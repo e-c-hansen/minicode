@@ -103,6 +103,11 @@ const std::vector<Marker>& biomeMarkers() {
 
 const char* const kPrettierCommand = "prettier --stdin-filepath {file}";
 const char* const kBiomeCommand = "biome format --stdin-file-path={file}";
+// The user's own Prettier where no project configures it (format.<lang> =
+// prettier): Markdown's prose keeps its line breaks unless a configuration
+// file Prettier finds says otherwise.
+const char* const kPrettierOwnCommand =
+    "prettier --stdin-filepath {file} --prose-wrap preserve --config-precedence prefer-file";
 
 struct Language {
     const char* key;
@@ -331,6 +336,32 @@ Plan plan(const std::string& lang, const std::string& setting,
         std::vector<std::string> words = Lsp::splitCommand(value);
         if (words.empty()) return p;
         p.fromSettings = true;
+        // format.markdown = prettier: the user's own Prettier for a language
+        // Prettier formats, where no project set it up too. A project's
+        // configuration still applies where there is one (prefer-file lets
+        // a configuration file Prettier finds win over the options given
+        // here); elsewhere Markdown's prose keeps its line breaks.
+        if (words.size() == 1 && v == "prettier") {
+            for (const Tool& t : l->tools) {
+                if (std::string(t.program) != "prettier" || !appliesTo(t, path)) continue;
+                for (const std::string& dir : searchDirs(path, root, fs)) {
+                    for (const Marker& m : t.markers) {
+                        std::string file;
+                        if (markerMatches(m, dir, fs, file)) {
+                            p.configFile = file;
+                            break;
+                        }
+                    }
+                    if (!p.configFile.empty()) break;
+                }
+                p.candidates.push_back({"prettier",
+                                        p.configFile.empty() ? kPrettierOwnCommand
+                                                             : kPrettierCommand,
+                                        !p.configFile.empty()});
+                p.installHint = hintFor("prettier");
+                return p;
+            }
+        }
         p.candidates.push_back({words[0], value, false});
         p.installHint = hintFor(words[0]);
         return p;
@@ -449,12 +480,287 @@ bool insideFolder(const std::string& path, const std::string& root) {
 }
 
 Source chooseProgram(bool fromSettings, const std::string& local, const std::string& outside,
-                     const std::string& consent) {
+                     const std::string& consent, bool configIsCode) {
+    if (configIsCode && (!local.empty() || !outside.empty()) && consent != "allow")
+        return consent == "deny" ? Source::Refused : Source::Ask;
     if (local.empty()) return outside.empty() ? Source::None : Source::Outside;
     if (consent == "allow") return Source::Local;
     if (consent == "deny" || (fromSettings && !outside.empty()))
         return outside.empty() ? Source::None : Source::Outside;
     return Source::Ask;
+}
+
+namespace {
+
+bool endsWith(const std::string& s, const std::string& suffix) {
+    return s.size() >= suffix.size() &&
+           s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// Copies `text` from `i`, a string's opening quote, through its closing one.
+size_t copyString(const std::string& text, size_t i, std::string& out) {
+    out += text[i++];
+    while (i < text.size()) {
+        const char c = text[i++];
+        out += c;
+        if (c == '\\' && i < text.size()) out += text[i++];
+        else if (c == '"') break;
+    }
+    return i;
+}
+
+// JSON with // and /* */ comments and trailing commas (biome.jsonc, a
+// commented .prettierrc) as plain JSON, so Json::parse reads it.
+std::string plainJson(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    for (size_t i = 0; i < text.size();) {
+        const char c = text[i];
+        if (c == '"') {
+            i = copyString(text, i, out);
+        } else if (c == '/' && i + 1 < text.size() && text[i + 1] == '/') {
+            while (i < text.size() && text[i] != '\n') i++;
+        } else if (c == '/' && i + 1 < text.size() && text[i + 1] == '*') {
+            const size_t end = text.find("*/", i + 2);
+            i = end == std::string::npos ? text.size() : end + 2;
+            out += ' ';
+        } else {
+            out += c;
+            i++;
+        }
+    }
+    std::string clean;   // without trailing commas
+    clean.reserve(out.size());
+    for (size_t i = 0; i < out.size();) {
+        if (out[i] == '"') {
+            i = copyString(out, i, clean);
+            continue;
+        }
+        if (out[i] == ',') {
+            size_t k = i + 1;
+            while (k < out.size() && std::isspace((unsigned char)out[k])) k++;
+            if (k < out.size() && (out[k] == '}' || out[k] == ']')) {
+                i++;
+                continue;
+            }
+        }
+        clean += out[i++];
+    }
+    return clean;
+}
+
+// A plugins list with something in it, or (Prettier 2) a parser given by
+// path, anywhere in a parsed configuration, its overrides included.
+bool jsonNamesCode(const Json& j, bool prettier, int depth = 0) {
+    if (depth > 32) return true;   // deeper than any real configuration: do not guess
+    if (j.isArray()) {
+        for (const Json& e : j.elements())
+            if (jsonNamesCode(e, prettier, depth + 1)) return true;
+        return false;
+    }
+    if (!j.isObject()) return false;
+    for (const auto& kv : j.items()) {
+        const Json& v = kv.second;
+        if (kv.first == "plugins" && !v.isNull() && !(v.isArray() && v.size() == 0) &&
+            !(v.isString() && v.asString().empty()))
+            return true;
+        if (prettier && kv.first == "parser" && v.isString() &&
+            v.asString().find_first_of("/.") != std::string::npos)
+            return true;
+        if (jsonNamesCode(v, prettier, depth + 1)) return true;
+    }
+    return false;
+}
+
+// A YAML, TOML or JSON5 Prettier configuration, read as text and on the
+// safe side: the word plugins anywhere, a parser whose value looks like a
+// path, or no key at all (the whole file a shared configuration's name).
+bool textNamesCode(const std::string& text) {
+    if (text.find("plugins") != std::string::npos) return true;
+    bool anyKey = false, anyText = false;
+    size_t pos = 0;
+    while (pos <= text.size()) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) nl = text.size();
+        const std::string line = trim(text.substr(pos, nl - pos));
+        pos = nl + 1;
+        if (line.empty() || line[0] == '#' || line == "---" || line == "..." ||
+            line.rfind("//", 0) == 0)
+            continue;
+        anyText = true;
+        const size_t sep = line.find_first_of(":=");
+        if (sep == std::string::npos) continue;
+        anyKey = true;
+        const size_t parser = line.find("parser");
+        if (parser != std::string::npos && parser < sep &&
+            line.find_first_of("/.", sep + 1) != std::string::npos)
+            return true;
+    }
+    return anyText && !anyKey;
+}
+
+// The value of package.json's "prettier" key, or a whole configuration.
+bool prettierValueRunsCode(const Json& v) {
+    if (v.isString()) return !v.asString().empty();   // a shared configuration module
+    return jsonNamesCode(v, true);
+}
+
+// "/a/b/../c" -> "/a/c", for a configuration named by a relative path.
+std::string normalized(const std::string& path) {
+    std::vector<std::string> parts;
+    size_t pos = 0;
+    while (pos <= path.size()) {
+        size_t slash = path.find('/', pos);
+        if (slash == std::string::npos) slash = path.size();
+        const std::string part = path.substr(pos, slash - pos);
+        pos = slash + 1;
+        if (part.empty() || part == ".") continue;
+        if (part == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else {
+            parts.push_back(part);
+        }
+    }
+    std::string out;
+    for (const std::string& part : parts) out += "/" + part;
+    return out.empty() ? "/" : out;
+}
+
+const char* const kBiomeFiles[] = {"biome.json", "biome.jsonc", ".biome.json", ".biome.jsonc"};
+
+bool biomeRunsCode(const std::string& file,
+                   const std::function<std::string(const std::string&)>& read, int depth) {
+    if (depth > 8) return true;
+    const std::string text = read ? read(file) : "";
+    Json j;
+    if (!Json::parse(plainJson(text), j))
+        return text.find("plugins") != std::string::npos ||
+               text.find("extends") != std::string::npos;
+    if (jsonNamesCode(j, false)) return true;
+    const Json& ext = j["extends"];
+    std::vector<std::string> names;
+    if (ext.isString()) names.push_back(ext.asString());
+    for (const Json& e : ext.elements())
+        if (e.isString()) names.push_back(e.asString());
+    const std::string dir = parentOf(file);
+    for (const std::string& name : names) {
+        if (name.empty()) continue;
+        if (name == "//") {
+            // A monorepo's root configuration: the nearest one above.
+            for (std::string up = parentOf(dir); !up.empty(); up = up == "/" ? "" : parentOf(up)) {
+                std::string found;
+                for (const char* n : kBiomeFiles)
+                    if (found.empty() && read && !read(join(up, n)).empty()) found = join(up, n);
+                if (found.empty()) continue;
+                if (biomeRunsCode(found, read, depth + 1)) return true;
+                break;
+            }
+            continue;
+        }
+        // A file beside it is read and checked; a package's is not visible.
+        const bool file = name[0] != '/' && name[0] != '@' &&
+                          (name.rfind("./", 0) == 0 || name.rfind("../", 0) == 0 ||
+                           endsWith(name, ".json") || endsWith(name, ".jsonc"));
+        if (!file) return true;
+        const std::string target = normalized(join(dir, name));
+        if (!read || read(target).empty() || biomeRunsCode(target, read, depth + 1)) return true;
+    }
+    return false;
+}
+
+// The files Prettier 3 reads its configuration from, in one folder;
+// package.json and package.yaml count only with a "prettier" key.
+const char* const kPrettierFiles[] = {
+    "package.json", "package.yaml", ".prettierrc", ".prettierrc.json", ".prettierrc.yaml",
+    ".prettierrc.yml", ".prettierrc.json5", ".prettierrc.js", "prettier.config.js",
+    ".prettierrc.ts", "prettier.config.ts", ".prettierrc.mjs", "prettier.config.mjs",
+    ".prettierrc.mts", "prettier.config.mts", ".prettierrc.cjs", "prettier.config.cjs",
+    ".prettierrc.cts", "prettier.config.cts", ".prettierrc.toml",
+};
+
+// Where package.yaml's top-level prettier key starts, or npos.
+size_t packageYamlPrettier(const std::string& text) {
+    if (text.rfind("prettier:", 0) == 0) return 0;
+    const size_t at = text.find("\nprettier:");
+    return at == std::string::npos ? at : at + 1;
+}
+
+}  // namespace
+
+bool configRunsCode(const std::string& program, const std::string& configFile,
+                    const std::function<std::string(const std::string&)>& read) {
+    if (configFile.empty()) return false;
+    const std::string tool = programName(program);
+    const std::string name = programName(configFile);
+    if (tool == "prettier") {
+        for (const char* ext : {".js", ".cjs", ".mjs", ".ts", ".cts", ".mts"})
+            if (endsWith(name, ext)) return true;
+        const std::string text = read ? read(configFile) : "";
+        if (name == "package.json") {
+            Json j;
+            return Json::parse(text, j) && j.isObject() && j.has("prettier") &&
+                   prettierValueRunsCode(j["prettier"]);
+        }
+        if (name == "package.yaml") {
+            const size_t at = packageYamlPrettier(text);
+            if (at == std::string::npos) return false;
+            // The key's value: the rest of its line, then the indented lines.
+            size_t end = text.find('\n', at);
+            while (end != std::string::npos && end + 1 < text.size() &&
+                   (text[end + 1] == ' ' || text[end + 1] == '\t' || text[end + 1] == '\n'))
+                end = text.find('\n', end + 1);
+            if (end == std::string::npos) end = text.size();
+            const std::string value = text.substr(at + 9, end - at - 9);
+            const std::string inlineValue = trim(value.substr(0, value.find('\n')));
+            if (!inlineValue.empty() && inlineValue[0] != '#' && inlineValue[0] != '{')
+                return true;   // a shared configuration's name
+            return textNamesCode(value);
+        }
+        Json j;
+        if (Json::parse(plainJson(text), j)) return prettierValueRunsCode(j);
+        return textNamesCode(text);
+    }
+    if (tool == "biome") return biomeRunsCode(configFile, read, 0);
+    if (tool == "latexindent") {
+        // A replacement given as a substitution is run with Perl's eval
+        // (LatexIndent/Replacement.pm) once replacement mode is on, which
+        // the file can turn on itself (switchesViaYaml: rSwitch).
+        const std::string text = read ? read(configFile) : "";
+        return text.find("substitution") != std::string::npos;
+    }
+    return false;
+}
+
+std::string codeConfigFile(const std::string& program, const std::string& path,
+                           const std::string& root, const std::string& planConfig,
+                           const Fs& fs) {
+    const std::string tool = programName(program);
+    if (tool == "latexindent")
+        return configRunsCode(tool, planConfig, fs.read) ? planConfig : "";
+    const bool prettier = tool == "prettier";
+    if (!prettier && tool != "biome") return "";
+    for (const std::string& dir : searchDirs(path, root, fs)) {
+        std::vector<std::string> present;
+        auto consider = [&](const std::string& name) {
+            const std::string file = join(dir, name);
+            if (!fs.exists || !fs.exists(file)) return;
+            const std::string text = name.rfind("package.", 0) == 0 && fs.read ? fs.read(file) : "";
+            if (name == "package.json" && !jsonHasKey(text, "prettier")) return;
+            if (name == "package.yaml" && packageYamlPrettier(text) == std::string::npos) return;
+            present.push_back(file);
+        };
+        if (prettier)
+            for (const char* name : kPrettierFiles) consider(name);
+        else
+            for (const char* name : kBiomeFiles) consider(name);
+        if (present.empty()) continue;
+        // The tool stops at the nearest folder holding one; whichever of
+        // its files a given version prefers, any that runs code counts.
+        for (const std::string& file : present)
+            if (configRunsCode(tool, file, fs.read)) return file;
+        return "";
+    }
+    return "";
 }
 
 bool serverMayFormat(const std::string& lang, const Plan& plan) {
@@ -470,12 +776,16 @@ bool hasDefault(const std::string& lang) {
 std::string unplannedMessage(const std::string& lang, const std::string& extension) {
     const Language* l = findLanguage(lang);
     if (!l) return "minicode has no formatter for ." + extension + " files.";
-    bool biome = false;
-    for (const Tool& t : l->tools)
+    bool biome = false, prettier = false;
+    for (const Tool& t : l->tools) {
         if (std::string(t.program) == "biome") biome = true;
+        if (std::string(t.program) == "prettier") prettier = true;
+    }
     return std::string("minicode formats ") + l->display + " files only in projects set up for " +
-           (biome ? "Prettier or Biome" : "Prettier") + ", or with a command of your own (format." +
-           lang + " in the settings).";
+           (biome ? "Prettier or Biome" : "Prettier") +
+           (prettier ? ", or when the settings say format." + lang +
+                           " = prettier (your own Prettier) or give a command of your own."
+                     : ", or with a command of your own (format." + lang + " in the settings).");
 }
 
 bool jsonHasKey(const std::string& text, const std::string& key) {

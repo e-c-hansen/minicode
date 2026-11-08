@@ -78,6 +78,13 @@ static NSString *ToolFolderName(NSString *program, NSString *root) {
     return dir;
 }
 
+// A file as the window's folder names it: "web/prettier.config.js".
+static NSString *FolderRelativeName(NSString *path, NSString *root) {
+    NSString *prefix = [root stringByAppendingString:@"/"];
+    return root.length && [path hasPrefix:prefix] ? [path substringFromIndex:prefix.length]
+                                                  : path.lastPathComponent;
+}
+
 // Run argv with `input` on stdin. Blocks; call it off the main thread.
 static void RunFormatter(NSArray<NSString *> *argv, NSString *cwd, NSData *input,
                          NSTimeInterval timeout, int *status, BOOL *timedOut,
@@ -222,14 +229,33 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
         const std::string answer = Std(consent ?: @"");
         for (const Formatter::Candidate &c : plan.candidates) {
             MCFormatterLookup found = FindFormatter(c.program, lang, realPath, realRoot);
+            // A configuration in the folder that runs code when the tool
+            // reads it (prettier.config.js, a plugin) is the folder's own
+            // program, whichever copy of the tool would read it.
+            const std::string codeConfig = Formatter::codeConfigFile(
+                c.program, Std(realPath), Std(realRoot), plan.configFile, fs);
             Formatter::Source source = Formatter::chooseProgram(
-                plan.fromSettings, Std(found.local ?: @""), Std(found.outside ?: @""), answer);
+                plan.fromSettings, Std(found.local ?: @""), Std(found.outside ?: @""), answer,
+                !codeConfig.empty());
             if (source == Formatter::Source::Ask) {
                 // Nothing runs until the user answers for the folder; the
                 // editor asks and formats again (formatSourceQuietly:).
                 result.needsConsent = YES;
                 result.tool = NS(Formatter::programName(c.program));
-                result.consentFolder = ToolFolderName(found.local, realRoot);
+                if (found.local) result.consentFolder = ToolFolderName(found.local, realRoot);
+                if (!codeConfig.empty())
+                    result.consentConfig = FolderRelativeName(NS(codeConfig), realRoot);
+                finish();
+                return;
+            }
+            if (source == Formatter::Source::Refused) {
+                NSString *tool = NS(Formatter::programName(c.program));
+                result.tool = tool;
+                result.error = [NSString stringWithFormat:
+                    @"%@ in this folder can run code when %@ reads it, and this folder's own "
+                     "programs are not allowed to run, so %@ did not run. Ask Again About This "
+                     "Folder's Tools (minicode menu) asks again.",
+                    FolderRelativeName(NS(codeConfig), realRoot), tool, tool];
                 finish();
                 return;
             }
@@ -279,10 +305,10 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
         }
 
         result.tool = NS(Formatter::programName(chosen->program));
-        result.style = plan.fromSettings
-            ? [NSString stringWithFormat:@"format.%@ in the settings", NS(lang)]
-            : chosen->projectStyle
-                ? [NSString stringWithFormat:@"the project's %@", configName]
+        result.style = chosen->projectStyle
+            ? [NSString stringWithFormat:@"the project's %@", configName]
+            : plan.fromSettings
+                ? [NSString stringWithFormat:@"format.%@ in the settings", NS(lang)]
                 : @"Google style";
         bool ranged = false;
         std::vector<std::string> words =

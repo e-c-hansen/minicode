@@ -138,8 +138,9 @@ static void testFormatCoverage() {
         // The notes.
         CHECK(unplannedMessage("", "toml") == "minicode has no formatter for .toml files.");
         CHECK(unplannedMessage("markdown", "md") ==
-              "minicode formats Markdown files only in projects set up for Prettier, or with "
-              "a command of your own (format.markdown in the settings).");
+              "minicode formats Markdown files only in projects set up for Prettier, or when "
+              "the settings say format.markdown = prettier (your own Prettier) or give a "
+              "command of your own.");
         CHECK(unplannedMessage("css", "css").find("Prettier or Biome") != std::string::npos);
     }
 

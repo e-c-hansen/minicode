@@ -1116,7 +1116,18 @@ container (PanelHost, laid out by hand in layoutContainer)
   outside the folder, never at another formatter. A `format.<lang>` command
   never asks while the tool exists outside the folder (the owner's
   `format.python = ruff ...`); `$VIRTUAL_ENV`'s bin is trusted; a project copy
-  outside the window's folder is never used.
+  outside the window's folder is never used. **A configuration that runs
+  code counts as the folder's program** (2026-11-07,
+  `Formatter::codeConfigFile`, `configRunsCode`): Prettier's JS and TS
+  configs, a JSON/YAML/TOML one or package.json key naming plugins, a parser
+  by path or a shared config module, Biome's plugins or a package's
+  `extends`, latexindent's `substitution` (Perl `eval`, which
+  `switchesViaYaml` can turn on). Then any copy of the tool, the user's own
+  command included, asks first, and Deny runs nothing (`Source::Refused`).
+  `format.<lang> = prettier` alone (markdown, json, yaml, css, JS and TS
+  files) is the opt-in for the user's own Prettier: the project's config
+  where there is one, else `--prose-wrap preserve --config-precedence
+  prefer-file`.
 - `format.on-save`: Cmd+S (non-nil sender) formats then saves; minicode's own
   saves and Save All never format. A Cmd+S is never lost (`_formatSaveTab`:
   leaving the tab saves it unformatted).
@@ -1506,14 +1517,29 @@ false`) a formula shows as its TeX in the code style.
   interrupting a paragraph; plus ```` ```math ````. `\[...\]` counts only as a
   block (inline it is an escaped bracket). Memos keep unclosed openers linear.
   `tests/markdown/math.md` has every case.
-- **The batch** (`MathTex`): each formula in `\setbox\mcbox\hbox{$...$}` (never
+- **The batch** (`MathTex`): each formula in
+  `\setbox\mcbox\hbox\mcbgroup\aftergroup\mcafter$...$\mcegroup\mcsentinel` (never
   a macro argument, so TeX recovers from a stray `\par`), shipped by `\mcship`
-  as a page of its box plus 1 pt; the log's `MC:BEGIN:k` and
-  `MC:k:page:wd:ht:dp` give pages, boxes and errors; the output routine drops
+  as a page of its box plus 1 pt; the log's `MC:<nonce>:BEGIN:k` and
+  `MC:<nonce>:k:page:wd:ht:dp` give pages, boxes and errors (a fresh nonce
+  per run, so a formula's own `\typeout` is no box); the output routine drops
   other pages. `check` refuses what could derail later formulas (unbalanced
   braces, a stray `$`, `\input`, `\end{document}`, `\write`, `\stop`) and the
   ways round those words (`\csname`, `\catcode`, `\scantokens`,
-  `\makeatletter`, `\ExplSyntaxOn`, any `^^`); `prepare`
+  `\makeatletter`, `\ExplSyntaxOn`, any `^^`), and what would outlive the
+  formula's group into later ones, whose pictures are cached under their own
+  keys (2026-11-07): `\global`, `\gdef`, `\xdef`, `\globaldefs`, counters,
+  `\aftergroup`, `\afterassignment`, the group words, `\fontdimen` and the
+  other always-global assignments, and the prefixes `\mc`, `\XeTeX`,
+  `\Declare`, `\New`, `\Renew`, `\Provide`, `\AddTo`, `\AtBegin`, `\AtEnd`. A
+  formula that still closes its box early (`{$}`: TeX closes a brace for the
+  `$`) has its rest gobbled unread to `\mcsentinel` by `\mcafter`; one that
+  leaves a group open makes `\mcship` (built only from `\mc` copies of the
+  primitives) skip the rest of the batch, so the run has no PDF and the others
+  go again. **Trap**: `\globaldefs=-1` around each formula broke every
+  formula's fonts (LaTeX loads fonts lazily with global definitions); check a
+  change to the batch with a real tectonic (`markdown_math` with
+  `MC_GUI_REAL_TECTONIC`). `prepare`
   rewrites MathJax-only forms (`\mathbb{1}` to dsfont's `\mathds`, align and
   friends inline, `\tag`, Unicode symbols); the preamble and macros are in
   MathTex.cpp. **Bump `MathTex::kVersion`** when any of it changes: it is in

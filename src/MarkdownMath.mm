@@ -211,6 +211,11 @@ static NSMutableDictionary<NSString *, NSArray *> *MCMathIndex(void) {
     return gIndex;
 }
 
+void MCMathReloadCache(void) {
+    gIndex = nil;
+    [MCMathMemory() removeAllObjects];
+}
+
 // A batch's PDF, from memory or the disk, or nil when it is gone.
 static MCMathPages *MCMathOpenBatch(NSString *batch) {
     static NSCache<NSString *, MCMathPages *> *open;
@@ -330,11 +335,11 @@ static NSString *MCStr(const std::string &s) {
     return [NSString stringWithUTF8String:s.c_str()] ?: @"";
 }
 
-// The last "MC:BEGIN:k" in what TeX printed: the formula it was in.
-static long MCMathLastBegun(NSData *output) {
+// The last "MC:<nonce>:BEGIN:k" in what TeX printed: the formula it was in.
+static long MCMathLastBegun(NSData *output, NSString *begin) {
     NSString *s = [[NSString alloc] initWithData:output encoding:NSUTF8StringEncoding] ?:
                   [[NSString alloc] initWithData:output encoding:NSISOLatin1StringEncoding];
-    NSRange r = [s rangeOfString:@"MC:BEGIN:" options:NSBackwardsSearch];
+    NSRange r = [s rangeOfString:begin options:NSBackwardsSearch];
     if (r.location == NSNotFound) return -1;
     return [s substringFromIndex:NSMaxRange(r)].integerValue;
 }
@@ -359,7 +364,12 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
         stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *tex = [dir stringByAppendingPathComponent:@"math.tex"];
-    NSString *source = MCStr(MathTex::document(formulas));
+    // The run's own mark on the log's lines, which no formula can know, so
+    // one that prints a line of its own cannot pass for another's box.
+    char nonceBytes[17];
+    std::snprintf(nonceBytes, sizeof nonceBytes, "%08x%08x", arc4random(), arc4random());
+    const std::string nonce = nonceBytes;
+    NSString *source = MCStr(MathTex::document(formulas, nonce));
     NSError *err = nil;
     if (![source writeToFile:tex atomically:NO encoding:NSUTF8StringEncoding error:&err]) {
         [fm removeItemAtPath:dir error:nil];
@@ -406,7 +416,8 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
         if (stop && task.running) [task terminate];
     });
     dispatch_resume(watch);
-    NSData *needle = [@"MC:BEGIN:" dataUsingEncoding:NSUTF8StringEncoding];
+    NSString *begin = MCStr(MathTex::logMark(nonce) + "BEGIN:");
+    NSData *needle = [begin dataUsingEncoding:NSUTF8StringEncoding];
     NSFileHandle *reader = pipe.fileHandleForReading;
     for (;;) {
         NSData *chunk = [reader availableData];
@@ -415,8 +426,9 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
             [output appendData:chunk];
             lastWord = [NSDate date];
             if (!inFormulas) {
-                const NSUInteger from = output.length > chunk.length + 16
-                                            ? output.length - chunk.length - 16 : 0;
+                // Back far enough for a mark split across two chunks.
+                const NSUInteger from = output.length > chunk.length + needle.length
+                                            ? output.length - chunk.length - needle.length : 0;
                 inFormulas = [output rangeOfData:needle options:0
                                            range:NSMakeRange(from, output.length - from)]
                                  .location != NSNotFound;
@@ -438,7 +450,7 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
 
     if (wasKilled) {
         // Whatever it was in fails; the rest go round again.
-        const long culprit = MCMathLastBegun(output);
+        const long culprit = MCMathLastBegun(output, begin);
         if (culprit < 0 || (size_t)culprit >= which.size()) {
             run.wholeError = @"tectonic did not finish in time.";
             return run;
@@ -453,7 +465,7 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
         return run;
     }
 
-    const std::vector<MathTex::Box> boxes = MathTex::readLog(log, which.size());
+    const std::vector<MathTex::Box> boxes = MathTex::readLog(log, which.size(), nonce);
     MCMathPages *pages = pdfData.length ? [[MCMathPages alloc] initWithData:pdfData] : nil;
     bool anyReached = false;
     for (const MathTex::Box &b : boxes) anyReached = anyReached || b.reached;

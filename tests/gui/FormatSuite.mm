@@ -110,6 +110,10 @@ MC_GUI_SUITE(format) {
 // the language servers ask for (MCPythonEnvironmentConsent, one per
 // folder); format.<lang> in the settings never asks while the tool is
 // installed outside the folder (the owner's `format.python = ruff ...`).
+// A Prettier configuration that runs code (prettier.config.js) asks the
+// same question even for a Prettier installed elsewhere, and Don't Allow
+// then runs nothing; format.markdown = prettier formats a README with the
+// user's own Prettier, prose kept as written.
 MC_GUI_SUITE(format_consent) {
     __block EditorController *c = nil;
     __block id consentBefore = nil;
@@ -243,6 +247,113 @@ MC_GUI_SUITE(format_consent) {
         // The tab goes before its file, so later suites see no deleted tab.
         GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
         [fm removeItemAtPath:dir error:nil];
+        MCGuiSetSettings(@"lsp.enabled = false\n");
+    });
+
+    // A configuration that runs code (prettier.config.js) is the folder's
+    // own program too, for a Prettier installed outside the folder: asked
+    // about, Don't Allow runs nothing at all, Allow runs it. A plain
+    // .prettierrc still runs unasked, and format.markdown = prettier runs
+    // the user's own Prettier on a README with no Prettier set up.
+    NSString *jsDir = MCGuiProjectFile(@"fmtcjs");
+    NSString *js = [jsDir stringByAppendingPathComponent:@"a.js"];
+    NSString *notes = [jsDir stringByAppendingPathComponent:@"notes.md"];
+    NSString *config = [jsDir stringByAppendingPathComponent:@"prettier.config.js"];
+    NSString *prettier = [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/prettier"];
+    NSString *ranPrettier = [MCGuiScratch() stringByAppendingPathComponent:@"fmtc-prettier-ran"];
+    NSString *prettierArgs = [MCGuiScratch() stringByAppendingPathComponent:@"fmtc-prettier-args"];
+    MCGuiStep(@"prettier.config.js in the folder, prettier in ~/.local/bin: Don't Allow", ^{
+        consentBefore = [MCAppDefaults() objectForKey:@"MCPythonEnvironmentConsent"];
+        forget();
+        MCGuiWriteFile(js, @"x=1\n");
+        MCGuiWriteFile(config, @"module.exports = {};\n");
+        Script(prettier, [NSString stringWithFormat:
+            @"#!/bin/sh\n/usr/bin/touch '%@'\nprintf '%%s\\n' \"$@\" > '%@'\n"
+            @"exec /usr/bin/sed -E -e 's/^x=1$/x = 1/' -e 's/^#Title$/# Title/'\n",
+            ranPrettier, prettierArgs]);
+        MCGuiSetSettings(@"lsp.enabled = false\n");
+        c = MCGuiController();
+        GCHECK([c showFile:js]);
+        alerts = MCGuiAlertsShown().count;
+        [c setValue:nil forKey:@"lastFormatNote"];
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Don't Allow
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"asked about the configuration; Don't Allow: a note", 15, ^BOOL {
+        return MCGuiAlertsShown().count == alerts + 1 &&
+               [[c valueForKey:@"lastFormatNote"] containsString:@"can run code"];
+    });
+    MCGuiStep(@"the question named the file; prettier never ran; deny kept", ^{
+        NSString *asked = MCGuiAlertsShown().lastObject;
+        MCGuiNote(@"asked: %@; the note: %@", asked, [c valueForKey:@"lastFormatNote"]);
+        GCHECK([asked containsString:@"prettier"] &&
+               [asked containsString:@"fmtcjs/prettier.config.js"]);
+        GCHECK([[c valueForKey:@"lastFormatNote"] containsString:@"prettier.config.js"]);
+        GCHECK(!ran(ranPrettier));
+        GCHECK_EQ_STR(Text(c).string, @"x=1\n");
+        GCHECK_EQ_STR(answer(), @"deny");
+        [c setValue:nil forKey:@"lastFormatNote"];
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"formatting again: the note at once", 15, ^BOOL {
+        return [[c valueForKey:@"lastFormatNote"] containsString:@"can run code"];
+    });
+    MCGuiStep(@"not asked again, still not run; then forgotten, and Allow", ^{
+        GCHECK(MCGuiAlertsShown().count == alerts + 1);
+        GCHECK(!ran(ranPrettier));
+        forget();
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);   // Allow
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"Allow: prettier formats", 15, ^BOOL {
+        return [Text(c).string isEqualToString:@"x = 1\n"];
+    });
+    MCGuiStep(@"asked once more, allow kept; a plain .prettierrc instead", ^{
+        GCHECK(MCGuiAlertsShown().count == alerts + 2);
+        GCHECK(ran(ranPrettier));
+        GCHECK_EQ_STR(answer(), @"allow");
+        [Text(c).undoManager undo];
+        [fm removeItemAtPath:ranPrettier error:nil];
+        [fm removeItemAtPath:config error:nil];
+        MCGuiWriteFile([jsDir stringByAppendingPathComponent:@".prettierrc"], @"{\"semi\": false}\n");
+        forget();
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"a plain .prettierrc: formatted unasked", 15, ^BOOL {
+        return [Text(c).string isEqualToString:@"x = 1\n"];
+    });
+    MCGuiStep(@"no question, nothing stored; then format.markdown = prettier on a README", ^{
+        GCHECK(MCGuiAlertsShown().count == alerts + 2);
+        GCHECK(answer() == nil);
+        [Text(c).undoManager undo];
+        [fm removeItemAtPath:[jsDir stringByAppendingPathComponent:@".prettierrc"] error:nil];
+        MCGuiWriteFile(notes, @"#Title\n");
+        MCGuiSetSettings(@"lsp.enabled = false\nformat.markdown = prettier\n");
+        GCHECK([c showFile:notes]);
+        if ([[c valueForKey:@"previewMode"] boolValue])
+            [c performSelector:@selector(togglePreview:) withObject:nil];   // the source
+        GCHECK(Text(c).editable);
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"the user's own Prettier formats the README", 15, ^BOOL {
+        return [Text(c).string isEqualToString:@"# Title\n"];
+    });
+    MCGuiStep(@"prose kept as written; put everything back", ^{
+        NSString *given = Disk(prettierArgs);
+        MCGuiNote(@"prettier's arguments: %@", given);
+        GCHECK([given containsString:@"--prose-wrap\npreserve"]);
+        GCHECK([given containsString:@"--stdin-filepath"] && [given containsString:@"notes.md"]);
+        GCHECK(MCGuiAlertsShown().count == alerts + 2);
+        if (consentBefore)
+            [MCAppDefaults() setObject:consentBefore forKey:@"MCPythonEnvironmentConsent"];
+        else
+            forget();
+        [Text(c).undoManager undo];
+        GCHECK_EQ_STR(Text(c).string, @"#Title\n");
+        GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);   // notes.md
+        GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);   // a.js
+        [fm removeItemAtPath:jsDir error:nil];
+        [fm removeItemAtPath:prettier error:nil];
         MCGuiSetSettings(@"lsp.enabled = false\n");
     });
 }

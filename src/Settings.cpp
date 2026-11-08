@@ -1642,9 +1642,13 @@ const char* Settings::defaultFileText() {
 # pyink is not installed; gofmt; rustfmt with the edition from Cargo.toml;
 # shfmt; latexindent for LaTeX. Python tools are looked for in the project's
 # .venv or venv first. Markdown, JSON, YAML and CSS are formatted only in
-# projects set up for Prettier (Biome too for JSON and CSS), or by a
-# command given here (format.markdown, format.json, format.yaml, format.css)
-# such as prettier --stdin-filepath {file}. A file that nothing here
+# projects set up for Prettier (Biome too for JSON and CSS), or as the
+# settings say: the word prettier as format.markdown (or format.json,
+# format.yaml, format.css) runs your own Prettier, keeping Markdown's line
+# breaks, and a command such as prettier --stdin-filepath {file} runs as
+# written. A Prettier, Biome or latexindent configuration in the folder
+# that runs code (prettier.config.js, plugins) waits for your Allow, as the
+# folder's own programs do. A file that nothing here
 # formats is formatted by its language server, when a running one can
 # (taplo for TOML, say); a file with a formatter of its own never is.
 # Giving a command here runs exactly that, whatever the project says; {file}

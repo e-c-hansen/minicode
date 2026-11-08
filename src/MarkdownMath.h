@@ -59,6 +59,11 @@ extern NSString *const MCMathErrorKey;
 // going first.
 NSString *MCMathCacheDirectory(void);
 
+// Forgets what was read from the cache folder (and the formulas in memory),
+// so the next lookup reads the folder again: for checks that write a batch
+// into it themselves. Main thread only.
+void MCMathReloadCache(void);
+
 // A typeset formula in the text. Its cell sits on the baseline, draws in
 // `color` at `scale` screen points per PDF point, and scales itself down to
 // the width of its line when it would not fit. It reaches at least as high

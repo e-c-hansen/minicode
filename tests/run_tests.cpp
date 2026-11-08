@@ -2225,9 +2225,11 @@ void testMathTex() {
     GROUP("mathtex:document");
     const std::string doc = document({{"x^2", false}, {"\\sum_i a_i", true}, {"y % note", false}});
     CHECK(count(doc, "MC:BEGIN:") == 3 && count(doc, "\\mcship{") == 3);
-    CHECK(doc.find("\\setbox\\mcbox\\hbox{$\\displaystyle\n\\sum_i a_i\n$}") != std::string::npos);
-    CHECK(doc.find("\\setbox\\mcbox\\hbox{$\nx^2\n$}") != std::string::npos);
-    CHECK(doc.find("y % note\n$}") != std::string::npos);   // the comment ends before the $
+    CHECK(doc.find("\\setbox\\mcbox\\hbox\\mcbgroup\\aftergroup\\mcafter$\\displaystyle\n"
+                   "\\sum_i a_i\n$\\mcegroup\\mcsentinel\n") != std::string::npos);
+    CHECK(doc.find("\\setbox\\mcbox\\hbox\\mcbgroup\\aftergroup\\mcafter$\nx^2\n$\\mcegroup") !=
+          std::string::npos);
+    CHECK(doc.find("y % note\n$\\mcegroup") != std::string::npos);   // the comment ends before the $
     CHECK(doc.find("\\usepackage{amsmath,amssymb,amsfonts") != std::string::npos);
     CHECK(doc.find("\\typeout{MC:END}\n\\end{document}") != std::string::npos);
 
@@ -10136,6 +10138,7 @@ static void testMultiCaretOccurrences() {
 #include "ide_link_tests.inc"
 #include "format_consent_tests.inc"
 #include "format_coverage_tests.inc"
+#include "mathtex_isolation_tests.inc"
 #include "terminal_paste_tests.inc"
 #include "terminal_marks_tests.inc"
 #include "latex_safety_tests.inc"
@@ -10208,6 +10211,7 @@ int main() {
     testFormatter();
     testFormatConsent();
     testFormatCoverage();
+    testMathTexIsolation();
     testInstallHints();
     testLinuxBuildLists();
     testCategoryIvars();

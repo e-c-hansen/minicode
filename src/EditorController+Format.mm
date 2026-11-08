@@ -99,12 +99,25 @@
 - (void)askToRunFolderFormatter:(MCFormatResult *)r quiet:(BOOL)quiet
                            then:(void (^)(void))then {
     NSAlert *a = [NSAlert new];
-    a.messageText = [NSString stringWithFormat:@"Run %@ from this folder's %@?", r.tool,
-                                               r.consentFolder];
-    a.informativeText =
-        @"Programs in the folder run with your rights, so minicode asks before running one. "
-         "The answer is kept for this folder, and also covers its Python environment for "
-         "the language servers.";
+    NSString *keep = @"The answer is kept for this folder, and also covers its Python "
+                      "environment for the language servers.";
+    if (r.consentConfig && r.consentFolder) {
+        a.messageText = [NSString stringWithFormat:@"Run %@ from this folder's %@, with its %@?",
+                                                   r.tool, r.consentFolder, r.consentConfig];
+    } else if (r.consentConfig) {
+        a.messageText = [NSString stringWithFormat:@"Let %@ run the code in this folder's %@?",
+                                                   r.tool, r.consentConfig];
+    } else {
+        a.messageText = [NSString stringWithFormat:@"Run %@ from this folder's %@?", r.tool,
+                                                   r.consentFolder];
+    }
+    a.informativeText = r.consentConfig
+        ? [NSString stringWithFormat:
+              @"%@ in this folder can run code when %@ reads it, with your rights, so minicode "
+               "asks first. With Don't Allow, %@ does not run for this folder. %@",
+              r.consentConfig, r.tool, r.tool, keep]
+        : [@"Programs in the folder run with your rights, so minicode asks before running one. "
+              stringByAppendingString:keep];
     [a addButtonWithTitle:@"Allow"];
     [a addButtonWithTitle:@"Don't Allow"];
     [a addButtonWithTitle:@"Cancel"];

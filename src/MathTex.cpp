@@ -19,7 +19,7 @@
 
 namespace MathTex {
 
-const int kVersion = 2;
+const int kVersion = 3;
 
 namespace {
 
@@ -212,12 +212,48 @@ std::string spellUnicode(const std::string& s) {
 // \endcsname), \makeatletter and \ExplSyntaxOn make @, _ and : letters, so
 // \@@input and \file_input:n become words, and \everyeof rides along with
 // \scantokens. \stop ends the run.
+//
+// The rest keep one formula from changing the ones after it: each
+// formula's picture is cached under its own TeX, so a formula changed by an
+// earlier one in its batch would be a wrong picture kept for good. Its own
+// definitions end with its box, so what outlives a group is refused:
+// \global, \gdef and \xdef, and \globaldefs, which makes every assignment
+// global (\globaldefs=-1 around each formula would make them local instead,
+// but LaTeX loads fonts the first time they are used, with global
+// definitions, and under it every formula's fonts broke); LaTeX's commands
+// that assign globally whatever they are given (the counters, xcolor's
+// \xglobal and \globalcolor, the NewDocumentCommand family, the Declare...,
+// AddToHook and AtBeginDocument kinds, matched by the prefixes below);
+// \aftergroup and \afterassignment, which carry tokens past the box's end;
+// \endgroup, \egroup, \begingroup and \bgroup, which close or leave open a
+// group the braces do not show; what TeX keeps globally anyway (\fontdimen,
+// \hyphenchar, \skewchar, \deadcycles, \insertpenalties, the interaction
+// modes); and the batch's own names, any word beginning \mc. A formula that
+// still gets out of its box (a $ inside braces, which TeX mends by closing
+// a brace) has the rest of its text thrown away unread, and one that leaves
+// a group open stops the run there (document()). Nor can a formula forge
+// the log's lines (\typeout{MC:...}): they carry the run's nonce. XeTeX's
+// own primitives (\XeTeXpicfile reads a file into the picture) have no
+// place in a formula.
 const char* const kRefused[] = {
     "\\input", "\\include", "\\endinput", "\\documentclass", "\\usepackage",
     "\\shipout", "\\output", "\\openout", "\\write", "\\immediate", "\\end{document}",
     "\\begin{document}", "\\newpage", "\\clearpage",
     "\\csname", "\\catcode", "\\scantokens", "\\everyeof", "\\makeatletter",
     "\\ExplSyntaxOn", "\\openin", "\\read", "\\readline", "\\stop",
+    "\\global", "\\gdef", "\\xdef", "\\globaldefs", "\\setcounter", "\\addtocounter",
+    "\\stepcounter", "\\refstepcounter", "\\newcounter", "\\xglobal", "\\globalcolor",
+    "\\aftergroup", "\\afterassignment", "\\endgroup", "\\egroup", "\\begingroup",
+    "\\bgroup", "\\fontdimen", "\\hyphenchar", "\\skewchar", "\\deadcycles",
+    "\\insertpenalties", "\\interactionmode", "\\batchmode", "\\nonstopmode",
+    "\\scrollmode", "\\errorstopmode", "\\SetSymbolFont", "\\SetMathAlphabet",
+};
+
+// Control words refused by how they begin: the batch's own (\mcship,
+// \mcbox, ...), XeTeX's primitives, and LaTeX's declarations.
+const char* const kRefusedPrefixes[] = {
+    "\\mc", "\\XeTeX", "\\Declare", "\\New", "\\Renew", "\\Provide", "\\AddTo",
+    "\\RemoveFrom", "\\AtBegin", "\\AtEnd",
 };
 
 }  // namespace
@@ -235,6 +271,12 @@ std::string check(const std::string& tex) {
                 const bool env = std::strchr(word, '{') != nullptr;
                 if (env ? tex.compare(i, std::strlen(word), word) == 0 : wordAt(tex, i, word))
                     return std::string(word) + " is not allowed in a formula";
+            }
+            for (const char* prefix : kRefusedPrefixes) {
+                if (tex.compare(i, std::strlen(prefix), prefix) != 0) continue;
+                size_t end = i + 1;
+                while (end < tex.size() && isLetter(tex[end])) end++;
+                return tex.substr(i, end - i) + " is not allowed in a formula";
             }
             i++;   // the escaped character, or the control word's first letter
             continue;
@@ -284,7 +326,8 @@ std::string prepare(const std::string& tex, bool display) {
     return out;
 }
 
-std::string document(const std::vector<Formula>& formulas) {
+std::string document(const std::vector<Formula>& formulas, const std::string& nonce) {
+    const std::string mark = logMark(nonce);
     char pad[32];
     std::snprintf(pad, sizeof pad, "%.2fpt", kPadPt);
     std::string d =
@@ -314,23 +357,60 @@ std::string document(const std::vector<Formula>& formulas) {
          "  \\pdfpagewidth=\\dimexpr\\wd\\mcbox+2\\mcpad\\relax\n"
          "  \\pdfpageheight=\\dimexpr\\ht\\mcbox+\\dp\\mcbox+2\\mcpad\\relax\n"
          "  \\global\\advance\\mcpage by 1\n"
-         "  \\typeout{MC:#1:\\the\\mcpage:\\the\\wd\\mcbox:\\the\\ht\\mcbox:\\the\\dp\\mcbox}%\n"
+         "  \\typeout{" + mark +
+             "#1:\\the\\mcpage:\\the\\wd\\mcbox:\\the\\ht\\mcbox:\\the\\dp\\mcbox}%\n"
          "  \\shipout\\vbox{\\kern\\mcpad\\hbox{\\kern\\mcpad\\box\\mcbox}}}\n"
-         "\\begin{document}\n";
+         // Keeping each formula to its box. The primitives the guards use,
+         // under names a formula may not write (check() refuses \mc...),
+         // since a formula that leaves a group open still has its own
+         // definitions of \ifnum or \else in force when \mcship runs.
+         "\\let\\mcifnum\\ifnum \\let\\mcifx\\ifx \\let\\mcelse\\else \\let\\mcfi\\fi\n"
+         "\\let\\mcgrouplevel\\currentgrouplevel \\let\\mcerrmessage\\errmessage\n"
+         "\\let\\mcbgroup\\bgroup \\let\\mcegroup\\egroup \\let\\mcfuturelet\\futurelet\n"
+         "\\let\\mcexpandafter\\expandafter \\let\\mcsentinel\\relax \\let\\mcstop\\relax\n"
+         "\\newif\\ifmcbroken \\newcount\\mclevel\n"
+         // Run by \aftergroup as the box closes: the next token is
+         // \mcsentinel unless the formula closed the box itself (a $ in
+         // braces, which TeX mends by closing a brace), and then the rest
+         // of it is thrown away unread, up to the sentinel.
+         "\\def\\mcafter{\\mcfuturelet\\mcnext\\mcafterb}\n"
+         "\\def\\mcafterb{\\mcifx\\mcnext\\mcsentinel\\mcelse\\mcexpandafter\\mcgobble\\mcfi}\n"
+         "\\long\\def\\mcgobble#1\\mcsentinel{\\mcbrokentrue\n"
+         "  \\mcerrmessage{The formula closed its box early}}\n"
+         // Shipped only at the document's own group level. A formula that
+         // left a group open has its text still in force, so the rest of
+         // the batch is thrown away unread: the run ends without a PDF, the
+         // formula fails, and the others go round again.
+         "\\long\\def\\mcskip#1\\mcstop{}\n"
+         "\\let\\mcshipbox\\mcship\n"
+         "\\def\\mcship#1{\\mcifnum\\mcgrouplevel>\\mclevel\n"
+         "  \\mcerrmessage{The formula left a group open}\\mcexpandafter\\mcskip\n"
+         "  \\mcelse\\ifmcbroken\\mcbrokenfalse\\else\\mcshipbox{#1}\\fi\\mcfi}\n"
+         "\\begin{document}\n"
+         "\\mclevel=\\currentgrouplevel\n";
     for (size_t k = 0; k < formulas.size(); k++) {
         const std::string n = std::to_string(k);
-        d += "\\typeout{MC:BEGIN:" + n + "}\n";
+        d += "\\typeout{" + mark + "BEGIN:" + n + "}\n";
         // The TeX on lines of its own: a % comment in it then ends at its
-        // own line, not at the closing $.
-        d += formulas[k].display ? "\\setbox\\mcbox\\hbox{$\\displaystyle\n" : "\\setbox\\mcbox\\hbox{$\n";
+        // own line, not at the closing $. The box opens with \mcbgroup and
+        // ends with \mcegroup, so the text \mcgobble or \mcskip throws away
+        // holds only the formulas' own braces, which are balanced.
+        d += formulas[k].display ? "\\setbox\\mcbox\\hbox\\mcbgroup\\aftergroup\\mcafter$\\displaystyle\n"
+                                 : "\\setbox\\mcbox\\hbox\\mcbgroup\\aftergroup\\mcafter$\n";
         d += prepare(formulas[k].tex, formulas[k].display);
-        d += "\n$}\n\\mcship{" + n + "}\n";
+        d += "\n$\\mcegroup\\mcsentinel\n\\mcship{" + n + "}\n";
     }
-    d += "\\typeout{MC:END}\n\\end{document}\n";
+    // Where throwing away the rest of a formula, or of the batch, stops.
+    d += "\\mcsentinel\\mcstop\n\\typeout{" + mark + "END}\n\\end{document}\n";
     return d;
 }
 
-std::vector<Box> readLog(const std::string& log, size_t count) {
+std::string logMark(const std::string& nonce) {
+    return nonce.empty() ? "MC:" : "MC:" + nonce + ":";
+}
+
+std::vector<Box> readLog(const std::string& log, size_t count, const std::string& nonce) {
+    const std::string mark = logMark(nonce);
     std::vector<Box> out(count);
     long cur = -1;
     size_t a = 0;
@@ -340,8 +420,10 @@ std::vector<Box> readLog(const std::string& log, size_t count) {
         std::string line = log.substr(a, e - a);
         if (!line.empty() && line.back() == '\r') line.pop_back();
         a = e + 1;
-        if (line.compare(0, 3, "MC:") == 0) {
-            const std::string rest = line.substr(3);
+        // Only lines with the run's mark are the batch's: a formula may
+        // print anything (\typeout, \message), but cannot know the nonce.
+        if (line.compare(0, mark.size(), mark) == 0) {
+            const std::string rest = line.substr(mark.size());
             if (rest.compare(0, 6, "BEGIN:") == 0) {
                 const unsigned long k = std::strtoul(rest.c_str() + 6, nullptr, 10);
                 cur = k < count ? (long)k : -1;
