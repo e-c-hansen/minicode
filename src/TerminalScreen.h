@@ -7,7 +7,28 @@
 // saved cursors, autowrap with the pending-wrap rule, tab stops, DEC line
 // drawing, and the mode flags the host needs to encode keys (application
 // cursor keys, keypad mode, bracketed paste). Replies the program asks for
-// (cursor position, device attributes) are queued for the host to write back.
+// (cursor position, device attributes, the terminal's name and version,
+// its colors, the state of a mode) are queued for the host to write back.
+//
+// Conformance, as xterm's control sequence document and the kitty keyboard
+// protocol's specification describe them (term:vt-conformance tests each):
+// DA1 answers a VT220-class terminal with ANSI color ("CSI ? 62 ; 22 c"),
+// DA2 "CSI > 1 ; version ; 0 c", XTVERSION "DCS > | minicode version ST";
+// OSC 4, 10, 11 and 12 with "?" answer the palette and the host's
+// foreground, background and cursor colors (setThemeColors); DECRQM
+// answers every mode kept; DECSCUSR's cursor shapes; SGR 8 (hidden), 4:0
+// to 4:5 and 21 (underline styles), 58 and 59 (underline color), 53 and 55
+// (overline); the kitty keyboard flags (push, pop, set, query, a stack per
+// screen; flag 1 only); and mode 2027 (grapheme clusters, below).
+//
+// Widths (mode 2027): a character takes termCharWidth's columns and emoji
+// sequences join into one cell (grapheme clusters, as Claude Code's Ink
+// counts them), except while zsh's line editor has the main screen, from
+// the shell integration's prompt mark (133;A) to its command mark (133;C):
+// there each code point takes termCodepointWidth's columns, zsh's own, so
+// what is typed at the prompt lands where zsh thinks it is. A program may
+// choose: DECSET 2027 asks for clusters, DECRST 2027 for code points, both
+// for good (until a full reset); DECRQM 2027 answers what is in effect.
 //
 // It also encodes keys and mouse events into the bytes a program expects, so
 // the GUI layer only maps its events onto TermKey and TermMouse.
@@ -80,6 +101,14 @@ enum class TermKey {
 
 // Modifier bits, numbered as xterm encodes them (the parameter is 1 + mods).
 enum TermMod { TermModShift = 1, TermModAlt = 2, TermModCtrl = 4 };
+
+// The cursor's shape a program asked for (DECSCUSR, "CSI Ps SP q"):
+// Default until it asks (the host's own choice, terminal.cursor-style).
+enum class TermCursorShape : uint8_t { Default, Block, Underline, Bar };
+
+// The kitty keyboard protocol's progressive enhancement flags that the
+// screen takes (others asked for are dropped): 1, disambiguate escape codes.
+enum TermKeyboardFlag { TermKeyboardDisambiguate = 1 };
 
 class TerminalScreen {
 public:
@@ -289,13 +318,55 @@ public:
     // writes them to the pty; taking them clears the queue.
     std::string takeReplies();
 
+    // What OSC 10, 11 and 12 queries answer (0xRRGGBB): the host's text,
+    // background and cursor colors, so a program sees a light theme. The
+    // defaults are the dark theme's.
+    void setThemeColors(uint32_t foreground, uint32_t background, uint32_t cursor);
+    // The version XTVERSION and DA2 report ("1.5.8"; empty: none known).
+    void setVersion(const std::string& version) { version_ = version; }
+
+    // The cursor's shape and whether it blinks (DECSCUSR, DECSET 12): the
+    // program's choice, Default and steady until it makes one. RIS and
+    // DECSTR put both back.
+    TermCursorShape cursorShape() const { return cursorShape_; }
+    bool cursorBlinks() const { return cursorBlink_; }
+
+    // The underline color of a style (TermStyle::underlineColor); the
+    // default color (the text's) for 0.
+    TermColor underlineColor(uint16_t id) const { return underlineColors_.color(id); }
+    size_t underlineColorCount() const { return underlineColors_.size(); }   // tests
+
+    // The kitty keyboard protocol's flags in effect on the screen showing
+    // (TermKeyboardFlag bits), for encodeKey and encodeChar. A program sets
+    // them with "CSI > flags u" (push), "CSI < n u" (pop), "CSI = flags ;
+    // mode u" (set), and reads them with "CSI ? u"; the main and alternate
+    // screens keep a stack each, of at most kKeyboardStackMax entries.
+    int keyboardFlags() const { return keyboardFlags_[onAlt_ ? 1 : 0]; }
+    static constexpr size_t kKeyboardStackMax = 16;
+    // Both stacks emptied and the flags off, as when the shell's prompt
+    // comes back after a program that never popped them.
+    void resetKeyboardModes();
+
+    // Mode 2027 (see the top of this file): whether characters are counted
+    // as grapheme clusters now (false: one code point at a time).
+    bool clusterWidths() const;
+
     // The bytes for a key. `appCursor` is appCursorKeys(), `appKeypad` is
     // appKeypad(); mods is a TermMod mask.
+    // keyboardFlags is keyboardFlags(): with the kitty protocol's
+    // disambiguate flag, Escape is "CSI 27 u", Enter, Tab and Backspace
+    // with a modifier are "CSI 13/9/127 ; m u" (without one, as before),
+    // F1 to F4 are "CSI P", "CSI Q", "CSI 13 ~" and "CSI S" (with "1 ; m"
+    // for modifiers), the cursor keys ignore DECCKM, and keypad Enter is
+    // "CSI 57414 u"; the rest is as without it.
     static std::string encodeKey(TermKey key, int mods, bool appCursor,
-                                 bool appKeypad = false);
+                                 bool appKeypad = false, int keyboardFlags = 0);
     // The bytes for a typed character: Ctrl turns letters and a few symbols
-    // into control codes, Alt (Option as Meta) prefixes ESC.
-    static std::string encodeChar(uint32_t cp, int mods);
+    // into control codes, Alt (Option as Meta) prefixes ESC. With the kitty
+    // protocol's disambiguate flag a character with Ctrl or Alt is "CSI
+    // code ; m u" instead, the code its lowercase (unshifted) form and m
+    // 1 + mods (Shift included); Shift alone types the character.
+    static std::string encodeChar(uint32_t cp, int mods, int keyboardFlags = 0);
     // Pasted text, wrapped in the bracketed-paste markers when the program
     // asked for them. Newlines become carriage returns, as typed. Inside the
     // markers every ESC is shown as U+241B (as xterm.js does), so a paste
@@ -402,6 +473,22 @@ private:
     // output, and the output's row does not continue onto the prompt's.
     bool promptSp_ = false;
     int syncEnds_ = 0;
+    TermCursorShape cursorShape_ = TermCursorShape::Default;
+    bool cursorBlink_ = false;
+    // Kitty keyboard flags per screen (0 main, 1 alternate), and the flags
+    // pushed before them.
+    int keyboardFlags_[2] = {0, 0};
+    std::vector<int> keyboardStack_[2];
+    void keyboardSequence(char lead, const std::string& params);
+    // Mode 2027: -1 not chosen (clusters but at zsh's prompt), 0 code
+    // points, 1 clusters. promptActive_: a 133;A came and no 133;C since.
+    int graphemes_ = -1;
+    bool promptActive_ = false;
+    uint32_t themeFg_ = 0xD4D4D4, themeBg_ = 0x181818, themeCursor_ = 0xD4D4D4;
+    std::string version_;
+    TermColorTable underlineColors_;
+    void collectUnderlineColors();
+    void colorQuery(const std::string& body);   // OSC 4, 10, 11, 12
     int g0_ = 0, g1_ = 0, gl_ = 0;    // charsets: 0 ASCII, 1 DEC line drawing
     std::string lastChar_;            // for REP
     uint32_t lastCp_ = 0;

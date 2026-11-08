@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <climits>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -122,6 +123,10 @@ void TerminalScreen::fullReset() {
     cursorVisible_ = true;
     appCursor_ = appKeypad_ = bracketedPaste_ = syncOutput_ = false;
     resetMouseModes();
+    resetKeyboardModes();
+    cursorShape_ = TermCursorShape::Default;
+    cursorBlink_ = false;
+    graphemes_ = -1;                    // promptActive_ stays: it is the shell's
     promptSp_ = false;
     g0_ = g1_ = gl_ = 0;
     lastChar_.clear();
@@ -1055,7 +1060,10 @@ void TerminalScreen::print(uint32_t cp, const std::string& utf8In) {
         cp = kDecGraphics[cp - 0x5F];
         utf8 = utf8Encode(cp);
     }
-    int w = termCharWidth(cp);
+    // Mode 2027: grapheme clusters, or zsh's widths one code point at a
+    // time while its line editor has the screen.
+    const bool clusters = clusterWidths();
+    int w = clusters ? termCharWidth(cp) : termCodepointWidth(cp);
     Grid& g = grid();
     // The character before the cursor, which a combining mark joins, and so
     // do the parts of an emoji sequence: a pictograph after a zero width
@@ -1063,14 +1071,14 @@ void TerminalScreen::print(uint32_t cp, const std::string& utf8In) {
     // regional indicator.
     int x = wrapPending_ ? x_ : x_ - 1;
     if (x >= 0 && g[y_][x].width == 0 && x > 0) x--;
-    if (x >= 0 && (w == 0 || termJoinsCluster(g[y_][x].ch, cp))) {
+    if (x >= 0 && (w == 0 || (clusters && termJoinsCluster(g[y_][x].ch, cp)))) {
         TermCell& before = g[y_][x];
         if (before.ch.size() + utf8.size() > kTermMaxCellBytes) return;
         touch(y_);
         before.ch += utf8;
         // An emoji drawn as one is two columns wide: a flag, a joined
         // sequence, or a symbol that VS16 asks to show as an emoji (❤️).
-        bool widen = before.width == 1 &&
+        bool widen = clusters && before.width == 1 &&
                      (w != 0 || (cp == 0xFE0F && termIsPictographic(termFirstCodepoint(before.ch))));
         // Only in place: with the cursor just after it, and room for the
         // right half (at the right edge the character stays narrow).
@@ -1204,6 +1212,8 @@ void TerminalScreen::switchScreen(bool alt, bool save, bool clearAlt) {
         if (save) saveCursor();              // saved into the main slot
         onAlt_ = true;
         if (clearAlt) {
+            keyboardFlags_[1] = 0;               // a fresh screen, fresh keys
+            keyboardStack_[1].clear();
             TermCell b = blank();
             for (Row& r : alt_) { r.assign(cols_, b); r.wrap = 0; }
         }
@@ -1260,9 +1270,14 @@ void TerminalScreen::osc(const std::string& raw) {
         addMark('D', body.size() > 6 && body[5] == ';' ? std::atoi(body.c_str() + 6) : 0);
     } else if (body.rfind("133;A", 0) == 0) {
         promptSp_ = true;
+        promptActive_ = true;
         addMark('A', 0);
     } else if (body.rfind("133;C", 0) == 0) {
+        promptActive_ = false;
         addMark('C', 0);
+    } else if (body.rfind("4;", 0) == 0 || body.rfind("10;", 0) == 0 ||
+               body.rfind("11;", 0) == 0 || body.rfind("12;", 0) == 0) {
+        colorQuery(body);
     } else {
         std::string path = termOsc7Path(body);
         if (!path.empty()) directory_ = path;
@@ -1517,6 +1532,130 @@ void TerminalScreen::collectLinks() {
     }
 }
 
+void TerminalScreen::collectUnderlineColors() {
+    std::vector<bool> used(TermColorTable::kMax + 1, false);
+    auto mark = [&](uint16_t id) { if (id < used.size()) used[id] = true; };
+    for (const Grid* g : {&main_, &alt_})
+        for (const Row& row : *g)
+            for (const TermCell& c : row) mark(c.style.underlineColor);
+    for (const HistLine& h : history_)
+        for (const StyleRun& r : h.runs) mark(r.style.underlineColor);
+    for (const HistLine& h : below_)
+        for (const StyleRun& r : h.runs) mark(r.style.underlineColor);
+    mark(style_.underlineColor);
+    mark(savedMain_.style.underlineColor);
+    mark(savedAlt_.style.underlineColor);
+    underlineColors_.release(used);
+}
+
+// ------------------------------------------------------------- replies
+void TerminalScreen::setThemeColors(uint32_t foreground, uint32_t background, uint32_t cursor) {
+    themeFg_ = foreground & 0xFFFFFF;
+    themeBg_ = background & 0xFFFFFF;
+    themeCursor_ = cursor & 0xFFFFFF;
+}
+
+// OSC 10, 11 and 12 ("?" asks for the text, background and cursor color;
+// "10;?;?" asks for 10 and 11, as in xterm, each further parameter the
+// next number) and OSC 4 ("4;n;?" for palette entry n, pairs repeating).
+// Answered as "rgb:rrrr/gggg/bbbb", ended as the query was. Setting a
+// color is not supported and is ignored.
+void TerminalScreen::colorQuery(const std::string& body) {
+    std::vector<std::string> parts;
+    for (size_t i = 0; i <= body.size();) {
+        size_t j = body.find(';', i);
+        if (j == std::string::npos) j = body.size();
+        parts.push_back(body.substr(i, j - i));
+        i = j + 1;
+        if (parts.size() > 64) break;
+    }
+    const std::string end = parser_.oscEndedWithBel() ? "\x07" : "\x1b\\";
+    auto spec = [](uint32_t rgb) {
+        char buf[32];
+        std::snprintf(buf, sizeof buf, "rgb:%04x/%04x/%04x", ((rgb >> 16) & 0xFF) * 257,
+                      ((rgb >> 8) & 0xFF) * 257, (rgb & 0xFF) * 257);
+        return std::string(buf);
+    };
+    const int first = std::atoi(parts[0].c_str());
+    if (first == 4) {
+        for (size_t k = 1; k + 1 < parts.size(); k += 2) {
+            if (parts[k + 1] != "?" || parts[k].empty() || parts[k].size() > 3) continue;
+            bool digits = true;
+            for (char c : parts[k]) digits = digits && c >= '0' && c <= '9';
+            int n = digits ? std::atoi(parts[k].c_str()) : -1;
+            if (n < 0 || n > 255) continue;
+            TermColor c;
+            c.kind = TermColor::Indexed;
+            c.index = (uint8_t)n;
+            replies_ += "\x1b]4;" + std::to_string(n) + ";" + spec(c.rgb()) + end;
+        }
+        return;
+    }
+    for (size_t k = 1; k < parts.size(); k++) {
+        const int which = first + (int)k - 1;
+        if (which > 12) break;
+        if (parts[k] != "?") continue;
+        const uint32_t rgb = which == 10 ? themeFg_ : which == 11 ? themeBg_ : themeCursor_;
+        replies_ += "\x1b]" + std::to_string(which) + ";" + spec(rgb) + end;
+    }
+}
+
+// ------------------------------------------------------- kitty keyboard
+void TerminalScreen::resetKeyboardModes() {
+    for (int i = 0; i < 2; i++) {
+        keyboardFlags_[i] = 0;
+        keyboardStack_[i].clear();
+    }
+}
+
+// "CSI ? u" query, "CSI > flags u" push, "CSI < n u" pop, "CSI = flags ;
+// mode u" set (mode 1 all, 2 these on, 3 these off), as the kitty keyboard
+// protocol's specification says; only the flags the screen takes are kept,
+// so the query answers what the keys will do.
+void TerminalScreen::keyboardSequence(char lead, const std::string& params) {
+    const int i = onAlt_ ? 1 : 0;
+    int& flags = keyboardFlags_[i];
+    std::vector<int>& stack = keyboardStack_[i];
+    auto p = TermParser::params(params);
+    auto arg = [&](size_t k, int def) {
+        int v = k < p.size() ? p[k][0] : -1;
+        return v < 0 ? def : v;
+    };
+    switch (lead) {
+    case '?':
+        replies_ += "\x1b[?" + std::to_string(flags) + "u";
+        break;
+    case '>':
+        if (stack.size() >= kKeyboardStackMax) stack.erase(stack.begin());   // the oldest goes
+        stack.push_back(flags);
+        flags = arg(0, 0) & TermKeyboardDisambiguate;
+        break;
+    case '<': {
+        int n = std::max(1, arg(0, 1));
+        for (int k = 0; k < n; k++) {
+            if (stack.empty()) { flags = 0; break; }   // emptied: all off
+            flags = stack.back();
+            stack.pop_back();
+        }
+        break;
+    }
+    case '=': {
+        int want = arg(0, 0) & TermKeyboardDisambiguate;
+        int mode = arg(1, 1);
+        if (mode == 1) flags = want;
+        else if (mode == 2) flags |= want;
+        else if (mode == 3) flags &= ~want;
+        break;
+    }
+    default: break;
+    }
+}
+
+bool TerminalScreen::clusterWidths() const {
+    if (graphemes_ >= 0) return graphemes_ == 1;
+    return onAlt_ || !promptActive_;
+}
+
 void TerminalScreen::setMode(const std::string& csi, bool on) {
     bool priv = !csi.empty() && csi[0] == '?';
     for (const auto& p : TermParser::params(priv ? csi.substr(1) : csi)) {
@@ -1550,6 +1689,9 @@ void TerminalScreen::setMode(const std::string& csi, bool on) {
             if (syncOutput_ && !on) syncEnds_++;
             syncOutput_ = on;
             break;
+        case 12: cursorBlink_ = on; break;       // att610: a blinking cursor
+        case 66: appKeypad_ = on; break;         // DECNKM, as ESC = and ESC >
+        case 2027: graphemes_ = on ? 1 : 0; break;   // grapheme clusters
         default: break;
         }
     }
@@ -1576,6 +1718,9 @@ void TerminalScreen::reportMode(const std::string& params) {
         case 9: case 1000: case 1002: case 1003: state = is(mouseTracking_ == m); break;
         case 1005: case 1006: case 1015: state = is(mouseEncoding_ == m); break;
         case 1004: state = is(focusEvents_); break;
+        case 12: state = is(cursorBlink_); break;
+        case 66: state = is(appKeypad_); break;
+        case 2027: state = is(clusterWidths()); break;
         default: break;
         }
     } else if (m == 4) {
@@ -1592,11 +1737,47 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
         return;
     }
     if (f == 'h' || f == 'l') { setMode(csi, f == 'h'); return; }
+    bool plain = true;                       // no intermediates
+    for (char c : csi) if (c >= 0x20 && c <= 0x2F) plain = false;
+    if (plain && f == 'u' && (lead == '?' || lead == '>' || lead == '<' || lead == '=')) {
+        keyboardSequence(lead, csi.substr(1));   // the kitty keyboard protocol
+        return;
+    }
+    if (plain && lead == '>' && (f == 'c' || f == 'q')) {
+        auto p = TermParser::params(csi.substr(1));
+        if (p[0][0] > 0) return;             // only Ps 0 asks
+        if (f == 'c') {                      // DA2: type 1 (VT220), version, ROM 0
+            int number = 0, part = 0, parts = 0;
+            for (char c : version_ + ".") {
+                if (c >= '0' && c <= '9') part = part * 10 + (c - '0');
+                else if (parts < 3) { number = number * 100 + std::min(part, 99); part = 0; parts++; }
+            }
+            while (parts++ < 3) number *= 100;
+            replies_ += "\x1b[>1;" + std::to_string(number) + ";0c";
+        } else {                             // XTVERSION
+            replies_ += "\x1bP>|minicode" + (version_.empty() ? "" : " " + version_) + "\x1b\\";
+        }
+        return;
+    }
     if (lead == '>' || lead == '<' || lead == '=') return;   // xterm extensions
     if (lead == '?') return;                 // DECSED, DECRQM and friends
     // Intermediates (e.g. " q" cursor style, "!p" soft reset).
     for (char c : csi)
         if (c >= 0x20 && c <= 0x2F) {
+            if (csi.back() == ' ' && f == 'q') {        // DECSCUSR
+                int ps = TermParser::params(csi)[0][0];
+                if (ps < 0) ps = 0;
+                if (ps > 6) return;
+                // 0 and 1 blinking block (0: the host's shape), 2 steady
+                // block, 3 and 4 underline, 5 and 6 bar; odd ones blink.
+                static const TermCursorShape shapes[] = {
+                    TermCursorShape::Default, TermCursorShape::Block, TermCursorShape::Block,
+                    TermCursorShape::Underline, TermCursorShape::Underline,
+                    TermCursorShape::Bar, TermCursorShape::Bar};
+                cursorShape_ = shapes[ps];
+                cursorBlink_ = ps != 0 && ps % 2 == 1;
+                return;
+            }
             if (csi.back() == '!' && f == 'p') {       // DECSTR
                 style_ = TermStyle();
                 insertMode_ = originMode_ = false;
@@ -1611,11 +1792,20 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
                 // and the host kept waiting on the frame).
                 g0_ = g1_ = gl_ = 0;
                 (onAlt_ ? savedAlt_ : savedMain_) = Saved();
+                cursorShape_ = TermCursorShape::Default;
+                cursorBlink_ = false;
                 if (syncOutput_) { syncOutput_ = false; syncEnds_++; }
             }
             return;
         }
-    if (f == 'm') { applySgr(style_, csi); return; }
+    if (f == 'm') {
+        // A new underline color with the table full: free the ids no cell
+        // uses first (a program cycling colors would otherwise lose them).
+        if (underlineColors_.full() && csi.find("58") != std::string::npos)
+            collectUnderlineColors();
+        applySgr(style_, csi, &underlineColors_);
+        return;
+    }
 
     auto params = TermParser::params(csi);
     auto arg = [&](size_t i, int def) {
@@ -1766,8 +1956,8 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
             replies_ += "\x1b[" + std::to_string(y_ - rowBase + 1) + ";" +
                         std::to_string(x_ + 1) + "R";
         break;
-    case 'c':                                    // DA: a VT100 with AVO
-        if (raw == 0) replies_ += "\x1b[?1;2c";
+    case 'c':                                    // DA1: a VT220 with ANSI color
+        if (raw == 0) replies_ += "\x1b[?62;22c";
         break;
     case 'r': {                                  // DECSTBM
         int t = arg(0, 1) - 1;
@@ -1793,8 +1983,41 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
 
 // ------------------------------------------------------------------- keys
 std::string TerminalScreen::encodeKey(TermKey key, int mods, bool appCursor,
-                                      bool appKeypad) {
+                                      bool appKeypad, int keyboardFlags) {
     std::string m = std::to_string(1 + mods);
+    if (keyboardFlags & TermKeyboardDisambiguate) {
+        // The kitty protocol: "CSI code ; m u" for keys whose legacy bytes
+        // are ambiguous, "CSI 1 ; m X" and "CSI n ; m ~" for the rest.
+        auto u = [&](int code) -> std::string {
+            std::string s = "\x1b[" + std::to_string(code);
+            if (mods) s += ";" + m;
+            return s + "u";
+        };
+        auto letter = [&](char c) -> std::string {
+            if (mods) return "\x1b[1;" + m + c;
+            return std::string("\x1b[") + c;
+        };
+        switch (key) {
+        case TermKey::Escape: return u(27);
+        // Unmodified, as before, so a shell still takes Return after a
+        // program died with the flags on.
+        case TermKey::Enter: return mods ? u(13) : "\r";
+        case TermKey::Tab: return mods ? u(9) : "\t";
+        case TermKey::Backspace: return mods ? u(127) : "\x7f";
+        case TermKey::KeypadEnter: return u(57414);
+        case TermKey::Up: return letter('A');
+        case TermKey::Down: return letter('B');
+        case TermKey::Right: return letter('C');
+        case TermKey::Left: return letter('D');
+        case TermKey::Home: return letter('H');
+        case TermKey::End: return letter('F');
+        case TermKey::F1: return letter('P');
+        case TermKey::F2: return letter('Q');
+        case TermKey::F3: return mods ? "\x1b[13;" + m + "~" : "\x1b[13~";   // CSI R is a report
+        case TermKey::F4: return letter('S');
+        default: break;                          // the "~" keys: as below
+        }
+    }
     auto cursor = [&](char c) -> std::string {
         if (mods) return "\x1b[1;" + m + c;
         return std::string(appCursor ? "\x1bO" : "\x1b[") + c;
@@ -1847,8 +2070,12 @@ std::string TerminalScreen::encodeKey(TermKey key, int mods, bool appCursor,
     return "";
 }
 
-std::string TerminalScreen::encodeChar(uint32_t cp, int mods) {
+std::string TerminalScreen::encodeChar(uint32_t cp, int mods, int keyboardFlags) {
     std::string out;
+    if ((keyboardFlags & TermKeyboardDisambiguate) && (mods & (TermModCtrl | TermModAlt))) {
+        uint32_t code = cp >= 'A' && cp <= 'Z' ? cp + 0x20 : cp;
+        return "\x1b[" + std::to_string(code) + ";" + std::to_string(1 + mods) + "u";
+    }
     if (mods & TermModCtrl) {
         uint32_t c = cp;
         if (c >= 'a' && c <= 'z') c -= 0x20;
