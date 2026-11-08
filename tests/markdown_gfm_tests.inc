@@ -222,6 +222,13 @@ static void testMarkdownGfm() {
         CHECK(mdText(r).find("py print") == std::string::npos);
         CHECK(mdText(r).find("```") == std::string::npos);
         CHECK(mdRun(r, "And after.").footnotes);
+        // The way back ends the note's last paragraph, or after its last
+        // code block stands on a line of its own, outside the code.
+        CHECK(!mdRun(r, "\xE2\x86\xA9").codeBlock && mdRun(r, "\xE2\x86\xA9").footnotes);
+        auto last = P::parse("x[^a]\n\n[^a]: N\n\n    ```\n    a\n    ```\n");
+        const MdRun backLink = mdRun(last, "\xE2\x86\xA9");
+        CHECK(backLink.link && !backLink.codeBlock && !backLink.code && backLink.footnotes);
+        CHECK(mdText(last).find("a\n\xE2\x86\xA9\n") != std::string::npos);
         CHECK(!mdRun(r, "Body again.").footnotes);
         // Body comes before the footnotes, the code inside them.
         size_t body = 0, at = 0;

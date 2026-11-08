@@ -2733,17 +2733,31 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
             closing = out.size() - 1;
         }
         if (closing == std::string::npos) continue;
-        // Back to each reference: " ↩", " ↩²", ...
+        // Back to each reference: " ↩", " ↩²", ... at the end of its last
+        // paragraph, or after its last code block on a line of their own.
+        MdRun tail = out[closing];
+        const bool afterCode = tail.codeBlock;
+        if (afterCode) {
+            tail.code = tail.codeBlock = false;
+            tail.lang.clear();
+            closing++;
+        }
         std::vector<MdRun> back;
         for (int use = 1; use <= notes.uses[k]; use++) {
-            MdRun space = out[closing];
+            MdRun space = tail;
             space.text = " ";
-            MdRun link = out[closing];
+            MdRun link = tail;
             link.text = backLink(use);
             link.link = true;
             link.url = "#fnref-" + number + (use > 1 ? "-" + std::to_string(use) : "");
             back.push_back(std::move(space));
             back.push_back(std::move(link));
+        }
+        if (afterCode && !back.empty()) {   // a line of its own: no space before, a "\n" after
+            back.erase(back.begin());
+            MdRun end = tail;
+            end.text = "\n";
+            back.push_back(std::move(end));
         }
         out.insert(out.begin() + (std::ptrdiff_t)closing, back.begin(), back.end());
     }
