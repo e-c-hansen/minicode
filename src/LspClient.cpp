@@ -7,6 +7,7 @@
 #include "LspClient.h"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 
 namespace Lsp {
 
@@ -570,10 +571,20 @@ void Client::deliver(Incoming& in) {
     handleMessage(in.message);
 }
 
+double Client::now() const {
+    if (clock_) return clock_();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
 const Progress* Client::progress() const {
+    if (progress_.empty()) return nullptr;
+    const double t = now();
     const Progress* best = nullptr;
-    for (const auto& kv : progress_)
+    for (const auto& kv : progress_) {
+        if (t - kv.second.heard > kProgressStale) continue;
         if (!best || kv.second.begun > best->begun) best = &kv.second;
+    }
     return best;
 }
 
@@ -596,9 +607,11 @@ void Client::handleProgress(const Json& params) {
         p.message = value["message"].asString();
         p.percentage = percentage(-1);
         p.begun = ++begun;
+        p.heard = now();
     } else if (kind == "report") {
         auto it = progress_.find(token);
         if (it == progress_.end()) return;   // never begun: nothing to update
+        it->second.heard = now();
         if (value["message"].isString()) it->second.message = value["message"].asString();
         it->second.percentage = percentage(it->second.percentage);
     } else if (kind == "end") {

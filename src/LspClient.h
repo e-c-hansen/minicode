@@ -267,6 +267,7 @@ struct Progress {
     std::string title, message;
     int percentage = -1;
     uint64_t begun = 0;  // increases across every server, so the newest wins
+    double heard = 0;    // the client's clock (seconds) at begin or the last report
 };
 // "Indexing: 3/10 files 30%", cut to about 60 characters (whole UTF-8
 // characters), or "working…" when the server said nothing.
@@ -998,10 +999,17 @@ public:
     void deliver(Incoming& in);
 
     // $/progress: the newest work begun and not yet ended, or null; every
-    // begin, report and end runs onProgress.
+    // begin, report and end runs onProgress. Work with no begin or report
+    // for kProgressStale seconds no longer counts (a server that dropped
+    // its `end` would say "indexing" for its whole life), as VS Code and
+    // Zed show nothing for it; a report brings it back, an end drops it.
+    // progressCount counts stale work too.
+    static constexpr double kProgressStale = 60;
     const Progress* progress() const;
     size_t progressCount() const { return progress_.size(); }
     std::function<void()> onProgress;
+    // Seconds, any steady origin; steady_clock unless a check sets it.
+    void setClock(std::function<double()> clock) { clock_ = std::move(clock); }
 
     // Server capabilities, valid once Ready.
     const Json& capabilities() const { return capabilities_; }
@@ -1075,6 +1083,8 @@ private:
     State state_ = State::Idle;
     Reader reader_;
     std::map<std::string, Progress> progress_;   // by token
+    std::function<double()> clock_;
+    double now() const;
     int nextId_ = 1;
     int initializeId_ = 0, shutdownId_ = 0;
     std::map<int, TakingHandler> handlers_;

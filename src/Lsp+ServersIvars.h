@@ -8,6 +8,7 @@
     // Whether a folder configures Ruff, asked again after a file opens.
     NSMutableDictionary<NSString *, NSNumber *> *_ruffConfigured;
     BOOL _progressPending;    // a redraw for $/progress is queued
+    BOOL _progressAgeing;     // a redraw for work going stale is queued
     // What the settings said last, so a change restarts only what it touches.
     NSString *_settingsSignature, *_pythonSetting;
 }
