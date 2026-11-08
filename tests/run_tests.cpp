@@ -10158,6 +10158,7 @@ static void testMultiCaretOccurrences() {
 #include "lsp_semantic_tests.inc"
 #include "preview_scroll_tests.inc"
 #include "quick_diff_tests.inc"
+#include "zsh_integration_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10184,6 +10185,7 @@ int main() {
     testParserFuzz();
     testTerminalHyperlinks();
     testTerminalPaste();
+    testZshIntegration();
     testTerminalMarks();
     testTerminalDraw();
     testSettings();
