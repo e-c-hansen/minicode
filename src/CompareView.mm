@@ -694,10 +694,10 @@ static const CGFloat kHunkGutterWidth = 46, kHunkButton = 17;
     const NSUInteger len = s.length;
     [s beginEditing];
     // In order, so each run splits only the last one.
-    NSColor *colors[8];
-    for (int i = 0; i < 8; i++) colors[i] = [cfg syntax:(TokenStyle)i];
+    NSColor *colors[kTokenStyleCount];
+    for (int i = 0; i < kTokenStyleCount; i++) colors[i] = [cfg syntax:(TokenStyle)i];
     for (const SideBySide::Span &sp : pane.syntax) {
-        if (sp.start + sp.length > len || sp.style <= 0 || sp.style >= 8) continue;
+        if (sp.start + sp.length > len || sp.style <= 0 || sp.style >= kTokenStyleCount) continue;
         [s addAttribute:NSForegroundColorAttributeName value:colors[sp.style]
                   range:NSMakeRange(sp.start, sp.length)];
     }

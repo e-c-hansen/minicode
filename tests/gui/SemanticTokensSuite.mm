@@ -305,7 +305,7 @@ MC_GUI_SUITE(semantic_tokens) {
         [tv scrollRangeToVisible:NSMakeRange(far, 1)];
         (void)Visible(c);
         t0 = ThreadCpu();
-        [c performSelector:@selector(paintSemanticVisible)];
+        [c performSelector:@selector(paintVisibleLines)];
         const double scrolled = ThreadCpu() - t0;
         GCHECK_EQ_STR(ColorAt(c, far), kVariable);
         NSIndexSet *painted = [c valueForKey:@"semanticPainted"];

@@ -11,8 +11,9 @@ const char* const kSurfaceNames[kSurfaceCount] = {
     "titlebar", "sidebar", "editor", "terminal", "browser", "statusbar",
 };
 // Indexed by TokenStyle; Plain has no key of its own (it is editor.text).
-const char* const kSyntaxNames[8] = {
+const char* const kSyntaxNames[kTokenStyleCount] = {
     nullptr, "keyword", "type", "string", "comment", "number", "preprocessor", "function",
+    "escape", "self",
 };
 // Indexed by MarkdownColor.
 const char* const kMarkdownNames[kMarkdownColorCount] = {
@@ -22,10 +23,11 @@ const char* const kMarkdownNames[kMarkdownColorCount] = {
 // VS Code's built-in themes. Each row: id, title, dark; backgrounds and texts
 // in Surface order (title bar, sidebar, editor, terminal, browser toolbar,
 // status bar); syntax in TokenStyle order (plain unused, keyword, type,
-// string, comment, number, preprocessor, function); Markdown (heading, link,
-// code, quote, done); code block background, ruler, terminal input text;
-// line numbers, the caret line's number, the bracket match box; the
-// semantic colors (class, variable, parameter, property, constant).
+// string, comment, number, preprocessor, function, escape, self); Markdown
+// (heading, link, code, quote, done); code block background, ruler,
+// terminal input text; line numbers, the caret line's number, the bracket
+// match box; the semantic colors (class, variable, parameter, property,
+// constant); the bracket-pair colors (1, 2, 3, unexpected).
 // Dark+ is minicode's look from the start, so its values are the defaults
 // the settings file documents; the others come from the themes' own files
 // (editor, sideBar, titleBar, panel and statusBar colors, the token colors
@@ -38,80 +40,104 @@ const char* const kMarkdownNames[kMarkdownColorCount] = {
 // variable.other.constant), matched as TextMate matches them, and the
 // editor's text where a theme gives one none (Solarized's parameters);
 // font styles (Monokai's underlined classes) are left out, as the lexer's are.
+// An escape takes what the theme gives constant.character.escape (else
+// constant.character, as TextMate falls back), self and this what it gives
+// variable.language (else variable). The bracket-pair colors are VS Code's
+// editorBracketHighlight.foreground1 to 3 for dark and light themes
+// (editorColorRegistry.ts), which only Solarized Dark sets for itself, and
+// unexpectedBracket.foreground, which is #FF1212 at 80% in every one.
 
 const Theme kThemes[] = {
     {"dark-modern", "Dark Modern", true,
      {0x181818, 0x181818, 0x1F1F1F, 0x181818, 0x1F1F1F, 0x181818},
      {0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC},
-     {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA},
+     {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA,
+      0xD7BA7D, 0x569CD6},
      {0xFFFFFF, 0x4DAAFC, 0xCE9178, 0x9D9D9D, 0x6E7681},
      0x2B2B2B, 0x5A5A5A, 0xE6E6E6,
      0x6E7681, 0xCCCCCC, 0x888888,
-     {0x4EC9B0, 0x9CDCFE, 0x9CDCFE, 0x9CDCFE, 0x4FC1FF}},
+     {0x4EC9B0, 0x9CDCFE, 0x9CDCFE, 0x9CDCFE, 0x4FC1FF},
+     {0xFFD700, 0xDA70D6, 0x179FFF, 0xFF1212}},
     {"dark-plus", "Dark+", true,
      {0x323233, 0x252526, 0x1E1E1E, 0x181818, 0x2A2A2A, 0x007ACC},
      {0xCCCCCC, 0xCCCCCC, 0xD4D4D4, 0xD4D4D4, 0xD4D4D4, 0xFFFFFF},
-     {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA},
+     {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA,
+      0xD7BA7D, 0x569CD6},
      {0xFFFFFF, 0x4EA1F7, 0xCE9178, 0x9CA3AF, 0x858585},
      0x2A2A2A, 0x5A5A5A, 0xEDEDED,
      0x858585, 0xC6C6C6, 0x888888,
-     {0x4EC9B0, 0x9CDCFE, 0x9CDCFE, 0x9CDCFE, 0x4FC1FF}},
+     {0x4EC9B0, 0x9CDCFE, 0x9CDCFE, 0x9CDCFE, 0x4FC1FF},
+     {0xFFD700, 0xDA70D6, 0x179FFF, 0xFF1212}},
     {"monokai", "Monokai", true,
      {0x1E1F1C, 0x1E1F1C, 0x272822, 0x1E1F1C, 0x1E1F1C, 0x414339},
      {0xCCCCCC, 0xCCCCCC, 0xF8F8F2, 0xF8F8F2, 0xF8F8F2, 0xFFFFFF},
-     {0, 0xF92672, 0x66D9EF, 0xE6DB74, 0x88846F, 0xAE81FF, 0xF92672, 0xA6E22E},
+     {0, 0xF92672, 0x66D9EF, 0xE6DB74, 0x88846F, 0xAE81FF, 0xF92672, 0xA6E22E,
+      0xAE81FF, 0xFD971F},
      {0xF8F8F2, 0x66D9EF, 0xE6DB74, 0x88846F, 0x75715E},
      0x3E3D32, 0x464741, 0xFFFFFF,
      0x90908A, 0xC2C2BF, 0x888888,
-     {0xA6E22E, 0xF8F8F2, 0xFD971F, 0xF8F8F2, 0xF8F8F2}},
+     {0xA6E22E, 0xF8F8F2, 0xFD971F, 0xF8F8F2, 0xF8F8F2},
+     {0xFFD700, 0xDA70D6, 0x179FFF, 0xFF1212}},
     {"solarized-dark", "Solarized Dark", true,
      {0x002C39, 0x00212B, 0x002B36, 0x00212B, 0x00212B, 0x00212B},
      {0x93A1A1, 0x93A1A1, 0x839496, 0x839496, 0x93A1A1, 0x93A1A1},
-     {0, 0x859900, 0xB58900, 0x2AA198, 0x586E75, 0xD33682, 0xCB4B16, 0x268BD2},
+     {0, 0x859900, 0xB58900, 0x2AA198, 0x586E75, 0xD33682, 0xCB4B16, 0x268BD2,
+      0xCB4B16, 0x268BD2},
      {0x93A1A1, 0x268BD2, 0x2AA198, 0x657B83, 0x586E75},
      0x073642, 0x0C4A59, 0x93A1A1,
      0x858585, 0x949494, 0x888888,
-     {0xCB4B16, 0x268BD2, 0x839496, 0x268BD2, 0x268BD2}},
+     {0xCB4B16, 0x268BD2, 0x839496, 0x268BD2, 0x268BD2},
+     {0xCDCDCD, 0xB58900, 0xD33682, 0xFF1212}},
     {"tomorrow-night-blue", "Tomorrow Night Blue", true,
      {0x001126, 0x001C40, 0x002451, 0x001C40, 0x001C40, 0x001126},
      {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF},
-     {0, 0xEBBBFF, 0xFFEEAD, 0xD1F1A9, 0x7285B7, 0xFFC58F, 0xEBBBFF, 0xBBDAFF},
+     {0, 0xEBBBFF, 0xFFEEAD, 0xD1F1A9, 0x7285B7, 0xFFC58F, 0xEBBBFF, 0xBBDAFF,
+      0xFFC58F, 0xFF9DA4},
      {0xFFFFFF, 0xBBDAFF, 0xD1F1A9, 0x7285B7, 0x7285B7},
      0x00346E, 0x003F8E, 0xFFFFFF,
      0x7285B7, 0xFFFFFF, 0x888888,
-     {0xFFEEAD, 0xFF9DA4, 0xFFC58F, 0xFF9DA4, 0xFF9DA4}},
+     {0xFFEEAD, 0xFF9DA4, 0xFFC58F, 0xFF9DA4, 0xFF9DA4},
+     {0xFFD700, 0xDA70D6, 0x179FFF, 0xFF1212}},
     {"light-modern", "Light Modern", false,
      {0xF8F8F8, 0xF8F8F8, 0xFFFFFF, 0xF8F8F8, 0xF8F8F8, 0xF8F8F8},
      {0x1E1E1E, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B},
-     {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26},
+     {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26,
+      0xEE0000, 0x0000FF},
      {0x1F1F1F, 0x005FB8, 0xA31515, 0x6E7781, 0x8B949E},
      0xF0F0F0, 0xD3D3D3, 0x1F1F1F,
      0x6E7681, 0x171184, 0xB9B9B9,
-     {0x267F99, 0x001080, 0x001080, 0x001080, 0x0070C1}},
+     {0x267F99, 0x001080, 0x001080, 0x001080, 0x0070C1},
+     {0x0431FA, 0x319331, 0x7B3814, 0xFF1212}},
     {"light-plus", "Light+", false,
      {0xDDDDDD, 0xF3F3F3, 0xFFFFFF, 0xFFFFFF, 0xF3F3F3, 0x007ACC},
      {0x333333, 0x616161, 0x000000, 0x333333, 0x333333, 0xFFFFFF},
-     {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26},
+     {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26,
+      0xEE0000, 0x0000FF},
      {0x000000, 0x006AB1, 0xA31515, 0x6A737D, 0x8E8E8E},
      0xF3F3F3, 0xD3D3D3, 0x000000,
      0x237893, 0x0B216F, 0xB9B9B9,
-     {0x267F99, 0x001080, 0x001080, 0x001080, 0x0070C1}},
+     {0x267F99, 0x001080, 0x001080, 0x001080, 0x0070C1},
+     {0x0431FA, 0x319331, 0x7B3814, 0xFF1212}},
     {"quiet-light", "Quiet Light", false,
      {0xC4B7D7, 0xF2F2F2, 0xF5F5F5, 0xF5F5F5, 0xF2F2F2, 0x705697},
      {0x333333, 0x333333, 0x333333, 0x333333, 0x333333, 0xFFFFFF},
-     {0, 0x4B83CD, 0x7A3E9D, 0x448C27, 0xAAAAAA, 0xAB6526, 0x7A3E9D, 0xAA3731},
+     {0, 0x4B83CD, 0x7A3E9D, 0x448C27, 0xAAAAAA, 0xAB6526, 0x7A3E9D, 0xAA3731,
+      0x777777, 0x9C5D27},
      {0x333333, 0x4B83CD, 0x448C27, 0x777777, 0xAAAAAA},
      0xE8E8E8, 0xD3D3D3, 0x000000,
      0x6D705B, 0x9769DC, 0xB9B9B9,
-     {0x7A3E9D, 0x7A3E9D, 0x7A3E9D, 0x7A3E9D, 0x7A3E9D}},
+     {0x7A3E9D, 0x7A3E9D, 0x7A3E9D, 0x7A3E9D, 0x7A3E9D},
+     {0x0431FA, 0x319331, 0x7B3814, 0xFF1212}},
     {"solarized-light", "Solarized Light", false,
      {0xEEE8D5, 0xEEE8D5, 0xFDF6E3, 0xEEE8D5, 0xEEE8D5, 0xEEE8D5},
      {0x586E75, 0x586E75, 0x657B83, 0x586E75, 0x586E75, 0x586E75},
-     {0, 0x859900, 0xB58900, 0x2AA198, 0x93A1A1, 0xD33682, 0xCB4B16, 0x268BD2},
+     {0, 0x859900, 0xB58900, 0x2AA198, 0x93A1A1, 0xD33682, 0xCB4B16, 0x268BD2,
+      0xCB4B16, 0x268BD2},
      {0x586E75, 0x268BD2, 0x2AA198, 0x93A1A1, 0x93A1A1},
      0xEEE8D5, 0xDDD6C1, 0x073642,
      0x237893, 0x567983, 0xB9B9B9,
-     {0xCB4B16, 0x268BD2, 0x657B83, 0x268BD2, 0x268BD2}},
+     {0xCB4B16, 0x268BD2, 0x657B83, 0x268BD2, 0x268BD2},
+     {0x0431FA, 0x319331, 0x7B3814, 0xFF1212}},
 };
 
 const char* const kMaterials[] = {
@@ -562,13 +588,17 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
           "editor.git-added", "editor.git-modified", "editor.git-deleted",
           "syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
-          "syntax.class", "syntax.variable", "syntax.parameter", "syntax.property",
-          "syntax.constant", "window.opacity", "window.text"}, false},
+          "syntax.escape", "syntax.self", "syntax.class", "syntax.variable",
+          "syntax.parameter", "syntax.property", "syntax.constant",
+          "syntax.bracket-1", "syntax.bracket-2", "syntax.bracket-3",
+          "syntax.bracket-unexpected", "window.opacity", "window.text"}, false},
         {"syntax", "Syntax Colors",
          {"syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
-          "syntax.class", "syntax.variable", "syntax.parameter", "syntax.property",
-          "syntax.constant", "editor.text"}, false},
+          "syntax.escape", "syntax.self", "syntax.class", "syntax.variable",
+          "syntax.parameter", "syntax.property", "syntax.constant",
+          "syntax.bracket-1", "syntax.bracket-2", "syntax.bracket-3",
+          "syntax.bracket-unexpected", "editor.text"}, false},
         {"markdown", "Markdown Preview",
          {"markdown.heading", "markdown.link", "markdown.code", "markdown.quote",
           "markdown.done", "editor.background", "editor.opacity", "editor.text",
@@ -985,6 +1015,22 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
         MC_KEY("syntax.parameter", Word, true, return colorValue(v, s.semantic_[2], e);),
         MC_KEY("syntax.property", Word, true, return colorValue(v, s.semantic_[3], e);),
         MC_KEY("syntax.constant", Word, true, return colorValue(v, s.semantic_[4], e);),
+        MC_KEY("editor.bracket-pair-colorization", Word, false,
+               const std::string w = lower(v);
+               bool on = true;
+               if (w == "on") on = true;
+               else if (w == "off") on = false;
+               else if (!parseBool(w, on)) {
+                   e = "'" + v + "' is not on or off";
+                   return false;
+               }
+               s.bracketPairColorization_ = on;
+               return true;),
+        MC_KEY("syntax.bracket-1", Word, true, return colorValue(v, s.bracket_[0], e);),
+        MC_KEY("syntax.bracket-2", Word, true, return colorValue(v, s.bracket_[1], e);),
+        MC_KEY("syntax.bracket-3", Word, true, return colorValue(v, s.bracket_[2], e);),
+        MC_KEY("syntax.bracket-unexpected", Word, true,
+               return colorValue(v, s.bracket_[3], e);),
         MC_KEY("editor.gutter-background", Word, true,
                return colorValue(v, s.gutterBackground_, e);),
         MC_KEY("editor.line-number-color", Word, true,
@@ -1184,7 +1230,7 @@ bool Settings::apply(const std::string& key, const std::string& value,
         if (group == "syntax" || group == "markdown") {
             bool syntax = group == "syntax";
             const char* const* table = syntax ? kSyntaxNames : kMarkdownNames;
-            int count = syntax ? 8 : kMarkdownColorCount;
+            int count = syntax ? kTokenStyleCount : kMarkdownColorCount;
             for (int i = 0; i < count; i++) {
                 if (!table[i] || field != table[i]) continue;
                 if (!parseColor(value, color)) { error = colorError(value); return false; }
@@ -1231,8 +1277,16 @@ bool Settings::textIsSet(Surface s) const {
 
 Rgba Settings::syntax(TokenStyle s) const {
     int i = (int)s;
-    if (i <= 0 || i >= 8) return text(Surface::Editor);
+    if (i <= 0 || i >= kTokenStyleCount) return text(Surface::Editor);
     return syntax_[i] ? *syntax_[i] : Rgba::hex(theme_->syntax[i]);
+}
+
+Rgba Settings::bracketColor(int i) const {
+    if (i < 0 || i > 3) i = 3;
+    if (bracket_[i]) return *bracket_[i];
+    // VS Code's unexpectedBracket.foreground is #FF1212 at 80% (204/255, as
+    // the settings file's #FF1212CC reads).
+    return Rgba::hex(theme_->bracket[i], i == 3 ? 204 / 255.0 : 1.0);
 }
 
 Rgba Settings::semanticColor(SemanticColor c) const {
@@ -1492,6 +1546,12 @@ const char* Settings::defaultFileText() {
 # constant (macOS). The colors are syntax.class and the rest, below. Off,
 # only minicode's own colors show. Never in large-file mode.
 # editor.semantic-highlighting = on
+# Brackets in code colored by how deeply they are nested, three colors in
+# turn, and a closer with nothing open before it in a color of its own, as
+# VS Code's editor.bracketPairColorization (macOS). The colors are
+# syntax.bracket-1 and the rest, below. Never in large-file mode, nor on a
+# line too long to color.
+# editor.bracket-pair-colorization = on
 # The gutter behind the numbers, which is the editor's background unless set
 # here. The caret's line has its number in the active color.
 # editor.gutter-background = #1E1E1E
@@ -1581,6 +1641,9 @@ const char* Settings::defaultFileText() {
 # syntax.number = #B5CEA8
 # syntax.preprocessor = #C586C0
 # syntax.function = #DCDCAA
+# An escape in a string (\n, \x41), and self, cls, this and super.
+# syntax.escape = #D7BA7D
+# syntax.self = #569CD6
 # The names a language server says what they are (semantic tokens, with
 # editor.semantic-highlighting on): classes, types and namespaces;
 # variables; parameters; properties; and constants (enum members, read-only
@@ -1590,6 +1653,12 @@ const char* Settings::defaultFileText() {
 # syntax.parameter = #9CDCFE
 # syntax.property = #9CDCFE
 # syntax.constant = #4FC1FF
+# Brackets by depth (editor.bracket-pair-colorization on), and a closer with
+# nothing open before it.
+# syntax.bracket-1 = #FFD700
+# syntax.bracket-2 = #DA70D6
+# syntax.bracket-3 = #179FFF
+# syntax.bracket-unexpected = #FF1212CC
 
 # Rendered Markdown. Body text uses editor.text.
 # markdown.heading = #FFFFFF

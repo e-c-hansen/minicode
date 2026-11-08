@@ -3719,7 +3719,8 @@ std::string uncommentKeys(const std::string &text) {
         bool isKey = line.rfind("# ", 0) == 0 &&
                      (key.find('.') != std::string::npos || key == "theme");
         for (char ch : key)
-            if (!(ch == '.' || ch == '-' || (ch >= 'a' && ch <= 'z'))) isKey = false;
+            if (!(ch == '.' || ch == '-' || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')))
+                isKey = false;
         if (isKey) out += line.substr(2) + "\n";
         line.clear();
     }
@@ -3942,9 +3943,10 @@ void testSettings() {
     // terminal.multiline-paste-warning, the tree's six git colors and
     // editor.large-file-optimizations, editor.auto-close,
     // editor.semantic-highlighting with its five syntax colors, the three
-    // inlay hint keys, format.latex, and editor.git-gutter with its three
-    // colors.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 111);
+    // inlay hint keys, format.latex, editor.git-gutter with its three
+    // colors, editor.bracket-pair-colorization with its four colors, and
+    // syntax.escape and syntax.self.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 118);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -3987,6 +3989,8 @@ void testSettings() {
     for (int i = 0; i < kSemanticColorCount; i++)
         CHECK(un.semanticColor((SemanticColor)i) == d.semanticColor((SemanticColor)i));
     CHECK(un.semanticHighlighting() && d.semanticHighlighting());
+    for (int i = 0; i < 4; i++) CHECK(un.bracketColor(i) == d.bracketColor(i));
+    CHECK(un.bracketPairColorization() && d.bracketPairColorization());
     for (int i = 0; i < kMarkdownColorCount; i++)
         CHECK(un.markdown((MarkdownColor)i) == d.markdown((MarkdownColor)i));
     CHECK(un.material() == d.material() && un.blur() == d.blur());
@@ -10265,6 +10269,7 @@ static void testMultiCaretOccurrences() {
 #include "preview_scroll_tests.inc"
 #include "quick_diff_tests.inc"
 #include "lexer_styles_tests.inc"
+#include "bracket_pairs_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10318,6 +10323,7 @@ int main() {
     testGitModel();
     testQuickDiff();
     testLexerStyles();
+    testBracketPairs();
     testEditorTabs();
     testFormatter();
     testFormatConsent();

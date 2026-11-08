@@ -89,7 +89,7 @@ struct Theme {
     const char* title;           // "Dark Modern", for menus
     bool dark;                   // dark backgrounds: the window's controls go dark too
     uint32_t background[kSurfaceCount], text[kSurfaceCount];   // indexed by Surface
-    uint32_t syntax[8];          // indexed by TokenStyle; [0] is unused (editor text)
+    uint32_t syntax[kTokenStyleCount];   // by TokenStyle; [0] is unused (editor text)
     uint32_t markdown[kMarkdownColorCount];
     uint32_t codeBackground, ruler, terminalInput;
     uint32_t lineNumber, lineNumberActive, bracketMatch;
@@ -97,6 +97,9 @@ struct Theme {
     // variables, parameters, properties and constants (SemanticColor
     // order), read off the scopes each type probes.
     uint32_t semantic[kSemanticColorCount];
+    // Bracket pairs by depth (VS Code's editorBracketHighlight.foreground1
+    // to 3), then an unexpected closer's (drawn at 80%).
+    uint32_t bracket[4];
 };
 
 // A value on one line of the settings file, in UTF-16 offsets.
@@ -199,6 +202,9 @@ public:
     // syntax.class, .variable, .parameter, .property and .constant: the
     // colors of names a language server's semantic tokens say what they are.
     Rgba semanticColor(SemanticColor c) const;
+    // syntax.bracket-1 to 3 (i = 0 to 2, a bracket pair's color by depth in
+    // turn) and syntax.bracket-unexpected (3).
+    Rgba bracketColor(int i) const;
     Rgba markdown(MarkdownColor c) const;
     Rgba markdownCodeBackground() const;      // follows the editor's opacity
     // The terminal's input line draws no background of its own (it is part of
@@ -291,6 +297,10 @@ public:
     // the default, as VS Code's editor.semanticHighlighting.enabled with a
     // built-in theme).
     bool semanticHighlighting() const { return semanticHighlighting_; }
+    // editor.bracket-pair-colorization: brackets in code colored by depth
+    // (BracketPairs.h; on, the default, as VS Code's
+    // editor.bracketPairColorization.enabled).
+    bool bracketPairColorization() const { return bracketPairColorization_; }
     // The gutter's background: editor.gutter-background, else the editor's
     // own; editor.opacity applies to either.
     Rgba gutterBackground() const;
@@ -443,7 +453,7 @@ private:
     std::optional<Rgba> windowText_;
     bool blur_ = false;
     std::string material_ = "under-window";
-    std::optional<Rgba> syntax_[8];
+    std::optional<Rgba> syntax_[kTokenStyleCount];
     std::optional<Rgba> markdown_[kMarkdownColorCount];
     bool titlebarKeySet_ = false;
     bool lspEnabled_ = true;
@@ -470,6 +480,8 @@ private:
     bool largeFileOptimizations_ = true;
     bool semanticHighlighting_ = true;
     std::optional<Rgba> semantic_[kSemanticColorCount];
+    bool bracketPairColorization_ = true;
+    std::optional<Rgba> bracket_[4];
     std::optional<Rgba> gutterBackground_, lineNumberColor_, lineNumberActiveColor_,
         bracketMatchColor_;
     std::optional<Rgba> treeGit_[kTreeGitColorCount];
