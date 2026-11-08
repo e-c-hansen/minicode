@@ -176,6 +176,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if (item.action == @selector(nextTourStop:) || item.action == @selector(previousTourStop:))
         return self.tourActive;
     if (item.action == @selector(exportPDF:)) return self.canExportPDF;
+    if (item.action == @selector(exportMarkdownHtml:)) return self.canExportMarkdownHtml;
     if (item.action == @selector(showLineInPDF:)) return self.canShowLineInPDF;
     if (item.action == @selector(toggleSidePreview:)) {
         item.state = [self sidePreviewShowing] ? NSControlStateValueOn : NSControlStateValueOff;

@@ -432,6 +432,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
         [self appendHintsRow:s key:[self hk:@"markdown.showPreviewToSide"]
                        label:@"Preview to the side" key2:nil label2:nil
                        state:[self sidePreviewShowing] ? @"open" : nil];
+        [self appendHintsRow:s key:[self hk:@"minicode.markdown.exportHtml"]
+                       label:@"Export as HTML (File menu)" key2:nil label2:nil state:nil];
     } else if (self.isLatex) {
         [self appendHintsRow:s key:[self hk:@"markdown.showPreview"] label:@"LaTeX preview"
                         key2:nil label2:nil

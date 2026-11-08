@@ -39,6 +39,7 @@
 #include "PageCheck.h"
 #include "SideBySide.h"
 #include "PreviewScroll.h"
+#include "MarkdownHtml.h"
 #include "AgentTranscript.h"
 #include "AgentIndex.h"
 #include "AgentEvidence.h"
@@ -10145,6 +10146,7 @@ static void testMultiCaretOccurrences() {
 #include "latex_safety_tests.inc"
 #include "latex_tests.inc"
 #include "markdown_gfm_tests.inc"
+#include "markdown_html_tests.inc"
 #include "lsp_watch_tests.inc"
 #include "large_file_tests.inc"
 #include "terminal_draw_tests.inc"
@@ -10175,6 +10177,7 @@ int main() {
     testMarkdownCorpus();
     testMarkdownEdit();
     testMarkdownGfm();
+    testMarkdownHtml();
     testTerminalStream();
     testTerminalScreen();
     testTerminalReflow();

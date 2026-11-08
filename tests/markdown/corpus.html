@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="minicode">
+<title>Markdown corpus</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0; background: #ffffff; color: #1f2328; }
+.markdown-body { box-sizing: border-box; max-width: 860px; margin: 0 auto; padding: 32px; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+h1, h2 { padding-bottom: .3em; border-bottom: 1px solid #d1d9e0; }
+h1, h2, h3, h4, h5, h6 { margin: 24px 0 16px; line-height: 1.25; }
+p, blockquote, ul, ol, table, pre { margin: 0 0 16px; }
+a { color: #0969da; }
+code, pre { font: 85%/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+code { padding: .2em .4em; border-radius: 6px; background: rgba(129, 139, 152, .12); }
+pre { padding: 16px; overflow: auto; border-radius: 6px; background: #f6f8fa; }
+pre code { padding: 0; background: none; font-size: 100%; }
+blockquote { padding: 0 1em; color: #59636e; border-left: .25em solid #d1d9e0; }
+table { border-collapse: collapse; }
+th, td { padding: 6px 13px; border: 1px solid #d1d9e0; }
+th { background: #f6f8fa; }
+hr { height: .25em; margin: 24px 0; border: 0; background: #d1d9e0; }
+img { max-width: 100%; }
+.task-list-item { list-style: none; }
+.task-list-item input { margin: 0 .3em .25em -1.4em; vertical-align: middle; }
+.footnotes { font-size: 85%; color: #59636e; }
+.math.display { display: block; text-align: center; margin: 0 0 16px; }
+@media (prefers-color-scheme: dark) {
+  body { background: #0d1117; color: #f0f6fc; }
+  h1, h2, th, td, hr { border-color: #3d444d; }
+  hr { background: #3d444d; }
+  a { color: #4493f8; }
+  pre, th { background: #151b23; }
+  blockquote { color: #9198a1; border-left-color: #3d444d; }
+  .footnotes { color: #9198a1; }
+}
+</style>
+</head>
+<body>
+<article class="markdown-body">
+<pre><code>title: Markdown corpus
+purpose: every construct the preview draws, for tests and for eyes
+</code></pre>
+<h1 id="markdown-corpus">Markdown corpus</h1>
+<p>Open this file in MiniCode and compare the preview with GitHub's rendering of the same file. <code>tests/run_tests.cpp</code> parses it too, and checks what it can without a screen. Each section names what it exercises.</p>
+<h2 id="spacing-between-blocks">Spacing between blocks</h2>
+<p>One paragraph. Its second source line joins the first.</p>
+<p>Another paragraph, after one blank line.</p>
+<p>A third, after two blank lines: the space above it is the same. A list follows with no blank line:</p>
+<ul>
+<li>the list is not glued to the text above</li>
+<li>and a table follows the list</li>
+</ul>
+<table>
+<thead>
+<tr><th>Column</th><th>Other</th></tr>
+</thead>
+<tbody>
+<tr><td>a</td><td>b</td></tr>
+</tbody>
+</table>
+<p>Text right after the table.</p>
+<h2 id="emphasis">Emphasis</h2>
+<p><em>Italic</em>, <strong>bold</strong>, <strong><em>bold italic</em></strong>, <strong>bold with </strong><strong><em>italic</em></strong><strong> inside</strong>, and <em>italic with </em><strong><em>bold</em></strong><em> inside</em>. Underscores: <em>italic</em> and <strong>bold</strong>.</p>
+<p>Names keep their underscores: snake_case_name, max_len, load_config and save_state, x_1 and a_b_c. Arithmetic keeps its stars: 2 * 3 * 4.</p>
+<p>Stars inside a word do emphasise, as on GitHub: un<em>frigging</em>believable, and 5<em>6</em>7 puts the 6 in italics. So does a double underscore at a word's start: <strong>init</strong>.py shows a bold &quot;init&quot;. A bold label glued to its sentence, <strong>Label</strong>Text after it, stays bold as far as the label.</p>
+<p><del>Struck through</del> and <del>single tilde</del>. An unmatched ** stays as written, and so does a lone * or _.</p>
+<h2 id="escapes">Escapes</h2>
+<p>*not italic*, _not italic_, # not a heading, [not a link](nowhere), `not code`, a backslash before a letter \q stays, and f′_n keeps its underscore.</p>
+<h2 id="inline-code">Inline code</h2>
+<p>Plain <code>code</code>, <code>code with a ` backtick</code>, <code>`backticks`</code> with spaces trimmed, and <code>code with **stars** and _underscores_</code> left alone.</p>
+<h2 id="links">Links</h2>
+<p>Several on one line: <a href="https://example.com/one">first</a> <a href="#links">second</a> <a href="#emphasis">third</a> and <a href="corpus.md">fourth</a>.</p>
+<p>A link with a title <a href="https://example.com">titled</a>, one with parentheses in it <a href="https://en.wikipedia.org/wiki/Markdown_(disambiguation)">wiki</a>, and one whose text is styled: <a href="https://example.com/styled"><strong>bold</strong> and <code>code</code></a>.</p>
+<p>Reference links: <a href="https://example.com/reference">full</a>, <a href="https://example.com/collapsed">collapsed</a>, and <a href="https://example.com/shortcut">shortcut</a>. The definitions below them do not show.</p>
+<p>Autolinks: <a href="https://example.com/auto">https://example.com/auto</a>, <a href="mailto:someone@example.org">someone@example.org</a>, and bare ones, <a href="https://example.com/bare_path_here">https://example.com/bare_path_here</a> and <a href="http://www.example.com">www.example.com</a>, followed by a full stop. A picture: <img src="missing.png" alt="alt text of a missing picture">.</p>
+<h2 id="entities">Entities</h2>
+<p>&amp; &lt;tag&gt; &quot;quoted&quot; non breaking © 2026 — — → ½ αβγ and &amp;unknown; stays.</p>
+<h2 id="hard-line-breaks">Hard line breaks</h2>
+<p>Two spaces end this line<br>
+so this is a new line. A backslash ends this one<br>
+and this is a new line too.<br>
+After a br tag.</p>
+<h2 id="lists">Lists</h2>
+<ul>
+<li><strong>Bold label</strong>: text after the label.</li>
+<li>A long item that wraps: the second and later lines of it line up with the first line's text rather than with the bullet, as a hanging indent.</li>
+<li>Nested with two spaces:<ul>
+<li>second level<ul>
+<li>third level</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>Nested with four spaces:<ul>
+<li>second level again</li>
+</ul>
+</li>
+</ul>
+<ol start="3">
+<li>An ordered list can start at three.</li>
+<li>The next item.</li>
+<li>A wider number lines up with the others.</li>
+</ol>
+<ol>
+<li>Parentheses work too.</li>
+<li>Second.</li>
+</ol>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled> A task still to do</li>
+<li class="task-list-item"><input type="checkbox" disabled checked> A task done</li>
+<li>A loose list</li>
+<li>has blank lines between its items</li>
+<li>Item one continues lazily on an unindented line.</li>
+<li>Item two<p>has a second paragraph, indented under it.</p>
+<pre><code>and a code block
+</code></pre>
+</li>
+</ul>
+<h2 id="quotes">Quotes</h2>
+<blockquote>
+<p>A quote written over several source lines is one paragraph.</p>
+<p>A second paragraph in the same quote. Lazy continuation joins the paragraph above.</p>
+</blockquote>
+<blockquote>
+<p>Outer</p>
+<blockquote>
+<p>Nested, a paragraph of its own</p>
+</blockquote>
+</blockquote>
+<blockquote>
+<ul>
+<li>a list</li>
+<li>inside a quote</li>
+</ul>
+</blockquote>
+<blockquote>
+<ul>
+<li>an item in a quote</li>
+</ul>
+<blockquote>
+<ul>
+<li><p>with a quote inside the item</p>
+</li>
+</ul>
+</blockquote>
+</blockquote>
+<ol>
+<li>A numbered step<blockquote>
+<p>A quote inside the step, its bar at the step's indent.</p>
+</blockquote>
+</li>
+</ol>
+<blockquote>
+<p><strong>Note</strong></p>
+<p>An alert, as GitHub writes them.</p>
+</blockquote>
+<blockquote>
+<p><strong>Warning</strong></p>
+<p>Another kind.</p>
+</blockquote>
+<h2 id="code-blocks">Code blocks</h2>
+<pre><code class="language-python">def f(x_1, x_2):
+    return x_1 * x_2   # stars and underscores stay
+</code></pre>
+<pre><code>Tildes fence a block too.
+</code></pre>
+<pre><code class="language-markdown">```
+A fence inside a longer fence.
+```
+</code></pre>
+<pre><code>An indented code block,
+four spaces in.
+</code></pre>
+<h2 id="rules">Rules</h2>
+<p>Above a rule.</p>
+<hr>
+<hr>
+<hr>
+<h1 id="setext-headings">Setext headings</h1>
+<h2 id="a-second-level-one">A second-level one</h2>
+<h2 id="headings-closing-hashes">Headings: closing hashes</h2>
+<h3 id="3-section-sign-café-and--rocket">§3 Section sign, café, and 🚀 rocket</h3>
+<p>Links to them: <a href="#headings-closing-hashes">closing hashes</a> and <a href="#3-section-sign-café-and--rocket">the third</a>.</p>
+<h2 id="tables">Tables</h2>
+<table>
+<thead>
+<tr><th>Left</th><th style="text-align: center">Centre</th><th style="text-align: right">Right</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>bold</strong></td><td style="text-align: center"><code>code</code></td><td style="text-align: right"><a href="#tables">link</a></td></tr>
+<tr><td></td><td style="text-align: center">empty cells</td><td style="text-align: right"></td></tr>
+<tr><td>a | b</td><td style="text-align: center"><del>struck</del></td><td style="text-align: right">12</td></tr>
+</tbody>
+</table>
+<p>A paragraph directly above a table:</p>
+<table>
+<thead>
+<tr><th>k</th><th>v</th></tr>
+</thead>
+<tbody>
+<tr><td>x</td><td>y</td></tr>
+</tbody>
+</table>
+<h2 id="html">HTML</h2>
+<p>Press <code>Ctrl</code>+<code>C</code>, a <strong>bold</strong> tag, an <em>italic</em> one, a <a href="https://example.com/html">link by tag</a>, and an inline comment.</p>
+<p><img src="missing-logo.png" alt="A logo that is not there"></p>
+<h3 id="a-heading-written-in-html">A heading written in HTML</h3>
+<p>*Not emphasis*: inside an HTML block the text is HTML, not Markdown.</p>
+<p><strong>A summary, in bold</strong></p>
+<p>Markdown again, after a blank line.</p>
+<h2 id="footnotes">Footnotes</h2>
+<p>A claim that needs a source<sup class="footnote-ref"><a href="#fn-1" id="fnref-1">1</a></sup>, another<sup class="footnote-ref"><a href="#fn-2" id="fnref-2">2</a></sup>, and the first again<sup class="footnote-ref"><a href="#fn-1" id="fnref-1-2">1</a></sup>. A reference nothing defines stays as written[^missing].</p>
+<h2 id="math">Math</h2>
+<p>Inline math sits on the line: <span class="math inline">\(e^{i\pi} + 1 = 0\)</span>, <span class="math inline">\(x_t \in \mathbb{R}^d\)</span> and <span class="math inline">\(\alpha_{\text{min}}\)</span>, and underscores in it pair with nothing. It costs $5 and $10, which is no formula, and $ is a dollar sign.</p>
+<div class="math display">\[\mathcal{L}(\theta) = -\frac{1}{N}\sum_{n=1}^{N} \log p_\theta(y_n \mid x_n)\]</div>
+<p>A formula in a paragraph,</p>
+<div class="math display">\[\int_0^1 x^2\,dx = \tfrac{1}{3},\]</div>
+<p>stands on its own line.</p>
+<div class="math display">\[\operatorname*{arg\,max}_k \; s_k\]</div>
+<p><code>tests/markdown/math.md</code> has many more.</p>
+<h2 id="unicode">Unicode</h2>
+<p>Symbols render as they are: x ∈ ℝ^n, A ∈ ℝ^{n × m}, a ⊙ b, f′(x), α → β, ≤ ≥ ≠ ≈ ∞ ∑ ∏ √, and ½ ¼ ¾. Wide text: 日本語のテキスト and 한국어.</p>
+<h2 id="long-lines">Long lines</h2>
+<p>A very long line that goes on and on to show that wrapping happens at the pane's edge rather than at the source's line length, with nothing lost or clipped at the right side, however narrow the window is made, and however many words are added to it after this point.</p>
+<hr>
+<section class="footnotes">
+<ol>
+<li id="fn-1">The source, with a <a href="#footnotes">link</a> back to this section. <a href="#fnref-1" class="footnote-backref">↩</a> <a href="#fnref-1-2" class="footnote-backref">↩²</a></li>
+<li id="fn-2">A second note.<p>Its second paragraph, indented four spaces. <a href="#fnref-2" class="footnote-backref">↩</a></p>
+</li>
+</ol>
+</section>
+</article>
+</body>
+</html>

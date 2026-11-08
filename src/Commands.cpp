@@ -276,6 +276,9 @@ const std::vector<Command>& all() {
          nullptr},
         {"minicode.latex.exportPDF", "Export PDF…", "File", "shift+cmd+s", A, "exportPDF:", 0, 0,
          nullptr},
+        // A Markdown file as a standalone page (VS Code has no export).
+        {"minicode.markdown.exportHtml", "Export as HTML…", "File", "", A, "exportMarkdownHtml:",
+         0, 0, nullptr},
         {"explorer.newFolder", "New Folder…", "File", "shift+cmd+n", A, "newFolder:", 0, 0,
          nullptr},
         // Keys only while the tree has the keyboard, as in Finder and VS Code:

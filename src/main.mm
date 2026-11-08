@@ -546,6 +546,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)togglePreview:(id)sender   { [[self current] togglePreview:sender]; }
 - (void)toggleSidePreview:(id)sender { [[self current] toggleSidePreview:sender]; }
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
+- (void)exportMarkdownHtml:(id)sender { [[self current] exportMarkdownHtml:sender]; }
 - (void)showLineInPDF:(id)sender   { [[self current] showLineInPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
@@ -557,6 +558,7 @@ static BOOL MCWindowTabAction(SEL a) {
     if (item.action == @selector(showContextMenu:))
         return (NSApp.keyWindow ?: NSApp.mainWindow) != nil;
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
+    if (item.action == @selector(exportMarkdownHtml:)) return [self current].canExportMarkdownHtml;
     if (item.action == @selector(forgetFolderToolsAnswer:))
         return [self current].canForgetFolderToolsAnswer;
     if (item.action == @selector(showLineInPDF:)) return [self current].canShowLineInPDF;
@@ -849,6 +851,9 @@ static void BuildMenu(void) {
     exportPDF.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [fileMenu addItem:exportPDF];
+    // A Markdown file as a standalone page; VS Code has no export, so no key.
+    [fileMenu addItemWithTitle:@"Export as HTML…"
+                        action:@selector(exportMarkdownHtml:) keyEquivalent:@""];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
     // The file tree's commands, on its clicked or selected row (else the

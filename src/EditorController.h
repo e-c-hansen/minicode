@@ -335,4 +335,11 @@
 - (void)toggleSidePreview:(id)sender;
 // The page beside the source is on show for the tab on show.
 - (BOOL)sidePreviewShowing;
+// File > Export as HTML…: the Markdown tab's text as a standalone page.
+@property(nonatomic, readonly) BOOL canExportMarkdownHtml;
+- (void)exportMarkdownHtml:(id)sender;
+- (BOOL)writeMarkdownHtmlTo:(NSString *)path;
 @end
+// Where Export as HTML… writes, given the suggested path (the file's own,
+// as .html): nil asks with a save panel. The GUI checks answer here.
+extern NSString * (^MCHtmlExportPathChooser)(NSString *suggested);

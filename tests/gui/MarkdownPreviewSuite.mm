@@ -13,6 +13,7 @@
 #import "EditorController+Private.h"
 #import "MarkdownEditPanel.h"
 #import "MarkdownMath.h"
+#include "MarkdownHtml.h"
 
 namespace {
 
@@ -279,6 +280,64 @@ MC_GUI_SUITE(markdown_preview) {
         NSTextView *editor = [[c valueForKey:@"markdownEditPanel"] valueForKey:@"_editor"];
         GCHECK_EQ_STR(editor.string, @"<div align=\"center\">\n  *kept* &amp; <b>bold</b>\n</div>");
         [[c valueForKey:@"markdownEditPanel"] close];
+    });
+
+    MCGuiStep(@"a numbered task keeps its number before its box; a footnote's code is a code box", ^{
+        NSString *path = Fixture(@"numbered.md");
+        MCGuiWriteFile(path, @"1. [ ] first\n2. [x] second\n\nRun it[^a].\n\n"
+                             @"[^a]: Like this:\n\n    ```sh\n    make all\n    ```\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:path]);
+        const NSUInteger box = LinkAt(c, @"minicode-task:0");
+        GCHECK(box != NSNotFound && box >= 3);
+        if (box != NSNotFound && box >= 3)
+            GCHECK_EQ_STR([Text(c).string substringWithRange:NSMakeRange(box - 3, 3)], @"1. ");
+        const NSUInteger second = LinkAt(c, @"minicode-task:1");
+        GCHECK(second != NSNotFound && second >= 3 &&
+               [[Text(c).string substringWithRange:NSMakeRange(second - 3, 3)] isEqualToString:@"2. "]);
+        const NSUInteger code = At(c, @"make all");
+        GCHECK(code != NSNotFound && At(c, @"sh make") == NSNotFound);
+        NSTextBlock *boxed = Para(c, code).textBlocks.lastObject;
+        GCHECK(boxed.backgroundColor != nil);   // the code block's box
+        GCHECK(At(c, @"\xE2\x86\xA9") > code);   // the way back, after the code
+    });
+
+    MCGuiStep(@"Export as HTML… writes the page beside the file, unsaved changes included", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:corpus]);
+        NSMenuItem *item = nil;
+        for (NSMenuItem *top in NSApp.mainMenu.itemArray)
+            for (NSMenuItem *i in top.submenu.itemArray)
+                if (i.action == @selector(exportMarkdownHtml:)) item = i;
+        GCHECK(item && item.keyEquivalent.length == 0 && [item.menu.title isEqualToString:@"File"]);
+        GCHECK([c validateMenuItem:item] && c.canExportMarkdownHtml);
+        // Unsaved text goes into the page.
+        NSString *edited = [original stringByAppendingString:@"\n## Added before saving\n"];
+        [c setValue:edited forKey:@"sourceText"];
+        __block NSString *suggested = nil;
+        NSString *out = Fixture(@"exported.html");
+        MCHtmlExportPathChooser = ^NSString *(NSString *s) {
+            suggested = s;
+            return out;
+        };
+        [[NSFileManager defaultManager] removeItemAtPath:out error:nil];
+        [c exportMarkdownHtml:item];
+        MCHtmlExportPathChooser = nil;
+        GCHECK_EQ_STR(suggested, Fixture(@"corpus.html"));
+        NSString *page = [NSString stringWithContentsOfFile:out encoding:NSUTF8StringEncoding error:nil];
+        const std::string want = MarkdownHtml::page(edited.UTF8String, "corpus.md");
+        GCHECK(page && [page isEqualToString:[NSString stringWithUTF8String:want.c_str()]]);
+        GCHECK([page containsString:@"<title>Markdown corpus</title>"]);
+        GCHECK([page containsString:@"<h2 id=\"added-before-saving\">Added before saving</h2>"]);
+        GCHECK([page containsString:@"<li class=\"task-list-item\"><input type=\"checkbox\" disabled>"]);
+        NSTextField *note = [c valueForKey:@"settingsLabel"];
+        GCHECK([note.stringValue containsString:@"Exported exported.html"]);
+        [c setValue:original forKey:@"sourceText"];
+        // A file that is not Markdown has nothing to export.
+        NSString *py = Fixture(@"plain.py");
+        MCGuiWriteFile(py, @"print(1)\n");
+        GCHECK([c showFile:py]);
+        GCHECK(!c.canExportMarkdownHtml && ![c validateMenuItem:item]);
     });
 
     if (NSString *tectonic = NSProcessInfo.processInfo.environment[@"MC_GUI_REAL_TECTONIC"]) {

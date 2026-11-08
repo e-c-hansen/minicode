@@ -4,7 +4,9 @@
 #import "TextKit2.h"
 #import "MarkdownMermaid.h"
 #import "MarkdownSidePreview.h"
+#include "MarkdownHtml.h"
 #include "MarkdownTasks.h"
+#include "FolderSearch.h"
 #include "MermaidDiagram.h"
 #import <objc/runtime.h>
 
@@ -1065,6 +1067,53 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
         return YES;
     }
     [self openMarkdownLink:href];
+    return YES;
+}
+
+// ------------------------------------------------------- Export as HTML…
+// The buffer as a standalone page (MarkdownHtml.h), unsaved changes
+// included, written through the atomic writer where the save panel says:
+// beside the file at first, so its relative pictures and links still work.
+
+NSString * (^MCHtmlExportPathChooser)(NSString *suggested) = nil;
+
+- (BOOL)canExportMarkdownHtml {
+    return self.isMarkdown && _activeTab != nil && self.currentPath != nil && !self.showingMessage &&
+           !self.isDiff;
+}
+
+- (void)exportMarkdownHtml:(id)sender {
+    (void)sender;
+    if (![self canExportMarkdownHtml]) {
+        NSBeep();
+        return;
+    }
+    NSString *suggested =
+        [self.currentPath.stringByDeletingPathExtension stringByAppendingPathExtension:@"html"];
+    NSString *path = nil;
+    if (MCHtmlExportPathChooser) {
+        path = MCHtmlExportPathChooser(suggested);
+    } else {
+        NSSavePanel *panel = [NSSavePanel savePanel];
+        panel.directoryURL = [NSURL fileURLWithPath:suggested.stringByDeletingLastPathComponent];
+        panel.nameFieldStringValue = suggested.lastPathComponent;
+        panel.allowedFileTypes = @[@"html"];
+        panel.canCreateDirectories = YES;
+        if ([panel runModal] == NSModalResponseOK) path = panel.URL.path;
+    }
+    if (path.length) [self writeMarkdownHtmlTo:path];
+}
+
+- (BOOL)writeMarkdownHtmlTo:(NSString *)path {
+    const std::string html = MarkdownHtml::page(Utf8String(self.sourceText ?: @""),
+                                                Utf8String(self.currentPath.lastPathComponent ?: @""));
+    std::string error;
+    if (!FolderSearch::writeFileAtomically(path.fileSystemRepresentation, html, &error)) {
+        [self showStatusNote:[NSString stringWithFormat:@"%@ could not be written: %@",
+                                                        path.lastPathComponent, [NSString stringWithUTF8String:error.c_str()] ?: @""]];
+        return NO;
+    }
+    [self showStatusNote:[NSString stringWithFormat:@"Exported %@", path.lastPathComponent]];
     return YES;
 }
 
