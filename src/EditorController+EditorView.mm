@@ -149,16 +149,7 @@
     }
     [self setEditorFont:font];
     [self applyHighlighting];   // every run in the new font
-    if (n > 0) {
-        const NSRect r = [self textRectForCharacter:top];
-        if (!NSIsEmptyRect(r)) {
-            [tv.layoutManager ensureLayoutForBoundingRect:
-                NSMakeRect(0, 0, CGFLOAT_MAX,
-                           NSMaxY(r) + 2 * NSHeight(self.editorScroll.contentView.bounds))
-                                          inTextContainer:tv.textContainer];
-            [self scrollEditorToY:NSMinY(r) - offset * scale];
-        }
-    }
+    if (n > 0) [self scrollEditorToCharacter:top offset:offset * scale];
 }
 
 // The stretches of [lo, hi) that are strings or comments, from the

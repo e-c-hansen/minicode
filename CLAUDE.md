@@ -626,7 +626,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   ask a TextKit 2 view for its layout manager (it switches over).
 - **Storage**: `MCSourceStorage` is an NSTextStorage over a plain
   NSMutableAttributedString that fixes attributes eagerly (only the edited
-  paragraph) and skips the glyph-info fix unless glyph info is in the range.
+  paragraph) and skips the glyph-info fix unless glyph info is in the range,
+  and the font fix (substitution, which reads every character: 1.2 s of
+  each 25 MB show) over plain ASCII under fonts that have all of it.
   AppKit's storage re-fixed a 65,536-character block around the caret twice a
   keystroke and walked every run for glyph info: about 11 ms a keystroke in a
   highlighted 100,000-line file, now about 0.5 ms (opening such a file costs
@@ -644,8 +646,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   `storedAttributesAtIndex:...` (the highlighter's compare, or every
   restyle of a hinted line set its colors again) leave them out, and
   CodeTextView hides them while writing to a pasteboard.
-- **Contiguous layout stays on**: everything that reads positions relies on
-  exactness. Never call `numberOfGlyphs` on the editor; lay out only up to the
+- **Contiguous layout stays on**, except in large-file mode (below):
+  everything that reads positions relies on exactness. Never call `numberOfGlyphs` on the editor; lay out only up to the
   character needed. `textDidChange:`'s copy into `sourceText` shares characters
   (about a microsecond) and the backups rely on a new object per change;
   measured, leave it.
@@ -767,8 +769,18 @@ container (PanelHost, laid out by hand in layoutContainer)
   limit either). The status bar's "Large file: features off" turns them on
   for the tab (`largeFileFeatures`). A file over 50 MB opened by hand
   (`openFileAtPath:`, a new tab only) asks Open Anyway or Cancel. Measured:
-  25 MB opens in about 0.4 s (3.5 s with the mode off) and types at about
-  2 ms a key; 60 MB in 1.3 s. **Trap: word wrap stays as set**, unlike VS
+  25 MB opens in about 0.25 s of CPU (2.2 s with the mode off) and types
+  at about 5 ms a key; 60 MB in 0.7 s. **Its layout is non-contiguous**
+  (2026-11-08, set in `displaySourceEditable`, cleared by
+  `makeEditorReadOnly` and when the note turns features on, which lays
+  out above the top line then and keeps the place): showing the tab again
+  at line 300,000, Go to Line or a search hit lays out a screen there, not
+  every line above it (13 to 18 s of CPU before, 0.25 s now). Rects far
+  from what is laid out are estimates, which nothing the mode keeps
+  needs; a from-the-top `ensureLayout...` (`MCTextViewRectForCharacter`,
+  `restoreTextPlaceOf:`, the zoom, notes) starts near its target when
+  `allowsNonContiguousLayout` is on. The scroll bar's thumb and a jump
+  far down need the owner's eyes on a real screen. **Trap: word wrap stays as set**, unlike VS
   Code: a TextKit view that does not wrap lays out all of its text in
   `sizeToFit` to learn its width (5.5 s for 25 MB, nine tenths of it there).
   Known: a keystroke in a 5,000,000-character line costs about 0.35 s, all
@@ -778,8 +790,7 @@ container (PanelHost, laid out by hand in layoutContainer)
   showActiveTab) now empties a text over 1 MB first (60 ms); what shows
   next calls `documentOpened:` in the same turn, which drops the emptying
   before it is sent (large_file checks no didChange goes).
-  Switching back still lays out to the place it kept (contiguous layout:
-  about 4 s for the middle of 25 MB). The 16 to 48 ms keys in a window
+  The 16 to 48 ms keys in a window
   earlier suites had used were a Markdown page's text blocks (see "The
   editor's text view").
 - **Trap: anything that lays out all of a large text stays.** Two did on

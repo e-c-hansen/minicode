@@ -635,7 +635,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     // the hidden text view holds nothing, and saving writes the tab's text.
     if (self.previewMode && MCViewerKindOverText(self.viewerKind)) {
         if (self.latex) self.latex.hidden = YES;
-        self.textView.editable = NO;
+        [self makeEditorReadOnly];
         _liveHighlight = NO;
         [self.textView.textStorage setAttributedString:[NSAttributedString new]];
         [self.viewers showText:self.sourceText ?: @"" kind:self.viewerKind path:self.currentPath];
@@ -648,7 +648,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     if (self.latex) self.latex.hidden = YES;
     [self relayoutRightArea];
     if ([self showsRenderedMarkdown]) {
-        self.textView.editable = NO;
+        [self makeEditorReadOnly];   // a long source goes first; the page's layout is contiguous
         [self renderMarkdown:[self markdownToRender]];
     } else {
         [self displaySourceEditable];

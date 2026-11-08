@@ -201,7 +201,8 @@ static NSRange MCNoteRange(NSString *s, int line, int column, int toLine, int to
             r = [lm lineFragmentRectForGlyphAtIndex:[lm glyphIndexForCharacterAtIndex:n - 1]
                                      effectiveRange:nil];
     } else {
-        [lm ensureLayoutForCharacterRange:NSMakeRange(0, index + 1)];
+        [lm ensureLayoutForCharacterRange:lm.allowsNonContiguousLayout ? NSMakeRange(index, 1)
+                                                                       : NSMakeRange(0, index + 1)];
         r = [lm lineFragmentRectForGlyphAtIndex:[lm glyphIndexForCharacterAtIndex:index]
                                  effectiveRange:nil];
     }
@@ -380,7 +381,9 @@ static void MCScrollLine(NSTextView *tv, CGFloat lineTop, CGFloat above) {
     // Laid out a screen past it too, or the text view is still only as tall
     // as the layout so far and the scroll stops short (the line ends up at
     // the bottom of the pane).
-    [tv.layoutManager ensureLayoutForBoundingRect:NSMakeRect(0, 0, CGFLOAT_MAX, lineTop + 2 * H)
+    const CGFloat from = tv.layoutManager.allowsNonContiguousLayout ? MAX(0, lineTop - H) : 0;
+    [tv.layoutManager ensureLayoutForBoundingRect:NSMakeRect(0, from, CGFLOAT_MAX,
+                                                             lineTop + 2 * H - from)
                                   inTextContainer:tv.textContainer];
     CGFloat y = MIN(lineTop - above, NSHeight(tv.frame) - H);
     [clip scrollToPoint:NSMakePoint(clip.bounds.origin.x, MAX(0, y))];

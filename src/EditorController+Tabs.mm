@@ -454,17 +454,7 @@
     if (sel.location > n) sel = NSMakeRange(n, 0);
     if (NSMaxRange(sel) > n) sel.length = n - sel.location;
     tv.selectedRange = sel;
-    if (n > 0) {
-        const NSRect r = [self textRectForCharacter:MIN(t.topCharacter, n - 1)];
-        // Laid out a screen past it too, or the scroll stops where the
-        // layout does, with that character at the bottom of the pane.
-        if (!MCUsesTextKit2(tv) && !NSIsEmptyRect(r))
-            [tv.layoutManager ensureLayoutForBoundingRect:
-                NSMakeRect(0, 0, CGFLOAT_MAX,
-                           NSMaxY(r) + 2 * NSHeight(self.editorScroll.contentView.bounds))
-                                          inTextContainer:tv.textContainer];
-        if (!NSIsEmptyRect(r)) [self scrollEditorToY:NSMinY(r) - t.topOffset];
-    }
+    [self scrollEditorToCharacter:t.topCharacter offset:t.topOffset];
     if (t.isMarkdown && t.previewMode)
         _previewEntryScroll = self.editorScroll.contentView.bounds.origin;
 }

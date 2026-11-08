@@ -30,6 +30,22 @@ MCTab *Active(EditorController *c) { return [c valueForKey:@"activeTab"]; }
 
 BOOL FullPerf() { return NSProcessInfo.processInfo.environment[@"MC_GUI_FULL_PERF"].length > 0; }
 
+// The character at the top left of the editor's visible rect.
+NSUInteger TopCharacter(NSTextView *tv) {
+    const NSRect v = tv.visibleRect;
+    return [tv characterIndexForInsertionAtPoint:NSMakePoint(NSMinX(v) + 20, NSMinY(v) + 1)];
+}
+
+NSUInteger LineOf(NSString *s, NSUInteger i) {
+    __block NSUInteger n = 0;
+    [s enumerateSubstringsInRange:NSMakeRange(0, MIN(i, s.length))
+                          options:NSStringEnumerationByLines | NSStringEnumerationSubstringNotRequired
+                       usingBlock:^(NSString *l, NSRange r, NSRange e, BOOL *stop) {
+        (void)l; (void)r; (void)e; (void)stop; n++;
+    }];
+    return n;
+}
+
 // The foreground colors' runs over a range.
 NSUInteger ColorRunCount(NSTextStorage *ts, NSRange r) {
     __block NSUInteger n = 0;
@@ -87,6 +103,7 @@ MC_GUI_SUITE(large_file) {
     __block CodeTextView *tv = nil;
     __block std::vector<double> freshKeys;   // the first typing's, to compare with later
     __block NSUInteger typedAt = 0;
+    __block double openBase = 0;             // the first step's baseline, ms of CPU
     // A window of its own on a folder of its own: what earlier suites left
     // open (tabs, servers, trees watching the project) does not time this
     // suite's keystrokes, and 85 MB of files do not land in their folder.
@@ -125,6 +142,7 @@ MC_GUI_SUITE(large_file) {
             GCHECK(plain.length == read.length && n > 0);
         }
         base = MCGuiThreadCpuMs() - base;
+        openBase = base;
         SampleFor(@"open25", 7);
         const double t0 = Ms(), c0 = MCGuiThreadCpuMs();
         GCHECK([c showFile:big]);
@@ -135,17 +153,18 @@ MC_GUI_SUITE(large_file) {
                   @"(%.0f ms of main-thread CPU; the baseline %.0f ms, %.1f times it)",
                   (unsigned long)[s componentsSeparatedByString:@"\n"].count - 1, opened, shown,
                   shownCpu, base, shownCpu / MAX(base, 1));
-        // Read, made a text storage and highlighted plain: about 0.55 s of
-        // the main thread's CPU on an M3, against 2.2 s with the mode off
-        // (a full lex and attribute pass of 470,000 lines; measured by
-        // turning the mode off in noteLargeFileText:). The open is on the
-        // main thread, so its CPU time is the bound; the old 3 s of wall
-        // time let the mode off pass. On a loaded Mac the thread may run on
-        // an efficiency core, several times slower in CPU time too, so the
-        // bound is 1.5 s or six times the baseline, whichever is more: the
-        // open is 2.4 to 2.9 times the baseline (0.18 s; 0.54 s on the
-        // efficiency cores), with the mode off about twelve.
-        GCHECK_TIME(shownCpu, MAX(1500, 6 * base), @"a 25 MB file shows");
+        // Made a text storage and highlighted plain: about 0.25 s of the
+        // main thread's CPU, under the baseline (0.3 s), against 2.2 s with
+        // the mode off (a full lex and attribute pass of 470,000 lines;
+        // measured by turning the mode off in noteLargeFileText:). Font
+        // substitution reading all 25 MB for missing glyphs made it 1.8 to
+        // 2.6 s, six or seven times the baseline (MCSourceStorage now skips
+        // it for plain ASCII). The open is on the main thread, so its CPU
+        // time is the bound; the old 3 s of wall time let the mode off pass.
+        // On a loaded Mac the thread may run on an efficiency core, several
+        // times slower in CPU time too, and the baseline with it: so 1 s or
+        // three times the baseline, whichever is more.
+        GCHECK_TIME(shownCpu, MAX(1000, 3 * base), @"a 25 MB file shows");
         MCTab *t = Active(c);
         GCHECK(t.largeFile && !t.largeFileFeatures && [c largeFileFeaturesOff]);
         GCHECK(tv.string.length > (25u << 20) - 100);
@@ -159,6 +178,7 @@ MC_GUI_SUITE(large_file) {
         // took that way.
         GCHECK(tv.folds.fileName == nil);
         GCHECK(![c bracketMatchingApplies]);
+        GCHECK(tv.layoutManager.allowsNonContiguousLayout);   // laid out only where shown
         GCHECK(tv.textContainer.widthTracksTextView == MCEditorWordWrap());
         GCHECK([c languageServerPath:big] == nil && ![c languageServerMayRead:t]);
         GCHECK(c.lsp.bufferText(big) == nil);
@@ -216,17 +236,29 @@ MC_GUI_SUITE(large_file) {
     NSString *page = [dir stringByAppendingPathComponent:@"page.md"];
     MCGuiStep(@"switching away from it lays none of it out", ^{
         MCTab *bigTab = Active(c);
+        // Where the typing left it: line 300,000 at the top of the pane.
+        const NSRange selection = tv.selectedRange;
+        const NSUInteger topLine = LineOf(tv.string, TopCharacter(tv));
+        GCHECK(topLine > 290000 && tv.undoManager.canUndo);
         MCGuiWriteFile(small, @"x = 1\n");
         double c0 = MCGuiThreadCpuMs();
         GCHECK([c showFile:small]);   // a new tab, read for the first time
         const double toNew = MCGuiThreadCpuMs() - c0;
         GCHECK(Active(c) != bigTab && [tv.string isEqualToString:@"x = 1\n"]);
+        GCHECK(!tv.layoutManager.allowsNonContiguousLayout);   // a small file's rects are exact
         SampleFor(@"back25", 5);
         c0 = MCGuiThreadCpuMs();
         GCHECK([c showFile:big]);
         const double back = MCGuiThreadCpuMs() - c0;
         GCHECK(Active(c) == bigTab && bigTab.dirty);
         GCHECK([[tv.string substringWithRange:NSMakeRange(typedAt, 5)] isEqualToString:@"ab cd"]);
+        // The caret, the top line and the undo steps as they were.
+        GCHECK(NSEqualRanges(tv.selectedRange, selection));
+        const NSUInteger topAgain = LineOf(tv.string, TopCharacter(tv));
+        MCGuiNote(@"the top line %lu before, %lu shown again", (unsigned long)topLine,
+                  (unsigned long)topAgain);
+        GCHECK(topAgain + 1 >= topLine && topAgain <= topLine + 1);
+        GCHECK(tv.undoManager.canUndo && tv.layoutManager.allowsNonContiguousLayout);
         c0 = MCGuiThreadCpuMs();
         GCHECK([c showFile:small]);   // a tab shown again
         const double toShown = MCGuiThreadCpuMs() - c0;
@@ -234,6 +266,11 @@ MC_GUI_SUITE(large_file) {
                   @"away again %.0f ms", toNew, back, toShown);
         GCHECK_TIME(toNew, 250, @"switching from the 25 MB tab to a new tab");
         GCHECK_TIME(toShown, 250, @"switching from the 25 MB tab to a tab shown before");
+        // Showing it again at line 300,000 laid out every line above it
+        // (contiguous layout) and read all 25 MB for font substitution: 13
+        // to 18 s of CPU, against about 0.25 s now, as much as the first
+        // open. The bound is the open's own, from this run's baseline.
+        GCHECK_TIME(back, MAX(1000, 3 * openBase), @"showing the 25 MB tab again at line 300,000");
         GCHECK([c closeTab:Active(c) prompt:NO]);
         GCHECK(Active(c) == bigTab);
     });

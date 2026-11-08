@@ -142,6 +142,19 @@ BOOL TextIsLarge(NSString *text) {
     if (!t.largeFile || t.largeFileFeatures) return;
     t.largeFileFeatures = YES;
     if (self.textView.editable && !self.showingMessage) {
+        // Contiguous layout again, so folds and boxes have exact rects: the
+        // lines above the top one are laid out now, and the place kept.
+        NSTextView *tv = self.textView;
+        const NSUInteger n = tv.string.length;
+        const NSRect visible = tv.visibleRect;
+        const NSUInteger top = n ? MIN([tv characterIndexForInsertionAtPoint:
+                                           NSMakePoint(NSMinX(visible) + 20, NSMinY(visible) + 1)],
+                                       n - 1)
+                                 : 0;
+        const NSRect before = n ? [self textRectForCharacter:top] : NSZeroRect;
+        tv.layoutManager.allowsNonContiguousLayout = NO;
+        if (n && !NSIsEmptyRect(before))
+            [self scrollEditorToCharacter:top offset:NSMinY(before) - NSMinY(visible)];
         self.textView.folds.fileName = self.currentPath;
         [self applyHighlighting];
         [self updateBracketMatch];

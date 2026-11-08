@@ -122,7 +122,8 @@
     // NSTextView asks (1.9 s to lay out 100,000 lines, which is what a
     // Format Document touching both ends of such a file costs).
     // Non-contiguous layout would remove that but makes far positions
-    // estimates; it needs trying on a real screen before it is turned on.
+    // estimates; only a file in large-file mode has it, which keeps none of
+    // the features that read them (displaySourceEditable).
     // The backdrop paints the background over the whole scroll view; the text
     // view drawing it too would double a translucent color.
     self.textView.drawsBackground = NO;

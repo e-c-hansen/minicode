@@ -29,7 +29,11 @@ NSRect MCTextViewRectForCharacter(NSTextView *tv, NSUInteger i) {
     if (MCUsesTextKit2(tv) || n == 0) return NSZeroRect;
     NSLayoutManager *lm = tv.layoutManager;
     if (i >= n) i = n - 1;
-    [lm ensureLayoutForCharacterRange:NSMakeRange(0, i + 1)];
+    // Laid out from the top, so the rect is exact; with non-contiguous
+    // layout (a file in large-file mode) only around the character, its
+    // place an estimate, rather than every line before it.
+    [lm ensureLayoutForCharacterRange:lm.allowsNonContiguousLayout ? NSMakeRange(i, 1)
+                                                                   : NSMakeRange(0, i + 1)];
     NSRange glyphs = [lm glyphRangeForCharacterRange:NSMakeRange(i, 1) actualCharacterRange:NULL];
     NSRect r = [lm boundingRectForGlyphRange:glyphs inTextContainer:tv.textContainer];
     if (NSIsEmptyRect(r)) r.size = NSMakeSize(1, 1);   // a bare newline

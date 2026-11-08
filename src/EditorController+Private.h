@@ -777,6 +777,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSString *)markdownToRender;
 - (NSRect)textRectForCharacter:(NSUInteger)i;
 - (void)scrollEditorToY:(CGFloat)y;
+- (void)scrollEditorToCharacter:(NSUInteger)i offset:(CGFloat)offset;
 - (NSInteger)lineOfCharacter:(NSUInteger)i inString:(NSString *)s;
 - (NSUInteger)characterAtStartOfLine:(NSInteger)line inString:(NSString *)s;
 - (NSUInteger)markdownCharacterForSourceLine:(NSInteger)line;

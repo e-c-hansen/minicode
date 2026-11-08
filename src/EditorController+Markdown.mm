@@ -210,6 +210,36 @@ static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *an
     MCScrollTextViewToY(self.editorScroll, self.textView, y);
 }
 
+// Character `i`'s line `offset` points below the top of the pane (a tab
+// shown again, the zoom). Laid out a screen past it too, or the scroll stops
+// where the layout does, with that character at the bottom of the pane.
+// With non-contiguous layout (large-file mode) not from the top: 300,000
+// lines of a 25 MB file took 13 s of the main thread to show again. Its
+// rects are estimates that laying out around them can move, so the
+// character is placed again until it stays put.
+- (void)scrollEditorToCharacter:(NSUInteger)i offset:(CGFloat)offset {
+    NSTextView *tv = self.textView;
+    const NSUInteger n = tv.string.length;
+    if (n == 0) return;
+    const NSUInteger at = MIN(i, n - 1);
+    NSRect r = [self textRectForCharacter:at];
+    const BOOL estimated = tv.layoutManager.allowsNonContiguousLayout;
+    const CGFloat screen = NSHeight(self.editorScroll.contentView.bounds);
+    for (int pass = 0; pass < 4 && !NSIsEmptyRect(r); pass++) {
+        const CGFloat from = estimated ? MAX(0, NSMinY(r) - screen) : 0;
+        if (!MCUsesTextKit2(tv))
+            [tv.layoutManager ensureLayoutForBoundingRect:
+                NSMakeRect(0, from, CGFLOAT_MAX, NSMaxY(r) + 2 * screen - from)
+                                          inTextContainer:tv.textContainer];
+        if (estimated) r = [self textRectForCharacter:at];
+        [self scrollEditorToY:NSMinY(r) - offset];
+        if (!estimated) break;
+        const NSRect now = [self textRectForCharacter:at];
+        if (NSMinY(now) == NSMinY(r)) break;
+        r = now;
+    }
+}
+
 - (NSInteger)lineOfCharacter:(NSUInteger)i inString:(NSString *)s {
     NSInteger line = 0;
     const NSUInteger end = MIN(i, s.length);

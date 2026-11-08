@@ -61,6 +61,14 @@ struct MCOverlay {
         self.textView.editable = YES;
     }
     if (_layoutHeldTextBlocks) [self forgetTextBlockLayout];
+    // Large-file mode lays out only what it shows (non-contiguous layout):
+    // a place far down the text, the tab's own when shown again, a search
+    // hit or Go to Line, then lays out a screen there instead of every line
+    // above it (13 s of the main thread at line 300,000 of a 25 MB file).
+    // Its rects are estimates until the lines above are laid out, which
+    // costs nothing the mode keeps (no folds, no bracket boxes, no
+    // squiggles). Everything else stays contiguous, so its rects are exact.
+    self.textView.layoutManager.allowsNonContiguousLayout = [self largeFileFeaturesOff];
     [self.textView.textStorage setAttributedString:attr];
     self.textView.typingAttributes = base;      // typed text stays monospaced
     self.textView.editable = YES;
@@ -109,10 +117,12 @@ struct MCOverlay {
 // is sent as an edit (detachDocument), as for any text replaced on show.
 - (void)makeEditorReadOnly {
     NSTextView *tv = self.textView;
-    if (tv.editable && tv.textStorage.length > (1u << 20)) {
+    NSLayoutManager *lm = tv.layoutManager;
+    if ((tv.editable || lm.allowsNonContiguousLayout) && tv.textStorage.length > (1u << 20)) {
         _liveHighlight = NO;
         [tv.textStorage setAttributedString:[NSAttributedString new]];
     }
+    lm.allowsNonContiguousLayout = NO;   // only a large file's source has it (displaySourceEditable)
     tv.editable = NO;
 }
 
