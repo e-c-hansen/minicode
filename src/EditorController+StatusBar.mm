@@ -375,6 +375,10 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                         key2:[self hk:@"workbench.action.terminal.focusPrevious"] label2:@"Previous" state:nil];
         [self appendHintsRow:s key:[self hk:@"workbench.action.terminal.kill"] label:@"Close terminal"
                         key2:nil label2:nil state:nil];
+        [self appendHintsRow:s key:[self hk:@"workbench.action.terminal.resizePaneLeft"]
+                       label:@"Resize pane left"
+                        key2:[self hk:@"workbench.action.terminal.resizePaneUp"]
+                      label2:@"Up (right, down too)" state:nil];
         [self appendHintsRow:s key:@"⌘ click" label:@"Open a file:line or URL in the terminal"
                         key2:nil label2:nil state:nil];
         [self appendHintsRow:s key:[self hk:@"actions.find"] label:@"Find in the terminal"

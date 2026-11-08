@@ -73,6 +73,10 @@
 - (void)toggleTerminal:(id)sender;    // Ctrl+` bottom terminal dock
 - (void)newTerminal:(id)sender;       // Ctrl+Shift+` a terminal in a new tab
 - (void)splitTerminal:(id)sender;     // Cmd+\ a terminal beside the active one
+- (void)splitTerminalDown:(id)sender; // a terminal below the active one
+- (void)renameTerminal:(id)sender;    // Rename Terminal… the active terminal
+- (void)moveTerminalLeft:(id)sender;  // the shown terminal tab one place left
+- (void)moveTerminalRight:(id)sender; // and right
 - (void)nextTerminal:(id)sender;      // Option+Cmd+] across panes and tabs
 - (void)previousTerminal:(id)sender;  // Option+Cmd+[
 - (void)closeTerminal:(id)sender;     // Ctrl+Shift+W the active terminal

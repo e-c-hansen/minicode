@@ -392,6 +392,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)openTerminalLink:(MCTermLink *)link;
 - (void)openTerminalLinkNow:(MCTermLink *)link;
 - (void)makeBrowserWithHome:(NSString *)home;
+// Rename Terminal… and Move Terminal Left and Right can act.
+- (BOOL)validateTerminalTabCommand:(NSMenuItem *)item;
+- (BOOL)resizeTerminalDockBy:(CGFloat)delta;
 @end
 
 // EditorController+EditCommands.mm: Indent and Outdent Lines, Insert Line

@@ -115,6 +115,9 @@ extern NSNotificationName const MCTerminalDidCloseNotification;
 // A title given from outside (`minicode term --title`), shown in place of
 // the one above; nil for none.
 @property(nonatomic, copy) NSString *fixedTitle;
+// The name the user gave it (Rename Terminal…), shown in place of both until
+// cleared with an empty name; nil for none.
+@property(nonatomic, copy) NSString *userTitle;
 @property(nonatomic, readonly, copy) NSString *directory;   // the shell's cwd
 @property(nonatomic, copy) void (^onTitleChange)(void);
 // Types a command as if it were entered in the input line, so it shows and

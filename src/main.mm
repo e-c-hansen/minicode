@@ -593,6 +593,10 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
 - (void)newTerminal:(id)sender     { [[self current] newTerminal:sender]; }
 - (void)splitTerminal:(id)sender   { [[self current] splitTerminal:sender]; }
+- (void)splitTerminalDown:(id)sender { [[self current] splitTerminalDown:sender]; }
+- (void)renameTerminal:(id)sender  { [[self current] renameTerminal:sender]; }
+- (void)moveTerminalLeft:(id)sender { [[self current] moveTerminalLeft:sender]; }
+- (void)moveTerminalRight:(id)sender { [[self current] moveTerminalRight:sender]; }
 - (void)nextTerminal:(id)sender    { [[self current] nextTerminal:sender]; }
 - (void)previousTerminal:(id)sender { [[self current] previousTerminal:sender]; }
 - (void)closeTerminal:(id)sender   { [[self current] closeTerminal:sender]; }
@@ -1484,6 +1488,10 @@ static void BuildMenu(void) {
     [termMenu addItemWithTitle:@"Split Terminal"
                         action:@selector(splitTerminal:)
                  keyEquivalent:@"\\"];
+    // A terminal below the active one, in its column (no key, as VS Code).
+    [termMenu addItemWithTitle:@"Split Terminal Down"
+                        action:@selector(splitTerminalDown:)
+                 keyEquivalent:@""];
     NSMenuItem *nextTerm =
         [[NSMenuItem alloc] initWithTitle:@"Next Terminal"
                                    action:@selector(nextTerminal:)
@@ -1524,6 +1532,39 @@ static void BuildMenu(void) {
     [termMenu addItemWithTitle:@"Copy Last Command Output"
                         action:@selector(copyLastCommandOutput:)
                  keyEquivalent:@""];
+    [termMenu addItem:[NSMenuItem separatorItem]];
+    // The shown tab's active terminal: a name of the user's that wins over
+    // the program's title, and the tab's place in the strip (a drag there
+    // does the same). No keys, as in VS Code.
+    [termMenu addItemWithTitle:@"Rename Terminal…"
+                        action:@selector(renameTerminal:)
+                 keyEquivalent:@""];
+    [termMenu addItemWithTitle:@"Move Terminal Left"
+                        action:@selector(moveTerminalLeft:)
+                 keyEquivalent:@""];
+    [termMenu addItemWithTitle:@"Move Terminal Right"
+                        action:@selector(moveTerminalRight:)
+                 keyEquivalent:@""];
+    // VS Code's Ctrl+Cmd+arrows, answered by the terminal panel with the
+    // keyboard in one of its terminals (MCTerminalPanel resizeTerminalPane:),
+    // so elsewhere they are off. The tag is the direction.
+    {
+        NSString *const titles[] = {@"Resize Terminal Pane Left", @"Resize Terminal Pane Right",
+                                    @"Resize Terminal Pane Up", @"Resize Terminal Pane Down"};
+        const unichar arrows[] = {NSLeftArrowFunctionKey, NSRightArrowFunctionKey,
+                                  NSUpArrowFunctionKey, NSDownArrowFunctionKey};
+        for (int i = 0; i < 4; i++) {
+            NSMenuItem *resize =
+                [[NSMenuItem alloc] initWithTitle:titles[i]
+                                           action:@selector(resizeTerminalPane:)
+                                    keyEquivalent:[NSString stringWithCharacters:&arrows[i]
+                                                                          length:1]];
+            resize.keyEquivalentModifierMask =
+                NSEventModifierFlagControl | NSEventModifierFlagCommand;
+            resize.tag = i + 1;
+            [termMenu addItem:resize];
+        }
+    }
     [termMenu addItem:[NSMenuItem separatorItem]];
     // Not Cmd+Return, which commits in the git panel's message box.
     NSMenuItem *runFile =
