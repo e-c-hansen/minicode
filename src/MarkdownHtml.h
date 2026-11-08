@@ -12,7 +12,10 @@
 // fetches nothing). Pictures keep their addresses as written when those are
 // relative, https or data:image; any other address shows the alt text.
 // Links keep relative, #, http, https and mailto addresses; any other
-// scheme (javascript: and the like) leaves the text without a link. All
+// scheme (javascript: and the like) leaves the text without a link. The
+// scheme is read as a browser reads it (leading and trailing controls and
+// spaces stripped, tabs and line breaks removed anywhere, and again with
+// character references decoded), so " java\tscript:" is javascript:. All
 // text is escaped; the page carries a small stylesheet of its own that
 // follows the reader's light or dark appearance.
 #pragma once

@@ -1565,7 +1565,11 @@ view is disposed (on `unrealize`), or dispose loops forever.
   heading anchors, lists rebuilt from `listDepth`/`quoteIndent`/`quoteDepth`
   (a `gap` outside a quote ends the quotes open), footnotes in a `<section>`,
   math as `\(...\)` text. Links keep only relative, #, http(s) and mailto
-  addresses, pictures relative, https and data:image. The golden page is
+  addresses, pictures relative, https and data:image, the scheme read as a
+  browser reads it (leading and trailing controls and spaces stripped, tabs
+  and line breaks removed, and again with references decoded and every
+  control dropped; every reading must pass): `&#9;javascript:` was a
+  javascript: link to the browser. The golden page is
   `tests/markdown/corpus.html`: after a deliberate change,
   `MC_WRITE_GOLDEN=1 ./build/run_tests` writes it again; read the diff.
   The Mac writes it through the atomic writer after a save panel, or where

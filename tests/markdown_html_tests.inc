@@ -67,6 +67,26 @@ static void testMarkdownHtml() {
         CHECK(body("[x](javascript:alert(1))\n") == "<p>x</p>\n");
         CHECK(body("[x](JavaScript:alert(1))\n") == "<p>x</p>\n");
         CHECK(has(body("<someone@example.org>\n"), "href=\"mailto:someone@example.org\""));
+        // A browser strips leading and trailing controls and spaces and
+        // removes tabs and line breaks anywhere before it reads the scheme,
+        // so these are javascript: links too and are left out (round-6
+        // documents defect 2).
+        for (const char *md : {"[x](&#9;javascript:alert(1))\n", "[x](< javascript:alert(1)>)\n",
+                               "[x](<java\tscript:alert(1)>)\n", "[x](&#x09;javascript:alert(1))\n",
+                               "[x](&#X9;JAVASCRIPT:alert(1))\n", "[x](&Tab;javascript:alert(1))\n",
+                               "[x](<\x01javascript:alert(1)>)\n", "[x](<\x1f\x02 javascript:x>)\n",
+                               "[x](java&#10;script:x)\n", "[x](<java&#13;script:x>)\n",
+                               "[x](javascript&colon;x)\n", "[x](&#32;JaVaScRiPt:x)\n",
+                               "[x](<jav\tas\ncript:x>)\n", "[x](vbscript:msgbox(1))\n",
+                               "[x](VBScript:x)\n", "[x](data:text/html,<b>x</b>)\n",
+                               "[x](&#9;data:text/html;base64,PGI+)\n", "[x](file:///etc/passwd)\n",
+                               "<a href=\" javascript:x\">x</a>\n", "<a href=\"\tjavascript:x\">x</a>\n"})
+            CHECK(body(md).find("href") == std::string::npos);
+        // What a browser reads as relative, http, https or mailto stays.
+        CHECK(has(body("[x](<  https://x.org/>)\n"), "<a href=\"  https://x.org/\">"));
+        CHECK(has(body("[x](HTTPS://x.org)\n"), "href=\"HTTPS://x.org\""));
+        CHECK(has(body("[x](notes/a:b.md)\n"), "href=\"notes/a:b.md\""));
+        CHECK(has(body("[x](1a:b)\n"), "href=\"1a:b\""));
 
         // Pictures: relative, https and data:image keep their addresses.
         CHECK(has(body("![a pic](img/p.png)\n"), "<img src=\"img/p.png\" alt=\"a pic\">"));
@@ -74,6 +94,13 @@ static void testMarkdownHtml() {
         CHECK(has(body("![d](data:image/png;base64,AAAA)\n"), "src=\"data:image/png;base64,AAAA\""));
         CHECK(body("![plain](http://x.org/p.png)\n") == "<p>plain</p>\n");
         CHECK(body("![f](file:///etc/p.png)\n") == "<p>f</p>\n");
+        // Read as a browser reads it, as links are.
+        for (const char *md : {"![f](&#9;javascript:x)\n", "![f](< javascript:x>)\n",
+                               "![f](<java\tscript:x>)\n", "![f](&Tab;file:///etc/p.png)\n",
+                               "![f](<\x01http://x.org/p.png>)\n", "![f](&#9;data:text/html,x)\n",
+                               "![f](<da\tta:text/html,x>)\n", "![f](<ht\ntp://x.org/p.png>)\n"})
+            CHECK(body(md).find("<img") == std::string::npos);
+        CHECK(has(body("![d](< data:image/png;base64,AAAA>)\n"), "<img src=\" data:image/png"));
 
         // Lists nest; an ordered one keeps its start; items stay together.
         CHECK(body("- a\n  - b\n- c\n") ==
@@ -175,5 +202,120 @@ static void testMarkdownHtml() {
                        out.find("href=\"javascript") == std::string::npos;
         }
         CHECK(allBalanced && noScript);
+
+        // Random addresses spelled to slip past a filter (controls, spaces,
+        // entity-coded tabs and line breaks before and inside the scheme,
+        // mixed case, angle brackets, HTML anchors): no href or src on the
+        // page has a scheme off the allow list as a browser reads it. The
+        // browser's reading is written out here again, apart from the
+        // export's: the attribute's references decoded, leading and
+        // trailing C0 controls and spaces stripped, tabs and line breaks
+        // removed, then a letter and scheme characters up to a colon.
+        auto browserScheme = [](std::string v) {
+            std::string d;
+            for (size_t i = 0; i < v.size();) {
+                if (v[i] == '&') {
+                    const size_t semi = v.find(';', i);
+                    if (semi != std::string::npos) {
+                        const std::string ref = v.substr(i + 1, semi - i - 1);
+                        long cp = -1;
+                        if (ref == "amp") cp = '&';
+                        else if (ref == "lt") cp = '<';
+                        else if (ref == "gt") cp = '>';
+                        else if (ref == "quot") cp = '"';
+                        else if (ref.size() > 1 && ref[0] == '#')
+                            cp = (ref[1] == 'x' || ref[1] == 'X') ? std::strtol(ref.c_str() + 2, nullptr, 16)
+                                                                   : std::strtol(ref.c_str() + 1, nullptr, 10);
+                        if (cp >= 0) {
+                            d += cp < 0x80 ? (char)cp : '\x01';
+                            i = semi + 1;
+                            continue;
+                        }
+                    }
+                }
+                d += v[i++];
+            }
+            size_t a = 0, b = d.size();
+            while (a < b && (unsigned char)d[a] <= 0x20) a++;
+            while (b > a && (unsigned char)d[b - 1] <= 0x20) b--;
+            std::string u;
+            for (size_t k = a; k < b; k++)
+                if (d[k] != '\t' && d[k] != '\n' && d[k] != '\r') u += d[k];
+            if (u.empty() || !std::isalpha((unsigned char)u[0])) return std::make_pair(std::string(), u);
+            for (size_t k = 1; k < u.size(); k++) {
+                if (u[k] == ':') {
+                    std::string s = u.substr(0, k);
+                    for (char &c : s) c = (char)std::tolower((unsigned char)c);
+                    return std::make_pair(s, u);
+                }
+                if (!std::isalnum((unsigned char)u[k]) && u[k] != '+' && u[k] != '-' && u[k] != '.')
+                    break;
+            }
+            return std::make_pair(std::string(), u);
+        };
+        auto attributeValues = [](const std::string &page, const std::string &name) {
+            std::vector<std::string> values;
+            const std::string open = " " + name + "=\"";
+            for (size_t at = page.find(open); at != std::string::npos; at = page.find(open, at + 1)) {
+                const size_t from = at + open.size(), to = page.find('"', from);
+                if (to == std::string::npos) break;
+                values.push_back(page.substr(from, to - from));
+            }
+            return values;
+        };
+        static const char *const kPrefixes[] = {"", " ", "  ", "&#9;", "&#x09;", "&#X9;", "&Tab;",
+                                                "&#10;", "&#13;", "&#32;", "&NewLine;", "\x01",
+                                                "\x1f", "\x7f", "&#0;", "&#1;", "&#x1F;", "\t"};
+        static const char *const kSchemes[] = {"javascript", "vbscript", "data", "file", "http",
+                                               "https", "mailto", "livescript", "jar"};
+        static const char *const kInside[] = {"\t", "&#9;", "&#10;", "&#13;", "&Tab;", "\n", ""};
+        int links = 0, pictures = 0;
+        bool schemesAllowed = true;
+        for (int round = 0; round < 3000; round++) {
+            auto next = [&] {
+                seed = seed * 1103515245u + 12345u;
+                return seed >> 16;
+            };
+            std::string addr = kPrefixes[next() % (sizeof kPrefixes / sizeof *kPrefixes)];
+            std::string scheme = kSchemes[next() % (sizeof kSchemes / sizeof *kSchemes)];
+            for (char &c : scheme)
+                if (next() % 2) c = (char)std::toupper((unsigned char)c);
+            const size_t cut = next() % (scheme.size() + 1);
+            const char *inside = next() % 3 ? "" : kInside[next() % (sizeof kInside / sizeof *kInside)];
+            addr += scheme.substr(0, cut) + inside + scheme.substr(cut);
+            addr += next() % 4 ? ":" : (next() % 2 ? "&colon;" : "&#58;");
+            addr += next() % 2 ? "alert(1)" : "image/png;base64,AA";
+            if (next() % 3 == 0) addr += kPrefixes[next() % (sizeof kPrefixes / sizeof *kPrefixes)];
+            std::string md;
+            switch (next() % 4) {
+            case 0: md = "[t](" + addr + ")\n"; break;
+            case 1: md = "[t](<" + addr + ">)\n"; break;
+            case 2: md = "![t](<" + addr + ">)\n"; break;
+            default: md = "<a href=\"" + addr + "\">t</a>\n"; break;
+            }
+            const std::string out = page(md, "f");
+            for (const std::string &v : attributeValues(out, "href")) {
+                links++;
+                const auto read = browserScheme(v);
+                const std::string &s = read.first;
+                if (!(s.empty() || s == "http" || s == "https" || s == "mailto")) {
+                    std::printf("  href=\"%s\" is read as %s: (from %s)\n", v.c_str(), s.c_str(), md.c_str());
+                    schemesAllowed = false;
+                }
+            }
+            for (const std::string &v : attributeValues(out, "src")) {
+                pictures++;
+                const auto read = browserScheme(v);
+                const std::string &s = read.first;
+                std::string head = read.second.substr(0, 11);
+                for (char &c : head) c = (char)std::tolower((unsigned char)c);
+                if (!(s.empty() || s == "https" || (s == "data" && head == "data:image/"))) {
+                    std::printf("  src=\"%s\" is read as %s: (from %s)\n", v.c_str(), s.c_str(), md.c_str());
+                    schemesAllowed = false;
+                }
+            }
+        }
+        CHECK(schemesAllowed);
+        CHECK(links > 100 && pictures > 50);   // the allowed spellings still come through
     }
 }
