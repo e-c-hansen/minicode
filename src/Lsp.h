@@ -378,6 +378,24 @@ void MCForgetFolderToolsConsent(NSString *root);
 @property(nonatomic, readonly) NSView *renameView;
 @end
 
+// ---- Format Document through a server (Lsp+Formatting.mm)
+@interface LspSession (Formatting)
+// Does a running server of the file on show format it
+// (documentFormattingProvider)? Asked only for a file no formatter is
+// planned for (Formatter::serverMayFormat).
+- (BOOL)canFormatDocument;
+// textDocument/formatting for the file on show, or rangeFormatting for
+// `selection` (length 0: the whole file) when the server formats ranges;
+// its edits go in as one undo step, "Format Document", unsaved. NO (and
+// `done` never called) when no running server formats the file. Otherwise
+// `done` is called once on the main thread: with nil once the edit is in
+// (or the text changed meanwhile, so the answer was dropped), else with a
+// note: already formatted, or (`error`) the server's refusal, an edit that
+// could not be applied, or no answer within 5 seconds.
+- (BOOL)formatDocumentInRange:(NSRange)selection
+                         done:(void (^)(NSString *note, BOOL error))done;
+@end
+
 // ---- the workspace edit applier (Lsp+WorkspaceEdit.mm)
 @interface LspSession (WorkspaceEdit)
 // Edits to files open in tabs (Replace in Folder), made as rename makes

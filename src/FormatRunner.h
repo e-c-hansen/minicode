@@ -28,6 +28,12 @@
 // Ask, store the answer, and format again.
 @property(nonatomic, assign) BOOL needsConsent;
 @property(nonatomic, copy) NSString *consentFolder;
+// Nothing ran because no formatter is planned for the file at all
+// (Formatter::serverMayFormat): its kind of file has none, or nothing
+// configures one and its language has no default. A running language
+// server that formats may be asked instead; `error` is the note for when
+// none does. Set with `unavailable`.
+@property(nonatomic, assign) BOOL serverMayFormat;
 @end
 
 // Format `text`, the current contents of the file at `path` (saved or not),

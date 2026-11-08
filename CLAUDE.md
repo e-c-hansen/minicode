@@ -1036,7 +1036,8 @@ container (PanelHost, laid out by hand in layoutContainer)
 ## Formatting (Mac)
 
 - Shift+Option+F pipes the buffer through an external formatter.
-  `format.<python|cpp|go|rust|shell>` (`{file}`, `off`) runs as written. Else
+  `format.<python|cpp|go|rust|shell|markdown|json|yaml|css|latex>` (`{file}`,
+  `off`) runs as written. Else
   the nearest folder's config (up to the open folder or a `.git`) decides:
   `[tool.pyink]`, `.style.yapf`, `[yapf]` in setup.cfg, `[tool.black]`,
   ruff.toml, .ruff.toml or any `[tool.ruff]` (lint settings count, but pyink,
@@ -1053,7 +1054,20 @@ container (PanelHost, laid out by hand in layoutContainer)
   `clang-format --style=file --fallback-style=Google`, pyink (`--line-length 80
   --pyink-use-majority-quotes`, Google's published 4-space guide) then yapf
   `--style=google`, gofmt, rustfmt with Cargo.toml's edition, `shfmt -i 2 -ci
-  -bn`. No LSP formatting fallback (clangd and pylsp format in other styles).
+  -bn`, `latexindent -g /dev/null` (with `-l={config}`, the project's
+  `.latexindent.yaml` or `localSettings.yaml` by path, since the text comes
+  on stdin). Markdown, JSON, YAML and CSS (scss, less) have no default: only
+  the project's Prettier (Biome for .json, .jsonc, .css) or a format.<lang>
+  command formats them, so their plan is often empty.
+- **The server fallback** (2026-11-07, `Lsp+Formatting.mm`): only when
+  nothing is planned at all (`Formatter::serverMayFormat`: no formatter for
+  the extension, or an empty plan with no setting), the first running
+  server offering `documentFormattingProvider` (`Lsp::routeFormatting`,
+  main first, rangeFormatting for a selection where offered) formats it
+  through the workspace-edit applier as one "Format Document" step; 5 s
+  limit. Never for a language with a default (clangd, pylsp and Ruff format
+  in other styles), a configured project tool that is missing, `off`, or a
+  settings command. format.on-save covers such files too.
 - `MCFormatText`: `MCFindProgram` (never xcrun shims), venv bins first for
   Python; stdin to stdout in the file's folder, wide PATH, `PYTHONUTF8=1`, 10 s
   then SIGTERM and SIGKILL. A non-zero exit, empty output or non-UTF-8 leaves
