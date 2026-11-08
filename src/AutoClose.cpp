@@ -291,7 +291,9 @@ bool HighlighterContext::lexed(size_t i) const {
     if (i > hl_.length()) return false;
     const size_t line = hl_.lineOf(i);
     const size_t end = line + 1 < hl_.lineCount() ? hl_.lineStart(line + 1) : hl_.length();
-    return end - hl_.lineStart(line) <= kMaxTokenizationLineLength + 1;
+    // The break's own length, as the highlighter counts it: a CRLF line of
+    // exactly the limit is lexed.
+    return lineIsLexed(*src_, hl_.lineStart(line), end);
 }
 
 std::vector<Span> HighlighterContext::nonCode(size_t lo, size_t hi) const {

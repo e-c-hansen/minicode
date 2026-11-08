@@ -108,6 +108,13 @@ public:
     virtual void read(size_t pos, size_t len, Ch* out) const = 0;
 };
 
+// Whether the line [start, end) of src (its break included, as the
+// highlighter keeps lines) is short enough to be lexed: at most
+// kMaxTokenizationLineLength units with its break ('\n', "\r\n", a lone
+// '\r', or U+2029, three bytes in UTF-8) not counted.
+template <class Ch>
+bool lineIsLexed(const TextSource<Ch>& src, size_t start, size_t end);
+
 // A TextSource over a string the caller owns.
 template <class Ch>
 class StringSource : public TextSource<Ch> {

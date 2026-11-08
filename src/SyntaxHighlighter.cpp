@@ -1670,3 +1670,19 @@ IncrementalHighlighter<Ch>::edit(const TextSource<Ch>& src, size_t pos,
 
 template class IncrementalHighlighter<char>;
 template class IncrementalHighlighter<char16_t>;
+
+template <class Ch>
+bool lineIsLexed(const TextSource<Ch>& src, size_t start, size_t end) {
+    if (end <= start) return true;
+    const size_t len = end - start;
+    if (len <= kMaxTokenizationLineLength) return true;
+    if (len > kMaxTokenizationLineLength + 3) return false;
+    Ch tail[3];
+    const size_t k = std::min<size_t>(3, len);
+    src.read(end - k, k, tail);
+    bool foreign;
+    return len - breakAtEnd(tail, k, &foreign) <= kMaxTokenizationLineLength;
+}
+
+template bool lineIsLexed<char>(const TextSource<char>&, size_t, size_t);
+template bool lineIsLexed<char16_t>(const TextSource<char16_t>&, size_t, size_t);
