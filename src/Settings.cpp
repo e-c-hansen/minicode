@@ -1121,8 +1121,11 @@ bool Settings::apply(const std::string& key, const std::string& value,
         std::string lang = key.substr(7);
         for (const std::string& known : formatLanguages())
             if (lang == known) { formatCommands_[lang] = value; return true; }
-        error = "unknown setting '" + key + "' (formatters are format.python, "
-                "format.cpp, format.go, format.rust and format.shell)";
+        std::string known;
+        const std::vector<std::string>& langs = formatLanguages();
+        for (size_t i = 0; i < langs.size(); i++)
+            known += (i == 0 ? "" : i + 1 == langs.size() ? ", and " : ", ") + ("format." + langs[i]);
+        error = "unknown setting '" + key + "' (formatters are " + known + ")";
         return false;
     }
 
@@ -1333,8 +1336,9 @@ std::string Settings::runTemplate(const std::string& extension) const {
 const std::vector<std::string>& Settings::formatLanguages() {
     // The same keys as Formatter::languages(), which a test checks; kept
     // here so the settings parser needs nothing else from the core.
-    static const std::vector<std::string> langs = {"python", "cpp", "go", "rust",
-                                                   "shell"};
+    static const std::vector<std::string> langs = {"python", "cpp",  "go",   "rust",
+                                                   "shell",  "markdown", "json", "yaml",
+                                                   "css",    "latex"};
     return langs;
 }
 
@@ -1598,7 +1602,13 @@ const char* Settings::defaultFileText() {
 # style is used: clang-format for C, C++, Objective-C, Java, JavaScript,
 # TypeScript, Protocol Buffers and C#; pyink, or yapf --style=google when
 # pyink is not installed; gofmt; rustfmt with the edition from Cargo.toml;
-# shfmt. Python tools are looked for in the project's .venv or venv first.
+# shfmt; latexindent for LaTeX. Python tools are looked for in the project's
+# .venv or venv first. Markdown, JSON, YAML and CSS are formatted only in
+# projects set up for Prettier (Biome too for JSON and CSS), or by a
+# command given here (format.markdown, format.json, format.yaml, format.css)
+# such as prettier --stdin-filepath {file}. A file that nothing here
+# formats is formatted by its language server, when a running one can
+# (taplo for TOML, say); a file with a formatter of its own never is.
 # Giving a command here runs exactly that, whatever the project says; {file}
 # stands for the file's path. off leaves a language alone. Google's internal
 # 2-space Python is pyink --pyink-indentation 2 with the options below.
@@ -1609,6 +1619,7 @@ const char* Settings::defaultFileText() {
 # format.go = gofmt
 # format.rust = rustfmt --edition 2021
 # format.shell = shfmt -i 2 -ci -bn --filename {file}
+# format.latex = latexindent -g /dev/null
 # Format the file each time Cmd+S saves it.
 # format.on-save = false
 # The Python the Python server analyses your code with, so it finds the

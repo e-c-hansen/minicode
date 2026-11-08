@@ -115,13 +115,13 @@ const std::vector<Tool>& formatters() {
         // A project's own copy in node_modules/.bin is used first, so these
         // matter only where the project's packages are not installed.
         {"prettier",
-         "Prettier formats JavaScript and TypeScript projects set up for it with "
-         "Format Document (Shift+Option+F).",
+         "Prettier formats JavaScript, TypeScript, Markdown, JSON, YAML, and CSS in "
+         "projects set up for it with Format Document (Shift+Option+F).",
          "https://prettier.io",
          {{"npm install -g prettier", "npm"}, {"brew install prettier", "brew"}}},
         {"biome",
-         "Biome formats JavaScript and TypeScript projects set up for it with "
-         "Format Document (Shift+Option+F).",
+         "Biome formats JavaScript, TypeScript, JSON, and CSS in projects set up for it "
+         "with Format Document (Shift+Option+F).",
          "https://biomejs.dev",
          {{"npm install -g @biomejs/biome", "npm"}, {"brew install biome", "brew"}}},
         {"gofmt", "gofmt, which comes with Go, formats Go with Format Document "
@@ -134,6 +134,10 @@ const std::vector<Tool>& formatters() {
          "https://github.com/mvdan/sh",
          {{"brew install shfmt", "brew"},
           {"go install mvdan.cc/sh/v3/cmd/shfmt@latest", "go"}}},
+        {"latexindent",
+         "latexindent formats LaTeX with Format Document (Shift+Option+F).",
+         "https://latexindentpl.readthedocs.io",
+         {{"brew install latexindent", "brew"}}},
     };
     return t;
 }
