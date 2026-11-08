@@ -120,10 +120,13 @@ MC_GUI_SUITE(semantic_tokens) {
               @"result": @{@"resultId": @"2",
                            @"edits": @[@{@"start": @16, @"deleteCount": @1,
                                          @"data": @[@12]}]}}]};
-    __block NSUInteger answers = 0;
+    __block NSUInteger answers = 0, requestsBefore = 0;
 
     MCGuiStep(@"a server with semantic tokens", ^{
         c = MCGuiController();
+        // The shared window's session may have asked before, for a suite
+        // that ran earlier (after language, it had once): count from here.
+        requestsBefore = Session(c).semanticRequests;
         MCGuiWriteFile(file, original);
         NSString *cmd = MCGuiFakeLsp(@"semantic", script, nil, nil);
         MCGuiSetSettings([NSString stringWithFormat:
@@ -144,7 +147,7 @@ MC_GUI_SUITE(semantic_tokens) {
         GCHECK_EQ_STR(ColorAt(c, Nth(s, @"total", 0)), kPlain);
         NSArray *full = MCGuiFakeLspReceived(@"semantic", @"textDocument/semanticTokens/full");
         GCHECK(full.count == 1);
-        GCHECK(Session(c).semanticRequests == 1);
+        GCHECK(Session(c).semanticRequests - requestsBefore == 1);
         answers = Session(c).semanticAnswers;
         NSTextView *tv = Text(c);
         [tv scrollRangeToVisible:NSMakeRange(Nth(s, @"total", 0), 5)];
