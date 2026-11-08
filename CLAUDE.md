@@ -624,6 +624,20 @@ container (PanelHost, laid out by hand in layoutContainer)
   character needed. `textDidChange:`'s copy into `sourceText` shares characters
   (about a microsecond) and the backups rely on a new object per change;
   measured, leave it.
+- **Trap: a Markdown page's text blocks outlive it** (2026-11-07). The
+  preview shares the editor's view, and once its quotes, code boxes, h1/h2
+  rules or tables are laid out the layout manager keeps a block table
+  (`_blockRunsArray`) after the text is replaced; while it exists TextKit
+  recalculates the used rect after every edit over every laid-out line
+  fragment instead of from the first and last (`_enableTextViewResizing`,
+  `_recalculateUsageForTextContainerAtIndex:`): 1.5 to 10 ms a key at
+  100,000 lines, 16 to 48 ms at 25 MB. A fresh layout manager or text
+  container does not help while the page is still in the storage.
+  `renderMarkdown:` marks it (`layoutHeldTextBlocks`) and
+  `displaySourceEditable` takes the layout manager off the empty storage
+  and puts it back (`forgetTextBlockLayout`), which drops the table and
+  keeps the object, its delegate and settings. The keystroke and
+  large_file suites type in a window a page used.
 - **Programmatic edits** go through `CodeTextView replaceRanges:withStrings:
   actionName:` (Lsp.h): `replaceSourceWithText:actionName:` (Format
   Document, the inline agent, a clean tab following the disk, a pending
@@ -731,14 +745,15 @@ container (PanelHost, laid out by hand in layoutContainer)
   `sizeToFit` to learn its width (5.5 s for 25 MB, nine tenths of it there).
   Known: a keystroke in a 5,000,000-character line costs about 0.35 s, all
   of it TextKit typesetting the paragraph again; the highlighter reads 3
-  units of it. Switching away from a large tab lays it all out once as the
-  line numbers hide (about 1.3 s at 25 MB). Open question: in the window
-  earlier suites had used, typing at the middle of the 25 MB file cost 16
-  to 48 ms a key, every sample in TextKit walking the laid-out line
-  fragments (`_recalculateUsageForTextContainerAtIndex:`), with the same
-  text laid out (`firstUnlaidCharacterIndex`) as in a fresh window, where
-  it cost 2.7 ms; the cause was not found, so large_file runs in a window
-  of its own.
+  units of it. Switching away from a large tab laid it all out as the line
+  numbers hid (1.3 to 5 s at 25 MB); `makeEditorReadOnly` (resetViewMode,
+  showActiveTab) now empties a text over 1 MB first (60 ms); what shows
+  next calls `documentOpened:` in the same turn, which drops the emptying
+  before it is sent (large_file checks no didChange goes).
+  Switching back still lays out to the place it kept (contiguous layout:
+  about 4 s for the middle of 25 MB). The 16 to 48 ms keys in a window
+  earlier suites had used were a Markdown page's text blocks (see "The
+  editor's text view").
 - **Trap: anything that lays out all of a large text stays.** Two did on
   every open after a file with diagnostics or a preview: `needsDisplay =
   YES` on the text view, which NSTextView answers by laying out every glyph
