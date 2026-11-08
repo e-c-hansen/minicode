@@ -143,12 +143,18 @@
 - (void)restyleChangedIn:(NSRange)range tokens:(const std::vector<Token> &)tokens
                inStorage:(NSTextStorage *)storage {
     const NSUInteger limit = NSMaxRange(range);
+    MCSourceStorage *source = [storage isKindOfClass:[MCSourceStorage class]]
+                                  ? (MCSourceStorage *)storage : nil;
     auto paint = ^(NSUInteger start, NSUInteger end, int style) {
         if (end <= start) return;
         NSDictionary *want = [self attributesForStyle:style];
         NSRange run;
-        NSDictionary *have = [storage attributesAtIndex:start longestEffectiveRange:&run
-                                                inRange:NSMakeRange(start, end - start)];
+        // As stored: an inlay hint's gap (SourceStorage.h) is no color to set.
+        NSDictionary *have = source
+            ? [source storedAttributesAtIndex:start longestEffectiveRange:&run
+                                      inRange:NSMakeRange(start, end - start)]
+            : [storage attributesAtIndex:start longestEffectiveRange:&run
+                                 inRange:NSMakeRange(start, end - start)];
         if (run.location <= start && NSMaxRange(run) >= end &&
             (have == want || [have isEqualToDictionary:want]))
             return;

@@ -362,6 +362,11 @@ static NSString *StateText(MCLspState state) {
     c.onWatchersChanged = [weakSelf] {
         dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf updateFileWatcher]; });
     };
+    // The server's inlay hints changed (workspace/inlayHint/refresh): asked
+    // again once the request it came in has been answered.
+    c.onInlayHintRefresh = [weakSelf] {
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf scheduleInlayHints:0]; });
+    };
     // $/progress: the status bar and the popover say what it is doing.
     c.onProgress = [weakSelf, weakServer] {
         MCLspServer *s = weakServer;
@@ -390,6 +395,7 @@ static NSString *StateText(MCLspState state) {
     e.state = MCLspStateRunning;
     [self changed];
     [self serverMayComplete:server];
+    [self scheduleInlayHints:0];
 }
 
 // A server began, reported or ended work. Coalesced to one redraw a

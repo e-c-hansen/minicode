@@ -1,6 +1,8 @@
 // CodeTextView.mm — Objective-C++. The editor's text view (see Lsp.h):
 // squiggles, hover, several carets, folds, the ruler and bracket boxes.
 #import "LspShared.h"
+#import "LspInlayHints.h"
+#import "SourceStorage.h"
 #include <os/log.h>
 
 // -------------------------------------------------------- CodeTextView
@@ -11,11 +13,13 @@
     NSTrackingArea *_hoverArea;
     MCMultiCarets *_multi;
     MCFolds *_folds;
+    MCInlayHints *_inlays;
     NSEvent *_keyEvent;   // the key being interpreted, during keyDown:
 }
 
 - (MCMultiCarets *)multiCarets { return _multi; }
 - (MCFolds *)folds { return _folds; }
+- (MCInlayHints *)inlayHints { return _inlays; }
 - (BOOL)multiCaretActive { return _multi.active; }
 
 // The designated initializer (initWithFrame: comes through it too), so a
@@ -25,6 +29,7 @@
     if ((self = [super initWithFrame:frame textContainer:container])) {
         _multi = [[MCMultiCarets alloc] initWithTextView:self];
         _folds = [[MCFolds alloc] initWithTextView:self];
+        _inlays = [[MCInlayHints alloc] initWithTextView:self];
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(storageEdited:)
                    name:NSTextStorageDidProcessEditingNotification
@@ -178,6 +183,7 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
     [super drawRect:dirty];
     if (_folds.hasFolds && self.editable)
         [_folds drawPlaceholdersInRect:dirty color:_bracketMatchColor ?: [NSColor grayColor]];
+    [_inlays drawInRect:dirty];
     [_multi drawInRect:dirty];
     if (_diagnostics.count == 0) return;
     NSRange visible = [self visibleCharacterRange];
@@ -549,6 +555,17 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
     }
     if ([_multi doCommand:selector]) return;
     [super doCommandBySelector:selector];
+}
+
+// What goes to a pasteboard (a copy, a drag, a service) is the text with
+// its own attributes: the inlay hints' gaps are left out of the rich text.
+- (BOOL)writeSelectionToPasteboard:(NSPasteboard *)pboard types:(NSArray<NSPasteboardType> *)types {
+    MCSourceStorage *ts = [self.textStorage isKindOfClass:[MCSourceStorage class]]
+                              ? (MCSourceStorage *)self.textStorage : nil;
+    ts.gapsHidden = YES;
+    BOOL ok = [super writeSelectionToPasteboard:pboard types:types];
+    ts.gapsHidden = NO;
+    return ok;
 }
 
 - (void)copy:(id)sender {

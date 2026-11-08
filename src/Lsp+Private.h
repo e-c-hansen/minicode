@@ -268,6 +268,12 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
 - (void)closePicker;
 @end
 
+@interface LspSession (InlayHints)
+- (void)startInlayHints;
+- (void)scheduleInlayHints:(NSTimeInterval)delay;
+- (void)clearInlayHints;
+@end
+
 @interface LspSession (WorkspaceEdit)
 - (NSString *)textOfPath:(NSString *)path uri:(const std::string &)uri;
 - (NSInteger)applyWorkspaceEdit:(const Lsp::WorkspaceEdit &)we

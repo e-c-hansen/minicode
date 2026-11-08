@@ -27,6 +27,7 @@
     _uri = nil;
     _changes.reset();
     [self forgetCompletionRequests];
+    [self clearInlayHints];
     _tv.diagnostics = @[];
 }
 
@@ -47,7 +48,10 @@
         _uri = servers.count ? NS(Lsp::uriFromPath(Std(RealPath(_path)))) : nil;
     }
     [self syncOpenDocuments];
-    if (_servers.count && _uri) [self paintDiagnostics];
+    if (_servers.count && _uri) {
+        [self paintDiagnostics];
+        [self scheduleInlayHints:0];
+    }
 }
 
 // Leaves the file on its server: the tab is still open. syncOpenDocuments
