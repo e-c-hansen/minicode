@@ -116,4 +116,40 @@ static void testPreviewScroll() {
         CHECK(markAt(late, 1) == -1);
         CHECK(markAt(Page{}, 3) == -1);
     }
+
+    GROUP("previewscroll:lazy");
+    {
+        // A long page asked about one stretch at a time: two marks, with
+        // the bottom only for the last, answer as the whole page does, so
+        // the page need be laid out (its tops known) only that far.
+        Page big;
+        std::vector<Mark> runs;
+        double top = 8;
+        for (int l = 0; l < 4000; l += 1 + (l * 7) % 5) {
+            runs.push_back({l, top});
+            top += 6 + (l * 13) % 40;
+        }
+        big.marks = marks(runs);
+        big.bottom = top + 50;
+        big.lines = 4010;
+        bool ok = true;
+        for (double l = 0; l <= 4012; l += 0.37) {
+            const Page part = around(big.marks, markAt(big, l), big.bottom, big.lines);
+            ok = ok && part.marks.size() <= 2 && near(yForLine(part, l), yForLine(big, l));
+        }
+        for (double y = 0; y <= big.bottom + 20; y += 3.1) {
+            // The mark at or above y, as the caller finds it from the layout.
+            int i = -1;
+            while (i + 1 < (int)big.marks.size() && big.marks[(size_t)(i + 1)].top <= y) i++;
+            const Page part = around(big.marks, i, big.bottom, big.lines);
+            ok = ok && near(lineForY(part, y), lineForY(big, y));
+        }
+        CHECK(ok);
+        // Tops that go back up are taken as the one before; nothing at all
+        // is an empty page.
+        const Page odd = around({{0, 50}, {3, 20}}, 0, 90, 5);
+        CHECK(odd.marks.size() == 2 && near(odd.marks[1].top, 50));
+        CHECK(around({}, 0, 10, 3).marks.empty());
+        CHECK(around(big.marks, -1, 1, 1).marks.size() == 1);
+    }
 }

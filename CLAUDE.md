@@ -135,7 +135,8 @@ goes here first, with tests; the GUI only displays it.
 
 - `SyntaxHighlighter` (about 200 grammars, `IncrementalHighlighter`),
   `MarkdownParser` (CommonMark plus GitHub, math, `lines()`), `MarkdownEdit`
-  (the block behind a preview click), `MarkdownTasks` (task lists), `MathTex`
+  (the block behind a preview click), `MarkdownPage` (a page in pieces, and
+  which survive an edit), `MarkdownHtml` (Export as HTML's page), `MarkdownTasks` (task lists), `MathTex`
   (the Markdown math batch), `MermaidDiagram` (```mermaid blocks for mmdc),
   `LatexDoc` (editable ranges of LaTeX source), `LatexScratch` (the
   preview's output folders and sibling records), `LatexLog` (tectonic's
@@ -1479,6 +1480,10 @@ view is disposed (on `unrealize`), or dispose loops forever.
   list, `MdRun::footnotes`) in the order `Notes::refer` numbers them;
   references are runs with `footnote`; `MdRun::anchor` names what `#fn-N` and
   `#fnref-N` land on (the Mac and Linux record them; Android does not yet).
+  A definition's contents are four columns in, as an item's past its
+  marker: a fence there is the note's code block, eight columns after a
+  blank line indented code (`codeIndent`); the ↩ links follow a note's last
+  code block on a line of their own.
   Quotes carry `quoteDepth` and, inside a list item, `quoteIndent`; a quote
   keeps its own list stack (`quoteList`), and a fence in an item its depth.
   Between blocks comes exactly one `"\n"`
@@ -1488,6 +1493,16 @@ view is disposed (on `unrealize`), or dispose loops forever.
   so the preview and a double-click agree. Tests: `md:*` (GFM's in
   `tests/markdown_gfm_tests.inc`), `tests/markdown/corpus.md`, and the
   `markdown_preview` GUI suite.
+- **Export as HTML…** (File menu, no key; 2026-11-08): `MarkdownHtml` (core,
+  `md:html-export`) writes a standalone page from the same runs: GitHub's
+  heading anchors, lists rebuilt from `listDepth`/`quoteIndent`/`quoteDepth`
+  (a `gap` outside a quote ends the quotes open), footnotes in a `<section>`,
+  math as `\(...\)` text. Links keep only relative, #, http(s) and mailto
+  addresses, pictures relative, https and data:image. The golden page is
+  `tests/markdown/corpus.html`: after a deliberate change,
+  `MC_WRITE_GOLDEN=1 ./build/run_tests` writes it again; read the diff.
+  The Mac writes it through the atomic writer after a save panel, or where
+  `MCHtmlExportPathChooser` says (the harness).
 - **The Mac's page** (+MarkdownRender): a paragraph's style comes from its
   first run; quotes and code blocks are `NSTextBlock`s, one object carried
   across a block's paragraphs so its bar or box is drawn once (a quote one
@@ -1511,10 +1526,26 @@ view is disposed (on `unrealize`), or dispose loops forever.
   `markdown` language command; 2026-11-07): `MarkdownSidePreview.{h,mm}` is
   the window's pane (its own read-only TextKit 1 view, the bar, its share,
   the 0.3 s re-render timer); `MCTab sidePreview` says whether a tab wants
-  it (in the session as `sidePreview` paths). The page comes from
-  `markdownPageFor:width:anchors:` (the full preview's builder, laid out for
-  the given width) and `finishMarkdownPage`, and re-renders through
-  `keepPlaceIn:scroll:whileRendering:`, both shared with the full preview.
+  it (in the session as `sidePreview` paths). **At scale** (2026-11-08):
+  the page is built in pieces (`MarkdownPage`, core, `md:page-*`: split at
+  line starts outside quotes, code and tables, where the builder's state
+  starts over) with the full preview's builder in three steps
+  (`beginMarkdownPageWidth:`, `markdownRuns:from:to:anchors:`,
+  `markdownNoteForRuns:`; `markdownPageFor:` is them over one piece). After
+  a pause the parse, the split and `MarkdownPage::match` against the page
+  on show run on a queue (`renderSidePreviewAfterTyping`); on the main
+  thread only unmatched pieces, and pieces still waiting for a picture,
+  formula or diagram (`keep`), are built and spliced in, a storage edit per
+  stretch, never the whole text (`renderSidePreviewFrom:keepingPlace:`,
+  `spliceSidePage:`). The pane's runs carry `MCMarkdownLine` objects, one a
+  line of a piece, so a kept piece's lines move without touching the text
+  (read them with `MCMarkdownLineOf`, which takes the full preview's
+  NSNumbers too; a task box's line comes from its run, not its link). A
+  page of another context (path, width, zoom, theme, math, Mermaid, web
+  pictures; `sidePreviewApplySettings` drops it) is built whole. A click on
+  a page older than the buffer (`renderedSource`) renders first and acts on
+  nothing (`catchUpSidePage`). `lastRenderCpuMilliseconds` is what the
+  suite bounds (under 10 ms at 1,200 lines, 30 at 20,000).
   The pane steps aside while its tab shows the full preview, so the two
   pages never show at once and share the per-render state (`_awaitedMath`,
   `_awaitedWebImages`, the Mermaid page); arrivals go through
@@ -1526,7 +1557,15 @@ view is disposed (on `unrealize`), or dispose loops forever.
   (`followSource:...`, lines from the gutter's `LineIndex`). The map is
   `PreviewScroll` (core, `previewscroll:*`): a mark per source line's first
   run, interpolated top to next top both ways, so the two maps are
-  inverses. Only the user's moves lead: the pane's own (render, resize,
+  inverses. The marks' lines and characters come from the runs; a mark's
+  top is found only when asked (`topOfMark:`, laying out that far), and a
+  question needs two marks (`PreviewScroll::around`), so the page is never
+  laid out whole unless the source's end is on show (`pageBottom`). Trap:
+  `setNeedsDisplayInRect:` on the pane after a splice laid out the page to
+  that rect in small steps, each walking every laid-out line fragment (the
+  text blocks' slow path, see the editor's trap): 4.3 s at 20,000 lines;
+  the mark uses `avoidAdditionalLayout:YES`. Only the user's moves lead:
+  the pane's own (render, resize,
   `scrollY`, following) go through `holdFollowing:`, and a bounds change
   that leaves a side's y as last seen is ignored. After a render
   `pageRendered` follows the source unless `pageLeads` (the user scrolled
@@ -1555,6 +1594,10 @@ view is disposed (on `unrealize`), or dispose loops forever.
   arrived above). Limits: 20 MB, 50 megapixels; an NSCache of bytes, not images
   (the animated cell sets frames on its own image); failures remembered 30 s;
   nothing on disk. NSImage draws SVG; an SVG's `<image href>` is never fetched.
+  Checked without the web: `markdown_preview` gives the loader's session (made
+  at its first fetch from `ephemeralSessionConfiguration`, swapped for the
+  step) a URL protocol answering `https://pictures.minicode-test.invalid/`
+  half a second late, in both previews, and sees http never asked for.
 - **Task lists** (all ports): `MdRun::task`; the Mac's box is an `MCTaskBox`
   with `NSLinkAttributeName` `minicode-task:<line>` (`clickedOnCell:` never
   fired), applied as a preview edit, never saved by itself (the user ruled out
@@ -1564,8 +1607,8 @@ view is disposed (on `unrealize`), or dispose loops forever.
   without a dash is not a task (GitHub, Obsidian, VS Code agree), and the task
   key adds only the dash. The TODOs window is Find in Folder's in a mode; a tag
   counts after a comment opener or first on a line with a colon, and in
-  Markdown only after `<!--`. Known: a numbered task shows its box but not its
-  number.
+  Markdown only after `<!--`. A numbered task's marker is "3. ☐": the
+  number stands before the box on every port.
 - Empty Markdown and LaTeX files open in the source on every port.
 
 ## Math in the Markdown preview (Mac)

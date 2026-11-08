@@ -13,6 +13,10 @@
 #import "EditorController+Private.h"
 #import "MarkdownEditPanel.h"
 #import "MarkdownMath.h"
+#import "MarkdownImage.h"
+#import "MarkdownSidePreview.h"
+#include "MarkdownHtml.h"
+#import <objc/runtime.h>
 
 namespace {
 
@@ -84,6 +88,113 @@ NSRange Changed(NSString *a, NSString *b, NSString **with) {
         s++;
     if (with) *with = [b substringWithRange:NSMakeRange(p, b.length - p - s)];
     return NSMakeRange(p, a.length - p - s);
+}
+
+// Web pictures without the web: https://pictures.minicode-test.invalid/
+// answers here with a tall PNG, through a URL protocol the picture
+// loader's session is given (its configuration is made by
+// ephemeralSessionConfiguration, swapped for the step that needs it). Every
+// address asked for is recorded, so an http one can be seen never to be.
+NSMutableArray<NSString *> *gPictureRequests;
+NSData *gPicturePng;
+
+}  // namespace
+
+@interface MCGuiPictureProtocol : NSURLProtocol
+@end
+
+@implementation MCGuiPictureProtocol
++ (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    if (![request.URL.host isEqualToString:@"pictures.minicode-test.invalid"]) return NO;
+    @synchronized(gPictureRequests) {
+        [gPictureRequests addObject:request.URL.absoluteString];
+    }
+    return YES;
+}
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
+// Half a second late, as a server would be, so the page shows the alt text
+// first however the steps are timed; on the loading thread's run loop.
+- (void)startLoading {
+    [self performSelector:@selector(answer) withObject:nil afterDelay:0.5];
+}
+- (void)answer {
+    NSHTTPURLResponse *ok = [[NSHTTPURLResponse alloc]
+         initWithURL:self.request.URL statusCode:200 HTTPVersion:@"HTTP/1.1"
+        headerFields:@{@"Content-Type": @"image/png",
+                       @"Content-Length": [NSString stringWithFormat:@"%lu",
+                                                    (unsigned long)gPicturePng.length]}];
+    [self.client URLProtocol:self didReceiveResponse:ok cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+    [self.client URLProtocol:self didLoadData:gPicturePng];
+    [self.client URLProtocolDidFinishLoading:self];
+}
+- (void)stopLoading {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
+}
+@end
+
+@interface NSURLSessionConfiguration (MCGuiPictures)
+@end
+
+@implementation NSURLSessionConfiguration (MCGuiPictures)
++ (NSURLSessionConfiguration *)mcgui_ephemeralSessionConfiguration {
+    NSURLSessionConfiguration *c = [self mcgui_ephemeralSessionConfiguration];   // the original
+    c.protocolClasses = [@[MCGuiPictureProtocol.class] arrayByAddingObjectsFromArray:c.protocolClasses ?: @[]];
+    return c;
+}
+@end
+
+namespace {
+
+void SwapEphemeralConfiguration(void) {
+    Class meta = object_getClass(NSURLSessionConfiguration.class);
+    method_exchangeImplementations(
+        class_getClassMethod(meta, @selector(ephemeralSessionConfiguration)),
+        class_getClassMethod(meta, @selector(mcgui_ephemeralSessionConfiguration)));
+}
+
+// Whether character `i` of `tv` shows a picture rather than text.
+BOOL PictureAt(NSTextView *tv, NSUInteger i) {
+    NSTextStorage *st = tv.textStorage;
+    return i < st.length &&
+           [[st attribute:NSAttachmentAttributeName atIndex:i effectiveRange:NULL]
+               isKindOfClass:MCMarkdownImage.class];
+}
+
+NSUInteger PictureCount(NSTextView *tv) {
+    NSTextStorage *st = tv.textStorage;
+    __block NSUInteger n = 0;
+    [st enumerateAttribute:NSAttachmentAttributeName inRange:NSMakeRange(0, st.length) options:0
+                usingBlock:^(id v, NSRange r, BOOL *stop) {
+        (void)r; (void)stop;
+        if ([v isKindOfClass:MCMarkdownImage.class]) n++;
+    }];
+    return n;
+}
+
+// The text at the top of the part of `tv` on show.
+NSString *TopText(NSTextView *tv) {
+    const NSRect v = tv.visibleRect;
+    NSUInteger i = [tv characterIndexForInsertionAtPoint:NSMakePoint(NSMinX(v) + 20, NSMinY(v) + 2)];
+    NSString *s = tv.string;
+    if (i >= s.length) return @"";
+    const NSRange line = [s lineRangeForRange:NSMakeRange(i, 0)];
+    return [[s substringWithRange:line]
+        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
+// A page of short paragraphs with pictures among the first: an https one
+// (`name`), an http one and a data: one.
+NSString *PicturePage(NSString *name) {
+    NSMutableString *md = [NSMutableString string];
+    for (int k = 0; k < 120; k++) {
+        [md appendFormat:@"Para %d of the pictures page.\n\n", k];
+        if (k == 3)
+            [md appendFormat:@"![a tall picture](https://pictures.minicode-test.invalid/%@)\n\n"
+                             @"![plain http](http://pictures.minicode-test.invalid/plain.png)\n\n"
+                             @"![inline](data:image/png;base64,%@)\n\n",
+                             name, [gPicturePng base64EncodedStringWithOptions:0]];
+    }
+    return md;
 }
 
 }  // namespace
@@ -279,6 +390,158 @@ MC_GUI_SUITE(markdown_preview) {
         NSTextView *editor = [[c valueForKey:@"markdownEditPanel"] valueForKey:@"_editor"];
         GCHECK_EQ_STR(editor.string, @"<div align=\"center\">\n  *kept* &amp; <b>bold</b>\n</div>");
         [[c valueForKey:@"markdownEditPanel"] close];
+    });
+
+    MCGuiStep(@"a numbered task keeps its number before its box; a footnote's code is a code box", ^{
+        NSString *path = Fixture(@"numbered.md");
+        MCGuiWriteFile(path, @"1. [ ] first\n2. [x] second\n\nRun it[^a].\n\n"
+                             @"[^a]: Like this:\n\n    ```sh\n    make all\n    ```\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:path]);
+        const NSUInteger box = LinkAt(c, @"minicode-task:0");
+        GCHECK(box != NSNotFound && box >= 3);
+        if (box != NSNotFound && box >= 3)
+            GCHECK_EQ_STR([Text(c).string substringWithRange:NSMakeRange(box - 3, 3)], @"1. ");
+        const NSUInteger second = LinkAt(c, @"minicode-task:1");
+        GCHECK(second != NSNotFound && second >= 3 &&
+               [[Text(c).string substringWithRange:NSMakeRange(second - 3, 3)] isEqualToString:@"2. "]);
+        const NSUInteger code = At(c, @"make all");
+        GCHECK(code != NSNotFound && At(c, @"sh make") == NSNotFound);
+        NSTextBlock *boxed = Para(c, code).textBlocks.lastObject;
+        GCHECK(boxed.backgroundColor != nil);   // the code block's box
+        GCHECK(At(c, @"\xE2\x86\xA9") > code);   // the way back, after the code
+    });
+
+    __block NSString *topBefore = nil;
+    __block CGFloat yBefore = 0;   // where the view was scrolled to
+    MCGuiStep(@"web pictures: alt text first, the page scrolled below the picture", ^{
+        // A tall picture (40 by 600 pixels) to push what follows it down.
+        NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
+            initWithBitmapDataPlanes:NULL pixelsWide:40 pixelsHigh:600 bitsPerSample:8
+                     samplesPerPixel:4 hasAlpha:YES isPlanar:NO
+                      colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+        memset(rep.bitmapData, 0x80, (size_t)rep.bytesPerRow * 600);
+        gPicturePng = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+        gPictureRequests = [NSMutableArray array];
+        // The loader's session is made at its first fetch, with the
+        // configuration swapped in now; one made before goes.
+        SwapEphemeralConfiguration();
+        id loader = [NSClassFromString(@"MCWebImageLoader") performSelector:@selector(shared)];
+        [[loader valueForKey:@"_session"] invalidateAndCancel];
+        [loader setValue:nil forKey:@"_session"];
+
+        NSString *path = Fixture(@"pictures.md");
+        MCGuiWriteFile(path, PicturePage(@"tall.png"));
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:path] && c.previewMode);
+        NSTextView *tv = Text(c);
+        GCHECK(At(c, @"a tall picture") != NSNotFound);   // its alt text stands in
+        GCHECK(At(c, @"plain http") != NSNotFound);
+        GCHECK(PictureCount(tv) == 1);                     // the data: one, decoded in place
+        [c scrollEditorToY:NSMinY([c textRectForCharacter:At(c, @"Para 60 of")])];
+        topBefore = TopText(tv);
+        yBefore = ((NSScrollView *)[c valueForKey:@"editorScroll"]).contentView.bounds.origin.y;
+        MCGuiNote(@"at the top before the picture: %@", topBefore);
+        GCHECK([topBefore hasPrefix:@"Para 60 of"]);
+    });
+    MCGuiWait(@"the https picture to arrive and take its alt text's place", 5, ^BOOL {
+        EditorController *c = MCGuiController();
+        return PictureCount(Text(c)) == 2 && At(c, @"a tall picture") == NSNotFound;
+    });
+    MCGuiStep(@"the text at the top stays at the top; http was never asked for", ^{
+        EditorController *c = MCGuiController();
+        NSTextView *tv = Text(c);
+        MCGuiNote(@"at the top after: %@; asked for %@", TopText(tv), gPictureRequests);
+        GCHECK_EQ_STR(TopText(tv), topBefore);
+        // ... though the picture pushed it down the page.
+        const CGFloat y = ((NSScrollView *)[c valueForKey:@"editorScroll"]).contentView.bounds.origin.y;
+        MCGuiNote(@"scrolled from %.0f to %.0f", yBefore, y);
+        GCHECK(y > yBefore + 100);
+        GCHECK(At(c, @"plain http") != NSNotFound);   // still its alt text
+        @synchronized(gPictureRequests) {
+            GCHECK([gPictureRequests containsObject:@"https://pictures.minicode-test.invalid/tall.png"]);
+            for (NSString *u in gPictureRequests) GCHECK(![u hasPrefix:@"http:"]);
+        }
+        // The picture sits where its alt text was, between paragraphs 3 and 4.
+        const NSUInteger three = At(c, @"Para 3 of"), four = At(c, @"Para 4 of");
+        BOOL between = NO;
+        for (NSUInteger i = three; i < four; i++) between = between || PictureAt(tv, i);
+        GCHECK(between);
+    });
+
+    MCGuiStep(@"the page beside the source: the picture arrives, the page keeps its place", ^{
+        NSString *path = Fixture(@"pictures-side.md");
+        MCGuiWriteFile(path, PicturePage(@"tall-side.png"));
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:path]);
+        if (c.previewMode) [c togglePreview:nil];
+        if (![c sidePreviewShowing]) [c toggleSidePreview:nil];
+        MCMarkdownSidePreview *side = [c valueForKey:@"sidePreview"];
+        GCHECK([c sidePreviewShowing]);
+        NSTextView *page = side.textView;
+        const NSUInteger at = [page.string rangeOfString:@"Para 60 of"].location;
+        GCHECK(at != NSNotFound && [page.string containsString:@"a tall picture"]);
+        // The user scrolls the page: it leads, so it keeps its place.
+        MCScrollTextViewToY(side.scrollView, page, NSMinY(MCTextViewRectForCharacter(page, at)));
+        GCHECK(side.pageLeads);
+        topBefore = TopText(page);
+        yBefore = side.scrollY;
+        GCHECK([topBefore hasPrefix:@"Para 60 of"]);
+    });
+    MCGuiWait(@"the picture to arrive in the page beside the source", 5, ^BOOL {
+        MCMarkdownSidePreview *side = [MCGuiController() valueForKey:@"sidePreview"];
+        return PictureCount(side.textView) == 2 &&
+               ![side.textView.string containsString:@"a tall picture"];
+    });
+    MCGuiStep(@"its top is still the same text", ^{
+        EditorController *c = MCGuiController();
+        MCMarkdownSidePreview *side = [c valueForKey:@"sidePreview"];
+        MCGuiNote(@"side top after: %@", TopText(side.textView));
+        GCHECK_EQ_STR(TopText(side.textView), topBefore);
+        GCHECK(side.scrollY > yBefore + 100 && side.pageLeads);
+        // Built again in place: the page is what a whole render makes.
+        GCHECK_EQ_STR(side.textView.string,
+                      [c markdownPageFor:c.sourceText width:side.pageWidth anchors:NULL].string);
+        SwapEphemeralConfiguration();   // back as it was
+        [c closeSidePreview];
+    });
+
+    MCGuiStep(@"Export as HTML… writes the page beside the file, unsaved changes included", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:corpus]);
+        NSMenuItem *item = nil;
+        for (NSMenuItem *top in NSApp.mainMenu.itemArray)
+            for (NSMenuItem *i in top.submenu.itemArray)
+                if (i.action == @selector(exportMarkdownHtml:)) item = i;
+        GCHECK(item && item.keyEquivalent.length == 0 && [item.menu.title isEqualToString:@"File"]);
+        GCHECK([c validateMenuItem:item] && c.canExportMarkdownHtml);
+        // Unsaved text goes into the page.
+        NSString *edited = [original stringByAppendingString:@"\n## Added before saving\n"];
+        [c setValue:edited forKey:@"sourceText"];
+        __block NSString *suggested = nil;
+        NSString *out = Fixture(@"exported.html");
+        MCHtmlExportPathChooser = ^NSString *(NSString *s) {
+            suggested = s;
+            return out;
+        };
+        [[NSFileManager defaultManager] removeItemAtPath:out error:nil];
+        [c exportMarkdownHtml:item];
+        MCHtmlExportPathChooser = nil;
+        GCHECK_EQ_STR(suggested, Fixture(@"corpus.html"));
+        NSString *page = [NSString stringWithContentsOfFile:out encoding:NSUTF8StringEncoding error:nil];
+        const std::string want = MarkdownHtml::page(edited.UTF8String, "corpus.md");
+        GCHECK(page && [page isEqualToString:[NSString stringWithUTF8String:want.c_str()]]);
+        GCHECK([page containsString:@"<title>Markdown corpus</title>"]);
+        GCHECK([page containsString:@"<h2 id=\"added-before-saving\">Added before saving</h2>"]);
+        GCHECK([page containsString:@"<li class=\"task-list-item\"><input type=\"checkbox\" disabled>"]);
+        NSTextField *note = [c valueForKey:@"settingsLabel"];
+        GCHECK([note.stringValue containsString:@"Exported exported.html"]);
+        [c setValue:original forKey:@"sourceText"];
+        // A file that is not Markdown has nothing to export.
+        NSString *py = Fixture(@"plain.py");
+        MCGuiWriteFile(py, @"print(1)\n");
+        GCHECK([c showFile:py]);
+        GCHECK(!c.canExportMarkdownHtml && ![c validateMenuItem:item]);
     });
 
     if (NSString *tectonic = NSProcessInfo.processInfo.environment[@"MC_GUI_REAL_TECTONIC"]) {

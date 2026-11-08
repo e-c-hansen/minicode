@@ -55,7 +55,8 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/FileSniff.cpp src/Csv.cpp src/JsonOutline.cpp src/Notebook.cpp \
             src/Commands.cpp src/ProcessTable.cpp src/ClaudeHooks.cpp src/AttentionBoard.cpp \
             src/PageCheck.cpp src/IdeLink.cpp src/MermaidDiagram.cpp src/LatexScratch.cpp \
-            src/LatexLog.cpp
+            src/LatexLog.cpp \
+            src/MarkdownHtml.cpp src/MarkdownPage.cpp
 
 # Each source file compiles to its own object in build/obj (build/test-obj for
 # the tests), with a dependency file listing the headers it read, so touching

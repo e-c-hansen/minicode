@@ -211,6 +211,62 @@ static void testMarkdownGfm() {
         CHECK(cb.kind == MarkdownEdit::Block::Code);
     }
 
+    GROUP("md:footnote-code");
+    {
+        // A fence indented under a definition is the footnote's code
+        // block, as on GitHub, not inline code holding its info string.
+        auto r = P::parse("Text[^1].\n\n[^1]: The note:\n\n    ```py\n    print(1)\n    ```\n\n"
+                          "    And after.\n\nBody again.\n");
+        const MdRun code = mdRun(r, "print(1)\n");
+        CHECK(code.codeBlock && code.footnotes && code.lang == "py" && code.line == 5);
+        CHECK(mdText(r).find("py print") == std::string::npos);
+        CHECK(mdText(r).find("```") == std::string::npos);
+        CHECK(mdRun(r, "And after.").footnotes);
+        // The way back ends the note's last paragraph, or after its last
+        // code block stands on a line of its own, outside the code.
+        CHECK(!mdRun(r, "\xE2\x86\xA9").codeBlock && mdRun(r, "\xE2\x86\xA9").footnotes);
+        auto last = P::parse("x[^a]\n\n[^a]: N\n\n    ```\n    a\n    ```\n");
+        const MdRun backLink = mdRun(last, "\xE2\x86\xA9");
+        CHECK(backLink.link && !backLink.codeBlock && !backLink.code && backLink.footnotes);
+        CHECK(mdText(last).find("a\n\xE2\x86\xA9\n") != std::string::npos);
+        CHECK(!mdRun(r, "Body again.").footnotes);
+        // Body comes before the footnotes, the code inside them.
+        size_t body = 0, at = 0;
+        for (size_t k = 0; k < r.size(); k++) {
+            if (r[k].text == "Body again.") body = k;
+            if (r[k].text == "print(1)\n") at = k;
+        }
+        CHECK(body < at);
+        // A fence interrupts the definition's text, as it does a paragraph.
+        auto tight = P::parse("x[^a]\n\n[^a]: Run\n    ```\n    make\n    ```\n");
+        CHECK(mdRun(tight, "make\n").codeBlock && mdRun(tight, "make\n").footnotes);
+        CHECK(mdRun(tight, "Run").footnotes && !mdRun(tight, "Run").code);
+        // Eight spaces after a blank line: indented code in the footnote.
+        auto indented = P::parse("x[^a]\n\n[^a]: See:\n\n        two = 2\n        three\n\n    Done.\n");
+        CHECK(mdRun(indented, "two = 2\n").codeBlock && mdRun(indented, "two = 2\n").footnotes);
+        CHECK(mdRun(indented, "three\n").codeBlock);
+        CHECK(mdRun(indented, "Done.").footnotes && !mdRun(indented, "Done.").code);
+        // The code's lines edit as a code block.
+        const std::string src = "x[^a]\n\n[^a]: N\n\n    ```\n    a\n    ```\n";
+        CHECK(MarkdownEdit::blockAt(src, 5).kind == MarkdownEdit::Block::Code);
+        // With nothing referring to it, nothing shows.
+        CHECK(mdText(P::parse("[^z]: N\n\n    ```\n    a\n    ```\n")).find('a') == std::string::npos);
+    }
+
+    GROUP("md:numbered-task");
+    {
+        // A task in an ordered list keeps its number before the box.
+        auto r = P::parse("1. [ ] first\n2. [x] second\n- [ ] bullet\n");
+        const MdRun one = mdRun(r, "  1. \xE2\x98\x90 ");
+        CHECK(one.marker && one.ordered && one.task == 1);
+        const MdRun two = mdRun(r, "  2. \xE2\x98\x91 ");
+        CHECK(two.marker && two.task == 2);
+        CHECK(mdRun(r, "  \xE2\x98\x90 ").marker);   // a bullet task: the box alone
+        CHECK(mdRun(r, "first").task == 1 && mdRun(r, "second").task == 2);
+        // Ticking it still finds the box.
+        CHECK(MarkdownTasks::toggleBox("1. [ ] first\n", 0) == "1. [x] first\n");
+    }
+
     GROUP("md:gfm-speed");
     {
         // Inputs that would make footnotes, HTML blocks or quote lists slow.

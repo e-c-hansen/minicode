@@ -64,4 +64,24 @@ double lineForY(const Page& page, double y) {
     return m.line + t * (endLine(page, m) - m.line);
 }
 
+Page around(const std::vector<Mark>& marks, int i, double bottom, int lines) {
+    Page p;
+    p.lines = lines;
+    p.bottom = bottom;
+    if (marks.empty()) return p;
+    if (i < 0) {
+        p.marks.push_back(marks.front());
+        return p;
+    }
+    const size_t k = std::min((size_t)i, marks.size() - 1);
+    p.marks.push_back(marks[k]);
+    if (k + 1 < marks.size()) {
+        Mark next = marks[k + 1];
+        next.top = std::max(next.top, marks[k].top);
+        p.marks.push_back(next);
+    }
+    p.bottom = std::max(p.bottom, p.marks.back().top);
+    return p;
+}
+
 }  // namespace PreviewScroll
