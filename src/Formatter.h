@@ -70,7 +70,11 @@ struct Plan {
 // The plan for formatting `path` (absolute). `setting` is the format.<lang>
 // value ("" when unset). Configuration files are looked for from the file's
 // folder upwards, stopping after `root` (the open folder) or after a folder
-// holding .git, whichever comes first.
+// holding .git, whichever comes first. A setting of just "prettier", for a
+// language Prettier formats (Markdown, JSON, YAML, CSS, JavaScript and
+// TypeScript files), is the opt-in for the user's own Prettier: the
+// project's configuration where it has one (projectStyle, configFile),
+// else Prettier with --prose-wrap preserve; fromSettings either way.
 Plan plan(const std::string& lang, const std::string& setting,
           const std::string& path, const std::string& root, const Fs& fs);
 
@@ -92,7 +96,8 @@ std::string configFile(const std::string& program, const std::string& path,
 bool serverMayFormat(const std::string& lang, const Plan& plan);
 // The note when nothing is planned and no server formats the file:
 // "minicode formats Markdown files only in projects set up for Prettier,
-// or with a command of your own (format.markdown in the settings)."; for
+// or when the settings say format.markdown = prettier (your own Prettier)
+// or give a command of your own."; for
 // `lang` "" it names the file's extension.
 std::string unplannedMessage(const std::string& lang, const std::string& extension);
 
@@ -124,9 +129,45 @@ bool insideFolder(const std::string& path, const std::string& root);
 // A command from the settings file is the user's own choice of tool, so it
 // asks only when the folder holds the only copy; otherwise it runs the copy
 // outside the folder until the folder is allowed.
-enum class Source { Local, Outside, Ask, None };
+//
+// `configIsCode`: the folder's configuration for the tool runs code when the
+// tool reads it (codeConfigFile), whichever copy of the tool runs. That
+// configuration is then the folder's program too: with no answer the
+// folder is asked (Ask) as long as some copy is installed; "allow" runs as
+// above; "deny" runs nothing (Refused), since a copy outside the folder
+// would read the same file.
+enum class Source { Local, Outside, Ask, None, Refused };
 Source chooseProgram(bool fromSettings, const std::string& local, const std::string& outside,
-                     const std::string& consent);
+                     const std::string& consent, bool configIsCode = false);
+
+// Does this configuration file run code when `program` reads it? `read`
+// gives a file's text ("" when unreadable). Prettier: a JavaScript or
+// TypeScript config (.prettierrc.js, prettier.config.mjs, ...), a JSON,
+// YAML, TOML or JSON5 one that names plugins (also in its overrides) or a
+// parser by path, or one that is only a string, the name of a shared
+// configuration module; package.json's "prettier" key alike. Biome: a
+// biome.json[c] that names plugins (Biome loads JavaScript and TypeScript
+// plugins as well as GritQL ones), or extends a configuration that is not
+// a file beside it that passes the same test (a package's, which the
+// check cannot see). latexindent: a YAML file with a replacement given as
+// a substitution, which latexindent evaluates as Perl (its switchesViaYaml
+// can turn replacements on from the file itself); its fineTuning patterns
+// are compiled at run time without `use re 'eval'`, so they cannot run
+// code. Every other formatter's configuration is data.
+bool configRunsCode(const std::string& program, const std::string& configFile,
+                    const std::function<std::string(const std::string&)>& read);
+
+// The configuration file in the folder that `program` would read for
+// `path` and that runs code (configRunsCode), or "". Prettier and Biome
+// look for their files themselves, from the file's folder upwards, and use
+// the nearest folder holding any; that is followed here up to `root` or a
+// folder holding .git (a file above the open folder is the user's own, not
+// the folder's), and any code-running file in that nearest folder counts,
+// whichever of them a given version reads first. latexindent reads only the
+// file it is given (-l={config}): `planConfig`, Plan::configFile.
+std::string codeConfigFile(const std::string& program, const std::string& path,
+                           const std::string& root, const std::string& planConfig,
+                           const Fs& fs);
 
 // A command line -> argv. Words are split like lsp.* commands (quotes group,
 // backslash escapes), and {file} is replaced inside each word afterwards, so

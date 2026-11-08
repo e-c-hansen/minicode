@@ -28,6 +28,11 @@
 // Ask, store the answer, and format again.
 @property(nonatomic, assign) BOOL needsConsent;
 @property(nonatomic, copy) NSString *consentFolder;
+// Or, also, the folder's configuration for `tool` runs code when the tool
+// reads it (Formatter::codeConfigFile): its name in the folder
+// ("prettier.config.js"), which the question names. `consentFolder` is nil
+// when the tool itself is installed outside the folder.
+@property(nonatomic, copy) NSString *consentConfig;
 // Nothing ran because no formatter is planned for the file at all
 // (Formatter::serverMayFormat): its kind of file has none, or nothing
 // configures one and its language has no default. A running language
