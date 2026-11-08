@@ -1,7 +1,9 @@
 // KeystrokeSuite.mm — `make guitest SUITES=keystroke`: what a typed
 // character costs in a 100,000-line Python file, with the highlighting
-// after it checked against a full re-highlight. Set MC_GUI_SAMPLE=<file>
-// to run /usr/bin/sample on the process while it types.
+// after it checked against a full re-highlight, in a fresh window and
+// again once the window has shown a Markdown page and another long file.
+// Set MC_GUI_SAMPLE=<file> to run /usr/bin/sample on the process while it
+// types (<file>.used for the second typing).
 #import "Harness.h"
 #import "ControlServer.h"
 #import "EditorController.h"
@@ -55,17 +57,36 @@ double Median(std::vector<double> v) {
     return v[v.size() / 2];
 }
 
+double P95(std::vector<double> v) {
+    if (v.empty()) return 0;
+    std::sort(v.begin(), v.end());
+    return v[v.size() * 95 / 100];
+}
+
+// MC_GUI_SAMPLE=<file>: /usr/bin/sample on the process for six seconds
+// into <file><suffix>; YES when it runs (the typing then lasts longer).
+BOOL SampleInto(NSString *suffix) {
+    NSString *out = NSProcessInfo.processInfo.environment[@"MC_GUI_SAMPLE"];
+    if (!out.length) return NO;
+    [NSTask launchedTaskWithLaunchPath:@"/usr/bin/sample"
+                             arguments:@[[NSString stringWithFormat:@"%d", getpid()], @"6", @"1",
+                                         @"-file", [out stringByAppendingString:suffix]]];
+    [NSThread sleepForTimeInterval:0.5];
+    return YES;
+}
+
 } // namespace
 
 MC_GUI_SUITE(keystroke) {
     __block EditorController *c = nil;
     __block NSTextView *tv = nil;
     __block NSUInteger at = 0;
-    // A window of its own on a folder of its own, as large_file's: in a
-    // whole run the shared window's state from earlier suites made each
-    // keystroke here cost 5 to 10 ms of CPU against 0.5 ms alone (after the
-    // folding suite every keystroke recalculated the layout manager's used
-    // rect over the laid-out lines, _enableTextViewResizing in a sample).
+    __block std::vector<double> fresh;   // the first typing's CPU times
+    // A window of its own on a folder of its own, as large_file's, so the
+    // first typing is a fresh window's; the used window is made on purpose
+    // below. (In a whole run the shared window had shown Markdown pages,
+    // whose text blocks made each keystroke here cost 5 to 10 ms of CPU
+    // against 0.5 ms: forgetTextBlockLayout in EditorController+Highlighting.mm.)
     NSString *dir = [MCGuiScratch() stringByAppendingPathComponent:@"keystroke"];
     NSString *path = [dir stringByAppendingPathComponent:@"big100k.py"];
     MCGuiStep(@"a 100,000-line Python file", ^{
@@ -96,20 +117,12 @@ MC_GUI_SUITE(keystroke) {
         [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(at, 2000)];
     });
     MCGuiStep(@"typing 200 characters mid-file", ^{
-        __block BOOL sampling = NO;
-        NSString *sampleOut = NSProcessInfo.processInfo.environment[@"MC_GUI_SAMPLE"];
-        NSString *typed = [@"" stringByPaddingToLength:200 withString:@"ab cd " startingAtIndex:0];
-        if (sampleOut.length) {
-            NSTask *t = [NSTask launchedTaskWithLaunchPath:@"/usr/bin/sample"
-                arguments:@[[NSString stringWithFormat:@"%d", getpid()], @"6", @"1", @"-file",
-                            sampleOut]];
-            (void)t;
-            sampling = YES;
-            [NSThread sleepForTimeInterval:0.5];
-            typed = [@"" stringByPaddingToLength:2000 withString:@"ab cd " startingAtIndex:0];
-        }
+        const BOOL sampling = SampleInto(@"");
+        NSString *typed = [@"" stringByPaddingToLength:sampling ? 2000 : 200 withString:@"ab cd "
+                                       startingAtIndex:0];
         std::vector<double> wall;
         std::vector<double> times = TypeChars(tv, typed, &wall);
+        fresh = times;
         const double med = Median(times);
         double total = 0;
         for (double t : times) total += t;
@@ -212,6 +225,59 @@ MC_GUI_SUITE(keystroke) {
         emoji = [tv.textStorage attribute:NSFontAttributeName atIndex:at + 1 effectiveRange:NULL];
         GCHECK([emoji.fontName containsString:@"Emoji"]);
         for (int i = 0; i < 2; i++) [tv.undoManager undo];
+        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
+    });
+    // The window used as a day's work uses it: a Markdown page shown in the
+    // editor's view (quotes, code boxes, h1 and h2 rules, and a table are
+    // text blocks), and another 100,000-line file laid out to its end.
+    // Then the first file again, typed in where the fresh window typed.
+    // The block table a page left in the layout manager made TextKit
+    // recalculate the used rect over every laid-out line on each keystroke
+    // (1.5 ms against 0.3 here, _recalculateUsageForTextContainerAtIndex:
+    // in a sample), until forgetTextBlockLayout reset it.
+    NSString *page = [dir stringByAppendingPathComponent:@"page.md"];
+    NSString *other = [dir stringByAppendingPathComponent:@"other100k.py"];
+    MCGuiStep(@"the window used: a Markdown page, then another long file laid out", ^{
+        MCGuiWriteFile(page, @"# Title\n\n## Part\n\n> a quote\n\n```\ncode\n```\n\n---\n\n"
+                             @"| a | b |\n|---|---|\n| 1 | 2 |\n");
+        GCHECK([c showFile:page]);
+        GCHECK(!tv.editable);   // its preview
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
+        NSMutableString *s = [NSMutableString string];
+        for (int i = 0; i < 100000 / 4; i++)
+            [s appendFormat:@"def g%d(x):\n    if x:\n        return %d\n\n", i, i];
+        MCGuiWriteFile(other, s);
+        GCHECK([c showFile:other]);
+        GCHECK(tv.editable && [tv.string hasPrefix:@"def g0"]);
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
+        const double c0 = MCGuiThreadCpuMs();
+        GCHECK([c showFile:path]);
+        MCGuiNote(@"back to the first file: %.0f ms of CPU (laid out to where it was)",
+                  MCGuiThreadCpuMs() - c0);
+        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
+    });
+    MCGuiStep(@"typing in the used window costs what it cost in a fresh one", ^{
+        tv.selectedRange = NSMakeRange(at, 0);
+        [tv scrollRangeToVisible:tv.selectedRange];
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(at, 2000)];
+        const BOOL sampling = SampleInto(@".used");
+        NSString *typed = [@"" stringByPaddingToLength:sampling ? 2000 : 200 withString:@"xy zw "
+                                       startingAtIndex:0];
+        std::vector<double> times = TypeChars(tv, typed);
+        const double med = Median(times), p95 = P95(times);
+        const double freshMed = Median(fresh), freshP95 = P95(fresh);
+        MCGuiNote(@"%lu keystrokes in the used window: median %.2f ms of CPU, 95th percentile "
+                  @"%.2f ms (fresh: %.2f and %.2f)", (unsigned long)times.size(), med, p95,
+                  freshMed, freshP95);
+        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"xy zw "]);
+        // About twice the fresh window's at most, measured in this run so
+        // the bound holds on any core; with the block table the median was
+        // five times it.
+        if (!sampling) {
+            GCHECK_TIME(med, MAX(1.0, 2.5 * freshMed), @"the median keystroke in the used window");
+            GCHECK_TIME(p95, MAX(3.0, 3 * freshP95), @"the 95th percentile in the used window");
+        }
+        for (NSUInteger i = 0; i < times.size(); i++) [tv.undoManager undo];
         GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
     });
     MCGuiStep(@"the suite's window closes unasked, and its file goes", ^{

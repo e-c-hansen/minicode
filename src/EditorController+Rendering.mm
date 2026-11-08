@@ -125,6 +125,7 @@ static void *kMediaItemContext = &kMediaItemContext;
 // survive into a file that shows something else. A text file sets its own
 // mode again from its extension, and refreshDisplay makes the view editable.
 - (void)resetViewMode {
+    [self makeEditorReadOnly];   // a long text on show goes first, while the tab still has it
     self.isMarkdown = NO;
     self.isLatex = NO;
     self.isImage = NO;
@@ -136,7 +137,6 @@ static void *kMediaItemContext = &kMediaItemContext;
     self.sourceText = nil;
     self.savedText = nil;
     self.dirty = NO;
-    self.textView.editable = NO;
     self.imageView.image = nil;
     self.pdfView.document = nil;
     [self stopMedia];   // the sound must stop when anything else is shown
