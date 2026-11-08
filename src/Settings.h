@@ -270,6 +270,15 @@ public:
     // folding, bracket matching or a language server (on, the default, as
     // VS Code's editor.largeFileOptimizations).
     bool largeFileOptimizations() const { return largeFileOptimizations_; }
+    // editor.inlay-hints: what a language server says between the words
+    // (a variable's type, a parameter's name) drawn in the text without
+    // being part of it (on, the default, as VS Code's
+    // editor.inlayHints.enabled). editor.inlay-hint-color and
+    // editor.inlay-hint-background color them, VS Code's
+    // editorInlayHint.foreground and .background unless set.
+    bool inlayHints() const { return inlayHints_; }
+    Rgba inlayHintColor() const;
+    Rgba inlayHintBackground() const;
     // editor.semantic-highlighting: a language server that names what each
     // word is (semantic tokens) colors it so, over the lexer's colors (on,
     // the default, as VS Code's editor.semanticHighlighting.enabled with a
@@ -447,6 +456,8 @@ private:
     LineNumbers lineNumbers_ = LineNumbers::On;
     bool wordWrap_ = true;
     bool autoClose_ = true;
+    bool inlayHints_ = true;
+    std::optional<Rgba> inlayHintColor_, inlayHintBackground_;
     bool largeFileOptimizations_ = true;
     bool semanticHighlighting_ = true;
     std::optional<Rgba> semantic_[kSemanticColorCount];

@@ -64,6 +64,16 @@
             [s askToRunFolderFormatter:r quiet:quiet then:then];
             return;
         }
+        // No formatter is planned for this file: a running language server
+        // that formats it does, never in place of a project's formatter.
+        if (r.serverMayFormat && [s.textView.string isEqualToString:original] &&
+            [s.lsp formatDocumentInRange:sel done:^(NSString *note, BOOL error) {
+                EditorController *me = weakSelf;
+                if (me && note && (error || !quiet) && weakTab == me->_activeTab)
+                    [me showFormatNote:note error:error];
+                if (then) then();
+            }])
+            return;
         if (r.error) {
             if (!(quiet && r.unavailable))
                 [s showFormatNote:r.error error:YES install:r.installPrograms];
@@ -144,7 +154,11 @@
 
 // format.on-save: NO when this file has no formatter, so the save goes on.
 - (BOOL)formatBeforeSaving {
-    if (![self canFormatSource] || Formatter::languageFor(Utf8String(self.currentPath)).empty())
+    if (![self canFormatSource]) return NO;
+    // A file with no formatter of its own may still have a server that
+    // formats it (formatSourceQuietly: asks it).
+    if (Formatter::languageFor(Utf8String(self.currentPath)).empty() &&
+        ![self.lsp canFormatDocument])
         return NO;
     __weak EditorController *weakSelf = self;
     _formatSaveTab = _activeTab;

@@ -173,8 +173,8 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
     NSString *ext = path.pathExtension.length ? path.pathExtension : path.lastPathComponent;
     if (lang.empty()) {
         result.unavailable = YES;
-        result.error = [NSString stringWithFormat:@"MiniCode has no formatter for .%@ files.",
-                                                  ext];
+        result.serverMayFormat = YES;
+        result.error = NS(Formatter::unplannedMessage("", Std(ext)));
         finish();
         return;
     }
@@ -204,6 +204,15 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
             result.error = [NSString stringWithFormat:
                 @"Formatting is off for %@ files (format.%@ = off in the settings).",
                 display, NS(lang)];
+            finish();
+            return;
+        }
+        if (Formatter::serverMayFormat(lang, plan)) {
+            // Markdown, JSON, YAML or CSS in a project not set up for a
+            // formatter: the file's language server may format it.
+            result.unavailable = YES;
+            result.serverMayFormat = YES;
+            result.error = NS(Formatter::unplannedMessage(lang, Std(ext)));
             finish();
             return;
         }
@@ -278,7 +287,7 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
         bool ranged = false;
         std::vector<std::string> words =
             Formatter::arguments(chosen->command, Std(path), (int)firstLine, (int)lastLine,
-                                 &ranged);
+                                 &ranged, plan.configFile);
         result.ranged = ranged;
         NSMutableArray<NSString *> *argv = [NSMutableArray arrayWithObject:program];
         for (size_t i = 1; i < words.size(); i++) [argv addObject:NS(words[i])];

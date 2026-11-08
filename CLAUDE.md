@@ -173,12 +173,13 @@ goes here first, with tests; the GUI only displays it.
   (documents and watched files), `Lsp+Diagnostics`, `Lsp+Completion`,
   `Lsp+Navigation` (definition, hover, symbols), `Lsp+Actions` (rename,
   references, code actions), `Lsp+Semantic` (semantic tokens),
-  `Lsp+WorkspaceEdit`; `Lsp+Private.h` and the
+  `Lsp+WorkspaceEdit`, `Lsp+InlayHints`; `Lsp+Private.h` and the
   `Lsp+<Concern>Ivars.h` follow the rules below), `LspServer`
   (processes), `LspPopups` (completion, hover, signature), `LspShared.h` (only
   the Lsp files import it), `LspPanel` (status item, popover, interpreter
   sheet), `LspPicker` (references and fixes list, rename box), `LspWatcher`
-  (files changed on disk, for the servers), `ProblemsPanel`, `InstallPanel`.
+  (files changed on disk, for the servers), `LspInlayHints` (drawing inlay
+  hints in the storage's gaps), `ProblemsPanel`, `InstallPanel`.
 - `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
@@ -608,6 +609,16 @@ container (PanelHost, laid out by hand in layoutContainer)
   makes the view with `initWithFrame:textContainer:`. **Never
   `replaceTextStorage:` after the view exists**: CodeTextView, the carets and
   the folds subscribe to the storage at init and heard nothing on a new one.
+  **Gaps** (2026-11-07, inlay hints): the storage answers a kern on the
+  character before each `MCTextGap`, never stored, in `attributesAtIndex:`
+  and its longest-range form (the typesetter reads that one, and the kern by
+  name: answering only `attributesAtIndex:effectiveRange:` laid out
+  nothing), and moves the gaps itself in `replaceCharactersInRange:`
+  (`Lsp::inlayFollowEdit`). `attributedSubstringFromRange:` (copies, and
+  NSTextView's undo, which reinserts what it kept) and
+  `storedAttributesAtIndex:...` (the highlighter's compare, or every
+  restyle of a hinted line set its colors again) leave them out, and
+  CodeTextView hides them while writing to a pasteboard.
 - **Contiguous layout stays on**: everything that reads positions relies on
   exactness. Never call `numberOfGlyphs` on the editor; lay out only up to the
   character needed. `textDidChange:`'s copy into `sourceText` shares characters
@@ -1036,7 +1047,8 @@ container (PanelHost, laid out by hand in layoutContainer)
 ## Formatting (Mac)
 
 - Shift+Option+F pipes the buffer through an external formatter.
-  `format.<python|cpp|go|rust|shell>` (`{file}`, `off`) runs as written. Else
+  `format.<python|cpp|go|rust|shell|markdown|json|yaml|css|latex>` (`{file}`,
+  `off`) runs as written. Else
   the nearest folder's config (up to the open folder or a `.git`) decides:
   `[tool.pyink]`, `.style.yapf`, `[yapf]` in setup.cfg, `[tool.black]`,
   ruff.toml, .ruff.toml or any `[tool.ruff]` (lint settings count, but pyink,
@@ -1053,7 +1065,20 @@ container (PanelHost, laid out by hand in layoutContainer)
   `clang-format --style=file --fallback-style=Google`, pyink (`--line-length 80
   --pyink-use-majority-quotes`, Google's published 4-space guide) then yapf
   `--style=google`, gofmt, rustfmt with Cargo.toml's edition, `shfmt -i 2 -ci
-  -bn`. No LSP formatting fallback (clangd and pylsp format in other styles).
+  -bn`, `latexindent -g /dev/null` (with `-l={config}`, the project's
+  `.latexindent.yaml` or `localSettings.yaml` by path, since the text comes
+  on stdin). Markdown, JSON, YAML and CSS (scss, less) have no default: only
+  the project's Prettier (Biome for .json, .jsonc, .css) or a format.<lang>
+  command formats them, so their plan is often empty.
+- **The server fallback** (2026-11-07, `Lsp+Formatting.mm`): only when
+  nothing is planned at all (`Formatter::serverMayFormat`: no formatter for
+  the extension, or an empty plan with no setting), the first running
+  server offering `documentFormattingProvider` (`Lsp::routeFormatting`,
+  main first, rangeFormatting for a selection where offered) formats it
+  through the workspace-edit applier as one "Format Document" step; 5 s
+  limit. Never for a language with a default (clangd, pylsp and Ruff format
+  in other styles), a configured project tool that is missing, `off`, or a
+  settings command. format.on-save covers such files too.
 - `MCFormatText`: `MCFindProgram` (never xcrun shims), venv bins first for
   Python; stdin to stdout in the file's folder, wide PATH, `PYTHONUTF8=1`, 10 s
   then SIGTERM and SIGKILL. A non-zero exit, empty output or non-UTF-8 leaves
@@ -1285,6 +1310,23 @@ view is disposed (on `unrealize`), or dispose loops forever.
   (`Client::versions`, `staleEditFile`) and are refused for a file that moved
   on. Files no tab has open are kept apart (`_otherDiags`) for
   Problems.
+- **Inlay hints** (2026-11-07, `Lsp+InlayHints.mm`, `LspInlayHints.mm`,
+  core `InlayHints.{h,cpp}`, `lsp:inlay-*`, `make guitest
+  SUITES=inlay_hints`): VS Code's editor.inlayHints. Asked for the lines on
+  show and 30 either side (the first line counted by `LineBreakCounter`
+  in pieces, no copy of the text before), when the file attaches or a
+  server becomes ready, 0.3 s after typing (the request out is cancelled
+  by any edit, and an answer for older text is dropped), when scrolling
+  leaves the window asked about, and on `workspace/inlayHint/refresh`.
+  Only a Ready server that offers them is asked. `shortenInlayLabels` is
+  VS Code's maximumLength 43 per line. A hint after a word follows it when
+  typing lands right at it; one before an argument stays put
+  (`followsBefore`). Hints at a line's start are left out (no character
+  to open a gap after). basedpyright gets its `inlayHints` settings named
+  (1.40 has them on by default anyway). `editor.inlay-hints`,
+  `editor.inlay-hint-color`, `editor.inlay-hint-background`. The label is
+  drawn after the text in `drawRect:`, at the glyph box's right edge minus
+  the gap (the box includes the kern); a null (folded) glyph gets none.
 - **Problems** (Shift+Cmd+M, `MCProblemsPanel`, above the terminal):
   `problemRows` (files with errors first, then severity, line, column),
   `countProblems`, `problemCountsText`, `problemOneLine`, `stepProblem` (F8 and

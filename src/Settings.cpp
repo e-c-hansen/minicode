@@ -558,6 +558,7 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
          {"editor.background", "editor.opacity", "editor.text",
           "editor.gutter-background", "editor.line-number-color",
           "editor.line-number-active-color", "editor.bracket-match",
+          "editor.inlay-hint-color", "editor.inlay-hint-background",
           "syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
           "syntax.class", "syntax.variable", "syntax.parameter", "syntax.property",
@@ -935,6 +936,21 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.largeFileOptimizations_ = on;
                return true;),
+        MC_KEY("editor.inlay-hints", Word, false,
+               const std::string w = lower(v);
+               bool on = true;
+               if (w == "on") on = true;
+               else if (w == "off") on = false;
+               else if (!parseBool(w, on)) {
+                   e = "'" + v + "' is not on or off";
+                   return false;
+               }
+               s.inlayHints_ = on;
+               return true;),
+        MC_KEY("editor.inlay-hint-color", Word, true,
+               return colorValue(v, s.inlayHintColor_, e);),
+        MC_KEY("editor.inlay-hint-background", Word, true,
+               return colorValue(v, s.inlayHintBackground_, e);),
         MC_KEY("editor.semantic-highlighting", Word, false,
                const std::string w = lower(v);
                bool on = true;
@@ -1121,8 +1137,11 @@ bool Settings::apply(const std::string& key, const std::string& value,
         std::string lang = key.substr(7);
         for (const std::string& known : formatLanguages())
             if (lang == known) { formatCommands_[lang] = value; return true; }
-        error = "unknown setting '" + key + "' (formatters are format.python, "
-                "format.cpp, format.go, format.rust and format.shell)";
+        std::string known;
+        const std::vector<std::string>& langs = formatLanguages();
+        for (size_t i = 0; i < langs.size(); i++)
+            known += (i == 0 ? "" : i + 1 == langs.size() ? ", and " : ", ") + ("format." + langs[i]);
+        error = "unknown setting '" + key + "' (formatters are " + known + ")";
         return false;
     }
 
@@ -1249,6 +1268,20 @@ Rgba Settings::treeGitColor(TreeGitColor c) const {
     return Rgba::hex(theme_->dark ? dark[i] : light[i]);
 }
 
+Rgba Settings::inlayHintColor() const {
+    return inlayHintColor_ ? *inlayHintColor_ : Rgba::hex(0x969696);
+}
+
+Rgba Settings::inlayHintBackground() const {
+    if (inlayHintBackground_) return *inlayHintBackground_;
+    // VS Code's: badge.background at a tenth, the Modern themes' own badge
+    // color, else its dark or light default.
+    const std::string id = theme_->id;
+    const uint32_t badge = id == "dark-modern" ? 0x616161 : id == "light-modern" ? 0xCCCCCC
+                         : theme_->dark ? 0x4D4D4D : 0xC4C4C4;
+    return Rgba::hex(badge, 0x1A / 255.0);
+}
+
 Rgba Settings::terminalInputText() const {
     return textIsSet(Surface::Terminal) ? text(Surface::Terminal)
                                         : Rgba::hex(theme_->terminalInput);
@@ -1333,8 +1366,9 @@ std::string Settings::runTemplate(const std::string& extension) const {
 const std::vector<std::string>& Settings::formatLanguages() {
     // The same keys as Formatter::languages(), which a test checks; kept
     // here so the settings parser needs nothing else from the core.
-    static const std::vector<std::string> langs = {"python", "cpp", "go", "rust",
-                                                   "shell"};
+    static const std::vector<std::string> langs = {"python", "cpp",  "go",   "rust",
+                                                   "shell",  "markdown", "json", "yaml",
+                                                   "css",    "latex"};
     return langs;
 }
 
@@ -1437,6 +1471,14 @@ const char* Settings::defaultFileText() {
 # editor.line-number-active-color = #C6C6C6
 # The box around the bracket beside the caret and its partner.
 # editor.bracket-match = #888888
+# What a language server can say between the words, drawn in the text
+# without being part of it, as in VS Code: a variable's type after its name
+# (x: int), a function's return type, a parameter's name before an
+# argument. basedpyright, clangd and rust-analyzer send them (macOS). The
+# colors are VS Code's unless set; the background is mostly transparent.
+# editor.inlay-hints = on
+# editor.inlay-hint-color = #969696
+# editor.inlay-hint-background = #4D4D4D1A
 # Sort the lines between "keep-sorted start" and "keep-sorted end" comments
 # every time a file is saved, as Google's keep-sorted tool would.
 # editor.keep-sorted-on-save = false
@@ -1598,7 +1640,13 @@ const char* Settings::defaultFileText() {
 # style is used: clang-format for C, C++, Objective-C, Java, JavaScript,
 # TypeScript, Protocol Buffers and C#; pyink, or yapf --style=google when
 # pyink is not installed; gofmt; rustfmt with the edition from Cargo.toml;
-# shfmt. Python tools are looked for in the project's .venv or venv first.
+# shfmt; latexindent for LaTeX. Python tools are looked for in the project's
+# .venv or venv first. Markdown, JSON, YAML and CSS are formatted only in
+# projects set up for Prettier (Biome too for JSON and CSS), or by a
+# command given here (format.markdown, format.json, format.yaml, format.css)
+# such as prettier --stdin-filepath {file}. A file that nothing here
+# formats is formatted by its language server, when a running one can
+# (taplo for TOML, say); a file with a formatter of its own never is.
 # Giving a command here runs exactly that, whatever the project says; {file}
 # stands for the file's path. off leaves a language alone. Google's internal
 # 2-space Python is pyink --pyink-indentation 2 with the options below.
@@ -1609,6 +1657,7 @@ const char* Settings::defaultFileText() {
 # format.go = gofmt
 # format.rust = rustfmt --edition 2021
 # format.shell = shfmt -i 2 -ci -bn --filename {file}
+# format.latex = latexindent -g /dev/null
 # Format the file each time Cmd+S saves it.
 # format.on-save = false
 # The Python the Python server analyses your code with, so it finds the

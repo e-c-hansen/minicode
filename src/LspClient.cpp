@@ -479,7 +479,10 @@ bool offers(const Json& caps, Feature f) {
     case Feature::DocumentSymbols: return provides(caps["documentSymbolProvider"]);
     case Feature::WorkspaceSymbols: return provides(caps["workspaceSymbolProvider"]);
     case Feature::FoldingRange: return provides(caps["foldingRangeProvider"]);
+    case Feature::InlayHint: return provides(caps["inlayHintProvider"]);
     case Feature::SemanticTokens: return offersSemanticTokens(caps);
+    case Feature::Formatting: return provides(caps["documentFormattingProvider"]);
+    case Feature::RangeFormatting: return provides(caps["documentRangeFormattingProvider"]);
     }
     return false;
 }
@@ -504,6 +507,30 @@ std::vector<int> serversOffering(Feature f, const std::vector<ServerView>& serve
         if (!v.ready || (v.capabilities && offers(*v.capabilities, f))) out.push_back((int)i);
     }
     return out;
+}
+
+int routeFormatting(const std::vector<ServerView>& servers, bool range, bool* useRange) {
+    if (useRange) *useRange = false;
+    auto usable = [&](size_t i, Feature f) {
+        const ServerView& v = servers[i];
+        return v.ready && v.capabilities && offers(*v.capabilities, f);
+    };
+    // Main first, then the others; for a range, a server that formats one
+    // before one that formats only the whole file.
+    std::vector<size_t> order;
+    for (size_t i = 0; i < servers.size(); i++)
+        if (servers[i].main) order.push_back(i);
+    for (size_t i = 0; i < servers.size(); i++)
+        if (!servers[i].main) order.push_back(i);
+    if (range)
+        for (size_t i : order)
+            if (usable(i, Feature::RangeFormatting)) {
+                if (useRange) *useRange = true;
+                return (int)i;
+            }
+    for (size_t i : order)
+        if (usable(i, Feature::Formatting)) return (int)i;
+    return -1;
 }
 
 StatusLine statusLine(const std::string& language, const std::vector<ServerStatus>& servers,
@@ -1525,6 +1552,12 @@ Json pythonSettings(PythonServer kind, const std::string& interpreter) {
             // and checks far more than pyright unless told otherwise; a
             // pyproject.toml or pyrightconfig.json still wins over this.
             analysis.set("typeCheckingMode", "standard");
+            // Its inlay hints, named here so an older basedpyright that
+            // kept them off shows them too; editor.inlay-hints = off asks
+            // for none.
+            analysis.set("inlayHints", Json::object({{"variableTypes", true},
+                                                     {"functionReturnTypes", true},
+                                                     {"callArgumentNames", true}}));
             out.set("python", python);
             out.set("basedpyright", Json::object({{"analysis", analysis}}));
         }
@@ -2076,6 +2109,14 @@ WorkspaceEdit parseWorkspaceEdit(const Json& j, const CanonicalUri& canonical) {
     return we;
 }
 
+WorkspaceEdit formattingEdit(const std::string& uri, const Json& result,
+                             const CanonicalUri& canonical) {
+    if (!result.isArray()) return WorkspaceEdit();
+    Json changes = Json::object();
+    changes.set(uri, result);
+    return parseWorkspaceEdit(Json::object({{"changes", changes}}), canonical);
+}
+
 namespace {
 int versionIn(const DocVersions& v, const std::string& uri) {
     auto it = v.find(uri);
@@ -2401,6 +2442,10 @@ void Client::initialize(const std::string& rootPath, int processId,
              {"dataSupport", true},
              {"resolveSupport", Json::object({{"properties", Json::array().push("edit")}})},
          })},
+        // Format Document asks a server only for a file no formatter is
+        // planned for (Formatter::serverMayFormat).
+        {"formatting", Json::object({{"dynamicRegistration", false}})},
+        {"rangeFormatting", Json::object({{"dynamicRegistration", false}})},
         {"publishDiagnostics",
          Json::object({{"relatedInformation", false},
                        {"versionSupport", true},
@@ -2409,6 +2454,8 @@ void Client::initialize(const std::string& rootPath, int processId,
         // Go to Symbol in File (Shift+Cmd+O) shows a tree's containers.
         {"documentSymbol", Json::object({{"hierarchicalDocumentSymbolSupport", true},
                                          {"symbolKind", symbolKinds}})},
+        // Inlay hints are drawn as they come; none is resolved.
+        {"inlayHint", Json::object({{"dynamicRegistration", false}})},
     });
     // Semantic tokens: whole documents and their deltas, a token never
     // over two lines, laid over the editor's own colors.
@@ -2453,6 +2500,7 @@ void Client::initialize(const std::string& rootPath, int processId,
                                                            {"symbolKind", symbolKinds}})},
                                   {"didChangeConfiguration",
                                    Json::object({{"dynamicRegistration", false}})},
+                                  {"inlayHint", Json::object({{"refreshSupport", true}})},
                                   {"semanticTokens", Json::object({{"refreshSupport", true}})}});
     // Files changed on disk, for the watchers a server registers, only
     // from an owner that sends them: a server told the client watches
@@ -2674,6 +2722,28 @@ int Client::semanticTokensDelta(const std::string& uri, const std::string& previ
                          std::move(h));
 }
 
+static Json formattingOptions(int tabSize, bool insertSpaces) {
+    return Json::object({{"tabSize", tabSize > 0 ? tabSize : 4}, {"insertSpaces", insertSpaces}});
+}
+
+int Client::formatting(const std::string& uri, int tabSize, bool insertSpaces,
+                       ResultHandler h) {
+    return request("textDocument/formatting",
+                   Json::object({{"textDocument", Json::object({{"uri", uri}})},
+                                 {"options", formattingOptions(tabSize, insertSpaces)}}),
+                   std::move(h));
+}
+
+int Client::rangeFormatting(const std::string& uri, Range range, int tabSize,
+                            bool insertSpaces, ResultHandler h) {
+    return request("textDocument/rangeFormatting",
+                   Json::object({{"textDocument", Json::object({{"uri", uri}})},
+                                 {"range", Json::object({{"start", positionJson(range.start)},
+                                                         {"end", positionJson(range.end)}})},
+                                 {"options", formattingOptions(tabSize, insertSpaces)}}),
+                   std::move(h));
+}
+
 int Client::prepareRename(const std::string& uri, Position p, ResultHandler h) {
     return request("textDocument/prepareRename", docPosition(uri, p), std::move(h));
 }
@@ -2715,6 +2785,15 @@ int Client::documentSymbols(const std::string& uri, ResultHandler h) {
 
 int Client::workspaceSymbols(const std::string& query, ResultHandler h) {
     return request("workspace/symbol", Json::object({{"query", query}}), std::move(h));
+}
+
+int Client::inlayHints(const std::string& uri, Range range, ResultHandler h) {
+    Json params = Json::object({
+        {"textDocument", Json::object({{"uri", uri}})},
+        {"range", Json::object({{"start", positionJson(range.start)},
+                                {"end", positionJson(range.end)}})},
+    });
+    return request("textDocument/inlayHint", params, std::move(h));
 }
 
 int Client::executeCommand(const Json& command, ResultHandler h) {
@@ -3027,6 +3106,9 @@ void Client::handleServerRequest(const Json& msg) {
             if (!applied && !reason.empty()) result.set("failureReason", reason);
             respond(theId, result);
         });
+    } else if (method == "workspace/inlayHint/refresh") {
+        respond(id, Json());
+        if (onInlayHintRefresh) onInlayHintRefresh();
     } else if (method == "workspace/workspaceFolders") {
         std::string uri = uriFromPath(rootPath_);
         respond(id, Json::array().push(Json::object({{"uri", uri}, {"name", rootPath_}})));
@@ -3057,7 +3139,6 @@ void Client::handleServerRequest(const Json& msg) {
     } else if (method == "window/workDoneProgress/create" ||
                method == "window/showMessageRequest" ||
                method == "workspace/diagnostic/refresh" ||
-               method == "workspace/inlayHint/refresh" ||
                method == "workspace/codeLens/refresh") {
         respond(id, Json());
     } else {

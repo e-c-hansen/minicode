@@ -24,16 +24,22 @@
 namespace Formatter {
 
 // The settings key for a file's language ("python", "cpp", "go", "rust",
-// "shell"), or "" when no formatter applies. "cpp" covers everything
-// clang-format formats: C, C++, Objective-C, Java, JavaScript, TypeScript,
-// Protocol Buffers and C#.
+// "shell", "markdown", "json", "yaml", "css", "latex"), or "" when no
+// formatter applies. "cpp" covers everything clang-format formats: C, C++,
+// Objective-C, Java, JavaScript, TypeScript, Protocol Buffers and C#.
+// Markdown, JSON, YAML and CSS have no default: only a project set up for
+// Prettier (or Biome, for JSON and CSS) or a format.<lang> command formats
+// them, so their plan is often empty.
 std::string languageFor(const std::string& path);
 const std::vector<std::string>& languages();
-// For messages: "Python", "C-family", "Go", "Rust", "shell".
+// For messages: "Python", "C-family", "Go", "Rust", "shell", "Markdown", ...
 std::string displayName(const std::string& lang);
 // The command the settings file documents for a language: its first tool's
 // Google-style command.
 std::string defaultCommand(const std::string& lang);
+// Does the language have a formatter that runs without the project
+// configuring one (defaultCommand is not "")?
+bool hasDefault(const std::string& lang);
 
 // What the planner may look at. `exists` answers for a file path, `read`
 // gives a file's text ("" when unreadable). Paths are absolute, '/'-separated.
@@ -76,6 +82,20 @@ Plan plan(const std::string& lang, const std::string& setting,
 std::string configFile(const std::string& program, const std::string& path,
                        const std::string& root, const Fs& fs);
 
+// May Format Document ask a language server (textDocument/formatting)?
+// Only when no formatter is planned for the file at all: its kind of file
+// has none (`lang` ""), or nothing configures one and the language has no
+// default (a README in a project without Prettier). Never when the project
+// configures a formatter, the settings name one or turn the language off,
+// or a default tool is merely not installed: the server would format in a
+// style the project never chose.
+bool serverMayFormat(const std::string& lang, const Plan& plan);
+// The note when nothing is planned and no server formats the file:
+// "minicode formats Markdown files only in projects set up for Prettier,
+// or with a command of your own (format.markdown in the settings)."; for
+// `lang` "" it names the file's extension.
+std::string unplannedMessage(const std::string& lang, const std::string& extension);
+
 // Folders that may hold a project's own Python tools, nearest first:
 // .venv/bin and venv/bin in the file's folder and each one above it up to
 // `root` (only the file's own folder when it is outside `root`), then
@@ -114,9 +134,12 @@ Source chooseProgram(bool fromSettings, const std::string& local, const std::str
 // firstLine/lastLine (1-based, inclusive; 0 for the whole file) add the
 // program's line-range option when it has one (clang-format, yapf, pyink,
 // black); `ranged` says whether one was added.
+// {config} is replaced the same way by `config`, the project file that
+// chose the formatter's style (Plan::configFile), for a program that is told
+// it by path (latexindent -l).
 std::vector<std::string> arguments(const std::string& command, const std::string& path,
                                    int firstLine = 0, int lastLine = 0,
-                                   bool* ranged = nullptr);
+                                   bool* ranged = nullptr, const std::string& config = "");
 
 // The program's name without its folder ("/opt/x/clang-format" -> "clang-format").
 std::string programName(const std::string& program);

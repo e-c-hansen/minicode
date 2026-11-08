@@ -363,6 +363,9 @@ enum class Feature {
     Completion, SignatureHelp, Hover, Definition, References, Rename, CodeActions,
     DocumentSymbols, WorkspaceSymbols, FoldingRange,
     SemanticTokens,   // textDocument/semanticTokens/full
+    InlayHint,        // textDocument/inlayHint
+    Formatting,       // textDocument/formatting
+    RangeFormatting,  // textDocument/rangeFormatting
 };
 // Does a server whose `initialize` answered with these capabilities offer it?
 bool offers(const Json& capabilities, Feature f);
@@ -378,6 +381,18 @@ int routeRequest(Feature f, const std::vector<ServerView>& servers);
 // The servers asked for code actions: every one that offers them, or is
 // still starting (main or not; its answer is waited for).
 std::vector<int> serversOffering(Feature f, const std::vector<ServerView>& servers);
+// Format Document's server, when no formatter is planned for the file
+// (Formatter::serverMayFormat): the first that is running and offers
+// formatting, the main one first, or -1. A server still starting is passed
+// over (Format Document never waits for one). With `range` (lines are
+// selected), a server offering range formatting is preferred, and
+// *useRange says whether the one chosen formats the range only.
+int routeFormatting(const std::vector<ServerView>& servers, bool range, bool* useRange);
+// textDocument/formatting's (and rangeFormatting's) answer, a list of
+// TextEdits for `uri` (null: nothing to change), as a WorkspaceEdit for the
+// applier: sorted, duplicates dropped, overlaps refused.
+WorkspaceEdit formattingEdit(const std::string& uri, const Json& result,
+                             const CanonicalUri& canonical = nullptr);
 
 // The status bar for a file's servers. States are LSP's view of a server
 // entry (MCLspState in Lsp.h has the same values in the same order).
@@ -940,6 +955,11 @@ public:
     int semanticTokensFull(const std::string& uri, TakingHandler h);
     int semanticTokensDelta(const std::string& uri, const std::string& previousResultId,
                             TakingHandler h);
+    // textDocument/formatting, and textDocument/rangeFormatting for a range,
+    // with the file's indentation as their FormattingOptions.
+    int formatting(const std::string& uri, int tabSize, bool insertSpaces, ResultHandler h);
+    int rangeFormatting(const std::string& uri, Range range, int tabSize, bool insertSpaces,
+                        ResultHandler h);
     // textDocument/prepareRename and textDocument/rename.
     int prepareRename(const std::string& uri, Position p, ResultHandler h);
     int rename(const std::string& uri, Position p, const std::string& newName,
@@ -957,6 +977,9 @@ public:
     // textDocument/documentSymbol and workspace/symbol (the query as typed).
     int documentSymbols(const std::string& uri, ResultHandler h);
     int workspaceSymbols(const std::string& query, ResultHandler h);
+    // textDocument/inlayHint for a range of a document (InlayHints.h reads
+    // the answer).
+    int inlayHints(const std::string& uri, Range range, ResultHandler h);
     // Drop interest in a request (its handler will not run). Sends
     // $/cancelRequest if it was already sent.
     void cancel(int id);
@@ -1009,6 +1032,10 @@ public:
     std::function<void(const std::string& uri, const std::vector<Diagnostic>&)> onDiagnostics;
     size_t staleDiagnosticsDropped() const { return staleDiagnostics_; }
     std::function<void(int type, const std::string& message)> onShowMessage;
+    // workspace/inlayHint/refresh: the server's hints changed (a file it
+    // depends on was saved), so the open documents' should be asked again.
+    // Answered at once either way.
+    std::function<void()> onInlayHintRefresh;
     std::function<void(const std::string& problem)> onProtocolError;
     // workspace/applyEdit from the server (often while a command it was
     // asked to run is still going). The owner applies params["edit"] and

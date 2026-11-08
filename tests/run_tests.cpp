@@ -3816,9 +3816,10 @@ void testSettings() {
     // develop, git, control and agent keys (with markdown.mermaid and
     // agent.ide-link), terminal.activate-venv, search.use-ignore-files and
     // terminal.multiline-paste-warning, the tree's six git colors and
-    // editor.large-file-optimizations, editor.auto-close, and
-    // editor.semantic-highlighting with its five syntax colors.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 103);
+    // editor.large-file-optimizations, editor.auto-close,
+    // editor.semantic-highlighting with its five syntax colors, the three
+    // inlay hint keys, and format.latex.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 107);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -3906,8 +3907,11 @@ void testSettings() {
     }
     // The documented formatters are each language's first Google-style tool.
     CHECK(Settings::formatLanguages() == Formatter::languages());
+    // Markdown, JSON, YAML and CSS have none (only a project's Prettier
+    // or Biome formats them), and are not listed.
     for (const std::string &lang : Settings::formatLanguages()) {
-        CHECK(!Formatter::defaultCommand(lang).empty());
+        CHECK(Formatter::hasDefault(lang) ==
+              (lang != "markdown" && lang != "json" && lang != "yaml" && lang != "css"));
         CHECK(un.formatCommand(lang) == Formatter::defaultCommand(lang));
         CHECK(d.formatCommand(lang).empty());
     }
@@ -8552,11 +8556,12 @@ void testFormatter() {
     CHECK(languageFor("/a/main.go") == "go");
     CHECK(languageFor("/a/lib.rs") == "rust");
     CHECK(languageFor("/a/run.sh") == "shell");
-    CHECK(languageFor("/a/notes.md").empty());
+    CHECK(languageFor("/a/notes.md") == "markdown");
+    CHECK(languageFor("/a/notes.txt").empty());
     CHECK(languageFor("/a/Makefile").empty());
     CHECK(languageFor("/a/.py").empty());       // a dotfile, not a .py
     CHECK(languageFor("/a.d/x").empty());
-    CHECK(languages().size() == 5);
+    CHECK(languages().size() == 10);
     CHECK(displayName("cpp") == "C-family");
 
     GROUP("format:plan defaults");
@@ -8968,7 +8973,7 @@ static void testInstallHints() {
         Formatter::Plan pl = Formatter::plan(lang, "", "/w/a", "/w", none);
         for (const Formatter::Candidate &c : pl.candidates)
             CHECK(Install::formatter(c.program) != nullptr);
-        CHECK(!pl.installHint.empty());
+        CHECK(pl.installHint.empty() == !Formatter::hasDefault(lang));
     }
     // Every command is one line, every tool says what it gives and where it
     // lives, and every prerequisite is one `prerequisite` knows.
@@ -10105,6 +10110,7 @@ static void testMultiCaretOccurrences() {
 #include "terminal_links_tests.inc"
 #include "ide_link_tests.inc"
 #include "format_consent_tests.inc"
+#include "format_coverage_tests.inc"
 #include "terminal_paste_tests.inc"
 #include "terminal_marks_tests.inc"
 #include "latex_safety_tests.inc"
@@ -10119,6 +10125,7 @@ static void testMultiCaretOccurrences() {
 #include "folder_search_tests.inc"
 #include "auto_close_tests.inc"
 #include "side_by_side_tests.inc"
+#include "lsp_inlay_tests.inc"
 #include "lsp_semantic_tests.inc"
 #include "preview_scroll_tests.inc"
 
@@ -10175,6 +10182,7 @@ int main() {
     testEditorTabs();
     testFormatter();
     testFormatConsent();
+    testFormatCoverage();
     testInstallHints();
     testLinuxBuildLists();
     testCategoryIvars();
@@ -10232,6 +10240,7 @@ int main() {
     testMultiEdit();
     testFolderSearchParallel();
     testAutoClose();
+    testLspInlayHints();
     testLspSemanticTokens();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

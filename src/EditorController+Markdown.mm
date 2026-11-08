@@ -61,6 +61,9 @@
     if (overText && toPreview) [self endTextSessionOfTab:_activeTab];
     self.previewMode = toPreview;
     [self refreshDisplay];
+    // The source on show goes to its language server, as when a file opens
+    // in the source (marksman, texlab); the rendered page never does.
+    [self.lsp documentOpened:self.previewMode ? nil : [self languageServerPath:self.currentPath]];
     [self updateTitle];
 
     if (toPreview && self.isMarkdown) {

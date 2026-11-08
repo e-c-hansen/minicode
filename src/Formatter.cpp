@@ -65,6 +65,45 @@ struct Tool {
 // in place of clang-format when the project configures them.
 #define MC_JS_EXTENSIONS {"js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"}
 
+// What says a project formats with Prettier: its configuration files, a
+// "prettier" key in package.json, or Prettier among the packages it
+// installs (Prettier runs with its defaults when there is no file).
+const std::vector<Marker>& prettierMarkers() {
+    static const std::vector<Marker> m = {
+        {".prettierrc", Kind::Any, ""},
+        {".prettierrc.json", Kind::Any, ""},
+        {".prettierrc.json5", Kind::Any, ""},
+        {".prettierrc.yaml", Kind::Any, ""},
+        {".prettierrc.yml", Kind::Any, ""},
+        {".prettierrc.toml", Kind::Any, ""},
+        {".prettierrc.js", Kind::Any, ""},
+        {".prettierrc.cjs", Kind::Any, ""},
+        {".prettierrc.mjs", Kind::Any, ""},
+        {".prettierrc.ts", Kind::Any, ""},
+        {".prettierrc.cts", Kind::Any, ""},
+        {".prettierrc.mts", Kind::Any, ""},
+        {"prettier.config.js", Kind::Any, ""},
+        {"prettier.config.cjs", Kind::Any, ""},
+        {"prettier.config.mjs", Kind::Any, ""},
+        {"prettier.config.ts", Kind::Any, ""},
+        {"prettier.config.cts", Kind::Any, ""},
+        {"prettier.config.mts", Kind::Any, ""},
+        {"package.json", Kind::JsonKey, "prettier"},
+        {"package.json", Kind::JsonDependency, "prettier"},
+        {"node_modules/.bin/prettier", Kind::Any, ""},
+    };
+    return m;
+}
+
+const std::vector<Marker>& biomeMarkers() {
+    static const std::vector<Marker> m = {{"biome.json", Kind::Any, ""},
+                                          {"biome.jsonc", Kind::Any, ""}};
+    return m;
+}
+
+const char* const kPrettierCommand = "prettier --stdin-filepath {file}";
+const char* const kBiomeCommand = "biome format --stdin-file-path={file}";
+
 struct Language {
     const char* key;
     const char* display;
@@ -115,34 +154,8 @@ const std::vector<Language>& table() {
              // Biome formats with it. They come before clang-format, so a
              // folder holding a .prettierrc and a .clang-format (a project
              // with both kinds of code) formats its scripts with Prettier.
-             {"prettier", "", "prettier --stdin-filepath {file}",
-              {{".prettierrc", Kind::Any, ""},
-               {".prettierrc.json", Kind::Any, ""},
-               {".prettierrc.json5", Kind::Any, ""},
-               {".prettierrc.yaml", Kind::Any, ""},
-               {".prettierrc.yml", Kind::Any, ""},
-               {".prettierrc.toml", Kind::Any, ""},
-               {".prettierrc.js", Kind::Any, ""},
-               {".prettierrc.cjs", Kind::Any, ""},
-               {".prettierrc.mjs", Kind::Any, ""},
-               {".prettierrc.ts", Kind::Any, ""},
-               {".prettierrc.cts", Kind::Any, ""},
-               {".prettierrc.mts", Kind::Any, ""},
-               {"prettier.config.js", Kind::Any, ""},
-               {"prettier.config.cjs", Kind::Any, ""},
-               {"prettier.config.mjs", Kind::Any, ""},
-               {"prettier.config.ts", Kind::Any, ""},
-               {"prettier.config.cts", Kind::Any, ""},
-               {"prettier.config.mts", Kind::Any, ""},
-               {"package.json", Kind::JsonKey, "prettier"},
-               // Prettier runs with its defaults when there is no file: a
-               // project that installs it formats with it.
-               {"package.json", Kind::JsonDependency, "prettier"},
-               {"node_modules/.bin/prettier", Kind::Any, ""}},
-              false, MC_JS_EXTENSIONS},
-             {"biome", "", "biome format --stdin-file-path={file}",
-              {{"biome.json", Kind::Any, ""}, {"biome.jsonc", Kind::Any, ""}},
-              false, MC_JS_EXTENSIONS},
+             {"prettier", "", kPrettierCommand, prettierMarkers(), false, MC_JS_EXTENSIONS},
+             {"biome", "", kBiomeCommand, biomeMarkers(), false, MC_JS_EXTENSIONS},
              // --style=file uses the nearest .clang-format and falls back to
              // Google's style when the project has none.
              {"clang-format",
@@ -164,6 +177,30 @@ const std::vector<Language>& table() {
         {"shell", "shell", {"sh", "bash", "ksh", "bats"},
          {{"shfmt", "shfmt -i 2 -ci -bn --filename {file}", "shfmt --filename {file}",
            {{".editorconfig", Kind::EditorConfigShell, ""}},
+           true}}},
+        // Markdown, JSON, YAML and CSS have no Google formatter: they are
+        // formatted only where the project sets up Prettier (or Biome, for
+        // the JSON and CSS it formats), with the project's configuration.
+        {"markdown", "Markdown", {"md", "markdown"},
+         {{"prettier", "", kPrettierCommand, prettierMarkers(), false}}},
+        {"json", "JSON", {"json", "jsonc", "json5"},
+         {{"prettier", "", kPrettierCommand, prettierMarkers(), false},
+          {"biome", "", kBiomeCommand, biomeMarkers(), false, {"json", "jsonc"}}}},
+        {"yaml", "YAML", {"yaml", "yml"},
+         {{"prettier", "", kPrettierCommand, prettierMarkers(), false}}},
+        {"css", "CSS", {"css", "scss", "less"},
+         {{"prettier", "", kPrettierCommand, prettierMarkers(), false},
+          {"biome", "", kBiomeCommand, biomeMarkers(), false, {"css"}}}},
+        // latexindent, which TeX distributions and Homebrew ship. A project's
+        // .latexindent.yaml or localSettings.yaml (the names its -l looks
+        // for) is its style, given by path, since the text comes on stdin.
+        // -g /dev/null: no indent.log in the project's folder.
+        {"latex", "LaTeX", {"tex", "ltx", "sty", "cls"},
+         {{"latexindent", "latexindent -g /dev/null", "latexindent -g /dev/null -l={config}",
+           {{".latexindent.yaml", Kind::Any, ""},
+            {"latexindent.yaml", Kind::Any, ""},
+            {"localSettings.yaml", Kind::Any, ""},
+            {".localSettings.yaml", Kind::Any, ""}},
            true}}},
     };
     return langs;
@@ -420,6 +457,27 @@ Source chooseProgram(bool fromSettings, const std::string& local, const std::str
     return Source::Ask;
 }
 
+bool serverMayFormat(const std::string& lang, const Plan& plan) {
+    if (lang.empty()) return true;
+    if (plan.off || plan.fromSettings) return false;
+    return plan.candidates.empty();
+}
+
+bool hasDefault(const std::string& lang) {
+    return !defaultCommand(lang).empty();
+}
+
+std::string unplannedMessage(const std::string& lang, const std::string& extension) {
+    const Language* l = findLanguage(lang);
+    if (!l) return "minicode has no formatter for ." + extension + " files.";
+    bool biome = false;
+    for (const Tool& t : l->tools)
+        if (std::string(t.program) == "biome") biome = true;
+    return std::string("minicode formats ") + l->display + " files only in projects set up for " +
+           (biome ? "Prettier or Biome" : "Prettier") + ", or with a command of your own (format." +
+           lang + " in the settings).";
+}
+
 bool jsonHasKey(const std::string& text, const std::string& key) {
     Json j;
     return Json::parse(text, j) && j.isObject() && j.has(key);
@@ -438,14 +496,19 @@ std::string programName(const std::string& program) {
 }
 
 std::vector<std::string> arguments(const std::string& command, const std::string& path,
-                                   int firstLine, int lastLine, bool* ranged) {
+                                   int firstLine, int lastLine, bool* ranged,
+                                   const std::string& config) {
     if (ranged) *ranged = false;
     std::vector<std::string> words = Lsp::splitCommand(command);
+    const std::pair<std::string, const std::string*> marks[] = {{"{file}", &path},
+                                                                {"{config}", &config}};
     for (std::string& w : words) {
-        size_t at = 0;
-        while ((at = w.find("{file}", at)) != std::string::npos) {
-            w.replace(at, 6, path);
-            at += path.size();
+        for (const auto& m : marks) {
+            size_t at = 0;
+            while ((at = w.find(m.first, at)) != std::string::npos) {
+                w.replace(at, m.first.size(), *m.second);
+                at += m.second->size();
+            }
         }
     }
     if (words.empty() || firstLine <= 0 || lastLine < firstLine) return words;

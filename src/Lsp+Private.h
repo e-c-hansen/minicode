@@ -268,6 +268,12 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
 - (void)closePicker;
 @end
 
+@interface LspSession (InlayHints)
+- (void)startInlayHints;
+- (void)scheduleInlayHints:(NSTimeInterval)delay;
+- (void)clearInlayHints;
+@end
+
 @interface LspSession (Semantic)
 - (void)scheduleSemanticTokens:(NSTimeInterval)delay;
 - (void)forgetSemanticTokens;

@@ -246,3 +246,129 @@ MC_GUI_SUITE(format_consent) {
         MCGuiSetSettings(@"lsp.enabled = false\n");
     });
 }
+
+// `make guitest SUITES=format_coverage`: Markdown formatted by the
+// project's Prettier (a fake one in ~/.local/bin, outside the folder, so no
+// question); the same file with Prettier configured but missing names it
+// and never goes to the language server; with no Prettier set up, the
+// file's server formats it (textDocument/formatting from fakelsp) as one
+// undo step; and a kind of file minicode has no formatter for is
+// formatted by its server, also before a save with format.on-save.
+MC_GUI_SUITE(format_coverage) {
+    __block EditorController *c = nil;
+    __block NSString *md = nil, *notes = nil;
+    NSString *dir = MCGuiProjectFile(@"fmtcov");
+    NSString *readme = [dir stringByAppendingPathComponent:@"README.md"];
+    NSString *other = [dir stringByAppendingPathComponent:@"a.notes"];
+    NSString *rc = [dir stringByAppendingPathComponent:@".prettierrc"];
+    NSString *prettier = [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/prettier"];
+    NSString *args = [MCGuiScratch() stringByAppendingPathComponent:@"fmtcov-prettier-args"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSDictionary *(^edit)(int, int, int, NSString *) = ^NSDictionary *(int line, int from, int to,
+                                                                       NSString *text) {
+        return @{@"range": @{@"start": @{@"line": @(line), @"character": @(from)},
+                             @"end": @{@"line": @(line), @"character": @(to)}},
+                 @"newText": text};
+    };
+    NSDictionary *(^server)(NSArray *) = ^NSDictionary *(NSArray *result) {
+        return @{@"capabilities": @{@"textDocumentSync": @1,
+                                    @"documentFormattingProvider": @YES},
+                 @"rules": @[@{@"method": @"textDocument/formatting", @"result": result}]};
+    };
+    BOOL (^opened)(NSString *, NSString *) = ^BOOL(NSString *name, NSString *file) {
+        for (NSDictionary *m in MCGuiFakeLspReceived(name, @"textDocument/didOpen"))
+            if ([m[@"params"][@"textDocument"][@"uri"] hasSuffix:file]) return YES;
+        return NO;
+    };
+
+    MCGuiStep(@"a README with a .prettierrc, a fake prettier, servers for .md and .notes", ^{
+        MCGuiWriteFile(readme, @"#  Title\n");
+        MCGuiWriteFile(rc, @"{}\n");
+        Script(prettier, [NSString stringWithFormat:
+            @"#!/bin/sh\nprintf '%%s\\n' \"$@\" > '%@'\nexec /usr/bin/sed -E 's/^#  /# /'\n",
+            args]);
+        md = MCGuiFakeLsp(@"fmtmd", server(@[edit(0, 1, 2, @"")]), nil, nil);
+        notes = MCGuiFakeLsp(@"fmtnotes", server(@[edit(0, 1, 1, @" ")]), nil, nil);
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.markdown = %@\nlsp.notes = %@\n"
+            @"lsp.notes.extensions = notes\n", md, notes]);
+        c = MCGuiController();
+        GCHECK([c showFile:readme]);
+        if ([[c valueForKey:@"previewMode"] boolValue])
+            [c performSelector:@selector(togglePreview:) withObject:nil];   // the source
+        GCHECK(Text(c).editable);
+    });
+    MCGuiWait(@"the Markdown server has the file", 20, ^BOOL {
+        return opened(@"fmtmd", @"README.md");
+    });
+    MCGuiStep(@"Format Document", ^{ [c formatDocument:nil]; });
+    MCGuiWait(@"formatted by the project's Prettier", 15, ^BOOL {
+        return [Text(c).string isEqualToString:@"# Title\n"];
+    });
+    MCGuiStep(@"prettier was told the file; the server was not asked", ^{
+        NSString *given = Disk(args);
+        MCGuiNote(@"prettier's arguments: %@", given);
+        GCHECK([given containsString:@"--stdin-filepath"] && [given containsString:@"README.md"]);
+        GCHECK(MCGuiFakeLspReceived(@"fmtmd", @"textDocument/formatting").count == 0);
+        [Text(c).undoManager undo];
+        GCHECK_EQ_STR(Text(c).string, @"#  Title\n");
+        // Prettier is configured but not installed.
+        [fm removeItemAtPath:prettier error:nil];
+        [c setValue:nil forKey:@"lastFormatNote"];
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"the note names the project's Prettier", 15, ^BOOL {
+        return [[c valueForKey:@"lastFormatNote"] containsString:@"not installed"];
+    });
+    MCGuiStep(@"the server never substitutes for it; then no Prettier set up", ^{
+        MCGuiNote(@"the note: %@", [c valueForKey:@"lastFormatNote"]);
+        GCHECK([[c valueForKey:@"lastFormatNote"] containsString:@".prettierrc"]);
+        GCHECK(MCGuiFakeLspReceived(@"fmtmd", @"textDocument/formatting").count == 0);
+        GCHECK_EQ_STR(Text(c).string, @"#  Title\n");
+        [fm removeItemAtPath:rc error:nil];
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"formatted by the Markdown server", 15, ^BOOL {
+        return [Text(c).string isEqualToString:@"# Title\n"];
+    });
+    MCGuiStep(@"asked with the file's indentation; one undo step, unsaved", ^{
+        NSArray *asked = MCGuiFakeLspReceived(@"fmtmd", @"textDocument/formatting");
+        GCHECK(asked.count == 1);
+        NSDictionary *p = [asked.firstObject objectForKey:@"params"];
+        GCHECK([p[@"textDocument"][@"uri"] hasSuffix:@"README.md"]);
+        GCHECK([p[@"options"][@"tabSize"] integerValue] > 0 && p[@"options"][@"insertSpaces"]);
+        GCHECK_EQ_STR(Disk(readme), @"#  Title\n");
+        GCHECK([[c valueForKey:@"dirty"] boolValue]);
+        [Text(c).undoManager undo];
+        GCHECK_EQ_STR(Text(c).string, @"#  Title\n");
+        GCHECK(![[c valueForKey:@"dirty"] boolValue]);
+        // A kind of file minicode has no formatter for.
+        MCGuiWriteFile(other, @"a=1\n");
+        GCHECK([c showFile:other]);
+    });
+    MCGuiWait(@"its server has it", 20, ^BOOL { return opened(@"fmtnotes", @"a.notes"); });
+    MCGuiStep(@"Format Document on it", ^{ [c formatDocument:nil]; });
+    MCGuiWait(@"formatted by its server", 15, ^BOOL {
+        return [Text(c).string isEqualToString:@"a =1\n"];
+    });
+    MCGuiStep(@"one undo; then format.on-save formats it before Cmd+S writes", ^{
+        [Text(c).undoManager undo];
+        GCHECK_EQ_STR(Text(c).string, @"a=1\n");
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.markdown = %@\nlsp.notes = %@\n"
+            @"lsp.notes.extensions = notes\nformat.on-save = true\n", md, notes]);
+        [Text(c) insertText:@"b=2\n" replacementRange:NSMakeRange(Text(c).string.length, 0)];
+        [c saveCurrentFile:c];
+    });
+    MCGuiWait(@"saved formatted", 15, ^BOOL {
+        return [Disk(other) isEqualToString:@"a =1\nb=2\n"];
+    });
+    MCGuiStep(@"put everything back", ^{
+        GCHECK_EQ_STR(Text(c).string, @"a =1\nb=2\n");
+        GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
+        [c showFile:readme];
+        GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
+        [fm removeItemAtPath:dir error:nil];
+        MCGuiSetSettings(@"lsp.enabled = false\n");
+    });
+}

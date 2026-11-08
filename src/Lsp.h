@@ -26,6 +26,7 @@
 
 @class MCMultiCarets;
 @class MCFolds;
+@class MCInlayHints;
 
 // The color a diagnostic's severity is drawn in (1 error ... 4 hint): the
 // squiggles, the hover box's messages and the gutter's dots.
@@ -72,6 +73,9 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 // enabled while the view is editable. foldLevel: takes the level from the
 // sender's tag.
 @property(nonatomic, readonly) MCFolds *folds;
+// Inlay hints (LspInlayHints.h): labels drawn between characters, in gaps
+// the layout opens; LspSession (InlayHints) fills them in.
+@property(nonatomic, readonly) MCInlayHints *inlayHints;
 - (IBAction)foldRegion:(id)sender;
 - (IBAction)unfoldRegion:(id)sender;
 - (IBAction)toggleFold:(id)sender;
@@ -291,6 +295,15 @@ void MCForgetFolderToolsConsent(NSString *root);
 @property(nonatomic, readonly) NSUInteger watchedBatches;
 @end
 
+// ---- inlay hints (Lsp+InlayHints.mm): the lines on show, asked of the
+// server that offers them when a file opens, a moment after typing stops,
+// when scrolling leaves the lines asked about, and when the server says
+// they changed; drawn by the view's MCInlayHints (editor.inlay-hints).
+@interface LspSession (InlayHints)
+// Test hook: textDocument/inlayHint requests sent so far.
+@property(nonatomic, readonly) NSUInteger inlayHintRequests;
+@end
+
 // The menu actions below (triggerCompletion, goToDefinition, renameSymbol,
 // ...) each beep, and say why in the status bar, when the current file has
 // no server.
@@ -376,6 +389,24 @@ void MCForgetFolderToolsConsent(NSString *root);
 // The rename field while it shows, else nil; and its popover's view.
 @property(nonatomic, readonly) NSTextField *renameField;
 @property(nonatomic, readonly) NSView *renameView;
+@end
+
+// ---- Format Document through a server (Lsp+Formatting.mm)
+@interface LspSession (Formatting)
+// Does a running server of the file on show format it
+// (documentFormattingProvider)? Asked only for a file no formatter is
+// planned for (Formatter::serverMayFormat).
+- (BOOL)canFormatDocument;
+// textDocument/formatting for the file on show, or rangeFormatting for
+// `selection` (length 0: the whole file) when the server formats ranges;
+// its edits go in as one undo step, "Format Document", unsaved. NO (and
+// `done` never called) when no running server formats the file. Otherwise
+// `done` is called once on the main thread: with nil once the edit is in
+// (or the text changed meanwhile, so the answer was dropped), else with a
+// note: already formatted, or (`error`) the server's refusal, an edit that
+// could not be applied, or no answer within 5 seconds.
+- (BOOL)formatDocumentInRange:(NSRange)selection
+                         done:(void (^)(NSString *note, BOOL error))done;
 @end
 
 // ---- the workspace edit applier (Lsp+WorkspaceEdit.mm)
