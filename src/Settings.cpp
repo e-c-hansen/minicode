@@ -24,14 +24,21 @@ const char* const kMarkdownNames[kMarkdownColorCount] = {
 // status bar); syntax in TokenStyle order (plain unused, keyword, type,
 // string, comment, number, preprocessor, function); Markdown (heading, link,
 // code, quote, done); code block background, ruler, terminal input text;
-// line numbers, the caret line's number, the bracket match box.
+// line numbers, the caret line's number, the bracket match box; the
+// semantic colors (class, variable, parameter, property, constant).
 // Dark+ is minicode's look from the start, so its values are the defaults
 // the settings file documents; the others come from the themes' own files
 // (editor, sideBar, titleBar, panel and statusBar colors, the token colors
 // for comments, strings, keywords, keyword.control, types, numbers and
 // function names, editorLineNumber's foreground and activeForeground,
 // editorBracketMatch's border), the nearest where a theme leaves a color to
-// its base.
+// its base. The semantic colors are what each theme's token colors give the
+// scopes VS Code's semantic token types probe (entity.name.type.class,
+// variable.other.readwrite, variable.parameter, variable.other.property,
+// variable.other.constant), matched as TextMate matches them, and the
+// editor's text where a theme gives one none (Solarized's parameters);
+// font styles (Monokai's underlined classes) are left out, as the lexer's are.
+
 const Theme kThemes[] = {
     {"dark-modern", "Dark Modern", true,
      {0x181818, 0x181818, 0x1F1F1F, 0x181818, 0x1F1F1F, 0x181818},
@@ -39,63 +46,72 @@ const Theme kThemes[] = {
      {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA},
      {0xFFFFFF, 0x4DAAFC, 0xCE9178, 0x9D9D9D, 0x6E7681},
      0x2B2B2B, 0x5A5A5A, 0xE6E6E6,
-     0x6E7681, 0xCCCCCC, 0x888888},
+     0x6E7681, 0xCCCCCC, 0x888888,
+     {0x4EC9B0, 0x9CDCFE, 0x9CDCFE, 0x9CDCFE, 0x4FC1FF}},
     {"dark-plus", "Dark+", true,
      {0x323233, 0x252526, 0x1E1E1E, 0x181818, 0x2A2A2A, 0x007ACC},
      {0xCCCCCC, 0xCCCCCC, 0xD4D4D4, 0xD4D4D4, 0xD4D4D4, 0xFFFFFF},
      {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA},
      {0xFFFFFF, 0x4EA1F7, 0xCE9178, 0x9CA3AF, 0x858585},
      0x2A2A2A, 0x5A5A5A, 0xEDEDED,
-     0x858585, 0xC6C6C6, 0x888888},
+     0x858585, 0xC6C6C6, 0x888888,
+     {0x4EC9B0, 0x9CDCFE, 0x9CDCFE, 0x9CDCFE, 0x4FC1FF}},
     {"monokai", "Monokai", true,
      {0x1E1F1C, 0x1E1F1C, 0x272822, 0x1E1F1C, 0x1E1F1C, 0x414339},
      {0xCCCCCC, 0xCCCCCC, 0xF8F8F2, 0xF8F8F2, 0xF8F8F2, 0xFFFFFF},
      {0, 0xF92672, 0x66D9EF, 0xE6DB74, 0x88846F, 0xAE81FF, 0xF92672, 0xA6E22E},
      {0xF8F8F2, 0x66D9EF, 0xE6DB74, 0x88846F, 0x75715E},
      0x3E3D32, 0x464741, 0xFFFFFF,
-     0x90908A, 0xC2C2BF, 0x888888},
+     0x90908A, 0xC2C2BF, 0x888888,
+     {0xA6E22E, 0xF8F8F2, 0xFD971F, 0xF8F8F2, 0xF8F8F2}},
     {"solarized-dark", "Solarized Dark", true,
      {0x002C39, 0x00212B, 0x002B36, 0x00212B, 0x00212B, 0x00212B},
      {0x93A1A1, 0x93A1A1, 0x839496, 0x839496, 0x93A1A1, 0x93A1A1},
      {0, 0x859900, 0xB58900, 0x2AA198, 0x586E75, 0xD33682, 0xCB4B16, 0x268BD2},
      {0x93A1A1, 0x268BD2, 0x2AA198, 0x657B83, 0x586E75},
      0x073642, 0x0C4A59, 0x93A1A1,
-     0x858585, 0x949494, 0x888888},
+     0x858585, 0x949494, 0x888888,
+     {0xCB4B16, 0x268BD2, 0x839496, 0x268BD2, 0x268BD2}},
     {"tomorrow-night-blue", "Tomorrow Night Blue", true,
      {0x001126, 0x001C40, 0x002451, 0x001C40, 0x001C40, 0x001126},
      {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF},
      {0, 0xEBBBFF, 0xFFEEAD, 0xD1F1A9, 0x7285B7, 0xFFC58F, 0xEBBBFF, 0xBBDAFF},
      {0xFFFFFF, 0xBBDAFF, 0xD1F1A9, 0x7285B7, 0x7285B7},
      0x00346E, 0x003F8E, 0xFFFFFF,
-     0x7285B7, 0xFFFFFF, 0x888888},
+     0x7285B7, 0xFFFFFF, 0x888888,
+     {0xFFEEAD, 0xFF9DA4, 0xFFC58F, 0xFF9DA4, 0xFF9DA4}},
     {"light-modern", "Light Modern", false,
      {0xF8F8F8, 0xF8F8F8, 0xFFFFFF, 0xF8F8F8, 0xF8F8F8, 0xF8F8F8},
      {0x1E1E1E, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B},
      {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26},
      {0x1F1F1F, 0x005FB8, 0xA31515, 0x6E7781, 0x8B949E},
      0xF0F0F0, 0xD3D3D3, 0x1F1F1F,
-     0x6E7681, 0x171184, 0xB9B9B9},
+     0x6E7681, 0x171184, 0xB9B9B9,
+     {0x267F99, 0x001080, 0x001080, 0x001080, 0x0070C1}},
     {"light-plus", "Light+", false,
      {0xDDDDDD, 0xF3F3F3, 0xFFFFFF, 0xFFFFFF, 0xF3F3F3, 0x007ACC},
      {0x333333, 0x616161, 0x000000, 0x333333, 0x333333, 0xFFFFFF},
      {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26},
      {0x000000, 0x006AB1, 0xA31515, 0x6A737D, 0x8E8E8E},
      0xF3F3F3, 0xD3D3D3, 0x000000,
-     0x237893, 0x0B216F, 0xB9B9B9},
+     0x237893, 0x0B216F, 0xB9B9B9,
+     {0x267F99, 0x001080, 0x001080, 0x001080, 0x0070C1}},
     {"quiet-light", "Quiet Light", false,
      {0xC4B7D7, 0xF2F2F2, 0xF5F5F5, 0xF5F5F5, 0xF2F2F2, 0x705697},
      {0x333333, 0x333333, 0x333333, 0x333333, 0x333333, 0xFFFFFF},
      {0, 0x4B83CD, 0x7A3E9D, 0x448C27, 0xAAAAAA, 0xAB6526, 0x7A3E9D, 0xAA3731},
      {0x333333, 0x4B83CD, 0x448C27, 0x777777, 0xAAAAAA},
      0xE8E8E8, 0xD3D3D3, 0x000000,
-     0x6D705B, 0x9769DC, 0xB9B9B9},
+     0x6D705B, 0x9769DC, 0xB9B9B9,
+     {0x7A3E9D, 0x7A3E9D, 0x7A3E9D, 0x7A3E9D, 0x7A3E9D}},
     {"solarized-light", "Solarized Light", false,
      {0xEEE8D5, 0xEEE8D5, 0xFDF6E3, 0xEEE8D5, 0xEEE8D5, 0xEEE8D5},
      {0x586E75, 0x586E75, 0x657B83, 0x586E75, 0x586E75, 0x586E75},
      {0, 0x859900, 0xB58900, 0x2AA198, 0x93A1A1, 0xD33682, 0xCB4B16, 0x268BD2},
      {0x586E75, 0x268BD2, 0x2AA198, 0x93A1A1, 0x93A1A1},
      0xEEE8D5, 0xDDD6C1, 0x073642,
-     0x237893, 0x567983, 0xB9B9B9},
+     0x237893, 0x567983, 0xB9B9B9,
+     {0xCB4B16, 0x268BD2, 0x657B83, 0x268BD2, 0x268BD2}},
 };
 
 const char* const kMaterials[] = {
@@ -545,11 +561,13 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
           "editor.inlay-hint-color", "editor.inlay-hint-background",
           "syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
-          "window.opacity", "window.text"}, false},
+          "syntax.class", "syntax.variable", "syntax.parameter", "syntax.property",
+          "syntax.constant", "window.opacity", "window.text"}, false},
         {"syntax", "Syntax Colors",
          {"syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
-          "editor.text"}, false},
+          "syntax.class", "syntax.variable", "syntax.parameter", "syntax.property",
+          "syntax.constant", "editor.text"}, false},
         {"markdown", "Markdown Preview",
          {"markdown.heading", "markdown.link", "markdown.code", "markdown.quote",
           "markdown.done", "editor.background", "editor.opacity", "editor.text",
@@ -933,6 +951,22 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return colorValue(v, s.inlayHintColor_, e);),
         MC_KEY("editor.inlay-hint-background", Word, true,
                return colorValue(v, s.inlayHintBackground_, e);),
+        MC_KEY("editor.semantic-highlighting", Word, false,
+               const std::string w = lower(v);
+               bool on = true;
+               if (w == "on") on = true;
+               else if (w == "off") on = false;
+               else if (!parseBool(w, on)) {
+                   e = "'" + v + "' is not on or off";
+                   return false;
+               }
+               s.semanticHighlighting_ = on;
+               return true;),
+        MC_KEY("syntax.class", Word, true, return colorValue(v, s.semantic_[0], e);),
+        MC_KEY("syntax.variable", Word, true, return colorValue(v, s.semantic_[1], e);),
+        MC_KEY("syntax.parameter", Word, true, return colorValue(v, s.semantic_[2], e);),
+        MC_KEY("syntax.property", Word, true, return colorValue(v, s.semantic_[3], e);),
+        MC_KEY("syntax.constant", Word, true, return colorValue(v, s.semantic_[4], e);),
         MC_KEY("editor.gutter-background", Word, true,
                return colorValue(v, s.gutterBackground_, e);),
         MC_KEY("editor.line-number-color", Word, true,
@@ -1180,6 +1214,12 @@ Rgba Settings::syntax(TokenStyle s) const {
     return syntax_[i] ? *syntax_[i] : Rgba::hex(theme_->syntax[i]);
 }
 
+Rgba Settings::semanticColor(SemanticColor c) const {
+    int i = (int)c;
+    if (i < 0 || i >= kSemanticColorCount) return text(Surface::Editor);
+    return semantic_[i] ? *semantic_[i] : Rgba::hex(theme_->semantic[i]);
+}
+
 Rgba Settings::markdown(MarkdownColor c) const {
     int i = (int)c;
     return markdown_[i] ? *markdown_[i] : Rgba::hex(theme_->markdown[i]);
@@ -1414,6 +1454,12 @@ const char* Settings::defaultFileText() {
 # every file gets them. Lines over 20,000 characters are never colored, in
 # any file.
 # editor.large-file-optimizations = on
+# A language server that says what each name is (semantic tokens, as
+# basedpyright, clangd, rust-analyzer and gopls do) colors it so, over the
+# colors minicode gives it by itself: a parameter, a property, a class, a
+# constant (macOS). The colors are syntax.class and the rest, below. Off,
+# only minicode's own colors show. Never in large-file mode.
+# editor.semantic-highlighting = on
 # The gutter behind the numbers, which is the editor's background unless set
 # here. The caret's line has its number in the active color.
 # editor.gutter-background = #1E1E1E
@@ -1493,6 +1539,15 @@ const char* Settings::defaultFileText() {
 # syntax.number = #B5CEA8
 # syntax.preprocessor = #C586C0
 # syntax.function = #DCDCAA
+# The names a language server says what they are (semantic tokens, with
+# editor.semantic-highlighting on): classes, types and namespaces;
+# variables; parameters; properties; and constants (enum members, read-only
+# variables). A function a server names takes syntax.function.
+# syntax.class = #4EC9B0
+# syntax.variable = #9CDCFE
+# syntax.parameter = #9CDCFE
+# syntax.property = #9CDCFE
+# syntax.constant = #4FC1FF
 
 # Rendered Markdown. Body text uses editor.text.
 # markdown.heading = #FFFFFF

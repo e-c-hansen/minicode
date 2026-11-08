@@ -172,8 +172,8 @@ goes here first, with tests; the GUI only displays it.
   categories as EditorController is: `Lsp+Servers`, `Lsp+Python`, `Lsp+Sync`
   (documents and watched files), `Lsp+Diagnostics`, `Lsp+Completion`,
   `Lsp+Navigation` (definition, hover, symbols), `Lsp+Actions` (rename,
-  references, code actions), `Lsp+WorkspaceEdit`, `Lsp+InlayHints`;
-  `Lsp+Private.h` and the
+  references, code actions), `Lsp+Semantic` (semantic tokens),
+  `Lsp+WorkspaceEdit`, `Lsp+InlayHints`; `Lsp+Private.h` and the
   `Lsp+<Concern>Ivars.h` follow the rules below), `LspServer`
   (processes), `LspPopups` (completion, hover, signature), `LspShared.h` (only
   the Lsp files import it), `LspPanel` (status item, popover, interpreter
@@ -794,6 +794,21 @@ container (PanelHost, laid out by hand in layoutContainer)
   attributes inside `willProcessEditing` (it widens the edit and the caret
   jumps to its end); reset a range with one `setAttributes:`, never
   `addAttribute:` over many runs (3.4 s for 50k lines against 1 ms).
+- **Semantic tokens** (Mac, 2026-11-07, `editor.semantic-highlighting`):
+  `LspSession (Semantic)` asks `/full` (then `/full/delta`) on show, 0.3 s
+  after typing and on the server's refresh, one request at a time, and hands
+  `Lsp::SemanticSpan`s (decoded in the core against the text the server
+  answered for) to `semanticTokensArrived:` only while `_edits` is
+  unchanged. +Highlighting keeps them while the characters are unchanged
+  (any character edit ends them, in `willProcessEditing`, before its
+  `_liveHighlight` check) and paints only lines on screen
+  (`paintSemanticVisible`, from the clip view's bounds notification, a
+  `_semanticPainted` index set), through `restyleChangedIn:` with the spans
+  over the lexer's tokens (never over strings or comments): the same
+  diff-only painting, so no new attribute traps. An edit's own lines get the
+  lexer's colors at once; other lines keep painted colors, which move with
+  their text, until the next answer. Theme colors (`Theme::semantic`) are
+  VS Code's for the scopes each token type probes; font styles are left out.
 - Linux retags in idle slices over a UTF-8 mirror; Android's `Highlighter.kt`
   uses the core over a native mirror.
 

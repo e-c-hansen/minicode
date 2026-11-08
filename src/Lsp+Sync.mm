@@ -21,6 +21,7 @@
     // Answers still on their way were for the document leaving the view.
     [self forgetActionRequests];
     [self forgetNavigationRequests];
+    [self forgetSemanticTokens];
     // The document stays open on its servers while its tab is open (see
     // syncOpenDocuments), and so do its diagnostics, for when it is back.
     _servers = @[];
@@ -82,6 +83,7 @@
         BOOL wasRunning = _entries[_langKey].server != nil;
         [self attachDocument];
         [self scheduleFoldingRanges:0.1];
+        [self scheduleSemanticTokens:0];
         // In automatic mode another file may sit in another environment.
         // Only a real change reaches the server (same environment: nothing).
         if (wasRunning && [_langKey isEqualToString:@"python"])
@@ -362,6 +364,7 @@
                                                object:nil];
     [self performSelector:@selector(flushChanges) withObject:nil afterDelay:0.3];
     [self scheduleFoldingRanges:0.6];
+    [self scheduleSemanticTokens:0.3];
     // A rename or a fix going in is not typing: no completion or signature.
     if (_applyingEdit) return;
     [self popupsFollowEdit:ts];

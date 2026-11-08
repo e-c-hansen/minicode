@@ -637,6 +637,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
         changeInLength:(NSInteger)delta;
 - (void)flushHighlightingLater;
 - (void)flushHighlighting;
+// The language server's semantic tokens for the text as it is
+// (LspSession.onSemanticTokens): an array of Lsp::SemanticSpan.
+- (void)semanticTokensArrived:(NSData *)spans;
 @end
 
 // EditorController+LargeFile.mm: large-file mode (LargeFile.h), its status

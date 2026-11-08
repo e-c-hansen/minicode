@@ -5,8 +5,8 @@
 // open (Lsp+Sync.mm), diagnostics and Problems (Lsp+Diagnostics.mm),
 // completion and the signature hint (Lsp+Completion.mm), definition, hover
 // and symbols (Lsp+Navigation.mm), rename, references and code actions
-// (Lsp+Actions.mm), the workspace edit applier (Lsp+WorkspaceEdit.mm), and
-// inlay hints (Lsp+InlayHints.mm).
+// (Lsp+Actions.mm), semantic tokens (Lsp+Semantic.mm), the workspace edit
+// applier (Lsp+WorkspaceEdit.mm), and inlay hints (Lsp+InlayHints.mm).
 // The server processes are in LspServer.mm, the editor's text view in
 // CodeTextView.mm, and the completion list, hover and signature popups in
 // LspPopups.mm.
@@ -18,6 +18,7 @@
 #import "Lsp+DiagnosticsIvars.h"
 #import "Lsp+InlayHintsIvars.h"
 #import "Lsp+NavigationIvars.h"
+#import "Lsp+SemanticIvars.h"
 #import "Lsp+ServersIvars.h"
 #import "Lsp+SyncIvars.h"
 

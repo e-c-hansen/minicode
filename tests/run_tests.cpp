@@ -3780,9 +3780,10 @@ void testSettings() {
     // develop, git, control and agent keys (with markdown.mermaid and
     // agent.ide-link), terminal.activate-venv, search.use-ignore-files and
     // terminal.multiline-paste-warning, the tree's six git colors and
-    // editor.large-file-optimizations, editor.auto-close, and the three
-    // inlay hint keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 100);
+    // editor.large-file-optimizations, editor.auto-close,
+    // editor.semantic-highlighting with its five syntax colors, and the
+    // three inlay hint keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 106);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -3822,6 +3823,9 @@ void testSettings() {
     }
     for (int i = 1; i < 8; i++)
         CHECK(un.syntax((TokenStyle)i) == d.syntax((TokenStyle)i));
+    for (int i = 0; i < kSemanticColorCount; i++)
+        CHECK(un.semanticColor((SemanticColor)i) == d.semanticColor((SemanticColor)i));
+    CHECK(un.semanticHighlighting() && d.semanticHighlighting());
     for (int i = 0; i < kMarkdownColorCount; i++)
         CHECK(un.markdown((MarkdownColor)i) == d.markdown((MarkdownColor)i));
     CHECK(un.material() == d.material() && un.blur() == d.blur());
@@ -3895,6 +3899,10 @@ void testSettings() {
             CHECK(&s.theme() == &t);
             CHECK(s.isDark() == t.dark);
             for (int i = 1; i < 8; i++) CHECK(t.syntax[i] != 0);
+            for (int i = 0; i < kSemanticColorCount; i++) {
+                CHECK(t.semantic[i] != 0);
+                CHECK(s.semanticColor((SemanticColor)i) == Rgba::hex(t.semantic[i]));
+            }
             CHECK(t.codeBackground != 0 && t.ruler != 0);
             CHECK(s.background(Surface::Editor) == Rgba::hex(t.background[(int)Surface::Editor]));
             CHECK(s.text(Surface::Terminal) == Rgba::hex(t.text[(int)Surface::Terminal]));
@@ -3908,6 +3916,22 @@ void testSettings() {
         Settings m = parseSettings("syntax.string = #123456\ntheme = monokai\n");
         CHECK(m.syntax(TokenStyle::String) == Rgba::hex(0x123456));
         CHECK(m.syntax(TokenStyle::Keyword) == Rgba::hex(0xF92672));
+        // The semantic colors are the theme's, VS Code's for the scopes the
+        // token types probe, unless the file sets them; the setting is a
+        // switch.
+        CHECK(d.semanticColor(SemanticColor::Parameter) == Rgba::hex(0x9CDCFE));
+        CHECK(d.semanticColor(SemanticColor::Constant) == Rgba::hex(0x4FC1FF));
+        CHECK(m.semanticColor(SemanticColor::Parameter) == Rgba::hex(0xFD971F));
+        CHECK(parseSettings("theme = light-plus\n").semanticColor(SemanticColor::Class) ==
+              Rgba::hex(0x267F99));
+        Settings sc = parseSettings("theme = monokai\nsyntax.parameter = #010203\n"
+                                    "editor.semantic-highlighting = off\n");
+        CHECK(sc.semanticColor(SemanticColor::Parameter) == Rgba::hex(0x010203));
+        CHECK(sc.semanticColor(SemanticColor::Class) == Rgba::hex(0xA6E22E));
+        CHECK(!sc.semanticHighlighting() && Settings::isColorKey("syntax.constant"));
+        std::vector<SettingsError> se2;
+        parseSettings("editor.semantic-highlighting = sometimes\nsyntax.class = blue\n", &se2);
+        CHECK(se2.size() == 2);
         Settings o = parseSettings("theme = light-plus\neditor.background = #000000\n");
         CHECK(o.isDark() && !o.theme().dark);   // the editor as drawn decides
         // Opacity still applies to a theme's colors.
@@ -10061,6 +10085,7 @@ static void testMultiCaretOccurrences() {
 #include "auto_close_tests.inc"
 #include "side_by_side_tests.inc"
 #include "lsp_inlay_tests.inc"
+#include "lsp_semantic_tests.inc"
 #include "preview_scroll_tests.inc"
 
 int main() {
@@ -10174,6 +10199,7 @@ int main() {
     testFolderSearchParallel();
     testAutoClose();
     testLspInlayHints();
+    testLspSemanticTokens();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

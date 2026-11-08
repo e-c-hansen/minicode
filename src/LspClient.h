@@ -361,7 +361,9 @@ std::string programDisplayName(const std::string& program);
 // What a request is about, to choose which of a file's servers gets it.
 enum class Feature {
     Completion, SignatureHelp, Hover, Definition, References, Rename, CodeActions,
-    DocumentSymbols, WorkspaceSymbols, FoldingRange, InlayHint
+    DocumentSymbols, WorkspaceSymbols, FoldingRange,
+    SemanticTokens,   // textDocument/semanticTokens/full
+    InlayHint
 };
 // Does a server whose `initialize` answered with these capabilities offer it?
 bool offers(const Json& capabilities, Feature f);
@@ -629,6 +631,69 @@ struct FoldingRange {
 };
 std::vector<FoldingRange> parseFoldingRanges(const Json& result);
 
+// ------------------------------------------------------- semantic tokens
+// textDocument/semanticTokens: the server says what each name is (a class,
+// a parameter, a property...), which the lexer cannot know, and the editor
+// colors it so, over the lexer's colors, as VS Code's
+// editor.semanticHighlighting does.
+//
+// What minicode colors a token as: VS Code's default semantic token map
+// (tokenClassificationRegistry.ts: each type probes a TextMate scope) read
+// against minicode's themes, where every type whose scope the themes color
+// apart lands on one of these. Function is the lexer's own syntax.function;
+// the others have syntax.class, .variable, .parameter, .property and
+// .constant. None leaves the lexer's color: keywords, comments, strings,
+// numbers, operators, macros, labels and types a server makes up
+// (basedpyright's selfParameter).
+enum class SemanticStyle : uint8_t {
+    None, Class, Function, Variable, Parameter, Property, Constant,
+};
+// namespace, type, class, enum, interface, struct and typeParameter are
+// Class; function, method, member and decorator Function; variable and
+// event Variable, a readonly one Constant; parameter Parameter; property
+// Property, a readonly one Constant; enumMember Constant.
+SemanticStyle semanticStyle(const std::string& type, bool readonly);
+// The server's legend (semanticTokensProvider.legend), with each type's
+// style worked out once.
+struct SemanticLegend {
+    std::vector<std::string> types, modifiers;
+    std::vector<SemanticStyle> styles;   // by type index
+    uint32_t readonlyBit = 0;            // the readonly modifier's bit, 0 when none
+    static SemanticLegend from(const Json& capabilities);
+};
+// What the provider offers: whole documents (full) and their changes
+// since an answer (full.delta). Ranges are never asked for.
+bool offersSemanticTokens(const Json& capabilities);
+bool offersSemanticTokensDelta(const Json& capabilities);
+// The tokens a server last sent for one document: its resultId (for the
+// next /full/delta) and the numbers, five a token (line and start relative
+// to the token before, length, type, modifier bits).
+struct SemanticTokens {
+    std::string resultId;
+    std::vector<uint32_t> data;
+    // A /full or /full/delta answer (SemanticTokens or
+    // SemanticTokensDelta). False, with nothing kept, for an answer that is
+    // neither or a delta whose edits do not fit the data it is for; the
+    // next request then asks for the whole document.
+    bool apply(const Json& result);
+};
+// Delta edits ({start, deleteCount, data}) on the data they were made
+// against, in the order of their starts; false (and data unchanged) when
+// one runs past the end or two overlap.
+bool applySemanticEdits(std::vector<uint32_t>& data, const Json& edits);
+// A token's characters in the text, UTF-16 offsets, and its style.
+struct SemanticSpan {
+    uint32_t start = 0, length = 0;
+    SemanticStyle style = SemanticStyle::None;
+};
+// The tokens as spans over the text they were computed on, in order: only
+// those with a style, each cut at its line's end (tokens never span lines),
+// none past the text, and one that starts before the previous one ends
+// left out.
+std::vector<SemanticSpan> decodeSemanticTokens(const std::vector<uint32_t>& data,
+                                               const SemanticLegend& legend,
+                                               const PositionIndex& index);
+
 // ------------------------------------------------------------ symbols
 // LSP's SymbolKind numbers, the ones named here; any of 1 to 26 may come.
 enum SymbolKind {
@@ -871,6 +936,11 @@ public:
                    ResultHandler h);
     // textDocument/foldingRange for a whole document.
     int foldingRanges(const std::string& uri, ResultHandler h);
+    // textDocument/semanticTokens/full, and /full/delta from the answer
+    // whose resultId is given. The handler may take the result.
+    int semanticTokensFull(const std::string& uri, TakingHandler h);
+    int semanticTokensDelta(const std::string& uri, const std::string& previousResultId,
+                            TakingHandler h);
     // textDocument/prepareRename and textDocument/rename.
     int prepareRename(const std::string& uri, Position p, ResultHandler h);
     int rename(const std::string& uri, Position p, const std::string& newName,
@@ -970,6 +1040,11 @@ public:
     // Sends the changes some watcher wants, in one notification, and says
     // how many it sent. Nothing before Ready or without registrations.
     size_t didChangeWatchedFiles(const std::vector<FileChange>& changes);
+
+    // workspace/semanticTokens/refresh: the server's tokens for every
+    // document may have changed (a file they depend on did); runs after
+    // the request is answered.
+    std::function<void()> onSemanticTokensRefresh;
 
     size_t pendingRequests() const { return handlers_.size(); }
     size_t queuedMessages() const { return queue_.size(); }

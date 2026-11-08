@@ -274,6 +274,14 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
 - (void)clearInlayHints;
 @end
 
+@interface LspSession (Semantic)
+- (void)scheduleSemanticTokens:(NSTimeInterval)delay;
+- (void)forgetSemanticTokens;
+- (void)semanticServerReady:(MCLspServer *)server;
+- (void)semanticTokensRefreshedBy:(MCLspServer *)server;
+- (void)semanticSettingsChanged;
+@end
+
 @interface LspSession (WorkspaceEdit)
 - (NSString *)textOfPath:(NSString *)path uri:(const std::string &)uri;
 - (NSInteger)applyWorkspaceEdit:(const Lsp::WorkspaceEdit &)we

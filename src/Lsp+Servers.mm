@@ -367,6 +367,13 @@ static NSString *StateText(MCLspState state) {
     c.onInlayHintRefresh = [weakSelf] {
         dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf scheduleInlayHints:0]; });
     };
+    // workspace/semanticTokens/refresh: the file on show's tokens again.
+    c.onSemanticTokensRefresh = [weakSelf, weakServer] {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MCLspServer *s = weakServer;
+            if (s && !s.stopping) [weakSelf semanticTokensRefreshedBy:s];
+        });
+    };
     // $/progress: the status bar and the popover say what it is doing.
     c.onProgress = [weakSelf, weakServer] {
         MCLspServer *s = weakServer;
@@ -396,6 +403,7 @@ static NSString *StateText(MCLspState state) {
     [self changed];
     [self serverMayComplete:server];
     [self scheduleInlayHints:0];
+    [self semanticServerReady:server];
 }
 
 // A server began, reported or ended work. Coalesced to one redraw a
@@ -680,6 +688,7 @@ static NSString *StateText(MCLspState state) {
         _pythonSetting = python;
         [self applyPythonInterpreter];
     }
+    [self semanticSettingsChanged];
 }
 
 @end
