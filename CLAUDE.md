@@ -71,6 +71,19 @@ opening comment says what it does in more detail than the lines below.
   ./build/test-asan/run_tests` runs forty times the rounds. A parser change
   that breaks a fuzzer's property is a bug in the parser until shown
   otherwise; the fuzzers use only public interfaces.
+- `make test-tsan` runs them under ThreadSanitizer in `build/test-tsan`
+  (a report stops the run; timing bounds skipped, since instrumented code
+  costs several times the CPU they allow); CI's `tsan` job runs it with
+  g++ after `sysctl vm.mmap_rnd_bits=28` (the runner's ASLR is too wide for
+  GCC's TSan). A known false positive goes in `tests/tsan.supp` by name,
+  with why; a real race is fixed. About 4.5 minutes on an M3 with clang.
+- CI (`.github/workflows/ci.yml`, six jobs: macOS, GTK4, sanitizers, tsan,
+  Android debug plus Kotlin checks, Android release) is the gate: no merge
+  to main while a job on main is red, except the fix for that red. The
+  macOS job also builds `make dist-zip RELEASE=1` and checks it as
+  release.sh does (`nm`, the zip's contents, check-minos); the Android
+  release job signs with a key made in the job (`keytool`, random
+  password), never the owner's release key.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
@@ -2570,8 +2583,9 @@ activation. Check each side's breakdown before quoting a number (a first run
 How much of the GUI you can check depends on the port and on whether the
 session has a display. Check first.
 
-- **Core**: `make test`, `make test CXX=g++-16` for libstdc++, and `make
-  test-asan` (also with `CXX=g++-16`) for the sanitizers.
+- **Core**: `make test`, `make test CXX=g++-16` for libstdc++, `make
+  test-asan` (also with `CXX=g++-16`) for the sanitizers, and `make
+  test-tsan` (clang on the Mac; GCC's TSan is Linux only) for races.
 - **The Mac, committed checks**: `make guitest [SUITES=...]` builds
   `build/guitest` (the whole app with main.mm's `main` renamed `minicode_main`,
   plus `tests/gui/*.mm`) and runs it offscreen; the macOS CI job runs it. The
@@ -2711,7 +2725,12 @@ widgets off the view before a re-render, `Terminal::topRow`.
 changes port on every reconnect, so ask for it (restart the adb server if
 connect says "No route"); test files are in `/sdcard/mc-test`. Gradle 8.14.3
 via the wrapper, JDK 21, SDK and NDK from `sdkmanager`. CI builds the debug
-APK (no key needed); `linux:build-lists` checks the CMakeLists names every
+APK (no key needed), a release APK signed with a throwaway key, and runs
+`./gradlew kotlinChecks`: `android/checks` compiles the app's Kotlin files
+with no Android in them (listed in its build file; `Pty.kt`,
+`LeaderKey.kt`) with `app/src/test/kotlin` on the JVM, no test library, and
+checks them against the C++ they mirror (TermKey, TermMod, the cell flags)
+and the leader key's presses. `linux:build-lists` checks the CMakeLists names every
 core file its files include. Traps paid for:
 
 - The core compiles with the NDK and its tests pass on the phone. `TermKey`
