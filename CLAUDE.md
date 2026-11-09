@@ -670,7 +670,17 @@ container (PanelHost, laid out by hand in layoutContainer)
   character instead (`MCGapParagraphStyle`; a kern on the break before
   opens nothing), answered by name too; `fixAttributesInRange:` reads with
   the gaps hidden (fixing writes a paragraph's first style over the rest)
-  and `setTypingAttributes:` puts the stored style back.
+  and `setTypingAttributes:` puts the stored style back. **The paragraph
+  style by name** (2026-11-08) comes from a run the storage keeps through
+  edits (`storedParagraphStyleAt:`), not the store: TextKit asks for it at
+  both ends of every range whose display it invalidates, a range reaching
+  text not laid out stays pending and is asked about on every keystroke
+  (after Select All, or the undo of a Replace All, which selects every
+  piece), and the store finds a run by walking from the last one asked
+  about, so each key walked the runs from the caret to the end and back:
+  1.1 to 2.4 ms a key against 0.35 (the keystroke suite, which also fuzzes
+  the run against the stored styles). TextKit's own work on the pending
+  range still makes a key after Select All 1.4 to 2.2 times a fresh one.
 - **Contiguous layout stays on**, except in large-file mode (below) and
   while a tab shown again far down (past 32K characters) shows:
   everything that reads positions relies on exactness. Never call `numberOfGlyphs` on the editor; lay out only up to the
@@ -703,9 +713,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   `MCTextViewWillReplaceManyRangesNotification` from 64 ranges on and the
   catch-up goes back to contiguous layout first (1.7 s, the pane then laid
   out from the top once); the workspace edit applier has its own loop and
-  does not post it yet. `textDidChange:`'s copy into `sourceText` shares characters
-  (about a microsecond) and the backups rely on a new object per change;
-  measured, leave it.
+  does not post it yet. `textDidChange:`'s copy into `sourceText` (the
+  backups rely on a new object per change) is a memcpy while the store's
+  string is 8-bit (0.15 ms at 2.4 MB) and a scan of every character once a
+  non-ASCII character has been in it, even undone (1.5 ms a key; AppKit's
+  storage, an NSBigMutableString, copied in microseconds). Not fixed yet
+  (2026-11-08).
 - **Trap: a Markdown page's text blocks outlive it** (2026-11-07). The
   preview shares the editor's view, and once its quotes, code boxes, h1/h2
   rules or tables are laid out the layout manager keeps a block table
