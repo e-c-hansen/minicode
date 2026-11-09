@@ -30,7 +30,8 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/LspProtocol.cpp ../src/LspText.cpp ../src/LspServers.cpp \
         ../src/LspDiagnostics.cpp ../src/LspCompletion.cpp ../src/LspSync.cpp \
         ../src/LspFeatures.cpp ../src/LspEdits.cpp \
-        ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp
+        ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp \
+        ../src/Commands.cpp ../src/CommandsLinux.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
@@ -39,7 +40,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Markdown.cpp \
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp \
        src/Search.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
        src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp src/TermLinkPath.cpp \
-       src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp
+       src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp
 
 SRCS := $(GUI) $(CORE)
 

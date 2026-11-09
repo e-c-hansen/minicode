@@ -3,3 +3,4 @@
 # different suites do not conflict.
 SaveSuite.cpp
 HarnessSuite.cpp
+KeysSuite.cpp

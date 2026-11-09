@@ -16,8 +16,8 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
   WebKit and poppler-glib and builds the panels only when present.
 - `Makefile` — plain pkg-config fallback that builds at least the core viewer.
 - `src/main.cpp` — the GtkApplication: its windows (each an `App`), the
-  menu, the accelerators and which of them the terminal gets, the
-  sidebar/editor split, status bar, and the collapsible panels.
+  actions the menu bar and the keys name, the sidebar/editor split, status
+  bar, the shortcut hints, and the collapsible panels.
 - `src/FileTree.{h,cpp}` — the sidebar file browser (a list per folder +
   GtkTreeListModel + GtkListView), lazy-loaded and live-refreshing from a
   GFileMonitor per folder (GtkDirectoryList's own monitoring reports nothing
@@ -47,7 +47,7 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
 - `src/Markdown.{h,cpp}` — renders the MarkdownParser run list into a styled
   GtkTextBuffer, with tables (a grid of labels) and pictures (GIFs play) as
   embedded widgets, and a map from the rendered text back to source lines
-  that the editor uses for links, Ctrl+Shift+P keeping its place, and
+  that the editor uses for links, the preview toggle keeping its place, and
   editing a block from the preview (`../src/MarkdownEdit`).
 - `src/Terminal.{h,cpp}` — VTE terminal panel, behind `MINICODE_ENABLE_TERMINAL`,
   with Ctrl+click on file references and URLs found by `../src/TermLinks`.
@@ -59,7 +59,7 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
 - `src/Search.{h,cpp}` — Find in Folder (Ctrl+Shift+F): a window with a
   search entry and a list of matches. The search itself is
   `../src/FolderSearch.{h,cpp}`, run on a GTask worker thread. The same
-  window in a TODOs mode (Ctrl+Shift+L) lists `FolderSearch::findTodos`.
+  window in a TODOs mode (Ctrl+Shift+D) lists `FolderSearch::findTodos`.
 - `src/GitPanel.{h,cpp}` — the Source Control panel (Ctrl+Shift+G), which
   takes the file tree's place in the sidebar: the branch, staged and
   unstaged changes, the commit message, and the commit graph drawn with
@@ -69,6 +69,11 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
 - `src/GitModel.{h,cpp}` — pure C++: what the panel shows and every git
   command it runs, worked out from `../src/GitStatus` and `../src/GitGraph`.
   Tested in `tests/run_tests.cpp`.
+- `src/Keys.{h,cpp}` — the command registry in the port: the table of
+  GActions by command id, and from it and the Linux keys
+  (`../src/CommandsLinux.cpp`, with `keys.conf` applied) the menu bar, the
+  accelerators, the file tree's own keys and the hints' key text. Which
+  keys are the shell's while the terminal has the keyboard is decided here.
 - `src/Palette.h` — the dark color palette, mirrored from the macOS build.
 - `resources/org.minicode.Editor.desktop.in` — the desktop launcher, with the
   binary path filled in at configure time from the install prefix.

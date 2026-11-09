@@ -30,8 +30,12 @@ struct MCGuiAppWindow {
     Terminal*   terminal = nullptr;
     Browser*    browser = nullptr;
     GtkWidget*  statusLabel = nullptr;
+    GtkWidget*  settingsLabel = nullptr;   // problems in settings.conf and keys.conf
     GtkWidget*  searchBar = nullptr;
     GtkWidget*  searchEntry = nullptr;
+    GtkWidget*  hintsPanel = nullptr;      // the shortcut hints, and their text
+    GtkWidget*  hintsLabel = nullptr;
+    GtkWidget*  hintsHint = nullptr;       // the status bar's note on them
     std::string rootDir;
 };
 
@@ -44,6 +48,8 @@ MCGuiAppWindow MCGuiApp();                       // the newest; empty with none 
 void MCGuiOpenFile(const std::string& path);
 // The settings file, read again now (the app also watches it).
 void MCGuiReloadSettings();
+// keys.conf, the same.
+void MCGuiReloadKeys();
 // Every window, closed as the app closes one, with no questions about unsaved
 // text.
 void MCGuiCloseAllWindows();

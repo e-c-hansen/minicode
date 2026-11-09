@@ -234,6 +234,11 @@ void MCGuiSetSettings(const std::string& text) {
     MCGuiReloadSettings();
 }
 
+void MCGuiSetKeys(const std::string& text) {
+    MCGuiWriteFile(envOr("MINICODE_KEYS"), text);
+    MCGuiReloadKeys();
+}
+
 std::string MCGuiEditorText() {
     Editor* editor = MCGuiApp().editor;
     if (!editor) return "";

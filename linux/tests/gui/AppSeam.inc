@@ -12,8 +12,12 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.git = a->git;
     w.lsp = a->lsp;
     w.statusLabel = a->statusLabel;
+    w.settingsLabel = a->settingsLabel;
     w.searchBar = a->searchBar;
     w.searchEntry = a->searchEntry;
+    w.hintsPanel = a->hintsPanel;
+    w.hintsLabel = a->hintsLabel;
+    w.hintsHint = a->hintsHint;
     w.rootDir = a->rootDir;
 #ifdef MINICODE_ENABLE_TERMINAL
     w.terminal = a->terminal;
@@ -41,6 +45,8 @@ void MCGuiOpenFile(const std::string& path) {
 void MCGuiReloadSettings() {
     if (g.settings) g.settings->reload();
 }
+
+void MCGuiReloadKeys() { Keys::reload(); }
 
 void MCGuiCloseAllWindows() {
     const std::vector<App*> open = g.windows;   // closing edits the list

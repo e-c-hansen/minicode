@@ -152,7 +152,8 @@ goes here first, with tests; the GUI only displays it.
   `SyncTex` (page point to source lines, and line to boxes), `Json`, `IdeLink` (the Claude Code
   IDE link: WebSocket, MCP, lock file).
 - `Settings` (the settings file, themes, every resolved color), `Commands` (the
-  command registry and keys.conf), `EditorTabs` (tab rules), `Backups` (backups
+  command registry and keys.conf; the GTK port's keys are a table of their
+  own in `CommandsLinux.cpp`, the Mac's rows untouched), `EditorTabs` (tab rules), `Backups` (backups
   of unsaved tabs, with a POSIX `Fs`), `FileDetails` (tree sorts, ages, folder
   totals), `RunFile` (Run File's quoting).
 - Editing: `LineDiff` (Myers, split at lines unique on both sides past

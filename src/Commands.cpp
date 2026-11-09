@@ -783,7 +783,10 @@ const Command* findBySelector(const std::string& selector, int tag) {
     return nullptr;
 }
 
-std::vector<Key> defaultKeys(const Command& c) {
+namespace {
+// "shift+cmd+p f1" -> its keys; a word that does not parse is left out (the
+// tables' tests say none is).
+std::vector<Key> keyList(const char* list) {
     std::vector<Key> out;
     std::string word;
     auto take = [&]() {
@@ -792,12 +795,41 @@ std::vector<Key> defaultKeys(const Command& c) {
         if (parseKey(word, &k)) out.push_back(k);
         word.clear();
     };
-    for (const char* p = c.keys; *p; p++) {
+    for (const char* p = list; p && *p; p++) {
         if (*p == ' ') take();
         else word += *p;
     }
     take();
     return out;
+}
+}  // namespace
+
+std::vector<Key> defaultKeys(const Command& c) { return keyList(c.keys); }
+
+// ------------------------------------------------------------ platforms
+bool available(const Command& c, Platform p) {
+    return p == Platform::Mac || linuxRow(c.id) != nullptr;
+}
+
+std::vector<Key> defaultKeys(const Command& c, Platform p) {
+    if (p == Platform::Mac) return defaultKeys(c);
+    const LinuxRow* row = linuxRow(c.id);
+    return row ? keyList(row->keys) : std::vector<Key>();
+}
+
+const char* titleOf(const Command& c, Platform p) {
+    const LinuxRow* row = p == Platform::Linux ? linuxRow(c.id) : nullptr;
+    return row && row->title ? row->title : c.title;
+}
+
+const char* menuOf(const Command& c, Platform p) {
+    const LinuxRow* row = p == Platform::Linux ? linuxRow(c.id) : nullptr;
+    return row && row->menu ? row->menu : c.menu;
+}
+
+unsigned flagsOf(const Command& c, Platform p) {
+    const LinuxRow* row = p == Platform::Linux ? linuxRow(c.id) : nullptr;
+    return c.flags | (row ? (row->flags & Global) : 0u);
 }
 
 // ------------------------------------------------------------ the keymap
@@ -841,9 +873,11 @@ std::vector<std::string> Keymap::conflicts() const {
     return out;
 }
 
-Keymap defaults() {
+Keymap defaults() { return defaults(Platform::Mac); }
+
+Keymap defaults(Platform p) {
     Keymap m;
-    for (const Command& c : all()) m.keys[c.id] = defaultKeys(c);
+    for (const Command& c : all()) m.keys[c.id] = defaultKeys(c, p);
     m.index();
     return m;
 }
@@ -866,7 +900,12 @@ bool hasKey(const std::vector<Key>& v, const Key& k) {
 }  // namespace
 
 Keymap resolve(const std::string& text, std::vector<Error>* errors) {
-    Keymap m = defaults();
+    return resolve(text, errors, Platform::Mac);
+}
+
+Keymap resolve(const std::string& text, std::vector<Error>* errors, Platform platform) {
+    const bool onLinux = platform == Platform::Linux;
+    Keymap m = defaults(platform);
     auto err = [&](int line, const std::string& msg) {
         if (errors) errors->push_back({line, msg});
     };
@@ -907,6 +946,11 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
             continue;
         }
         const std::string ks = format(k);
+        if (onLinux && (k.mods & Cmd)) {
+            err(lineNo, ks + ": Linux has no Command key (this line is a Mac's); use ctrl, alt "
+                             "and shift");
+            continue;
+        }
         if (right == "-") {
             for (const Command& c : all()) {
                 std::vector<Key>& v = m.keys[c.id];
@@ -929,6 +973,11 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
                         "Shortcuts writes it)");
             continue;
         }
+        if (!available(*cmd, platform)) {
+            err(lineNo, std::string(cmd->title) + " (" + cmd->id +
+                            ") is not in minicode for Linux yet");
+            continue;
+        }
         if (cmd->flags & Fixed) {
             err(lineNo, std::string(cmd->title) + " is handled by " + cmd->note +
                             ", so keys.conf cannot change its keys yet");
@@ -947,7 +996,7 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
                     g.end());
             continue;
         }
-        if (typesText(k) && !cmd->language) {
+        if (typesText(k) && !cmd->language && !(onLinux && cmd->when == When::Tree)) {
             err(lineNo, ks + " types or moves in a text field; give it cmd, ctrl or alt "
                              "(only f1 to f20 work alone)");
             continue;
@@ -999,36 +1048,66 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors) {
 }
 
 // ---------------------------------------------------------- the file text
-std::string defaultFileText() {
+std::string defaultFileText() { return defaultFileText(Platform::Mac); }
+
+std::string defaultFileText(Platform platform) {
+    const bool onLinux = platform == Platform::Linux;
     std::string s =
         "# minicode keyboard shortcuts\n"
         "#\n"
         "# Each line gives a key to a command, beside the keys it has already:\n"
-        "#\n"
-        "#   ctrl+alt+cmd+k = editor.action.deleteLines\n"
-        "#\n"
-        "# A minus takes a key away, from every command or from one:\n"
-        "#\n"
-        "#   ctrl+shift+k = -\n"
-        "#   cmd+k = -workbench.action.terminal.clear\n"
-        "#\n"
-        "# Modifiers are ctrl, alt (or option), shift and cmd, joined with + before\n"
-        "# the key: a letter, a digit, ` - = [ ] \\ ; ' , . /, f1 to f20, up, down,\n"
-        "# left, right, home, end, pageup, pagedown, enter, tab, space, escape,\n"
-        "# backspace, delete, numpad0 to numpad9, or contextmenu (the Menu key).\n"
-        "# A key given here is taken from any other command that had it by default,\n"
-        "# unless one works only in the editor and the other only in the terminal\n"
-        "# (or the file tree, or a web page or a PDF), or one works only in files\n"
-        "# of one language (Markdown, Python), where it goes first. Two lines giving\n"
-        "# one key to two commands are an error, shown in the status bar. The menus\n"
-        "# follow this file as it is saved.\n"
-        "#\n"
-        "# Every command, with its keys by default, follows. Uncomment a line and\n"
-        "# change its key to add one.\n";
+        "#\n";
+    if (!onLinux) {
+        s += "#   ctrl+alt+cmd+k = editor.action.deleteLines\n"
+             "#\n"
+             "# A minus takes a key away, from every command or from one:\n"
+             "#\n"
+             "#   ctrl+shift+k = -\n"
+             "#   cmd+k = -workbench.action.terminal.clear\n"
+             "#\n"
+             "# Modifiers are ctrl, alt (or option), shift and cmd, joined with + before\n"
+             "# the key: a letter, a digit, ` - = [ ] \\ ; ' , . /, f1 to f20, up, down,\n"
+             "# left, right, home, end, pageup, pagedown, enter, tab, space, escape,\n"
+             "# backspace, delete, numpad0 to numpad9, or contextmenu (the Menu key).\n"
+             "# A key given here is taken from any other command that had it by default,\n"
+             "# unless one works only in the editor and the other only in the terminal\n"
+             "# (or the file tree, or a web page or a PDF), or one works only in files\n"
+             "# of one language (Markdown, Python), where it goes first. Two lines giving\n"
+             "# one key to two commands are an error, shown in the status bar. The menus\n"
+             "# follow this file as it is saved.\n";
+    } else {
+        s += "#   ctrl+alt+k = editor.action.commentLine\n"
+             "#\n"
+             "# A minus takes a key away, from every command or from one:\n"
+             "#\n"
+             "#   ctrl+shift+e = -\n"
+             "#   ctrl+b = -workbench.action.toggleSidebarVisibility\n"
+             "#\n"
+             "# Modifiers are ctrl, alt, and shift, joined with + before the key: a\n"
+             "# letter, a digit, ` - = [ ] \\ ; ' , . /, f1 to f20, up, down, left,\n"
+             "# right, home, end, pageup, pagedown, enter, tab, space, escape, backspace,\n"
+             "# delete, numpad0 to numpad9, or contextmenu (the Menu key). There is no\n"
+             "# cmd: a line with it, from a Mac's keys.conf, is refused.\n"
+             "# A key given here is taken from any other command that had it by default,\n"
+             "# unless one works only in the editor and the other only in the terminal\n"
+             "# (or the file tree), or one works only in Markdown files, where it goes\n"
+             "# first. Two lines giving one key to two commands are an error, shown in\n"
+             "# the status bar. The menus follow this file as it is saved.\n"
+             "# While the terminal has the keyboard, plain ctrl keys and keys with no\n"
+             "# modifier go to the program in it, unless the command works from there\n"
+             "# too (Toggle Terminal on ctrl+`, Focus File Tree on ctrl+0); keys with\n"
+             "# shift or alt still run their commands, but for ctrl+shift+c and\n"
+             "# ctrl+shift+v (the terminal's copy and paste), ctrl+shift+g and\n"
+             "# ctrl+shift+space.\n"
+             "# Only the commands minicode for Linux has are listed.\n";
+    }
+    s += "#\n"
+         "# Every command, with its keys by default, follows. Uncomment a line and\n"
+         "# change its key to add one.\n";
     std::string menu;
     for (const Command& c : all()) {
-        if (c.flags & Fixed) continue;
-        std::string top = c.menu;
+        if ((c.flags & Fixed) || !available(c, platform)) continue;
+        std::string top = menuOf(c, platform);
         size_t gt = top.find(" >");
         if (gt != std::string::npos) top = top.substr(0, gt);
         if (top != menu) {
@@ -1040,8 +1119,9 @@ std::string defaultFileText() {
                             : c.when == When::NotPageOrTerminal
                                 ? ", but not in a web page, a PDF, or the terminal"
                                 : std::string(", in ") + placeName(c);
-        std::string comment = std::string(c.menu) + " > " + c.title + where;
-        std::vector<Key> keys = defaultKeys(c);
+        std::string comment =
+            std::string(menuOf(c, platform)) + " > " + titleOf(c, platform) + where;
+        std::vector<Key> keys = defaultKeys(c, platform);
         if (keys.empty()) {
             std::string l = "# (no key) = " + std::string(c.id);
             if (l.size() < 56) l.append(56 - l.size(), ' ');
@@ -1053,15 +1133,18 @@ std::string defaultFileText() {
             s += l + "  # " + comment + "\n";
         }
     }
-    s += "\n# ---- Keys the editor and the terminal handle themselves, which this file\n"
-         "# cannot change yet, nor give to another command where they apply:\n";
+    std::string fixed;
     for (const Command& c : all()) {
-        if (!(c.flags & Fixed)) continue;
+        if (!(c.flags & Fixed) || !available(c, platform)) continue;
         std::string l = "#   ";
-        for (const Key& k : defaultKeys(c)) l += format(k) + " ";
+        for (const Key& k : defaultKeys(c, platform)) l += format(k) + " ";
         if (l.size() < 40) l.append(40 - l.size(), ' ');
-        s += l + c.title + ", in " + placeName(c) + "\n";
+        fixed += l + titleOf(c, platform) + ", in " + placeName(c) + "\n";
     }
+    if (!fixed.empty())
+        s += "\n# ---- Keys the editor and the terminal handle themselves, which this file\n"
+             "# cannot change yet, nor give to another command where they apply:\n" +
+             fixed;
     return s;
 }
 

@@ -75,7 +75,7 @@ Then, once, from `linux/`: `meson setup build -Dterminal=enabled
 -Dbrowser=enabled -Dpdf=enabled`.
 
 The GUI checks (item 0.1) are `meson test -C build --suite gui` from
-`linux/`, about 3 seconds in November 2026; `./build/minicode-guitest
+`linux/`, about 8 seconds in November 2026 (3 before the `keys` suite); `./build/minicode-guitest
 <suite>...` runs some with their output as it comes. They start their own
 Xvfb and session bus, so several agents can run them at once, and they put
 nothing on the owner's screen. `HANDOFF.md` ("How to work on it" and the GUI
@@ -115,6 +115,37 @@ Mac's:
   it exists.
 
 No key is bound twice where the places overlap (`Commands::overlaps`).
+
+Choices item 0.3 made where D1 left room, each by the rule:
+- A command the port does not have yet has no row, so its key is free: the
+  palette's Ctrl+Shift+P, Select Line's Ctrl+L, Select All Occurrences'
+  Ctrl+Shift+L (item 1.9), Replace's Ctrl+H, the inline agent's Ctrl+I, Go
+  to Line's Ctrl+G (VS Code's on Linux, so Find Next is F3 alone), and
+  Close Tab's Ctrl+W (item 1.1).
+- New Folder, the Mac's Shift+Cmd+N, yields Ctrl+Shift+N to New Window and
+  takes Ctrl+Alt+N (New File's old key), as on the Mac New Window took
+  Option+Cmd+N. Close Window is Ctrl+Shift+W, VS Code's Linux key and the
+  Mac's Shift+Cmd+W.
+- A Mac key with Option and Command and no VS Code key on Linux is Ctrl+Alt
+  with the same letter: Show Hover is Ctrl+Alt+I (VS Code's is a chord,
+  Ctrl+K Ctrl+I), and the task key Ctrl+Alt+L. Alt+C, markdown-all-in-one's
+  task key on every platform, stays as on the Mac, in Markdown files only.
+- Open Folder stays Ctrl+O: VS Code's Linux Open Folder is a chord, and its
+  Ctrl+O opens a file, which minicode has no command for.
+- Toggle Terminal is Ctrl+Shift+T and Ctrl+` without the Mac's Cmd+J: it is
+  Global, and Ctrl+J would be taken from the shell, which ends a line with it.
+- Ctrl+0, Ctrl+1 and Ctrl+Tab are Global, as the port's pane keys always
+  were, so they leave the terminal. Ctrl+Tab is the registry's
+  workbench.action.nextEditor titled Previous File until the port has tabs.
+- In the terminal Ctrl+Shift+C and Ctrl+Shift+V stay VTE's copy and paste,
+  so the preview's Ctrl+Shift+V does not apply there; Ctrl+Shift+G and
+  Ctrl+Shift+Space still go to the shell, as before.
+- The tree's F2 and Delete are VS Code's explorer keys, on the tree's own
+  controller, never the menu; on Linux keys.conf lets a tree command have a
+  key that types elsewhere.
+- Settings… and Keyboard Shortcuts… are in the Edit menu and Quit in the File
+  menu, Reveal in Finder is Open Containing Folder. On Linux keys.conf refuses
+  a line with cmd (a Mac's file) and a command the port does not have.
 
 **D2. One `GtkTextView`, one `GtkTextBuffer` per tab.** Split `Editor` into
 the view and slot, and a `Document` holding what is per file: the buffer, its
@@ -236,12 +267,20 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   workaround is needed, and the `harness` suite now checks that the page
   answers from inside it. Its home page was a web search for "about:blank",
   online; it is now `about:blank` itself.
-- [ ] **0.3 The registry and keys (D1, D12).** Build `Commands` into the port,
+- [x] **0.3 The registry and keys (D1, D12).** Build `Commands` into the port,
   add `CommandsLinux.cpp` with core tests (each id exists, no key twice where
   places overlap, keys.conf applies), and drive the accelerators, the menu
   bar, and the hints from it. Move the keys D1 names and update the Linux column in `README.md`
   and `BUILD-LINUX.md`. *Done means:* a GUI suite presses every moved key
   through XTest, in the editor and with the terminal focused.
+  *Verified on the ThinkPad, 2026-11-09:* `commands:linux-*` hold the table
+  to the registry, D1 and README's Linux column; the `keys` suite presses
+  every moved key and its old key in the editor, and with the terminal
+  focused reads the bytes a raw `head` got for the plain Ctrl keys, then
+  moves keys with a scratch keys.conf. It fails with the preview's row taken
+  out of `CommandsLinux.cpp`, and with the terminal's rule broken. Needs the
+  owner: the keys under GNOME on Wayland with IBus (Ctrl+Alt+L locks the
+  screen on some desktops), and how the new menu bar reads.
 
 ### Stage 1: daily editing, 8,000 to 10,000 lines
 

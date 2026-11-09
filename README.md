@@ -411,6 +411,8 @@ cmd+k = -workbench.action.terminal.clear
 
 The menus, the command palette and the shortcut hints follow the file as soon as it is saved. A key given to a command is taken from whatever had it before, unless the two never work in the same place: one only in the editor and the other only in the terminal, say, or one only in a web page or a PDF and the other everywhere else, or the terminals' zoom and the editor's. Two lines giving one key to two commands are a mistake, and the status bar says so, as it does for the settings file. The few keys the editor and the terminal handle themselves, such as moving lines with Option Up and Down, are listed at the end of the file and cannot be changed yet.
 
+On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit menu opens it, written the first time with the commands minicode for Linux has. Its modifiers are ctrl, alt, and shift; a line with cmd, from a Mac's file, is refused. While the terminal has the keyboard, plain Ctrl keys and function keys go to the program in it, except Ctrl backtick, Ctrl 0, Ctrl 1, and Ctrl Tab, the ways out of it. Keys with Shift or Alt still work there, except Ctrl Shift C and Ctrl Shift V, the terminal's copy and paste, and Ctrl Shift G and Ctrl Shift Space, which a shell reads as Ctrl G and Ctrl Space.
+
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
 | Add a cursor on the line below or above each cursor, at the same column | Option Command Down, Option Command Up |  |  |
@@ -424,7 +426,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Close the active terminal | Control Shift W |  |  |
 | Close the application | Command Q | Ctrl Q |  |
 | Close the tab, the terminal the keyboard is in, or the browser's tab when it has the keyboard (the browser panel with its last tab) | Command W |  |  |
-| Close the window | Shift Command W | Ctrl W |  |
+| Close the window | Shift Command W | Ctrl Shift W |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N, or Ctrl N |
 | Copy or cut the line the cursor is on when nothing is selected, and paste such a line above the cursor's line | Command C, Command X, then Command V |  |  |
@@ -443,7 +445,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Find only in the selected text, while the find bar has the keyboard | Option Command L |  |  |
 | Find in the browser's page, while the browser has the keyboard (Return and Shift Return for the next and previous match, Escape to close) | Command F, then Command G, Shift Command G |  |  |
 | Find in the terminal, its scrollback included (Return and Shift Return for the next and previous match, Escape to close) | Command F, then Command G, Shift Command G |  |  |
-| Find next, find previous | Command G, Shift Command G | Ctrl G or F3, Shift F3 |  |
+| Find next, find previous | Command G, Shift Command G | F3, Shift F3 |  |
 | Focus the browser's address bar, opening the browser if it is hidden | Command 3 |  |  |
 | Focus the editor (its left group when split), or the player when a video or audio file is open | Command 1 | Ctrl 1 |  |
 | Focus the file tree (outside the browser and PDFs, where it is Actual Size) | Command 0 | Ctrl 0 |  |
@@ -470,7 +472,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Keep each match's case when replacing, in the find bar or Replace in Folder | Option Command P |  |  |
 | Keep a preview tab (its title in italics) as an ordinary tab | Double-click its title, edit or save it, or Keep Open in its right click menu or the File menu |  |  |
 | List every problem the language servers report, grouped by file | Shift Command M, or click the problem counts in the status bar |  |  |
-| List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift L | W, or Ctrl Shift L |
+| List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift D | W, or Ctrl Shift L |
 | Make the selection, or the word at the cursor, bold or italic in Markdown, or plain again | Toggle Bold, Toggle Italic in the Edit menu (no key by default: Command B is the sidebar and Command I the inline agent, as in VS Code; keys.conf can give them one) |  |  |
 | Move a word left or right at the terminal's prompt | Option Left, Option Right |  |  |
 | Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up |  |  |
@@ -481,10 +483,10 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Move to the next terminal waiting for you, in any window (a Claude Code session asking for permission, with `minicode hooks --install` run) | Control Command W |  |  |
 | Move to the previous or next command in the terminal, its prompt at the top | Command Up, Command Down, in the terminal |  |  |
 | Move to the start or end of the line at the terminal's prompt, or delete back to its start | Command Left, Command Right, Command Delete |  |  |
-| New file | Command N | Ctrl Alt N | New file in the ⋮ menu |
-| New folder | Shift Command N | Ctrl Shift N |  |
+| New file | Command N | Ctrl N | New file in the ⋮ menu |
+| New folder | Shift Command N | Ctrl Alt N |  |
 | New tab in the browser, while it has the keyboard (View > New Browser Tab anywhere) | Command T, or the + at the end of its tabs |  |  |
-| New window | Option Command N | Ctrl N |  |
+| New window | Option Command N | Ctrl Shift N |  |
 | Next tab, previous tab (the browser's, while it has the keyboard and more than one tab) | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [, or Option Command Right, Option Command Left |  |  |
 | Open a file of the folder by typing part of its name, recently opened files first | Command P |  |  |
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
@@ -522,28 +524,28 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Select every place the selected text, or the word at the cursor, occurs | Shift Command L |  |  |
 | Select the cursor's line, and the next line with each press after | Command L |  |  |
 | Select the terminal's commands and what they printed, back to the previous command or on to the next | Shift Command Up, Shift Command Down, in the terminal |  |  |
-| Show or hide dotfiles | Shift Command . | Ctrl H, or Ctrl Shift . |  |
+| Show or hide dotfiles | Shift Command . | Ctrl Shift . |  |
 | Show or hide the on-screen keyboard, for symbols the phone's keyboard lacks |  |  | Y, or the keyboard button in the title bar |
 | Show or hide the sizes of files and folders in the file tree | Shift Command I |  |  |
 | Show or hide when each file in the file tree was created | Control Shift Command I |  |  |
 | Show or hide when each file in the file tree was last saved, and when the open file was saved | Option Shift Command I |  |  |
 | Show the cursor's line of a LaTeX file on the typeset page | Option Command J |  |  |
 | Show the language server's quick fixes for the cursor or the selection | Command period |  |  |
-| Show the type and documentation under the cursor | Option Command I | Ctrl I | K, or Ctrl K |
+| Show the type and documentation under the cursor | Option Command I | Ctrl Alt I | K, or Ctrl K |
 | Split the editor: the file on show in a second group beside it, with its own tabs | Command backslash, in the editor |  |  |
 | Split the terminal, with a new one beside it | Command backslash, in the terminal |  |  |
 | Split the terminal, with a new one below it | Split Terminal Down in the Terminal menu, or Option-click the ◫ button |  |  |
 | Sort every keep-sorted block in the file | Shift F9 | Shift F9 | Sort keep-sorted blocks in the ⋮ menu |
 | Sort the selected lines, or the keep-sorted block around the cursor | F9 (F9 may need fn on a laptop) | F9 | J, or Ctrl J |
 | Take the selected completion | Tab or Return (Shift Return for a new line instead) |  |  |
-| Tick or clear a Markdown task, or make the selected lines tasks | Option Command L, or Option C, or click its box in the preview | Ctrl L, or click its box in the preview | L, or Ctrl L, or tap its box in the preview |
+| Tick or clear a Markdown task, or make the selected lines tasks | Option Command L, or Option C, or click its box in the preview | Ctrl Alt L, or Alt C, or click its box in the preview | L, or Ctrl L, or tap its box in the preview |
 | Toggle the agents panel in place of the file tree | Shift Command A |  |  |
 | Toggle the fold on the cursor's line | Control Command L |  |  |
 | Toggle the browser | Shift Command B | Ctrl Shift B | B, or Ctrl Shift B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |
 | Toggle the file list or sidebar | Command B | Ctrl B | F, or Ctrl B or Ctrl F |
 | Toggle the pane with the keyboard (the editor, the browser or the terminal) filling the whole of the right side | Control Command M |  |  |
-| Toggle the preview of a Markdown or LaTeX file, the table of a CSV file, the outline of a JSON file, or a rendered notebook (the last three on the Mac) | Shift Command V | Ctrl Shift P | P, or Ctrl P |
+| Toggle the preview of a Markdown or LaTeX file, the table of a CSV file, the outline of a JSON file, or a rendered notebook (the last three on the Mac) | Shift Command V | Ctrl Shift V (in the terminal it pastes) | P, or Ctrl P |
 | Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H, or Ctrl H |
 | Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G | V, or Ctrl Shift G |
 | Toggle the terminal | Shift Command T, Command J, or Control backtick | Ctrl Shift T, or Ctrl backtick | T, or Ctrl T |

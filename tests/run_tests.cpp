@@ -10698,6 +10698,7 @@ static void testMultiCaretOccurrences() {
 #include "fold_tests.inc"
 #include "previews_tests.inc"
 #include "commands_tests.inc"
+#include "commands_linux_tests.inc"
 #include "procs_tests.inc"
 #include "attention_tests.inc"
 #include "ignore_tests.inc"
@@ -10851,6 +10852,12 @@ int main() {
     testKeymapFile();
     testCommandLanguages();
     testCommandsReadme();
+    testLinuxCommandTable();
+    testLinuxCommandDefaults();
+    testLinuxTerminalKeys();
+    testLinuxAccelerators();
+    testLinuxKeymapFile();
+    testLinuxCommandsReadme();
     testClaudeHooks();
     testNotifyCommandLine();
     testAttentionBoard();

@@ -267,6 +267,8 @@ void setWorld(const std::string& root, const std::string& shortRoot) {
     setenv("TMPDIR", (shortRoot + "/t").c_str(), 1);
     setenv("ZDOTDIR", at("zdot").c_str(), 1);
     setenv("MINICODE_SETTINGS", at("settings.conf").c_str(), 1);
+    // Not written until a suite writes it: the defaults until then.
+    setenv("MINICODE_KEYS", at("keys.conf").c_str(), 1);
     setenv("MINICODE_BACKUP_DIR", at("backups").c_str(), 1);
     setenv("GIT_CONFIG_GLOBAL", "/dev/null", 1);
     setenv("GIT_CONFIG_NOSYSTEM", "1", 1);

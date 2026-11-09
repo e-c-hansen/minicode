@@ -28,6 +28,11 @@
 // end, pageup, pagedown, enter (Return), tab, space, escape, backspace,
 // delete (forward), numpad0 to numpad9 and contextmenu (a PC keyboard's Menu
 // key). Pure C++, no I/O; src/Keymap.mm puts the result on the menus.
+//
+// The keys in each row are the Mac's. The GTK port's are a table of their
+// own, src/CommandsLinux.cpp (linux/PARITY.md, D1), in the same notation and
+// over the same commands; the functions that take a Platform read it, and
+// those without one are the Mac's.
 #pragma once
 #include <map>
 #include <string>
@@ -132,6 +137,9 @@ struct Error {
     std::string message;
 };
 
+// Whose keys (see "platforms" below).
+enum class Platform { Mac, Linux };
+
 // The keys in effect: every command's, in order (the first is the one a
 // menu shows; a user's keys come before the defaults).
 class Keymap {
@@ -152,8 +160,8 @@ public:
 
     std::map<std::string, std::vector<Key>> keys;   // by command id
 private:
-    friend Keymap defaults();
-    friend Keymap resolve(const std::string&, std::vector<Error>*);
+    friend Keymap defaults(Platform);
+    friend Keymap resolve(const std::string&, std::vector<Error>*, Platform);
     void index();
     std::map<std::string, std::vector<const Command*>> byKey_;   // format(key) -> commands
 };
@@ -165,5 +173,63 @@ Keymap resolve(const std::string& fileText, std::vector<Error>* errors);
 // What Keyboard Shortcuts writes when there is no file yet: how the file
 // works, then every command and its default keys, commented out.
 std::string defaultFileText();
+
+// ------------------------------------------------------------ platforms
+// Mac: the rows' own keys, every command. Linux: CommandsLinux.cpp's table,
+// and only the commands it has a row for, the ones the GTK port has. A
+// command without a row there has no keys on Linux, keys.conf cannot give it
+// one, and the port shows it nowhere.
+
+// One command on Linux (CommandsLinux.cpp). Titles and menus are the
+// registry's unless Linux words them otherwise ("Open Containing Folder",
+// Quit in the File menu).
+struct LinuxRow {
+    const char* id;
+    const char* keys;     // default keys, space separated, never cmd; "" for none
+    unsigned flags;       // Global: kept while the terminal has the keyboard
+    const char* title;    // null: the registry's
+    const char* menu;     // null: the registry's
+};
+// In the registry's order.
+const std::vector<LinuxRow>& linuxRows();
+const LinuxRow* linuxRow(const std::string& id);
+
+bool available(const Command& c, Platform p);
+std::vector<Key> defaultKeys(const Command& c, Platform p);
+const char* titleOf(const Command& c, Platform p);
+const char* menuOf(const Command& c, Platform p);
+// The registry's flags, with Linux's Global added from its row.
+unsigned flagsOf(const Command& c, Platform p);
+Keymap defaults(Platform p);
+// On Linux a line naming a command Linux lacks, or a key with cmd (a Mac's
+// keys.conf), is refused; a file tree command may have a key that types
+// elsewhere (Delete, as in VS Code's explorer), since the tree takes no text.
+Keymap resolve(const std::string& fileText, std::vector<Error>* errors, Platform p);
+// Linux's lists only the commands Linux has, with Linux's modifiers.
+std::string defaultFileText(Platform p);
+
+// ---- Linux keys and the terminal (PARITY.md D1)
+// While the terminal has the keyboard, plain Ctrl keys and keys with no
+// modifier (F9, F12) are the program's unless the command is Global, so a
+// terminal command takes Ctrl+Shift. Keys with Shift or Alt stay the app's,
+// except VTE's own copy and paste (Ctrl+Shift+C and Ctrl+Shift+V) and the
+// two a shell reads as their Ctrl key (Ctrl+Shift+G as Ctrl+G, and
+// Ctrl+Shift+Space as Ctrl+Space). Does `k`, one of `c`'s keys, go to the
+// terminal rather than run `c` there? Says nothing of whether `c` applies
+// in the terminal at all (appliesIn).
+bool linuxTerminalTakes(const Command& c, const Key& k);
+// VTE's copy and paste: no command has them while the terminal has the
+// keyboard, whatever keys.conf says.
+bool linuxTerminalOwnKey(const Key& k);
+// GTK's accelerator strings for a key (gtk_accelerator_parse): "<Ctrl>s",
+// "<Ctrl><Shift>p". Shift with a digit or punctuation is the character it
+// types on a US layout ("<Ctrl>greater" for ctrl+shift+.), since GTK matches
+// the keyval a key produced and counts Shift as used up by it; the keypad's
+// plus and minus are added beside "+" and "-". None for a key with cmd.
+std::vector<std::string> linuxAccelerators(const Key& k);
+// As the shortcut hints, the status bar and README's Linux column write it:
+// "Ctrl Shift P", "Ctrl `", "Shift F3", "Page Up"; with "+" between,
+// "Ctrl+Shift+H".
+std::string linuxLabel(const Key& k, const char* between = " ");
 
 }  // namespace Commands

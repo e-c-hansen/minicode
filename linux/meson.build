@@ -39,6 +39,10 @@ core_sources = [
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp',
   core_dir / 'GitModel.cpp',
+  # The command registry and its Linux keys (Keys.cpp drives the menus and
+  # the accelerators from them).
+  core_dir / 'Commands.cpp',
+  core_dir / 'CommandsLinux.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -72,6 +76,8 @@ gui_sources = [
   # like Terminal.cpp) over its plain C++ half.
   'src/WebImageRules.cpp',
   'src/WebImages.cpp',
+  # The menu bar, the accelerators and the tree's keys, from the registry.
+  'src/Keys.cpp',
 ]
 
 inc = include_directories('src', '../src')

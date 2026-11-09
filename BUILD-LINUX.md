@@ -654,6 +654,26 @@ Verified by running it:
     refreshes ran log four times, since an unchanged repository keeps its
     graph. Closing a window with the panel open, and with a Show more still
     loading, logged no GTK warnings.
+- The keys from the command registry (November 2026, `linux/PARITY.md` item
+  0.3), by the `keys` GUI suite on a private Xvfb with real key presses.
+  The menu bar holds each command the port has once, in the registry's
+  order and Linux's words, and each action's accelerators are its keys in
+  `src/CommandsLinux.cpp`. Every key that moved does its job and its old key
+  no longer does: Ctrl Shift V toggles the preview and Ctrl Shift P nothing,
+  Ctrl Alt L and (in Markdown only) Alt C toggle a task and Ctrl L nothing,
+  Ctrl Shift D opens the TODOs and Ctrl Shift L nothing, Ctrl N asks for a
+  new file's name, Ctrl Alt N a folder's, Ctrl Shift N opens a window that
+  Ctrl W leaves and Ctrl Shift W closes, Ctrl Shift . shows dotfiles and
+  Ctrl H nothing, F3 opens the find bar and Ctrl G nothing, Ctrl Alt I runs
+  the hover and Ctrl I nothing. With the terminal focused, a raw `head`
+  received Ctrl N, L, H, G, W, I, B, O, Q, F, Ctrl Alt L, Ctrl Alt I and F3
+  as their bytes, in order, while no command ran; Ctrl Shift V pasted into
+  the shell; Ctrl Shift D, Ctrl Shift N, Ctrl Shift W and Ctrl Alt N acted,
+  and Ctrl 0 moved the keyboard to the tree. A scratch keys.conf moved the
+  preview to Ctrl Alt J and Rename in the tree from F2 to Ctrl Alt R, the
+  hints showed the new keys, its Mac line (`cmd+k`) was named in the status
+  bar, and emptying the file put every key back. Edit > Keyboard
+  Shortcuts… wrote the file with only the commands the port has.
 
 Not verified:
 
@@ -712,15 +732,14 @@ Not verified:
   asked before it, and the re-rooting done after it).
 - Open Containing Folder, which was not run, because it opens a file manager
   window.
-- For item 8: every new shortcut as a real key press. The accelerator table
-  was read back from GTK and the actions were activated, so Ctrl+N, Ctrl+W,
-  Ctrl+Q, Ctrl+Tab, Ctrl+G, Ctrl+Shift+G, Shift+Enter in the find bar,
-  Ctrl+1, Ctrl+` and Ctrl+H were never pressed. Nor was a key typed into
-  the terminal: that bash really receives Ctrl+W, Ctrl+H and the rest rests
-  on GTK not binding them any more, which was checked, not on a keystroke.
-  Ctrl+Shift+C and Ctrl+Shift+V in the terminal were compiled, not tried.
-  Whether F10 (GTK's menu bar key) still reaches the terminal was not
-  looked at. How the color popover looks in place (it follows the system's
+- For item 8: some shortcuts as real key presses. The `keys` suite now
+  presses the keys item 0.3 moved, and the plain Ctrl keys typed into the
+  terminal (see above), but Ctrl+Tab, Ctrl+1, Ctrl+Shift+G from the
+  terminal, Shift+Enter in the find bar and Ctrl+Shift+C in the terminal
+  are still not pressed by any check, and whether F10 (GTK's menu bar key)
+  still reaches the terminal was not looked at. None of the keys was
+  pressed under GNOME on Wayland with an input method, where GNOME or IBus
+  could take one first (Ctrl+Alt+L locks the screen on some desktops). How the color popover looks in place (it follows the system's
   GTK theme, light on a stock Ubuntu, over the dark editor), dragging in it
   with a mouse, the Keep Mine / Reload alert on screen, where GNOME puts a
   second window, and GNOME's "New Window" dock item all need a person.
@@ -920,7 +939,7 @@ running does not start a second process. It does still do what you asked:
 the argument is forwarded to the running instance, which opens a new window on
 that folder, or raises the window that already has it open and shows the file
 there if you named one. GNOME's "New Window" on the dock icon runs the
-launcher again, so it opens a window too. Inside the app, Ctrl+N opens a
+launcher again, so it opens a window too. Inside the app, Ctrl+Shift+N opens a
 window on the current folder. The application quits when its last window
 closes.
 
@@ -946,7 +965,18 @@ status bar along the bottom.
 
 ## Keyboard shortcuts
 
-These mirror the macOS set, with Ctrl standing in for Command.
+The keys are the Linux column of the table in `README.md` ("Keyboard
+shortcuts"). They come from one table, `src/CommandsLinux.cpp`, beside the
+Mac's in `src/Commands.cpp`, which builds the menu bar, the accelerators, the
+file tree's keys and the shortcut hints, and a core test holds the README's
+column to it. They follow the Mac's set by `linux/PARITY.md`'s rule D1: VS
+Code's Linux key for a feature VS Code has, minicode's own Shift Command keys
+as Ctrl Shift with the same letter, and its Command keys as Ctrl unless VS
+Code's Linux keys use them for something else. `~/.config/minicode/keys.conf`
+(or `$MINICODE_KEYS`) changes them as on the Mac, in the same notation but
+with ctrl, alt, and shift only; Edit > Keyboard Shortcuts… writes it the
+first time with every command the port has, commented out, and the menus,
+the hints and the status bar follow it as it is saved.
 
 The settings file (Ctrl+,) is the same `~/.config/minicode/settings.conf` the
 macOS build reads (it follows `$XDG_CONFIG_HOME`). Every panel's background,
@@ -961,42 +991,10 @@ through GDK's Wayland surface looks possible; it was not tried or built. Transpa
 GNOME always has. A click on a color swatch opens a color picker under it,
 and the color applies live while you drag, as on the Mac.
 
-| Shortcut          | Action                     |
-| ----------------- | -------------------------- |
-| Ctrl N            | New window on the same folder |
-| Ctrl W            | Close the window           |
-| Ctrl Q            | Quit (every window)        |
-| Ctrl O            | Open folder                |
-| Ctrl S            | Save                       |
-| Ctrl Alt N        | New file                   |
-| Ctrl Shift N      | New folder                 |
-| Ctrl F            | Find in the current file   |
-| Ctrl G or F3, Shift F3 | Find next, find previous (also Enter and Shift Enter in the find bar) |
-| Ctrl Shift F      | Find in the folder         |
-| Ctrl Shift P      | Toggle the Markdown or LaTeX preview |
-| Ctrl Shift S      | Export the typeset PDF of a LaTeX file |
-| Ctrl Shift H      | Show or hide the shortcut hints |
-| Ctrl B            | Toggle the sidebar         |
-| Ctrl Shift E      | Collapse or restore the editor |
-| Ctrl Shift T, Ctrl ` | Toggle the terminal panel |
-| Ctrl /            | Comment or uncomment the selected lines |
-| Ctrl ,            | Open the settings file     |
-| Ctrl Shift B      | Toggle the browser panel   |
-| Ctrl Shift G      | Toggle the Source Control panel in place of the file tree |
-| Ctrl H, Ctrl Shift . | Show or hide dotfiles, in every window |
-| Ctrl 0            | Focus the file tree        |
-| Ctrl 1            | Focus the editor           |
-| Ctrl Tab          | Back to the previous file  |
-| Ctrl Space        | Complete, with a language server |
-| F12, Ctrl click   | Go to definition           |
-| Ctrl I            | Show the type and documentation under the cursor |
-| Ctrl +, Ctrl =, Ctrl - | Zoom a PDF or the LaTeX preview in and out (also Ctrl with the wheel, or a pinch) |
-| Ctrl Alt 0        | Back to fit width          |
-| Ctrl Shift Space  | Play or pause the video or audio file on screen (not while the terminal or a text field has the keyboard) |
-| F2                | Rename the selected item, in the tree |
-| Delete            | Move the selected item to the Trash, in the tree |
-| Ctrl Shift C, Ctrl Shift V | Copy and paste, in the terminal |
-| Ctrl click, in the terminal | Open a file:line or URL from the output |
+Besides the table, Enter and Shift Enter in the find bar find the next and
+previous match, Ctrl Shift C and Ctrl Shift V copy and paste in the
+terminal, and a Ctrl click on a file:line or URL in the terminal's output
+opens it.
 
 F2 and Delete work only while the file tree has the keyboard, so Delete in the
 editor still deletes text.
@@ -1010,29 +1008,33 @@ In the Source Control panel, Up and Down move through the files, Enter shows
 the selected file's diff in the editor's place, Space stages or unstages it,
 Tab moves between the changes, the graph and the message box, and Ctrl Enter
 in the message box commits. Enter or a click on a commit in the graph shows
-it. Find Previous is Shift F3 rather than the Mac's Shift Command G, because
-Ctrl Shift G is the panel, as in VS Code on Linux.
+it. Find Next and Find Previous are F3 and Shift F3, VS Code's on Linux,
+rather than the Mac's Command G and Shift Command G: VS Code's Ctrl G on
+Linux is Go to Line, and Ctrl Shift G is the panel.
 
-Ctrl Shift . is the Mac's Shift Command . with Ctrl for Command, for a
-keyboard remapped the Mac way (Toshy, for one, turns Command H into Super H,
-which GNOME uses to hide the window, so Ctrl H never arrives). It is bound
-as Ctrl and the `>` character, so it works on layouts where Shift . types
-`>`, such as US and UK English.
+Show Hidden Files is Ctrl Shift ., the Mac's Shift Command . with Ctrl for
+Command. It is bound as Ctrl and the `>` character, so it works on layouts
+where Shift . types `>`, such as US and UK English. Ctrl H, the file
+managers' key, is Replace's once the port has it, as in VS Code.
 
 The zoom keys act only while a PDF or the LaTeX preview is on screen, and
 otherwise pass through to whatever has the keyboard. Fit width is Ctrl+Alt+0,
 not the usual Ctrl+0, because Ctrl+0 is Focus the File Tree, as Command 0 is
 on the Mac, and one of the ways out of the terminal.
 
-While the terminal has the keyboard, the plain Ctrl shortcuts (Ctrl B, F, G,
-H, I, N, O, Q, S, W, Space, slash, comma, plus and minus) and F12 belong to the shell, so
-readline, vim and emacs get them: Ctrl W deletes a word, Ctrl H is backspace.
-Everything with Shift or Alt in it still works there, except Ctrl Shift G,
-which the shell reads as Ctrl G, and Ctrl Shift Space (Play or Pause), which
-it reads as Ctrl Space, and so do the keys that move between panes:
-Ctrl `, Ctrl 0, Ctrl 1 and Ctrl Tab. Ctrl 0 reaches the Source Control panel
-from the terminal while it is open. Ctrl click on a
-link in the output is a mouse action and is not affected. The Mac has no such
-split, since its shortcuts use Command and the terminal gets Control. The tree's right-click menu and the File menu both
-have New File, New Folder, Rename, Move to Trash, Open Containing Folder and
-Copy Path.
+While the terminal has the keyboard, the plain Ctrl shortcuts (Ctrl B, F, N,
+O, Q, S, Space, slash, comma, plus and minus) and the keys with no modifier
+(F3, F9, F12) belong to the program in it, so readline, vim and emacs get
+them: Ctrl W deletes a word, Ctrl H is backspace. The keys that move between
+panes stay the app's: Ctrl `, Ctrl 0, Ctrl 1 and Ctrl Tab (Global in
+`src/CommandsLinux.cpp`). Ctrl 0 reaches the Source Control panel from the
+terminal while it is open. Everything with Shift or Alt in it still works
+there, except Ctrl Shift C and Ctrl Shift V, the terminal's copy and paste
+(elsewhere Ctrl Shift V is the preview), Ctrl Shift G (Source Control),
+which the shell reads as Ctrl G, and Ctrl Shift Space (Play or Pause),
+which it reads as Ctrl Space; the editor's own keys (Ctrl Alt L, Ctrl Alt I,
+Shift F9) are not bound there at all. Ctrl click on a link in the output is
+a mouse action and is not affected. The Mac has no such split, since its
+shortcuts use Command and the terminal gets Control. The tree's right-click
+menu and the File menu both have New File, New Folder, Rename, Move to
+Trash, Open Containing Folder and Copy Path.

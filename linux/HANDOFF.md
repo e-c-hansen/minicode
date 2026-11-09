@@ -1160,7 +1160,7 @@ theme and at 2x, and the box's height against the text on the ThinkPad
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).
   From `linux/`, `meson test -C build --suite gui` runs every suite (about
-  3 seconds in November 2026); `./build/minicode-guitest save harness` runs
+  8 seconds in November 2026, 5 of them the `keys` suite); `./build/minicode-guitest save harness` runs
   some with their output as it comes, and `SUITES="save" meson test -C build
   --suite gui -v` does the same through Meson. Plain `meson test -C build`
   leaves them out. The program starts its own Xvfb on a display number the
@@ -1298,10 +1298,19 @@ Do not claim a GUI behaviour works when it was only compiled.
   GSettings (`org.gtk.gtk4.Settings.ColorChooser`), and the old color dialog
   did the same. A test that picks colors should run with
   `GSETTINGS_BACKEND=memory`, or it writes to the user's dconf.
-- A new shortcut goes in `kBinds` in `main.cpp`, the menu in `buildMenu`,
-  `hintsText`, and the README table. A plain Ctrl key is given to the shell
-  while the terminal has the keyboard without anything more; if it is a key
-  for moving between panes, add it to the exceptions in `shellOwns`.
+- A new command (November 2026, `PARITY.md` item 0.3, which replaced
+  `kBinds`, `buildMenu`'s hand-written menus and `shellOwns`; the older
+  items below still name them): a row in `../src/CommandsLinux.cpp` (the
+  registry's id, the Linux keys by D1's rule, a Linux title or menu where
+  the Mac's do not fit), a row in `Keys.cpp`'s `actions()` naming its
+  GAction, the action itself (`addAction` in `main.cpp`), a row in
+  `hintsText` if the hints should list it (its key comes from
+  `Keys::label`), and its README row (`commands:linux-readme` fails
+  without it). The menu bar and the accelerators follow from the tables,
+  and the `keys` GUI suite fails when the two disagree. A plain Ctrl key or
+  a key with no modifier goes to the program while the terminal has the
+  keyboard without anything more; a key for moving between panes gets the
+  `Global` flag in its row (`Commands::linuxTerminalTakes`).
 - VTE numbers rows two ways. `vte_terminal_get_text_range_format` and
   `vte_terminal_get_cursor_position` count from the start of the buffer;
   the vertical adjustment counts from the oldest row still kept. They part
@@ -1343,8 +1352,9 @@ Do not claim a GUI behaviour works when it was only compiled.
   `<Ctrl><Shift>period`, never fires: GTK matches the keyval the key
   produced (`greater`) and counts Shift as used up by it. Write the
   character instead (`<Ctrl>greater`); it then depends on the layout.
-  `shellOwns` sees no Shift in it, so such a key needs an exception there
-  to stay bound in the terminal.
+  `Commands::linuxAccelerators` does this for every key with Shift and a
+  digit or punctuation, and the terminal's rule reads the registry's key
+  (`ctrl+shift+.`), which has its Shift.
 - `gtk_list_view_scroll_to` with `GTK_LIST_SCROLL_FOCUS` moves the list's
   own focus item but does not take the keyboard from another widget; call
   `gtk_widget_grab_focus` on the list as well.

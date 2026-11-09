@@ -528,8 +528,9 @@ static void testKeymapFile() {
 // ------------------------------------------------- the README's table
 // The keys a README cell names, spelled as the README spells them: "Shift
 // Command P", "Control 1 to 9", "Option Command [", "Command equals (or
-// Command plus)".
-static std::vector<Commands::Key> ReadmeKeys(const std::string &cell) {
+// Command plus)". In the Linux column (`onLinux`) the words are Ctrl, Alt and
+// Shift, and Delete is the forward delete key.
+static std::vector<Commands::Key> ReadmeKeys(const std::string &cell, bool onLinux = false) {
     using namespace Commands;
     std::vector<std::string> words;
     std::string w;
@@ -559,10 +560,15 @@ static std::vector<Commands::Key> ReadmeKeys(const std::string &cell) {
         if (t == "Command") { mods |= Cmd; continue; }
         if (t == "Option") { mods |= Alt; continue; }
         if (t == "Control") { mods |= Ctrl; continue; }
+        if (onLinux && t == "Ctrl") { mods |= Ctrl; continue; }
+        if (onLinux && t == "Alt") { mods |= Alt; continue; }
         if (t == "with" || t == "fn") continue;
         std::string name;
         unsigned extra = 0;
-        if (named.count(t)) name = named.at(t);
+        if (onLinux && t == "Delete") name = "delete";
+        else if (onLinux && t == "Backspace") name = "backspace";
+        else if (onLinux && t == "Enter") name = "enter";
+        else if (named.count(t)) name = named.at(t);
         else if (t == "plus") { name = "="; extra = Shift; }
         else if (t == "keypad" && i + 1 < words.size()) name = "numpad" + words[++i];
         else if (t == "Forward" && i + 1 < words.size() && words[i + 1] == "Delete") { name = "delete"; i++; }

@@ -5,10 +5,10 @@
 //
 //   GtkApplicationWindow
 //     vbox
-//       overlay  (the shortcut list floats over the panes, Ctrl+Shift+H)
+//       overlay  (the shortcut list floats over the panes)
 //         hpaned  (movable divider)
 //           [start] sidebar stack: FileTree, or the Source Control panel
-//                   (GitPanel) in its place on Ctrl+Shift+G
+//                   (GitPanel) in its place
 //           [end]   right vbox
 //                     editor find-bar (GtkSearchBar)
 //                     vpaned  (movable divider)
@@ -43,7 +43,7 @@
 // Browser only exist when their libraries were found at configure time.
 //
 // Windows. Everything above belongs to one window, an App, and there can be
-// several (Ctrl+N, or a second `minicode <path>` from a shell): each has its
+// several (New Window, or a second `minicode <path>` from a shell): each has its
 // own tree, editor, terminal, browser, Find in Folder panel and language
 // server session, as each macOS window has its own EditorController. What
 // they share lives in `g` below: the settings file and stylesheet, the menu
@@ -63,6 +63,7 @@
 #include "Search.h"
 #include "Lsp.h"
 #include "GitPanel.h"
+#include "Keys.h"
 
 #include <algorithm>
 #include <functional>
@@ -92,12 +93,12 @@ struct App {
     Editor*   editor = nullptr;
     FileTree* tree = nullptr;
     // The sidebar is a stack: the file tree, or the Source Control panel in
-    // its place (Ctrl+Shift+G), made on first use.
+    // its place, made on first use.
     GtkWidget* sidebar = nullptr;
     GitPanel*  git = nullptr;
     bool       gitShown = false;
     SearchPanel* search = nullptr;   // Find in Folder, created on first use
-    SearchPanel* todos = nullptr;    // the TODOs window, the same, on Ctrl+Shift+L
+    SearchPanel* todos = nullptr;    // the TODOs window, the same
     LspSession*  lsp = nullptr;      // language servers for this window
     GtkWidget*   lspLabel = nullptr; // their status, in the status bar
 
@@ -148,9 +149,6 @@ struct Shared {
     // Dotfiles in the tree: the application's setting, as the Mac's
     // gShowHidden is one flag for every window.
     bool showHidden = false;
-    // The active window's terminal has the keyboard, so plain Ctrl keys are
-    // the shell's (see "Keys in the terminal" below).
-    bool shellKeys = false;
 };
 Shared g;
 }  // namespace
@@ -160,14 +158,21 @@ static App* newWindow(const std::string& root, const std::string& file);
 // Defined with the rest of the hints panel further down; the pane toggles call
 // it so an open panel never reports stale state.
 static void refreshHints(App* app);
+// Tells Keys what has the keyboard (see "keys" below).
+static void updateKeyPlace();
 
 // A divider dragged this close to the top (terminal) or the right edge
 // (sidebar) snaps the rest of the way.
 static const int kTopSnap = 40;
 static const int kRightSnap = 60;
 
-static const char* kHintsHintShow = "Ctrl+Shift+H  Shortcuts";
-static const char* kHintsHintHide = "Ctrl+Shift+H  Hide shortcuts";
+// The status bar's note on the shortcut hints, with their key as keys.conf
+// leaves it.
+static std::string hintsHintText(bool showing) {
+    const std::string key = Keys::label("minicode.toggleShortcutHints", "+");
+    return (key.empty() ? std::string() : key + "  ") +
+           (showing ? "Hide shortcuts" : "Shortcuts");
+}
 
 // ------------------------------------------------- the editor/terminal split
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -336,6 +341,7 @@ static void updateTitle(void* userp) {
         if (GAction* z = g_action_map_lookup_action(G_ACTION_MAP(app->window), zoom))
             g_simple_action_set_enabled(G_SIMPLE_ACTION(z), app->editor->showingPdf());
     updateMediaKey(app);
+    updateKeyPlace();    // a Markdown file's own keys
     refreshHints(app);   // Play/Pause is listed while video or audio can play
     gtk_label_set_text(GTK_LABEL(app->statusLabel),
                        app->editor->isDiff() ? app->editor->diffTitle().c_str()
@@ -671,14 +677,12 @@ static void act_toggle_sidebar(GSimpleAction*, GVariant*, gpointer userp) {
     refreshHints(app);
 }
 
-// Ctrl+H or Ctrl+Shift+., View > Show Hidden Files: the Mac's Shift+Cmd+.
+// View > Show Hidden Files, Ctrl+Shift+.: the Mac's Shift+Cmd+.
 // (toggleHiddenFiles: flips one global flag). An application action with a
 // check-box state, so every window's tree and every window's menu agree.
-// Ctrl+Shift+. is the Mac's key with Ctrl for Command, for keyboards remapped
-// the Mac way (Toshy sends Ctrl for the Command key, and turns Command+H into
-// Super+H, which GNOME takes to hide the window, so Ctrl+H never arrives).
-// It is bound as Ctrl+> (see kBinds), so it needs a layout where Shift+.
-// types ">", as the US and UK ones do.
+// GTK matches it as Ctrl+> (Commands::linuxAccelerators), so it needs a
+// layout where Shift+. types ">", as the US and UK ones do. Ctrl+H, the
+// file managers' key, is Replace's (PARITY.md, D1).
 static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer) {
     g_simple_action_set_state(action, value);
     g.showHidden = g_variant_get_boolean(value);
@@ -746,8 +750,8 @@ static void act_toggle_browser(GSimpleAction*, GVariant*, gpointer userp) {
     refreshHints(app);
 }
 
-// Ctrl+/ : only when the editor has the keyboard, so the shortcut never edits
-// a file you are not looking at.
+// Toggle Comment: only when the editor has the keyboard, so the shortcut
+// never edits a file you are not looking at.
 static void act_toggle_comment(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     GtkWidget* view = app->editor->textView();
@@ -755,9 +759,8 @@ static void act_toggle_comment(GSimpleAction*, GVariant*, gpointer userp) {
         gtk_widget_error_bell(view);
 }
 
-// Ctrl+L: the task key in a Markdown file's source, on the lines the
-// selection touches. Elsewhere it rings the bell. In the terminal it is the
-// shell's (clear screen), see shellOwns.
+// The task key in a Markdown file's source, on the lines the selection
+// touches. Elsewhere it rings the bell.
 static void act_toggle_task(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     GtkWidget* view = app->editor->textView();
@@ -765,9 +768,8 @@ static void act_toggle_task(GSimpleAction*, GVariant*, gpointer userp) {
         gtk_widget_error_bell(view);
 }
 
-// F9: sort the selected lines, or the keep-sorted block around the caret.
-// Shift+F9: every keep-sorted block in the file. In the terminal F9 is the
-// shell's (shellOwns).
+// Sort Lines: the selected lines, or the keep-sorted block around the
+// caret. Sort keep-sorted Blocks: every block in the file.
 static void sortCommand(App* app, bool all) {
     GtkWidget* view = app->editor->textView();
     std::string message;
@@ -783,7 +785,7 @@ static void act_fix_keep_sorted(GSimpleAction*, GVariant*, gpointer userp) {
     sortCommand(static_cast<App*>(userp), true);
 }
 
-// Ctrl+, : open the settings file, writing the commented defaults first.
+// Settings: open the settings file, writing the commented defaults first.
 static void act_settings(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     if (!g.settings->ensureFileExists()) {
@@ -793,6 +795,18 @@ static void act_settings(GSimpleAction*, GVariant*, gpointer userp) {
     }
     openFileThen(app, g.settings->path(),
                  [app] { gtk_widget_grab_focus(app->editor->textView()); });
+}
+
+// Keyboard Shortcuts…: keys.conf, as Settings… opens settings.conf; the
+// first time it is written with every command Linux has, commented out.
+static void act_keyboard_shortcuts(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!Keys::ensureFileExists()) {
+        gtk_label_set_text(GTK_LABEL(app->settingsLabel),
+                           ("Could not create " + Keys::path()).c_str());
+        return;
+    }
+    openFileThen(app, Keys::path(), [app] { gtk_widget_grab_focus(app->editor->textView()); });
 }
 
 static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
@@ -807,13 +821,12 @@ static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp);
 // Defined with the find bar's search further down.
 static bool findStep(App* app, bool forward);
 
-// Ctrl+G or F3, and Shift+F3: the next or previous match of what the find
-// bar holds, from the selection, wrapping at either end, as the Mac's Find
-// Next and Find Previous do (Command G, Shift Command G). They work with the
-// bar closed too. With nothing to look for, they open the bar instead.
-// Ctrl+Shift+G, the Mac's Find Previous with Ctrl for Command, is the Source
-// Control panel here, as in VS Code on Linux, whose Find Previous is also
-// Shift+F3.
+// Find Next and Find Previous (VS Code's F3 and Shift+F3 on Linux): the
+// next or previous match of what the find bar holds, from the selection,
+// wrapping at either end, as the Mac's do (Command G, Shift Command G). They
+// work with the bar closed too. With nothing to look for, they open the bar
+// instead. In the bar Ctrl+G and Ctrl+Shift+G step too (GtkSearchEntry's own
+// keys).
 static void act_find_next(GSimpleAction*, GVariant*, gpointer userp) {
     findStep(static_cast<App*>(userp), true);
 }
@@ -822,18 +835,19 @@ static void act_find_previous(GSimpleAction*, GVariant*, gpointer userp) {
     findStep(static_cast<App*>(userp), false);
 }
 
-// Ctrl+N: a new window on this window's folder, as the Mac's New Window
-// (Command N) opens one on the front window's root.
+// New Window: one on this window's folder, as the Mac's opens one on the
+// front window's root.
 static void act_new_window(GSimpleAction*, GVariant*, gpointer userp) {
     newWindow(static_cast<App*>(userp)->rootDir, "");
 }
 
-// Ctrl+W: this window only, asking "Save changes?" first like any close.
+// Close Window: this window only, asking "Save changes?" first like any
+// close.
 static void act_close_window(GSimpleAction*, GVariant*, gpointer userp) {
     gtk_window_close(GTK_WINDOW(static_cast<App*>(userp)->window));
 }
 
-// Ctrl+Q: every window, each asking about its own unsaved edits. One that is
+// Quit: every window, each asking about its own unsaved edits. One that is
 // cancelled stays open, and so does the application with it.
 static void act_quit(GSimpleAction*, GVariant*, gpointer) {
     const std::vector<App*> open = g.windows;   // closing edits the list
@@ -841,8 +855,8 @@ static void act_quit(GSimpleAction*, GVariant*, gpointer) {
         if (!a->dead) gtk_window_close(GTK_WINDOW(a->window));
 }
 
-// Ctrl+Tab: the file that was open before this one (the Mac's Previous File,
-// Control Tab). Pressed again, it goes back.
+// Previous File, Ctrl+Tab: the file that was open before this one (the
+// Mac's Previous File before it had tabs). Pressed again, it goes back.
 static void act_previous_file(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     if (app->recent.size() < 2) { gtk_widget_error_bell(app->window); return; }
@@ -864,8 +878,8 @@ static void showEditorOverBrowser(App* app) {
 #endif
 }
 
-// Ctrl+1: the editor gets the keyboard, shown first if it was hidden (the
-// Mac's Focus Editor, Command 1).
+// Focus Editor: the editor gets the keyboard, shown first if it was hidden
+// (the Mac's Command 1).
 static void act_focus_editor(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     showEditorOverBrowser(app);
@@ -1281,8 +1295,8 @@ static void act_copy_path(GSimpleAction*, GVariant*, gpointer userp) {
     gdk_clipboard_set_text(gtk_widget_get_clipboard(app->window), path.c_str());
 }
 
-// Ctrl+0: the tree, or the Source Control panel's list while it is in the
-// tree's place, as the Mac's Command 0.
+// Focus File Tree: the tree, or the Source Control panel's list while it is
+// in the tree's place, as the Mac's Command 0.
 static void act_focus_tree(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     if (app->gitShown) {
@@ -1378,7 +1392,7 @@ static void act_hover(GSimpleAction*, GVariant*, gpointer userp) {
     if (editorFocused(app)) app->lsp->showHoverInfo();
 }
 
-// Ctrl+Shift+F: search the folder selected in the tree, or else the open
+// Find in Folder: search the folder selected in the tree, or else the open
 // folder, which is what the Mac's Shift+Cmd+F does.
 static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
@@ -1392,7 +1406,7 @@ static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
     app->search->show();
 }
 
-// Ctrl+Shift+L: the TODOs window, scoped as Find in Folder is, and scanned
+// TODOs in Folder: the window, scoped as Find in Folder is, and scanned
 // again each time it comes up. A row opens like a Find in Folder match.
 static void act_todos(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
@@ -1512,119 +1526,162 @@ static void onSearchPrevious(GtkSearchEntry*, gpointer userp) {
 // The macOS build floats a shortcut list over the top-right of the window
 // (EditorController.mm -buildHintsPanelInContainer) and advertises it from the
 // status bar, because nothing else in the UI tells you the bindings exist. This
-// is that panel, with the Linux accelerators and Ctrl+Shift+H instead of ⇧⌘H —
-// Ctrl+H is taken here, and rightly so, since it is the usual Linux binding for
-// showing hidden files.
+// is that panel. As on the Mac, what each row does is written here and its key
+// comes from the registry (Keys::label), so keys.conf moves it too; a command
+// keys.conf took every key from shows "—". The panel is monospace, so the key
+// column is as wide as its widest key.
+namespace {
+struct HintRow {
+    enum Kind { Heading, Row, Text } kind;
+    std::string key, text;
+};
+}  // namespace
+
 static std::string hintsText(App* app) {
-    std::string s;
-    s += "Keyboard Shortcuts\n";
-    s += "────────────────────────────────────────\n";
-    s += "Ctrl O         Open folder\n";
-    s += "Ctrl S         Save\n";
-    s += "Ctrl F         Find in file\n";
-    s += "Ctrl G, F3     Find next\n";
-    s += "Shift F3       Find previous\n";
-    s += "Ctrl Shift F   Find in folder\n";
-    s += "Ctrl Shift L   TODOs in folder\n";
-    s += "Ctrl /         Toggle comment\n";
-    s += "Tab, Shift Tab Indent, outdent lines\n";
-    s += "F9             Sort lines\n";
-    s += "Shift F9       Sort keep-sorted blocks\n";
-    s += "Ctrl ,         Settings\n";
-    s += "Ctrl 0         Focus the file tree\n";
-    s += "Ctrl 1         Focus the editor\n";
-    s += "Ctrl Tab       Previous file\n";
+    std::vector<HintRow> rows;
+    auto heading = [&](const std::string& title) { rows.push_back({HintRow::Heading, "", title}); };
+    auto text = [&](const std::string& line) { rows.push_back({HintRow::Text, "", line}); };
+    auto plain = [&](const std::string& key, const std::string& what) {
+        rows.push_back({HintRow::Row, key, what});
+    };
+    // The command's key at `index` (the first by default); "—" for none, and
+    // nothing at all for a second key it does not have.
+    auto row = [&](const char* id, const std::string& what, size_t index = 0) {
+        const std::string key = Keys::label(id, " ", index);
+        if (key.empty() && index > 0) return;
+        plain(key.empty() ? "—" : key, what);
+    };
 
-    s += "\nWindows\n";
-    s += "────────────────────────────────────────\n";
-    s += "Ctrl N         New window\n";
-    s += "Ctrl W         Close window\n";
-    s += "Ctrl Q         Quit\n";
+    heading("Keyboard Shortcuts");
+    row("workbench.action.files.openFolder", "Open folder");
+    row("workbench.action.files.save", "Save");
+    row("actions.find", "Find in file");
+    row("editor.action.nextMatchFindAction", "Find next");
+    row("editor.action.previousMatchFindAction", "Find previous");
+    row("workbench.action.findInFiles", "Find in folder");
+    row("minicode.showTodos", "TODOs in folder");
+    row("editor.action.commentLine", "Toggle comment");
+    plain("Tab, Shift Tab", "Indent, outdent lines");
+    row("minicode.sortLines", "Sort lines");
+    row("minicode.sortKeepSortedBlocks", "Sort keep-sorted blocks");
+    row("workbench.action.openSettings", "Settings");
+    row("workbench.action.focusSideBar", "Focus the file tree");
+    row("workbench.action.focusFirstEditorGroup", "Focus the editor");
+    row("workbench.action.nextEditor", "Previous file");
 
-    s += "\nFiles\n";
-    s += "────────────────────────────────────────\n";
-    s += "Ctrl Alt N     New file\n";
-    s += "Ctrl Shift N   New folder\n";
-    s += "F2             Rename (in the tree)\n";
-    s += "Delete         Move to Trash (in the tree)\n";
-    s += std::string("Ctrl H         Hidden files (") +
-         (g.showHidden ? "shown" : "hidden") + ")\n";
-    s += "Ctrl Shift .   Hidden files, too\n";
+    heading("Windows");
+    row("workbench.action.newWindow", "New window");
+    row("workbench.action.closeWindow", "Close window");
+    row("workbench.action.quit", "Quit");
 
-    s += "\nLanguage servers\n";
-    s += "────────────────────────────────────────\n";
-    s += "Ctrl Space     Complete\n";
-    s += "F12            Go to definition (or Ctrl click)\n";
-    s += "Ctrl I         Hover info\n";
+    heading("Files");
+    row("explorer.newFile", "New file");
+    row("explorer.newFolder", "New folder");
+    row("renameFile", "Rename (in the tree)");
+    row("moveFileToTrash", "Move to Trash (in the tree)");
+    row("minicode.toggleHiddenFiles",
+        std::string("Hidden files (") + (g.showHidden ? "shown" : "hidden") + ")");
 
-    s += "\nPanes\n";
-    s += "────────────────────────────────────────\n";
-    s += "Ctrl B         Sidebar\n";
-    s += std::string("Ctrl Shift E   Editor      (") +
-         (editorCollapsed(app) ? "collapsed" : "shown") + ")\n";
+    heading("Language servers");
+    row("editor.action.triggerSuggest", "Complete");
+    row("editor.action.revealDefinition", "Go to definition (or Ctrl click)");
+    row("editor.action.showHover", "Hover info");
+
+    heading("Panes");
+    row("workbench.action.toggleSidebarVisibility", "Sidebar");
+    row("minicode.toggleEditor",
+        std::string("Editor      (") + (editorCollapsed(app) ? "collapsed" : "shown") + ")");
 #ifdef MINICODE_ENABLE_TERMINAL
-    s += std::string("Ctrl Shift T   Terminal    (") +
-         (app->termPanel && gtk_widget_get_visible(app->termPanel) ? "open" : "hidden") +
-         ")\n";
-    s += "Ctrl `         Terminal, too\n";
+    row("workbench.action.terminal.toggleTerminal",
+        std::string("Terminal    (") +
+            (app->termPanel && gtk_widget_get_visible(app->termPanel) ? "open" : "hidden") + ")");
+    row("workbench.action.terminal.toggleTerminal", "Terminal, too", 1);
 #endif
 #ifdef MINICODE_ENABLE_BROWSER
-    s += std::string("Ctrl Shift B   Browser     (") +
-         (app->browserRevealer &&
-          gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer))
-              ? "open" : "hidden") + ")\n";
+    row("minicode.toggleBrowser",
+        std::string("Browser     (") +
+            (app->browserRevealer &&
+                     gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer))
+                 ? "open" : "hidden") + ")");
 #endif
-    s += std::string("Ctrl Shift G   Git panel   (") + (app->gitShown ? "open" : "hidden") +
-         ")\n";
+    row("workbench.view.scm",
+        std::string("Git panel   (") + (app->gitShown ? "open" : "hidden") + ")");
     if (app->gitShown) {
-        s += "Enter          Show the diff or commit\n";
-        s += "Space          Stage or unstage\n";
+        plain("Enter", "Show the diff or commit");
+        plain("Space", "Stage or unstage");
         // Ctrl+Enter to commit is written in the message box itself.
-        s += "Tab            Changes, graph, message\n";
+        plain("Tab", "Changes, graph, message");
     }
     if (app->editor->isMarkdown()) {
-        s += std::string("Ctrl Shift P   Markdown    (") +
-             (app->editor->inPreview() ? "rendered" : "source") + ")\n";
-        if (app->editor->inPreview())
-            s += "Click a box    Check or clear a task\n";
-        else
-            s += "Ctrl L         Toggle task\n";
+        row("markdown.showPreview", std::string("Markdown    (") +
+                                        (app->editor->inPreview() ? "rendered" : "source") + ")");
+        if (app->editor->inPreview()) {
+            plain("Click a box", "Check or clear a task");
+        } else {
+            row("minicode.markdown.toggleTask", "Toggle task");
+            row("minicode.markdown.toggleTask", "Toggle task, too", 1);
+        }
     }
     if (app->editor->isLatex()) {
-        s += std::string("Ctrl Shift P   LaTeX       (") +
-             (app->editor->inPreview() ? "preview" : "source") + ")\n";
-        s += "Ctrl Shift S   Export PDF\n";
+        row("markdown.showPreview", std::string("LaTeX       (") +
+                                        (app->editor->inPreview() ? "preview" : "source") + ")");
+        row("minicode.latex.exportPDF", "Export PDF");
     }
     if (app->editor->showingPdf()) {
-        s += "Ctrl + / -     Zoom the PDF (or Ctrl wheel)\n";
-        s += "Ctrl Alt 0     Fit width\n";
+        row("minicode.page.zoomIn", "Zoom the PDF in (or Ctrl wheel)");
+        row("minicode.page.zoomOut", "Zoom it out");
+        row("minicode.page.fitWidth", "Fit width");
     }
     if (app->editor->canPlayMedia()) {
-        // A section of its own: the key is wider than the column above.
-        s += "\nVideo and audio\n";
-        s += "────────────────────────────────────────\n";
-        s += "Ctrl Shift Space  Play or pause\n";
+        heading("Video and audio");
+        row("minicode.togglePlayback", "Play or pause");
     }
 
 #ifdef MINICODE_ENABLE_TERMINAL
-    s += "\nIn the terminal\n";
-    s += "────────────────────────────────────────\n";
-    s += "Plain Ctrl keys go to the shell (Ctrl C,\n";
-    s += "Ctrl W, Ctrl H...). These still work:\n";
-    s += "Ctrl Shift C   Copy\n";
-    s += "Ctrl Shift V   Paste\n";
-    s += "Ctrl click     Open a file:line or URL\n";
-    s += "Ctrl Shift …   Every Ctrl Shift shortcut\n";
-    s += "               but G and Space, the shell's\n";
-    s += "Ctrl ` 0 1     Panes: terminal, tree, editor\n";
-    s += "Ctrl Tab       Previous file\n";
-    s += "Ctrl Alt N     New file\n";
+    heading("In the terminal");
+    text("Plain Ctrl keys go to the program (Ctrl C,");
+    text("Ctrl W, Ctrl H...). These still work:");
+    plain("Ctrl Shift C", "Copy");
+    plain("Ctrl Shift V", "Paste");
+    plain("Ctrl click", "Open a file:line or URL");
+    plain("Ctrl Shift …", "Ctrl Shift shortcuts, but");
+    plain("", "G and Space (the shell's), and:");
+    // The commands that keep a plain Ctrl key there (Global on Linux).
+    for (const Keys::Action& a : Keys::actions()) {
+        const Commands::Command* c = Commands::find(a.id);
+        if (!c || !Commands::appliesIn(c->when, Commands::When::Terminal)) continue;
+        for (const Commands::Key& k : Keys::keymap().keysOf(c->id))
+            if (!(k.mods & (Commands::Shift | Commands::Alt)) &&
+                !Commands::linuxTerminalTakes(*c, k))
+                plain(Commands::linuxLabel(k), Commands::titleOf(*c, Commands::Platform::Linux));
+    }
 #endif
 
-    s += "\nCtrl Shift H   Hide these hints";
+    rows.push_back({HintRow::Text, "", ""});
+    row("minicode.toggleShortcutHints", "Hide these hints");
+
+    size_t width = 0;
+    for (const HintRow& r : rows)
+        if (r.kind == HintRow::Row) width = std::max(width, (size_t)g_utf8_strlen(r.key.c_str(), -1));
+    std::string s;
+    for (const HintRow& r : rows) {
+        switch (r.kind) {
+        case HintRow::Heading:
+            if (!s.empty()) s += "\n";
+            s += r.text + "\n────────────────────────────────────────\n";
+            break;
+        case HintRow::Text:
+            s += r.text + "\n";
+            break;
+        case HintRow::Row:
+            s += r.key + std::string(width + 2 - (size_t)g_utf8_strlen(r.key.c_str(), -1), ' ') +
+                 r.text + "\n";
+            break;
+        }
+    }
+    if (!s.empty() && s.back() == '\n') s.pop_back();
     return s;
 }
-
 static GtkWidget* buildHintsPanel(App* app) {
     app->hintsLabel = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(app->hintsLabel), 0.0);
@@ -1682,11 +1739,35 @@ static void act_toggle_hints(GSimpleAction*, GVariant*, gpointer userp) {
                                      GTK_SCROLLED_WINDOW(app->hintsScroll)), 0);
     }
     gtk_widget_set_visible(app->hintsPanel, showing);
-    gtk_label_set_text(GTK_LABEL(app->hintsHint),
-                       showing ? kHintsHintHide : kHintsHintShow);
+    gtk_label_set_text(GTK_LABEL(app->hintsHint), hintsHintText(showing).c_str());
 }
 
 // ---------------------------------------------------------------- settings
+
+// Problems in settings.conf, then in keys.conf, on the status bar: the first,
+// with a count of the rest, and all of them in the tooltip, as on the Mac.
+static void showConfigErrors(App* app) {
+    std::vector<std::string> errors;
+    for (const std::string& e : g.settings->errors()) errors.push_back("Settings " + e);
+    for (const std::string& e : Keys::errors()) errors.push_back("Keys " + e);
+    std::string note;
+    if (!errors.empty()) {
+        note = errors.front();
+        if (errors.size() > 1)
+            note += " (and " + std::to_string(errors.size() - 1) + " more)";
+    }
+    gtk_label_set_text(GTK_LABEL(app->settingsLabel), note.c_str());
+    std::string tip;
+    auto add = [&tip](const std::string& path, const std::vector<std::string>& list) {
+        if (list.empty()) return;
+        if (!tip.empty()) tip += "\n\n";
+        tip += path;
+        for (const std::string& e : list) tip += "\n" + e;
+    };
+    add(g.settings->path(), g.settings->errors());
+    add(Keys::path(), Keys::errors());
+    gtk_widget_set_tooltip_text(app->settingsLabel, tip.empty() ? nullptr : tip.c_str());
+}
 
 // One window's share of the settings: the editor's tags, the language
 // servers, the terminal's colors, and the status-bar note about bad lines.
@@ -1698,18 +1779,7 @@ static void applyWindowSettings(App* app) {
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->terminal) app->terminal->applySettings(st);
 #endif
-    const auto& errors = g.settings->errors();
-    std::string note;
-    if (!errors.empty()) {
-        note = "Settings " + errors.front();
-        if (errors.size() > 1)
-            note += " (and " + std::to_string(errors.size() - 1) + " more)";
-    }
-    gtk_label_set_text(GTK_LABEL(app->settingsLabel), note.c_str());
-    std::string tip;
-    for (const auto& e : errors) tip += (tip.empty() ? "" : "\n") + e;
-    gtk_widget_set_tooltip_text(app->settingsLabel,
-        errors.empty() ? nullptr : (g.settings->path() + "\n\n" + tip).c_str());
+    showConfigErrors(app);
 }
 
 // The stylesheet, which is the display's and so shared by every window.
@@ -1729,106 +1799,15 @@ static void onSettingsChanged(void*) {
     for (App* a : g.windows) applyWindowSettings(a);
 }
 
-// ------------------------------------------------------------ keys in the terminal
+// ---------------------------------------------------------------- keys
 //
-// Application accelerators are handled by the window in the capture phase,
-// before the focused widget sees the key, so while the terminal had the
-// keyboard Ctrl+B, Ctrl+F, Ctrl+H, Ctrl+W and the rest were taken from bash,
-// readline, vim and emacs (Ctrl+H is backspace in many setups, Ctrl+W deletes
-// a word). The Mac never has this problem: its shortcuts are on Command, and
-// Control goes to the terminal.
-//
-// So while the active window's terminal has the focus, every accelerator that
-// is a plain Ctrl key, or a bare function key, is taken off, and they come
-// back when the focus leaves it. What stays: anything with Shift or Alt in it
-// (the pane toggles, Find in Folder, New Folder and New File, Export PDF, the
-// hints), and the pane keys Ctrl+`, Ctrl+0, Ctrl+1 and Ctrl+Tab, which a shell
-// has no use for and which are how you get out of the terminal without the
-// mouse. The Shift keys that go to the shell are Ctrl+Shift+G (Source
-// Control), which terminals send as Ctrl+G, and Ctrl+Shift+Space (Play/Pause). Accelerators belong to the application, not a window, but only the
-// active window gets keys, so its focus decides.
-
-struct Bind {
-    const char* action;
-    const char* accels[3];
-};
-
-static const Bind kBinds[] = {
-    {"win.newwindow",      {"<Ctrl>n"}},
-    {"win.close",          {"<Ctrl>w"}},
-    {"app.quit",           {"<Ctrl>q"}},
-    {"win.open",           {"<Ctrl>o"}},
-    {"win.save",           {"<Ctrl>s"}},
-    {"win.exportpdf",      {"<Ctrl><Shift>s"}},
-    {"win.newfile",        {"<Ctrl><Alt>n"}},
-    {"win.newfolder",      {"<Ctrl><Shift>n"}},
-    {"win.find",           {"<Ctrl>f"}},
-    {"win.findnext",       {"<Ctrl>g", "F3"}},
-    {"win.findprevious",   {"<Shift>F3"}},
-    {"win.togglegit",      {"<Ctrl><Shift>g"}},
-    {"win.findinfolder",   {"<Ctrl><Shift>f"}},
-    {"win.togglepreview",  {"<Ctrl><Shift>p"}},
-    {"win.togglehints",    {"<Ctrl><Shift>h"}},
-    {"win.togglesidebar",  {"<Ctrl>b"}},
-    {"win.toggleeditor",   {"<Ctrl><Shift>e"}},
-    {"win.toggleterminal", {"<Ctrl><Shift>t", "<Ctrl>grave"}},
-    {"win.togglecomment",  {"<Ctrl>slash"}},
-    // Ctrl+L is the shell's in the terminal (clear screen): shellOwns takes
-    // it off there like every plain Ctrl key.
-    {"win.toggletask",     {"<Ctrl>l"}},
-    {"win.sortlines",      {"F9"}},
-    {"win.fixkeepsorted",  {"<Shift>F9"}},
-    {"win.todos",          {"<Ctrl><Shift>l"}},
-    {"win.settings",       {"<Ctrl>comma"}},
-    {"win.togglebrowser",  {"<Ctrl><Shift>b"}},
-    // Ctrl+Shift+. (the Mac's key) is written as the character it types:
-    // "<Ctrl><Shift>period" never matches, because GTK compares the keyval
-    // the key produced, ">" on a US layout, and with Shift consumed by it
-    // the modifiers differ as well. Checked with real X key events.
-    {"app.showhidden",     {"<Ctrl>h", "<Ctrl>greater"}},
-    {"win.focustree",      {"<Ctrl>0"}},
-    {"win.focuseditor",    {"<Ctrl>1"}},
-    {"win.previousfile",   {"<Ctrl>Tab"}},
-    {"win.complete",       {"<Ctrl>space"}},
-    {"win.definition",     {"F12"}},
-    {"win.hoverinfo",      {"<Ctrl>i"}},
-    {"win.zoomin",         {"<Ctrl>plus", "<Ctrl>equal", "<Ctrl>KP_Add"}},
-    {"win.zoomout",        {"<Ctrl>minus", "<Ctrl>KP_Subtract"}},
-    {"win.zoomfit",        {"<Ctrl><Alt>0"}},
-    {"win.playpause",      {"<Ctrl><Shift>space"}},
-};
-
-// Is this accelerator the shell's while the terminal has the keyboard?
-static bool shellOwns(const char* accel) {
-    guint key = 0;
-    GdkModifierType mods = (GdkModifierType)0;
-    if (!gtk_accelerator_parse(accel, &key, &mods)) return false;
-    // Ctrl+Shift+G (Source Control) goes to the shell too, which reads it as
-    // Ctrl+G. Ctrl+0 still reaches the panel from the terminal.
-    if (key == GDK_KEY_g && mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) return true;
-    // So does Play/Pause, Ctrl+Shift+Space, which a shell reads as Ctrl+Space
-    // (Emacs sets the mark with it).
-    if (key == GDK_KEY_space && mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) return true;
-    if (mods & (GDK_SHIFT_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK)) return false;
-    switch (key) {
-        case GDK_KEY_grave: case GDK_KEY_0: case GDK_KEY_1: case GDK_KEY_Tab:
-            return false;   // the pane keys
-        case GDK_KEY_greater:
-            return false;   // Ctrl+Shift+., typed with Shift like the others that stay
-        default:
-            return true;
-    }
-}
-
-static void applyAccels(bool shell) {
-    for (const Bind& b : kBinds) {
-        const char* accels[4] = {nullptr, nullptr, nullptr, nullptr};
-        int n = 0;
-        for (const char* a : b.accels)
-            if (a && !(shell && shellOwns(a))) accels[n++] = a;
-        gtk_application_set_accels_for_action(g.gapp, b.action, accels);
-    }
-}
+// The accelerators, the menu bar, the tree's own keys and the hints' key text
+// all come from the command registry through Keys.h, with keys.conf applied.
+// What stays here is telling Keys what has the keyboard, since GTK's
+// accelerators are the application's and only the active window gets keys:
+// while its terminal has the keyboard the plain Ctrl keys are the program's
+// (Ctrl+W deletes a word, Ctrl+H is backspace), as the Mac's terminal gets
+// Control because its shortcuts are on Command.
 
 static App* appForWindow(GtkWindow* w) {
     for (App* a : g.windows)
@@ -1836,19 +1815,24 @@ static App* appForWindow(GtkWindow* w) {
     return nullptr;
 }
 
-static void updateShellKeys() {
-    bool shell = false;
+static void updateKeyPlace() {
+    Keys::Place place;
+    if (App* a = appForWindow(gtk_application_get_active_window(g.gapp))) {
+        if (!a->dead) {
+            GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(a->window));
 #ifdef MINICODE_ENABLE_TERMINAL
-    if (App* a = appForWindow(gtk_application_get_active_window(g.gapp)))
-        shell = a->terminal && a->terminal->owns(gtk_root_get_focus(GTK_ROOT(a->window)));
+            place.terminal = a->terminal && a->terminal->owns(focus);
 #endif
-    if (shell == g.shellKeys) return;
-    g.shellKeys = shell;
-    applyAccels(shell);
+            place.editor = focus && focus == a->editor->textView();
+            place.tree = Keys::within(focus, a->tree->widget());
+            place.language = Commands::languageOfPath(a->editor->currentPath());
+        }
+    }
+    Keys::setPlace(place);
 }
 
 static void onFocusWidget(GObject*, GParamSpec*, gpointer userp) {
-    updateShellKeys();
+    updateKeyPlace();
     updateMediaKey(static_cast<App*>(userp));
 }
 
@@ -1856,116 +1840,22 @@ static void onFocusWidget(GObject*, GParamSpec*, gpointer userp) {
 // (windowDidBecomeKey); the file monitor catches most of them sooner.
 static void onIsActive(GObject* w, GParamSpec*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    updateShellKeys();
+    updateKeyPlace();
     if (!app->dead && gtk_window_is_active(GTK_WINDOW(w))) {
         app->editor->checkExternalChange();
         if (app->git && app->gitShown) app->git->refresh();   // commits made elsewhere
     }
 }
 
-// ---------------------------------------------------------------- menu
-
-// New File, New Folder, Rename, Move to Trash, Reveal and Copy Path, in the
-// Mac's order and grouping. Shared by the File menu and the tree's
-// right-click menu.
-static GMenuModel* treeActionsMenu() {
-    GMenu* menu = g_menu_new();
-    GMenu* create = g_menu_new();
-    g_menu_append(create, "New File…", "win.newfile");
-    g_menu_append(create, "New Folder…", "win.newfolder");
-    g_menu_append_section(menu, nullptr, G_MENU_MODEL(create));
-    g_object_unref(create);
-    GMenu* change = g_menu_new();
-    g_menu_append(change, "Rename…", "win.rename");
-    g_menu_append(change, "Move to Trash", "win.trash");
-    g_menu_append_section(menu, nullptr, G_MENU_MODEL(change));
-    g_object_unref(change);
-    GMenu* where = g_menu_new();
-    g_menu_append(where, "Open Containing Folder", "win.reveal");
-    g_menu_append(where, "Copy Path", "win.copypath");
-    g_menu_append_section(menu, nullptr, G_MENU_MODEL(where));
-    g_object_unref(where);
-    return G_MENU_MODEL(menu);
-}
-
-// The menu bar is the application's, shown in every window.
-static void buildMenu() {
-    GMenu* menuBar = g_menu_new();
-
-    GMenu* fileMenu = g_menu_new();
-    GMenu* top = g_menu_new();
-    g_menu_append(top, "New Window", "win.newwindow");
-    g_menu_append(top, "Open Folder…", "win.open");
-    g_menu_append(top, "Save", "win.save");
-    g_menu_append(top, "Export PDF…", "win.exportpdf");
-    g_menu_append_section(fileMenu, nullptr, G_MENU_MODEL(top));
-    g_object_unref(top);
-    g.treeMenu = treeActionsMenu();
-    g_menu_append_section(fileMenu, nullptr, g.treeMenu);
-    GMenu* bottom = g_menu_new();
-    g_menu_append(bottom, "Close Window", "win.close");
-    g_menu_append(bottom, "Quit", "app.quit");
-    g_menu_append_section(fileMenu, nullptr, G_MENU_MODEL(bottom));
-    g_object_unref(bottom);
-    g_menu_append_submenu(menuBar, "File", G_MENU_MODEL(fileMenu));
-    g_object_unref(fileMenu);   // menuBar holds it now
-
-    GMenu* editMenu = g_menu_new();
-    GMenu* find = g_menu_new();
-    g_menu_append(find, "Find", "win.find");
-    g_menu_append(find, "Find Next", "win.findnext");
-    g_menu_append(find, "Find Previous", "win.findprevious");
-    g_menu_append(find, "Find in Folder…", "win.findinfolder");
-    g_menu_append(find, "TODOs…", "win.todos");
-    g_menu_append_section(editMenu, nullptr, G_MENU_MODEL(find));
-    g_object_unref(find);
-    GMenu* code = g_menu_new();
-    g_menu_append(code, "Toggle Comment", "win.togglecomment");
-    g_menu_append(code, "Toggle Task", "win.toggletask");
-    g_menu_append(code, "Sort Lines", "win.sortlines");
-    g_menu_append(code, "Sort keep-sorted Blocks", "win.fixkeepsorted");
-    g_menu_append(code, "Complete", "win.complete");
-    g_menu_append(code, "Go to Definition", "win.definition");
-    g_menu_append(code, "Show Hover Info", "win.hoverinfo");
-    g_menu_append_section(editMenu, nullptr, G_MENU_MODEL(code));
-    g_object_unref(code);
-    g_menu_append(editMenu, "Settings…", "win.settings");
-    g_menu_append_submenu(menuBar, "Edit", G_MENU_MODEL(editMenu));
-    g_object_unref(editMenu);
-
-    GMenu* viewMenu = g_menu_new();
-    g_menu_append(viewMenu, "Toggle Markdown Preview", "win.togglepreview");
-    g_menu_append(viewMenu, "Toggle Shortcut Hints", "win.togglehints");
-    g_menu_append(viewMenu, "Toggle Sidebar", "win.togglesidebar");
-    g_menu_append(viewMenu, "Toggle Editor", "win.toggleeditor");
-    g_menu_append(viewMenu, "Toggle Terminal", "win.toggleterminal");
-    g_menu_append(viewMenu, "Toggle Browser", "win.togglebrowser");
-    g_menu_append(viewMenu, "Toggle Source Control", "win.togglegit");
-    g_menu_append(viewMenu, "Show Hidden Files", "app.showhidden");
-    GMenu* zoom = g_menu_new();
-    g_menu_append(zoom, "Zoom In", "win.zoomin");
-    g_menu_append(zoom, "Zoom Out", "win.zoomout");
-    g_menu_append(zoom, "Fit Width", "win.zoomfit");
-    g_menu_append_section(viewMenu, nullptr, G_MENU_MODEL(zoom));
-    g_object_unref(zoom);
-    GMenu* play = g_menu_new();
-    g_menu_append(play, "Play or Pause", "win.playpause");
-    g_menu_append_section(viewMenu, nullptr, G_MENU_MODEL(play));
-    g_object_unref(play);
-    g_menu_append_submenu(menuBar, "View", G_MENU_MODEL(viewMenu));
-    g_object_unref(viewMenu);
-
-    // Keyboard-driven movement, the Mac's Navigate menu.
-    GMenu* navMenu = g_menu_new();
-    g_menu_append(navMenu, "Focus File Tree", "win.focustree");
-    g_menu_append(navMenu, "Focus Editor", "win.focuseditor");
-    g_menu_append(navMenu, "Previous File", "win.previousfile");
-    g_menu_append(navMenu, "Go to Definition", "win.definition");
-    g_menu_append_submenu(menuBar, "Navigate", G_MENU_MODEL(navMenu));
-    g_object_unref(navMenu);
-
-    gtk_application_set_menubar(g.gapp, G_MENU_MODEL(menuBar));
-    g_object_unref(menuBar);
+// keys.conf changed: the accelerators and the tree already follow it; the
+// status bar's note on its errors and the hints follow here.
+static void onKeysChanged() {
+    for (App* a : g.windows) {
+        showConfigErrors(a);
+        gtk_label_set_text(GTK_LABEL(a->hintsHint),
+                           hintsHintText(gtk_widget_get_visible(a->hintsPanel)).c_str());
+        refreshHints(a);
+    }
 }
 
 static void addAction(App* app, const char* name, GCallback cb) {
@@ -1976,7 +1866,7 @@ static void addAction(App* app, const char* name, GCallback cb) {
 }
 
 // What the application needs once, before its first window: the settings,
-// the stylesheet, the menu bar, its own actions and the accelerators.
+// the stylesheet, its own actions, the keys and the menu bar.
 static void initShared() {
     if (g.settings) return;
     g.settings = new AppSettings();
@@ -1993,8 +1883,13 @@ static void initShared() {
     g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(hidden));
     g_object_unref(hidden);
 
-    buildMenu();
-    applyAccels(false);
+    Keys::init(g.gapp, onKeysChanged);
+    GMenuModel* bar = Keys::menuBar();
+    gtk_application_set_menubar(g.gapp, bar);
+    g_object_unref(bar);
+    // The tree's right-click menu, in the Mac's order and grouping.
+    g.treeMenu = Keys::menuOf({"explorer.newFile", "explorer.newFolder", "", "renameFile",
+                               "moveFileToTrash", "", "revealFileInOS", "copyFilePath"});
 }
 
 // ---------------------------------------------------------------- windows
@@ -2068,7 +1963,7 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     delete app->editor;
     app->editor = nullptr;
     // The App itself is kept (see App::dead).
-    updateShellKeys();
+    updateKeyPlace();
 }
 
 // Build a window rooted at `root`, showing `file` if one is named.
@@ -2204,7 +2099,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->settingsLabel = gtk_label_new("");
     gtk_label_set_ellipsize(GTK_LABEL(app->settingsLabel), PANGO_ELLIPSIZE_END);
 
-    app->hintsHint = gtk_label_new(kHintsHintShow);
+    app->hintsHint = gtk_label_new(hintsHintText(false).c_str());
     gtk_label_set_xalign(GTK_LABEL(app->hintsHint), 1.0);
 
     GtkWidget* statusBar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
@@ -2282,6 +2177,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "fixkeepsorted",  G_CALLBACK(act_fix_keep_sorted));
     addAction(app, "todos",          G_CALLBACK(act_todos));
     addAction(app, "settings",       G_CALLBACK(act_settings));
+    addAction(app, "keyboardshortcuts", G_CALLBACK(act_keyboard_shortcuts));
     addAction(app, "zoomin",         G_CALLBACK(act_zoom_in));
     addAction(app, "zoomout",        G_CALLBACK(act_zoom_out));
     addAction(app, "zoomfit",        G_CALLBACK(act_zoom_fit));
@@ -2290,16 +2186,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
         g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
                                         G_ACTION_MAP(app->window), off)), FALSE);
     app->tree->setContextMenu(g.treeMenu);
-    // F2 and Delete rename and trash only while the tree has the keyboard. As
-    // window accelerators they would take Delete away from the editor.
-    GtkEventController* treeKeys = gtk_shortcut_controller_new();
-    gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(treeKeys),
-        gtk_shortcut_new(gtk_keyval_trigger_new(GDK_KEY_F2, (GdkModifierType)0),
-                         gtk_named_action_new("win.rename")));
-    gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(treeKeys),
-        gtk_shortcut_new(gtk_keyval_trigger_new(GDK_KEY_Delete, (GdkModifierType)0),
-                         gtk_named_action_new("win.trash")));
-    gtk_widget_add_controller(app->tree->widget(), treeKeys);
+    // Rename and Move to Trash (F2 and Delete) only while the tree has the
+    // keyboard. As window accelerators they would take Delete from the editor.
+    Keys::addTreeKeys(app->tree->widget());
     g_signal_connect(app->window, "close-request", G_CALLBACK(onCloseRequest), app);
     g_signal_connect(app->window, "notify::focus-widget", G_CALLBACK(onFocusWidget), app);
     g_signal_connect(app->window, "notify::is-active", G_CALLBACK(onIsActive), app);

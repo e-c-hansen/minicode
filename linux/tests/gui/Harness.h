@@ -134,6 +134,7 @@ void MCGuiWriteFile(const std::string& path, const std::string& text);   // make
 std::string MCGuiReadFile(const std::string& path);      // "" when unreadable
 bool MCGuiFileExists(const std::string& path);
 void MCGuiSetSettings(const std::string& text);          // writes the file, has the app read it
+void MCGuiSetKeys(const std::string& text);              // keys.conf ($MINICODE_KEYS), the same
 // The text of the editor's buffer (the newest window's).
 std::string MCGuiEditorText();
 // A picture of a widget as drawn, written as <name>.png into
