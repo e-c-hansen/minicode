@@ -72,7 +72,7 @@ what the offscreen checks need:
     sudo apt install xvfb xdotool imagemagick xcompmgr libxtst-dev
 
 Then, once, from `linux/`: `meson setup build -Dterminal=enabled
--Dbrowser=enabled -Dpdf=enabled -Dwarning_level=2`.
+-Dbrowser=enabled -Dpdf=enabled`.
 
 The GUI checks (item 0.1) are `meson test -C build --suite gui` from
 `linux/`, about 3 seconds in November 2026; `./build/minicode-guitest
@@ -170,10 +170,12 @@ state are JSON (`Json`) under `$XDG_STATE_HOME/minicode` (default
 `MINICODE_BACKUP_DIR` overrides as on the Mac, and every one of these moves
 with the harness's scratch home.
 
-**D12. The palette reads the registry and the port's action table**, not a
-menu: the port has no menu bar. A command with no action on Linux does not
-appear. Each item adds its actions to that table, so the hints panel and
-`README.md`'s Linux column follow.
+**D12. The registry builds the menu bar, and the palette reads the
+registry.** Today `main.cpp` writes its `GMenu` and accelerators by hand. A
+table in the port maps a command id to its GAction; a command with none on
+Linux appears nowhere, and an action's enabled state decides whether the
+palette offers it. Each item adds its rows to that table, so the menus, the
+hints panel, the palette, and `README.md`'s Linux column cannot drift apart.
 
 **D13. GUI checks.** An item's checks are suites in `linux/tests/gui`, one
 file a suite and one line in `suites.txt` (merged by union, so parallel
@@ -227,8 +229,8 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   not known; the app makes a web view in every window.
 - [ ] **0.3 The registry and keys (D1, D12).** Build `Commands` into the port,
   add `CommandsLinux.cpp` with core tests (each id exists, no key twice where
-  places overlap, keys.conf applies), and drive the accelerators and hints
-  from it. Move the keys D1 names and update the Linux column in `README.md`
+  places overlap, keys.conf applies), and drive the accelerators, the menu
+  bar, and the hints from it. Move the keys D1 names and update the Linux column in `README.md`
   and `BUILD-LINUX.md`. *Done means:* a GUI suite presses every moved key
   through XTest, in the editor and with the terminal focused.
 
