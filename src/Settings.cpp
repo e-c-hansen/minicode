@@ -881,6 +881,10 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return boolValue(v, s.keepSortedOnSave_, e);),
         MC_KEY("editor.organize-imports-on-save", Word, false,
                return boolValue(v, s.organizeImportsOnSave_, e);),
+        MC_KEY("workbench.enable-preview", Word, false,
+               return boolValue(v, s.enablePreview_, e);),
+        MC_KEY("workbench.enable-preview-from-quick-open", Word, false,
+               return boolValue(v, s.enablePreviewFromQuickOpen_, e);),
         MC_KEY("editor.auto-save", Word, false,
                const std::string w = lower(v);
                if (w == "off" || w == "false" || w == "none") s.autoSave_ = AutoSave::Off;
@@ -1516,6 +1520,15 @@ const char* Settings::defaultFileText() {
 # tree.git-deleted = #C74E39
 # tree.git-ignored = #8C8C8C
 # tree.git-conflict = #E4676B
+# A file opened by a single click in the tree, a single click on a Find in
+# Folder result, or Go to Definition goes in the preview tab, its name in
+# italics, which the next such file replaces, as in VS Code. Editing or
+# saving it, a double-click on its tab or on the file in the tree, or
+# Cmd+click in the tree keeps it open. Off, every file gets a tab of its own
+# (macOS).
+# workbench.enable-preview = on
+# Whether Quick Open (Cmd+P) opens files in the preview tab too.
+# workbench.enable-preview-from-quick-open = off
 
 # The file editor and Markdown preview.
 # editor.background = #1E1E1E

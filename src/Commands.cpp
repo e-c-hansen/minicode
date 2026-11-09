@@ -337,6 +337,8 @@ const std::vector<Command>& all() {
          "closeTabsToTheRight:", 0, 0, nullptr},
         {"workbench.action.closeAllEditors", "Close All Tabs", "File", "", A, "closeAllTabs:", 0,
          0, nullptr},
+        {"workbench.action.keepEditor", "Keep Open", "File", "", A, "keepActiveTabOpen:", 0, 0,
+         nullptr},
         {"workbench.action.closeWindow", "Close Window", "File", "shift+cmd+w", A,
          "performClose:", 0, 0, nullptr},
 
