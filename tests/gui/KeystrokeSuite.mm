@@ -8,6 +8,7 @@
 #import "ControlServer.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
+#import "LayoutCatchUp.h"
 #import "Lsp.h"
 #import "MultiCaretView.h"
 #include <mach/mach_time.h>
@@ -237,6 +238,47 @@ MC_GUI_SUITE(keystroke) {
     // in a sample), until forgetTextBlockLayout reset it.
     NSString *page = [dir stringByAppendingPathComponent:@"page.md"];
     NSString *other = [dir stringByAppendingPathComponent:@"other100k.py"];
+    // Where the first file's text was, laid out from the top (exact), for
+    // when it shows again.
+    __block NSRect exactAt = NSZeroRect;
+    __block NSUInteger topBefore = 0;
+    __block CGFloat topOffsetBefore = 0;
+    NSUInteger (^topOfPane)(CGFloat *) = ^NSUInteger(CGFloat *offset) {
+        const NSRect visible = tv.visibleRect;
+        NSUInteger top = [tv characterIndexForInsertionAtPoint:
+            NSMakePoint(NSMinX(visible) + 20, NSMinY(visible) + 1)];
+        top = [tv.string lineRangeForRange:NSMakeRange(MIN(top, tv.string.length - 1), 0)].location;
+        if (offset) *offset = NSMinY([c textRectForCharacter:top]) - NSMinY(visible);
+        return top;
+    };
+    // What contiguous layout does with a new line put in above the pane
+    // (where the text in the pane goes), for the same edit made later in
+    // the tab shown again.
+    __block CGFloat contiguousTopShift = 0, contiguousCaretShift = 0;
+    MCGuiStep(@"contiguous layout: a new line above the pane", ^{
+        GCHECK(!tv.layoutManager.allowsNonContiguousLayout && !tv.layoutManager.hasNonContiguousLayout);
+        exactAt = [c textRectForCharacter:at];
+        topBefore = topOfPane(&topOffsetBefore);
+        GCHECK(topBefore > 100000);   // far down: laying out from the top would cost seconds
+        MCGuiUndoGroup(tv.undoManager, ^{
+            GCHECK([(CodeTextView *)tv replaceRanges:@[[NSValue valueWithRange:NSMakeRange(0, 0)]]
+                                         withStrings:@[@"\n"]
+                                          actionName:@"New Line"]);
+        });
+        [tv displayIfNeeded];
+        contiguousTopShift =
+            NSMinY([c textRectForCharacter:topBefore + 1]) - NSMinY(tv.visibleRect) - topOffsetBefore;
+        contiguousCaretShift = NSMinY([c textRectForCharacter:at + 1]) - NSMinY(exactAt);
+        MCGuiNote(@"contiguous layout: the pane's text moved %.1f, the caret's line %.1f",
+                  contiguousTopShift, contiguousCaretShift);
+        [tv.undoManager undo];   // which shows the line it took away, at the top
+        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
+        GCHECK(NSEqualRects([c textRectForCharacter:at], exactAt));
+        tv.selectedRange = NSMakeRange(at, 0);
+        [c scrollEditorToCharacter:topBefore offset:topOffsetBefore];
+        CGFloat offset = 0;
+        GCHECK(topOfPane(&offset) == topBefore && fabs(offset - topOffsetBefore) < 0.01);
+    });
     MCGuiStep(@"the window used: a Markdown page, then another long file laid out", ^{
         MCGuiWriteFile(page, @"# Title\n\n## Part\n\n> a quote\n\n```\ncode\n```\n\n---\n\n"
                              @"| a | b |\n|---|---|\n| 1 | 2 |\n");
@@ -250,11 +292,114 @@ MC_GUI_SUITE(keystroke) {
         GCHECK([c showFile:other]);
         GCHECK(tv.editable && [tv.string hasPrefix:@"def g0"]);
         [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
-        const double c0 = MCGuiThreadCpuMs();
+        // Showing a 100,000-line tab again costs about what showing the
+        // other one cost with nothing far down to lay out: the text, its
+        // colors and a screen at the place. Laying out the 50,000 lines
+        // above the place took 1.5 to 3.9 s here (editor N2).
+        GCHECK([c showFile:page]);
+        double c0 = MCGuiThreadCpuMs();
+        GCHECK([c showFile:other]);
+        const double baseline = MCGuiThreadCpuMs() - c0;
+        c0 = MCGuiThreadCpuMs();
         GCHECK([c showFile:path]);
-        MCGuiNote(@"back to the first file: %.0f ms of CPU (laid out to where it was)",
-                  MCGuiThreadCpuMs() - c0);
+        const double back = MCGuiThreadCpuMs() - c0;
+        MCGuiNote(@"back to the first file: %.0f ms of CPU (the other file from the top: %.0f ms)",
+                  back, baseline);
+        GCHECK_TIME(back, MAX(500.0, 2.5 * baseline), @"showing a long tab again far down");
         GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
+        CGFloat offset = 0;
+        GCHECK(topOfPane(&offset) == topBefore);
+        GCHECK(fabs(offset - topOffsetBefore) < 1);
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(at, 0)));
+    });
+    // The lines above the place are laid out in the background, a few
+    // milliseconds a turn, with the text on screen kept where it is; then
+    // every rect is the one laid out from the top gave before the switch.
+    __block MCLayoutCatchUp *catchUp = nil;
+    MCGuiStep(@"typing while the lines above catch up", ^{
+        catchUp = [c valueForKey:@"layoutCatchUp"];
+        GCHECK(catchUp.watching && catchUp.running && tv.layoutManager.allowsNonContiguousLayout);
+        TypeChars(tv, @"q");
+        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 7)] isEqualToString:@"qab cd "]);
+        [tv.undoManager undo];
+        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
+    });
+    // Laid out from the top of the text through the pane.
+    BOOL (^allLaidOut)(void) = ^BOOL {
+        if (catchUp.running) return NO;
+        NSUInteger first = 0, glyph = 0;
+        [tv.layoutManager getFirstUnlaidCharacterIndex:&first glyphIndex:&glyph];
+        return first > NSMaxRange([tv.layoutManager characterRangeForGlyphRange:
+            [tv.layoutManager glyphRangeForBoundingRectWithoutAdditionalLayout:tv.visibleRect
+                                                               inTextContainer:tv.textContainer]
+                                                             actualGlyphRange:NULL]) - 1;
+    };
+    MCGuiWait(@"the lines above the pane are laid out", 120, allLaidOut);
+    MCGuiStep(@"laid out: the rects are exact and the place kept", ^{
+        MCGuiNote(@"caught up in %lu pieces, %.0f ms of CPU, the longest %.1f ms",
+                  (unsigned long)catchUp.pieces, catchUp.totalMilliseconds,
+                  catchUp.longestPieceMilliseconds);
+        GCHECK(catchUp.watching && catchUp.pieces > 10);
+        // Each piece is sized to about 5 ms from what the last one cost.
+        GCHECK_TIME(catchUp.longestPieceMilliseconds, 50, @"the longest piece of the catch-up");
+        const NSRect now = [c textRectForCharacter:at];
+        MCGuiNote(@"the caret's rect: %@ (laid out from the top before: %@)",
+                  NSStringFromRect(now), NSStringFromRect(exactAt));
+        GCHECK(NSEqualRects(now, exactAt));
+        CGFloat offset = 0;
+        GCHECK(topOfPane(&offset) == topBefore);
+        GCHECK(fabs(offset - topOffsetBefore) < 1);
+    });
+    // An edit above the pane leaves what follows it unlaid, which
+    // non-contiguous layout alone would estimate (the pane's text moved 4
+    // points up, not a line down, and stayed there): it is laid out again
+    // as the edit ends, so the text below moves exactly as contiguous
+    // layout moved it in the fresh window.
+    __block double spentBefore = 0;
+    // Where the pane's top line (as it was before the edit) is, from the
+    // pane's top, and the caret's line, both exact.
+    void (^checkPushedDown)(NSString *) = ^(NSString *when) {
+        const CGFloat top = NSMinY([c textRectForCharacter:topBefore + 1]) - NSMinY(tv.visibleRect);
+        const NSRect caret = [c textRectForCharacter:at + 1];
+        MCGuiNote(@"%@: the pane's text moved %.1f, the caret's line %.1f", when,
+                  top - topOffsetBefore, NSMinY(caret) - NSMinY(exactAt));
+        GCHECK(fabs(top - topOffsetBefore - contiguousTopShift) < 0.01);
+        GCHECK(fabs(NSMinY(caret) - NSMinY(exactAt) - contiguousCaretShift) < 0.01);
+    };
+    MCGuiStep(@"a new line above the pane moves the text as contiguous layout does", ^{
+        GCHECK(contiguousCaretShift > 5);   // a line
+        spentBefore = catchUp.totalMilliseconds;
+        // A programmatic edit, which leaves the scroll alone (typing would
+        // scroll to the caret).
+        GCHECK([(CodeTextView *)tv replaceRanges:@[[NSValue valueWithRange:NSMakeRange(0, 0)]]
+                                     withStrings:@[@"\n"]
+                                      actionName:@"New Line"]);
+        GCHECK(tv.selectedRange.location == at + 1);
+        MCGuiNote(@"laid out again in %.1f ms of CPU", catchUp.totalMilliseconds - spentBefore);
+        GCHECK(allLaidOut());
+        checkPushedDown(@"after the edit");
+        [tv displayIfNeeded];
+        checkPushedDown(@"drawn");
+    });
+    // Negative: nothing moves it later (the pieces have nothing to do).
+    MCGuiPause(0.6);
+    MCGuiStep(@"and stays there", ^{
+        GCHECK(allLaidOut());
+        checkPushedDown(@"a moment later");
+        [tv.undoManager undo];
+        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
+        GCHECK(allLaidOut());
+        GCHECK(NSEqualRects([c textRectForCharacter:at], exactAt));
+        // Back to the place, as the tab's own place, Go Back or a search
+        // hit would: laid out there first, then above it.
+        [c scrollEditorToCharacter:topBefore offset:topOffsetBefore];
+    });
+    MCGuiWait(@"laid out again after going back", 30, allLaidOut);
+    MCGuiStep(@"and exactly where it was", ^{
+        GCHECK(NSEqualRects([c textRectForCharacter:at], exactAt));
+        CGFloat offset = 0;
+        GCHECK(topOfPane(&offset) == topBefore);
+        GCHECK(fabs(offset - topOffsetBefore) < 1);
     });
     MCGuiStep(@"typing in the used window costs what it cost in a fresh one", ^{
         tv.selectedRange = NSMakeRange(at, 0);

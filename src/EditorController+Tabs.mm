@@ -312,6 +312,7 @@
 - (void)stashActiveTab {
     MCTab *t = _activeTab;
     if (!t) return;
+    [_layoutCatchUp cancel];   // the text goes; its place is read from what is laid out
     [self saveBeforeLeavingFormatSave];   // Cmd+S is never lost to a tab switch
     NSTextView *tv = self.textView;
     [self.markdownEditPanel close];
@@ -443,18 +444,55 @@
     [self updateTitle];
 }
 
+// How far down a tab's place may be before showing it again lays out only
+// the place, the lines above caught up in the background: about 1,000
+// lines, some tens of milliseconds laid out from the top.
+static const NSUInteger kCatchUpFrom = 1 << 15;
+
 // The selection and the scroll a tab kept (stashActiveTab), put back in the
 // text view once it shows the tab's text.
+//
+// Far down an ordinary tab's text (editor N2), laying out from the top to
+// the place took 1.5 to 3.9 s of the main thread at the middle of 100,000
+// lines: the editor's layout is contiguous, so its rects are exact. The
+// place is laid out alone instead, with non-contiguous layout, and
+// MCLayoutCatchUp lays out the lines above it in idle turns, keeping the
+// text on screen still, until everything from the top through the pane is
+// laid out and every rect there is the contiguous one; it keeps it so after
+// edits and new widths (LayoutCatchUp.h, also for why the flag stays on).
+// Meanwhile every rect is read from the layout the text is drawn from (the
+// stretch around the place), so carets, squiggles, boxes and the gutter
+// agree with what is on screen; only a rect's distance from the top of the
+// text is an estimate until the lines above it are laid out, as in
+// large-file mode, which keeps non-contiguous layout and is left alone.
 - (void)restoreTextPlaceOf:(MCTab *)t {
     if ((t.isLatex && t.previewMode) || !t.haveView) return;
     NSTextView *tv = self.textView;
     const NSUInteger n = tv.string.length;
-    if (t.folds.count && tv.editable) [self.textView.folds restore:t.folds];
+    [_layoutCatchUp cancel];
     NSRange sel = t.selection;
     if (sel.location > n) sel = NSMakeRange(n, 0);
     if (NSMaxRange(sel) > n) sel.length = n - sel.location;
+    const BOOL catchUp = tv.editable && !MCUsesTextKit2(tv) && !self.showingMessage &&
+                         !tv.layoutManager.allowsNonContiguousLayout &&
+                         MAX(MIN(t.topCharacter, n), sel.location) > kCatchUpFrom;
+    if (catchUp) {
+        if (!_layoutCatchUp) {
+            _layoutCatchUp = [[MCLayoutCatchUp alloc] initWithTextView:tv
+                                                            scrollView:self.editorScroll];
+            __weak EditorController *weakSelf = self;
+            __weak NSTextView *weakView = tv;
+            _layoutCatchUp.stillWanted = ^BOOL {
+                EditorController *me = weakSelf;
+                return me && weakView.editable && !me.showingMessage && ![me largeFileFeaturesOff];
+            };
+        }
+        [_layoutCatchUp prepare];
+    }
+    if (t.folds.count && tv.editable) [self.textView.folds restore:t.folds];
     tv.selectedRange = sel;
     [self scrollEditorToCharacter:t.topCharacter offset:t.topOffset];
+    if (catchUp) [_layoutCatchUp start];
     if (t.isMarkdown && t.previewMode)
         _previewEntryScroll = self.editorScroll.contentView.bounds.origin;
 }

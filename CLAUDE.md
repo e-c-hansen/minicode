@@ -648,9 +648,33 @@ container (PanelHost, laid out by hand in layoutContainer)
   `storedAttributesAtIndex:...` (the highlighter's compare, or every
   restyle of a hinted line set its colors again) leave them out, and
   CodeTextView hides them while writing to a pasteboard.
-- **Contiguous layout stays on**, except in large-file mode (below):
+- **Contiguous layout stays on**, except in large-file mode (below) and
+  while a tab shown again far down (past 32K characters) shows:
   everything that reads positions relies on exactness. Never call `numberOfGlyphs` on the editor; lay out only up to the
-  character needed. `textDidChange:`'s copy into `sourceText` shares characters
+  character needed. **A tab shown again far down** (2026-11-08, editor
+  N2; `restoreTextPlaceOf:`, `LayoutCatchUp.{h,mm}`): its place is laid
+  out alone with non-contiguous layout (3.9 s of the main thread at the
+  middle of 100,000 lines before, about what showing it at the top costs
+  now), and `MCLayoutCatchUp` lays out the lines above it upward from the
+  pane, a piece of about 8 ms a turn, until nothing between the top of the
+  text and the pane is unlaid; from then every rect from the top through
+  the pane is the contiguous one (the keystroke suite compares them), and
+  text below is laid out as it is reached. An edit made through the text
+  view that leaves lines above the pane unlaid has them laid out as it
+  ends (`NSTextDidChangeNotification`) with the pane's scroll kept, so the
+  text moves as contiguous layout moves it; a new width or a jump far down
+  goes to the pieces. **Traps**: turning `allowsNonContiguousLayout` off
+  throws all layout away (0.7 s to lay out to the middle again), so the
+  flag stays on until the tab leaves (`displaySourceEditable` and
+  `makeEditorReadOnly` set it per tab). With it on, NSTextView scrolls to
+  keep the pane's text still as layout above it changes, and an edit that
+  adds a line above the pane leaves the rest estimated (the pane's text
+  moved 4 points up, not 18 down) until laid out. After each hole filled
+  TextKit looks up attributes at the pane and the caret, and with the
+  highlighter's 520,000 color runs a lookup far from the last walks the
+  runs between: the catch-up costs about three times the CPU contiguous
+  layout did (6 to 7.5 s in idle turns against 2.3 s of stall, for 50,000
+  lines), and small pieces far more. `textDidChange:`'s copy into `sourceText` shares characters
   (about a microsecond) and the backups rely on a new object per change;
   measured, leave it.
 - **Trap: a Markdown page's text blocks outlive it** (2026-11-07). The

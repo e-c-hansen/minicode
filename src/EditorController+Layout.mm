@@ -123,7 +123,8 @@
     // Format Document touching both ends of such a file costs).
     // Non-contiguous layout would remove that but makes far positions
     // estimates; only a file in large-file mode has it, which keeps none of
-    // the features that read them (displaySourceEditable).
+    // the features that read them (displaySourceEditable), and a tab shown
+    // again far down, until all of it is laid out (restoreTextPlaceOf:).
     // The backdrop paints the background over the whole scroll view; the text
     // view drawing it too would double a translucent color.
     self.textView.drawsBackground = NO;
