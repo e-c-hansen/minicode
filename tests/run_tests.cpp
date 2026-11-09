@@ -23,6 +23,7 @@
 #include "GitGraph.h"
 #include "EditorTabs.h"
 #include "TerminalLayout.h"
+#include "BrowserTabs.h"
 #include "Formatter.h"
 #include "InstallHints.h"
 #include "ChangeRequest.h"
@@ -10640,6 +10641,7 @@ static void testMultiCaretOccurrences() {
 #include "lexer_styles_tests.inc"
 #include "bracket_pairs_tests.inc"
 #include "terminal_layout_tests.inc"
+#include "browser_tabs_tests.inc"
 #include "snippet_tests.inc"
 #include "terminal_vt_tests.inc"
 
@@ -10703,6 +10705,7 @@ int main() {
     testLexerStyles();
     testBracketPairs();
     testTerminalLayout();
+    testBrowserTabs();
     testSnippets();
     testSnippetCompletionItems();
     testEditorTabs();
