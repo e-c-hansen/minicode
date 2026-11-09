@@ -334,7 +334,7 @@ MC_GUI_SUITE(bracket_pairs) {
         MCGuiNote(@"opening 30,000 lines: %.0f ms of CPU with bracket colors (%lu lines painted "
                   @"for them), %.0f without", ms[1], (unsigned long)lines, ms[0]);
         GCHECK(lines > 0 && lines < 200);
-        GCHECK_TIME(ms[1], 1.4 * ms[0] + 50, @"opening with bracket colors");
+        GCHECK_TIME(ms[1], 1.3 * ms[0] + 100, @"opening with bracket colors");
     });
 
     MCGuiStep(@"a letter at 20,000 places costs about what it does without them", ^{
