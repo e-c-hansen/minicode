@@ -2046,13 +2046,20 @@ for full-screen programs. Both can be open at once.
   writes a copy beside a `.zshenv` stub (`ShellIntegration::zshenvStub`,
   `src/ShellIntegration.h`: `__minicode_mode=grid|line`, then source the
   copy) in each mode's ZDOTDIR folder, so a running app never sources a
-  newer bundle's script. The private ZLE keys live in ShellIntegration.h.
+  newer bundle's script. The folders are the process's own
+  (`ShellIntegration::folderName`: `MiniCode-zsh-grid-<pid>-<start>` and
+  `MiniCode-zsh-<pid>-<start>` in `NSTemporaryDirectory()`; 2026-11-08,
+  round 6's defect 6: one shared folder let two minicodes running at once
+  source each other's copy); the first terminal of a launch removes those
+  of processes gone, and quitting removes its own. The old shared folders
+  are left to the older minicodes using them. The private ZLE keys live in
+  ShellIntegration.h.
   `make test`'s `zsh:*` groups (`tests/zsh_integration_tests.inc`) run it in
   a real interactive zsh reading a pipe (precmd and preexec run there):
   `zsh -n`, the marks of both modes, the nonce, OSC 7's encoding, and the
   exec hook case by case; skipped without /bin/zsh (CI's Linux jobs).
-- **Grid mode's shell**: `zsh -l -i`, `ZDOTDIR` at
-  `NSTemporaryDirectory()/MiniCode-zsh-grid/`, whose .zshenv hands ZDOTDIR back
+- **Grid mode's shell**: `zsh -l -i`, `ZDOTDIR` at the process's
+  `MiniCode-zsh-grid-<pid>-<start>`, whose .zshenv hands ZDOTDIR back
   and at the first precmd (after .zshrc, so last in line) installs hooks that
   only print: precmd `133;D;status` (if preexec ran), OSC 7, `133;A`; a
   `zle-line-init` hook (`add-zle-hook-widget`) `133;B`; preexec
@@ -2080,16 +2087,28 @@ for full-screen programs. Both can be open at once.
   zsh-vi-mode does) stopped B for good.
 - **exec**: preexec looks for `exec` as a command word (first, or after `; &&
   || & |`, `then`, `do`, `else`, `{`, `!`, and past `builtin`, `command`,
-  `noglob`) and for that command exports ZDOTDIR as the integration folder (the
-  user's in `MINICODE_USER_ZDOTDIR`) with `MINICODE_EXEC=1`, and the nonce
-  only when the program is zsh (2026-11-06: a bash, or `exec claude`, kept it
-  in its environment for everything it ran, any of which could forge marks;
-  so a zsh exec'd from that bash no longer marks), and only a zsh that
-  reads its startup files (`__minicode_reads_rcs`: not `-f` or a cluster
-  holding f, `--no-rcs`, `-o norcs`, `+o rcs`, unless a later option turns
-  them back on; 2026-11-08, `exec zsh -f` kept it), so an exec'd zsh
-  loads the integration and reports the exec finished (133;D;0); the next
-  precmd restores both if the exec failed. Line mode also `unsetopt ZLE` there.
+  `noglob`). The exec's program, and nothing else on the line, gets ZDOTDIR
+  as the integration folder (the user's in `MINICODE_USER_ZDOTDIR`) with
+  `MINICODE_EXEC=1` (`__minicode_exec_env`): for the line, preexec puts a
+  function named `exec` (`__minicode_exec`) in front of the builtin, which
+  exports them just before `builtin exec` and puts the shell's back if it
+  returns; the next precmd removes it (2026-11-08, round 6's defect 2:
+  exported from preexec, `make && exec zsh` gave make the nonce). Functions
+  are looked up at run time, so this works for a line already parsed. A
+  `builtin exec` skips functions and is set up from preexec only as the
+  line's first command; a line with an exec of no program (`exec >log`)
+  gets no function, since a function call's redirections end with it. The
+  nonce goes only to zsh (2026-11-06: a bash, or `exec claude`, kept it in
+  its environment for everything it ran, any of which could forge marks; so
+  a zsh exec'd from that bash no longer marks), only one that reads its
+  startup files (`__minicode_reads_rcs`: not `-f` or a cluster holding f,
+  `--no-rcs`, `-o norcs`, `+o rcs`, unless a later option turns them back
+  on; `exec zsh -f` kept it), and not one emulating sh or ksh, which reads
+  .profile instead (`__minicode_takes_nonce`: `--emulate`, or a name, exec
+  -a's or the program's, starting with s, b or k after an optional r, zsh's
+  own rule; `exec -a sh zsh` kept it), so an exec'd zsh loads the
+  integration and reports the exec finished (133;D;0). zsh 5.9 exits when
+  an interactive exec fails. Line mode also `unsetopt ZLE` there.
   Exec into another shell (bash, sh, dash, fish, ksh, tcsh, csh, nu, elvish,
   xonsh, pwsh, by `proc_name`, polled twice a second while a command runs) sets
   `_integrated` NO: not busy, title cleared, the finished notification posted,
@@ -2162,7 +2181,13 @@ for full-screen programs. Both can be open at once.
 - **Mode 2027 and zsh's widths** (2026-11-08): clusters (above) except
   on the main screen from a 133;A to the next 133;C, where each code point
   takes `termCodepointWidth`, zsh's own count, so typing at the prompt
-  agrees with ZLE (`TerminalScreen::clusterWidths`). macOS's /bin/zsh never
+  agrees with ZLE (`TerminalScreen::clusterWidths`), unless the pty has
+  ISIG off (`setRawTty`, from `tcgetattr` once per `drainBacklog`): ZLE
+  keeps ISIG, raw mode (cfmakeraw, Go's term.MakeRaw) drops it, so that is
+  a program a widget runs, such as fzf's Ctrl+R with --height, which counts
+  clusters (round 6's defect 5; the suite runs such a picker). xterm.js,
+  VS Code's terminal, counts code points everywhere with Unicode 11's
+  widths and joins no clusters. macOS's /bin/zsh never
   calls libc's wcwidth (`nm -u /bin/zsh` has no `_wcwidth`): it is built
   with zsh's Unicode 9 table, `Src/wcwidth9.h`, so a regional indicator is
   2, U+2764 1 and U+093F 0. `tools/gen-zsh-width.py` writes the ranges
@@ -2181,7 +2206,11 @@ for full-screen programs. Both can be open at once.
   and mode 12 (the grid draws bar and underline shapes and blinks at 0.6 s
   only with the keyboard; `terminal.cursor-style` when no program chose);
   SGR 8/28, 4:0-4:5 and 21, 58/59 (underline colors as ids in the
-  screen's `TermColorTable`, freed by scanning cells when full), 53/55;
+  screen's `TermColorTable`; ids no cell uses are freed by a scan of every
+  cell and scrollback run, only when a new color misses a full table and
+  the work since the last scan, in printed characters, SGR bytes and
+  erased cells, is a quarter of what it read: before, every SGR with "58"
+  in its text rescanned, 0.1 ms each at 9,000 lines), 53/55;
   the kitty keyboard protocol with a stack per screen (16 deep, a fresh
   alternate screen starts empty, the prompt's return clears both), flag 1
   only, encoded by `encodeKey`/`encodeChar(..., keyboardFlags)`.
@@ -2250,7 +2279,9 @@ for full-screen programs. Both can be open at once.
   CR counts as a break). One line asks too when, unbracketed, it holds a
   control character other than Tab (2026-11-08: "echo hi" + Ctrl+O ran
   unasked), with Paste and Cancel only; the preview shows controls as
-  U+2400 symbols. Secure keyboard entry: TerminalView polls termios
+  U+2400 symbols, and when the first is past the first three lines' 30
+  characters a line saying where it is, with the 30 characters around it
+  (round 6's defect 4: the question showed none). Secure keyboard entry: TerminalView polls termios
   (after output, and four times a second while a command runs) and sets
   the grid's `hiddenInput` for ECHO off with ICANON on (ZLE and full-screen
   programs turn ICANON off); the grid calls Enable/DisableSecureEventInput
@@ -2270,8 +2301,8 @@ for full-screen programs. Both can be open at once.
   (`MCTerminalZoom`, see "Zoom"; never the editor's); the grid remeasures its
   cell, the input line and log re-font (keeping weight and slant), the panel
   relays out and the pty gets the rows and columns that fit.
-- **Line mode**: `zsh -l -i +Z`, `ZDOTDIR` at
-  `NSTemporaryDirectory()/MiniCode-zsh` (hooks emit 133 A/C/D and OSC 7, blank
+- **Line mode**: `zsh -l -i +Z`, `ZDOTDIR` at the process's
+  `MiniCode-zsh-<pid>-<start>` (hooks emit 133 A/C/D and OSC 7, blank
   `PS1`, `PROMPT_SP` unset); echo is off while zsh reads, so the master's ECHO
   flag shows hidden input. The last log line is "live" (replaced from
   `_liveStart`), so panel-written lines go through `ensureNewline`

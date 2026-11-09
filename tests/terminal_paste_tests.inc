@@ -171,6 +171,30 @@ void testTerminalPaste() {
               lines.preview == "a\nb\xE2\x90\x9B");
     }
     {
+        // Round 6's terminal defect 4: a control character past the 30th
+        // character of its line (a long harmless-looking command ending in
+        // Ctrl+O) was not in the preview, which then showed none. Now the
+        // preview adds where it is and the characters around it.
+        const std::string cmd = "echo this looks like a harmless long command && ls";
+        PC c = TerminalScreen::checkPaste(cmd + "\x0f", false, "auto");
+        CHECK(c.ask && c.controls);
+        const std::string want = cmd.substr(0, 30) + "\xE2\x80\xA6\nLine 1, column " +
+                                 std::to_string(cmd.size() + 1) + ": \xE2\x80\xA6" +
+                                 cmd.substr(cmd.size() - 12) + "\xE2\x90\x8F";
+        CHECK(c.preview == want);
+        if (c.preview != want) std::printf("    preview: %s\n", c.preview.c_str());
+        // Below the third line: its line number, and text after it cut.
+        PC d = TerminalScreen::checkPaste("a\nb\nc\nd\n\xC3\xA9x\x1b[31m" + std::string(40, 'y'),
+                                          false, "auto");
+        const std::string wantD = "a\nb\nc\n\xE2\x80\xA6\nLine 5, column 3: \xC3\xA9x\xE2\x90\x9B[31m" +
+                                  std::string(23, 'y') + "\xE2\x80\xA6";
+        CHECK(d.preview == wantD);
+        if (d.preview != wantD) std::printf("    preview: %s\n", d.preview.c_str());
+        // One already in the lines shown adds nothing.
+        PC e = TerminalScreen::checkPaste("ls\x0f\nmore " + std::string(40, 'z') + "\x0f", false, "auto");
+        CHECK(e.preview.find("Line ") == std::string::npos);
+    }
+    {
         // Bracketed: the program receives the bytes as text inside the
         // brackets (encodePaste shows ESC as U+241B), so nothing asks and
         // nothing counts as a control, in auto; always still asks only for

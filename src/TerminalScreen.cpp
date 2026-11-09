@@ -582,6 +582,7 @@ void TerminalScreen::touchRows(int from, int to) {
     from = std::max(from, 0);
     to = std::min(to, (int)dirtyRows_.size() - 1);
     for (int y = from; y <= to; y++) dirtyRows_[y] = 1;
+    if (to >= from) ulWork_ += (long long)(to - from + 1) * cols_;
 }
 
 TerminalScreen::Dirty TerminalScreen::takeDirty() {
@@ -985,6 +986,7 @@ void TerminalScreen::eraseCells(int y, int from, int to) {
     to = clampInt(to, 0, cols_);
     if (from >= to) return;
     touch(y);
+    ulWork_ += to - from;
     clearWide(y, from);
     clearWide(y, to - 1);
     Row& row = grid()[y];
@@ -1054,6 +1056,7 @@ void TerminalScreen::reverseIndex() {
 }
 
 void TerminalScreen::print(uint32_t cp, const std::string& utf8In) {
+    ulWork_++;
     std::string utf8 = utf8In;
     int charset = gl_ == 0 ? g0_ : g1_;
     if (charset == 1 && cp >= 0x5F && cp <= 0x7E) {
@@ -1534,18 +1537,26 @@ void TerminalScreen::collectLinks() {
 
 void TerminalScreen::collectUnderlineColors() {
     std::vector<bool> used(TermColorTable::kMax + 1, false);
+    long long read = 0;
     auto mark = [&](uint16_t id) { if (id < used.size()) used[id] = true; };
     for (const Grid* g : {&main_, &alt_})
-        for (const Row& row : *g)
+        for (const Row& row : *g) {
             for (const TermCell& c : row) mark(c.style.underlineColor);
-    for (const HistLine& h : history_)
+            read += (long long)row.size();
+        }
+    auto markLine = [&](const HistLine& h) {
         for (const StyleRun& r : h.runs) mark(r.style.underlineColor);
-    for (const HistLine& h : below_)
-        for (const StyleRun& r : h.runs) mark(r.style.underlineColor);
+        read += (long long)h.runs.size() + 1;
+    };
+    for (const HistLine& h : history_) markLine(h);
+    for (const HistLine& h : below_) markLine(h);
     mark(style_.underlineColor);
     mark(savedMain_.style.underlineColor);
     mark(savedAlt_.style.underlineColor);
     underlineColors_.release(used);
+    ulScanCost_ = std::max(read, 1LL);
+    ulWork_ = 0;
+    ulScans_++;
 }
 
 // ------------------------------------------------------------- replies
@@ -1653,7 +1664,7 @@ void TerminalScreen::keyboardSequence(char lead, const std::string& params) {
 
 bool TerminalScreen::clusterWidths() const {
     if (graphemes_ >= 0) return graphemes_ == 1;
-    return onAlt_ || !promptActive_;
+    return onAlt_ || !promptActive_ || rawTty_;
 }
 
 void TerminalScreen::setMode(const std::string& csi, bool on) {
@@ -1800,10 +1811,18 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
         }
     if (f == 'm') {
         // A new underline color with the table full: free the ids no cell
-        // uses first (a program cycling colors would otherwise lose them).
-        if (underlineColors_.full() && csi.find("58") != std::string::npos)
-            collectUnderlineColors();
+        // uses (a program cycling colors would otherwise lose them) and
+        // apply the SGR again, when enough work came since the last scan
+        // (ulWork_); until then the color is the text's.
+        ulWork_ += (long long)csi.size() + 3;
+        const TermStyle before = style_;
+        underlineColors_.clearMissed();
         applySgr(style_, csi, &underlineColors_);
+        if (underlineColors_.missed() && (ulScans_ == 0 || ulWork_ * 4 >= ulScanCost_)) {
+            style_ = before;   // its id counts as used while scanning
+            collectUnderlineColors();
+            applySgr(style_, csi, &underlineColors_);
+        }
         return;
     }
 
@@ -2179,23 +2198,56 @@ TerminalScreen::PasteCheck TerminalScreen::checkPaste(const std::string& text, b
         }
     }
     out.ask = true;
-    for (size_t i = 0; i < lines.size() && i < 3; i++) {
-        bool cut = false;
-        // Control characters as their symbols (they would draw oddly, or
-        // not at all, in the question), Tab as a space.
+    // Control characters as their symbols (they would draw oddly, or not
+    // at all, in the question), Tab as a space.
+    auto shown = [](const std::string& text) {
         std::string line;
-        for (char c : firstChars(lines[i], 30, cut)) {
+        for (char c : text) {
             const unsigned char u = (unsigned char)c;
             if (c == '\t') line += ' ';
             else if (u < 0x20) line += utf8Encode(0x2400 + u);
             else if (u == 0x7F) line += "\xE2\x90\xA1";   // U+2421 SYMBOL FOR DELETE
             else line += c;
         }
+        return line;
+    };
+    const std::string ellipsis = "\xE2\x80\xA6";   // …
+    for (size_t i = 0; i < lines.size() && i < 3; i++) {
+        bool cut = false;
         if (i) out.preview += '\n';
-        out.preview += line;
-        if (cut) out.preview += "\xE2\x80\xA6";   // …
+        out.preview += shown(firstChars(lines[i], 30, cut));
+        if (cut) out.preview += ellipsis;
     }
-    if (lines.size() > 3) out.preview += "\n\xE2\x80\xA6";
+    if (lines.size() > 3) out.preview += "\n" + ellipsis;
+    // A control character the lines above leave out (past a line's 30th
+    // character, or below its third line) gets a line of its own: where it
+    // is, and the 30 characters around it, so the question never says
+    // there are control characters and shows none.
+    if (out.controls) {
+        for (size_t i = 0; i < lines.size(); i++) {
+            const std::string& line = lines[i];
+            size_t at = 0, col = 0;
+            for (; at < line.size(); at++) {
+                const unsigned char u = (unsigned char)line[at];
+                if ((u < 0x20 && u != '\t') || u == 0x7F) break;
+                if ((u & 0xC0) != 0x80) col++;
+            }
+            if (at == line.size()) continue;
+            if (i < 3 && col < 30) break;          // already shown
+            // From 12 characters before it, back to a character's start.
+            size_t from = at, back = 0;
+            while (from > 0 && back < 12) {
+                from--;
+                if (((unsigned char)line[from] & 0xC0) != 0x80) back++;
+            }
+            bool cut = false;
+            const std::string window = firstChars(line.substr(from), 30, cut);
+            out.preview += "\nLine " + std::to_string(i + 1) + ", column " +
+                           std::to_string(col + 1) + ": " + (from > 0 ? ellipsis : "") +
+                           shown(window) + (cut ? ellipsis : "");
+            break;
+        }
+    }
     return out;
 }
 
