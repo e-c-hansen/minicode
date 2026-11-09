@@ -39,19 +39,24 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
 - (void)saveSession {
     if (![self sessionsEnabled] || !_root.path) return;
     // The file on show, or with a diff on show the file shown last.
-    MCTab *shown = _activeTab.currentPath ? _activeTab : nil;
-    for (MCTab *t in _tabs)
-        if (!shown && t.currentPath) shown = t;
-        else if (shown != _activeTab && t.currentPath && t.lastActive > shown.lastActive)
-            shown = t;
+    // An agent's preview tab is left out, so it is never the one on show.
+    MCTab *shown = _activeTab.currentPath && !_activeTab.agentPreview ? _activeTab : nil;
+    for (MCTab *t in _tabs) {
+        if (!t.currentPath || t.agentPreview) continue;
+        if (!shown) shown = t;
+        else if (shown != _activeTab && t.lastActive > shown.lastActive) shown = t;
+    }
     NSMutableArray<NSString *> *files = [NSMutableArray array];
     NSMutableArray<NSString *> *besides = [NSMutableArray array];   // with the page to the side
     NSInteger active = 0;
+    NSString *preview = nil;   // the user's preview tab comes back as one
     for (MCTab *t in _tabs) {
-        if (!t.currentPath) continue;   // a diff is not reopened
+        // A diff is not reopened, nor an agent's preview tab (its note is gone).
+        if (!t.currentPath || t.agentPreview) continue;
         if (t == shown) active = (NSInteger)files.count;
         [files addObject:t.currentPath];
         if (t.sidePreview) [besides addObject:t.currentPath];
+        if (t.preview) preview = t.currentPath;
     }
     NSString *key = [self sessionKey];
     // Windows open on the same folder share its session: this window's
@@ -87,6 +92,7 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
                                       mutableCopy];
         if (browser) entry[@"browser"] = browser;
         if (besides.count) entry[@"sidePreview"] = besides;
+        if (preview) entry[@"preview"] = preview;
         all[key] = entry;
         while (all.count > kMaxTabSessions) {
             NSString *oldest = nil;
@@ -144,6 +150,9 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         saved.active = [s[@"active"] intValue];
         if ([s[@"sidePreview"] isKindOfClass:NSArray.class])
             besides = [NSSet setWithArray:s[@"sidePreview"]];
+        if ([s[@"preview"] isKindOfClass:NSString.class])
+            for (size_t i = 0; i < saved.files.size(); i++)
+                if (saved.files[i] == Utf8String(s[@"preview"])) saved.preview = (int)i;
     }
     // Unsaved buffers kept from a crash, a force quit or a restart: a file of
     // the session with a backup comes back even if it is gone from disk, and
@@ -165,6 +174,7 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
                ([fm fileExistsAtPath:[NSString stringWithUTF8String:f.c_str()] isDirectory:&dir] &&
                 !dir);
     });
+    const std::string previewFile = r.preview >= 0 ? r.files[(size_t)r.preview] : "";
     for (const std::string &f : extra) r.files.push_back(f);
     if (r.files.empty()) return;
     if (r.active < 0) r.active = 0;
@@ -176,6 +186,9 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         if (b != backupFor.end() && ![self takeBackup:@(b->second.c_str()) intoTab:t] &&
             ![fm fileExistsAtPath:t.currentPath])
             continue;   // nothing to show: the backup does not read and the file is gone
+        // The preview tab comes back as one, unless unsaved changes came
+        // back into it from a backup (an edit keeps a tab).
+        t.preview = !previewFile.empty() && f == previewFile && !t.dirty;
         [_tabs addObject:t];
     }
     if (_tabs.count == 0) return;

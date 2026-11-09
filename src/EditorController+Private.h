@@ -443,6 +443,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)pathMovedFrom:(NSString *)src to:(NSString *)dst;
 - (void)handleRowClick:(NSInteger)row atPoint:(NSPoint)pt;
 - (void)activateRow:(NSInteger)row;
+- (void)revealPath:(NSString *)path open:(BOOL)open from:(EditorTabs::OpenFrom)from;
 - (void)startWatching:(NSString *)path;
 - (void)stopWatching;
 - (void)reloadTreeKeepingState:(BOOL)rescan;
@@ -540,6 +541,17 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)dropAllTabs;
 - (int)focusedCloseTarget;
 - (void)focusAfterClosingPanel;
+// Preview tabs (EditorTabs.h, "The preview tab"): a file opened from
+// `from` goes in the preview tab when the settings say so, else in a kept
+// tab; a kept open of a file in a preview tab keeps it.
+- (void)openFileAtPath:(NSString *)path from:(EditorTabs::OpenFrom)from;
+- (BOOL)opensInPreview:(EditorTabs::OpenFrom)from;
+// A preview tab, the user's or an agent's, becomes an ordinary tab.
+- (void)keepPreviewTab:(MCTab *)t;
+- (void)keepTabAtIndex:(NSInteger)i;
+- (void)keepTabFromMenu:(id)sender;
+- (MCTab *)previewTab;
+- (BOOL)openFileForLanguageServer:(NSString *)p from:(EditorTabs::OpenFrom)from;
 @end
 
 // EditorController+Persistence.mm: the tabs between runs, backups and hot exit, auto-save, files changed, moved or deleted outside.
@@ -761,7 +773,6 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSTextView *)notesTextView;
 - (id)notesActiveTab;
 - (void)dropAgentPreviewTab:(MCTab *)t;
-- (void)keepAgentPreviewTabAtIndex:(NSInteger)i;
 - (void)showPage:(id<MCEditorPage>)page;
 - (void)closePageOf:(MCTab *)t;
 - (void)agentWorktreesChanged;

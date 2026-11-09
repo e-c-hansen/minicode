@@ -32,6 +32,10 @@
         return it;
     };
     const NSInteger count = (NSInteger)_tabs.count;
+    if (t.preview || t.agentPreview) {   // VS Code's Keep Open, for a preview tab
+        add(@"Keep Open", @selector(keepTabFromMenu:), YES);
+        [m addItem:[NSMenuItem separatorItem]];
+    }
     add(@"Close", @selector(closeTabFromMenu:), YES);
     add(@"Close Other Tabs", @selector(closeOtherTabsFromMenu:), count > 1);
     add(@"Close Tabs to the Right", @selector(closeTabsToTheRightFromMenu:), i < count - 1);
@@ -134,6 +138,10 @@
     if (_activeTab) [self closeTabsToTheRightFromMenu:[self menuItemForActiveTab]];
 }
 - (void)closeAllTabs:(id)sender { [self closeAllTabsFromMenu:sender]; }
+- (void)keepActiveTabOpen:(id)sender {
+    if (_activeTab.preview || _activeTab.agentPreview) [self keepPreviewTab:_activeTab];
+    else NSBeep();
+}
 - (void)copyActiveFilePath:(id)sender { [self copyTabPath:[self menuItemForActiveTab]]; }
 - (void)copyActiveFileRelativePath:(id)sender {
     [self copyTabRelativePath:[self menuItemForActiveTab]];
@@ -158,6 +166,7 @@
     else if (a == @selector(closeOtherTabs:)) *enabled = t && count > 1;
     else if (a == @selector(closeTabsToTheRight:)) *enabled = t && i < count - 1;
     else if (a == @selector(closeAllTabs:)) *enabled = count > 0;
+    else if (a == @selector(keepActiveTabOpen:)) *enabled = t.preview || t.agentPreview;
     else if (a == @selector(copyActiveFilePath:)) *enabled = path != nil;
     else if (a == @selector(copyActiveFileRelativePath:)) *enabled = inRoot;
     else if (a == @selector(revealActiveFileInFinder:)) *enabled = onDisk;
@@ -194,7 +203,7 @@
     strip.onSelect = ^(NSInteger i) { [weakSelf selectTabAtIndex:i]; };
     strip.onClose = ^(NSInteger i) { [weakSelf closeTabAtIndex:i]; };
     strip.menuForTab = ^NSMenu *(NSInteger i) { return [weakSelf menuForTabAtIndex:i]; };
-    strip.onDoubleClick = ^(NSInteger i) { [weakSelf keepAgentPreviewTabAtIndex:i]; };
+    strip.onDoubleClick = ^(NSInteger i) { [weakSelf keepTabAtIndex:i]; };
     [self.rightArea addSubview:strip];
     self.tabStrip = strip;
     // With no file open the slot is empty but for one muted line.
@@ -255,7 +264,7 @@
         if (t.gone) item.title = [item.title stringByAppendingString:@" (deleted)"];
         item.toolTip = t.currentPath ?: item.title;
         item.dirty = t.dirty;
-        item.preview = t.agentPreview;
+        item.preview = t.agentPreview || t.preview;
         [items addObject:item];
     }
     const BOOL wasShown = !self.tabStrip.hidden;
@@ -272,6 +281,136 @@
         if (t.currentPath && [t.currentPath.stringByResolvingSymlinksInPath isEqualToString:real])
             return t;
     return nil;
+}
+
+// ------------------------------------------------------ the preview tab
+// VS Code's preview editor (workbench.editor.enablePreview): a file opened
+// by a single click in the tree, a single click on a search result, or a
+// code navigation goes in the window's one preview tab, its title in
+// italics, which the next such open replaces; anything else opens in a
+// kept tab. The rules are EditorTabs' (opensInPreview, staysPreview,
+// placePreview). The agents' preview tabs (agentPreview) are kept apart:
+// an agent's note waits in its own tab however the user browses, and the
+// user's file is never taken away by an agent's open.
+
+- (BOOL)opensInPreview:(EditorTabs::OpenFrom)from {
+    const Settings &cfg = [AppSettings shared].settings;
+    EditorTabs::PreviewSettings s;
+    s.enabled = cfg.enablePreview();
+    s.fromQuickOpen = cfg.enablePreviewFromQuickOpen();
+    return EditorTabs::opensInPreview(from, s);
+}
+
+// The user's preview tab, if there is one.
+- (MCTab *)previewTab {
+    for (MCTab *t in _tabs)
+        if (t.preview) return t;
+    return nil;
+}
+
+- (void)keepPreviewTab:(MCTab *)t {
+    if (!t || !(t.preview || t.agentPreview)) return;
+    t.preview = NO;
+    t.agentPreview = NO;
+    [self reloadTabStrip];
+    [self saveSession];
+}
+
+// A double-click on a tab's title keeps it, as in VS Code.
+- (void)keepTabAtIndex:(NSInteger)i {
+    if (i < 0 || i >= (NSInteger)_tabs.count) return;
+    [self keepPreviewTab:_tabs[(NSUInteger)i]];
+}
+
+- (void)keepTabFromMenu:(id)sender {
+    [self keepPreviewTab:[self tabOfMenuItem:sender]];
+}
+
+// Show a file in its tab, else in a new one: the preview tab when `from`
+// opens in preview (replacing the old preview tab, which has no unsaved
+// changes since an edit keeps it), else a kept tab just right of the one on
+// show. The file in the tab that was on show stays as it was, unsaved
+// changes and all.
+- (void)openFileAtPath:(NSString *)path from:(EditorTabs::OpenFrom)from {
+    [self revealEditor];
+    if (!path) return;
+    const BOOL inPreview = [self opensInPreview:from];
+    MCTab *tab = [self tabForPath:path];
+    if (tab) {
+        // A kept open of the preview tab's file keeps it; an open in preview
+        // never makes a kept tab a preview.
+        const BOOL wasPreview = tab.preview || tab.agentPreview;
+        if (wasPreview && !EditorTabs::staysPreview(true, inPreview)) [self keepPreviewTab:tab];
+        if (tab != _activeTab) [self activateTab:tab];   // the one on show: nothing to render
+        else [self reselectCurrentFileInTree];          // a Cmd+click may have deselected it
+        return;
+    }
+    if (![self confirmOpeningLargeFile:path]) return;   // over 50 MB: asked first
+    tab = [MCTab new];
+    tab.currentPath = path;
+    MCTab *old = inPreview ? [self previewTab] : nil;
+    // An old preview with unsaved changes (from a backup) is never dropped.
+    if (old.dirty) {
+        [self keepPreviewTab:old];
+        old = nil;
+    }
+    if (!inPreview) {
+        [self insertTab:tab];
+        [self activateTab:tab];
+        return;
+    }
+    const NSInteger active = _activeTab ? (NSInteger)[_tabs indexOfObject:_activeTab] : -1;
+    const NSInteger oldAt = old ? (NSInteger)[_tabs indexOfObject:old] : -1;
+    const EditorTabs::PreviewPlace place =
+        EditorTabs::placePreview((int)active, (int)oldAt, (int)_tabs.count);
+    // `index` counts without the old tab, which is still in the list.
+    NSUInteger at = (NSUInteger)place.index;
+    if (place.replace >= 0 && place.index >= place.replace) at++;
+    tab.preview = YES;
+    [_tabs insertObject:tab atIndex:MIN(at, _tabs.count)];
+    [self activateTab:tab];
+    // Leaving it can have saved it (a Cmd+S waiting for its formatter),
+    // which keeps it.
+    if (old.preview && !old.dirty) [self dropPreviewTab:old];
+}
+
+// The preview tab a newer one replaced: no question (it has no unsaved
+// changes) and no place in Reopen Closed Tab, as VS Code leaves a replaced
+// preview editor out of its recently closed list.
+- (void)dropPreviewTab:(MCTab *)t {
+    if (t == _activeTab || ![_tabs containsObject:t]) return;
+    [self discardBackupOf:t];
+    [t.latex removeFromSuperview];
+    [self closePageOf:t];
+    [_tabs removeObject:t];
+    [self.lsp tabsChanged];
+    [self reloadTabStrip];
+    [self saveSession];
+}
+
+// A file a language server's answer names (a workspace edit's, or a code
+// navigation's target): selected in the tree when it is in the folder, and
+// opened. YES when it is now on show.
+- (BOOL)openFileForLanguageServer:(NSString *)p from:(EditorTabs::OpenFrom)from {
+    // VS Code's workbench.editor.enablePreviewFromCodeNavigation, off by
+    // default: a preview tab a navigation starts from is kept, so the
+    // target does not replace the file it was reached from.
+    if (from == EditorTabs::OpenFrom::CodeNavigation && _activeTab.preview &&
+        [self opensInPreview:from] && [self tabForPath:p] != _activeTab)
+        [self keepPreviewTab:_activeTab];
+    if ([p hasPrefix:[self.rootPath stringByAppendingString:@"/"]])
+        [self revealPath:p open:YES from:from];
+    else
+        [self openFileAtPath:p from:from];
+    // A tab opened under another spelling (/private/tmp for /tmp) is the
+    // same file.
+    return [self.currentPath isEqualToString:p] ||
+           [self.currentPath.stringByResolvingSymlinksInPath
+               isEqualToString:p.stringByResolvingSymlinksInPath];
+}
+
+- (void)openFileFromQuickOpen:(NSString *)path {
+    [self revealPath:path open:YES from:EditorTabs::OpenFrom::QuickOpen];
 }
 
 - (void)insertTab:(MCTab *)tab {
@@ -853,6 +992,7 @@ static const NSUInteger kMaxClosedTabs = 50;
     t.savedText = text;
     t.gone = NO;
     t.dirty = NO;
+    if (t.preview) [self keepPreviewTab:t];   // saved: kept, as in VS Code
     // So our own save never looks like a change made outside.
     [self recordStamp:MCDiskStampFromFileStamp(written) ofTab:t];
     if (t == _activeTab) {

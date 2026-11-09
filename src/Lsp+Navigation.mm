@@ -148,7 +148,8 @@ NSArray<MCSymbolItem *> *MCOutlineSymbols(NSString *path, NSString *text, NSUInt
 - (void)revealLocationNow:(const Lsp::Location &)loc {
     if (![self uri:loc.uri isSameFileAs:_uri]) {
         NSString *path = [self treePathForURI:loc.uri];
-        if (!path.length || !self.openFile || !self.openFile(path)) return;
+        BOOL (^open)(NSString *) = self.openFileForNavigation ?: self.openFile;
+        if (!path.length || !open || !open(path)) return;
     }
     std::u16string text = U16Of(_tv.string);
     size_t a = Lsp::offsetForPosition(text, loc.range.start);
