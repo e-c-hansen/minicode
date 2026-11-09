@@ -609,6 +609,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)nextWaitingTerminal:(id)sender { MCJumpToNextWaitingTerminal(); }
 - (void)runCurrentFile:(id)sender  { [[self current] runCurrentFile:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
+- (void)openBrowserTab:(id)sender  { [[self current] openBrowserTab:sender]; }
 - (void)toggleSidebarVisibility:(id)sender   { [[self current] toggleSidebarVisibility:sender]; }
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
 - (void)gitFetch:(id)sender { [[self current] gitFetch:sender]; }
@@ -1463,6 +1464,10 @@ static void BuildMenu(void) {
     browser.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:browser];
+    // From anywhere. Cmd+T does the same while the browser has the keyboard
+    // (the pane's own newBrowserTab:, a page key the key monitor runs).
+    [viewMenu addItemWithTitle:@"New Browser Tab" action:@selector(openBrowserTab:)
+                 keyEquivalent:@""];
 
     [viewMenu addItem:[NSMenuItem separatorItem]];
 

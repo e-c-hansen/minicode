@@ -23,6 +23,7 @@
 #include "GitGraph.h"
 #include "EditorTabs.h"
 #include "TerminalLayout.h"
+#include "BrowserTabs.h"
 #include "Formatter.h"
 #include "InstallHints.h"
 #include "ChangeRequest.h"
@@ -52,6 +53,7 @@
 #include "JsonOutline.h"
 #include "Notebook.h"
 #include "Commands.h"
+#include "PageMeasure.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -3950,9 +3952,9 @@ void testSettings() {
     // editor.semantic-highlighting with its five syntax colors, the three
     // inlay hint keys, format.latex, editor.git-gutter with its three
     // colors, editor.bracket-pair-colorization with its four colors, and
-    // syntax.escape and syntax.self, and terminal.cursor-style, and the two
-    // workbench.enable-preview keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 121);
+    // syntax.escape and syntax.self, terminal.cursor-style, the two
+    // workbench.enable-preview keys, and markdown.max-width.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 122);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4568,6 +4570,77 @@ void testSettings() {
     CHECK(!parseSettings("Markdown.Web-Images = off\n").webImages());
     Settings wi = parseSettings("markdown.web-images = maybe\n", &e6);
     CHECK(wi.webImages() && e6.size() == 1 && e6[0].line == 1);
+
+    GROUP("settings:markdown-max-width");
+    {
+        std::vector<SettingsError> em;
+        CHECK(parseSettings("").markdownMaxWidth() == Settings::kDefaultMarkdownMaxWidth);
+        CHECK(parseSettings("markdown.max-width = 700\n").markdownMaxWidth() == 700);
+        CHECK(parseSettings("markdown.max-width = off\n").markdownMaxWidth() == 0);
+        CHECK(parseSettings("Markdown.Max-Width = 0  # all of it\n").markdownMaxWidth() == 0);
+        Settings bad = parseSettings("markdown.max-width = 700\nmarkdown.max-width = 50\n"
+                                     "markdown.max-width = wide\n", &em);
+        CHECK(bad.markdownMaxWidth() == 700 && em.size() == 2 && em[0].line == 2 &&
+              em[1].line == 3);
+        CHECK(std::string(Settings::defaultFileText()).find("# markdown.max-width = 840\n") !=
+              std::string::npos);
+    }
+
+    GROUP("measure:centered-inset");
+    CHECK(PageMeasure::centeredInset(2000, 8, 840, 5) == 575);   // (2000 - 840 - 10) / 2
+    CHECK(PageMeasure::centeredInset(600, 8, 840, 5) == 8);      // narrower: the least inset
+    CHECK(PageMeasure::centeredInset(2000, 8, 0, 5) == 8);       // off
+    CHECK(PageMeasure::centeredInset(861, 8, 840, 5) == 8);      // 6 is below 8
+    CHECK(PageMeasure::centeredInset(1001, 14, 840, 5) == 76);   // 75.5, rounded up
+    CHECK(PageMeasure::maxTextWidth(840, 2) == 1680);
+    CHECK(PageMeasure::maxTextWidth(0, 3) == 0);
+    {
+        // The text is never wider than the limit, nor the inset below the least.
+        for (double w = 100; w < 4000; w += 37) {
+            const double inset = PageMeasure::centeredInset(w, 8, 840, 5);
+            CHECK(inset >= 8);
+            CHECK(w - 2 * inset - 10 <= 840 || inset == 8);
+            CHECK(w - 2 * inset - 10 >= 839 || inset == 8);   // and no narrower
+        }
+    }
+
+    GROUP("measure:hints");
+    {
+        using PageMeasure::HintRow;
+        auto pair = [](double k1, double l1, double k2, double l2) {
+            HintRow r; r.key1 = k1; r.label1 = l1; r.hasKey2 = true; r.key2 = k2; r.label2 = l2;
+            return r;
+        };
+        auto alone = [](double k1, double l1) { HintRow r; r.key1 = k1; r.label1 = l1; return r; };
+        auto state = [](double k1, double l1, double st) {
+            HintRow r; r.key1 = k1; r.label1 = l1; r.hasState = true; r.state = st; return r;
+        };
+        HintRow head; head.heading = true; head.key1 = 60;
+        std::vector<HintRow> rows = {head, pair(20, 150, 30, 120), pair(40, 90, 20, 160),
+                                     alone(20, 300), state(25, 60, 40)};
+        // Wide: two columns, stops past the widest key and the widest paired label.
+        PageMeasure::HintsLayout two = PageMeasure::layoutHints(rows, 1000, 10, 24);
+        CHECK(two.columns == 2 && !two.wraps);
+        CHECK(two.label1 == 50);                       // 40 + 10
+        CHECK(two.key2 == 50 + 150 + 24);              // the long lone label does not push it
+        CHECK(two.label2 == two.key2 + 30 + 10);
+        CHECK(two.state == two.key2);
+        CHECK(two.textWidth == std::max(two.label2 + 160, 50.0 + 300));
+        // Exactly the two-column width still fits; a point less goes to one column.
+        CHECK(PageMeasure::layoutHints(rows, two.textWidth, 10, 24).columns == 2);
+        PageMeasure::HintsLayout one = PageMeasure::layoutHints(rows, two.textWidth - 1, 10, 24);
+        CHECK(one.columns == 1 && !one.wraps);
+        CHECK(one.label1 == 50);                       // every key, either column's
+        CHECK(one.state == 50 + 300 + 10);             // after the longest label
+        CHECK(one.textWidth == one.state + 40);
+        CHECK(one.textWidth < two.textWidth);
+        // Narrower than any row: labels wrap, the text as wide as the room.
+        PageMeasure::HintsLayout tight = PageMeasure::layoutHints(rows, 200, 10, 24);
+        CHECK(tight.columns == 1 && tight.wraps && tight.textWidth == 200);
+        // A heading wider than everything sets the width.
+        HintRow wide; wide.heading = true; wide.key1 = 2000;
+        CHECK(PageMeasure::layoutHints({wide, pair(1, 1, 1, 1)}, 5000, 10, 24).textWidth == 2000);
+    }
 
     GROUP("settings:keep-sorted");
     std::vector<SettingsError> eks;
@@ -10640,6 +10713,7 @@ static void testMultiCaretOccurrences() {
 #include "lexer_styles_tests.inc"
 #include "bracket_pairs_tests.inc"
 #include "terminal_layout_tests.inc"
+#include "browser_tabs_tests.inc"
 #include "snippet_tests.inc"
 #include "terminal_vt_tests.inc"
 
@@ -10703,6 +10777,7 @@ int main() {
     testLexerStyles();
     testBracketPairs();
     testTerminalLayout();
+    testBrowserTabs();
     testSnippets();
     testSnippetCompletionItems();
     testEditorTabs();

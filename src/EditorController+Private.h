@@ -230,7 +230,9 @@ static const NSInteger kWorktreeMenuTag = 7701;
 @property(nonatomic, strong) NSDate *fileModDate;    // on-disk mtime we last saw
 @property(nonatomic, strong) NSView *statusBar;
 @property(nonatomic, strong) NSView *hintsPanel;
-@property(nonatomic, strong) NSTextField *hintsLabel;
+@property(nonatomic, strong) NSScrollView *hintsScroll;
+@property(nonatomic, strong) NSTextView *hintsTextView;
+@property(nonatomic, assign) NSInteger hintsColumns;   // 1 or 2, as last laid out
 @property(nonatomic, assign) BOOL hintsVisible;
 @property(nonatomic, strong) PanelHost *rightArea;
 @property(nonatomic, strong) PanelScrollView *editorScroll;
@@ -366,8 +368,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)layoutStatusRight;
 - (void)buildHintsPanelInContainer:(NSView *)container;
 - (void)updateHints;
-- (void)appendHintsHeading:(NSString *)title to:(NSMutableAttributedString *)s;
-- (void)appendHintsRow:(NSMutableAttributedString *)s
+- (void)appendHintsHeading:(NSString *)title to:(NSMutableArray *)s;
+- (void)appendHintsRow:(NSMutableArray *)s
                    key:(NSString *)key1 label:(NSString *)label1
                   key2:(NSString *)key2 label2:(NSString *)label2
                  state:(NSString *)state;
@@ -376,6 +378,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSString *)hk:(NSString *)commandId at:(NSUInteger)index;
 - (NSString *)hkAlso:(NSString *)commandId title:(NSString *)title;
 - (NSAttributedString *)hintsText;
+- (NSArray<NSDictionary *> *)hintsRows;
 - (void)showStatusNote:(NSString *)note;
 - (void)updateSavedStatus;
 - (void)layoutStatusLabels;
@@ -891,6 +894,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 
 // EditorController+MarkdownRender.mm: turning Markdown runs into attributed text: paragraphs, runs, tables.
 @interface EditorController (MarkdownRender)
+- (void)applyMarkdownMeasure;   // markdown.max-width for the page on show
 - (NSParagraphStyle *)markdownParagraphFor:(const MdRun &)r
                                     quotes:(NSMutableArray<NSTextBlock *> *)quotes
                                       code:(NSTextBlock * __strong *)code;

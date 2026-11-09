@@ -230,6 +230,13 @@ public:
     // blocks (on by default, where mermaid-cli's mmdc is found). Off, they
     // show as their source.
     bool mermaid() const { return mermaid_; }
+    // markdown.max-width: the longest line of a rendered Markdown page, in
+    // points of text at 100% zoom (kDefaultMarkdownMaxWidth, about GitHub's
+    // article width at the preview's 15-point body); it grows with the
+    // preview's zoom, and the page is centered in a wider pane. 0 (off)
+    // lets lines run the whole width of the pane.
+    static constexpr int kDefaultMarkdownMaxWidth = 840;
+    int markdownMaxWidth() const { return markdownMaxWidth_; }
 
     // editor.keep-sorted-on-save: sort every keep-sorted block in a file
     // when it is saved (off by default).
@@ -472,6 +479,7 @@ private:
     bool webImages_ = true;
     bool math_ = true;
     bool mermaid_ = true;
+    int markdownMaxWidth_ = kDefaultMarkdownMaxWidth;
     bool ideLink_ = false;
     bool keepSortedOnSave_ = false;
     bool organizeImportsOnSave_ = false;

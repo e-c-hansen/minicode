@@ -1,9 +1,10 @@
 // KeystrokeSuite.mm — `make guitest SUITES=keystroke`: what a typed
 // character costs in a 100,000-line Python file, with the highlighting
 // after it checked against a full re-highlight, in a fresh window and
-// again once the window has shown a Markdown page and another long file.
+// again once the window has shown a Markdown page and another long file,
+// after Select All, and after a Replace All and its undo.
 // Set MC_GUI_SAMPLE=<file> to run /usr/bin/sample on the process while it
-// types (<file>.used for the second typing).
+// types (<file>.used and <file>.replaced for the later typings).
 #import "Harness.h"
 #import "ControlServer.h"
 #import "EditorController.h"
@@ -11,7 +12,9 @@
 #import "LayoutCatchUp.h"
 #import "Lsp.h"
 #import "MultiCaretView.h"
+#import "SourceStorage.h"
 #include <mach/mach_time.h>
+#include <random>
 #include <vector>
 
 namespace {
@@ -101,6 +104,108 @@ BOOL SampleInto(NSString *suffix) {
     return YES;
 }
 
+// The storage's paragraph style answer at `at` (SourceStorage.h: a run kept
+// through edits) against what is stored there and over the range it gives.
+BOOL StyleAnswerHolds(MCSourceStorage *st, NSUInteger at) {
+    NSRange r = NSMakeRange(NSNotFound, 0);
+    id v = [st attribute:NSParagraphStyleAttributeName atIndex:at effectiveRange:&r];
+    if (!NSLocationInRange(at, r) || NSMaxRange(r) > st.length) return NO;
+    for (NSUInteger i = r.location; i < NSMaxRange(r); i++) {
+        id stored = [st storedAttributesAtIndex:i longestEffectiveRange:NULL
+                                        inRange:NSMakeRange(0, st.length)][NSParagraphStyleAttributeName];
+        if (stored != v && ![stored isEqual:v]) return NO;
+    }
+    return YES;
+}
+
+// Random edits of every kind to a storage, each at the ends of the run
+// just asked for as often as anywhere; the answer checked around the edit
+// and the run's ends, before fixing (inside the editing session) and
+// after. Returns the wrong answers; `asked` gets how many were checked.
+int StyleRunFuzz(int ops, int *asked) {
+    NSMutableParagraphStyle *p1 = [NSMutableParagraphStyle new], *p2 = [NSMutableParagraphStyle new];
+    p1.lineSpacing = 2;
+    p2.lineSpacing = 2;   // equal to p1, another object
+    NSMutableParagraphStyle *p3 = [NSMutableParagraphStyle new];
+    p3.headIndent = 24;
+    NSArray *styles = @[p1, p2, p3, NSNull.null];   // NSNull: none
+    NSDictionary *(^attrsWith)(id) = ^NSDictionary *(id ps) {
+        return ps == NSNull.null ? @{NSForegroundColorAttributeName: NSColor.redColor}
+                                 : @{NSParagraphStyleAttributeName: ps,
+                                     NSForegroundColorAttributeName: NSColor.blueColor};
+    };
+    NSMutableString *start = [NSMutableString string];
+    for (int i = 0; i < 12; i++) [start appendString:@"line of text\n"];
+    MCSourceStorage *st = [[MCSourceStorage alloc] initWithString:start attributes:attrsWith(p1)];
+    std::mt19937 rng(20261108);
+    auto pick = [&](NSUInteger n) { return n ? (NSUInteger)(rng() % n) : 0; };
+    NSArray *pieces = @[@"", @"x", @"ab", @"\n", @"word\nnext", @"  "];
+    auto text = [&]() -> NSString * { return pieces[rng() % pieces.count]; };
+    int wrong = 0;
+    *asked = 0;
+    for (int op = 0; op < ops; op++) {
+        NSRange known = NSMakeRange(0, 0);
+        if (st.length)
+            [st attribute:NSParagraphStyleAttributeName atIndex:pick(st.length) effectiveRange:&known];
+        const NSUInteger len = st.length;
+        NSUInteger loc = pick(len + 1);
+        const unsigned where = rng() % 6;
+        if (where == 0) loc = known.location;
+        else if (where == 1) loc = NSMaxRange(known);
+        else if (where == 2 && known.location) loc = known.location - 1;
+        const NSUInteger span = pick(12);
+        NSRange r = NSMakeRange(loc, MIN(span, len - loc));
+        if (rng() % 3 == 0) r.length = 0;
+        id ps = styles[rng() % styles.count];
+        NSUInteger made = r.length;   // characters where r was, after the edit
+        [st beginEditing];
+        switch (rng() % 9) {
+        case 0: case 1: case 2: {
+            NSString *t = text();
+            made = t.length;
+            [st replaceCharactersInRange:r withString:t];
+            break;
+        }
+        case 3: {   // one style, or two
+            NSMutableAttributedString *a =
+                [[NSMutableAttributedString alloc] initWithString:text() attributes:attrsWith(ps)];
+            if (rng() % 2)
+                [a appendAttributedString:[[NSAttributedString alloc]
+                    initWithString:text() attributes:attrsWith(styles[rng() % styles.count])]];
+            made = a.length;
+            [st replaceCharactersInRange:r withAttributedString:a];
+            break;
+        }
+        case 4: [st setAttributes:attrsWith(ps) range:r]; break;
+        case 5:
+            if (ps != NSNull.null) [st addAttribute:NSParagraphStyleAttributeName value:ps range:r];
+            break;
+        case 6: [st addAttributes:attrsWith(ps) range:r]; break;
+        case 7: [st removeAttribute:NSParagraphStyleAttributeName range:r]; break;
+        case 8: [st addAttribute:NSForegroundColorAttributeName value:NSColor.greenColor range:r]; break;
+        }
+        const NSInteger shift = (NSInteger)made - (NSInteger)r.length;
+        const NSInteger a = (NSInteger)known.location, b = (NSInteger)NSMaxRange(known);
+        const NSInteger probes[] = {(NSInteger)loc - 1, (NSInteger)loc, (NSInteger)(loc + made) - 1,
+                                    (NSInteger)(loc + made), a, a + shift, b - 1, b + shift - 1,
+                                    b + shift, (NSInteger)pick(st.length)};
+        const NSUInteger first = pick(10);   // the first probe meets the run the edit left
+        for (int pass = 0; pass < 2; pass++) {
+            for (NSUInteger k = 0; k < 10; k++) {
+                const NSInteger p = probes[(first + k) % 10];
+                if (p < 0 || (NSUInteger)p >= st.length) continue;
+                (*asked)++;
+                if (!StyleAnswerHolds(st, (NSUInteger)p)) wrong++;
+            }
+            if (pass == 0) [st endEditing];   // fixing makes each paragraph one style
+        }
+        if (op % 500 == 499)
+            [st setAttributedString:[[NSAttributedString alloc]
+                initWithString:start attributes:attrsWith(styles[rng() % styles.count])]];
+    }
+    return wrong;
+}
+
 } // namespace
 
 MC_GUI_SUITE(keystroke) {
@@ -115,6 +220,18 @@ MC_GUI_SUITE(keystroke) {
     // against 0.5 ms: forgetTextBlockLayout in EditorController+Highlighting.mm.)
     NSString *dir = [MCGuiScratch() stringByAppendingPathComponent:@"keystroke"];
     NSString *path = [dir stringByAppendingPathComponent:@"big100k.py"];
+    // The paragraph style by name comes from a run the storage keeps
+    // through edits (SourceStorage.h). Each wrong turn of keeping it (a
+    // run not moved for text put in before it, plain text taking the
+    // wrong neighbour's style, a restyle or attributed text of another
+    // style not forgetting it) made 100 to 4,000 wrong answers here.
+    MCGuiStep(@"the storage's paragraph style answer follows every kind of edit", ^{
+        int asked = 0;
+        const int wrong = StyleRunFuzz(3000, &asked);
+        MCGuiNote(@"%d answers checked through 3,000 edits, %d wrong", asked, wrong);
+        GCHECK(wrong == 0);
+        GCHECK(asked > 30000);
+    });
     MCGuiStep(@"a 100,000-line Python file", ^{
         NSMutableString *s = [NSMutableString string];
         for (int i = 0; i < 100000 / 5; i++)
@@ -233,6 +350,44 @@ MC_GUI_SUITE(keystroke) {
         GCHECK(moved && moved.range.location == at + 23 && moved.range.length == 4);
         for (int i = 0; i < 3; i++) [tv.undoManager undo];
         ctv.diagnostics = @[];
+    });
+    // A selection reaching text not laid out leaves TextKit a display
+    // invalidation it asks about again on every keystroke, looking up the
+    // paragraph style at its far end, the end of the text. Through the
+    // store's runs that walked every run from the caret to the end and
+    // back, and each key cost three times what it cost before (1.1 to 1.6
+    // ms against 0.35 to 0.5 here; SourceStorage.h). The lookups are
+    // checked (8.7 to 30 ms of CPU for these 200 before); the typing is
+    // only noted, since TextKit's own work on the pending range still
+    // costs 1.4 to 2.2 times a fresh window's keystroke, too close to a
+    // bound the old cost would break.
+    MCGuiStep(@"after Select All the paragraph style is found without walking the runs", ^{
+        NSTextStorage *ts = tv.textStorage;
+        const double c0 = MCGuiThreadCpuMs();
+        for (int i = 0; i < 100; i++) {
+            [ts attribute:NSParagraphStyleAttributeName atIndex:at effectiveRange:NULL];
+            [ts attribute:NSParagraphStyleAttributeName atIndex:ts.length - 1 effectiveRange:NULL];
+        }
+        const double lookups = MCGuiThreadCpuMs() - c0;
+        MCGuiNote(@"200 paragraph style lookups between the caret and the end: %.2f ms of CPU",
+                  lookups);
+        GCHECK_TIME(lookups, 1, @"200 paragraph style lookups far apart");
+        [tv selectAll:nil];
+        [tv displayIfNeeded];
+        tv.selectedRange = NSMakeRange(at, 0);   // a click
+        [tv displayIfNeeded];
+        std::vector<double> times = TypeChars(tv, [@"" stringByPaddingToLength:200
+                                                                    withString:@"xy zw "
+                                                               startingAtIndex:0]);
+        const double med = Median(times), freshMed = Median(fresh);
+        MCGuiNote(@"200 keystrokes after Select All: median %.2f ms of CPU (fresh: %.2f)", med,
+                  freshMed);
+        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"xy zw "]);
+        for (NSUInteger i = 0; i < times.size(); i++) [tv.undoManager undo];
+        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
+        tv.selectedRange = NSMakeRange(at, 0);
+        [tv scrollRangeToVisible:tv.selectedRange];
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(at, 2000)];
     });
     // Fixing attributes still happens: a character the editor's font lacks
     // gets a font that has it, typed or highlighted again.
@@ -426,6 +581,36 @@ MC_GUI_SUITE(keystroke) {
         GCHECK(topOfPane(&offset) == topBefore);
         GCHECK(fabs(offset - topOffsetBefore) < 1);
     });
+    // 200 keystrokes where the fresh window typed, against its times (the
+    // bound about twice them, measured in this run so it holds on any
+    // core; with the block table the median was five times them), then
+    // undone. MC_GUI_SAMPLE samples it into <file><suffix>.
+    void (^typeAsFresh)(NSString *, NSString *) = ^(NSString *suffix, NSString *where) {
+        tv.selectedRange = NSMakeRange(at, 0);
+        [tv scrollRangeToVisible:tv.selectedRange];
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(at, 2000)];
+        const BOOL sampling = SampleInto(suffix);
+        NSString *typed = [@"" stringByPaddingToLength:sampling ? 2000 : 200 withString:@"xy zw "
+                                       startingAtIndex:0];
+        std::vector<double> times = TypeChars(tv, typed);
+        const double med = Median(times), p95 = P95(times);
+        const double freshMed = Median(fresh), freshP95 = P95(fresh);
+        MCGuiNote(@"%lu keystrokes %@: median %.2f ms of CPU, 95th percentile %.2f ms (fresh: "
+                  @"%.2f and %.2f)", (unsigned long)times.size(), where, med, p95, freshMed, freshP95);
+        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"xy zw "]);
+        if (!sampling) {
+            GCHECK_TIME(med, MAX(1.0, 2.5 * freshMed),
+                        ([NSString stringWithFormat:@"the median keystroke %@", where]));
+            GCHECK_TIME(p95, MAX(3.0, 3 * freshP95),
+                        ([NSString stringWithFormat:@"the 95th percentile %@", where]));
+        }
+        for (NSUInteger i = 0; i < times.size(); i++) [tv.undoManager undo];
+        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
+    };
+    MCGuiStep(@"typing in the used window costs what it cost in a fresh one", ^{
+        GCHECK(catchUp.watching && tv.layoutManager.allowsNonContiguousLayout);
+        typeAsFresh(@".used", @"in the used window");
+    });
     // An edit of many ranges goes back to contiguous layout first: with
     // non-contiguous layout Replace All of 20,000 matches took 4.3 s of CPU
     // against 0.6 (multiedit's case), TextKit looking up the attributes at
@@ -449,35 +634,33 @@ MC_GUI_SUITE(keystroke) {
         const double cpu = MCGuiThreadCpuMs() - c0;
         MCGuiNote(@"Replace All of 20,000 matches in the tab shown again: %.0f ms of CPU", cpu);
         GCHECK(!catchUp.watching && !tv.layoutManager.allowsNonContiguousLayout);
-        GCHECK_TIME(cpu, 4000, @"Replace All of 20,000 matches in a tab shown again far down");
         GCHECK([tv.string rangeOfString:@"None"].location == NSNotFound);
         [tv.undoManager undo];
         GCHECK([tv.string rangeOfString:@"Nada"].location == NSNotFound);
         GCHECK(NSEqualRects([c textRectForCharacter:at], exactAt));   // contiguous: exact
+        // The same Replace All again, now that the tab is contiguous, is the
+        // baseline, measured on this thread in this step: a slow runner
+        // (4.6 s on CI's macOS runner, 1.7 s on a quiet M3) slows both. With
+        // the switch to contiguous layout it costs five to seven times the
+        // baseline (going contiguous lays the text out from the top); kept
+        // non-contiguous it took 15.5 s, about twenty-five times it.
+        const double b0 = MCGuiThreadCpuMs();
+        MCGuiUndoGroup(tv.undoManager, ^{
+            GCHECK([(CodeTextView *)tv replaceRanges:ranges withStrings:strings actionName:@"Replace All"]);
+        });
+        const double base = MCGuiThreadCpuMs() - b0;
+        MCGuiNote(@"the same Replace All in the contiguous tab: %.0f ms of CPU", base);
+        GCHECK_TIME(cpu, MAX(4000.0, 10 * base),
+                    @"Replace All of 20,000 matches in a tab shown again far down");
+        [tv.undoManager undo];
+        GCHECK([tv.string rangeOfString:@"Nada"].location == NSNotFound);
     });
-    MCGuiStep(@"typing in the used window costs what it cost in a fresh one", ^{
-        tv.selectedRange = NSMakeRange(at, 0);
-        [tv scrollRangeToVisible:tv.selectedRange];
-        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(at, 2000)];
-        const BOOL sampling = SampleInto(@".used");
-        NSString *typed = [@"" stringByPaddingToLength:sampling ? 2000 : 200 withString:@"xy zw "
-                                       startingAtIndex:0];
-        std::vector<double> times = TypeChars(tv, typed);
-        const double med = Median(times), p95 = P95(times);
-        const double freshMed = Median(fresh), freshP95 = P95(fresh);
-        MCGuiNote(@"%lu keystrokes in the used window: median %.2f ms of CPU, 95th percentile "
-                  @"%.2f ms (fresh: %.2f and %.2f)", (unsigned long)times.size(), med, p95,
-                  freshMed, freshP95);
-        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"xy zw "]);
-        // About twice the fresh window's at most, measured in this run so
-        // the bound holds on any core; with the block table the median was
-        // five times it.
-        if (!sampling) {
-            GCHECK_TIME(med, MAX(1.0, 2.5 * freshMed), @"the median keystroke in the used window");
-            GCHECK_TIME(p95, MAX(3.0, 3 * freshP95), @"the 95th percentile in the used window");
-        }
-        for (NSUInteger i = 0; i < times.size(); i++) [tv.undoManager undo];
-        GCHECK([[tv.string substringWithRange:NSMakeRange(at, 6)] isEqualToString:@"ab cd "]);
+    // The undo selected every piece it put back, text not laid out
+    // included, which left each later keystroke three times the fresh
+    // window's (SourceStorage.h), 2.3 ms against 0.6 on CI.
+    MCGuiStep(@"typing after Replace All and its undo costs what it cost in a fresh window", ^{
+        GCHECK(!tv.layoutManager.allowsNonContiguousLayout);
+        typeAsFresh(@".replaced", @"after Replace All and its undo");
     });
     MCGuiStep(@"the suite's window closes unasked, and its file goes", ^{
         for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy]) [c closeTab:t prompt:NO];

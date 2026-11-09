@@ -568,6 +568,11 @@ const std::vector<Command>& all() {
          "shift+cmd+t cmd+j ctrl+`", A, "toggleTerminal:", 0, Global, nullptr},
         {"minicode.toggleBrowser", "Toggle Browser", "View", "shift+cmd+b", A, "toggleBrowser:",
          0, 0, nullptr},
+        // Safari's key while the browser's page or its toolbar has the
+        // keyboard: a page key, which only the pane answers, so the key goes
+        // on to Go to Symbol in Workspace in a PDF too.
+        {"minicode.browser.newTab", "New Browser Tab", "View", "cmd+t", P, "newBrowserTab:", 0,
+         0, "the browser pane (View > New Browser Tab, openBrowserTab:, opens one from anywhere)"},
         {"minicode.togglePlayback", "Play/Pause", "View", "shift+cmd+space", A,
          "togglePlayback:", 0, 0, nullptr},
         {"editor.action.showContextMenu", "Show Context Menu", "View",
@@ -636,7 +641,8 @@ const std::vector<Command>& all() {
          0, nullptr},
         {"workbench.action.gotoSymbol", "Go to Symbol in File…", "Navigate", "shift+cmd+o", A,
          "goToSymbolInFile:", 0, 0, nullptr},
-        {"workbench.action.showAllSymbols", "Go to Symbol in Workspace…", "Navigate", "cmd+t", A,
+        // In the browser's page Cmd+T is New Browser Tab, as in Safari.
+        {"workbench.action.showAllSymbols", "Go to Symbol in Workspace…", "Navigate", "cmd+t", NP,
          "goToSymbolInWorkspace:", 0, 0, nullptr},
         {"workbench.action.navigateBack", "Go Back", "Navigate", "ctrl+-", A, "navigateBack:", 0,
          0, nullptr},
