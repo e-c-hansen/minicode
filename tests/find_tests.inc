@@ -102,6 +102,37 @@ static void testTextFind() {
         CHECK(findAll(u"(ab", bad).empty());
         // The same pattern as plain text is literal.
         CHECK(spans(findAll(u"x(ab", q16(u"(ab"))) == (V{"1+3"}));
+    }
+
+    GROUP("find:regex-backtracking-anchors");
+    {
+        // Patterns left to std::regex (a backreference): a search from
+        // inside the line sees the character before it (\b) and is not at
+        // the line's start (^), with public flags only (libc++ let ^ match
+        // where any search began unless given its private __no_update_pos).
+        auto rx = [](const std::u16string &p) { return q16(p, false, false, true); };
+        CHECK(!rx(u"^(a)\\1").linear());
+        CHECK(spans(findAll(u"aaaa", rx(u"^(a)\\1"))) == (V{"0+2"}));
+        CHECK(spans(findAll(u"aaaa\naa", rx(u"^(a)\\1"))) == (V{"0+2", "5+2"}));
+        CHECK(spans(findAll(u"aa-aa", rx(u"(?:^|-)(a)\\1"))) == (V{"0+2", "2+3"}));
+        CHECK(spans(findAll(u"baa aa", rx(u"\\b(a)\\1"))) == (V{"4+2"}));
+        CHECK(spans(findAll(u"aab", rx(u"\\B(a)\\1"))) == (V{}));
+        CHECK(spans(findAll(u"baa", rx(u"\\B(a)\\1"))) == (V{"1+2"}));
+        // A ^ that is not an anchor stays what it was: escaped, in a class,
+        // negating a class, inside [:alpha:]'s class.
+        CHECK(spans(findAll(u"z^aa", rx(u"\\^(a)\\1"))) == (V{"1+3"}));
+        CHECK(spans(findAll(u"z^aa", rx(u"[\\^x](a)\\1"))) == (V{"1+3"}));
+        CHECK(spans(findAll(u"z^aa", rx(u"[x^](a)\\1"))) == (V{"1+3"}));
+        CHECK(spans(findAll(u"xyaa", rx(u"[^x](a)\\1"))) == (V{"1+3"}));
+        CHECK(spans(findAll(u"x1aa", rx(u"[[:digit:]^](a)\\1"))) == (V{"1+3"}));
+        CHECK(spans(findAll(u"x^aa", rx(u"[[:digit:]^](a)\\1"))) == (V{"1+3"}));
+        // Empty matches at the start only, then after each match.
+        CHECK(spans(findAll(u"bb", rx(u"^(?=(b))"))) == (V{"0+0"}));
+        // On a line searched a start at a time (over 2,000 characters).
+        const std::u16string dashes(2500, u'-');
+        CHECK(spans(findAll(dashes, rx(u"^(-)\\1"))) == (V{"0+2"}));
+        CHECK(spans(findAll(dashes + u"aa", rx(u"\\b(a)\\1"))) == (V{"2500+2"}));
+        CHECK(spans(findAll(u"a" + dashes, rx(u"\\b(-)\\1"))) == (V{"1+2"}));
         CHECK(spans(findAll(u"a.c abc", q16(u"a.c"))) == (V{"0+3"}));
     }
 

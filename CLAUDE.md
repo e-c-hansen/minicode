@@ -1093,8 +1093,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   finds no `\b` at a line's end once a search starts past 0, and libc++
   throws error_complexity (a silent "no match") on short exponential
   patterns rather than hanging, while libstdc++ hangs; std::regex's own
-  traps: libc++ lets `^` match mid-line with `match_prev_avail` (hence
-  `__no_update_pos`); libstdc++ tests bracket ranges through the C locale's
+  traps: libc++ lets `^` match where any search starts, `match_not_bol`
+  being dropped beside `match_prev_avail` (only its private
+  `__no_update_pos` stops it), so a search from inside a line runs the
+  pattern with each anchor `^` made `(?:\b\B)` (`Fallback::inside`,
+  `find:regex-backtracking-anchors`); libstdc++ tests bracket ranges through the C locale's
   ctype, so `[а-я]` ignoring case missed Ж on CI's Linux job, and a
   case-insensitive regex runs over the line folded to lower case, one code
   point for one (the linear engine folds the same way). Preserve case is VS
