@@ -221,6 +221,7 @@ goes here first, with tests; the GUI only displays it.
 - Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownEditPanel`,
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
   `CompareView`.
+- `EditorMirror` (the split editor's group without the keyboard).
 - `Browser` (with `MCKeyboardWindow`), `TabStrip`, `Search` (Find in Folder and
   TODOs window), `GitPanel`, `GitGutter` (change bars), `TreeDetails`,
   `FormatRunner`, `BackupStore`,
@@ -243,7 +244,7 @@ goes here first, with tests; the GUI only displays it.
 `validateMenuItem:`, undo and redo, and the forwarding accessors of the active
 tab. The rest is in `EditorController+<Concern>.mm`: Layout, StatusBar, Panels
 (terminal dock, browser, keyboard between panes), Search, Tree, TreeDetails,
-Tabs (tabs, closed tabs, saving), Persistence (sessions, backups, auto-save,
+Tabs (tabs, closed tabs, saving), Groups (the split editor), Persistence (sessions, backups, auto-save,
 files changed outside), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Navigation, LanguageServers, Agents (inline agent, Request a
@@ -299,6 +300,8 @@ container (PanelHost, laid out by hand in layoutContainer)
 │   └── rightArea (PanelHost, relayoutRightArea)
 │       ├── changeBar (MCChangeBar)                Request a Change, top, over all
 │       ├── tabStrip (MCTabStrip)                  top of the editor's side
+│       ├── split: the other group's strip, MCEditorMirror and a vertical
+│       │   DragBar beside the focused group, which holds all below
 │       ├── installBar (MCInstallBar)              under the strip
 │       ├── emptyLabel                             no file open
 │       ├── editorScroll → CodeTextView            over MCSourceStorage, with
@@ -609,6 +612,34 @@ container (PanelHost, laid out by hand in layoutContainer)
 - AppDelegate's `current` maps a window an editor made (`ownsWindow:`, Find in
   Folder and TODOs) to that editor; items that edit the file on show are
   disabled while another window is key, so keys reach that window's field.
+- **Two editor groups** (2026-11-08, `EditorController+Groups.mm`,
+  `EditorMirror.{h,mm}`, `EditorTabs::restoreGroups`, `make guitest
+  SUITES=split_editor`): VS Code's Split Editor, two groups at most. The
+  one editor (CodeTextView and everything on it) is always in the focused
+  group; the other group's tab shows in an `MCEditorMirror`: a plain
+  read-only NSTextView with a layout manager of its own over the editor's
+  MCSourceStorage when it is the same tab shown as editable text (TextKit 1:
+  several layout managers, one storage), else a copy of that tab's
+  attributed text, else a picture (`cacheDisplayInRect:`) of what the
+  editor showed. Focusing a group (a press in the mirror or its strip,
+  Cmd+1, Cmd+2) copies what the editor shows into the mirror, swaps the
+  group lists and strips (`self.tabStrip` is always the focused group's)
+  and activates the other tab at the mirror's place; a press goes on to
+  the same character. `_tabs` stays every document of either group
+  (backups, sessions, auto-save, disk checks, the servers' open files
+  untouched); the strip, tab keys and closing use `groupTabs`, and inserts
+  and removals go through `groupInsertTab:`/`groupRemoveTab:`. One MCTab per
+  file even in both groups (one text, undo, backup). **Traps**: never move
+  the mirror's layout manager with `replaceTextStorage:`, which carries
+  every layout manager of the storage, the editor's too
+  (`removeLayoutManager:` then `addLayoutManager:`); the mirror must let go
+  of the editor's storage before its whole text is replaced
+  (`MCSourceStorage willReplaceAll`, and `editorWillShowTab:` for an empty
+  text), or it lays out the next tab's text or a Markdown page; the
+  editor's layout manager stays the storage's first (`usesCodeWords`).
+  Left out: squiggles, inlay labels, folds and carets in the mirror; a find
+  bar per group; dragging tabs between strips; a third group or a split
+  down. Cmd+2 was Focus Terminal (a Command-only key, so it yields).
 - GTK and Android have no tabs.
 
 ## Backups, hot exit and auto-save (Mac)
@@ -3171,7 +3202,7 @@ session has a display. Check first.
   editing: keystroke, multiedit, editor_keys, auto_close, bracket_pairs,
   folding, foldperf, multicaretclick, multicaret_rows, find_bar,
   large_file, save, paste, zoomfit;
-  files and windows: tree, tree_hidden, preview_tabs, search,
+  files and windows: tree, tree_hidden, preview_tabs, split_editor, search,
   replace_in_folder, backups, palette, symbols, keymap, config_writes,
   daily_work, structure, utf16;
   language servers and formatting: language, lsp_fixes, lsp_sync,

@@ -341,8 +341,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"workbench.action.navigateBack"], [self hk:@"workbench.action.navigateForward"]] label:@"Back, forward"
                     key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:[self hk:@"workbench.action.focusSideBar"] label:@"Focus tree"
-                    key2:[self hk:@"workbench.action.focusFirstEditorGroup"] label2:@"Focus editor" state:nil];
-    [self appendHintsRow:s key:[self hk:@"workbench.action.terminal.focus"] label:@"Focus terminal"
+                    key2:[self hk:@"workbench.action.focusFirstEditorGroup"] label2:@"Focus editor (left group)" state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.focusSecondEditorGroup"] label:@"Focus right group"
                     key2:[self hk:@"minicode.focusBrowser"] label2:@"Focus browser" state:nil];
     [self appendHintsRow:s key:[self hk:@"minicode.runFile"] label:@"Run the file in the terminal"
                     key2:[self hk:@"minicode.requestChange"] label2:@"Request a change to minicode" state:nil];
@@ -362,6 +362,8 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
                     key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:[self hk:@"workbench.action.reopenClosedEditor"] label:@"Reopen closed tab"
                     key2:nil label2:nil state:nil];
+    [self appendHintsRow:s key:[self hk:@"workbench.action.splitEditor"] label:@"Split editor"
+                    key2:[self hk:@"workbench.action.moveEditorToNextGroup"] label2:@"Tab to right group" state:nil];
     [self appendHintsRow:s key:[self hk:@"workbench.action.closeWindow"] label:@"Close window"
                     key2:[self hk:@"workbench.action.quit"] label2:@"Quit" state:nil];
 

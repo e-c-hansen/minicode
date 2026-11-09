@@ -45,6 +45,9 @@ typedef NS_ENUM(NSInteger, MCLineNumbers) {
 @property(nonatomic, readonly) NSUInteger lineCount;
 // Whether it is showing now.
 @property(nonatomic, readonly) BOOL shown;
+// The width of its lanes beside the digits (dots, change bars, folds), for
+// the split editor's other group (EditorMirror.h), which matches it.
+@property(nonatomic, readonly) CGFloat laneWidth;
 
 // The change bars (QuickDiff.h, the editor's git gutter): a lane of their
 // own between the dots and the numbers while changeLane is on, a 3-point

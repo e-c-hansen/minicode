@@ -93,6 +93,8 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         if (browser) entry[@"browser"] = browser;
         if (besides.count) entry[@"sidePreview"] = besides;
         if (preview) entry[@"preview"] = preview;
+        // Two editor groups: each one's files (`files` stays all of them).
+        if (NSDictionary *groups = [self editorGroupsSessionState]) entry[@"groups"] = groups;
         all[key] = entry;
         while (all.count > kMaxTabSessions) {
             NSString *oldest = nil;
@@ -212,6 +214,7 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         return;
     }
     [self activateTab:_tabs[(NSUInteger)active]];
+    if ([s isKindOfClass:NSDictionary.class]) [self restoreEditorGroups:s[@"groups"]];
 }
 
 // ------------------------------------------------- backups and hot exit

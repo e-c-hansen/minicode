@@ -7,6 +7,7 @@
 #import "EditorController+EditorViewIvars.h"
 #import "EditorController+FormatIvars.h"
 #import "EditorController+GitIvars.h"
+#import "EditorController+GroupsIvars.h"
 #import "EditorController+HighlightingIvars.h"
 #import "EditorController+LanguageServersIvars.h"
 #import "EditorController+LargeFileIvars.h"
@@ -141,6 +142,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if ([self validateActiveTabAction:item.action enabled:&enabled]) return enabled;
     if ([self validateZoomFitItem:item enabled:&enabled]) return enabled;
     if ([self validateGitItem:item enabled:&enabled]) return enabled;
+    if ([self validateGroupItem:item enabled:&enabled]) return enabled;
     if (item.action == @selector(sortTreeBy:)) {
         item.state = item.tag == (NSInteger)_treeSort.key ? NSControlStateValueOn
                                                           : NSControlStateValueOff;
@@ -172,9 +174,9 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         return YES;
     }
     if (item.action == @selector(selectTabNumber:))
-        return EditorTabs::indexForNumber((int)item.tag, (int)_tabs.count) >= 0;
+        return EditorTabs::indexForNumber((int)item.tag, (int)[self groupTabs].count) >= 0;
     if (item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:))
-        return _tabs.count > 0;
+        return [self groupTabs].count > 0;
     if (item.action == @selector(goToBracket:)) return [self bracketMatchingApplies];
     if (item.action == @selector(renameTerminal:) || item.action == @selector(moveTerminalLeft:) ||
         item.action == @selector(moveTerminalRight:))

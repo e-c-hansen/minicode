@@ -554,7 +554,8 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 // A new agent tab goes where the old preview tab was, else beside the
 // active one; shown at once unless the user is typing (`beside`).
 - (void)putAgentTab:(MCTab *)tab replacing:(MCTab *)old beside:(BOOL)beside {
-    if (old) [_tabs insertObject:tab atIndex:[_tabs indexOfObject:old]];
+    if (old && [[self groupTabs] containsObject:old])
+        [self groupInsertTab:tab atIndex:[[self groupTabs] indexOfObject:old]];
     else [self insertTab:tab];
     if (!beside) [self activateTab:tab];
     if (old) [self dropAgentPreviewTab:old];
@@ -609,9 +610,11 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 // Closed Tab.
 - (void)dropAgentPreviewTab:(MCTab *)t {
     if (t == _activeTab || ![_tabs containsObject:t]) return;
+    if ([self otherGroupHoldsTab:t]) [self removeTabFromOtherGroup:t];
+    if ([[self groupTabs] containsObject:t]) [self groupRemoveTab:t];
+    if ([_tabs containsObject:t]) return;   // still on show in the other group
     [self discardBackupOf:t];
     [t.latex removeFromSuperview];
-    [_tabs removeObject:t];
     [self.lsp tabsChanged];
     [self reloadTabStrip];
     [self saveSession];

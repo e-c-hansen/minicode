@@ -166,6 +166,21 @@ static void testCommandTable() {
           find("workbench.action.terminal.selectToNextCommand"));
     for (const char* k : {"cmd+up", "cmd+down", "shift+cmd+up", "shift+cmd+down"})
         CHECK(d.commandsFor(K(k)).size() == 2);
+    // The split editor's VS Code keys: Cmd+\ and Ctrl+Cmd+Left and Right
+    // are the editor's, and the terminal's while it has the keyboard (its
+    // split and its panes' sizes). Cmd+1 and Cmd+2 focus the editor groups.
+    CHECK(d.commandFor(K("cmd+\\"), When::Editor) == find("workbench.action.splitEditor"));
+    CHECK(d.commandFor(K("cmd+\\"), When::Terminal) == find("workbench.action.terminal.split"));
+    CHECK(d.commandFor(K("ctrl+cmd+right"), When::Editor) ==
+          find("workbench.action.moveEditorToNextGroup"));
+    CHECK(d.commandFor(K("ctrl+cmd+left"), When::Editor) ==
+          find("workbench.action.moveEditorToPreviousGroup"));
+    CHECK(d.commandFor(K("ctrl+cmd+left"), When::Terminal) ==
+          find("workbench.action.terminal.resizePaneLeft"));
+    CHECK(d.commandFor(K("cmd+1"), When::Any) == find("workbench.action.focusFirstEditorGroup"));
+    CHECK(d.commandFor(K("cmd+2"), When::Terminal) ==
+          find("workbench.action.focusSecondEditorGroup"));
+    CHECK(d.keysOf("workbench.action.terminal.focus").empty());
     CHECK(d.commandFor(K("cmd+k"), When::Terminal) == find("workbench.action.terminal.clear"));
     CHECK(d.commandFor(K("cmd+k"), When::Editor) == nullptr);
     CHECK(d.commandFor(K("shift+cmd+p"), When::Terminal) == find("workbench.action.showCommands"));

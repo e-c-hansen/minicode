@@ -242,6 +242,8 @@ static const NSUInteger kMinDigits = 3;
 // The bars' x, in the lane left of the numbers.
 - (CGFloat)changeBarX { return kDotLane; }
 
+- (CGFloat)laneWidth { return kDotLane + (_changeLane ? kChangeLane : 0) + kFoldLane; }
+
 // A line's rect in the gutter (its first fragment to its last), from the
 // layout manager; NSZeroRect when the line is past the text.
 - (NSRect)rectOfLines:(size_t)line count:(size_t)count {

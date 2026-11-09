@@ -91,9 +91,18 @@
 - (void)runCurrentFile:(id)sender;    // Shift+Cmd+Return run the file in a terminal
 - (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
 - (void)focusTree:(id)sender;         // Cmd+0 move keyboard focus to file tree
-- (void)focusEditor:(id)sender;       // Cmd+1 move keyboard focus to editor
-- (void)focusTerminal:(id)sender;     // Cmd+2 the terminal, opening it if hidden
+- (void)focusEditor:(id)sender;       // move keyboard focus to the editor
+- (void)focusTerminal:(id)sender;     // the terminal, opening it if hidden
 - (void)focusBrowser:(id)sender;      // Cmd+3 the browser's address bar, likewise
+@end
+
+// EditorController+Groups.mm: two editor groups side by side
+@interface EditorController (Groups)
+- (void)splitEditor:(id)sender;              // Cmd+\ in the editor: the tab in a group beside
+- (void)focusFirstEditorGroup:(id)sender;    // Cmd+1 the left group (or the one editor)
+- (void)focusSecondEditorGroup:(id)sender;   // Cmd+2 the right group, made if there is none
+- (void)moveEditorToNextGroup:(id)sender;    // Ctrl+Cmd+Right
+- (void)moveEditorToPreviousGroup:(id)sender;   // Ctrl+Cmd+Left
 @end
 
 // EditorController+Search.mm

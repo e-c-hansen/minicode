@@ -251,6 +251,8 @@ BOOL CoversAscii(NSFont *font) {
 }
 
 - (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)str {
+    if (_willReplaceAll && range.location == 0 && range.length == _store.length && range.length)
+        _willReplaceAll();
     [_store replaceCharactersInRange:range withString:str];
     _charEdits++;
     [self moveGapsForEdit:range newLength:str.length];
@@ -398,6 +400,8 @@ BOOL CoversAscii(NSFont *font) {
 - (NSUInteger)length { return _store.length; }
 
 - (void)replaceCharactersInRange:(NSRange)range withAttributedString:(NSAttributedString *)attr {
+    if (_willReplaceAll && range.location == 0 && range.length == _store.length && range.length)
+        _willReplaceAll();
     [_store replaceCharactersInRange:range withAttributedString:attr];
     _charEdits++;
     [self moveGapsForEdit:range newLength:attr.length];

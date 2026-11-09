@@ -517,6 +517,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)trashTabFile:(id)sender;
 - (NSUndoManager *)undoManagerForTextView:(NSTextView *)view;
 - (void)buildTabStrip;
+// A strip's clicks, closes and menus, for either group's strip.
+- (void)wireTabStrip:(MCTabStrip *)strip;
+- (NSArray<MCTabStripItem *> *)stripItemsForTabs:(NSArray<MCTab *> *)tabs;
 - (void)applyTabSettings;
 - (NSRect)layoutTabStripIn:(NSRect)slot editorShown:(BOOL)shown;
 - (void)reloadTabStrip;
@@ -552,6 +555,36 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)keepTabFromMenu:(id)sender;
 - (MCTab *)previewTab;
 - (BOOL)openFileForLanguageServer:(NSString *)p from:(EditorTabs::OpenFrom)from;
+@end
+
+// EditorController+Groups.mm: two editor groups side by side (Split Editor).
+@interface EditorController (Groups)
+- (BOOL)editorSplit;
+- (NSInteger)focusedGroup;
+// The focused group's tabs in strip order: _tabs itself unless split.
+- (NSMutableArray<MCTab *> *)groupTabs;
+- (BOOL)otherGroupHoldsTab:(MCTab *)t;
+// Into and out of the focused group (and _tabs, which every document of
+// either group is in).
+- (void)groupInsertTab:(MCTab *)t atIndex:(NSUInteger)i;
+- (void)groupRemoveTab:(MCTab *)t;
+- (void)ensureTabInFocusedGroup:(MCTab *)t;
+- (void)removeTabFromOtherGroup:(MCTab *)t;
+- (NSRect)layoutEditorGroupsIn:(NSRect)slot editorShown:(BOOL)shown;
+- (NSView *)groupDivider;
+- (void)applyGroupSettings;
+- (void)colorOtherGroupStrip;
+- (void)reloadParkedStrip;
+- (void)focusGroupOfStrip:(MCTabStrip *)strip;
+- (void)focusEditorGroup:(NSInteger)g;
+- (void)syncEditorMirror;
+- (void)editorWillShowTab:(MCTab *)tab;
+- (void)joinEditorGroups;
+- (void)joinEditorGroupsQuietly;
+- (void)closeEmptyEditorGroup;
+- (BOOL)validateGroupItem:(NSMenuItem *)item enabled:(BOOL *)enabled;
+- (NSDictionary *)editorGroupsSessionState;
+- (void)restoreEditorGroups:(NSDictionary *)state;
 @end
 
 // EditorController+Persistence.mm: the tabs between runs, backups and hot exit, auto-save, files changed, moved or deleted outside.

@@ -93,4 +93,9 @@ BOOL MCIsGapParagraphStyle(NSParagraphStyle *style, NSParagraphStyle **stored);
 // tab stops, SnippetSession.mm). Called inside the edit: arithmetic only,
 // never layout.
 @property(nonatomic, copy) void (^onReplaceCharacters)(NSRange range, NSUInteger length);
+// Called before the whole of a text is replaced (another tab shown, a
+// preview rendered, the text emptied), while it still holds the old text:
+// the split editor's other group, laying out this storage with a layout
+// manager of its own, takes a copy and lets go first (EditorMirror.h).
+@property(nonatomic, copy) void (^willReplaceAll)(void);
 @end

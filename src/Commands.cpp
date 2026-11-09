@@ -546,6 +546,15 @@ const std::vector<Command>& all() {
         // minicode has none of.
         {"minicode.toggleMaximizedPane", "Maximize Pane", "View", "ctrl+cmd+m", A,
          "toggleMaximizedPane:", 0, 0, nullptr},
+        // Two editor groups side by side, with VS Code's Mac keys. Cmd+\ and
+        // Ctrl+Cmd+arrows are the terminal's while it has the keyboard (its
+        // split and its panes' sizes), so these are the editor's elsewhere.
+        {"workbench.action.splitEditor", "Split Editor", "View", "cmd+\\", E, "splitEditor:", 0,
+         0, nullptr},
+        {"workbench.action.moveEditorToNextGroup", "Move Editor into Next Group", "View",
+         "ctrl+cmd+right", E, "moveEditorToNextGroup:", 0, 0, nullptr},
+        {"workbench.action.moveEditorToPreviousGroup", "Move Editor into Previous Group", "View",
+         "ctrl+cmd+left", E, "moveEditorToPreviousGroup:", 0, 0, nullptr},
         {"minicode.toggleHiddenFiles", "Show Hidden Files", "View", "shift+cmd+.", A,
          "toggleHiddenFiles:", 0, 0, nullptr},
         {"minicode.tree.toggleSizes", "Show Sizes", "View", "shift+cmd+i", A, "toggleTreeColumn:",
@@ -567,7 +576,7 @@ const std::vector<Command>& all() {
         // ---- Terminal
         {"workbench.action.terminal.new", "New Terminal", "Terminal", "ctrl+shift+`", A,
          "newTerminal:", 0, Global, nullptr},
-        {"workbench.action.terminal.split", "Split Terminal", "Terminal", "cmd+\\", A,
+        {"workbench.action.terminal.split", "Split Terminal", "Terminal", "cmd+\\", T,
          "splitTerminal:", 0, 0, nullptr},
         // VS Code's terminal groups take one direction from the panel's
         // place; here a column stacks. No key, as VS Code has none.
@@ -638,9 +647,15 @@ const std::vector<Command>& all() {
         // In a web page or a PDF Cmd+0 is Actual Size, as in Safari.
         {"workbench.action.focusSideBar", "Focus File Tree", "Navigate", "cmd+0", NP, "focusTree:",
          0, 0, nullptr},
-        {"workbench.action.focusFirstEditorGroup", "Focus Editor", "Navigate", "cmd+1", A,
-         "focusEditor:", 0, 0, nullptr},
-        {"workbench.action.terminal.focus", "Focus Terminal", "Navigate", "cmd+2", A,
+        // VS Code's Cmd+1 and Cmd+2 focus the first and second editor group,
+        // as minicode's Cmd+1 always focused its one editor; Cmd+2 was Focus
+        // Terminal, a Command-only key, which yields to VS Code's (keys.conf
+        // can give it back: cmd+2 = workbench.action.terminal.focus).
+        {"workbench.action.focusFirstEditorGroup", "Focus First Editor Group", "Navigate",
+         "cmd+1", A, "focusFirstEditorGroup:", 0, 0, nullptr},
+        {"workbench.action.focusSecondEditorGroup", "Focus Second Editor Group", "Navigate",
+         "cmd+2", A, "focusSecondEditorGroup:", 0, 0, nullptr},
+        {"workbench.action.terminal.focus", "Focus Terminal", "Navigate", "", A,
          "focusTerminal:", 0, 0, nullptr},
         {"minicode.focusBrowser", "Focus Browser", "Navigate", "cmd+3", A, "focusBrowser:", 0, 0,
          nullptr},

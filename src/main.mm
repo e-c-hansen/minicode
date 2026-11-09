@@ -670,6 +670,13 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)openReplaceInFolder:(id)sender { [[self current] openReplaceInFolder:sender]; }
 - (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
 - (void)focusEditor:(id)sender     { [[self current] focusEditor:sender]; }
+- (void)focusFirstEditorGroup:(id)sender  { [[self current] focusFirstEditorGroup:sender]; }
+- (void)focusSecondEditorGroup:(id)sender { [[self current] focusSecondEditorGroup:sender]; }
+- (void)splitEditor:(id)sender     { [[self current] splitEditor:sender]; }
+- (void)moveEditorToNextGroup:(id)sender { [[self current] moveEditorToNextGroup:sender]; }
+- (void)moveEditorToPreviousGroup:(id)sender {
+    [[self current] moveEditorToPreviousGroup:sender];
+}
 - (void)focusTerminal:(id)sender   { [[self current] focusTerminal:sender]; }
 - (void)focusBrowser:(id)sender    { [[self current] focusBrowser:sender]; }
 - (void)selectNextTab:(id)sender     { [[self current] selectNextTab:sender]; }
@@ -1394,6 +1401,23 @@ static void BuildMenu(void) {
     maximize.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
     [viewMenu addItem:maximize];
 
+    // Two editor groups side by side (EditorController+Groups.mm); the keys
+    // come from the registry (Cmd+\, Ctrl+Cmd+Right and Left).
+    [viewMenu addItemWithTitle:@"Split Editor" action:@selector(splitEditor:) keyEquivalent:@"\\"];
+    {
+        const unichar right = NSRightArrowFunctionKey, left = NSLeftArrowFunctionKey;
+        NSMenuItem *next = [viewMenu addItemWithTitle:@"Move Editor into Next Group"
+                                               action:@selector(moveEditorToNextGroup:)
+                                        keyEquivalent:[NSString stringWithCharacters:&right
+                                                                              length:1]];
+        NSMenuItem *previous = [viewMenu addItemWithTitle:@"Move Editor into Previous Group"
+                                                   action:@selector(moveEditorToPreviousGroup:)
+                                            keyEquivalent:[NSString stringWithCharacters:&left
+                                                                                  length:1]];
+        next.keyEquivalentModifierMask = previous.keyEquivalentModifierMask =
+            NSEventModifierFlagControl | NSEventModifierFlagCommand;
+    }
+
     NSMenuItem *hidden =
         [[NSMenuItem alloc] initWithTitle:@"Show Hidden Files"
                                    action:@selector(toggleHiddenFiles:)
@@ -1498,9 +1522,11 @@ static void BuildMenu(void) {
     newTerm.keyEquivalentModifierMask =
         NSEventModifierFlagControl | NSEventModifierFlagShift;
     [termMenu addItem:newTerm];
+    // Cmd+\ is the terminal's while it has the keyboard (the key monitor
+    // runs it there), Split Editor's elsewhere.
     [termMenu addItemWithTitle:@"Split Terminal"
                         action:@selector(splitTerminal:)
-                 keyEquivalent:@"\\"];
+                 keyEquivalent:@""];
     // A terminal below the active one, in its column (no key, as VS Code).
     [termMenu addItemWithTitle:@"Split Terminal Down"
                         action:@selector(splitTerminalDown:)
@@ -1567,7 +1593,9 @@ static void BuildMenu(void) {
                  keyEquivalent:@""];
     // VS Code's Ctrl+Cmd+arrows, answered by the terminal panel with the
     // keyboard in one of its terminals (MCTerminalPanel resizeTerminalPane:),
-    // so elsewhere they are off. The tag is the direction.
+    // so elsewhere they are off. The tag is the direction. Left and Right
+    // are the editor's Move Editor into a Group elsewhere, so they stay off
+    // these items and the key monitor runs them in a terminal.
     {
         NSString *const titles[] = {@"Resize Terminal Pane Left", @"Resize Terminal Pane Right",
                                     @"Resize Terminal Pane Up", @"Resize Terminal Pane Down"};
@@ -1581,6 +1609,7 @@ static void BuildMenu(void) {
                                                                           length:1]];
             resize.keyEquivalentModifierMask =
                 NSEventModifierFlagControl | NSEventModifierFlagCommand;
+            if (i < 2) resize.keyEquivalent = @"";
             resize.tag = i + 1;
             [termMenu addItem:resize];
         }
@@ -1647,12 +1676,15 @@ static void BuildMenu(void) {
     [navMenu addItemWithTitle:@"Focus File Tree"
                        action:@selector(focusTree:)
                 keyEquivalent:@"0"];
-    [navMenu addItemWithTitle:@"Focus Editor"
-                       action:@selector(focusEditor:)
+    [navMenu addItemWithTitle:@"Focus First Editor Group"
+                       action:@selector(focusFirstEditorGroup:)
                 keyEquivalent:@"1"];
+    [navMenu addItemWithTitle:@"Focus Second Editor Group"
+                       action:@selector(focusSecondEditorGroup:)
+                keyEquivalent:@"2"];
     [navMenu addItemWithTitle:@"Focus Terminal"
                        action:@selector(focusTerminal:)
-                keyEquivalent:@"2"];
+                keyEquivalent:@""];
     [navMenu addItemWithTitle:@"Focus Browser"
                        action:@selector(focusBrowser:)
                 keyEquivalent:@"3"];

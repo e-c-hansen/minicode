@@ -126,6 +126,7 @@
     const BOOL changed = showing && ![_sourceAttributes[NSFontAttributeName] isEqual:font];
     if (!changed) {
         [self setEditorFont:font];
+        [self applyGroupSettings];   // the split editor's other group too
         // A rendered Markdown page follows the zoom too, keeping its place.
         if (self.isMarkdown && self.previewMode && !self.textView.editable)
             [self renderMarkdownKeepingPlace];
@@ -147,6 +148,7 @@
     [self setEditorFont:font];
     [self applyHighlighting];   // every run in the new font
     if (n > 0) [self scrollEditorToCharacter:top offset:offset * scale];
+    [self applyGroupSettings];   // the split editor's other group too
 }
 
 // The stretches of [lo, hi) that are strings or comments, from the

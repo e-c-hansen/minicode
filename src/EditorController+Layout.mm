@@ -353,6 +353,7 @@
         @{NSBackgroundColorAttributeName: [NSColor selectedTextBackgroundColor]};
     for (MCTab *t in _tabs) [t.latex applySettings];
     [self applyTabSettings];
+    [self applyGroupSettings];
     self.imageView.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
     self.pdfView.backgroundColor = [cfg background:Surface::Editor];
     self.playerView.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
@@ -513,6 +514,9 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
         browserRect.origin.x = W - bw;
         browserRect.size.width = bw;
     }
+    // Split, the editor's side holds two groups: the other one is laid out
+    // here, and everything below goes in the focused one's part.
+    editorRect = [self layoutEditorGroupsIn:editorRect editorShown:showEditor];
     // The tab strip takes the top of the editor's side; the browser keeps
     // its whole height.
     editorRect = [self layoutTabStripIn:editorRect editorShown:showEditor];
@@ -605,6 +609,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     // order: moving a bar in the middle of its own drag is asking for trouble.
     NSMutableArray<NSView *> *bars = [NSMutableArray array];
     if (NSView *side = [self sidePreviewDivider]) [bars addObject:side];
+    if (NSView *groups = [self groupDivider]) [bars addObject:groups];
     if (self.browserDivider) [bars addObject:self.browserDivider];
     if (self.termDivider) [bars addObject:self.termDivider];
     // The find bar floats over the editor, and the inline agent's bar over
