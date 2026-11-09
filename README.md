@@ -98,7 +98,7 @@ A new terminal starts with the folder's Python virtual environment active, as VS
 
 ![Writing a short list in vim inside the terminal panel, then paging through git log](docs/demos/vim.gif)
 
-Paths and URLs in the output are links. Command click src/main.cpp:42:7 from a compiler, or a file Claude Code mentions, and it opens at that line; a URL opens in the browser panel, which Shift Command B toggles, and the keyboard stays in the terminal. An address on 0.0.0.0 or [::], which servers listening everywhere print (Python's http.server among them), opens as localhost. On the Mac, links whose text is not their address, which Claude Code, `ls --hyperlink`, and gcc print (OSC 8 hyperlinks), open the same way, and while Command is held the pointer shows the address. Programs that open a page themselves, such as Claude Code when you click a link in it, Python's webbrowser module, and `vite --open`, find minicode in the BROWSER variable every minicode terminal on the Mac has: a local page (localhost, 127.0.0.1, ::1, a file) opens in the browser panel of that terminal's window, and any other page, a sign-in page for instance, in your default browser, as it does when minicode is not running. A BROWSER set in your .zshrc takes its place. Tools that call the `open` command, or the npm open package, without looking at BROWSER still use the default browser. On the Mac the browser sits to the right of the editor rather than in its place, with a bar between them you can drag, and the terminal stays across the bottom under both. Any of the three can be hidden on its own (Shift Command E for the editor), and the others take its space. Command 1, 2 and 3 move the keyboard to the editor, the terminal and the browser.
+Paths and URLs in the output are links. Command click src/main.cpp:42:7 from a compiler, or a file Claude Code mentions, and it opens at that line; a URL opens in the browser panel, which Shift Command B toggles, and the keyboard stays in the terminal. An address on 0.0.0.0 or [::], which servers listening everywhere print (Python's http.server among them), opens as localhost. On the Mac, links whose text is not their address, which Claude Code, `ls --hyperlink`, and gcc print (OSC 8 hyperlinks), open the same way, and while Command is held the pointer shows the address. Programs that open a page themselves, such as Claude Code when you click a link in it, Python's webbrowser module, and `vite --open`, find minicode in the BROWSER variable every minicode terminal on the Mac has: a local page (localhost, 127.0.0.1, ::1, a file) opens in the browser panel of that terminal's window, and any other page, a sign-in page for instance, in your default browser, as it does when minicode is not running. A BROWSER set in your .zshrc takes its place. Tools that call the `open` command, or the npm open package, without looking at BROWSER still use the default browser. On the Mac the browser sits to the right of the editor rather than in its place, with a bar between them you can drag, and the terminal stays across the bottom under both. It has tabs: while it has the keyboard, Command T opens one (View > New Browser Tab does from anywhere), Command W closes the one on show and the browser with the last, and Control Tab moves between them; tabs drag along their row, and Command clicking a link opens it in a tab behind. Only the tab on show and the one you used before it keep their page loaded, and the others load again when you come back to them, so a dozen tabs cost about what two do. Any of the three can be hidden on its own (Shift Command E for the editor), and the others take its space. Command 1, 2 and 3 move the keyboard to the editor, the terminal and the browser.
 
 Side by side, everything still fits. Long lines in the editor wrap at the pane's edge, so there is no scrolling sideways; Option Z turns wrapping off and on, and editor.word-wrap = off keeps it off. In the browser, a PDF or the LaTeX preview, Command equals, Command minus and Command 0 zoom the page as Safari does, while it has the keyboard or right after you scroll or click in it, the terminals' zoom in a terminal, and the editor's zoom everywhere else. The browser keeps each site's zoom, shows the new percentage in its toolbar for a moment, and View > Page Zoom > Zoom to Fit Width shrinks a page that is too wide until all of it shows; Zoom to Fit Page shows a whole PDF page at once. A video's full screen button fills the screen. When one pane needs all the room, Control Command M gives the editor, the browser or the terminal, whichever has the keyboard, the whole right side, and pressing it again puts the others back. Command B hides the sidebar and shows it again.
 
@@ -128,7 +128,7 @@ Command I calls up the inline agent, as it does for VS Code's inline chat, where
 
 The answers in the bar come from Claude Code's print mode, allowed to read the project but not to change anything; the edit is minicode's to make. agent.command in the settings is the command it runs, claude by default, with flags such as --model if you want them.
 
-Restart minicode, in the minicode menu or the ↻ at the right end of the status bar, does the same restart on demand, as VS Code's Reload Window does: the same bundle opens again with every window's folder, tabs, unsaved changes and browser page, and a conversation with Claude from Request a Change goes on where it was. The browser panel comes back on the page it was showing, with its back and forward history and its scroll position, after a restart and after an ordinary quit too.
+Restart minicode, in the minicode menu or the ↻ at the right end of the status bar, does the same restart on demand, as VS Code's Reload Window does: the same bundle opens again with every window's folder, tabs, unsaved changes and browser page, and a conversation with Claude from Request a Change goes on where it was. The browser panel comes back with its tabs, each on the page it was showing with its back and forward history and its scroll position, after a restart and after an ordinary quit too.
 
 Shift Command H lists the shortcuts that apply right now.
 
@@ -421,7 +421,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Close every tab but the one on show | Option Command T |  |  |
 | Close the active terminal | Control Shift W |  |  |
 | Close the application | Command Q | Ctrl Q |  |
-| Close the tab, the terminal the keyboard is in, or the browser panel when it has the keyboard | Command W |  |  |
+| Close the tab, the terminal the keyboard is in, or the browser's tab when it has the keyboard (the browser panel with its last tab) | Command W |  |  |
 | Close the window | Shift Command W | Ctrl W |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N, or Ctrl N |
@@ -450,7 +450,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Format the file, or the selected lines where the formatter can | Shift Option F |  |  |
 | Go back to where you were before a jump (a definition, a symbol, a line, a problem, another tab), or forward again | Control minus, Control Shift minus |  |  |
 | Go to a line of the open file, by its number (42:7 for a column too) | Control G |  |  |
-| Go to a symbol anywhere in the folder, from the language servers running in the window | Command T |  |  |
+| Go to a symbol anywhere in the folder, from the language servers running in the window (outside the browser, where it opens a tab) | Command T |  |  |
 | Go to a symbol of the open file (its functions, classes and headings, or @: grouped by kind), from its language server or minicode's own outline | Shift Command O |  |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
 | Go to tab 1 to 8, or the last tab | Control 1 to 9, or Shift Command 1 to 9 (macOS keeps Shift Command 3, 4 and 5 for screenshots) |  |  |
@@ -478,8 +478,9 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Move to the start or end of the line at the terminal's prompt, or delete back to its start | Command Left, Command Right, Command Delete |  |  |
 | New file | Command N | Ctrl Alt N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Shift N |  |
+| New tab in the browser, while it has the keyboard (View > New Browser Tab anywhere) | Command T, or the + at the end of its tabs |  |  |
 | New window | Option Command N | Ctrl N |  |
-| Next tab, previous tab | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [, or Option Command Right, Option Command Left |  |  |
+| Next tab, previous tab (the browser's, while it has the keyboard and more than one tab) | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [, or Option Command Right, Option Command Left |  |  |
 | Open a file of the folder by typing part of its name, recently opened files first | Command P |  |  |
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
 | Open a folder | Command O | Ctrl O | O, or Ctrl O |

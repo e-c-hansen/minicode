@@ -90,6 +90,11 @@
 - (BOOL)closeFocusedTerminal;
 - (void)runCurrentFile:(id)sender;    // Shift+Cmd+Return run the file in a terminal
 - (void)toggleBrowser:(id)sender;     // Shift+Cmd+B embedded browser
+// View > New Browser Tab, from anywhere: the browser shown with a new,
+// empty tab and the keyboard in its address bar. (Cmd+T, a page key, is
+// the pane's own newBrowserTab:, so it acts only while the pane has the
+// keyboard; elsewhere the key is Go to Symbol in Workspace.)
+- (void)openBrowserTab:(id)sender;
 - (void)focusTree:(id)sender;         // Cmd+0 move keyboard focus to file tree
 - (void)focusEditor:(id)sender;       // Cmd+1 move keyboard focus to editor
 - (void)focusTerminal:(id)sender;     // Cmd+2 the terminal, opening it if hidden

@@ -310,7 +310,9 @@ container (PanelHost, laid out by hand in layoutContainer)
 │       ├── JSON outline                           right of the text
 │       ├── MCMarkdownSidePreview                  a Markdown page right of
 │       │   its source (Ctrl+Cmd+V), a vertical DragBar between
-│       ├── browser (BrowserView)                  right of the editor
+│       ├── browser (BrowserView)                  right of the editor: its
+│       │   MCTabStrip of pages, +, the toolbar, the pages (one per live tab,
+│       │   the agent page)
 │       ├── problemsPanel (MCProblemsPanel)        above the terminal
 │       ├── terminalPanel (MCTerminalPanel)        bottom, full width: strip,
 │       │   +, ◫, TerminalViews side by side, MCTerminalFindBar
@@ -555,7 +557,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   as clean; `attributesOfItemAtPath:` did not follow links.
 - **Keys**: Ctrl+Tab / Ctrl+Shift+Tab, Shift+Cmd+] / [, Shift+Cmd+1..9 and
   Ctrl+1..9 (macOS takes Shift+Cmd+3, 4, 5). Cmd+W (`closeFocused:`) closes the
-  tab, or the terminal, browser or Problems list with the keyboard; a repeat
+  tab, or the terminal, the browser's tab (the browser with its last) or
+  Problems list with the keyboard; a repeat
   (`isARepeat`) is ignored, so a held Cmd+W closes one thing. Shift+Cmd+W
   closes the window. Cmd+N New File (with no window, opens one), Option+Cmd+N
   New Window. Reopen Closed Tab (Option+Shift+Cmd+T): the newest of the
@@ -2787,12 +2790,38 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   upgrade`. Restart minicode (minicode menu, the status bar's ↻,
   `restartMinicode:`; no key, Cmd+R is Refresh) uses
   `NSBundle.mainBundle.bundlePath` (beeps when not a .app).
-- **The browser comes back**: the session entry's `browser` key (address plus
+- **The browser comes back**: the session entry's `browser` key (its `page`
+  is `BrowserView savedState`: every tab's address, title and
   `WKWebView.interactionState`, about 2.6 KB with history and scroll, macOS
-  12+, left out past 2 MB; visibility; fraction), restored in
-  `restoreBrowserFromSession` for a new window, never on Open Folder;
-  `applicationWillTerminate` saves every window's session. Cookies persist in
-  the default data store.
+  12+, 2 MB a tab and 4 MB in all by `BrowserTabs::keptRecords`, and
+  `active`; the tab on show again as the old single-page `url`/`state`, which
+  `restoreState:` still takes; visibility; fraction), restored in
+  `restoreBrowserFromSession` for a new window, never on Open Folder, with
+  only the tab on show loading; `applicationWillTerminate` saves every
+  window's session. Cookies persist in the default data store.
+- **Browser tabs** (2026-11-08, round 7 O4, `BrowserTabs.{h,cpp}`,
+  `browsertabs:*`, `make guitest SUITES=browser_tabs`): an `MCTabStrip` above
+  the toolbar; placing, stepping, closing and dragging are `EditorTabs`'.
+  Only the tab on show and the one used before it keep a web view
+  (`BrowserTabs::livePages`, `kLivePages` 2); the rest are suspended to
+  address, title and `interactionState` and load on show, so their WebKit
+  processes end (eight 40 MB pages: about 450 MB of WebKit, 110 MB with
+  two live). Keys reach the pane through the responder chain (it is in the
+  chain of whatever in it has the keyboard): `closeFocused:` (the agent page
+  when it shows, else the tab; the last tab calls `onEmpty`, which hides the
+  pane), `selectNextTab:`/`selectPreviousTab:`/`selectTabNumber:` (with one
+  tab passed on to the window's controller). Cmd+T is
+  `minicode.browser.newTab`, a page key whose selector only the pane
+  answers, so in a PDF, the editor or after a scroll in a page the key goes
+  on to Go to Symbol in Workspace (now `NotPage`); View > New Browser Tab
+  is `openBrowserTab:` from anywhere. A Command- or middle-clicked link
+  opens a suspended tab behind (`decidePolicyForNavigationAction:`); a
+  target=_blank or window.open page comes up beside its opener in the web
+  view WebKit's configuration makes (`WKUIDelegate`). Harness traps: a
+  Command key in a focused web view goes to the page and comes back to the
+  menus a moment later (wait for it); WebKit gives a script's click no
+  modifiers, so the Command-click check hands the delegate an action
+  subclass.
 - `mc-dev` (the user's `~/Code/dotfiles/shell/aliases.sh`) runs the repo's
   build; launching a build registers it with Launch Services, so Finder may
   offer two minicodes (`lsregister -u` it).
@@ -3163,7 +3192,8 @@ session has a display. Check first.
   terminal_exec, terminal_keys, terminal_zoom, run_file;
   git: git_panel, git_actions, git_hunks, git_verbs, git_sync, git_gutter;
   agents and control: agents, agent_panel, agent_places, agentcommands,
-  agent_autosave, attention, control, browserpages, idelink, processes;
+  agent_autosave, attention, control, browserpages, browser_tabs, idelink,
+  processes;
   run only when named: _backups_writer, _backups_restore.
   A suite's file is usually its name in CamelCase; the exceptions are
   mermaid (IdeLinkSuite.mm), foldperf (FoldingSuite.mm), the format_*
