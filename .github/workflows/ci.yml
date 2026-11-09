@@ -71,20 +71,39 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install GTK4, VTE, WebKitGTK and poppler
+      # The last line is the GUI checks' (linux/tests/gui): their display,
+      # their XTest input, and dbus-run-session for their private session bus
+      # (in dbus-daemon on Ubuntu, which --no-install-recommends would not
+      # bring otherwise).
+      - name: Install GTK4, VTE, WebKitGTK, poppler, and the GUI checks' tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build build-essential pkg-config \
             libgtk-4-dev libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev \
-            libpoppler-glib-dev
+            libpoppler-glib-dev \
+            xvfb libxtst-dev dbus-daemon
 
       # apt will happily install a runtime library and leave the -dev package
       # out, and Meson would then just report the panel as disabled and build a
       # green but much smaller app. Fail here instead, where the reason is
-      # obvious. See the same warning in BUILD-LINUX.md.
+      # obvious. See the same warning in BUILD-LINUX.md. Without xtst Meson
+      # builds no GUI checks at all.
       - name: Confirm the dev packages actually landed
-        run: pkg-config --modversion gtk4 vte-2.91-gtk4 webkitgtk-6.0 poppler-glib
+        run: |
+          pkg-config --modversion gtk4 vte-2.91-gtk4 webkitgtk-6.0 poppler-glib xtst
+          command -v Xvfb dbus-run-session
+
+      # TEMPORARY, to learn the runner: WebKit runs each page's process in
+      # bubblewrap, which needs an unprivileged user namespace.
+      - name: User namespaces and bubblewrap on the runner
+        run: |
+          uname -r
+          sysctl kernel.apparmor_restrict_unprivileged_userns kernel.unprivileged_userns_clone || true
+          ls /etc/apparmor.d | grep -i -E 'bwrap|unpriv' || true
+          sudo aa-status 2>/dev/null | grep -i -E 'bwrap|unpriv' || true
+          bwrap --version || true
+          bwrap --ro-bind / / --unshare-user --unshare-pid true && echo "bwrap: works" || echo "bwrap: refused"
 
       # The shared core in ../src, the same tests the macOS job runs, built
       # here with g++ (the top-level Makefile picks clang++ only on the Mac).
@@ -111,6 +130,35 @@ jobs:
       - name: Makefile fallback tests
         working-directory: linux
         run: make test
+
+      # The GUI checks (linux/tests/gui/Harness.h): the whole app on an Xvfb
+      # of its own, driven by real X input through XTest, with a scratch home
+      # and a private session bus. -v prints their output as it comes, so the
+      # log has every FAIL line, and a crash or a stuck step says where it
+      # was. The harness's own limit on the run is set inside the step's, so
+      # a run that overruns still ends with its summary and the pictures
+      # below are kept.
+      - name: GUI checks
+        id: gui
+        working-directory: linux
+        timeout-minutes: 10
+        env:
+          MC_GUI_TOTAL_SECONDS: '420'
+          MC_GUI_SNAPSHOTS: ${{ runner.temp }}/gui-pictures
+        run: meson test -C build --suite gui -v --print-errorlogs
+
+      # A picture of the window on top at each failed check (the first ten),
+      # and Meson's log of the run, only when the checks failed.
+      - name: Keep the GUI checks' pictures
+        if: failure() && steps.gui.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: gui-checks
+          path: |
+            ${{ runner.temp }}/gui-pictures
+            linux/build/meson-logs/testlog.txt
+          if-no-files-found: ignore
+          retention-days: 7
 
   # The core tests again, built with AddressSanitizer and
   # UndefinedBehaviorSanitizer (`make test-asan`, g++ here), with the

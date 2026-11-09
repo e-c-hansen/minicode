@@ -387,7 +387,13 @@ int MCGuiWrapperMain(int argc, char** argv) {
     std::string display;
     const pid_t xvfbPid = startXvfb(root + "/xvfb.log", &display);
     if (xvfbPid <= 0) {
-        fprintf(stderr, "minicode-guitest: Xvfb did not start (log: %s/xvfb.log)\n", root.c_str());
+        // The log goes with the scratch folder, so it is printed here: on CI
+        // this is all there is to go on.
+        fprintf(stderr, "minicode-guitest: Xvfb did not start. Its log:\n");
+        gchar* log = nullptr;
+        if (g_file_get_contents((root + "/xvfb.log").c_str(), &log, nullptr, nullptr))
+            fprintf(stderr, "%s\n", log);
+        g_free(log);
     } else {
         setenv("DISPLAY", display.c_str(), 1);
         setenv("MC_GUI_XVFB_PID", std::to_string(xvfbPid).c_str(), 1);

@@ -221,7 +221,7 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   outlives a run, a hung step, a crash, or a SIGKILL to the wrapper. It puts
   nothing on the owner's screen, so it needs no one's eyes; CI has not run
   it yet (0.2).
-- [ ] **0.2 CI.** The GTK job installs `xvfb` and `libxtst-dev` and runs the
+- [~] worktree-agent-afce1366663b4d411 **0.2 CI.** The GTK job installs `xvfb` and `libxtst-dev` and runs the
   suites under its 20-minute limit. *Done means:* a deliberately failing check
   turns the job red on a branch. The checks also need `dbus-run-session`
   (Ubuntu's `dbus-daemon` package), which `--no-install-recommends` may

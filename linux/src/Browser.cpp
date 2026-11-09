@@ -42,7 +42,10 @@ Browser::Browser(const std::string& homeUrl) {
     g_signal_connect(web_, "notify::uri", G_CALLBACK(onUriChanged), this);
     g_signal_connect(web_, "load-changed", G_CALLBACK(onLoadChanged), this);
 
-    load(homeUrl);
+    // The home page is an address, not something typed into the bar, so it
+    // is loaded as it is: through load(), the GUI checks' about:blank was a
+    // web search for "about:blank", and every check's window went online.
+    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(web_), homeUrl.c_str());
     syncChrome();
 }
 

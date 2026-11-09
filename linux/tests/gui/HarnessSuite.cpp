@@ -7,11 +7,75 @@
 
 #include "Editor.h"
 
+#ifdef MINICODE_ENABLE_BROWSER
+#include "Browser.h"
+#include <webkit/webkit.h>
+#endif
+
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
 
+#include <map>
+
 static std::string notesPath() { return MCGuiProjectFile("harness.txt"); }
+
+#ifdef MINICODE_ENABLE_BROWSER
+static WebKitWebView* findWebView(GtkWidget* root) {
+    if (!root) return nullptr;
+    if (WEBKIT_IS_WEB_VIEW(root)) return WEBKIT_WEB_VIEW(root);
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (WebKitWebView* hit = findWebView(c)) return hit;
+    return nullptr;
+}
+
+static WebKitWebView* browserWebView() {
+    Browser* browser = MCGuiApp().browser;
+    return browser ? findWebView(browser->widget()) : nullptr;
+}
+
+// Whether a WebKit web process runs below this one with a bwrap between, from
+// /proc: WebKit starts each page's process inside bubblewrap, and with
+// WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS set it starts it directly instead.
+static bool webProcessInSandbox() {
+    std::map<pid_t, std::vector<pid_t>> kids;
+    std::map<pid_t, std::string> comm;
+    GDir* proc = g_dir_open("/proc", 0, nullptr);
+    if (!proc) return false;
+    while (const char* name = g_dir_read_name(proc)) {
+        if (!g_ascii_isdigit(name[0])) continue;
+        gchar* stat = nullptr;
+        if (!g_file_get_contents((std::string("/proc/") + name + "/stat").c_str(), &stat, nullptr,
+                                 nullptr))
+            continue;
+        // pid (comm) state ppid ...; comm may hold spaces and parentheses.
+        const char* open = strchr(stat, '(');
+        const char* close = strrchr(stat, ')');
+        int ppid = 0;
+        char state = 0;
+        if (open && close && close > open && sscanf(close + 1, " %c %d", &state, &ppid) == 2) {
+            const pid_t pid = (pid_t)atoi(name);
+            kids[ppid].push_back(pid);
+            comm[pid] = std::string(open + 1, (size_t)(close - open - 1));
+        }
+        g_free(stat);
+    }
+    g_dir_close(proc);
+    // Depth first from here, carrying whether a bwrap lies on the way down.
+    std::vector<std::pair<pid_t, bool>> todo = {{getpid(), false}};
+    while (!todo.empty()) {
+        const auto [pid, underBwrap] = todo.back();
+        todo.pop_back();
+        for (pid_t child : kids[pid]) {
+            const std::string& name = comm[child];
+            // The kernel cuts names at 15 characters: "WebKitWebProces".
+            if (name.rfind("WebKitWebProc", 0) == 0 && underBwrap) return true;
+            todo.push_back({child, underBwrap || name == "bwrap"});
+        }
+    }
+    return false;
+}
+#endif
 
 // The second app, for the "a second app" steps below. Runs when named only.
 MC_GUI_SUITE(_harness_child) {
@@ -54,6 +118,48 @@ MC_GUI_SUITE(harness) {
                             done();
                         });
     });
+
+#ifdef MINICODE_ENABLE_BROWSER
+    // Every window makes a web view, and WebKit runs its page in a process
+    // inside bubblewrap, which needs an unprivileged user namespace. Where
+    // those are refused (Ubuntu's AppArmor restriction without its bwrap
+    // profile, a container) the page's process dies as it starts and the
+    // browser pane stays blank; nothing else in the window notices. A page
+    // that answers JavaScript has a live process, and the process tree says
+    // whether it is in the sandbox.
+    MCGuiAsync("the browser pane's page runs JavaScript", 30, [](MCGuiDone done) {
+        WebKitWebView* web = browserWebView();
+        GCHECK(web != nullptr);
+        if (!web) {
+            done();
+            return;
+        }
+        // The checks' home page (MINICODE_BROWSER_HOME), so no window
+        // opening in a check reaches the network.
+        const char* uri = webkit_web_view_get_uri(web);
+        const std::string page = uri ? uri : "";
+        GCHECK_EQ_STR(page, "about:blank");
+        webkit_web_view_evaluate_javascript(
+            web, "6 * 7", -1, nullptr, nullptr, nullptr,
+            [](GObject* src, GAsyncResult* res, gpointer data) {
+                auto* finished = static_cast<MCGuiDone*>(data);
+                GError* error = nullptr;
+                JSCValue* value =
+                    webkit_web_view_evaluate_javascript_finish(WEBKIT_WEB_VIEW(src), res, &error);
+                GCHECK(value && jsc_value_is_number(value) && jsc_value_to_int32(value) == 42);
+                if (error) MCGuiNote("WebKit: %s", error->message);
+                g_clear_error(&error);
+                if (value) g_object_unref(value);
+                (*finished)();
+                delete finished;
+            },
+            new MCGuiDone(done));
+    });
+    MCGuiStep("the page's process is in WebKit's sandbox", [] {
+        GCHECK(g_getenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS") == nullptr);
+        GCHECK(webProcessInSandbox());
+    });
+#endif
 
     MCGuiStep("a file to type into", [] {
         MCGuiWriteFile(notesPath(), "");

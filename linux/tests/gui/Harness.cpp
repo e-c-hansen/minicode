@@ -131,6 +131,16 @@ bool MCGuiCheck(bool ok, const std::string& what, const char* file, int line) {
         printf("  FAIL [%s] %s:%d  %s  (in: %s)\n", gSuite.c_str(), slash ? slash + 1 : file, line,
                what.c_str(), gStep.c_str());
         fflush(stdout);
+        // When pictures are kept, one of the window on top as it was at the
+        // failure (CI keeps them when the job fails). The first few only: a
+        // run that goes wrong early can fail every check after.
+        const char* dir = getenv("MC_GUI_SNAPSHOTS");
+        if (dir && *dir && gFail <= 10) {
+            const std::string name = "fail-" + std::to_string(gFail) + "-" + gSuite;
+            MCGuiSnapshot(GTK_WIDGET(MCGuiTopWindow()), name);
+            printf("    a picture of the window: %s/%s.png\n", dir, name.c_str());
+            fflush(stdout);
+        }
     }
     return ok;
 }

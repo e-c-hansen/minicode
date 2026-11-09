@@ -48,7 +48,9 @@
 //
 // Environment: SUITES or MC_GUI_SUITES, as arguments do; MC_GUI_KEEP=1 keeps
 // the scratch folders; MC_GUI_VERBOSE=1 names each step; MC_GUI_SNAPSHOTS=dir
-// is where MCGuiSnapshot writes; MC_SKIP_TIMING=1 passes every timing bound;
+// is where MCGuiSnapshot writes, and where a failed check leaves a picture of
+// the window on top (fail-<n>-<suite>.png, the first ten); MC_SKIP_TIMING=1
+// passes every timing bound;
 // MC_GUI_TOTAL_SECONDS is the limit on the whole run (20 minutes) and
 // MC_GUI_STEP_SECONDS the limit on one step (a minute, on top of a wait's own
 // timeout), which also catches a step that never returns to the main loop.
