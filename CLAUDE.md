@@ -61,8 +61,9 @@ opening comment says what it does in more detail than the lines below.
   is in the README's macOS column), `install:readme` (every install command is
   in the README in backticks), `linux:build-lists` (linux/Makefile and
   meson.build name the same core files, and Android's CMakeLists names every
-  core file its own files include), and the `settings:*` count of keys in
-  the default settings file.
+  core file its own files include), `docs:gui-suites` (the GUI suite list
+  under "Verification" names every suite and nothing else), and the
+  `settings:*` count of keys in the default settings file.
 - `make test-asan` runs the same tests under ASan and UBSan in
   `build/test-asan` (UB stops the run); CI's `sanitizers` job runs it with
   g++ and leak detection. The `fuzz:*` groups (`tests/parser_fuzz.inc` for
@@ -3117,15 +3118,10 @@ session has a display. Check first.
   `MCGuiAsync`, `MCGuiPause`, `GCHECK`) from the run loop; it fails if any
   window reaches the screen. `MC_GUI_SNAPSHOTS=dir` saves pictures to look at,
   `MC_GUI_KEEP=1` keeps the scratch folder, `MC_GUI_SAMPLE=file` samples the
-  keystroke suite (`MC_GUI_FULL_PERF=1` runs foldperf on 100,000 lines, not
-  20,000). Suites: control, agents, backups, find_bar, folding, foldperf,
-  format, git_actions, git_panel, keymap, keystroke, lsp_fixes, palette,
-  paste, previews, problems, processes, replace_in_folder, run_file, symbols, terminal_links,
-  terminal_reflow, tree, large_file (`MC_GUI_SAMPLE=<folder>` samples its
-  open and typing steps), and in
-  LooseEndsSuite.mm terminal_exec, terminal_keys, terminal_zoom,
-  agent_autosave, multicaret_rows. **Language server checks use the scripted
-  server** `build/fakelsp` (`tests/fakelsp/fakelsp.cpp`, built by `make
+  keystroke suite and `MC_GUI_SAMPLE=<folder>` large_file's open and typing
+  steps (`MC_GUI_FULL_PERF=1` runs foldperf on 100,000 lines, not
+  20,000). The suites are listed in the next item. **Language server
+  checks use the scripted server** `build/fakelsp` (`tests/fakelsp/fakelsp.cpp`, built by `make
   guitest`): `MCGuiFakeLsp(name, script, program, words)` writes a JSON
   script of rules and returns the command line for `lsp.<language>`, and
   `MCGuiFakeLspReceived` reads what the client sent; the file's header
@@ -3136,6 +3132,32 @@ session has a display. Check first.
   (`MCGuiPause` is for a negative check or where time is the condition, with
   a comment saying which; `MCGuiWaitQuiet` waits for a count to stop
   changing). **New user-visible behaviour gets a committed check here.**
+- **The GUI suites**, by area (each an `MC_GUI_SUITE` in `tests/gui`; the
+  core's `docs:gui-suites` holds this list to them, both ways):
+  editing: keystroke, multiedit, editor_keys, auto_close, bracket_pairs,
+  folding, foldperf, multicaretclick, multicaret_rows, find_bar,
+  large_file, save, paste, zoomfit;
+  files and windows: tree, tree_hidden, search, replace_in_folder,
+  backups, palette, symbols, keymap, config_writes, daily_work, structure;
+  language servers and formatting: language, lsp_fixes, lsp_sync,
+  lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
+  snippets, problems, servers_by_extension, server_consent, tools_consent,
+  organize_on_save, format, format_consent, format_coverage;
+  documents and viewers: markdown_preview, markdown_side,
+  markdown_side_sync, markdown_math, mermaid, latex, previews, compare;
+  terminal: terminal_draw, terminal_links, terminal_marks, terminal_paste,
+  terminal_pty, terminal_reflow, terminal_splits, terminal_vt,
+  terminal_exec, terminal_keys, terminal_zoom, run_file;
+  git: git_panel, git_actions, git_hunks, git_verbs, git_sync, git_gutter;
+  agents and control: agents, agent_panel, agent_places, agentcommands,
+  agent_autosave, attention, control, browserpages, idelink, processes;
+  run only when named: _backups_writer, _backups_restore.
+  A suite's file is usually its name in CamelCase; the exceptions are
+  mermaid (IdeLinkSuite.mm), foldperf (FoldingSuite.mm), the format_*
+  suites (FormatSuite.mm), git_actions, git_hunks and git_verbs
+  (GitPanelSuite.mm), markdown_side_sync (MarkdownSideSuite.mm), and
+  LooseEndsSuite.mm (terminal_exec, terminal_keys, terminal_zoom,
+  agent_autosave, multicaret_rows).
 - **Timing bounds hold under load** (2026-11-07): with several agents
   building, load 40 to 100 ran wall times three to ten times over and failed
   brackets:bounded, procs:speed, keystroke, large_file, processes and
@@ -3309,50 +3331,104 @@ core file its files include. Traps paid for:
   `tar` fails with ENOSYS under Docker Desktop's amd64 emulation; gpg-agent
   cannot be forwarded into Docker Desktop, so signing is on the host.
 
-## Current state (2026-11-06)
+## Current state (2026-11-08)
 
-- **Released: 1.5.8**, and the user's Homebrew copy is on it. 1.5.7 shipped
-  what had merged since 1.5.6 (auto-save, Problems, find and replace, line
-  numbers, folding, symbols and Go Back, the terminal's find, reflow and
-  mouse, the control channel with notes and tours, the agent workspace, the
-  new viewers, keys.conf, the third review's fixes); 1.5.8 added the skill
-  in the bundle, `minicode hooks` and `notify` with the waiting terminals,
-  Processes and ports, agent pages (`browse`, `page`), Fetch, Pull, Push and
-  autofetch, organize imports on save, the Claude Code IDE link, Mermaid,
-  any server by extension, the daily-work commands, the folder's venv in new
-  terminals, BROWSER and OSC 8 links, page zoom, Maximize Pane, word wrap,
-  and the find bar and Find in Folder laid out as VS Code's.
-- The GitHub release notes of 1.5.7 and 1.5.8 hold only release.sh's
-  placeholder line, not what changed.
-- **PPA**: Launchpad's newest is 1.4.14 (2026-10-09); no 1.5 release was
-  uploaded (ppa.sh needs Docker on the Mac). `scripts/ppa.sh <version>` once
-  Docker is up, or on the ThinkPad.
-- The release is built on Apple silicon with no `-arch` flag, so it is arm64
-  only. The README says so; the cask does not declare
-  `depends_on arch: :arm64`.
-- **Needs the user's eyes** on a real screen with real keys and mouse: the
-  gutter and folds, the find bar and Find in Folder, Problems, the Agents
-  panel and Evidence, the viewers, notes and tours, the palette's symbols,
-  trackpad momentum in the terminal; the grid terminal with their own
-  .zshrc, prompt, autosuggestions and fzf, Claude Code's Shift+Return, vim
-  with the mouse; real F2, F8, F9, Shift+F12 (fn on a laptop), the
-  Control+Command folding keys, Shift+Option+O; a real crash or force quit
-  with unsaved tabs; a real Request a Change end to end and its relaunch;
-  Finder's Open With, double-click and Dock drops; `minicode -r` against the
-  running app; the LaTeX popover's placement; Ctrl+Space with several input
-  sources. From 1.5.8: the IDE link against a real Claude Code session; the
-  waiting dots once the user has run `minicode hooks --install`; push, pull
-  and autofetch against a real remote (ssh keys, a credential helper);
-  Mermaid with a real mmdc; BROWSER with Claude Code's links and `vite
-  --open`; page zoom and Zoom to Fit on a trackpad. **Linux**: none of the
-  1.5 work ran on Linux beyond CI; the ThinkPad still owes the folder picker
-  after closing its window, F2 rename in the tree, renames across two windows
-  under GNOME, the PDF placeholder at 2x and the git panel. **Android**: the leader
-  key and real typing in the commit and edit boxes (Enter and Shift+Enter), the
-  key rows against the curved corners, bash and vim on the real keyboard, the
-  on-screen keyboard resizing the pane, real sound and keys in the player, and
-  for web pictures a badge link, the scroll staying put and the toggle making
-  no requests (then delete `/sdcard/mc-test/web-test`).
+- **Released: 1.5.15** (2026-11-08), and the user's Homebrew copy is on it.
+  Since 1.5.8: 1.5.9 security and data safety (bracketed paste, secure
+  keyboard entry, symlinked config writes, the tectonic checksum and
+  `--untrusted`, formatter consent, the cask's arm64 requirement); 1.5.10
+  watched files, LSP parsing off the main thread, progress, the terminal's
+  command marks and Unicode 16 widths, footnotes and HTML blocks; 1.5.11
+  the compare view's word changes and per-hunk Accept and Reject,
+  auto-closing pairs, large-file mode, the linear regex engine, parallel
+  Find in Folder, the tree's git colors, Stage All, Discard and the branch
+  picker; 1.5.12 inlay hints, semantic tokens, more Format Document
+  languages with the server fallback, the preview to the side, LaTeX
+  forward search and problems, hunk staging, the streaming inline agent;
+  1.5.13 bracket-pair colors, more syntax styles, change bars, the commit
+  verbs, the side preview at scale, Export as HTML; 1.5.14 security fixes
+  in Export as HTML and the math batch, snippets, terminal splits and VT
+  conformance, LaTeX warnings, the fast switch back to a large tab, the
+  PPA build fix; 1.5.15 VS Code's Cmd+Up/Down and word separators, and the
+  terminals' own zoom. Every release from 1.5.7 on has notes of what
+  changed on GitHub (`gh release view v1.5.15`), written for users and
+  given to release.sh as `MINICODE_RELEASE_NOTES`.
+- **On main for the next release**: round 7, the fixes of the round-6
+  reassessment. rust-analyzer starts with build scripts, proc macros and
+  check on save off (or waits, for a crate with its own toolchain or cargo
+  config), and typescript-language-server waits or uses the user's
+  TypeScript, until the folder's tools are allowed; a formatter
+  configuration above the folder and `npx prettier` count as the folder's
+  code; snippets read the clipboard only for `$CLIPBOARD` and nest 64 deep;
+  inlay hints show at a line's start; a long tab shown again far down
+  shows at once (`MCLayoutCatchUp`); bracket colors are painted only on
+  screen; the find bar copies the text once per edit, not per keystroke;
+  the LSP client's copy is chunked and unchanged tabs are not sent again;
+  change bars keep a BOM and follow git run elsewhere; a text file with
+  "Subproject commit" lines stages by hunk; Show Hidden Files is one switch
+  for every window, checked and kept; Find in Folder searches UTF-16 with a
+  BOM; the terminal's exec hook gives its environment only to the exec and
+  no nonce to an emulating zsh, each process has its own integration
+  folder, the underline-color table frees ids amortized, the paste question
+  shows the control character, and a widget's picker (fzf) gets cluster
+  widths; the inline agent's Keep lands where its diff showed and
+  insertions are marked; the compare view's last per-hunk choice has a 3 s
+  grace; Evidence reads python's options; `hooks --install` keeps a hard
+  link; notes land on their line in large files; `state` and `selection`
+  count lines as the gutter does; a process carries the Claude Code session
+  that started it; ppa.sh waits for Launchpad's result; every CI job has a
+  time limit.
+- **PPA**: current at 1.5.15 (`1.5.15-1~ppa1~resolute1`, built for amd64 on
+  Launchpad). Uploads go from the ThinkPad (`ssh thinkpad`, checkout
+  `~/minicode`), since the Mac has no Docker; unlock its gpg key first
+  (`echo test | gpg --clearsign -u EEF9635EDB7F9335`), or signing fails
+  once the passphrase cache has expired (1.5.14 was skipped for that
+  reason). ppa.sh then waits for Launchpad's build (see "Build, test, run,
+  release").
+- The release is arm64 only (built on Apple silicon with no `-arch` flag);
+  the README says so and the cask declares `depends_on arch: :arm64`.
+- **Left to the owner**: notarization (the paid Apple Developer Program),
+  branch protection on main, and a run of the IDE link against a real
+  Claude Code session (it needs the owner's logged-in Claude Code, and no
+  agent writes to `~/.claude`). Multiplayer and remote workspaces are the
+  owner's ideas for later, not plans.
+- **Needs the user's eyes** on a real screen with real keys and mouse.
+  Older work: the gutter and folds, the find bar and Find in Folder,
+  Problems, the Agents panel and Evidence, the viewers, notes and tours,
+  the palette's symbols, trackpad momentum in the terminal; the grid
+  terminal with their own .zshrc, prompt, autosuggestions and fzf, Claude
+  Code's Shift+Return, vim with the mouse; real F2, F8, F9, Shift+F12 (fn on
+  a laptop), the Control+Command folding keys, Shift+Option+O; a real crash
+  or force quit with unsaved tabs; a real Request a Change end to end and
+  its relaunch; Finder's Open With, double-click and Dock drops; `minicode
+  -r` against the running app; the LaTeX popover's placement; Ctrl+Space
+  with several input sources; the waiting dots once the user has run
+  `minicode hooks --install`; push, pull and autofetch against a real
+  remote (ssh keys, a credential helper); Mermaid with a real mmdc; BROWSER
+  with Claude Code's links and `vite --open`; page zoom and Zoom to Fit on a
+  trackpad. From 1.5.9 to 1.5.15: the secure-input lock with a real sudo;
+  the one-line control-character paste question (not yet seen on screen);
+  inlay hints, semantic colors and bracket colors as they look; the side
+  preview's scroll sync on a trackpad; snippets from a real clangd,
+  rust-analyzer or gopls; dragging terminal splits; cursor shapes and the
+  kitty keyboard protocol in a real vim or helix; LaTeX warnings from a
+  real tectonic; a large-file tab's scroll bar thumb and a jump far down.
+  From round 7: scrolling and typing in a 100,000-line tab while the
+  catch-up fills in above the pane; rust-analyzer on a real crate before
+  and after Allow; fzf's Ctrl+R and Ctrl+T with emoji in the list; inlay
+  hints at a line's start; the inline agent's insertion marks; the compare
+  view's grace before the last choice is sent; change bars after a commit
+  made in another terminal; Show Hidden Files across two windows.
+  **Linux**: none of the 1.5 work ran on Linux beyond CI and Launchpad's
+  package build; the ThinkPad still owes the folder picker after closing
+  its window, F2 rename in the tree, renames across two windows under
+  GNOME, the PDF placeholder at 2x and the git panel. **Android**: the
+  leader key and real typing in the commit and edit boxes (Enter and
+  Shift+Enter), the key rows against the curved corners, bash and vim on
+  the real keyboard, the on-screen keyboard resizing the pane, real sound
+  and keys in the player, and for web pictures a badge link, the scroll
+  staying put and the toggle making no requests (then delete
+  `/sdcard/mc-test/web-test`).
 - The Reddit drafts are a Claude Doc, "MiniCode Reddit drafts"
   (https://claude.ai/code/artifact/06496ec8-70b7-443d-af5c-9c53f3996ffe).
 

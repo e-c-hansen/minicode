@@ -9337,6 +9337,72 @@ static void testCategoryIvars() {
     checkCategoryIvars("Lsp+", "Lsp.mm", "@interface LspSession () {", 8, 6, 4);
 }
 
+static void testGuiSuiteList() {
+    GROUP("docs:gui-suites");
+    // CLAUDE.md's "The GUI suites" item once named 26 of 73 suites. Every
+    // MC_GUI_SUITE in tests/gui/*.mm must be in that list, and every name in
+    // the list must be a suite.
+    std::ifstream doc("CLAUDE.md");
+    DIR *dir = opendir("tests/gui");
+    if (!doc || !dir) {
+        if (dir) closedir(dir);
+        std::printf("  (CLAUDE.md or tests/gui not found here; suite list check skipped)\n");
+        return;
+    }
+    std::set<std::string> suites;
+    while (dirent *e = readdir(dir)) {
+        std::string name = e->d_name;
+        if (name.size() < 4 || name.compare(name.size() - 3, 3, ".mm") != 0) continue;
+        std::ifstream f("tests/gui/" + name);
+        std::stringstream ss;
+        ss << f.rdbuf();
+        const std::string text = ss.str();
+        const std::string mark = "MC_GUI_SUITE(";
+        for (size_t at = text.find(mark); at != std::string::npos; at = text.find(mark, at + 1)) {
+            size_t b = at + mark.size(), c = b;
+            while (c < text.size() && (std::islower((unsigned char)text[c]) ||
+                                       std::isdigit((unsigned char)text[c]) || text[c] == '_'))
+                ++c;
+            if (c > b && c < text.size() && text[c] == ')') suites.insert(text.substr(b, c - b));
+        }
+    }
+    closedir(dir);
+    std::stringstream ds;
+    ds << doc.rdbuf();
+    const std::string md = ds.str();
+    size_t s0 = md.find("\n- **The GUI suites**");
+    CHECK(s0 != std::string::npos);
+    if (s0 == std::string::npos) return;
+    size_t s1 = md.find("\n  A suite's file", s0);
+    CHECK(s1 != std::string::npos);
+    if (s1 == std::string::npos) return;
+    // The list starts on the line after the item's first two (its heading).
+    std::stringstream lines(md.substr(s0 + 1, s1 - s0 - 1));
+    std::string line;
+    std::set<std::string> listed;
+    int n = 0;
+    while (std::getline(lines, line)) {
+        if (n++ < 2) continue;
+        size_t colon = line.rfind(':');
+        std::string names = colon == std::string::npos ? line : line.substr(colon + 1);
+        std::stringstream parts(names);
+        std::string w;
+        while (std::getline(parts, w, ',')) {
+            while (!w.empty() && std::isspace((unsigned char)w.front())) w.erase(0, 1);
+            while (!w.empty() && (std::isspace((unsigned char)w.back()) || w.back() == ';' ||
+                                  w.back() == '.'))
+                w.pop_back();
+            if (!w.empty()) listed.insert(w);
+        }
+    }
+    for (const std::string &s : suites)
+        if (!listed.count(s)) std::printf("  CLAUDE.md's GUI suite list lacks %s\n", s.c_str());
+    for (const std::string &s : listed)
+        if (!suites.count(s)) std::printf("  CLAUDE.md lists %s, which is no suite\n", s.c_str());
+    CHECK(suites.size() >= 70);
+    CHECK(suites == listed);
+}
+
 static void testLinuxBuildLists() {
     GROUP("linux:build-lists");
     // CI builds the GTK port with Meson only, so the plain Makefile's list of
@@ -10480,6 +10546,7 @@ int main() {
     testMathTexIsolation();
     testInstallHints();
     testLinuxBuildLists();
+    testGuiSuiteList();
     testCategoryIvars();
     testLineDiff();
     testAutoIndent();
