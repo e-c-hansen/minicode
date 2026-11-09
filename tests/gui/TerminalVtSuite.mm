@@ -10,6 +10,9 @@
 //     (${(m)#x}) is the screen's code-point width (mode 2027 at the
 //     prompt), and typing them at the prompt then Ctrl+A brings the cursor
 //     back exactly to the prompt's end (zsh moves it back by its own count).
+//     A picker a ZLE widget runs (as fzf's Ctrl+R does), with the tty raw
+//     and ISIG off, gets clusters instead: its flag takes 2 columns.
+//   - The integration's ZDOTDIR is a folder of this process's own.
 //   - On a grid of its own: a curly underline is drawn as a wave in its own
 //     color (red pixels at several heights), a straight one at one height,
 //     hidden text not at all; with the kitty keyboard flag pushed, Escape
@@ -181,6 +184,16 @@ MC_GUI_SUITE(terminal_vt) {
     };
     run(@"cd", [NSString stringWithFormat:@"cd '%@'", MCGuiProject()]);
 
+    // Round 6's terminal defect 6: the integration's folder is this
+    // process's own, not one every minicode shares.
+    run(@"where the integration is", @"print -r -- \"ZD=${__minicode_zdotdir:t}=\"");
+    MCGuiStep(@"a folder named for this process", ^{
+        const std::string text = VtScreenText(s.term);
+        const std::string want = "ZD=MiniCode-zsh-grid-" + std::to_string(getpid()) + "-";
+        GCHECK(text.find(want) != std::string::npos);
+        if (text.find(want) == std::string::npos) NSLog(@"wanted %s in:\n%s", want.c_str(), text.c_str());
+    });
+
     // ------------------------------------------------------------ cursor
     run(@"printf a bar", @"printf '\\e[6 q'");
     MCGuiStep(@"a steady bar: the cell's left edge only", ^{
@@ -276,6 +289,48 @@ MC_GUI_SUITE(terminal_vt) {
     });
     MCGuiStep(@"Ctrl+K clears the line", ^{
         VtGrid(s.term).onInput([NSData dataWithBytes:"\x0b" length:1]);
+    });
+    // Round 6's terminal defect 5: a program a widget starts (fzf's Ctrl+R
+    // with --height) draws below the prompt, before any 133;C, counting
+    // clusters. It puts the tty in raw mode with ISIG off, which ZLE never
+    // does; the flag it prints then takes 2 columns, as it counts, and the
+    // prompt gets zsh's widths back once the tty is ZLE's again.
+    MCGuiStep(@"a picker a widget runs, as fzf's are", ^{
+        NSString *script = @"s=$(stty -g)\nstty raw -isig -echo\n"
+                           @"printf '\\r\\nP\\360\\237\\207\\272\\360\\237\\207\\270Q'\n"
+                           @"dd bs=1 count=1 >/dev/null 2>&1\nstty \"$s\"\nprintf '\\r\\n'\n";
+        GCHECK([script writeToFile:[MCGuiProject() stringByAppendingPathComponent:@"fakepick.sh"]
+                        atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    });
+    run(@"bind it", @"fakepick() { /bin/sh ./fakepick.sh </dev/tty >/dev/tty; zle reset-prompt }; "
+                    @"zle -N fakepick; bindkey '^Xp' fakepick");
+    MCGuiStep(@"Ctrl+X p", ^{
+        VtGrid(s.term).onInput([NSData dataWithBytes:"\x18p" length:2]);
+    });
+    MCGuiWait(@"the picker drew its line", 10, ^BOOL {
+        return VtScreenText(s.term).find("P\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8Q") != std::string::npos;
+    });
+    MCGuiStep(@"the flag took 2 columns, as the picker counts", ^{
+        const TerminalScreen *scr = VtGrid(s.term).screen;
+        int pRow = -1, pCol = -1, qCol = -1;
+        for (int r = 0; r < scr->rows() && pRow < 0; r++)
+            for (int c = 0; c + 1 < scr->cols(); c++)
+                if (scr->cell(r, c).ch == "P" && scr->cell(r, c + 1).ch.size() > 1) {
+                    pRow = r, pCol = c;
+                    break;
+                }
+        for (int c = pCol + 1; pRow >= 0 && c < scr->cols(); c++)
+            if (scr->cell(pRow, c).ch == "Q") { qCol = c; break; }
+        GCHECK(pRow >= 0 && qCol == pCol + 3);
+        GCHECK(scr->clusterWidths());
+        if (qCol != pCol + 3) NSLog(@"P at %d,%d, Q at column %d", pRow, pCol, qCol);
+    });
+    MCGuiStep(@"a key ends the picker", ^{
+        VtGrid(s.term).onInput([NSData dataWithBytes:"x" length:1]);
+    });
+    MCGuiWait(@"the prompt is zsh's again, with its widths", 10, ^BOOL {
+        return [[s.term valueForKey:@"zleReady"] boolValue] &&
+               !VtGrid(s.term).screen->clusterWidths();
     });
     MCGuiStep(@"close the terminal", ^{
         [s.term close];
