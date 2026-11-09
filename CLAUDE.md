@@ -398,7 +398,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   forwarding method on AppDelegate if needed); a hints row (`appendHintsRow:`
   with `[self hk:@"id"]`, which reads the registry); a README table row, sorted
   by action, a column per platform. The hints panel is an attributed string on
-  tab stops; never align it with spaces (⌘ ⇧ ⌃ ⌫ ⏎ differ in width). Prefer
+  tab stops; never align it with spaces (⌘ ⇧ ⌃ ⌫ ⏎ differ in width). Its
+  stops come from the drawn widths of each column's keys and labels
+  (`PageMeasure::layoutHints`): two columns when they fit the window, else
+  one, never a row broken mid-row; it scales with the editor's zoom and
+  scrolls when taller than the window (2026-11-08). Prefer
   menu items with key equivalents to the key monitor: they work in every pane
   and for shifted variants.
 - No third-party dependencies, ever; new capabilities use system frameworks.
@@ -425,6 +429,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   `usesFontPanel` sets the shared NSColorPanel to the color under the caret
   when the selection moves, and the panel forwarded that to `colorPicked:`, so
   every pick became the text color; the editor sets `usesFontPanel = NO`.
+  The panel is opened through `MCShowSwatchColorPanel` (Appearance.h), whose
+  local monitor makes Esc close it (and the opacity popover) while the
+  keyboard is in the panel or the settings file; the panel never takes the
+  keyboard by itself, so the key lands in the file. Closing it clears its
+  target, so later changes of the shared panel are no picks.
 - **Adjust Settings…** ends every surface's context menu and opens the file at
   that surface's keys (`Settings::appearanceSurfaces()`: `tree`, `git`,
   `editor`, `syntax`, `markdown`, `terminal`, `browser`, `statusbar`,
@@ -1702,7 +1711,16 @@ view is disposed (on `unrealize`), or dispose loops forever.
   indent block of its own, kept on it as an associated object, since a
   margin on the box itself still had its background drawn under it; h1, h2 and rules
   are bordered text blocks; list text at 24 points a level with the marker
-  right-aligned on a tab; a hard break is U+2028; gaps are 12 points. Fenced
+  right-aligned on a tab; a hard break is U+2028; gaps are 12 points.
+  **The measure** (2026-11-08, `markdown.max-width`, 840 points at 100%,
+  about GitHub's README width; VS Code's markdown.css has no limit): lines
+  are at most that times `MCZoomScale`, the page centered by the text
+  view's horizontal inset (`PageMeasure::centeredInset`), so text blocks
+  and tables, which are container-wide, keep to it. The full preview sets
+  it in `applyMarkdownMeasure` (+MarkdownRender: on render, on the text
+  view's frame change, from `applyWordWrap` and `setPlainMessage`, which
+  put the editor's 8 back for source); the side pane in `applyMeasure`,
+  asked by `pageWidth` before every page. Fenced
   code naming a language (`MdRun::lang`,
   `MarkdownParser::extensionForLanguage`) is colored by `MarkdownCode.mm` after
   the page is built. Tables: runs carry table, row, column and alignment, and
@@ -3151,13 +3169,14 @@ session has a display. Check first.
   large_file, save, paste, zoomfit;
   files and windows: tree, tree_hidden, search, replace_in_folder,
   backups, palette, symbols, keymap, config_writes, daily_work, structure,
-  utf16;
+  utf16, hints_panel, swatch_escape;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
   snippets, problems, servers_by_extension, server_consent, tools_consent,
   organize_on_save, format, format_consent, format_coverage;
   documents and viewers: markdown_preview, markdown_side,
-  markdown_side_sync, markdown_math, mermaid, latex, previews, compare;
+  markdown_side_sync, markdown_width, markdown_math, mermaid, latex,
+  previews, compare;
   terminal: terminal_draw, terminal_links, terminal_marks, terminal_paste,
   terminal_pty, terminal_reflow, terminal_splits, terminal_vt,
   terminal_exec, terminal_keys, terminal_zoom, run_file;
@@ -3170,7 +3189,8 @@ session has a display. Check first.
   suites (FormatSuite.mm), git_actions, git_hunks and git_verbs
   (GitPanelSuite.mm), markdown_side_sync (MarkdownSideSuite.mm), and
   LooseEndsSuite.mm (terminal_exec, terminal_keys, terminal_zoom,
-  agent_autosave, multicaret_rows).
+  agent_autosave, multicaret_rows), and PageMeasureSuite.mm (hints_panel,
+  markdown_width, swatch_escape).
 - **Timing bounds hold under load** (2026-11-07): with several agents
   building, load 40 to 100 ran wall times three to ten times over and failed
   brackets:bounded, procs:speed, keystroke, large_file, processes and

@@ -4,6 +4,8 @@
 #import "Appearance.h"
 #import "EditorPanes.h"
 #import "TextKit2.h"
+#import "EditorFont.h"
+#include "PageMeasure.h"
 #include "PreviewScroll.h"
 #include <algorithm>
 #include <cmath>
@@ -132,7 +134,8 @@ static NSColor *MCMarkColor(void) {
 // Each side keeps at least this much while both show; a slot narrower than
 // twice it shows the source alone.
 static const CGFloat kMinPaneWidth = 150;
-static const CGFloat kSnapDistance = 16;   // the bar this close to the right edge closes it
+static const CGFloat kSnapDistance = 16;
+static const CGFloat kSideInset = 14;      // the page's least inset, either side   // the bar this close to the right edge closes it
 
 - (instancetype)initInView:(NSView *)host {
     if (!(self = [super init])) return nil;
@@ -163,7 +166,7 @@ static const CGFloat kSnapDistance = 16;   // the bar this close to the right ed
     tv.usesFontPanel = NO;   // see the editor's: the color panel follows the caret otherwise
     tv.usesFindBar = NO;
     tv.drawsBackground = NO;   // the scroll view's backdrop paints it
-    tv.textContainerInset = NSMakeSize(14, 10);
+    tv.textContainerInset = NSMakeSize(kSideInset, 10);
     tv.minSize = NSMakeSize(0, 0);
     tv.maxSize = NSMakeSize(FLT_MAX, FLT_MAX);
     tv.verticallyResizable = YES;
@@ -213,6 +216,7 @@ static const CGFloat kSnapDistance = 16;   // the bar this close to the right ed
         [self holdFollowing:^{
             self->_scrollView.frame = pane;
             [self->_scrollView tile];
+            [self applyMeasure];
         }];
         [self pageMoved];
     }
@@ -230,7 +234,26 @@ static const CGFloat kSnapDistance = 16;   // the bar this close to the right ed
     return YES;
 }
 
+// markdown.max-width, as the full preview keeps it (applyMarkdownMeasure):
+// lines no longer than that at the zoom, the page centered in a wider
+// pane by the text view's inset, which its text blocks and tables follow.
+// Asked again for every page's width, so a new zoom or setting is in
+// place before a page is built for it.
+
+- (void)applyMeasure {
+    NSTextView *tv = _textView;
+    NSTextContainer *tc = tv.textContainer;
+    const double most = PageMeasure::maxTextWidth(
+        [AppSettings shared].settings.markdownMaxWidth(), MCZoomScale());
+    const CGFloat inset = PageMeasure::centeredInset(NSWidth(tv.frame), kSideInset, most,
+                                                     tc.lineFragmentPadding);
+    if (tv.textContainerInset.width == inset) return;
+    tv.textContainerInset = NSMakeSize(inset, tv.textContainerInset.height);
+    tc.size = NSMakeSize(MAX(1, NSWidth(tv.frame) - 2 * inset), tc.size.height);
+}
+
 - (CGFloat)pageWidth {
+    [self applyMeasure];
     NSTextContainer *box = _textView.textContainer;
     return box.size.width - 2 * box.lineFragmentPadding;
 }
@@ -303,6 +326,7 @@ static const CGFloat kSnapDistance = 16;   // the bar this close to the right ed
 }
 
 - (void)applySettings {
+    [self holdFollowing:^{ [self applyMeasure]; }];   // markdown.max-width
     _scrollView.panelColor = [[AppSettings shared] background:Surface::Editor];
     _textView.selectedTextAttributes =
         @{NSBackgroundColorAttributeName: [NSColor selectedTextBackgroundColor]};

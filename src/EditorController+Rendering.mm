@@ -860,6 +860,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     _liveHighlight = NO;
     [self.textView.textStorage setAttributedString:
         [[NSAttributedString alloc] initWithString:msg attributes:a]];
+    [self applyMarkdownMeasure];   // a page's centered inset goes with it
     self.showingMessage = YES;
     _activeTab.message = msg;   // shown again when the tab comes back
 }

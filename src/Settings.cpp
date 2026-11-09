@@ -877,6 +877,19 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
         MC_KEY("markdown.web-images", Word, false, return boolValue(v, s.webImages_, e);),
         MC_KEY("markdown.math", Word, false, return boolValue(v, s.math_, e);),
         MC_KEY("markdown.mermaid", Word, false, return boolValue(v, s.mermaid_, e);),
+        MC_KEY("markdown.max-width", Word, false,
+               const std::string w = lower(v);
+               if (w == "off" || w == "none" || w == "false" || w == "0") {
+                   s.markdownMaxWidth_ = 0;
+                   return true;
+               }
+               long points;
+               if (!countValue(w, 5, 200, 20000, points)) {
+                   e = "'" + v + "' is not a width in points from 200 to 20000, or off";
+                   return false;
+               }
+               s.markdownMaxWidth_ = (int)points;
+               return true;),
         MC_KEY("editor.keep-sorted-on-save", Word, false,
                return boolValue(v, s.keepSortedOnSave_, e);),
         MC_KEY("editor.organize-imports-on-save", Word, false,
@@ -1690,6 +1703,10 @@ const char* Settings::defaultFileText() {
 # installed (npm install -g @mermaid-js/mermaid-cli; macOS only for now),
 # else shown as their source. Turn this off to always show the source.
 # markdown.mermaid = true
+# The longest line of a rendered Markdown page, in points at 100% zoom; the
+# page is centered in a wider pane and the width grows with the zoom. off
+# lets lines run the whole width of the pane.
+# markdown.max-width = 840
 
 # Language servers, for completion, go to definition and error underlines
 # (macOS only for now). MiniCode only talks to them, so install the ones you

@@ -90,6 +90,7 @@
 - (void)applyWordWrap {
     NSTextView *tv = self.textView;
     if (!tv) return;
+    [self applyMarkdownMeasure];   // a page's inset, or the source's own
     const BOOL wrap = MCEditorWordWrap() || !tv.editable;
     NSTextContainer *tc = tv.textContainer;
     if (wrap == !tv.horizontallyResizable && tc.widthTracksTextView == wrap) return;
