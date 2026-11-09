@@ -255,7 +255,10 @@ MC_GUI_SUITE(hints_panel) {
 // --------------------------------------------------------- markdown_width
 MC_GUI_SUITE(markdown_width) {
     __block EditorController *c = nil;
-    NSString *md = MCGuiProjectFile(@"measure.md");
+    // A folder of its own, so the window is new: nothing earlier suites
+    // left open (a browser, a terminal) narrows its editor.
+    NSString *dir = MCGuiProjectFile(@"measure");
+    NSString *md = [dir stringByAppendingPathComponent:@"measure.md"];
     NSString *text = [NSString stringWithFormat:
         @"# A heading over the page\n\n%@\n\n> %@\n\n```\n%@\n```\n\n"
         @"| name | what it is |\n|---|---|\n| one | %@ |\n\n---\n\nThe end.\n",
@@ -264,9 +267,11 @@ MC_GUI_SUITE(markdown_width) {
         LongParagraph()];
 
     MCGuiStep(@"a wide window shows the page centered at markdown.max-width", ^{
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES
+                                                   attributes:nil error:nil];
         MCGuiWriteFile(md, text);
         MCGuiSetSettings(kHarnessSettings);
-        [(id<MCControlAppHost>)NSApp.delegate controlOpenWindowAtPath:MCGuiProject()];
+        [(id<MCControlAppHost>)NSApp.delegate controlOpenWindowAtPath:dir];
         c = MCGuiController();
         MCGuiSetKeyWindow(c.window);
         MCEditorZoomBy(0);
@@ -274,8 +279,9 @@ MC_GUI_SUITE(markdown_width) {
         GCHECK([c showFile:md]);
         GCHECK(c.previewMode);
         NSTextView *tv = [c valueForKey:@"textView"];
-        MCGuiNote(@"view %.0f, inset %.1f, text %.1f", NSWidth(tv.frame),
-                  tv.textContainerInset.width, TextWidth(tv));
+        MCGuiNote(@"window %@, view %.0f, inset %.1f, text %.1f, browser %d, terminal %d",
+                  NSStringFromRect(c.window.frame), NSWidth(tv.frame),
+                  tv.textContainerInset.width, TextWidth(tv), c.browserVisible, c.terminalVisible);
         GCHECK(NSWidth(tv.frame) > 1200);
         GCHECK(fabs(TextWidth(tv) - Settings::kDefaultMarkdownMaxWidth) <= 1);
         GCHECK(Centered(tv));
