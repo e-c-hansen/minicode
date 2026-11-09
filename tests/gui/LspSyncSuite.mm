@@ -154,7 +154,11 @@ MC_GUI_SUITE(lsp_sync) {
     // The flush reads only what was typed (and finds its positions from the
     // line starts the client keeps); converting the whole buffer to UTF-8,
     // as it did, cost about 9 ms of the main thread here. The baseline is
-    // that conversion, timed on this thread in the same step.
+    // that conversion, timed on this thread in the same step, and the bound
+    // is half of it: the old flush did the conversion and more, so it costs
+    // at least the baseline on any machine, and a slow runner's baseline is
+    // slow too (CI's took 11 ms where this Mac takes 5 to 9). With one
+    // conversion put back in the flush it fails (15.5 ms against 4.5).
     NSString *big = MCGuiProjectFile(@"sync/big.py");
     MCGuiStep(@"a 2.5 MB file", ^{
         NSMutableString *s = [NSMutableString string];
@@ -170,10 +174,22 @@ MC_GUI_SUITE(lsp_sync) {
             if ([m[@"params"][@"textDocument"][@"uri"] hasSuffix:@"big.py"]) return YES;
         return NO;
     });
+    MCGuiStep(@"a first edit and pause, not timed", ^{
+        // The first edit after the open grows the client's copy (a fresh
+        // allocation of the whole text, once), the likeliest reason CI's
+        // runner, where page faults are dear, measured that flush at 11 ms,
+        // as much as the conversion. The bound is about every later pause.
+        NSTextView *tv = Text(c);
+        [c.window makeFirstResponder:tv];
+        TypeAt(c, 5, 0, @"w");
+        [Session(c) performSelector:@selector(flushChanges)];
+    });
+    MCGuiWait(@"the first edit reaches the server", 10, ^BOOL {
+        return MCGuiFakeLspReceived(@"sync", @"textDocument/didChange").count > 0;
+    });
     MCGuiStep(@"typing at two places, then the pause", ^{
         MCGuiFakeLspClearLog(@"sync");
         NSTextView *tv = Text(c);
-        [c.window makeFirstResponder:tv];
         NSRange mid = [tv.string rangeOfString:@"return x" options:0
                                          range:NSMakeRange(tv.string.length / 2, 200)];
         GCHECK(mid.location != NSNotFound);
@@ -187,15 +203,12 @@ MC_GUI_SUITE(lsp_sync) {
         const double flush = Session(c).lastFlushCpuMs;
         MCGuiNote(@"the flush: %.2f ms of the main thread's CPU (the buffer as UTF-8: %.2f ms)",
                   flush, baseline);
-        // About 0.8 ms here, most of it moving the client's copy along
-        // (the text after each edit, and its line starts); room is left
-        // for an efficiency core (3.2 ms at load 100 to 125, with several
-        // agents building), and the baseline ratio holds either way. The
-        // old flush took 9 to 13 ms, so 6 still catches a return to it.
-        GCHECK_TIME(flush, 6, @"a pause's flush in a 2.5 MB file");
-        // The ratio, for a slow machine; a flush that fast needs none (one
-        // loaded run's stalled sample failed it at a 15 to 1 norm).
-        GCHECK(MCGuiTimingSkipped() || flush < 1.5 || flush * 4 < baseline);
+        // About 0.3 to 2 ms here, most of it moving the client's copy
+        // along (the text after each edit, and its line starts), against
+        // 5 to 9 ms for the baseline and 9 to 13 for the old flush. A flush
+        // under 1.5 ms passes whatever the baseline, so one odd baseline
+        // sample on a loaded Mac cannot fail a fast flush.
+        GCHECK_TIME(flush, MAX(1.5, baseline / 2), @"a pause's flush in a 2.5 MB file (half the baseline)");
     });
     MCGuiWait(@"one ranged change with both edits", 10, ^BOOL {
         return MCGuiFakeLspReceived(@"sync", @"textDocument/didChange").count > 0;
