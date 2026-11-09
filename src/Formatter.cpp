@@ -5,6 +5,7 @@
 #include "LspClient.h"   // Lsp::splitCommand, shared with lsp.* commands
 #include <algorithm>
 #include <cctype>
+#include <initializer_list>
 
 namespace Formatter {
 
@@ -739,7 +740,17 @@ std::string codeConfigFile(const std::string& program, const std::string& path,
         return configRunsCode(tool, planConfig, fs.read) ? planConfig : "";
     const bool prettier = tool == "prettier";
     if (!prettier && tool != "biome") return "";
-    for (const std::string& dir : searchDirs(path, root, fs)) {
+    (void)root;
+    // Both tools search from the file's folder up to the filesystem root,
+    // past the open folder and past .git: a configuration above the folder
+    // (the repository's, when only its docs folder is open) is read and
+    // run just the same.
+    std::vector<std::string> dirs;
+    for (std::string dir = parentOf(path); !dir.empty(); dir = parentOf(dir)) {
+        dirs.push_back(dir);
+        if (dir == "/") break;
+    }
+    for (const std::string& dir : dirs) {
         std::vector<std::string> present;
         auto consider = [&](const std::string& name) {
             const std::string file = join(dir, name);
@@ -761,6 +772,132 @@ std::string codeConfigFile(const std::string& program, const std::string& path,
         return "";
     }
     return "";
+}
+
+namespace {
+
+// "@biomejs/biome@2.1" -> "biome", "prettier@3" -> "prettier", "./x" -> "x".
+std::string binOfPackage(std::string spec) {
+    const size_t from = !spec.empty() && spec[0] == '@' ? spec.find('/') : 0;
+    const size_t at = from == std::string::npos ? std::string::npos : spec.find('@', from + 1);
+    if (at != std::string::npos && at > 0) spec.resize(at);
+    return programName(spec);
+}
+
+}  // namespace
+
+Launch launched(const std::string& command) {
+    Launch out;
+    const std::vector<std::string> w = Lsp::splitCommand(command);
+    if (w.empty()) return out;
+    const std::string runner = programName(w[0]);
+    size_t i = 1;
+    // Skips options before the next word; `valued` ones take the word after
+    // them. True when one of them (-c, --call) gave the command itself.
+    auto skip = [&](std::initializer_list<const char*> valued) {
+        while (i < w.size() && w[i].size() > 1 && w[i][0] == '-') {
+            const std::string o = w[i];
+            if (o == "--") {
+                i++;
+                return false;
+            }
+            const size_t eq = o.find('=');
+            const std::string key = eq == std::string::npos ? o : o.substr(0, eq);
+            if (key == "-c" || key == "--call") {
+                const std::string value =
+                    eq != std::string::npos ? o.substr(eq + 1) : i + 1 < w.size() ? w[i + 1] : "";
+                const std::vector<std::string> inner = Lsp::splitCommand(value);
+                if (!inner.empty()) out.tool = binOfPackage(inner[0]);
+                return true;
+            }
+            bool takes = false;
+            if (eq == std::string::npos)
+                for (const char* v : valued)
+                    if (key == v) takes = true;
+            i += takes ? 2 : 1;
+        }
+        return false;
+    };
+    auto next = [&](bool folderCode) {
+        if (i < w.size()) {
+            out.tool = binOfPackage(w[i]);
+            out.folderCode = folderCode;
+        }
+        return out;
+    };
+    const std::initializer_list<const char*> npxOptions = {
+        "-p", "--package", "--cache", "--userconfig", "-w", "--workspace", "--prefix"};
+    if (runner == "npx" || runner == "pnpx" || runner == "bunx") {
+        if (skip(npxOptions)) return out;
+        return next(false);
+    }
+    if (runner == "npm") {
+        if (skip({"--prefix", "-w", "--workspace", "--userconfig", "--cache"})) return out;
+        if (i >= w.size()) return out;
+        const std::string sub = w[i++];
+        if (sub == "exec" || sub == "x") {
+            if (skip(npxOptions)) return out;
+            return next(false);
+        }
+        if (sub == "run" || sub == "run-script" || sub == "rum" || sub == "urn") {
+            skip({});
+            return next(true);
+        }
+        return out;
+    }
+    if (runner == "pnpm") {
+        if (skip({"-C", "--dir", "--filter", "-F", "--workspace-dir", "--config"})) return out;
+        if (i >= w.size()) return out;
+        const std::string sub = w[i];
+        if (sub == "exec" || sub == "dlx") {
+            i++;
+            if (skip({"--package", "--filter", "-F"})) return out;
+            return next(false);
+        }
+        if (sub == "run" || sub == "run-script") {
+            i++;
+            skip({});
+            return next(true);
+        }
+        return next(false);   // pnpm runs a bin by its name
+    }
+    if (runner == "yarn") {
+        if (skip({"--cwd"})) return out;
+        if (i >= w.size()) return out;
+        const std::string sub = w[i];
+        if (sub == "dlx") {
+            i++;
+            if (skip({"-p", "--package"})) return out;
+            return next(false);
+        }
+        if (sub == "exec" || sub == "run") {
+            i++;
+            skip({});
+        }
+        return next(true);   // a script or one of the project's own bins
+    }
+    if (runner == "bun") {
+        if (skip({"--cwd", "--config"})) return out;
+        if (i >= w.size()) return out;
+        const std::string sub = w[i];
+        if (sub == "x") {
+            i++;
+            if (skip(npxOptions)) return out;
+            return next(false);
+        }
+        if (sub == "run") {
+            i++;
+            skip({});
+        }
+        return next(true);   // a script, or a file of the folder's
+    }
+    return out;
+}
+
+Source chooseLaunched(bool fromSettings, bool folderCopy, const std::string& runner,
+                      const std::string& consent, bool configIsCode) {
+    return folderCopy ? chooseProgram(fromSettings, runner, "", consent, configIsCode)
+                      : chooseProgram(fromSettings, "", runner, consent, configIsCode);
 }
 
 bool serverMayFormat(const std::string& lang, const Plan& plan) {

@@ -160,6 +160,10 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
                                                                  : NSControlStateValueOff;
         return YES;
     }
+    if (item.action == @selector(toggleHiddenFiles:)) {
+        item.state = gShowHidden ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
     if (item.action == @selector(closeFocused:)) {
         static NSString *const titles[] = {@"Close Window", @"Close Terminal",
                                            @"Close Browser", @"Close Tab",

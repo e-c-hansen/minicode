@@ -228,6 +228,101 @@ MC_GUI_SUITE(agent_panel) {
         [Agent(s.c) discard];
     });
 
+    // AG-D1: Keep after the user typed elsewhere and moved the caret into
+    // the other copy. The edit lands where the bar showed it, the second
+    // copy, not where the caret is now.
+    NSString *secondTripled = @"def double(x):\n    return x * 2\n\n\ndef twice(x):\n    return x * 3\n";
+    MCGuiStep(@"the edit shown on the second copy", ^{
+        Text(s.c).selectedRange = NSMakeRange([twice rangeOfString:@"return" options:NSBackwardsSearch].location, 0);
+        ask(@"triple");
+    });
+    waitForReply(@"the edit on the second copy");
+    MCGuiStep(@"typed elsewhere, the caret in the first copy, Keep: the second copy changes", ^{
+        MCAgentSession *agent = Agent(s.c);
+        GCHECK(agent.editPending);
+        GCHECK_EQ_STR(agent.pendingText, secondTripled);
+        NSTextView *tv = Text(s.c);
+        MCGuiUndoGroup(tv.undoManager, ^{
+            [tv insertText:@"print(twice(2))\n" replacementRange:NSMakeRange(tv.string.length, 0)];
+        });
+        tv.selectedRange = NSMakeRange([twice rangeOfString:@"return"].location, 0);
+        GCHECK(agent.editPending);
+        [agent keep];
+        GCHECK(!agent.shown);
+        GCHECK_EQ_STR(tv.string, [secondTripled stringByAppendingString:@"print(twice(2))\n"]);
+    });
+    MCGuiStep(@"put back", ^{
+        NSTextView *tv = Text(s.c);
+        while (tv.undoManager.canUndo) [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, twice);
+        tv.selectedRange = NSMakeRange([twice rangeOfString:@"return" options:NSBackwardsSearch].location, 0);
+        ask(@"triple");
+    });
+    waitForReply(@"the edit on the second copy again");
+    // The second copy deleted meanwhile: the only place left for the block
+    // is the first copy, which the bar never showed changing. Keep shows
+    // that change first; a second Return makes it.
+    MCGuiStep(@"the second copy deleted, Keep: the new change is shown, nothing made", ^{
+        MCAgentSession *agent = Agent(s.c);
+        GCHECK(agent.editPending);
+        NSTextView *tv = Text(s.c);
+        const NSUInteger from = [twice rangeOfString:@"\n\n\ndef twice"].location + 1;
+        MCGuiUndoGroup(tv.undoManager, ^{
+            [tv insertText:@"" replacementRange:NSMakeRange(from, tv.string.length - from)];
+        });
+        NSString *left = @"def double(x):\n    return x * 2\n";
+        GCHECK_EQ_STR(tv.string, left);
+        [agent keep];
+        GCHECK(agent.shown && agent.editPending);
+        GCHECK_EQ_STR(tv.string, left);
+        GCHECK_EQ_STR(agent.pendingText, @"def double(x):\n    return x * 3\n");
+        NSString *bar = agent.bar.attributedMessage.string;
+        MCGuiNote(@"the bar: %@", bar);
+        GCHECK([bar hasPrefix:@"The file changed while the edit waited, so it now makes this change, 1 line"]);
+        GCHECK([bar containsString:@"   2 -     return x * 2\n   2 +     return x * 3"]);
+        [agent keep];
+        GCHECK(!agent.shown);
+        GCHECK_EQ_STR(tv.string, @"def double(x):\n    return x * 3\n");
+        while (tv.undoManager.canUndo) [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, twice);
+    });
+
+    // AG-D2: an edit that only adds lines replaces none, so the place they
+    // go is marked: the line above underlined, its break tinted.
+    MCGuiStep(@"an edit that only adds a line", ^{
+        GCHECK([s.c showFile:file]);
+        GCHECK_EQ_STR(Text(s.c).string, original);
+        Text(s.c).selectedRange = NSMakeRange(4, 0);
+        WriteAgent(script, PlainReply(@"<<<<<<< SEARCH\ndef double(x):\n=======\ndef double(x):\n    \"\"\"Twice x.\"\"\"\n>>>>>>> REPLACE\n"));
+        ask(@"add a docstring");
+    });
+    waitForReply(@"the insertion");
+    MCGuiStep(@"where the line goes is marked in the file", ^{
+        MCAgentSession *agent = Agent(s.c);
+        GCHECK(agent.editPending);
+        GCHECK_EQ_STR(agent.pendingText, @"def double(x):\n    \"\"\"Twice x.\"\"\"\n    return x * 2\n");
+        NSLayoutManager *lm = Text(s.c).layoutManager;
+        const NSUInteger brk = [original rangeOfString:@"\n"].location;
+        NSRange eff;
+        id under = [lm temporaryAttribute:NSUnderlineStyleAttributeName atCharacterIndex:0
+                           effectiveRange:&eff];
+        GCHECK(under != nil && [under integerValue] != 0);
+        GCHECK(NSEqualRanges(eff, NSMakeRange(0, brk)));
+        GCHECK([lm temporaryAttribute:NSBackgroundColorAttributeName atCharacterIndex:brk
+                       effectiveRange:NULL] != nil);
+        // Nothing replaced, so no line is tinted as replaced.
+        GCHECK([lm temporaryAttribute:NSBackgroundColorAttributeName atCharacterIndex:0
+                       effectiveRange:NULL] == nil);
+        GCHECK([lm temporaryAttribute:NSBackgroundColorAttributeName atCharacterIndex:brk + 5
+                       effectiveRange:NULL] == nil);
+        [agent discard];
+        GCHECK([lm temporaryAttribute:NSUnderlineStyleAttributeName atCharacterIndex:0
+                       effectiveRange:NULL] == nil);
+        GCHECK([lm temporaryAttribute:NSBackgroundColorAttributeName atCharacterIndex:brk
+                       effectiveRange:NULL] == nil);
+        GCHECK([s.c showFile:file2]);   // the steps below ask about util2.py
+    });
+
     // An answer, streamed.
     MCGuiStep(@"a question", ^{
         WriteAgent(script, SlowStream(Fixture(@"answer.jsonl")));

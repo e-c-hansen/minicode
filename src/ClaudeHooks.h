@@ -87,7 +87,9 @@ std::string writeTarget(const std::string &path);
 // the file `path` names (writeTarget: a settings.json that is a symlink
 // into a dotfiles folder stays a link, and the dotfiles copy changes),
 // given that file's mode (`newMode` for a new file), flushed, then renamed
-// over it. False, with `error` saying why, when nothing was written.
+// over it. A file with other hard links is written in place instead, so its
+// other names see the new text too. False, with `error` saying why, when
+// nothing was written.
 bool writeSettingsFile(const std::string &path, const std::string &text, unsigned newMode,
                        std::string &error);
 

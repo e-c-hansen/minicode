@@ -6,6 +6,7 @@
 // kinds, settings and options, and configurationSection.
 #include "LspClient.h"
 #include "LspInternal.h"
+#include <algorithm>
 #include <cctype>
 
 namespace Lsp {
@@ -301,6 +302,9 @@ StatusLine statusLine(const std::string& language, const std::vector<ServerStatu
             part = name + " crashed";
             red = true;
             break;
+        case ServerState::Waiting:   // the bar over the file asks
+            part = name + " waits for your answer about this folder";
+            break;
         case ServerState::Idle: break;
         }
         if (!part.empty()) parts.push_back(part);
@@ -428,6 +432,141 @@ Json pythonInitializationOptions(PythonServer kind, const std::string& interpret
 
 bool pythonInterpreterNeedsRestart(PythonServer kind) {
     return kind == PythonServer::Jedi || kind == PythonServer::Other;
+}
+
+// ------------------------------------------- servers that run the folder's code
+namespace {
+
+std::string withoutTrailingSlash(std::string d) {
+    while (d.size() > 1 && d.back() == '/') d.pop_back();
+    return d;
+}
+
+std::string parentOf(const std::string& dirIn) {
+    const std::string dir = withoutTrailingSlash(dirIn);
+    if (dir.empty() || dir == "/") return "";
+    size_t slash = dir.find_last_of('/');
+    if (slash == std::string::npos) return "";
+    return slash == 0 ? "/" : dir.substr(0, slash);
+}
+
+std::string joinPath(const std::string& dir, const std::string& name) {
+    return dir == "/" ? "/" + name : dir + "/" + name;
+}
+
+// Whether `path` is `dir` or inside it.
+bool within(const std::string& path, const std::string& dir) {
+    if (dir.empty() || path.empty()) return false;
+    if (dir == "/") return path[0] == '/';
+    return path == dir || (path.size() > dir.size() && path.compare(0, dir.size(), dir) == 0 &&
+                           path[dir.size()] == '/');
+}
+
+}  // namespace
+
+bool serverMayRunProjectCode(const std::string& server) {
+    return server == "rust" || server == "typescript";
+}
+
+std::vector<std::string> projectFolders(const std::string& fileDirIn, const std::string& rootIn,
+                                        const std::string& homeIn) {
+    const std::string root = withoutTrailingSlash(rootIn), home = withoutTrailingSlash(homeIn);
+    std::vector<std::string> out;
+    // The home folder and the folders holding it are the user's own
+    // (~/.cargo is cargo's home). A file outside the window's folder has
+    // its own folders read, then the window's.
+    for (std::string d : {withoutTrailingSlash(fileDirIn), root})
+        for (; !d.empty() && !within(home, d) && out.size() < 4096; d = parentOf(d)) {
+            if (std::find(out.begin(), out.end(), d) != out.end()) break;
+            out.push_back(d);
+        }
+    return out;
+}
+
+std::string rustProjectCodeFile(const std::string& fileDir, const std::string& root,
+                                const std::string& home, const ProjectFs& fs) {
+    static const char* const kFiles[] = {
+        ".cargo/config.toml", ".cargo/config",      // cargo runs the rustc and wrappers named
+        "rust-toolchain.toml", "rust-toolchain",    // rustup runs a toolchain named by path
+        "rust-analyzer.toml", "rust-project.json",  // rust-analyzer's own build commands
+    };
+    std::vector<std::string> dirs = projectFolders(fileDir, root, home);
+    const std::string r = withoutTrailingSlash(root);
+    if (!r.empty() && fs.subfolders && !within(withoutTrailingSlash(home), r))
+        for (const std::string& name : fs.subfolders(r)) {
+            const std::string sub = joinPath(r, name);
+            if (fs.exists(joinPath(sub, "Cargo.toml"))) dirs.push_back(sub);
+        }
+    for (const std::string& d : dirs)
+        for (const char* f : kFiles) {
+            const std::string p = joinPath(d, f);
+            if (fs.exists(p)) return p;
+        }
+    return "";
+}
+
+std::string workspaceTypescript(const std::string& root, const std::string& home,
+                                const ProjectFs& fs) {
+    for (const std::string& d : projectFolders(root, root, home)) {
+        const std::string lib = joinPath(d, "node_modules/typescript/lib");
+        if (fs.exists(joinPath(lib, "tsserver.js"))) return lib;
+    }
+    return "";
+}
+
+std::string ownTypescript(const std::string& serverProgram, const std::string& tsserverProgram,
+                          const std::string& rootIn, const ProjectFs& fs) {
+    const std::string root = withoutTrailingSlash(rootIn);
+    std::vector<std::string> tries;
+    // .../node_modules/typescript-language-server/lib/cli.mjs: its package
+    // folder holds its own TypeScript (npm puts peers there), or the
+    // node_modules it sits in does.
+    const std::string pkg = parentOf(parentOf(serverProgram));
+    if (!pkg.empty()) {
+        tries.push_back(joinPath(pkg, "node_modules/typescript/lib/tsserver.js"));
+        tries.push_back(joinPath(parentOf(pkg), "typescript/lib/tsserver.js"));
+    }
+    // .../typescript/bin/tsserver beside .../typescript/lib/tsserver.js.
+    const std::string ts = parentOf(parentOf(tsserverProgram));
+    if (!ts.empty()) tries.push_back(joinPath(ts, "lib/tsserver.js"));
+    for (const std::string& p : tries)
+        if (!within(p, root) && fs.exists(p)) return p;
+    return "";
+}
+
+ProjectCodeCheck checkProjectCode(const std::string& server, bool allowed,
+                                  const std::string& fileDir, const std::string& root,
+                                  const std::string& home, const std::string& ownTs,
+                                  const ProjectFs& fs) {
+    ProjectCodeCheck c;
+    if (allowed || !serverMayRunProjectCode(server)) return c;
+    if (server == "rust") {
+        c.file = rustProjectCodeFile(fileDir, root, home, fs);
+        if (!c.file.empty()) {
+            c.verdict = ProjectCode::Waits;
+            return c;
+        }
+        // rust-analyzer's own names for them (its manual's Configuration).
+        Json off = Json::object({
+            {"cargo", Json::object({{"buildScripts", Json::object({{"enable", false}})}})},
+            {"procMacro", Json::object({{"enable", false}})},
+            {"checkOnSave", false},
+        });
+        c.verdict = ProjectCode::Restricted;
+        c.settings = Json::object({{"rust-analyzer", off}});
+        c.initializationOptions = std::move(off);
+        return c;
+    }
+    // typescript-language-server
+    c.file = workspaceTypescript(root, home, fs);
+    if (c.file.empty()) return c;
+    if (ownTs.empty()) {
+        c.verdict = ProjectCode::Waits;
+        return c;
+    }
+    c.verdict = ProjectCode::Restricted;
+    c.initializationOptions = Json::object({{"tsserver", Json::object({{"path", ownTs}})}});
+    return c;
 }
 
 }  // namespace Lsp

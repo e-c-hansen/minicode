@@ -6,6 +6,16 @@
 #                                     needs no key, signs and sends nothing
 #   scripts/ppa.sh --simulate 1.4.12  everything, signing included, but dput
 #                                     only checks (dput -s) and sends nothing
+#   scripts/ppa.sh --no-wait 1.4.12   uploads without waiting for the build
+#
+# After a real upload it waits for Launchpad to build the package
+# (scripts/ppa-wait.sh, about 35 minutes) and fails unless every build of it
+# is "Successfully built", so a release never stops at "uploaded" with the
+# build failing unseen (1.5.13's did). MINICODE_PPA_NO_WAIT=1 is --no-wait.
+# Exit status: 0 uploaded and built (or uploaded, with --no-wait); 3 uploaded
+# and the build failed, so a fix goes out as the next PPA revision; 4
+# uploaded and the build's end not seen (scripts/ppa-wait.sh waits again);
+# anything else, nothing was uploaded.
 #
 # The version given here is the one source of truth, as in release.sh: the
 # changelog entry is written from it by dch, never by hand. Launchpad builds
@@ -46,11 +56,17 @@ cd "$(dirname "$0")/.."
 
 DRY=""
 SIMULATE=""
-case "${1:-}" in
-    --dry-run) DRY=1; shift ;;
-    --simulate) SIMULATE=1; shift ;;
-esac
-VERSION="${1:?usage: scripts/ppa.sh [--dry-run|--simulate] <version> [ppa revision]   e.g. 1.4.12}"
+NO_WAIT="${MINICODE_PPA_NO_WAIT:-}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run) DRY=1; shift ;;
+        --simulate) SIMULATE=1; shift ;;
+        --no-wait) NO_WAIT=1; shift ;;
+        -*) echo "error: unknown option $1" >&2; exit 2 ;;
+        *) break ;;
+    esac
+done
+VERSION="${1:?usage: scripts/ppa.sh [--dry-run|--simulate|--no-wait] <version> [ppa revision]   e.g. 1.4.12}"
 REV="${2:-1}"
 SERIES="${MINICODE_PPA_SERIES:-resolute}"
 PPA="${MINICODE_PPA:-ppa:echansen/minicode}"
@@ -269,3 +285,22 @@ build_run "cd \"\$B\" && dput '$PPA' \"minicode_\${PKGVER}_source.changes\""
 
 echo "==> Uploaded $PKGVER. Launchpad mails $SIGNER_EMAIL when it is accepted and"
 echo "    built; progress at https://launchpad.net/~$PPA_OWNER/+archive/ubuntu/$PPA_NAME/+packages"
+if [ -n "$NO_WAIT" ]; then
+    echo "==> Not waiting for the build (--no-wait); scripts/ppa-wait.sh $VERSION $REV waits for it"
+    exit 0
+fi
+# The container and the scratch folder are done with; the wait can be long.
+cleanup
+CID=""
+trap - EXIT
+status=0
+MINICODE_PPA_SERIES="$SERIES" MINICODE_PPA="$PPA" scripts/ppa-wait.sh "$VERSION" "$REV" || status=$?
+case "$status" in
+    0) ;;
+    1) echo "error: $PKGVER is uploaded and Launchpad failed to build it. Launchpad never takes a" >&2
+       echo "       version twice, so a fix goes out as the next revision: scripts/ppa.sh $VERSION $((REV + 1))" >&2
+       exit 3 ;;
+    *) echo "error: $PKGVER is uploaded, but whether it built is not known yet;" >&2
+       echo "       scripts/ppa-wait.sh $VERSION $REV waits again" >&2
+       exit 4 ;;
+esac

@@ -51,9 +51,9 @@ struct PlacedInlayHint {
 
 // Where hints fall in a window of the text: `window` is the text from
 // `base` (an offset at the start of line `firstLine`) to the end of a line.
-// Hints outside the window are left out, and so are hints at the start of
-// a line, which have no character before them on their line to open a gap
-// after. A position past its line's end is taken as the line's end.
+// Hints outside the window are left out. A hint at a line's start (an
+// argument on a continuation line, offset 0) goes with what follows it.
+// A position past its line's end is taken as the line's end.
 std::vector<PlacedInlayHint> placeInlayHints(const std::vector<InlayHint>& hints,
                                              const std::u16string& window, size_t base,
                                              int firstLine);

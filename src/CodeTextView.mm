@@ -582,11 +582,15 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
 // caret, as the storage answers it, so typing right after an inlay hint's
 // gap stored its kern in every character typed (the highlighter then set
 // their colors again on each keystroke, and plain text kept it). The
-// editor never kerns anything of its own.
+// editor never kerns anything of its own. At a line's start the gap is the
+// paragraph style's first-line indent: typed text takes the style stored.
 - (void)setTypingAttributes:(NSDictionary<NSAttributedStringKey, id> *)attrs {
-    if (attrs[NSKernAttributeName]) {
+    NSParagraphStyle *stored = nil;
+    const BOOL gapStyle = MCIsGapParagraphStyle(attrs[NSParagraphStyleAttributeName], &stored);
+    if (attrs[NSKernAttributeName] || gapStyle) {
         NSMutableDictionary *m = [attrs mutableCopy];
         [m removeObjectForKey:NSKernAttributeName];
+        if (gapStyle) m[NSParagraphStyleAttributeName] = stored;   // nil removes it
         attrs = m;
     }
     [super setTypingAttributes:attrs];

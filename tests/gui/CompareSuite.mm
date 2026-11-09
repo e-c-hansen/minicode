@@ -7,9 +7,10 @@
 //     scrolls away, F7 goes on from what the panes show. F7 in the editor
 //     is left alone.
 //   - A comparison with a decision gets Accept and Reject per hunk between
-//     the panes; the decision ends once every hunk has a choice, or with the
-//     bar's Accept the Rest or Reject the Rest, and its text is made of the
-//     accepted hunks only.
+//     the panes; the decision ends once every hunk has a choice (after a
+//     moment in which the last choice can be taken back, or Send Now), or
+//     with the bar's Accept the Rest or Reject the Rest, and its text is
+//     made of the accepted hunks only.
 #import <Carbon/Carbon.h>
 
 #import "Harness.h"
@@ -316,8 +317,70 @@ MC_GUI_SUITE(compare) {
         __block BOOL yes = YES;
         cmp.onDecision = ^(BOOL accepted) { n++; yes = accepted; };
         [c showComparison:cmp preview:YES];
+        cmp.lastChoiceGrace = 0;   // at once: the grace is checked below
         for (NSUInteger i = 0; i < 3; i++) [cmp decideHunk:i as:-1];
         GCHECK(n == 1 && !yes && cmp.decision == -1);
+    });
+
+    // AG-D4: the last hunk's choice is not final at once. The answer waits
+    // a moment, the bar saying so with Send Now, and a second press on the
+    // last button takes the choice back.
+    __block MCComparison *graced = nil;
+    __block int gracedCalls = 0;
+    __block BOOL gracedYes = NO;
+    MCGuiStep(@"the last hunk's choice can be taken back for a moment", ^{
+        graced = MakeComparison(@"grace");
+        graced.decisionPrompt = @"Claude Code wants to change review.py.";
+        graced.lastChoiceGrace = 0.6;
+        graced.onDecision = ^(BOOL accepted) { gracedCalls++; gracedYes = accepted; };
+        [c showComparison:graced preview:YES];
+        [graced decideHunk:0 as:1];
+        [graced decideHunk:1 as:-1];
+        [graced decideHunk:2 as:-1];   // the last: a misclick
+        GCHECK(graced.sending && graced.decision == 0 && gracedCalls == 0);
+        GCHECK(!v.acceptButton.hidden && v.rejectButton.hidden);
+        GCHECK_EQ_STR(v.acceptButton.title, @"Send Now");
+        NSTextField *label = [v valueForKey:@"decisionLabel"];
+        GCHECK([label.stringValue containsString:@"sending to Claude Code in a moment"]);
+        // The hunk buttons still take a choice back.
+        GCHECK(!NSIsEmptyRect([v rectForHunk:0 accept:YES]));
+        [graced decideHunk:2 as:0];
+        GCHECK(!graced.sending && graced.decision == 0);
+        GCHECK_EQ_STR(v.acceptButton.title, @"Accept the Rest");
+    });
+    MCGuiPause(1.0);   // longer than the grace: nothing may be sent while a hunk is undecided
+    MCGuiStep(@"nothing went while a hunk was undecided; the right choice then goes after the grace", ^{
+        GCHECK(gracedCalls == 0 && graced.decision == 0);
+        [graced decideHunk:2 as:1];
+        GCHECK(graced.sending && gracedCalls == 0);
+    });
+    MCGuiWait(@"the answer after the grace", 5, ^BOOL { return gracedCalls == 1; });
+    MCGuiStep(@"accepted as decided, the bar done", ^{
+        GCHECK(gracedYes && graced.decision == 1 && !graced.sending);
+        GCHECK(v.acceptButton.hidden);
+        // The first and third hunks taken, the second not.
+        GCHECK(graced.acceptedText.length > 0 && ![graced.acceptedText isEqualToString:NewText()]);
+    });
+    MCGuiStep(@"Send Now sends at once; closing the tab during the grace sends as decided", ^{
+        MCComparison *now = MakeComparison(@"send-now");
+        now.decisionPrompt = @"Claude Code wants to change review.py.";
+        __block int calls2 = 0;
+        now.onDecision = ^(BOOL accepted) { (void)accepted; calls2++; };
+        [c showComparison:now preview:YES];
+        for (NSUInteger i = 0; i < 3; i++) [now decideHunk:i as:1];
+        GCHECK(now.sending && calls2 == 0);
+        [v.acceptButton performClick:nil];
+        GCHECK(calls2 == 1 && now.decision == 1 && [now.acceptedText isEqualToString:NewText()]);
+        MCComparison *closed = MakeComparison(@"closed");
+        closed.decisionPrompt = @"Claude Code wants to change review.py.";
+        __block BOOL closedYes = NO;
+        closed.onDecision = ^(BOOL accepted) { closedYes = accepted; };
+        [closed decideHunk:0 as:1];
+        [closed decideHunk:1 as:-1];
+        [closed decideHunk:2 as:-1];
+        GCHECK(closed.sending);
+        [closed tabClosed];
+        GCHECK(closedYes && closed.decision == 1);
     });
 
     MCGuiStep(@"close the window", ^{ [c.window close]; });

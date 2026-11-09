@@ -25,7 +25,17 @@ void takeTerminal(Proc& p, const Terminal& t) {
     p.terminal = t.id;
     p.terminalTitle = t.title;
     p.window = t.window;
-    if (!t.session.empty()) p.session = t.session;
+}
+
+// A shell's short name, as the kernel gives it (a login shell's starts
+// with "-"): the terminal's shell is no shell after `exec claude`.
+bool isShellName(std::string name) {
+    if (!name.empty() && name[0] == '-') name.erase(0, 1);
+    static const char* const kShells[] = {"zsh", "bash", "sh", "dash", "fish", "ksh", "mksh",
+                                          "tcsh", "csh", "nu", "elvish", "xonsh", "pwsh"};
+    for (const char* s : kShells)
+        if (name == s) return true;
+    return false;
 }
 
 }  // namespace
@@ -110,14 +120,61 @@ SampleStats Tracker::sample(Source& source, double now, const std::vector<Termin
                 for (size_t i : c->second) q.push_back((int)i);
         }
     };
+    // The process each terminal's Claude Code session runs as (R7.4; see
+    // SessionRoot), and every pid under it now.
+    std::map<int, std::string> sessionOf;
+    {
+        std::map<int, SessionRoot> kept;
+        for (const Terminal& t : terminals) {
+            if (t.session.empty() || t.shellPid <= 0 || !byPid.count(t.shellPid)) continue;
+            SessionRoot sr = sessions_.count(t.id) ? sessions_[t.id] : SessionRoot();
+            const bool rootAlive = sr.root.pid && liveBasic(list, byPid, sr.root);
+            if (sr.session != t.session || (!rootAlive && t.sessionNamedAt > sr.namedAt)) {
+                sr.session = t.session;
+                sr.namedAt = t.sessionNamedAt;
+                sr.root = Key();
+                const Basic& shell = list[byPid[t.shellPid]];
+                if (!isShellName(shell.name)) {
+                    sr.root = keyOf(shell);
+                } else {
+                    const Basic* newest = nullptr;
+                    auto k = kids.find(t.shellPid);
+                    if (k != kids.end())
+                        for (size_t i : k->second)
+                            if (list[i].start <= t.sessionNamedAt &&
+                                (!newest || list[i].start > newest->start))
+                                newest = &list[i];
+                    if (newest) sr.root = keyOf(*newest);
+                }
+            } else if (!rootAlive) {
+                sr.root = Key();
+            }
+            if (sr.root.pid) {
+                std::deque<int> q{sr.root.pid};
+                while (!q.empty()) {
+                    const int pid = q.front();
+                    q.pop_front();
+                    if (!sessionOf.emplace(pid, sr.session).second) continue;
+                    auto k = kids.find(pid);
+                    if (k != kids.end())
+                        for (size_t i : k->second) q.push_back(list[i].pid);
+                }
+            }
+            kept[t.id] = sr;
+        }
+        sessions_.swap(kept);
+    }
+    auto takeSession = [&](Proc& p) {
+        if (!p.session.empty()) return;
+        auto s = sessionOf.find(p.key.pid);
+        if (s != sessionOf.end()) p.session = s->second;
+    };
     for (const Terminal& t : terminals) {
         if (t.shellPid <= 0 || !byPid.count(t.shellPid)) continue;
         walk(t.shellPid, [&](Proc& p, bool fresh) {
             if (fresh || p.origin == Origin::Outside) takeTerminal(p, t);
-            else if (p.terminal == t.id) {
-                p.terminalTitle = t.title;
-                if (!t.session.empty()) p.session = t.session;
-            }
+            else if (p.terminal == t.id) p.terminalTitle = t.title;
+            takeSession(p);
         });
     }
     std::vector<Key> roots;

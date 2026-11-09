@@ -4,6 +4,7 @@
 // reports turned into changes, coalescing, and what is never watched).
 #include "LspClient.h"
 #include <algorithm>
+#include <iterator>
 #include <map>
 
 namespace Lsp {
@@ -160,46 +161,185 @@ std::u16string applyContentChanges(const std::u16string& text,
     return out;
 }
 
-SyncedText::SyncedText(std::u16string text) : text_(std::move(text)) {
-    starts_.push_back(0);
-    for (size_t i = 1; i <= text_.size(); i++)
-        if (startsLine(i)) starts_.push_back(i);
+SyncedText::SyncedText(const std::u16string& text) : size_(text.size()) {
+    chunks_.reserve(text.size() / kChunk + 1);
+    for (size_t at = 0; at < text.size(); at += kChunk) {
+        Chunk c;
+        c.text = text.substr(at, kChunk);
+        chunks_.push_back(std::move(c));
+    }
+    for (size_t k = 0; k < chunks_.size(); k++) rescan(k);
+    rebuild();
 }
 
-// A line starts after \n, and after a \r not followed by \n.
-bool SyncedText::startsLine(size_t at) const {
-    if (at == 0) return true;
-    if (at > text_.size()) return false;
-    const char16_t c = text_[at - 1];
-    if (c == u'\n') return true;
-    return c == u'\r' && (at == text_.size() || text_[at] != u'\n');
+void SyncedText::add(std::vector<size_t>& tree, size_t k, long delta) {
+    if (!delta) return;
+    for (size_t i = k + 1; i < tree.size(); i += i & (~i + 1))
+        tree[i] = (size_t)((long)tree[i] + delta);
+}
+
+size_t SyncedText::before(const std::vector<size_t>& tree, size_t k) {
+    size_t sum = 0;
+    for (size_t i = k; i > 0; i -= i & (~i + 1)) sum += tree[i];
+    return sum;
+}
+
+size_t SyncedText::find(const std::vector<size_t>& tree, size_t value) const {
+    const size_t n = chunks_.size();
+    if (n == 0) return 0;
+    size_t step = 1;
+    while (step * 2 <= n) step *= 2;
+    size_t pos = 0, rest = value;
+    for (; step; step /= 2)
+        if (pos + step <= n && tree[pos + step] <= rest) {
+            pos += step;
+            rest -= tree[pos];
+        }
+    return std::min(pos, n - 1);
+}
+
+void SyncedText::rebuild() {
+    const size_t n = chunks_.size();
+    units_.assign(n + 1, 0);
+    startsIn_.assign(n + 1, 0);
+    startCount_ = 0;
+    for (size_t k = 0; k < n; k++) {
+        units_[k + 1] += chunks_[k].text.size();
+        startsIn_[k + 1] += chunks_[k].starts.size();
+        startCount_ += chunks_[k].starts.size();
+        const size_t up = (k + 1) + ((k + 1) & (~(k + 1) + 1));
+        if (up <= n) {
+            units_[up] += units_[k + 1];
+            startsIn_[up] += startsIn_[k + 1];
+        }
+    }
+}
+
+// A line starts after \n, and after a \r not followed by \n (the unit after
+// a chunk's last is the next chunk's first).
+void SyncedText::rescan(size_t k) {
+    Chunk& c = chunks_[k];
+    c.starts.clear();
+    const size_t n = c.text.size();
+    const char16_t* t = c.text.data();
+    for (size_t i = 0; i < n; i++) {
+        if (t[i] == u'\n') {
+            c.starts.push_back((uint32_t)(i + 1));
+        } else if (t[i] == u'\r') {
+            const bool nextIsNewline = i + 1 < n ? t[i + 1] == u'\n'
+                                       : k + 1 < chunks_.size() && chunks_[k + 1].text[0] == u'\n';
+            if (!nextIsNewline) c.starts.push_back((uint32_t)(i + 1));
+        }
+    }
 }
 
 Position SyncedText::position(size_t offset) const {
-    offset = std::min(offset, text_.size());
-    auto it = std::upper_bound(starts_.begin(), starts_.end(), offset);
-    const size_t line = (size_t)(it - starts_.begin()) - 1;
-    return Position{(int)line, (int)(offset - starts_[line])};
+    offset = std::min(offset, size_);
+    if (offset == 0) return Position{0, 0};
+    // The starts at or before `offset` are those of the chunks before the
+    // one holding the unit before it, and that chunk's own up to it.
+    const size_t k = chunkAt(offset - 1);
+    const Chunk& c = chunks_[k];
+    const size_t chunkStart = before(units_, k);
+    auto it = std::upper_bound(c.starts.begin(), c.starts.end(), (uint32_t)(offset - chunkStart));
+    const size_t inChunk = (size_t)(it - c.starts.begin());
+    const size_t earlier = before(startsIn_, k);
+    size_t start = 0;
+    if (inChunk) {
+        start = chunkStart + c.starts[inChunk - 1];
+    } else if (earlier) {
+        // The chunk holding the last start before this one.
+        const size_t j = find(startsIn_, earlier - 1);
+        start = before(units_, j) + chunks_[j].starts.back();
+    }
+    return Position{(int)(earlier + inChunk), (int)(offset - start)};
 }
 
 void SyncedText::replace(size_t a, size_t b, const std::u16string& with) {
-    a = std::min(a, text_.size());
-    b = std::min(std::max(a, b), text_.size());
-    // Whether a line starts at s depends on the units at s - 1 and s, so
-    // only starts in [a, b] (old) can change, becoming ones in
-    // [a, a + with.size()] (new); the rest keep theirs, moved.
-    auto lo = std::lower_bound(starts_.begin(), starts_.end(), a);
-    auto hi = std::upper_bound(lo, starts_.end(), b);
-    const long delta = (long)with.size() - (long)(b - a);
-    for (auto it = hi; it != starts_.end(); ++it) *it = (size_t)((long)*it + delta);
-    const size_t at = (size_t)(lo - starts_.begin());
-    starts_.erase(lo, hi);
-    text_.replace(a, b - a, with);
-    std::vector<size_t> found;
-    const size_t end = std::min(a + with.size(), text_.size());
-    for (size_t s = a; s <= end; s++)
-        if (startsLine(s)) found.push_back(s);
-    starts_.insert(starts_.begin() + (long)at, found.begin(), found.end());
+    a = std::min(a, size_);
+    b = std::min(std::max(a, b), size_);
+    if (a == b && with.empty()) return;
+    snapshot_.reset();
+    if (chunks_.empty()) {
+        *this = SyncedText(with);
+        return;
+    }
+    size_t ka = chunkAt(a), kb = chunkAt(b);
+    std::u16string merged = chunks_[ka].text.substr(0, a - before(units_, ka));
+    merged += with;
+    merged.append(chunks_[kb].text, b - before(units_, kb), std::u16string::npos);
+    // A small piece joins a neighbour, so chunks stay a quarter full at
+    // least and their number follows the text's size.
+    const size_t kMin = kChunk / 4, kMax = kChunk * 2;
+    if (merged.size() < kMin && kb + 1 < chunks_.size()) {
+        merged += chunks_[++kb].text;
+    } else if (merged.size() < kMin && ka > 0) {
+        merged.insert(0, chunks_[--ka].text);
+    }
+    const size_t count = merged.empty()        ? 0
+                         : merged.size() <= kMax ? 1
+                                                 : (merged.size() + kChunk - 1) / kChunk;
+    size_ = size_ - (b - a) + with.size();
+    auto piece = [&](size_t i, size_t& at) {
+        const size_t len = (merged.size() - at) / (count - i);
+        std::u16string p = merged.substr(at, len);
+        at += len;
+        return p;
+    };
+    const size_t first = ka > 0 ? ka - 1 : 0;   // may end in a \r meeting another unit
+    if (count == kb - ka + 1) {
+        // As many chunks as before: rewritten in place, the trees adjusted.
+        size_t at = 0;
+        for (size_t i = 0; i < count; i++) {
+            Chunk& c = chunks_[ka + i];
+            const long was = (long)c.text.size();
+            c.text = piece(i, at);
+            add(units_, ka + i, (long)c.text.size() - was);
+        }
+        for (size_t k = first; k < ka + count; k++) {
+            const long was = (long)chunks_[k].starts.size();
+            rescan(k);
+            const long delta = (long)chunks_[k].starts.size() - was;
+            add(startsIn_, k, delta);
+            startCount_ = (size_t)((long)startCount_ + delta);
+        }
+        return;
+    }
+    std::vector<Chunk> pieces(count);
+    size_t at = 0;
+    for (size_t i = 0; i < count; i++) pieces[i].text = piece(i, at);
+    chunks_.erase(chunks_.begin() + (long)ka, chunks_.begin() + (long)kb + 1);
+    chunks_.insert(chunks_.begin() + (long)ka, std::make_move_iterator(pieces.begin()),
+                   std::make_move_iterator(pieces.end()));
+    for (size_t k = first; k < ka + count && k < chunks_.size(); k++) rescan(k);
+    rebuild();
+}
+
+char16_t SyncedText::at(size_t i) const {
+    const size_t k = chunkAt(i);
+    return chunks_[k].text[i - before(units_, k)];
+}
+
+std::u16string SyncedText::str() const {
+    std::u16string out;
+    out.reserve(size_);
+    for (const Chunk& c : chunks_) out += c.text;
+    return out;
+}
+
+std::shared_ptr<const std::u16string> SyncedText::snapshot() const {
+    if (!snapshot_) snapshot_ = std::make_shared<const std::u16string>(str());
+    return snapshot_;
+}
+
+bool SyncedText::operator==(const std::u16string& s) const {
+    if (s.size() != size_) return false;
+    size_t at = 0;
+    for (const Chunk& c : chunks_) {
+        if (s.compare(at, c.text.size(), c.text) != 0) return false;
+        at += c.text.size();
+    }
+    return true;
 }
 
 // ------------------------------------------------------- watched files

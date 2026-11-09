@@ -33,6 +33,13 @@ static double MCThreadCpuMs() {
     [self forgetSemanticTokens];
     // The document stays open on its servers while its tab is open (see
     // syncOpenDocuments), and so do its diagnostics, for when it is back.
+    // Its edits are no longer followed (any not flushed are dropped with
+    // the tracker below), so its next sync compares its tab's text whole.
+    for (MCLspDoc *d in _docs.allValues)
+        if (d.live) {
+            d.live = NO;
+            d.sentText = nil;
+        }
     _servers = @[];
     _uri = nil;
     _changes.reset();
@@ -145,9 +152,16 @@ static double MCThreadCpuMs() {
 // disk. The file on show is the text view's; the others come from
 // bufferText. Only servers already running (or starting) for a file on show
 // take files from background tabs: a tab never starts a server unseen.
-// Files whose tabs have gone are closed. Cheap when nothing changed: an
-// unchanged text sends nothing (Client::didChange compares).
+// Files whose tabs have gone are closed. Cheap when nothing changed: a tab
+// is handed over whole (converted, and compared by Client::didChange) only
+// when its text is not the one it was last given. A background tab's text
+// is an immutable string, so the same object means the same text; the file
+// on show was given whole when it was attached and has had its edits sent
+// since (flushChanges, just below). It ran on every tab switch, tabsChanged,
+// rename, references and workspace-symbol query, converting every open tab
+// whole each time (about 17 ms of the main thread per 2.5 MB tab).
 - (void)syncOpenDocuments {
+    const double c0 = MCThreadCpuMs();
     // The file on show's edits go first, as ranges where the server takes
     // them; its didOpen below then has nothing left to send.
     [self flushChanges];
@@ -173,7 +187,9 @@ static double MCThreadCpuMs() {
             if (![self language:lang forPath:path installed:NO]) continue;
             NSString *uri = NS(Lsp::uriFromPath(Std(RealPath(path))));
             if (texts[uri]) continue;    // the file on show, or a tab seen already
-            NSString *text = self.bufferText ? self.bufferText(path) : nil;
+            // A tab's own text is immutable (copy returns it); a live
+            // storage's string is copied, so it never matches next time.
+            NSString *text = self.bufferText ? [self.bufferText(path) copy] : nil;
             if (!text) continue;         // not read yet, or not shown as text
             BOOL any = NO;
             for (NSString *key in @[NS(lang.server), NS(Lsp::alsoKey(lang.server))]) {
@@ -199,12 +215,27 @@ static double MCThreadCpuMs() {
     }
     for (NSString *key in wanted) {
         MCLspDoc *d = wanted[key];
+        MCLspDoc *had = _docs[key];
+        const BOOL shown = _uri && [d.uri isEqualToString:_uri] && [_servers containsObject:d.server];
+        NSString *text = texts[d.uri];
+        if (had && d.server.client.isOpen(Std(d.uri)) &&
+            (shown ? had.live : (had.sentText && had.sentText == text))) {
+            had.path = d.path;
+            continue;   // the server has this text already
+        }
         // didOpen of an open document is a didChange (and nothing at all
         // when the text is what the server has).
-        d.server.client.didOpen(Std(d.uri), Std(languageIds[d.uri]), Std(texts[d.uri]));
+        d.server.client.didOpen(Std(d.uri), Std(languageIds[d.uri]), Std(text));
+        _documentsSentWhole++;
+        d.live = shown;
+        d.sentText = shown || text == _tv.string ? nil : text;   // never the storage's own
         _docs[key] = d;
     }
+    _lastSyncCpuMs = MCThreadCpuMs() - c0;
 }
+
+- (NSUInteger)documentsSentWhole { return _documentsSentWhole; }
+- (double)lastSyncCpuMs { return _lastSyncCpuMs; }
 
 // The path a tab has a file under, for a canonical URI, or nil.
 - (NSString *)tabPathForURI:(NSString *)uri {

@@ -330,6 +330,26 @@ static void testInlineAgent() {
             st3.finish();
             CHECK(!st3.sawJson());
         }
+        // Once a line is JSON the output as it came is never the reply, so
+        // it is not kept: a run that reads big files (each a tool result
+        // line with --verbose) holds only the line being read (AG-D3).
+        {
+            Stream st;
+            st.feed("Welcome back!\n");
+            CHECK(st.heldBytes() == 14);
+            st.feed("{\"type\":\"system\"}\n");
+            CHECK(st.heldBytes() == 0);
+            const std::string big =
+                "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"content\":\"" +
+                std::string(4 << 20, 'x') + "\"}]}}\n";
+            for (int i = 0; i < 4; i++) st.feed(big);
+            CHECK(st.heldBytes() == 0);
+            st.feed(big.substr(0, 1000));
+            CHECK(st.heldBytes() == 1000);
+            st.feed(big.substr(1000));
+            st.feed(answer);
+            CHECK(st.heldBytes() == 0 && st.reply() == "It doubles its argument.");
+        }
         CHECK(std::string(kPrintFlags).find("--output-format stream-json --verbose") != std::string::npos);
     }
 
@@ -402,6 +422,64 @@ static void testInlineAgent() {
         d = pendingDiff(big, bigger, 1, 50);
         CHECK(d.size() == 51 && d.back().kind == DiffLine::Gap && d.back().more == 150);
         CHECK(changedLines(big, bigger) == 100);
+    }
+
+    // Keep after the user changed the buffer (AG-D1): the selection the
+    // blocks were placed by moves with the user's edits, and a change that
+    // lands anywhere but where the bar showed it is caught.
+    GROUP("inline:keep-rebase");
+    {
+        auto u = [](const std::string &s) { return std::u16string(s.begin(), s.end()); };
+        auto keep = [&](const std::string &base, size_t sel, const std::string &now,
+                        const std::vector<Edit> &edits, std::string *next) {
+            const size_t moved = moveOffset(u(base), u(now), sel);
+            Applied a = applyEdits(now, edits, moved, moved);
+            *next = a.ok ? a.text : now;
+            return a.ok;
+        };
+        const std::string base =
+            "def double(x):\n    return x * 2\n\n\ndef twice(x):\n    return x * 2\n";
+        Edit e;
+        e.search = "    return x * 2";
+        e.replace = "    return x * 3";
+        const size_t sel = base.rfind("return");          // in the second copy
+        Applied shown = applyEdits(base, {e}, sel, sel);
+        CHECK(shown.ok && shown.text.rfind("x * 3") > base.find("twice"));
+        const std::string pending = shown.text;
+        // A line typed at the end, the caret moved into the first copy:
+        // with the caret of the moment the block went to the first copy, a
+        // place the bar never showed; moved, it is the second again.
+        std::string now = base + "print(double(2))\n", next;
+        const size_t caretNow = now.find("return");
+        Applied old = applyEdits(now, {e}, caretNow, caretNow);
+        CHECK(old.ok && !sameChange(u(base), u(pending), u(now), u(old.text)));
+        CHECK(keep(base, sel, now, {e}, &next));
+        CHECK(next == pending + "print(double(2))\n");
+        CHECK(sameChange(u(base), u(pending), u(now), u(next)));
+        // A line added right above the block, and one far above: still
+        // the change shown.
+        now = base;
+        now.insert(now.rfind("    return"), "    # twice\n");
+        now.insert(0, "import math\n");
+        CHECK(keep(base, sel, now, {e}, &next));
+        CHECK(next.find("# twice\n    return x * 3\n") != std::string::npos &&
+              next.find("return x * 2") != std::string::npos);
+        CHECK(sameChange(u(base), u(pending), u(now), u(next)));
+        // The second function deleted: the only match left is the first,
+        // which the bar never showed changing.
+        now = "def double(x):\n    return x * 2\n";
+        CHECK(keep(base, sel, now, {e}, &next));
+        CHECK(next == "def double(x):\n    return x * 3\n");
+        CHECK(!sameChange(u(base), u(pending), u(now), u(next)));
+        // The user changed the lines the block replaces (found loosely):
+        // what it takes out is not what the bar showed.
+        now = base;
+        now.replace(now.rfind("    return x * 2"), 16, "  return x * 2");
+        CHECK(keep(base, sel, now, {e}, &next));
+        CHECK(!sameChange(u(base), u(pending), u(now), u(next)));
+        // Nothing changed: the same.
+        CHECK(sameChange(u(base), u(pending), u(base), u(pending)));
+        CHECK(moveOffset(u(base), u(base), sel) == sel);
     }
 
     GROUP("agent:command");

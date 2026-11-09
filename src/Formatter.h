@@ -140,6 +140,32 @@ enum class Source { Local, Outside, Ask, None, Refused };
 Source chooseProgram(bool fromSettings, const std::string& local, const std::string& outside,
                      const std::string& consent, bool configIsCode = false);
 
+// A command that runs another program by name, as the Node package
+// runners do: `npx prettier`, `pnpx`, `bunx`, `bun x`, `pnpm exec`,
+// `pnpm dlx`, `pnpm prettier`, `npm exec -- prettier`, `npm x`, `yarn
+// prettier`, `yarn exec`, `yarn dlx`. A runner runs the folder's own copy
+// (node_modules/.bin) when there is one, and whichever copy runs reads the
+// tool's configuration, so the rules above apply to the program it
+// launches, never to the runner's name. `tool`: the launched program's name
+// (a package's bin: "@biomejs/biome@2" -> "biome"; `-c "prettier ..."`'s
+// first word), "" when the command is not a runner's. `folderCode`: the
+// runner runs only the folder's own code whatever is installed elsewhere: a
+// package.json script (npm run, pnpm run, bun run, yarn run) or yarn's own
+// bins (`yarn prettier`, `yarn exec`), which come from the project's
+// dependencies.
+struct Launch {
+    std::string tool;
+    bool folderCode = false;
+};
+Launch launched(const std::string& command);
+// chooseProgram for a runner (`runner`: its path, "" when not installed).
+// `folderCopy`: the folder holds the program it launches (or folderCode),
+// so the runner runs the folder's program and is the folder's own as far
+// as the question goes; otherwise it is the user's program outside the
+// folder.
+Source chooseLaunched(bool fromSettings, bool folderCopy, const std::string& runner,
+                      const std::string& consent, bool configIsCode);
+
 // Does this configuration file run code when `program` reads it? `read`
 // gives a file's text ("" when unreadable). Prettier: a JavaScript or
 // TypeScript config (.prettierrc.js, prettier.config.mjs, ...), a JSON,
@@ -159,12 +185,14 @@ bool configRunsCode(const std::string& program, const std::string& configFile,
 
 // The configuration file in the folder that `program` would read for
 // `path` and that runs code (configRunsCode), or "". Prettier and Biome
-// look for their files themselves, from the file's folder upwards, and use
-// the nearest folder holding any; that is followed here up to `root` or a
-// folder holding .git (a file above the open folder is the user's own, not
-// the folder's), and any code-running file in that nearest folder counts,
-// whichever of them a given version reads first. latexindent reads only the
-// file it is given (-l={config}): `planConfig`, Plan::configFile.
+// look for their files themselves, from the file's folder upwards to the
+// filesystem root, and use the nearest folder holding any; that is followed
+// here the same way, past `root` and past .git (a repository whose docs
+// folder alone is open still has its prettier.config.js read, so a file
+// above the open folder counts as the folder's), and any code-running file
+// in that nearest folder counts, whichever of them a given version reads
+// first. latexindent reads only the file it is given (-l={config}):
+// `planConfig`, Plan::configFile. `root` is not used for Prettier or Biome.
 std::string codeConfigFile(const std::string& program, const std::string& path,
                            const std::string& root, const std::string& planConfig,
                            const Fs& fs);

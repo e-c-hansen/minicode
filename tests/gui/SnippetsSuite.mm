@@ -18,8 +18,26 @@
 #import "Lsp.h"
 #import "MultiCaretView.h"
 #import "SnippetSession.h"
+#import <objc/runtime.h>
 
 namespace {
+
+// How many times the pasteboard's text was read while `block` ran (the
+// harness's generalPasteboard is a private one, but a read is a read).
+NSUInteger PasteboardReadsDuring(void (^block)(void)) {
+    Method m = class_getInstanceMethod(NSPasteboard.class, @selector(stringForType:));
+    IMP original = method_getImplementation(m);
+    __block NSUInteger reads = 0;
+    IMP counting = imp_implementationWithBlock(^NSString *(NSPasteboard *pb, NSPasteboardType t) {
+        reads++;
+        return ((NSString * (*)(id, SEL, NSPasteboardType))original)(pb, @selector(stringForType:), t);
+    });
+    method_setImplementation(m, counting);
+    block();
+    method_setImplementation(m, original);
+    imp_removeBlock(counting);
+    return reads;
+}
 
 LspSession *Session(EditorController *c) { return [c valueForKey:@"lsp"]; }
 CodeTextView *Text(EditorController *c) { return (CodeTextView *)[c valueForKey:@"textView"]; }
@@ -51,6 +69,7 @@ NSString *Selected(NSTextView *tv) {
 NSString *const kOriginal = @"def f():\n    fo\n    pi\n";
 NSString *const kForSnippet = @"for ${1:i} in ${2:range(10)}:\n\t$0";
 NSString *const kChoiceSnippet = @"${1|alpha,beta,gamma|} = $1";
+NSString *const kClipSnippet = @"${1:x} = $CLIPBOARD";
 
 }  // namespace
 
@@ -64,7 +83,9 @@ MC_GUI_SUITE(snippets) {
             @"items": @[@{@"label": @"for", @"kind": @15, @"filterText": @"for",
                           @"insertTextFormat": @2, @"insertText": kForSnippet},
                         @{@"label": @"pick", @"kind": @15, @"filterText": @"pick",
-                          @"insertTextFormat": @2, @"insertText": kChoiceSnippet}]}}]};
+                          @"insertTextFormat": @2, @"insertText": kChoiceSnippet},
+                        @{@"label": @"clip", @"kind": @15, @"filterText": @"clip",
+                          @"insertTextFormat": @2, @"insertText": kClipSnippet}]}}]};
 
     // The caret after `word` (on its own line) and the list asked for.
     void (^askAfter)(NSString *) = ^(NSString *word) {
@@ -105,8 +126,12 @@ MC_GUI_SUITE(snippets) {
     // ---------------------------------------- the insertion is one undo step
     MCGuiStep(@"ask at fo", ^{ askAfter(@"    fo"); });
     MCGuiWait(@"the list", 10, ^BOOL { return listShows(@"for"); });
-    MCGuiStep(@"Tab: the snippet, indented, with i selected", ^{
-        accept();
+    MCGuiStep(@"Tab: the snippet, indented, with i selected; the clipboard not read", ^{
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        [pb clearContents];
+        [pb setString:@"hunter2" forType:NSPasteboardTypeString];
+        // A snippet that does not name $CLIPBOARD never reads it.
+        GCHECK(PasteboardReadsDuring(accept) == 0);
         CodeTextView *tv = Text(c);
         GCHECK_EQ_STR(tv.string, @"def f():\n    for i in range(10):\n        \n    pi\n");
         GCHECK(tv.snippets.active);
@@ -256,6 +281,25 @@ MC_GUI_SUITE(snippets) {
         GCHECK(tv.selectedRange.location == end);
         GCHECK(!tv.multiCaretActive);
     });
+    // ---------------------------------------- $CLIPBOARD, read when named
+    MCGuiStep(@"a line to complete clip at", ^{
+        CodeTextView *tv = Text(c);
+        while (tv.undoManager.canUndo && ![tv.string isEqualToString:kOriginal])
+            [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, kOriginal);
+        MCGuiUndoGroup(tv.undoManager, ^{
+            [tv insertText:@"    cl\n" replacementRange:NSMakeRange(tv.string.length, 0)];
+        });
+        askAfter(@"    cl");
+    });
+    MCGuiWait(@"the list", 10, ^BOOL { return listShows(@"clip"); });
+    MCGuiStep(@"Tab: the clipboard read once, and its text in the snippet", ^{
+        GCHECK(PasteboardReadsDuring(accept) == 1);
+        GCHECK([Text(c).string containsString:@"    x = hunter2\n"]);
+        GCHECK_EQ_STR(Selected(Text(c)), @"x");
+        Command(Text(c), @selector(cancelOperation:));
+    });
+
     // Left as it was found, for the suites after this one: the text back,
     // no tabs, and the servers off (symbols reads a file's outline with no
     // server, and a scripted one still running answered it with nothing).

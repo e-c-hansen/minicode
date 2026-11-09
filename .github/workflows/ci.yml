@@ -9,6 +9,11 @@ jobs:
   macos:
     name: macOS app
     runs-on: macos-latest
+    # Every job has a limit well past its usual length (the slowest of the Linux
+    # jobs, ASan, takes about 7 minutes), so a hang fails the job instead of
+    # holding a runner and main's status for the six hours GitHub allows. This
+    # one takes about 13 minutes; the GUI harness has a 25-minute backstop too.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
 
@@ -62,6 +67,7 @@ jobs:
   linux:
     name: GTK4 port
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -114,6 +120,7 @@ jobs:
   sanitizers:
     name: Core tests under ASan and UBSan
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -186,6 +193,7 @@ jobs:
   android:
     name: Android debug APK and Kotlin checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -220,6 +228,7 @@ jobs:
   android-release:
     name: Android release APK
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 

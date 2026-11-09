@@ -135,6 +135,7 @@ typedef NS_ENUM(NSInteger, MCLspState) {
     MCLspStateFailed,        // could not be launched, or refused `initialize`
     MCLspStateRestarting,    // exited on its own; a restart is scheduled
     MCLspStateCrashed,       // exited on its own too often; restarted by hand only
+    MCLspStateWaiting,       // would run the folder's own code: waits for its answer
 };
 
 @interface MCLspServerInfo : NSObject
@@ -308,6 +309,11 @@ void MCForgetFolderToolsConsent(NSString *root);
 - (void)injectWatchedPaths:(NSArray<NSString *> *)paths type:(int)type;
 // The last didChange flush's main-thread CPU time (ms).
 @property(nonatomic, readonly) double lastFlushCpuMs;
+// How many tabs' texts the open-documents sync has handed over whole
+// (converted and compared) so far, and its last run's main-thread CPU time
+// (ms): a tab whose text has not changed since it was sent costs neither.
+@property(nonatomic, readonly) NSUInteger documentsSentWhole;
+@property(nonatomic, readonly) double lastSyncCpuMs;
 @end
 
 // ---- inlay hints (Lsp+InlayHints.mm): the lines on show, asked of the
@@ -520,8 +526,14 @@ void MCForgetFolderToolsConsent(NSString *root);
 // open Python file would use it but the user has not been asked for this
 // folder yet; nil otherwise. Nothing runs from it until they say yes.
 @property(nonatomic, readonly, copy) NSString *folderEnvironmentAwaitingConsent;
+// The open file's server ("rust", "typescript") when it would run the
+// folder's own code and the user has not been asked for this folder yet
+// (it runs without that part, or waits: Lsp::checkProjectCode), and the
+// question to ask; nil otherwise. The answer is the same one.
+@property(nonatomic, readonly, copy) NSString *folderCodeAwaitingConsent;
+@property(nonatomic, readonly, copy) NSString *folderCodeQuestion;
 // The answer, remembered per folder; every window on the folder restarts
-// its Python servers with it.
+// its Python servers, and those that run the folder's code, with it.
 - (void)setFolderEnvironmentAllowed:(BOOL)allow;
 - (BOOL)folderEnvironmentAllowed;
 // "allow", "deny", or nil (not asked).

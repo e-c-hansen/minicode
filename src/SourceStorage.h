@@ -27,9 +27,15 @@
 // is a kern on the character before it, answered by attributesAtIndex:
 // and never stored, so the characters, their stored attributes, undo, the
 // highlighter's runs and copies (attributedSubstringFromRange:) are as
-// without it; only layout sees it. The storage keeps the gaps on their
-// text through every edit itself (Lsp::inlayFollowEdit), at the moment of
-// the edit, so layout never meets a gap on the wrong character.
+// without it; only layout sees it. At a paragraph's start (offset 0, or
+// after \n, \r or U+2029) a kern on the line break before would open no
+// room on the line, so the gap is the first-line indent of the paragraph
+// style answered for the paragraph's first character, which is the one
+// TextKit takes a paragraph's style from (MCGapParagraphStyle); fixing
+// attributes reads them as stored, or that style would be written over the
+// paragraph. The storage keeps the gaps on their text through every edit
+// itself (Lsp::inlayFollowEdit), at the moment of the edit, so layout
+// never meets a gap on the wrong character.
 //
 // Words: while the editor's text view is editable (source text), a
 // double-click selects and Option+Left, Option+Right and Option+Delete step
@@ -50,7 +56,21 @@ struct MCTextGap {
     uint32_t tag = 0;         // the owner's, to find what it draws there
 };
 
+// The paragraph style a line-start gap answers: `stored` (the default for
+// nil) with `width` more first-line indent, marked with what is stored.
+NSParagraphStyle *MCGapParagraphStyle(NSParagraphStyle *stored, CGFloat width);
+// Is this a style MCGapParagraphStyle made? `stored` gets what the
+// character really has (nil for none). NSTextView takes its typing
+// attributes from the storage's answer, and a typed character must not
+// keep a gap's indent.
+BOOL MCIsGapParagraphStyle(NSParagraphStyle *style, NSParagraphStyle **stored);
+
 @interface MCSourceStorage : NSTextStorage
+// The character a gap at `offset` is laid out on: offset - 1 (a kern), or
+// at a paragraph's start the paragraph's first character, offset itself
+// (`lineStart` YES; offset may then be the text's length, with nothing to
+// lay out).
+- (NSUInteger)characterOfGapAt:(NSUInteger)offset lineStart:(BOOL *)lineStart;
 // Ascending by offset, as they are now. Setting them lays out again only
 // the characters whose gaps changed.
 @property(nonatomic, assign) std::vector<MCTextGap> gaps;

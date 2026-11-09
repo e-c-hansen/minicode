@@ -197,6 +197,7 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
         [row addObject:[self button:@"Look Again" action:@selector(start:) key:info.key]];
         break;
     case MCLspStateOff:
+    case MCLspStateWaiting:   // the bar over the file asks; Start would wait again
         break;
     default:
         if (info.program && !info.notUsedHere)
@@ -298,8 +299,10 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
         [stack addArrangedSubview:rule];
         [rule.widthAnchor constraintEqualToConstant:kPanelWidth - 24].active = YES;
         NSString *text = [answer isEqualToString:@"allow"]
-            ? @"Programs in this folder's own .venv and node_modules may run: you allowed them."
-            : @"Programs in this folder's own .venv and node_modules do not run: you said not to.";
+            ? @"Programs in this folder's own .venv and node_modules, and its Rust build "
+              @"scripts and procedural macros, may run: you allowed them."
+            : @"Programs in this folder's own .venv and node_modules, and its Rust build "
+              @"scripts and procedural macros, do not run: you said not to.";
         NSTextField *l = Label(text, Small(), PHex(0xC8C8C8), YES, NO);
         l.preferredMaxLayoutWidth = kPanelWidth - 120;
         NSView *gap = [NSView new];

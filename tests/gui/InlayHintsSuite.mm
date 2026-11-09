@@ -265,6 +265,96 @@ MC_GUI_SUITE(inlay_hints) {
     });
     MCGuiWait(@"they come back", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
 
+    // ------------------------------------------------ at a line's start
+    // A hint at offset 0 and one at a line's start (an argument on a
+    // continuation line) were dropped: a kern on the line break before
+    // them opens no room. They are the first-line indent of their
+    // paragraph now, laid out only, never stored, never typed with.
+    MCGuiStep(@"hints at offset 0, at a line's start and on an empty line open room there", ^{
+        CodeTextView *tv = Text(c);
+        NSString *text = tv.string;
+        const NSUInteger empty = [text rangeOfString:@"\n\n"].location + 1;   // line 2
+        NSLayoutManager *lm = tv.layoutManager;
+        [lm ensureLayoutForCharacterRange:NSMakeRange(0, text.length)];
+        const CGFloat d0 = GlyphX(tv, 0), t0 = GlyphX(tv, line3), e0 = GlyphX(tv, empty);
+        const CGFloat s0 = GlyphX(tv, line3 + 6);   // "=" moves with its line
+        const NSUInteger line1 = [text rangeOfString:@"    return"].location;
+        const CGFloat r0 = GlyphX(tv, line1 + 4);
+        std::vector<Lsp::InlayHint> hints(3);
+        hints[0].label = "first:";
+        hints[1].label = "args:";
+        hints[1].paddingRight = true;
+        hints[2].label = "empty";
+        std::vector<Lsp::PlacedInlayHint> placed(3);
+        placed[0].offset = 0;
+        placed[0].hint = 0;
+        placed[1].offset = line3;
+        placed[1].hint = 1;
+        placed[2].offset = empty;
+        placed[2].hint = 2;
+        [tv.inlayHints showHints:hints placed:placed];
+        [lm ensureLayoutForCharacterRange:NSMakeRange(0, text.length)];
+        GCHECK(tv.inlayHints.count == 3);
+        const CGFloat d1 = GlyphX(tv, 0), t1 = GlyphX(tv, line3), e1 = GlyphX(tv, empty);
+        // Gaps sorted by offset: 0, the empty line, line 3.
+        const NSRect b0 = [tv.inlayHints rectOfHintAtIndex:0];
+        const NSRect be = [tv.inlayHints rectOfHintAtIndex:1];
+        const NSRect b3 = [tv.inlayHints rectOfHintAtIndex:2];
+        MCGuiNote(@"line 0's first glyph %.1f -> %.1f (box %.1f to %.1f); line 3's %.1f -> %.1f "
+                  @"(box %.1f to %.1f); the empty line's %.1f -> %.1f", d0, d1, NSMinX(b0),
+                  NSMaxX(b0), t0, t1, NSMinX(b3), NSMaxX(b3), e0, e1);
+        GCHECK(NSWidth(b0) > 0 && NSWidth(b3) > 0 && NSWidth(be) > 0);
+        GCHECK(d1 - d0 >= NSWidth(b0) - 0.5);
+        GCHECK(NSMinX(b0) >= d0 - 0.5 && NSMaxX(b0) <= d1 + 0.5);
+        GCHECK(t1 - t0 >= NSWidth(b3) - 0.5);
+        GCHECK(NSMinX(b3) >= t0 - 0.5 && NSMaxX(b3) < t1 - 1);   // padded on its right
+        GCHECK(GlyphX(tv, line3 + 6) - s0 > NSWidth(b3) - 0.5);
+        GCHECK(NSMinX(be) >= e0 - 0.5 && e1 - e0 >= NSWidth(be) - 0.5);
+        // A line with no hint is where it was.
+        GCHECK(fabs(GlyphX(tv, line1 + 4) - r0) < 0.5);
+        // Nothing is stored: no indent in the stored paragraph styles.
+        MCSourceStorage *ts = (MCSourceStorage *)tv.textStorage;
+        for (NSUInteger at : {(NSUInteger)0, line3, empty, line3 + 3}) {
+            NSParagraphStyle *ps = [ts storedAttributesAtIndex:at longestEffectiveRange:NULL
+                                                       inRange:NSMakeRange(at, 1)]
+                                       [NSParagraphStyleAttributeName];
+            GCHECK(ps.firstLineHeadIndent == 0);
+        }
+        // Typed at the line's start, the character takes no indent; the
+        // hint stays before it (it goes with what follows), and fixing the
+        // edited paragraph's attributes stores none either.
+        [c.window makeFirstResponder:tv];
+        tv.selectedRange = NSMakeRange(line3, 0);
+        NSParagraphStyle *typing = tv.typingAttributes[NSParagraphStyleAttributeName];
+        GCHECK(typing.firstLineHeadIndent == 0);
+        TypeAt(tv, line3, 0, @"x");
+        GCHECK(OffsetOf(c, @"args:") == line3);
+        for (NSUInteger at = line3; at < line3 + 8; at++) {
+            NSParagraphStyle *ps = [ts storedAttributesAtIndex:at longestEffectiveRange:NULL
+                                                       inRange:NSMakeRange(at, 1)]
+                                       [NSParagraphStyleAttributeName];
+            GCHECK(ps.firstLineHeadIndent == 0);
+        }
+        [lm ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
+        GCHECK(fabs(GlyphX(tv, line3) - t1) < 0.5);   // the typed x, after the room
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, text);
+        // A copy carries no indent.
+        tv.selectedRange = NSMakeRange(line3, 18);
+        [tv copy:nil];
+        NSData *rtf = [[NSPasteboard generalPasteboard] dataForType:NSPasteboardTypeRTF];
+        if (rtf) {
+            NSAttributedString *a = [[NSAttributedString alloc] initWithRTF:rtf documentAttributes:NULL];
+            NSParagraphStyle *ps = [a attribute:NSParagraphStyleAttributeName atIndex:0
+                                 effectiveRange:NULL];
+            GCHECK(ps.firstLineHeadIndent == 0);
+        }
+        MCGuiSnapshot(tv, @"inlay-hints-line-start");
+        [tv.inlayHints clear];
+        [lm ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
+        GCHECK(fabs(GlyphX(tv, 0) - d0) < 0.5 && fabs(GlyphX(tv, line3) - t0) < 0.5);
+    });
+
     // ------------------------------------------------ the cost of a keystroke
     // Hints on every line on show in a 100,000-line file, given to the view
     // directly (as an answer would), then 200 keystrokes on a hinted line;

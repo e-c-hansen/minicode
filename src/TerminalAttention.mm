@@ -125,6 +125,10 @@ static std::string U8(NSString *s) { return s.UTF8String ?: ""; }
     return s ? NSFrom(s->cwd) : nil;
 }
 
+- (NSTimeInterval)sessionTimeForTerminal:(TerminalView *)terminal {
+    return terminal ? _board.sessionTime((int)terminal.terminalID) : 0;
+}
+
 - (TerminalView *)terminalForSession:(NSString *)sessionId transcript:(NSString *)transcript {
     int id = _board.terminalFor(U8(sessionId), U8(transcript));
     return id ? [_terminals objectForKey:@(id)] : nil;

@@ -381,6 +381,7 @@ const CGFloat kMCInstallBarHeight = 30;
 - (void)setServerKey:(NSString *)key {
     _serverKey = [key copy];
     _consentEnvironment = nil;
+    _consentServer = nil;
     NSString *language = NS(Lsp::serverDisplayName(Std(key)));
     _label.stringValue = [NSString stringWithFormat:
         @"No %@ language server is installed, so there are no completions or error checks.",
@@ -393,6 +394,7 @@ const CGFloat kMCInstallBarHeight = 30;
 - (void)setConsentEnvironment:(NSString *)env {
     _consentEnvironment = [env copy];
     if (!env) return;
+    _consentServer = nil;
     _label.stringValue = [NSString stringWithFormat:
         @"This folder has its own Python environment, %@. The language servers run "
          "programs from it only if you allow it.", env];
@@ -401,6 +403,19 @@ const CGFloat kMCInstallBarHeight = 30;
          "The answer is kept for this folder; Ask Again About This Folder's Tools in the "
          "minicode menu takes it back.", env];
     [self setButtons:@"Use It" mute:@"Don't Use It"
+               close:@"Ask again next time minicode starts"];
+}
+
+- (void)askAboutServer:(NSString *)key question:(NSString *)question {
+    _consentServer = [key copy];
+    if (!key) return;
+    _consentEnvironment = nil;
+    _label.stringValue = question ?: @"";
+    _label.toolTip = [NSString stringWithFormat:
+        @"%@ Until then it runs without what would run the folder's code, or waits. The answer "
+         "is kept for this folder, as for its .venv and node_modules; Ask Again About This "
+         "Folder's Tools in the minicode menu takes it back.", question ?: @""];
+    [self setButtons:@"Allow" mute:@"Don't Allow"
                close:@"Ask again next time minicode starts"];
 }
 

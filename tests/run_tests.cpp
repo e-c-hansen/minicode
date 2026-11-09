@@ -6917,7 +6917,7 @@ void testLspCompletionEditsAndVersions() {
         std::string base;
         client.onDiagnostics = [&](const std::string &uri, const std::vector<Lsp::Diagnostic> &) {
             calls++;
-            const std::u16string *t = client.textFor(uri);
+            auto t = client.textFor(uri);
             base = t ? Lsp::toUtf8(*t) : "(none)";
         };
         auto publish = [&](const std::string &uri, const std::string &version) {
@@ -10394,6 +10394,7 @@ static void testMultiCaretOccurrences() {
 #include "tree_tests.inc"
 #include "lsp_threading_tests.inc"
 #include "lsp_sync_tests.inc"
+#include "lsp_trust_tests.inc"
 #include "multiedit_tests.inc"
 #include "folder_search_tests.inc"
 #include "auto_close_tests.inc"
@@ -10403,6 +10404,7 @@ static void testMultiCaretOccurrences() {
 #include "preview_scroll_tests.inc"
 #include "quick_diff_tests.inc"
 #include "zsh_integration_tests.inc"
+#include "ppa_wait_tests.inc"
 #include "lexer_styles_tests.inc"
 #include "bracket_pairs_tests.inc"
 #include "terminal_layout_tests.inc"
@@ -10437,6 +10439,8 @@ int main() {
     testTerminalHyperlinks();
     testTerminalPaste();
     testZshIntegration();
+    testPpaWait();
+    testCiTimeouts();
     testTerminalMarks();
     testTerminalDraw();
     testTerminalVt();
@@ -10529,6 +10533,7 @@ int main() {
     testTreeRefresh();
     testLspThreading();
     testLspSync();
+    testLspProjectCode();
     testMultiEdit();
     testFolderSearchParallel();
     testAutoClose();

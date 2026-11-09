@@ -135,6 +135,14 @@ static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
     return env;
 }
 
+// The open file's server that would run the folder's own code, to ask
+// about now (the same answer, put off by the same ×), or nil.
+- (NSString *)serverToAsk {
+    NSString *key = self.lsp.folderCodeAwaitingConsent;
+    if (!key || [EnvironmentQuestionPutOff() containsObject:self.lsp.root ?: @""]) return nil;
+    return key;
+}
+
 - (void)ensureInstallBar {
     if (self.installBar) return;
     MCInstallBar *bar = [[MCInstallBar alloc] initWithFrame:NSZeroRect];
@@ -143,12 +151,13 @@ static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
     // The same bar asks about a folder's environment; its buttons then
     // answer that.
     bar.onInstall = ^(NSButton *sender) {
-        if (weakBar.consentEnvironment) [weakSelf.lsp setFolderEnvironmentAllowed:YES];
+        if (weakBar.consentEnvironment || weakBar.consentServer)
+            [weakSelf.lsp setFolderEnvironmentAllowed:YES];
         else [weakSelf showInstallHelpFrom:sender];
     };
     bar.onClose = ^{
         EditorController *s = weakSelf;
-        if (weakBar.consentEnvironment) {
+        if (weakBar.consentEnvironment || weakBar.consentServer) {
             [EnvironmentQuestionPutOff() addObject:s.lsp.root ?: @""];
             [s updateInstallBar];
         } else {
@@ -156,7 +165,8 @@ static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
         }
     };
     bar.onMute = ^{
-        if (weakBar.consentEnvironment) [weakSelf.lsp setFolderEnvironmentAllowed:NO];
+        if (weakBar.consentEnvironment || weakBar.consentServer)
+            [weakSelf.lsp setFolderEnvironmentAllowed:NO];
         else [weakSelf closeInstallBarMuting:YES];
     };
     self.installBar = bar;
@@ -182,6 +192,26 @@ static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
     }
     if (self.installBar.consentEnvironment) {
         self.installBar.consentEnvironment = nil;
+        self.installBar.hidden = YES;
+        [self relayoutRightArea];
+    }
+    // Then a server that would run the folder's own code: it runs without
+    // that part, or waits, until answered.
+    NSString *server = [self serverToAsk];
+    if (server) {
+        [self ensureInstallBar];
+        NSString *question = self.lsp.folderCodeQuestion;
+        if (![self.installBar.consentServer isEqualToString:server] ||
+            ![self.installBar.text isEqualToString:question])
+            [self.installBar askAboutServer:server question:question];
+        if (self.installBar.hidden) {
+            self.installBar.hidden = NO;
+            [self relayoutRightArea];
+        }
+        return;
+    }
+    if (self.installBar.consentServer) {
+        [self.installBar askAboutServer:nil question:nil];
         self.installBar.hidden = YES;
         [self relayoutRightArea];
     }
@@ -217,6 +247,8 @@ static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
     BOOL show = shown && !bar.hidden &&
                 (bar.consentEnvironment
                      ? [bar.consentEnvironment isEqualToString:[self environmentToAsk]]
+                 : bar.consentServer
+                     ? [bar.consentServer isEqualToString:[self serverToAsk]]
                      : _installBarKey && [_installBarKey isEqualToString:self.lsp.missingServer]);
     if (!show) {
         bar.frame = NSZeroRect;

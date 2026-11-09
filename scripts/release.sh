@@ -19,7 +19,10 @@
 #   6. copies packaging/minicode.rb into the tap as the live cask,
 #   7. uploads the Ubuntu source package to the Launchpad PPA through
 #      scripts/ppa.sh, when a signing key is configured (packaging/PPA.md),
-#      and says it skipped that step when none is.
+#      and says it skipped that step when none is; ppa.sh then waits for
+#      Launchpad's build (scripts/ppa-wait.sh, about 35 minutes) and the
+#      release fails loudly unless it is "Successfully built".
+#      MINICODE_PPA_NO_WAIT=1 uploads without waiting.
 #
 # The zip ships from this repo's own Releases, next to the tag it was built
 # from; the tap holds nothing but the cask. packaging/minicode.rb is the one
@@ -33,8 +36,10 @@
 # The PPA upload needs gpg, the key id in MINICODE_PPA_KEY or
 # ~/.config/minicode/ppa-key-id, and Docker or the packaging tools installed
 # (scripts/ppa.sh); MINICODE_NO_PPA=1 releases without it. It runs last, so a
-# failed upload leaves the GitHub release and the cask in place, and
-# scripts/ppa.sh VERSION retries it alone.
+# failed upload or build leaves the GitHub release and the cask in place, and
+# the error says what retries it alone: scripts/ppa.sh VERSION for a failed
+# upload, scripts/ppa.sh VERSION 2 for a failed build (Launchpad never takes
+# a version twice), scripts/ppa-wait.sh VERSION to wait again.
 #
 # --linux is for a change that only Ubuntu users would notice, and it runs on
 # the ThinkPad as well as the Mac: it tests, stamps the version into Info.plist
@@ -96,6 +101,25 @@ if [ -n "$PPA_KEY" ]; then
     fi
 fi
 
+# The PPA step of either kind of release: upload with ppa.sh, which waits for
+# Launchpad's build, and say what is left to do when it fails. $1 says what
+# is already out (for the messages).
+ppa_step() {
+    local status=0
+    echo "==> Uploading $VERSION to the Ubuntu PPA"
+    MINICODE_PPA_KEY="$PPA_KEY" scripts/ppa.sh "$VERSION" || status=$?
+    case "$status" in
+        0) return 0 ;;
+        3) echo "error: Launchpad failed to build $VERSION (above); $1. Once debian/ is" >&2
+           echo "       fixed and committed, scripts/ppa.sh $VERSION 2 uploads it again" >&2 ;;
+        4) echo "error: $VERSION is uploaded to the PPA but its build has not been seen to end;" >&2
+           echo "       $1. scripts/ppa-wait.sh $VERSION waits again" >&2 ;;
+        *) echo "error: the PPA upload failed; $1. Retry it with" >&2
+           echo "       scripts/ppa.sh $VERSION" >&2 ;;
+    esac
+    return 1
+}
+
 if [ -n "$LINUX_ONLY" ]; then
     if [ -z "$PPA_KEY" ]; then
         echo "error: a Linux-only release is the PPA upload, and there is no signing key" >&2
@@ -116,13 +140,12 @@ if [ -n "$LINUX_ONLY" ]; then
     git tag "v$VERSION"
     git push -q origin main "refs/tags/v$VERSION"
 
-    echo "==> Uploading $VERSION to the Ubuntu PPA"
-    if ! MINICODE_PPA_KEY="$PPA_KEY" scripts/ppa.sh "$VERSION"; then
-        echo "error: the PPA upload failed; main and the tag are pushed. Retry it with" >&2
-        echo "       scripts/ppa.sh $VERSION" >&2
-        exit 1
+    ppa_step "main and the tag are pushed" || exit 1
+    if [ -n "${MINICODE_PPA_NO_WAIT:-}" ]; then
+        echo "==> Done. Ubuntu users get $VERSION once Launchpad has built it (about half an hour)."
+    else
+        echo "==> Done. Launchpad has built $VERSION; apt finds it once published (a few minutes)."
     fi
-    echo "==> Done. Ubuntu users get $VERSION once Launchpad has built it (about half an hour)."
     echo "    Homebrew, GitHub Releases and Obtainium stay on the last full release."
     exit 0
 fi
@@ -240,15 +263,11 @@ elif [ -z "$PPA_KEY" ]; then
     echo "==> Skipping the Ubuntu PPA: no signing key configured (MINICODE_PPA_KEY or"
     echo "    ~/.config/minicode/ppa-key-id; packaging/PPA.md has the one-time setup)"
 else
-    echo "==> Uploading $VERSION to the Ubuntu PPA"
-    if ! MINICODE_PPA_KEY="$PPA_KEY" scripts/ppa.sh "$VERSION"; then
-        PPA_FAILED=1
-    fi
+    ppa_step "everything else is released" || PPA_FAILED=1
 fi
 
 echo "==> Done. brew upgrade --cask e-c-hansen/tap/minicode will now pull $VERSION."
 if [ -n "$PPA_FAILED" ]; then
-    echo "error: the PPA upload failed; everything else is released. Retry it with" >&2
-    echo "       scripts/ppa.sh $VERSION" >&2
+    echo "error: the Ubuntu PPA step failed (the error above says how to finish it)" >&2
     exit 1
 fi

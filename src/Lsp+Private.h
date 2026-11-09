@@ -129,6 +129,11 @@ static inline NSAttributedString *MCDocText(NSString *text, BOOL markdown) {
 // A second server (key "python.also"): the command it was started with,
 // decided by the settings or the project when it is first wanted.
 @property(nonatomic, copy) NSString *alsoCommand;
+// A server that would run the folder's own code (Lsp::checkProjectCode):
+// what it was started with, or why it waits, when it was last started;
+// `projectCodeFile` is the project's file that decided.
+@property(nonatomic, assign) Lsp::ProjectCode projectCode;
+@property(nonatomic, copy) NSString *projectCodeFile;
 @end
 
 // A file open in a tab of this window, open on its language's servers so
@@ -138,6 +143,12 @@ static inline NSAttributedString *MCDocText(NSString *text, BOOL markdown) {
 @property(nonatomic, copy) NSString *path;
 @property(nonatomic, copy) NSString *uri;   // canonical
 @property(nonatomic, strong) MCLspServer *server;
+// What the server was last given (Lsp+Sync.mm's syncOpenDocuments): a
+// background tab's text, an immutable string, so the same object next time
+// means the same text; or, for the file on show, that it was sent whole
+// when attached and has followed the storage's edits since (live).
+@property(nonatomic, strong) NSString *sentText;
+@property(nonatomic, assign) BOOL live;
 @end
 
 static inline NSString *DocKey(NSString *uri, MCLspServer *server) {
@@ -189,6 +200,8 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
 @end
 
 @interface LspSession (Servers)
+- (Lsp::ProjectCodeCheck)projectCodeForKey:(NSString *)key program:(NSString *)program;
+- (NSString *)projectCodeQuestionForKey:(NSString *)key;
 - (MCLspServer *)serverFor:(Lsp::Feature)f;
 - (NSArray<MCLspServer *> *)serversFor:(Lsp::Feature)f;
 - (void)windowBecameKey:(NSNotification *)note;
@@ -231,7 +244,7 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
 - (BOOL)uri:(const std::string &)a isSameFileAs:(NSString *)b;
 - (void)diagnosticsArrived:(const std::string &)uri
                       list:(const std::vector<Lsp::Diagnostic> &)list
-                      base:(const std::u16string *)base
+                      base:(std::shared_ptr<const std::u16string>)base
                     server:(MCLspServer *)server;
 - (void)problemsChanged;
 - (void)paintDiagnostics;

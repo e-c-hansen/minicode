@@ -137,17 +137,20 @@ static void testLspInlayHints() {
             hint(10, 11),   // after "def f(a, b)": a return type
             hint(11, 5),    // after "    v": a type, following the name
             hint(11, 10),   // before "a" in g(a): a parameter name
-            hint(11, 0),    // at a line's start: no character before it
+            hint(11, 0),    // at a line's start: before what follows it
             hint(12, 99),   // past its line's end: at the end
             hint(13, 0),    // the empty "line" after the window's last break
+            hint(10, 0),    // where the window starts
         };
         std::vector<Lsp::PlacedInlayHint> p = Lsp::placeInlayHints(hs, window, 500, 10);
-        CHECK(p.size() == 4);
-        if (p.size() == 4) {
+        CHECK(p.size() == 6);
+        if (p.size() == 6) {
             CHECK(p[0].hint == 1 && p[0].offset == 511 && !p[0].followsBefore);   // after ')'
             CHECK(p[1].hint == 2 && p[1].offset == 500 + 14 + 5 && p[1].followsBefore);
             CHECK(p[2].hint == 3 && p[2].offset == 500 + 14 + 10 && !p[2].followsBefore);
-            CHECK(p[3].hint == 5 && p[3].offset == 500 + 14 + 13 + 12);
+            CHECK(p[3].hint == 4 && p[3].offset == 500 + 14 && !p[3].followsBefore);
+            CHECK(p[4].hint == 5 && p[4].offset == 500 + 14 + 13 + 12);
+            CHECK(p[5].hint == 7 && p[5].offset == 500 && !p[5].followsBefore);
         }
         CHECK(Lsp::placeInlayHints(hs, u"", 0, 0).empty());
         CHECK(Lsp::inlayWordChar(u'a') && Lsp::inlayWordChar(u'_') && Lsp::inlayWordChar(u'9') &&
@@ -190,8 +193,10 @@ static void testLspInlayHints() {
         // Text on both sides of it replaced: it goes.
         CHECK(!follow(10, true, 8, 4, 1, o));
         CHECK(!follow(10, false, 0, 20, 20, o));
-        // Nothing left before it: it goes too.
-        CHECK(!follow(3, true, 0, 3, 0, o));
+        // Nothing left before it: it stays, at the text's start (a hint
+        // there is shown, as at any line's start).
+        CHECK(follow(3, true, 0, 3, 0, o) && o == 0);
+        CHECK(follow(3, false, 0, 3, 1, o) && o == 1);
     }
 
     GROUP("lsp:inlay-settings");

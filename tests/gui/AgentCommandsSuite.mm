@@ -24,6 +24,8 @@
 #import "CompareView.h"
 #import "ControlCommands.h"
 #import "ControlServer.h"
+#import "EditorTab.h"
+#import "FileTree.h"
 #import "GitPanel.h"
 #include <signal.h>
 #include <sys/socket.h>
@@ -318,11 +320,13 @@ MC_GUI_SUITE(agentcommands) {
     });
 
     // ------------------------------------- a file the agent has just written
+    __block NSUInteger listings = 0;
     MCGuiStep(@"fresh.txt on show, clean", ^{
         GCHECK([c openFileForAgent:F(@"fresh.txt") preview:NO]);
         [c.window makeFirstResponder:[c valueForKey:@"outline"]];
         GCHECK(![ActiveTab(c)[@"dirty"] boolValue]);
         // The agent rewrites it, and points at a line of the new text at once.
+        listings = MCTreeListingCount();
         MCGuiWriteFile(F(@"fresh.txt"), [@"new 1\nnew 2\n" stringByAppendingString:Lines(5, @"old")]);
     });
     CLI(@"a note on the new text", @[@"open", F(@"fresh.txt:2"), @"--note", @"Added"],
@@ -331,9 +335,24 @@ MC_GUI_SUITE(agentcommands) {
         GCHECK([tv.string hasPrefix:@"new 1\nnew 2\n"]);
         GCHECK(NSEqualRanges(notes.noteRange, LinesRange(tv.string, 2, 2)));
     });
-    // A pause before a negative check: the file system's event for the
-    // write comes and goes, and the reload it starts must not take the note.
-    MCGuiPause(2.0);
+    // The file system's event for the write comes and goes, and the reload
+    // it starts must not take the note. Waited for, not paused: the event
+    // has reached the window once its tree has listed the folder again
+    // (the same callback looks at the tabs, checkTabsOnDisk), and any
+    // reload it started is over once the tab's stamp is the file's (a
+    // reload records it last; a tab whose stamp is the file's starts none).
+    MCGuiWait(@"the write's event has reached the window, and the tab is caught up", 10, ^BOOL {
+        BOOL listed = NO;
+        NSArray<NSString *> *all = MCTreeListedFolders();
+        const NSUInteger fresh = MCTreeListingCount() - listings;
+        NSString *root = c.rootPath.stringByResolvingSymlinksInPath;
+        for (NSUInteger i = all.count > fresh ? all.count - fresh : 0; i < all.count; i++)
+            listed = listed || [all[i].stringByResolvingSymlinksInPath isEqualToString:root];
+        MCTab *t = [c valueForKey:@"activeTab"];
+        MCDiskStamp *disk = MCStampOfFile(F(@"fresh.txt"));
+        return listed && disk && [disk.modDate isEqualToDate:t.fileModDate] &&
+               disk.fileID == t.fileID && (int64_t)disk.size == t.fileSize;
+    });
     MCGuiStep(@"the reload that followed left the note alone", ^{
         GCHECK(notes.noteShown && [notes.noteText isEqualToString:@"Added"]);
         GCHECK(NSEqualRanges(notes.noteRange, LinesRange(tv.string, 2, 2)));

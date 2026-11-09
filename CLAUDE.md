@@ -88,7 +88,9 @@ opening comment says what it does in more detail than the lines below.
   macOS job also builds `make dist-zip RELEASE=1` and checks it as
   release.sh does (`nm`, the zip's contents, check-minos); the Android
   release job signs with a key made in the job (`keytool`, random
-  password), never the owner's release key.
+  password), never the owner's release key. Every job has a
+  `timeout-minutes` (macOS 40, tsan 45, the rest 20; `ci:timeouts` checks
+  a new job has one), so a hang never holds a runner for six hours.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
@@ -121,7 +123,12 @@ opening comment says what it does in more detail than the lines below.
   uploads it to `ppa:echansen/minicode` (`--dry-run` and `--simulate` send
   nothing). Setup is in `packaging/PPA.md`. Account `echansen`, key
   340F7652...1F40 in the Mac's gpg with its passphrase in the Keychain;
-  Launchpad builds amd64 about 35 minutes after an upload. The ThinkPad has its
+  Launchpad builds amd64 about 35 minutes after an upload, and ppa.sh (so
+  release.sh too) waits for it (`scripts/ppa-wait.sh VERSION [N]`, the PPA's
+  public getBuildRecords) and fails unless it is "Successfully built" (exit 3
+  failed: upload N+1; 4 not seen to end: run ppa-wait.sh again; `--no-wait`
+  or `MINICODE_PPA_NO_WAIT=1` skips it; `ppa:wait` tests it on canned
+  answers). 1.5.13's build failed unseen when the scripts stopped at dput. The ThinkPad has its
   own key (AEE321CE...DB7F9335) and no Docker, so there ppa.sh runs the
   packaging tools directly (`packaging/PPA.md`, step 9). On the Mac it needs
   Docker, which must not be started unattended (see "Verification").
@@ -647,7 +654,13 @@ container (PanelHost, laid out by hand in layoutContainer)
   NSTextView's undo, which reinserts what it kept) and
   `storedAttributesAtIndex:...` (the highlighter's compare, or every
   restyle of a hinted line set its colors again) leave them out, and
-  CodeTextView hides them while writing to a pasteboard.
+  CodeTextView hides them while writing to a pasteboard. A gap at a
+  paragraph's start (offset 0, after \n, \r or U+2029; 2026-11-08) is the
+  first-line indent of the paragraph style answered for its first
+  character instead (`MCGapParagraphStyle`; a kern on the break before
+  opens nothing), answered by name too; `fixAttributesInRange:` reads with
+  the gaps hidden (fixing writes a paragraph's first style over the rest)
+  and `setTypingAttributes:` puts the stored style back.
 - **Contiguous layout stays on**, except in large-file mode (below) and
   while a tab shown again far down (past 32K characters) shows:
   everything that reads positions relies on exactness. Never call `numberOfGlyphs` on the editor; lay out only up to the
@@ -1167,7 +1180,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   what the folder's `.gitignore`/`.ignore` files ignore (from the window's
   folder down, `search.use-ignore-files`) skipped, dotfiles searched; 1 MB and
   UTF-8 only, the files left out counted and named (`skipped`, shown under
-  the results) unless a NUL in their first 8 KB marks them binary; 2000
+  the results) unless a NUL in their first 8 KB marks them binary; UTF-16
+  with a byte order mark decoded as ripgrep does (`decodeUtf16`; its NULs
+  had hidden it), Replace in Folder writing it back in its own encoding
+  (`readTextFile` with an encoding, `encodeText`) and leaving out one with a
+  lone surrogate; 2000
   lines by default, 20,000 on the Mac; ANSI stripped; symlink loops and
   named pipes safe; generation-counted and cancelled per file). Since
   2026-11-07 the walk is parallel: folders are listed and files read and
@@ -1250,6 +1267,14 @@ container (PanelHost, laid out by hand in layoutContainer)
   `extends`, latexindent's `substitution` (Perl `eval`, which
   `switchesViaYaml` can turn on). Then any copy of the tool, the user's own
   command included, asks first, and Deny runs nothing (`Source::Refused`).
+  Prettier's and Biome's files are looked for up to `/`, past the open
+  folder and .git, as the tools look (2026-11-08: a repository with only
+  docs/ open ran its prettier.config.js unasked). A package runner
+  (`Formatter::launched`: npx, pnpx, bunx, `bun x`, `pnpm exec`/`dlx`, `npm
+  exec`, yarn) is the program it launches: that tool's configuration
+  counts, and with the folder's own node_modules/.bin copy (or a
+  package.json script, or yarn's bins) the runner is the folder's program
+  (`chooseLaunched`).
   `format.<lang> = prettier` alone (markdown, json, yaml, css, JS and TS
   files) is the opt-in for the user's own Prettier: the project's config
   where there is one, else `--prose-wrap preserve --config-precedence
@@ -1365,7 +1390,10 @@ view is disposed (on `unrealize`), or dispose loops forever.
   the Mac's flush (2026-11-08) hands `Client::didChange` the length and a
   `TextReader` over the storage: only each region's new text (and a unit
   either side) is read, positions come from the client's copy, a
-  `SyncedText` (UTF-16 with line starts kept through edits), and
+  `SyncedText` (UTF-16 in chunks of about 1,024 units, each with its own
+  line starts, lengths and line counts in Fenwick trees, so an edit
+  rewrites only the chunks it touches in log time; one flat
+  string moved its tail per edit, `lsp:sync-scale`), and
   contentChanges go last region first. The regions are trusted, so a pause
   costs what was typed, not the file (9 ms of main at 2.5 MB before);
   lengths that do not add up, a boundary inside a surrogate pair or
@@ -1376,12 +1404,17 @@ view is disposed (on `unrealize`), or dispose loops forever.
   counted in `syncRepairs`), and `lsp:sync-oracle` checks the copy against
   a server applying what it is sent. The UTF-8 overloads (GTK, tests) still
   compare the outside text with `rangedChanges` first. `textFor` is the
-  copy as UTF-16.
+  copy as UTF-16, made on first asking and shared until the next edit.
 - **Every tab's file stays open** on its server (`syncOpenDocuments`: on show,
   server start, before rename and references, on `tabsChanged`); only a running
   server takes background tabs, so a tab never starts one. With only the file
   on show open, rename missed unsaved uses elsewhere and the server read
-  edited-but-unsaved files from disk.
+  edited-but-unsaved files from disk. A tab is converted and compared only
+  when its text is not what it last gave (2026-11-08, `MCLspDoc sentText`
+  and `live`): a background tab's `sourceText` is immutable, so the same
+  object is the same text; the file on show was sent whole when attached
+  and follows by flushChanges. It had converted every tab whole on every
+  call (`make guitest SUITES=lsp_open_tabs`).
 - Requests during the handshake are queued; server-to-client requests are
   always answered (nulls for configuration, -32601 for unknown methods).
 - **Watched files** (2026-11-06): `client/registerCapability` for
@@ -1475,6 +1508,20 @@ view is disposed (on `unrealize`), or dispose loops forever.
   Again in the Language Servers popover, which sends the same action) takes
   it back (`MCForgetFolderToolsConsent`) and clears a × put-off, so the bar
   asks at once (`make guitest SUITES=tools_consent`).
+- **Servers that run the folder's code** (2026-11-08, `Lsp::checkProjectCode`,
+  `lsp:project-code`, `make guitest SUITES=server_consent`) take the same
+  answer. Until it is "allow", rust-analyzer starts with build scripts, proc
+  macros and checkOnSave off (initializationOptions and the
+  `rust-analyzer` section), and does not start at all (`MCLspStateWaiting`)
+  when the crate's folders or the window's (up to, not including, home)
+  hold a `.cargo/config[.toml]`, `rust-toolchain[.toml]`,
+  `rust-analyzer.toml` or `rust-project.json`: `cargo metadata` runs the
+  rustc and rustc-wrapper a cargo config names, and rustup's proxies run a
+  toolchain named by path (rust-analyzer itself, from ~/.cargo/bin). The
+  TypeScript server finds the folder's node_modules/typescript first, so it
+  gets `tsserver.path` to the user's own, or waits. The bar asks (Allow,
+  Don't Allow, the same × put-off); an answer restarts them. clangd (does
+  not load compile commands' plugins) and gopls are left alone.
 - **Completion** opens after `.`/`->`/`::` and on a word's second letter; an
   `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Tab takes;
   Return only when asked for (Ctrl+Space, Option+Esc), after a trigger
@@ -1501,7 +1548,10 @@ view is disposed (on `unrealize`), or dispose loops forever.
   them (a choice stop's options are the completion list in `_choiceMode`).
   Mirrors are carets (`setCaretRanges:`). It ends at $0, on Esc, an undo or
   redo, a selection outside the stop (checked a turn later), or a
-  replacement swallowing the stop. Python's servers are told to send bare
+  replacement swallowing the stop. `$CLIPBOARD` reads the pasteboard only
+  when the snippet names it (`Context::readClipboard`), and placeholders
+  nest 64 deep at most (`Snippet.cpp` kMaxDepth; deeper is text as
+  written; bad input parses in linear time). Python's servers are told to send bare
   names (pylsp include_params and jedi's disableSnippets off;
   basedpyright's completeFunctionParens stays off). Trap: the session's
   boxes are invalidated a run-loop turn after a storage edit; asking the
@@ -1546,8 +1596,9 @@ view is disposed (on `unrealize`), or dispose loops forever.
   Only a Ready server that offers them is asked. `shortenInlayLabels` is
   VS Code's maximumLength 43 per line. A hint after a word follows it when
   typing lands right at it; one before an argument stays put
-  (`followsBefore`). Hints at a line's start are left out (no character
-  to open a gap after). basedpyright gets its `inlayHints` settings named
+  (`followsBefore`). A hint at a line's start goes with what follows it and
+  is a line-start gap (see "Gaps"); only one at the start of an empty last
+  line is left out. basedpyright gets its `inlayHints` settings named
   (1.40 has them on by default anyway). `editor.inlay-hints`,
   `editor.inlay-hint-color`, `editor.inlay-hint-background`. The label is
   drawn after the text in `drawRect:`, at the glyph box's right edge minus
@@ -2037,6 +2088,9 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   per hunk in a gutter between the panes (`rectForHunk:accept:`,
   `pressHunkButtonAtPoint:`, for tests); `acceptedText` is
   `SideBySide::assemble` of the accepted hunks (the right text when all).
+  The last hunk's choice sends the answer only after `lastChoiceGrace` (3 s;
+  `sending`, the bar's Send Now), so a misclick can be pressed again and
+  taken back; the bar's own buttons and closing the tab send at once.
   Trap: laying both panes out to size them took 1.5 s on the main thread
   for 50,000 lines a side; every row has one fixed height (a paragraph
   style), so sizes and row rects are arithmetic and layout is
@@ -2444,8 +2498,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `posix_spawn`s an argument vector in the top level. Paths after `--`; add,
   restore and rm get `--literal-pathspecs` (`sp*ecial.txt` never stages
   `spXecial.txt`). Status `--porcelain=v2 --branch -z --untracked-files=all`;
-  diffs `-c core.quotePath=false diff --no-color --no-ext-diff --src-prefix=a/
-  --dst-prefix=b/` (a user's noprefix or diff tool would change the output),
+  diffs `-c core.quotePath=false diff --no-color --no-ext-diff
+  --submodule=short --src-prefix=a/ --dst-prefix=b/` (a user's noprefix,
+  diff tool or diff.submodule would change the output),
   `--cached -M` for a staged rename, `--no-index -- /dev/null path` for
   untracked (status 1 means differs). `MCFindProgram(@"git")`, never
   /usr/bin/git's shim.
@@ -2538,8 +2593,11 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - **Submodules, several rows, the verbs** (Mac, 2026-11-07): `Row::submodule`
   comes from status; `discardPlan` refuses a submodule (trashing it and
   restoring the gitlink left an empty folder, the checkout in the Trash) and
-  the hunk planner refuses a gitlink diff (`Subproject commit <oid>` lines,
-  mode 160000); staging one still works. The change lists take several rows
+  the hunk planner refuses a gitlink diff, known by mode 160000 in its header,
+  or with no index line at all (git writes none for a submodule at the same
+  commit with changes inside) by its one "Subproject commit" line a side; a
+  plain file holding such lines has a 100644 index line and stages by hunk.
+  Staging a submodule still works. The change lists take several rows
   (`allowsMultipleSelection`; Command or Shift click shows no diff): Space,
   the row menu's Stage, Unstage and Discard act on all (`stageRowsArgs`,
   `discardBatchPlan`: one question, refused whole if any row would be, each
@@ -2558,7 +2616,14 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `replaceRanges:withStrings:actionName:`; Stage Change is VS Code's
   `hash-object -w --stdin --path` and `update-index --cacheinfo`, refused when
   the entry no longer names the object the bars came from. The panel posts
-  `MCGitPanelDidRefreshNotification` so the bars look again. Option+F5 and
+  `MCGitPanelDidRefreshNotification` so the bars look again, and the gutter
+  watches the repository folder itself (a vnode source, `MCGitDirWatch`;
+  git renames index.lock and HEAD.lock into it), so git in a terminal with
+  the panel hidden moves them at once. A tab that keeps its file's UTF-8 BOM
+  apart (`MCTab bom`) diffs against the index text without its U+FEFF
+  (`QuickDiff::stripBom`), and Stage Change puts it back (`restoreBom`):
+  compared whole, line 0 always read as changed and Revert wrote a second
+  BOM. Option+F5 and
   Shift+Option+F5 (`nextChange:`) are Editor commands the key monitor runs.
 - **Tool guard trap**: in a worktree-isolated agent session, git commands in
   compound or unusual forms are refused (even a filename containing "git"); use
@@ -2574,7 +2639,11 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   after the drop (Finder waits on a modal during it). `pathMovedFrom:to:` moves
   tabs, the LaTeX path and a preview's relative pictures. F2 renames,
   Cmd+Delete trashes (the registry's `Tree` commands, run by the key monitor),
-  Space previews with Quick Look.
+  Space previews with Quick Look. Show Hidden Files (`gShowHidden`) is one
+  switch for every window: flipping it rescans each (a window left alone
+  listed its next changed folder by the new rule, showing dotfiles there
+  only), its item has a checkmark, and it is kept in the app's defaults
+  (`MCShowHiddenFiles`, read in `applicationWillFinishLaunching:`).
 - **FSEvents refresh what changed** (2026-11-06): the stream names folders,
   and `TreeRefresh::plan` (FileDetails) turns a batch into the loaded
   folders to list again (a subtree event: those below too; at or above the
@@ -2654,8 +2723,13 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   edit is pending, not made**: the session keeps every request's blocks
   (`_rounds`) and what they make of the buffer (`pendingText`), the bar shows
   `InlineAgent::pendingDiff` (SideBySide's rows and word changes), the lines
-  it replaces are tinted red; Return (Keep) applies the rounds again to the
-  buffer as it is then and puts the result in through `replaceSourceWithText:`
+  it replaces are tinted red (lines only added: the line above underlined
+  green, its break tinted); Return (Keep) applies the rounds again to the
+  buffer as it is then, placed by the selection they were shown with moved
+  through the user's edits (`InlineAgent::moveOffset`), never the caret of
+  the moment, and when that is not the change the bar showed
+  (`InlineAgent::sameChange`) the bar shows the new diff and waits for
+  Return again; else the result goes in through `replaceSourceWithText:`
   as one undo step; Esc drops it, nothing to restore. A bar closed from
   elsewhere with an edit waiting says in the status bar that it was not made.
   Commands are typed, never run. `make guitest SUITES=agent_panel` streams
@@ -2757,7 +2831,10 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   waits with its tab (`MCNoteState.pending`) and is placed when it is shown.
   The user's own steps (Option+], a click) always show.
 - **Notes** (`AgentNotes.mm`): a layout-manager highlight and a box over the
-  text view, never in the file or its undo; upper third; closed by Escape, ×,
+  text view, never in the file or its undo; upper third (in large-file mode
+  the line's place is an estimate, so it is read again after laying out
+  there until it stays put, as `scrollEditorToCharacter:offset:` does);
+  closed by Escape, ×,
   or an edit touching its lines (undo does not bring it back); plain text up to
   500 characters (cleaned by the handlers too, bidi controls dropped); not
   persisted. They go in one agent preview tab per window (`agentPreview`,
@@ -2888,8 +2965,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   is made, not on first use, because its shell gets it as
   `MINICODE_TERMINAL_ID`, with `MINICODE_PID` (inherited ones are dropped).
   `minicode hooks --install` (run by the user only; backs up, merges, a second
-  run changes nothing; a symlinked settings.json stays a link,
-  `ClaudeHooks::writeSettingsFile`) adds `minicode notify --from-hook` to Claude Code's
+  run changes nothing; a symlinked settings.json stays a link and a
+  hard-linked one is written in place, `ClaudeHooks::writeSettingsFile`) adds `minicode notify --from-hook` to Claude Code's
   Notification, Stop, UserPromptSubmit and PostToolUse hooks; notify never
   starts minicode and with --from-hook prints nothing and exits 0 whatever
   happens. Core: `ClaudeHooks` (hook JSON, the settings merge) and
@@ -2928,8 +3005,15 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   `proc_pid_rusage` are Mach ticks: convert with the timebase. Stop checks
   each pid's start time before SIGTERM and again before the SIGKILL 3 s
   later. `minicode procs` samples once more before answering, and never
-  opens a window for `--folder`. Session (R7.4) is a field the terminals
-  could fill; nothing sets it yet.
+  opens a window for `--folder`. Session (R7.4): each terminal's session is
+  the attention board's (the last `minicode notify`, with its time); the
+  Tracker takes the newest child of the shell started before that notify
+  (Claude Code holds the foreground while its hooks run) as the session's
+  process, or the shell itself after `exec claude`, and a process under it
+  gets the session once, when first seen there, kept after (a `/clear`'s
+  new session labels only what starts after it; a program run by hand
+  after Claude Code quit is nobody's). In `procs --json` and the row's
+  tooltip.
 - **Checks**: the `processes` suite starts a server (python3 found with
   `MCFindProgram`, else `nc -lk`) in its own terminal, disowns it, closes
   the terminal, stops the orphan; a sleep for Stop's question; a server
