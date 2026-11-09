@@ -14,6 +14,7 @@
 #import "BackupStore.h"
 #import "EditorFont.h"
 #import "IdeLinkServer.h"
+#import "LspInlayHints.h"
 #import "ControlServer.h"
 #import "Keymap.h"
 #import "TerminalAttention.h"
@@ -1267,6 +1268,9 @@ static void BuildMenu(void) {
                                            keyEquivalent:@"z"];
     wrap.keyEquivalentModifierMask = NSEventModifierFlagOption;
     [viewMenu addItem:wrap];
+    // The language server's inlay hints on or off (editor.inlay-hints;
+    // LspInlayHints.h). No key, as in VS Code.
+    [viewMenu addItem:MCInlayHintsMenuItem()];
 
     // Folding (FoldView.h). VS Code's Option+Cmd+[ and ] are minicode's
     // previous and next terminal, and its other folding keys are Cmd+K

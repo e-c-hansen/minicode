@@ -13,7 +13,10 @@
     // again.
     NSRange _inlayWindow;
     NSUInteger _inlayRequests;   // sent, for the checks
-    BOOL _inlaySetting;          // editor.inlay-hints as last seen
+    // Hints show now: editor.inlay-hints, and in its two "unless pressed"
+    // modes whether Control+Option are held down.
+    BOOL _inlayShown;
+    NSUInteger _inlayEdits;      // _edits when the hints shown were asked for
     __weak NSClipView *_inlayClip;   // whose scrolling is followed
 }
 @end

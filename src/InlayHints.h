@@ -25,6 +25,10 @@ struct InlayHint {
     // and a parameter's `count=` on the right.
     bool paddingLeft = false, paddingRight = false;
     std::string tooltip;   // a string or a MarkupContent's value; may be empty
+    // What accepting the hint writes into the text (a double-click, as in
+    // VS Code): basedpyright's `: list[int]` gives the label at its place,
+    // and `-> Any` an import at the top as well. Empty: nothing to accept.
+    std::vector<TextEdit> textEdits;
 };
 
 // textDocument/inlayHint's answer (InlayHint[] or null), sorted by
@@ -70,6 +74,15 @@ bool inlayWordChar(char16_t c);
 // characters on both sides of it: the hint goes until the server says again.
 bool inlayFollowEdit(size_t& offset, bool followsBefore, size_t start, size_t oldLen,
                      size_t newLen);
+
+// The edits a hint's acceptance makes in the text as it is now, as
+// offsets, last first (apply them in order). `fresh`: the text is the one
+// the hints were asked about, so their positions hold. Otherwise only a
+// hint whose edits all insert at its own position is taken, at `offsetNow`,
+// where the hint has moved with the typing since. Empty when there is
+// nothing to accept, or when the edits overlap or no longer fit the text.
+std::vector<OffsetEdit> inlayHintAcceptEdits(const InlayHint& hint, const std::u16string& text,
+                                             bool fresh, size_t offsetNow);
 
 // Counts LSP line breaks ("\r\n", "\r", "\n") in text fed piece by piece,
 // so the line of an offset in a long file is found without a copy of all

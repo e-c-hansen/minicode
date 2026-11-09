@@ -11,13 +11,24 @@
 // 100,000-line file with hints on the lines on show, in CPU time of the
 // main thread, against the same keystrokes with none.
 //
-// MC_GUI_REAL_BASEDPYRIGHT=1 adds the real basedpyright (when installed):
-// its hints for the same file arrive and are placed.
+// Then the caret and the pointer beside them (the owner's report: the
+// caret moved oddly around them): a click anywhere in a hint's room puts
+// the caret at the hint's offset, and the caret is drawn where the next
+// character goes, before a hint that follows the word before it and after
+// one that goes with what follows, with clicks made the way the window
+// server makes them. A double-click on a hint writes its textEdits (an
+// import too) as one undo step; one without edits selects a word; one
+// whose text was typed before since goes where the hint is now. VS Code's
+// on-unless-pressed and off-unless-pressed, and View > Inlay Hints.
+//
+// Where basedpyright is installed, its hints for a file arrive and are
+// placed, a click beside one lands at it and a double-click writes it.
 #import "Harness.h"
 #import "EditorController.h"
 #import "Lsp.h"
 #import "LspInlayHints.h"
 #import "SourceStorage.h"
+#include <pwd.h>
 #include <time.h>
 #include <vector>
 
@@ -71,6 +82,88 @@ NSDictionary *Hint(int line, int ch, id label, int kind, BOOL left, BOOL right) 
              @"kind": @(kind), @"paddingLeft": @(left), @"paddingRight": @(right)};
 }
 
+NSDictionary *Edit(int line, int ch, NSString *text) {
+    return @{@"range": @{@"start": @{@"line": @(line), @"character": @(ch)},
+                         @"end": @{@"line": @(line), @"character": @(ch)}},
+             @"newText": text};
+}
+
+NSDictionary *WithEdits(NSDictionary *hint, NSArray *edits) {
+    NSMutableDictionary *m = [hint mutableCopy];
+    m[@"textEdits"] = edits;
+    return m;
+}
+
+// A mouse event as the window server makes them, at a point in the window
+// (MultiCaretClickSuite.mm says why the view is handed it directly).
+NSEvent *Mouse(CGEventType type, NSPoint inWindow, int64_t clicks) {
+    const CGFloat h = NSMaxY(NSScreen.screens.firstObject.frame);
+    CGEventRef cg = CGEventCreateMouseEvent(NULL, type, CGPointMake(inWindow.x, h - inWindow.y),
+                                            kCGMouseButtonLeft);
+    CGEventSetIntegerValueField(cg, kCGMouseEventClickState, clicks);
+    NSEvent *e = [NSEvent eventWithCGEvent:cg];
+    CFRelease(cg);
+    return e;
+}
+
+// A click (clickCount 1 or 2) at a point in the text view: the release is
+// queued for its tracking loop and the press goes to the view the window's
+// hit test finds there.
+void Click(NSTextView *tv, NSPoint inView, int64_t clicks) {
+    const NSPoint w = [tv convertPoint:inView toView:nil];
+    [NSApp postEvent:Mouse(kCGEventLeftMouseUp, w, clicks) atStart:NO];
+    NSView *hit = [tv.window.contentView.superview hitTest:w];
+    [hit mouseDown:Mouse(kCGEventLeftMouseDown, w, clicks)];
+}
+
+void DoubleClick(NSTextView *tv, NSPoint inView) {
+    Click(tv, inView, 1);
+    Click(tv, inView, 2);
+}
+
+// Where the caret is drawn: the x of the text view's insertion indicator
+// (macOS 14 and later), NAN without one.
+CGFloat CaretX(NSTextView *tv) {
+    [tv updateInsertionPointStateAndRestartTimer:NO];
+    Class cls = NSClassFromString(@"NSTextInsertionIndicator");
+    for (NSView *v in tv.subviews)
+        if (cls && [v isKindOfClass:cls]) return NSMinX(v.frame);
+    return NAN;
+}
+
+NSUInteger IndexOf(EditorController *c, NSString *label) {
+    NSArray *shown = Text(c).inlayHints.shownHints;
+    for (NSUInteger i = 0; i < shown.count; i++)
+        if ([shown[i][@"label"] isEqualToString:label]) return i;
+    return NSNotFound;
+}
+
+NSString *BasedPyright() {
+    NSMutableArray *dirs = [[NSProcessInfo.processInfo.environment[@"PATH"]
+        componentsSeparatedByString:@":"] mutableCopy];
+    struct passwd *pw = getpwuid(getuid());   // HOME is the scratch one here
+    if (pw) [dirs addObject:[@(pw->pw_dir) stringByAppendingPathComponent:@".local/bin"]];
+    for (NSString *d in dirs) {
+        NSString *p = [d stringByAppendingPathComponent:@"basedpyright-langserver"];
+        if ([[NSFileManager defaultManager] isExecutableFileAtPath:p]) return p;
+    }
+    return nil;
+}
+
+NSMenuItem *ViewMenuItem(NSString *title) {
+    for (NSMenuItem *top in NSApp.mainMenu.itemArray)
+        if ([top.submenu.title isEqualToString:@"View"] || [top.title isEqualToString:@"View"])
+            for (NSMenuItem *item in top.submenu.itemArray)
+                if ([item.title isEqualToString:title]) return item;
+    return nil;
+}
+
+NSString *const kAccept = @"def area(width, height):\n"
+                          @"    return width * height\n"
+                          @"\n"
+                          @"items = [n for n in range(3)]\n"
+                          @"total = area(3, 4)\n";
+
 NSString *const kSource = @"def area(width, height):\n"
                           @"    return width * height\n"
                           @"\n"
@@ -90,11 +183,25 @@ MC_GUI_SUITE(inlay_hints) {
     // After "grand_" is typed before total: the same, moved, and a float.
     NSArray *second = @[Hint(0, 23, @"-> int", 1, YES, NO), Hint(3, 11, @": float", 1, NO, NO),
                         Hint(3, 19, @"width=", 2, NO, YES), Hint(3, 22, @"height=", 2, NO, YES)];
+    // As basedpyright sends them: a return type with an import, a
+    // variable's type and a parameter name with their text, and a
+    // parameter name with none.
+    NSArray *acceptHints = @[
+        WithEdits(Hint(0, 23, @"-> Any", 1, YES, NO),
+                  @[Edit(0, 23, @" -> Any"), Edit(0, 0, @"from typing import Any\n\n\n")]),
+        WithEdits(Hint(3, 5, @": list[int]", 1, NO, NO), @[Edit(3, 5, @": list[int]")]),
+        WithEdits(Hint(4, 13, @"width=", 2, NO, YES), @[Edit(4, 13, @"width=")]),
+        Hint(4, 16, @"height=", 2, NO, YES)];
     NSDictionary *script = @{
         @"name": @"fakelsp",
         @"capabilities": @{@"textDocumentSync": @{@"openClose": @YES, @"change": @1},
                            @"inlayHintProvider": @YES},
         @"rules": @[
+            @{@"method": @"textDocument/inlayHint",
+              @"when": @{@"uriEndsWith": @"accept.py", @"textContains": @"items = [n"},
+              @"result": acceptHints},
+            @{@"method": @"textDocument/inlayHint", @"when": @{@"uriEndsWith": @"accept.py"},
+              @"result": @[]},
             @{@"method": @"textDocument/inlayHint", @"when": @{@"textContains": @"grand_total"},
               @"result": second},
             @{@"method": @"textDocument/inlayHint", @"when": @{@"textContains": @"total = area"},
@@ -194,11 +301,10 @@ MC_GUI_SUITE(inlay_hints) {
         GCHECK(tv.selectedRange.location == line3 + 18);
         [tv moveToBeginningOfLine:nil];
         GCHECK(tv.selectedRange.location == line3);
-        // A click in the gap puts the caret on one side of it.
+        // A point anywhere in the gap is the hint's offset.
         const NSRect box = [tv.inlayHints rectOfHintAtIndex:1];
-        const NSUInteger i = [tv characterIndexForInsertionAtPoint:
-                                     NSMakePoint(NSMidX(box), NSMidY(box))];
-        GCHECK(i == line3 + 4 || i == line3 + 5);
+        for (CGFloat x : {NSMinX(box) + 1, NSMidX(box), NSMaxX(box) - 1})
+            GCHECK([tv characterIndexForInsertionAtPoint:NSMakePoint(x, NSMidY(box))] == line3 + 5);
     });
     MCGuiStep(@"typing before them moves them at once", ^{
         MCGuiFakeLspClearLog(@"inlay");
@@ -474,21 +580,228 @@ MC_GUI_SUITE(inlay_hints) {
         [big.inlayHints clear];
     });
 
-    // ------------------------------------------------ a real basedpyright
-    if (!NSProcessInfo.processInfo.environment[@"MC_GUI_REAL_BASEDPYRIGHT"].length) return;
-    NSString *real = MCGuiProjectFile(@"inlay-real/area.py");
-    MCGuiStep(@"the same file under basedpyright", ^{
-        NSString *exe = MCFindProgram(@"basedpyright-langserver");
-        GCHECK(exe.length > 0);
-        MCGuiWriteFile(real, kSource);
+    // --------------------------------------- the caret and the pointer beside them
+    NSString *acceptFile = MCGuiProjectFile(@"inlay/accept.py");
+    __block NSUInteger items = 0, total = 0;
+    __block CGFloat cell = 0;
+    MCGuiStep(@"a file whose hints carry their text", ^{
+        MCGuiWriteFile(acceptFile, kAccept);
+        GCHECK([c showFile:acceptFile]);
+        items = [kAccept rangeOfString:@"items"].location;
+        total = [kAccept rangeOfString:@"total"].location;
+    });
+    MCGuiWait(@"its four hints", 20, ^BOOL { return Text(c).inlayHints.count == 4; });
+    MCGuiStep(@"a click in the left half of a hint's room lands at the hint, not before the word's end", ^{
+        CodeTextView *tv = Text(c);
+        [c.window makeFirstResponder:tv];
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
+        cell = GlyphX(tv, items + 2) - GlyphX(tv, items + 1);
+        const NSRect list = [tv.inlayHints rectOfHintAtIndex:IndexOf(c, @": list[int]")];
+        tv.selectedRange = NSMakeRange(0, 0);
+        Click(tv, NSMakePoint(NSMinX(list) + 1, NSMidY(list)), 1);
+        MCGuiNote(@"a click at the left of \": list[int]\" put the caret at %lu (items ends at %lu)",
+                  (unsigned long)tv.selectedRange.location, (unsigned long)(items + 5));
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(items + 5, 0)));
+        // ...drawn where the next character goes: right after "items",
+        // before the hint, which typing pushes along.
+        const CGFloat x = CaretX(tv);
+        if (!isnan(x)) {
+            MCGuiNote(@"the caret at x %.1f; s at %.1f, the label %.1f to %.1f", x,
+                      GlyphX(tv, items + 4), NSMinX(list), NSMaxX(list));
+            GCHECK(x > GlyphX(tv, items + 4) + cell / 2 && x < NSMinX(list) + 1);
+        }
+        tv.selectedRange = NSMakeRange(0, 0);
+        Click(tv, NSMakePoint(NSMaxX(list) - 1, NSMidY(list)), 1);
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(items + 5, 0)));
+        // A parameter's name: a click on its left lands at the argument,
+        // not before the "(", and the caret is drawn after the name, where
+        // typing goes.
+        const NSRect width = [tv.inlayHints rectOfHintAtIndex:IndexOf(c, @"width=")];
+        Click(tv, NSMakePoint(NSMinX(width) + 1, NSMidY(width)), 1);
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(total + 13, 0)));
+        const CGFloat wx = CaretX(tv);
+        if (!isnan(wx)) GCHECK(wx > NSMaxX(width) - 1 && wx < GlyphX(tv, total + 13) + 1);
+        // A click on a character's own left half is as ever.
+        Click(tv, NSMakePoint(GlyphX(tv, items + 2) + 1, NSMidY(list)), 1);
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(items + 2, 0)));
+        // A drag from the hint's room back to the line's start selects the
+        // whole word, not all but its last letter.
+        const NSPoint from = [tv convertPoint:NSMakePoint(NSMinX(list) + 2, NSMidY(list)) toView:nil];
+        const NSPoint to = [tv convertPoint:NSMakePoint(GlyphX(tv, items) + 1, NSMidY(list)) toView:nil];
+        [NSApp postEvent:Mouse(kCGEventLeftMouseDragged, to, 1) atStart:NO];
+        [NSApp postEvent:Mouse(kCGEventLeftMouseUp, to, 1) atStart:NO];
+        [[tv.window.contentView.superview hitTest:from] mouseDown:Mouse(kCGEventLeftMouseDown, from, 1)];
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(items, 5)));
+    });
+    MCGuiStep(@"the arrows put the caret before the hint at the word's end, and after it past", ^{
+        CodeTextView *tv = Text(c);
+        const NSRect list = [tv.inlayHints rectOfHintAtIndex:IndexOf(c, @": list[int]")];
+        tv.selectedRange = NSMakeRange(items, 0);
+        for (int i = 0; i < 5; i++) [tv moveRight:nil];
+        GCHECK(tv.selectedRange.location == items + 5);
+        const CGFloat before = CaretX(tv);
+        [tv moveRight:nil];
+        GCHECK(tv.selectedRange.location == items + 6);
+        const CGFloat past = CaretX(tv);
+        [tv moveLeft:nil];
+        const CGFloat back = CaretX(tv);
+        if (!isnan(before)) {
+            MCGuiNote(@"the caret at the word's end %.1f, one right %.1f, back %.1f", before, past, back);
+            GCHECK(before < NSMinX(list) + 1);
+            GCHECK(past > NSMaxX(list) && fabs(past - GlyphX(tv, items + 6)) < 1.5);
+            GCHECK(fabs(back - before) < 0.5);
+        }
+        // Typed there, the letter goes before the hint and the caret with it.
+        TypeAt(tv, items + 5, 0, @"x");
+        GCHECK(OffsetOf(c, @": list[int]") == items + 6);
+        GCHECK(tv.selectedRange.location == items + 6);
+        const NSRect moved = [tv.inlayHints rectOfHintAtIndex:IndexOf(c, @": list[int]")];
+        const CGFloat typed = CaretX(tv);
+        if (!isnan(typed)) GCHECK(typed < NSMinX(moved) + 1 && typed > GlyphX(tv, items + 5));
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, kAccept);
+        // Hints gone, the caret is where the layout puts it again.
+        tv.selectedRange = NSMakeRange(items + 5, 0);
+        [tv.inlayHints clear];
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
+        const CGFloat plain = CaretX(tv);
+        if (!isnan(plain)) GCHECK(fabs(plain - GlyphX(tv, items + 5)) < 1.5);
+        // Home and End are as ever.
+        [tv moveToEndOfLine:nil];
+        GCHECK(tv.selectedRange.location == items + 29);
+        [tv moveToBeginningOfLine:nil];
+        GCHECK(tv.selectedRange.location == items);
+        // They come back with a nudge (an edit and its undo ask again).
+        TypeAt(tv, 0, 0, @"#");
+        [tv.undoManager undo];
+    });
+    MCGuiWait(@"the hints back", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
+    MCGuiStep(@"a double-click on a type writes it, the caret after it, as one undo step", ^{
+        CodeTextView *tv = Text(c);
+        const NSRect list = [tv.inlayHints rectOfHintAtIndex:IndexOf(c, @": list[int]")];
+        DoubleClick(tv, NSMakePoint(NSMidX(list), NSMidY(list)));
+        GCHECK([tv.string containsString:@"\nitems: list[int] = [n for n in range(3)]\n"]);
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(items + 5 + 11, 0)));
+        GCHECK(IndexOf(c, @": list[int]") == NSNotFound);   // gone at once
+        GCHECK([tv.undoManager.undoActionName isEqualToString:@"Insert Inlay Hint"]);
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, kAccept);
+    });
+    MCGuiWait(@"the hints back", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
+    MCGuiStep(@"one with an import writes both in one step", ^{
+        CodeTextView *tv = Text(c);
+        const NSRect any = [tv.inlayHints rectOfHintAtIndex:IndexOf(c, @"-> Any")];
+        DoubleClick(tv, NSMakePoint(NSMidX(any), NSMidY(any)));
+        GCHECK([tv.string hasPrefix:@"from typing import Any\n\n\ndef area(width, height) -> Any:\n"]);
+        NSString *after = tv.string;
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, kAccept);
+        [tv.undoManager redo];
+        GCHECK_EQ_STR(tv.string, after);
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, kAccept);
+    });
+    MCGuiWait(@"the hints back", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
+    MCGuiStep(@"one with nothing to write leaves the text; one typed before since goes where it is", ^{
+        CodeTextView *tv = Text(c);
+        const NSRect height = [tv.inlayHints rectOfHintAtIndex:IndexOf(c, @"height=")];
+        DoubleClick(tv, NSMakePoint(NSMidX(height), NSMidY(height)));
+        GCHECK_EQ_STR(tv.string, kAccept);
+        GCHECK(IndexOf(c, @"height=") != NSNotFound);
+        // Typed before it, at once (before the server is asked again).
+        TypeAt(tv, items, 0, @"z");
+        GCHECK(OffsetOf(c, @": list[int]") == items + 6);
+        const NSRect list = [tv.inlayHints rectOfHintAtIndex:IndexOf(c, @": list[int]")];
+        DoubleClick(tv, NSMakePoint(NSMidX(list), NSMidY(list)));
+        GCHECK([tv.string containsString:@"\nzitems: list[int] = [n"]);
+        [tv.undoManager undo];
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, kAccept);
+    });
+    MCGuiWait(@"the hints back", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
+
+    // ---------------------------------------- unless pressed, and the menu
+    MCGuiStep(@"on-unless-pressed: shown, and gone while Control+Option are held", ^{
         MCGuiSetSettings([NSString stringWithFormat:
-            @"lsp.enabled = true\nlsp.python = %@ --stdio\nlsp.python.also = off\n", exe]);
+            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n"
+            @"editor.inlay-hints = on-unless-pressed\n", cmd]);
+        GCHECK(Session(c).inlayHintsShown);
+        GCHECK(Text(c).inlayHints.count == 4);
+        MCInlayHintsSetPressed(YES);
+        GCHECK(!Session(c).inlayHintsShown);
+        GCHECK(Text(c).inlayHints.count == 0);
+        MCInlayHintsSetPressed(NO);
+    });
+    MCGuiWait(@"back once let go", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
+    MCGuiStep(@"off-unless-pressed (VS Code's spelling): none", ^{
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n"
+            @"editor.inlay-hints = offUnlessPressed\n", cmd]);
+        GCHECK(Text(c).inlayHints.count == 0);
+        MCInlayHintsSetPressed(YES);
+    });
+    MCGuiWait(@"shown while held", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
+    MCGuiStep(@"and gone when let go", ^{
+        MCInlayHintsSetPressed(NO);
+        GCHECK(Text(c).inlayHints.count == 0);
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n", cmd]);
+    });
+    MCGuiWait(@"on again", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
+    MCGuiStep(@"View > Inlay Hints, checked, turns them off in the settings file", ^{
+        NSMenuItem *item = ViewMenuItem(@"Inlay Hints");
+        GCHECK(item != nil);
+        if (!item) return;
+        GCHECK([(id)item.target validateMenuItem:item] && item.state == NSControlStateValueOn);
+        GCHECK([NSApp sendAction:item.action to:item.target from:item]);
+        NSString *file = [NSString stringWithContentsOfFile:
+            NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"]
+                                                  encoding:NSUTF8StringEncoding error:NULL];
+        GCHECK([file containsString:@"editor.inlay-hints = off"]);
+    });
+    MCGuiWait(@"they go", 10, ^BOOL { return Text(c).inlayHints.count == 0; });
+    MCGuiStep(@"unchecked; again turns them on", ^{
+        NSMenuItem *item = ViewMenuItem(@"Inlay Hints");
+        GCHECK([(id)item.target validateMenuItem:item] && item.state == NSControlStateValueOff);
+        GCHECK([NSApp sendAction:item.action to:item.target from:item]);
+    });
+    MCGuiWait(@"they come back", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
+
+    // ------------------------------------------------ a real basedpyright
+    NSString *bp = BasedPyright();
+    if (!bp) {
+        MCGuiStep(@"basedpyright is not installed: only the scripted server", ^{
+            MCGuiNote(@"basedpyright-langserver not found; the checks ran against fakelsp only");
+        });
+        return;
+    }
+    NSString *real = MCGuiProjectFile(@"inlay-real/area.py");
+    NSString *const kReal = [kSource stringByAppendingString:@"values = [n for n in range(3)]\n"];
+    MCGuiStep(@"the same file under basedpyright", ^{
+        MCGuiWriteFile(real, kReal);
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.python = %@ --stdio\nlsp.python.also = off\n", bp]);
         GCHECK([c showFile:real]);
     });
-    MCGuiWait(@"basedpyright's hints arrive", 60, ^BOOL { return Text(c).inlayHints.count > 0; });
-    MCGuiStep(@"and are placed", ^{
-        MCGuiNote(@"basedpyright: %@", Text(c).inlayHints.shownHints);
-        GCHECK_EQ_STR(Text(c).string, kSource);
-        GCHECK([Labels(c) count] >= 2);
+    MCGuiWait(@"basedpyright's hints arrive", 60, ^BOOL {
+        return IndexOf(c, @": list[int]") != NSNotFound;
     });
+    MCGuiStep(@"placed; a click beside one lands at it; a double-click writes it", ^{
+        CodeTextView *tv = Text(c);
+        MCGuiNote(@"basedpyright: %@", tv.inlayHints.shownHints);
+        GCHECK_EQ_STR(tv.string, kReal);
+        GCHECK([Labels(c) count] >= 2);
+        const NSUInteger v = [kReal rangeOfString:@"values"].location;
+        GCHECK(OffsetOf(c, @": list[int]") == v + 6);
+        [c.window makeFirstResponder:tv];
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
+        const NSRect list = [tv.inlayHints rectOfHintAtIndex:IndexOf(c, @": list[int]")];
+        Click(tv, NSMakePoint(NSMinX(list) + 1, NSMidY(list)), 1);
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(v + 6, 0)));
+        DoubleClick(tv, NSMakePoint(NSMidX(list), NSMidY(list)));
+        GCHECK([tv.string containsString:@"\nvalues: list[int] = [n for n in range(3)]\n"]);
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, kReal);
+    });
+    MCGuiStep(@"language servers off again", ^{ MCGuiSetSettings(@"lsp.enabled = false\n"); });
 }

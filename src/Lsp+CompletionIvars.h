@@ -14,7 +14,7 @@
     BOOL _completing;         // a request is out or the list is showing
     BOOL _haveItems;          // the server has answered it
     BOOL _incomplete;         // ...with a list it says will change as you type
-    Lsp::CompletionOrigin _origin;   // how the list came up (what Return does)
+    NSString *_filteredFor;   // the word the list shown was filtered for
     BOOL _navigated;          // the arrow keys moved through it
     int _completionGen, _resolveGen, _signatureGen;
     int _resolveId;
