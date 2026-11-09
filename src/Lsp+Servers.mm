@@ -23,6 +23,7 @@ static NSString *StateText(MCLspState state) {
     case MCLspStateFailed: return @"failed to start";
     case MCLspStateRestarting: return @"restarting";
     case MCLspStateCrashed: return @"crashed";
+    case MCLspStateWaiting: return @"waits for your answer";
     }
     return @"";
 }
@@ -260,8 +261,86 @@ static NSString *StateText(MCLspState state) {
     MCLspEntry *e = [self entryForKey:key];
     if (e.server) return e.server;
     // Not installed is looked for again: it may have been installed since.
-    if (e.state != MCLspStateIdle && e.state != MCLspStateNotInstalled) return nil;
+    // So is one waiting for the folder's answer: the project may have changed.
+    if (e.state != MCLspStateIdle && e.state != MCLspStateNotInstalled &&
+        e.state != MCLspStateWaiting)
+        return nil;
     return [self startEntry:e];
+}
+
+// ---- servers that run the folder's own code (Lsp::checkProjectCode)
+- (Lsp::ProjectCodeCheck)projectCodeForKey:(NSString *)key program:(NSString *)program {
+    const std::string k = Std(key);
+    if (Lsp::isAlsoKey(k) || !Lsp::serverMayRunProjectCode(k)) return Lsp::ProjectCodeCheck();
+    NSFileManager *fm = [NSFileManager defaultManager];
+    Lsp::ProjectFs fs;
+    fs.exists = [fm](const std::string &p) { return (bool)[fm fileExistsAtPath:NS(p)]; };
+    fs.subfolders = [fm](const std::string &d) {
+        std::vector<std::string> out;
+        for (NSString *name in [fm contentsOfDirectoryAtPath:NS(d) error:nil]) {
+            if (out.size() >= 1000) break;
+            out.push_back(Std(name));
+        }
+        return out;
+    };
+    NSString *root = RealPath(_root) ?: @"";
+    // The file on show's folder, when it is this server's: cargo reads its
+    // configuration from where the crate is, up.
+    NSString *dir = root;
+    Lsp::Language lang;
+    if (_path && [self language:lang forPath:_path installed:NO] && lang.server == k)
+        dir = RealPath(_path.stringByDeletingLastPathComponent) ?: root;
+    std::string ownTs;
+    if (k == "typescript") {
+        NSString *tsserver = MCFindProgram(@"tsserver");
+        ownTs = Lsp::ownTypescript(Std(RealPath(program)), Std(RealPath(tsserver)), Std(root), fs);
+    }
+    return Lsp::checkProjectCode(k, [self folderEnvironmentAllowed], Std(dir), Std(root),
+                                 Std(RealPath(NSHomeDirectory())), ownTs, fs);
+}
+
+// The project's file that decided, as the folder names it.
+- (NSString *)projectCodeFileShownForKey:(NSString *)key {
+    NSString *file = _entries[key].projectCodeFile;
+    NSString *root = RealPath(_root);
+    if (root.length && [file hasPrefix:[root stringByAppendingString:@"/"]])
+        return [file substringFromIndex:root.length + 1];
+    return file;
+}
+
+- (NSString *)projectCodeQuestionForKey:(NSString *)key {
+    MCLspEntry *e = _entries[key];
+    if (!e || e.projectCode == Lsp::ProjectCode::Free) return nil;
+    NSString *file = [self projectCodeFileShownForKey:key];
+    const BOOL waits = e.projectCode == Lsp::ProjectCode::Waits;
+    if ([key isEqualToString:@"rust"])
+        return waits ? [NSString stringWithFormat:
+                           @"This folder's %@ can name programs for cargo or rustup to run, so "
+                           @"the Rust language server starts only if you allow it.", file]
+                     : @"The Rust language server runs this project's build scripts and "
+                       @"procedural macros only if you allow it.";
+    return waits ? [NSString stringWithFormat:
+                       @"This folder has its own TypeScript (%@) and there is no other to use, "
+                       @"so the language server starts only if you allow it to run it.", file]
+                 : [NSString stringWithFormat:
+                       @"This folder has its own TypeScript (%@). The language server uses "
+                       @"yours instead unless you allow it.", file];
+}
+
+- (NSString *)folderCodeAwaitingConsent {
+    if (!_langKey || !_path || ![AppSettings shared].settings.lspEnabled()) return nil;
+    if ([self folderEnvironmentConsent]) return nil;
+    MCLspEntry *e = _entries[_langKey];
+    if (!e) return nil;
+    if (e.state == MCLspStateWaiting ||
+        (e.server && e.projectCode == Lsp::ProjectCode::Restricted))
+        return _langKey;
+    return nil;
+}
+
+- (NSString *)folderCodeQuestion {
+    NSString *key = self.folderCodeAwaitingConsent;
+    return key ? [self projectCodeQuestionForKey:key] : nil;
 }
 
 - (MCLspServer *)startEntry:(MCLspEntry *)e {
@@ -274,19 +353,29 @@ static NSString *StateText(MCLspState state) {
         return nil;
     }
     NSArray *first = [self firstDirsForKey:e.key];
-    MCLspServer *server = nil;
     NSArray *argv = nil;
     for (const std::string &cmd : [self commandsForKey:key]) {
         argv = MCResolveCommand(cmd, first);
         if (!argv) continue;
         e.command = NS(cmd);
-        server = [[MCLspServer alloc] initWithKey:e.key argv:argv root:_root];
         break;
     }
     if (!argv) {
         e.state = MCLspStateNotInstalled;
         return nil;
     }
+    // A server that would run the folder's own code waits for the folder's
+    // answer, or starts without that part (Lsp::checkProjectCode).
+    Lsp::ProjectCodeCheck pc = [self projectCodeForKey:e.key program:argv.firstObject];
+    e.projectCode = pc.verdict;
+    e.projectCodeFile = pc.file.empty() ? nil : NS(pc.file);
+    if (pc.verdict == Lsp::ProjectCode::Waits) {
+        e.serverName = ServerDisplayName(e.key, argv);
+        e.state = MCLspStateWaiting;
+        e.message = [self projectCodeQuestionForKey:e.key];
+        return nil;
+    }
+    MCLspServer *server = [[MCLspServer alloc] initWithKey:e.key argv:argv root:_root];
     if (!server) {
         e.state = MCLspStateFailed;
         e.message = [NSString stringWithFormat:@"%@ could not be run", argv.firstObject];
@@ -305,6 +394,10 @@ static NSString *StateText(MCLspState state) {
         e.interpreterSource = source;
         c.setInitializationOptions(Lsp::pythonInitializationOptions(kind, Std(interp)));
         c.setSettings(Lsp::pythonSettings(kind, Std(interp)));
+    }
+    if (pc.verdict == Lsp::ProjectCode::Restricted) {
+        c.setInitializationOptions(pc.initializationOptions);
+        if (!pc.settings.isNull()) c.setSettings(pc.settings);
     }
     __weak LspSession *weakSelf = self;
     __weak MCLspServer *weakServer = server;

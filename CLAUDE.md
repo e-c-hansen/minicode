@@ -1443,6 +1443,20 @@ view is disposed (on `unrealize`), or dispose loops forever.
   Again in the Language Servers popover, which sends the same action) takes
   it back (`MCForgetFolderToolsConsent`) and clears a × put-off, so the bar
   asks at once (`make guitest SUITES=tools_consent`).
+- **Servers that run the folder's code** (2026-11-08, `Lsp::checkProjectCode`,
+  `lsp:project-code`, `make guitest SUITES=server_consent`) take the same
+  answer. Until it is "allow", rust-analyzer starts with build scripts, proc
+  macros and checkOnSave off (initializationOptions and the
+  `rust-analyzer` section), and does not start at all (`MCLspStateWaiting`)
+  when the crate's folders or the window's (up to, not including, home)
+  hold a `.cargo/config[.toml]`, `rust-toolchain[.toml]`,
+  `rust-analyzer.toml` or `rust-project.json`: `cargo metadata` runs the
+  rustc and rustc-wrapper a cargo config names, and rustup's proxies run a
+  toolchain named by path (rust-analyzer itself, from ~/.cargo/bin). The
+  TypeScript server finds the folder's node_modules/typescript first, so it
+  gets `tsserver.path` to the user's own, or waits. The bar asks (Allow,
+  Don't Allow, the same × put-off); an answer restarts them. clangd (does
+  not load compile commands' plugins) and gopls are left alone.
 - **Completion** opens after `.`/`->`/`::` and on a word's second letter; an
   `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Tab takes;
   Return only when asked for (Ctrl+Space, Option+Esc), after a trigger

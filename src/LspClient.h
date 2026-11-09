@@ -405,7 +405,7 @@ WorkspaceEdit formattingEdit(const std::string& uri, const Json& result,
 // The status bar for a file's servers. States are LSP's view of a server
 // entry (MCLspState in Lsp.h has the same values in the same order).
 enum class ServerState {
-    Idle, Starting, Running, NotInstalled, Off, Stopped, Failed, Restarting, Crashed
+    Idle, Starting, Running, NotInstalled, Off, Stopped, Failed, Restarting, Crashed, Waiting
 };
 struct ServerStatus {
     std::string name;        // "basedpyright", or "" when none was found
@@ -958,6 +958,75 @@ Json pythonInitializationOptions(PythonServer kind, const std::string& interpret
 // Whether a different interpreter needs the server restarted, rather than
 // reaching it through didChangeConfiguration.
 bool pythonInterpreterNeedsRestart(PythonServer kind);
+
+// ------------------------------------------- servers that run the folder's code
+// Some servers, left to their defaults, run code of the folder's own when
+// they load it, so they wait for the folder's answer (the one its .venv
+// and formatters get; VS Code's Workspace Trust, under which the Rust
+// extension does not run at all):
+//   - rust-analyzer builds and runs build scripts (build.rs) and proc
+//     macros on load, and cargo check on save. Until the folder allows it,
+//     it starts with all three off. cargo itself, which it runs for the
+//     crate graph, runs programs a .cargo/config.toml names (rustc,
+//     rustc-wrapper: `cargo metadata` runs them, checked with cargo 1.86),
+//     and rustup's proxies run a toolchain a rust-toolchain.toml names by
+//     path (rust-analyzer itself, when ~/.cargo/bin's is the one found);
+//     rust-analyzer.toml and rust-project.json can set its build commands.
+//     With any of those in the project it does not start until allowed.
+//   - typescript-language-server runs the folder's own
+//     node_modules/typescript (it looks for it from the folder up) before
+//     its own, and that tsserver loads plugins from beside it. Until the
+//     folder allows it, it is pointed at the user's own TypeScript, and
+//     with none found it does not start.
+// Checked and left alone: clangd (Apple clangd 21 does not load a plugin a
+// compile command names, -fplugin or -Xclang -load; it is never given
+// --query-driver), gopls (the go command does not run a package's code to
+// load it, and limits cgo's flags), the Python servers (their interpreter
+// is the .venv question).
+enum class ProjectCode {
+    Free,         // nothing of the folder's runs, or the folder allowed it
+    Restricted,   // starts with `initializationOptions` and `settings`
+    Waits,        // does not start until the folder allows it (`file` says why)
+};
+struct ProjectCodeCheck {
+    ProjectCode verdict = ProjectCode::Free;
+    std::string file;   // the project's file that decides (Waits, TypeScript's Restricted)
+    Json initializationOptions, settings;
+};
+struct ProjectFs {
+    std::function<bool(const std::string& path)> exists;
+    std::function<std::vector<std::string>(const std::string& dir)> subfolders;   // names
+};
+// Whether a language's server may run the folder's code (rust, typescript).
+bool serverMayRunProjectCode(const std::string& server);
+// The folders whose project files a server reads for a file in `fileDir`
+// under the window's folder `root`: from fileDir up to root, then on up,
+// stopping at the home folder or one holding it ("/"), which are the
+// user's own (~/.cargo is cargo's home). A file outside root has its own
+// folders read first, then root's.
+std::vector<std::string> projectFolders(const std::string& fileDir, const std::string& root,
+                                        const std::string& home);
+// The first file in the project that could have cargo, rustup or
+// rust-analyzer run a program of the folder's with build scripts and proc
+// macros off, or "": in projectFolders and in the folder's own subfolders
+// holding a Cargo.toml (rust-analyzer loads those too).
+std::string rustProjectCodeFile(const std::string& fileDir, const std::string& root,
+                                const std::string& home, const ProjectFs& fs);
+// The folder's own TypeScript as typescript-language-server finds it
+// (node_modules/typescript/lib, from root up, stopping before home), or "".
+std::string workspaceTypescript(const std::string& root, const std::string& home,
+                                const ProjectFs& fs);
+// The user's own tsserver.js for typescript-language-server: in the
+// server's package (resolved path of its program, .../lib/cli.mjs), else
+// beside the tsserver found on PATH (resolved), never inside `root`; "".
+std::string ownTypescript(const std::string& serverProgram, const std::string& tsserverProgram,
+                          const std::string& root, const ProjectFs& fs);
+// What a server for `server` gets in the folder. `allowed`: the folder's
+// answer is "allow". `ownTs`: ownTypescript's answer.
+ProjectCodeCheck checkProjectCode(const std::string& server, bool allowed,
+                                  const std::string& fileDir, const std::string& root,
+                                  const std::string& home, const std::string& ownTs,
+                                  const ProjectFs& fs);
 
 // ------------------------------------------------------------------- client
 class Client {
