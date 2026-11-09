@@ -10438,6 +10438,7 @@ int main() {
     testTerminalHyperlinks();
     testTerminalPaste();
     testZshIntegration();
+    testPpaWait();
     testCiTimeouts();
     testTerminalMarks();
     testTerminalDraw();
