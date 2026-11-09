@@ -582,6 +582,7 @@ void TerminalScreen::touchRows(int from, int to) {
     from = std::max(from, 0);
     to = std::min(to, (int)dirtyRows_.size() - 1);
     for (int y = from; y <= to; y++) dirtyRows_[y] = 1;
+    if (to >= from) ulWork_ += (long long)(to - from + 1) * cols_;
 }
 
 TerminalScreen::Dirty TerminalScreen::takeDirty() {
@@ -985,6 +986,7 @@ void TerminalScreen::eraseCells(int y, int from, int to) {
     to = clampInt(to, 0, cols_);
     if (from >= to) return;
     touch(y);
+    ulWork_ += to - from;
     clearWide(y, from);
     clearWide(y, to - 1);
     Row& row = grid()[y];
@@ -1054,6 +1056,7 @@ void TerminalScreen::reverseIndex() {
 }
 
 void TerminalScreen::print(uint32_t cp, const std::string& utf8In) {
+    ulWork_++;
     std::string utf8 = utf8In;
     int charset = gl_ == 0 ? g0_ : g1_;
     if (charset == 1 && cp >= 0x5F && cp <= 0x7E) {
@@ -1534,18 +1537,26 @@ void TerminalScreen::collectLinks() {
 
 void TerminalScreen::collectUnderlineColors() {
     std::vector<bool> used(TermColorTable::kMax + 1, false);
+    long long read = 0;
     auto mark = [&](uint16_t id) { if (id < used.size()) used[id] = true; };
     for (const Grid* g : {&main_, &alt_})
-        for (const Row& row : *g)
+        for (const Row& row : *g) {
             for (const TermCell& c : row) mark(c.style.underlineColor);
-    for (const HistLine& h : history_)
+            read += (long long)row.size();
+        }
+    auto markLine = [&](const HistLine& h) {
         for (const StyleRun& r : h.runs) mark(r.style.underlineColor);
-    for (const HistLine& h : below_)
-        for (const StyleRun& r : h.runs) mark(r.style.underlineColor);
+        read += (long long)h.runs.size() + 1;
+    };
+    for (const HistLine& h : history_) markLine(h);
+    for (const HistLine& h : below_) markLine(h);
     mark(style_.underlineColor);
     mark(savedMain_.style.underlineColor);
     mark(savedAlt_.style.underlineColor);
     underlineColors_.release(used);
+    ulScanCost_ = std::max(read, 1LL);
+    ulWork_ = 0;
+    ulScans_++;
 }
 
 // ------------------------------------------------------------- replies
@@ -1800,10 +1811,18 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
         }
     if (f == 'm') {
         // A new underline color with the table full: free the ids no cell
-        // uses first (a program cycling colors would otherwise lose them).
-        if (underlineColors_.full() && csi.find("58") != std::string::npos)
-            collectUnderlineColors();
+        // uses (a program cycling colors would otherwise lose them) and
+        // apply the SGR again, when enough work came since the last scan
+        // (ulWork_); until then the color is the text's.
+        ulWork_ += (long long)csi.size() + 3;
+        const TermStyle before = style_;
+        underlineColors_.clearMissed();
         applySgr(style_, csi, &underlineColors_);
+        if (underlineColors_.missed() && (ulScans_ == 0 || ulWork_ * 4 >= ulScanCost_)) {
+            style_ = before;   // its id counts as used while scanning
+            collectUnderlineColors();
+            applySgr(style_, csi, &underlineColors_);
+        }
         return;
     }
 

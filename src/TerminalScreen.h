@@ -335,6 +335,7 @@ public:
     // default color (the text's) for 0.
     TermColor underlineColor(uint16_t id) const { return underlineColors_.color(id); }
     size_t underlineColorCount() const { return underlineColors_.size(); }   // tests
+    int underlineColorScans() const { return ulScans_; }                    // tests
 
     // The kitty keyboard protocol's flags in effect on the screen showing
     // (TermKeyboardFlag bits), for encodeKey and encodeChar. A program sets
@@ -484,9 +485,19 @@ private:
     // points, 1 clusters. promptActive_: a 133;A came and no 133;C since.
     int graphemes_ = -1;
     bool promptActive_ = false;
+    bool rawTty_ = false;           // setRawTty
     uint32_t themeFg_ = 0xD4D4D4, themeBg_ = 0x181818, themeCursor_ = 0xD4D4D4;
     std::string version_;
     TermColorTable underlineColors_;
+    // Freeing underline color ids is a scan of every cell and scrollback
+    // run, so it runs only when an SGR's new color found the table full,
+    // and only once the work since the last scan (characters printed,
+    // SGR bytes, cells erased, rows redrawn in bulk) is at least a quarter
+    // of what that scan read: at most four entries read per unit, so a
+    // program naming new colors with every id still in use is not slowed
+    // to a scan per SGR.
+    long long ulWork_ = 0, ulScanCost_ = 0;
+    int ulScans_ = 0;
     void collectUnderlineColors();
     void colorQuery(const std::string& body);   // OSC 4, 10, 11, 12
     int g0_ = 0, g1_ = 0, gl_ = 0;    // charsets: 0 ASCII, 1 DEC line drawing
@@ -520,7 +531,7 @@ private:
         if (y >= 0 && y < (int)dirtyRows_.size()) dirtyRows_[y] = 1;
     }
     void touchRows(int from, int to);   // [from, to]
-    void touchAll() { dirtyAll_ = true; }
+    void touchAll() { dirtyAll_ = true; ulWork_ += (long long)rows_ * cols_; }
     std::string nonce_;
     void addMark(char kind, int status);
     void dropMarks(long long fromId, long long toId);   // [from, to)

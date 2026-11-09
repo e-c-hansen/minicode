@@ -2190,7 +2190,11 @@ for full-screen programs. Both can be open at once.
   and mode 12 (the grid draws bar and underline shapes and blinks at 0.6 s
   only with the keyboard; `terminal.cursor-style` when no program chose);
   SGR 8/28, 4:0-4:5 and 21, 58/59 (underline colors as ids in the
-  screen's `TermColorTable`, freed by scanning cells when full), 53/55;
+  screen's `TermColorTable`; ids no cell uses are freed by a scan of every
+  cell and scrollback run, only when a new color misses a full table and
+  the work since the last scan, in printed characters, SGR bytes and
+  erased cells, is a quarter of what it read: before, every SGR with "58"
+  in its text rescanned, 0.1 ms each at 9,000 lines), 53/55;
   the kitty keyboard protocol with a stack per screen (16 deep, a fresh
   alternate screen starts empty, the prompt's return clears both), flag 1
   only, encoded by `encodeKey`/`encodeChar(..., keyboardFlags)`.
