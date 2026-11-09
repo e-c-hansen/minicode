@@ -545,6 +545,7 @@ static char kMarkdownMermaidKey;
 
 // The full preview: the page in the editor's own text view, at its top.
 - (void)renderMarkdown:(NSString *)content {
+    [self applyMarkdownMeasure];   // markdown.max-width, before the page's width is read
     NSTextContainer *box = self.textView.textContainer;
     NSDictionary *anchors = nil;
     NSAttributedString *page =

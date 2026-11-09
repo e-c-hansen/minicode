@@ -139,15 +139,8 @@ static NSColor *ContrastColor(const Rgba &c) {
     // changeColor: to the text view.
     [self.textView setSelectedRange:NSMakeRange(start + span.start, 0)];
 
-    NSColorPanel *panel = [NSColorPanel sharedColorPanel];
-    panel.showsAlpha = YES;
-    panel.continuous = YES;
-    panel.target = nil;   // setting the starting color must not count as a pick
-    panel.action = NULL;
-    panel.color = MCColor(span.color);
-    panel.target = self;
-    panel.action = @selector(colorPicked:);
-    [panel orderFront:nil];
+    // Esc in the file or the panel closes it (Appearance.h).
+    MCShowSwatchColorPanel(MCColor(span.color), self, @selector(colorPicked:), self.textView);
 }
 
 - (void)colorPicked:(NSColorPanel *)panel {

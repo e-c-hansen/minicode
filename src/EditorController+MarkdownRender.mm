@@ -3,6 +3,7 @@
 #import "EditorFont.h"
 #import "EditorController+MarkdownIvars.h"
 #import <objc/runtime.h>
+#include "PageMeasure.h"
 
 // A task list item's box, drawn rather than the ☐ and ☑ characters, whose
 // look depends on the font. Checked, it is filled with the link color and
@@ -54,6 +55,50 @@
 @end
 
 @implementation EditorController (MarkdownRender)
+
+// ------------------------------------------------------------ the measure
+// A rendered page's lines are at most markdown.max-width points long (at
+// the zoom: it grows with the page's fonts), the page centered in a wider
+// pane by the text view's inset, so its quotes, code boxes, rules and
+// tables, all text blocks as wide as the text container, keep to it too.
+// The source keeps the editor's own inset. Set when a page renders, as the
+// view's width changes (the pane, the window, the sidebar), and wherever
+// the view goes back to source or a message (applyWordWrap, setPlainMessage).
+static const CGFloat kEditorInset = 8;   // EditorController+Layout.mm's
+static char kMCMeasureObserved;
+
+- (void)applyMarkdownMeasure {
+    NSTextView *tv = self.textView;
+    if (!tv) return;
+    if (!objc_getAssociatedObject(self, &kMCMeasureObserved)) {
+        objc_setAssociatedObject(self, &kMCMeasureObserved, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        tv.postsFrameChangedNotifications = YES;
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(markdownViewResized:)
+                                                     name:NSViewFrameDidChangeNotification
+                                                   object:tv];
+    }
+    NSTextContainer *tc = tv.textContainer;
+    CGFloat inset = kEditorInset;
+    if (!tv.editable && [self showsRenderedMarkdown] && tc.widthTracksTextView) {
+        const double most = PageMeasure::maxTextWidth(
+            [AppSettings shared].settings.markdownMaxWidth(), MCZoomScale());
+        inset = PageMeasure::centeredInset(NSWidth(tv.frame), kEditorInset, most,
+                                           tc.lineFragmentPadding);
+    }
+    if (tv.textContainerInset.width == inset) return;
+    tv.textContainerInset = NSMakeSize(inset, tv.textContainerInset.height);
+    if (tc.widthTracksTextView)
+        tc.size = NSMakeSize(MAX(1, NSWidth(tv.frame) - 2 * inset), tc.size.height);
+}
+
+- (void)markdownViewResized:(NSNotification *)note {
+    (void)note;
+    // Only a width that changes the inset does anything; the height
+    // changes with every edit.
+    if (self.textView.textContainerInset.width != kEditorInset || !self.textView.editable)
+        [self applyMarkdownMeasure];
+}
 
 // The preview's vertical rhythm, in points at no zoom: the empty line
 // between two blocks (the parser's `gap` runs), and the indent of each list

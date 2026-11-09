@@ -89,6 +89,12 @@ BOOL CoversAscii(NSFont *font) {
     NSRange _lastReplaced;
     NSUInteger _lastReplacementLength;
     BOOL _replacementsProcessed;
+    // A run of one stored paragraph style (SourceStorage.h): every
+    // character in _styleRun has _styleValue. Once edits have moved it, not
+    // always the longest such run, which an effective range need not be.
+    NSRange _styleRun;
+    id _styleValue;
+    BOOL _styleRunKnown;
 }
 
 - (instancetype)init {
@@ -288,7 +294,67 @@ BOOL CoversAscii(NSFont *font) {
     return _lastReplaced.location;
 }
 
+// ---- the paragraph style's run
+static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
+
+// The stored paragraph style at `location`, and characters around it that
+// all have it.
+- (id)storedParagraphStyleAt:(NSUInteger)location range:(NSRangePointer)range {
+    if (location >= _store.length)   // the store's own answer, an exception
+        return [_store attribute:NSParagraphStyleAttributeName atIndex:location effectiveRange:range];
+    if (!_styleRunKnown || !NSLocationInRange(location, _styleRun)) {
+        NSRange r;
+        _styleValue = [_store attribute:NSParagraphStyleAttributeName atIndex:location
+                  longestEffectiveRange:&r inRange:NSMakeRange(0, _store.length)];
+        _styleRun = r;
+        _styleRunKnown = YES;
+    }
+    if (range) *range = _styleRun;
+    return _styleValue;
+}
+
+// Characters `range` are being replaced by `length` new ones, which have
+// the run's paragraph style when `joins`.
+- (void)styleRunReplaced:(NSRange)range length:(NSUInteger)length joins:(BOOL)joins {
+    if (!_styleRunKnown) return;
+    const NSUInteger a = _styleRun.location, b = NSMaxRange(_styleRun);
+    const NSInteger delta = (NSInteger)length - (NSInteger)range.length;
+    if (range.location >= a && NSMaxRange(range) <= b) {
+        if (length == 0 || joins) {   // within the run: it grows or shrinks
+            _styleRun.length = (NSUInteger)((NSInteger)_styleRun.length + delta);
+            if (!_styleRun.length) _styleRunKnown = NO;
+        } else if (!range.length && range.location == b) {
+            // put in after it
+        } else if (!range.length && range.location == a) {
+            _styleRun.location += length;   // put in before it
+        } else {
+            _styleRunKnown = NO;
+        }
+    } else if (NSMaxRange(range) <= a) {
+        _styleRun.location = (NSUInteger)((NSInteger)a + delta);
+    } else if (range.location < b) {
+        _styleRunKnown = NO;   // across an end
+    }
+}
+
+// Plain characters put in for `range` take the first replaced character's
+// attributes, with none replaced the one's before, at the start the one's
+// after.
+- (BOOL)plainTextJoinsStyleRun:(NSRange)range {
+    if (!_styleRunKnown) return NO;
+    const NSUInteger from = range.length || range.location == 0 ? range.location : range.location - 1;
+    return NSLocationInRange(from, _styleRun);
+}
+
+// The paragraph style of `range` is being set to `style`.
+- (void)styleRunRestyled:(NSRange)range style:(id)style {
+    if (!_styleRunKnown || !range.length) return;
+    if (NSMaxRange(range) <= _styleRun.location || range.location >= NSMaxRange(_styleRun)) return;
+    if (!SameStyle(style, _styleValue)) _styleRunKnown = NO;
+}
+
 - (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)str {
+    [self styleRunReplaced:range length:str.length joins:[self plainTextJoinsStyleRun:range]];
     [_store replaceCharactersInRange:range withString:str];
     _charEdits++;
     [self noteReplacement:range length:str.length];
@@ -299,6 +365,7 @@ BOOL CoversAscii(NSFont *font) {
 }
 
 - (void)setAttributes:(NSDictionary<NSAttributedStringKey, id> *)attrs range:(NSRange)range {
+    [self styleRunRestyled:range style:attrs[NSParagraphStyleAttributeName]];
     [_store setAttributes:attrs range:range];
     [self edited:NSTextStorageEditedAttributes range:range changeInLength:0];
 }
@@ -314,6 +381,8 @@ BOOL CoversAscii(NSFont *font) {
                               longest:NO];
     if (!_gaps.empty() && !_gapsHidden && GapAttribute(name))
         return [self attributesAtIndex:location effectiveRange:range][name];
+    if ([name isEqualToString:NSParagraphStyleAttributeName])
+        return [self storedParagraphStyleAt:location range:range];
     return [_store attribute:name atIndex:location effectiveRange:range];
 }
 
@@ -347,8 +416,7 @@ BOOL CoversAscii(NSFont *font) {
     NSRange r;
     id value = longest ? [_store attribute:NSParagraphStyleAttributeName atIndex:location
                          longestEffectiveRange:&r inRange:limit]
-                       : [_store attribute:NSParagraphStyleAttributeName atIndex:location
-                                effectiveRange:&r];
+                       : [self storedParagraphStyleAt:location range:&r];
     if (range) {
         NSUInteger lo = r.location, hi = NSMaxRange(r);
         if (it != starts.end() && *it < hi) hi = *it;
@@ -437,6 +505,17 @@ BOOL CoversAscii(NSFont *font) {
 - (NSUInteger)length { return _store.length; }
 
 - (void)replaceCharactersInRange:(NSRange)range withAttributedString:(NSAttributedString *)attr {
+    if (_styleRunKnown) {
+        // Whether every new character has the run's paragraph style.
+        __block BOOL joins = YES;
+        id style = _styleValue;
+        [attr enumerateAttribute:NSParagraphStyleAttributeName inRange:NSMakeRange(0, attr.length)
+                         options:0 usingBlock:^(id value, NSRange r, BOOL *stop) {
+            (void)r;
+            if (!SameStyle(value, style)) { joins = NO; *stop = YES; }
+        }];
+        [self styleRunReplaced:range length:attr.length joins:joins];
+    }
     [_store replaceCharactersInRange:range withAttributedString:attr];
     _charEdits++;
     [self noteReplacement:range length:attr.length];
@@ -447,16 +526,19 @@ BOOL CoversAscii(NSFont *font) {
 }
 
 - (void)addAttribute:(NSAttributedStringKey)name value:(id)value range:(NSRange)range {
+    if ([name isEqualToString:NSParagraphStyleAttributeName]) [self styleRunRestyled:range style:value];
     [_store addAttribute:name value:value range:range];
     [self edited:NSTextStorageEditedAttributes range:range changeInLength:0];
 }
 
 - (void)addAttributes:(NSDictionary<NSAttributedStringKey, id> *)attrs range:(NSRange)range {
+    if (id style = attrs[NSParagraphStyleAttributeName]) [self styleRunRestyled:range style:style];
     [_store addAttributes:attrs range:range];
     [self edited:NSTextStorageEditedAttributes range:range changeInLength:0];
 }
 
 - (void)removeAttribute:(NSAttributedStringKey)name range:(NSRange)range {
+    if ([name isEqualToString:NSParagraphStyleAttributeName]) [self styleRunRestyled:range style:nil];
     [_store removeAttribute:name range:range];
     [self edited:NSTextStorageEditedAttributes range:range changeInLength:0];
 }

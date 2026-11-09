@@ -119,8 +119,10 @@
 // takes the new size at once, keeping the line at the top of the pane.
 - (void)editorZoomChanged:(NSNotification *)note {
     (void)note;
-    // The page beside a Markdown source follows the zoom, keeping its place.
+    // The page beside a Markdown source follows the zoom, keeping its place,
+    // and so do the shortcut hints.
     if ([self sidePreviewShowing]) [self renderSidePreviewKeepingPlace];
+    if (self.hintsVisible) [self updateHints];
     NSFont *font = MCEditorFont();
     const BOOL showing = _liveHighlight && self.textView.editable;
     const BOOL changed = showing && ![_sourceAttributes[NSFontAttributeName] isEqual:font];
