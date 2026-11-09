@@ -405,7 +405,7 @@ WorkspaceEdit formattingEdit(const std::string& uri, const Json& result,
 // The status bar for a file's servers. States are LSP's view of a server
 // entry (MCLspState in Lsp.h has the same values in the same order).
 enum class ServerState {
-    Idle, Starting, Running, NotInstalled, Off, Stopped, Failed, Restarting, Crashed
+    Idle, Starting, Running, NotInstalled, Off, Stopped, Failed, Restarting, Crashed, Waiting
 };
 struct ServerStatus {
     std::string name;        // "basedpyright", or "" when none was found
@@ -625,25 +625,54 @@ std::u16string applyContentChanges(const std::u16string& text,
 // The client's copy of a document as the server has it: UTF-16, with its
 // line starts kept as it is edited (lines end at \n, \r\n or \r, as
 // PositionIndex counts them), so a ranged change finds its positions and
-// goes in without reading or converting the rest of the text.
+// goes in without reading or converting the rest of the text. It is kept
+// in chunks of about kChunk units, each with its own line starts, and the
+// chunks' lengths and line counts in Fenwick trees, so an edit rewrites
+// only the chunks it touches and finds its place in log time: one
+// contiguous string had the whole tail moved, and every later line start
+// shifted, per edit (0.4 ms a flush in 2.5 MB, linear in the file). Only a
+// chunk split or merged (every thousand or so units typed or deleted there)
+// rebuilds the trees, linear in the number of chunks.
 class SyncedText {
 public:
-    SyncedText() : starts_{0} {}
-    explicit SyncedText(std::u16string text);
-    const std::u16string& text() const { return text_; }
-    size_t size() const { return text_.size(); }
-    size_t lines() const { return starts_.size(); }
+    static constexpr size_t kChunk = 1024;   // a new chunk's size
+    SyncedText() = default;
+    explicit SyncedText(const std::u16string& text);
+    size_t size() const { return size_; }
+    size_t lines() const { return 1 + startCount_; }
     // As PositionIndex::position.
     Position position(size_t offset) const;
-    // [a, b) replaced by `with`; only the line starts from a on to the end
-    // of the new text are looked at again (the ones after move).
+    // [a, b) replaced by `with`; only the chunks it touches (and the one
+    // before, for a \r\n across their boundary) are looked at again.
     void replace(size_t a, size_t b, const std::u16string& with);
-    bool operator==(const std::u16string& s) const { return text_ == s; }
+    // The unit at i (i < size()).
+    char16_t at(size_t i) const;
+    // The whole text, copied.
+    std::u16string str() const;
+    // The whole text, copied once and shared until the next replace.
+    std::shared_ptr<const std::u16string> snapshot() const;
+    bool operator==(const std::u16string& s) const;
+    size_t chunks() const { return chunks_.size(); }
 
 private:
-    std::u16string text_;
-    std::vector<size_t> starts_;
-    bool startsLine(size_t at) const;
+    struct Chunk {
+        std::u16string text;
+        // Line starts s with the unit before them in this chunk, as
+        // s - the chunk's start (1 to its length).
+        std::vector<uint32_t> starts;
+    };
+    std::vector<Chunk> chunks_;   // none for an empty text; else none empty
+    // Fenwick trees (1-based) over the chunks' lengths and start counts.
+    std::vector<size_t> units_, startsIn_;
+    size_t size_ = 0, startCount_ = 0;
+    mutable std::shared_ptr<const std::u16string> snapshot_;
+    static void add(std::vector<size_t>& tree, size_t k, long delta);
+    static size_t before(const std::vector<size_t>& tree, size_t k);   // chunks [0, k)
+    // The last chunk k with before(tree, k) <= value (at most chunks() - 1).
+    size_t find(const std::vector<size_t>& tree, size_t value) const;
+    size_t chunkAt(size_t pos) const { return find(units_, pos); }
+    void rescan(size_t k);
+    void rebuild();
 };
 // Units [start, start + length) of the editor's text as it is now (the
 // caller keeps them within the text).
@@ -930,6 +959,75 @@ Json pythonInitializationOptions(PythonServer kind, const std::string& interpret
 // reaching it through didChangeConfiguration.
 bool pythonInterpreterNeedsRestart(PythonServer kind);
 
+// ------------------------------------------- servers that run the folder's code
+// Some servers, left to their defaults, run code of the folder's own when
+// they load it, so they wait for the folder's answer (the one its .venv
+// and formatters get; VS Code's Workspace Trust, under which the Rust
+// extension does not run at all):
+//   - rust-analyzer builds and runs build scripts (build.rs) and proc
+//     macros on load, and cargo check on save. Until the folder allows it,
+//     it starts with all three off. cargo itself, which it runs for the
+//     crate graph, runs programs a .cargo/config.toml names (rustc,
+//     rustc-wrapper: `cargo metadata` runs them, checked with cargo 1.86),
+//     and rustup's proxies run a toolchain a rust-toolchain.toml names by
+//     path (rust-analyzer itself, when ~/.cargo/bin's is the one found);
+//     rust-analyzer.toml and rust-project.json can set its build commands.
+//     With any of those in the project it does not start until allowed.
+//   - typescript-language-server runs the folder's own
+//     node_modules/typescript (it looks for it from the folder up) before
+//     its own, and that tsserver loads plugins from beside it. Until the
+//     folder allows it, it is pointed at the user's own TypeScript, and
+//     with none found it does not start.
+// Checked and left alone: clangd (Apple clangd 21 does not load a plugin a
+// compile command names, -fplugin or -Xclang -load; it is never given
+// --query-driver), gopls (the go command does not run a package's code to
+// load it, and limits cgo's flags), the Python servers (their interpreter
+// is the .venv question).
+enum class ProjectCode {
+    Free,         // nothing of the folder's runs, or the folder allowed it
+    Restricted,   // starts with `initializationOptions` and `settings`
+    Waits,        // does not start until the folder allows it (`file` says why)
+};
+struct ProjectCodeCheck {
+    ProjectCode verdict = ProjectCode::Free;
+    std::string file;   // the project's file that decides (Waits, TypeScript's Restricted)
+    Json initializationOptions, settings;
+};
+struct ProjectFs {
+    std::function<bool(const std::string& path)> exists;
+    std::function<std::vector<std::string>(const std::string& dir)> subfolders;   // names
+};
+// Whether a language's server may run the folder's code (rust, typescript).
+bool serverMayRunProjectCode(const std::string& server);
+// The folders whose project files a server reads for a file in `fileDir`
+// under the window's folder `root`: from fileDir up to root, then on up,
+// stopping at the home folder or one holding it ("/"), which are the
+// user's own (~/.cargo is cargo's home). A file outside root has its own
+// folders read first, then root's.
+std::vector<std::string> projectFolders(const std::string& fileDir, const std::string& root,
+                                        const std::string& home);
+// The first file in the project that could have cargo, rustup or
+// rust-analyzer run a program of the folder's with build scripts and proc
+// macros off, or "": in projectFolders and in the folder's own subfolders
+// holding a Cargo.toml (rust-analyzer loads those too).
+std::string rustProjectCodeFile(const std::string& fileDir, const std::string& root,
+                                const std::string& home, const ProjectFs& fs);
+// The folder's own TypeScript as typescript-language-server finds it
+// (node_modules/typescript/lib, from root up, stopping before home), or "".
+std::string workspaceTypescript(const std::string& root, const std::string& home,
+                                const ProjectFs& fs);
+// The user's own tsserver.js for typescript-language-server: in the
+// server's package (resolved path of its program, .../lib/cli.mjs), else
+// beside the tsserver found on PATH (resolved), never inside `root`; "".
+std::string ownTypescript(const std::string& serverProgram, const std::string& tsserverProgram,
+                          const std::string& root, const ProjectFs& fs);
+// What a server for `server` gets in the folder. `allowed`: the folder's
+// answer is "allow". `ownTs`: ownTypescript's answer.
+ProjectCodeCheck checkProjectCode(const std::string& server, bool allowed,
+                                  const std::string& fileDir, const std::string& root,
+                                  const std::string& home, const std::string& ownTs,
+                                  const ProjectFs& fs);
+
 // ------------------------------------------------------------------- client
 class Client {
 public:
@@ -1001,11 +1099,13 @@ public:
     int version(const std::string& uri) const;
     // Every open document's version, to compare with later (staleEditFile).
     DocVersions versions() const;
-    const std::u16string* openText(const std::string& uri) const;
+    // Copies made on first asking and shared until the text changes (the
+    // copy is kept in chunks, SyncedText).
+    std::shared_ptr<const std::u16string> openText(const std::string& uri) const;
     // The text last sent for a document, found by its URI as given or, when
     // the server spells it another way, by the file it names. What the
     // positions in a server's answer about that document refer to.
-    const std::u16string* textFor(const std::string& uri) const;
+    std::shared_ptr<const std::u16string> textFor(const std::string& uri) const;
     std::vector<std::string> openUris() const;
 
     // Requests. The handler runs when the response arrives (with a null

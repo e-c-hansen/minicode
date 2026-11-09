@@ -60,6 +60,11 @@ NSPopover *MCShowInstallPopover(MCInstallView *view, NSView *anchor, NSRect rect
 // environment (".venv"): the buttons read Use It and Don't Use It. Setting
 // serverKey goes back to the install text.
 @property(nonatomic, copy) NSString *consentEnvironment;
+// Or whether a server that runs the folder's own code ("rust",
+// "typescript") may: `question` is the text, and the buttons read Allow and
+// Don't Allow. Either question clears the other.
+@property(nonatomic, readonly, copy) NSString *consentServer;
+- (void)askAboutServer:(NSString *)key question:(NSString *)question;
 @property(nonatomic, readonly, copy) NSString *text;
 @property(nonatomic, readonly) NSButton *installButton;
 @property(nonatomic, copy) void (^onInstall)(NSButton *sender);

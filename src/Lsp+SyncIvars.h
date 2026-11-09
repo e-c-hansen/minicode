@@ -11,6 +11,10 @@
     // that take ranged changes (incremental didChange).
     Lsp::ChangeTracker _changes;
     double _lastFlushCpuMs;   // the last flushChanges' main-thread CPU time
+    // syncOpenDocuments: texts handed over whole (converted and compared),
+    // and its last run's main-thread CPU time.
+    NSUInteger _documentsSentWhole;
+    double _lastSyncCpuMs;
 
     // Files changed on disk, for the servers that registered watchers
     // (workspace/didChangeWatchedFiles): made with the first registration,

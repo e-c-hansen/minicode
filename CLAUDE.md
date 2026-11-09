@@ -1360,7 +1360,10 @@ view is disposed (on `unrealize`), or dispose loops forever.
   the Mac's flush (2026-11-08) hands `Client::didChange` the length and a
   `TextReader` over the storage: only each region's new text (and a unit
   either side) is read, positions come from the client's copy, a
-  `SyncedText` (UTF-16 with line starts kept through edits), and
+  `SyncedText` (UTF-16 in chunks of about 1,024 units, each with its own
+  line starts, lengths and line counts in Fenwick trees, so an edit
+  rewrites only the chunks it touches in log time; one flat
+  string moved its tail per edit, `lsp:sync-scale`), and
   contentChanges go last region first. The regions are trusted, so a pause
   costs what was typed, not the file (9 ms of main at 2.5 MB before);
   lengths that do not add up, a boundary inside a surrogate pair or
@@ -1371,12 +1374,17 @@ view is disposed (on `unrealize`), or dispose loops forever.
   counted in `syncRepairs`), and `lsp:sync-oracle` checks the copy against
   a server applying what it is sent. The UTF-8 overloads (GTK, tests) still
   compare the outside text with `rangedChanges` first. `textFor` is the
-  copy as UTF-16.
+  copy as UTF-16, made on first asking and shared until the next edit.
 - **Every tab's file stays open** on its server (`syncOpenDocuments`: on show,
   server start, before rename and references, on `tabsChanged`); only a running
   server takes background tabs, so a tab never starts one. With only the file
   on show open, rename missed unsaved uses elsewhere and the server read
-  edited-but-unsaved files from disk.
+  edited-but-unsaved files from disk. A tab is converted and compared only
+  when its text is not what it last gave (2026-11-08, `MCLspDoc sentText`
+  and `live`): a background tab's `sourceText` is immutable, so the same
+  object is the same text; the file on show was sent whole when attached
+  and follows by flushChanges. It had converted every tab whole on every
+  call (`make guitest SUITES=lsp_open_tabs`).
 - Requests during the handshake are queued; server-to-client requests are
   always answered (nulls for configuration, -32601 for unknown methods).
 - **Watched files** (2026-11-06): `client/registerCapability` for
@@ -1470,6 +1478,20 @@ view is disposed (on `unrealize`), or dispose loops forever.
   Again in the Language Servers popover, which sends the same action) takes
   it back (`MCForgetFolderToolsConsent`) and clears a × put-off, so the bar
   asks at once (`make guitest SUITES=tools_consent`).
+- **Servers that run the folder's code** (2026-11-08, `Lsp::checkProjectCode`,
+  `lsp:project-code`, `make guitest SUITES=server_consent`) take the same
+  answer. Until it is "allow", rust-analyzer starts with build scripts, proc
+  macros and checkOnSave off (initializationOptions and the
+  `rust-analyzer` section), and does not start at all (`MCLspStateWaiting`)
+  when the crate's folders or the window's (up to, not including, home)
+  hold a `.cargo/config[.toml]`, `rust-toolchain[.toml]`,
+  `rust-analyzer.toml` or `rust-project.json`: `cargo metadata` runs the
+  rustc and rustc-wrapper a cargo config names, and rustup's proxies run a
+  toolchain named by path (rust-analyzer itself, from ~/.cargo/bin). The
+  TypeScript server finds the folder's node_modules/typescript first, so it
+  gets `tsserver.path` to the user's own, or waits. The bar asks (Allow,
+  Don't Allow, the same × put-off); an answer restarts them. clangd (does
+  not load compile commands' plugins) and gopls are left alone.
 - **Completion** opens after `.`/`->`/`::` and on a word's second letter; an
   `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Tab takes;
   Return only when asked for (Ctrl+Space, Option+Esc), after a trigger

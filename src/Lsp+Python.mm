@@ -217,6 +217,14 @@ static BOOL IsRunnable(NSString *path) {
             [self restartServer:key];
         }
     }
+    // A server that runs the folder's own code starts again with it, or
+    // without it (Lsp::checkProjectCode); one that waited may start now.
+    for (NSString *key in _entries.allKeys) {
+        MCLspEntry *e = _entries[key];
+        if (Lsp::serverMayRunProjectCode(Std(key)) &&
+            (e.server || e.state == MCLspStateWaiting))
+            [self restartServer:key];
+    }
     if (![_alsoKey length] && [_langKey isEqualToString:@"python"])
         [self lookAgainForMissingServer];
     [self changed];

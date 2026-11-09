@@ -195,9 +195,9 @@ int Client::version(const std::string& uri) const {
     return it == docs_.end() ? 0 : it->second.version;
 }
 
-const std::u16string* Client::openText(const std::string& uri) const {
+std::shared_ptr<const std::u16string> Client::openText(const std::string& uri) const {
     auto it = docs_.find(uri);
-    return it == docs_.end() ? nullptr : &it->second.text.text();
+    return it == docs_.end() ? nullptr : it->second.text.snapshot();
 }
 
 const Client::Doc* Client::findDoc(const std::string& uri) const {
@@ -210,9 +210,9 @@ const Client::Doc* Client::findDoc(const std::string& uri) const {
     return nullptr;
 }
 
-const std::u16string* Client::textFor(const std::string& uri) const {
+std::shared_ptr<const std::u16string> Client::textFor(const std::string& uri) const {
     const Doc* d = findDoc(uri);
-    return d ? &d->text.text() : nullptr;
+    return d ? d->text.snapshot() : nullptr;
 }
 
 std::vector<std::string> Client::openUris() const {
@@ -237,7 +237,7 @@ void Client::didOpen(const std::string& uri, const std::string& languageId,
 
 void Client::sendWhole(Doc& d, const std::string& uri, std::u16string text) {
     std::string utf8 = toUtf8(text);
-    d.text = SyncedText(std::move(text));
+    d.text = SyncedText(text);
     d.version = ++lastVersion_[uri];
     fullSent_++;
     notify("textDocument/didChange",
@@ -270,7 +270,7 @@ void Client::didChange(const std::string& uri, const std::string& text,
     // anything they do not account for sends the whole text.
     std::vector<ContentChange> unused;
     if (syncKind() == 2 && !changes.overflowed() &&
-        !rangedChanges(toUtf8(it->second.text.text()), text, changes.regions(), unused)) {
+        !rangedChanges(toUtf8(it->second.text.str()), text, changes.regions(), unused)) {
         didChange(uri, text);
         return;
     }
@@ -293,7 +293,7 @@ void Client::didChange(const std::string& uri, size_t length, const ChangeTracke
     auto it = docs_.find(uri);
     if (it == docs_.end()) return;
     Doc& d = it->second;
-    const std::u16string& old = d.text.text();
+    const SyncedText& old = d.text;
     auto whole = [&] {
         std::u16string now = read(0, length);
         if (d.text == now) return;
@@ -332,7 +332,7 @@ void Client::didChange(const std::string& uri, size_t length, const ChangeTracke
     std::vector<Placed> placed;
     placed.reserve(regions.size());
     auto oldSplits = [&](size_t at) {
-        return at > 0 && at < old.size() && splits(old[at - 1], old[at]);
+        return at > 0 && at < old.size() && splits(old.at(at - 1), old.at(at));
     };
     size_t bytes = 0;
     for (const ChangeTracker::Region& r : regions) {
