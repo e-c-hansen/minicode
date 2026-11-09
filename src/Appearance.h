@@ -38,8 +38,22 @@ BOOL MCChooseTheme(NSString *themeId);
 @property(nonatomic, copy) NSString *appearanceSurface;
 @end
 
+// The system color panel for a color swatch in the settings file, at
+// `color`; its picks go to target/action (the starting color is not one).
+// Esc closes it while the keyboard is in the panel or in `owner` (the
+// settings file's text view), as it closes the opacity popover below: the
+// panel never takes the keyboard by itself, so Esc in the file is the way
+// a user dismisses it from the keys.
+void MCShowSwatchColorPanel(NSColor *color, id target, SEL action, NSView *owner);
+// Whether the swatch's panel is open (tests).
+BOOL MCSwatchColorPanelOpen(void);
+// Closes the swatch's color panel and the opacity popover, if open, as Esc
+// does; YES when one was.
+BOOL MCCloseSwatchPanels(void);
+
 // A small popover with a slider, for an opacity value in the settings file.
-// onChange gets every new value (0 to 1) while the slider moves.
+// onChange gets every new value (0 to 1) while the slider moves. Esc closes
+// it while the keyboard is in it or in `view`.
 @interface MCOpacityPopover : NSObject
 + (void)showForValue:(double)value relativeToRect:(NSRect)rect ofView:(NSView *)view
             onChange:(void (^)(double value))onChange;

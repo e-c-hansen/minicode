@@ -310,7 +310,9 @@ container (PanelHost, laid out by hand in layoutContainer)
 │       ├── JSON outline                           right of the text
 │       ├── MCMarkdownSidePreview                  a Markdown page right of
 │       │   its source (Ctrl+Cmd+V), a vertical DragBar between
-│       ├── browser (BrowserView)                  right of the editor
+│       ├── browser (BrowserView)                  right of the editor: its
+│       │   MCTabStrip of pages, +, the toolbar, the pages (one per live tab,
+│       │   the agent page)
 │       ├── problemsPanel (MCProblemsPanel)        above the terminal
 │       ├── terminalPanel (MCTerminalPanel)        bottom, full width: strip,
 │       │   +, ◫, TerminalViews side by side, MCTerminalFindBar
@@ -398,7 +400,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   forwarding method on AppDelegate if needed); a hints row (`appendHintsRow:`
   with `[self hk:@"id"]`, which reads the registry); a README table row, sorted
   by action, a column per platform. The hints panel is an attributed string on
-  tab stops; never align it with spaces (⌘ ⇧ ⌃ ⌫ ⏎ differ in width). Prefer
+  tab stops; never align it with spaces (⌘ ⇧ ⌃ ⌫ ⏎ differ in width). Its
+  stops come from the drawn widths of each column's keys and labels
+  (`PageMeasure::layoutHints`): two columns when they fit the window, else
+  one, never a row broken mid-row; it scales with the editor's zoom and
+  scrolls when taller than the window (2026-11-08). Prefer
   menu items with key equivalents to the key monitor: they work in every pane
   and for shifted variants.
 - No third-party dependencies, ever; new capabilities use system frameworks.
@@ -425,6 +431,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   `usesFontPanel` sets the shared NSColorPanel to the color under the caret
   when the selection moves, and the panel forwarded that to `colorPicked:`, so
   every pick became the text color; the editor sets `usesFontPanel = NO`.
+  The panel is opened through `MCShowSwatchColorPanel` (Appearance.h), whose
+  local monitor makes Esc close it (and the opacity popover) while the
+  keyboard is in the panel or the settings file; the panel never takes the
+  keyboard by itself, so the key lands in the file. Closing it clears its
+  target, so later changes of the shared panel are no picks.
 - **Adjust Settings…** ends every surface's context menu and opens the file at
   that surface's keys (`Settings::appearanceSurfaces()`: `tree`, `git`,
   `editor`, `syntax`, `markdown`, `terminal`, `browser`, `statusbar`,
@@ -572,7 +583,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   as clean; `attributesOfItemAtPath:` did not follow links.
 - **Keys**: Ctrl+Tab / Ctrl+Shift+Tab, Shift+Cmd+] / [, Shift+Cmd+1..9 and
   Ctrl+1..9 (macOS takes Shift+Cmd+3, 4, 5). Cmd+W (`closeFocused:`) closes the
-  tab, or the terminal, browser or Problems list with the keyboard; a repeat
+  tab, or the terminal, the browser's tab (the browser with its last) or
+  Problems list with the keyboard; a repeat
   (`isARepeat`) is ignored, so a held Cmd+W closes one thing. Shift+Cmd+W
   closes the window. Cmd+N New File (with no window, opens one), Option+Cmd+N
   New Window. Reopen Closed Tab (Option+Shift+Cmd+T): the newest of the
@@ -1738,7 +1750,16 @@ view is disposed (on `unrealize`), or dispose loops forever.
   indent block of its own, kept on it as an associated object, since a
   margin on the box itself still had its background drawn under it; h1, h2 and rules
   are bordered text blocks; list text at 24 points a level with the marker
-  right-aligned on a tab; a hard break is U+2028; gaps are 12 points. Fenced
+  right-aligned on a tab; a hard break is U+2028; gaps are 12 points.
+  **The measure** (2026-11-08, `markdown.max-width`, 840 points at 100%,
+  about GitHub's README width; VS Code's markdown.css has no limit): lines
+  are at most that times `MCZoomScale`, the page centered by the text
+  view's horizontal inset (`PageMeasure::centeredInset`), so text blocks
+  and tables, which are container-wide, keep to it. The full preview sets
+  it in `applyMarkdownMeasure` (+MarkdownRender: on render, on the text
+  view's frame change, from `applyWordWrap` and `setPlainMessage`, which
+  put the editor's 8 back for source); the side pane in `applyMeasure`,
+  asked by `pageWidth` before every page. Fenced
   code naming a language (`MdRun::lang`,
   `MarkdownParser::extensionForLanguage`) is colored by `MarkdownCode.mm` after
   the page is built. Tables: runs carry table, row, column and alignment, and
@@ -2827,12 +2848,38 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   upgrade`. Restart minicode (minicode menu, the status bar's ↻,
   `restartMinicode:`; no key, Cmd+R is Refresh) uses
   `NSBundle.mainBundle.bundlePath` (beeps when not a .app).
-- **The browser comes back**: the session entry's `browser` key (address plus
+- **The browser comes back**: the session entry's `browser` key (its `page`
+  is `BrowserView savedState`: every tab's address, title and
   `WKWebView.interactionState`, about 2.6 KB with history and scroll, macOS
-  12+, left out past 2 MB; visibility; fraction), restored in
-  `restoreBrowserFromSession` for a new window, never on Open Folder;
-  `applicationWillTerminate` saves every window's session. Cookies persist in
-  the default data store.
+  12+, 2 MB a tab and 4 MB in all by `BrowserTabs::keptRecords`, and
+  `active`; the tab on show again as the old single-page `url`/`state`, which
+  `restoreState:` still takes; visibility; fraction), restored in
+  `restoreBrowserFromSession` for a new window, never on Open Folder, with
+  only the tab on show loading; `applicationWillTerminate` saves every
+  window's session. Cookies persist in the default data store.
+- **Browser tabs** (2026-11-08, round 7 O4, `BrowserTabs.{h,cpp}`,
+  `browsertabs:*`, `make guitest SUITES=browser_tabs`): an `MCTabStrip` above
+  the toolbar; placing, stepping, closing and dragging are `EditorTabs`'.
+  Only the tab on show and the one used before it keep a web view
+  (`BrowserTabs::livePages`, `kLivePages` 2); the rest are suspended to
+  address, title and `interactionState` and load on show, so their WebKit
+  processes end (eight 40 MB pages: about 450 MB of WebKit, 110 MB with
+  two live). Keys reach the pane through the responder chain (it is in the
+  chain of whatever in it has the keyboard): `closeFocused:` (the agent page
+  when it shows, else the tab; the last tab calls `onEmpty`, which hides the
+  pane), `selectNextTab:`/`selectPreviousTab:`/`selectTabNumber:` (with one
+  tab passed on to the window's controller). Cmd+T is
+  `minicode.browser.newTab`, a page key whose selector only the pane
+  answers, so in a PDF, the editor or after a scroll in a page the key goes
+  on to Go to Symbol in Workspace (now `NotPage`); View > New Browser Tab
+  is `openBrowserTab:` from anywhere. A Command- or middle-clicked link
+  opens a suspended tab behind (`decidePolicyForNavigationAction:`); a
+  target=_blank or window.open page comes up beside its opener in the web
+  view WebKit's configuration makes (`WKUIDelegate`). Harness traps: a
+  Command key in a focused web view goes to the page and comes back to the
+  menus a moment later (wait for it); WebKit gives a script's click no
+  modifiers, so the Command-click check hands the delegate an action
+  subclass.
 - `mc-dev` (the user's `~/Code/dotfiles/shell/aliases.sh`) runs the repo's
   build; launching a build registers it with Launch Services, so Finder may
   offer two minicodes (`lsregister -u` it).
@@ -3191,26 +3238,29 @@ session has a display. Check first.
   large_file, save, paste, zoomfit;
   files and windows: tree, tree_hidden, preview_tabs, search,
   replace_in_folder, backups, palette, symbols, keymap, config_writes,
-  daily_work, structure, utf16;
+  daily_work, structure, utf16, hints_panel, swatch_escape;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
   snippets, problems, servers_by_extension, server_consent, tools_consent,
   organize_on_save, format, format_consent, format_coverage;
   documents and viewers: markdown_preview, markdown_side,
-  markdown_side_sync, markdown_math, mermaid, latex, previews, compare;
+  markdown_side_sync, markdown_width, markdown_math, mermaid, latex,
+  previews, compare;
   terminal: terminal_draw, terminal_links, terminal_marks, terminal_paste,
   terminal_pty, terminal_reflow, terminal_splits, terminal_vt,
   terminal_exec, terminal_keys, terminal_zoom, run_file;
   git: git_panel, git_actions, git_hunks, git_verbs, git_sync, git_gutter;
   agents and control: agents, agent_panel, agent_places, agentcommands,
-  agent_autosave, attention, control, browserpages, idelink, processes;
+  agent_autosave, attention, control, browserpages, browser_tabs, idelink,
+  processes;
   run only when named: _backups_writer, _backups_restore.
   A suite's file is usually its name in CamelCase; the exceptions are
   mermaid (IdeLinkSuite.mm), foldperf (FoldingSuite.mm), the format_*
   suites (FormatSuite.mm), git_actions, git_hunks and git_verbs
   (GitPanelSuite.mm), markdown_side_sync (MarkdownSideSuite.mm), and
   LooseEndsSuite.mm (terminal_exec, terminal_keys, terminal_zoom,
-  agent_autosave, multicaret_rows).
+  agent_autosave, multicaret_rows), and PageMeasureSuite.mm (hints_panel,
+  markdown_width, swatch_escape).
 - **Timing bounds hold under load** (2026-11-07): with several agents
   building, load 40 to 100 ran wall times three to ten times over and failed
   brackets:bounded, procs:speed, keystroke, large_file, processes and

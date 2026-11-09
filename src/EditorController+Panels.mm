@@ -283,10 +283,11 @@
 - (void)makeBrowserWithHome:(NSString *)home {
     if (self.browser) return;
     self.browser = [[BrowserView alloc] initWithHomeURL:home];
+    __weak EditorController *weakSelf = self;
+    self.browser.onEmpty = ^{ [weakSelf browserEmptied]; };
     [self.rightArea addSubview:self.browser];
     self.browserDivider = [[DragBar alloc] initWithFrame:NSZeroRect];
     self.browserDivider.vertical = YES;
-    __weak EditorController *weakSelf = self;
     self.browserDivider.onDrag = ^(CGFloat x) {
         [weakSelf browserBarDraggedTo:x];
     };
@@ -305,6 +306,44 @@
     if (self.browserVisible) [self.browser focusURLBar];
     else [self collapseRightAreaIfEmpty];
     if (self.hintsVisible) [self updateHints];
+}
+
+// The browser's last tab was closed (Cmd+W or its x): the pane hides, as
+// the terminal dock does with its last terminal, and the keyboard goes back
+// to the editor (or what else shows). An empty tab waits for the next
+// Toggle Browser.
+- (void)browserEmptied {
+    if (!self.browserVisible) return;
+    const BOOL hadKeyboard = [self.browser keyboardInPane];
+    if (self.maximizedPane == MCPaneBrowser) [self toggleMaximizedPane:nil];
+    self.browserVisible = NO;
+    [self relayoutRightArea];
+    [self collapseRightAreaIfEmpty];
+    if (hadKeyboard || self.window.firstResponder == self.window) [self focusAfterClosingPanel];
+    if (self.hintsVisible) [self updateHints];
+}
+
+// View > New Browser Tab, from the menu or the palette, wherever the
+// keyboard is. Cmd+T is the pane's own (BrowserView newBrowserTab:): no
+// one else answers it, so in the editor, a PDF or anywhere else the key
+// goes on to Go to Symbol in Workspace.
+- (void)openBrowserTab:(id)sender {
+    (void)sender;
+    [self makeBrowserWithHome:@""];
+    [self leaveMaximizedPaneFor:MCPaneBrowser];
+    if (!self.browserVisible) {
+        self.browserVisible = YES;
+        [self showRightArea];
+        [self relayoutRightArea];
+        if (self.hintsVisible) [self updateHints];
+    }
+    // An empty tab on show (a pane just made, or left by closing the last
+    // tab) is the new tab already.
+    BrowserView *b = self.browser;
+    const NSInteger shown = b.selectedTab;
+    if (shown < 0 || shown >= (NSInteger)b.tabCount || b.tabAddresses[(NSUInteger)shown].length)
+        [b newTab];
+    [b focusURLBar];
 }
 
 // --------------------------------------------------- keyboard focus + switch
