@@ -226,6 +226,32 @@ std::string writeTarget(const std::string &path) {
     return std::string();
 }
 
+namespace {
+
+// Overwrites the file itself: every name it has sees the new text.
+bool writeInPlace(const std::string &target, const std::string &text, std::string &error) {
+    const int fd = open(target.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) {
+        error = target + ": " + std::strerror(errno);
+        return false;
+    }
+    size_t off = 0;
+    int failed = 0;
+    while (off < text.size() && !failed) {
+        const ssize_t n = pwrite(fd, text.data() + off, text.size() - off, (off_t)off);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) failed = n < 0 ? errno : EIO;
+        else off += (size_t)n;
+    }
+    if (!failed && ftruncate(fd, (off_t)text.size()) != 0) failed = errno;
+    if (!failed && fsync(fd) != 0) failed = errno;
+    if (close(fd) != 0 && !failed) failed = errno;
+    if (failed) error = target + ": " + std::strerror(failed);
+    return !failed;
+}
+
+}  // namespace
+
 bool writeSettingsFile(const std::string &path, const std::string &text, unsigned newMode,
                        std::string &error) {
     const std::string target = writeTarget(path);
@@ -241,6 +267,10 @@ bool writeSettingsFile(const std::string &path, const std::string &text, unsigne
             return false;
         }
         mode = st.st_mode & 07777;
+        // A file with other names (a dotfile manager's hard link): a rename
+        // would leave them on the old text, so it is written in place, as
+        // FolderSearch::writeFileAtomically does.
+        if (st.st_nlink > 1) return writeInPlace(target, text, error);
     }
     std::string tmp = target + ".minicode-XXXXXX";
     std::vector<char> name(tmp.begin(), tmp.end());

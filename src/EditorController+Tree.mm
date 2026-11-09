@@ -1,6 +1,7 @@
 // EditorController+Tree.mm — EditorController: the file tree: its data source, drag and drop, FSEvents, worktree rows, file operations, opening a folder.
 #import "EditorController+Private.h"
 #import "EditorController+TreeIvars.h"
+#import "ControlServer.h"
 
 @implementation EditorController (Tree)
 
@@ -63,10 +64,26 @@
     return m;
 }
 
-// Cmd+Shift+. : show or hide dotfiles in the tree (like Finder).
+static NSString *const kShowHiddenFilesKey = @"MCShowHiddenFiles";
+
++ (void)loadShowHiddenFiles { gShowHidden = [MCAppDefaults() boolForKey:kShowHiddenFilesKey]; }
+
+// Cmd+Shift+. : show or hide dotfiles in the tree (like Finder), in every
+// window at once, remembered across launches (loadShowHiddenFiles); the
+// menu item has a checkmark while they show. Every window rescans: the
+// switch is process-wide, so a window left as it was listed its next
+// changed folder by the new rule and showed dotfiles in that folder only
+// (round 5's workspace 2).
 - (void)toggleHiddenFiles:(id)sender {
+    (void)sender;
     gShowHidden = !gShowHidden;
-    [self refreshTree:nil];
+    [MCAppDefaults() setBool:gShowHidden forKey:kShowHiddenFilesKey];
+    NSMutableArray<EditorController *> *all = [NSMutableArray arrayWithObject:self];
+    id<MCControlAppHost> host = (id<MCControlAppHost>)NSApp.delegate;
+    if ([host respondsToSelector:@selector(controlControllers)])
+        for (EditorController *c in [host controlControllers])
+            if (c != self) [all addObject:c];
+    for (EditorController *c in all) [c refreshTree:nil];
 }
 
 // ------------------------------------------------------- NSOutlineView source

@@ -263,6 +263,46 @@ MC_GUI_SUITE(replace_in_folder) {
         MCGuiSnapshot(t.window.contentView, @"todos-dark");
         [t.window close];
     });
+    // ---- UTF-16 with a byte order mark (round 5's workspace 3): found,
+    // and replaced in its own encoding.
+    NSString *wide = [MCGuiScratch() stringByAppendingPathComponent:@"rif16"];
+    NSString *le = [wide stringByAppendingPathComponent:@"le.ps1"];
+    MCGuiStep(@"a UTF-16LE file, searched", ^{
+        NSMutableData *d = [NSMutableData dataWithBytes:"\xFF\xFE" length:2];
+        [d appendData:[@"$a = \"cat\"\r\nWrite-Host cat\r\n"
+                          dataUsingEncoding:NSUTF16LittleEndianStringEncoding]];
+        [[NSFileManager defaultManager] createDirectoryAtPath:wide withIntermediateDirectories:YES
+                                                   attributes:nil error:nil];
+        GCHECK([d writeToFile:le atomically:NO]);
+        SearchPanel *p = Panel(c);
+        [p setScope:wide];
+        p.field.stringValue = @"cat";
+        p.replaceField.stringValue = @"dog";
+        [p runSearch:nil];
+    });
+    MCGuiWait(@"its two lines", 10, ^BOOL { return !Panel(c).busy && Hits(c).count == 2; });
+    MCGuiStep(@"found, named nowhere as skipped; Replace All", ^{
+        MCGuiNote(@"status: %@; rows: %@", Panel(c).status.stringValue,
+                  [Hits(c) valueForKey:@"text"]);
+        GCHECK(Panel(c).skippedNote.hidden);
+        GCHECK_EQ_STR([Hits(c)[1] valueForKey:@"text"], @"Write-Host cat");
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        [Panel(c) replaceAll:nil];
+    });
+    MCGuiWait(@"replaced", 10, ^BOOL {
+        NSData *d = [NSData dataWithContentsOfFile:le];
+        return !Panel(c).busy && d.length > 2 &&
+               [[[NSString alloc] initWithData:[d subdataWithRange:NSMakeRange(2, d.length - 2)]
+                                      encoding:NSUTF16LittleEndianStringEncoding]
+                   containsString:@"dog"];
+    });
+    MCGuiStep(@"still UTF-16LE with its mark, every match replaced", ^{
+        NSMutableData *want = [NSMutableData dataWithBytes:"\xFF\xFE" length:2];
+        [want appendData:[@"$a = \"dog\"\r\nWrite-Host dog\r\n"
+                             dataUsingEncoding:NSUTF16LittleEndianStringEncoding]];
+        GCHECK([[NSData dataWithContentsOfFile:le] isEqualToData:want]);
+    });
+
     MCGuiStep(@"close the panel; Don't Save the tabs", ^{
         [Panel(c).window close];
         MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);

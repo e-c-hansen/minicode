@@ -8,8 +8,11 @@
 #include "GitModel.h"
 #import <QuartzCore/QuartzCore.h>
 #include "QuickDiff.h"
+#include <fcntl.h>
+#include <memory>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -77,6 +80,25 @@ std::string RealPath(NSString *p) {
 @implementation MCGitGutterSource
 @end
 
+// The repository folder of the file on show (where its index and HEAD
+// are, a linked worktree's own folder for one), watched by a vnode
+// source: git writes both by renaming a lock file over them, which changes
+// the folder's entries, and only then are the two files' stats compared.
+// So a stage, commit, reset or checkout run anywhere (Claude Code in a
+// terminal, with the Source Control panel hidden) brings a look at once.
+@interface MCGitDirWatch : NSObject {
+@public
+    std::string dir;
+    dispatch_source_t source;   // cancelled with the object; its handler keeps
+                                // the stamps (index, HEAD) itself, on the queue
+}
+@end
+@implementation MCGitDirWatch
+- (void)dealloc {
+    if (source) dispatch_source_cancel(source);
+}
+@end
+
 @interface MCGitGutter () <NSPopoverDelegate>
 @end
 
@@ -88,9 +110,11 @@ std::string RealPath(NSString *p) {
     CFTimeInterval _lastEdit;          // the look waits until typing has paused
     BOOL _pauseWanted;                 // ...when an edit asked for it
     NSString *_shownPath;              // the file the bars are of
+    MCGitDirWatch *_watch;             // its repository's folder, while it has one
     MCGitGutterSource *_source;        // the queue's (read on the main thread only as a copy)
     // What the bars on show were made from, for Revert and Stage.
-    std::u16string _original;
+    std::u16string _original;          // without a BOM the tab keeps apart
+    bool _originalBom;                 // ...which it had: Stage Change puts it back
     std::string _top, _rel;
     GitUi::IndexEntry _entry;
     NSPopover *_popover;
@@ -122,6 +146,50 @@ std::string RealPath(NSString *p) {
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_popover close];
+    _watch = nil;
+}
+
+// Watch `gitDir` (empty: nothing); `indexStamp` is the index as the look
+// read it, so a change made since is caught at the first event.
+- (void)watchGitDir:(const std::string &)gitDir indexStamp:(Stamp)indexStamp {
+    if (_watch && _watch->dir == gitDir) return;
+    _watch = nil;
+    if (gitDir.empty()) return;
+    const int fd = open(gitDir.c_str(), O_EVTONLY | O_CLOEXEC);
+    if (fd < 0) return;
+    dispatch_source_t source = dispatch_source_create(
+        DISPATCH_SOURCE_TYPE_VNODE, (uintptr_t)fd,
+        DISPATCH_VNODE_WRITE | DISPATCH_VNODE_DELETE | DISPATCH_VNODE_RENAME, _queue);
+    if (!source) { close(fd); return; }
+    MCGitDirWatch *w = [MCGitDirWatch new];
+    w->dir = gitDir;
+    w->source = source;
+    struct Seen { Stamp index, head; };
+    auto seen = std::make_shared<Seen>(Seen{indexStamp, StampOf(gitDir + "/HEAD")});
+    const std::string dir = gitDir;
+    __weak MCGitGutter *weakSelf = self;
+    // Its own handler runs only while the source is there.
+    __unsafe_unretained dispatch_source_t self_source = source;
+    dispatch_source_set_event_handler(source, ^{
+        // The folder itself moved or went (the repository deleted or
+        // renamed): the next look watches whatever is there now.
+        const bool gone = dispatch_source_get_data(self_source) &
+                          (DISPATCH_VNODE_DELETE | DISPATCH_VNODE_RENAME);
+        const Stamp i = StampOf(dir + "/index"), h = StampOf(dir + "/HEAD");
+        if (!gone && i == seen->index && h == seen->head) return;   // FETCH_HEAD, a lock file
+        seen->index = i;
+        seen->head = h;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MCGitGutter *s = weakSelf;
+            if (!s) return;
+            if (gone && s->_watch && s->_watch->dir == dir) s->_watch = nil;
+            s->_indexChanges++;
+            [s refreshSoon];
+        });
+    });
+    dispatch_source_set_cancel_handler(source, ^{ close(fd); });
+    dispatch_resume(source);
+    _watch = w;
 }
 
 - (void)applySettings {
@@ -194,25 +262,31 @@ std::string RealPath(NSString *p) {
     _looks++;
     if (!path || !tv || !g) {
         _shownPath = path;
+        _watch = nil;
         std::vector<QuickDiff::Bar> none;
         [g setChangeBars:none];
         return;
     }
     NSString *text = [tv.textStorage.string copy];
+    const bool bom = [host gitGutterHasBom];
     MCGitGutterSource *previous = _source;
     __weak MCGitGutter *weakSelf = self;
     dispatch_async(_queue, ^{
         MCGitGutterSource *src = [MCGitGutter sourceFor:path previous:previous];
         std::vector<QuickDiff::Bar> bars;
-        if (src->hasOriginal) bars = QuickDiff::bars(src->original, U16(text));
+        std::u16string original = src->original;
+        const bool stripped = src->hasOriginal && QuickDiff::stripBom(original, bom);
+        if (src->hasOriginal) bars = QuickDiff::bars(original, U16(text));
         dispatch_async(dispatch_get_main_queue(), ^{
             MCGitGutter *s = weakSelf;
             if (!s) return;
             s->_source = src;
+            [s watchGitDir:src->inRepository ? src->gitDir : std::string() indexStamp:src->stamp];
             if (gen != s->_generation) return;   // typed meanwhile: the next look
             if (![path isEqualToString:s->_host.gitGutterPath]) return;
             s->_shownPath = path;
-            s->_original = src->original;
+            s->_original = original;
+            s->_originalBom = stripped;
             s->_top = src->top;
             s->_rel = src->rel;
             s->_entry = src->entry;
@@ -336,8 +410,9 @@ std::string RealPath(NSString *p) {
         return NO;
     }
     [self closePopover];
-    const std::string staged = QuickDiff::toUtf8(
-        QuickDiff::stagedText(bars[(size_t)index], _original, U16(tv.string)));
+    std::u16string text = QuickDiff::stagedText(bars[(size_t)index], _original, U16(tv.string));
+    QuickDiff::restoreBom(text, _originalBom);
+    const std::string staged = QuickDiff::toUtf8(text);
     NSString *top = [NSString stringWithUTF8String:_top.c_str()];
     const std::string rel = _rel;
     const GitUi::IndexEntry entry = _entry;

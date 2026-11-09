@@ -83,6 +83,17 @@ std::string describe(const Bar& b);
 // without their line breaks.
 std::vector<std::u16string> oldLines(const Bar& b, const std::u16string& original);
 
+// The byte order mark. A tab keeps its file's UTF-8 BOM apart from the
+// text it edits (FolderSearch::stripUtf8Bom, written back on save), while
+// the index's text has it as a first U+FEFF; compared as it is, every line
+// 0 read as changed and Revert Change put a second BOM in the file.
+// stripBom takes the original's U+FEFF away when the buffer's file kept
+// one apart (`bufferBom`), and says whether it did; restoreBom puts it in
+// front of stagedText's result again, so the index keeps its BOM. A BOM
+// in the index that the file on disk lost is a change, and stays one.
+bool stripBom(std::u16string& original, bool bufferBom);
+void restoreBom(std::u16string& staged, bool stripped);
+
 // UTF-8 to UTF-16 (invalid bytes become U+FFFD), for the original git prints.
 std::u16string fromUtf8(const std::string& s);
 // UTF-16 to UTF-8 (a lone surrogate becomes U+FFFD), for what is staged.

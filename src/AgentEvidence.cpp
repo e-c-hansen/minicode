@@ -142,16 +142,38 @@ TestTool match(const Tokens &t, size_t i, int depth) {
     if (w == "jest") return TestTool::Jest;
     if (w == "vitest") return TestTool::Vitest;
     if (w.compare(0, 6, "python") == 0) {
-        for (size_t j = i + 1; j + 1 < t.size(); j++) {
-            if (t[j] == "-m") {
-                const std::string &m = t[j + 1];
-                if (m == "pytest") return TestTool::Pytest;
-                if (m == "unittest") return TestTool::Unittest;
-                if (m == "tox") return TestTool::Tox;
-                if (m == "nox") return TestTool::Nox;
-                return TestTool::None;
+        auto module = [](const std::string &m) {
+            if (m == "pytest") return TestTool::Pytest;
+            if (m == "unittest") return TestTool::Unittest;
+            if (m == "tox") return TestTool::Tox;
+            if (m == "nox") return TestTool::Nox;
+            return TestTool::None;
+        };
+        // The interpreter's options before the module, as its getopt reads
+        // them: flags cluster (-Bu), and -X, -W and -Q take an argument,
+        // joined (-Xdev) or the next word (-X dev); -m names the module the
+        // same two ways; -c is a command, never a test run.
+        for (size_t j = i + 1; j < t.size(); j++) {
+            const std::string &a = t[j];
+            if (a.size() < 2 || a[0] != '-') break;
+            if (a[1] == '-') {
+                if (a == "--check-hash-based-pycs") j++;
+                else if (a == "--") break;
+                continue;
             }
-            if (t[j][0] != '-') break;
+            for (size_t k = 1; k < a.size(); k++) {
+                const char c = a[k];
+                if (c == 'c') return TestTool::None;
+                if (c == 'm' || c == 'X' || c == 'W' || c == 'Q') {
+                    std::string arg = a.substr(k + 1);
+                    if (arg.empty()) {
+                        if (++j >= t.size()) return TestTool::None;
+                        arg = t[j];
+                    }
+                    if (c == 'm') return module(arg);
+                    break;
+                }
+            }
         }
         return TestTool::None;
     }

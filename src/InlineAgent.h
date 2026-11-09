@@ -61,6 +61,9 @@ public:
     std::string reply() const;
     // For failed(), or a run that ended without a result: why, in a line.
     std::string error() const;
+    // Bytes held for the reply: the output as it came, kept only while no
+    // line has been JSON, and an unfinished last line.
+    size_t heldBytes() const { return raw_.size() + pending_.size(); }
 
 private:
     void line(const std::string& l);
@@ -140,6 +143,20 @@ std::vector<DiffLine> pendingDiff(const std::u16string& before, const std::u16st
 // How many lines the change touches: per run, the larger of its old and new
 // line counts.
 size_t changedLines(const std::u16string& before, const std::u16string& after);
+
+// Keep, after the user changed the buffer while an edit waited (UTF-16,
+// as NSString). The blocks are made again on the buffer as it is now, with
+// the selection they were first placed by moved to where its text is now
+// (moveOffset: through a line diff of `base` to `now`, LineDiff::mapOffset),
+// so a SEARCH part found in several places picks the same one. Whether
+// what that made (`now` to `next`) is the change the bar showed (`base` to
+// `pending`): the same runs of lines taken out and put in, each where the
+// user's own edits moved it. When it is not, the bar shows the new diff
+// and Keep waits for another press, never putting the edit somewhere the
+// user was not shown.
+size_t moveOffset(const std::u16string& base, const std::u16string& now, size_t pos);
+bool sameChange(const std::u16string& base, const std::u16string& pending,
+                const std::u16string& now, const std::u16string& next);
 
 struct CommandRequest {
     std::string request;

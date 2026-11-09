@@ -161,6 +161,8 @@ static void testGitModel() {
     auto d3 = diffArgs(r[4]);
     CHECK(!hasArg(d3, "--cached") && d3.back() == "src/main.cpp" && hasArg(d3, "--no-ext-diff"));
     CHECK(hasArg(d3, "--literal-pathspecs") && hasArg(d3, "--src-prefix=a/"));
+    CHECK(hasArg(d1, "--submodule=short") && hasArg(d2, "--submodule=short") &&
+          hasArg(d3, "--submodule=short"));   // whatever diff.submodule says
     auto lg = logArgs(200, false, true);
     CHECK(hasArg(lg, "--topo-order") && hasArg(lg, "-z") && hasArg(lg, "--max-count=200"));
     CHECK(hasArg(lg, "@{upstream}") && !hasArg(lg, "--branches") && lg.back() == "--");
@@ -844,15 +846,45 @@ static void testGitModel() {
                      "(open it as a folder).");
         HunkPlan hp = hunkPlan(gitlink, DiffSide::Changes, HunkOp::Discard, 5, 5, false);
         CHECK(hp.patch.empty() && hp.refusal == why && hp.question.empty());
-        // Without the index line (a staged gitlink from --cached), the
-        // "Subproject commit" lines alone are enough.
+        // The mode decides, wherever the header gives it: a file becoming
+        // a submodule, and a submodule added.
+        const std::string typechange =
+            "diff --git a/lib b/lib\nold mode 100644\nnew mode 160000\n"
+            "index 3333333..2222222\n--- a/lib\n+++ b/lib\n@@ -1 +1 @@\n-text\n"
+            "+Subproject commit 2222222222222222222222222222222222222222\n";
+        CHECK(hunkPlan(typechange, DiffSide::Staged, HunkOp::Unstage, 7, 7, false).refusal == why);
+        const std::string added =
+            "diff --git a/lib b/lib\nnew file mode 160000\nindex 0000000..2222222\n"
+            "--- /dev/null\n+++ b/lib\n@@ -0,0 +1 @@\n"
+            "+Subproject commit 2222222222222222222222222222222222222222\n";
+        CHECK(hunkPlan(added, DiffSide::Staged, HunkOp::Unstage, 6, 6, false).refusal == why);
+        // A plain file whose lines read "Subproject commit <object name>"
+        // (pasted git output) is a text file: its mode says so (round 6's
+        // workspace 3 refused it as a submodule).
+        const std::string pasted =
+            "diff --git a/notes.txt b/notes.txt\nindex 1111111..2222222 100644\n"
+            "--- a/notes.txt\n+++ b/notes.txt\n@@ -1,2 +1,2 @@\n"
+            " Subproject commit 3333333333333333333333333333333333333333\n"
+            "-Subproject commit 1111111111111111111111111111111111111111\n"
+            "+Subproject commit 2222222222222222222222222222222222222222-dirty\n";
+        HunkPlan text = hunkPlan(pasted, DiffSide::Changes, HunkOp::Stage, 6, 7, false);
+        CHECK(text.refusal.empty() && !text.patch.empty() && text.path == "notes.txt");
+        std::string none;
+        CHECK(!buildPatch(pasted, HunkOp::Stage, 7, 7, &none).empty() && none.empty());
+        // Without an index line (git writes none when both sides name one
+        // commit and only "-dirty" differs, as for lib above with a change
+        // inside it), one "Subproject commit" line a side is the gitlink.
         const std::string bare =
             "diff --git a/lib b/lib\n--- a/lib\n+++ b/lib\n@@ -1 +1 @@\n"
             "-Subproject commit 1111111111111111111111111111111111111111\n"
+            "+Subproject commit 1111111111111111111111111111111111111111-dirty\n";
+        CHECK(hunkPlan(bare, DiffSide::Changes, HunkOp::Discard, 4, 4, false).refusal == why);
+        // ...but not lines of that form among others.
+        const std::string mixed =
+            "diff --git a/n.txt b/n.txt\n--- a/n.txt\n+++ b/n.txt\n@@ -1,2 +1,2 @@\n"
+            " text\n-Subproject commit 1111111111111111111111111111111111111111\n"
             "+Subproject commit 2222222222222222222222222222222222222222\n";
-        CHECK(hunkPlan(bare, DiffSide::Staged, HunkOp::Unstage, 3, 3, false).refusal == why);
-        // A file whose lines read "Subproject commit" without an object
-        // name after it is still a text file.
+        CHECK(!hunkPlan(mixed, DiffSide::Changes, HunkOp::Stage, 5, 6, false).patch.empty());
         const std::string words = "diff --git a/n.txt b/n.txt\n--- a/n.txt\n+++ b/n.txt\n"
                                   "@@ -1 +1 @@\n-Subproject commits\n+Subproject commit x\n";
         CHECK(!hunkPlan(words, DiffSide::Changes, HunkOp::Stage, 3, 3, false).patch.empty());

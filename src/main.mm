@@ -8,6 +8,7 @@
 #import "AppSettings.h"
 #import "TerminalPanel.h"
 #import "TreeDetails.h"
+#import "FileTree.h"   // gShowHidden, for Show Hidden Files' checkmark
 #import "ChangePanel.h"
 #import "PalettePanel.h"
 #import "BackupStore.h"
@@ -42,6 +43,7 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
 // something, application:openURLs: arrives before didFinishLaunching.
 - (void)applicationWillFinishLaunching:(NSNotification *)note {
     self.controllers = [NSMutableArray array];
+    [EditorController loadShowHiddenFiles];   // before any window lists its tree
 
     // Keep each window independent. Otherwise macOS auto-merges them into
     // native tabs, and Cmd+W closes the whole tab group instead of one window.
@@ -554,6 +556,10 @@ static BOOL MCWindowTabAction(SEL a) {
         item.state = MCTreeColumnShown((MCTreeColumns)item.tag) ? NSControlStateValueOn
                                                                  : NSControlStateValueOff;
         return YES;
+    }
+    if (item.action == @selector(toggleHiddenFiles:)) {
+        item.state = gShowHidden ? NSControlStateValueOn : NSControlStateValueOff;
+        return [self current] != nil;
     }
     if (item.action == @selector(showContextMenu:))
         return (NSApp.keyWindow ?: NSApp.mainWindow) != nil;

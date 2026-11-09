@@ -101,7 +101,13 @@
     NSAlert *a = [NSAlert new];
     NSString *keep = @"The answer is kept for this folder, and also covers its Python "
                       "environment for the language servers.";
-    if (r.consentConfig && r.consentFolder) {
+    // A configuration above the folder (the repository's, with only its
+    // docs folder open) comes by its whole path.
+    const BOOL above = [r.consentConfig hasPrefix:@"/"] || [r.consentConfig hasPrefix:@"~"];
+    if (above) {
+        a.messageText = [NSString stringWithFormat:@"Let %@ run the code in %@, above this folder?",
+                                                   r.tool, r.consentConfig];
+    } else if (r.consentConfig && r.consentFolder) {
         a.messageText = [NSString stringWithFormat:@"Run %@ from this folder's %@, with its %@?",
                                                    r.tool, r.consentFolder, r.consentConfig];
     } else if (r.consentConfig) {
@@ -113,7 +119,7 @@
     }
     a.informativeText = r.consentConfig
         ? [NSString stringWithFormat:
-              @"%@ in this folder can run code when %@ reads it, with your rights, so minicode "
+              @"%@ can run code when %@ reads it, with your rights, so minicode "
                "asks first. With Don't Allow, %@ does not run for this folder. %@",
               r.consentConfig, r.tool, r.tool, keep]
         : [@"Programs in the folder run with your rights, so minicode asks before running one. "

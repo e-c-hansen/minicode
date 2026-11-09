@@ -684,6 +684,7 @@ static CGFloat MCAgentTextHeight(NSAttributedString *text, NSFont *font, CGFloat
     std::vector<std::vector<InlineAgent::Edit>> _rounds;
     NSString *_base;
     NSString *_pending;
+    NSRange _baseSelection;  // the selection in _base the blocks were placed by
     NSString *_asked;      // the request on its way
     NSString *_streamed;   // the reply so far, as InlineAgent::preview shows it
     NSString *_activity;   // what Claude is doing, "" while it writes
@@ -1048,6 +1049,7 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
     [_earlier addObject:_asked ?: @""];
     _rounds = rounds;
     _base = now;
+    _baseSelection = sel;
     _pending = proposed;
     if (_ctx.tint) _ctx.tint(_pending);
     [self showPendingWithNote:nil error:NO];
@@ -1113,22 +1115,50 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
 - (NSString *)pendingText { return _shown ? _pending : nil; }
 
 // Keep: the edit goes into the buffer as one undo step, made again on the
-// buffer as it is now if it changed since.
+// buffer as it is now if it changed since: placed by the selection it was
+// placed by when shown, moved with the user's edits (not wherever the caret
+// is now), and when that makes a change other than the one the bar shows,
+// the bar shows the new one and waits for Return again
+// (InlineAgent::sameChange).
 - (void)keep {
     if (_pending && _ctx.currentText && _ctx.applyText) {
-        NSString *now = _ctx.currentText();
+        NSString *now = [_ctx.currentText() copy];
         if (!now) { [self finish:YES]; return; }
         NSString *next = _pending;
         if (![now isEqualToString:_base]) {
-            const NSRange sel = _ctx.currentSelection ? _ctx.currentSelection() : _ctx.selection;
+            const std::u16string base16 = [self u16:_base], now16 = [self u16:now];
+            const NSRange sel = NSMakeRange(
+                InlineAgent::moveOffset(base16, now16, _baseSelection.location), 0);
+            const NSUInteger selEndAt =
+                MAX(sel.location, InlineAgent::moveOffset(base16, now16, NSMaxRange(_baseSelection)));
             std::string text = Std(now);
-            size_t selStart = MCAgentBytes(now, sel.location), selEnd = MCAgentBytes(now, NSMaxRange(sel));
+            size_t selStart = MCAgentBytes(now, sel.location), selEnd = MCAgentBytes(now, selEndAt);
             NSString *why = nil;
             if (!MCAgentApplyRounds(_rounds, text, selStart, selEnd, &why)) {
                 [self showPendingWithNote:why error:YES];
                 return;
             }
             next = NS(text);
+            if (!InlineAgent::sameChange(base16, [self u16:_pending], now16, [self u16:next])) {
+                _base = now;
+                _baseSelection = NSMakeRange(sel.location, selEndAt - sel.location);
+                _pending = next;
+                if (_ctx.tint) _ctx.tint(_pending);
+                if ([next isEqualToString:now]) {
+                    [self showPendingWithNote:@"The file changed while the edit waited, and it "
+                                              @"now changes nothing; Esc discards it."
+                                        error:YES];
+                } else {
+                    const size_t n = InlineAgent::changedLines(now16, [self u16:next]);
+                    [self showPendingWithNote:
+                        [NSString stringWithFormat:@"The file changed while the edit waited, so it "
+                                                   @"now makes this change, %zu line%@; Return "
+                                                   @"keeps it, Esc discards it:",
+                                                   n, n == 1 ? @"" : @"s"]
+                                        error:NO];
+                }
+                return;
+            }
         }
         if (![next isEqualToString:now] && !_ctx.applyText(next, @"Inline Agent")) {
             [self showPendingWithNote:@"The file could not be changed here." error:YES];

@@ -88,6 +88,16 @@ static CGFloat MCCompareRowHeight() {
     MCPane _panes[2];                    // left, right
     NSUInteger _changed;
     BOOL _prepared;
+    NSTimer *_sendTimer;                 // the grace after the last hunk's choice
+}
+- (instancetype)init {
+    if ((self = [super init])) _lastChoiceGrace = 3;
+    return self;
+}
+- (BOOL)sending { return _sendTimer != nil; }
+- (void)cancelSending {
+    [_sendTimer invalidate];
+    _sendTimer = nil;
 }
 - (void)setLeftText:(NSString *)text {
     _leftText = [text copy];
@@ -189,16 +199,39 @@ static CGFloat MCCompareRowHeight() {
     [self prepare];
     if (!_decisionPrompt || _decision != 0 || hunk >= _choices.size()) return;
     _choices[hunk] = (signed char)(choice > 0 ? 1 : choice < 0 ? -1 : 0);
+    [self cancelSending];
     for (signed char c : _choices)
         if (!c) {
             [self changed];
             return;
         }
+    // The last hunk's choice: the answer goes after a moment, so a press on
+    // the wrong button can still be taken back (AG-D4); Send Now, a bar
+    // button or closing the tab sends it at once.
+    if (_lastChoiceGrace <= 0) {
+        [self finish];
+        return;
+    }
+    __weak MCComparison *weakSelf = self;
+    _sendTimer = [NSTimer scheduledTimerWithTimeInterval:_lastChoiceGrace repeats:NO
+                                                   block:^(NSTimer *t) {
+        (void)t;
+        MCComparison *c = weakSelf;
+        if (!c || !c->_sendTimer) return;
+        c->_sendTimer = nil;
+        if (c->_decision == 0) [c finish];
+    }];
+    [self changed];
+}
+- (void)sendNow {
+    if (!_sendTimer || _decision != 0) return;
+    [self cancelSending];
     [self finish];
 }
 - (void)decideRest:(BOOL)accepted {
     [self prepare];
     if (!_decisionPrompt || _decision != 0) return;
+    [self cancelSending];
     for (signed char &c : _choices)
         if (!c) c = accepted ? 1 : -1;
     // With no hunks (the texts differ only in the last line's "\n") the
@@ -235,13 +268,17 @@ static CGFloat MCCompareRowHeight() {
 }
 - (void)endDecision:(NSString *)why {
     if (!_decisionPrompt || _decision != 0) return;
+    [self cancelSending];
     _decision = 2;
     _decisionNote = [why copy];
     _onDecision = nil;
     [self changed];
 }
 - (void)tabClosed {
-    [self decide:NO];
+    // Every hunk decided and the answer about to go: it goes now, as
+    // decided; otherwise closing rejects.
+    if (_sendTimer) [self sendNow];
+    else [self decide:NO];
 }
 @end
 
@@ -486,7 +523,11 @@ static const CGFloat kHunkGutterWidth = 46, kHunkButton = 17;
 
 // The bar's buttons: the whole change, or once some hunks have their own
 // choice, the hunks still undecided.
-- (void)acceptChange:(id)sender { (void)sender; [self.comparison decideRest:YES]; }
+- (void)acceptChange:(id)sender {
+    (void)sender;
+    if (self.comparison.sending) [self.comparison sendNow];   // Send Now
+    else [self.comparison decideRest:YES];
+}
 - (void)rejectChange:(id)sender {
     (void)sender;
     MCComparison *c = self.comparison;
@@ -529,6 +570,11 @@ static const CGFloat kHunkGutterWidth = 46, kHunkButton = 17;
             text = @"Rejected.";
         } else if (c.decision == 2) {
             text = c.decisionNote ?: @"No longer waiting for an answer.";
+        } else if (c.sending) {
+            text = [NSString stringWithFormat:@"%lu accepted, %lu rejected: sending to Claude Code "
+                                              @"in a moment. Press a change's button again to "
+                                              @"take its choice back.",
+                                              (unsigned long)yes, (unsigned long)no];
         } else if (yes || no) {
             text = [NSString stringWithFormat:@"%@ %lu accepted, %lu rejected, %lu to decide.", text,
                                               (unsigned long)yes, (unsigned long)no,
@@ -536,11 +582,13 @@ static const CGFloat kHunkGutterWidth = 46, kHunkButton = 17;
         }
         self.decisionLabel.stringValue = text;
         self.decisionLabel.toolTip = text;
-        _acceptButton.hidden = _rejectButton.hidden = c.decision != 0;
+        _acceptButton.hidden = c.decision != 0;
+        _rejectButton.hidden = c.decision != 0 || c.sending;
         const BOOL rest = c.hunksDecided;
-        _acceptButton.title = rest ? @"Accept the Rest" : @"Accept";
+        _acceptButton.title = c.sending ? @"Send Now" : rest ? @"Accept the Rest" : @"Accept";
         _rejectButton.title = rest ? @"Reject the Rest" : @"Reject";
-        _acceptButton.toolTip = rest ? @"Accept every change not yet decided" : @"Accept the whole change";
+        _acceptButton.toolTip = c.sending ? @"Send the choices to Claude Code now"
+                              : rest ? @"Accept every change not yet decided" : @"Accept the whole change";
         _rejectButton.toolTip = rest ? @"Reject every change not yet decided" : @"Reject the whole change";
     }
     [self applyRowChoices];

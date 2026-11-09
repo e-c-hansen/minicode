@@ -94,7 +94,11 @@ struct Context {
     std::string currentLine;        // TM_CURRENT_LINE
     std::string currentWord;        // TM_CURRENT_WORD
     long lineIndex = 0;             // TM_LINE_INDEX (0-based); TM_LINE_NUMBER is one more
-    std::string clipboard;          // CLIPBOARD
+    std::string clipboard;          // CLIPBOARD, when readClipboard is unset
+    // Reads CLIPBOARD when a snippet names it, and never otherwise (a
+    // password just copied is no business of a snippet that does not use
+    // it). The Mac reads the general pasteboard here, once per expansion.
+    std::function<std::string()> readClipboard;
     std::string lineComment;        // LINE_COMMENT
     std::string blockCommentStart, blockCommentEnd;
     std::tm time{};                 // the CURRENT_* variables, local time

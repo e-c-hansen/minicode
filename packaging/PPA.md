@@ -156,8 +156,20 @@ then upload the current release for real:
 Launchpad mails the address on the key when the upload is accepted (or
 rejected, with the reason), then builds it; the build log and status are at
 <https://launchpad.net/~echansen/+archive/ubuntu/minicode/+packages>. A
-build takes a few minutes, and publishing another few after that, before
+build takes about 35 minutes, and publishing a few more after that, before
 `apt install minicode` finds it.
+
+ppa.sh waits for that build (`scripts/ppa-wait.sh`, which reads the PPA's
+public build records once a minute) and fails unless every build of the
+version is "Successfully built", printing the build log's address; 1.5.13
+failed to build and went unnoticed for a release, because the scripts used
+to stop at dput. Its exit status says what is left: 3, the build failed,
+so a fix goes out as the next revision (`scripts/ppa.sh 1.4.12 2`); 4, it
+stopped waiting (no build record after 30 minutes, which usually means
+Launchpad rejected the upload, or no end after 4 hours), and
+`scripts/ppa-wait.sh 1.4.12` waits again. `--no-wait` (or
+`MINICODE_PPA_NO_WAIT=1`, which release.sh passes on) uploads without
+waiting.
 
 ### 9. A second machine (the ThinkPad)
 

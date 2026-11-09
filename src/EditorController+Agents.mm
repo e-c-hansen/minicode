@@ -90,19 +90,57 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 }
 
 // The lines the inline agent's pending edit would replace, tinted red (the
-// bar shows what comes in their place); nil clears the tint.
+// bar shows what comes in their place); nil clears the tint. Where it only
+// adds lines nothing is replaced, so the place they go is marked instead
+// (AG-D2): the line above them underlined in green, its line break tinted
+// green to the end of the line, or with no line above (lines added at the
+// top) the first line underlined with dashes.
 - (void)agentTintAgainst:(NSString *)proposed {
     CodeTextView *tv = self.textView;
     NSLayoutManager *lm = tv.layoutManager;
-    const NSRange all = NSMakeRange(0, tv.string.length);
+    NSString *text = tv.string;
+    const NSRange all = NSMakeRange(0, text.length);
     [lm removeTemporaryAttribute:NSBackgroundColorAttributeName forCharacterRange:all];
+    [lm removeTemporaryAttribute:NSUnderlineStyleAttributeName forCharacterRange:all];
+    [lm removeTemporaryAttribute:NSUnderlineColorAttributeName forCharacterRange:all];
     if (!proposed || !tv.editable) return;
     NSColor *tint = [[NSColor colorWithSRGBRed:0xF1 / 255.0 green:0x4C / 255.0 blue:0x4C / 255.0
                                          alpha:1] colorWithAlphaComponent:0.2];
-    for (const LineDiff::Hunk &h : LineDiff::diff(U16(tv.string), U16(proposed)))
-        if (h.oldLength > 0 && h.oldStart + h.oldLength <= all.length)
+    NSColor *green = [NSColor colorWithSRGBRed:0x73 / 255.0 green:0xC9 / 255.0 blue:0x91 / 255.0
+                                         alpha:1];
+    for (const LineDiff::Hunk &h : LineDiff::diff(U16(text), U16(proposed))) {
+        if (h.oldStart + h.oldLength > all.length) continue;
+        if (h.oldLength > 0) {
             [lm addTemporaryAttribute:NSBackgroundColorAttributeName value:tint
                     forCharacterRange:NSMakeRange(h.oldStart, h.oldLength)];
+            continue;
+        }
+        if (h.newLength == 0 || all.length == 0) continue;
+        // Lines start after a break, so the line above ends at oldStart.
+        NSRange line;
+        NSUnderlineStyle style = NSUnderlineStyleThick;
+        if (h.oldStart > 0) {
+            line = [text lineRangeForRange:NSMakeRange(h.oldStart - 1, 0)];
+            const NSUInteger brk = h.oldStart - 1;
+            [lm addTemporaryAttribute:NSBackgroundColorAttributeName
+                                value:[green colorWithAlphaComponent:0.35]
+                    forCharacterRange:NSMakeRange(brk, 1)];
+        } else {
+            line = [text lineRangeForRange:NSMakeRange(0, 0)];
+            style |= NSUnderlinePatternDash;
+        }
+        // The line's text, without its break.
+        NSUInteger end = NSMaxRange(line);
+        while (end > line.location && ([text characterAtIndex:end - 1] == '\n' ||
+                                       [text characterAtIndex:end - 1] == '\r' ||
+                                       [text characterAtIndex:end - 1] == 0x2029))
+            end--;
+        if (end == line.location) continue;
+        const NSRange body = NSMakeRange(line.location, end - line.location);
+        [lm addTemporaryAttributes:@{NSUnderlineStyleAttributeName: @(style),
+                                     NSUnderlineColorAttributeName: green}
+                 forCharacterRange:body];
+    }
 }
 
 - (void)inlineAgent:(id)sender {
@@ -737,19 +775,38 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     return out;
 }
 
-// Line and column of `index`, read a block at a time (characterAtIndex on
-// the editor's string costs a message per character).
-static NSDictionary *MCLineColumn(NSString *s, NSUInteger index) {
-    NSUInteger line = 1, start = 0;
+// Line and column of `index` (1-based), counted as the gutter numbers lines
+// (AG-D7): a line ends after '\n', U+2029, or a '\r' not before '\n'. From
+// the gutter's LineIndex, which follows every edit to the storage, so a
+// call costs a binary search and not a walk from the top (25 million
+// characters in a large file); counted here only when there is no gutter
+// or its index is not this text's.
+static NSDictionary *MCLineColumn(NSString *s, NSUInteger index, MCLineGutter *gutter) {
     index = MIN(index, s.length);
-    unichar buf[4096];
-    for (NSUInteger at = 0; at < index; at += 4096) {
-        const NSUInteger n = MIN((NSUInteger)4096, index - at);
-        [s getCharacters:buf range:NSMakeRange(at, n)];
-        for (NSUInteger i = 0; i < n; i++)
-            if (buf[i] == '\n') { line++; start = at + i + 1; }
+    NSUInteger line = 0, start = 0;
+    if (gutter && [gutter startOfLine:gutter.lineCount] == s.length) {
+        line = [gutter lineOfCharacter:index];
+        start = [gutter startOfLine:line];
+    } else {
+        unichar buf[4096];
+        unichar prev = 0;
+        for (NSUInteger at = 0; at < index; at += 4096) {
+            const NSUInteger n = MIN((NSUInteger)4096, index - at);
+            [s getCharacters:buf range:NSMakeRange(at, n)];
+            for (NSUInteger i = 0; i < n; i++) {
+                // A '\r' ends its line unless a '\n' follows: decided at the
+                // next unit, or at `index` from the text itself.
+                if (prev == '\r' && buf[i] != '\n') { line++; start = at + i; }
+                if (buf[i] == '\n' || buf[i] == 0x2029) { line++; start = at + i + 1; }
+                prev = buf[i];
+            }
+        }
+        if (prev == '\r' && (index >= s.length || [s characterAtIndex:index] != '\n')) {
+            line++;
+            start = index;
+        }
     }
-    return @{@"line": @(line), @"column": @(index - start + 1)};
+    return @{@"line": @(line + 1), @"column": @(index - start + 1)};
 }
 
 - (NSDictionary *)controlSelection {
@@ -770,8 +827,8 @@ static NSDictionary *MCLineColumn(NSString *s, NSUInteger index) {
     }
     return @{@"path": self.currentPath,
              @"text": text,
-             @"start": MCLineColumn(s, r.location),
-             @"end": MCLineColumn(s, NSMaxRange(r)),
+             @"start": MCLineColumn(s, r.location, self.gutter),
+             @"end": MCLineColumn(s, NSMaxRange(r), self.gutter),
              @"preview": @(self.previewMode),
              @"truncated": @(cut)};
 }
