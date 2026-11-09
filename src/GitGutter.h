@@ -8,10 +8,13 @@
 // Shift+Option+F5) move the caret between them.
 //
 // The original is read again only when the file on show changes or the
-// repository's index file does (its stat is taken each time, so a stage, a
-// commit or a checkout in a terminal shows on the next look); looks come
-// after edits, on the window becoming key, and after the Source Control
-// panel refreshes. No bars for a file outside a repository, an untracked,
+// repository's index file does (its stat is taken each time); looks come
+// after edits, on the window becoming key, after the Source Control panel
+// refreshes, and when the repository folder's index or HEAD changes (a
+// vnode source on that folder, so a stage or commit in a terminal shows
+// at once with the panel hidden). The index's text loses a first U+FEFF
+// when the tab keeps its file's BOM apart (QuickDiff::stripBom), and
+// Stage Change puts it back. No bars for a file outside a repository, an untracked,
 // ignored or conflicted one, a link, a submodule, in large-file mode, a
 // preview or a diff, or with editor.git-gutter off.
 //
@@ -30,6 +33,8 @@
 // The file the editor shows as source text, or nil (a preview, a diff, a
 // viewer, large-file mode, no file).
 - (NSString *)gitGutterPath;
+// That file's UTF-8 BOM is kept apart from the buffer (MCTab bom).
+- (BOOL)gitGutterHasBom;
 // Stage Change changed the index: the panel should look again.
 - (void)gitGutterChangedIndex;
 @end
@@ -44,6 +49,7 @@
 - (NSArray<NSString *> *)barDescriptions;   // "modified 3+1 (was 3+1)", for tests and logs
 @property(nonatomic, readonly) NSUInteger diffs;   // diffs applied, for tests
 @property(nonatomic, readonly) NSUInteger looks;   // looks begun (with a file or not)
+@property(nonatomic, readonly) NSUInteger indexChanges;   // index or HEAD changes seen
 
 // Option+F5, Shift+Option+F5: the caret to the next or previous change's
 // first line, wrapping; NO (and nothing moves) without bars.
