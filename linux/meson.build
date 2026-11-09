@@ -42,8 +42,10 @@ core_sources = [
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
+# main.cpp is apart from the rest so that minicode-guitest can compile it again
+# with main renamed, and share every other object with the real program.
+main_source = 'src/main.cpp'
 gui_sources = [
-  'src/main.cpp',
   'src/FileTree.cpp',
   'src/Editor.cpp',
   'src/Markdown.cpp',
@@ -135,8 +137,8 @@ if plist.contains(version_key)
 endif
 cpp_args += '-DMINICODE_VERSION="' + app_version + '"'
 
-executable('minicode',
-  sources : gui_sources + core_sources,
+minicode_exe = executable('minicode',
+  sources : [main_source] + gui_sources + core_sources,
   include_directories : inc,
   dependencies : deps,
   cpp_args : cpp_args,
@@ -195,4 +197,51 @@ if poppler_dep.found()
     dependencies : [poppler_dep, dependency('gio-2.0')],
     cpp_args : ['-DMINICODE_ENABLE_PDF'],
     install : false)
+endif
+
+# --- the GUI checks (tests/gui/Harness.h): the whole app, offscreen ----------
+# The objects are the real program's; only main.cpp is compiled again, with
+# main renamed and the seam the checks reach the app through. Nothing here
+# changes the minicode target. libxtst-dev is needed only to build them.
+xtst_dep = dependency('xtst', required : false)
+x11_dep = dependency('x11', required : false)
+gtk_x11_dep = dependency('gtk4-x11', required : false)
+if xtst_dep.found() and x11_dep.found() and gtk_x11_dep.found()
+  gui_main = static_library('minicode-guitest-main',
+    sources : [main_source],
+    include_directories : inc,
+    dependencies : deps,
+    # The browser pane's home page must not reach the network from a check.
+    cpp_args : cpp_args + ['-Dmain=minicode_main', '-DMINICODE_GUITEST',
+                           '-DMINICODE_BROWSER_HOME="about:blank"'],
+    install : false)
+
+  # One line a suite, in tests/gui/suites.txt (fs.read makes Meson reconfigure
+  # when that file changes, so a merged suite is built with no other step).
+  gui_suites = []
+  foreach line : fs.read('tests' / 'gui' / 'suites.txt').split('\n')
+    name = line.strip()
+    if name != '' and not name.startswith('#')
+      gui_suites += 'tests' / 'gui' / name
+    endif
+  endforeach
+
+  guitest = executable('minicode-guitest',
+    sources : ['tests/gui/Harness.cpp', 'tests/gui/Input.cpp', 'tests/gui/Wrapper.cpp'] + gui_suites,
+    objects : minicode_exe.extract_objects(gui_sources + core_sources),
+    link_with : gui_main,
+    include_directories : [inc, include_directories('tests/gui')],
+    dependencies : deps + [xtst_dep, x11_dep, gtk_x11_dep],
+    cpp_args : cpp_args,
+    # backtrace() needs the names of the app's own functions.
+    link_args : ['-rdynamic'],
+    install : false)
+
+  # `meson test -C build` leaves these out (the setup below), so it stays
+  # quick and needs no display; `meson test -C build --suite gui` runs them.
+  # The harness has its own limits, well inside this one.
+  test('gui', guitest, suite : 'gui', is_parallel : false, timeout : 1800)
+  add_test_setup('default', exclude_suites : ['gui'], is_default : true)
+else
+  message('GUI checks: not built (they need libxtst-dev)')
 endif

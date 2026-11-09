@@ -9562,6 +9562,41 @@ static void testCategoryIvars() {
     checkCategoryIvars("Lsp+", "Lsp.mm", "@interface LspSession () {", 8, 6, 4);
 }
 
+static void testLinuxGuiSuiteList() {
+    GROUP("linux:gui-suites");
+    // The GTK port's GUI checks build the files linux/tests/gui/suites.txt
+    // names, one a line, so that branches adding suites merge by union. A
+    // suite file left out of the list would build and pass without running.
+    std::ifstream list("linux/tests/gui/suites.txt");
+    DIR *dir = opendir("linux/tests/gui");
+    if (!list || !dir) {
+        if (dir) closedir(dir);
+        std::printf("  (linux/tests/gui not found here; its suite list check skipped)\n");
+        return;
+    }
+    std::set<std::string> listed, files;
+    for (std::string line; std::getline(list, line);) {
+        while (!line.empty() && std::isspace((unsigned char)line.back())) line.pop_back();
+        while (!line.empty() && std::isspace((unsigned char)line.front())) line.erase(0, 1);
+        if (!line.empty() && line[0] != '#') listed.insert(line);
+    }
+    while (dirent *e = readdir(dir)) {
+        const std::string name = e->d_name;
+        if (name.size() < 5 || name.compare(name.size() - 4, 4, ".cpp") != 0) continue;
+        std::ifstream f("linux/tests/gui/" + name);
+        std::stringstream ss;
+        ss << f.rdbuf();
+        if (ss.str().find("MC_GUI_SUITE(") != std::string::npos) files.insert(name);
+    }
+    closedir(dir);
+    for (const std::string &f : files)
+        if (!listed.count(f)) std::printf("  linux/tests/gui/suites.txt lacks %s\n", f.c_str());
+    for (const std::string &f : listed)
+        if (!files.count(f)) std::printf("  linux/tests/gui/suites.txt names %s, no suite file\n", f.c_str());
+    CHECK(!files.empty());
+    CHECK(files == listed);
+}
+
 static void testGuiSuiteList() {
     GROUP("docs:gui-suites");
     // CLAUDE.md's "The GUI suites" item once named 26 of 73 suites. Every
@@ -10773,6 +10808,7 @@ int main() {
     testMathTexIsolation();
     testInstallHints();
     testLinuxBuildLists();
+    testLinuxGuiSuiteList();
     testGuiSuiteList();
     testCategoryIvars();
     testLineDiff();

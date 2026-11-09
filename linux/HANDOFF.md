@@ -1158,8 +1158,30 @@ theme and at 2x, and the box's height against the text on the ThinkPad
 
 ## How to work on it
 
-Two ways to run the app, both described in `../CLAUDE.md` ("Verification
-reality"):
+- **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).
+  From `linux/`, `meson test -C build --suite gui` runs every suite (about
+  3 seconds in November 2026); `./build/minicode-guitest save harness` runs
+  some with their output as it comes, and `SUITES="save" meson test -C build
+  --suite gui -v` does the same through Meson. Plain `meson test -C build`
+  leaves them out. The program starts its own Xvfb on a display number the
+  server picks, so agents can run it at the same moment, with a private
+  session bus and a scratch home under `build/`; it refuses any other
+  display, so nothing reaches the owner's screen and no permission is
+  needed. Input is real: XTest from inside the process, so accelerators,
+  gestures, and double-click counting run as for a person. It needs `xvfb`
+  and `libxtst-dev`; without the second, Meson builds no checks and says
+  so. `tests/gui/Harness.h` describes the API, which follows the Mac's
+  `tests/gui/Harness.h` name for name. A new suite is a file,
+  `tests/gui/<Name>Suite.cpp`, and a line in `tests/gui/suites.txt`; the
+  app's windows, editor, tree, and terminal are reached through
+  `tests/gui/AppSeam.h`, and a suite needing more of the app adds a field
+  there. `MC_GUI_KEEP=1` keeps the scratch folders, `MC_GUI_VERBOSE=1` names
+  each step, and `MC_GUI_SNAPSHOTS=<folder>` keeps pictures from
+  `MCGuiSnapshot`. Two lines of noise are expected on every run, a libEGL
+  "DRI3" warning and WebKit's "Can't connect to a11y bus".
+
+Two ways to run the app by hand, both described in `../CLAUDE.md`
+("Verification reality"):
 
 - **From the Mac:** `linux/dev/gtk-dev.sh` builds a Docker image with Xvfb
   and a compositor, mounts the repo, and builds and tests the port. Drive it
@@ -1207,8 +1229,9 @@ Per feature:
 1. Put the logic in `../src` with tests, and run `make test`.
 2. Build with `meson compile -C build` at `warning_level=2`, with zero
    warnings.
-3. Drive the feature for real, in the container or on the ThinkPad, and
-   check a screenshot.
+3. Drive the feature for real with a GUI suite in `tests/gui`, pressing
+   real keys, and see it fail without the feature. Look at a snapshot where
+   the look matters.
 4. Update `BUILD-LINUX.md` ("What is verified") and this file.
 
 Do not claim a GUI behaviour works when it was only compiled.
@@ -1375,3 +1398,27 @@ Do not claim a GUI behaviour works when it was only compiled.
 - `disconnectOwners` must never be given a null owner: disconnecting by null
   data strips handlers GTK connected itself. A window that never opened a
   `.tex` has no LaTeX preview, and its pointer is null.
+
+GUI checks (`tests/gui`):
+
+- There is no window manager on the checks' display. A window becomes
+  active (`gtk_window_is_active`) only when it has the X focus, which the
+  harness gives the key window before every key (`MCGuiSetKeyWindow`, the
+  newest app window by default). Every window opens at the top left, and an
+  alert covers the window under it; `MCGuiTopWindow` finds it.
+- The private session bus activates nothing, so no portal runs in the
+  checks. Anything that can go through `xdg-desktop-portal` on the owner's
+  desktop (a file dialog, a link opened outside the app) behaves there as on
+  a desktop without one; check it on the desktop as well. Under the
+  standard bus the first run started xdg-desktop-portal and at-spi, with a
+  page of warnings.
+- A drag sent as one burst (press, motion, release) selected nothing in the
+  text view in 3 runs of 8 when it came right after a double-click; GDK
+  merges motion events that arrive together. `MCGuiDrag` moves over several
+  turns of the main loop, and the runner waits for it.
+- GtkTextView undoes typing a piece at a time: one Ctrl+Z after typing a
+  line takes back its last word or so, not the line.
+- GTK 4.18 deprecated its X11 API. `tests/gui/Input.cpp` is the only file
+  that uses it and defines `GDK_DISABLE_DEPRECATION_WARNINGS`.
+- In the checks the browser pane's home page is `about:blank`
+  (`MINICODE_BROWSER_HOME`), so a window opening never reaches the network.

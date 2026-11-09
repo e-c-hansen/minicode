@@ -1,0 +1,5 @@
+# The GUI suites' source files, one a line (Harness.h). A new suite adds its
+# file here; .gitattributes merges this file by union, so branches adding
+# different suites do not conflict.
+SaveSuite.cpp
+HarnessSuite.cpp

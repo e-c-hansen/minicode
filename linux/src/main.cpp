@@ -72,6 +72,12 @@
 #include <limits.h>
 #include <sys/stat.h>
 
+// What the browser pane opens with. The GUI checks build this file with
+// about:blank, so that a check never reaches the network.
+#ifndef MINICODE_BROWSER_HOME
+#define MINICODE_BROWSER_HOME "https://duckduckgo.com"
+#endif
+
 struct App {
     GtkWidget*      window = nullptr;
     GtkWidget*      hpaned = nullptr;
@@ -2132,7 +2138,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->upperBox = upperBox;
     gtk_box_append(GTK_BOX(upperBox), app->editor->widget());
 #ifdef MINICODE_ENABLE_BROWSER
-    app->browser = new Browser("https://duckduckgo.com");
+    app->browser = new Browser(MINICODE_BROWSER_HOME);
     app->browserRevealer = gtk_revealer_new();
     gtk_revealer_set_child(GTK_REVEALER(app->browserRevealer),
                            app->browser->widget());
@@ -2425,3 +2431,9 @@ int main(int argc, char** argv) {
     g_object_unref(gapp);
     return status;
 }
+
+// What the GUI checks may reach of this file (linux/tests/gui/AppSeam.h),
+// compiled only into minicode-guitest.
+#ifdef MINICODE_GUITEST
+#include "../tests/gui/AppSeam.inc"
+#endif

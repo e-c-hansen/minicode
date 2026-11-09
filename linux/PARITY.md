@@ -32,8 +32,8 @@ These hold for every agent, in addition to `../CLAUDE.md`'s conventions.
   branch is an acceptable leftover, a broken main is not.
 - **Before each merge**, on the branch with main merged in, and with no
   warnings at `warning_level=2`: `make test` from the repo root,
-  `meson compile -C build` and `meson test -C build` from `linux/`, and the
-  GUI suites once item 0.1 exists.
+  `meson compile -C build`, `meson test -C build`, and the GUI suites,
+  `meson test -C build --suite gui`, from `linux/`.
 - **A new GUI check must fail without its fix.** Take the fix out, see the
   check fail, and put the fix back.
 - **Push after each merge, one at a time.** Wait for CI to pass on a push
@@ -73,6 +73,13 @@ what the offscreen checks need:
 
 Then, once, from `linux/`: `meson setup build -Dterminal=enabled
 -Dbrowser=enabled -Dpdf=enabled -Dwarning_level=2`.
+
+The GUI checks (item 0.1) are `meson test -C build --suite gui` from
+`linux/`, about 3 seconds in November 2026; `./build/minicode-guitest
+<suite>...` runs some with their output as it comes. They start their own
+Xvfb and session bus, so several agents can run them at once, and they put
+nothing on the owner's screen. `HANDOFF.md` ("How to work on it" and the GUI
+traps) has the rest.
 
 **Releases** go at the end of a stage and only when the owner asks, with
 `scripts/release.sh --linux X.Y.Z` from the ThinkPad, after the owner has
@@ -168,6 +175,16 @@ menu: the port has no menu bar. A command with no action on Linux does not
 appear. Each item adds its actions to that table, so the hints panel and
 `README.md`'s Linux column follow.
 
+**D13. GUI checks.** An item's checks are suites in `linux/tests/gui`, one
+file a suite and one line in `suites.txt` (merged by union, so parallel
+branches do not clash). They use the harness's `MCGuiStep`, `MCGuiWait`,
+`GCHECK`, and the rest, named as on the Mac so a Mac suite ports nearly line
+by line. Where the input is what is checked, it is real input (`MCGuiKey`,
+`MCGuiType`, `MCGuiClick`), not a call into the app. The app's state is read
+through `tests/gui/AppSeam.h`: a suite that needs more adds a field there,
+and nothing in `main.cpp` becomes global for a check. Timing bounds are CPU
+time of the thread doing the work (`GCHECK_TIME`).
+
 ## Left out on purpose
 
 - Window blur: GTK 4 has no API and Mutter no protocol for it.
@@ -185,7 +202,7 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
 
 ### Stage 0: foundations, about 2,000 lines, one agent at a time
 
-- [ ] **0.1 A GUI harness.** `linux/tests/gui`, the counterpart of
+- [x] **0.1 A GUI harness.** `linux/tests/gui`, the counterpart of
   `tests/gui/Harness.{h,mm}`: the whole app with `main` renamed, plus suites
   played as steps from the GLib main loop. A wrapper starts its own Xvfb and
   sets `GDK_BACKEND=x11` and `GTK_A11Y=none` under `dbus-run-session`, with a
@@ -197,9 +214,17 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   thread doing the work). *Done means:* one suite opens a file, types through
   XTest, presses Ctrl+S through real accelerator matching, and checks the
   file on disk, and the same suite fails with the save action disabled.
+  *Verified on the ThinkPad, 2026-11-09:* `save` passes and fails with
+  `win.save` taken out of `main.cpp`; four runs at once pass, and nothing
+  outlives a run, a hung step, a crash, or a SIGKILL to the wrapper. It puts
+  nothing on the owner's screen, so it needs no one's eyes; CI has not run
+  it yet (0.2).
 - [ ] **0.2 CI.** The GTK job installs `xvfb` and `libxtst-dev` and runs the
   suites under its 20-minute limit. *Done means:* a deliberately failing check
-  turns the job red on a branch.
+  turns the job red on a branch. The checks also need `dbus-run-session`
+  (Ubuntu's `dbus-daemon` package), which `--no-install-recommends` may
+  leave out. Whether WebKit's sandbox (bubblewrap) starts on the runner is
+  not known; the app makes a web view in every window.
 - [ ] **0.3 The registry and keys (D1, D12).** Build `Commands` into the port,
   add `CommandsLinux.cpp` with core tests (each id exists, no key twice where
   places overlap, keys.conf applies), and drive the accelerators and hints

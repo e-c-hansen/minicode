@@ -832,6 +832,11 @@ automatically when their libraries are absent.
     meson test -C build
     ./build/minicode ~/some/project
 
+The GUI checks are a suite of their own, which plain `meson test` leaves out:
+`meson test -C build --suite gui` runs the whole app on a private Xvfb with
+real key presses and clicks (`linux/tests/gui/Harness.h`). They need `xvfb`
+and `libxtst-dev`, and are not built without the second.
+
 Meson auto-detects VTE, WebKit and poppler. Watch the configure output: it
 prints whether each panel is ENABLED or disabled. To force a panel on (and make
 configuration fail loudly if the library is missing):
