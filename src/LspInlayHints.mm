@@ -87,7 +87,10 @@
     gaps.reserve(placed.size());
     const NSUInteger length = ts.length;
     for (const Lsp::PlacedInlayHint &p : placed) {
-        if (p.hint >= hints.size() || p.offset == 0 || p.offset > length) continue;
+        if (p.hint >= hints.size() || p.offset > length) continue;
+        // At the start of an empty last line there is no character to make
+        // room on.
+        if ([ts characterOfGapAt:p.offset lineStart:NULL] >= length) continue;
         const Lsp::InlayHint &h = hints[p.hint];
         MCInlayHintItem *item = [MCInlayHintItem new];
         item.label = [[NSString alloc] initWithBytes:h.label.data() length:h.label.size()
@@ -150,25 +153,37 @@
     const NSUInteger length = text.length;
     const NSPoint origin = _tv.textContainerOrigin;
     const CGFloat ascender = _font.ascender, descender = _font.descender;
-    // The first gap on a character at or after chars.location.
-    auto it = std::lower_bound(gaps.begin(), gaps.end(), chars.location + 1,
+    // The first gap on a character at or after chars.location (a gap at a
+    // line's start is on the character at its offset, others on the one
+    // before).
+    auto it = std::lower_bound(gaps.begin(), gaps.end(), chars.location,
                                [](const MCTextGap &g, NSUInteger o) { return g.offset < o; });
-    while (it != gaps.end() && it->offset - 1 <= NSMaxRange(chars)) {
+    while (it != gaps.end() && it->offset <= NSMaxRange(chars) + 1) {
         auto end = it;
         CGFloat total = 0;
         while (end != gaps.end() && end->offset == it->offset) total += (end++)->width;
-        const NSUInteger k = it->offset - 1;
-        const unichar c = k < length ? [text characterAtIndex:k] : '\n';
-        const NSUInteger g = c == '\n' || c == '\r' ? NSNotFound
-                                                    : [lm glyphIndexForCharacterAtIndex:k];
+        BOOL lineStart = NO;
+        const NSUInteger k = [ts characterOfGapAt:it->offset lineStart:&lineStart];
+        if (k < chars.location || k > NSMaxRange(chars) || k >= length) {
+            it = end;
+            continue;
+        }
+        const unichar c = [text characterAtIndex:k];
+        const NSUInteger g = !lineStart && (c == '\n' || c == '\r')
+                                 ? NSNotFound : [lm glyphIndexForCharacterAtIndex:k];
         // A glyph a fold hides (a null glyph) has no room drawn after it.
         if (g != NSNotFound && !([lm propertyForGlyphAtIndex:g] & NSGlyphPropertyNull)) {
-            const NSRect br = [lm boundingRectForGlyphRange:NSMakeRange(g, 1) inTextContainer:tc];
             const NSRect frag = [lm lineFragmentRectForGlyphAtIndex:g effectiveRange:NULL];
-            const CGFloat baseline = origin.y + frag.origin.y + [lm locationForGlyphAtIndex:g].y;
-            // The kern is the glyph's advance past its own: the room ends
-            // where the glyph's box does.
-            CGFloat x = origin.x + NSMaxX(br) - total;
+            const NSPoint glyphAt = [lm locationForGlyphAtIndex:g];
+            const CGFloat baseline = origin.y + frag.origin.y + glyphAt.y;
+            // A kern is the glyph's advance past its own: the room ends
+            // where the glyph's box does. A line-start gap is the first
+            // line's indent: it ends where the line's first glyph starts.
+            const CGFloat right =
+                lineStart ? frag.origin.x + glyphAt.x
+                          : NSMaxX([lm boundingRectForGlyphRange:NSMakeRange(g, 1)
+                                                 inTextContainer:tc]);
+            CGFloat x = origin.x + right - total;
             for (auto at = it; at != end; ++at) {
                 MCInlayHintItem *item = at->tag < _items.count ? _items[at->tag] : nil;
                 if (!item) { x += at->width; continue; }
@@ -186,7 +201,7 @@
 - (NSRect)rectOfHintAtIndex:(NSUInteger)index {
     MCSourceStorage *ts = [self storage];
     if (!ts || index >= ts.gaps.size()) return NSZeroRect;
-    const NSUInteger k = ts.gaps[index].offset - 1;
+    const NSUInteger k = [ts characterOfGapAt:ts.gaps[index].offset lineStart:NULL];
     __block NSRect found = NSZeroRect;
     [self enumerateBoxesIn:NSMakeRange(k, 0)
                      block:^(size_t gapIndex, MCInlayHintItem *item, NSRect box, CGFloat baseline) {

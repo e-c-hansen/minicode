@@ -3,8 +3,37 @@
 #include "InlayHints.h"
 #include "MultiCaret.h"
 #include <algorithm>
+#include <objc/runtime.h>
+
+static char kStoredStyleKey;
+
+NSParagraphStyle *MCGapParagraphStyle(NSParagraphStyle *stored, CGFloat width) {
+    NSParagraphStyle *base = stored ?: [NSParagraphStyle defaultParagraphStyle];
+    NSMutableParagraphStyle *m = [base mutableCopy];
+    m.firstLineHeadIndent = base.firstLineHeadIndent + width;
+    // What the character really has (nil for none), for typing attributes.
+    objc_setAssociatedObject(m, &kStoredStyleKey, stored ?: (id)[NSNull null],
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return m;
+}
+
+BOOL MCIsGapParagraphStyle(NSParagraphStyle *style, NSParagraphStyle **stored) {
+    id was = style ? objc_getAssociatedObject(style, &kStoredStyleKey) : nil;
+    if (!was) return NO;
+    if (stored) *stored = was == [NSNull null] ? nil : (NSParagraphStyle *)was;
+    return YES;
+}
 
 namespace {
+
+// Where TextKit starts a paragraph (U+2028 only breaks a line within one).
+bool IsParagraphBreak(unichar c) { return c == '\n' || c == '\r' || c == 0x2029; }
+
+// The attributes a gap changes, which layout may ask for by name.
+bool GapAttribute(NSAttributedStringKey name) {
+    return [name isEqualToString:NSKernAttributeName] ||
+           [name isEqualToString:NSParagraphStyleAttributeName];
+}
 
 // Whether every character in `range` is printable ASCII, a tab or a line
 // break: characters every font the editor uses has, so font substitution
@@ -49,6 +78,11 @@ BOOL CoversAscii(NSFont *font) {
     NSMutableAttributedString *_store;
     std::vector<MCTextGap> _gaps;
     uint64_t _gapsGeneration;
+    // The gaps' offsets that start a paragraph (line-start gaps), worked
+    // out again only after the gaps or the characters changed.
+    std::vector<NSUInteger> _lineStartGaps;
+    uint64_t _charEdits, _lineStartsFor, _lineStartsForEdits;
+    BOOL _lineStartsKnown;
 }
 
 - (instancetype)init {
@@ -73,25 +107,58 @@ BOOL CoversAscii(NSFont *font) {
 // ---- the primitives
 - (NSString *)string { return _store.string; }
 
-// The stored attributes at `location` (over `run`) with the gaps' kern: a
-// gap's character alone gets its kern added; a run without one stops short
-// of the gaps either side.
+- (BOOL)paragraphStartsAt:(NSUInteger)offset {
+    return offset == 0 || IsParagraphBreak([_store.string characterAtIndex:offset - 1]);
+}
+
+- (NSUInteger)characterOfGapAt:(NSUInteger)offset lineStart:(BOOL *)lineStart {
+    const BOOL start = offset <= _store.length && [self paragraphStartsAt:offset];
+    if (lineStart) *lineStart = start;
+    return start ? offset : offset - 1;
+}
+
+// The stored attributes at `location` (over `run`) with the gaps: a gap's
+// character alone gets its room added, as a kern (a gap after it) or as
+// the paragraph's first-line indent (gaps at the start of the paragraph it
+// starts); a run without one stops short of the gaps' characters either
+// side.
 - (NSDictionary *)withGaps:(NSDictionary *)attrs at:(NSUInteger)location run:(NSRange *)run {
-    // The gaps on characters at or after this one; a gap at offset p is on
-    // the character p - 1.
+    NSString *s = _store.string;
+    const BOOL breakHere = location < s.length && IsParagraphBreak([s characterAtIndex:location]);
+    const BOOL startsParagraph = [self paragraphStartsAt:location];
+    // The gaps after this character, and those before it.
     auto it = std::lower_bound(_gaps.begin(), _gaps.end(), location + 1,
                                [](const MCTextGap &g, NSUInteger o) { return g.offset < o; });
-    if (it != _gaps.end() && it->offset == location + 1) {
-        CGFloat width = 0;
-        for (auto k = it; k != _gaps.end() && k->offset == location + 1; ++k) width += k->width;
+    // A gap at p is on the character p - 1, unless p starts a paragraph:
+    // a kern on the line break before it would open no room on its line.
+    const BOOL kern = !breakHere && it != _gaps.end() && it->offset == location + 1;
+    const BOOL indent = startsParagraph && it != _gaps.begin() && (it - 1)->offset == location;
+    if (kern || indent) {
         NSMutableDictionary *m = [attrs mutableCopy];
-        m[NSKernAttributeName] = @([attrs[NSKernAttributeName] doubleValue] + width);
+        if (kern) {
+            CGFloat width = 0;
+            for (auto k = it; k != _gaps.end() && k->offset == location + 1; ++k) width += k->width;
+            m[NSKernAttributeName] = @([attrs[NSKernAttributeName] doubleValue] + width);
+        }
+        if (indent) {
+            CGFloat width = 0;
+            for (auto k = it; k != _gaps.begin() && (k - 1)->offset == location; --k)
+                width += (k - 1)->width;
+            NSParagraphStyle *ps = attrs[NSParagraphStyleAttributeName];
+            m[NSParagraphStyleAttributeName] = MCGapParagraphStyle(ps, width);
+        }
         *run = NSMakeRange(location, 1);
         return m;
     }
     NSUInteger lo = run->location, hi = NSMaxRange(*run);
-    if (it != _gaps.end() && it->offset - 1 < hi) hi = it->offset - 1;
-    if (it != _gaps.begin() && (it - 1)->offset > lo) lo = (it - 1)->offset;
+    if (it != _gaps.end()) {
+        const NSUInteger c = [self characterOfGapAt:it->offset lineStart:NULL];
+        if (c < hi) hi = c;
+    }
+    if (it != _gaps.begin()) {
+        const NSUInteger c = [self characterOfGapAt:(it - 1)->offset lineStart:NULL];
+        if (c + 1 > lo) lo = c + 1;
+    }
     *run = NSMakeRange(lo, hi - lo);
     return attrs;
 }
@@ -150,9 +217,12 @@ BOOL CoversAscii(NSFont *font) {
     _gapsGeneration++;
     const NSUInteger length = _store.length;
     for (NSLayoutManager *lm in self.layoutManagers)
-        for (NSUInteger p : changed)
-            if (p > 0 && p <= length)
-                [lm invalidateLayoutForCharacterRange:NSMakeRange(p - 1, 1) actualCharacterRange:NULL];
+        for (NSUInteger p : changed) {
+            if (p > length) continue;
+            const NSUInteger c = [self characterOfGapAt:p lineStart:NULL];
+            if (c < length)
+                [lm invalidateLayoutForCharacterRange:NSMakeRange(c, 1) actualCharacterRange:NULL];
+        }
 }
 
 // The gaps follow an edit before anything lays the text out again.
@@ -182,6 +252,7 @@ BOOL CoversAscii(NSFont *font) {
 
 - (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)str {
     [_store replaceCharactersInRange:range withString:str];
+    _charEdits++;
     [self moveGapsForEdit:range newLength:str.length];
     if (_onReplaceCharacters) _onReplaceCharacters(range, str.length);
     [self edited:NSTextStorageEditedCharacters | NSTextStorageEditedAttributes range:range
@@ -197,10 +268,55 @@ BOOL CoversAscii(NSFont *font) {
 // the primitives a run at a time)
 - (id)attribute:(NSAttributedStringKey)name atIndex:(NSUInteger)location
     effectiveRange:(NSRangePointer)range {
-    // The typesetter asks for the kern by name: the gaps answer it.
-    if (!_gaps.empty() && !_gapsHidden && [name isEqualToString:NSKernAttributeName])
-        return [self attributesAtIndex:location effectiveRange:range][NSKernAttributeName];
+    // The typesetter asks for the kern (and the paragraph style) by name:
+    // the gaps answer them.
+    if (!_gaps.empty() && !_gapsHidden && [name isEqualToString:NSParagraphStyleAttributeName])
+        return [self paragraphStyleAt:location range:range limit:NSMakeRange(0, _store.length)
+                              longest:NO];
+    if (!_gaps.empty() && !_gapsHidden && GapAttribute(name))
+        return [self attributesAtIndex:location effectiveRange:range][name];
     return [_store attribute:name atIndex:location effectiveRange:range];
+}
+
+- (const std::vector<NSUInteger> &)lineStartGaps {
+    if (!_lineStartsKnown || _lineStartsFor != _gapsGeneration ||
+        _lineStartsForEdits != _charEdits) {
+        _lineStartGaps.clear();
+        for (const MCTextGap &g : _gaps)
+            if (g.offset < _store.length && [self paragraphStartsAt:g.offset] &&
+                (_lineStartGaps.empty() || _lineStartGaps.back() != g.offset))
+                _lineStartGaps.push_back(g.offset);
+        _lineStartsFor = _gapsGeneration;
+        _lineStartsForEdits = _charEdits;
+        _lineStartsKnown = YES;
+    }
+    return _lineStartGaps;
+}
+
+// The paragraph style by name, which the typesetter asks for often: the
+// stored one, its range stopping short of the line-start gaps, except on
+// a line-start gap's own character.
+- (id)paragraphStyleAt:(NSUInteger)location range:(NSRangePointer)range limit:(NSRange)limit
+               longest:(BOOL)longest {
+    const std::vector<NSUInteger> &starts = [self lineStartGaps];
+    auto it = std::lower_bound(starts.begin(), starts.end(), location);
+    if (it != starts.end() && *it == location) {
+        NSDictionary *attrs = [self attributesAtIndex:location effectiveRange:NULL];
+        if (range) *range = NSMakeRange(location, 1);
+        return attrs[NSParagraphStyleAttributeName];
+    }
+    NSRange r;
+    id value = longest ? [_store attribute:NSParagraphStyleAttributeName atIndex:location
+                         longestEffectiveRange:&r inRange:limit]
+                       : [_store attribute:NSParagraphStyleAttributeName atIndex:location
+                                effectiveRange:&r];
+    if (range) {
+        NSUInteger lo = r.location, hi = NSMaxRange(r);
+        if (it != starts.end() && *it < hi) hi = *it;
+        if (it != starts.begin() && *(it - 1) + 1 > lo) lo = *(it - 1) + 1;
+        *range = NSMakeRange(lo, hi - lo);
+    }
+    return value;
 }
 
 // The typesetter reads attributes this way, so the gaps are here too.
@@ -225,7 +341,9 @@ BOOL CoversAscii(NSFont *font) {
 
 - (id)attribute:(NSAttributedStringKey)name atIndex:(NSUInteger)location
     longestEffectiveRange:(NSRangePointer)range inRange:(NSRange)limit {
-    if (!_gaps.empty() && !_gapsHidden && [name isEqualToString:NSKernAttributeName])
+    if (!_gaps.empty() && !_gapsHidden && [name isEqualToString:NSParagraphStyleAttributeName])
+        return [self paragraphStyleAt:location range:range limit:limit longest:YES];
+    if (!_gaps.empty() && !_gapsHidden && GapAttribute(name))
         return [self attributesAtIndex:location longestEffectiveRange:range inRange:limit][name];
     return [_store attribute:name atIndex:location longestEffectiveRange:range inRange:limit];
 }
@@ -236,7 +354,14 @@ BOOL CoversAscii(NSFont *font) {
 // the text (440,000 in a highlighted 100,000-line file), however small the
 // range being fixed. The editor never sets glyph info, so that step runs
 // only when some (pasted rich text) is in the range.
+//
+// Fixing reads the attributes it fixes through this storage and writes what
+// it read back over the paragraph (a paragraph's style is its first
+// character's), so it sees them as stored: a line-start gap's indent read
+// here would be stored over the whole paragraph.
 - (void)fixAttributesInRange:(NSRange)range {
+    const BOOL wasHidden = _gapsHidden;
+    _gapsHidden = YES;
     __block BOOL glyphInfo = NO;
     [_store enumerateAttribute:NSGlyphInfoAttributeName inRange:range options:0
                     usingBlock:^(id value, NSRange r, BOOL *stop) {
@@ -245,14 +370,15 @@ BOOL CoversAscii(NSFont *font) {
     }];
     if (glyphInfo) {
         [super fixAttributesInRange:range];
-        return;
+    } else {
+        // Font substitution reads every character of the range for one its
+        // font lacks: 1.2 s of putting a 25 MB file in, every time its tab
+        // is shown. Plain ASCII under fonts that have all of it needs none.
+        if (![self rangeNeedsNoFontFix:range]) [self fixFontAttributeInRange:range];
+        [self fixParagraphStyleAttributeInRange:range];
+        [self fixAttachmentAttributeInRange:range];
     }
-    // Font substitution reads every character of the range for one its
-    // font lacks: 1.2 s of putting a 25 MB file in, every time its tab is
-    // shown. Plain ASCII under fonts that have all of it needs none.
-    if (![self rangeNeedsNoFontFix:range]) [self fixFontAttributeInRange:range];
-    [self fixParagraphStyleAttributeInRange:range];
-    [self fixAttachmentAttributeInRange:range];
+    _gapsHidden = wasHidden;
 }
 
 - (BOOL)rangeNeedsNoFontFix:(NSRange)range {
@@ -273,6 +399,7 @@ BOOL CoversAscii(NSFont *font) {
 
 - (void)replaceCharactersInRange:(NSRange)range withAttributedString:(NSAttributedString *)attr {
     [_store replaceCharactersInRange:range withAttributedString:attr];
+    _charEdits++;
     [self moveGapsForEdit:range newLength:attr.length];
     if (_onReplaceCharacters) _onReplaceCharacters(range, attr.length);
     [self edited:NSTextStorageEditedCharacters | NSTextStorageEditedAttributes range:range
