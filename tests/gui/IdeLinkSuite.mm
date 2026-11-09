@@ -555,9 +555,10 @@ MC_GUI_SUITE(idelink) {
             GCHECK([v.comparison decisionOfHunk:0] == 0 && !v.comparison.hunksDecided);
             GCHECK([v pressHunkButtonAtPoint:NSMakePoint(NSMidX(accept0), NSMidY(accept0))]);
             GCHECK([v pressHunkButtonAtPoint:NSMakePoint(NSMidX(reject1), NSMidY(reject1))]);
-            GCHECK(v.comparison.decision == 1);
+            // The last choice: the answer goes after the grace (AG-D4).
+            GCHECK(v.comparison.sending && v.comparison.decision == 0);
             dispatch_async(ClientQueue(), ^{
-                NSDictionary *answer = [client answerTo:20 timeout:5 notes:notes];
+                NSDictionary *answer = [client answerTo:20 timeout:10 notes:notes];
                 dispatch_async(dispatch_get_main_queue(), ^{
                     NSArray *t = Texts(answer);
                     GCHECK(t.count == 2 && [t[0] isEqualToString:@"FILE_SAVED"] &&
