@@ -79,9 +79,33 @@ bool isVarChar(char c) { return isVarStart(c) || isDigit(c); }
 
 // ---- the parser
 
+// How deep placeholders and defaults nest before the rest is text. Real
+// snippets nest two or three deep; a server could send 50,000, and the
+// parser, the expansion and the nodes' destructors all recurse per level.
+constexpr int kMaxDepth = 64;
+
 class Parser {
 public:
-    explicit Parser(const std::string& s) : s_(s) {}
+    explicit Parser(const std::string& s) : s_(s), failed_(s.size(), false) {
+        // Where each ${ ends by brace count alone (its matching unescaped
+        // }), for what nests past kMaxDepth: one pass, so a part past the
+        // limit costs nothing to step over, closed or not.
+        close_.assign(s.size(), std::string::npos);
+        std::vector<size_t> open;
+        for (size_t i = 0; i < s.size(); i++) {
+            const char c = s[i];
+            if (c == '\\' && i + 1 < s.size() &&
+                (s[i + 1] == '$' || s[i + 1] == '}' || s[i + 1] == '\\')) {
+                i++;
+            } else if (c == '$' && i + 1 < s.size() && s[i + 1] == '{') {
+                open.push_back(i);
+                i++;
+            } else if (c == '}' && !open.empty()) {
+                close_[open.back()] = i + 1;
+                open.pop_back();
+            }
+        }
+    }
 
     std::vector<Node> all() {
         std::vector<Node> out;
@@ -92,7 +116,21 @@ public:
 private:
     // Nodes until the end, or (inside a placeholder or a default) until an
     // unescaped }, which is left for the caller. False when the } is missing.
+    //
+    // Bad input stays linear: a $ that did not parse is remembered
+    // (failed_), so a part read again as text after its outer part failed
+    // is not parsed again; and a nested part that ran out of text before
+    // its } (exhausted_) means every part around it runs out too (none of
+    // them can find a } it did not), so they fail at once instead of each
+    // reading the rest of the text again. Past kMaxDepth a ${...} is its
+    // text as written.
     bool any(std::vector<Node>& out, bool nested) {
+        struct Level {
+            int& d;
+            bool on;
+            Level(int& depth, bool nest) : d(depth), on(nest) { if (on) d++; }
+            ~Level() { if (on) d--; }
+        } level(depth_, nested);
         std::string text;
         auto flush = [&] {
             if (text.empty()) return;
@@ -116,11 +154,27 @@ private:
             }
             if (c == '$') {
                 const size_t save = i_;
+                if (depth_ >= kMaxDepth && i_ + 1 < s_.size() && s_[i_ + 1] == '{') {
+                    // Too deep: the part is text, as written, to its }.
+                    if (close_[i_] == std::string::npos) {
+                        exhausted_ = true;   // no } for it, so none for us
+                        flush();
+                        return false;
+                    }
+                    text.append(s_, i_, close_[i_] - i_);
+                    i_ = close_[i_];
+                    continue;
+                }
                 Node n;
-                if (dollar(n)) {
+                if (!failed_[save] && dollar(n)) {
                     flush();
                     out.push_back(std::move(n));
                     continue;
+                }
+                failed_[save] = true;
+                if (exhausted_) {
+                    if (nested) return false;
+                    exhausted_ = false;   // the top level reads on as text
                 }
                 i_ = save + 1;   // as written
                 text += '$';
@@ -130,6 +184,7 @@ private:
             i_++;
         }
         flush();
+        if (nested) exhausted_ = true;
         return !nested;
     }
 
@@ -222,6 +277,10 @@ private:
 
     // After ${n|: options split by commas, ending in |}.
     bool choice(Node& n) {
+        // One that ran out of text before its |} means a later one does
+        // too: not read to the end again for each of them.
+        if (noChoiceEnd_ != std::string::npos && i_ >= noChoiceEnd_) return false;
+        const size_t from = i_;
         std::string cur;
         while (i_ < s_.size()) {
             const char c = s_[i_];
@@ -246,6 +305,7 @@ private:
             cur += c;
             i_++;
         }
+        if (noChoiceEnd_ == std::string::npos || from < noChoiceEnd_) noChoiceEnd_ = from;
         return false;
     }
 
@@ -390,6 +450,11 @@ private:
 
     const std::string& s_;
     size_t i_ = 0;
+    int depth_ = 0;                  // placeholders and defaults open
+    std::vector<bool> failed_;       // a $ here did not parse
+    std::vector<size_t> close_;      // a ${ here: just past its } by count
+    bool exhausted_ = false;         // a nested part ran out of text
+    size_t noChoiceEnd_ = std::string::npos;   // a choice from here found no |}
 };
 
 // ---- transforms
@@ -572,7 +637,7 @@ bool variable(const Context& ctx, const std::string& name, std::string& value) {
             ctx.filePath.compare(0, w.size(), w) == 0 && ctx.filePath[w.size()] == '/')
             value = ctx.filePath.substr(w.size() + 1);
         else value = ctx.filePath;
-    } else if (name == "CLIPBOARD") value = ctx.clipboard;
+    } else if (name == "CLIPBOARD") value = ctx.readClipboard ? ctx.readClipboard() : ctx.clipboard;
     else if (name == "WORKSPACE_NAME") value = baseName(ctx.workspaceFolder);
     else if (name == "WORKSPACE_FOLDER") value = ctx.workspaceFolder;
     else if (name == "CURSOR_INDEX") value = "0";

@@ -519,8 +519,16 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
         if (text[i] == u'\n' || (text[i] == u'\r' && (i + 1 >= text.size() || text[i + 1] != u'\n')))
             lineIndex++;
     ctx.lineIndex = lineIndex;
-    NSString *clip = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
-    if (clip) ctx.clipboard = Std(clip);
+    // The pasteboard only when the snippet names $CLIPBOARD, read once.
+    auto clipboard = std::make_shared<std::pair<bool, std::string>>();
+    ctx.readClipboard = [clipboard] {
+        if (!clipboard->first) {
+            clipboard->first = true;
+            NSString *clip = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+            if (clip) clipboard->second = Std(clip);
+        }
+        return clipboard->second;
+    };
     Snippet::commentsFor(ctx.filePath, ctx.lineComment, ctx.blockCommentStart,
                          ctx.blockCommentEnd);
     const time_t now = time(nullptr);

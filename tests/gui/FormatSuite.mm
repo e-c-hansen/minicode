@@ -356,6 +356,106 @@ MC_GUI_SUITE(format_consent) {
         [fm removeItemAtPath:prettier error:nil];
         MCGuiSetSettings(@"lsp.enabled = false\n");
     });
+
+    // Prettier searches above the open folder (a repository whose docs
+    // folder alone is open), so a prettier.config.js there is asked about
+    // too; and a package runner (npx prettier) is the program it runs: the
+    // folder's own node_modules/.bin/prettier when there is one.
+    NSString *upDir = MCGuiProjectFile(@"fmtup");
+    NSString *readme = [upDir stringByAppendingPathComponent:@"README.md"];
+    NSString *aboveConfig = [MCGuiScratch() stringByAppendingPathComponent:@"prettier.config.js"];
+    NSString *npx = [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/npx"];
+    NSString *folderPrettier = [upDir stringByAppendingPathComponent:@"node_modules/.bin/prettier"];
+    NSString *ranNpx = [MCGuiScratch() stringByAppendingPathComponent:@"fmtc-npx-ran"];
+    NSString *(^formatter)(NSString *) = ^NSString *(NSString *marker) {
+        return [NSString stringWithFormat:
+            @"#!/bin/sh\n/usr/bin/touch '%@'\nexec /usr/bin/sed -E 's/^#Title$/# Title/'\n", marker];
+    };
+    MCGuiStep(@"prettier.config.js above the window's folder, format.markdown = prettier", ^{
+        consentBefore = [MCAppDefaults() objectForKey:@"MCPythonEnvironmentConsent"];
+        forget();
+        MCGuiWriteFile(readme, @"#Title\n");
+        MCGuiWriteFile(aboveConfig, @"module.exports = {};\n");
+        Script(prettier, formatter(ranPrettier));
+        [fm removeItemAtPath:ranPrettier error:nil];
+        MCGuiSetSettings(@"lsp.enabled = false\nformat.markdown = prettier\n");
+        GCHECK([c showFile:readme]);
+        if ([[c valueForKey:@"previewMode"] boolValue])
+            [c performSelector:@selector(togglePreview:) withObject:nil];   // the source
+        alerts = MCGuiAlertsShown().count;
+        [c setValue:nil forKey:@"lastFormatNote"];
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Don't Allow
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"asked about the configuration above; Don't Allow: a note", 15, ^BOOL {
+        return MCGuiAlertsShown().count == alerts + 1 &&
+               [[c valueForKey:@"lastFormatNote"] containsString:@"can run code"];
+    });
+    MCGuiStep(@"the question named the file above the folder; prettier never ran", ^{
+        NSString *asked = MCGuiAlertsShown().lastObject;
+        MCGuiNote(@"asked: %@; the note: %@", asked, [c valueForKey:@"lastFormatNote"]);
+        GCHECK([asked containsString:@"prettier.config.js"] &&
+               [asked containsString:@"above this folder"]);
+        GCHECK(!ran(ranPrettier));
+        GCHECK_EQ_STR(Text(c).string, @"#Title\n");
+        GCHECK_EQ_STR(answer(), @"deny");
+        // npx prettier, with the folder's own copy in its node_modules.
+        [fm removeItemAtPath:aboveConfig error:nil];
+        forget();
+        Script(npx, formatter(ranNpx));
+        Script(folderPrettier, formatter(ranPrettier));
+        // By its path: the Mac's own npx (Homebrew's) comes first in the
+        // search, and would fetch prettier from the registry.
+        MCGuiSetSettings([NSString stringWithFormat:@"lsp.enabled = false\n"
+                         @"format.markdown = %@ prettier --stdin-filepath {file}\n", npx]);
+        [c setValue:nil forKey:@"lastFormatNote"];
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Don't Allow
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"npx with the folder's prettier: asked; Don't Allow: a note", 15, ^BOOL {
+        return MCGuiAlertsShown().count == alerts + 2 &&
+               [[c valueForKey:@"lastFormatNote"] containsString:@"would run this folder's own"];
+    });
+    MCGuiStep(@"the question named prettier and node_modules; npx never ran; then Allow", ^{
+        NSString *asked = MCGuiAlertsShown().lastObject;
+        MCGuiNote(@"asked: %@; the note: %@", asked, [c valueForKey:@"lastFormatNote"]);
+        GCHECK([asked containsString:@"prettier"] && [asked containsString:@"node_modules"]);
+        GCHECK(!ran(ranNpx) && !ran(ranPrettier));
+        GCHECK_EQ_STR(Text(c).string, @"#Title\n");
+        forget();
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);   // Allow
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"Allow: npx formats", 15, ^BOOL {
+        return [Text(c).string isEqualToString:@"# Title\n"];
+    });
+    MCGuiStep(@"npx ran; without the folder's copy it runs unasked", ^{
+        GCHECK(ran(ranNpx));
+        GCHECK(MCGuiAlertsShown().count == alerts + 3);
+        [Text(c).undoManager undo];
+        [fm removeItemAtPath:ranNpx error:nil];
+        [fm removeItemAtPath:[upDir stringByAppendingPathComponent:@"node_modules"] error:nil];
+        forget();
+        [c formatDocument:nil];
+    });
+    MCGuiWait(@"npx alone formats unasked", 15, ^BOOL {
+        return [Text(c).string isEqualToString:@"# Title\n"];
+    });
+    MCGuiStep(@"no question, nothing stored; put everything back", ^{
+        GCHECK(MCGuiAlertsShown().count == alerts + 3);
+        GCHECK(answer() == nil);
+        if (consentBefore)
+            [MCAppDefaults() setObject:consentBefore forKey:@"MCPythonEnvironmentConsent"];
+        else
+            forget();
+        [Text(c).undoManager undo];
+        GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
+        [fm removeItemAtPath:upDir error:nil];
+        [fm removeItemAtPath:prettier error:nil];
+        [fm removeItemAtPath:npx error:nil];
+        [fm removeItemAtPath:aboveConfig error:nil];
+        MCGuiSetSettings(@"lsp.enabled = false\n");
+    });
 }
 
 // `make guitest SUITES=format_coverage`: Markdown formatted by the

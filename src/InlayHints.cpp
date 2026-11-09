@@ -112,12 +112,12 @@ std::vector<PlacedInlayHint> placeInlayHints(const std::vector<InlayHint>& hints
         // "line" there: that line belongs to the next window.
         if (rel == lines - 1 && rel > 0 && (window.back() == u'\n' || window.back() == u'\r')) continue;
         const size_t at = index.offset(Position{(int)rel, p.character});
-        if (at == 0) continue;   // the window starts a line
-        const char16_t prev = window[at - 1];
-        if (prev == u'\n' || prev == u'\r') continue;   // at a line's start
+        // At a line's start (the window starts one) it goes with what
+        // follows it.
+        const char16_t prev = at == 0 ? u'\n' : window[at - 1];
         PlacedInlayHint placed;
         placed.offset = base + at;
-        placed.followsBefore = inlayWordChar(prev);
+        placed.followsBefore = prev != u'\n' && prev != u'\r' && inlayWordChar(prev);
         placed.hint = i;
         out.push_back(placed);
     }
@@ -138,7 +138,7 @@ bool inlayFollowEdit(size_t& offset, bool followsBefore, size_t start, size_t ol
     }
     if (end == offset) {                          // ending right at it
         offset = start + newLen;
-        return offset > 0;
+        return true;
     }
     return false;                                 // over it
 }

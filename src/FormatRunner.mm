@@ -78,11 +78,25 @@ static NSString *ToolFolderName(NSString *program, NSString *root) {
     return dir;
 }
 
-// A file as the window's folder names it: "web/prettier.config.js".
+// A file as the window's folder names it: "web/prettier.config.js"; one
+// above the folder by its whole path, "~/Code/repo/prettier.config.js".
 static NSString *FolderRelativeName(NSString *path, NSString *root) {
     NSString *prefix = [root stringByAppendingString:@"/"];
-    return root.length && [path hasPrefix:prefix] ? [path substringFromIndex:prefix.length]
-                                                  : path.lastPathComponent;
+    if (root.length && [path hasPrefix:prefix]) return [path substringFromIndex:prefix.length];
+    return path.stringByAbbreviatingWithTildeInPath;
+}
+
+// The folder's own copy of a program a package runner launches by name
+// (npx prettier): node_modules/.bin in the file's folder and above it, up
+// to the window's folder, as the runners look; nil for none.
+static NSString *FolderNodeBin(const std::string &tool, NSString *path, NSString *root) {
+    if (!root.length || tool.empty() || tool.find('/') != std::string::npos) return nil;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (const std::string &dir : Formatter::nodeBinDirs(Std(path), Std(root))) {
+        NSString *p = [NS(dir) stringByAppendingPathComponent:NS(tool)];
+        if ([fm isExecutableFileAtPath:p] && Formatter::insideFolder(Std(p), Std(root))) return p;
+    }
+    return nil;
 }
 
 // Run argv with `input` on stdin. Blocks; call it off the main thread.
@@ -226,45 +240,84 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
 
         const Formatter::Candidate *chosen = nullptr;
         NSString *program = nil, *kept = nil;   // kept: a folder copy not allowed
+        NSString *keptRunner = nil;             // the runner that would have run it
         const std::string answer = Std(consent ?: @"");
         for (const Formatter::Candidate &c : plan.candidates) {
             MCFormatterLookup found = FindFormatter(c.program, lang, realPath, realRoot);
-            // A configuration in the folder that runs code when the tool
-            // reads it (prettier.config.js, a plugin) is the folder's own
-            // program, whichever copy of the tool would read it.
+            // A package runner (npx prettier, pnpm exec, bunx, yarn) is
+            // the program it launches: the folder's own copy when the
+            // folder has one, and that program's configuration counts.
+            const Formatter::Launch launch = Formatter::launched(c.command);
+            const std::string tool = launch.tool.empty() ? c.program : launch.tool;
+            NSString *launchedLocal = nil;   // the folder's copy a runner would run
+            if (!launch.tool.empty()) {
+                launchedLocal = FolderNodeBin(launch.tool, realPath, realRoot);
+                if (!launchedLocal && launch.folderCode)
+                    launchedLocal = [realRoot stringByAppendingPathComponent:@"package.json"];
+            }
+            // A configuration that runs code when the tool reads it
+            // (prettier.config.js, a plugin), in the folder or above it, is
+            // the folder's own program, whichever copy of the tool reads it.
             const std::string codeConfig = Formatter::codeConfigFile(
-                c.program, Std(realPath), Std(realRoot), plan.configFile, fs);
-            Formatter::Source source = Formatter::chooseProgram(
-                plan.fromSettings, Std(found.local ?: @""), Std(found.outside ?: @""), answer,
-                !codeConfig.empty());
+                tool, Std(realPath), Std(realRoot), plan.configFile, fs);
+            Formatter::Source source = launch.tool.empty()
+                ? Formatter::chooseProgram(plan.fromSettings, Std(found.local ?: @""),
+                                           Std(found.outside ?: @""), answer,
+                                           !codeConfig.empty())
+                : Formatter::chooseLaunched(plan.fromSettings, launchedLocal != nil,
+                                            Std(found.outside ?: @""), answer,
+                                            !codeConfig.empty());
+            if (launchedLocal) {
+                // The runner stands in for the folder's copy.
+                found.local = found.outside;
+                found.outside = nil;
+            }
             if (source == Formatter::Source::Ask) {
                 // Nothing runs until the user answers for the folder; the
                 // editor asks and formats again (formatSourceQuietly:).
                 result.needsConsent = YES;
-                result.tool = NS(Formatter::programName(c.program));
-                if (found.local) result.consentFolder = ToolFolderName(found.local, realRoot);
+                result.tool = NS(tool);
+                if (launchedLocal)
+                    result.consentFolder = [launchedLocal.lastPathComponent
+                                               isEqualToString:@"package.json"]
+                        ? @"package.json" : ToolFolderName(launchedLocal, realRoot);
+                else if (found.local) result.consentFolder = ToolFolderName(found.local, realRoot);
                 if (!codeConfig.empty())
                     result.consentConfig = FolderRelativeName(NS(codeConfig), realRoot);
                 finish();
                 return;
             }
             if (source == Formatter::Source::Refused) {
-                NSString *tool = NS(Formatter::programName(c.program));
-                result.tool = tool;
+                NSString *name = NS(tool);
+                result.tool = name;
                 result.error = [NSString stringWithFormat:
-                    @"%@ in this folder can run code when %@ reads it, and this folder's own "
-                     "programs are not allowed to run, so %@ did not run. Ask Again About This "
-                     "Folder's Tools (minicode menu) asks again.",
-                    FolderRelativeName(NS(codeConfig), realRoot), tool, tool];
+                    @"%@ can run code when %@ reads it, and this folder's own programs are not "
+                     "allowed to run, so %@ did not run. Ask Again About This Folder's Tools "
+                     "(minicode menu) asks again.",
+                    FolderRelativeName(NS(codeConfig), realRoot), name, name];
                 finish();
                 return;
             }
             if (source == Formatter::Source::Local) program = found.local;
             if (source == Formatter::Source::Outside) program = found.outside;
             if (program) { chosen = &c; break; }
-            if (found.local && !kept) kept = found.local;
+            if (found.local && !kept) {
+                kept = launchedLocal ?: found.local;
+                if (launchedLocal) keptRunner = NS(Formatter::programName(c.program));
+            }
         }
         NSString *configName = NS(plan.configFile).lastPathComponent;
+        if (!chosen && kept && keptRunner) {
+            // A runner that would run the folder's own copy (or script).
+            result.error = [NSString stringWithFormat:
+                @"format.%@ runs %@, which would run this folder's own %@, and this folder's "
+                 "own programs are not allowed to run.",
+                NS(lang), keptRunner,
+                [kept.lastPathComponent isEqualToString:@"package.json"]
+                    ? @"package.json scripts" : ToolFolderName(kept, realRoot)];
+            finish();
+            return;
+        }
         if (!chosen && kept) {
             // The folder has the tool, and the user said no to the folder's
             // own programs.
