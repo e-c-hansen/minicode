@@ -2070,16 +2070,28 @@ for full-screen programs. Both can be open at once.
   zsh-vi-mode does) stopped B for good.
 - **exec**: preexec looks for `exec` as a command word (first, or after `; &&
   || & |`, `then`, `do`, `else`, `{`, `!`, and past `builtin`, `command`,
-  `noglob`) and for that command exports ZDOTDIR as the integration folder (the
-  user's in `MINICODE_USER_ZDOTDIR`) with `MINICODE_EXEC=1`, and the nonce
-  only when the program is zsh (2026-11-06: a bash, or `exec claude`, kept it
-  in its environment for everything it ran, any of which could forge marks;
-  so a zsh exec'd from that bash no longer marks), and only a zsh that
-  reads its startup files (`__minicode_reads_rcs`: not `-f` or a cluster
-  holding f, `--no-rcs`, `-o norcs`, `+o rcs`, unless a later option turns
-  them back on; 2026-11-08, `exec zsh -f` kept it), so an exec'd zsh
-  loads the integration and reports the exec finished (133;D;0); the next
-  precmd restores both if the exec failed. Line mode also `unsetopt ZLE` there.
+  `noglob`). The exec's program, and nothing else on the line, gets ZDOTDIR
+  as the integration folder (the user's in `MINICODE_USER_ZDOTDIR`) with
+  `MINICODE_EXEC=1` (`__minicode_exec_env`): for the line, preexec puts a
+  function named `exec` (`__minicode_exec`) in front of the builtin, which
+  exports them just before `builtin exec` and puts the shell's back if it
+  returns; the next precmd removes it (2026-11-08, round 6's defect 2:
+  exported from preexec, `make && exec zsh` gave make the nonce). Functions
+  are looked up at run time, so this works for a line already parsed. A
+  `builtin exec` skips functions and is set up from preexec only as the
+  line's first command; a line with an exec of no program (`exec >log`)
+  gets no function, since a function call's redirections end with it. The
+  nonce goes only to zsh (2026-11-06: a bash, or `exec claude`, kept it in
+  its environment for everything it ran, any of which could forge marks; so
+  a zsh exec'd from that bash no longer marks), only one that reads its
+  startup files (`__minicode_reads_rcs`: not `-f` or a cluster holding f,
+  `--no-rcs`, `-o norcs`, `+o rcs`, unless a later option turns them back
+  on; `exec zsh -f` kept it), and not one emulating sh or ksh, which reads
+  .profile instead (`__minicode_takes_nonce`: `--emulate`, or a name, exec
+  -a's or the program's, starting with s, b or k after an optional r, zsh's
+  own rule; `exec -a sh zsh` kept it), so an exec'd zsh loads the
+  integration and reports the exec finished (133;D;0). zsh 5.9 exits when
+  an interactive exec fails. Line mode also `unsetopt ZLE` there.
   Exec into another shell (bash, sh, dash, fish, ksh, tcsh, csh, nu, elvish,
   xonsh, pwsh, by `proc_name`, polled twice a second while a command runs) sets
   `_integrated` NO: not busy, title cleared, the finished notification posted,

@@ -252,40 +252,98 @@ void testZshIntegration() {
 
     GROUP("zsh:exec-nonce");
     {
-        // The exec hook's choices, case by case, in the real shell: for an
-        // exec, ZDOTDIR goes back to the integration's folder with
-        // MINICODE_EXEC, and the nonce only for a zsh that reads its
-        // startup files (and so ours, which take it out of its environment).
-        struct Case { const char *line; bool exec, nonce; };
+        // What an exec's program gets, case by case, in the real shell
+        // (__minicode_exec_env with exec's arguments, as the function named
+        // exec calls it): ZDOTDIR back at the integration's folder with
+        // MINICODE_EXEC, and the nonce only for a zsh that reads our
+        // startup file and so takes it out of its environment: not one
+        // that reads none (TE-D1), nor one emulating sh or ksh, which
+        // reads .profile instead (round 6's terminal defect 1: `exec -a sh
+        // zsh` and `exec zsh --emulate sh` kept it).
+        struct Case { const char *args; bool nonce; };
         const Case cases[] = {
-            {"exec zsh", true, true},
-            {"exec /bin/zsh -i", true, true},
-            {"exec -l zsh", true, true},
-            {"exec -a myzsh zsh", true, true},
-            {"exec -la myzsh zsh", true, true},
-            {"exec -- zsh", true, true},
-            {"command exec zsh", true, true},
-            {"cd /tmp && exec zsh", true, true},
-            {"exec zsh -o rcs", true, true},
-            {"exec zsh -f +f", true, true},
-            {"exec zsh --no-rcs --rcs", true, true},
-            {"exec zsh -i script.zsh -f", true, true},
-            {"exec zsh -c \"echo -f\"", true, true},
-            {"exec bash", true, false},
-            {"exec claude", true, false},
-            {"exec zsh -f", true, false},
-            {"exec zsh -fi", true, false},
-            {"exec zsh -if", true, false},
-            {"exec zsh -fc true", true, false},
-            {"exec zsh --no-rcs", true, false},
-            {"exec zsh --norcs", true, false},
-            {"exec zsh --no_rcs", true, false},
-            {"exec zsh -o norcs", true, false},
-            {"exec zsh -o NO_RCS", true, false},
-            {"exec zsh -onorcs", true, false},
-            {"exec zsh +o rcs", true, false},
-            {"exec -l zsh +o rcs", true, false},
-            {"exec zsh -i -o norcs", true, false},
+            {"zsh", true},
+            {"/bin/zsh -i", true},
+            {"-l zsh", true},
+            {"-a myzsh zsh", true},
+            {"-la myzsh zsh", true},
+            {"-a -zsh zsh", true},
+            {"-a csh zsh", true},          // csh emulation still reads .zshenv
+            {"-- zsh", true},
+            {"zsh -o rcs", true},
+            {"zsh -f +f", true},
+            {"zsh --no-rcs --rcs", true},
+            {"zsh -i script.zsh -f", true},
+            {"zsh -c \"echo -f\"", true},
+            {"bash", false},
+            {"claude", false},
+            {"zsh -f", false},
+            {"zsh -fi", false},
+            {"zsh -if", false},
+            {"zsh -fc true", false},
+            {"zsh --no-rcs", false},
+            {"zsh --norcs", false},
+            {"zsh --no_rcs", false},
+            {"zsh -o norcs", false},
+            {"zsh -o NO_RCS", false},
+            {"zsh -onorcs", false},
+            {"zsh +o rcs", false},
+            {"-l zsh +o rcs", false},
+            {"zsh -i -o norcs", false},
+            {"-a sh zsh", false},
+            {"-a -sh zsh", false},
+            {"-la ksh zsh", false},
+            {"-a bash /bin/zsh", false},
+            {"-a rsh zsh", false},
+            {"zsh --emulate sh", false},
+            {"zsh --emulate ksh -i", false},
+            {"zsh --emulate=sh", false},
+            {"zsh -i --emulate sh", false},  // anywhere among the options
+        };
+        std::string input;
+        int n = 0;
+        for (const Case &c : cases) {
+            input += "__minicode_exec_env " + std::string(c.args) + "; print -r -- \"case" +
+                     std::to_string(n) +
+                     ":${MINICODE_NONCE-none}:${MINICODE_EXEC-none}:${ZDOTDIR-none}\"; "
+                     "__minicode_exec_restore; print -r -- \"after" + std::to_string(n) +
+                     ":${MINICODE_NONCE-none}:${MINICODE_EXEC-none}:${ZDOTDIR-none}\"\n";
+            n++;
+        }
+        ZshRun r = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"), input);
+        const std::string zdot = (root / "zdot-grid").string();
+        n = 0;
+        for (const Case &c : cases) {
+            const std::string got = printed(r.out, "case" + std::to_string(n));
+            const std::string want = std::string(c.nonce ? "n0nce" : "none") + ":1:" + zdot;
+            CHECK(got == want);
+            if (got != want) std::printf("    exec %s: %s (wanted %s)\n", c.args, got.c_str(), want.c_str());
+            CHECK(printed(r.out, "after" + std::to_string(n)) == "none:none:none");
+            n++;
+        }
+    }
+    {
+        // Which lines the hook gives a function named exec (which sets the
+        // environment just before exec runs), which it sets the
+        // environment for at once (exec after `builtin` skips functions;
+        // only as the line's first command), and which neither. Round 6's
+        // terminal defect 2: the hook exported the nonce from preexec, so
+        // in `make && exec zsh` make had it, and anything make ran.
+        struct Case { const char *line; bool fn, direct; };
+        const Case cases[] = {
+            {"exec zsh", true, false},
+            {"make && exec zsh", true, false},
+            {"npm test; exec zsh -l", true, false},
+            {"cd /tmp && exec bash", true, false},
+            {"noglob exec zsh", true, false},
+            {"if true; then exec zsh; fi", true, false},
+            {"{ exec zsh }", true, false},
+            {"builtin exec zsh", false, true},
+            {"command exec zsh", false, true},
+            {"cd /tmp && builtin exec zsh", false, false},
+            {"exec >log; exec zsh", false, false},     // a redirection's exec: no function
+            {"exec 2>/dev/null", false, false},
+            {"exec", false, false},
             {"echo exec zsh", false, false},
             {"(exec zsh)", false, false},
         };
@@ -293,19 +351,64 @@ void testZshIntegration() {
         int n = 0;
         for (const Case &c : cases) {
             input += "__minicode_exec_hook '" + std::string(c.line) + "'; print -r -- \"case" +
-                     std::to_string(n++) +
-                     ":${MINICODE_NONCE-none}:${MINICODE_EXEC-none}:${ZDOTDIR-none}\"; "
-                     "__minicode_exec_undo\n";
+                     std::to_string(n) + ":${+functions[exec]}:${MINICODE_NONCE-none}:${MINICODE_EXEC-none}\"; "
+                     "__minicode_exec_undo; print -r -- \"undone" + std::to_string(n) +
+                     ":${+functions[exec]}:${MINICODE_NONCE-none}:${MINICODE_EXEC-none}:${ZDOTDIR-none}\"\n";
+            n++;
         }
         ZshRun r = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"), input);
-        const std::string zdot = (root / "zdot-grid").string();
         n = 0;
         for (const Case &c : cases) {
-            const std::string got = printed(r.out, "case" + std::to_string(n++));
-            const std::string want = std::string(c.nonce ? "n0nce" : "none") + ":" +
-                                     (c.exec ? "1:" + zdot : std::string("none:none"));
+            const std::string got = printed(r.out, "case" + std::to_string(n));
+            const std::string want = std::string(c.fn ? "1" : "0") + ":" +
+                                     (c.direct ? "n0nce:1" : "none:none");
             CHECK(got == want);
             if (got != want) std::printf("    %s: %s (wanted %s)\n", c.line, got.c_str(), want.c_str());
+            CHECK(printed(r.out, "undone" + std::to_string(n)) == "0:none:none:none");
+            n++;
+        }
+    }
+    {
+        // End to end, defect 2: what ran before the exec on its line had
+        // none of it in its environment; the zsh it started did get the
+        // nonce (marks with it, D;0 for the exec) and took it out again.
+        const zfs::path envFile = root / "make-env.txt";
+        ZshRun r = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"),
+                          "/usr/bin/env > '" + envFile.string() + "' && exec /bin/zsh -i\n"
+                          "print -r -- \"after:${MINICODE_NONCE-unset}\"\n");
+        const std::string env = readFile(envFile.c_str());
+        CHECK(!env.empty());
+        CHECK(env.find("n0nce") == std::string::npos);
+        CHECK(env.find("MINICODE_EXEC") == std::string::npos);
+        CHECK(env.find("zdot-grid") == std::string::npos);
+        if (env.find("n0nce") != std::string::npos) std::printf("    env before exec:\n%s\n", env.c_str());
+        CHECK(printed(r.out, "after") == "unset");
+        const std::string marks = joinMarks(marksIn(r.out, "n0nce"));
+        CHECK(marks.find("133;C 133;D;0 7 133;A") != std::string::npos);
+        CHECK(marks.find("?") == std::string::npos);
+        if (marks.find("133;C 133;D;0 7 133;A") == std::string::npos)
+            std::printf("    marks: %s\n    err: %s\n", marks.c_str(), r.err.c_str());
+        // An exec that fails leaves the line going on with the shell's own
+        // environment, and the function gone at the next prompt (zsh 5.9
+        // exits instead, so nothing runs after it at all).
+        std::remove(envFile.c_str());
+        ZshRun f = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"),
+                          "exec /nonexistent/zsh; /usr/bin/env > '" + envFile.string() + "'\n"
+                          "print -r -- \"fn:${+functions[exec]}\"\n");
+        const std::string env2 = readFile(envFile.c_str());
+        CHECK(env2.find("n0nce") == std::string::npos && env2.find("MINICODE_EXEC") == std::string::npos);
+        CHECK(printed(f.out, "fn") == "0" || f.out.find("fn:") == std::string::npos);
+    }
+    {
+        // End to end, defect 1: a zsh in sh emulation (by its name, or
+        // --emulate) never gets the nonce, since ours never runs in it to
+        // take it out again.
+        for (const char *line : {"exec -a sh /bin/zsh -i", "exec /bin/zsh --emulate sh -i"}) {
+            ZshRun r = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"),
+                              std::string(line) + "\nprint -r -- \"sh:${MINICODE_NONCE-unset}\"\n");
+            CHECK(printed(r.out, "sh") == "unset");
+            if (printed(r.out, "sh") != "unset")
+                std::printf("    %s: %s\n    err: %s\n", line, printed(r.out, "sh").c_str(), r.err.c_str());
         }
     }
     {
