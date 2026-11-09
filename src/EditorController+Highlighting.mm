@@ -77,8 +77,10 @@ struct MCOverlay {
     // in large-file mode (EditorController+LargeFile.mm).
     self.textView.folds.fileName = [self largeFileFeaturesOff] ? nil : self.currentPath ?:
         [@"untitled." stringByAppendingString:self.currentExt ?: @"txt"];
-    [self applyHighlighting];
+    // At the top before the colors, which paint the lines on screen: the
+    // view still stood where the last text had it.
     [self.textView scrollToBeginningOfDocument:nil];
+    [self applyHighlighting];
 }
 
 // A page with text blocks laid out in the editor (a Markdown preview's
@@ -168,21 +170,45 @@ struct MCOverlay {
         _bracketDepths.assign(BracketPairs::summarizeLines(NSStringSource(storage.string), *_hl,
                                                            0, _hl->lineCount(), tokens));
     _bracketPainted = [NSMutableIndexSet indexSet];
+    _bracketEdits.clear();
+    // The lexer's colors everywhere; the bracket colors only on the lines
+    // on screen (paintVisibleLines), the rest as they come into view, as
+    // the server's tokens are. Painting every bracket here doubled the CPU
+    // of an open, a theme change and the zoom (407 against 198 ms for
+    // 30,000 lines), most of it attribute runs split around each bracket.
     [storage beginEditing];
-    [self restyleRange:NSMakeRange(0, storage.length) tokens:tokens inStorage:storage];
+    [self restyleRange:NSMakeRange(0, storage.length) tokens:tokens brackets:NO inStorage:storage];
     [storage endEditing];
-    if (_bracketsOn) {
-        [_bracketPainted addIndexesInRange:NSMakeRange(0, storage.length)];
-        [self observeEditorScrolling];
-    }
+    if (_bracketsOn || _semanticCurrent) [self observeEditorScrolling];
     _pending.clear();   // all of it is fresh now
     _liveHighlight = YES;
     // New colors (a theme, the zoom) over the same text: the server's
     // tokens still hold, painted again where they show.
-    if (_semanticCurrent) {
-        _semanticPainted = [NSMutableIndexSet indexSet];
+    if (_semanticCurrent) _semanticPainted = [NSMutableIndexSet indexSet];
+    if (_semanticCurrent || _bracketsOn) {
         [self paintVisibleLines];
+        // Again once the view has settled (the scroll to the top or to the
+        // tab's place, the window's layout), should that bring other lines
+        // on screen without a scroll.
+        [self semanticViewScrolled:nil];
     }
+}
+
+// The edits gathered since _bracketPainted last followed the text
+// (BracketPairs::PaintedEdits), applied to it in one pass.
+- (void)applyBracketEdits {
+    if (_bracketEdits.empty()) return;
+    __block std::vector<std::pair<size_t, size_t>> spans;
+    [_bracketPainted enumerateRangesUsingBlock:^(NSRange r, BOOL *stop) {
+        (void)stop;
+        spans.push_back({r.location, NSMaxRange(r)});
+    }];
+    const std::vector<std::pair<size_t, size_t>> now = _bracketEdits.apply(spans);
+    _bracketEdits.clear();
+    NSMutableIndexSet *set = [NSMutableIndexSet indexSet];
+    for (const auto &span : now)
+        [set addIndexesInRange:NSMakeRange(span.first, span.second - span.first)];
+    _bracketPainted = set;
 }
 
 // Whether the bracket depths describe the storage as it is (they follow
@@ -208,16 +234,28 @@ struct MCOverlay {
 }
 
 // Watch the editor scroll, to paint the lines coming into view: with the
-// server's tokens, and with bracket colors after an edit changed depths.
+// server's tokens and with bracket colors. Lines also come on screen
+// without a scroll: the pane grows (the clip view's frame), a fold closes
+// or the wrapping changes (the text view's).
 - (void)observeEditorScrolling {
     if (_semanticObserving) return;
-    NSClipView *clip = self.textView.enclosingScrollView.contentView;
+    NSTextView *tv = self.textView;
+    NSClipView *clip = tv.enclosingScrollView.contentView;
     if (!clip) return;
     clip.postsBoundsChangedNotifications = YES;
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(semanticViewScrolled:)
-                                                 name:NSViewBoundsDidChangeNotification
-                                               object:clip];
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserver:self
+           selector:@selector(semanticViewScrolled:)
+               name:NSViewBoundsDidChangeNotification
+             object:clip];
+    [nc addObserver:self
+           selector:@selector(semanticViewScrolled:)
+               name:NSViewFrameDidChangeNotification
+             object:clip];
+    [nc addObserver:self
+           selector:@selector(semanticViewScrolled:)
+               name:NSViewFrameDidChangeNotification
+             object:tv];
     _semanticObserving = YES;
 }
 
@@ -231,9 +269,16 @@ struct MCOverlay {
 // against milliseconds here).
 - (void)restyleRange:(NSRange)range tokens:(const std::vector<Token> &)tokens
            inStorage:(NSTextStorage *)storage {
+    [self restyleRange:range tokens:tokens brackets:_bracketsOn inStorage:storage];
+}
+
+// The same, with the bracket colors only when `withBrackets`.
+- (void)restyleRange:(NSRange)range tokens:(const std::vector<Token> &)tokens
+            brackets:(BOOL)withBrackets
+           inStorage:(NSTextStorage *)storage {
     if (range.length == 0) return;
     std::vector<MCOverlay> brackets;
-    if (_bracketsOn) [self bracketOverlaysIn:range tokens:tokens into:brackets];
+    if (withBrackets) [self bracketOverlaysIn:range tokens:tokens into:brackets];
     // Without tokens (plain text, a line too long to lex) only what differs
     // is set, however long the range: setting a 5 MB line's attributes
     // again on each keystroke made TextKit lay it out again.
@@ -427,12 +472,14 @@ struct MCOverlay {
                 BracketPairs::summarizeLines(src, *_hl, r.firstLine, r.endLine, relexed));
             // What was painted with its bracket colors follows its text; the
             // edited characters are not, and when the edit changed the depth
-            // the lines after it start at, nothing after it is.
-            [_bracketPainted removeIndexesInRange:NSMakeRange(edited.location, oldLen)];
-            [_bracketPainted shiftIndexesStartingAtIndex:edited.location + oldLen by:delta];
-            if (moved && storage.length > edited.location)
-                [_bracketPainted removeIndexesInRange:NSMakeRange(edited.location,
-                                                                  storage.length - edited.location)];
+            // the lines after it start at, nothing after it is. Gathered and
+            // applied once (applyBracketEdits): a multi-range edit's edits
+            // each moved every hole the ones after it had left.
+            const bool cut = moved && storage.length > edited.location;
+            if (!_bracketEdits.add(edited.location, oldLen, newLen, cut)) {
+                [self applyBracketEdits];
+                _bracketEdits.add(edited.location, oldLen, newLen, cut);
+            }
         }
     } else {
         range = [storage.string lineRangeForRange:edited];
@@ -478,6 +525,7 @@ struct MCOverlay {
 
 // Recolor the lines edits have touched since the last flush.
 - (void)flushHighlighting {
+    [self applyBracketEdits];
     if (_pending.empty()) return;
     NSTextStorage *storage = self.textView.textStorage;
     const NSUInteger total = storage.length;
@@ -510,10 +558,17 @@ struct MCOverlay {
             range = [storage.string lineRangeForRange:NSMakeRange(start, end - start)];
         }
         if (NSMaxRange(range) <= done && done > 0) continue;   // these lines are done
+        // Bracket colors only on lines that had them: a line never painted
+        // (off screen since the open, or after an edit changed its depth)
+        // waits until it is seen, as before the edit: painting it here would
+        // split the attribute runs around each of its brackets (each split a
+        // memmove of the runs after it), for lines nobody is looking at.
+        const BOOL withBrackets =
+            _bracketsOn && [_bracketPainted intersectsIndexesInRange:range];
         [storage beginEditing];
-        [self restyleRange:range tokens:tokens inStorage:storage];
+        [self restyleRange:range tokens:tokens brackets:withBrackets inStorage:storage];
         [storage endEditing];
-        if (_bracketsOn) [_bracketPainted addIndexesInRange:range];
+        if (withBrackets) [_bracketPainted addIndexesInRange:range];
         done = NSMaxRange(range);
     }
     // An edit that changed the depth below it: the brackets on screen take
@@ -549,7 +604,15 @@ struct MCOverlay {
     (void)note;
     if ((!_semanticCurrent && !_bracketsOn) || _semanticPaintScheduled) return;
     _semanticPaintScheduled = YES;   // once a run-loop turn, however many scroll events
-    [self performSelector:@selector(paintVisibleLines) withObject:nil afterDelay:0];
+    // A block on the run loop, not a zero-delay perform: it runs before the
+    // window draws in this turn, where the timer's turn came after it and
+    // lines scrolled in showed their plain colors for a frame.
+    __weak EditorController *weakSelf = self;
+    CFRunLoopRef main = CFRunLoopGetMain();
+    CFRunLoopPerformBlock(main, kCFRunLoopCommonModes, ^{
+        [weakSelf paintVisibleLines];
+    });
+    CFRunLoopWakeUp(main);
 }
 
 // Paint the lines on screen not painted yet: with the server's tokens
@@ -565,6 +628,7 @@ struct MCOverlay {
     const BOOL sem = _semanticCurrent;
     const BOOL br = [self bracketDepthsCurrent];
     if ((!sem && !br) || !_liveHighlight || !tv.editable) return;
+    if (br) [self applyBracketEdits];
     NSTextStorage *storage = tv.textStorage;
     NSString *string = storage.string;
     const NSUInteger total = storage.length;

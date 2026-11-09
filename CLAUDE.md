@@ -899,8 +899,13 @@ container (PanelHost, laid out by hand in layoutContainer)
   empties the set from the edit on; `paintVisibleLines` (the old
   semantic painter, now both) repaints the lines on screen, for brackets
   alone only their bracket characters (so the server's moved colors
-  stay), and the rest as they scroll in. Off with no highlighter (large
-  files, plain text) and in the settings file.
+  stay), and the rest as they scroll in (or come on screen as the clip
+  view or text view changes size; a run-loop block, so before the window
+  draws). An open, a theme or the zoom paints only the lines on screen
+  too (every bracket at once doubled an open's CPU). The set follows
+  edits through `BracketPairs::PaintedEdits`, applied once at the flush:
+  moving it per edit was quadratic in a multi-range edit. Off with no
+  highlighter (large files, plain text) and in the settings file.
 - Linux retags in idle slices over a UTF-8 mirror; Android's `Highlighter.kt`
   uses the core over a native mirror.
 
