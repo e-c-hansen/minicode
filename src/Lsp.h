@@ -308,6 +308,11 @@ void MCForgetFolderToolsConsent(NSString *root);
 - (void)injectWatchedPaths:(NSArray<NSString *> *)paths type:(int)type;
 // The last didChange flush's main-thread CPU time (ms).
 @property(nonatomic, readonly) double lastFlushCpuMs;
+// How many tabs' texts the open-documents sync has handed over whole
+// (converted and compared) so far, and its last run's main-thread CPU time
+// (ms): a tab whose text has not changed since it was sent costs neither.
+@property(nonatomic, readonly) NSUInteger documentsSentWhole;
+@property(nonatomic, readonly) double lastSyncCpuMs;
 @end
 
 // ---- inlay hints (Lsp+InlayHints.mm): the lines on show, asked of the

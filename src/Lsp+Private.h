@@ -138,6 +138,12 @@ static inline NSAttributedString *MCDocText(NSString *text, BOOL markdown) {
 @property(nonatomic, copy) NSString *path;
 @property(nonatomic, copy) NSString *uri;   // canonical
 @property(nonatomic, strong) MCLspServer *server;
+// What the server was last given (Lsp+Sync.mm's syncOpenDocuments): a
+// background tab's text, an immutable string, so the same object next time
+// means the same text; or, for the file on show, that it was sent whole
+// when attached and has followed the storage's edits since (live).
+@property(nonatomic, strong) NSString *sentText;
+@property(nonatomic, assign) BOOL live;
 @end
 
 static inline NSString *DocKey(NSString *uri, MCLspServer *server) {
@@ -231,7 +237,7 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
 - (BOOL)uri:(const std::string &)a isSameFileAs:(NSString *)b;
 - (void)diagnosticsArrived:(const std::string &)uri
                       list:(const std::vector<Lsp::Diagnostic> &)list
-                      base:(const std::u16string *)base
+                      base:(std::shared_ptr<const std::u16string>)base
                     server:(MCLspServer *)server;
 - (void)problemsChanged;
 - (void)paintDiagnostics;

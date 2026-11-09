@@ -6917,7 +6917,7 @@ void testLspCompletionEditsAndVersions() {
         std::string base;
         client.onDiagnostics = [&](const std::string &uri, const std::vector<Lsp::Diagnostic> &) {
             calls++;
-            const std::u16string *t = client.textFor(uri);
+            auto t = client.textFor(uri);
             base = t ? Lsp::toUtf8(*t) : "(none)";
         };
         auto publish = [&](const std::string &uri, const std::string &version) {

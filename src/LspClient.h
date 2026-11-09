@@ -625,25 +625,54 @@ std::u16string applyContentChanges(const std::u16string& text,
 // The client's copy of a document as the server has it: UTF-16, with its
 // line starts kept as it is edited (lines end at \n, \r\n or \r, as
 // PositionIndex counts them), so a ranged change finds its positions and
-// goes in without reading or converting the rest of the text.
+// goes in without reading or converting the rest of the text. It is kept
+// in chunks of about kChunk units, each with its own line starts, and the
+// chunks' lengths and line counts in Fenwick trees, so an edit rewrites
+// only the chunks it touches and finds its place in log time: one
+// contiguous string had the whole tail moved, and every later line start
+// shifted, per edit (0.4 ms a flush in 2.5 MB, linear in the file). Only a
+// chunk split or merged (every thousand or so units typed or deleted there)
+// rebuilds the trees, linear in the number of chunks.
 class SyncedText {
 public:
-    SyncedText() : starts_{0} {}
-    explicit SyncedText(std::u16string text);
-    const std::u16string& text() const { return text_; }
-    size_t size() const { return text_.size(); }
-    size_t lines() const { return starts_.size(); }
+    static constexpr size_t kChunk = 1024;   // a new chunk's size
+    SyncedText() = default;
+    explicit SyncedText(const std::u16string& text);
+    size_t size() const { return size_; }
+    size_t lines() const { return 1 + startCount_; }
     // As PositionIndex::position.
     Position position(size_t offset) const;
-    // [a, b) replaced by `with`; only the line starts from a on to the end
-    // of the new text are looked at again (the ones after move).
+    // [a, b) replaced by `with`; only the chunks it touches (and the one
+    // before, for a \r\n across their boundary) are looked at again.
     void replace(size_t a, size_t b, const std::u16string& with);
-    bool operator==(const std::u16string& s) const { return text_ == s; }
+    // The unit at i (i < size()).
+    char16_t at(size_t i) const;
+    // The whole text, copied.
+    std::u16string str() const;
+    // The whole text, copied once and shared until the next replace.
+    std::shared_ptr<const std::u16string> snapshot() const;
+    bool operator==(const std::u16string& s) const;
+    size_t chunks() const { return chunks_.size(); }
 
 private:
-    std::u16string text_;
-    std::vector<size_t> starts_;
-    bool startsLine(size_t at) const;
+    struct Chunk {
+        std::u16string text;
+        // Line starts s with the unit before them in this chunk, as
+        // s - the chunk's start (1 to its length).
+        std::vector<uint32_t> starts;
+    };
+    std::vector<Chunk> chunks_;   // none for an empty text; else none empty
+    // Fenwick trees (1-based) over the chunks' lengths and start counts.
+    std::vector<size_t> units_, startsIn_;
+    size_t size_ = 0, startCount_ = 0;
+    mutable std::shared_ptr<const std::u16string> snapshot_;
+    static void add(std::vector<size_t>& tree, size_t k, long delta);
+    static size_t before(const std::vector<size_t>& tree, size_t k);   // chunks [0, k)
+    // The last chunk k with before(tree, k) <= value (at most chunks() - 1).
+    size_t find(const std::vector<size_t>& tree, size_t value) const;
+    size_t chunkAt(size_t pos) const { return find(units_, pos); }
+    void rescan(size_t k);
+    void rebuild();
 };
 // Units [start, start + length) of the editor's text as it is now (the
 // caller keeps them within the text).
@@ -1001,11 +1030,13 @@ public:
     int version(const std::string& uri) const;
     // Every open document's version, to compare with later (staleEditFile).
     DocVersions versions() const;
-    const std::u16string* openText(const std::string& uri) const;
+    // Copies made on first asking and shared until the text changes (the
+    // copy is kept in chunks, SyncedText).
+    std::shared_ptr<const std::u16string> openText(const std::string& uri) const;
     // The text last sent for a document, found by its URI as given or, when
     // the server spells it another way, by the file it names. What the
     // positions in a server's answer about that document refer to.
-    const std::u16string* textFor(const std::string& uri) const;
+    std::shared_ptr<const std::u16string> textFor(const std::string& uri) const;
     std::vector<std::string> openUris() const;
 
     // Requests. The handler runs when the response arrives (with a null

@@ -38,12 +38,11 @@
 // ones). Each server's list stands beside the others'.
 - (void)diagnosticsArrived:(const std::string &)uri
                       list:(const std::vector<Lsp::Diagnostic> &)list
-                      base:(const std::u16string *)base
+                      base:(std::shared_ptr<const std::u16string>)base
                     server:(MCLspServer *)server {
     std::string key = CanonicalURI(uri);
-    std::shared_ptr<const std::u16string> text;
-    if (base) text = std::make_shared<const std::u16string>(*base);
-    if (!_store.publish(key, Std(server.serverId), list, text, Std(server.name))) return;
+    // The client's copy, shared (made once per text, not per publish).
+    if (!_store.publish(key, Std(server.serverId), list, base, Std(server.name))) return;
     if ([self uri:uri isSameFileAs:_uri]) [self paintDiagnostics];
     [self problemsChanged];
 }

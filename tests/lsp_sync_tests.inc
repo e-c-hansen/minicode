@@ -21,7 +21,7 @@ static void testLspSync() {
         bool same = true;
         for (int round = 0; round < 2000 && same; round++) {
             Lsp::SyncedText t(randomText((int)(rng() % 20)));
-            std::u16string mirror = t.text();
+            std::u16string mirror = t.str();
             for (int step = 0; step < 8 && same; step++) {
                 const size_t a = rng() % (mirror.size() + 1);
                 const size_t b = a + rng() % (mirror.size() - a + 1);
@@ -42,6 +42,71 @@ static void testLspSync() {
         CHECK(crlf.position(2) == (Lsp::Position{1, 0}) && crlf.lines() == 5);
         crlf.replace(2, 3, u"");    // a\r\nb again
         CHECK(crlf.position(3) == (Lsp::Position{1, 0}) && crlf.lines() == 4);
+    }
+    {
+        // The same across chunks (SyncedText::kChunk units each): texts of
+        // tens of thousands of units, replacements small and spanning
+        // chunks, deletions down to nothing and back, a \r and \n meeting
+        // across a chunk's edge. Positions agree with PositionIndex at
+        // random offsets and every chunk edge's neighbours, and the number
+        // of chunks follows the size.
+        std::mt19937 rng(8112026);
+        const std::u16string pieces[] = {u"abc", u"\n", u"\r", u"\r\n", u"\U0001F600", u"x y"};
+        auto randomText = [&](size_t n) {
+            std::u16string s;
+            while (s.size() < n) s += pieces[rng() % 6];
+            return s;
+        };
+        bool same = true, bounded = true;
+        size_t maxChunks = 0;
+        for (int round = 0; round < 40 && same; round++) {
+            std::u16string mirror = randomText(1 + rng() % 40000);
+            Lsp::SyncedText t(mirror);
+            for (int step = 0; step < 60 && same; step++) {
+                const size_t a = rng() % (mirror.size() + 1);
+                const size_t span = rng() % 4 == 0 ? 20000 : 12;
+                const size_t b = a + rng() % (std::min(span, mirror.size() - a) + 1);
+                const int kind = (int)(rng() % 10);
+                const std::u16string with = kind == 0   ? std::u16string()
+                                            : kind == 1 ? randomText(rng() % 15000)
+                                                        : randomText(rng() % 6);
+                if (kind == 2 && step % 7 == 0) {
+                    t.replace(0, mirror.size(), u"");   // everything goes
+                    mirror.clear();
+                }
+                t.replace(a > mirror.size() ? mirror.size() : a,
+                          b > mirror.size() ? mirror.size() : b, with);
+                mirror.replace(std::min(a, mirror.size()),
+                               std::min(b, mirror.size()) - std::min(a, mirror.size()), with);
+                same = t == mirror && t.size() == mirror.size() && t.str() == mirror &&
+                       *t.snapshot() == mirror;
+                const Lsp::PositionIndex index(mirror);
+                same = same && t.lines() == (size_t)index.position(mirror.size()).line + 1;
+                std::vector<size_t> at;
+                for (int k = 0; k < 200; k++) at.push_back(rng() % (mirror.size() + 1));
+                for (size_t e = 0; e <= mirror.size(); e += Lsp::SyncedText::kChunk / 4)
+                    for (size_t d = 0; d < 3; d++)
+                        if (e + d >= 1) at.push_back(std::min(mirror.size(), e + d - 1));
+                for (size_t k : at) same = same && t.position(k) == index.position(k);
+                for (size_t k = 0; k < mirror.size() && same && k < 64; k++)
+                    same = t.at(k) == mirror[k];
+                maxChunks = std::max(maxChunks, t.chunks());
+                bounded = bounded &&
+                          t.chunks() <= mirror.size() / (Lsp::SyncedText::kChunk / 4) + 1;
+            }
+        }
+        CHECK(same && bounded);
+        if (!bounded) std::printf("  as many as %zu chunks\n", maxChunks);
+        // A \r ending one chunk and a \n starting the next are one break.
+        std::u16string edge(Lsp::SyncedText::kChunk - 1, u'a');
+        edge += u"\r\nb";
+        Lsp::SyncedText e(edge);
+        CHECK(e.chunks() == 2 && e.lines() == 2 &&
+              e.position(edge.size() - 1) == (Lsp::Position{1, 0}));
+        e.replace(Lsp::SyncedText::kChunk, Lsp::SyncedText::kChunk + 1, u"c");   // \rcb
+        CHECK(e.lines() == 2 && e.position(Lsp::SyncedText::kChunk) == (Lsp::Position{1, 0}));
+        e.replace(Lsp::SyncedText::kChunk, Lsp::SyncedText::kChunk, u"\n");      // \r\ncb
+        CHECK(e.lines() == 2 && e.position(Lsp::SyncedText::kChunk + 1) == (Lsp::Position{1, 0}));
     }
 
     GROUP("lsp:sync-oracle");
@@ -106,7 +171,7 @@ static void testLspSync() {
                 // A lone surrogate, which an edit can leave, does not
                 // survive UTF-8 on the wire: the server holds U+FFFD there.
                 const std::u16string expect = Lsp::toUtf16(Lsp::toUtf8(buffer));
-                const std::u16string *copy = client.textFor(uri);
+                auto copy = client.textFor(uri);
                 if (server != expect || !copy || *copy != buffer) wrong++;
             }
             ranged += client.rangedChangesSent();
@@ -137,7 +202,7 @@ static void testLspSync() {
             t.edit(10, 0, 1);
             client.didChange("file:///p/b.py", buffer.size(), t,
                              [&](size_t a, size_t n) { return buffer.substr(a, n); });
-            const std::u16string *copy = client.textFor("file:///p/b.py");
+            auto copy = client.textFor("file:///p/b.py");
             CHECK(copy && client.rangedChangesSent() == 1);
             if (checking) {
                 CHECK(client.syncRepairs() == 1 && *copy == buffer && client.fullChangesSent() == 1);
@@ -208,5 +273,52 @@ static void testLspSync() {
         std::printf("  sync: a 2.5 MB file's flush %.2f ms of CPU (whole-text way %.2f ms)\n",
                     flush, baseline);
         CHECK(flush < baseline / 2 || flush < 1.0);
+    }
+
+    GROUP("lsp:sync-scale");
+    {
+        // A flush costs what was typed, not the file: 300 flushes of two
+        // edits each (one near the start, one in the middle, a line break
+        // among them now and then) in a 1 MB text and in a 16 MB one. The
+        // copy as one string moved its whole tail and shifted every later
+        // line start per edit, about 2 ms a flush at 16 MB.
+        auto run = [](size_t units, bool &right) {
+            size_t bytes = 0;
+            Lsp::Client client([&](const std::string &b) { bytes += b.size(); });
+            client.initialize("/p", 1);
+            client.receive(reply(1, "{\"capabilities\":{\"textDocumentSync\":2}}"));
+            std::u16string buffer;
+            buffer.reserve(units + 64);
+            while (buffer.size() < units)
+                buffer += u"    let value_" + Lsp::toUtf16(std::to_string(buffer.size() % 997)) +
+                          u" = compute(é, 42);\n";
+            client.didOpen("file:///p/big.rs", "rust", Lsp::toUtf8(buffer));
+            double spent = 0;
+            for (int i = 0; i < 300; i++) {
+                Lsp::ChangeTracker t;
+                const size_t mid = buffer.size() / 2 + (size_t)i * 7;
+                const std::u16string typed = i % 25 == 0 ? u"\n" : u"x";
+                buffer.insert(mid, typed);
+                t.edit(mid, 0, typed.size());
+                buffer.erase(20 + (size_t)i, 1);
+                t.edit(20 + (size_t)i, 1, 0);
+                const double t0 = cpuMs();
+                client.didChange("file:///p/big.rs", buffer.size(), t,
+                                 [&](size_t a, size_t n) { return buffer.substr(a, n); });
+                spent += cpuMs() - t0;
+            }
+            right = client.rangedChangesSent() == 300 && *client.textFor("file:///p/big.rs") ==
+                                                              buffer;
+            (void)bytes;
+            return spent;
+        };
+        bool smallRight = false, bigRight = false;
+        const double small = run(1u << 20, smallRight);
+        const double big = run(16u << 20, bigRight);
+        CHECK(smallRight && bigRight);
+        std::printf("  sync scale: 300 flushes %.2f ms of CPU at 1 MB, %.2f ms at 16 MB\n", small,
+                    big);
+        CHECK_TIME(big, 100);
+        CHECK(big < small * 4 + 15 || timingSkipped());
     }
 }
