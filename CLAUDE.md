@@ -88,7 +88,9 @@ opening comment says what it does in more detail than the lines below.
   macOS job also builds `make dist-zip RELEASE=1` and checks it as
   release.sh does (`nm`, the zip's contents, check-minos); the Android
   release job signs with a key made in the job (`keytool`, random
-  password), never the owner's release key.
+  password), never the owner's release key. Every job has a
+  `timeout-minutes` (macOS 40, tsan 45, the rest 20; `ci:timeouts` checks
+  a new job has one), so a hang never holds a runner for six hours.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos

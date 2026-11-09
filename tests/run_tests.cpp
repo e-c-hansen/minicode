@@ -10403,6 +10403,7 @@ static void testMultiCaretOccurrences() {
 #include "preview_scroll_tests.inc"
 #include "quick_diff_tests.inc"
 #include "zsh_integration_tests.inc"
+#include "ppa_wait_tests.inc"
 #include "lexer_styles_tests.inc"
 #include "bracket_pairs_tests.inc"
 #include "terminal_layout_tests.inc"
@@ -10437,6 +10438,7 @@ int main() {
     testTerminalHyperlinks();
     testTerminalPaste();
     testZshIntegration();
+    testCiTimeouts();
     testTerminalMarks();
     testTerminalDraw();
     testTerminalVt();
