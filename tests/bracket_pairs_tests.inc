@@ -263,6 +263,89 @@ static void testBracketPairs() {
         CHECK(d.lineCount() == 0 && d.depthAt(0) == 0);
     }
 
+    GROUP("bracketpairs:painted-edits");
+    {
+        // The current spans follow random batches of edits, against a
+        // character-by-character model that applies each edit as it comes.
+        using Spans = std::vector<std::pair<size_t, size_t>>;
+        auto toSpans = [](const std::vector<bool> &v) {
+            Spans s;
+            for (size_t i = 0; i < v.size(); ++i) {
+                if (!v[i]) continue;
+                if (!s.empty() && s.back().second == i) s.back().second++;
+                else s.push_back({i, i + 1});
+            }
+            return s;
+        };
+        std::mt19937 rng(20261108);
+        int batches = 0, refused = 0;
+        bool ok = true;
+        for (int round = 0; round < 400 * kFuzzScale && ok; ++round) {
+            std::vector<bool> model(50 + rng() % 200);
+            for (size_t i = 0; i < model.size(); ++i) model[i] = rng() % 5 != 0;
+            Spans spans = toSpans(model);
+            PaintedEdits pe;
+            const int kind = round % 3;   // descending, ascending, any order
+            size_t cursor = kind == 0 ? model.size() : 0;
+            for (int e = 0; e < 30; ++e) {
+                size_t at, oldLen;
+                if (kind == 0) {          // last first, as replaceRanges: makes them
+                    if (cursor == 0) break;
+                    oldLen = rng() % 4;
+                    const size_t room = cursor - std::min(cursor, oldLen);
+                    at = room ? rng() % (room + 1) : 0;
+                    oldLen = std::min(oldLen, cursor - at);
+                } else if (kind == 1) {   // first first
+                    if (cursor > model.size()) break;
+                    at = cursor + rng() % (model.size() - cursor + 1);
+                    oldLen = std::min<size_t>(rng() % 4, model.size() - at);
+                } else {
+                    at = rng() % (model.size() + 1);
+                    oldLen = std::min<size_t>(rng() % 4, model.size() - at);
+                }
+                const size_t newLen = rng() % 4;
+                const bool cut = rng() % 9 == 0;
+                if (!pe.add(at, oldLen, newLen, cut)) {
+                    ++refused;
+                    spans = pe.apply(spans);
+                    pe.clear();
+                    ++batches;
+                    if (!pe.add(at, oldLen, newLen, cut)) ok = false;
+                }
+                model.erase(model.begin() + (long)at, model.begin() + (long)(at + oldLen));
+                model.insert(model.begin() + (long)at, newLen, false);
+                if (cut)
+                    for (size_t i = at; i < model.size(); ++i) model[i] = false;
+                cursor = kind == 0 ? at : at + newLen;
+            }
+            spans = pe.apply(spans);
+            ++batches;
+            if (spans != toSpans(model)) {
+                ok = false;
+                std::printf("  painted edits differ from the model in round %d\n", round);
+            }
+        }
+        CHECK(ok);
+        CHECK(refused > 0);   // the any-order rounds were split into batches
+        // A letter typed over 10,000 and 40,000 selections, last first:
+        // linear (moving the spans at each edit was quadratic).
+        double ms[2];
+        for (int r = 0; r < 2; ++r) {
+            const size_t n = r ? 40000 : 10000;
+            const double t0 = cpuMs();
+            PaintedEdits big;
+            for (size_t k = n; k-- > 0;) CHECK(big.add(k * 20, 5, 1, false));
+            const Spans after = big.apply({{0, n * 20}});
+            ms[r] = cpuMs() - t0;
+            CHECK(after.size() == n && after[1].first == 17 && after[1].second == 32);
+        }
+        std::printf("  painted spans through 10,000 edits %.2f ms, 40,000 %.2f ms of CPU\n",
+                    ms[0], ms[1]);
+        CHECK_TIME(ms[1], 40);
+        CHECK_TIME(ms[1], 8 * ms[0] + 5);   // four times the edits, about four times the time
+        (void)batches;
+    }
+
     GROUP("bracketpairs:speed");
     {
         // 100,000 lines: summing them all, then a thousand one-line edits

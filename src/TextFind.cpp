@@ -265,6 +265,9 @@ std::shared_ptr<Worker> startWorker() {
 // A pattern the linear engine refuses: std::regex, run on a worker.
 struct Fallback {
     std::shared_ptr<const StdRegex> re;
+    // The same with ^ never holding (withoutLineStart), for searches from
+    // inside a line; `re` itself when the pattern has no ^.
+    std::shared_ptr<const StdRegex> inside;
     std::mutex callers;   // one search at a time
     std::shared_ptr<Worker> worker;
     std::atomic<bool> tooSlow{false};
@@ -342,6 +345,60 @@ struct Query::Impl {
     std::shared_ptr<Fallback> slow;             // else std::regex
 };
 
+// `pattern` with every ^ that is an assertion (not escaped, not in a
+// class) replaced by one that never holds, (?:\b\B); nothing else
+// changes, groups included. A search from inside a line runs it: neither
+// library offers a public flag that keeps ^ from matching where a search
+// starts while letting \b see the character before (libc++ drops
+// match_not_bol beside match_prev_avail). *changed says whether there was
+// one.
+static std::u32string withoutLineStart(const std::u32string& p, bool* changed) {
+    std::u32string out;
+    out.reserve(p.size() + 8);
+    *changed = false;
+    bool inClass = false;
+    const std::size_t n = p.size();
+    for (std::size_t i = 0; i < n;) {
+        const char32_t c = p[i];
+        if (c == U'\\') {   // an escape: it and the character after it
+            out.append(p, i, std::min<std::size_t>(2, n - i));
+            i += 2;
+            continue;
+        }
+        if (inClass) {
+            // [:alpha:], [.x.] and [=e=] inside a class run to their own ":]".
+            if (c == U'[' && i + 1 < n && (p[i + 1] == U':' || p[i + 1] == U'.' || p[i + 1] == U'=')) {
+                const char32_t close[3] = {p[i + 1], U']', 0};
+                const std::size_t e = p.find(close, i + 2);
+                const std::size_t to = e == std::u32string::npos ? n : e + 2;
+                out.append(p, i, to - i);
+                i = to;
+                continue;
+            }
+            if (c == U']') inClass = false;
+            out.push_back(c);
+            ++i;
+            continue;
+        }
+        if (c == U'[') {   // a class; a ^ first in it negates it
+            inClass = true;
+            out.push_back(c);
+            ++i;
+            if (i < n && p[i] == U'^') out.push_back(p[i++]);
+            continue;
+        }
+        if (c == U'^') {
+            out += U"(?:\\b\\B)";
+            *changed = true;
+            ++i;
+            continue;
+        }
+        out.push_back(c);
+        ++i;
+    }
+    return out;
+}
+
 static std::shared_ptr<const Query::Impl> compile(const std::u32string& pattern,
                                                   const Options& options, bool linear,
                                                   std::string* error) {
@@ -364,6 +421,18 @@ static std::shared_ptr<const Query::Impl> compile(const std::u32string& pattern,
         if (linear) impl->vm = Regex::compile(pattern, !options.caseSensitive);
         if (!impl->vm) {
             impl->slow = std::make_shared<Fallback>();
+            impl->slow->inside = re;
+            bool changed = false;
+            const std::u32string inside = withoutLineStart(pattern, &changed);
+            if (changed) {
+                try {
+                    impl->slow->inside = std::make_shared<const StdRegex>(
+                        std::wstring(inside.begin(), inside.end()), flags);
+                } catch (const std::regex_error&) {
+                    // Cannot happen (an assertion stands where one stood);
+                    // were it to, ^ would match where a search starts.
+                }
+            }
             impl->slow->re = std::move(re);
         }
     } else {
@@ -518,9 +587,10 @@ bool matchLinear(const Query::Impl& q, const std::u32string& line, std::vector<C
 // folded text puts the character itself in the lower-case range. A line
 // over kSteppedLine is searched a start position at a time, polling `cancel`
 // and giving up after about a second. Returns false when `cancel` stopped it.
-bool matchBacktracking(const Options& opt, const StdRegex& re, const std::u32string& line32,
-                       std::vector<CpMatch>& out, std::size_t limit,
-                       const std::atomic<bool>* cancel) {
+// `inside` is `re` without ^ (Fallback::inside), for searches from p > 0.
+bool matchBacktracking(const Options& opt, const StdRegex& re, const StdRegex& inside,
+                       const std::u32string& line32, std::vector<CpMatch>& out,
+                       std::size_t limit, const std::atomic<bool>* cancel) {
     namespace rc = std::regex_constants;
     using Results = std::match_results<const wchar_t*>;
     const std::size_t n = line32.size();
@@ -539,30 +609,26 @@ bool matchBacktracking(const Options& opt, const StdRegex& re, const std::u32str
     bool stop = false, stopped = false;
     // From inside the line: match_prev_avail (\b looks at the character
     // before), and ^ must not match. libstdc++ takes that from
-    // match_prev_avail itself (or match_not_bol); libc++ ignores
-    // match_not_bol beside it and lets ^ match at the start of any search,
-    // except one flagged with its own __no_update_pos, which is how its
-    // regex_iterator searches on from a match.
+    // match_prev_avail itself; libc++ drops match_not_bol beside it and
+    // lets ^ match at the start of any search, except one flagged with its
+    // private __no_update_pos (how its regex_iterator searches on from a
+    // match). So a search from inside runs the pattern without its ^.
     auto flagsAt = [](std::size_t p) {
-        if (p == 0) return rc::match_default;
-#ifdef _LIBCPP_VERSION
-        return rc::match_prev_avail | rc::match_not_bol | rc::__no_update_pos;
-#else
-        return rc::match_prev_avail | rc::match_not_bol;
-#endif
+        return p == 0 ? rc::match_default : rc::match_prev_avail;
     };
+    auto reAt = [&](std::size_t p) -> const StdRegex& { return p == 0 ? re : inside; };
     // The first match starting at or after `from` (not an empty one at
     // `from` when notNull), into m.
     auto next = [&](std::size_t from, bool notNull, Results& m) -> bool {
         if (!stepped) {
             if (notNull) {
-                if (std::regex_search(b + from, e, m, re,
+                if (std::regex_search(b + from, e, m, reAt(from),
                                       flagsAt(from) | rc::match_not_null | rc::match_continuous))
                     return true;
                 if (from >= n) return false;
                 ++from;
             }
-            return std::regex_search(b + from, e, m, re, flagsAt(from));
+            return std::regex_search(b + from, e, m, reAt(from), flagsAt(from));
         }
         for (std::size_t p = from; p <= n; ++p) {
             // Before every attempt: one can itself cost a pass over the line.
@@ -581,7 +647,7 @@ bool matchBacktracking(const Options& opt, const StdRegex& re, const std::u32str
                 end = b + p + reach;
                 fl |= rc::match_not_eol | rc::match_not_eow;
             }
-            if (std::regex_search(b + p, end, m, re, fl)) return true;
+            if (std::regex_search(b + p, end, m, reAt(p), fl)) return true;
         }
         return false;
     };
@@ -618,7 +684,8 @@ bool matchBacktracking(const Options& opt, const StdRegex& re, const std::u32str
 bool matchLine(const Query::Impl& q, const std::u32string& line, std::vector<CpMatch>& out,
                std::size_t limit, const std::atomic<bool>* cancel = nullptr) {
     if (q.vm) return matchLinear(q, line, out, limit, cancel);
-    if (q.slow) return matchBacktracking(q.opt, *q.slow->re, line, out, limit, cancel);
+    if (q.slow)
+        return matchBacktracking(q.opt, *q.slow->re, *q.slow->inside, line, out, limit, cancel);
     matchPlain(q, line, out, limit);
     return true;
 }
@@ -633,10 +700,10 @@ bool matchLineGuarded(const Query::Impl& q, const std::u32string& line,
     auto result = std::make_shared<std::vector<CpMatch>>();
     auto lineCopy = std::make_shared<const std::u32string>(line);
     const Options opt = q.opt;
-    const std::shared_ptr<const StdRegex> re = q.slow->re;
+    const std::shared_ptr<const StdRegex> re = q.slow->re, inside = q.slow->inside;
     const Fallback::Ran ran = q.slow->run(
-        [opt, re, lineCopy, result, limit](const std::atomic<bool>& stop) {
-            matchBacktracking(opt, *re, *lineCopy, *result, limit, &stop);
+        [opt, re, inside, lineCopy, result, limit](const std::atomic<bool>& stop) {
+            matchBacktracking(opt, *re, *inside, *lineCopy, *result, limit, &stop);
         },
         cancel);
     if (ran != Fallback::Ran::Done) return false;
@@ -904,6 +971,7 @@ std::vector<Match> findAll(const std::u16string& text, const Query& query, std::
     job->q.opt = q->opt;
     job->q.slow = std::make_shared<Fallback>();
     job->q.slow->re = q->slow->re;
+    job->q.slow->inside = q->slow->inside;
     const Fallback::Ran ran = q->slow->run(
         [job, limit](const std::atomic<bool>& stop) {
             job->finished = findAllIn(job->text, job->q, limit, &job->truncated, &stop, job->out);

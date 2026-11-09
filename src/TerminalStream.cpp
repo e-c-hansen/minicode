@@ -517,6 +517,7 @@ uint16_t TermColorTable::intern(const TermColor& c) {
         colors_.push_back(c);
         id = (uint16_t)colors_.size();
     } else {
+        missed_ = true;
         return 0;                               // full: the text's color
     }
     ids_[k] = id;

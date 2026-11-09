@@ -75,10 +75,11 @@ struct TermStyle {
 
 // Colors given out as small ids, so a style can name one in two bytes (the
 // underline color). Id 0 is "none"; at most kMax ids are in use at once,
-// and with the table full intern() returns 0. Its owner frees ids nothing
-// uses any more with release() (the screen does, scanning its cells, when
-// full() and an SGR names a new color), as the OSC 8 link table does. Holds
-// no pointers, so a screen that owns one stays copyable.
+// and with the table full intern() returns 0 and notes it (missed()). Its
+// owner frees ids nothing uses any more with release() (the screen does,
+// scanning its cells, when an SGR's new color missed and enough output came
+// since its last scan), as the OSC 8 link table does. Holds no pointers, so
+// a screen that owns one stays copyable.
 class TermColorTable {
 public:
     static constexpr size_t kMax = 4095;
@@ -89,6 +90,10 @@ public:
     }
     size_t size() const { return ids_.size(); }
     bool full() const { return free_.empty() && colors_.size() >= kMax; }
+    // Whether an intern() since the last clearMissed() found no id for a
+    // new color (the table full).
+    bool missed() const { return missed_; }
+    void clearMissed() { missed_ = false; }
     // Frees every id whose used[id] is false (used has kMax + 1 entries).
     void release(const std::vector<bool>& used);
 
@@ -96,6 +101,7 @@ private:
     std::vector<TermColor> colors_;
     std::vector<uint16_t> free_;
     std::unordered_map<uint32_t, uint16_t> ids_;   // by key(), the ids in use
+    bool missed_ = false;
     static uint32_t key(const TermColor& c);
 };
 

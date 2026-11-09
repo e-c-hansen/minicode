@@ -97,4 +97,43 @@ private:
     size_t count_ = 0;
 };
 
+// Which characters' bracket colors are current (the Mac keeps them as
+// ascending, disjoint [start, end) spans) follows the text's edits. Moving
+// the spans at every edit is quadratic in a multi-range edit: its edits come
+// last first (CodeTextView replaceRanges:), each leaves a hole, and every
+// later edit moved all the holes after it again (0.44 s of the main thread
+// for a letter typed at 10,000 carets). Edits instead gather here, each
+// wholly before or wholly after those already here, as such an edit's are
+// (descending, or ascending as an undo may give them), kept in the
+// coordinates of the text before the first; apply then maps the spans
+// through all of them in one pass.
+class PaintedEdits {
+public:
+    // [at, at + oldLen) of the text as it is now became newLen characters.
+    // `cut`: nothing from `at` on stays current (the edit changed the depth
+    // the lines after it start at). Returns false, recording nothing, when
+    // the edit overlaps or falls between those gathered: apply them first,
+    // then add it again.
+    bool add(size_t at, size_t oldLen, size_t newLen, bool cut);
+    bool empty() const { return front_.empty() && back_.empty(); }
+    void clear();
+    // `spans` (ascending, disjoint [start, end) of the text before the
+    // edits) as they are after them: an edited character is no longer
+    // current, every other one moves with its text, and nothing at or after
+    // a cut is. Adjacent results are joined. Linear in spans and edits.
+    std::vector<std::pair<size_t, size_t>> apply(
+        const std::vector<std::pair<size_t, size_t>>& spans) const;
+
+private:
+    struct Edit {
+        size_t at, oldLen, newLen;   // `at` in the text before the first edit
+    };
+    std::vector<Edit> front_;   // each before the last (descending)
+    std::vector<Edit> back_;    // each after the last (ascending)
+    size_t low_ = 0;            // where the lowest edit starts (either text)
+    size_t highEnd_ = 0;        // where the highest one's new text ends, now
+    long long delta_ = 0;       // the change in length so far
+    size_t cut_ = SIZE_MAX;     // nothing from here (the old text) on is current
+};
+
 }  // namespace BracketPairs
