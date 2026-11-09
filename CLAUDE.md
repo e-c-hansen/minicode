@@ -647,7 +647,13 @@ container (PanelHost, laid out by hand in layoutContainer)
   NSTextView's undo, which reinserts what it kept) and
   `storedAttributesAtIndex:...` (the highlighter's compare, or every
   restyle of a hinted line set its colors again) leave them out, and
-  CodeTextView hides them while writing to a pasteboard.
+  CodeTextView hides them while writing to a pasteboard. A gap at a
+  paragraph's start (offset 0, after \n, \r or U+2029; 2026-11-08) is the
+  first-line indent of the paragraph style answered for its first
+  character instead (`MCGapParagraphStyle`; a kern on the break before
+  opens nothing), answered by name too; `fixAttributesInRange:` reads with
+  the gaps hidden (fixing writes a paragraph's first style over the rest)
+  and `setTypingAttributes:` puts the stored style back.
 - **Contiguous layout stays on**, except in large-file mode (below):
   everything that reads positions relies on exactness. Never call `numberOfGlyphs` on the editor; lay out only up to the
   character needed. `textDidChange:`'s copy into `sourceText` shares characters
@@ -1210,6 +1216,14 @@ container (PanelHost, laid out by hand in layoutContainer)
   `extends`, latexindent's `substitution` (Perl `eval`, which
   `switchesViaYaml` can turn on). Then any copy of the tool, the user's own
   command included, asks first, and Deny runs nothing (`Source::Refused`).
+  Prettier's and Biome's files are looked for up to `/`, past the open
+  folder and .git, as the tools look (2026-11-08: a repository with only
+  docs/ open ran its prettier.config.js unasked). A package runner
+  (`Formatter::launched`: npx, pnpx, bunx, `bun x`, `pnpm exec`/`dlx`, `npm
+  exec`, yarn) is the program it launches: that tool's configuration
+  counts, and with the folder's own node_modules/.bin copy (or a
+  package.json script, or yarn's bins) the runner is the folder's program
+  (`chooseLaunched`).
   `format.<lang> = prettier` alone (markdown, json, yaml, css, JS and TS
   files) is the opt-in for the user's own Prettier: the project's config
   where there is one, else `--prose-wrap preserve --config-precedence
@@ -1461,7 +1475,10 @@ view is disposed (on `unrealize`), or dispose loops forever.
   them (a choice stop's options are the completion list in `_choiceMode`).
   Mirrors are carets (`setCaretRanges:`). It ends at $0, on Esc, an undo or
   redo, a selection outside the stop (checked a turn later), or a
-  replacement swallowing the stop. Python's servers are told to send bare
+  replacement swallowing the stop. `$CLIPBOARD` reads the pasteboard only
+  when the snippet names it (`Context::readClipboard`), and placeholders
+  nest 64 deep at most (`Snippet.cpp` kMaxDepth; deeper is text as
+  written; bad input parses in linear time). Python's servers are told to send bare
   names (pylsp include_params and jedi's disableSnippets off;
   basedpyright's completeFunctionParens stays off). Trap: the session's
   boxes are invalidated a run-loop turn after a storage edit; asking the
@@ -1506,8 +1523,9 @@ view is disposed (on `unrealize`), or dispose loops forever.
   Only a Ready server that offers them is asked. `shortenInlayLabels` is
   VS Code's maximumLength 43 per line. A hint after a word follows it when
   typing lands right at it; one before an argument stays put
-  (`followsBefore`). Hints at a line's start are left out (no character
-  to open a gap after). basedpyright gets its `inlayHints` settings named
+  (`followsBefore`). A hint at a line's start goes with what follows it and
+  is a line-start gap (see "Gaps"); only one at the start of an empty last
+  line is left out. basedpyright gets its `inlayHints` settings named
   (1.40 has them on by default anyway). `editor.inlay-hints`,
   `editor.inlay-hint-color`, `editor.inlay-hint-background`. The label is
   drawn after the text in `drawRect:`, at the glyph box's right edge minus
