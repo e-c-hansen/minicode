@@ -1,6 +1,7 @@
 // InlineAgent.cpp — see InlineAgent.h.
 #include "InlineAgent.h"
 
+#include "LineDiff.h"
 #include "SideBySide.h"
 
 #include <algorithm>
@@ -452,7 +453,10 @@ std::string describeTool(const std::string& name, const Json& input) {
 
 bool Stream::feed(const std::string& bytes) {
     changed_ = false;
-    raw_ += bytes;
+    // The output as it came is the reply only while no line is JSON; once
+    // one is, it is never read, and with --verbose it would hold every
+    // tool result (whole files read) a second time.
+    if (!sawJson_) raw_ += bytes;
     pending_ += bytes;
     size_t from = 0;
     for (size_t nl = pending_.find('\n'); nl != std::string::npos; nl = pending_.find('\n', from)) {
@@ -460,6 +464,7 @@ bool Stream::feed(const std::string& bytes) {
         from = nl + 1;
     }
     pending_.erase(0, from);
+    if (sawJson_ && !raw_.empty()) std::string().swap(raw_);
     return changed_;
 }
 
@@ -713,6 +718,43 @@ size_t changedLines(const std::u16string& before, const std::u16string& after) {
         n += std::max(removed, added);
     }
     return n;
+}
+
+size_t moveOffset(const std::u16string& base, const std::u16string& now, size_t pos) {
+    if (base == now) return std::min(pos, now.size());
+    return LineDiff::mapOffset(base, now, LineDiff::diff(base, now), std::min(pos, base.size()));
+}
+
+bool sameChange(const std::u16string& base, const std::u16string& pending,
+                const std::u16string& now, const std::u16string& next) {
+    const std::vector<LineDiff::Hunk> shown = LineDiff::diff(base, pending, 40000, 0.25, false);
+    const std::vector<LineDiff::Hunk> made = LineDiff::diff(now, next, 40000, 0.25, false);
+    if (shown.size() != made.size()) return false;
+    const std::vector<LineDiff::Hunk> user = LineDiff::diff(base, now, 40000, 0.25, false);
+    for (size_t i = 0; i < shown.size(); i++) {
+        const LineDiff::Hunk &a = shown[i], &b = made[i];
+        if (base.compare(a.oldStart, a.oldLength, now, b.oldStart, b.oldLength) != 0 ||
+            pending.compare(a.newStart, a.newLength, next, b.newStart, b.newLength) != 0)
+            return false;
+        // The user changed none of the lines the run takes out (a run the
+        // user deleted or rewrote may be "found" again elsewhere), so the
+        // user's edits only moved it.
+        const size_t from = a.oldStart, to = a.oldStart + a.oldLength;
+        for (const LineDiff::Hunk &h : user) {
+            const size_t hFrom = h.oldStart, hTo = h.oldStart + h.oldLength;
+            if (hFrom == hTo ? hFrom > from && hFrom < to
+                             : hFrom < std::max(to, from + 1) && hTo > from)
+                return false;
+        }
+        // Where the user's edits moved the run: its start, or else its end
+        // (a line the user added right above it maps its start before
+        // that line).
+        if (LineDiff::mapOffset(base, now, user, a.oldStart) != b.oldStart &&
+            LineDiff::mapOffset(base, now, user, a.oldStart + a.oldLength) !=
+                b.oldStart + b.oldLength)
+            return false;
+    }
+    return true;
 }
 
 std::string commandPrompt(const CommandRequest& r) {

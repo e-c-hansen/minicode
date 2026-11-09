@@ -16,7 +16,11 @@
 #import "ProcessesPanel.h"
 #import "Terminal.h"
 #import "TerminalPanel.h"
+#import "TerminalAttention.h"
 
+#include <algorithm>
+#include <functional>
+#include <map>
 #include <netinet/in.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -494,6 +498,55 @@ MC_GUI_SUITE(processes) {
         GCHECK(MCGuiAlertsShown().count == s.alerts + 1);
     });
     MCGuiWait(@"it ends", 6, ^BOOL { return !Alive(s.outsidePid); });
+
+    // ------------------------------------------ R7.4: a process's session
+    // A program in the second terminal's foreground stands in for Claude
+    // Code: once a notify names a session in that terminal, what runs under
+    // the program has the session; a job started before it does not.
+    MCGuiStep(@"a program in the foreground of the second terminal, a child under it", ^{
+        [s.termB runCommand:@"sleep 403 & sh -c 'sleep 402 & wait'"];
+    });
+    MCGuiWait(@"its child is tracked", 15, ^BOOL {
+        return PidsNamed(s, s.termB, "sleep").size() == 2;
+    });
+    MCGuiStep(@"a notify names a session in that terminal", ^{
+        for (int p : PidsNamed(s, s.termB, "sleep")) [s.started addObject:@(p)];
+        Json args;
+        GCHECK(Json::parse("{\"state\":\"clear\",\"session_id\":\"r74-session\","
+                           "\"transcript_path\":\"/tmp/r74.jsonl\"}", args));
+        NSString *error = nil;
+        GCHECK([[MCTerminalAttention shared] applyNotify:args toTerminal:s.termB error:&error]);
+        GCHECK([[MCTerminalAttention shared] sessionTimeForTerminal:s.termB] > 0);
+    });
+    Sample(@"a look after the notify");
+    MCGuiStep(@"the program and its child have the session; the job started before has none", ^{
+        Procs::View v = [[MCProcessMonitor shared] viewForWindow:MCControlWindowID(s.c)
+                                                          folder:MCProcessRealPath(s.root)];
+        std::map<std::string, std::vector<std::string>> sessions;   // name -> sessions
+        std::function<void(const std::vector<Procs::Node> &)> walk = [&](const std::vector<Procs::Node> &ns) {
+            for (const Procs::Node &n : ns) {
+                if (n.proc.alive && n.proc.terminal == MCControlTerminalID(s.termB))
+                    sessions[Procs::displayName(n.proc)].push_back(n.proc.session);
+                walk(n.children);
+            }
+        };
+        for (const Procs::Group &g : v.groups) walk(g.roots);
+        GCHECK(sessions["sh"].size() == 1 && sessions["sh"][0] == "r74-session");
+        std::vector<std::string> sleeps = sessions["sleep"];
+        std::sort(sleeps.begin(), sleeps.end());
+        GCHECK(sleeps.size() == 2 && sleeps[0].empty() && sleeps[1] == "r74-session");
+        for (const Procs::Group &g : v.groups)
+            for (const Procs::Node &n : g.roots)
+                if (Procs::displayName(n.proc) == "sh") [s.started addObject:@(n.proc.key.pid)];
+    });
+    CLIStep(s, @"minicode procs --json carries it", @[@"procs", @"--json"], ^(int st, NSString *out, NSString *) {
+        GCHECK(st == 0);
+        NSUInteger withSession = 0;
+        for (NSDictionary *g in JSONOf(out)[@"groups"])
+            for (NSDictionary *p in g[@"processes"])
+                withSession += [p[@"session"] isEqual:@"r74-session"];
+        GCHECK(withSession == 2);
+    });
 
     // --------------------------------------------------------------- after
     MCGuiStep(@"the panel goes, the tree comes back", ^{

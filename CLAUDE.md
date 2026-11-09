@@ -2036,6 +2036,9 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   per hunk in a gutter between the panes (`rectForHunk:accept:`,
   `pressHunkButtonAtPoint:`, for tests); `acceptedText` is
   `SideBySide::assemble` of the accepted hunks (the right text when all).
+  The last hunk's choice sends the answer only after `lastChoiceGrace` (3 s;
+  `sending`, the bar's Send Now), so a misclick can be pressed again and
+  taken back; the bar's own buttons and closing the tab send at once.
   Trap: laying both panes out to size them took 1.5 s on the main thread
   for 50,000 lines a side; every row has one fixed height (a paragraph
   style), so sizes and row rects are arithmetic and layout is
@@ -2668,8 +2671,13 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   edit is pending, not made**: the session keeps every request's blocks
   (`_rounds`) and what they make of the buffer (`pendingText`), the bar shows
   `InlineAgent::pendingDiff` (SideBySide's rows and word changes), the lines
-  it replaces are tinted red; Return (Keep) applies the rounds again to the
-  buffer as it is then and puts the result in through `replaceSourceWithText:`
+  it replaces are tinted red (lines only added: the line above underlined
+  green, its break tinted); Return (Keep) applies the rounds again to the
+  buffer as it is then, placed by the selection they were shown with moved
+  through the user's edits (`InlineAgent::moveOffset`), never the caret of
+  the moment, and when that is not the change the bar showed
+  (`InlineAgent::sameChange`) the bar shows the new diff and waits for
+  Return again; else the result goes in through `replaceSourceWithText:`
   as one undo step; Esc drops it, nothing to restore. A bar closed from
   elsewhere with an edit waiting says in the status bar that it was not made.
   Commands are typed, never run. `make guitest SUITES=agent_panel` streams
@@ -2771,7 +2779,10 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   waits with its tab (`MCNoteState.pending`) and is placed when it is shown.
   The user's own steps (Option+], a click) always show.
 - **Notes** (`AgentNotes.mm`): a layout-manager highlight and a box over the
-  text view, never in the file or its undo; upper third; closed by Escape, ×,
+  text view, never in the file or its undo; upper third (in large-file mode
+  the line's place is an estimate, so it is read again after laying out
+  there until it stays put, as `scrollEditorToCharacter:offset:` does);
+  closed by Escape, ×,
   or an edit touching its lines (undo does not bring it back); plain text up to
   500 characters (cleaned by the handlers too, bidi controls dropped); not
   persisted. They go in one agent preview tab per window (`agentPreview`,
@@ -2902,8 +2913,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   is made, not on first use, because its shell gets it as
   `MINICODE_TERMINAL_ID`, with `MINICODE_PID` (inherited ones are dropped).
   `minicode hooks --install` (run by the user only; backs up, merges, a second
-  run changes nothing; a symlinked settings.json stays a link,
-  `ClaudeHooks::writeSettingsFile`) adds `minicode notify --from-hook` to Claude Code's
+  run changes nothing; a symlinked settings.json stays a link and a
+  hard-linked one is written in place, `ClaudeHooks::writeSettingsFile`) adds `minicode notify --from-hook` to Claude Code's
   Notification, Stop, UserPromptSubmit and PostToolUse hooks; notify never
   starts minicode and with --from-hook prints nothing and exits 0 whatever
   happens. Core: `ClaudeHooks` (hook JSON, the settings merge) and
@@ -2942,8 +2953,15 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   `proc_pid_rusage` are Mach ticks: convert with the timebase. Stop checks
   each pid's start time before SIGTERM and again before the SIGKILL 3 s
   later. `minicode procs` samples once more before answering, and never
-  opens a window for `--folder`. Session (R7.4) is a field the terminals
-  could fill; nothing sets it yet.
+  opens a window for `--folder`. Session (R7.4): each terminal's session is
+  the attention board's (the last `minicode notify`, with its time); the
+  Tracker takes the newest child of the shell started before that notify
+  (Claude Code holds the foreground while its hooks run) as the session's
+  process, or the shell itself after `exec claude`, and a process under it
+  gets the session once, when first seen there, kept after (a `/clear`'s
+  new session labels only what starts after it; a program run by hand
+  after Claude Code quit is nobody's). In `procs --json` and the row's
+  tooltip.
 - **Checks**: the `processes` suite starts a server (python3 found with
   `MCFindProgram`, else `nc -lk`) in its own terminal, disowns it, closes
   the terminal, stops the orphan; a sleep for Stop's question; a server

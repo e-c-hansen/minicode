@@ -48,8 +48,15 @@
 // rejects all of it. Either ends the decision.
 - (void)decide:(BOOL)accepted;
 // One hunk: accepted (1), rejected (-1) or undecided again (0). When no
-// hunk is left undecided, the decision ends: accepted if any hunk was.
+// hunk is left undecided, the decision ends `lastChoiceGrace` seconds later
+// (3; 0 ends it at once): accepted if any hunk was. Until then `sending` is
+// YES, the bar says the answer is about to go and offers Send Now, and a
+// press on a hunk's button takes its choice back as before.
 - (void)decideHunk:(NSUInteger)hunk as:(NSInteger)choice;
+@property(nonatomic) NSTimeInterval lastChoiceGrace;
+@property(nonatomic, readonly) BOOL sending;
+// Ends the grace at once (the bar's Send Now; closing the tab meanwhile).
+- (void)sendNow;
 // A hunk's own choice (1, -1, or 0 while undecided).
 - (NSInteger)decisionOfHunk:(NSUInteger)hunk;
 // The bar's buttons once some hunks are decided: every hunk still

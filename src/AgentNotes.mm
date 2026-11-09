@@ -371,23 +371,36 @@ static NSRange MCBand(NSString *s, NSRange range) {
     _view.needsDisplay = YES;
 }
 
-// Scrolls so that `lineTop` (in the text view) is `above` points below the
-// top of the pane, as near as the text's length allows.
-static void MCScrollLine(NSTextView *tv, CGFloat lineTop, CGFloat above) {
+// Scrolls so that the line holding character `index` is `above` points
+// below the top of the pane, as near as the text's length allows. Laid out
+// a screen past it too, or the text view is still only as tall as the
+// layout so far and the scroll stops short (the line ends up at the bottom
+// of the pane). With non-contiguous layout (large-file mode) not from the
+// top, and the line's place is an estimate that laying out around it moves:
+// it is read again after each layout and the scroll redone until it stays
+// put, as the editor's own restore does (scrollEditorToCharacter:offset:).
+- (void)scrollToCharacter:(NSUInteger)index above:(CGFloat)above in:(NSTextView *)tv {
     NSScrollView *scroll = tv.enclosingScrollView;
     if (!scroll) return;
     NSClipView *clip = scroll.contentView;
     const CGFloat H = NSHeight(clip.bounds);
-    // Laid out a screen past it too, or the text view is still only as tall
-    // as the layout so far and the scroll stops short (the line ends up at
-    // the bottom of the pane).
-    const CGFloat from = tv.layoutManager.allowsNonContiguousLayout ? MAX(0, lineTop - H) : 0;
-    [tv.layoutManager ensureLayoutForBoundingRect:NSMakeRect(0, from, CGFLOAT_MAX,
-                                                             lineTop + 2 * H - from)
-                                  inTextContainer:tv.textContainer];
-    CGFloat y = MIN(lineTop - above, NSHeight(tv.frame) - H);
-    [clip scrollToPoint:NSMakePoint(clip.bounds.origin.x, MAX(0, y))];
-    [scroll reflectScrolledClipView:clip];
+    const BOOL estimated = tv.layoutManager.allowsNonContiguousLayout;
+    NSRect r = [self lineRectAt:index in:tv];
+    for (int pass = 0; pass < 4; pass++) {
+        const CGFloat lineTop = NSMinY(r);
+        const CGFloat from = estimated ? MAX(0, lineTop - H) : 0;
+        [tv.layoutManager ensureLayoutForBoundingRect:NSMakeRect(0, from, CGFLOAT_MAX,
+                                                                 lineTop + 2 * H - from)
+                                      inTextContainer:tv.textContainer];
+        if (estimated) r = [self lineRectAt:index in:tv];
+        const CGFloat y = MIN(NSMinY(r) - above, NSHeight(tv.frame) - H);
+        [clip scrollToPoint:NSMakePoint(clip.bounds.origin.x, MAX(0, y))];
+        [scroll reflectScrolledClipView:clip];
+        if (!estimated) break;
+        const NSRect now = [self lineRectAt:index in:tv];
+        if (NSMinY(now) == NSMinY(r)) break;
+        r = now;
+    }
 }
 
 // The range's first line a third of the way down the pane, with room for
@@ -396,10 +409,11 @@ static void MCScrollLine(NSTextView *tv, CGFloat lineTop, CGFloat above) {
     NSTextView *tv = _observed;
     NSScrollView *scroll = tv.enclosingScrollView;
     if (!_shown || !scroll) return;
-    const NSRect first = [self lineRectAt:_shown.range.location in:tv];
     const CGFloat H = NSHeight(scroll.contentView.bounds);
     const CGFloat noteH = _view.superview ? NSHeight(_view.frame) + 12 : 0;
-    MCScrollLine(tv, NSMinY(first), MAX(round(H / 3), noteH));
+    [self scrollToCharacter:_shown.range.location above:MAX(round(H / 3), noteH) in:tv];
+    // The box goes over the line where it is now laid out.
+    [self placeView];
 }
 
 // ------------------------------------------------------------------- API
@@ -478,8 +492,7 @@ static void MCScrollLine(NSTextView *tv, CGFloat lineTop, CGFloat above) {
     NSUInteger at = column > 0 ? MCColumn(s, ls, le, column) : ls;
     tv.selectedRange = NSMakeRange(at, 0);
     if (NSScrollView *scroll = tv.enclosingScrollView)
-        MCScrollLine(tv, NSMinY([self lineRectAt:at in:tv]),
-                     round(NSHeight(scroll.contentView.bounds) / 3));
+        [self scrollToCharacter:at above:round(NSHeight(scroll.contentView.bounds) / 3) in:tv];
     if (le > ls && tv.window) [tv showFindIndicatorForRange:NSMakeRange(ls, le - ls)];
     return YES;
 }

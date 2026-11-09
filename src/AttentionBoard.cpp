@@ -70,6 +70,11 @@ const Session *Board::session(int terminal) const {
     return it == entries_.end() || it->second.session.empty() ? nullptr : &it->second.session;
 }
 
+double Board::sessionTime(int terminal) const {
+    auto it = entries_.find(terminal);
+    return it == entries_.end() || it->second.session.empty() ? 0 : it->second.sessionTime;
+}
+
 int Board::terminalFor(const std::string &sessionId, const std::string &transcript) const {
     int best = 0;
     double bestTime = -1;
