@@ -1,6 +1,8 @@
 // EditorTabs.cpp — see EditorTabs.h.
 #include "EditorTabs.h"
 
+#include <algorithm>
+#include <cmath>
 #include <set>
 
 namespace EditorTabs {
@@ -170,6 +172,54 @@ PreviewPlace placePreview(int active, int preview, int count) {
     }
     p.index = target;
     return p;
+}
+
+int moveTarget(int focused, bool split, int direction) {
+    if (!split) return direction > 0 ? 1 : -1;
+    if (direction > 0) return focused == 0 ? 1 : -1;
+    return focused == 1 ? 0 : -1;
+}
+
+double leftGroupWidth(double total, double fraction, double minWidth) {
+    if (total <= 0) return 0;
+    if (!(fraction > 0 && fraction < 1)) fraction = 0.5;
+    if (total < 2 * minWidth) return std::round(total / 2);
+    return std::min(std::max(std::round(total * fraction), minWidth), total - minWidth);
+}
+
+GroupLayout restoreGroups(const GroupsSession &saved, const std::vector<std::string> &open) {
+    GroupLayout out;
+    const int focused = saved.focused == 1 ? 1 : 0;
+    std::vector<bool> placed(open.size(), false);
+    for (int g = 0; g < 2; g++) {
+        std::set<int> seen;
+        for (const std::string &f : saved.groups[g]) {
+            for (size_t i = 0; i < open.size(); i++) {
+                if (open[i] != f || seen.count((int)i)) continue;
+                seen.insert((int)i);
+                out.groups[g].push_back((int)i);
+                placed[i] = true;
+                break;
+            }
+        }
+    }
+    for (size_t i = 0; i < open.size(); i++)
+        if (!placed[i]) out.groups[focused].push_back((int)i);
+    if (out.groups[0].empty() || out.groups[1].empty()) return GroupLayout();
+    out.split = true;
+    out.focused = focused;
+    for (int g = 0; g < 2; g++) {
+        out.active[g] = 0;
+        for (size_t k = 0; k < out.groups[g].size(); k++)
+            if (open[(size_t)out.groups[g][k]] == saved.active[g]) {
+                out.active[g] = (int)k;
+                break;
+            }
+    }
+    double f = saved.fraction;
+    if (!(f >= 0.15)) f = f > 0 ? 0.15 : 0.5;
+    out.fraction = std::min(f, 0.85);
+    return out;
 }
 
 }  // namespace EditorTabs

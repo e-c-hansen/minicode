@@ -109,4 +109,44 @@ struct PreviewPlace {
 };
 PreviewPlace placePreview(int active, int preview, int count);
 
+// ---- Editor groups (VS Code's Split Editor), two at most, side by side
+// Each group has its own row of tabs; one file open in both is one
+// document shown twice. Group 0 is the left one.
+
+// Where "Move Editor into Next Group" (direction 1) or "into Previous
+// Group" (-1) sends the tab on show from group `focused`: the other group,
+// a new group to the right when there is only one (as VS Code makes one),
+// or -1 when there is none that way.
+int moveTarget(int focused, bool split, int direction);
+
+// The left group's width out of `total`, for its share `fraction`: neither
+// group narrower than `minWidth` while there is room for both, else halves.
+double leftGroupWidth(double total, double fraction, double minWidth);
+
+// A remembered split: each group's files in tab order, each group's file on
+// show, which group had the keyboard, and the left group's share of the
+// width.
+struct GroupsSession {
+    std::vector<std::string> groups[2];
+    std::string active[2];
+    int focused = 0;
+    double fraction = 0.5;
+};
+
+// The split laid out again over the files that were reopened (`open`, in
+// tab order): `groups` hold indices into `open`, each group its own files
+// that are open, in its order, once each; a reopened file neither group
+// named (a backup's, another window's) joins the focused group. `active`
+// is an index into its group (its file, else the first). With a group left
+// empty there is no split (`split` false, everything else unset). The share
+// is kept between 0.15 and 0.85.
+struct GroupLayout {
+    bool split = false;
+    std::vector<int> groups[2];
+    int active[2] = {-1, -1};
+    int focused = 0;
+    double fraction = 0.5;
+};
+GroupLayout restoreGroups(const GroupsSession &saved, const std::vector<std::string> &open);
+
 }  // namespace EditorTabs

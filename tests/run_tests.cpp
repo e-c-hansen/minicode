@@ -8755,6 +8755,78 @@ static void testEditorTabs() {
         CHECK(p.replace == -1 && p.index == 2);
     }
 
+    GROUP("tabs:group-move");
+    CHECK(moveTarget(0, false, 1) == 1);    // one group: a new one to the right
+    CHECK(moveTarget(0, false, -1) == -1);  // nothing to the left
+    CHECK(moveTarget(0, true, 1) == 1);
+    CHECK(moveTarget(1, true, 1) == -1);    // two at most
+    CHECK(moveTarget(1, true, -1) == 0);
+    CHECK(moveTarget(0, true, -1) == -1);
+
+    GROUP("tabs:group-width");
+    CHECK(leftGroupWidth(1000, 0.5, 150) == 500);
+    CHECK(leftGroupWidth(1000, 0.05, 150) == 150);   // never narrower than the minimum
+    CHECK(leftGroupWidth(1000, 0.95, 150) == 850);
+    CHECK(leftGroupWidth(200, 0.9, 150) == 100);     // no room for both: halves
+    CHECK(leftGroupWidth(1000, 0, 150) == 500);      // no share: halves
+    CHECK(leftGroupWidth(0, 0.5, 150) == 0);
+
+    GROUP("tabs:group-restore");
+    {   // each group its own files, in its order, the active ones found
+        GroupsSession s;
+        s.groups[0] = {"/a", "/b"};
+        s.groups[1] = {"/c", "/a"};
+        s.active[0] = "/b";
+        s.active[1] = "/a";
+        s.focused = 1;
+        s.fraction = 0.4;
+        GroupLayout l = restoreGroups(s, {"/a", "/b", "/c"});
+        CHECK(l.split && l.focused == 1 && l.fraction == 0.4);
+        CHECK((l.groups[0] == std::vector<int>{0, 1}));
+        CHECK((l.groups[1] == std::vector<int>{2, 0}));   // one file in both
+        CHECK(l.active[0] == 1 && l.active[1] == 1);
+    }
+    {   // a file gone drops out; a file neither named joins the focused group
+        GroupsSession s;
+        s.groups[0] = {"/a", "/gone"};
+        s.groups[1] = {"/c"};
+        s.active[0] = "/gone";
+        s.active[1] = "/c";
+        GroupLayout l = restoreGroups(s, {"/a", "/c", "/backup"});
+        CHECK(l.split && l.focused == 0);
+        CHECK((l.groups[0] == std::vector<int>{0, 2}));
+        CHECK((l.groups[1] == std::vector<int>{1}));
+        CHECK(l.active[0] == 0 && l.active[1] == 0);   // its file gone: the first
+    }
+    {   // repeats count once
+        GroupsSession s;
+        s.groups[0] = {"/a", "/a"};
+        s.groups[1] = {"/b", "/b"};
+        GroupLayout l = restoreGroups(s, {"/a", "/b"});
+        CHECK((l.groups[0] == std::vector<int>{0}) && (l.groups[1] == std::vector<int>{1}));
+    }
+    {   // a group left empty: no split
+        GroupsSession s;
+        s.groups[0] = {"/a"};
+        s.groups[1] = {"/gone"};
+        CHECK(!restoreGroups(s, {"/a"}).split);
+        CHECK(!restoreGroups(GroupsSession(), {"/a", "/b"}).split);
+        CHECK(!restoreGroups(s, {}).split);
+    }
+    {   // the share stays in bounds; a missing one is half
+        GroupsSession s;
+        s.groups[0] = {"/a"};
+        s.groups[1] = {"/b"};
+        s.fraction = 0.01;
+        CHECK(restoreGroups(s, {"/a", "/b"}).fraction == 0.15);
+        s.fraction = 0.99;
+        CHECK(restoreGroups(s, {"/a", "/b"}).fraction == 0.85);
+        s.fraction = 0;
+        CHECK(restoreGroups(s, {"/a", "/b"}).fraction == 0.5);
+        s.focused = 7;
+        CHECK(restoreGroups(s, {"/a", "/b"}).focused == 0);
+    }
+
     GROUP("tabs:labels");
     CHECK((labels({"/p/a.txt", "/p/b.txt"}) == std::vector<std::string>{"a.txt", "b.txt"}));
     CHECK((labels({"/p/src/main.cpp", "/p/tests/main.cpp", "/p/x.h"}) ==
