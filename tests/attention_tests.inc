@@ -232,6 +232,16 @@ static void testClaudeHooks() {
         CHECK(!writeSettingsFile((dir / "loop1").string(), "x", 0600, err) && !err.empty());
         CHECK(!writeSettingsFile((dir / "claude").string(), "x", 0600, err) &&
               err.find("plain file") != std::string::npos);
+        // A hard link (AG-D5): both names see the new text, still one file,
+        // its mode kept; a shorter text leaves nothing of the longer one.
+        const fs::path original = dir / "dotfiles" / "hard.json", other = dir / "claude" / "hard.json";
+        { std::ofstream(original) << "{\"hooks\": {\"Stop\": []}, \"padding\": \"xxxxxxxxxxxx\"}"; }
+        ::chmod(original.c_str(), 0604);
+        fs::create_hard_link(original, other, ec);
+        CHECK(!ec && writeSettingsFile(other.string(), "{\"b\": 2}\n", 0600, err));
+        CHECK(read(original) == "{\"b\": 2}\n" && read(other) == "{\"b\": 2}\n");
+        CHECK(fs::hard_link_count(original, ec) == 2 && fs::equivalent(original, other, ec));
+        CHECK(::stat(other.c_str(), &st) == 0 && (st.st_mode & 07777) == 0604);
         fs::remove_all(dir, ec);
     }
 }

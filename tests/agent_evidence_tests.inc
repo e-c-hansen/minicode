@@ -89,6 +89,18 @@ static void testAgentEvidence() {
     CHECK(testCommand("uv run python -m unittest") == TestTool::Unittest);
     CHECK(testCommand("cd pkg && python3 -m unittest 2>&1 | tail -5") == TestTool::Unittest);
     CHECK(testCommand("python -m unittestish") == TestTool::None);
+    // Interpreter options with arguments before -m (AG-D6).
+    CHECK(testCommand("python -X dev -m unittest") == TestTool::Unittest);
+    CHECK(testCommand("python3 -W error -m pytest -q") == TestTool::Pytest);
+    CHECK(testCommand("python -X importtime -m pytest") == TestTool::Pytest);
+    CHECK(testCommand("python -Xdev -Werror::DeprecationWarning -m unittest") == TestTool::Unittest);
+    CHECK(testCommand("python -Bu -m pytest") == TestTool::Pytest);
+    CHECK(testCommand("python -Bm pytest") == TestTool::Pytest);
+    CHECK(testCommand("python -mpytest") == TestTool::Pytest);
+    CHECK(testCommand("python --check-hash-based-pycs never -m unittest") == TestTool::Unittest);
+    CHECK(testCommand("python -W ignore script.py -m pytest") == TestTool::None);
+    CHECK(testCommand("python -c 'import x' -m pytest") == TestTool::None);
+    CHECK(testCommand("python -X") == TestTool::None);
     CHECK(std::string(testToolName(TestTool::Unittest)) == "unittest");
     s = parseSummary("..s.\n----------------------------------------------------------------------\n"
                      "Ran 4 tests in 0.004s\n\nOK (skipped=1)\n");
