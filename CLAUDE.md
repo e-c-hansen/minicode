@@ -2263,7 +2263,9 @@ for full-screen programs. Both can be open at once.
   CR counts as a break). One line asks too when, unbracketed, it holds a
   control character other than Tab (2026-11-08: "echo hi" + Ctrl+O ran
   unasked), with Paste and Cancel only; the preview shows controls as
-  U+2400 symbols. Secure keyboard entry: TerminalView polls termios
+  U+2400 symbols, and when the first is past the first three lines' 30
+  characters a line saying where it is, with the 30 characters around it
+  (round 6's defect 4: the question showed none). Secure keyboard entry: TerminalView polls termios
   (after output, and four times a second while a command runs) and sets
   the grid's `hiddenInput` for ECHO off with ICANON on (ZLE and full-screen
   programs turn ICANON off); the grid calls Enable/DisableSecureEventInput

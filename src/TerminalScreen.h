@@ -394,7 +394,8 @@ public:
         int lines = 1;           // the lines the text holds
         // Its first three lines, each cut at 30 characters, control
         // characters shown as their symbols (U+2400 + c, U+2421 for DEL),
-        // Tab as a space.
+        // Tab as a space; then, when the first control character is not in
+        // them, "Line L, column C: " and the 30 characters around it.
         std::string preview;
     };
     static PasteCheck checkPaste(const std::string& text, bool bracketed,

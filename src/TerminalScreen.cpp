@@ -2198,23 +2198,56 @@ TerminalScreen::PasteCheck TerminalScreen::checkPaste(const std::string& text, b
         }
     }
     out.ask = true;
-    for (size_t i = 0; i < lines.size() && i < 3; i++) {
-        bool cut = false;
-        // Control characters as their symbols (they would draw oddly, or
-        // not at all, in the question), Tab as a space.
+    // Control characters as their symbols (they would draw oddly, or not
+    // at all, in the question), Tab as a space.
+    auto shown = [](const std::string& text) {
         std::string line;
-        for (char c : firstChars(lines[i], 30, cut)) {
+        for (char c : text) {
             const unsigned char u = (unsigned char)c;
             if (c == '\t') line += ' ';
             else if (u < 0x20) line += utf8Encode(0x2400 + u);
             else if (u == 0x7F) line += "\xE2\x90\xA1";   // U+2421 SYMBOL FOR DELETE
             else line += c;
         }
+        return line;
+    };
+    const std::string ellipsis = "\xE2\x80\xA6";   // …
+    for (size_t i = 0; i < lines.size() && i < 3; i++) {
+        bool cut = false;
         if (i) out.preview += '\n';
-        out.preview += line;
-        if (cut) out.preview += "\xE2\x80\xA6";   // …
+        out.preview += shown(firstChars(lines[i], 30, cut));
+        if (cut) out.preview += ellipsis;
     }
-    if (lines.size() > 3) out.preview += "\n\xE2\x80\xA6";
+    if (lines.size() > 3) out.preview += "\n" + ellipsis;
+    // A control character the lines above leave out (past a line's 30th
+    // character, or below its third line) gets a line of its own: where it
+    // is, and the 30 characters around it, so the question never says
+    // there are control characters and shows none.
+    if (out.controls) {
+        for (size_t i = 0; i < lines.size(); i++) {
+            const std::string& line = lines[i];
+            size_t at = 0, col = 0;
+            for (; at < line.size(); at++) {
+                const unsigned char u = (unsigned char)line[at];
+                if ((u < 0x20 && u != '\t') || u == 0x7F) break;
+                if ((u & 0xC0) != 0x80) col++;
+            }
+            if (at == line.size()) continue;
+            if (i < 3 && col < 30) break;          // already shown
+            // From 12 characters before it, back to a character's start.
+            size_t from = at, back = 0;
+            while (from > 0 && back < 12) {
+                from--;
+                if (((unsigned char)line[from] & 0xC0) != 0x80) back++;
+            }
+            bool cut = false;
+            const std::string window = firstChars(line.substr(from), 30, cut);
+            out.preview += "\nLine " + std::to_string(i + 1) + ", column " +
+                           std::to_string(col + 1) + ": " + (from > 0 ? ellipsis : "") +
+                           shown(window) + (cut ? ellipsis : "");
+            break;
+        }
+    }
     return out;
 }
 
