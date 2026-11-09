@@ -28,6 +28,12 @@
 //   would have expected searched: those larger than the limit and those
 //   not UTF-8, unless a NUL byte in their first 8 KB marks them binary
 //   (FileSniff's rule), since every picture and object file would be named.
+//   UTF-16 with a byte order mark is decoded and searched as ripgrep does
+//   (decodeUtf16; every such file has NULs, so until 2026-11-08 it fell
+//   out without a word): its matches' lines, columns and bytes are of the
+//   text decoded to UTF-8. Replace in Folder counts and replaces in one
+//   only when the decoding is exact (no lone surrogate), and writes it
+//   back in its own encoding (readTextFile, encodeText).
 // - Search stops at 2000 lines by default (the GTK port and Android); the
 //   Mac asks for 20,000, as VS Code stops.
 // - Folders are listed and files read and matched on a few threads (one
@@ -307,9 +313,29 @@ bool replaceMatchInText(const std::string& content, const std::string& query,
 // ending as search() ends them. False past the last line.
 bool lineAt(const std::string& content, int line, std::string* out);
 
+// How a text file's bytes are written: UTF-8, or UTF-16 with its byte
+// order mark (FF FE little-endian, FE FF big-endian).
+enum class TextEncoding { Utf8, Utf16LE, Utf16BE };
+
+// UTF-16 text that starts with its byte order mark, as ripgrep (and so VS
+// Code's search) reads it: into *utf8 without the mark, *encoding saying
+// which order. A lone surrogate, or an odd byte at the end, becomes U+FFFD,
+// unless `strict`, where either makes it fail (what Replace in Folder
+// writes back must be the file's own text again). False when `bytes` does
+// not start with a UTF-16 byte order mark.
+bool decodeUtf16(const std::string& bytes, std::string* utf8, TextEncoding* encoding,
+                 bool strict);
+
+// UTF-8 text written in `encoding`: as it is for Utf8, else as UTF-16 with
+// its byte order mark first (an invalid byte becomes U+FFFD).
+std::string encodeText(const std::string& utf8, TextEncoding encoding);
+
 // Read a file as search() does: a regular file (after symlinks) of at most
-// maxFileSize bytes holding valid UTF-8. False otherwise.
-bool readTextFile(const std::string& path, std::uintmax_t maxFileSize, std::string* out);
+// maxFileSize bytes holding valid UTF-8. False otherwise. With `encoding`,
+// UTF-16 with a byte order mark is read too (decodeUtf16, strict), into
+// UTF-8, and *encoding says how to write it back (encodeText).
+bool readTextFile(const std::string& path, std::uintmax_t maxFileSize, std::string* out,
+                  TextEncoding* encoding = nullptr);
 
 // What stat() says of a file (symlinks followed): enough to tell whether it
 // changed since it was last read or written.

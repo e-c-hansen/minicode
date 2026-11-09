@@ -50,6 +50,24 @@ char32_t decodeAt(const std::string& s, std::size_t i, std::size_t* len) {
     return cp;
 }
 
+void appendUtf8(std::string& out, char32_t cp) {
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+}
+
 std::size_t countChars(const std::string& s) {
     std::size_t n = 0;
     for (unsigned char c : s) if ((c & 0xC0) != 0x80) ++n;
@@ -285,10 +303,17 @@ bool looksBinary(const char* s, std::size_t n) {
     return std::memchr(s, 0, std::min<std::size_t>(n, 8192)) != nullptr;
 }
 
+bool hasUtf16Bom(const std::string& s) {
+    return s.size() >= 2 && ((s[0] == '\xFF' && s[1] == '\xFE') || (s[0] == '\xFE' && s[1] == '\xFF'));
+}
+
 // Read a file for searching: only a regular file (after symlinks), opened
-// without blocking so a pipe swapped in cannot hold the search.
+// without blocking so a pipe swapped in cannot hold the search. UTF-16
+// with its byte order mark comes back decoded to UTF-8; `strict` (Replace
+// in Folder's count) only when the decoding is exact, since that text is
+// what gets written back.
 FileKind readForSearch(const std::string& path, std::uintmax_t maxSize, std::string* out,
-                       std::uint64_t* dev, std::uint64_t* ino) {
+                       std::uint64_t* dev, std::uint64_t* ino, bool strict) {
     const int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) return FileKind::Silent;
     struct stat st;
@@ -313,7 +338,15 @@ FileKind readForSearch(const std::string& path, std::uintmax_t maxSize, std::str
     ::close(fd);
     out->resize(got);
     if (size > maxSize || got > maxSize)
-        return looksBinary(out->data(), out->size()) ? FileKind::Silent : FileKind::TooLarge;
+        return looksBinary(out->data(), out->size()) && !hasUtf16Bom(*out) ? FileKind::Silent
+                                                                            : FileKind::TooLarge;
+    if (hasUtf16Bom(*out)) {
+        std::string text;
+        TextEncoding encoding;
+        if (!decodeUtf16(*out, &text, &encoding, strict)) return FileKind::NotUtf8;
+        *out = std::move(text);
+        return FileKind::Searched;
+    }
     if (!isValidUtf8(*out))
         return looksBinary(out->data(), out->size()) ? FileKind::Silent : FileKind::NotUtf8;
     return FileKind::Searched;
@@ -347,7 +380,7 @@ struct Matcher {
         o.rel = job.rel;
         if (stopping()) return;
         std::string content;
-        o.kind = readForSearch(job.path, opt.maxFileSize, &content, &o.dev, &o.ino);
+        o.kind = readForSearch(job.path, opt.maxFileSize, &content, &o.dev, &o.ino, plan);
         if (opt.onFileRead) opt.onFileRead();
         if (o.kind != FileKind::Searched) return;
         if (useNeedle && needle.never) return;   // no line can match
@@ -1354,7 +1387,77 @@ bool replaceMatchInText(const std::string& content, const std::string& query,
                                       byteColumn, out);
 }
 
-bool readTextFile(const std::string& path, std::uintmax_t maxFileSize, std::string* out) {
+bool decodeUtf16(const std::string& bytes, std::string* utf8, TextEncoding* encoding,
+                 bool strict) {
+    if (!hasUtf16Bom(bytes)) return false;
+    const bool le = bytes[0] == '\xFF';
+    const std::size_t n = bytes.size();
+    if (strict && (n & 1)) return false;
+    auto unit = [&](std::size_t i) -> char32_t {
+        const unsigned a = static_cast<unsigned char>(bytes[i]);
+        const unsigned b = static_cast<unsigned char>(bytes[i + 1]);
+        return le ? (a | (b << 8)) : ((a << 8) | b);
+    };
+    std::string out;
+    out.reserve(n);
+    std::size_t i = 2;
+    while (i + 1 < n) {
+        char32_t cp = unit(i);
+        i += 2;
+        if (cp >= 0xD800 && cp < 0xE000) {
+            const char32_t low = cp < 0xDC00 && i + 1 < n ? unit(i) : 0;
+            if (low >= 0xDC00 && low < 0xE000) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                i += 2;
+            } else {
+                if (strict) return false;
+                cp = 0xFFFD;   // a lone surrogate
+            }
+        }
+        appendUtf8(out, cp);
+    }
+    if (i < n) appendUtf8(out, 0xFFFD);   // an odd last byte (not strict: refused above)
+    *utf8 = std::move(out);
+    *encoding = le ? TextEncoding::Utf16LE : TextEncoding::Utf16BE;
+    return true;
+}
+
+std::string encodeText(const std::string& utf8, TextEncoding encoding) {
+    if (encoding == TextEncoding::Utf8) return utf8;
+    const bool le = encoding == TextEncoding::Utf16LE;
+    std::string out;
+    out.reserve(utf8.size() * 2 + 2);
+    auto put = [&](unsigned u) {
+        const char hi = static_cast<char>(u >> 8), lo = static_cast<char>(u & 0xFF);
+        if (le) { out += lo; out += hi; }
+        else    { out += hi; out += lo; }
+    };
+    put(0xFEFF);
+    for (std::size_t i = 0; i < utf8.size();) {
+        const unsigned char c = static_cast<unsigned char>(utf8[i]);
+        const std::size_t len = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3
+                              : (c & 0xF8) == 0xF0 ? 4 : 0;
+        char32_t cp = 0xFFFD;
+        if (len && i + len <= utf8.size() && isValidUtf8(utf8.substr(i, len))) {
+            std::size_t got;
+            cp = decodeAt(utf8, i, &got);
+            i += len;
+        } else {
+            i += 1;
+        }
+        if (cp >= 0x10000) {
+            cp -= 0x10000;
+            put(0xD800 + static_cast<unsigned>(cp >> 10));
+            put(0xDC00 + static_cast<unsigned>(cp & 0x3FF));
+        } else {
+            put(static_cast<unsigned>(cp));
+        }
+    }
+    return out;
+}
+
+bool readTextFile(const std::string& path, std::uintmax_t maxFileSize, std::string* out,
+                  TextEncoding* encoding) {
     std::error_code ec;
     const fs::file_status st = fs::status(path, ec);
     if (ec || !fs::is_regular_file(st)) return false;
@@ -1366,7 +1469,15 @@ bool readTextFile(const std::string& path, std::uintmax_t maxFileSize, std::stri
     content.resize(static_cast<std::size_t>(size) + 1);
     in.read(&content[0], static_cast<std::streamsize>(content.size()));
     content.resize(static_cast<std::size_t>(in.gcount()));
-    if (content.size() > maxFileSize || !isValidUtf8(content)) return false;
+    if (content.size() > maxFileSize) return false;
+    if (encoding && hasUtf16Bom(content)) {
+        std::string text;
+        if (!decodeUtf16(content, &text, encoding, true)) return false;
+        *out = std::move(text);
+        return true;
+    }
+    if (!isValidUtf8(content)) return false;
+    if (encoding) *encoding = TextEncoding::Utf8;
     *out = std::move(content);
     return true;
 }

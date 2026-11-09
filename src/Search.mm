@@ -1347,7 +1347,11 @@ static NSString *MCSkippedNote(const FolderSearchResult &r, NSString **tooltip) 
         for (NSString *path in diskPaths) {
             const std::string p = path.fileSystemRepresentation;
             std::string content, out, error;
-            if (!FolderSearch::readTextFile(p, FolderSearchOptions().maxFileSize, &content)) {
+            // A UTF-16 file is replaced in its decoded text and written
+            // back as UTF-16 with its byte order mark.
+            FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
+            if (!FolderSearch::readTextFile(p, FolderSearchOptions().maxFileSize, &content,
+                                            &encoding)) {
                 [failed addObject:[NSString stringWithFormat:@"%@ could not be read as text",
                                                              path.lastPathComponent]];
                 continue;
@@ -1361,7 +1365,8 @@ static NSString *MCSkippedNote(const FolderSearchResult &r, NSString **tooltip) 
                 out = FolderSearch::replaceInText(content, q, with8, o, &n);
             }
             if (n == 0 || out == content) continue;
-            if (!FolderSearch::writeFileAtomically(p, out, &error)) {
+            if (!FolderSearch::writeFileAtomically(p, FolderSearch::encodeText(out, encoding),
+                                                   &error)) {
                 [failed addObject:[NSString stringWithFormat:@"%@: %s", path.lastPathComponent,
                                                              error.c_str()]];
                 continue;
