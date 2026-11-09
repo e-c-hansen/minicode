@@ -16,11 +16,23 @@
 // Measured (TextKit 1, macOS 27): turning non-contiguous layout off again
 // throws all of the layout away (the next rect at the middle of 100,000
 // lines then cost 0.7 s, as from scratch), so the flag stays on while the
-// tab shows; and with it on, an edit that adds a line leaves what follows
-// estimated (a line or two off) until laid out again. So this keeps
-// watching: 0.3 s after an edit or a new width it closes what was left
-// unlaid above the pane.
+// tab shows; and with it on, an edit that adds a line above the pane leaves
+// what follows estimated until laid out again. So this keeps watching: an
+// edit made through the text view has what it left unlaid above the pane
+// laid out as it ends, the pane's scroll kept, so the text moves as it
+// does with contiguous layout; a new width or another change goes to the
+// pieces 0.3 s later. Before an edit of many ranges it goes back to
+// contiguous layout for good (MCTextViewWillReplaceManyRangesNotification).
 #import <Cocoa/Cocoa.h>
+
+// Posted by CodeTextView (object: the view) before an edit of many ranges
+// (Replace All, thousands of carets), which non-contiguous layout makes
+// several times slower in a highlighted text: after each storage edit
+// TextKit looks up the attributes at the pane and the caret, walking the
+// color runs between them and the edit (Replace All of 20,000 matches in
+// 100,000 lines: 4.3 s against 0.6). The catch-up turns contiguous layout
+// back on first, and the pane is laid out from the top once, after it.
+extern NSNotificationName const MCTextViewWillReplaceManyRangesNotification;
 
 @interface MCLayoutCatchUp : NSObject
 

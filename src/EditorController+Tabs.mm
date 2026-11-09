@@ -473,9 +473,11 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
     NSRange sel = t.selection;
     if (sel.location > n) sel = NSMakeRange(n, 0);
     if (NSMaxRange(sel) > n) sel.length = n - sel.location;
+    // The place decides, not the caret: a caret far below a pane at the top
+    // lays out nothing until it is shown.
     const BOOL catchUp = tv.editable && !MCUsesTextKit2(tv) && !self.showingMessage &&
                          !tv.layoutManager.allowsNonContiguousLayout &&
-                         MAX(MIN(t.topCharacter, n), sel.location) > kCatchUpFrom;
+                         MIN(t.topCharacter, n) > kCatchUpFrom;
     if (catchUp) {
         if (!_layoutCatchUp) {
             _layoutCatchUp = [[MCLayoutCatchUp alloc] initWithTextView:tv

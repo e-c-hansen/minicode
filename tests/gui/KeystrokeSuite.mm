@@ -426,6 +426,35 @@ MC_GUI_SUITE(keystroke) {
         GCHECK(topOfPane(&offset) == topBefore);
         GCHECK(fabs(offset - topOffsetBefore) < 1);
     });
+    // An edit of many ranges goes back to contiguous layout first: with
+    // non-contiguous layout Replace All of 20,000 matches took 4.3 s of CPU
+    // against 0.6 (multiedit's case), TextKit looking up the attributes at
+    // the pane after each storage edit across the color runs between.
+    MCGuiStep(@"Replace All of 20,000 matches goes back to contiguous layout", ^{
+        GCHECK(catchUp.watching && tv.layoutManager.allowsNonContiguousLayout);
+        NSString *s = tv.string;
+        NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+        NSMutableArray<NSString *> *strings = [NSMutableArray array];
+        for (NSRange r = [s rangeOfString:@"None"]; r.location != NSNotFound;
+             r = [s rangeOfString:@"None" options:0
+                            range:NSMakeRange(NSMaxRange(r), s.length - NSMaxRange(r))]) {
+            [ranges addObject:[NSValue valueWithRange:r]];
+            [strings addObject:@"Nada"];
+        }
+        GCHECK(ranges.count == 20000);
+        const double c0 = MCGuiThreadCpuMs();
+        MCGuiUndoGroup(tv.undoManager, ^{
+            GCHECK([(CodeTextView *)tv replaceRanges:ranges withStrings:strings actionName:@"Replace All"]);
+        });
+        const double cpu = MCGuiThreadCpuMs() - c0;
+        MCGuiNote(@"Replace All of 20,000 matches in the tab shown again: %.0f ms of CPU", cpu);
+        GCHECK(!catchUp.watching && !tv.layoutManager.allowsNonContiguousLayout);
+        GCHECK_TIME(cpu, 4000, @"Replace All of 20,000 matches in a tab shown again far down");
+        GCHECK([tv.string rangeOfString:@"None"].location == NSNotFound);
+        [tv.undoManager undo];
+        GCHECK([tv.string rangeOfString:@"Nada"].location == NSNotFound);
+        GCHECK(NSEqualRects([c textRectForCharacter:at], exactAt));   // contiguous: exact
+    });
     MCGuiStep(@"typing in the used window costs what it cost in a fresh one", ^{
         tv.selectedRange = NSMakeRange(at, 0);
         [tv scrollRangeToVisible:tv.selectedRange];

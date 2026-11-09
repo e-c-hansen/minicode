@@ -4,6 +4,7 @@
 #import "LspInlayHints.h"
 #import "SourceStorage.h"
 #import "SnippetSession.h"
+#import "LayoutCatchUp.h"
 #include <os/log.h>
 
 // -------------------------------------------------------- CodeTextView
@@ -433,6 +434,10 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
         // either way (TextKit 1 keeps one soft-invalidated span), so only
         // the glyphs are given up, and they are made again on demand.
         if (count >= kDropGlyphsAtEdits) {
+            // A tab shown again far down goes back to contiguous layout
+            // first (LayoutCatchUp.h says why).
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:MCTextViewWillReplaceManyRangesNotification object:self];
             const NSUInteger from = ranges[0].rangeValue.location;
             const NSUInteger to = NSMaxRange(ranges[count - 1].rangeValue);
             if (to > from)

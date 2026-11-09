@@ -16,12 +16,19 @@ const NSTimeInterval kAfterChange = 0.3;
 
 }  // namespace
 
+NSNotificationName const MCTextViewWillReplaceManyRangesNotification =
+    @"MCTextViewWillReplaceManyRangesNotification";
+
 @implementation MCLayoutCatchUp {
     __weak NSTextView *_tv;
     __weak NSScrollView *_scroll;
     __weak NSTextStorage *_observedStorage;
     NSUInteger _piece;
     NSUInteger _below;   // where the next piece ends: laid out from here down to the pane
+    // Nothing was unlaid above the pane when last looked, and the width is
+    // the same since: a gap there now is the latest edit's.
+    BOOL _settled;
+    CGFloat _width;
 }
 
 - (instancetype)initWithTextView:(NSTextView *)textView scrollView:(NSScrollView *)scroll {
@@ -48,6 +55,8 @@ const NSTimeInterval kAfterChange = 0.3;
     _watching = YES;
     _piece = kFirstPiece;
     _below = NSNotFound;
+    _settled = NO;
+    _width = tv.textContainer.size.width;
     _longestPieceMilliseconds = 0;
     _totalMilliseconds = 0;
     _pieces = 0;
@@ -59,7 +68,21 @@ const NSTimeInterval kAfterChange = 0.3;
     [nc addObserver:self selector:@selector(frameChanged:)
                name:NSViewFrameDidChangeNotification object:tv];
     [nc addObserver:self selector:@selector(textChanged:) name:NSTextDidChangeNotification object:tv];
+    [nc addObserver:self selector:@selector(manyRangesComing:)
+               name:MCTextViewWillReplaceManyRangesNotification object:tv];
     [self catchUp];
+}
+
+// See MCTextViewWillReplaceManyRangesNotification. Turning non-contiguous
+// layout off throws the layout away, so the pane is laid out from the top
+// when next drawn, the cost the catch-up spared when the tab showed, paid
+// once with an edit that costs as much again anyway.
+- (void)manyRangesComing:(NSNotification *)note {
+    (void)note;
+    NSTextView *tv = _tv;
+    if (!_watching || !tv.layoutManager.allowsNonContiguousLayout) return;
+    [self cancel];
+    tv.layoutManager.allowsNonContiguousLayout = NO;
 }
 
 - (void)cancel {
@@ -72,6 +95,7 @@ const NSTimeInterval kAfterChange = 0.3;
     if (NSTextView *tv = _tv) {
         [nc removeObserver:self name:NSViewFrameDidChangeNotification object:tv];
         [nc removeObserver:self name:NSTextDidChangeNotification object:tv];
+        [nc removeObserver:self name:MCTextViewWillReplaceManyRangesNotification object:tv];
     }
     _observedStorage = nil;
 }
@@ -119,9 +143,10 @@ const NSTimeInterval kAfterChange = 0.3;
     NSClipView *clip = _scroll.contentView;
     NSLayoutManager *lm = tv.layoutManager;
     NSTextContainer *tc = tv.textContainer;
-    // While the first catch-up runs the gap above the pane is its own, not
-    // the edit's: the pieces close it.
-    if (!_watching || _running || !tc || !clip || !lm.allowsNonContiguousLayout ||
+    // A gap that was there before the edit (the first catch-up, a new
+    // width) is not the edit's: the pieces close it, and a keystroke never
+    // waits for it.
+    if (!_watching || !_settled || !tc || !clip || !lm.allowsNonContiguousLayout ||
         (_stillWanted && !_stillWanted()))
         return;
     NSUInteger first = 0, firstGlyph = 0;
@@ -144,6 +169,7 @@ const NSTimeInterval kAfterChange = 0.3;
         [clip scrollToPoint:place];
         [_scroll reflectScrolledClipView:clip];
     }
+    if (first < top) _settled = NO;   // the rest is the pieces' (storageEdited asked for them)
     const double spent = ThreadCpuMs() - c0;
     _pieces++;
     _totalMilliseconds += spent;
@@ -153,6 +179,11 @@ const NSTimeInterval kAfterChange = 0.3;
 // A new width (a resize, word wrap, the zoom) lays out again; so may folds.
 - (void)frameChanged:(NSNotification *)note {
     (void)note;
+    const CGFloat width = _tv.textContainer.size.width;
+    if (width != _width) {
+        _width = width;
+        _settled = NO;
+    }
     [self later];
 }
 
@@ -219,9 +250,11 @@ const NSTimeInterval kAfterChange = 0.3;
     if (![self anchor:&at offset:&offset] || first >= at) {
         _running = NO;   // laid out from the top through the pane: those rects exact
         _below = NSNotFound;
+        _settled = _width == tv.textContainer.size.width;
         return;
     }
     _running = YES;
+    _settled = NO;
     const double c0 = ThreadCpuMs();
     NSString *text = tv.textStorage.string;
     if (_below == NSNotFound || _below > at) _below = at;
