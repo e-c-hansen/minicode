@@ -569,4 +569,27 @@ void testTerminalVt() {
         s.feed(vtMark("C") + "\x1b[?2027l");
         CHECK(ask() == "\x1b[?2027;2$y");
     }
+    {
+        // Round 6's terminal defect 5: fzf's widgets (Ctrl+R, Ctrl+T with
+        // --height) draw below the prompt between 133;A and 133;C, counting
+        // clusters; they put the pty in raw mode with ISIG off, which ZLE
+        // never does. With the host saying so, clusters there; back to
+        // zsh's code points once the tty is ZLE's again.
+        const std::string flag = "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8";
+        TerminalScreen s = vtScreen(vtMark("A"), 40, 3);
+        s.feed("\r" + flag);
+        CHECK(s.cursorCol() == 4);
+        s.setRawTty(true);
+        CHECK(s.clusterWidths());
+        s.feed("\r" + flag);
+        CHECK(s.cursorCol() == 2);
+        s.setRawTty(false);
+        CHECK(!s.clusterWidths());
+        s.feed("\r" + flag);
+        CHECK(s.cursorCol() == 4);
+        // A program's own choice still wins.
+        s.feed("\x1b[?2027l");
+        s.setRawTty(true);
+        CHECK(!s.clusterWidths());
+    }
 }

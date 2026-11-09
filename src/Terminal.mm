@@ -2295,6 +2295,13 @@ static NSString *MCBrowserHelperPath(void) {
     const char *bytes = (const char *)_backlog.bytes;
     MCPty *pty = _pty;
     int generation = _generation;
+    // Whether the pty is raw with signals off: at zsh's prompt that is a
+    // program a widget started (fzf's Ctrl+R), not ZLE, which keeps ISIG,
+    // so the screen counts clusters there (TerminalScreen::setRawTty).
+    if (_master >= 0) {
+        struct termios t;
+        if (tcgetattr(_master, &t) == 0) _screen.setRawTty((t.c_lflag & ISIG) == 0);
+    }
     while (_backlogStart < total) {
         NSUInteger n = MIN((NSUInteger)kSliceBytes, total - _backlogStart);
         [self receive:[NSData dataWithBytesNoCopy:(void *)(bytes + _backlogStart) length:n

@@ -1664,7 +1664,7 @@ void TerminalScreen::keyboardSequence(char lead, const std::string& params) {
 
 bool TerminalScreen::clusterWidths() const {
     if (graphemes_ >= 0) return graphemes_ == 1;
-    return onAlt_ || !promptActive_;
+    return onAlt_ || !promptActive_ || rawTty_;
 }
 
 void TerminalScreen::setMode(const std::string& csi, bool on) {

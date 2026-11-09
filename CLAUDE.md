@@ -2171,7 +2171,13 @@ for full-screen programs. Both can be open at once.
 - **Mode 2027 and zsh's widths** (2026-11-08): clusters (above) except
   on the main screen from a 133;A to the next 133;C, where each code point
   takes `termCodepointWidth`, zsh's own count, so typing at the prompt
-  agrees with ZLE (`TerminalScreen::clusterWidths`). macOS's /bin/zsh never
+  agrees with ZLE (`TerminalScreen::clusterWidths`), unless the pty has
+  ISIG off (`setRawTty`, from `tcgetattr` once per `drainBacklog`): ZLE
+  keeps ISIG, raw mode (cfmakeraw, Go's term.MakeRaw) drops it, so that is
+  a program a widget runs, such as fzf's Ctrl+R with --height, which counts
+  clusters (round 6's defect 5; the suite runs such a picker). xterm.js,
+  VS Code's terminal, counts code points everywhere with Unicode 11's
+  widths and joins no clusters. macOS's /bin/zsh never
   calls libc's wcwidth (`nm -u /bin/zsh` has no `_wcwidth`): it is built
   with zsh's Unicode 9 table, `Src/wcwidth9.h`, so a regional indicator is
   2, U+2764 1 and U+093F 0. `tools/gen-zsh-width.py` writes the ranges

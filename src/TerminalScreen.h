@@ -26,9 +26,15 @@
 // counts them), except while zsh's line editor has the main screen, from
 // the shell integration's prompt mark (133;A) to its command mark (133;C):
 // there each code point takes termCodepointWidth's columns, zsh's own, so
-// what is typed at the prompt lands where zsh thinks it is. A program may
-// choose: DECSET 2027 asks for clusters, DECRST 2027 for code points, both
-// for good (until a full reset); DECRQM 2027 answers what is in effect.
+// what is typed at the prompt lands where zsh thinks it is. Not while the
+// pty is raw with signals off (setRawTty): ZLE keeps ISIG on, so that is a
+// program a widget started, such as fzf's Ctrl+R and Ctrl+T with --height,
+// which draws below the prompt counting clusters. A program may choose:
+// DECSET 2027 asks for clusters, DECRST 2027 for code points, both for good
+// (until a full reset); DECRQM 2027 answers what is in effect. (xterm.js,
+// VS Code's terminal, counts one code point at a time everywhere, with
+// Unicode 11's widths; it joins no clusters, so it agrees with neither zsh's
+// Unicode 9 table nor fzf's clusters for every character.)
 //
 // It also encodes keys and mouse events into the bytes a program expects, so
 // the GUI layer only maps its events onto TermKey and TermMouse.
@@ -351,6 +357,12 @@ public:
     // Mode 2027 (see the top of this file): whether characters are counted
     // as grapheme clusters now (false: one code point at a time).
     bool clusterWidths() const;
+    // Whether the pty's line discipline has ISIG off now (the host looks at
+    // its termios before handing output over). zsh's line editor turns
+    // ICANON and ECHO off but keeps ISIG, and raw mode as programs set it
+    // (cfmakeraw, Go's term.MakeRaw, prompt_toolkit) turns ISIG off; so at
+    // the prompt this says a program other than ZLE is drawing.
+    void setRawTty(bool raw) { rawTty_ = raw; }
 
     // The bytes for a key. `appCursor` is appCursorKeys(), `appKeypad` is
     // appKeypad(); mods is a TermMod mask.
