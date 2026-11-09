@@ -11,7 +11,9 @@
 //   - the answer taken back: it starts again with the three off;
 //   - a rust-toolchain.toml in the crate (rustup would run a toolchain it
 //     names by path): it does not start at all, the status bar says it
-//     waits, and the bar names the file; Allow starts it with its defaults.
+//     waits, and the bar names the file; Allow starts it with its defaults,
+//     once, though the Python server (a second stand-in, running for a
+//     Python tab) restarts with the same answer and attaches the file.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"   // installBar
@@ -45,6 +47,7 @@ MC_GUI_SUITE(server_consent) {
     __block EditorController *c = nil;
     NSString *file = MCGuiProjectFile(@"consent/src/main.rs");
     NSString *other = MCGuiProjectFile(@"consent/notes.txt");
+    NSString *py = MCGuiProjectFile(@"consent/tool.py");
     NSString *toolchain = MCGuiProjectFile(@"consent/rust-toolchain.toml");
     // The workspace/configuration answer, asked for by the server once it
     // is initialized (rust-analyzer pulls its settings so).
@@ -67,12 +70,24 @@ MC_GUI_SUITE(server_consent) {
         // crate's own folders are read wherever it is.
         MCGuiNote(@"the window's folder: %@; the file: %@", c.rootPath, file);
         [[NSFileManager defaultManager] removeItemAtPath:toolchain error:nil];
-        MCForgetFolderToolsConsent(c.rootPath);
+        // An earlier suite (language) may have put the folder's question
+        // off with × for this launch, which holds for every question about
+        // the folder's tools; Ask Again takes an answer back and that too.
+        MCSetFolderToolsConsent(c.rootPath, NO);
+        [c forgetFolderToolsAnswer:nil];
+        GCHECK(MCFolderToolsConsent(c.rootPath) == nil);
         MCGuiWriteFile(file, @"fn main() {}\n");
         MCGuiWriteFile(other, @"notes\n");
+        MCGuiWriteFile(py, @"x = 1\n");
         NSString *cmd = MCGuiFakeLsp(@"rust-consent", script, nil, nil);
+        NSString *pyCmd = MCGuiFakeLsp(@"py-consent", @{@"rules": @[]}, nil, nil);
         MCGuiFakeLspClearLog(@"rust-consent");
-        MCGuiSetSettings([NSString stringWithFormat:@"lsp.enabled = true\nlsp.rust = %@\n", cmd]);
+        // Only the stand-in: a file an earlier suite left on show would
+        // otherwise start the real servers this Mac has.
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.rust = %@\nlsp.python = %@\nlsp.python.also = off\n"
+            @"lsp.cpp = off\nlsp.go = off\nlsp.typescript = off\n", cmd, pyCmd]);
+        GCHECK([c showFile:py]);   // its server keeps running for the tab
         showRust();
     });
     MCGuiWait(@"it starts, its settings asked for", 20, ^BOOL {
@@ -157,11 +172,14 @@ MC_GUI_SUITE(server_consent) {
         GCHECK(Initializes().count == 0 && !Session(c).hasServer);
         [c.installBar.installButton performClick:nil];
     });
-    MCGuiWait(@"it starts, with its defaults", 20, ^BOOL {
+    MCGuiWait(@"it starts", 20, ^BOOL { return Initializes().count > 0 && Session(c).hasServer; });
+    MCGuiStep(@"once, with its defaults", ^{
         NSArray<NSDictionary *> *inits = Initializes();
         id options = inits.lastObject[@"params"][@"initializationOptions"];
-        return inits.count == 1 && Session(c).hasServer &&
-               (options == nil || [options isKindOfClass:NSNull.class]);
+        MCGuiNote(@"started %lu times; the answer %@; initializationOptions: %@",
+                  (unsigned long)inits.count, MCFolderToolsConsent(c.rootPath), options);
+        GCHECK(inits.count == 1);
+        GCHECK(options == nil || [options isKindOfClass:NSNull.class]);
     });
 
     MCGuiStep(@"tidy up: servers off, no answer, no tabs or files", ^{
@@ -169,7 +187,7 @@ MC_GUI_SUITE(server_consent) {
         MCForgetFolderToolsConsent(c.rootPath);
         // A Rust file left on show would start the real rust-analyzer in
         // a later suite that turns the servers on.
-        for (NSString *p in @[file, other]) {
+        for (NSString *p in @[file, other, py]) {
             GCHECK([c showFile:p]);
             GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
         }
