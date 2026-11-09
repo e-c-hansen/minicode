@@ -248,6 +248,16 @@ const Theme* Settings::findTheme(const std::string& id) {
     return nullptr;
 }
 
+bool Settings::inlayHintsShown(InlayHints mode, bool pressed) {
+    switch (mode) {
+    case InlayHints::On: return true;
+    case InlayHints::Off: return false;
+    case InlayHints::OnUnlessPressed: return !pressed;
+    case InlayHints::OffUnlessPressed: return pressed;
+    }
+    return true;
+}
+
 bool Settings::isColorKey(const std::string& key) {
     if (const KeyRule* r = findKeyRule(key)) return r->color;
     size_t dot = key.find('.');
@@ -987,13 +997,16 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
         MC_KEY("editor.inlay-hints", Word, false,
                const std::string w = lower(v);
                bool on = true;
-               if (w == "on") on = true;
-               else if (w == "off") on = false;
-               else if (!parseBool(w, on)) {
-                   e = "'" + v + "' is not on or off";
+               if (w == "on-unless-pressed" || w == "onunlesspressed")
+                   s.inlayHints_ = InlayHints::OnUnlessPressed;
+               else if (w == "off-unless-pressed" || w == "offunlesspressed")
+                   s.inlayHints_ = InlayHints::OffUnlessPressed;
+               else if (w == "on" || w == "off" || parseBool(w, on))
+                   s.inlayHints_ = w == "off" || !on ? InlayHints::Off : InlayHints::On;
+               else {
+                   e = "'" + v + "' is not on, off, on-unless-pressed or off-unless-pressed";
                    return false;
                }
-               s.inlayHints_ = on;
                return true;),
         MC_KEY("editor.git-gutter", Word, false,
                const std::string w = lower(v);
@@ -1596,8 +1609,11 @@ const char* Settings::defaultFileText() {
 # What a language server can say between the words, drawn in the text
 # without being part of it, as in VS Code: a variable's type after its name
 # (x: int), a function's return type, a parameter's name before an
-# argument. basedpyright, clangd and rust-analyzer send them (macOS). The
-# colors are VS Code's unless set; the background is mostly transparent.
+# argument. basedpyright, clangd and rust-analyzer send them (macOS). A
+# double-click on one writes it into the text. on-unless-pressed hides them
+# while Control and Option are held down, off-unless-pressed shows them only
+# then, and View > Inlay Hints turns them on and off. The colors are VS
+# Code's unless set; the background is mostly transparent.
 # editor.inlay-hints = on
 # editor.inlay-hint-color = #969696
 # editor.inlay-hint-background = #4D4D4D1A

@@ -11,6 +11,77 @@
 #import "LspInlayHints.h"
 #include "InlayHints.h"
 
+// Control and Option held down (VS Code's Ctrl+Alt for the "unless pressed"
+// modes of editor.inlayHints.enabled), from one watcher for the whole app,
+// posted to every session.
+static NSString *const MCInlayHintsPressedNotification = @"MCInlayHintsPressed";
+static BOOL gInlayPressed = NO;
+
+static void MCInlayWatchModifiers(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        auto post = ^(BOOL pressed) {
+            if (pressed == gInlayPressed) return;
+            gInlayPressed = pressed;
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:MCInlayHintsPressedNotification object:nil];
+        };
+        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged
+                                              handler:^NSEvent *(NSEvent *event) {
+            const NSEventModifierFlags both = NSEventModifierFlagControl | NSEventModifierFlagOption;
+            post((event.modifierFlags & both) == both);
+            return event;
+        }];
+        // A release while another app is in front never arrives.
+        [[NSNotificationCenter defaultCenter]
+            addObserverForName:NSApplicationDidResignActiveNotification object:nil queue:nil
+                    usingBlock:^(NSNotification *note) {
+            (void)note;
+            post(NO);
+        }];
+    });
+}
+
+// Test hook: Control+Option held down, or let go.
+void MCInlayHintsSetPressed(BOOL pressed) {
+    MCInlayWatchModifiers();
+    if (pressed == gInlayPressed) return;
+    gInlayPressed = pressed;
+    [[NSNotificationCenter defaultCenter] postNotificationName:MCInlayHintsPressedNotification
+                                                        object:nil];
+}
+
+// View > Inlay Hints: editor.inlay-hints on or off in the settings file,
+// checked while hints show without Control+Option held down.
+@interface MCInlayHintsMenuTarget : NSObject
+@end
+@implementation MCInlayHintsMenuTarget
+- (void)toggleInlayHints:(id)sender {
+    (void)sender;
+    const BOOL shown = Settings::inlayHintsShown([AppSettings shared].settings.inlayHintsMode(), NO);
+    if (![[AppSettings shared] writeValue:shown ? @"off" : @"on" forKey:@"editor.inlay-hints"])
+        NSBeep();
+}
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(toggleInlayHints:))
+        item.state = Settings::inlayHintsShown([AppSettings shared].settings.inlayHintsMode(), NO)
+                         ? NSControlStateValueOn : NSControlStateValueOff;
+    return YES;
+}
+@end
+
+NSMenuItem *MCInlayHintsMenuItem(void) {
+    static MCInlayHintsMenuTarget *target;
+    if (!target) target = [MCInlayHintsMenuTarget new];
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@"Inlay Hints"
+                                                  action:@selector(toggleInlayHints:)
+                                           keyEquivalent:@""];
+    item.target = target;
+    item.toolTip = @"What the language server says between the words, such as a variable's "
+                   @"type (editor.inlay-hints). Double-click one to write it into the text.";
+    return item;
+}
+
 // Lines asked about either side of those on show, as VS Code asks.
 static const int kInlayExtraLines = 30;
 
@@ -43,12 +114,21 @@ static NSUInteger InlayLineEnd(NSString *s, NSUInteger i) {
 
 - (void)startInlayHints {
     _inlayWindow = NSMakeRange(NSNotFound, 0);
-    _inlaySetting = [AppSettings shared].settings.inlayHints();
+    MCInlayWatchModifiers();
+    _inlayShown = Settings::inlayHintsShown([AppSettings shared].settings.inlayHintsMode(),
+                                            gInlayPressed);
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
     [nc addObserver:self selector:@selector(inlayHintsTextEdited:)
                name:NSTextStorageDidProcessEditingNotification object:_tv.textStorage];
     [nc addObserver:self selector:@selector(inlayHintsSettingsChanged:)
                name:MCSettingsDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(inlayHintsSettingsChanged:)
+               name:MCInlayHintsPressedNotification object:nil];
+    __weak LspSession *weakSelf = self;
+    _tv.onInlayHintDoubleClick = ^BOOL(NSUInteger index) {
+        LspSession *s = weakSelf;
+        return s && [s acceptInlayHintAtIndex:index];
+    };
 }
 
 - (NSUInteger)inlayHintRequests { return _inlayRequests; }
@@ -88,13 +168,57 @@ static NSUInteger InlayLineEnd(NSString *s, NSUInteger i) {
     [self scheduleInlayHints:0.3];
 }
 
+// The setting changed, or Control+Option went down or up: hints come
+// (asked for at once) or go.
 - (void)inlayHintsSettingsChanged:(NSNotification *)note {
     (void)note;
-    const BOOL on = [AppSettings shared].settings.inlayHints();
-    if (on == _inlaySetting) return;
-    _inlaySetting = on;
-    if (on) [self scheduleInlayHints:0];
+    const BOOL shown = Settings::inlayHintsShown([AppSettings shared].settings.inlayHintsMode(),
+                                                 gInlayPressed);
+    if (shown == _inlayShown) return;
+    _inlayShown = shown;
+    if (shown) [self scheduleInlayHints:0];
     else [self clearInlayHints];
+}
+
+- (BOOL)inlayHintsShown { return _inlayShown; }
+
+// A double-click on a hint: its textEdits go into the text as one undo
+// step (VS Code's), the caret after the hint's own text, and the hint goes
+// at once. NO for a hint with nothing to write (the click selects a word).
+- (BOOL)acceptInlayHintAtIndex:(NSUInteger)index {
+    MCInlayHints *hints = _tv.inlayHints;
+    const Lsp::InlayHint *hint = [hints hintAtIndex:index];
+    NSArray<NSDictionary *> *shown = hints.shownHints;
+    if (!hint || hint->textEdits.empty() || index >= shown.count || !_tv.editable) return NO;
+    const NSUInteger at = [shown[index][@"offset"] unsignedIntegerValue];
+    const std::vector<Lsp::OffsetEdit> edits =
+        Lsp::inlayHintAcceptEdits(*hint, U16Of(_tv.string), _edits == _inlayEdits, at);
+    if (edits.empty()) {
+        // Its import or its place moved with typing since: ask again.
+        NSBeep();
+        [self scheduleInlayHints:0];
+        return YES;
+    }
+    // Ascending for replaceRanges: (the edits come last first), and where
+    // the caret goes: after what goes in at the hint.
+    NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+    NSMutableArray<NSString *> *strings = [NSMutableArray array];
+    NSInteger shift = 0;
+    NSUInteger caret = at;
+    for (auto it = edits.rbegin(); it != edits.rend(); ++it) {
+        [ranges addObject:[NSValue valueWithRange:NSMakeRange(it->start, it->length)]];
+        [strings addObject:[NSString stringWithCharacters:(const unichar *)it->text.data()
+                                                   length:it->text.size()]];
+        if (it->start < at || (it->start == at && it->length == 0)) {
+            shift += (NSInteger)it->text.size() - (NSInteger)it->length;
+            if (it->start == at) caret = (NSUInteger)((NSInteger)at + shift);
+        }
+    }
+    if (caret == at) caret = (NSUInteger)((NSInteger)at + shift);
+    [hints removeHintAtIndex:index];
+    if (![_tv replaceRanges:ranges withStrings:strings actionName:@"Insert Inlay Hint"]) return YES;
+    if (caret <= _tv.string.length) _tv.selectedRange = NSMakeRange(caret, 0);
+    return YES;
 }
 
 // The characters on show, without laying out any text that is not.
@@ -124,7 +248,7 @@ static NSUInteger InlayLineEnd(NSString *s, NSUInteger i) {
 // Scrolling that leaves the lines asked about asks again, once it rests.
 - (void)inlayHintsScrolled:(NSNotification *)note {
     (void)note;
-    if (!_uri || !_inlaySetting || _inlayWindow.location == NSNotFound) return;
+    if (!_uri || !_inlayShown || _inlayWindow.location == NSNotFound) return;
     const NSRange vis = [self inlayVisibleCharacters];
     if (vis.location >= _inlayWindow.location && NSMaxRange(vis) <= NSMaxRange(_inlayWindow))
         return;
@@ -133,7 +257,7 @@ static NSUInteger InlayLineEnd(NSString *s, NSUInteger i) {
 
 - (void)requestInlayHints {
     [self forgetInlayRequest];
-    MCLspServer *server = _uri && _inlaySetting && _tv.editable
+    MCLspServer *server = _uri && _inlayShown && _tv.editable
                               ? [self serverFor:Lsp::Feature::InlayHint] : nil;
     // Only a server that is up and says it has them is asked.
     if (!server || server.stopping || server.client.state() != Lsp::Client::State::Ready ||
@@ -185,7 +309,10 @@ static NSUInteger InlayLineEnd(NSString *s, NSUInteger i) {
         if (!me) return;
         me->_inlayRequest = 0;
         // For the text as it was asked about only: typing since asks again.
-        if (!error.isNull() || ![uri isEqualToString:me->_uri] || me->_edits != edits) return;
+        if (!error.isNull() || ![uri isEqualToString:me->_uri] || me->_edits != edits ||
+            !me->_inlayShown)
+            return;
+        me->_inlayEdits = edits;
         std::vector<Lsp::InlayHint> hints = Lsp::parseInlayHints(result);
         Lsp::shortenInlayLabels(hints);
         [me->_tv.inlayHints showHints:hints

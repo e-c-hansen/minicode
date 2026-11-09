@@ -397,12 +397,16 @@ Json pythonSettings(PythonServer kind, const std::string& interpreter) {
             // and checks far more than pyright unless told otherwise; a
             // pyproject.toml or pyrightconfig.json still wins over this.
             analysis.set("typeCheckingMode", "standard");
-            // Its inlay hints, named here so an older basedpyright that
-            // kept them off shows them too; editor.inlay-hints = off asks
-            // for none.
+            // Its inlay hints as its VS Code extension's defaults have them
+            // (1.40.2's package.json: generic types too, a parameter's name
+            // only where the argument is not already that name), named here
+            // so an older basedpyright that kept some off shows them too;
+            // editor.inlay-hints = off asks for none.
             analysis.set("inlayHints", Json::object({{"variableTypes", true},
                                                      {"functionReturnTypes", true},
-                                                     {"callArgumentNames", true}}));
+                                                     {"callArgumentNames", true},
+                                                     {"callArgumentNamesMatching", false},
+                                                     {"genericTypes", true}}));
             out.set("python", python);
             out.set("basedpyright", Json::object({{"analysis", analysis}}));
         }

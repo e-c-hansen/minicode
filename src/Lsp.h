@@ -77,9 +77,16 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 // Inlay hints (LspInlayHints.h): labels drawn between characters, in gaps
 // the layout opens; LspSession (InlayHints) fills them in.
 @property(nonatomic, readonly) MCInlayHints *inlayHints;
+// A double-click on a hint (by its place in inlayHints.shownHints) while
+// the view is editable. Returning YES takes the click (the hint went into
+// the text); NO lets it select a word as usual.
+@property(nonatomic, copy) BOOL (^onInlayHintDoubleClick)(NSUInteger index);
 // A snippet completion's tab stops (SnippetSession.h): while one runs, Tab,
 // Shift+Tab and Esc are its own, before the carets and AutoIndent.
 @property(nonatomic, readonly) MCSnippetSession *snippets;
+// The key press being interpreted (during keyDown:), else nil: a command a
+// key sent can tell Shift+Return from Return by it.
+@property(nonatomic, readonly) NSEvent *currentKeyEvent;
 - (IBAction)foldRegion:(id)sender;
 - (IBAction)unfoldRegion:(id)sender;
 - (IBAction)toggleFold:(id)sender;
@@ -328,6 +335,10 @@ void MCForgetFolderToolsConsent(NSString *root);
 @interface LspSession (InlayHints)
 // Test hook: textDocument/inlayHint requests sent so far.
 @property(nonatomic, readonly) NSUInteger inlayHintRequests;
+// Whether hints show now (editor.inlay-hints, and Control+Option held).
+@property(nonatomic, readonly) BOOL inlayHintsShown;
+// A double-click on the hint at `index` (shownHints): its edits written.
+- (BOOL)acceptInlayHintAtIndex:(NSUInteger)index;
 @end
 
 // The menu actions below (triggerCompletion, goToDefinition, renameSymbol,

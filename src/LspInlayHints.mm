@@ -5,7 +5,10 @@
 #import "SourceStorage.h"
 #include <algorithm>
 
-@interface MCInlayHintItem : NSObject
+@interface MCInlayHintItem : NSObject {
+@public
+    Lsp::InlayHint hint;   // as the server sent it (its edits, for accepting)
+}
 @property(nonatomic, copy) NSString *label;
 @property(nonatomic, assign) BOOL paddingLeft, paddingRight;
 @property(nonatomic, assign) CGFloat labelWidth;
@@ -98,6 +101,7 @@
         item.paddingLeft = h.paddingLeft;
         item.paddingRight = h.paddingRight;
         item.labelWidth = [self widthOfLabel:item.label];
+        item->hint = h;
         MCTextGap g;
         g.offset = p.offset;
         g.width = [self gapWidthOf:item];
@@ -109,6 +113,7 @@
     if (gaps.empty() && ts.gaps.empty()) return;
     ts.gaps = gaps;
     _tv.needsDisplay = YES;
+    [self caretMayHaveMoved];
 }
 
 - (void)clear {
@@ -117,6 +122,31 @@
     if (!ts || ts.gaps.empty()) return;
     ts.gaps = {};
     _tv.needsDisplay = YES;
+    [self caretMayHaveMoved];
+}
+
+- (void)removeHintAtIndex:(NSUInteger)index {
+    MCSourceStorage *ts = [self storage];
+    if (!ts || index >= ts.gaps.size()) return;
+    std::vector<MCTextGap> gaps = ts.gaps;
+    gaps.erase(gaps.begin() + (long)index);
+    ts.gaps = gaps;   // the items stay, by tag, for the gaps left
+    _tv.needsDisplay = YES;
+    [self caretMayHaveMoved];
+}
+
+- (const Lsp::InlayHint *)hintAtIndex:(NSUInteger)index {
+    MCSourceStorage *ts = [self storage];
+    if (!ts || index >= ts.gaps.size()) return nullptr;
+    const uint32_t tag = ts.gaps[index].tag;
+    return tag < _items.count ? &_items[tag]->hint : nullptr;
+}
+
+// The gaps moved under the caret: the text view places it again (the
+// caret beside a hint that follows the word before it is drawn before it).
+- (void)caretMayHaveMoved {
+    NSTextView *tv = _tv;
+    if (tv.window && tv.selectedRange.length == 0) [tv updateInsertionPointStateAndRestartTimer:NO];
 }
 
 - (NSUInteger)count {
@@ -142,6 +172,22 @@
 - (void)enumerateBoxesIn:(NSRange)chars
                    block:(void (^)(size_t gapIndex, MCInlayHintItem *item, NSRect box,
                                    CGFloat baseline))block {
+    [self enumerateRoomsIn:chars
+                     block:^(size_t gapIndex, MCInlayHintItem *item, NSRect box, NSRect slot,
+                             NSRect room, NSUInteger offset, CGFloat baseline) {
+        (void)slot;
+        (void)room;
+        (void)offset;
+        if (item) block(gapIndex, item, box, baseline);
+    }];
+}
+
+// The same, with each gap's slot (its label and padding, the line's
+// height) and the room all the gaps at its offset open, in view
+// coordinates, and the offset. `item` is nil for a gap without one.
+- (void)enumerateRoomsIn:(NSRange)chars
+                   block:(void (^)(size_t gapIndex, MCInlayHintItem *item, NSRect box, NSRect slot,
+                                   NSRect room, NSUInteger offset, CGFloat baseline))block {
     MCSourceStorage *ts = [self storage];
     if (!ts) return;
     const std::vector<MCTextGap> gaps = ts.gaps;
@@ -184,13 +230,15 @@
                           : NSMaxX([lm boundingRectForGlyphRange:NSMakeRange(g, 1)
                                                  inTextContainer:tc]);
             CGFloat x = origin.x + right - total;
+            const NSRect room = NSMakeRect(x, origin.y + NSMinY(frag), total, NSHeight(frag));
             for (auto at = it; at != end; ++at) {
                 MCInlayHintItem *item = at->tag < _items.count ? _items[at->tag] : nil;
-                if (!item) { x += at->width; continue; }
-                const CGFloat left = x + (item.paddingLeft ? _padding : 0);
-                NSRect box = NSMakeRect(left, baseline - ascender, item.labelWidth,
-                                        ascender - descender);
-                block((size_t)(at - gaps.begin()), item, box, baseline);
+                const NSRect slot = NSMakeRect(x, NSMinY(room), at->width, NSHeight(room));
+                NSRect box = NSZeroRect;
+                if (item)
+                    box = NSMakeRect(x + (item.paddingLeft ? _padding : 0), baseline - ascender,
+                                     item.labelWidth, ascender - descender);
+                block((size_t)(at - gaps.begin()), item, box, slot, room, it->offset, baseline);
                 x += at->width;
             }
         }
@@ -210,6 +258,59 @@
         if (gapIndex == index) found = box;
     }];
     return found;
+}
+
+// ---- the pointer and the caret
+// The characters near a point, for the gaps whose room may hold it.
+- (NSRange)charactersNearPoint:(NSPoint)point {
+    NSLayoutManager *lm = _tv.layoutManager;
+    NSTextContainer *tc = _tv.textContainer;
+    MCSourceStorage *ts = [self storage];
+    if (!lm || !tc || !ts || ts.length == 0) return NSMakeRange(NSNotFound, 0);
+    const NSPoint origin = _tv.textContainerOrigin;
+    const NSUInteger g = [lm glyphIndexForPoint:NSMakePoint(point.x - origin.x, point.y - origin.y)
+                                inTextContainer:tc];
+    const NSUInteger k = [lm characterIndexForGlyphAtIndex:g];
+    const NSUInteger from = k > 0 ? k - 1 : 0;
+    return NSMakeRange(from, MIN(k + 1, ts.length - 1) - from + 1);
+}
+
+- (NSUInteger)hintIndexAtPoint:(NSPoint)point {
+    MCSourceStorage *ts = [self storage];
+    if (!ts || ts.gaps.empty() || !_tv.editable) return NSNotFound;
+    const NSRange near = [self charactersNearPoint:point];
+    if (near.location == NSNotFound) return NSNotFound;
+    __block NSUInteger found = NSNotFound;
+    [self enumerateRoomsIn:near
+                     block:^(size_t gapIndex, MCInlayHintItem *item, NSRect box, NSRect slot,
+                             NSRect room, NSUInteger offset, CGFloat baseline) {
+        (void)box;
+        (void)room;
+        (void)offset;
+        (void)baseline;
+        if (item && found == NSNotFound && NSPointInRect(point, slot)) found = gapIndex;
+    }];
+    return found;
+}
+
+- (CGFloat)caretShiftAtOffset:(NSUInteger)offset {
+    MCSourceStorage *ts = [self storage];
+    if (!ts || !_tv.editable) return 0;
+    const std::vector<MCTextGap> &gaps = ts.gaps;
+    auto it = std::lower_bound(gaps.begin(), gaps.end(), offset,
+                               [](const MCTextGap &g, NSUInteger o) { return g.offset < o; });
+    CGFloat shift = 0;
+    for (; it != gaps.end() && it->offset == offset; ++it)
+        if (it->followsBefore) shift += it->width;
+    if (shift <= 0) return 0;
+    // Only where the room is laid out (not on a folded line).
+    BOOL lineStart = NO;
+    const NSUInteger k = [ts characterOfGapAt:offset lineStart:&lineStart];
+    if (lineStart || k >= ts.length) return 0;
+    NSLayoutManager *lm = _tv.layoutManager;
+    const NSUInteger g = [lm glyphIndexForCharacterAtIndex:k];
+    if ([lm propertyForGlyphAtIndex:g] & NSGlyphPropertyNull) return 0;
+    return shift;
 }
 
 - (void)drawInRect:(NSRect)dirty {
