@@ -1,5 +1,7 @@
 // Browser.mm — embedded browser panel. Objective-C++.
 #import "Browser.h"
+#import "TerminalFindBar.h"
+#import "TerminalGridView.h"
 #import "AppSettings.h"
 #import "Appearance.h"
 #import "BrowserPages.h"
@@ -152,6 +154,8 @@ static const NSUInteger kMaxBrowserStates = 4 * 1024 * 1024;
                            NSMenuItemValidation> {
     NSMutableArray<MCBrowserTab *> *_tabs;
     NSInteger _selected;
+    NSUInteger _findGeneration;   // answers for an older query or page are dropped
+    NSInteger _findCount;
     uint64_t _clock;
 }
 @property(nonatomic, strong) MCWebView   *agentWeb;   // the agent's, once it loaded one
@@ -353,6 +357,7 @@ static id MCRecordFromData(NSData *data, BOOL archived) {
 // The strip is the editor's: the sidebar's color, with the tab on show in
 // the browser's own, running into the toolbar below it.
 - (void)applySettings {
+    [_findBar applySettings];
     AppSettings *cfg = [AppSettings shared];
     self.layer.backgroundColor = [cfg background:Surface::Browser].CGColor;
     self.urlBar.textColor = cfg.settings.textIsSet(Surface::Browser)
@@ -505,6 +510,11 @@ static const CGFloat kBrowserBarHeight = 36;
     const NSRect page = [self pageRect];
     for (MCBrowserTab *t in _tabs) t.web.frame = page;   // hidden pages keep their size
     self.agentWeb.frame = page;
+    if (_findBar) {
+        const NSSize size = [MCTerminalFindBar preferredSize];
+        const CGFloat w = MIN(size.width, MAX(0, W - 16));
+        _findBar.frame = NSMakeRect(W - w - 8, NSMaxY(page) - size.height - 6, w, size.height);
+    }
 }
 
 - (void)focusURLBar { [self.window makeFirstResponder:self.urlBar]; }
@@ -805,8 +815,122 @@ static const CGFloat kBrowserBarHeight = 36;
     if (i >= 0) [self selectTab:(NSUInteger)i];
 }
 
+// ---------------------------------------------------------- find in page
+// Edit > Find's tags (Commands.cpp, NSTextFinderAction).
+enum { kFindInPageShow = 1, kFindInPageNext = 2, kFindInPagePrevious = 3 };
+
+- (void)performTextFinderAction:(id)sender {
+    const NSInteger tag = [sender respondsToSelector:@selector(tag)] ? [sender tag] : 0;
+    if (tag == kFindInPageShow) {
+        [self showFindBar];
+    } else if (tag == kFindInPageNext || tag == kFindInPagePrevious) {
+        if (!_findBar || _findBar.hidden) [self showFindBar];
+        else [self findInPageForward:tag == kFindInPageNext];
+    }
+}
+
+// A text field's editor answers the menu's Find items itself and refuses
+// them, so with the keyboard in the address bar the key is taken here.
+- (BOOL)performKeyEquivalent:(NSEvent *)e {
+    if (self.urlBar.currentEditor && self.window.firstResponder == self.urlBar.currentEditor) {
+        NSMenuItem *item = MCMenuItemForKey(NSApp.mainMenu, e);
+        if (item.action == @selector(performTextFinderAction:) &&
+            (item.tag == kFindInPageShow || item.tag == kFindInPageNext ||
+             item.tag == kFindInPagePrevious)) {
+            [self performTextFinderAction:item];
+            return YES;
+        }
+    }
+    return [super performKeyEquivalent:e];
+}
+
+- (void)showFindBar {
+    if (!_findBar) {
+        _findBar = [[MCTerminalFindBar alloc]
+            initWithFrame:(NSRect){NSZeroPoint, [MCTerminalFindBar preferredSize]}];
+        __weak BrowserView *weakSelf = self;
+        _findBar.onChange = ^{ [weakSelf findQueryChanged]; };
+        _findBar.onNext = ^(BOOL forward) { [weakSelf findInPageForward:forward]; };
+        _findBar.onClose = ^{ [weakSelf hideFindBar]; };
+        [self addSubview:_findBar];
+        [self layoutChildren];
+    }
+    const BOOL wasHidden = _findBar.hidden;
+    _findBar.hidden = NO;
+    if (wasHidden && _findBar.field.stringValue.length) [self findQueryChanged];
+    [_findBar focusField];
+}
+
+- (void)hideFindBar {
+    if (!_findBar || _findBar.hidden) return;
+    const BOOL hadKeyboard = [_findBar isEditing];
+    _findBar.hidden = YES;
+    MCWebView *web = self.shownWeb;
+    if (!hadKeyboard || !web || web.isHiddenOrHasHiddenAncestor) return;
+    web.grantKeyboard = YES;
+    [self.window makeFirstResponder:web];
+    web.grantKeyboard = NO;
+}
+
+// A new query, or a page newly on show: counted, then found from the top
+// (from the last match, typing "ab" after "a" would pass the first "ab").
+// The script runs in a world of its own, out of the page's reach.
+- (void)findQueryChanged {
+    if (!_findBar || _findBar.hidden) return;
+    MCWebView *web = self.shownWeb;
+    NSString *query = _findBar.field.stringValue;
+    const NSUInteger generation = ++_findGeneration;
+    if (!web) { [_findBar showCount:0 index:-1 limit:0]; return; }
+    NSString *body =
+        @"getSelection().removeAllRanges();"
+        @"if (!q) return 0;"
+        @"var t = document.body ? document.body.innerText : '';"
+        @"if (!cs) { t = t.toLowerCase(); q = q.toLowerCase(); }"
+        @"var n = 0, i = 0;"
+        @"while ((i = t.indexOf(q, i)) >= 0) { n++; i += q.length; }"
+        @"return n;";
+    __weak BrowserView *weakSelf = self;
+    [web callAsyncJavaScript:body
+                   arguments:@{@"q": query, @"cs": @(_findBar.matchCase)}
+                     inFrame:nil
+              inContentWorld:WKContentWorld.defaultClientWorld
+           completionHandler:^(id result, NSError *error) {
+        (void)error;
+        BrowserView *me = weakSelf;
+        if (!me || generation != me->_findGeneration) return;
+        me->_findCount = [result isKindOfClass:NSNumber.class] ? [result integerValue] : 0;
+        if (!query.length) {
+            [me->_findBar showCount:0 index:-1 limit:0];
+            return;
+        }
+        [me findInPageForward:YES];
+    }];
+}
+
+- (void)findInPageForward:(BOOL)forward {
+    MCWebView *web = self.shownWeb;
+    NSString *query = _findBar.field.stringValue;
+    if (!web || !query.length) return;
+    WKFindConfiguration *config = [WKFindConfiguration new];
+    config.backwards = !forward;
+    config.caseSensitive = _findBar.matchCase;
+    config.wraps = YES;
+    const NSUInteger generation = _findGeneration;
+    __weak BrowserView *weakSelf = self;
+    [web findString:query withConfiguration:config completionHandler:^(WKFindResult *result) {
+        BrowserView *me = weakSelf;
+        if (!me || generation != me->_findGeneration) return;
+        // WebKit also finds what innerText leaves out (a frame's text).
+        const NSInteger count = result.matchFound ? MAX((NSInteger)1, me->_findCount) : 0;
+        [me->_findBar showCount:count index:-1 limit:0];
+    }];
+}
+
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     const SEL a = item.action;
+    if (a == @selector(performTextFinderAction:))
+        return item.tag == kFindInPageShow || item.tag == kFindInPageNext ||
+               item.tag == kFindInPagePrevious;
     if (a == @selector(closeFocused:)) {
         item.title = self.agentPageShown ? @"Close Agent Page"
                      : _tabs.count > 1   ? @"Close Browser Tab"
@@ -844,6 +968,7 @@ static const CGFloat kBrowserBarHeight = 36;
     [self updateToolbar];
     [self reloadStrip];
     [self layoutChildren];
+    [self findQueryChanged];   // the bar, if open, follows the page on show
 }
 
 - (void)updateToolbar {
@@ -1066,7 +1191,10 @@ static const CGFloat kBrowserBarHeight = 36;
         if (fabs(wv.pageZoom - z) > 0.001) wv.pageZoom = z;
         [self reloadStrip];
     }
-    if (wv == self.shownWeb) [self updateToolbar];
+    if (wv == self.shownWeb) {
+        [self updateToolbar];
+        [self findQueryChanged];
+    }
 }
 
 // ------------------------------------------------------------------ zoom

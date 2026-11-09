@@ -15,6 +15,9 @@ typedef NS_ENUM(NSInteger, MCLineEdit) {
     MCLineEditDeleteToStart,  // delete back to its start (Ctrl+U)
 };
 
+// The menu item, enabled or not, whose key equivalent is this key event's.
+NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
+
 @interface TerminalGridView : NSView <NSTextInputClient>
 // The screen to draw; owned by the TerminalView, which outlives this view.
 @property(nonatomic, assign) TerminalScreen *screen;

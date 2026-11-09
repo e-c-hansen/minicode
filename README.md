@@ -441,6 +441,7 @@ The menus, the command palette and the shortcut hints follow the file as soon as
 | Find in the current file, every match highlighted, Return and Shift Return for the next and previous one | Command F | Ctrl F |  |
 | Find with match case, whole word, or a regular expression, in the find bar or Find in Folder | Option Command C, Option Command W, Option Command R |  |  |
 | Find only in the selected text, while the find bar has the keyboard | Option Command L |  |  |
+| Find in the browser's page, while the browser has the keyboard (Return and Shift Return for the next and previous match, Escape to close) | Command F, then Command G, Shift Command G |  |  |
 | Find in the terminal, its scrollback included (Return and Shift Return for the next and previous match, Escape to close) | Command F, then Command G, Shift Command G |  |  |
 | Find next, find previous | Command G, Shift Command G | Ctrl G or F3, Shift F3 |  |
 | Focus the browser's address bar, opening the browser if it is hidden | Command 3 |  |  |

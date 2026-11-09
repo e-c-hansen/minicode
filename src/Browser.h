@@ -12,6 +12,7 @@
 @end
 
 @class MCPageProbe;
+@class MCTerminalFindBar;
 
 // The user's pages are tabs, in a strip like the terminal's above the
 // toolbar (BrowserTabs.h has the rules): + or Cmd+T opens one, a tab's x,
@@ -32,6 +33,11 @@
 // elsewhere in minicode, loads in the user's tab on show.
 @interface BrowserView : NSView
 - (instancetype)initWithHomeURL:(NSString *)url;
+// Find in the page on show (Cmd+F while the pane has the keyboard, the
+// address bar too; Cmd+G and Shift+Cmd+G, Return and Shift+Return, Esc): the
+// terminal's bar over the page's top right, WebKit doing the finding. Nil
+// until first asked for.
+@property(nonatomic, readonly) MCTerminalFindBar *findBar;
 - (void)focusURLBar;
 // The tabs. newTab opens an empty one right of the one on show and shows
 // it (the caller gives the address bar the keyboard); closing the last

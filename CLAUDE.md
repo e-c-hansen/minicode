@@ -1824,6 +1824,22 @@ view is disposed (on `unrealize`), or dispose loops forever.
   the Mac builds an `NSTextTable` (`appendMarkdownTable:`); a table holding
   typeset formulas gets `MCTableColumnWidths` (AppKit's table layout ignores
   attachment widths). Cells are padded by display width, never bytes.
+- **A page draws through `MCGapLayoutManager holdsPage`** (2026-11-09, the
+  owner's screenshots; `make guitest SUITES=markdown_page`; the full
+  preview, the side pane, the split editor's copy). AppKit's
+  `glyphRangeForBoundingRect:` assumes line fragments only go down, and a
+  table's go back up at each cell, so a strip inside a row of uneven cells
+  (each piece that scrolls in) found no glyphs and stayed blank; the
+  override adds the rows the rect touches, by each row's top (those do go
+  down) and only up to what is laid out. `fillBackgroundRectArray:` rebuilds
+  a wrapped run's background from each line's glyphs (AppKit joins whole
+  lines and runs to the fragment's edges); **`rects` is the layout manager's
+  own buffer, overwritten by the next rect it answers, so copy it first**,
+  and only a run's own `NSBackgroundColorAttributeName` goes this way:
+  selections, text blocks and table borders come through the same method.
+  A page replaced while scrolled down redraws the whole pane
+  (`MCRedrawWholePane`): TextKit marks only the page's own column there, so
+  a new zoom's margins kept the old page's ink.
 - Every run carries its source `line` (`kMarkdownSourceLine`): Shift+Cmd+V
   opens the preview at the caret and the source where a scrolled preview is.
   Links (`openMarkdownLink:`): `#heading` by GitHub's anchor
@@ -2938,6 +2954,14 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   menus a moment later (wait for it); WebKit gives a script's click no
   modifiers, so the Command-click check hands the delegate an action
   subclass.
+- **Find in the page** (2026-11-09, `make guitest SUITES=browser_find`):
+  the terminal's `MCTerminalFindBar` at the page's top right, Edit > Find's
+  `performTextFinderAction:` answered by the pane in the responder chain
+  (`performKeyEquivalent:` with the keyboard in the address bar, whose field
+  editor answers the menu's Find items and refuses them). WebKit finds
+  (`findString:withConfiguration:`) and selects; the count is a script in
+  the client world over `innerText`, so it is the visible text's, and no
+  "2 of 5" (WebKit does not say which match it is on).
 - `mc-dev` (the user's `~/Code/dotfiles/shell/aliases.sh`) runs the repo's
   build; launching a build registers it with Launch Services, so Finder may
   offer two minicodes (`lsregister -u` it).
@@ -3302,14 +3326,14 @@ session has a display. Check first.
   snippets, completion_keys, problems, servers_by_extension, server_consent, tools_consent,
   organize_on_save, format, format_consent, format_coverage;
   documents and viewers: markdown_preview, markdown_side,
-  markdown_side_sync, markdown_width, markdown_math, mermaid, latex,
+  markdown_side_sync, markdown_width, markdown_page, markdown_math, mermaid, latex,
   previews, compare;
   terminal: terminal_draw, terminal_links, terminal_marks, terminal_paste,
   terminal_pty, terminal_reflow, terminal_splits, terminal_vt,
   terminal_exec, terminal_keys, terminal_zoom, run_file;
   git: git_panel, git_actions, git_hunks, git_verbs, git_sync, git_gutter;
   agents and control: agents, agent_panel, agent_places, agentcommands,
-  agent_autosave, attention, control, browserpages, browser_tabs, idelink,
+  agent_autosave, attention, control, browserpages, browser_tabs, browser_find, idelink,
   processes;
   run only when named: _backups_writer, _backups_restore.
   A suite's file is usually its name in CamelCase; the exceptions are

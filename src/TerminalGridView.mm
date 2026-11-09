@@ -47,7 +47,6 @@ static const long long kNoLine = LLONG_MIN;
 // Synchronized output: the longest a frame may keep the view from drawing.
 static const NSTimeInterval kSyncLimit = 0.15;
 
-static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
 // Grid views with secure keyboard entry on (see updateSecureInput).
 static NSInteger gSecureGrids;
 // Points a row's glyphs may reach into the rows above and below it (an
@@ -1552,7 +1551,7 @@ static BOOL RectsCover(const NSRect *rects, NSInteger n, NSRect r) {
 
 // The menu item, enabled or not, whose key equivalent is this key event's
 // (Command, Control, Option and Shift compared; nil when none).
-static NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
+NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
     const NSEventModifierFlags mods = NSEventModifierFlagCommand | NSEventModifierFlagControl |
                                       NSEventModifierFlagOption | NSEventModifierFlagShift;
     const NSEventModifierFlags flags = e.modifierFlags & mods;
