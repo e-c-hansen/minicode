@@ -869,7 +869,8 @@ static void testGitModel() {
             "+Subproject commit 2222222222222222222222222222222222222222-dirty\n";
         HunkPlan text = hunkPlan(pasted, DiffSide::Changes, HunkOp::Stage, 6, 7, false);
         CHECK(text.refusal.empty() && !text.patch.empty() && text.path == "notes.txt");
-        CHECK(!buildPatch(pasted, HunkOp::Stage, 7, 7, &why).empty());
+        std::string none;
+        CHECK(!buildPatch(pasted, HunkOp::Stage, 7, 7, &none).empty() && none.empty());
         // Without an index line (git writes none when both sides name one
         // commit and only "-dirty" differs, as for lib above with a change
         // inside it), one "Subproject commit" line a side is the gitlink.
