@@ -239,8 +239,11 @@ std::vector<std::string> stageArgs(const Row& r, bool initial) {
 }
 
 std::vector<std::string> diffArgs(const Row& r) {
+    // --submodule=short: a submodule's diff stays one "Subproject commit"
+    // line a side under its 160000 header whatever the user's
+    // diff.submodule says (log and diff write no such header).
     std::vector<std::string> a = {"-c", "core.quotePath=false", "--literal-pathspecs",
-                                  "diff", "--no-color", "--no-ext-diff",
+                                  "diff", "--no-color", "--no-ext-diff", "--submodule=short",
                                   "--src-prefix=a/", "--dst-prefix=b/"};
     if (r.untracked) {
         a.insert(a.end(), {"--no-index", "--", "/dev/null", r.path});
@@ -722,28 +725,46 @@ std::string hunkRefusal(const Git::FileDiff& f) {
     if (f.header.empty() || !startsWith(f.header[0].text, "diff --git "))
         return name + " has a conflict: resolve it in the file, then stage it whole.";
     if (f.binary) return name + " is a binary file: stage or discard it whole.";
-    // A submodule's diff is one "Subproject commit" line a side (mode
-    // 160000): there is no text to take apart, and reversing it onto the
-    // work tree would do nothing to the checkout.
-    bool gitlink = false;
-    for (const Git::DiffLine& l : f.header)
-        if (startsWith(l.text, "index ") && l.text.size() >= 7 &&
-            l.text.compare(l.text.size() - 7, 7, " 160000") == 0)
+    // A submodule's diff is one "Subproject commit" line a side: there is
+    // no text to take apart, and reversing it onto the work tree would do
+    // nothing to the checkout. The header's mode says so (160000 on the
+    // index line, or on a new file, deleted file, old or new mode line).
+    // A plain file may hold lines reading "Subproject commit <object
+    // name>" (pasted git output, a fixture) and its hunks stage as any
+    // other file's: its diff always has an index line naming two objects
+    // and a 100644 or 100755 mode. Only a gitlink at the same commit with
+    // changes inside (the "-dirty" form) has no index line at all, since
+    // git writes none when the two sides name one object; then it is
+    // known by its hunk, one such line a side.
+    bool gitlink = false, indexLine = false;
+    for (const Git::DiffLine& l : f.header) {
+        const std::string& t = l.text;
+        if (startsWith(t, "index ")) indexLine = true;
+        const bool modeLine = startsWith(t, "index ") || startsWith(t, "new file mode ") ||
+                              startsWith(t, "deleted file mode ") || startsWith(t, "old mode ") ||
+                              startsWith(t, "new mode ");
+        if (modeLine && t.size() >= 7 && t.compare(t.size() - 7, 7, " 160000") == 0)
             gitlink = true;
-    auto isGitlinkLine = [](const std::string& t) {
-        // "+Subproject commit <object name>", "-dirty" after it when the
-        // checkout has changes of its own.
-        if (t.size() < 19 + 40 || t.compare(1, 18, "Subproject commit ") != 0) return false;
-        size_t i = 19;
-        while (i < t.size() && std::isxdigit((unsigned char)t[i])) i++;
-        return i - 19 >= 40 && (i == t.size() || t.compare(i, std::string::npos, "-dirty") == 0);
-    };
-    for (const Git::Hunk& h : f.hunks)
-        for (const Git::DiffLine& l : h.lines)
-            if ((l.kind == Git::LineKind::Added || l.kind == Git::LineKind::Removed ||
-                 l.kind == Git::LineKind::Context) &&
-                isGitlinkLine(l.text))
-                gitlink = true;
+    }
+    if (!gitlink && !indexLine && f.hunks.size() == 1) {
+        auto isGitlinkLine = [](const std::string& t) {
+            // "+Subproject commit <object name>", "-dirty" after it.
+            if (t.size() < 19 + 40 || t.compare(1, 18, "Subproject commit ") != 0) return false;
+            size_t i = 19;
+            while (i < t.size() && std::isxdigit((unsigned char)t[i])) i++;
+            return i - 19 >= 40 &&
+                   (i == t.size() || t.compare(i, std::string::npos, "-dirty") == 0);
+        };
+        size_t removed = 0, added = 0, other = 0;
+        for (const Git::DiffLine& l : f.hunks[0].lines) {
+            if (l.kind == Git::LineKind::Removed && isGitlinkLine(l.text)) removed++;
+            else if (l.kind == Git::LineKind::Added && isGitlinkLine(l.text)) added++;
+            else if (l.kind == Git::LineKind::Removed || l.kind == Git::LineKind::Added ||
+                     l.kind == Git::LineKind::Context)
+                other++;
+        }
+        gitlink = removed == 1 && added == 1 && other == 0;
+    }
     if (gitlink)
         return name + " is a submodule: stage or unstage it whole, and discard inside it "
                       "(open it as a folder).";
