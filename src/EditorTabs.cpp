@@ -45,12 +45,14 @@ Session restorable(const Session &saved,
     std::set<std::string> seen;
     // Where the saved active file lands, or the nearest kept file before it.
     int activeAt = -1, before = -1;
+    int previewAt = -1;
     for (int i = 0; i < (int)saved.files.size(); i++) {
         const std::string &f = saved.files[(size_t)i];
         const bool keep = !f.empty() && !seen.count(f) && exists(f);
         if (keep) {
             seen.insert(f);
             out.files.push_back(f);
+            if (i == saved.preview) previewAt = (int)out.files.size() - 1;
         }
         if (i == saved.active) {
             if (keep) activeAt = (int)out.files.size() - 1;
@@ -62,6 +64,7 @@ Session restorable(const Session &saved,
         }
     }
     if (out.files.empty()) return out;
+    out.preview = previewAt;
     if (activeAt >= 0) out.active = activeAt;
     else if (before >= 0) out.active = before;
     else out.active = 0;
@@ -126,6 +129,47 @@ int dropIndex(const std::vector<double> &widths, int from, double x) {
         left += widths[(size_t)i];
     }
     return before;
+}
+
+bool opensInPreview(OpenFrom from, const PreviewSettings &s) {
+    if (!s.enabled) return false;
+    switch (from) {
+    case OpenFrom::TreeClick:
+    case OpenFrom::CodeNavigation:
+    case OpenFrom::SearchClick:
+        return true;
+    case OpenFrom::QuickOpen:
+        return s.fromQuickOpen;
+    case OpenFrom::Other:
+    case OpenFrom::TreeDoubleClick:
+    case OpenFrom::TreeCommandClick:
+    case OpenFrom::TreeReturn:
+    case OpenFrom::SearchOpen:
+        return false;
+    }
+    return false;
+}
+
+OpenFrom treeClick(int clickCount, bool sameRowAsLastPress, bool command) {
+    if (command) return OpenFrom::TreeCommandClick;
+    if (clickCount >= 2 && sameRowAsLastPress) return OpenFrom::TreeDoubleClick;
+    return OpenFrom::TreeClick;
+}
+
+bool staysPreview(bool isPreview, bool openInPreview) { return isPreview && openInPreview; }
+
+PreviewPlace placePreview(int active, int preview, int count) {
+    PreviewPlace p;
+    if (count < 0) count = 0;
+    if (active >= count) active = -1;
+    int target = insertionIndex(active, count);
+    if (preview >= 0 && preview < count) {
+        p.replace = preview;
+        // The old preview tab goes, so a place right of it moves left one.
+        if (target > preview) target--;
+    }
+    p.index = target;
+    return p;
 }
 
 }  // namespace EditorTabs

@@ -239,6 +239,14 @@ public:
     // VS Code's editor.codeActionsOnSave does, before format.on-save; off by
     // default. Never on an auto-save.
     bool organizeImportsOnSave() const { return organizeImportsOnSave_; }
+    // workbench.enable-preview: a file opened by a single click in the tree,
+    // a search result or a code navigation goes in the window's preview tab,
+    // which the next such file replaces (VS Code's
+    // workbench.editor.enablePreview, on by default).
+    bool enablePreview() const { return enablePreview_; }
+    // workbench.enable-preview-from-quick-open: Quick Open (Cmd+P) opens in
+    // the preview tab too (VS Code's enablePreviewFromQuickOpen, off).
+    bool enablePreviewFromQuickOpen() const { return enablePreviewFromQuickOpen_; }
     // editor.auto-save: off (the default), after-delay (each file with
     // unsaved changes is written once typing has paused for
     // editor.auto-save-delay milliseconds, 1000 by default, as VS Code's
@@ -474,6 +482,8 @@ private:
     bool ideLink_ = false;
     bool keepSortedOnSave_ = false;
     bool organizeImportsOnSave_ = false;
+    bool enablePreview_ = true;
+    bool enablePreviewFromQuickOpen_ = false;
     bool gitAutoFetch_ = false;
     int gitAutoFetchPeriod_ = 180;
     AutoSave autoSave_ = AutoSave::Off;

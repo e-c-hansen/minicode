@@ -528,6 +528,23 @@ container (PanelHost, laid out by hand in layoutContainer)
   right click (`menuForTabAtIndex:`) has the close commands, copy paths,
   reveal, rename and trash; the File menu repeats them for the active tab so
   the palette finds them.
+- **The preview tab** (2026-11-08, VS Code's enablePreview,
+  `workbench.enable-preview`): `MCTab preview`, italic like `agentPreview`.
+  Every open goes through `openFileAtPath:from:` (`openFileAtPath:` is
+  `OpenFrom::Other`, kept) and the rules are the core's
+  (`EditorTabs::opensInPreview`, `treeClick`, `staysPreview`,
+  `placePreview`, `tabs:*`): a tree click, a search result's single click
+  (`SearchPanel previewHandler`) and a code navigation
+  (`lsp.openFileForNavigation`, which first keeps the preview tab it starts
+  from: enablePreviewFromCodeNavigation off) open in preview; Quick Open only
+  with `workbench.enable-preview-from-quick-open`. A kept open of a preview
+  tab's file keeps it; so do an edit (`noteEdited`), a save (`writeText:`), a
+  double-click on its title and Keep Open (tab menu, File menu). The replaced
+  tab is dropped unasked and never in Reopen Closed Tab; a dirty one is kept
+  instead. Agent previews stay their own (neither replaces the other). The
+  workspace edit applier opens kept (`lsp.openFile`): it opens every file
+  before editing any, so previews would replace each other. No
+  `workbench.editor.limit` (off by default in VS Code too).
 - **Dirty means "differs from disk"**: `noteEdited` compares with `savedText`
   (length first), so undoing back clears the dot. `savedText` is the text as
   read (CRLF survives); a UTF-8 BOM is kept apart in `MCTab bom` and written
@@ -587,7 +604,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   `MINICODE_DEFAULTS_SUITE` points it at a scratch suite. A tab over 16 MB or
   not a plain file waits for a click. Windows on one folder share it: each save
   lists the saving window's files then the others'. Agent preview tabs are left
-  out.
+  out (they were saved until 2026-11-08); the user's preview tab is saved as
+  `preview` and comes back as one unless a backup made it dirty.
 - AppDelegate's `current` maps a window an editor made (`ownsWindow:`, Find in
   Folder and TODOs) to that editor; items that edit the file on show are
   disabled while another window is key, so keys reach that window's field.
@@ -2669,7 +2687,11 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 
 - `ClickOutline mouseDown:` runs the native tracking first and opens the file
   on release only if no drag began (`dragBegan`); NSOutlineView's selection
-  notifications did not fire reliably. Drag and drop moves rows into folders
+  notifications did not fire reliably. It records the click's count,
+  Command and whether the press before was on the same row
+  (`sameRowAsLastPress`: the window server's click count is by time alone),
+  so a single click opens in the preview tab and a double-click or Cmd+click
+  keeps (`EditorTabs::treeClick`). Drag and drop moves rows into folders
   (`validateDrop:` retargets onto a folder; into itself, a descendant or where
   it is refused), copies files from Finder in and rows out; a clash is reported
   after the drop (Finder waits on a modal during it). `pathMovedFrom:to:` moves
@@ -3172,9 +3194,9 @@ session has a display. Check first.
   editing: keystroke, multiedit, editor_keys, auto_close, bracket_pairs,
   folding, foldperf, multicaretclick, multicaret_rows, find_bar,
   large_file, save, paste, zoomfit;
-  files and windows: tree, tree_hidden, search, replace_in_folder,
-  backups, palette, symbols, keymap, config_writes, daily_work, structure,
-  utf16;
+  files and windows: tree, tree_hidden, preview_tabs, search,
+  replace_in_folder, backups, palette, symbols, keymap, config_writes,
+  daily_work, structure, utf16;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
   snippets, completion_keys, problems, servers_by_extension, server_consent, tools_consent,

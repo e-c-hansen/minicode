@@ -482,7 +482,7 @@ static BOOL MCEditorOnlyAction(SEL a) {
 static BOOL MCWindowTabAction(SEL a) {
     return a == @selector(reopenClosedTab:) || a == @selector(closeOtherTabs:) ||
            a == @selector(closeTabsToTheRight:) || a == @selector(closeAllTabs:) ||
-           a == @selector(copyActiveFilePath:) || a == @selector(copyActiveFileRelativePath:) ||
+           a == @selector(keepActiveTabOpen:) || a == @selector(copyActiveFilePath:) || a == @selector(copyActiveFileRelativePath:) ||
            a == @selector(revealActiveFileInFinder:) || a == @selector(revealActiveFileInTree:) ||
            a == @selector(sortTreeBy:) || a == @selector(setTreeSortDirection:) ||
            a == @selector(saveFileAs:) || a == @selector(saveAllFiles:) ||
@@ -645,7 +645,7 @@ static BOOL MCWindowTabAction(SEL a) {
     __weak EditorController *weak = c;
     ctx.openFile = ^(NSString *path) {
         EditorController *e = weak;
-        [e revealPath:path andOpen:YES];   // as a click in the tree
+        [e openFileFromQuickOpen:path];   // selected in the tree; kept unless the settings say
     };
     if (c.canGoToLine)
         ctx.goToLine = ^(NSInteger line, NSInteger column) {
@@ -699,6 +699,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)closeOtherTabs:(id)sender  { [[self current] closeOtherTabs:sender]; }
 - (void)closeTabsToTheRight:(id)sender { [[self current] closeTabsToTheRight:sender]; }
 - (void)closeAllTabs:(id)sender    { [[self current] closeAllTabs:sender]; }
+- (void)keepActiveTabOpen:(id)sender { [[self current] keepActiveTabOpen:sender]; }
 - (void)copyActiveFilePath:(id)sender { [[self current] copyActiveFilePath:sender]; }
 - (void)copyActiveFileRelativePath:(id)sender {
     [[self current] copyActiveFileRelativePath:sender];
@@ -924,6 +925,10 @@ static void BuildMenu(void) {
                         action:@selector(closeTabsToTheRight:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Close All Tabs"
                         action:@selector(closeAllTabs:) keyEquivalent:@""];
+    // The preview tab (its title in italics) as an ordinary one, as VS
+    // Code's Keep Editor; its key there is a Cmd+K chord, none here.
+    [fileMenu addItemWithTitle:@"Keep Open"
+                        action:@selector(keepActiveTabOpen:) keyEquivalent:@""];
 
     // Cmd+Shift+W closes the whole window, asking about unsaved tabs first.
     NSMenuItem *closeWindow =

@@ -246,9 +246,14 @@ void MCForgetFolderToolsConsent(NSString *root);
 // green running, yellow starting, red failed or crashed, gray when there is
 // none; nil for no dot. Called on every change.
 @property(nonatomic, copy) void (^onStatus)(NSString *text, NSColor *dot);
-// Open a file (for go to definition). Return YES if it is now the current
-// file; the session then selects the target range.
+// Open a file in a kept tab (a workspace edit's files). Return YES if it is
+// now the current file.
 @property(nonatomic, copy) BOOL (^openFile)(NSString *path);
+// Open a code navigation's file (go to definition, a reference), in the
+// preview tab where the window's settings say so; openFile when unset.
+// Return YES if it is now the current file; the session then selects the
+// target range.
+@property(nonatomic, copy) BOOL (^openFileForNavigation)(NSString *path);
 // The unsaved text of a file open in a tab (another tab's included), or nil
 // when no tab has it: what references show and what an edit checks a
 // file's buffer against.

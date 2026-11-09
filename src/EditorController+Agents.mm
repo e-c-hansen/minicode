@@ -617,15 +617,8 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     [self saveSession];
 }
 
-// A double-click on the preview tab's title keeps it, as in VS Code.
-- (void)keepAgentPreviewTabAtIndex:(NSInteger)i {
-    if (i < 0 || i >= (NSInteger)_tabs.count) return;
-    MCTab *t = _tabs[(NSUInteger)i];
-    if (!t.agentPreview) return;
-    t.agentPreview = NO;
-    [self reloadTabStrip];
-    [self saveSession];
-}
+// A double-click on the preview tab's title keeps it: keepTabAtIndex:
+// (EditorController+Tabs.mm), for both kinds of preview tab.
 
 - (void)showComparison:(MCComparison *)comparison preview:(BOOL)preview {
     [self showComparison:comparison preview:preview quiet:NO];

@@ -163,16 +163,10 @@
     self.lsp.onProblemsChanged = ^{ [weakSelf updateProblems]; };
     self.lsp.onSemanticTokens = ^(NSData *spans) { [weakSelf semanticTokensArrived:spans]; };
     self.lsp.openFile = ^BOOL(NSString *p) {
-        EditorController *s = weakSelf;
-        if ([p hasPrefix:[s.rootPath stringByAppendingString:@"/"]])
-            [s revealPath:p andOpen:YES];
-        else
-            [s openFileAtPath:p];
-        // A tab opened under another spelling (/private/tmp for /tmp) is
-        // the same file.
-        return [s.currentPath isEqualToString:p] ||
-               [s.currentPath.stringByResolvingSymlinksInPath
-                   isEqualToString:p.stringByResolvingSymlinksInPath];
+        return [weakSelf openFileForLanguageServer:p from:EditorTabs::OpenFrom::Other];
+    };
+    self.lsp.openFileForNavigation = ^BOOL(NSString *p) {
+        return [weakSelf openFileForLanguageServer:p from:EditorTabs::OpenFrom::CodeNavigation];
     };
     // Rename and quick fixes edit files in other tabs, and references show
     // their lines, from the tab's unsaved text.
