@@ -1150,7 +1150,13 @@ static NSString *MCSkippedNote(const FolderSearchResult &r, NSString **tooltip) 
 - (void)rowClicked:(id)sender {
     (void)sender;
     id item = [self.outline itemAtRow:self.outline.clickedRow];
-    if (![item isKindOfClass:[SearchFile class]] || NSApp.currentEvent.clickCount > 1) return;
+    if (NSApp.currentEvent.clickCount > 1) return;   // the double-click's own action
+    if ([item isKindOfClass:[SearchHit class]]) {
+        SearchHit *h = item;
+        if (self.previewHandler) self.previewHandler(h.path, h.line);
+        return;
+    }
+    if (![item isKindOfClass:[SearchFile class]]) return;
     if ([self.outline isItemExpanded:item]) [self.outline collapseItem:item];
     else [self.outline expandItem:item];
 }

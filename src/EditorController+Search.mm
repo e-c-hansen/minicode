@@ -62,11 +62,20 @@
              openHandler:^(NSString *path, NSInteger line) {
                 EditorController *s = weakSelf;
                 [s.navigator jump:^{
-                    [s openFileAtPath:path];
+                    [s openFileAtPath:path from:EditorTabs::OpenFrom::SearchOpen];
                     [s jumpToLine:line];
                 }];
                 [s.window makeKeyAndOrderFront:nil];
             }];
+        // A single click shows the line in the preview tab, the keyboard
+        // staying in the results (VS Code's search view).
+        self.searchPanel.previewHandler = ^(NSString *path, NSInteger line) {
+            EditorController *s = weakSelf;
+            [s.navigator jump:^{
+                [s openFileAtPath:path from:EditorTabs::OpenFrom::SearchClick];
+                if ([s.currentPath isEqualToString:path]) [s jumpToLine:line];
+            }];
+        };
         // Replace in Folder edits open tabs through their buffers, as
         // rename does, and leaves a tab with unsaved changes alone.
         self.searchPanel.openState = ^MCOpenFileState(NSString *path) {
@@ -146,11 +155,16 @@
             initTodosWithRoot:_root.path
                   openHandler:^(NSString *path, NSInteger line) {
                 EditorController *s = weakSelf;
-                [s openFileAtPath:path];
+                [s openFileAtPath:path from:EditorTabs::OpenFrom::SearchOpen];
                 if (![s.currentPath isEqualToString:path]) return;   // refused
                 [s.window makeKeyAndOrderFront:nil];
                 [s goToLine:(int)line column:0];
             }];
+        self.todoPanel.previewHandler = ^(NSString *path, NSInteger line) {
+            EditorController *s = weakSelf;
+            [s openFileAtPath:path from:EditorTabs::OpenFrom::SearchClick];
+            if ([s.currentPath isEqualToString:path]) [s goToLine:(int)line column:0];
+        };
     }
     NSInteger row = self.outline.selectedRow;
     if (row >= 0) {

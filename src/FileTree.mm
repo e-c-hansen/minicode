@@ -121,10 +121,19 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
 
 @implementation ClickOutline {
     NSTimeInterval _typedAt;   // the last letter typed to the tree, for type-select
+    NSInteger _lastPressRow;   // the row the press before this one was on
+}
+- (instancetype)initWithFrame:(NSRect)frame {
+    if ((self = [super initWithFrame:frame])) _lastPressRow = -1;
+    return self;
 }
 - (void)mouseDown:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     NSInteger row = [self rowAtPoint:p];
+    _clickCount = event.clickCount;
+    _sameRowAsLastPress = row >= 0 && row == _lastPressRow;
+    _commandClick = (event.modifierFlags & NSEventModifierFlagCommand) != 0;
+    _lastPressRow = row;
     // The native tracking runs first (selection, expansion, and a drag once
     // the mouse moves), and returns at the release or when a drag starts.
     // A press that became a drag opens nothing; any other is a click.
