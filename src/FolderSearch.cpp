@@ -1456,6 +1456,53 @@ std::string encodeText(const std::string& utf8, TextEncoding encoding) {
     return out;
 }
 
+bool decodeFileText(std::string* bytes, TextEncoding* encoding, bool* bom) {
+    if (hasUtf16Bom(*bytes)) {
+        std::string text;
+        TextEncoding e = TextEncoding::Utf8;
+        if (!decodeUtf16(*bytes, &text, &e, true)) return false;
+        *bytes = std::move(text);
+        *encoding = e;
+        *bom = true;
+        return true;
+    }
+    *encoding = TextEncoding::Utf8;
+    *bom = stripUtf8Bom(bytes);
+    return true;
+}
+
+std::string encodeFileText(const std::string& utf8, TextEncoding encoding, bool bom) {
+    if (encoding != TextEncoding::Utf8) return encodeText(utf8, encoding);
+    if (!bom) return utf8;
+    std::string out;
+    out.reserve(utf8.size() + 3);
+    out += "\xEF\xBB\xBF";
+    out += utf8;
+    return out;
+}
+
+const char* encodingName(TextEncoding encoding, bool bom) {
+    switch (encoding) {
+    case TextEncoding::Utf16LE: return "utf16le";
+    case TextEncoding::Utf16BE: return "utf16be";
+    case TextEncoding::Utf8: break;
+    }
+    return bom ? "utf8bom" : "utf8";
+}
+
+bool parseEncodingName(const std::string& name, TextEncoding* encoding, bool* bom) {
+    if (name == "utf8" || name == "utf8bom") {
+        *encoding = TextEncoding::Utf8;
+        *bom = name == "utf8bom";
+    } else if (name == "utf16le" || name == "utf16be") {
+        *encoding = name == "utf16le" ? TextEncoding::Utf16LE : TextEncoding::Utf16BE;
+        *bom = true;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 bool readTextFile(const std::string& path, std::uintmax_t maxFileSize, std::string* out,
                   TextEncoding* encoding) {
     std::error_code ec;

@@ -50,6 +50,42 @@ static void testFileSniff() {
         CHECK(classify("/a/noext", std::string("\xCA\xFE\xBA\xBE\0\0", 6)) == Kind::QuickLook);
         CHECK(std::string(kindName(Kind::QuickLook)) == "quicklook");
     }
+    GROUP("sniff:utf16");
+    {
+        // UTF-16 with a byte order mark is text, NULs and all (round 6's
+        // D10: a Find in Folder result in one opened Quick Look); without
+        // a mark, or with a lone surrogate in the head, it stays binary.
+        auto utf16 = [](const std::u16string &s, bool le, bool mark = true) {
+            std::string b = !mark ? std::string() : le ? std::string("\xFF\xFE", 2)
+                                                       : std::string("\xFE\xFF", 2);
+            for (char16_t u : s) {
+                const char hi = (char)(u >> 8), lo = (char)(u & 0xFF);
+                b += le ? lo : hi;
+                b += le ? hi : lo;
+            }
+            return b;
+        };
+        const std::u16string text = u"$a = 1\r\n# caf\u00E9 \U0001F600\r\n";
+        CHECK(isUtf16Text(utf16(text, true)) && isUtf16Text(utf16(text, false)));
+        CHECK(classify("/a/s.ps1", utf16(text, true)) == Kind::Text);
+        CHECK(classify("/a/s.txt", utf16(text, false)) == Kind::Text);
+        CHECK(classify("/a/t.csv", utf16(u"a,b\n", true)) == Kind::Csv);
+        CHECK(classify("/a/s.ps1", utf16(text, true, false)) == Kind::QuickLook);   // no mark
+        CHECK(!isUtf16Text(std::string("\xFF\xFE", 2) + "a"));                     // odd, whole
+        CHECK(isUtf16Text(std::string("\xFF\xFE", 2)));                            // empty
+        CHECK(!isUtf16Text(std::string("\xFF")) && !isUtf16Text(std::string()));
+        const std::u16string lone = std::u16string(u"a") + char16_t(0xD800) + u"b";
+        CHECK(!isUtf16Text(utf16(lone, true)));
+        CHECK(classify("/a/x.txt", utf16(lone, true)) == Kind::QuickLook);
+        CHECK(!isUtf16Text(utf16(std::u16string(1, char16_t(0xDC00)), false)));
+        CHECK(!isUtf16Text(utf16(std::u16string(1, char16_t(0xD800)), true)));      // at the end
+        // The head cut at kHeadBytes: half a unit, or half a pair, may end it.
+        std::string cut = utf16(std::u16string(kHeadBytes / 2 - 2, u'x') + u"\U0001F600", true);
+        CHECK(cut.size() == kHeadBytes + 2);
+        CHECK(isUtf16Text(cut.substr(0, kHeadBytes)));      // ends between the pair's halves
+        CHECK(isUtf16Text(cut.substr(0, kHeadBytes + 1)));  // and half a unit more
+        CHECK(isUtf16Text(cut));
+    }
 }
 
 namespace {

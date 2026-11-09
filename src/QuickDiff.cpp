@@ -204,6 +204,49 @@ void restoreBom(std::u16string& staged, bool stripped) {
     if (stripped) staged.insert(staged.begin(), (char16_t)0xFEFF);
 }
 
+Original readOriginal(const std::string& blob, FolderSearch::TextEncoding fileEncoding,
+                      bool fileBom) {
+    using FolderSearch::TextEncoding;
+    Original o;
+    if (fileEncoding != TextEncoding::Utf8 && blob.size() >= 2 && !(blob.size() & 1)) {
+        const bool le = fileEncoding == TextEncoding::Utf16LE;
+        const unsigned char a = (unsigned char)blob[0], b = (unsigned char)blob[1];
+        if (le ? (a == 0xFF && b == 0xFE) : (a == 0xFE && b == 0xFF)) {
+            o.encoding = fileEncoding;
+            o.bom = true;
+            o.text.reserve(blob.size() / 2 - 1);
+            for (size_t i = 2; i + 1 < blob.size(); i += 2) {
+                const unsigned x = (unsigned char)blob[i], y = (unsigned char)blob[i + 1];
+                o.text += (char16_t)(le ? (x | (y << 8)) : ((x << 8) | y));
+            }
+            return o;
+        }
+    }
+    o.text = fromUtf8(blob);
+    o.bom = stripBom(o.text, fileBom && fileEncoding == TextEncoding::Utf8);
+    return o;
+}
+
+std::string stagedBlob(const std::u16string& staged, const Original& how) {
+    using FolderSearch::TextEncoding;
+    if (how.encoding == TextEncoding::Utf8) {
+        std::u16string text = staged;
+        restoreBom(text, how.bom);
+        return toUtf8(text);
+    }
+    const bool le = how.encoding == TextEncoding::Utf16LE;
+    std::string out;
+    out.reserve(staged.size() * 2 + 2);
+    auto put = [&](unsigned u) {
+        const char hi = (char)(u >> 8), lo = (char)(u & 0xFF);
+        if (le) { out += lo; out += hi; }
+        else    { out += hi; out += lo; }
+    };
+    if (how.bom) put(0xFEFF);
+    for (char16_t c : staged) put(c);
+    return out;
+}
+
 std::u16string fromUtf8(const std::string& s) {
     std::u16string out;
     out.reserve(s.size());

@@ -10,10 +10,19 @@ namespace FileSniff {
 // How many bytes of a file's head the checks look at.
 constexpr size_t kHeadBytes = 8192;
 
-// A NUL byte in the first kHeadBytes: no text file has one (UTF-16 text
-// does, and is not UTF-8 either, so it is not opened as text anyway).
+// A NUL byte in the first kHeadBytes: no text file has one, but for
+// UTF-16 (isUtf16Text, checked first).
 bool looksBinary(const char *data, size_t len);
 inline bool looksBinary(const std::string &head) { return looksBinary(head.data(), head.size()); }
+
+// The head starts with a UTF-16 byte order mark (FF FE or FE FF) and its
+// code units pair up: no lone surrogate, and an even length unless the
+// head is cut at kHeadBytes (where half a unit or a pair may end it). Such
+// a file is text, read and written in its own encoding (FolderSearch::
+// decodeFileText); one with a lone surrogate further on is caught when it
+// is read. UTF-16 without a byte order mark stays binary.
+bool isUtf16Text(const char *data, size_t len);
+inline bool isUtf16Text(const std::string &head) { return isUtf16Text(head.data(), head.size()); }
 
 // SQLite's 16-byte header, "SQLite format 3" and a NUL.
 bool isSqlite(const char *data, size_t len);

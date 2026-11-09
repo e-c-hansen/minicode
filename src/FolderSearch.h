@@ -330,6 +330,21 @@ bool decodeUtf16(const std::string& bytes, std::string* utf8, TextEncoding* enco
 // its byte order mark first (an invalid byte becomes U+FFFD).
 std::string encodeText(const std::string& utf8, TextEncoding encoding);
 
+// A file's bytes as the editor's text, and back (the Mac's tabs: MCTab
+// encoding and bom). UTF-16 with its byte order mark is decoded exactly
+// (decodeUtf16, strict); a lone surrogate or an odd byte makes it false,
+// and such a file is not opened as text. Anything else is taken as UTF-8,
+// a UTF-8 byte order mark taken off; the UTF-8 itself is not checked here
+// (the caller's decoder does). *bom says a mark was there. In place, so a
+// large UTF-8 file is not copied. encodeFileText with the encoding and
+// bom found gives back the same bytes, for every file decodeFileText took.
+bool decodeFileText(std::string* bytes, TextEncoding* encoding, bool* bom);
+std::string encodeFileText(const std::string& utf8, TextEncoding encoding, bool bom);
+// VS Code's names for them ("utf8", "utf8bom", "utf16le", "utf16be"), as
+// a backup records them; parseEncodingName is false for any other name.
+const char* encodingName(TextEncoding encoding, bool bom);
+bool parseEncodingName(const std::string& name, TextEncoding* encoding, bool* bom);
+
 // Read a file as search() does: a regular file (after symlinks) of at most
 // maxFileSize bytes holding valid UTF-8. False otherwise. With `encoding`,
 // UTF-16 with a byte order mark is read too (decodeUtf16, strict), into
