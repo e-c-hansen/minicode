@@ -209,6 +209,16 @@ static BOOL IsRunnable(NSString *path) {
 // be in the environment, so it is looked for again too).
 - (void)environmentConsentChanged:(NSNotification *)note {
     if (![note.object isEqual:[self rootKey]]) return;
+    // A server that runs the folder's own code starts again with it, or
+    // without it (Lsp::checkProjectCode); one that waited may start now.
+    // These go first: a Python restart attaches the file on show, which
+    // would start a waiting one only for the loop below to restart it.
+    for (NSString *key in _entries.allKeys) {
+        MCLspEntry *e = _entries[key];
+        if (Lsp::serverMayRunProjectCode(Std(key)) &&
+            (e.server || e.state == MCLspStateWaiting))
+            [self restartServer:key];
+    }
     for (NSString *key in @[@"python", NS(Lsp::alsoKey("python"))]) {
         MCLspEntry *e = _entries[key];
         if (!e) continue;
@@ -216,14 +226,6 @@ static BOOL IsRunnable(NSString *path) {
             if (Lsp::isAlsoKey(Std(key))) e.alsoCommand = [self alsoCommandForKey:key];
             [self restartServer:key];
         }
-    }
-    // A server that runs the folder's own code starts again with it, or
-    // without it (Lsp::checkProjectCode); one that waited may start now.
-    for (NSString *key in _entries.allKeys) {
-        MCLspEntry *e = _entries[key];
-        if (Lsp::serverMayRunProjectCode(Std(key)) &&
-            (e.server || e.state == MCLspStateWaiting))
-            [self restartServer:key];
     }
     if (![_alsoKey length] && [_langKey isEqualToString:@"python"])
         [self lookAgainForMissingServer];
