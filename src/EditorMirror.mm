@@ -1,4 +1,5 @@
 // EditorMirror.mm — see EditorMirror.h.
+#import "SourceStorage.h"
 #import "EditorMirror.h"
 #include "LineIndex.h"
 #include <vector>
@@ -214,7 +215,7 @@ static const NSUInteger kMirrorMinDigits = 3;
 // ---------------------------------------------------------------- the mirror
 @implementation MCEditorMirror {
     NSTextStorage *_own;          // its own text, when not sharing
-    NSLayoutManager *_layout;     // held here: a storage holds it only while on it
+    MCGapLayoutManager *_layout;  // held here: a storage holds it only while on it
     NSTextContainer *_box;
     MCMirrorTextView *_tv;
     MCMirrorPictureView *_picture;
@@ -231,7 +232,7 @@ static const NSUInteger kMirrorMinDigits = 3;
         _scrollView.autohidesScrollers = YES;
         _scrollView.automaticallyAdjustsContentInsets = NO;
         _own = [NSTextStorage new];
-        _layout = [NSLayoutManager new];
+        _layout = [MCGapLayoutManager new];
         // It reads no far positions: only what it shows is laid out.
         _layout.allowsNonContiguousLayout = YES;
         [_own addLayoutManager:_layout];
@@ -328,6 +329,8 @@ static const NSUInteger kMirrorMinDigits = 3;
     [self forgetPicture];
     [self setWraps:wraps];
     if (_own.length) [_own setAttributedString:[NSAttributedString new]];
+    _layout.holdsPage = NO;
+    _layout.allowsNonContiguousLayout = YES;
     [self moveLayoutTo:storage];
 }
 
@@ -335,6 +338,17 @@ static const NSUInteger kMirrorMinDigits = 3;
     [self forgetPicture];
     [self setWraps:wraps];
     [self moveLayoutTo:_own];
+    // A copy of a rendered page: its tables need layout from the top
+    // (MCGapLayoutManager finds their rows by what is laid out).
+    __block BOOL table = NO;
+    [text enumerateAttribute:NSParagraphStyleAttributeName
+                     inRange:NSMakeRange(0, text.length)
+                     options:0
+                  usingBlock:^(NSParagraphStyle *ps, NSRange, BOOL *stop) {
+        if ([ps.textBlocks.lastObject isKindOfClass:NSTextTableBlock.class]) table = *stop = YES;
+    }];
+    _layout.holdsPage = YES;
+    _layout.allowsNonContiguousLayout = !table;
     [_own setAttributedString:text ?: [NSAttributedString new]];
     [_gutter storageChanged];
 }

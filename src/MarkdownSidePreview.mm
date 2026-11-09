@@ -1,4 +1,5 @@
 // MarkdownSidePreview.mm — see MarkdownSidePreview.h.
+#import "SourceStorage.h"
 #import "MarkdownSidePreview.h"
 #import "AppSettings.h"
 #import "Appearance.h"
@@ -153,7 +154,8 @@ static const CGFloat kSideInset = 14;      // the page's least inset, either sid
     // TextKit 1, as the editor's: the place keeping and the source lines
     // read positions from a layout manager.
     NSTextStorage *storage = [NSTextStorage new];
-    NSLayoutManager *layout = [NSLayoutManager new];
+    MCGapLayoutManager *layout = [MCGapLayoutManager new];
+    layout.holdsPage = YES;   // its tables and its inline code (SourceStorage.h)
     [storage addLayoutManager:layout];
     NSTextContainer *box = [[NSTextContainer alloc] initWithSize:NSMakeSize(400, CGFLOAT_MAX)];
     [layout addTextContainer:box];

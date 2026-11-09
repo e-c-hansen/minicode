@@ -1,5 +1,6 @@
 // SourceStorage.mm — see SourceStorage.h.
 #import "SourceStorage.h"
+#include <vector>
 #include "InlayHints.h"
 #include "MultiCaret.h"
 #include <algorithm>
@@ -583,8 +584,128 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
 @end
 
 // ------------------------------------------------------- MCGapLayoutManager
-@implementation MCGapLayoutManager
+@implementation MCGapLayoutManager {
+    std::vector<NSRange> _tableRows;   // characters of each table row, in order
+    BOOL _tableRowsKnown;
+}
 
+- (void)setHoldsPage:(BOOL)holdsPage {
+    _holdsPage = holdsPage;
+    _tableRowsKnown = NO;
+}
+
+- (void)processEditingForTextStorage:(NSTextStorage *)textStorage
+                              edited:(NSTextStorageEditActions)editMask
+                               range:(NSRange)newCharRange
+                      changeInLength:(NSInteger)delta
+                    invalidatedRange:(NSRange)invalidatedCharRange {
+    if (editMask & NSTextStorageEditedCharacters) _tableRowsKnown = NO;
+    [super processEditingForTextStorage:textStorage edited:editMask range:newCharRange
+                         changeInLength:delta invalidatedRange:invalidatedCharRange];
+}
+
+- (const std::vector<NSRange> &)tableRows {
+    if (_tableRowsKnown) return _tableRows;
+    _tableRowsKnown = YES;
+    _tableRows.clear();
+    NSTextStorage *ts = self.textStorage;
+    __block NSTextTable *lastTable = nil;
+    __block NSInteger lastRow = -1;
+    [ts enumerateAttribute:NSParagraphStyleAttributeName
+                   inRange:NSMakeRange(0, ts.length)
+                   options:0
+                usingBlock:^(NSParagraphStyle *ps, NSRange r, BOOL *) {
+        NSTextTableBlock *cell = (NSTextTableBlock *)ps.textBlocks.lastObject;
+        if (![cell isKindOfClass:NSTextTableBlock.class]) { lastTable = nil; return; }
+        if (cell.table == lastTable && cell.startingRow == lastRow && !_tableRows.empty() &&
+            NSMaxRange(_tableRows.back()) == r.location) {
+            _tableRows.back().length += r.length;
+        } else {
+            _tableRows.push_back(r);
+            lastTable = cell.table;
+            lastRow = cell.startingRow;
+        }
+    }];
+    return _tableRows;
+}
+
+// The top of a row, in the container: it goes down from row to row, as
+// the fragments inside a row do not. Only for a row laid out.
+- (CGFloat)topOfRow:(NSRange)row {
+    const NSUInteger g = [self glyphIndexForCharacterAtIndex:row.location];
+    return NSMinY([self lineFragmentRectForGlyphAtIndex:g effectiveRange:NULL
+                                withoutAdditionalLayout:YES]);
+}
+
+// `found` (AppKit's answer) widened by the table rows `rect` touches and
+// the lines around them it touches. Layout has reached `rect` already,
+// or is not to be added to.
+- (NSRange)glyphs:(NSRange)found widenedForRect:(NSRect)rect {
+    if (!_holdsPage || self.allowsNonContiguousLayout) return found;
+    const std::vector<NSRange> &rows = [self tableRows];
+    if (rows.empty()) return found;
+    const NSUInteger laidChars = self.firstUnlaidCharacterIndex;
+    NSInteger count = 0, past = (NSInteger)rows.size();   // the rows laid out
+    while (count < past) {
+        const NSInteger mid = (count + past) / 2;
+        if (NSMaxRange(rows[mid]) <= laidChars) count = mid + 1; else past = mid;
+    }
+    if (count == 0) return found;
+    const CGFloat top = NSMinY(rect), bottom = NSMaxY(rect);
+    // The first row whose successor starts below the rect's top.
+    NSInteger lo = 0, hi = count - 1;
+    while (lo < hi) {
+        const NSInteger mid = (lo + hi) / 2;
+        if ([self topOfRow:rows[mid + 1]] > top) hi = mid; else lo = mid + 1;
+    }
+    const NSInteger first = lo;
+    if ([self topOfRow:rows[first]] >= bottom) return found;   // above every table it could touch
+    // The last row starting above the rect's bottom.
+    lo = first; hi = count - 1;
+    while (lo < hi) {
+        const NSInteger mid = (lo + hi + 1) / 2;
+        if ([self topOfRow:rows[mid]] < bottom) lo = mid; else hi = mid - 1;
+    }
+    const NSInteger last = lo;
+    const NSRange chars = NSUnionRange(rows[first], rows[last]);
+    NSRange g = [self glyphRangeForCharacterRange:chars actualCharacterRange:NULL];
+    NSUInteger start = g.location, end = NSMaxRange(g);
+    if (found.length) {
+        start = MIN(start, found.location);
+        end = MAX(end, NSMaxRange(found));
+    }
+    // The lines of text before and after the rows, which go down as usual.
+    const NSUInteger laid = self.firstUnlaidGlyphIndex;
+    while (end < laid) {
+        NSRange line;
+        const NSRect f = [self lineFragmentRectForGlyphAtIndex:end effectiveRange:&line
+                                       withoutAdditionalLayout:YES];
+        if (NSMinY(f) >= bottom || !line.length) break;
+        end = NSMaxRange(line);
+    }
+    while (start > 0) {
+        NSRange line;
+        const NSRect f = [self lineFragmentRectForGlyphAtIndex:start - 1 effectiveRange:&line
+                                       withoutAdditionalLayout:YES];
+        if (NSMaxY(f) <= top || !line.length) break;
+        start = line.location;
+    }
+    return NSMakeRange(start, end - start);
+}
+
+- (NSRange)glyphRangeForBoundingRect:(NSRect)bounds inTextContainer:(NSTextContainer *)container {
+    const NSRange found = [super glyphRangeForBoundingRect:bounds inTextContainer:container];
+    return [self glyphs:found widenedForRect:bounds];
+}
+
+- (NSRange)glyphRangeForBoundingRectWithoutAdditionalLayout:(NSRect)bounds
+                                            inTextContainer:(NSTextContainer *)container {
+    const NSRange found = [super glyphRangeForBoundingRectWithoutAdditionalLayout:bounds
+                                                                  inTextContainer:container];
+    return [self glyphs:found widenedForRect:bounds];
+}
+
+// A run's background on each of its lines ends where the line's text does.
 // What NSTextView's clicks ask: the character, and how far the point is
 // from the place before it to the place after it.
 - (NSUInteger)characterIndexForPoint:(NSPoint)point
@@ -606,6 +727,77 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
     }
     if (fraction) *fraction = f;
     return k;
+}
+
+- (void)fillBackgroundRectArray:(const NSRect *)rects
+                          count:(NSUInteger)count
+              forCharacterRange:(NSRange)charRange
+                          color:(NSColor *)color {
+    // A copy first: `rects` is the layout manager's own buffer, which the
+    // next rect it answers for overwrites.
+    const std::vector<NSRect> given(rects, rects + count);
+    const auto asGiven = ^{
+        [super fillBackgroundRectArray:given.data() count:count forCharacterRange:charRange
+                                 color:color];
+    };
+    NSTextView *tv = self.firstTextView;
+    NSTextStorage *ts = self.textStorage;
+    // Only a run's own background: this also draws selections, and text
+    // blocks' backgrounds and table borders.
+    if (!_holdsPage || !tv || !count || !charRange.length || NSMaxRange(charRange) > ts.length ||
+        ![color isEqual:[ts attribute:NSBackgroundColorAttributeName atIndex:charRange.location
+                       effectiveRange:NULL]]) {
+        asGiven();
+        return;
+    }
+    // Each line of the run: the box of its glyphs there, without the blanks
+    // a wrap leaves at the end of the line. AppKit's rects will not do: it
+    // joins whole lines into one, running from edge to edge.
+    __block std::vector<NSRect> boxes;
+    __block NSRect lastFragment = NSZeroRect;
+    __block NSUInteger lineCount = 0;
+    NSString *text = ts.string;
+    NSCharacterSet *blanks = NSCharacterSet.whitespaceCharacterSet;
+    const NSRange glyphs = [self glyphRangeForCharacterRange:charRange actualCharacterRange:NULL];
+    [self enumerateLineFragmentsForGlyphRange:glyphs
+                                   usingBlock:^(NSRect fragment, NSRect, NSTextContainer *box,
+                                                NSRange lineGlyphs, BOOL *) {
+        lineCount++;
+        lastFragment = fragment;
+        NSRange own = NSIntersectionRange(lineGlyphs, glyphs);
+        if (NSMaxRange(lineGlyphs) < NSMaxRange(glyphs)) {
+            while (own.length) {
+                const NSUInteger c = [self characterIndexForGlyphAtIndex:NSMaxRange(own) - 1];
+                if (![blanks characterIsMember:[text characterAtIndex:c]]) break;
+                own.length--;
+            }
+        }
+        if (own.length) boxes.push_back([self boundingRectForGlyphRange:own inTextContainer:box]);
+    }];
+    if (lineCount < 2) {   // nothing wrapped: AppKit's rect is the run's
+        asGiven();
+        return;
+    }
+    // The rects come in the view's coordinates or the container's, depending
+    // on who is drawing: the last one lies inside the last line's fragment.
+    const NSRect last = given.back();
+    const auto inFragmentAt = ^(CGFloat dy) {
+        return NSMinY(last) >= NSMinY(lastFragment) + dy - 1 &&
+               NSMaxY(last) <= NSMaxY(lastFragment) + dy + 1;
+    };
+    NSPoint shift = NSZeroPoint;
+    if (inFragmentAt(tv.textContainerOrigin.y)) {
+        shift = tv.textContainerOrigin;
+    } else if (!inFragmentAt(0)) {
+        asGiven();
+        return;
+    }
+    std::vector<NSRect> out;
+    out.reserve(boxes.size());
+    for (const NSRect &b : boxes) out.push_back(NSOffsetRect(b, shift.x, shift.y));
+    if (!out.empty())
+        [super fillBackgroundRectArray:out.data() count:out.size() forCharacterRange:charRange
+                                 color:color];
 }
 
 @end

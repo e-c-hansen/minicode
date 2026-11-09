@@ -913,6 +913,14 @@ static NSUInteger MCMathNoteLength(NSTextStorage *st) {
 // Render the preview again, keeping the text at the top of the pane where it
 // was (keepPlaceIn:scroll:whileRendering:). A page at the very top stays at
 // the top, as a browser's does while its pictures load.
+// After a page is replaced and scrolled back, all the pane is redrawn:
+// TextKit marks only the page's own column of what it replaced (and the
+// top screenful, scrolled there for a moment), so with a new zoom the old
+// page's ink stayed in the margins of a page scrolled down.
+static void MCRedrawWholePane(NSTextView *tv) {
+    [tv setNeedsDisplayInRect:tv.visibleRect avoidAdditionalLayout:YES];
+}
+
 - (void)renderMarkdownKeepingPlace {
     NSClipView *clip = self.editorScroll.contentView;
     const BOOL unscrolled = NSEqualPoints(clip.bounds.origin, _previewEntryScroll);
@@ -1000,6 +1008,7 @@ static NSUInteger MCMathNoteLength(NSTextStorage *st) {
         const NSRect r = MCTextViewRectForCharacter(tv, MIN(anchor, st.length - 1));
         MCScrollTextViewToY(scroll, tv, NSIsEmptyRect(r) ? origin.y : NSMinY(r) - offset);
     }
+    MCRedrawWholePane(tv);
 }
 
 // ------------------------------------------------ the preview to the side
@@ -1312,6 +1321,7 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
             const NSRect r = MCTextViewRectForCharacter(tv, MIN(anchor, page.length - 1));
             if (!NSIsEmptyRect(r)) MCScrollTextViewToY(side.scrollView, tv, NSMinY(r) - offset);
         }
+        MCRedrawWholePane(tv);
     }
     parsed.length = st.length;
     // The places links land on, piece by piece down the page.

@@ -139,5 +139,14 @@ BOOL MCIsGapParagraphStyle(NSParagraphStyle *style, NSParagraphStyle **stored);
 // characterIndexForPoint:inTextContainer:fractionOfDistanceBetweenInsertionPoints:
 // (overriding characterIndexForInsertionAtPoint: in the view was not
 // enough: a click never asks it).
+//
+// It also draws rendered pages (`holdsPage`, a Markdown preview), two
+// things AppKit's own gets wrong there. The glyphs in a rect: line
+// fragments of a table go back up at each new cell, and AppKit's lookup
+// assumes they only go down, so a thin rect inside a row of uneven cells
+// (each strip that scrolls in) found no glyphs and drew blank bands. And
+// the background of a run that wraps: AppKit fills to the end of the line
+// fragment and from its start, so inline code ran to the page's edges.
 @interface MCGapLayoutManager : NSLayoutManager
+@property(nonatomic) BOOL holdsPage;
 @end

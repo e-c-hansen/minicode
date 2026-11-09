@@ -1,5 +1,6 @@
 // EditorController+Highlighting.mm — EditorController: the source's syntax colors, kept up as it is edited,
 // a language server's semantic tokens laid over them, and bracket-pair colors.
+#import "SourceStorage.h"
 #import "EditorController+Private.h"
 #import "EditorController+HighlightingIvars.h"
 
@@ -96,10 +97,12 @@ struct MCOverlay {
 // settings. Done over an empty storage, before the source goes in.
 - (void)layoutHeldTextBlocks {
     _layoutHeldTextBlocks = YES;
+    ((MCGapLayoutManager *)self.textView.layoutManager).holdsPage = YES;
 }
 
 - (void)forgetTextBlockLayout {
     _layoutHeldTextBlocks = NO;
+    ((MCGapLayoutManager *)self.textView.layoutManager).holdsPage = NO;
     NSTextStorage *storage = self.textView.textStorage;
     NSLayoutManager *layout = self.textView.layoutManager;   // held while off the storage
     if (!storage || !layout) return;
