@@ -238,4 +238,77 @@ bool Depths::replace(size_t first, size_t oldCount, const std::vector<LineSum>& 
     return was.after(before) != is.after(before);
 }
 
+bool PaintedEdits::add(size_t at, size_t oldLen, size_t newLen, bool cut) {
+    const long long change = (long long)newLen - (long long)oldLen;
+    size_t original;
+    if (empty()) {
+        original = at;
+        back_.push_back({at, oldLen, newLen});
+        low_ = at;
+        highEnd_ = at + newLen;
+    } else if (at + oldLen <= low_) {   // before them all: the old text's place
+        original = at;
+        front_.push_back({at, oldLen, newLen});
+        low_ = at;
+        highEnd_ = (size_t)((long long)highEnd_ + change);
+    } else if (at >= highEnd_) {        // after them all
+        original = (size_t)((long long)at - delta_);
+        back_.push_back({original, oldLen, newLen});
+        highEnd_ = at + newLen;
+    } else {
+        return false;
+    }
+    delta_ += change;
+    if (cut) cut_ = std::min(cut_, original);
+    return true;
+}
+
+void PaintedEdits::clear() {
+    front_.clear();
+    back_.clear();
+    low_ = highEnd_ = 0;
+    delta_ = 0;
+    cut_ = SIZE_MAX;
+}
+
+std::vector<std::pair<size_t, size_t>> PaintedEdits::apply(
+    const std::vector<std::pair<size_t, size_t>>& spans) const {
+    std::vector<Edit> edits(front_.rbegin(), front_.rend());
+    edits.insert(edits.end(), back_.begin(), back_.end());
+    std::vector<std::pair<size_t, size_t>> out;
+    out.reserve(spans.size() + edits.size());
+    auto emit = [&](size_t a, size_t b, long long shift) {
+        if (b <= a) return;
+        const size_t s = (size_t)((long long)a + shift), e = (size_t)((long long)b + shift);
+        if (!out.empty() && out.back().second >= s) out.back().second = std::max(out.back().second, e);
+        else out.push_back({s, e});
+    };
+    const size_t n = edits.size();
+    size_t k = 0;          // the first edit not wholly before the span
+    long long shift = 0;   // what the edits before k moved the text by
+    for (auto span : spans) {
+        if (span.first >= cut_) break;
+        span.second = std::min(span.second, cut_);
+        while (k < n && edits[k].at + edits[k].oldLen <= span.first) {
+            shift += (long long)edits[k].newLen - (long long)edits[k].oldLen;
+            ++k;
+        }
+        // Through the edits starting in it (and one it starts inside).
+        size_t at = span.first, j = k;
+        long long sh = shift;
+        while (at < span.second) {
+            if (j < n && edits[j].at < span.second) {
+                emit(at, std::min(edits[j].at, span.second), sh);
+                at = std::max(at, edits[j].at + edits[j].oldLen);
+                sh += (long long)edits[j].newLen - (long long)edits[j].oldLen;
+                ++j;
+            } else {
+                emit(at, span.second, sh);
+                at = span.second;
+            }
+        }
+    }
+    return out;
+}
+
 }  // namespace BracketPairs

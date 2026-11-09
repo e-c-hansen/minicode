@@ -22,13 +22,38 @@ double Ms() {
 }
 
 // Every foreground color run of the storage, as [start, length, color].
+// Each bracket is a run of its own whose color is left out: bracket-pair
+// colors are painted on the lines on screen and as lines come into view
+// (EditorController+Highlighting.mm), so a full pass and the edits before
+// it differ there by design; bracket_pairs checks those colors.
 NSArray<NSArray *> *ColorRuns(NSTextStorage *ts) {
     NSMutableArray *out = [NSMutableArray array];
+    NSString *s = ts.string;
+    NSCharacterSet *brackets = [NSCharacterSet characterSetWithCharactersInString:@"()[]{}"];
+    __block NSUInteger runStart = 0;
+    __block id runColor = nil;
+    void (^piece)(NSUInteger, id) = ^(NSUInteger at, id color) {
+        if (runColor && ![color isEqual:@"bracket"] && [runColor isEqual:color]) return;
+        if (runColor) [out addObject:@[@(runStart), @(at - runStart), runColor]];
+        runStart = at;
+        runColor = color;
+    };
     [ts enumerateAttribute:NSForegroundColorAttributeName inRange:NSMakeRange(0, ts.length)
                    options:0 usingBlock:^(NSColor *c, NSRange r, BOOL *stop) {
         (void)stop;
-        [out addObject:@[@(r.location), @(r.length), c ?: (id)NSNull.null]];
+        id color = c ?: (id)NSNull.null;
+        NSUInteger at = r.location;
+        while (at < NSMaxRange(r)) {
+            const NSRange b = [s rangeOfCharacterFromSet:brackets options:0
+                                                   range:NSMakeRange(at, NSMaxRange(r) - at)];
+            const NSUInteger to = b.location == NSNotFound ? NSMaxRange(r) : b.location;
+            if (to > at) piece(at, color);
+            if (b.location == NSNotFound) break;
+            piece(b.location, @"bracket");
+            at = b.location + 1;
+        }
     }];
+    if (runColor) [out addObject:@[@(runStart), @(s.length - runStart), runColor]];
     return out;
 }
 
