@@ -93,4 +93,20 @@ BOOL MCIsGapParagraphStyle(NSParagraphStyle *style, NSParagraphStyle **stored);
 // tab stops, SnippetSession.mm). Called inside the edit: arithmetic only,
 // never layout.
 @property(nonatomic, copy) void (^onReplaceCharacters)(NSRange range, NSUInteger length);
+// The room the gaps open after character `index` (a kern), 0 for none.
+- (CGFloat)gapWidthAfterCharacter:(NSUInteger)index;
+@end
+
+// The editor's layout manager. A gap's room is a kern, part of the glyph
+// before it, so the layout took a point in the room for a point in that
+// glyph: a click on the left of an inlay hint (`values|: list[int]`) put
+// the caret before the word's last letter. Here a point in the room is
+// past the glyph, which is the gap's offset, wherever in the room it is,
+// and a point in the glyph is measured against the glyph's own width.
+// NSTextView's clicks and drags, characterIndexForInsertionAtPoint: and
+// several carets' clicks all come through
+// characterIndexForPoint:inTextContainer:fractionOfDistanceBetweenInsertionPoints:
+// (overriding characterIndexForInsertionAtPoint: in the view was not
+// enough: a click never asks it).
+@interface MCGapLayoutManager : NSLayoutManager
 @end

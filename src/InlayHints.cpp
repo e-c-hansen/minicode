@@ -55,6 +55,15 @@ std::vector<InlayHint> parseInlayHints(const Json& result) {
         hint.paddingRight = h["paddingRight"].asBool();
         const std::string tip = textOf(h["tooltip"]);
         if (!tip.empty()) hint.tooltip = tip;
+        if (h["textEdits"].isArray())
+            for (const Json& e : h["textEdits"].elements()) {
+                if (!e.isObject() || !e["range"].isObject() || !e["newText"].isString()) continue;
+                const Json& r = e["range"];
+                if (wholeNumber(r["start"]["line"]) < 0 || wholeNumber(r["start"]["character"]) < 0 ||
+                    wholeNumber(r["end"]["line"]) < 0 || wholeNumber(r["end"]["character"]) < 0)
+                    continue;
+                hint.textEdits.push_back(TextEdit{parseRange(r), e["newText"].asString()});
+            }
         out.push_back(std::move(hint));
     }
     std::stable_sort(out.begin(), out.end(), [](const InlayHint& a, const InlayHint& b) {
@@ -141,6 +150,40 @@ bool inlayFollowEdit(size_t& offset, bool followsBefore, size_t start, size_t ol
         return true;
     }
     return false;                                 // over it
+}
+
+std::vector<OffsetEdit> inlayHintAcceptEdits(const InlayHint& hint, const std::u16string& text,
+                                             bool fresh, size_t offsetNow) {
+    std::vector<OffsetEdit> out;
+    if (hint.textEdits.empty()) return out;
+    if (!fresh) {
+        // Typed since: only what goes in at the hint itself, which has moved
+        // with its text.
+        if (offsetNow > text.size()) return out;
+        for (const TextEdit& e : hint.textEdits) {
+            if (positionBefore(e.range.start, hint.position) ||
+                positionBefore(hint.position, e.range.start) ||
+                positionBefore(e.range.start, e.range.end) || positionBefore(e.range.end, e.range.start))
+                return {};
+        }
+        for (auto it = hint.textEdits.rbegin(); it != hint.textEdits.rend(); ++it)
+            out.push_back(OffsetEdit{offsetNow, 0, toUtf16(it->newText)});
+        return out;
+    }
+    // In order (an import at the top comes after the label's place in
+    // basedpyright's list), insertions at one place in the server's order.
+    std::vector<TextEdit> edits = hint.textEdits;
+    std::stable_sort(edits.begin(), edits.end(), [](const TextEdit& a, const TextEdit& b) {
+        return positionBefore(a.range.start, b.range.start);
+    });
+    const PositionIndex index(text);
+    const long lines = (long)index.lineCount();
+    for (size_t i = 0; i < edits.size(); i++) {
+        if (edits[i].range.end.line >= lines || positionBefore(edits[i].range.end, edits[i].range.start))
+            return {};
+        if (i > 0 && positionBefore(edits[i].range.start, edits[i - 1].range.end)) return {};
+    }
+    return offsetEdits(text, edits);
 }
 
 void LineBreakCounter::feed(const char16_t* s, size_t n) {

@@ -45,7 +45,8 @@ static void testLspInlayHints() {
         Json bs = Lsp::pythonSettings(Lsp::PythonServer::BasedPyright, "");
         const Json &ih = bs["basedpyright"]["analysis"]["inlayHints"];
         CHECK(ih["variableTypes"].asBool() && ih["functionReturnTypes"].asBool() &&
-              ih["callArgumentNames"].asBool());
+              ih["callArgumentNames"].asBool() && ih["genericTypes"].asBool());
+        CHECK(ih.has("callArgumentNamesMatching") && !ih["callArgumentNamesMatching"].asBool());
         CHECK(!Lsp::pythonSettings(Lsp::PythonServer::Pyright, "")["python"]["analysis"]
                    .has("inlayHints"));
     }
@@ -82,6 +83,66 @@ static void testLspInlayHints() {
         }
         CHECK(Lsp::parseInlayHints(Json()).empty());
         CHECK(Lsp::parseInlayHints(parsed("{\"label\":\"x\"}")).empty());
+    }
+
+    GROUP("lsp:inlay-accept");
+    {
+        // basedpyright 1.40's, as it sends them: a return type with its
+        // import at the top (listed after the label's own edit), a
+        // variable's type, and edits that are not edits (no range, no text).
+        const std::string text = "import os\n\ndef area(w, h):\n    return w * h\n"
+                                 "values = [n for n in range(3)]\n";
+        std::vector<Lsp::InlayHint> h = Lsp::parseInlayHints(parsed(
+            "[{\"label\":\"-> Any\",\"position\":{\"line\":2,\"character\":14},"
+            "\"paddingLeft\":true,\"kind\":1,\"textEdits\":["
+            "{\"newText\":\" -> Any\",\"range\":{\"start\":{\"line\":2,\"character\":14},"
+            "\"end\":{\"line\":2,\"character\":14}}},"
+            "{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,"
+            "\"character\":0}},\"newText\":\"from typing import Any\\n\\n\\n\"}]},"
+            "{\"label\":\": list[int]\",\"position\":{\"line\":4,\"character\":6},\"kind\":1,"
+            "\"textEdits\":[{\"newText\":\": list[int]\",\"range\":{\"start\":{\"line\":4,"
+            "\"character\":6},\"end\":{\"line\":4,\"character\":6}}},"
+            "{\"newText\":\"x\"},{\"range\":{\"start\":{\"line\":0,\"character\":0},"
+            "\"end\":{\"line\":0,\"character\":0}}}]},"
+            "{\"label\":\"width=\",\"position\":{\"line\":3,\"character\":4},\"kind\":2}]"));
+        CHECK(h.size() == 3);
+        if (h.size() == 3) {
+            CHECK(h[0].textEdits.size() == 2 && h[0].textEdits[1].newText == "from typing import Any\n\n\n");
+            CHECK(h[2].textEdits.size() == 1 && h[2].textEdits[0].newText == ": list[int]");
+            CHECK(h[1].textEdits.empty());
+            const std::u16string t = Lsp::toUtf16(text);
+            auto apply = [&](const std::vector<Lsp::OffsetEdit> &edits) {
+                std::u16string out = t;
+                for (const Lsp::OffsetEdit &e : edits) out.replace(e.start, e.length, e.text);
+                return Lsp::toUtf8(out);
+            };
+            // Fresh: every edit where the server put it, the import first in
+            // the text, both in one go.
+            std::vector<Lsp::OffsetEdit> e0 = Lsp::inlayHintAcceptEdits(h[0], t, true, 0);
+            CHECK(e0.size() == 2);
+            CHECK(apply(e0) == "from typing import Any\n\n\nimport os\n\ndef area(w, h) -> Any:\n"
+                               "    return w * h\nvalues = [n for n in range(3)]\n");
+            const size_t at = text.find("values") + 6;
+            CHECK(apply(Lsp::inlayHintAcceptEdits(h[2], t, true, at)) ==
+                  "import os\n\ndef area(w, h):\n    return w * h\n"
+                  "values: list[int] = [n for n in range(3)]\n");
+            // Nothing to accept.
+            CHECK(Lsp::inlayHintAcceptEdits(h[1], t, true, 0).empty());
+            // Typed since: one that inserts only at itself goes where the
+            // hint is now; one with an import elsewhere is not guessed at.
+            std::vector<Lsp::OffsetEdit> moved = Lsp::inlayHintAcceptEdits(h[2], t, false, at - 2);
+            CHECK(moved.size() == 1 && moved[0].start == at - 2 && moved[0].length == 0 &&
+                  moved[0].text == u": list[int]");
+            CHECK(Lsp::inlayHintAcceptEdits(h[0], t, false, 30).empty());
+            CHECK(Lsp::inlayHintAcceptEdits(h[2], t, false, t.size() + 1).empty());
+            // Edits that overlap, or reach past the text, are refused whole.
+            Lsp::InlayHint bad = h[2];
+            bad.textEdits.push_back(Lsp::TextEdit{{{4, 2}, {4, 8}}, "z"});
+            CHECK(Lsp::inlayHintAcceptEdits(bad, t, true, at).empty());
+            Lsp::InlayHint far = h[2];
+            far.textEdits[0].range = Lsp::Range{{40, 0}, {40, 0}};
+            CHECK(Lsp::inlayHintAcceptEdits(far, t, true, at).empty());
+        }
     }
 
     GROUP("lsp:inlay-shorten");
@@ -221,5 +282,26 @@ static void testLspInlayHints() {
         CHECK(e.empty() && !off.inlayHints() && off.inlayHintColor() == Rgba::hex(0xFF0000));
         parseSettings("editor.inlay-hints = sometimes\n", &e);
         CHECK(e.size() == 1);
+        // VS Code's four values, in minicode's spelling and VS Code's.
+        using M = Settings::InlayHints;
+        CHECK(d.inlayHintsMode() == M::On);
+        CHECK(parseSettings("editor.inlay-hints = off\n").inlayHintsMode() == M::Off);
+        CHECK(parseSettings("editor.inlay-hints = false\n").inlayHintsMode() == M::Off);
+        CHECK(parseSettings("editor.inlay-hints = true\n").inlayHintsMode() == M::On);
+        for (const char *v : {"on-unless-pressed", "onUnlessPressed"}) {
+            Settings s = parseSettings(std::string("editor.inlay-hints = ") + v + "\n");
+            CHECK(s.inlayHintsMode() == M::OnUnlessPressed && s.inlayHints());
+        }
+        for (const char *v : {"off-unless-pressed", "offUnlessPressed"}) {
+            Settings s = parseSettings(std::string("editor.inlay-hints = ") + v + "\n");
+            CHECK(s.inlayHintsMode() == M::OffUnlessPressed && s.inlayHints());
+        }
+        // Holding Control+Option down turns them over in the two pressed modes.
+        CHECK(Settings::inlayHintsShown(M::On, false) && Settings::inlayHintsShown(M::On, true));
+        CHECK(!Settings::inlayHintsShown(M::Off, false) && !Settings::inlayHintsShown(M::Off, true));
+        CHECK(Settings::inlayHintsShown(M::OnUnlessPressed, false) &&
+              !Settings::inlayHintsShown(M::OnUnlessPressed, true));
+        CHECK(!Settings::inlayHintsShown(M::OffUnlessPressed, false) &&
+              Settings::inlayHintsShown(M::OffUnlessPressed, true));
     }
 }

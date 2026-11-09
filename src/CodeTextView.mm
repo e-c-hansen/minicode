@@ -52,6 +52,9 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
     MCInlayHints *_inlays;
     MCSnippetSession *_snippets;
     NSEvent *_keyEvent;   // the key being interpreted, during keyDown:
+    // The caret moved left of a hint's room (placeCaretBesideHints): by
+    // how much, and the x it was given.
+    CGFloat _caretShift, _caretShiftedX;
 }
 
 - (MCMultiCarets *)multiCarets { return _multi; }
@@ -787,6 +790,43 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
     return _multi.active ? NO : [super shouldDrawInsertionPoint];
 }
 
+// ---- the caret beside inlay hints
+// The caret is drawn where the next character typed goes: before a hint
+// that follows the word before it (`values|: list[int]`), after one that
+// goes with what follows (`area(width=|3`). AppKit places it after the
+// room in both cases; macOS 14 and later draw it as an
+// NSTextInsertionIndicator subview, which is moved here each time AppKit
+// places it. (Earlier systems keep AppKit's place.) Where a click lands
+// beside a hint is the layout manager's answer (MCGapLayoutManager,
+// SourceStorage.h).
+- (void)updateInsertionPointStateAndRestartTimer:(BOOL)restartFlag {
+    [super updateInsertionPointStateAndRestartTimer:restartFlag];
+    [self placeCaretBesideHints];
+}
+
+- (void)placeCaretBesideHints {
+    static Class indicatorClass = NSClassFromString(@"NSTextInsertionIndicator");
+    if (!indicatorClass) return;
+    NSView *indicator = nil;
+    for (NSView *v in self.subviews)
+        if ([v isKindOfClass:indicatorClass]) { indicator = v; break; }
+    if (!indicator) return;
+    NSRect f = indicator.frame;
+    // AppKit may leave the indicator where it was (the selection did not
+    // move): take back the shift given last time before working out a new.
+    if (_caretShift > 0 && f.origin.x == _caretShiftedX) f.origin.x += _caretShift;
+    _caretShift = 0;
+    const NSRange sel = self.selectedRange;
+    const CGFloat shift = sel.length == 0 && !_multi.active && self.editable
+                              ? [_inlays caretShiftAtOffset:sel.location] : 0;
+    if (shift > 0) {
+        f.origin.x -= shift;
+        _caretShift = shift;
+        _caretShiftedX = f.origin.x;
+    }
+    if (!NSEqualRects(f, indicator.frame)) indicator.frame = f;
+}
+
 - (BOOL)becomeFirstResponder {
     BOOL ok = [super becomeFirstResponder];
     if (_multi.active) self.needsDisplay = YES;   // carets back to full color
@@ -798,6 +838,15 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
     if ([_multi mouseDown:event]) return;
     NSEventModifierFlags mods = event.modifierFlags &
         NSEventModifierFlagDeviceIndependentFlagsMask;
+    // A double-click on an inlay hint writes it into the text, as in VS
+    // Code (the first click put the caret at the hint).
+    if (event.clickCount == 2 && self.editable && self.onInlayHintDoubleClick &&
+        !(mods & (NSEventModifierFlagCommand | NSEventModifierFlagShift |
+                  NSEventModifierFlagOption | NSEventModifierFlagControl))) {
+        const NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+        const NSUInteger hint = [_inlays hintIndexAtPoint:p];
+        if (hint != NSNotFound && self.onInlayHintDoubleClick(hint)) return;
+    }
     if (mods == NSEventModifierFlagCommand && self.onCommandClick) {
         NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
         NSUInteger i = [self characterIndexForInsertionAtPoint:p];

@@ -278,11 +278,18 @@ public:
     bool largeFileOptimizations() const { return largeFileOptimizations_; }
     // editor.inlay-hints: what a language server says between the words
     // (a variable's type, a parameter's name) drawn in the text without
-    // being part of it (on, the default, as VS Code's
-    // editor.inlayHints.enabled). editor.inlay-hint-color and
-    // editor.inlay-hint-background color them, VS Code's
-    // editorInlayHint.foreground and .background unless set.
-    bool inlayHints() const { return inlayHints_; }
+    // being part of it, VS Code's editor.inlayHints.enabled: on (the
+    // default), off, on-unless-pressed (hidden while Control and Option are
+    // held down) or off-unless-pressed (shown only then). VS Code's
+    // spellings onUnlessPressed and offUnlessPressed are taken too.
+    // editor.inlay-hint-color and editor.inlay-hint-background color them,
+    // VS Code's editorInlayHint.foreground and .background unless set.
+    enum class InlayHints { On, Off, OnUnlessPressed, OffUnlessPressed };
+    InlayHints inlayHintsMode() const { return inlayHints_; }
+    // Whether hints can show at all (any mode but off).
+    bool inlayHints() const { return inlayHints_ != InlayHints::Off; }
+    // Whether they show in `mode`, with Control+Option held down or not.
+    static bool inlayHintsShown(InlayHints mode, bool pressed);
     // editor.git-gutter: change bars beside the line numbers of a file git
     // tracks (QuickDiff.h; on, the default, as VS Code's scm.diffDecorations
     // "all"). editor.git-added, editor.git-modified and editor.git-deleted
@@ -477,7 +484,7 @@ private:
     LineNumbers lineNumbers_ = LineNumbers::On;
     bool wordWrap_ = true;
     bool autoClose_ = true;
-    bool inlayHints_ = true;
+    InlayHints inlayHints_ = InlayHints::On;
     std::optional<Rgba> inlayHintColor_, inlayHintBackground_;
     bool gitGutter_ = true;
     std::optional<Rgba> gitGutterColor_[3];

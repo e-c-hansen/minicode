@@ -1612,11 +1612,30 @@ view is disposed (on `unrealize`), or dispose loops forever.
   typing lands right at it; one before an argument stays put
   (`followsBefore`). A hint at a line's start goes with what follows it and
   is a line-start gap (see "Gaps"); only one at the start of an empty last
-  line is left out. basedpyright gets its `inlayHints` settings named
-  (1.40 has them on by default anyway). `editor.inlay-hints`,
-  `editor.inlay-hint-color`, `editor.inlay-hint-background`. The label is
-  drawn after the text in `drawRect:`, at the glyph box's right edge minus
-  the gap (the box includes the kern); a null (folded) glyph gets none.
+  line is left out. basedpyright gets its `inlayHints` settings named, as
+  its VS Code extension's defaults (genericTypes on, callArgumentNamesMatching
+  off). `editor.inlay-hints` (on, off, on-unless-pressed, off-unless-pressed:
+  Control+Option held, one app-wide flagsChanged monitor posting to the
+  sessions; `MCInlayHintsSetPressed` for checks; hidden is cleared, shown
+  asks again), View > Inlay Hints (`MCInlayHintsMenuItem`, writes the
+  setting), `editor.inlay-hint-color`, `editor.inlay-hint-background`. The
+  label is drawn after the text in `drawRect:`, at the glyph box's right
+  edge minus the gap (the box includes the kern); a null (folded) glyph gets
+  none. **The caret beside them** (the owner's report, 2026-11-08): a click
+  never asks the view's `characterIndexForInsertionAtPoint:` but the layout
+  manager's `characterIndexForPoint:...fractionOfDistanceBetweenInsertionPoints:`,
+  so the editor's is `MCGapLayoutManager` (SourceStorage.h), which measures
+  a point against the glyph's own width and takes the room as past it (a
+  click on a hint's left half put the caret before the word's last letter).
+  The caret is drawn where typing goes, left of a `followsBefore` room
+  (`MCInlayHints caretShiftAtOffset:`): CodeTextView moves the
+  NSTextInsertionIndicator after each `updateInsertionPointStateAndRestartTimer:`,
+  undoing its own last shift when AppKit left the indicator alone (macOS 14
+  and later; earlier systems keep AppKit's place). A double-click on a hint
+  applies its `textEdits` (`Lsp::inlayHintAcceptEdits`: sorted, the import
+  too, refused when overlapping; after typing only a hint inserting at
+  itself, at its moved offset) through `replaceRanges:` as one step, "Insert
+  Inlay Hint".
 - **Problems** (Shift+Cmd+M, `MCProblemsPanel`, above the terminal):
   `problemRows` (files with errors first, then severity, line, column),
   `countProblems`, `problemCountsText`, `problemOneLine`, `stepProblem` (F8 and
