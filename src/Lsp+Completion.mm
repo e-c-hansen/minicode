@@ -181,10 +181,10 @@ static void FreeOffMain(std::vector<Lsp::CompletionItem> &items) {
         [self flash:self.statusText.length ? self.statusText : @"No language server for this file"];
         return;
     }
-    [self requestCompletion:nil origin:Lsp::CompletionOrigin::Explicit];
+    [self requestCompletion:nil];
 }
 
-- (void)requestCompletion:(NSString *)trigger origin:(Lsp::CompletionOrigin)origin {
+- (void)requestCompletion:(NSString *)trigger {
     MCLspServer *server = [self serverFor:Lsp::Feature::Completion];
     if (!server || !_uri) return;
     [self flushChanges];
@@ -194,14 +194,10 @@ static void FreeOffMain(std::vector<Lsp::CompletionItem> &items) {
     while (anchor > 0 && IsIdentChar([s characterAtIndex:anchor - 1])) anchor--;
     if (!_completing || anchor != _anchor) {
         // A new word: forget the old list. The same word asked again (an
-        // incomplete list) keeps it showing until the answer, and keeps how
-        // it first came up unless it is now asked for.
+        // incomplete list) keeps it showing until the answer.
         _items.clear();
         _haveItems = NO;
-        _origin = origin;
         _navigated = NO;
-    } else if (origin == Lsp::CompletionOrigin::Explicit) {
-        _origin = origin;
     }
     _anchor = anchor;
     _completing = YES;
@@ -278,6 +274,7 @@ static void FreeOffMain(std::vector<Lsp::CompletionItem> &items) {
         prevText = _shown[(size_t)prevRow].textToInsert();
     }
     FreeOffMain(_shown);
+    _filteredFor = [prefix copy];
     if (parsed && parsed->prefix == Std(prefix)) {
         _shown = std::move(parsed->shown);
         parsed->shown.clear();
@@ -585,7 +582,6 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
     _shown = std::move(items);
     _choiceMode = YES;
     _choiceRange = range;
-    _origin = Lsp::CompletionOrigin::Explicit;
     _navigated = NO;
     NSRect caret = [_tv firstRectForCharacterRange:NSMakeRange(range.location, 0) actualRange:NULL];
     [[self completionPopup] showLabels:choices details:details select:0 atScreenRect:caret
@@ -800,7 +796,7 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
             if (triggers.empty() || Contains(triggers, Std(trigger))) {
                 // After the text view has finished the edit and moved the caret.
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    [self requestCompletion:trigger origin:Lsp::CompletionOrigin::Trigger];
+                    [self requestCompletion:trigger];
                 });
                 return;
             }
@@ -819,13 +815,8 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
             unichar first = [s characterAtIndex:start];
             BOOL number = first >= '0' && first <= '9';
             if (!number && (afterAccess || length == 2)) {
-                // A member after "." counts as after the trigger character
-                // (Return takes it); any other word's list leaves Return a
-                // new line until the arrows are used.
-                Lsp::CompletionOrigin origin = afterAccess ? Lsp::CompletionOrigin::Trigger
-                                                           : Lsp::CompletionOrigin::Typing;
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    [self requestCompletion:nil origin:origin];
+                    [self requestCompletion:nil];
                 });
                 return;
             }
@@ -836,7 +827,7 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
         // grows; the old one stays up, filtered, until the new one is in.
         if (_incomplete && _haveItems && typedOne && IsIdentChar(c))
             dispatch_async(dispatch_get_main_queue(), ^{
-                [self requestCompletion:nil origin:Lsp::CompletionOrigin::Typing];
+                [self requestCompletion:nil];
             });
         dispatch_async(dispatch_get_main_queue(), ^{ [self refilterCompletion]; });
     }
@@ -866,7 +857,7 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
     if (sel == @selector(complete:)) {
         // Without a server's, the text view's own word completion.
         if (![self serverFor:Lsp::Feature::Completion]) return NO;
-        [self requestCompletion:nil origin:Lsp::CompletionOrigin::Explicit];
+        [self requestCompletion:nil];
         return YES;
     }
     if (_popup.visible) {
@@ -876,27 +867,34 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
         BOOL tab = sel == @selector(insertTab:);
         BOOL backTab = sel == @selector(insertBacktab:);
         if (ret || tab || backTab) {
-            // Tab takes the item; Return does when the list was asked for,
-            // came after ".", or was moved through, and is otherwise a new
-            // line (Lsp::completionKeyAccepts). A key that does not take it
-            // closes the list and goes on to the editor (AutoIndent).
+            // Return and Tab take the selected item, however the list came
+            // up (Lsp::completionKeyAccepts, VS Code's defaults); Shift+Tab
+            // and Shift+Return close it and go on to the editor (AutoIndent,
+            // a new line).
+            //
+            // A letter typed just before the key (a quick typist's keys
+            // waiting together) has not been filtered in yet: the list is
+            // filtered for the word as it is now first, so the key takes
+            // the item for that word, or goes to the editor when nothing
+            // is left to take.
+            if (!_choiceMode && _haveItems && ![[self typedPrefix] isEqualToString:_filteredFor]) {
+                [self refilterCompletion];
+                if (!_popup.visible) return NO;
+            }
             NSInteger row = _popup.selectedRow;
             if (row < 0 || (size_t)row >= _shown.size()) {
                 // Nothing selected: the key is the editor's (Tab indents).
                 [self closeCompletion];
                 return NO;
             }
-            // The word typed out exactly as some item (case and all) is a
-            // new line, unless the arrows chose another item: "os.path"
-            // used to become os.PathLike.
-            std::string typed = _choiceMode ? std::string() : Std([self typedPrefix]);
-            BOOL exact = !_choiceMode &&
-                         (_shown[(size_t)row].textToInsert() == typed ||
-                          (!_navigated && Lsp::exactCompletion(_shown, typed) >= 0));
-            Lsp::CompletionKey key = ret ? Lsp::CompletionKey::Return
+            NSEvent *event = _tv.currentKeyEvent ?: NSApp.currentEvent;
+            const BOOL shift = event.type == NSEventTypeKeyDown &&
+                               (event.modifierFlags & NSEventModifierFlagShift);
+            Lsp::CompletionKey key = ret ? (shift ? Lsp::CompletionKey::ShiftReturn
+                                                  : Lsp::CompletionKey::Return)
                                    : tab ? Lsp::CompletionKey::Tab
                                          : Lsp::CompletionKey::ShiftTab;
-            if (!Lsp::completionKeyAccepts(_origin, _navigated, key, exact)) {
+            if (!Lsp::completionKeyAccepts(key)) {
                 [self closeCompletion];
                 return NO;
             }

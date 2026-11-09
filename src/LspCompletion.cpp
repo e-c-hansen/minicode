@@ -255,26 +255,8 @@ std::vector<CompletionItem> filterCompletions(const std::vector<CompletionItem>&
     return out;
 }
 
-int exactCompletion(const std::vector<CompletionItem>& shown, const std::string& typed) {
-    if (typed.empty()) return -1;
-    for (size_t i = 0; i < shown.size(); i++)
-        if (shown[i].filterKey() == typed || shown[i].textToInsert() == typed) return (int)i;
-    return -1;
-}
-
-bool completionKeyAccepts(CompletionOrigin origin, bool navigated, CompletionKey key,
-                          bool selectedEqualsTyped) {
-    switch (key) {
-    case CompletionKey::Tab:
-        return true;
-    case CompletionKey::ShiftTab:
-        return false;
-    case CompletionKey::Return:
-        // A word typed out in full: Return is a new line whatever the list.
-        if (selectedEqualsTyped) return false;
-        return origin != CompletionOrigin::Typing || navigated;
-    }
-    return false;
+bool completionKeyAccepts(CompletionKey key) {
+    return key == CompletionKey::Return || key == CompletionKey::Tab;
 }
 
 }  // namespace Lsp

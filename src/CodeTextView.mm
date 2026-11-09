@@ -58,6 +58,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
 - (MCFolds *)folds { return _folds; }
 - (MCInlayHints *)inlayHints { return _inlays; }
 - (MCSnippetSession *)snippets { return _snippets; }
+- (NSEvent *)currentKeyEvent { return _keyEvent; }
 - (BOOL)multiCaretActive { return _multi.active; }
 
 // The designated initializer (initWithFrame: comes through it too), so a

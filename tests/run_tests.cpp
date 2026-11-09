@@ -5915,34 +5915,20 @@ void testLspParsing() {
         std::vector<Lsp::CompletionItem> ins = Lsp::parseCompletion(parsed(
             "[{\"label\":\"append(x)\",\"insertText\":\"append\",\"filterText\":\"append\"},"
             "{\"label\":\"appendleft\"}]"));
-        CHECK(Lsp::exactCompletion(Lsp::filterCompletions(os, "path"), "path") == 0);
-        CHECK(Lsp::exactCompletion(Lsp::filterCompletions(os, "pa"), "pa") == -1);
-        CHECK(Lsp::exactCompletion(Lsp::filterCompletions(os, "pathlike"), "pathlike") == -1);
-        CHECK(Lsp::exactCompletion(Lsp::filterCompletions(ins, "append"), "append") == 0);
-        CHECK(Lsp::exactCompletion(os, "") == -1);
+        CHECK(labels(Lsp::filterCompletions(ins, "append")) == "append(x) appendleft ");
     }
 
     GROUP("lsp:completion-keys");
     {
-        using O = Lsp::CompletionOrigin;
         using K = Lsp::CompletionKey;
-        // A list that came up by itself while typing: Return is a new line
-        // ("name = nm" + Return stays "nm"), unless the arrows were used.
-        CHECK(!Lsp::completionKeyAccepts(O::Typing, false, K::Return, false));
-        CHECK(Lsp::completionKeyAccepts(O::Typing, true, K::Return, false));
-        // Asked for, or after ".", "->", "::": Return takes the item.
-        CHECK(Lsp::completionKeyAccepts(O::Explicit, false, K::Return, false));
-        CHECK(Lsp::completionKeyAccepts(O::Trigger, false, K::Return, false));
-        // The word typed out in full is a new line however the list came.
-        CHECK(!Lsp::completionKeyAccepts(O::Explicit, false, K::Return, true));
-        CHECK(!Lsp::completionKeyAccepts(O::Trigger, true, K::Return, true));
-        CHECK(!Lsp::completionKeyAccepts(O::Typing, true, K::Return, true));
-        // Tab takes the item always; Shift+Tab never.
-        for (O o : {O::Typing, O::Trigger, O::Explicit})
-            for (bool nav : {false, true}) {
-                CHECK(Lsp::completionKeyAccepts(o, nav, K::Tab, false));
-                CHECK(!Lsp::completionKeyAccepts(o, nav, K::ShiftTab, false));
-            }
+        // VS Code's defaults: Return and Tab take the selected item whenever
+        // the list shows (a list that came up by itself while typing too, and
+        // a word typed out in full, whose item is first: see above).
+        CHECK(Lsp::completionKeyAccepts(K::Return));
+        CHECK(Lsp::completionKeyAccepts(K::Tab));
+        // Shift+Return is a new line and Shift+Tab an outdent.
+        CHECK(!Lsp::completionKeyAccepts(K::ShiftReturn));
+        CHECK(!Lsp::completionKeyAccepts(K::ShiftTab));
     }
 
     GROUP("lsp:hover");

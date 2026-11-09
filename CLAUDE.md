@@ -1533,10 +1533,14 @@ view is disposed (on `unrealize`), or dispose loops forever.
   Don't Allow, the same × put-off); an answer restarts them. clangd (does
   not load compile commands' plugins) and gopls are left alone.
 - **Completion** opens after `.`/`->`/`::` and on a word's second letter; an
-  `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Tab takes;
-  Return only when asked for (Ctrl+Space, Option+Esc), after a trigger
-  character, or once the arrows moved, else a new line; an item equal to the
-  typed word is a new line; Shift+Tab never takes. `filterCompletions` ranks
+  `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Return
+  and Tab take the selected item whenever the list shows (VS Code's
+  acceptSuggestionOnEnter "on", the owner's report 2026-11-08: Return on a
+  list that came up by itself and on a word typed out were new lines);
+  Shift+Return and Shift+Tab never take. A key pressed before the list was
+  filtered for the last letter (`_filteredFor`) refilters first: "pro" and
+  Tab in one go took "print". `make guitest SUITES=completion_keys` presses
+  real keys, under basedpyright too where installed. `filterCompletions` ranks
   exact, same-case prefix, any-case prefix, subsequence (sortText within) and
   reselects the first row unless the arrows chose an item still listed. Docs
   show beside the list after `completionItem/resolve` (80 ms).
@@ -3154,7 +3158,7 @@ session has a display. Check first.
   utf16;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
-  snippets, problems, servers_by_extension, server_consent, tools_consent,
+  snippets, completion_keys, problems, servers_by_extension, server_consent, tools_consent,
   organize_on_save, format, format_consent, format_coverage;
   documents and viewers: markdown_preview, markdown_side,
   markdown_side_sync, markdown_math, mermaid, latex, previews, compare;

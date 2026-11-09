@@ -80,6 +80,9 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 // A snippet completion's tab stops (SnippetSession.h): while one runs, Tab,
 // Shift+Tab and Esc are its own, before the carets and AutoIndent.
 @property(nonatomic, readonly) MCSnippetSession *snippets;
+// The key press being interpreted (during keyDown:), else nil: a command a
+// key sent can tell Shift+Return from Return by it.
+@property(nonatomic, readonly) NSEvent *currentKeyEvent;
 - (IBAction)foldRegion:(id)sender;
 - (IBAction)unfoldRegion:(id)sender;
 - (IBAction)toggleFold:(id)sender;
