@@ -230,8 +230,8 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   dbus-daemon` and runs `meson test --suite gui -v`; a deliberately failed
   check turned it red with its FAIL line and a picture of the window kept as
   the `gui-checks` artifact (run 42709131059), and it is green without
-  (42708024644), the whole job about 5.5 minutes and the checks 7 seconds of
-  it. The sandbox starts: the runner restricts user namespaces as Ubuntu
+  (42708024644, 42711062114), the whole job 5 to 7 minutes (4.5 before) and
+  the checks 7 seconds of it. The sandbox starts: the runner restricts user namespaces as Ubuntu
   desktops do, but loads AppArmor's `bwrap-userns-restrict` profile, so no
   workaround is needed, and the `harness` suite now checks that the page
   answers from inside it. Its home page was a web search for "about:blank",
