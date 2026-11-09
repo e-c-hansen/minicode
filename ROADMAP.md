@@ -1,41 +1,53 @@
 # Roadmap
 
 What is not built yet, roughly ordered by value. Nothing here is needed for
-the current version to stand on its own. Last rewritten 2026-11-05, after the
-second review's list was worked through; brought up to date with 1.5.8 on
-2026-11-06.
+the current version to stand on its own. Last rewritten 2026-11-05; brought
+up to date with 1.5.15 and the round-7 fixes on 2026-11-08.
 
 ## Not planned
 
 - **A debugger.** Decided against (2026-11-05).
 - **Windows.** Not planned unless that is decided; the core is portable C++,
   but there is no Windows front end of any kind.
+- **Under consideration, not planned**: editing with others at once, and
+  working on a remote machine's folder.
 
-## For daily work on the Mac
+## Left to the owner
 
 - **Claude Code's IDE link against a real session.** Built in 1.5.8 (View >
   Claude Code IDE Link) from the protocol as read in Claude Code's and the
-  VS Code extension's code, and checked with a WebSocket client of its own;
-  it has not yet been run against a real Claude Code session.
+  VS Code extension's code, and checked with a WebSocket client of its own
+  (and node's, where node is installed); it has not yet been run against a real Claude Code session.
+- **Notarization**, once the owner has a paid Apple Developer account;
+  `scripts/sign-and-notarize.sh` is ready.
+- **Branch protection on main**, with the six CI jobs required, so a branch
+  is checked before it lands rather than after.
+
+## For daily work on the Mac
+
 - **One text storage per tab** (M). The window has one text view and swaps
-  each tab's text into it, so a switch relexes and relays out the file.
-- **Non-contiguous layout** (M). Contiguous layout is left on because
-  everything that reads positions relies on it; turning it off for large
-  files needs trying on a real screen first.
+  each tab's text into it, so a switch colors and lays out the file again.
+  A long tab shown again far down already lays out only its place and fills
+  in the lines above it in idle time, and large-file mode lays out only what
+  is shown.
+- **A line of millions of characters.** A keystroke in a 5,000,000-character
+  line costs about 0.35 s, all of it TextKit typesetting the paragraph again;
+  minicode's own work on it is a few characters. It would need a view that
+  lays out only the visible part of a line.
 - **The command registry's fixed keys.** The keys the editor and terminal
-  handle themselves (moving lines with Option Up and Down, the terminal's
-  Ctrl keys) are listed in keys.conf but cannot be changed yet.
+  handle themselves (the editor's Command arrows, the terminal's Command
+  arrows and prompt keys, the tree's Space) are listed in keys.conf but
+  cannot be changed yet.
 - **Running notebook cells.** Notebooks are rendered read-only from their
   saved outputs; there is no kernel.
-- **Line mode in the terminal.** Kept for a release as a fallback after the
-  grid terminal became the default in 1.5.5; decide whether to drop it. Its
-  log still ignores multi-line progress bars that redraw with cursor-up.
+- **The data viewers**: sorting and filtering in the CSV table, and SQLite
+  results past the first 1,000 rows.
+- **Line mode in the terminal.** Kept as a fallback after the grid terminal
+  became the default in 1.5.5; decide whether to drop it. Its log still
+  ignores multi-line progress bars that redraw with cursor-up.
 
 ## Editor and language servers
 
-- Incremental sync (send the edit, not the whole file) for large files.
-- Snippet completions (placeholders you tab through); completion asks for
-  plain text, so a method completes without its parentheses.
 - Highlighting: Swift's `#"..."#` and `\(...)`, string templates in Kotlin,
   Scala, Dart and C#, Groovy's slashy strings, a block comment across lines
   inside a JavaScript template field, and a regex at the start of a line
@@ -55,8 +67,8 @@ second review's list was worked through; brought up to date with 1.5.8 on
 
 - Add a table row the way a list entry is added now (the column count and
   the `&` separators are already in reach of `LatexDoc`).
-- Click the page to move the cursor to that line in the source view.
-- Error markers in the source view from tectonic's log, instead of a log pane.
+- Click the page to move the cursor to that line in the source view (the
+  other way, Show Line in PDF, is built).
 - Text a macro prints (`\newcommand{\company}{Initech}`) is refused when
   clicked, because it is not where it appears. Offering the macro's
   definition instead would make it editable, with a note that every use
@@ -96,23 +108,29 @@ logic already in the shared core where it could be:
 - tabs and the landing state (`EditorTabs`), backups (`Backups`), auto-save;
 - the command palette and Quick Open (`CommandPalette`), Go to Symbol
   (`SymbolOutline`) and Go Back (`NavHistory`);
-- line numbers (`LineIndex`), bracket matching (`BracketMatch`), folding
-  (`Folding`), several carets and the line commands (`MultiCaret`), zoom;
+- line numbers (`LineIndex`), bracket matching (`BracketMatch`) and
+  bracket-pair colors (`BracketPairs`), folding (`Folding`), several carets
+  and the line commands (`MultiCaret`), auto-closing pairs (`AutoClose`),
+  zoom;
 - find and replace with options and Replace in Folder (`TextFind` and
   `FolderSearch` are already built into the port);
 - rename, references, quick fixes, the Problems list, the second server and
-  Organize Imports (all in `LspClient`), completion's additional edits, and
+  Organize Imports (all in `LspClient`), completion's additional edits,
+  snippets (`Snippet`), inlay hints (`InlayHints`), semantic tokens, and
   the install hints (`InstallHints`);
 - Format Document (`Formatter`), themes from a menu, Adjust Settings;
 - the inline agent, Request a Change, the control channel, the Agents
   panel and Evidence (`InlineAgent`, `ChangeRequest`, `ControlProtocol`, the
   Agent* core), agent pages in the browser (`PageCheck`), the terminals
   waiting for you (`ClaudeHooks`, `AttentionBoard`), the Processes panel
-  (`ProcessTable`) and the Claude Code IDE link (`IdeLink`);
-- push, pull, sync and autofetch in the source control panel
-  (`GitUi::syncPlan` in `GitModel`, which the port already draws from);
-- Mermaid diagrams in the Markdown preview (`MermaidDiagram`), page zoom,
-  and Maximize Pane;
+  (`ProcessTable`), the Claude Code IDE link (`IdeLink`) and the compare
+  view (`SideBySide`);
+- push, pull, sync and autofetch, Stage All, Discard, hunk staging and the
+  commit verbs in the source control panel (`GitModel`, which the port
+  already draws from), and change bars in the gutter (`QuickDiff`);
+- the preview to the side (`MarkdownPage`, `PreviewScroll`), Export as HTML
+  (`MarkdownHtml`), Mermaid diagrams (`MermaidDiagram`), LaTeX problems and
+  warnings on their lines (`LatexLog`), page zoom, and Maximize Pane;
 - the viewers for CSV, JSON, notebooks and SQLite (`FileSniff`, `Csv`,
   `JsonOutline`, `Notebook`);
 - typeset math (above). Blur is not possible on GNOME: GTK 4 has no API for
@@ -137,6 +155,7 @@ Termux. Still to do:
 
 ## Distribution
 
-- **Notarization**, once the user has a paid Apple Developer account;
-  `scripts/sign-and-notarize.sh` is ready.
 - A GitHub Action that runs `scripts/release.sh` on a tag.
+- A CI job that builds the Debian package in an ubuntu:26.04 container, so
+  a package that fails on Launchpad fails before the upload (ppa.sh now
+  waits for Launchpad's result and fails loudly, but only after uploading).
