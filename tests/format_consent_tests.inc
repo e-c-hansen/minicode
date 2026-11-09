@@ -154,8 +154,24 @@ static void testFormatConsent() {
         auto dep = fakeFs({{"/w/docs/package.json", "{\"devDependencies\": {\"prettier\": \"3\"}}"},
                            {"/w/.prettierrc.cjs", ""}});
         CHECK(codeConfigFile("prettier", "/w/docs/a.md", "/w", "", dep) == "/w/.prettierrc.cjs");
+        // Above the open folder, past .git, to the filesystem root, as
+        // Prettier and Biome search: a repository with only its docs
+        // folder open still has its configuration run.
         auto above = fakeFs({{"/prettier.config.js", ""}});
-        CHECK(codeConfigFile("prettier", "/w/a.md", "/w", "", above).empty());   // the user's own
+        CHECK(codeConfigFile("prettier", "/w/a.md", "/w", "", above) == "/prettier.config.js");
+        auto repo = fakeFs({{"/r/prettier.config.mjs", ""}, {"/r/.git", ""},
+                            {"/r/docs/a.md", "x"}});
+        CHECK(codeConfigFile("prettier", "/r/docs/a.md", "/r/docs", "", repo) ==
+              "/r/prettier.config.mjs");
+        auto pastGit = fakeFs({{"/r/prettier.config.js", ""}, {"/r/sub/.git", ""}});
+        CHECK(codeConfigFile("prettier", "/r/sub/docs/a.md", "/r/sub/docs", "", pastGit) ==
+              "/r/prettier.config.js");
+        // The nearest folder holding one still decides.
+        auto plainBelow = fakeFs({{"/r/prettier.config.js", ""}, {"/r/docs/.prettierrc", "{}"}});
+        CHECK(codeConfigFile("prettier", "/r/docs/a.md", "/r/docs", "", plainBelow).empty());
+        auto biomeAbove = fakeFs({{"/r/biome.json", "{\"plugins\": [\"./p.grit\"]}"}});
+        CHECK(codeConfigFile("biome", "/r/docs/a.json", "/r/docs", "", biomeAbove) ==
+              "/r/biome.json");
         auto biomeFs = fakeFs({{"/w/biome.json", "{\"plugins\": [\"./p.js\"]}"}});
         CHECK(codeConfigFile("biome", "/w/a.json", "/w", "", biomeFs) == "/w/biome.json");
         auto latex = fakeFs({{"/w/localSettings.yaml", "replacements:\n  - substitution: s/a/b/\n"}});
@@ -188,6 +204,62 @@ static void testFormatConsent() {
         const bool code = !codeConfigFile("prettier", "/w/a.md", "/w", "/w/.prettierrc", plain).empty();
         CHECK(!code);
         CHECK(chooseProgram(false, "", outside, "", code) == Source::Outside);
+    }
+
+    GROUP("format:runners");
+    {
+        // The program a package runner launches, not the runner's name.
+        auto tool = [](const char *command) { return launched(command).tool; };
+        CHECK(tool("npx prettier --stdin-filepath {file}") == "prettier");
+        CHECK(tool("/opt/homebrew/bin/npx --yes prettier@3.3 --stdin-filepath {file}") ==
+              "prettier");
+        CHECK(tool("npx -p prettier@3 prettier --stdin-filepath {file}") == "prettier");
+        CHECK(tool("npx --package=@biomejs/biome biome format --stdin-file-path={file}") ==
+              "biome");
+        CHECK(tool("npx @biomejs/biome@2.1 format --stdin-file-path={file}") == "biome");
+        CHECK(tool("npx -c 'prettier --stdin-filepath {file}'") == "prettier");
+        CHECK(tool("pnpx prettier") == "prettier");
+        CHECK(tool("bunx prettier") == "prettier");
+        CHECK(tool("bun x prettier") == "prettier");
+        CHECK(tool("pnpm exec prettier --stdin-filepath {file}") == "prettier");
+        CHECK(tool("pnpm -C web exec prettier") == "prettier");
+        CHECK(tool("pnpm dlx prettier") == "prettier");
+        CHECK(tool("pnpm prettier") == "prettier");
+        CHECK(tool("npm exec -- prettier --stdin-filepath {file}") == "prettier");
+        CHECK(tool("npm x prettier") == "prettier");
+        CHECK(tool("yarn prettier --stdin-filepath {file}") == "prettier");
+        CHECK(tool("yarn exec prettier") == "prettier");
+        CHECK(tool("yarn dlx prettier") == "prettier");
+        // Not runners.
+        CHECK(tool("prettier --stdin-filepath {file}").empty());
+        CHECK(tool("/usr/local/bin/clang-format").empty());
+        CHECK(tool("npm").empty() && tool("npx").empty() && tool("").empty());
+        CHECK(tool("npm install").empty());
+        // Scripts and yarn's own bins are the folder's code whatever is
+        // installed elsewhere; npx and dlx may run a copy from outside.
+        CHECK(launched("npm run fmt").folderCode && launched("npm run fmt").tool == "fmt");
+        CHECK(launched("yarn prettier").folderCode && launched("yarn run fmt").folderCode);
+        CHECK(launched("pnpm run fmt").folderCode && launched("bun run fmt").folderCode);
+        CHECK(!launched("npx prettier").folderCode && !launched("yarn dlx prettier").folderCode);
+        CHECK(!launched("pnpm exec prettier").folderCode);
+
+        // npx with the folder's own node_modules/.bin/prettier runs that
+        // copy: asked about, as the folder's own program, even though the
+        // command is the user's; without one, it is the user's program.
+        const std::string npx = "/opt/homebrew/bin/npx";
+        CHECK(chooseLaunched(true, true, npx, "", false) == Source::Ask);
+        CHECK(chooseLaunched(true, true, npx, "allow", false) == Source::Local);
+        CHECK(chooseLaunched(true, true, npx, "deny", false) == Source::None);
+        CHECK(chooseLaunched(true, false, npx, "", false) == Source::Outside);
+        CHECK(chooseLaunched(true, false, npx, "deny", false) == Source::Outside);
+        // A configuration that runs code is asked about either way.
+        CHECK(chooseLaunched(true, false, npx, "", true) == Source::Ask);
+        CHECK(chooseLaunched(true, false, npx, "deny", true) == Source::Refused);
+        CHECK(chooseLaunched(true, true, "", "", false) == Source::None);   // no npx
+        // The configuration checked is the launched tool's.
+        auto js = fakeFs({{"/w/prettier.config.js", ""}});
+        CHECK(codeConfigFile(tool("npx prettier"), "/w/a.js", "/w", "", js) ==
+              "/w/prettier.config.js");
     }
 
     GROUP("format:own-prettier");
