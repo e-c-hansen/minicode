@@ -138,14 +138,61 @@ static NSString *MCZshIntegrationScript(void) {
     return text;
 }
 
+// When a process started (Unix seconds), or 0 when there is no such process.
+static double MCProcessStartTime(pid_t pid) {
+    struct kinfo_proc info;
+    size_t size = sizeof info;
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
+    if (sysctl(mib, 4, &info, &size, NULL, 0) != 0 || size == 0) return 0;
+    const struct timeval tv = info.kp_proc.p_starttime;
+    return (double)tv.tv_sec + tv.tv_usec / 1e6;
+}
+
+// The integration folders this process's terminals use, one per mode
+// (ShellIntegration::folderName). The first call removes those of
+// minicodes that have gone (a crash, or a quit that left them) and sets up
+// the removal of this process's own when it quits.
+static NSString *IntegrationFolderPath(BOOL grid) {
+    static long long start;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        start = (long long)MCProcessStartTime(getpid());
+        NSString *tmp = NSTemporaryDirectory();
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            NSFileManager *fm = [NSFileManager defaultManager];
+            for (NSString *name in [fm contentsOfDirectoryAtPath:tmp error:nil] ?: @[]) {
+                long long pid = 0, born = 0;
+                if (!ShellIntegration::parseFolderName(name.UTF8String ?: "", &pid, &born) ||
+                    pid == getpid())
+                    continue;
+                if (ShellIntegration::ownerGone(born, MCProcessStartTime((pid_t)pid)))
+                    [fm removeItemAtPath:[tmp stringByAppendingPathComponent:name] error:nil];
+            }
+        });
+        [[NSNotificationCenter defaultCenter]
+            addObserverForName:NSApplicationWillTerminateNotification object:nil queue:nil
+                    usingBlock:^(NSNotification *n) {
+            (void)n;
+            NSFileManager *fm = [NSFileManager defaultManager];
+            for (int mode = 0; mode < 2; mode++)
+                [fm removeItemAtPath:[tmp stringByAppendingPathComponent:
+                                              @(ShellIntegration::folderName(mode == 1, getpid(),
+                                                                             start).c_str())]
+                               error:nil];
+        }];
+    });
+    return [NSTemporaryDirectory() stringByAppendingPathComponent:
+                @(ShellIntegration::folderName(grid, getpid(), start).c_str())];
+}
+
 // Writes the integration folder (the script's copy and the .zshenv that
 // sources it); returns the folder, or nil on failure. Each mode has its own,
-// since terminals of both kinds can be open at once.
+// since terminals of both kinds can be open at once, and each process its
+// own, so a terminal never sources another minicode's script.
 static NSString *IntegrationDirectory(BOOL grid) {
     NSString *script = MCZshIntegrationScript();
     if (!script) return nil;
-    NSString *dir = [NSTemporaryDirectory()
-        stringByAppendingPathComponent:grid ? @"MiniCode-zsh-grid" : @"MiniCode-zsh"];
+    NSString *dir = IntegrationFolderPath(grid);
     NSFileManager *fm = [NSFileManager defaultManager];
     if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES
                         attributes:@{NSFilePosixPermissions: @0700} error:nil])

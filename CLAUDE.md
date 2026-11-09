@@ -2036,13 +2036,20 @@ for full-screen programs. Both can be open at once.
   writes a copy beside a `.zshenv` stub (`ShellIntegration::zshenvStub`,
   `src/ShellIntegration.h`: `__minicode_mode=grid|line`, then source the
   copy) in each mode's ZDOTDIR folder, so a running app never sources a
-  newer bundle's script. The private ZLE keys live in ShellIntegration.h.
+  newer bundle's script. The folders are the process's own
+  (`ShellIntegration::folderName`: `MiniCode-zsh-grid-<pid>-<start>` and
+  `MiniCode-zsh-<pid>-<start>` in `NSTemporaryDirectory()`; 2026-11-08,
+  round 6's defect 6: one shared folder let two minicodes running at once
+  source each other's copy); the first terminal of a launch removes those
+  of processes gone, and quitting removes its own. The old shared folders
+  are left to the older minicodes using them. The private ZLE keys live in
+  ShellIntegration.h.
   `make test`'s `zsh:*` groups (`tests/zsh_integration_tests.inc`) run it in
   a real interactive zsh reading a pipe (precmd and preexec run there):
   `zsh -n`, the marks of both modes, the nonce, OSC 7's encoding, and the
   exec hook case by case; skipped without /bin/zsh (CI's Linux jobs).
-- **Grid mode's shell**: `zsh -l -i`, `ZDOTDIR` at
-  `NSTemporaryDirectory()/MiniCode-zsh-grid/`, whose .zshenv hands ZDOTDIR back
+- **Grid mode's shell**: `zsh -l -i`, `ZDOTDIR` at the process's
+  `MiniCode-zsh-grid-<pid>-<start>`, whose .zshenv hands ZDOTDIR back
   and at the first precmd (after .zshrc, so last in line) installs hooks that
   only print: precmd `133;D;status` (if preexec ran), OSC 7, `133;A`; a
   `zle-line-init` hook (`add-zle-hook-widget`) `133;B`; preexec
@@ -2272,8 +2279,8 @@ for full-screen programs. Both can be open at once.
   (`MCTerminalZoom`, see "Zoom"; never the editor's); the grid remeasures its
   cell, the input line and log re-font (keeping weight and slant), the panel
   relays out and the pty gets the rows and columns that fit.
-- **Line mode**: `zsh -l -i +Z`, `ZDOTDIR` at
-  `NSTemporaryDirectory()/MiniCode-zsh` (hooks emit 133 A/C/D and OSC 7, blank
+- **Line mode**: `zsh -l -i +Z`, `ZDOTDIR` at the process's
+  `MiniCode-zsh-<pid>-<start>` (hooks emit 133 A/C/D and OSC 7, blank
   `PS1`, `PROMPT_SP` unset); echo is off while zsh reads, so the master's ECHO
   flag shows hidden input. The last log line is "live" (replaced from
   `_liveStart`), so panel-written lines go through `ensureNewline`

@@ -181,6 +181,16 @@ MC_GUI_SUITE(terminal_vt) {
     };
     run(@"cd", [NSString stringWithFormat:@"cd '%@'", MCGuiProject()]);
 
+    // Round 6's terminal defect 6: the integration's folder is this
+    // process's own, not one every minicode shares.
+    run(@"where the integration is", @"print -r -- \"ZD=${__minicode_zdotdir:t}=\"");
+    MCGuiStep(@"a folder named for this process", ^{
+        const std::string text = VtScreenText(s.term);
+        const std::string want = "ZD=MiniCode-zsh-grid-" + std::to_string(getpid()) + "-";
+        GCHECK(text.find(want) != std::string::npos);
+        if (text.find(want) == std::string::npos) NSLog(@"wanted %s in:\n%s", want.c_str(), text.c_str());
+    });
+
     // ------------------------------------------------------------ cursor
     run(@"printf a bar", @"printf '\\e[6 q'");
     MCGuiStep(@"a steady bar: the cell's left edge only", ^{

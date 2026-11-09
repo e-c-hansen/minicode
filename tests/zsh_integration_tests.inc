@@ -167,7 +167,28 @@ void testZshIntegration() {
             if (!ok) std::printf("    not bound: %s\n", line.c_str());
             return ok;
         };
-        CHECK(script.find("for m in emacs viins vicmd; do") != std::string::npos);
+        {
+        // Each process's own integration folder (round 6's terminal defect
+        // 6: every minicode wrote its copy into one shared folder, so two
+        // running at once sourced each other's script), and which folders
+        // the sweep at startup may take: only ones naming a process that
+        // has gone.
+        CHECK(ShellIntegration::folderName(true, 812, 1793900000) == "MiniCode-zsh-grid-812-1793900000");
+        CHECK(ShellIntegration::folderName(false, 812, 1793900000) == "MiniCode-zsh-812-1793900000");
+        long long pid = 0, start = 0;
+        CHECK(ShellIntegration::parseFolderName("MiniCode-zsh-grid-812-1793900000", &pid, &start) &&
+              pid == 812 && start == 1793900000);
+        CHECK(ShellIntegration::parseFolderName("MiniCode-zsh-77-5", &pid, &start) && pid == 77 &&
+              start == 5);
+        for (const char *other : {"MiniCode-zsh-grid", "MiniCode-zsh", "MiniCode-zsh-grid-12",
+                                  "MiniCode-zsh-grid-12-", "MiniCode-zsh-grid--5", "MiniCode-zsh-a-5",
+                                  "MiniCode-zsh-grid-1-2-3", "MiniCode-latex", "MiniCode-zsh-0-5"})
+            CHECK(!ShellIntegration::parseFolderName(other, &pid, &start));
+        CHECK(ShellIntegration::ownerGone(100, 0));          // no such process
+        CHECK(ShellIntegration::ownerGone(100, 500));        // the pid is someone else's now
+        CHECK(!ShellIntegration::ownerGone(100, 100.4));     // still running
+    }
+    CHECK(script.find("for m in emacs viins vicmd; do") != std::string::npos);
         CHECK(bound(ShellIntegration::kZlePushKey, "__minicode_push"));
         CHECK(bound(ShellIntegration::kZleLineStartKey, "beginning-of-line"));
         CHECK(bound(ShellIntegration::kZleLineEndKey, "end-of-line"));
