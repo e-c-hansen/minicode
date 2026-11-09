@@ -194,6 +194,16 @@ std::vector<std::u16string> oldLines(const Bar& b, const std::u16string& origina
     return out;
 }
 
+bool stripBom(std::u16string& original, bool bufferBom) {
+    if (!bufferBom || original.empty() || original[0] != 0xFEFF) return false;
+    original.erase(0, 1);
+    return true;
+}
+
+void restoreBom(std::u16string& staged, bool stripped) {
+    if (stripped) staged.insert(staged.begin(), (char16_t)0xFEFF);
+}
+
 std::u16string fromUtf8(const std::string& s) {
     std::u16string out;
     out.reserve(s.size());

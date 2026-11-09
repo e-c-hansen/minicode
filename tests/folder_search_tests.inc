@@ -275,6 +275,83 @@ static void testFolderSearchParallel() {
         fsys::remove_all(many, ec);
     }
 
+    GROUP("search:utf16");
+    {
+        // UTF-16 with a byte order mark is decoded and searched, as ripgrep
+        // does (round 5's workspace 3: every such file has NULs, so it fell
+        // out as binary without a word). Both byte orders; an astral
+        // character before the match; a lone surrogate as U+FFFD.
+        auto utf16 = [](const std::u16string& s, bool le) {
+            std::string b = le ? std::string("\xFF\xFE", 2) : std::string("\xFE\xFF", 2);
+            for (char16_t u : s) {
+                const char hi = static_cast<char>(u >> 8), lo = static_cast<char>(u & 0xFF);
+                b += le ? lo : hi;
+                b += le ? hi : lo;
+            }
+            return b;
+        };
+        const fsys::path dir = root / "utf16";
+        const std::u16string text = u"first\r\n\U0001F600 x = return 1\r\nlast café return\r\n";
+        writeFile(dir / "le.ps1", utf16(text, true));
+        writeFile(dir / "be.log", utf16(text, false));
+        writeFile(dir / "lone.txt", utf16(std::u16string(u"a ") + char16_t(0xD800) + u" return\n", true));
+        writeFile(dir / "odd.txt", utf16(u"return\n", true) + "x");
+        writeFile(dir / "big.txt", utf16(std::u16string(600 * 1024, u'a') + u"\nreturn\n", true));
+        FolderSearchOptions o;
+        o.threads = 2;
+        const FolderSearchResult r = search(dir.string(), "return", nullptr, o);
+        // be.log, le.ps1, lone.txt, odd.txt in name order; big.txt named
+        // as too large (its NULs no longer hide it).
+        CHECK(r.filesSearched == 4 && r.matches.size() == 6);
+        CHECK(r.skippedTooLarge == 1 && r.skipped.size() == 1 &&
+              r.skipped[0].relativePath == "big.txt");
+        for (const FolderSearchMatch& m : r.matches) {
+            if (m.relativePath == "be.log" || m.relativePath == "le.ps1") {
+                // Line 2: the emoji (4 UTF-8 bytes, one code point) and " x = ".
+                CHECK((m.line == 2 && m.byteColumn == 9 && m.column == 7 &&
+                       m.text == "\xF0\x9F\x98\x80 x = return 1") ||
+                      (m.line == 3 && m.text == "last caf\xC3\xA9 return"));
+            }
+        }
+        CHECK(!r.matches.empty() && r.matches[0].relativePath == "be.log");
+        bool lone = false;
+        for (const FolderSearchMatch& m : r.matches)
+            if (m.relativePath == "lone.txt") lone = m.text == "a \xEF\xBF\xBD return";
+        CHECK(lone);
+
+        // Replace in Folder counts only files it can write back exactly:
+        // not the lone surrogate's, not the odd byte's.
+        const FolderReplacePlan plan = planReplace(dir.string(), "return", nullptr, o);
+        CHECK(describe(plan) == "be.log 2\nle.ps1 2\ntotal 4");
+
+        // decodeUtf16 and encodeText round-trip both orders.
+        std::string u8;
+        TextEncoding enc = TextEncoding::Utf8;
+        CHECK(decodeUtf16(utf16(text, true), &u8, &enc, true) && enc == TextEncoding::Utf16LE);
+        CHECK(u8 == "first\r\n\xF0\x9F\x98\x80 x = return 1\r\nlast caf\xC3\xA9 return\r\n");
+        CHECK(encodeText(u8, enc) == utf16(text, true));
+        CHECK(decodeUtf16(utf16(text, false), &u8, &enc, true) && enc == TextEncoding::Utf16BE);
+        CHECK(encodeText(u8, enc) == utf16(text, false));
+        CHECK(encodeText(u8, TextEncoding::Utf8) == u8);
+        CHECK(!decodeUtf16("plain", &u8, &enc, false));
+        CHECK(!decodeUtf16(utf16(u"a", true) + "x", &u8, &enc, true));
+        CHECK(decodeUtf16(utf16(u"a", true) + "x", &u8, &enc, false) && u8 == "a\xEF\xBF\xBD");
+        CHECK(decodeUtf16(std::string("\xFF\xFE", 2), &u8, &enc, true) && u8.empty());
+        // readTextFile decodes only when asked for the encoding, so a
+        // caller that would write the bytes back as UTF-8 never gets one.
+        std::string back;
+        CHECK(!readTextFile((dir / "le.ps1").string(), 1 << 20, &back));
+        CHECK(readTextFile((dir / "le.ps1").string(), 1 << 20, &back, &enc) &&
+              enc == TextEncoding::Utf16LE);
+        CHECK(back == "first\r\n\xF0\x9F\x98\x80 x = return 1\r\nlast caf\xC3\xA9 return\r\n");
+        CHECK(!readTextFile((dir / "lone.txt").string(), 1 << 20, &back, &enc));
+        CHECK(readTextFile((dir / "lone.txt").string(), 1 << 20, &back, nullptr) == false);
+        writeFile(dir / "plain.txt", "return\n");
+        CHECK(readTextFile((dir / "plain.txt").string(), 1 << 20, &back, &enc) &&
+              enc == TextEncoding::Utf8 && back == "return\n");
+        fsys::remove_all(dir, ec);
+    }
+
     GROUP("search:cancel");
     {
         std::atomic<bool> stop(true);

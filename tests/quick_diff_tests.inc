@@ -209,6 +209,42 @@ static void testQuickDiff() {
         CHECK(toUtf8(std::u16string({0xD800, u'x'})) == "\xEF\xBF\xBDx");
     }
 
+    GROUP("quickdiff:bom");
+    {
+        // A file with a UTF-8 BOM: the tab's text has none (kept apart and
+        // written back), the index's starts with U+FEFF. Round 6 compared
+        // them as they were: line 0 always changed, and Revert Change put
+        // U+FEFF in the buffer, so the save wrote EF BB BF EF BB BF.
+        const std::u16string index = fromUtf8("\xEF\xBB\xBF" "a\nb\nc\n");
+        std::u16string o = index;
+        CHECK(bars(o, u16("a\nb\nc\n")).size() == 1);   // what happened before
+        CHECK(stripBom(o, true) && o == u16("a\nb\nc\n"));
+        CHECK(bars(o, u16("a\nb\nc\n")).empty());
+        // Revert gives the buffer's lines back without a U+FEFF.
+        const std::u16string n = u16("A\nb\nc\n");
+        V bs = bars(o, n);
+        CHECK(bs.size() == 1 && bs[0] == bar(Kind::Modified, 0, 1, 0, 1));
+        const Edit e = revertEdit(bs[0], o, n);
+        CHECK(e.start == 0 && e.text == u16("a\n"));
+        // An edit to line 1 is a bar of its own, not merged with line 0.
+        CHECK(bars(o, u16("a\nB\nc\n")) == V({bar(Kind::Modified, 1, 1, 1, 1)}));
+        // Stage Change keeps the index's BOM.
+        std::u16string staged = stagedText(bs[0], o, n);
+        restoreBom(staged, true);
+        CHECK(toUtf8(staged) == "\xEF\xBB\xBF" "A\nb\nc\n");
+        // Nothing taken when the buffer's file has no BOM (the work tree
+        // lost it: a change), or the index has none.
+        std::u16string kept = index;
+        CHECK(!stripBom(kept, false) && kept == index && bars(kept, u16("a\nb\nc\n")).size() == 1);
+        std::u16string plain = u16("a\n");
+        CHECK(!stripBom(plain, true) && plain == u16("a\n"));
+        std::u16string s2 = u16("x\n");
+        restoreBom(s2, false);
+        CHECK(s2 == u16("x\n"));
+        std::u16string empty;
+        CHECK(!stripBom(empty, true) && empty.empty());
+    }
+
     GROUP("quickdiff:speed");
     {
         // A 100,000-line file with three edits, as off the main thread after

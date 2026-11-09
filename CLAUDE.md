@@ -1150,7 +1150,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   what the folder's `.gitignore`/`.ignore` files ignore (from the window's
   folder down, `search.use-ignore-files`) skipped, dotfiles searched; 1 MB and
   UTF-8 only, the files left out counted and named (`skipped`, shown under
-  the results) unless a NUL in their first 8 KB marks them binary; 2000
+  the results) unless a NUL in their first 8 KB marks them binary; UTF-16
+  with a byte order mark decoded as ripgrep does (`decodeUtf16`; its NULs
+  had hidden it), Replace in Folder writing it back in its own encoding
+  (`readTextFile` with an encoding, `encodeText`) and leaving out one with a
+  lone surrogate; 2000
   lines by default, 20,000 on the Mac; ANSI stripped; symlink loops and
   named pipes safe; generation-counted and cancelled per file). Since
   2026-11-07 the walk is parallel: folders are listed and files read and
@@ -2439,8 +2443,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `posix_spawn`s an argument vector in the top level. Paths after `--`; add,
   restore and rm get `--literal-pathspecs` (`sp*ecial.txt` never stages
   `spXecial.txt`). Status `--porcelain=v2 --branch -z --untracked-files=all`;
-  diffs `-c core.quotePath=false diff --no-color --no-ext-diff --src-prefix=a/
-  --dst-prefix=b/` (a user's noprefix or diff tool would change the output),
+  diffs `-c core.quotePath=false diff --no-color --no-ext-diff
+  --submodule=short --src-prefix=a/ --dst-prefix=b/` (a user's noprefix,
+  diff tool or diff.submodule would change the output),
   `--cached -M` for a staged rename, `--no-index -- /dev/null path` for
   untracked (status 1 means differs). `MCFindProgram(@"git")`, never
   /usr/bin/git's shim.
@@ -2533,8 +2538,11 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 - **Submodules, several rows, the verbs** (Mac, 2026-11-07): `Row::submodule`
   comes from status; `discardPlan` refuses a submodule (trashing it and
   restoring the gitlink left an empty folder, the checkout in the Trash) and
-  the hunk planner refuses a gitlink diff (`Subproject commit <oid>` lines,
-  mode 160000); staging one still works. The change lists take several rows
+  the hunk planner refuses a gitlink diff, known by mode 160000 in its header,
+  or with no index line at all (git writes none for a submodule at the same
+  commit with changes inside) by its one "Subproject commit" line a side; a
+  plain file holding such lines has a 100644 index line and stages by hunk.
+  Staging a submodule still works. The change lists take several rows
   (`allowsMultipleSelection`; Command or Shift click shows no diff): Space,
   the row menu's Stage, Unstage and Discard act on all (`stageRowsArgs`,
   `discardBatchPlan`: one question, refused whole if any row would be, each
@@ -2553,7 +2561,14 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `replaceRanges:withStrings:actionName:`; Stage Change is VS Code's
   `hash-object -w --stdin --path` and `update-index --cacheinfo`, refused when
   the entry no longer names the object the bars came from. The panel posts
-  `MCGitPanelDidRefreshNotification` so the bars look again. Option+F5 and
+  `MCGitPanelDidRefreshNotification` so the bars look again, and the gutter
+  watches the repository folder itself (a vnode source, `MCGitDirWatch`;
+  git renames index.lock and HEAD.lock into it), so git in a terminal with
+  the panel hidden moves them at once. A tab that keeps its file's UTF-8 BOM
+  apart (`MCTab bom`) diffs against the index text without its U+FEFF
+  (`QuickDiff::stripBom`), and Stage Change puts it back (`restoreBom`):
+  compared whole, line 0 always read as changed and Revert wrote a second
+  BOM. Option+F5 and
   Shift+Option+F5 (`nextChange:`) are Editor commands the key monitor runs.
 - **Tool guard trap**: in a worktree-isolated agent session, git commands in
   compound or unusual forms are refused (even a filename containing "git"); use
@@ -2569,7 +2584,11 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   after the drop (Finder waits on a modal during it). `pathMovedFrom:to:` moves
   tabs, the LaTeX path and a preview's relative pictures. F2 renames,
   Cmd+Delete trashes (the registry's `Tree` commands, run by the key monitor),
-  Space previews with Quick Look.
+  Space previews with Quick Look. Show Hidden Files (`gShowHidden`) is one
+  switch for every window: flipping it rescans each (a window left alone
+  listed its next changed folder by the new rule, showing dotfiles there
+  only), its item has a checkmark, and it is kept in the app's defaults
+  (`MCShowHiddenFiles`, read in `applicationWillFinishLaunching:`).
 - **FSEvents refresh what changed** (2026-11-06): the stream names folders,
   and `TreeRefresh::plan` (FileDetails) turns a batch into the loaded
   folders to list again (a subtree event: those below too; at or above the

@@ -7,7 +7,10 @@
 // popover's title and old lines; Revert Change puts a change back as one
 // undo step; Stage Change puts one change in the index and nothing else;
 // the bars draw in their colors; none for an untracked file, in large-file
-// mode, or with editor.git-gutter off.
+// mode, or with editor.git-gutter off; git changing the index from outside
+// with the panel hidden moves them with no key pressed; and a file with a
+// UTF-8 BOM shows no bar of its own, reverts without a second BOM, and
+// stages with the index's BOM kept.
 #import "Harness.h"
 #import "EditorController.h"
 #import "GitGutter.h"
@@ -253,6 +256,92 @@ MC_GUI_SUITE(git_gutter) {
     MCGuiWait(@"back on: the bars again", 15, ^BOOL {
         return Bars(c).diffs > diffs && Bars(c).barCount == 2;
     });
+
+    // git outside the panel, which is hidden (the tree in the sidebar), with
+    // no key, edit or window change after it: the gutter watches the
+    // repository folder itself (round 6's workspace 2).
+    __block NSUInteger changes = 0;
+    MCGuiStep(@"the panel hidden; the buffer's text written to the index from outside", ^{
+        GCHECK(![[c valueForKey:@"gitPanelVisible"] boolValue]);
+        changes = Bars(c).indexChanges;
+        diffs = Bars(c).diffs;
+        NSString *buffer = Text(c).string;
+        GCHECK([buffer hasPrefix:@"top\n"]);
+        MCGuiWriteFile([MCGuiScratch() stringByAppendingPathComponent:@"gitgutter-buffer.txt"],
+                       buffer);
+    });
+    Shell(@"git hash-object and update-index, as a terminal would", [NSString
+        stringWithFormat:@"set -e; cd '%@'; o=$(%@ hash-object -w '%@'); "
+                          "%@ update-index --cacheinfo 100644,$o,g.txt",
+                          repo, G, [MCGuiScratch() stringByAppendingPathComponent:
+                                                       @"gitgutter-buffer.txt"], G]);
+    MCGuiWait(@"the bars go by themselves", 15, ^BOOL {
+        return Bars(c).diffs > diffs && Bars(c).barCount == 0;
+    });
+    MCGuiStep(@"seen as an index change", ^{
+        MCGuiNote(@"index changes seen: %lu", (unsigned long)(Bars(c).indexChanges - changes));
+        GCHECK(Bars(c).indexChanges > changes);
+    });
+
+    // A file with a UTF-8 BOM (round 6's workspace 1): the tab keeps the
+    // BOM apart, so the index's U+FEFF must not read as a change, Revert
+    // must not put one in the buffer, and Stage keeps the index's.
+    NSString *bomFile = [repo stringByAppendingPathComponent:@"bom.txt"];
+    Shell(@"bom.txt, committed with a BOM", [NSString
+        stringWithFormat:@"set -e; cd '%@'; printf '\\357\\273\\277b0\\nb1\\nb2\\n' > bom.txt; "
+                          "%@ add bom.txt; %@ commit -qm bom",
+                          repo, G, G]);
+    MCGuiStep(@"bom.txt shown", ^{
+        diffs = Bars(c).diffs;
+        GCHECK([c showFile:bomFile]);
+        GCHECK([[c valueForKeyPath:@"activeTab.bom"] boolValue]);
+        GCHECK(![Text(c).string hasPrefix:@"﻿"]);
+    });
+    MCGuiWait(@"diffed", 15, ^BOOL {
+        return Bars(c).diffs > diffs && [[c valueForKey:@"currentPath"] isEqualToString:bomFile];
+    });
+    MCGuiStep(@"no bars on an unchanged BOM file; line 1 edited", ^{
+        MCGuiNote(@"bars: %@", Bars(c).barDescriptions);
+        GCHECK(Bars(c).barCount == 0);
+        Type(c, [Text(c).string rangeOfString:@"b1"], @"B1");
+        diffs = Bars(c).diffs;
+    });
+    MCGuiWait(@"one bar, line 1 only", 15, ^BOOL {
+        return Bars(c).diffs > diffs &&
+               [Bars(c).barDescriptions isEqualToArray:@[@"modified 1+1 (was 1+1)"]];
+    });
+    MCGuiStep(@"Revert Change: the line back, no U+FEFF in the buffer", ^{
+        NSTextView *tv = Text(c);
+        [tv setSelectedRange:NSMakeRange([tv.string rangeOfString:@"B1"].location, 0)];
+        [c revertChange:nil];
+        GCHECK_EQ_STR(tv.string, @"b0\nb1\nb2\n");
+        // An edit to line 0 now, for Stage Change.
+        Type(c, NSMakeRange(0, 2), @"B0");
+        diffs = Bars(c).diffs;
+    });
+    MCGuiWait(@"line 0's bar", 15, ^BOOL {
+        return Bars(c).diffs > diffs &&
+               [Bars(c).barDescriptions isEqualToArray:@[@"modified 0+1 (was 0+1)"]];
+    });
+    MCGuiStep(@"Stage Change on line 0", ^{
+        [Text(c) setSelectedRange:NSMakeRange(0, 0)];
+        stageFailure = @"(not yet)";
+        Bars(c).onStaged = ^(NSString *failure) { stageFailure = failure; };
+        diffs = Bars(c).diffs;
+        [c stageChange:nil];
+    });
+    MCGuiWait(@"staged, and no bars: the buffer is as staged", 15, ^BOOL {
+        return stageFailure == nil && Bars(c).diffs > diffs && Bars(c).barCount == 0;
+    });
+    MCGuiStep(@"the index keeps its one BOM; saved, the file has one too", ^{
+        MCGitResult *r = MCGitRunSync(repo, @[@"show", @":bom.txt"]);
+        NSData *want = [NSData dataWithBytes:"\xEF\xBB\xBF" "B0\nb1\nb2\n" length:12];
+        MCGuiNote(@"the index: %@", r.output);
+        GCHECK([r.output isEqualToData:want]);
+        [c saveCurrentFile:nil];
+        GCHECK([[NSData dataWithContentsOfFile:bomFile] isEqualToData:want]);
+    });
+
     MCGuiStep(@"the window closes, unsaved tabs left as they are", ^{
         MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Don't Save
         [c.window performClose:nil];

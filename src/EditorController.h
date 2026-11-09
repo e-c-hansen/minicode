@@ -116,7 +116,9 @@
 // This window moves to `dir` (minicode -r), asking about unsaved tabs first;
 // NO when the user cancelled.
 - (BOOL)switchToFolder:(NSString *)dir;
-- (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles
+- (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles, every window
+// The switch as last left (the app's defaults), at launch.
++ (void)loadShowHiddenFiles;
 // The file tree's right click menu: the clicked or selected row, else the
 // open folder. The Sort By items' tags are TreeSort keys (sortTreeBy:) and
 // 1 or 0 for ascending (setTreeSortDirection:).
