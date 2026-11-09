@@ -737,19 +737,38 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     return out;
 }
 
-// Line and column of `index`, read a block at a time (characterAtIndex on
-// the editor's string costs a message per character).
-static NSDictionary *MCLineColumn(NSString *s, NSUInteger index) {
-    NSUInteger line = 1, start = 0;
+// Line and column of `index` (1-based), counted as the gutter numbers lines
+// (AG-D7): a line ends after '\n', U+2029, or a '\r' not before '\n'. From
+// the gutter's LineIndex, which follows every edit to the storage, so a
+// call costs a binary search and not a walk from the top (25 million
+// characters in a large file); counted here only when there is no gutter
+// or its index is not this text's.
+static NSDictionary *MCLineColumn(NSString *s, NSUInteger index, MCLineGutter *gutter) {
     index = MIN(index, s.length);
-    unichar buf[4096];
-    for (NSUInteger at = 0; at < index; at += 4096) {
-        const NSUInteger n = MIN((NSUInteger)4096, index - at);
-        [s getCharacters:buf range:NSMakeRange(at, n)];
-        for (NSUInteger i = 0; i < n; i++)
-            if (buf[i] == '\n') { line++; start = at + i + 1; }
+    NSUInteger line = 0, start = 0;
+    if (gutter && [gutter startOfLine:gutter.lineCount] == s.length) {
+        line = [gutter lineOfCharacter:index];
+        start = [gutter startOfLine:line];
+    } else {
+        unichar buf[4096];
+        unichar prev = 0;
+        for (NSUInteger at = 0; at < index; at += 4096) {
+            const NSUInteger n = MIN((NSUInteger)4096, index - at);
+            [s getCharacters:buf range:NSMakeRange(at, n)];
+            for (NSUInteger i = 0; i < n; i++) {
+                // A '\r' ends its line unless a '\n' follows: decided at the
+                // next unit, or at `index` from the text itself.
+                if (prev == '\r' && buf[i] != '\n') { line++; start = at + i; }
+                if (buf[i] == '\n' || buf[i] == 0x2029) { line++; start = at + i + 1; }
+                prev = buf[i];
+            }
+        }
+        if (prev == '\r' && (index >= s.length || [s characterAtIndex:index] != '\n')) {
+            line++;
+            start = index;
+        }
     }
-    return @{@"line": @(line), @"column": @(index - start + 1)};
+    return @{@"line": @(line + 1), @"column": @(index - start + 1)};
 }
 
 - (NSDictionary *)controlSelection {
@@ -770,8 +789,8 @@ static NSDictionary *MCLineColumn(NSString *s, NSUInteger index) {
     }
     return @{@"path": self.currentPath,
              @"text": text,
-             @"start": MCLineColumn(s, r.location),
-             @"end": MCLineColumn(s, NSMaxRange(r)),
+             @"start": MCLineColumn(s, r.location, self.gutter),
+             @"end": MCLineColumn(s, NSMaxRange(r), self.gutter),
              @"preview": @(self.previewMode),
              @"truncated": @(cut)};
 }
