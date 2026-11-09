@@ -150,6 +150,98 @@ static void testSnippets() {
         CHECK(plainText(parse("${1/a/b}")) == "${1/a/b}");
     }
 
+    GROUP("snippet:depth");
+    {
+        // A server's snippet nested 50,000 deep (the parser recursed per
+        // level and overflowed the stack): parsed in linear time, 64 levels
+        // of placeholders at most, the rest the text as written, closed or
+        // not, as placeholders or as defaults.
+        auto depthOf = [](const std::vector<Node> &nodes) {
+            size_t deepest = 0;
+            std::vector<std::pair<const std::vector<Node> *, size_t>> todo = {{&nodes, 0}};
+            while (!todo.empty()) {
+                auto [list, d] = todo.back();
+                todo.pop_back();
+                deepest = std::max(deepest, d);
+                for (const Node &n : *list) todo.push_back({&n.children, d + 1});
+            }
+            return deepest;
+        };
+        const size_t N = 50000;
+        std::string open, close, defaults;
+        for (size_t i = 0; i < N; i++) {
+            open += "${1:";
+            close += "}";
+            defaults += "${NAME:";
+        }
+        const double t0 = cpuMs();
+        std::vector<Node> closed = parse(open + "x" + close);
+        std::vector<Node> unclosed = parse(open + "x");
+        std::vector<Node> vars = parse(defaults + "y" + close);
+        std::vector<Node> half = parse(open + "x" + close.substr(0, N / 2));
+        const double parsed = cpuMs() - t0;
+        std::printf("  50,000 levels, four ways: %.1f ms of CPU\n", parsed);
+        CHECK_TIME(parsed, 2000);
+        CHECK(depthOf(closed) <= 64 + 1 && depthOf(closed) >= 64);
+        CHECK(depthOf(vars) <= 64 + 1);
+        CHECK(depthOf(half) <= 64 + 1);
+        // Closed: 64 placeholders, the innermost holding the rest as written.
+        std::string plain = plainText(closed);
+        CHECK(plain.size() == (N - 64) * 4 + 1 + (N - 64));
+        CHECK(plain.find('x') != std::string::npos && plain.rfind("${1:", 0) == 0);
+        // Unclosed: all of it text, as for any unclosed ${.
+        CHECK(unclosed.size() == 1 && unclosed[0].kind == Node::Kind::Text &&
+              unclosed[0].text == open + "x");
+        // Expanding them stays within the stack too. (Every placeholder of
+        // `closed` is $1, so the nested ones are mirrors of the outermost,
+        // which VS Code's rules cut off: its text may be empty.)
+        Context ctx = snipContext();
+        CHECK(expand(closed, ctx).stops.size() >= 1);
+        std::string distinct, distinctClose;
+        for (size_t i = 0; i < N; i++) {
+            distinct += "${" + std::to_string(i + 1) + ":";
+            distinctClose += "}";
+        }
+        const std::vector<Node> numbered = parse(distinct + "x" + distinctClose);
+        CHECK(depthOf(numbered) <= 64 + 1);
+        CHECK(expand(numbered, ctx).text.find(u'x') != std::u16string::npos);
+        CHECK(!expand(vars, ctx).text.empty());
+        CHECK(!expand(half, ctx).text.empty());
+        // Below the limit nothing changed.
+        std::string sixty, sixtyClose;
+        for (int i = 0; i < 60; i++) {
+            sixty += "${" + std::to_string(i + 1) + ":";
+            sixtyClose += "}";
+        }
+        std::vector<Node> n60 = parse(sixty + "z" + sixtyClose);
+        CHECK(depthOf(n60) == 61 && plainText(n60) == "z");
+        // Many unclosed choices read the rest of the text once, not once each.
+        std::string choices;
+        for (size_t i = 0; i < N; i++) choices += "${2|a,";
+        const double t1 = cpuMs();
+        std::vector<Node> ch = parse(choices);
+        const double choiceMs = cpuMs() - t1;
+        CHECK_TIME(choiceMs, 1000);
+        CHECK(plainText(ch) == choices);
+    }
+
+    GROUP("snippet:clipboard");
+    {
+        // The clipboard is read only for a snippet that names it, once.
+        int reads = 0;
+        Context ctx = snipContext();
+        ctx.clipboard.clear();
+        ctx.readClipboard = [&reads] {
+            reads++;
+            return std::string("secret");
+        };
+        CHECK(expand("print(${1:x})$0", ctx).text == u"print(x)");
+        CHECK(expand("${TM_FILENAME} ${CURRENT_YEAR} ${UUID}", ctx).text.size() > 0);
+        CHECK(reads == 0);
+        CHECK(expand("${1:$CLIPBOARD}", ctx).text == u"secret");
+        CHECK(reads == 1);
+    }
+
     GROUP("snippet:expand");
     {
         Context flat = snipContext();
