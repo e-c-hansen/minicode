@@ -316,6 +316,8 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
 }
 
 - (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)str {
+    if (_willReplaceAllCharacters && range.location == 0 && range.length == _store.length)
+        _willReplaceAllCharacters();
     [self styleRunReplaced:range length:str.length joins:[self plainTextJoinsStyleRun:range]];
     [_store replaceCharactersInRange:range withString:str];
     _charEdits++;
@@ -466,6 +468,8 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
 - (NSUInteger)length { return _store.length; }
 
 - (void)replaceCharactersInRange:(NSRange)range withAttributedString:(NSAttributedString *)attr {
+    if (_willReplaceAllCharacters && range.location == 0 && range.length == _store.length)
+        _willReplaceAllCharacters();
     if (_styleRunKnown) {
         // Whether every new character has the run's paragraph style.
         __block BOOL joins = YES;

@@ -1,5 +1,6 @@
 // EditorTab.mm — see EditorTab.h.
 #import "EditorTab.h"
+#import "SourceStorage.h"
 #include "FolderSearch.h"
 
 @implementation MCDiskStamp
@@ -61,14 +62,60 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
     return YES;
 }
 
-@implementation MCTab
+@implementation MCTab {
+    NSString *_sourceText;
+    MCSourceStorage *_live;   // set while the text is the storage's, not yet copied
+}
+@synthesize textGeneration = _textGeneration;
+
 - (instancetype)init {
     if ((self = [super init])) {
         _undoManager = [NSUndoManager new];
         _mediaSeconds = -1;
         _pdfAutoScales = YES;
         _fileSize = -1;
+        _textGeneration = 1;
     }
     return self;
 }
+
+- (NSString *)sourceText {
+    if (_live) {
+        _sourceText = [_live.string copy];
+        _live = nil;
+    }
+    return _sourceText;
+}
+
+- (void)setSourceText:(NSString *)text {
+    NSString *copy = [text copy];
+    const BOOL same = !_live && copy == _sourceText;
+    _live = nil;
+    _sourceText = copy;
+    if (!same) _textGeneration++;
+}
+
+- (void)followStorage:(NSTextStorage *)storage {
+    _textGeneration++;
+    if (![storage isKindOfClass:[MCSourceStorage class]]) {   // a copy now, as before
+        _live = nil;
+        _sourceText = [storage.string copy];
+        return;
+    }
+    if (_live == storage) return;
+    _live = (MCSourceStorage *)storage;
+    _sourceText = nil;   // the old text, let go
+    __weak MCTab *weakSelf = self;
+    __weak MCSourceStorage *weakStorage = _live;
+    _live.willReplaceAllCharacters = ^{
+        MCTab *t = weakSelf;
+        if (t && t->_live && t->_live == weakStorage) (void)t.sourceText;   // copied now
+    };
+}
+
+- (BOOL)followsStorage { return _live != nil; }
+
+- (NSString *)currentText { return _live ? _live.string : _sourceText; }
+
+- (BOOL)hasSourceText { return _live || _sourceText; }
 @end

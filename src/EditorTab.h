@@ -64,7 +64,30 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 @interface MCTab : NSObject
 @property(nonatomic, copy)   NSString *currentPath;   // nil for a diff or commit
 @property(nonatomic, assign) BOOL loaded;             // read from disk yet
+// The buffer's text, immutable. While the tab on show is edited it is the
+// editor's storage's (followStorage:, from textDidChange:) and is copied
+// from it only when read: a copy of the storage's CFString is a memcpy
+// while it is 8-bit and a scan of every character once a non-ASCII one
+// has been in it, even undone (1.3 to 3 ms a key at 2.6 MB), and a copy a
+// keystroke was most of a keystroke's cost. Each read after a change
+// gives a new object and later reads the same one until the next change,
+// so a pointer compare still tells whether the text changed.
 @property(nonatomic, copy)   NSString *sourceText;
+// The storage holds this tab's text, changed since sourceText was last
+// read or set. Kept until the text is read, set, or the storage is about
+// to be replaced whole (MCSourceStorage willReplaceAllCharacters), which
+// copies it first.
+- (void)followStorage:(NSTextStorage *)storage;
+@property(nonatomic, readonly) BOOL followsStorage;
+// The text without a copy: the storage's own (mutable) string while the
+// tab follows it, else sourceText. For a look on the spot (a length, a
+// compare), never to keep or hand to another thread.
+@property(nonatomic, readonly) NSString *currentText;
+// sourceText is not nil, asked without a copy.
+@property(nonatomic, readonly) BOOL hasSourceText;
+// Counts changes of the text: each set to another object and each
+// followStorage:. Never 0.
+@property(nonatomic, readonly) uint64_t textGeneration;
 // The text as it is on disk: as read, or as last saved. `dirty` means the
 // buffer differs from it, so typing a letter and deleting it again, or
 // undoing back to it, leaves nothing to save.
@@ -157,12 +180,12 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 // Its closed folds (FoldView.h), as UTF-16 spans of the source, while
 // another tab is shown; forgotten when the text is read again from disk.
 @property(nonatomic, copy)   NSArray<NSValue *> *folds;
-// Its backup (BackupStore): the id, the text and path last written (so an
-// unchanged buffer is not written again), whether one is on disk, and
-// whether the buffer came back from one and waits to be shown over the
-// disk's text (loadActiveTab).
+// Its backup (BackupStore): the id, the textGeneration and path last
+// written (so an unchanged buffer is not written again; 0 for none),
+// whether one is on disk, and whether the buffer came back from one and
+// waits to be shown over the disk's text (loadActiveTab).
 @property(nonatomic, copy)   NSString *backupID;
-@property(nonatomic, strong) NSString *backedUpText;
+@property(nonatomic, assign) uint64_t backedUpGeneration;
 @property(nonatomic, copy)   NSString *backedUpPath;
 @property(nonatomic, assign) BOOL hasBackup, restoredBackup;
 @end

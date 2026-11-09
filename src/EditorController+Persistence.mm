@@ -226,18 +226,20 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 
 // Only text read from a file has anything to keep.
 - (BOOL)tabTakesBackup:(MCTab *)t {
-    return t.currentPath && t.sourceText && !t.isImage && !t.isPDF && !t.isMedia &&
+    return t.currentPath && t.hasSourceText && !t.isImage && !t.isPDF && !t.isMedia &&
            !t.isDiff && !t.showingMessage;
 }
 
 - (BOOL)tabNeedsBackup:(MCTab *)t {
     return t.dirty && [self tabTakesBackup:t] &&
-           (t.backedUpText != t.sourceText || ![t.backedUpPath isEqualToString:t.currentPath]);
+           (t.backedUpGeneration != t.textGeneration ||
+            ![t.backedUpPath isEqualToString:t.currentPath]);
 }
 
 // After every edit and every change of a dirty flag: a clean tab's backup
 // goes now, and a changed buffer is written when typing pauses. Costs a
-// pointer comparison per tab, so it can run on every keystroke.
+// comparison of counts per tab and copies no text (MCTab sourceText), so
+// it can run on every keystroke.
 - (void)scheduleBackups {
     if (_closing || ![MCBackupStore shared]) return;
     BOOL pending = NO;
@@ -274,8 +276,8 @@ static NSString *MCTabEncodingName(MCTab *t) {
         if (!t.backupID) t.backupID = [store newID];
         [store writeID:t.backupID path:t.currentPath root:[self sessionKey]
               diskDate:t.fileModDate inode:t.fileID fileEncoding:MCTabEncodingName(t)
-                  text:t.sourceText];
-        t.backedUpText = t.sourceText;
+                  text:t.sourceText];   // copied from the storage here, once
+        t.backedUpGeneration = t.textGeneration;
         t.backedUpPath = t.currentPath;
         t.hasBackup = YES;
     }
@@ -284,7 +286,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
 - (void)discardBackupOf:(MCTab *)t {
     if (t.backupID && t.hasBackup) [[MCBackupStore shared] removeID:t.backupID];
     t.hasBackup = NO;
-    t.backedUpText = nil;
+    t.backedUpGeneration = 0;
     t.backedUpPath = nil;
 }
 
@@ -304,7 +306,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
                       diskDate:t.fileModDate inode:t.fileID
                   fileEncoding:MCTabEncodingName(t) text:t.sourceText])
             return NO;
-        t.backedUpText = t.sourceText;
+        t.backedUpGeneration = t.textGeneration;
         t.backedUpPath = t.currentPath;
         t.hasBackup = YES;
     }

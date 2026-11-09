@@ -107,4 +107,10 @@ BOOL MCIsGapParagraphStyle(NSParagraphStyle *style, NSParagraphStyle **stored);
 // tab stops, SnippetSession.mm). Called inside the edit: arithmetic only,
 // never layout.
 @property(nonatomic, copy) void (^onReplaceCharacters)(NSRange range, NSUInteger length);
+// Called before a replacement of every character (setAttributedString:,
+// setString:, typing over Select All; an empty text's insertions too),
+// while the characters are still the old ones. A tab whose text is copied
+// from the storage only when read (MCTab followStorage:) copies it here,
+// before another document, a preview or a message takes its place.
+@property(nonatomic, copy) void (^willReplaceAllCharacters)(void);
 @end
