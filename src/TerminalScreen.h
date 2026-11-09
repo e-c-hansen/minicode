@@ -26,9 +26,15 @@
 // counts them), except while zsh's line editor has the main screen, from
 // the shell integration's prompt mark (133;A) to its command mark (133;C):
 // there each code point takes termCodepointWidth's columns, zsh's own, so
-// what is typed at the prompt lands where zsh thinks it is. A program may
-// choose: DECSET 2027 asks for clusters, DECRST 2027 for code points, both
-// for good (until a full reset); DECRQM 2027 answers what is in effect.
+// what is typed at the prompt lands where zsh thinks it is. Not while the
+// pty is raw with signals off (setRawTty): ZLE keeps ISIG on, so that is a
+// program a widget started, such as fzf's Ctrl+R and Ctrl+T with --height,
+// which draws below the prompt counting clusters. A program may choose:
+// DECSET 2027 asks for clusters, DECRST 2027 for code points, both for good
+// (until a full reset); DECRQM 2027 answers what is in effect. (xterm.js,
+// VS Code's terminal, counts one code point at a time everywhere, with
+// Unicode 11's widths; it joins no clusters, so it agrees with neither zsh's
+// Unicode 9 table nor fzf's clusters for every character.)
 //
 // It also encodes keys and mouse events into the bytes a program expects, so
 // the GUI layer only maps its events onto TermKey and TermMouse.
@@ -335,6 +341,7 @@ public:
     // default color (the text's) for 0.
     TermColor underlineColor(uint16_t id) const { return underlineColors_.color(id); }
     size_t underlineColorCount() const { return underlineColors_.size(); }   // tests
+    int underlineColorScans() const { return ulScans_; }                    // tests
 
     // The kitty keyboard protocol's flags in effect on the screen showing
     // (TermKeyboardFlag bits), for encodeKey and encodeChar. A program sets
@@ -350,6 +357,12 @@ public:
     // Mode 2027 (see the top of this file): whether characters are counted
     // as grapheme clusters now (false: one code point at a time).
     bool clusterWidths() const;
+    // Whether the pty's line discipline has ISIG off now (the host looks at
+    // its termios before handing output over). zsh's line editor turns
+    // ICANON and ECHO off but keeps ISIG, and raw mode as programs set it
+    // (cfmakeraw, Go's term.MakeRaw, prompt_toolkit) turns ISIG off; so at
+    // the prompt this says a program other than ZLE is drawing.
+    void setRawTty(bool raw) { rawTty_ = raw; }
 
     // The bytes for a key. `appCursor` is appCursorKeys(), `appKeypad` is
     // appKeypad(); mods is a TermMod mask.
@@ -393,7 +406,8 @@ public:
         int lines = 1;           // the lines the text holds
         // Its first three lines, each cut at 30 characters, control
         // characters shown as their symbols (U+2400 + c, U+2421 for DEL),
-        // Tab as a space.
+        // Tab as a space; then, when the first control character is not in
+        // them, "Line L, column C: " and the 30 characters around it.
         std::string preview;
     };
     static PasteCheck checkPaste(const std::string& text, bool bracketed,
@@ -484,9 +498,19 @@ private:
     // points, 1 clusters. promptActive_: a 133;A came and no 133;C since.
     int graphemes_ = -1;
     bool promptActive_ = false;
+    bool rawTty_ = false;           // setRawTty
     uint32_t themeFg_ = 0xD4D4D4, themeBg_ = 0x181818, themeCursor_ = 0xD4D4D4;
     std::string version_;
     TermColorTable underlineColors_;
+    // Freeing underline color ids is a scan of every cell and scrollback
+    // run, so it runs only when an SGR's new color found the table full,
+    // and only once the work since the last scan (characters printed,
+    // SGR bytes, cells erased, rows redrawn in bulk) is at least a quarter
+    // of what that scan read: at most four entries read per unit, so a
+    // program naming new colors with every id still in use is not slowed
+    // to a scan per SGR.
+    long long ulWork_ = 0, ulScanCost_ = 0;
+    int ulScans_ = 0;
     void collectUnderlineColors();
     void colorQuery(const std::string& body);   // OSC 4, 10, 11, 12
     int g0_ = 0, g1_ = 0, gl_ = 0;    // charsets: 0 ASCII, 1 DEC line drawing
@@ -520,7 +544,7 @@ private:
         if (y >= 0 && y < (int)dirtyRows_.size()) dirtyRows_[y] = 1;
     }
     void touchRows(int from, int to);   // [from, to]
-    void touchAll() { dirtyAll_ = true; }
+    void touchAll() { dirtyAll_ = true; ulWork_ += (long long)rows_ * cols_; }
     std::string nonce_;
     void addMark(char kind, int status);
     void dropMarks(long long fromId, long long toId);   // [from, to)
