@@ -119,11 +119,108 @@ NSMenu *MCAdjustSettingsSubmenu(void) {
 @end
 
 static NSPopover *gOpacityPopover;
+static __weak NSView *gOpacityOwner;
+
+// ------------------------------------------------- Esc closes the pickers
+// The swatch's color panel and the opacity popover close on Esc while the
+// keyboard is in them or in the settings file that opened them. The color
+// panel never becomes key by itself (only a click in one of its fields
+// gives it the keyboard), so the key usually lands in the file, where Esc
+// would otherwise do nothing. One local monitor, made with the first
+// picker, that looks no further than the key code unless a picker is open.
+static BOOL gSwatchPanelOpen;
+static __weak NSView *gSwatchOwner;
+
+static void MCForgetSwatchPanel(void) {
+    gSwatchPanelOpen = NO;
+    gSwatchOwner = nil;
+    if (![NSColorPanel sharedColorPanelExists]) return;
+    NSColorPanel *panel = [NSColorPanel sharedColorPanel];
+    panel.target = nil;   // no later change of the shared panel counts as a pick
+    panel.action = NULL;
+}
+
+BOOL MCSwatchColorPanelOpen(void) { return gSwatchPanelOpen; }
+
+BOOL MCCloseSwatchPanels(void) {
+    BOOL closed = NO;
+    if (gSwatchPanelOpen) {
+        NSColorPanel *panel = [NSColorPanel sharedColorPanel];
+        MCForgetSwatchPanel();
+        [panel close];
+        closed = YES;
+    }
+    if (gOpacityPopover.shown) {
+        [gOpacityPopover close];
+        closed = YES;
+    }
+    gOpacityPopover = nil;
+    gOpacityOwner = nil;
+    return closed;
+}
+
+// Whether the keyboard is in `owner`: it, or the field editor editing it,
+// is its window's first responder.
+static BOOL MCKeyboardIn(NSWindow *window, NSView *owner) {
+    if (!owner || owner.window != window) return NO;
+    NSResponder *fr = window.firstResponder;
+    if (fr == owner) return YES;
+    return [fr isKindOfClass:NSTextView.class] && ((NSTextView *)fr).isFieldEditor &&
+           ((NSTextView *)fr).delegate == (id)owner;
+}
+
+static void MCWatchPickerEscape(void) {
+    static id monitor;
+    if (monitor) return;
+    monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+                                                     handler:^NSEvent *(NSEvent *e) {
+        if (e.keyCode != 53) return e;   // Esc
+        const NSEventModifierFlags mods = e.modifierFlags & (NSEventModifierFlagCommand |
+            NSEventModifierFlagControl | NSEventModifierFlagOption);
+        if (mods || !e.window) return e;
+        BOOL ours = NO;
+        if (gSwatchPanelOpen)
+            ours = e.window == [NSColorPanel sharedColorPanel] ||
+                   MCKeyboardIn(e.window, gSwatchOwner);
+        if (!ours && gOpacityPopover.shown)
+            ours = e.window == gOpacityPopover.contentViewController.view.window ||
+                   MCKeyboardIn(e.window, gOpacityOwner);
+        if (!ours) return e;
+        MCCloseSwatchPanels();
+        return nil;
+    }];
+    // The panel's own close button, Cmd+W in it, or anything else that
+    // closes it: its picks stop.
+    [[NSNotificationCenter defaultCenter]
+        addObserverForName:NSWindowWillCloseNotification object:nil queue:nil
+                usingBlock:^(NSNotification *note) {
+        if (gSwatchPanelOpen && [NSColorPanel sharedColorPanelExists] &&
+            note.object == [NSColorPanel sharedColorPanel])
+            MCForgetSwatchPanel();
+    }];
+}
+
+void MCShowSwatchColorPanel(NSColor *color, id target, SEL action, NSView *owner) {
+    MCWatchPickerEscape();
+    NSColorPanel *panel = [NSColorPanel sharedColorPanel];
+    panel.showsAlpha = YES;
+    panel.continuous = YES;
+    panel.target = nil;   // setting the starting color must not count as a pick
+    panel.action = NULL;
+    panel.color = color;
+    panel.target = target;
+    panel.action = action;
+    gSwatchPanelOpen = YES;
+    gSwatchOwner = owner;
+    [panel orderFront:nil];
+}
 
 @implementation MCOpacityPopover
 + (void)showForValue:(double)value relativeToRect:(NSRect)rect ofView:(NSView *)view
             onChange:(void (^)(double))onChange {
+    MCWatchPickerEscape();
     [gOpacityPopover close];
+    gOpacityOwner = view;
     MCOpacityController *vc = [[MCOpacityController alloc] init];
     vc.initial = value;
     vc.onChange = onChange;
