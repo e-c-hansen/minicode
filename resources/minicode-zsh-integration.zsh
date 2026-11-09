@@ -48,12 +48,17 @@ if [[ -o interactive ]]; then
   [[ -n $__minicode_exec_in ]] && __minicode_ran=1   # D for the `exec zsh`
 
   # `exec zsh` replaces this shell, and the new one would start without
-  # these hooks: no prompt marks, so the tab stayed busy for good. For the
-  # length of a command that execs, ZDOTDIR names this file's folder again
-  # (the user's own is passed along and handed back, as at the start), and
-  # MINICODE_EXEC tells the new shell to report the command finished. The
-  # next prompt puts both back.
-  typeset -gi __minicode_execed=0
+  # these hooks: no prompt marks, so the tab stayed busy for good. The exec
+  # itself (and nothing else on its line) gets ZDOTDIR at this file's
+  # folder again (the user's own is passed along and handed back, as at
+  # the start), MINICODE_EXEC, which tells the new shell to report the
+  # command finished, and the nonce when the new shell will take it.
+  # preexec runs before the whole line, so for a line with a plain exec it
+  # puts a function named exec in front of the builtin (__minicode_exec),
+  # which sets them just before exec runs: exported from preexec, `make &&
+  # exec zsh` gave make the nonce, and everything make ran. The next
+  # prompt takes the function away again.
+  typeset -gi __minicode_execed=0 __minicode_exec_fn=0
 
   # Whether a zsh started with these arguments reads its startup files, and
   # so ours, which takes the nonce out of its environment: not with -f
@@ -94,20 +99,82 @@ if [[ -o interactive ]]; then
     (( rcs ))
   }
 
+  # Whether the program exec's arguments start ($@: exec's own options
+  # -c, -l and -a with its name, then the program and its arguments) is a
+  # zsh that reads $ZDOTDIR/.zshenv, ours, which reads the nonce and takes
+  # it out of its environment. Any other program (exec bash, exec claude)
+  # would keep it in its environment for everything it runs, and any of
+  # those could print marks the terminal believes; a zsh started from such
+  # a shell later does not mark. A zsh emulating sh or ksh reads .profile
+  # and $ENV instead: one started with --emulate, or whose name (exec -a's,
+  # else the program's) begins with s, b or k after an optional r, as zsh
+  # decides at startup (exec -a sh zsh). And one that reads no startup
+  # files at all (__minicode_reads_rcs).
+  __minicode_takes_nonce() {
+    local name=
+    while [[ ${1-} == -* ]]; do
+      if [[ $1 == -- ]]; then shift; break; fi
+      if [[ $1 == -*a ]]; then name=${2-}; shift; fi
+      shift
+    done
+    (( $# )) || return 1
+    [[ ${${1:t}#-} == zsh ]] || return 1
+    [[ -n $name ]] || name=$1
+    name=${${name:t}#-}
+    [[ ${name#r} == [sbk]* ]] && return 1
+    shift
+    local a
+    for a in "$@"; do
+      [[ $a == --emulate(|=*) ]] && return 1
+      [[ $a == [-+]* ]] || break
+    done
+    __minicode_reads_rcs "$@"
+  }
+
+  # The environment an exec's program gets ($@: exec's arguments), and
+  # the shell's own back (only while MINICODE_EXEC says it was changed).
+  __minicode_exec_env() {
+    if [[ -n ${ZDOTDIR+x} ]]; then export MINICODE_USER_ZDOTDIR=$ZDOTDIR
+    else unset MINICODE_USER_ZDOTDIR; fi
+    export ZDOTDIR=$__minicode_zdotdir MINICODE_EXEC=1
+    __minicode_takes_nonce "$@" && export MINICODE_NONCE=$__minicode_nonce
+    return 0
+  }
+  __minicode_exec_restore() {
+    [[ -n ${MINICODE_EXEC+x} ]] || return 0
+    if [[ -n ${MINICODE_USER_ZDOTDIR+x} ]]; then ZDOTDIR=$MINICODE_USER_ZDOTDIR
+    else unset ZDOTDIR; fi
+    unset MINICODE_USER_ZDOTDIR MINICODE_EXEC MINICODE_NONCE
+    return 0
+  }
+  # The function named exec while a line with an exec runs. An exec that
+  # fails comes back here, and the line goes on with the shell's own
+  # environment.
+  __minicode_exec() {
+    __minicode_exec_env "$@"
+    builtin exec "$@"
+    local rc=$?
+    __minicode_exec_restore
+    return $rc
+  }
+
   # An exec counts where a command starts: after a separator, `then`,
-  # `do`, `else`, `{` or `!`, and after `builtin`, `command`, `noglob` or
-  # `nocorrect` in front of it. One in a subshell does not replace this
-  # shell.
+  # `do`, `else`, `{` or `!`, and after `noglob`, `nocorrect` or `-` in
+  # front of it. One in a subshell does not replace this shell. One after
+  # `builtin` skips functions, so its environment is set here, and only
+  # when it is the line's first command, which nothing on the line runs
+  # before (`command exec` finds no exec at all without POSIX_BUILTINS). A
+  # line with an exec of no program (exec >log, exec 3<&-) gets no
+  # function: as a function call, its redirections would last only for
+  # the call.
   __minicode_exec_hook() {
     local -a w; w=(${(z)1})
-    local i j prev=';'
+    local i j prev=';' builtin=0 seen=0 plain=0 direct=0
     for (( i = 1; i <= $#w; i++ )); do
       if [[ $prev == (';'|';;'|$'\n'|'&&'|'||'|'&'|'|'|'&|'|'&!'|'{'|'!'|then|do|else|elif) ]]; then
-        [[ $w[i] == (builtin|command|noglob|nocorrect|-) ]] && continue
+        if [[ $w[i] == (builtin|command) ]]; then builtin=1; continue; fi
+        [[ $w[i] == (noglob|nocorrect|-) ]] && continue
         if [[ $w[i] == exec ]]; then
-          if [[ -n ${ZDOTDIR+x} ]]; then export MINICODE_USER_ZDOTDIR=$ZDOTDIR
-          else unset MINICODE_USER_ZDOTDIR; fi
-          export ZDOTDIR=$__minicode_zdotdir MINICODE_EXEC=1
           # exec's own options: -c, -l, and -a with its argument.
           j=$(( i + 1 ))
           while [[ $w[j] == -* ]]; do
@@ -115,29 +182,38 @@ if [[ -o interactive ]]; then
             [[ $w[j] == -*a ]] && (( j++ ))
             (( j++ ))
           done
-          # The nonce only for a zsh that reads its startup files, which
-          # read it here and take it out of its environment. Any other
-          # program (exec bash, exec claude, exec zsh -f) would keep it in
-          # its environment for everything it runs, and any of those could
-          # print marks the terminal believes; a zsh started from such a
-          # shell later does not mark.
-          if [[ ${${w[j]:t}#-} == zsh ]] && __minicode_reads_rcs "${(@)w[j+1,-1]}"; then
-            export MINICODE_NONCE=$__minicode_nonce
+          if (( j > $#w )) || [[ $w[j] == ((<->|)[\<\>]*|';'|';;'|$'\n'|'&&'|'||'|'&'|'|'|'&|'|'&!'|'}') ]]; then
+            plain=-1
+          elif (( builtin )); then
+            (( seen )) || direct=$i
+          elif (( plain == 0 )); then
+            plain=1
           fi
-          __minicode_execed=1
-          return 0
         fi
+        seen=1 builtin=0
       fi
       prev=$w[i]
     done
+    if (( direct )); then
+      __minicode_exec_env "${(@Q)w[direct+1,-1]}"
+      __minicode_execed=1
+    fi
+    if (( plain == 1 )) && (( ! $+functions[exec] )); then
+      functions[exec]=$functions[__minicode_exec]
+      __minicode_exec_fn=1
+    fi
     return 0
   }
   __minicode_exec_undo() {
-    (( __minicode_execed )) || return 0
-    if [[ -n ${MINICODE_USER_ZDOTDIR+x} ]]; then ZDOTDIR=$MINICODE_USER_ZDOTDIR
-    else unset ZDOTDIR; fi
-    unset MINICODE_USER_ZDOTDIR MINICODE_EXEC MINICODE_NONCE
-    __minicode_execed=0
+    if (( __minicode_execed )); then
+      __minicode_exec_restore
+      __minicode_execed=0
+    fi
+    if (( __minicode_exec_fn )); then
+      unfunction exec 2>/dev/null
+      __minicode_exec_fn=0
+    fi
+    return 0
   }
   # A mark, with the nonce the terminal checks: marks without it, which
   # any program can print, are not believed.
