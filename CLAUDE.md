@@ -3150,7 +3150,8 @@ session has a display. Check first.
   folding, foldperf, multicaretclick, multicaret_rows, find_bar,
   large_file, save, paste, zoomfit;
   files and windows: tree, tree_hidden, search, replace_in_folder,
-  backups, palette, symbols, keymap, config_writes, daily_work, structure;
+  backups, palette, symbols, keymap, config_writes, daily_work, structure,
+  utf16;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
   snippets, problems, servers_by_extension, server_consent, tools_consent,
@@ -3379,7 +3380,8 @@ core file its files include. Traps paid for:
   change bars keep a BOM and follow git run elsewhere; a text file with
   "Subproject commit" lines stages by hunk; Show Hidden Files is one switch
   for every window, checked and kept; Find in Folder searches UTF-16 with a
-  BOM; the terminal's exec hook gives its environment only to the exec and
+  BOM, and such a file opens as text and is saved in its own encoding
+  (`MCTab encoding`); the terminal's exec hook gives its environment only to the exec and
   no nonce to an emulating zsh, each process has its own integration
   folder, the underline-color table frees ids amortized, the paste question
   shows the control character, and a widget's picker (fzf) gets cluster
@@ -3430,7 +3432,9 @@ core file its files include. Traps paid for:
   and after Allow; fzf's Ctrl+R and Ctrl+T with emoji in the list; inlay
   hints at a line's start; the inline agent's insertion marks; the compare
   view's grace before the last choice is sent; change bars after a commit
-  made in another terminal; Show Hidden Files across two windows.
+  made in another terminal; Show Hidden Files across two windows; a real
+  UTF-16 file (a PowerShell script or Windows log) opened, edited and
+  saved.
   **Linux**: none of the 1.5 work ran on Linux beyond CI and Launchpad's
   package build; the ThinkPad still owes the folder picker after closing
   its window, F2 rename in the tree, renames across two windows under
