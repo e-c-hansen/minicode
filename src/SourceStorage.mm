@@ -83,6 +83,12 @@ BOOL CoversAscii(NSFont *font) {
     std::vector<NSUInteger> _lineStartGaps;
     uint64_t _charEdits, _lineStartsFor, _lineStartsForEdits;
     BOOL _lineStartsKnown;
+    // The character replacements of the editing session being processed
+    // (counted afresh once one has been): how many, and the last.
+    NSUInteger _replacements;
+    NSRange _lastReplaced;
+    NSUInteger _lastReplacementLength;
+    BOOL _replacementsProcessed;
 }
 
 - (instancetype)init {
@@ -260,9 +266,32 @@ BOOL CoversAscii(NSFont *font) {
     _gapsGeneration++;
 }
 
+- (void)noteReplacement:(NSRange)range length:(NSUInteger)length {
+    if (_replacementsProcessed) {
+        _replacements = 0;
+        _replacementsProcessed = NO;
+    }
+    _replacements++;
+    _lastReplaced = range;
+    _lastReplacementLength = length;
+}
+
+- (void)processEditing {
+    [super processEditing];   // the DidProcessEditing observers read the replacements
+    _replacementsProcessed = YES;
+}
+
+- (NSUInteger)singleInsertedCharacter {
+    if (_replacementsProcessed || _replacements != 1 || _lastReplaced.length != 0 ||
+        _lastReplacementLength != 1)
+        return NSNotFound;
+    return _lastReplaced.location;
+}
+
 - (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)str {
     [_store replaceCharactersInRange:range withString:str];
     _charEdits++;
+    [self noteReplacement:range length:str.length];
     [self moveGapsForEdit:range newLength:str.length];
     if (_onReplaceCharacters) _onReplaceCharacters(range, str.length);
     [self edited:NSTextStorageEditedCharacters | NSTextStorageEditedAttributes range:range
@@ -410,6 +439,7 @@ BOOL CoversAscii(NSFont *font) {
 - (void)replaceCharactersInRange:(NSRange)range withAttributedString:(NSAttributedString *)attr {
     [_store replaceCharactersInRange:range withAttributedString:attr];
     _charEdits++;
+    [self noteReplacement:range length:attr.length];
     [self moveGapsForEdit:range newLength:attr.length];
     if (_onReplaceCharacters) _onReplaceCharacters(range, attr.length);
     [self edited:NSTextStorageEditedCharacters | NSTextStorageEditedAttributes range:range

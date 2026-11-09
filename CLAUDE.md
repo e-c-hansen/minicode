@@ -1557,7 +1557,11 @@ view is disposed (on `unrealize`), or dispose loops forever.
   list that came up by itself and on a word typed out were new lines);
   Shift+Return and Shift+Tab never take. A key pressed before the list was
   filtered for the last letter (`_filteredFor`) refilters first: "pro" and
-  Tab in one go took "print". `make guitest SUITES=completion_keys` presses
+  Tab in one go took "print". The letter typed is the storage's own record
+  (`MCSourceStorage singleInsertedCharacter`), never the notification's
+  editedRange, which also covers attributes set in the same session: a
+  letter typed between brackets read as "r)\n" changed and the list never
+  opened there. `make guitest SUITES=completion_keys` presses
   real keys, under basedpyright too where installed. `filterCompletions` ranks
   exact, same-case prefix, any-case prefix, subsequence (sortText within) and
   reselects the first row unless the arrows chose an item still listed. Docs

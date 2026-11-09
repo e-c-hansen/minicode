@@ -8,6 +8,7 @@
 #import "Lsp+Private.h"
 #import "Lsp+CompletionIvars.h"
 #import "SnippetSession.h"
+#import "SourceStorage.h"
 #include "AutoIndent.h"
 #include "Snippet.h"
 #include <ctime>
@@ -762,11 +763,20 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
 // An edit typed into the text on show (storageEdited: in Lsp+Sync.mm, once
 // the change is on its way to the servers; never a rename or fix going in).
 - (void)popupsFollowEdit:(NSTextStorage *)ts {
-    NSRange er = ts.editedRange;
+    // The one character typed, from the storage's own record: the
+    // editedRange also covers attributes set again in the same session
+    // (a bracket's color), which hid a letter typed inside brackets.
+    NSUInteger at = NSNotFound;
+    if (ts.changeInLength == 1) {
+        if ([ts isKindOfClass:[MCSourceStorage class]])
+            at = [(MCSourceStorage *)ts singleInsertedCharacter];
+        else if (ts.editedRange.length == 1)
+            at = ts.editedRange.location;
+    }
     NSString *s = ts.string;
-    BOOL typedOne = ts.changeInLength == 1 && er.length == 1;
-    unichar c = typedOne ? [s characterAtIndex:er.location] : 0;
-    unichar prev = typedOne && er.location > 0 ? [s characterAtIndex:er.location - 1] : 0;
+    BOOL typedOne = at != NSNotFound && at < s.length;
+    unichar c = typedOne ? [s characterAtIndex:at] : 0;
+    unichar prev = typedOne && at > 0 ? [s characterAtIndex:at - 1] : 0;
     MCLspServer *signatureServer = [self serverFor:Lsp::Feature::SignatureHelp];
     MCLspServer *completionServer = [self serverFor:Lsp::Feature::Completion];
 
@@ -806,9 +816,9 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
         // still lists json's members), and on the second letter of any
         // other word.
         if (!_completing && IsIdentChar(c)) {
-            NSUInteger start = er.location;
+            NSUInteger start = at;
             while (start > 0 && IsIdentChar([s characterAtIndex:start - 1])) start--;
-            NSUInteger length = er.location + 1 - start;
+            NSUInteger length = at + 1 - start;
             unichar b1 = start > 0 ? [s characterAtIndex:start - 1] : 0;
             unichar b2 = start > 1 ? [s characterAtIndex:start - 2] : 0;
             BOOL afterAccess = b1 == '.' || (b1 == '>' && b2 == '-') || (b1 == ':' && b2 == ':');

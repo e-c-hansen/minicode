@@ -239,6 +239,25 @@ MC_GUI_SUITE(completion_keys) {
     });
 
     // ------------------------------------------- inside auto-closed brackets
+    // The letter's editing session also sets the closer's attributes again
+    // (as the highlighter or a font fix may): the list opens all the same.
+    // Its editedRange covered "r)\n", and the list never opened between
+    // brackets after some other suites had run.
+    MCGuiStep(@"(p, then r with the closer restyled in the same session", ^{
+        fresh();
+        TypeKeys(c.window, tv, @"(p");
+        NSTextStorage *ts = tv.textStorage;
+        const NSUInteger at = tv.selectedRange.location;
+        MCGuiUndoGroup(tv.undoManager, ^{
+            [ts beginEditing];
+            [tv insertText:@"r" replacementRange:NSMakeRange(NSNotFound, 0)];
+            [ts addAttribute:NSForegroundColorAttributeName value:NSColor.redColor
+                       range:NSMakeRange(at + 1, 1)];
+            [ts endEditing];
+        });
+        GCHECK_EQ_STR(LineAtCaret(tv), @"    (pr)");
+    });
+    MCGuiWait(@"the list", 10, ^BOOL { return shows(@"print"); });
     MCGuiStep(@"( then pr", ^{ fresh(); TypeKeys(c.window, tv, @"(pr"); });
     MCGuiWait(@"the list", 10, ^BOOL { return shows(@"print"); });
     MCGuiStep(@"Return takes print inside the pair", ^{

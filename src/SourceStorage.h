@@ -93,6 +93,13 @@ BOOL MCIsGapParagraphStyle(NSParagraphStyle *style, NSParagraphStyle **stored);
 // tab stops, SnippetSession.mm). Called inside the edit: arithmetic only,
 // never layout.
 @property(nonatomic, copy) void (^onReplaceCharacters)(NSRange range, NSUInteger length);
+// While NSTextStorageDidProcessEditing is posted: the index of the one
+// character the editing session inserted, when that is all it replaced;
+// else NSNotFound. The notification's editedRange is the union of the
+// session's changes, attributes included, so a letter typed between
+// brackets read as three characters changed once the closer's color was
+// set again in the same session, and completion never opened there.
+- (NSUInteger)singleInsertedCharacter;
 // The room the gaps open after character `index` (a kern), 0 for none.
 - (CGFloat)gapWidthAfterCharacter:(NSUInteger)index;
 @end
