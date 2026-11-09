@@ -668,8 +668,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   data in the drive's cache; fsync where a volume refuses, and on Linux),
   renamed, and the folder synced too.
 - `scheduleBackups` (from `noteEdited` and `updateTitle`): a clean tab's backup
-  goes at once; a changed dirty buffer (`sourceText` compared by pointer with
-  `backedUpText`) is written 1 s after typing stops, at most 5 s after the
+  goes at once; a changed dirty buffer (`textGeneration` compared with
+  `backedUpGeneration`) is written 1 s after typing stops, at most 5 s after the
   first unwritten change, the immutable NSString converted on the queue. Only
   text tabs with a path.
 - Restore: `planForRoot:` takes the folder's backups no live process holds (pid
@@ -774,12 +774,17 @@ container (PanelHost, laid out by hand in layoutContainer)
   `MCTextViewWillReplaceManyRangesNotification` from 64 ranges on and the
   catch-up goes back to contiguous layout first (1.7 s, the pane then laid
   out from the top once); the workspace edit applier has its own loop and
-  does not post it yet. `textDidChange:`'s copy into `sourceText` (the
-  backups rely on a new object per change) is a memcpy while the store's
-  string is 8-bit (0.15 ms at 2.4 MB) and a scan of every character once a
-  non-ASCII character has been in it, even undone (1.5 ms a key; AppKit's
-  storage, an NSBigMutableString, copied in microseconds). Not fixed yet
-  (2026-11-08).
+  does not post it yet. **The tab's text is copied when read**
+  (2026-11-08, `MCTab followStorage:`): a copy of the store's CFString is a
+  memcpy while it is 8-bit (0.15 ms at 2.4 MB) and a scan of every
+  character once a non-ASCII one has been in it, even undone (1.3 to 3 ms;
+  AppKit's NSBigMutableString shares its characters), and
+  `textDidChange:` made one a keystroke for `sourceText`. Now it only
+  marks the tab; `sourceText` copies at its first read after a change
+  (a new object per change, so pointer compares still work), and the
+  storage's `willReplaceAllCharacters` copies it before anything replaces
+  the storage whole. What runs every keystroke must not read `sourceText`:
+  `currentText` (no copy, never kept), `hasSourceText`, `textGeneration`.
 - **Trap: a Markdown page's text blocks outlive it** (2026-11-07). The
   preview shares the editor's view, and once its quotes, code boxes, h1/h2
   rules or tables are laid out the layout manager keeps a block table

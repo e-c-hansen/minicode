@@ -354,6 +354,8 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
 }
 
 - (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)str {
+    if (_willReplaceAllCharacters && range.location == 0 && range.length == _store.length)
+        _willReplaceAllCharacters();
     if (_willReplaceAll && range.location == 0 && range.length == _store.length && range.length)
         _willReplaceAll();
     [self styleRunReplaced:range length:str.length joins:[self plainTextJoinsStyleRun:range]];
@@ -507,6 +509,8 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
 - (NSUInteger)length { return _store.length; }
 
 - (void)replaceCharactersInRange:(NSRange)range withAttributedString:(NSAttributedString *)attr {
+    if (_willReplaceAllCharacters && range.location == 0 && range.length == _store.length)
+        _willReplaceAllCharacters();
     if (_willReplaceAll && range.location == 0 && range.length == _store.length && range.length)
         _willReplaceAll();
     if (_styleRunKnown) {

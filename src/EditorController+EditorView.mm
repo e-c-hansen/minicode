@@ -12,7 +12,8 @@
 - (void)noteEdited {
     [self scheduleBackups];
     [self scheduleAutoSave];
-    NSString *now = self.sourceText ?: @"", *saved = self.savedText ?: @"";
+    // The storage's own string while the tab follows it: no copy.
+    NSString *now = _activeTab.currentText ?: @"", *saved = self.savedText ?: @"";
     // A file deleted outside has nothing on disk to match.
     const BOOL dirty = _activeTab.gone || now.length != saved.length ||
                        ![now isEqualToString:saved];
@@ -324,13 +325,12 @@
 }
 
 - (void)textDidChange:(NSNotification *)note {
-    // A copy of the storage's string. With AppKit's storage (an
-    // NSBigMutableString) it shared the characters and took about a
-    // microsecond; MCSourceStorage keeps a CFString, so it is a copy of the
-    // characters, 0.13 ms for a 2.4 MB file (measured), still a small part
-    // of a keystroke. backedUpText's pointer compare relies on a new object
-    // per change.
-    self.sourceText = self.textView.string;
+    // The tab's text is the storage's now, copied when someone reads it
+    // (EditorTab.h): a copy here, a keystroke, cost 0.15 ms at 2.4 MB while
+    // the text was 8-bit and 1.3 to 3 ms once a non-ASCII character had
+    // been in it. What runs on every keystroke (noteEdited, the backups'
+    // and auto-save's checks) reads it without a copy.
+    [_activeTab followStorage:self.textView.textStorage];
     [self noteEdited];
     // The title's task count follows typing, a moment after it stops.
     if (self.isMarkdown) {

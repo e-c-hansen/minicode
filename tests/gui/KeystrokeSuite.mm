@@ -311,6 +311,57 @@ MC_GUI_SUITE(keystroke) {
         [c performSelector:@selector(applyHighlighting)];
         GCHECK([incremental isEqualToArray:ColorRuns(tv.textStorage)]);
     });
+    // The storage's string is a CFString: a copy of it is a memcpy while it
+    // is 8-bit, and once a non-ASCII character has been in it, even undone,
+    // a scan of every character (1.3 ms a key here, more at 25 MB).
+    // textDidChange: made one a keystroke for the tab's sourceText; the tab
+    // now copies only when its text is read (EditorTab.h). Measured against
+    // ASCII typing in the same step, so it holds on any core.
+    MCGuiStep(@"a non-ASCII character in the file, even undone, costs a keystroke nothing", ^{
+        // Each typing on a line of its own: a line made longer costs each
+        // later keystroke on it more.
+        NSTextView *view = tv;
+        auto typeOn = [view](int line, NSString *text) {
+            NSString *find = [NSString stringWithFormat:@"return x + %d *", line];
+            const NSUInteger where = [view.string rangeOfString:find].location + 10;
+            view.selectedRange = NSMakeRange(where, 0);
+            [view scrollRangeToVisible:view.selectedRange];
+            [view.layoutManager ensureLayoutForCharacterRange:NSMakeRange(where, 2000)];
+            return TypeChars(view, text);
+        };
+        NSString *typed = [@"" stringByPaddingToLength:200 withString:@"ef gh " startingAtIndex:0];
+        const double ascii = Median(typeOn(12000, typed));
+        // é at the file's end, then undone: the text is ASCII again, the
+        // string's characters 16-bit.
+        const NSUInteger end = tv.string.length;
+        tv.selectedRange = NSMakeRange(end, 0);
+        MCGuiUndoGroup(tv.undoManager, ^{ [tv insertText:@"é" replacementRange:tv.selectedRange]; });
+        GCHECK([tv.string hasSuffix:@"é"]);
+        [tv.undoManager undo];
+        GCHECK(tv.string.length == end);
+        // MC_GUI_SAMPLE samples this typing into <file>.nonascii.
+        const BOOL sampling = SampleInto(@".nonascii");
+        const double undone = Median(typeOn(13000, sampling ? [@"" stringByPaddingToLength:2000
+            withString:@"ef gh " startingAtIndex:0] : typed));
+        // And kept there.
+        tv.selectedRange = NSMakeRange(tv.string.length, 0);
+        MCGuiUndoGroup(tv.undoManager, ^{ [tv insertText:@"é" replacementRange:tv.selectedRange]; });
+        const double kept = Median(typeOn(14000, typed));
+        MCGuiNote(@"median keystroke, ASCII file: %.3f ms of CPU; a non-ASCII character typed and "
+                  @"undone: %.3f ms; one in the file: %.3f ms", ascii, undone, kept);
+        if (!sampling) {
+            GCHECK_TIME(undone, MAX(ascii * 1.3, ascii + 0.3),
+                        @"typing after a non-ASCII character undone");
+            GCHECK_TIME(kept, MAX(ascii * 1.3, ascii + 0.3),
+                        @"typing with a non-ASCII character in the file");
+        }
+        for (int i = 0; i < (sampling ? 2401 : 601); i++) [tv.undoManager undo];
+        for (int line : {12000, 13000, 14000}) {
+            NSString *want = [NSString stringWithFormat:@"return x + %d * y\n", line];
+            GCHECK([tv.string containsString:want]);
+        }
+        GCHECK(![tv.string hasSuffix:@"é"]);
+    });
     MCGuiStep(@"typing at three carets", ^{
         CodeTextView *ctv = (CodeTextView *)tv;
         NSRange l1 = [tv.string rangeOfString:@"return x + 15000 *"];
@@ -661,6 +712,49 @@ MC_GUI_SUITE(keystroke) {
     MCGuiStep(@"typing after Replace All and its undo costs what it cost in a fresh window", ^{
         GCHECK(!tv.layoutManager.allowsNonContiguousLayout);
         typeAsFresh(@".replaced", @"after Replace All and its undo");
+    });
+    // The tab's text is the storage's while it is typed in (EditorTab.h):
+    // copied when first read after a change, the same object until the
+    // next one, and copied before another tab or anything else takes the
+    // storage's place.
+    MCGuiStep(@"the tab's text is copied when read, once a change", ^{
+        MCTab *t = [c valueForKey:@"activeTab"];
+        tv.selectedRange = NSMakeRange(at, 0);
+        TypeChars(tv, @"q");
+        GCHECK(t.followsStorage);
+        const uint64_t g = t.textGeneration;
+        NSString *a = t.sourceText;
+        GCHECK(!t.followsStorage);
+        GCHECK(a != tv.string && [a isEqualToString:tv.string]);
+        GCHECK(t.sourceText == a);
+        GCHECK(t.textGeneration == g);
+        TypeChars(tv, @"r");
+        GCHECK(t.textGeneration > g && t.sourceText != a);
+        GCHECK([t.sourceText isEqualToString:tv.string]);
+    });
+    MCGuiStep(@"a tab's text survives another tab shown and the storage replaced whole", ^{
+        MCTab *big = [c valueForKey:@"activeTab"];
+        tv.selectedRange = NSMakeRange(at, 0);
+        TypeChars(tv, @"Z");
+        GCHECK(big.followsStorage);
+        NSString *bigText = [tv.string copy];
+        NSString *small = [dir stringByAppendingPathComponent:@"small.txt"];
+        MCGuiWriteFile(small, @"alpha\n");
+        GCHECK([c showFile:small]);
+        MCTab *t = [c valueForKey:@"activeTab"];
+        GCHECK(t != big && !big.followsStorage);
+        GCHECK([big.sourceText isEqualToString:bigText]);
+        GCHECK([tv.string isEqualToString:@"alpha\n"]);
+        tv.selectedRange = NSMakeRange(5, 0);
+        TypeChars(tv, @"!");
+        GCHECK(t.followsStorage && t.dirty);
+        tv.string = @"something else";   // no textDidChange
+        GCHECK(!t.followsStorage);
+        GCHECK_EQ_STR(t.sourceText, @"alpha!\n");
+        [tv.textStorage setAttributedString:[[NSAttributedString alloc] initWithString:@"alpha!\n"]];
+        [c closeTab:t prompt:NO];
+        GCHECK([c valueForKey:@"activeTab"] == big);
+        GCHECK([tv.string isEqualToString:bigText]);
     });
     MCGuiStep(@"the suite's window closes unasked, and its file goes", ^{
         for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy]) [c closeTab:t prompt:NO];
