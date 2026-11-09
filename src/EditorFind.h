@@ -108,4 +108,6 @@
 @property(nonatomic, readonly) NSArray<NSValue *> *matchRanges;
 @property(nonatomic, readonly) BOOL resultsCurrent;
 @property(nonatomic, readonly) NSInteger currentIndex;
+// How many copies of the text the searches have made (one per edit of it).
+@property(nonatomic, readonly) NSUInteger textCopies;
 @end

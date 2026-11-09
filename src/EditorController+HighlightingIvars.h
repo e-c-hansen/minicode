@@ -33,10 +33,12 @@
     // and a highlighter), what each line does to the depth, kept edit by
     // edit, and the characters whose brackets show their current colors
     // (an edit that changes the depth below it takes the rest out; those
-    // on screen are painted again at once, the others as they scroll in).
+    // on screen are painted again at once, the others as they scroll in;
+    // at open, a theme or the zoom, only those on screen are painted).
     BOOL _bracketsOn;
     BracketPairs::Depths _bracketDepths;
     NSMutableIndexSet *_bracketPainted;
+    BracketPairs::PaintedEdits _bracketEdits;   // edits _bracketPainted has yet to follow
     NSColor *_bracketColors[4];
     NSUInteger _bracketLinesPainted;   // lines repainted for their brackets alone (tests)
 

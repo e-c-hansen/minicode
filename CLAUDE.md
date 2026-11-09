@@ -899,8 +899,13 @@ container (PanelHost, laid out by hand in layoutContainer)
   empties the set from the edit on; `paintVisibleLines` (the old
   semantic painter, now both) repaints the lines on screen, for brackets
   alone only their bracket characters (so the server's moved colors
-  stay), and the rest as they scroll in. Off with no highlighter (large
-  files, plain text) and in the settings file.
+  stay), and the rest as they scroll in (or come on screen as the clip
+  view or text view changes size; a run-loop block, so before the window
+  draws). An open, a theme or the zoom paints only the lines on screen
+  too (every bracket at once doubled an open's CPU). The set follows
+  edits through `BracketPairs::PaintedEdits`, applied once at the flush:
+  moving it per edit was quadratic in a multi-range edit. Off with no
+  highlighter (large files, plain text) and in the settings file.
 - Linux retags in idle slices over a UTF-8 mirror; Android's `Highlighter.kt`
   uses the core over a native mirror.
 
@@ -1088,8 +1093,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   finds no `\b` at a line's end once a search starts past 0, and libc++
   throws error_complexity (a silent "no match") on short exponential
   patterns rather than hanging, while libstdc++ hangs; std::regex's own
-  traps: libc++ lets `^` match mid-line with `match_prev_avail` (hence
-  `__no_update_pos`); libstdc++ tests bracket ranges through the C locale's
+  traps: libc++ lets `^` match where any search starts, `match_not_bol`
+  being dropped beside `match_prev_avail` (only its private
+  `__no_update_pos` stops it), so a search from inside a line runs the
+  pattern with each anchor `^` made `(?:\b\B)` (`Fallback::inside`,
+  `find:regex-backtracking-anchors`); libstdc++ tests bracket ranges through the C locale's
   ctype, so `[а-я]` ignoring case missed Ж on CI's Linux job, and a
   case-insensitive regex runs over the line folded to lower case, one code
   point for one (the linear engine folds the same way). Preserve case is VS
@@ -1108,7 +1116,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   and the menu item has no key. Trap: CALayer copies `shadowPath`, so
   release the path you made, never the one the getter returns (that crashed
   in the next CA commit). It searches as you type on a serial queue (cancelled between
-  lines, applied `whenCurrent:`) and draws through `drawBehindText`. Cmd+G /
+  lines, applied `whenCurrent:`), over a copy of the text made once per
+  edit of it (`MCFindText`: an NSString copy on main, UTF-16 on the
+  queue), never once per keystroke in the query, and draws through `drawBehindText`. Cmd+G /
   Shift+Cmd+G, Return / Shift+Return; Option+Cmd+C, W, R; Return in the replace
   field replaces and moves on; Shift+Cmd+1 replaces only while the bar has the
   keyboard (Go to Tab 1 elsewhere); Option+Cmd+Return replaces all as one

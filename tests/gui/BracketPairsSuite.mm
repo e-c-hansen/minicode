@@ -5,12 +5,15 @@
 // in strings and comments keep the lexer's. A typed "(" at the top recolors
 // the brackets on screen at once by painting only those lines (counted),
 // leaves the lines far below alone until they scroll into view, and costs
-// little CPU; undo puts the colors back. Off by its key; none in large-file
-// mode. Also the lexer's escape and self colors.
+// little CPU; undo puts the colors back. Opening a file paints only the
+// lines on screen, at about the cost of an open without bracket colors; an
+// edit at 20,000 places costs about what it does without them. Off by its
+// key; none in large-file mode. Also the lexer's escape and self colors.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
 #import "ControlServer.h"
+#import "Lsp.h"   // CodeTextView replaceRanges:
 
 namespace {
 NSTextView *Text(EditorController *c) { return (NSTextView *)[c valueForKey:@"textView"]; }
@@ -101,6 +104,13 @@ int DrawnIn(EditorController *c, NSUInteger i, NSArray<NSNumber *> *colors) {
     return pick;
 }
 
+}  // namespace
+
+@interface EditorController (BracketPairsSuite)
+- (void)paintVisibleLines;   // EditorController+Highlighting.mm
+@end
+
+namespace {
 NSString *const kGold = @"#FFD700", *const kOrchid = @"#DA70D6", *const kBlue = @"#179FFF";
 NSString *const kUnexpected = @"#FF1212", *const kString = @"#CE9178", *const kPlain = @"#D4D4D4";
 NSString *const kComment = @"#6A9955", *const kEscape = @"#D7BA7D", *const kSelf = @"#569CD6";
@@ -153,16 +163,32 @@ MC_GUI_SUITE(bracket_pairs) {
         GCHECK_EQ_STR(ColorAt(c, Nth(s, @"}", 0)), kBlue);
         GCHECK_EQ_STR(ColorAt(c, Nth(s, @"]", 0)), kOrchid);
         GCHECK_EQ_STR(ColorAt(c, Nth(s, @")", 0)), kGold);
-        GCHECK_EQ_STR(ColorAt(c, Nth(s, @"1)", 0) + 1), kUnexpected);
         // In a string and a comment they are the string's and the comment's.
         GCHECK_EQ_STR(ColorAt(c, Nth(s, @"\"(x)", 0) + 1), kString);
         GCHECK_EQ_STR(ColorAt(c, Nth(s, @"(comment)", 0)), kComment);
         // The lexer's newer styles: the escape and self.
         GCHECK_EQ_STR(ColorAt(c, Nth(s, @"\\n", 0)), kEscape);
         GCHECK_EQ_STR(ColorAt(c, Nth(s, @"self", 0)), kSelf);
-        // Far down, off screen, each line's call is at depth 0.
+        // Far down, off screen, not painted yet: only the lines on screen
+        // are, as they come into view.
         farBracket = Nth(s, @"value_2900 = call(", 0) + 17;
-        GCHECK_EQ_STR(ColorAt(c, farBracket), kGold);
+        GCHECK(!NSLocationInRange(farBracket, Visible(c)));
+        GCHECK_EQ_STR(ColorAt(c, farBracket), kPlain);
+        [Text(c) scrollRangeToVisible:NSMakeRange(farBracket, 1)];
+    });
+    MCGuiWait(@"scrolled into view: each line's call at depth 0", 5, ^BOOL {
+        return [ColorAt(c, farBracket) isEqualToString:kGold];
+    });
+    MCGuiStep(@"to the last line", ^{
+        lastCloser = Nth(Text(c).string, @"oops = 1)", 0) + 8;
+        GCHECK_EQ_STR(ColorAt(c, lastCloser), kPlain);   // not seen yet
+        [Text(c) scrollRangeToVisible:NSMakeRange(lastCloser, 1)];
+    });
+    MCGuiWait(@"a closer with nothing open: the unexpected color", 5, ^BOOL {
+        return [ColorAt(c, lastCloser) isEqualToString:kUnexpected];
+    });
+    MCGuiStep(@"back to the top", ^{
+        [Text(c) scrollRangeToVisible:NSMakeRange(0, 0)];
         GCHECK(!NSLocationInRange(farBracket, Visible(c)));
     });
 
@@ -278,28 +304,98 @@ MC_GUI_SUITE(bracket_pairs) {
     });
 
     MCGuiStep(@"a 30,000-line file opens at about the cost it has without them", ^{
-        // Past 64K characters the whole text is colored in one pass, whose
-        // attribute runs must split in order (the brackets once went in a
-        // second pass: 40 s for 100,000 lines).
+        // Only the lines on screen get their bracket colors at open (every
+        // bracket once did, in the same pass: twice the CPU of an open
+        // without them).
         NSMutableString *t = [NSMutableString string];
         for (int k = 0; k < 30000; k++) [t appendString:@"    x = g(h[1], {'k': (2)})\n"];
         NSString *wide = [dir stringByAppendingPathComponent:@"wide.py"];
         MCGuiWriteFile(wide, t);
+        double ms[2];
+        NSUInteger lines = 0;
+        for (int on = 1; on >= 0; on--) {
+            MCGuiSetSettings([saved stringByAppendingString:
+                                        on ? @"\neditor.auto-close = off\n"
+                                           : @"\neditor.auto-close = off\n"
+                                             @"editor.bracket-pair-colorization = off\n"]);
+            const NSUInteger p0 = Painted(c);
+            const double t0 = MCGuiThreadCpuMs();
+            GCHECK([c showFile:wide]);
+            ms[on] = MCGuiThreadCpuMs() - t0;
+            if (on) {
+                lines = Painted(c) - p0;
+                NSString *s = Text(c).string;
+                GCHECK_EQ_STR(ColorAt(c, Nth(s, @"(", 0)), kGold);
+                GCHECK_EQ_STR(ColorAt(c, Nth(s, @"(2", 0)), kBlue);
+            }
+            GCHECK([[c valueForKey:@"bracketsOn"] boolValue] == (BOOL)on);
+            GCHECK([c closeTab:Active(c) prompt:NO]);
+        }
+        MCGuiNote(@"opening 30,000 lines: %.0f ms of CPU with bracket colors (%lu lines painted "
+                  @"for them), %.0f without", ms[1], (unsigned long)lines, ms[0]);
+        GCHECK(lines > 0 && lines < 200);
+        GCHECK_TIME(ms[1], 1.3 * ms[0] + 100, @"opening with bracket colors");
+    });
+
+    MCGuiStep(@"a letter at 20,000 places costs about what it does without them", ^{
+        // 200 lines of 100 arguments each, every line painted, then two
+        // letters over each argument in one edit, as typing over 20,000
+        // selections makes it (last first). The characters whose colors are current follow
+        // all the edits at once; each edit once moved every hole the ones
+        // after it had left, quadratic in the edits.
+        NSMutableString *row = [NSMutableString stringWithString:@"v = f("];
+        for (int k = 0; k < 100; k++) [row appendString:@"a, "];
+        [row appendString:@")\n"];
+        NSMutableString *t = [NSMutableString string];
+        for (int k = 0; k < 200; k++) [t appendString:row];
+        for (int k = 0; k < 3000; k++) [t appendString:@"    x = g(h[1], {'k': (2)})\n"];
+        NSString *carets = [dir stringByAppendingPathComponent:@"carets.py"];
+        MCGuiWriteFile(carets, t);
+        NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+        NSMutableArray<NSString *> *strings = [NSMutableArray array];
+        for (NSUInteger r = 0; r < 200; r++)
+            for (NSUInteger k = 0; k < 100; k++) {
+                [ranges addObject:[NSValue valueWithRange:NSMakeRange(r * row.length + 6 + 3 * k, 1)]];
+                [strings addObject:@"bc"];   // a length that changes, as a word's would
+            }
         double ms[2];
         for (int on = 1; on >= 0; on--) {
             MCGuiSetSettings([saved stringByAppendingString:
                                         on ? @"\neditor.auto-close = off\n"
                                            : @"\neditor.auto-close = off\n"
                                              @"editor.bracket-pair-colorization = off\n"]);
+            GCHECK([c showFile:carets]);
+            NSTextView *tv = Text(c);
+            if (on) {   // every line of the 200 seen, so painted
+                for (NSUInteger r = 0; r < 200; r++) {
+                    [tv scrollRangeToVisible:NSMakeRange(r * row.length, 1)];
+                    [c paintVisibleLines];
+                }
+                [tv scrollRangeToVisible:NSMakeRange(0, 0)];
+                GCHECK_EQ_STR(ColorAt(c, 150 * row.length + 5), kGold);
+            }
             const double t0 = MCGuiThreadCpuMs();
-            GCHECK([c showFile:wide]);
+            MCGuiUndoGroup(tv.undoManager, ^{
+                GCHECK([(CodeTextView *)tv replaceRanges:ranges withStrings:strings
+                                              actionName:@"Typing"]);
+            });
             ms[on] = MCGuiThreadCpuMs() - t0;
-            GCHECK([[c valueForKey:@"bracketsOn"] boolValue] == (BOOL)on);
+            NSString *s = tv.string;
+            const NSUInteger row150 = 150 * (row.length + 100);   // each row 100 longer
+            GCHECK([[s substringWithRange:NSMakeRange(row150 + 6, 6)] isEqualToString:@"bc, bc"]);
+            if (on) {   // painted lines keep their colors through the edit
+                GCHECK_EQ_STR(ColorAt(c, 5), kGold);
+                GCHECK_EQ_STR(ColorAt(c, row150 + 5), kGold);
+                GCHECK_EQ_STR(ColorAt(c, 200 * (row.length + 100) - 2), kGold);
+            }
+            [tv.undoManager undo];
+            GCHECK([tv.string isEqualToString:t]);
+            if (on) GCHECK_EQ_STR(ColorAt(c, 150 * row.length + 5), kGold);
             GCHECK([c closeTab:Active(c) prompt:NO]);
         }
-        MCGuiNote(@"opening 30,000 lines: %.0f ms of CPU with bracket colors, %.0f without",
+        MCGuiNote(@"a letter at 20,000 places: %.0f ms of CPU with bracket colors, %.0f without",
                   ms[1], ms[0]);
-        GCHECK_TIME(ms[1], 2.5 * ms[0] + 150, @"opening with bracket colors");
+        GCHECK_TIME(ms[1], 1.3 * ms[0] + 150, @"a letter at 20,000 places with bracket colors");
         MCGuiSetSettings([saved stringByAppendingString:
                                     @"\neditor.font-size = 24\neditor.auto-close = off\n"]);
     });
