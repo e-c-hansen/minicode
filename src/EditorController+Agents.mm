@@ -90,19 +90,57 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 }
 
 // The lines the inline agent's pending edit would replace, tinted red (the
-// bar shows what comes in their place); nil clears the tint.
+// bar shows what comes in their place); nil clears the tint. Where it only
+// adds lines nothing is replaced, so the place they go is marked instead
+// (AG-D2): the line above them underlined in green, its line break tinted
+// green to the end of the line, or with no line above (lines added at the
+// top) the first line underlined with dashes.
 - (void)agentTintAgainst:(NSString *)proposed {
     CodeTextView *tv = self.textView;
     NSLayoutManager *lm = tv.layoutManager;
-    const NSRange all = NSMakeRange(0, tv.string.length);
+    NSString *text = tv.string;
+    const NSRange all = NSMakeRange(0, text.length);
     [lm removeTemporaryAttribute:NSBackgroundColorAttributeName forCharacterRange:all];
+    [lm removeTemporaryAttribute:NSUnderlineStyleAttributeName forCharacterRange:all];
+    [lm removeTemporaryAttribute:NSUnderlineColorAttributeName forCharacterRange:all];
     if (!proposed || !tv.editable) return;
     NSColor *tint = [[NSColor colorWithSRGBRed:0xF1 / 255.0 green:0x4C / 255.0 blue:0x4C / 255.0
                                          alpha:1] colorWithAlphaComponent:0.2];
-    for (const LineDiff::Hunk &h : LineDiff::diff(U16(tv.string), U16(proposed)))
-        if (h.oldLength > 0 && h.oldStart + h.oldLength <= all.length)
+    NSColor *green = [NSColor colorWithSRGBRed:0x73 / 255.0 green:0xC9 / 255.0 blue:0x91 / 255.0
+                                         alpha:1];
+    for (const LineDiff::Hunk &h : LineDiff::diff(U16(text), U16(proposed))) {
+        if (h.oldStart + h.oldLength > all.length) continue;
+        if (h.oldLength > 0) {
             [lm addTemporaryAttribute:NSBackgroundColorAttributeName value:tint
                     forCharacterRange:NSMakeRange(h.oldStart, h.oldLength)];
+            continue;
+        }
+        if (h.newLength == 0 || all.length == 0) continue;
+        // Lines start after a break, so the line above ends at oldStart.
+        NSRange line;
+        NSUnderlineStyle style = NSUnderlineStyleThick;
+        if (h.oldStart > 0) {
+            line = [text lineRangeForRange:NSMakeRange(h.oldStart - 1, 0)];
+            const NSUInteger brk = h.oldStart - 1;
+            [lm addTemporaryAttribute:NSBackgroundColorAttributeName
+                                value:[green colorWithAlphaComponent:0.35]
+                    forCharacterRange:NSMakeRange(brk, 1)];
+        } else {
+            line = [text lineRangeForRange:NSMakeRange(0, 0)];
+            style |= NSUnderlinePatternDash;
+        }
+        // The line's text, without its break.
+        NSUInteger end = NSMaxRange(line);
+        while (end > line.location && ([text characterAtIndex:end - 1] == '\n' ||
+                                       [text characterAtIndex:end - 1] == '\r' ||
+                                       [text characterAtIndex:end - 1] == 0x2029))
+            end--;
+        if (end == line.location) continue;
+        const NSRange body = NSMakeRange(line.location, end - line.location);
+        [lm addTemporaryAttributes:@{NSUnderlineStyleAttributeName: @(style),
+                                     NSUnderlineColorAttributeName: green}
+                 forCharacterRange:body];
+    }
 }
 
 - (void)inlineAgent:(id)sender {
