@@ -78,6 +78,7 @@
     return self.currentPath;
 }
 - (BOOL)gitGutterHasBom { return _activeTab.bom; }
+- (NSInteger)gitGutterEncoding { return _activeTab.encoding; }
 - (void)gitGutterChangedIndex { [self.gitPanel refresh]; }
 - (MCGitGutter *)gitGutter { return _gitGutter; }   // tests, by KVC
 

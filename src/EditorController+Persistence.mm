@@ -245,6 +245,11 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
                afterDelay:MAX(0, MIN(kBackupDelay, kBackupMaxWait - waited))];
 }
 
+// How a tab's file is written, as its backup records it.
+static NSString *MCTabEncodingName(MCTab *t) {
+    return @(FolderSearch::encodingName((FolderSearch::TextEncoding)t.encoding, t.bom));
+}
+
 // Every changed buffer to the store's queue; the main thread only hands
 // over the (immutable) text.
 - (void)writeBackups {
@@ -255,7 +260,8 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
         if (![self tabNeedsBackup:t]) continue;
         if (!t.backupID) t.backupID = [store newID];
         [store writeID:t.backupID path:t.currentPath root:[self sessionKey]
-              diskDate:t.fileModDate inode:t.fileID text:t.sourceText];
+              diskDate:t.fileModDate inode:t.fileID fileEncoding:MCTabEncodingName(t)
+                  text:t.sourceText];
         t.backedUpText = t.sourceText;
         t.backedUpPath = t.currentPath;
         t.hasBackup = YES;
@@ -282,7 +288,8 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
         if (!t.dirty || ![self tabTakesBackup:t]) continue;
         if (!t.backupID) t.backupID = [store newID];
         if (![store writeNowID:t.backupID path:t.currentPath root:[self sessionKey]
-                      diskDate:t.fileModDate inode:t.fileID text:t.sourceText])
+                      diskDate:t.fileModDate inode:t.fileID
+                  fileEncoding:MCTabEncodingName(t) text:t.sourceText])
             return NO;
         t.backedUpText = t.sourceText;
         t.backedUpPath = t.currentPath;
@@ -324,6 +331,14 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
     t.fileModDate = e.diskExisted ? [NSDate dateWithTimeIntervalSince1970:e.diskMtime] : nil;
     t.fileID = e.diskInode;
     t.fileSize = -1;   // a backup does not say
+    // How the file is written, for a file gone by now; one still there
+    // says so itself when it is read (loadActiveTab).
+    FolderSearch::TextEncoding encoding;
+    bool bom;
+    if (FolderSearch::parseEncodingName(e.fileEncoding, &encoding, &bom)) {
+        t.encoding = (MCTextEncoding)encoding;
+        t.bom = bom;
+    }
     MCDiskStamp *a = MCStampOfFile(t.currentPath);
     t.gone = e.diskExisted && !a;
     // Unchanged since: the disk's own date, exactly, so a save in the
@@ -514,6 +529,7 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
     if (!fresh) return;   // gone, or not text now: the stamp stays, so it is looked at again
     t.diskReadGeneration++;   // any read still out is older than this
     t.bom = d.bom;
+    t.encoding = d.encoding;
     if ([fresh isEqualToString:t.savedText ?: @""] && !t.gone) {   // touched, not changed
         [self recordStamp:d.stamp ofTab:t];
         return;
@@ -621,6 +637,7 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
         if (fresh.text) {
             self.savedText = fresh.text;
             t.bom = fresh.bom;
+            t.encoding = fresh.encoding;
         }
         [self recordStamp:fresh.stamp ?: disk ofTab:t];
         [self noteEdited];
@@ -636,6 +653,7 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
     t.sourceText = d.text;
     t.savedText = d.text;
     t.bom = d.bom;
+    t.encoding = d.encoding;
     t.dirty = NO;
     t.gone = NO;
     t.pendingSort = nil;

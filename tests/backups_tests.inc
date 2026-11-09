@@ -51,6 +51,11 @@ static void testBackups() {
         CHECK(std::fabs(back.diskMtime - e.diskMtime) < 1e-6);
         CHECK(back.diskInode == e.diskInode);
         CHECK(back.encoding == "utf-8");
+        CHECK(back.fileEncoding.empty());   // none given, none written
+        CHECK(data.find("file-encoding") == std::string::npos);
+        Entry wide = e;
+        wide.fileEncoding = "utf16be";
+        CHECK(decode(encode(wide, text), &back, &t) && back.fileEncoding == "utf16be");
         CHECK(back.lineEndings == "mixed");
         CHECK(std::fabs(back.saved - e.saved) < 1e-6);
         CHECK(back.ownerPid == 4242);

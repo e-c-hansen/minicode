@@ -253,11 +253,10 @@ NSString *NSOf(const std::string &s) { return [NSString stringWithUTF8String:s.c
     if (there && there != old && ![self closeTab:there prompt:YES]) return NO;
     if (_activeTab != old) [self activateTab:old];
     NSString *text = self.textView.editable ? [self.textView.string copy] : (self.sourceText ?: @"");
-    NSData *utf8 = [text dataUsingEncoding:NSUTF8StringEncoding];
-    std::string bytes = old.bom ? "\xEF\xBB\xBF" : "";
-    if (utf8) bytes.append((const char *)utf8.bytes, utf8.length);
-    std::string error = utf8 ? "" : "the text holds a character UTF-8 cannot store";
-    if (!utf8 || !FolderSearch::writeFileAtomically(path.fileSystemRepresentation, bytes, &error)) {
+    // In the old file's encoding, as VS Code's Save As keeps it.
+    std::string bytes, error;
+    if (!MCEncodeFileText(text, old.encoding, old.bom, &bytes, &error) ||
+        !FolderSearch::writeFileAtomically(path.fileSystemRepresentation, bytes, &error)) {
         NSAlert *a = [NSAlert new];
         a.messageText = [NSString stringWithFormat:@"“%@” could not be saved.", path.lastPathComponent];
         a.informativeText = [NSString stringWithFormat:@"%@: %@.", path, NSOf(error)];

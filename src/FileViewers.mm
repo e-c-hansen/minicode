@@ -29,10 +29,13 @@ MCViewerKind MCViewerKindForFile(NSString *path) {
     [fh closeFile];
     std::string bytes((const char *)head.bytes, head.length);
     const BOOL large = attrs.fileSize > MCCsvEditableBytes;
+    // The large table reads the file's bytes as UTF-8 itself: a UTF-16 one
+    // that size opens as text instead (in large-file mode).
+    const MCViewerKind bigTable = FileSniff::isUtf16Text(bytes) ? MCViewerNone : MCViewerCsvLarge;
     switch (FileSniff::classify(Utf8(path), bytes)) {
     case FileSniff::Kind::QuickLook: return MCViewerQuickLook;
-    case FileSniff::Kind::Csv: return large ? MCViewerCsvLarge : MCViewerCsv;
-    case FileSniff::Kind::Tsv: return large ? MCViewerCsvLarge : MCViewerTsv;
+    case FileSniff::Kind::Csv: return large ? bigTable : MCViewerCsv;
+    case FileSniff::Kind::Tsv: return large ? bigTable : MCViewerTsv;
     case FileSniff::Kind::Json: return MCViewerJson;
     case FileSniff::Kind::Notebook: return MCViewerNotebook;
     case FileSniff::Kind::Sqlite: return MCViewerSqlite;

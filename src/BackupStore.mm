@@ -75,8 +75,10 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
 }
 
 - (Backups::Entry)entryForID:(NSString *)bid path:(NSString *)path root:(NSString *)root
-                    diskDate:(NSDate *)diskDate inode:(uint64_t)inode {
+                    diskDate:(NSDate *)diskDate inode:(uint64_t)inode
+                fileEncoding:(NSString *)fileEncoding {
     Backups::Entry e;
+    e.fileEncoding = U8(fileEncoding ?: @"");
     e.id = U8(bid);
     e.path = U8(path);
     e.root = U8(root);
@@ -104,10 +106,11 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
 }
 
 - (void)writeID:(NSString *)bid path:(NSString *)path root:(NSString *)root
-       diskDate:(NSDate *)diskDate inode:(uint64_t)inode text:(NSString *)text {
+       diskDate:(NSDate *)diskDate inode:(uint64_t)inode
+   fileEncoding:(NSString *)fileEncoding text:(NSString *)text {
     if (!bid.length || !path) return;
     const Backups::Entry e = [self entryForID:bid path:path root:root
-                                     diskDate:diskDate inode:inode];
+                                     diskDate:diskDate inode:inode fileEncoding:fileEncoding];
     NSString *copy = [text copy] ?: @"";   // immutable: safe on the queue
     const uint64_t stamp = [self stamp:bid];
     dispatch_async(_queue, ^{
@@ -122,10 +125,11 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
 }
 
 - (BOOL)writeNowID:(NSString *)bid path:(NSString *)path root:(NSString *)root
-          diskDate:(NSDate *)diskDate inode:(uint64_t)inode text:(NSString *)text {
+          diskDate:(NSDate *)diskDate inode:(uint64_t)inode
+      fileEncoding:(NSString *)fileEncoding text:(NSString *)text {
     if (!bid.length || !path) return NO;
     const Backups::Entry e = [self entryForID:bid path:path root:root
-                                     diskDate:diskDate inode:inode];
+                                     diskDate:diskDate inode:inode fileEncoding:fileEncoding];
     NSData *bytes = [text ?: @"" dataUsingEncoding:NSUTF8StringEncoding];
     if (!bytes) return NO;
     [self stamp:bid];   // anything still queued for this id is older

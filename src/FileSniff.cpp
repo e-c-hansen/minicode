@@ -12,6 +12,34 @@ bool looksBinary(const char *data, size_t len) {
     return std::memchr(data, 0, len) != nullptr;
 }
 
+bool isUtf16Text(const char *data, size_t len) {
+    if (!data || len < 2) return false;
+    const unsigned char a = (unsigned char)data[0], b = (unsigned char)data[1];
+    const bool le = a == 0xFF && b == 0xFE;
+    if (!le && !(a == 0xFE && b == 0xFF)) return false;
+    const bool cut = len >= kHeadBytes;
+    if (cut) len = kHeadBytes;
+    if (len & 1) {
+        if (!cut) return false;
+        len--;
+    }
+    auto unit = [&](size_t i) -> unsigned {
+        const unsigned x = (unsigned char)data[i], y = (unsigned char)data[i + 1];
+        return le ? (x | (y << 8)) : ((x << 8) | y);
+    };
+    for (size_t i = 2; i < len; i += 2) {
+        const unsigned u = unit(i);
+        if (u >= 0xDC00 && u < 0xE000) return false;   // a low surrogate alone
+        if (u >= 0xD800 && u < 0xDC00) {
+            if (i + 2 >= len) return cut;               // the pair cut by the head's end
+            const unsigned low = unit(i + 2);
+            if (low < 0xDC00 || low >= 0xE000) return false;
+            i += 2;
+        }
+    }
+    return true;
+}
+
 bool isSqlite(const char *data, size_t len) {
     static const char magic[16] = {'S', 'Q', 'L', 'i', 't', 'e', ' ', 'f',
                                    'o', 'r', 'm', 'a', 't', ' ', '3', '\0'};
@@ -48,7 +76,7 @@ Kind classify(const std::string &path, const char *head, size_t len) {
     const std::string ext = extensionOf(path);
     if (isSqlite(head, len)) return Kind::Sqlite;
     if (isQuickLookDocument(ext)) return Kind::QuickLook;
-    if (looksBinary(head, len)) return Kind::QuickLook;
+    if (!isUtf16Text(head, len) && looksBinary(head, len)) return Kind::QuickLook;
     if (ext == "csv") return Kind::Csv;
     if (ext == "tsv" || ext == "tab") return Kind::Tsv;
     if (ext == "json" || ext == "geojson" || ext == "jsonc" || ext == "har" ||

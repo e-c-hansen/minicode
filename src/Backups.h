@@ -28,7 +28,11 @@ struct Entry {
     double diskMtime = 0;
     uint64_t diskInode = 0;
     bool diskExisted = false;
-    std::string encoding = "utf-8";
+    std::string encoding = "utf-8";     // the text below, always UTF-8
+    // How the file itself is written (FolderSearch::encodingName: "utf8",
+    // "utf8bom", "utf16le", "utf16be"), so a buffer whose file has gone
+    // is saved back the same way; "" in backups older than this key.
+    std::string fileEncoding{};
     std::string lineEndings = "none";   // lineEndingsOf(text)
     double saved = 0;           // when the backup was written (Unix seconds)
     // The process holding the buffer: a backup whose owner still runs is

@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 
+#include "FolderSearch.h"
+
 namespace QuickDiff {
 
 enum class Kind { Added, Modified, Deleted };
@@ -93,6 +95,26 @@ std::vector<std::u16string> oldLines(const Bar& b, const std::u16string& origina
 // in the index that the file on disk lost is a change, and stays one.
 bool stripBom(std::u16string& original, bool bufferBom);
 void restoreBom(std::u16string& staged, bool stripped);
+
+// The index's bytes as the original, for a buffer whose file is written
+// in `fileEncoding` with or without a byte order mark (the tab's, as
+// FolderSearch::decodeFileText found them). A UTF-16 file's blob that
+// starts with that order's mark is read unit for unit, the mark taken
+// off, exactly (a lone surrogate stays one); anything else is UTF-8
+// (fromUtf8), its U+FEFF taken off when the file's UTF-8 BOM is kept
+// apart (stripBom). A UTF-16 file whose index holds UTF-8, or the other
+// order, then differs on every line, which it does.
+struct Original {
+    std::u16string text;
+    // How the blob was read, so Stage Change writes it the same way.
+    FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
+    bool bom = false;   // a mark was taken off, and goes back on
+};
+Original readOriginal(const std::string& blob, FolderSearch::TextEncoding fileEncoding,
+                      bool fileBom);
+// What Stage Change writes to the index: stagedText's result in the blob's
+// own encoding, its mark back in front.
+std::string stagedBlob(const std::u16string& staged, const Original& how);
 
 // UTF-8 to UTF-16 (invalid bytes become U+FFFD), for the original git prints.
 std::u16string fromUtf8(const std::string& s);

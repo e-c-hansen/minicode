@@ -352,6 +352,114 @@ static void testFolderSearchParallel() {
         fsys::remove_all(dir, ec);
     }
 
+    GROUP("encoding:file-text");
+    {
+        // A tab's file read as text and written back (round 6's D10): UTF-8,
+        // UTF-8 with its mark, UTF-16 in both orders with theirs. An unedited
+        // file comes back byte for byte; one that would not decode exactly
+        // is refused, so it is never opened as text and saved changed.
+        auto utf16 = [](const std::u16string& s, bool le) {
+            std::string b = le ? std::string("\xFF\xFE", 2) : std::string("\xFE\xFF", 2);
+            for (char16_t u : s) {
+                const char hi = static_cast<char>(u >> 8), lo = static_cast<char>(u & 0xFF);
+                b += le ? lo : hi;
+                b += le ? hi : lo;
+            }
+            return b;
+        };
+        const std::u16string text = u"a\r\n\U0001F600 caf\u00E9\n\uFEFFz";
+        const std::string text8 = "a\r\n\xF0\x9F\x98\x80 caf\xC3\xA9\n\xEF\xBB\xBFz";
+        struct Case { std::string bytes; TextEncoding enc; bool bom; std::string utf8; };
+        const Case cases[] = {
+            {text8, TextEncoding::Utf8, false, text8},
+            {"\xEF\xBB\xBF" + text8, TextEncoding::Utf8, true, text8},
+            {utf16(text, true), TextEncoding::Utf16LE, true, text8},
+            {utf16(text, false), TextEncoding::Utf16BE, true, text8},
+            {"", TextEncoding::Utf8, false, ""},
+            {std::string("\xFF\xFE", 2), TextEncoding::Utf16LE, true, ""},
+        };
+        for (const Case& c : cases) {
+            std::string b = c.bytes;
+            TextEncoding e = TextEncoding::Utf8;
+            bool bom = !c.bom;
+            CHECK(decodeFileText(&b, &e, &bom));
+            CHECK(e == c.enc && bom == c.bom && b == c.utf8);
+            CHECK(encodeFileText(b, e, bom) == c.bytes);
+            TextEncoding e2;
+            bool bom2;
+            CHECK(parseEncodingName(encodingName(e, bom), &e2, &bom2) && e2 == e && bom2 == bom);
+        }
+        CHECK(std::string(encodingName(TextEncoding::Utf16BE, true)) == "utf16be");
+        CHECK(std::string(encodingName(TextEncoding::Utf8, true)) == "utf8bom");
+        TextEncoding e = TextEncoding::Utf8;
+        bool bom = false;
+        CHECK(!parseEncodingName("latin1", &e, &bom) && !parseEncodingName("", &e, &bom));
+        // Not exact: a lone surrogate, a lone low half, an odd last byte.
+        for (const std::string& bad :
+             {utf16(std::u16string(u"a") + char16_t(0xD800) + u"b", true),
+              utf16(std::u16string(1, char16_t(0xDC00)), false),
+              utf16(u"ab", true) + "x"}) {
+            std::string b = bad;
+            CHECK(!decodeFileText(&b, &e, &bom));
+            CHECK(b == bad);   // left as it was
+        }
+        // An edit encodes back in the file's own way, mark first.
+        CHECK(encodeFileText("A\n", TextEncoding::Utf16LE, true) == utf16(u"A\n", true));
+        CHECK(encodeFileText("A\n", TextEncoding::Utf16BE, true) == utf16(u"A\n", false));
+        CHECK(encodeFileText("A\n", TextEncoding::Utf8, true) == "\xEF\xBB\xBF" "A\n");
+        // Random UTF-16 files: whatever decodes comes back exactly, and only
+        // a lone surrogate or an odd length is refused.
+        std::mt19937 rng(10);
+        int decoded = 0, refused = 0;
+        for (int round = 0; round < 4000; ++round) {
+            const bool le = rng() & 1;
+            std::string b = le ? std::string("\xFF\xFE", 2) : std::string("\xFE\xFF", 2);
+            const int n = (int)(rng() % 24);
+            bool lone = false;
+            for (int i = 0; i < n; ++i) {
+                // Mostly characters, some pairs, now and then half of one.
+                static const char16_t plain[] = {u'a', u'\n', u'\r', 0, 0xE9, 0xFEFF, 0xFFFF};
+                static const char16_t half[] = {0xD83D, 0xDE00, 0xDBFF, 0xDC00};
+                std::u16string us;
+                const unsigned r = rng() % 40;
+                if (r == 0) us = half[rng() % 4];
+                else if (r < 5) us = u"\U0001F600";
+                else us = plain[rng() % (sizeof(plain) / sizeof(plain[0]))];
+                for (char16_t u : us) {
+                    b += le ? (char)(u & 0xFF) : (char)(u >> 8);
+                    b += le ? (char)(u >> 8) : (char)(u & 0xFF);
+                }
+            }
+            if (rng() % 8 == 0) b += 'x';
+            // Lone surrogates, as the decoder must see them.
+            const size_t units = (b.size() - 2) / 2;
+            auto unitAt = [&](size_t i) -> unsigned {
+                const unsigned x = (unsigned char)b[2 + 2 * i], y = (unsigned char)b[3 + 2 * i];
+                return le ? (x | (y << 8)) : ((x << 8) | y);
+            };
+            for (size_t i = 0; i < units; ++i) {
+                const unsigned u = unitAt(i);
+                if (u >= 0xDC00 && u < 0xE000) { lone = true; break; }
+                if (u >= 0xD800 && u < 0xDC00) {
+                    const unsigned l = i + 1 < units ? unitAt(i + 1) : 0;
+                    if (l < 0xDC00 || l >= 0xE000) { lone = true; break; }
+                    ++i;
+                }
+            }
+            const bool exact = !lone && !(b.size() & 1);
+            std::string t = b;
+            const bool ok = decodeFileText(&t, &e, &bom);
+            CHECK(ok == exact);
+            if (ok) {
+                ++decoded;
+                CHECK(encodeFileText(t, e, bom) == b);
+            } else {
+                ++refused;
+            }
+        }
+        CHECK(decoded > 500 && refused > 500);
+    }
+
     GROUP("search:cancel");
     {
         std::atomic<bool> stop(true);

@@ -93,6 +93,7 @@ std::string encode(const Entry &e, const std::string &text) {
     line("disk-mtime", num(e.diskMtime));
     line("disk-inode", std::to_string(e.diskInode));
     line("encoding", e.encoding);
+    if (!e.fileEncoding.empty()) line("file-encoding", e.fileEncoding);
     line("line-endings", lineEndingsOf(text));
     line("saved", num(e.saved));
     line("owner-pid", std::to_string(e.ownerPid));
@@ -127,6 +128,7 @@ bool decodeHeader(const std::string &data, Entry *e, size_t *textStart) {
         else if (k == "disk-mtime") out.diskMtime = std::strtod(v.c_str(), &stop);
         else if (k == "disk-inode") out.diskInode = std::strtoull(v.c_str(), &stop, 10);
         else if (k == "encoding") out.encoding = v;
+        else if (k == "file-encoding") out.fileEncoding = v;
         else if (k == "line-endings") out.lineEndings = v;
         else if (k == "saved") out.saved = std::strtod(v.c_str(), &stop);
         else if (k == "owner-pid") out.ownerPid = std::strtoll(v.c_str(), &stop, 10);

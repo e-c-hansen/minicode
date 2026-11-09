@@ -12,9 +12,10 @@
 // after edits, on the window becoming key, after the Source Control panel
 // refreshes, and when the repository folder's index or HEAD changes (a
 // vnode source on that folder, so a stage or commit in a terminal shows
-// at once with the panel hidden). The index's text loses a first U+FEFF
-// when the tab keeps its file's BOM apart (QuickDiff::stripBom), and
-// Stage Change puts it back. No bars for a file outside a repository, an untracked,
+// at once with the panel hidden). The index's text is read in the file's
+// encoding (a UTF-16 file's blob is UTF-16 too) and loses its byte order
+// mark when the tab keeps its file's apart (QuickDiff::readOriginal), and
+// Stage Change writes it back that way (QuickDiff::stagedBlob). No bars for a file outside a repository, an untracked,
 // ignored or conflicted one, a link, a submodule, in large-file mode, a
 // preview or a diff, or with editor.git-gutter off.
 //
@@ -33,8 +34,12 @@
 // The file the editor shows as source text, or nil (a preview, a diff, a
 // viewer, large-file mode, no file).
 - (NSString *)gitGutterPath;
-// That file's UTF-8 BOM is kept apart from the buffer (MCTab bom).
+// That file's byte order mark is kept apart from the buffer (MCTab bom),
+// and how it is written (MCTab encoding: FolderSearch::TextEncoding's
+// value), so the index's text is read the same way (QuickDiff::
+// readOriginal) and Stage Change writes it so.
 - (BOOL)gitGutterHasBom;
+- (NSInteger)gitGutterEncoding;
 // Stage Change changed the index: the panel should look again.
 - (void)gitGutterChangedIndex;
 @end

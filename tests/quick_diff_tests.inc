@@ -245,6 +245,56 @@ static void testQuickDiff() {
         CHECK(!stripBom(empty, true) && empty.empty());
     }
 
+    GROUP("quickdiff:utf16");
+    {
+        // A UTF-16 file (round 6's D10): the index's blob is UTF-16 with
+        // its mark too, read unit for unit and the mark kept apart as the
+        // tab keeps it; Stage Change writes it back that way.
+        using FolderSearch::TextEncoding;
+        auto utf16 = [](const std::u16string& t, bool le) {
+            std::string b = le ? std::string("\xFF\xFE", 2) : std::string("\xFE\xFF", 2);
+            for (char16_t u : t) {
+                const char hi = (char)(u >> 8), lo = (char)(u & 0xFF);
+                b += le ? lo : hi;
+                b += le ? hi : lo;
+            }
+            return b;
+        };
+        for (bool le : {true, false}) {
+            const TextEncoding enc = le ? TextEncoding::Utf16LE : TextEncoding::Utf16BE;
+            const std::u16string text = u"a\r\nb \U0001F600\r\nc\r\n";
+            const Original o = readOriginal(utf16(text, le), enc, true);
+            CHECK(o.text == text && o.bom && o.encoding == enc);
+            CHECK(bars(o.text, text).empty());
+            const std::u16string n = u"a\r\nB \U0001F600\r\nc\r\n";
+            const V bs = bars(o.text, n);
+            CHECK(bs == V({bar(Kind::Modified, 1, 1, 1, 1)}));
+            CHECK(revertEdit(bs[0], o.text, n).text == u"b \U0001F600\r\n");
+            CHECK(stagedBlob(stagedText(bs[0], o.text, n), o) == utf16(n, le));
+            // A lone surrogate in the index stays itself both ways.
+            const std::u16string odd = std::u16string(u"x") + char16_t(0xD800) + u"\n";
+            const Original lone = readOriginal(utf16(odd, le), enc, true);
+            CHECK(lone.text == odd && stagedBlob(lone.text, lone) == utf16(odd, le));
+        }
+        // The index in the other order, or in UTF-8: read as UTF-8, every
+        // line a change (the file's encoding changed), nothing stripped.
+        const Original other = readOriginal(utf16(u"a\n", false), TextEncoding::Utf16LE, true);
+        CHECK(other.encoding == TextEncoding::Utf8 && !other.bom);
+        CHECK(bars(other.text, u16("a\n")).size() == 1);
+        const Original eight = readOriginal("a\n", TextEncoding::Utf16LE, true);
+        CHECK(eight.text == u16("a\n") && eight.encoding == TextEncoding::Utf8 && !eight.bom);
+        CHECK(stagedBlob(u16("b\n"), eight) == "b\n");
+        // A UTF-8 file goes the old way: its BOM stripped only when kept apart.
+        const Original u8bom = readOriginal("\xEF\xBB\xBF" "a\n", TextEncoding::Utf8, true);
+        CHECK(u8bom.text == u16("a\n") && u8bom.bom);
+        CHECK(stagedBlob(u16("b\n"), u8bom) == "\xEF\xBB\xBF" "b\n");
+        const Original kept = readOriginal("\xEF\xBB\xBF" "a\n", TextEncoding::Utf8, false);
+        CHECK(kept.text.size() == 3 && !kept.bom);
+        // An odd-length blob is not taken as UTF-16.
+        CHECK(readOriginal(utf16(u"a", true) + "x", TextEncoding::Utf16LE, true).encoding ==
+              TextEncoding::Utf8);
+    }
+
     GROUP("quickdiff:speed");
     {
         // A 100,000-line file with three edits, as off the main thread after

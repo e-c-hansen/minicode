@@ -105,8 +105,9 @@
     if (!t.loaded && !t.dirty) return 0;
     NSString *text = self.lsp.bufferText(path);
     if (!text) return t.dirty ? 2 : 0;
-    if (!*disk) *disk = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding
-                                                     error:nil] ?: @"";
+    // Read as the tab read it (a UTF-16 file decoded, a byte order mark
+    // kept apart), or a clean UTF-16 tab would count as holding changes.
+    if (!*disk) *disk = MCReadDiskText(path, ULLONG_MAX).text ?: @"";
     if (![text isEqualToString:*disk]) return 2;
     if (t.previewMode && !t.dirty) return 0;   // shows the disk's text: it reloads
     return t.previewMode ? 2 : 1;

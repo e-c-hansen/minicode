@@ -73,7 +73,7 @@ std::string RealPath(NSString *p) {
     bool inRepository;
     Stamp stamp;               // the index file when the entry was read
     GitUi::IndexEntry entry;
-    std::u16string original;   // the entry's text
+    std::string blob;          // the entry's bytes
     bool hasOriginal;
 }
 @end
@@ -112,9 +112,10 @@ std::string RealPath(NSString *p) {
     NSString *_shownPath;              // the file the bars are of
     MCGitDirWatch *_watch;             // its repository's folder, while it has one
     MCGitGutterSource *_source;        // the queue's (read on the main thread only as a copy)
-    // What the bars on show were made from, for Revert and Stage.
-    std::u16string _original;          // without a BOM the tab keeps apart
-    bool _originalBom;                 // ...which it had: Stage Change puts it back
+    // What the bars on show were made from, for Revert and Stage: the
+    // index's text, without a byte order mark the tab keeps apart, and how
+    // it was read, which Stage Change writes it back as.
+    QuickDiff::Original _original;
     std::string _top, _rel;
     GitUi::IndexEntry _entry;
     NSPopover *_popover;
@@ -269,14 +270,17 @@ std::string RealPath(NSString *p) {
     }
     NSString *text = [tv.textStorage.string copy];
     const bool bom = [host gitGutterHasBom];
+    const auto encoding = (FolderSearch::TextEncoding)[host gitGutterEncoding];
     MCGitGutterSource *previous = _source;
     __weak MCGitGutter *weakSelf = self;
     dispatch_async(_queue, ^{
         MCGitGutterSource *src = [MCGitGutter sourceFor:path previous:previous];
         std::vector<QuickDiff::Bar> bars;
-        std::u16string original = src->original;
-        const bool stripped = src->hasOriginal && QuickDiff::stripBom(original, bom);
-        if (src->hasOriginal) bars = QuickDiff::bars(original, U16(text));
+        QuickDiff::Original original;
+        if (src->hasOriginal) {
+            original = QuickDiff::readOriginal(src->blob, encoding, bom);
+            bars = QuickDiff::bars(original.text, U16(text));
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             MCGitGutter *s = weakSelf;
             if (!s) return;
@@ -286,7 +290,6 @@ std::string RealPath(NSString *p) {
             if (![path isEqualToString:s->_host.gitGutterPath]) return;
             s->_shownPath = path;
             s->_original = original;
-            s->_originalBom = stripped;
             s->_top = src->top;
             s->_rel = src->rel;
             s->_entry = src->entry;
@@ -325,7 +328,7 @@ std::string RealPath(NSString *p) {
     if (previous && previous->path == want && previous->stamp == s->stamp &&
         previous->stamp.sec >= 0) {
         s->entry = previous->entry;
-        s->original = previous->original;
+        s->blob = previous->blob;
         s->hasOriginal = previous->hasOriginal;
         return s;
     }
@@ -336,7 +339,7 @@ std::string RealPath(NSString *p) {
     if (!s->entry.ok) return s;   // untracked, a conflict, a link, a submodule
     MCGitResult *blob = MCGitRunSync(top, Args(GitUi::blobArgs(s->entry.object)));
     if (!blob.ok) return s;
-    s->original = QuickDiff::fromUtf8(Bytes(blob.output));
+    s->blob = Bytes(blob.output);
     s->hasOriginal = true;
     return s;
 }
@@ -393,7 +396,7 @@ std::string RealPath(NSString *p) {
     }
     const QuickDiff::Bar b = bars[(size_t)index];
     const std::u16string buffer = U16(tv.string);
-    const QuickDiff::Edit e = QuickDiff::revertEdit(b, _original, buffer);
+    const QuickDiff::Edit e = QuickDiff::revertEdit(b, _original.text, buffer);
     if (e.start + e.length > buffer.size()) { NSBeep(); return NO; }
     [self closePopover];
     return [tv replaceRanges:@[[NSValue valueWithRange:NSMakeRange(e.start, e.length)]]
@@ -410,9 +413,8 @@ std::string RealPath(NSString *p) {
         return NO;
     }
     [self closePopover];
-    std::u16string text = QuickDiff::stagedText(bars[(size_t)index], _original, U16(tv.string));
-    QuickDiff::restoreBom(text, _originalBom);
-    const std::string staged = QuickDiff::toUtf8(text);
+    const std::string staged = QuickDiff::stagedBlob(
+        QuickDiff::stagedText(bars[(size_t)index], _original.text, U16(tv.string)), _original);
     NSString *top = [NSString stringWithUTF8String:_top.c_str()];
     const std::string rel = _rel;
     const GitUi::IndexEntry entry = _entry;
@@ -465,7 +467,7 @@ std::string RealPath(NSString *p) {
     _popoverBar = index;
     _popoverTitle = [NSString stringWithUTF8String:QuickDiff::describe(b).c_str()];
     NSMutableArray *lines = [NSMutableArray array];
-    for (const std::u16string &l : QuickDiff::oldLines(b, _original)) [lines addObject:NS(l)];
+    for (const std::u16string &l : QuickDiff::oldLines(b, _original.text)) [lines addObject:NS(l)];
     _popoverText = [lines componentsJoinedByString:@"\n"];
 
     const CGFloat w = 420;
