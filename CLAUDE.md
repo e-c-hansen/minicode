@@ -1116,7 +1116,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   and the menu item has no key. Trap: CALayer copies `shadowPath`, so
   release the path you made, never the one the getter returns (that crashed
   in the next CA commit). It searches as you type on a serial queue (cancelled between
-  lines, applied `whenCurrent:`) and draws through `drawBehindText`. Cmd+G /
+  lines, applied `whenCurrent:`), over a copy of the text made once per
+  edit of it (`MCFindText`: an NSString copy on main, UTF-16 on the
+  queue), never once per keystroke in the query, and draws through `drawBehindText`. Cmd+G /
   Shift+Cmd+G, Return / Shift+Return; Option+Cmd+C, W, R; Return in the replace
   field replaces and moves on; Shift+Cmd+1 replaces only while the bar has the
   keyboard (Go to Tab 1 elsewhere); Option+Cmd+Return replaces all as one

@@ -33,6 +33,24 @@ static NSString *FNS(const std::u16string &u) {
     return [NSString stringWithCharacters:(const unichar *)u.data() length:u.size()];
 }
 
+// The text a search reads, as of one version of the storage's characters:
+// an immutable copy of the string made on the main thread (a copy of the
+// characters, about 0.13 ms for 2.4 MB), turned into UTF-16 on the search
+// queue the first time a search reads it, and then only read there. Made
+// once per edit of the text, not once per keystroke in the find field
+// (every keystroke copied the whole buffer on the main thread).
+struct MCFindText {
+    NSString *source;                            // until the queue converts it
+    std::shared_ptr<const std::u16string> text;  // the queue's, once it has
+    const std::u16string &characters() {         // on the queue only
+        if (!text) {
+            text = std::make_shared<const std::u16string>(FU16(source));
+            source = nil;
+        }
+        return *text;
+    }
+};
+
 // The most matches found and highlighted; past it the count says "20000+".
 static const size_t kMatchLimit = 20000;
 
@@ -488,6 +506,9 @@ static const CGFloat kSashWidth = 4;
     NSRange _scope;              // Find in Selection's, NSNotFound when off
     void (^_whenCurrent)(void);  // waiting for results for the text as it is
     id _observer, _selectionObserver;
+    std::shared_ptr<MCFindText> _text;   // the characters at _textAt (MCFindText)
+    NSUInteger _textAt;
+    NSUInteger _textCopies;              // copies made (tests)
 }
 
 - (instancetype)initWithTextView:(CodeTextView *)textView {
@@ -545,6 +566,18 @@ static const CGFloat kSashWidth = 4;
 
 - (MCEditorFindBar *)bar { return _bar; }
 - (BOOL)shown { return _shown; }
+- (NSUInteger)textCopies { return _textCopies; }
+
+// The text as it is now, for the search queue (MCFindText).
+- (std::shared_ptr<MCFindText>)currentText {
+    if (!_text || _textAt != _textVersion) {
+        _text = std::make_shared<MCFindText>();
+        _text->source = [_tv.string copy] ?: @"";
+        _textAt = _textVersion;
+        _textCopies++;
+    }
+    return _text;
+}
 
 - (BOOL)matchCase { return [_bar caseOn]; }
 - (BOOL)wholeWord { return [_bar wordOn]; }
@@ -647,6 +680,7 @@ static const CGFloat kSashWidth = 4;
     _bar.hidden = YES;
     if (_cancel) _cancel->store(true);
     _whenCurrent = nil;
+    _text = nullptr;   // the copy goes with the bar
     _selectOnArrival = NO;
     if (_scope.location != NSNotFound) {   // VS Code drops the scope with the widget
         _scope = NSMakeRange(NSNotFound, 0);
@@ -850,7 +884,7 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
     auto cancel = std::make_shared<std::atomic<bool>>(false);
     _cancel = cancel;
     _searching = YES;
-    std::u16string text = FU16(_tv.string);
+    std::shared_ptr<MCFindText> text = [self currentText];
     TextFind::Query query = _query;
     const NSRange scope = _scope;
     __weak MCEditorFind *weakSelf = self;
@@ -858,7 +892,8 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
         if (cancel->load()) return;
         bool truncated = false, cancelled = false;
         std::vector<TextFind::Match> found = InScope(
-            TextFind::findAll(text, query, scope.location == NSNotFound ? kMatchLimit : 0,
+            TextFind::findAll(text->characters(), query,
+                              scope.location == NSNotFound ? kMatchLimit : 0,
                               &truncated, cancel.get(), &cancelled),
             scope);
         if (cancelled) return;
@@ -1010,9 +1045,24 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
             [s findNext:YES];
             return;
         }
-        std::u16string text = FU16(s->_tv.string);
         const TextFind::Match m = s->_matches[(size_t)i];
-        std::u16string with = TextFind::expand([s replacement], text, m, s->_query);
+        // Only what the replacement can take from: the match and its
+        // groups (a lookahead's may lie past it), not a copy of the buffer.
+        size_t lo = m.start, hi = m.start + m.length;
+        for (const auto &grp : m.groups)
+            if (grp.first != std::u16string::npos) {
+                lo = std::min(lo, grp.first);
+                hi = std::max(hi, grp.first + grp.second);
+            }
+        NSString *string = s->_tv.string;
+        if (hi > string.length) return;
+        TextFind::Match local = m;
+        local.start -= lo;
+        for (auto &grp : local.groups)
+            if (grp.first != std::u16string::npos) grp.first -= lo;
+        std::u16string with = TextFind::expand(
+            [s replacement], FU16([string substringWithRange:NSMakeRange(lo, hi - lo)]), local,
+            s->_query);
         std::vector<TextFind::Edit16> edits{{m.start, m.length, with}};
         if (![s applyEdits:edits actionName:@"Replace"]) return;
         // On to the next match after the replacement.
@@ -1029,13 +1079,14 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
         return;
     }
     const NSUInteger version = _textVersion;
-    std::u16string text = FU16(_tv.string);
+    std::shared_ptr<MCFindText> text = [self currentText];
     std::u16string with = [self replacement];
     TextFind::Query query = _query;
     const NSRange scope = _scope;
     __weak MCEditorFind *weakSelf = self;
     dispatch_async(_queue, ^{
-        std::vector<TextFind::Edit16> edits = TextFind::replaceAll(text, query, with);
+        std::vector<TextFind::Edit16> edits =
+            TextFind::replaceAll(text->characters(), query, with);
         if (scope.location != NSNotFound)
             edits.erase(std::remove_if(edits.begin(), edits.end(),
                                        [&](const TextFind::Edit16 &e) {

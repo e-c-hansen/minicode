@@ -348,6 +348,52 @@ MC_GUI_SUITE(find_bar) {
         [Find(c) close];
     });
 
+    // ---- a long text: the query's keystrokes copy nothing on the main thread
+    __block NSUInteger copies = 0;
+    __block NSString *longText = nil;
+    MCGuiStep(@"8,000,000 characters; a query", ^{
+        NSMutableString *t = [NSMutableString stringWithCapacity:8100000];
+        NSString *row = [[@"" stringByPaddingToLength:79990 withString:@"lorem ipsum "
+                                       startingAtIndex:0] stringByAppendingString:@" alpha\n"];
+        for (int k = 0; k < 100; k++) [t appendString:row];
+        longText = t;
+        MCGuiUndoGroup(Text(c).undoManager, ^{
+            [Text(c) insertText:longText replacementRange:NSMakeRange(0, 0)];
+        });
+        [Find(c) performFindAction:NSTextFinderActionShowFindInterface];
+        SetField(Find(c).bar.findField, @"alph");
+    });
+    MCGuiWait(@"found in the long text", 10, ^BOOL { return Settled(c, 300); });
+    MCGuiStep(@"eight more keystrokes in the query: no copy of the text, little CPU", ^{
+        copies = Find(c).textCopies;
+        const NSArray<NSString *> *queries =
+            @[@"alpha", @"alph", @"alpha", @"alphab", @"alpha", @"lpha", @"alpha", @"alph"];
+        const double t0 = MCGuiThreadCpuMs();
+        for (NSString *q in queries) SetField(Find(c).bar.findField, q);
+        const double ms = MCGuiThreadCpuMs() - t0;
+        MCGuiNote(@"eight query keystrokes over 8,000,000 characters: %.2f ms of main-thread "
+                  @"CPU, %lu copies of the text", ms,
+                  (unsigned long)(Find(c).textCopies - copies));
+        GCHECK(Find(c).textCopies == copies);
+        GCHECK_TIME(ms, 25, @"eight query keystrokes over 8,000,000 characters");
+    });
+    MCGuiWait(@"current again", 10, ^BOOL { return Settled(c, 300); });
+    MCGuiStep(@"an edit of the text: one copy for the next search", ^{
+        MCGuiUndoGroup(Text(c).undoManager, ^{
+            [Text(c) insertText:@"alpha " replacementRange:NSMakeRange(0, 0)];
+        });
+    });
+    MCGuiWait(@"the new match found", 10, ^BOOL { return Settled(c, 301); });
+    MCGuiStep(@"one copy; put back", ^{
+        GCHECK(Find(c).textCopies == copies + 1);
+        [Text(c).undoManager undo];
+        [Text(c).undoManager undo];
+        GCHECK_EQ_STR(Text(c).string, original);
+        SetField(Find(c).bar.findField, @"alpha");
+        [Find(c) close];
+        longText = nil;
+    });
+
     // ---- VS Code's narrow editor: reduced, narrow, collapsed
     MCGuiStep(@"the widths VS Code gives a narrow editor", ^{
         [Find(c) performFindAction:NSTextFinderActionShowFindInterface];
