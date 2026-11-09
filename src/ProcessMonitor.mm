@@ -4,6 +4,7 @@
 #import "ControlServer.h"
 #import "EditorController.h"
 #import "Terminal.h"
+#import "TerminalAttention.h"
 
 #include <arpa/inet.h>
 #include <libproc.h>
@@ -256,6 +257,14 @@ double ThreadCpuMillis() {
             pt.title = t.title.UTF8String ?: "";
             pt.shellPid = t.shellPid;
             pt.window = window;
+            // R7.4: the session `minicode notify` last named here, and when
+            // (as process start times count: microseconds since 1970).
+            MCTerminalAttention *attention = [MCTerminalAttention shared];
+            if (NSString *session = [attention sessionIdForTerminal:t]) {
+                pt.session = session.UTF8String ?: "";
+                pt.sessionNamedAt = (int64_t)(([attention sessionTimeForTerminal:t] +
+                                               NSTimeIntervalSince1970) * 1e6);
+            }
             terms.push_back(pt);
         }
     }

@@ -48,6 +48,8 @@ public:
     std::string message(int terminal) const;
     // The session last named for the terminal; null when none was.
     const Session *session(int terminal) const;
+    // When a notify last named that session; 0 when none did.
+    double sessionTime(int terminal) const;
     // The terminal a session runs in, by its id, else by its transcript (a
     // subagent's transcript names its parent's session): the one that named
     // it last when several did (a session resumed elsewhere). 0 for none.

@@ -197,6 +197,76 @@ static void testProcs() {
         CHECK(old && !old->alive && old->key.start == 41);
     }
 
+    // R7.4 (AG-D8): which Claude Code session started a process, from the
+    // session `minicode notify` named in its terminal.
+    GROUP("procs:session");
+    {
+        FakeProcs f;
+        world(f);
+        // Terminal 2: a server the user left running, then Claude Code
+        // (node), an MCP server it started before its first prompt.
+        f.add(310, 300, 45, "python3", folder).cmd = "python3 -m http.server";
+        f.add(320, 300, 60, "node", folder).cmd = "node /opt/claude/cli.js";
+        f.add(321, 320, 61, "node", folder).cmd = "node mcp-server.js";
+        std::vector<Terminal> ts = terms;
+        Tracker t;
+        t.sample(f, 1000, ts, {folder}, self, 501);
+        CHECK(tracked(t, 320) && tracked(t, 320)->session.empty());
+        // The first prompt's notify names session A; then Claude starts a
+        // dev server under a shell of its own.
+        ts[1].session = "A";
+        ts[1].sessionNamedAt = 70;
+        f.add(330, 320, 80, "zsh", folder);
+        f.add(331, 330, 81, "vite", folder);
+        t.sample(f, 1002, ts, {folder}, self, 501);
+        CHECK(tracked(t, 320)->session == "A" && tracked(t, 321)->session == "A");
+        CHECK(tracked(t, 330)->session == "A" && tracked(t, 331)->session == "A");
+        CHECK(tracked(t, 310)->session.empty());          // the user's, from before
+        CHECK(tracked(t, 210)->session.empty());          // terminal 1 named none
+        Json j = toJson(buildView(t.snapshot(), ts, 7, folder), folder, 7);
+        bool inJson = false;
+        for (const Json& g : j["groups"].elements())
+            for (const Json& p : g["processes"].elements())
+                if (p["pid"].asInt() == 331) inJson = p["session"].asString() == "A";
+        CHECK(inJson);
+        // /clear: session B in the same Claude process. What runs keeps A;
+        // what starts now is B's.
+        ts[1].session = "B";
+        ts[1].sessionNamedAt = 90;
+        f.add(332, 320, 95, "pytest", folder);
+        t.sample(f, 1004, ts, {folder}, self, 501);
+        CHECK(tracked(t, 331)->session == "A" && tracked(t, 332)->session == "B");
+        // Claude Code quits; the vite it left keeps its session (re-parented
+        // to launchd). The user then runs a program by hand: nobody's,
+        // though the terminal's last session is still B.
+        f.remove(320);
+        f.remove(330);
+        f.find(331)->b.ppid = 1;
+        f.add(340, 300, 120, "make", folder);
+        t.sample(f, 1006, ts, {folder}, self, 501);
+        CHECK(tracked(t, 331) && tracked(t, 331)->session == "A");
+        CHECK(tracked(t, 340) && tracked(t, 340)->session.empty());
+        // `claude --resume` names B again, later: the new Claude process
+        // (started after make) is B's, and so is what it starts; make stays
+        // nobody's.
+        f.add(350, 300, 130, "node", folder).cmd = "node /opt/claude/cli.js --resume";
+        ts[1].sessionNamedAt = 140;
+        f.add(351, 350, 150, "cargo", folder);
+        t.sample(f, 1008, ts, {folder}, self, 501);
+        CHECK(tracked(t, 350)->session == "B" && tracked(t, 351)->session == "B");
+        CHECK(tracked(t, 340)->session.empty());
+        // `exec claude`: the shell itself is Claude Code, so all under it.
+        FakeProcs g;
+        g.add(1, 0, 1, "launchd", "/");
+        g.add(self, 1, 10, "MiniCode", "/");
+        g.add(500, self, 20, "node", folder).cmd = "node /opt/claude/cli.js";
+        g.add(501, 500, 30, "rg", folder);
+        Tracker te;
+        std::vector<Terminal> one = {{5, "claude", 500, 7, "C", 25}};
+        te.sample(g, 1000, one, {folder}, self, 501);
+        CHECK(tracked(te, 501) && tracked(te, 501)->session == "C");
+    }
+
     GROUP("procs:outside");
     {
         FakeProcs f;

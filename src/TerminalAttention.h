@@ -46,6 +46,8 @@ typedef NS_ENUM(NSInteger, MCAttentionMark) {
 - (NSString *)sessionIdForTerminal:(TerminalView *)terminal;
 - (NSString *)transcriptForTerminal:(TerminalView *)terminal;
 - (NSString *)sessionCwdForTerminal:(TerminalView *)terminal;
+// When a notify last named it (seconds since the reference date), 0 for none.
+- (NSTimeInterval)sessionTimeForTerminal:(TerminalView *)terminal;
 // The live terminal a session runs in, by its id or else its transcript.
 - (TerminalView *)terminalForSession:(NSString *)sessionId transcript:(NSString *)transcript;
 @end

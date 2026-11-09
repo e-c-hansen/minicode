@@ -76,7 +76,11 @@ struct Terminal {
     std::string title;
     int shellPid = 0;         // 0 while it has no shell
     int window = 0;           // `minicode state`'s window id
-    std::string session;      // the Claude session running in it, when known
+    // The Claude Code session last named in it by `minicode notify` (the
+    // attention board's), and when that notify came, in microseconds since
+    // 1970 as process start times are; empty and 0 when none came.
+    std::string session;
+    int64_t sessionNamedAt = 0;
 };
 
 enum class Origin { Terminal, Outside };
@@ -92,6 +96,9 @@ struct Proc {
     int terminal = 0;         // the terminal it came from (Origin::Terminal)
     std::string terminalTitle;
     int window = 0;           // that terminal's window
+    // The Claude Code session that started it (R7.4): set once, when it is
+    // first seen under the program that named a session in its terminal
+    // (see Tracker), and kept after that program or its terminal is gone.
     std::string session;
     bool alive = true;
     double exitedAt = 0;      // when a sample first missed it
@@ -126,6 +133,22 @@ public:
 private:
     std::map<Key, Proc> procs_;
     std::vector<Basic> list_;
+    // Per terminal, the session named in it and the process that runs it:
+    // the newest of the shell's children started before the notify (Claude
+    // Code holds the terminal's foreground while its hooks run, so nothing
+    // else can have started from that shell since), or the shell itself
+    // when the shell is no shell any more (`exec claude`). A process gets
+    // the session when it is under that process. Picked again when another
+    // session is named, or when the process has exited and a later notify
+    // names the session again (`claude --resume`); never from a notify
+    // that came before the process started, so a program run by hand after
+    // Claude Code quit is nobody's.
+    struct SessionRoot {
+        std::string session;
+        int64_t namedAt = 0;
+        Key root;
+    };
+    std::map<int, SessionRoot> sessions_;
 };
 
 // ------------------------------------------------------------ the panel

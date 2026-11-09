@@ -22,7 +22,7 @@ static NSString *PNS(const std::string &s) {
 @interface MCProcItem : NSObject
 @property(nonatomic) int pid, ppid, pgid;
 @property(nonatomic) int64_t start;
-@property(nonatomic, copy) NSString *name, *command, *cwd, *terminalTitle;
+@property(nonatomic, copy) NSString *name, *command, *cwd, *terminalTitle, *session;
 @property(nonatomic) uint64_t memory;
 @property(nonatomic) double cpu;
 @property(nonatomic, copy) NSArray<NSNumber *> *ports;   // each once, in order
@@ -77,6 +77,7 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
     it.command = PNS(p.command);
     it.cwd = PNS(p.cwd);
     it.terminalTitle = PNS(p.terminalTitle);
+    it.session = PNS(p.session);
     it.memory = p.memory;
     it.cpu = p.cpu;
     NSMutableArray<NSNumber *> *ports = [NSMutableArray array];
@@ -480,6 +481,8 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
         if (p.outside) [tip addObject:@"Not started in minicode"];
         else if (p.orphan)
             [tip addObject:[NSString stringWithFormat:@"Its terminal (%ld) was closed", (long)p.terminal]];
+        if (p.session.length)
+            [tip addObject:[NSString stringWithFormat:@"Started by Claude Code session %@", p.session]];
         if (!p.alive) [tip addObject:@"Exited"];
         v.toolTip = [tip componentsJoinedByString:@"\n"];
     } else {
