@@ -16,6 +16,7 @@
 #import "TerminalGridView.h"
 #import "TerminalPanel.h"
 #import "AppSettings.h"
+#import <objc/message.h>
 #import "TreeDetails.h"
 #include <libproc.h>
 #include <sys/stat.h>
@@ -470,6 +471,13 @@ MC_GUI_SUITE(terminal_exec) {
 }
 
 // ------------------------------------------ the inline agent and auto-save
+// What the auto-save timer runs, run now (EditorController+Persistence.mm).
+static void AutoSaveNow(EditorController *c) {
+    SEL save = NSSelectorFromString(@"autoSaveNow");
+    GCHECK([c respondsToSelector:save]);
+    if ([c respondsToSelector:save]) ((void (*)(id, SEL))objc_msgSend)(c, save);
+}
+
 MC_GUI_SUITE(agent_autosave) {
     MCLooseState *s = [MCLooseState new];
     NSString *file = MCGuiProjectFile(@"agent-save.txt");
@@ -498,10 +506,11 @@ MC_GUI_SUITE(agent_autosave) {
         MCAgentSession *agent = [s.c valueForKey:@"agentSession"];
         return agent.editPending;
     });
-    // A pause before a negative check: auto-save (200 ms) must not write
-    // the proposed edit in this time.
-    MCGuiPause(0.8);
+    // Auto-save (200 ms) must not write the proposed edit. Not a pause:
+    // the step runs the auto-save itself (autoSaveNow, what the delay's
+    // timer runs), so the check holds whenever that timer would fire.
     MCGuiStep(@"proposed, not in the file, while Keep waits", ^{
+        AutoSaveNow(s.c);
         MCAgentSession *agent = [s.c valueForKey:@"agentSession"];
         GCHECK([agent.pendingText hasPrefix:@"ALPHA\n"]);
         GCHECK([Text(s.c).string hasPrefix:@"alpha\n"]);
@@ -521,8 +530,8 @@ MC_GUI_SUITE(agent_autosave) {
     MCGuiWait(@"the second edit", 20, ^BOOL {
         return ((MCAgentSession *)[s.c valueForKey:@"agentSession"]).editPending;
     });
-    MCGuiPause(0.8);   // negative, as above
     MCGuiStep(@"proposed; Discard", ^{
+        AutoSaveNow(s.c);   // as above
         MCAgentSession *agent = [s.c valueForKey:@"agentSession"];
         GCHECK_EQ_STR(agent.pendingText, @"ALPHA\nBETA\n");
         GCHECK([Text(s.c).string isEqualToString:@"ALPHA\nbeta\n"]);
@@ -530,8 +539,8 @@ MC_GUI_SUITE(agent_autosave) {
         [agent discard];
         GCHECK([Text(s.c).string isEqualToString:@"ALPHA\nbeta\n"]);
     });
-    MCGuiPause(0.6);   // negative: no auto-save of the discarded edit
     MCGuiStep(@"the disk never had BETA", ^{
+        AutoSaveNow(s.c);   // no auto-save of the discarded edit
         GCHECK_EQ_STR(disk(), @"ALPHA\nbeta\n");
         GCHECK(![[s.c valueForKey:@"dirty"] boolValue]);
         SetSettings(@"lsp.enabled = false\n");

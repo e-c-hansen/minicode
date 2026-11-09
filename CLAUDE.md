@@ -88,7 +88,9 @@ opening comment says what it does in more detail than the lines below.
   macOS job also builds `make dist-zip RELEASE=1` and checks it as
   release.sh does (`nm`, the zip's contents, check-minos); the Android
   release job signs with a key made in the job (`keytool`, random
-  password), never the owner's release key.
+  password), never the owner's release key. Every job has a
+  `timeout-minutes` (macOS 40, tsan 45, the rest 20; `ci:timeouts` checks
+  a new job has one), so a hang never holds a runner for six hours.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
@@ -121,7 +123,12 @@ opening comment says what it does in more detail than the lines below.
   uploads it to `ppa:echansen/minicode` (`--dry-run` and `--simulate` send
   nothing). Setup is in `packaging/PPA.md`. Account `echansen`, key
   340F7652...1F40 in the Mac's gpg with its passphrase in the Keychain;
-  Launchpad builds amd64 about 35 minutes after an upload. The ThinkPad has its
+  Launchpad builds amd64 about 35 minutes after an upload, and ppa.sh (so
+  release.sh too) waits for it (`scripts/ppa-wait.sh VERSION [N]`, the PPA's
+  public getBuildRecords) and fails unless it is "Successfully built" (exit 3
+  failed: upload N+1; 4 not seen to end: run ppa-wait.sh again; `--no-wait`
+  or `MINICODE_PPA_NO_WAIT=1` skips it; `ppa:wait` tests it on canned
+  answers). 1.5.13's build failed unseen when the scripts stopped at dput. The ThinkPad has its
   own key (AEE321CE...DB7F9335) and no Docker, so there ppa.sh runs the
   packaging tools directly (`packaging/PPA.md`, step 9). On the Mac it needs
   Docker, which must not be started unattended (see "Verification").

@@ -14,7 +14,11 @@
 // alone (well under a millisecond of its CPU between two fires; parsed on
 // the main thread they took 50 ms of it). The bound is on that CPU time:
 // a gap in wall time on a loaded machine is mostly the thread waiting for
-// a core (at load 60 to 100 the gaps ran past 15 ms with nothing to do). A completion list of 5,000 items is
+// a core (at load 60 to 100 the gaps ran past 15 ms with nothing to do).
+// It is relative to a baseline taken on the main thread in the same step:
+// parsing (and freeing) one of those notifications, the very work the
+// bound is there to keep off the main thread, so a slow runner, whose
+// parse is slow too, needs no bound of its own. A completion list of 5,000 items is
 // timed the same way, end to end, and noted: its items are parsed and
 // first filtered off the main thread too, and the list's windows are
 // built ahead, so what is left is the rows on show (8 to 11 ms on a loaded
@@ -26,6 +30,7 @@
 #import "EditorController.h"
 #import "Lsp.h"
 #import <QuartzCore/QuartzCore.h>
+#include "Json.h"
 
 namespace {
 LspSession *Session(EditorController *c) { return [c valueForKey:@"lsp"]; }
@@ -91,7 +96,7 @@ void Append(EditorController *c, NSString *text) {
 MC_GUI_SUITE(lsp_progress) {
     __block EditorController *c = nil;
     __block MCStallMeter *meter = [MCStallMeter new];
-    __block double idle = 0, idleCpu = 0;
+    __block double idle = 0, idleCpu = 0, parseOne = 0;
     NSString *file = MCGuiProjectFile(@"progress/app.py");
 
     // 5,000 items, as a big library's completions would come.
@@ -170,6 +175,20 @@ MC_GUI_SUITE(lsp_progress) {
         idleCpu = meter.busiest;
         MCGuiNote(@"idle: longest main-thread gap %.1f ms (at most %.2f ms of its CPU) over %lu fires",
                   idle * 1000, idleCpu, (unsigned long)meter.fires);
+        // The baseline: one notification as the server writes it, parsed
+        // and freed here, as the client did on the main thread before.
+        NSMutableDictionary *message = [telemetry mutableCopy];
+        message[@"jsonrpc"] = @"2.0";
+        NSData *bytes = [NSJSONSerialization dataWithJSONObject:message options:0 error:nil];
+        const std::string text((const char *)bytes.bytes, bytes.length);
+        const double p0 = MCGuiThreadCpuMs();
+        {
+            Json parsed;
+            GCHECK(Json::parse(text, parsed) && parsed["params"]["events"].size() == 40000);
+        }
+        parseOne = MCGuiThreadCpuMs() - p0;
+        MCGuiNote(@"the baseline: parsing and freeing one %.1f MB notification here, %.2f ms of CPU",
+                  text.size() / 1e6, parseOne);
         [c.window makeFirstResponder:Text(c)];
         Append(c, @"# flood\n");   // sent 0.3 s later, with the timer running
         [meter start];
@@ -182,10 +201,15 @@ MC_GUI_SUITE(lsp_progress) {
         MCGuiNote(@"three 6 MB notifications: longest main-thread gap %.1f ms (at most %.2f ms "
                   @"of its CPU) over %lu fires", meter.longest * 1000, meter.busiest,
                   (unsigned long)meter.fires);
-        // Under 25 ms of the main thread's CPU between two fires, the idle
-        // baseline's on top: a parse there took 50 ms of it. (CI's runner
-        // took 15 ms where this Mac takes under 5.)
-        GCHECK_TIME(meter.busiest, 25 + idleCpu, @"the main thread's busiest gap while they arrive");
+        // Less of the main thread's CPU between two fires than half the
+        // parse of one notification on it, with the idle meter's busiest
+        // gap on top. With the parse put back on the main thread a gap
+        // held 73 ms against a baseline of 83 (a bound of 42), so it fails;
+        // as it is, 2 to 12 ms here on a loaded Mac. CI's runner took 15 to
+        // 35 against the old absolute bounds of 10 and 25, its parse not
+        // measured then; a slower parse there raises the bound with it.
+        GCHECK_TIME(meter.busiest, idleCpu + parseOne / 2,
+                    @"the main thread's busiest gap while they arrive (half a parse)");
         GCHECK_EQ_STR(Session(c).statusText, @"fakelsp: Indexing: 5/5 files 100%");
         NSTextView *tv = Text(c);
         tv.selectedRange = NSMakeRange(NSMaxRange([tv.string rangeOfString:@"x = na"]), 0);
