@@ -199,9 +199,10 @@ const NSTimeInterval kAfterChange = 0.3;
 // looks up the attributes at the pane and the caret (the visible range,
 // the blink rect), and with the highlighter's hundreds of thousands of
 // color runs a lookup far from the last one walks the runs between, a
-// cost per piece. Measured at the middle of 100,000 lines: 6 to 7.5 s of
-// CPU in idle turns, against 2.3 s that contiguous layout spent before the
-// tab could show (keystroke suite, the same Mac), and pieces of 2,048
+// cost per piece. Measured at the middle of 100,000 lines (keystroke
+// suite): 1.8 s of CPU in idle turns against the 1.2 s contiguous layout
+// spent before the tab could show, on a quiet Mac, and 6 to 7.5 s against
+// 2.3 on a loaded one; pieces of 2,048
 // characters cost two and a half times as much in all as pieces of 65,536.
 - (void)step {
     if (!_watching) return;

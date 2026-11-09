@@ -672,9 +672,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   moved 4 points up, not 18 down) until laid out. After each hole filled
   TextKit looks up attributes at the pane and the caret, and with the
   highlighter's 520,000 color runs a lookup far from the last walks the
-  runs between: the catch-up costs about three times the CPU contiguous
-  layout did (6 to 7.5 s in idle turns against 2.3 s of stall, for 50,000
-  lines), and small pieces far more. `textDidChange:`'s copy into `sourceText` shares characters
+  runs between: the catch-up costs 1.5 to 3 times the CPU contiguous
+  layout did (1.8 s in idle turns against a 1.2 s stall for 50,000 lines
+  on a quiet Mac, 6 to 7.5 against 2.3 on a loaded one), and small pieces
+  far more. `textDidChange:`'s copy into `sourceText` shares characters
   (about a microsecond) and the backups rely on a new object per change;
   measured, leave it.
 - **Trap: a Markdown page's text blocks outlive it** (2026-11-07). The
