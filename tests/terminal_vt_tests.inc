@@ -354,6 +354,52 @@ void testTerminalVt() {
         CHECK(id != 0 && s.underlineColor(id).b == 99999 % 256);
         CHECK(s.underlineColorCount() == 1);
     }
+    {
+        // Round 6's terminal defect 3: with every id in use by 9,000 lines
+        // of scrollback, each SGR whose text held "58" (38;5;58, a channel
+        // of 158) scanned every cell and run again, about 0.1 ms each. Now
+        // only a new underline color that finds the table full may scan,
+        // and only once the output since the last scan is a quarter of
+        // what it read.
+        TerminalScreen s(80, 24);
+        s.setScrollbackLimit(9000);
+        auto color = [](int i) {
+            return "\x1b[58;2;" + std::to_string(i / 65536) + ";" + std::to_string(i / 256 % 256) +
+                   ";" + std::to_string(i % 256) + "m";
+        };
+        std::string fill;
+        for (int i = 0; i < 9000; i++)
+            fill += color(i % (int)TermColorTable::kMax) + "u\x1b[59m line " + std::to_string(i) + "\r\n";
+        s.feed(fill);
+        CHECK(s.underlineColorCount() == TermColorTable::kMax);
+        const int scans0 = s.underlineColorScans();
+        std::string other, fresh;
+        for (int i = 0; i < 5000; i++)
+            other += i % 2 ? "\x1b[38;5;58m\x1b[1;1Ha" : "\x1b[48;2;158;58;1m\x1b[1;1Hb";
+        for (int i = 0; i < 5000; i++) fresh += "\x1b[1;1H" + color(100000 + i) + "c";
+        double t0 = cpuMs();
+        s.feed(other);
+        const double otherMs = cpuMs() - t0;
+        const int scans1 = s.underlineColorScans();
+        t0 = cpuMs();
+        s.feed(fresh);
+        const double freshMs = cpuMs() - t0;
+        const int scans2 = s.underlineColorScans();
+        std::printf("    5,000 SGRs with 58 in their text against a full table: %.1f ms, %d scans; "
+                    "5,000 new underline colors: %.1f ms, %d scans\n",
+                    otherMs, scans1 - scans0, freshMs, scans2 - scans1);
+        CHECK(scans1 == scans0);                         // no new underline color: no scan
+        // 5,000 misses, at about 30 units of work each against about
+        // 30,000 entries a scan reads: a scan every thousand or so (one
+        // per SGR before).
+        CHECK(scans2 - scans1 >= 1 && scans2 - scans1 <= 40);
+        CHECK_TIME(otherMs, 400);
+        CHECK_TIME(freshMs, 400);
+        // A new color with every id in use is the text's; the scrollback
+        // keeps its colors.
+        CHECK(s.cell(0, 0).style.underlineColor == 0);
+        CHECK(s.underlineColor(s.lineCell(-1, 0).style.underlineColor).kind == TermColor::RGB);
+    }
 
     GROUP("term:kitty-keys");
     {
@@ -522,5 +568,28 @@ void testTerminalVt() {
         CHECK(ask() == "\x1b[?2027;1$y");
         s.feed(vtMark("C") + "\x1b[?2027l");
         CHECK(ask() == "\x1b[?2027;2$y");
+    }
+    {
+        // Round 6's terminal defect 5: fzf's widgets (Ctrl+R, Ctrl+T with
+        // --height) draw below the prompt between 133;A and 133;C, counting
+        // clusters; they put the pty in raw mode with ISIG off, which ZLE
+        // never does. With the host saying so, clusters there; back to
+        // zsh's code points once the tty is ZLE's again.
+        const std::string flag = "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8";
+        TerminalScreen s = vtScreen(vtMark("A"), 40, 3);
+        s.feed("\r" + flag);
+        CHECK(s.cursorCol() == 4);
+        s.setRawTty(true);
+        CHECK(s.clusterWidths());
+        s.feed("\r" + flag);
+        CHECK(s.cursorCol() == 2);
+        s.setRawTty(false);
+        CHECK(!s.clusterWidths());
+        s.feed("\r" + flag);
+        CHECK(s.cursorCol() == 4);
+        // A program's own choice still wins.
+        s.feed("\x1b[?2027l");
+        s.setRawTty(true);
+        CHECK(!s.clusterWidths());
     }
 }
