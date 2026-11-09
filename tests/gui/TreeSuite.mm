@@ -251,13 +251,19 @@ MC_GUI_SUITE(tree) {
         // (deep, under src) change while closed.
         [c.outline collapseItem:ItemAt(c, docs)];
         [c.outline collapseItem:ItemAt(c, src)];
+        mark = MCTreeListingCount();
         MCGuiWriteFile(file(@"docs/guide.md"), @"g\n");
         MCGuiWriteFile(file(@"src/deep/e.txt"), @"e\n");
     });
-    // The scenario, not a wait: the events must arrive while the folders
-    // are closed, and the tree shows no sign of them until they open.
-    MCGuiPause(1.0);
+    // The events must arrive while the folders are closed: waited for by
+    // the listings they cause (both folders were loaded, so both are
+    // listed again, closed as they are).
+    MCGuiWait(@"docs and deep listed again while closed", 10, ^BOOL {
+        NSArray<NSString *> *listed = ListedSince(mark, repo);
+        return [listed containsObject:docs] && [listed containsObject:deep];
+    });
     MCGuiStep(@"opened again, they show what changed while closed", ^{
+        GCHECK(![c.outline isItemExpanded:ItemAt(c, docs)] && ![c.outline isItemExpanded:ItemAt(c, src)]);
         [c.outline expandItem:ItemAt(c, docs)];
         [c.outline expandItem:ItemAt(c, src)];
         GCHECK(RowOf(c, file(@"docs/guide.md")) >= 0);
