@@ -537,6 +537,23 @@ container (PanelHost, laid out by hand in layoutContainer)
   right click (`menuForTabAtIndex:`) has the close commands, copy paths,
   reveal, rename and trash; the File menu repeats them for the active tab so
   the palette finds them.
+- **The preview tab** (2026-11-08, VS Code's enablePreview,
+  `workbench.enable-preview`): `MCTab preview`, italic like `agentPreview`.
+  Every open goes through `openFileAtPath:from:` (`openFileAtPath:` is
+  `OpenFrom::Other`, kept) and the rules are the core's
+  (`EditorTabs::opensInPreview`, `treeClick`, `staysPreview`,
+  `placePreview`, `tabs:*`): a tree click, a search result's single click
+  (`SearchPanel previewHandler`) and a code navigation
+  (`lsp.openFileForNavigation`, which first keeps the preview tab it starts
+  from: enablePreviewFromCodeNavigation off) open in preview; Quick Open only
+  with `workbench.enable-preview-from-quick-open`. A kept open of a preview
+  tab's file keeps it; so do an edit (`noteEdited`), a save (`writeText:`), a
+  double-click on its title and Keep Open (tab menu, File menu). The replaced
+  tab is dropped unasked and never in Reopen Closed Tab; a dirty one is kept
+  instead. Agent previews stay their own (neither replaces the other). The
+  workspace edit applier opens kept (`lsp.openFile`): it opens every file
+  before editing any, so previews would replace each other. No
+  `workbench.editor.limit` (off by default in VS Code too).
 - **Dirty means "differs from disk"**: `noteEdited` compares with `savedText`
   (length first), so undoing back clears the dot. `savedText` is the text as
   read (CRLF survives); a UTF-8 BOM is kept apart in `MCTab bom` and written
@@ -596,7 +613,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   `MINICODE_DEFAULTS_SUITE` points it at a scratch suite. A tab over 16 MB or
   not a plain file waits for a click. Windows on one folder share it: each save
   lists the saving window's files then the others'. Agent preview tabs are left
-  out.
+  out (they were saved until 2026-11-08); the user's preview tab is saved as
+  `preview` and comes back as one unless a backup made it dirty.
 - AppDelegate's `current` maps a window an editor made (`ownsWindow:`, Find in
   Folder and TODOs) to that editor; items that edit the file on show are
   disabled while another window is key, so keys reach that window's field.
@@ -679,7 +697,17 @@ container (PanelHost, laid out by hand in layoutContainer)
   character instead (`MCGapParagraphStyle`; a kern on the break before
   opens nothing), answered by name too; `fixAttributesInRange:` reads with
   the gaps hidden (fixing writes a paragraph's first style over the rest)
-  and `setTypingAttributes:` puts the stored style back.
+  and `setTypingAttributes:` puts the stored style back. **The paragraph
+  style by name** (2026-11-08) comes from a run the storage keeps through
+  edits (`storedParagraphStyleAt:`), not the store: TextKit asks for it at
+  both ends of every range whose display it invalidates, a range reaching
+  text not laid out stays pending and is asked about on every keystroke
+  (after Select All, or the undo of a Replace All, which selects every
+  piece), and the store finds a run by walking from the last one asked
+  about, so each key walked the runs from the caret to the end and back:
+  1.1 to 2.4 ms a key against 0.35 (the keystroke suite, which also fuzzes
+  the run against the stored styles). TextKit's own work on the pending
+  range still makes a key after Select All 1.4 to 2.2 times a fresh one.
 - **Contiguous layout stays on**, except in large-file mode (below) and
   while a tab shown again far down (past 32K characters) shows:
   everything that reads positions relies on exactness. Never call `numberOfGlyphs` on the editor; lay out only up to the
@@ -712,9 +740,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   `MCTextViewWillReplaceManyRangesNotification` from 64 ranges on and the
   catch-up goes back to contiguous layout first (1.7 s, the pane then laid
   out from the top once); the workspace edit applier has its own loop and
-  does not post it yet. `textDidChange:`'s copy into `sourceText` shares characters
-  (about a microsecond) and the backups rely on a new object per change;
-  measured, leave it.
+  does not post it yet. `textDidChange:`'s copy into `sourceText` (the
+  backups rely on a new object per change) is a memcpy while the store's
+  string is 8-bit (0.15 ms at 2.4 MB) and a scan of every character once a
+  non-ASCII character has been in it, even undone (1.5 ms a key; AppKit's
+  storage, an NSBigMutableString, copied in microseconds). Not fixed yet
+  (2026-11-08).
 - **Trap: a Markdown page's text blocks outlive it** (2026-11-07). The
   preview shares the editor's view, and once its quotes, code boxes, h1/h2
   rules or tables are laid out the layout manager keeps a block table
@@ -2664,7 +2695,11 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
 
 - `ClickOutline mouseDown:` runs the native tracking first and opens the file
   on release only if no drag began (`dragBegan`); NSOutlineView's selection
-  notifications did not fire reliably. Drag and drop moves rows into folders
+  notifications did not fire reliably. It records the click's count,
+  Command and whether the press before was on the same row
+  (`sameRowAsLastPress`: the window server's click count is by time alone),
+  so a single click opens in the preview tab and a double-click or Cmd+click
+  keeps (`EditorTabs::treeClick`). Drag and drop moves rows into folders
   (`validateDrop:` retargets onto a folder; into itself, a descendant or where
   it is refused), copies files from Finder in and rows out; a clash is reported
   after the drop (Finder waits on a modal during it). `pathMovedFrom:to:` moves
@@ -3167,9 +3202,9 @@ session has a display. Check first.
   editing: keystroke, multiedit, editor_keys, auto_close, bracket_pairs,
   folding, foldperf, multicaretclick, multicaret_rows, find_bar,
   large_file, save, paste, zoomfit;
-  files and windows: tree, tree_hidden, search, replace_in_folder,
-  backups, palette, symbols, keymap, config_writes, daily_work, structure,
-  utf16, hints_panel, swatch_escape;
+  files and windows: tree, tree_hidden, preview_tabs, search,
+  replace_in_folder, backups, palette, symbols, keymap, config_writes,
+  daily_work, structure, utf16, hints_panel, swatch_escape;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
   snippets, problems, servers_by_extension, server_consent, tools_consent,

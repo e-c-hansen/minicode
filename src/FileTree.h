@@ -75,4 +75,11 @@ extern BOOL gShowHidden;
 @property(nonatomic, copy) void (^onRowClick)(NSInteger row, NSPoint pointInView);
 @property(nonatomic, copy) void (^onActivate)(NSInteger row);   // Return / Enter
 @property(nonatomic, assign) BOOL dragBegan;   // set when a row is dragged
+// The click onRowClick is called for: its count, whether the press before
+// it was on the same row (the window server counts clicks by time alone, so
+// a quick click on another row comes as a double-click), and whether
+// Command was held.
+@property(nonatomic, readonly) NSInteger clickCount;
+@property(nonatomic, readonly) BOOL sameRowAsLastPress;
+@property(nonatomic, readonly) BOOL commandClick;
 @end

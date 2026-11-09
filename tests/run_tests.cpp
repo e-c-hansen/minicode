@@ -3951,9 +3951,9 @@ void testSettings() {
     // editor.semantic-highlighting with its five syntax colors, the three
     // inlay hint keys, format.latex, editor.git-gutter with its three
     // colors, editor.bracket-pair-colorization with its four colors, and
-    // syntax.escape and syntax.self, terminal.cursor-style, and
-    // markdown.max-width.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 120);
+    // syntax.escape and syntax.self, terminal.cursor-style, the two
+    // workbench.enable-preview keys, and markdown.max-width.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 122);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -8732,6 +8732,99 @@ static void testEditorTabs() {
     {   // an active index out of range
         Session r = restorable({{"/p/a", "/p/b"}, 7}, has({"/p/a", "/p/b"}));
         CHECK(r.files.size() == 2 && r.active == 0);
+    }
+
+    GROUP("tabs:session-preview");
+    {   // the preview tab stays with its file as others drop out
+        Session s{{"/p/a", "/p/b", "/p/c"}, 0, 2};
+        Session r = restorable(s, has({"/p/b", "/p/c"}));
+        CHECK((r.files == std::vector<std::string>{"/p/b", "/p/c"}) && r.preview == 1);
+    }
+    {   // its file is gone: no preview tab
+        Session r = restorable({{"/p/a", "/p/b"}, 0, 1}, has({"/p/a"}));
+        CHECK(r.files.size() == 1 && r.preview == -1);
+    }
+    {   // none saved, or out of range: none
+        CHECK(restorable({{"/p/a", "/p/b"}, 0}, has({"/p/a", "/p/b"})).preview == -1);
+        CHECK(restorable({{"/p/a", "/p/b"}, 0, 9}, has({"/p/a", "/p/b"})).preview == -1);
+    }
+    {   // a repeat of a file already listed is that tab, kept
+        Session r = restorable({{"/p/a", "/p/b", "/p/a"}, 0, 2}, has({"/p/a", "/p/b"}));
+        CHECK(r.files.size() == 2 && r.preview == -1);
+    }
+
+    GROUP("tabs:preview-from");
+    PreviewSettings on, off, quick;
+    off.enabled = false;
+    quick.fromQuickOpen = true;
+    // VS Code's defaults: a click in the explorer, a search result and a
+    // code navigation's target open in preview; Quick Open does not
+    // (workbench.editor.enablePreviewFromQuickOpen is false).
+    CHECK(opensInPreview(OpenFrom::TreeClick, on));
+    CHECK(opensInPreview(OpenFrom::SearchClick, on));
+    CHECK(opensInPreview(OpenFrom::CodeNavigation, on));
+    CHECK(!opensInPreview(OpenFrom::QuickOpen, on));
+    CHECK(opensInPreview(OpenFrom::QuickOpen, quick));
+    for (OpenFrom kept : {OpenFrom::Other, OpenFrom::TreeDoubleClick, OpenFrom::TreeCommandClick,
+                          OpenFrom::TreeReturn, OpenFrom::SearchOpen}) {
+        CHECK(!opensInPreview(kept, on));
+        CHECK(!opensInPreview(kept, quick));
+    }
+    // Off, nothing opens in preview, Quick Open included.
+    for (OpenFrom any : {OpenFrom::TreeClick, OpenFrom::SearchClick, OpenFrom::CodeNavigation,
+                         OpenFrom::QuickOpen}) {
+        PreviewSettings offQuick = off;
+        offQuick.fromQuickOpen = true;
+        CHECK(!opensInPreview(any, off) && !opensInPreview(any, offQuick));
+    }
+
+    GROUP("tabs:tree-click");
+    CHECK(treeClick(1, false, false) == OpenFrom::TreeClick);
+    CHECK(treeClick(1, true, false) == OpenFrom::TreeClick);
+    CHECK(treeClick(2, true, false) == OpenFrom::TreeDoubleClick);
+    CHECK(treeClick(3, true, false) == OpenFrom::TreeDoubleClick);
+    // A quick second click on another row is the window server's count, not
+    // a double-click on this file.
+    CHECK(treeClick(2, false, false) == OpenFrom::TreeClick);
+    CHECK(treeClick(1, false, true) == OpenFrom::TreeCommandClick);
+    CHECK(treeClick(2, true, true) == OpenFrom::TreeCommandClick);
+
+    GROUP("tabs:stays-preview");
+    CHECK(staysPreview(true, true));
+    CHECK(!staysPreview(true, false));    // a kept open keeps it
+    CHECK(!staysPreview(false, true));    // never makes a kept tab a preview
+    CHECK(!staysPreview(false, false));
+
+    GROUP("tabs:place-preview");
+    {   // no preview tab: right of the active one, nothing replaced
+        PreviewPlace p = placePreview(1, -1, 4);
+        CHECK(p.replace == -1 && p.index == 2);
+        p = placePreview(-1, -1, 0);
+        CHECK(p.replace == -1 && p.index == 0);
+        p = placePreview(-1, -1, 3);
+        CHECK(p.replace == -1 && p.index == 3);
+    }
+    {   // the preview tab is the active one: the new file takes its place
+        PreviewPlace p = placePreview(2, 2, 4);
+        CHECK(p.replace == 2 && p.index == 2);
+        p = placePreview(0, 0, 1);
+        CHECK(p.replace == 0 && p.index == 0);
+    }
+    {   // a preview tab left of the active one: right of the active, which moved left
+        PreviewPlace p = placePreview(3, 1, 5);   // [a P b ACT c] -> [a b ACT new c]
+        CHECK(p.replace == 1 && p.index == 3);
+    }
+    {   // a preview tab right of the active one: just right of the active
+        PreviewPlace p = placePreview(0, 3, 5);   // [ACT a b P c] -> [ACT new a b c]
+        CHECK(p.replace == 3 && p.index == 1);
+        p = placePreview(0, 1, 3);                // [ACT P a] -> [ACT new a]
+        CHECK(p.replace == 1 && p.index == 1);
+    }
+    {   // out of range: treated as none
+        PreviewPlace p = placePreview(0, 7, 2);
+        CHECK(p.replace == -1 && p.index == 1);
+        p = placePreview(5, -1, 2);
+        CHECK(p.replace == -1 && p.index == 2);
     }
 
     GROUP("tabs:labels");

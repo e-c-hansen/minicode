@@ -457,21 +457,11 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     [p play];
 }
 
-// Show a file: its tab when it has one, else a new tab just right of the
-// one on show. The file in the tab that was on show stays as it was,
-// unsaved changes and all.
+// Show a file: its tab when it has one, else a new kept tab just right of
+// the one on show (openFileAtPath:from:, EditorController+Tabs.mm, which
+// also opens files in the preview tab).
 - (void)openFileAtPath:(NSString *)path {
-    [self revealEditor];
-    if (!path) return;
-    if ([path isEqualToString:self.currentPath]) return;  // avoid double-render
-    MCTab *tab = [self tabForPath:path];
-    if (!tab) {
-        if (![self confirmOpeningLargeFile:path]) return;   // over 50 MB: asked first
-        tab = [MCTab new];
-        tab.currentPath = path;
-        [self insertTab:tab];
-    }
-    [self activateTab:tab];
+    [self openFileAtPath:path from:EditorTabs::OpenFrom::Other];
 }
 
 // Read the active tab's file and show it: the first time the tab is shown,

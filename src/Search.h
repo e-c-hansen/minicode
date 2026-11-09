@@ -49,6 +49,11 @@ typedef NS_ENUM(NSInteger, MCOpenFileState) {
 // in it are that editor window's menu targets.
 @property(nonatomic, strong, readonly) NSWindow *window;
 - (void)setScope:(NSString *)dir;   // point search at a specific folder
+// A single click on a result line: shows it in the editor's preview tab,
+// leaving the keyboard in this window, as VS Code's search view does (a
+// double-click or Return goes to the open handler, which keeps the tab).
+// Unset, a single click does nothing.
+@property(nonatomic, copy) void (^previewHandler)(NSString *path, NSInteger line);
 
 // Replace in Folder's way into the editor's tabs (set by EditorController).
 @property(nonatomic, copy) MCOpenFileState (^openState)(NSString *path);

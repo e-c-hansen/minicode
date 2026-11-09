@@ -126,6 +126,12 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 // show, replaced by the next such open; an edit or a double-click on its
 // title keeps it as an ordinary tab.
 @property(nonatomic, assign) BOOL agentPreview;
+// The window's preview tab (workbench.enable-preview): a file opened by a
+// single click in the tree, a search result or a code navigation, replaced
+// by the next such open; an edit, a save, a double-click on its title or on
+// the file in the tree, or Keep Open makes it an ordinary tab. Kept apart
+// from agentPreview on purpose (EditorTabs.h): neither replaces the other.
+@property(nonatomic, assign) BOOL preview;
 @property(nonatomic, strong) NSUndoManager *undoManager;
 @property(nonatomic, assign) uint64_t lastActive;     // for the tab shown after a close
 // Where the view was when another tab took over.

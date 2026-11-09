@@ -16,11 +16,8 @@
     // A file deleted outside has nothing on disk to match.
     const BOOL dirty = _activeTab.gone || now.length != saved.length ||
                        ![now isEqualToString:saved];
-    if (dirty && _activeTab.agentPreview) {
-        _activeTab.agentPreview = NO;   // typed in: the user's tab now
-        [self reloadTabStrip];
-        [self saveSession];
-    }
+    if (dirty && (_activeTab.agentPreview || _activeTab.preview))
+        [self keepPreviewTab:_activeTab];   // typed in: an ordinary tab now
     if (dirty == self.dirty) return;
     self.dirty = dirty;
     [self updateTitle];

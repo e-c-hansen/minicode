@@ -19,7 +19,7 @@ typedef NS_ENUM(NSInteger, MCTabAttention) {
 @property(nonatomic, copy) NSString *title;
 @property(nonatomic, copy) NSString *toolTip;   // the whole path
 @property(nonatomic, assign) BOOL dirty;        // a dot in place of the close button
-@property(nonatomic, assign) BOOL preview;      // the agent preview tab: an italic title
+@property(nonatomic, assign) BOOL preview;      // a preview tab (the user's or an agent's): an italic title
 @property(nonatomic, assign) MCTabAttention attention;
 @end
 
@@ -29,7 +29,7 @@ typedef NS_ENUM(NSInteger, MCTabAttention) {
 // A click on a tab, and a click on its close button or a middle click on it.
 @property(nonatomic, copy) void (^onSelect)(NSInteger index);
 @property(nonatomic, copy) void (^onClose)(NSInteger index);
-// A double-click on a tab's title (keeps the agent preview tab).
+// A double-click on a tab's title (keeps a preview tab).
 @property(nonatomic, copy) void (^onDoubleClick)(NSInteger index);
 // A tab dragged along the strip (past 4 points) and let go over it: from
 // its index to the one it takes (EditorTabs::dropIndex, by the tabs'

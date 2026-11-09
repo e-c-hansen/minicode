@@ -163,6 +163,12 @@
 - (BOOL)confirmCloseAllTabs;
 @property(nonatomic, readonly) BOOL hasUnsavedChanges;
 - (NSArray<NSString *> *)recentTabPaths;
+// Quick Open's file: in a kept tab, or in the preview tab with
+// workbench.enable-preview-from-quick-open; selected in the tree as a click
+// there would.
+- (void)openFileFromQuickOpen:(NSString *)path;
+// Keep Open: the tab on show, if it is a preview tab, becomes an ordinary one.
+- (void)keepActiveTabOpen:(id)sender;
 @end
 
 // EditorController+Persistence.mm

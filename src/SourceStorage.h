@@ -37,6 +37,20 @@
 // itself (Lsp::inlayFollowEdit), at the moment of the edit, so layout
 // never meets a gap on the wrong character.
 //
+// The paragraph style asked for by name comes from a run kept through
+// edits (2026-11-08). The store finds a character's attribute run by
+// walking from the last run asked about, so a question far from the caret
+// walks every run between (440,000 in a highlighted 100,000-line file),
+// and the next question at the caret walks back. TextKit asks for the
+// paragraph style (text blocks) at both ends of every range whose display
+// it invalidates, and a range reaching text not laid out stays pending,
+// asked again on every keystroke: after Select All, or the undo of a
+// Replace All (which selects every piece it put back), each key cost
+// three times what it cost before (1.1 ms against 0.35, 2.3 ms on CI).
+// The run of one paragraph style (the whole text, for source) is found
+// once and moved with each edit that keeps it; an edit that may split it
+// forgets it.
+//
 // Words: while the editor's text view is editable (source text), a
 // double-click selects and Option+Left, Option+Right and Option+Delete step
 // by the core's words (MultiCaret.h: VS Code's default
