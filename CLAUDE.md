@@ -3518,7 +3518,7 @@ core file its files include. Traps paid for:
 
 ## Current state (2026-11-08)
 
-- **Released: 1.5.15** (2026-11-08), and the user's Homebrew copy is on it.
+- **Released: 1.5.17** (2026-11-09), and the user's Homebrew copy is on it.
   Since 1.5.8: 1.5.9 security and data safety (bracketed paste, secure
   keyboard entry, symlinked config writes, the tectonic checksum and
   `--untrusted`, formatter consent, the cask's arm64 requirement); 1.5.10
@@ -3535,37 +3535,15 @@ core file its files include. Traps paid for:
   in Export as HTML and the math batch, snippets, terminal splits and VT
   conformance, LaTeX warnings, the fast switch back to a large tab, the
   PPA build fix; 1.5.15 VS Code's Cmd+Up/Down and word separators, and the
-  terminals' own zoom. Every release from 1.5.7 on has notes of what
-  changed on GitHub (`gh release view v1.5.15`), written for users and
+  terminals' own zoom; 1.5.16 round 7's fixes of the round-6 reassessment
+  and the owner's list (preview tabs, the split editor, browser tabs, Tab
+  and Return in completion, inlay hints that leave the caret alone, the
+  hints panel, Markdown's measure); 1.5.17 Markdown tables and code
+  backgrounds as drawn, Cmd+F in the browser. Every release from 1.5.7 on has notes of what
+  changed on GitHub (`gh release view v1.5.17`), written for users and
   given to release.sh as `MINICODE_RELEASE_NOTES`.
-- **On main for the next release**: round 7, the fixes of the round-6
-  reassessment. rust-analyzer starts with build scripts, proc macros and
-  check on save off (or waits, for a crate with its own toolchain or cargo
-  config), and typescript-language-server waits or uses the user's
-  TypeScript, until the folder's tools are allowed; a formatter
-  configuration above the folder and `npx prettier` count as the folder's
-  code; snippets read the clipboard only for `$CLIPBOARD` and nest 64 deep;
-  inlay hints show at a line's start; a long tab shown again far down
-  shows at once (`MCLayoutCatchUp`); bracket colors are painted only on
-  screen; the find bar copies the text once per edit, not per keystroke;
-  the LSP client's copy is chunked and unchanged tabs are not sent again;
-  change bars keep a BOM and follow git run elsewhere; a text file with
-  "Subproject commit" lines stages by hunk; Show Hidden Files is one switch
-  for every window, checked and kept; Find in Folder searches UTF-16 with a
-  BOM, and such a file opens as text and is saved in its own encoding
-  (`MCTab encoding`); the terminal's exec hook gives its environment only to the exec and
-  no nonce to an emulating zsh, each process has its own integration
-  folder, the underline-color table frees ids amortized, the paste question
-  shows the control character, and a widget's picker (fzf) gets cluster
-  widths; the inline agent's Keep lands where its diff showed and
-  insertions are marked; the compare view's last per-hunk choice has a 3 s
-  grace; Evidence reads python's options; `hooks --install` keeps a hard
-  link; notes land on their line in large files; `state` and `selection`
-  count lines as the gutter does; a process carries the Claude Code session
-  that started it; ppa.sh waits for Launchpad's result; every CI job has a
-  time limit.
 - **PPA**: current at 1.5.15 (`1.5.15-1~ppa1~resolute1`, built for amd64 on
-  Launchpad). Uploads go from the ThinkPad (`ssh thinkpad`, checkout
+  Launchpad); 1.5.16 and 1.5.17 wait for the ThinkPad. Uploads go from the ThinkPad (`ssh thinkpad`, checkout
   `~/minicode`), since the Mac has no Docker; unlock its gpg key first
   (`echo test | gpg --clearsign -u EEF9635EDB7F9335`), or signing fails
   once the passphrase cache has expired (1.5.14 was skipped for that
@@ -3606,7 +3584,9 @@ core file its files include. Traps paid for:
   view's grace before the last choice is sent; change bars after a commit
   made in another terminal; Show Hidden Files across two windows; a real
   UTF-16 file (a PowerShell script or Windows log) opened, edited and
-  saved.
+  saved. From 1.5.17: a new zoom on a Markdown page scrolled down (the
+  stale margins never reproduced offscreen); the look of the browser's
+  find bar and of WebKit's selected match.
   **Linux**: none of the 1.5 work ran on Linux beyond CI and Launchpad's
   package build; the ThinkPad still owes the folder picker after closing
   its window, F2 rename in the tree, renames across two windows under
