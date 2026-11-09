@@ -1177,8 +1177,12 @@ theme and at 2x, and the box's height against the text on the ThinkPad
   `tests/gui/AppSeam.h`, and a suite needing more of the app adds a field
   there. `MC_GUI_KEEP=1` keeps the scratch folders, `MC_GUI_VERBOSE=1` names
   each step, and `MC_GUI_SNAPSHOTS=<folder>` keeps pictures from
-  `MCGuiSnapshot`. Two lines of noise are expected on every run, a libEGL
-  "DRI3" warning and WebKit's "Can't connect to a11y bus".
+  `MCGuiSnapshot` and one of the window on top at each failed check. Two
+  lines of noise are expected on every run, a libEGL "DRI3" warning and
+  WebKit's "Can't connect to a11y bus". CI's GTK job runs every suite
+  (`.github/workflows/ci.yml`, about 7 seconds there); when they fail, the
+  run keeps those pictures and Meson's log as its `gui-checks` artifact
+  (`gh run download <id> -n gui-checks`).
 
 Two ways to run the app by hand, both described in `../CLAUDE.md`
 ("Verification reality"):
@@ -1422,3 +1426,14 @@ GUI checks (`tests/gui`):
   that uses it and defines `GDK_DISABLE_DEPRECATION_WARNINGS`.
 - In the checks the browser pane's home page is `about:blank`
   (`MINICODE_BROWSER_HOME`), so a window opening never reaches the network.
+  `Browser`'s constructor loads it as an address: through `Browser::load`,
+  which takes what is typed into the bar, it became a web search for
+  "about:blank" until November 2026. The `harness` suite checks the page's
+  address, that it answers JavaScript, and that its process runs inside
+  WebKit's sandbox (a `bwrap` between it and the app in `/proc`).
+- WebKit's sandbox starts on the ThinkPad and on CI's runner: both restrict
+  unprivileged user namespaces through AppArmor, and both load the apparmor
+  package's `bwrap-userns-restrict` profile, which lets `bwrap` make one.
+  Where it cannot start (a Docker container, which needs
+  `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1`), the `harness` suite fails
+  its two sandbox checks rather than passing with a blank browser pane.
