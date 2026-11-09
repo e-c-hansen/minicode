@@ -1,6 +1,7 @@
 // EditorController+StatusBar.mm — EditorController: the status bar, its notes and "Saved ...", and the shortcut hints.
 #import "EditorController+Private.h"
 #import "EditorFont.h"
+#include "PageMeasure.h"
 
 @implementation EditorController (StatusBar)
 
@@ -102,6 +103,9 @@
     [self layoutLargeFileNoteEndingAt:left - 16];
 }
 
+// The hints panel: a scroll view over a text view, at the top right of the
+// window, as tall as its text or the window's room (then it scrolls). The
+// text view neither edits nor selects; the panel keeps out of the way.
 - (void)buildHintsPanelInContainer:(NSView *)container {
     const CGFloat pw = 360, ph = 240, margin = 18;
     NSRect r = NSMakeRect(container.bounds.size.width - pw - margin,
@@ -113,36 +117,85 @@
     self.hintsPanel.layer.cornerRadius = 8;
     self.hintsPanel.layer.borderWidth = 1;
     self.hintsPanel.layer.borderColor = Hex(0x3C3C3C).CGColor;
+    self.hintsPanel.layer.masksToBounds = YES;
     self.hintsPanel.autoresizingMask = NSViewMinXMargin | NSViewMinYMargin;
     self.hintsPanel.hidden = YES;
 
-    NSTextField *lbl = [NSTextField labelWithString:@""];
-    lbl.frame = NSMakeRect(16, 14, pw - 32, ph - 28);
-    lbl.font = MCMonoFont(12, NSFontWeightRegular);
-    lbl.textColor = Hex(0xE0E0E0);
-    lbl.backgroundColor = [NSColor clearColor];
-    lbl.maximumNumberOfLines = 0;
-    lbl.lineBreakMode = NSLineBreakByWordWrapping;
-    [self.hintsPanel addSubview:lbl];
-    self.hintsLabel = lbl;
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSInsetRect(self.hintsPanel.bounds, 1, 1)];
+    scroll.drawsBackground = NO;
+    scroll.borderType = NSNoBorder;
+    scroll.hasVerticalScroller = YES;
+    scroll.hasHorizontalScroller = NO;
+    scroll.autohidesScrollers = YES;
+    scroll.automaticallyAdjustsContentInsets = NO;
+    scroll.scrollerKnobStyle = NSScrollerKnobStyleLight;
+    NSTextView *tv = [[NSTextView alloc] initWithFrame:scroll.bounds];
+    tv.editable = NO;
+    tv.selectable = NO;
+    tv.drawsBackground = NO;
+    tv.richText = YES;
+    tv.usesFontPanel = NO;
+    tv.textContainerInset = NSMakeSize(kHintsPad - 1, kHintsPad - 1);
+    tv.textContainer.lineFragmentPadding = 0;
+    tv.textContainer.widthTracksTextView = NO;
+    tv.horizontallyResizable = NO;
+    tv.verticallyResizable = YES;
+    tv.minSize = NSZeroSize;
+    tv.maxSize = NSMakeSize(FLT_MAX, FLT_MAX);
+    scroll.documentView = tv;
+    [self.hintsPanel addSubview:scroll];
+    self.hintsScroll = scroll;
+    self.hintsTextView = tv;
     [container addSubview:self.hintsPanel];
 }
 
-// Set the hint text and size the panel to fit it, anchored to the top-right.
+// Fill the panel for the room the window has: two columns when they fit
+// side by side, else one, never a row broken in the middle; as tall as the
+// text, or the room, with a scroll bar. Anchored to the top right.
 - (void)updateHints {
-    if (!self.hintsLabel) return;
-    NSAttributedString *text = [self hintsText];
-    self.hintsLabel.attributedStringValue = text;
-
+    NSTextView *tv = self.hintsTextView;
     NSView *container = self.hintsPanel.superview;
-    const CGFloat pw = kHintsWidth, pad = 16, margin = 18;
-    NSRect textRect = [text boundingRectWithSize:NSMakeSize(pw - 2 * pad, 10000)
-        options:NSStringDrawingUsesLineFragmentOrigin];
-    CGFloat ph = ceil(textRect.size.height) + 2 * pad;
-    self.hintsPanel.frame = NSMakeRect(
-        container.bounds.size.width - pw - margin,
-        container.bounds.size.height - [self titlebarHeight] - ph - margin, pw, ph);
-    self.hintsLabel.frame = NSMakeRect(pad, pad, pw - 2 * pad, ph - 2 * pad);
+    if (!tv || !container) return;
+    const CGFloat margin = 18, inset = kHintsPad;
+    const CGFloat W = NSWidth(container.bounds), H = NSHeight(container.bounds);
+    const CGFloat top = H - [self titlebarHeight] - margin;
+    const CGFloat roomH = MAX(80, top - kStatusBarHeight - margin);
+    const CGFloat roomW = MAX(120, W - 2 * margin) - 2 * inset;
+    // Scroll bars that take room (no trackpad, CI) take it from the text.
+    const CGFloat bar = NSScroller.preferredScrollerStyle == NSScrollerStyleLegacy
+        ? [NSScroller scrollerWidthForControlSize:NSControlSizeRegular
+                                     scrollerStyle:NSScrollerStyleLegacy]
+        : 0;
+    NSArray *rows = [self hintsRows];
+    PageMeasure::HintsLayout layout;
+    NSAttributedString *text = [self hintsTextForRows:rows room:roomW layout:&layout];
+    CGFloat textH = [self hintsHeightOf:text width:layout.textWidth];
+    const BOOL scrolls = textH + 2 * inset > roomH;
+    if (scrolls && bar > 0) {
+        text = [self hintsTextForRows:rows room:roomW - bar layout:&layout];
+        textH = [self hintsHeightOf:text width:layout.textWidth];
+    }
+    self.hintsColumns = layout.columns;
+    const CGFloat pw = ceil(layout.textWidth + 2 * inset + (scrolls ? bar : 0));
+    const CGFloat ph = ceil(MIN(textH + 2 * inset, roomH));
+    self.hintsPanel.frame = NSMakeRect(W - pw - margin, top - ph, pw, ph);
+    self.hintsScroll.frame = NSInsetRect(self.hintsPanel.bounds, 1, 1);
+    tv.textContainer.size = NSMakeSize(layout.textWidth, CGFLOAT_MAX);
+    [tv.textStorage setAttributedString:text];
+    [tv sizeToFit];
+    [self.hintsScroll tile];
+}
+
+// The text's height laid out `width` points wide.
+- (CGFloat)hintsHeightOf:(NSAttributedString *)text width:(CGFloat)width {
+    NSTextStorage *storage = [[NSTextStorage alloc] initWithAttributedString:text];
+    NSLayoutManager *lm = [NSLayoutManager new];
+    NSTextContainer *tc = [[NSTextContainer alloc] initWithSize:NSMakeSize(width, CGFLOAT_MAX)];
+    tc.lineFragmentPadding = 0;
+    [lm addTextContainer:tc];
+    [storage addLayoutManager:lm];
+    [lm ensureLayoutForTextContainer:tc];
+    return ceil(NSHeight([lm usedRectForTextContainer:tc]));
 }
 
 // The hints are laid out on tab stops, never with spaces: the key glyphs
@@ -150,68 +203,138 @@
 // spaces leaves every column ragged. A row holds one or two shortcuts:
 //   key | label | key | label       (two shortcuts)
 //   key | label | state             (a pane, with whether it is open)
-static const CGFloat kHintsWidth = 420;
-static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
+// The stops come from the widest key and label of each column as drawn
+// (PageMeasure::layoutHints), at the editor's zoom (MCZoomScale), so no
+// row breaks in the middle; a window too narrow for two columns gets one,
+// a shortcut a row.
+static const CGFloat kHintsPad = 16;
 
-- (void)appendHintsHeading:(NSString *)title to:(NSMutableAttributedString *)s {
-    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
-    ps.paragraphSpacingBefore = s.length ? 10 : 0;
-    ps.paragraphSpacing = 4;
-    [s appendAttributedString:[[NSAttributedString alloc]
-        initWithString:[title.uppercaseString stringByAppendingString:@"\n"]
-            attributes:@{
-                NSFontAttributeName: [NSFont systemFontOfSize:10
-                                                       weight:NSFontWeightSemibold],
-                NSForegroundColorAttributeName: Hex(0x9CA3AF),
-                NSKernAttributeName: @0.6,
-                NSParagraphStyleAttributeName: ps,
-            }]];
+- (void)appendHintsHeading:(NSString *)title to:(NSMutableArray *)s {
+    [s addObject:@{@"heading": title.uppercaseString}];
 }
 
 // One row. `key2`/`label2` may be nil; `state` (muted) takes the second
 // column instead, for panes.
-- (void)appendHintsRow:(NSMutableAttributedString *)s
+- (void)appendHintsRow:(NSMutableArray *)s
                    key:(NSString *)key1 label:(NSString *)label1
                   key2:(NSString *)key2 label2:(NSString *)label2
                  state:(NSString *)state {
-    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
-    ps.tabStops = @[
-        [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft
-                                        location:kHintsLabel1 options:@{}],
-        [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft
-                                        location:kHintsKey2 options:@{}],
-        [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft
-                                        location:kHintsLabel2 options:@{}],
-    ];
-    ps.lineSpacing = 3;
-    NSDictionary *keyAttr = @{
-        NSFontAttributeName: MCMonoFont(12, NSFontWeightMedium),
-        NSForegroundColorAttributeName: Hex(0x4EA1F7),
-        NSParagraphStyleAttributeName: ps,
-    };
-    NSDictionary *labelAttr = @{
-        NSFontAttributeName: [NSFont systemFontOfSize:12],
-        NSForegroundColorAttributeName: Hex(0xE0E0E0),
-        NSParagraphStyleAttributeName: ps,
-    };
-    NSDictionary *stateAttr = @{
-        NSFontAttributeName: [NSFont systemFontOfSize:12],
-        NSForegroundColorAttributeName: Hex(0x9CA3AF),
-        NSParagraphStyleAttributeName: ps,
-    };
-    void (^add)(NSString *, NSDictionary *) = ^(NSString *t, NSDictionary *a) {
-        [s appendAttributedString:[[NSAttributedString alloc] initWithString:t
-                                                                  attributes:a]];
-    };
-    add(key1, keyAttr);
-    add([@"\t" stringByAppendingString:label1], labelAttr);
+    NSMutableDictionary *row = [NSMutableDictionary dictionary];
+    row[@"key1"] = key1 ?: @"";
+    row[@"label1"] = label1 ?: @"";
     if (key2) {
-        add([@"\t" stringByAppendingString:key2], keyAttr);
-        add([@"\t" stringByAppendingString:label2 ?: @""], labelAttr);
+        row[@"key2"] = key2;
+        row[@"label2"] = label2 ?: @"";
     } else if (state) {
-        add([@"\t" stringByAppendingString:state], stateAttr);
+        row[@"state"] = state;
     }
-    add(@"\n", labelAttr);
+    [s addObject:row];
+}
+
+// The rows as text for `room` points of width, and where its stops went.
+- (NSAttributedString *)hintsTextForRows:(NSArray<NSDictionary *> *)rows room:(CGFloat)room
+                                  layout:(PageMeasure::HintsLayout *)layoutOut {
+    const CGFloat z = MCZoomScale();
+    NSFont *keyFont = MCMonoFont(round(12 * z * 2) / 2, NSFontWeightMedium);
+    NSFont *labelFont = [NSFont systemFontOfSize:round(12 * z * 2) / 2];
+    NSFont *headingFont = [NSFont systemFontOfSize:round(10 * z * 2) / 2
+                                            weight:NSFontWeightSemibold];
+    NSDictionary *headingMeasure = @{NSFontAttributeName: headingFont, NSKernAttributeName: @(0.6 * z)};
+    NSDictionary *keyMeasure = @{NSFontAttributeName: keyFont};
+    NSDictionary *labelMeasure = @{NSFontAttributeName: labelFont};
+    auto width = [](NSString *t, NSDictionary *a) -> double {
+        return t.length ? ceil([t sizeWithAttributes:a].width) : 0;
+    };
+    std::vector<PageMeasure::HintRow> measured;
+    for (NSDictionary *row in rows) {
+        PageMeasure::HintRow m;
+        if (row[@"heading"]) {
+            m.heading = true;
+            m.key1 = width(row[@"heading"], headingMeasure);
+        } else if (row[@"gap"]) {
+            m.heading = true;
+        } else {
+            m.key1 = width(row[@"key1"], keyMeasure);
+            m.label1 = width(row[@"label1"], labelMeasure);
+            if (row[@"key2"]) {
+                m.hasKey2 = true;
+                m.key2 = width(row[@"key2"], keyMeasure);
+                m.label2 = width(row[@"label2"], labelMeasure);
+            } else if (row[@"state"]) {
+                m.hasState = true;
+                m.state = width(row[@"state"], labelMeasure);
+            }
+        }
+        measured.push_back(m);
+    }
+    const PageMeasure::HintsLayout layout =
+        PageMeasure::layoutHints(measured, MAX(room, 40), 12 * z, 28 * z);
+    if (layoutOut) *layoutOut = layout;
+
+    auto tab = [](CGFloat at) {
+        return [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft location:at options:@{}];
+    };
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.lineSpacing = round(3 * z);
+    ps.headIndent = layout.label1;   // a label that must wrap stays in its column
+    ps.lineBreakMode = NSLineBreakByWordWrapping;
+    if (layout.columns == 2)
+        ps.tabStops = @[tab(layout.label1), tab(layout.key2), tab(layout.label2)];
+    else if (!layout.wraps)
+        ps.tabStops = @[tab(layout.label1), tab(layout.state)];
+    else
+        ps.tabStops = @[tab(layout.label1)];
+    NSDictionary *keyAttr = @{NSFontAttributeName: keyFont,
+                              NSForegroundColorAttributeName: Hex(0x4EA1F7),
+                              NSParagraphStyleAttributeName: ps};
+    NSDictionary *labelAttr = @{NSFontAttributeName: labelFont,
+                                NSForegroundColorAttributeName: Hex(0xE0E0E0),
+                                NSParagraphStyleAttributeName: ps};
+    NSDictionary *stateAttr = @{NSFontAttributeName: labelFont,
+                                NSForegroundColorAttributeName: Hex(0x9CA3AF),
+                                NSParagraphStyleAttributeName: ps};
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    void (^add)(NSString *, NSDictionary *) = ^(NSString *t, NSDictionary *a) {
+        [s appendAttributedString:[[NSAttributedString alloc] initWithString:t attributes:a]];
+    };
+    BOOL first = YES;
+    for (NSDictionary *row in rows) {
+        if (row[@"heading"]) {
+            NSMutableParagraphStyle *hp = [NSMutableParagraphStyle new];
+            hp.paragraphSpacingBefore = first ? 0 : round(10 * z);
+            hp.paragraphSpacing = round(4 * z);
+            add([row[@"heading"] stringByAppendingString:@"\n"], @{
+                NSFontAttributeName: headingFont,
+                NSForegroundColorAttributeName: Hex(0x9CA3AF),
+                NSKernAttributeName: @(0.6 * z),
+                NSParagraphStyleAttributeName: hp,
+            });
+        } else if (row[@"gap"]) {
+            add(@"\n", @{NSFontAttributeName: [NSFont systemFontOfSize:round(6 * z)]});
+        } else if (layout.columns == 2 || !row[@"key2"]) {
+            add(row[@"key1"], keyAttr);
+            add([@"\t" stringByAppendingString:row[@"label1"]], labelAttr);
+            if (row[@"key2"]) {
+                add([@"\t" stringByAppendingString:row[@"key2"]], keyAttr);
+                add([@"\t" stringByAppendingString:row[@"label2"]], labelAttr);
+            } else if (row[@"state"]) {
+                // At its stop; when even one column wraps, after its label.
+                add([(layout.wraps ? @" " : @"\t") stringByAppendingString:row[@"state"]],
+                    stateAttr);
+            }
+            add(@"\n", labelAttr);
+        } else {
+            // One column: the pair's shortcuts on rows of their own.
+            add(row[@"key1"], keyAttr);
+            add([NSString stringWithFormat:@"\t%@\n", row[@"label1"]], labelAttr);
+            add(row[@"key2"], keyAttr);
+            add([NSString stringWithFormat:@"\t%@\n", row[@"label2"]], labelAttr);
+        }
+        first = NO;
+    }
+    // No trailing newline, or the panel sizes itself one empty line too tall.
+    if ([s.string hasSuffix:@"\n"]) [s deleteCharactersInRange:NSMakeRange(s.length - 1, 1)];
+    return s;
 }
 
 // A command's first key as the hints show it (from keys.conf and the
@@ -238,9 +361,14 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     return [NSString stringWithFormat:@"%@  (also %@)", title, [rest componentsJoinedByString:@", "]];
 }
 
-// Context-aware shortcut list.
+// The shortcut list as text for the widest panel (tests read it).
 - (NSAttributedString *)hintsText {
-    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    return [self hintsTextForRows:[self hintsRows] room:CGFLOAT_MAX layout:NULL];
+}
+
+// Context-aware shortcut list: headings and rows (appendHintsRow:).
+- (NSArray<NSDictionary *> *)hintsRows {
+    NSMutableArray *s = [NSMutableArray array];
     NSString *(^openOr)(BOOL) = ^NSString *(BOOL open) {
         return open ? @"open" : @"hidden";
     };
@@ -469,13 +597,9 @@ static const CGFloat kHintsLabel1 = 52, kHintsKey2 = 208, kHintsLabel2 = 260;
     }
 
     // A short gap, not a whole empty heading, before the way out.
-    [s appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
-        attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:6]}]];
+    [s addObject:@{@"gap": @YES}];
     [self appendHintsRow:s key:[self hk:@"minicode.toggleShortcutHints"] label:@"Hide these hints"
                     key2:nil label2:nil state:nil];
-    // No trailing newline, or the panel sizes itself one empty line too tall.
-    if ([s.string hasSuffix:@"\n"])
-        [s deleteCharactersInRange:NSMakeRange(s.length - 1, 1)];
     return s;
 }
 
