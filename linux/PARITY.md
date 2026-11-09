@@ -219,14 +219,23 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   *Verified on the ThinkPad, 2026-11-09:* `save` passes and fails with
   `win.save` taken out of `main.cpp`; four runs at once pass, and nothing
   outlives a run, a hung step, a crash, or a SIGKILL to the wrapper. It puts
-  nothing on the owner's screen, so it needs no one's eyes; CI has not run
-  it yet (0.2).
-- [~] worktree-agent-afce1366663b4d411 **0.2 CI.** The GTK job installs `xvfb` and `libxtst-dev` and runs the
+  nothing on the owner's screen, so it needs no one's eyes; CI runs it (0.2).
+- [x] **0.2 CI.** The GTK job installs `xvfb` and `libxtst-dev` and runs the
   suites under its 20-minute limit. *Done means:* a deliberately failing check
   turns the job red on a branch. The checks also need `dbus-run-session`
   (Ubuntu's `dbus-daemon` package), which `--no-install-recommends` may
   leave out. Whether WebKit's sandbox (bubblewrap) starts on the runner is
   not known; the app makes a web view in every window.
+  *Verified on GitHub, 2026-11-09:* the job installs `xvfb libxtst-dev
+  dbus-daemon` and runs `meson test --suite gui -v`; a deliberately failed
+  check turned it red with its FAIL line and a picture of the window kept as
+  the `gui-checks` artifact (run 42709131059), and it is green without
+  (42708024644), the whole job about 5.5 minutes and the checks 7 seconds of
+  it. The sandbox starts: the runner restricts user namespaces as Ubuntu
+  desktops do, but loads AppArmor's `bwrap-userns-restrict` profile, so no
+  workaround is needed, and the `harness` suite now checks that the page
+  answers from inside it. Its home page was a web search for "about:blank",
+  online; it is now `about:blank` itself.
 - [ ] **0.3 The registry and keys (D1, D12).** Build `Commands` into the port,
   add `CommandsLinux.cpp` with core tests (each id exists, no key twice where
   places overlap, keys.conf applies), and drive the accelerators, the menu
