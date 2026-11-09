@@ -87,6 +87,15 @@ void Drag(NSView *v, NSPoint start, NSSize by) {
     [v mouseUp:Mouse(w, NSEventTypeLeftMouseUp, b, 0)];
 }
 
+// Ctrl+Cmd with an arrow, through the app's key monitor.
+void CtrlCmdArrow(NSWindow *w, unsigned short keyCode, unichar arrow) {
+    NSString *ch = [NSString stringWithCharacters:&arrow length:1];
+    MCGuiSendKeyToApp(w, keyCode,
+                      NSEventModifierFlagControl | NSEventModifierFlagCommand |
+                          NSEventModifierFlagFunction | NSEventModifierFlagNumericPad,
+                      ch, ch);
+}
+
 // The menu bar's Terminal menu (its item in the bar has no title of its
 // own, so itemWithTitle: finds nothing).
 NSMenu *TerminalMenu() {
@@ -240,18 +249,19 @@ MC_GUI_SUITE(terminal_splits) {
     });
 
     // ---- the keyboard
+    // Ctrl+Cmd+Left and Right are the editor's Move Editor into a Group
+    // elsewhere, so their menu items have them and the key monitor runs the
+    // terminal's in a terminal: sent as the app gets them.
     MCGuiStep(@"Ctrl+Cmd+Right in the left pane widens it by 4 cells", ^{
         [s.t1 focusInput];
         s.before = s.t1.frame.size.width;
-        GCHECK(MCGuiPerformMenuKey(s.c.window, kVK_RightArrow,
-                                   NSEventModifierFlagControl | NSEventModifierFlagCommand, nil, nil));
+        CtrlCmdArrow(s.c.window, kVK_RightArrow, NSRightArrowFunctionKey);
         CGFloat want = s.before + 4 * [TerminalGridView cellSize].width;
         GCHECK(fabs(s.t1.frame.size.width - want) <= 1);
         if (fabs(s.t1.frame.size.width - want) > 1)
             MCGuiNote(@"width %.1f, wanted %.1f", s.t1.frame.size.width, want);
         // Left takes it back.
-        GCHECK(MCGuiPerformMenuKey(s.c.window, kVK_LeftArrow,
-                                   NSEventModifierFlagControl | NSEventModifierFlagCommand, nil, nil));
+        CtrlCmdArrow(s.c.window, kVK_LeftArrow, NSLeftArrowFunctionKey);
         GCHECK(fabs(s.t1.frame.size.width - s.before) <= 1);
     });
     MCGuiStep(@"Ctrl+Cmd+Up in the lower pane of the stack grows it", ^{
@@ -284,10 +294,8 @@ MC_GUI_SUITE(terminal_splits) {
         [term update];
         NSInteger i = [term indexOfItemWithTarget:nil andAction:@selector(resizeTerminalPane:)];
         GCHECK(i >= 0 && ![term itemAtIndex:i].enabled);
-        CGFloat w = s.t1.frame.size.width;
-        MCGuiPerformMenuKey(s.c.window, kVK_RightArrow,
-                            NSEventModifierFlagControl | NSEventModifierFlagCommand, nil, nil);
-        GCHECK(s.t1.frame.size.width == w);
+        // (Ctrl+Cmd+Right is the editor's own there: Move Editor into Next
+        // Group, which split_editor checks.)
         // And with it in a terminal they are on.
         [s.t2 focusInput];
         [term update];

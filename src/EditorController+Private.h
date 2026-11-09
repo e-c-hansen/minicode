@@ -540,7 +540,13 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (BOOL)saveTab:(MCTab *)t;
 - (BOOL)tabHasTextToWrite:(MCTab *)t;
 - (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive;
+// Closes the tab in the editor group with the keyboard (in the other group
+// when only that one holds it). A file the other group also holds stays
+// open there, so nothing is asked.
 - (BOOL)closeTab:(MCTab *)t prompt:(BOOL)prompt;
+// Closes the document in both groups (its file trashed, a server's or an
+// agent's close).
+- (BOOL)closeTabEverywhere:(MCTab *)t prompt:(BOOL)prompt;
 - (void)dropAllTabs;
 - (int)focusedCloseTarget;
 - (void)focusAfterClosingPanel;

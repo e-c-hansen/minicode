@@ -333,6 +333,21 @@ MC_GUI_SUITE(split_editor) {
         GCHECK_EQ_STR(Layout(c), @"b.txt a.py | *c.txt");
     });
 
+    MCGuiStep(@"a document closed for good (its file trashed, a server done with it) goes from both groups", ^{
+        MCGuiWriteFile(F(@"gone.txt"), @"gone\n");
+        [c openFileAtPath:F(@"gone.txt") from:EditorTabs::OpenFrom::Other];
+        // In the left group too, after its tab on show, with the keyboard.
+        const BOOL afterA = [ParkedActive(c).currentPath isEqualToString:F(@"a.py")];
+        [c splitEditor:nil];
+        GCHECK_EQ_STR(Layout(c), afterA ? @"*b.txt a.py gone.txt | c.txt gone.txt"
+                                        : @"*b.txt gone.txt a.py | c.txt gone.txt");
+        [c closeTabEverywhere:[c tabForPath:F(@"gone.txt")] prompt:NO];
+        GCHECK_EQ_STR(Layout(c), @"*b.txt a.py | c.txt");
+        GCHECK([c tabForPath:F(@"gone.txt")] == nil);
+        GCHECK(MCGuiPerformMenuKey(c.window, kVK_ANSI_2, NSEventModifierFlagCommand, nil, nil));
+        GCHECK_EQ_STR(Layout(c), @"b.txt a.py | *c.txt");
+    });
+
     MCGuiStep(@"the session remembers both groups and which had the keyboard", ^{
         [c saveSession];
         NSDictionary *s = SavedSession(c);

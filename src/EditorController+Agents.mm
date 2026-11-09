@@ -852,7 +852,7 @@ static NSDictionary *MCLineColumn(NSString *s, NSUInteger index, MCLineGutter *g
 - (NSUInteger)closeComparisonTabsMatching:(BOOL (^)(MCComparison *comparison))match {
     NSUInteger n = 0;
     for (MCTab *t in [_tabs copy])
-        if (t.comparison && match(t.comparison) && [self closeTab:t prompt:NO]) n++;
+        if (t.comparison && match(t.comparison) && [self closeTabEverywhere:t prompt:NO]) n++;
     return n;
 }
 

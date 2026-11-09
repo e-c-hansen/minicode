@@ -818,7 +818,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     for (MCTab *t in [_tabs copy]) {
         if (t.dirty || !t.currentPath) continue;
         if ([t.currentPath isEqualToString:path] || [t.currentPath hasPrefix:prefix])
-            [self closeTab:t prompt:NO];
+            [self closeTabEverywhere:t prompt:NO];   // in both editor groups
     }
     [self refreshTree:nil];
 }

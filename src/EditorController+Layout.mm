@@ -191,7 +191,7 @@
     self.lsp.closeFile = ^(NSString *p) {
         EditorController *s = weakSelf;
         MCTab *t = [s tabForPath:p];
-        if (t && !t.dirty) [s closeTab:t prompt:NO];
+        if (t && !t.dirty) [s closeTabEverywhere:t prompt:NO];
     };
 
     // Right side hosts the editor plus (lazily) a terminal dock and browser.

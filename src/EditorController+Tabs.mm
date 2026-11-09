@@ -955,6 +955,12 @@ static const NSUInteger kMaxClosedTabs = 50;
     return YES;
 }
 
+- (BOOL)closeTabEverywhere:(MCTab *)t prompt:(BOOL)prompt {
+    if ([self otherGroupHoldsTab:t] && [[self groupTabs] containsObject:t])
+        [self removeTabFromOtherGroup:t];   // the copy here is then the only one
+    return [self closeTab:t prompt:prompt];
+}
+
 // Every tab goes, unasked (the caller asked), and nothing is remembered of
 // it: the folder's tabs stay remembered for when it is opened again.
 - (void)dropAllTabs {

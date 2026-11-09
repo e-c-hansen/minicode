@@ -250,7 +250,7 @@ NSString *NSOf(const std::string &s) { return [NSString stringWithUTF8String:s.c
     // A tab already open on the new file goes first (asked about, if it has
     // changes of its own).
     MCTab *there = [self tabForPath:path];
-    if (there && there != old && ![self closeTab:there prompt:YES]) return NO;
+    if (there && there != old && ![self closeTabEverywhere:there prompt:YES]) return NO;
     if (_activeTab != old) [self activateTab:old];
     NSString *text = self.textView.editable ? [self.textView.string copy] : (self.sourceText ?: @"");
     // In the old file's encoding, as VS Code's Save As keeps it.
