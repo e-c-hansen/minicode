@@ -520,8 +520,8 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     NSString *content = disk.text;
     // The file is gone, or no longer reads as text: the backup is all there is.
     if (!content && restored) content = @"";
-    // Not UTF-8: Quick Look shows what it can (text in another encoding,
-    // or the file's icon).
+    // Not UTF-8, nor UTF-16 that decodes exactly: Quick Look shows what
+    // it can (text in another encoding, or the file's icon).
     if (!content && [[NSFileManager defaultManager] fileExistsAtPath:path] &&
         [self showViewer:MCViewerQuickLook]) {
         [self recordModDate];
@@ -560,7 +560,12 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
                         MCViewerKindRendersMarkdown(viewer)) && !blank;
     self.savedText = content;
     self.dirty = NO;
-    _activeTab.bom = disk.bom;
+    // How the file is written, as read; a restored buffer whose file is
+    // gone keeps what its backup said (takeBackup:intoTab:).
+    if (disk.text) {
+        _activeTab.bom = disk.bom;
+        _activeTab.encoding = disk.encoding;
+    }
     [self recordStamp:disk.stamp ofTab:_activeTab];
     if (restored) [self showRestoredText:restored base:restoredBase inode:restoredInode];
     [self noteLargeFileText:self.sourceText];   // large-file mode, before it shows

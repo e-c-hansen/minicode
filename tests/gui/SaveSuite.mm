@@ -187,7 +187,8 @@ MC_GUI_SUITE(save) {
         EditorController *c = MCGuiController();
         MCGuiWriteFile(F(@"enc.txt"), @"hello\n");
         GCHECK([c showFile:F(@"enc.txt")]);
-        WriteInPlace(F(@"enc.txt"), [NSData dataWithBytes:"\xFF\xFEhi" length:4]);
+        // Neither UTF-8 nor UTF-16 (FF FE "hi" would be UTF-16LE text now).
+        WriteInPlace(F(@"enc.txt"), [NSData dataWithBytes:"\xC3(hi" length:4]);
         [c checkExternalChange];
         GCHECK_EQ_STR(TV(c).string, @"hello\n");
         GCHECK(!c.dirty);

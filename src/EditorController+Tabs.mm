@@ -824,21 +824,20 @@ static const NSUInteger kMaxClosedTabs = 50;
 // auto-save all write a tab's text here. The write goes through
 // FolderSearch::writeFileAtomically, so a symlink stays a link (its file
 // is written), a hard-linked file is written in place, and the mode,
-// owner, extended attributes and creation date stay; the tab's byte order
-// mark goes back in front. On success the tab is clean and in step with
+// owner, extended attributes and creation date stay; the text is written
+// in the tab's encoding (UTF-8, or UTF-16 as read) with its byte order
+// mark back in front. On success the tab is clean and in step with
 // the file as written (its stamp taken from the write itself), and its
 // language servers hear of the save. `interactive` says a failure in an
 // alert, else in the status bar (auto-save never asks anything).
 - (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive {
     if (!t || !text || ![self tabHasTextToWrite:t]) return NO;
     NSString *name = t.currentPath.lastPathComponent;
-    NSData *utf8 = [text dataUsingEncoding:NSUTF8StringEncoding];
-    std::string bytes = t.bom ? "\xEF\xBB\xBF" : "";
-    if (utf8) bytes.append((const char *)utf8.bytes, utf8.length);
-    std::string error = utf8 ? "" : "the text holds a character UTF-8 cannot store";
+    std::string bytes, error;
+    const BOOL encoded = MCEncodeFileText(text, t.encoding, t.bom, &bytes, &error);
     FolderSearch::FileStamp written;
-    if (!utf8 || !FolderSearch::writeFileAtomically(t.currentPath.fileSystemRepresentation, bytes,
-                                                    &error, &written)) {
+    if (!encoded || !FolderSearch::writeFileAtomically(t.currentPath.fileSystemRepresentation,
+                                                       bytes, &error, &written)) {
         NSString *why = [NSString stringWithUTF8String:error.c_str()] ?: @"";
         if (interactive) {
             NSAlert *a = [NSAlert new];

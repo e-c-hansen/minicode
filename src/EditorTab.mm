@@ -34,10 +34,31 @@ MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes) {
     d.stamp = MCStampFrom(st);
     d.tooLarge = r == FolderSearch::ReadStatus::TooLarge;
     if (r != FolderSearch::ReadStatus::Ok) return d;
-    d.bom = FolderSearch::stripUtf8Bom(&bytes);
+    FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
+    bool bom = false;
+    if (!FolderSearch::decodeFileText(&bytes, &encoding, &bom)) return d;
+    d.bom = bom;
+    d.encoding = (MCTextEncoding)encoding;
     d.text = [[NSString alloc] initWithBytes:bytes.data() length:bytes.size()
                                     encoding:NSUTF8StringEncoding];
     return d;
+}
+
+static_assert((int)MCTextEncodingUtf8 == (int)FolderSearch::TextEncoding::Utf8 &&
+                  (int)MCTextEncodingUtf16LE == (int)FolderSearch::TextEncoding::Utf16LE &&
+                  (int)MCTextEncodingUtf16BE == (int)FolderSearch::TextEncoding::Utf16BE,
+              "MCTextEncoding mirrors FolderSearch::TextEncoding");
+
+BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::string *bytes,
+                      std::string *why) {
+    NSData *utf8 = [text ?: @"" dataUsingEncoding:NSUTF8StringEncoding];
+    if (!utf8) {
+        if (why) *why = "the text holds a character UTF-8 cannot store";
+        return NO;
+    }
+    *bytes = FolderSearch::encodeFileText(std::string((const char *)utf8.bytes, utf8.length),
+                                          (FolderSearch::TextEncoding)encoding, bom);
+    return YES;
 }
 
 @implementation MCTab

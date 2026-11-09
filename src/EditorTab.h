@@ -18,18 +18,39 @@
 // nil when nothing is at the path.
 MCDiskStamp *MCStampOfFile(NSString *path);
 
+// How a file's text is written: FolderSearch::TextEncoding, value for value.
+typedef NS_ENUM(NSInteger, MCTextEncoding) {
+    MCTextEncodingUtf8,
+    MCTextEncodingUtf16LE,
+    MCTextEncodingUtf16BE,
+};
+
 @interface MCDiskText : NSObject
-@property(nonatomic, copy)   NSString *text;    // nil: missing, unreadable, too large or not UTF-8
-@property(nonatomic, assign) BOOL bom;          // the file starts with a UTF-8 byte order mark
+// nil: missing, unreadable, too large, not UTF-8, or UTF-16 that does not
+// decode exactly (a lone surrogate, an odd byte)
+@property(nonatomic, copy)   NSString *text;
+// The file starts with a byte order mark: UTF-8's, or UTF-16's (every
+// UTF-16 file read as text has one; without it, it is not text here).
+@property(nonatomic, assign) BOOL bom;
+@property(nonatomic, assign) MCTextEncoding encoding;
 @property(nonatomic, assign) BOOL tooLarge;     // over the limit asked for: not read
 // The file as it was before the read (nil when missing): a writer that
 // finished during the read shows as a change at the next look, never as
 // the text read.
 @property(nonatomic, strong) MCDiskStamp *stamp;
 @end
-// Read a file as UTF-8 text, the byte order mark kept apart, stat'ed
-// before reading (FolderSearch::readFileStable). Safe off the main thread.
+// Read a file as text, UTF-8 or UTF-16 with its byte order mark
+// (FolderSearch::decodeFileText), the mark kept apart, stat'ed before
+// reading (FolderSearch::readFileStable). Safe off the main thread.
 MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes);
+#ifdef __cplusplus
+#include <string>
+// A tab's text as the bytes of its file, in its encoding with its mark
+// (FolderSearch::encodeFileText): what a save writes. NO, with *why, when
+// the text holds what UTF-8 cannot carry (a lone surrogate).
+BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::string *bytes,
+                      std::string *why);
+#endif
 
 // ---------------------------------------------------------------------------
 // MCTab: one open document of a window, and everything that belongs to it
@@ -57,9 +78,12 @@ MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes);
 // the date and inode, what tells a change made outside (a date alone misses
 // a write in the same tick on SMB or exFAT).
 @property(nonatomic, assign) int64_t fileSize;
-// The file starts with a UTF-8 byte order mark, kept out of the text and
-// written back on save (Excel's "CSV UTF-8" files have one).
+// The file starts with a byte order mark, kept out of the text and
+// written back on save (Excel's "CSV UTF-8" files have one), and how it is
+// written: UTF-8, or UTF-16 in either order (always with its mark). Saves
+// write it back the same way, so an unedited file stays byte for byte.
 @property(nonatomic, assign) BOOL bom;
+@property(nonatomic, assign) MCTextEncoding encoding;
 // A read of the file in the background (a clean tab following its file):
 // a newer one, or an edit meanwhile, drops the older result.
 @property(nonatomic, assign) NSUInteger diskReadGeneration;

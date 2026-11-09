@@ -530,7 +530,16 @@ container (PanelHost, laid out by hand in layoutContainer)
 - **Dirty means "differs from disk"**: `noteEdited` compares with `savedText`
   (length first), so undoing back clears the dot. `savedText` is the text as
   read (CRLF survives); a UTF-8 BOM is kept apart in `MCTab bom` and written
-  back.
+  back. **UTF-16 with a BOM** (2026-11-08, D10) is text too: `MCReadDiskText`
+  decodes through `FolderSearch::decodeFileText` (strict: a lone surrogate
+  or an odd byte leaves the file to Quick Look) and `MCTab encoding` says
+  how it is written; every write goes through `MCEncodeFileText`
+  (`encodeFileText`), so an unedited file round-trips byte for byte, Save
+  As keeps the encoding, and a backup records it (`file-encoding`) for a
+  file gone by the restore. Anything comparing a tab with the disk reads
+  the disk with `MCReadDiskText`, never `stringWithContentsOfFile:` as
+  UTF-8 (Replace in Folder once took a clean UTF-16 tab for unsaved
+  changes). UTF-16 without a BOM stays Quick Look.
 - **One writer**: Cmd+S, `saveTab:` and auto-save all go through
   `writeText:toTab:interactive:` over `FolderSearch::writeFileAtomically`
   (a symlink stays a link, a dangling one too, creating the file it names;
@@ -2021,7 +2030,8 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
   (`setPlainMessage:@""`, `saveCurrentFile:` returns); `checkExternalChange`
   reloads keeping the place.
 - `FileSniff::classify` (first 8 KB and name): a NUL byte means binary, never
-  text; SQLite's header means a database; Office, iWork, OpenDocument, ePub,
+  text, unless the head is UTF-16 with its BOM (`isUtf16Text`); SQLite's
+  header means a database; Office, iWork, OpenDocument, ePub,
   archives and fonts go to Quick Look, and so does a file that is not UTF-8;
   .csv, .tsv, .json and .ipynb get viewers. `MCFileViewers` per window; a tab's
   `viewerKind` is without text (Quick Look, big CSV, SQLite), over text (the
@@ -2623,7 +2633,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   apart (`MCTab bom`) diffs against the index text without its U+FEFF
   (`QuickDiff::stripBom`), and Stage Change puts it back (`restoreBom`):
   compared whole, line 0 always read as changed and Revert wrote a second
-  BOM. Option+F5 and
+  BOM. For a UTF-16 tab (`MCTab encoding`) the blob is UTF-16 too:
+  `QuickDiff::readOriginal` reads it unit for unit without its mark and
+  `stagedBlob` writes Stage Change's text back so. Option+F5 and
   Shift+Option+F5 (`nextChange:`) are Editor commands the key monitor runs.
 - **Tool guard trap**: in a worktree-isolated agent session, git commands in
   compound or unusual forms are refused (even a filename containing "git"); use

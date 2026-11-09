@@ -6,16 +6,18 @@
 // one multi-range replacement, one undo step per file; a refusal after
 // edits puts them back. It keeps no state of its own.
 #import "Lsp+Private.h"
+#import "EditorTab.h"   // MCReadDiskText: a file's text as a tab reads it
 
 @implementation LspSession (WorkspaceEdit)
 
 // The text of a file as the editor has it: the text view's for the file on
-// show, a tab's buffer for another open file, else the disk's.
+// show, a tab's buffer for another open file, else the disk's, read as a
+// tab reads it (MCReadDiskText: UTF-16 with its mark too).
 - (NSString *)textOfPath:(NSString *)path uri:(const std::string &)uri {
     if ([self uri:uri isSameFileAs:_uri]) return _tv.string;
     NSString *buffer = self.bufferText ? self.bufferText(path) : nil;
     if (buffer) return buffer;
-    return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    return MCReadDiskText(path, ULLONG_MAX).text;
 }
 
 // The text a server's positions in a file refer to: what it was last sent
@@ -26,7 +28,7 @@
         std::shared_ptr<const std::u16string> t = e.server ? e.server.client.textFor(uri) : nullptr;
         if (t) return [NSString stringWithCharacters:(const unichar *)t->data() length:t->size()];
     }
-    return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    return MCReadDiskText(path, ULLONG_MAX).text;
 }
 
 // Another window with a tab on the file whose text the disk does not have
@@ -40,8 +42,7 @@
         NSString *buffer = other.bufferText(path);
         if (!buffer) continue;
         if (!read) {
-            disk = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding
-                                                error:nil];
+            disk = MCReadDiskText(path, ULLONG_MAX).text;
             read = YES;
         }
         if (!disk || ![buffer isEqualToString:disk]) return YES;

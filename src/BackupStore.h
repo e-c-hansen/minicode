@@ -16,11 +16,14 @@
 // The buffer of one tab, written in the background, after any earlier write
 // or removal for that id; a write overtaken by a newer one for the same id
 // is skipped. `diskDate` nil: the file was never on disk as far as the tab knew.
+// `fileEncoding` is how the file is written (Backups::Entry::fileEncoding).
 - (void)writeID:(NSString *)bid path:(NSString *)path root:(NSString *)root
-       diskDate:(NSDate *)diskDate inode:(uint64_t)inode text:(NSString *)text;
+       diskDate:(NSDate *)diskDate inode:(uint64_t)inode
+   fileEncoding:(NSString *)fileEncoding text:(NSString *)text;
 // The same, now, on the calling thread; NO when it could not be written.
 - (BOOL)writeNowID:(NSString *)bid path:(NSString *)path root:(NSString *)root
-          diskDate:(NSDate *)diskDate inode:(uint64_t)inode text:(NSString *)text;
+          diskDate:(NSDate *)diskDate inode:(uint64_t)inode
+      fileEncoding:(NSString *)fileEncoding text:(NSString *)text;
 - (void)removeID:(NSString *)bid;
 // Waits for every queued write and removal.
 - (void)flush;
