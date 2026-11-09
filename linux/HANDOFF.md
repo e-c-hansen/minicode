@@ -1,5 +1,9 @@
 # Linux port: handoff, September 2026
 
+The work from here is in `PARITY.md`: its stages, rules, and decisions come
+first. The items below are done, and stay for how each was built and what it
+cost.
+
 The GTK4 port under `linux/` was last worked on in August 2026. Since then the
 macOS app has gained its biggest features: the LaTeX preview, the LSP client,
 incremental highlighting, image and PDF viewing, and several file tree

@@ -100,42 +100,12 @@ TeX.
 
 ## Linux parity
 
-The GTK port (`linux/HANDOFF.md`) has the editor, tree, terminal (VTE),
-browser, Markdown and LaTeX previews, language servers, source control and
-media. Almost everything the Mac gained from 1.5.0 on is still missing, its
-logic already in the shared core where it could be:
-
-- tabs and the landing state (`EditorTabs`), backups (`Backups`), auto-save;
-- the command palette and Quick Open (`CommandPalette`), Go to Symbol
-  (`SymbolOutline`) and Go Back (`NavHistory`);
-- line numbers (`LineIndex`), bracket matching (`BracketMatch`) and
-  bracket-pair colors (`BracketPairs`), folding (`Folding`), several carets
-  and the line commands (`MultiCaret`), auto-closing pairs (`AutoClose`),
-  zoom;
-- find and replace with options and Replace in Folder (`TextFind` and
-  `FolderSearch` are already built into the port);
-- rename, references, quick fixes, the Problems list, the second server and
-  Organize Imports (all in `LspClient`), completion's additional edits,
-  snippets (`Snippet`), inlay hints (`InlayHints`), semantic tokens, and
-  the install hints (`InstallHints`);
-- Format Document (`Formatter`), themes from a menu, Adjust Settings;
-- the inline agent, Request a Change, the control channel, the Agents
-  panel and Evidence (`InlineAgent`, `ChangeRequest`, `ControlProtocol`, the
-  Agent* core), agent pages in the browser (`PageCheck`), the terminals
-  waiting for you (`ClaudeHooks`, `AttentionBoard`), the Processes panel
-  (`ProcessTable`), the Claude Code IDE link (`IdeLink`) and the compare
-  view (`SideBySide`);
-- push, pull, sync and autofetch, Stage All, Discard, hunk staging and the
-  commit verbs in the source control panel (`GitModel`, which the port
-  already draws from), and change bars in the gutter (`QuickDiff`);
-- the preview to the side (`MarkdownPage`, `PreviewScroll`), Export as HTML
-  (`MarkdownHtml`), Mermaid diagrams (`MermaidDiagram`), LaTeX problems and
-  warnings on their lines (`LatexLog`), page zoom, and Maximize Pane;
-- the viewers for CSV, JSON, notebooks and SQLite (`FileSniff`, `Csv`,
-  `JsonOutline`, `Notebook`);
-- typeset math (above). Blur is not possible on GNOME: GTK 4 has no API for
-  it and Mutter offers no Wayland blur protocol; KDE Plasma has its own,
-  untried.
+The GTK port has the editor, tree, terminal (VTE), browser, Markdown and LaTeX
+previews, language servers, source control and media. Almost everything the
+Mac gained from 1.5.0 on is still missing. `linux/PARITY.md` is the plan, in
+stages, and says what is done. Blur is not possible on GNOME: GTK 4 has no API
+for it and Mutter offers no Wayland blur protocol; KDE Plasma has its own,
+untried.
 
 Real key presses and a person's eyes on the Linux-only pieces are listed in
 `BUILD-LINUX.md` under "Not verified".

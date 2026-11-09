@@ -3432,7 +3432,8 @@ session has a display. Check first.
 
 ## The Linux port
 
-`linux/HANDOFF.md` (items 1 to 14) and `BUILD-LINUX.md` (build, and what is
+`linux/PARITY.md` is the plan for catching up with the Mac, and its list says
+what is done; start there. `linux/HANDOFF.md` (items 1 to 14) and `BUILD-LINUX.md` (build, and what is
 unverified). It shares the highlighter, Markdown, tasks, settings, comments,
 AutoIndent, KeepSorted, FolderSearch, TextFind, LatexDoc, SyncTex, Json,
 LspClient, TermLinks, GitStatus, GitGraph and GitModel; VTE is its terminal. The core
