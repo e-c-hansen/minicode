@@ -83,6 +83,12 @@ BOOL CoversAscii(NSFont *font) {
     std::vector<NSUInteger> _lineStartGaps;
     uint64_t _charEdits, _lineStartsFor, _lineStartsForEdits;
     BOOL _lineStartsKnown;
+    // The character replacements of the editing session being processed
+    // (counted afresh once one has been): how many, and the last.
+    NSUInteger _replacements;
+    NSRange _lastReplaced;
+    NSUInteger _lastReplacementLength;
+    BOOL _replacementsProcessed;
     // A run of one stored paragraph style (SourceStorage.h): every
     // character in _styleRun has _styleValue. Once edits have moved it, not
     // always the longest such run, which an effective range need not be.
@@ -115,6 +121,16 @@ BOOL CoversAscii(NSFont *font) {
 
 - (BOOL)paragraphStartsAt:(NSUInteger)offset {
     return offset == 0 || IsParagraphBreak([_store.string characterAtIndex:offset - 1]);
+}
+
+- (CGFloat)gapWidthAfterCharacter:(NSUInteger)index {
+    if (_gaps.empty() || _gapsHidden || index >= _store.length) return 0;
+    if ([self paragraphStartsAt:index + 1]) return 0;   // a line-start gap is an indent
+    auto it = std::lower_bound(_gaps.begin(), _gaps.end(), index + 1,
+                               [](const MCTextGap &g, NSUInteger o) { return g.offset < o; });
+    CGFloat width = 0;
+    for (; it != _gaps.end() && it->offset == index + 1; ++it) width += it->width;
+    return width;
 }
 
 - (NSUInteger)characterOfGapAt:(NSUInteger)offset lineStart:(BOOL *)lineStart {
@@ -256,6 +272,28 @@ BOOL CoversAscii(NSFont *font) {
     _gapsGeneration++;
 }
 
+- (void)noteReplacement:(NSRange)range length:(NSUInteger)length {
+    if (_replacementsProcessed) {
+        _replacements = 0;
+        _replacementsProcessed = NO;
+    }
+    _replacements++;
+    _lastReplaced = range;
+    _lastReplacementLength = length;
+}
+
+- (void)processEditing {
+    [super processEditing];   // the DidProcessEditing observers read the replacements
+    _replacementsProcessed = YES;
+}
+
+- (NSUInteger)singleInsertedCharacter {
+    if (_replacementsProcessed || _replacements != 1 || _lastReplaced.length != 0 ||
+        _lastReplacementLength != 1)
+        return NSNotFound;
+    return _lastReplaced.location;
+}
+
 // ---- the paragraph style's run
 static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
 
@@ -321,6 +359,7 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
     [self styleRunReplaced:range length:str.length joins:[self plainTextJoinsStyleRun:range]];
     [_store replaceCharactersInRange:range withString:str];
     _charEdits++;
+    [self noteReplacement:range length:str.length];
     [self moveGapsForEdit:range newLength:str.length];
     if (_onReplaceCharacters) _onReplaceCharacters(range, str.length);
     [self edited:NSTextStorageEditedCharacters | NSTextStorageEditedAttributes range:range
@@ -483,6 +522,7 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
     }
     [_store replaceCharactersInRange:range withAttributedString:attr];
     _charEdits++;
+    [self noteReplacement:range length:attr.length];
     [self moveGapsForEdit:range newLength:attr.length];
     if (_onReplaceCharacters) _onReplaceCharacters(range, attr.length);
     [self edited:NSTextStorageEditedCharacters | NSTextStorageEditedAttributes range:range
@@ -534,6 +574,34 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
     return MultiCaret::move([self wordText], {c},
                             forward ? MultiCaret::Move::WordRight : MultiCaret::Move::WordLeft,
                             false)[0].head;
+}
+
+@end
+
+// ------------------------------------------------------- MCGapLayoutManager
+@implementation MCGapLayoutManager
+
+// What NSTextView's clicks ask: the character, and how far the point is
+// from the place before it to the place after it.
+- (NSUInteger)characterIndexForPoint:(NSPoint)point
+                     inTextContainer:(NSTextContainer *)container
+    fractionOfDistanceBetweenInsertionPoints:(CGFloat *)fraction {
+    CGFloat f = 0;
+    const NSUInteger k = [super characterIndexForPoint:point inTextContainer:container
+              fractionOfDistanceBetweenInsertionPoints:&f];
+    NSTextStorage *ts = self.textStorage;
+    if ([ts isKindOfClass:[MCSourceStorage class]] && k < ts.length) {
+        const CGFloat room = [(MCSourceStorage *)ts gapWidthAfterCharacter:k];
+        if (room > 0) {
+            const NSRange glyphs = [self glyphRangeForCharacterRange:NSMakeRange(k, 1)
+                                                actualCharacterRange:NULL];
+            const NSRect box = [self boundingRectForGlyphRange:glyphs inTextContainer:container];
+            const CGFloat own = MAX((CGFloat)1, NSWidth(box) - room);
+            f = MAX((CGFloat)0, MIN((CGFloat)1, (point.x - NSMinX(box)) / own));
+        }
+    }
+    if (fraction) *fraction = f;
+    return k;
 }
 
 @end

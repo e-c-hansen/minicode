@@ -1581,10 +1581,18 @@ view is disposed (on `unrealize`), or dispose loops forever.
   Don't Allow, the same × put-off); an answer restarts them. clangd (does
   not load compile commands' plugins) and gopls are left alone.
 - **Completion** opens after `.`/`->`/`::` and on a word's second letter; an
-  `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Tab takes;
-  Return only when asked for (Ctrl+Space, Option+Esc), after a trigger
-  character, or once the arrows moved, else a new line; an item equal to the
-  typed word is a new line; Shift+Tab never takes. `filterCompletions` ranks
+  `isIncomplete` list is asked again. `Lsp::completionKeyAccepts`: Return
+  and Tab take the selected item whenever the list shows (VS Code's
+  acceptSuggestionOnEnter "on", the owner's report 2026-11-08: Return on a
+  list that came up by itself and on a word typed out were new lines);
+  Shift+Return and Shift+Tab never take. A key pressed before the list was
+  filtered for the last letter (`_filteredFor`) refilters first: "pro" and
+  Tab in one go took "print". The letter typed is the storage's own record
+  (`MCSourceStorage singleInsertedCharacter`), never the notification's
+  editedRange, which also covers attributes set in the same session: a
+  letter typed between brackets read as "r)\n" changed and the list never
+  opened there. `make guitest SUITES=completion_keys` presses
+  real keys, under basedpyright too where installed. `filterCompletions` ranks
   exact, same-case prefix, any-case prefix, subsequence (sortText within) and
   reselects the first row unless the arrows chose an item still listed. Docs
   show beside the list after `completionItem/resolve` (80 ms).
@@ -1656,11 +1664,30 @@ view is disposed (on `unrealize`), or dispose loops forever.
   typing lands right at it; one before an argument stays put
   (`followsBefore`). A hint at a line's start goes with what follows it and
   is a line-start gap (see "Gaps"); only one at the start of an empty last
-  line is left out. basedpyright gets its `inlayHints` settings named
-  (1.40 has them on by default anyway). `editor.inlay-hints`,
-  `editor.inlay-hint-color`, `editor.inlay-hint-background`. The label is
-  drawn after the text in `drawRect:`, at the glyph box's right edge minus
-  the gap (the box includes the kern); a null (folded) glyph gets none.
+  line is left out. basedpyright gets its `inlayHints` settings named, as
+  its VS Code extension's defaults (genericTypes on, callArgumentNamesMatching
+  off). `editor.inlay-hints` (on, off, on-unless-pressed, off-unless-pressed:
+  Control+Option held, one app-wide flagsChanged monitor posting to the
+  sessions; `MCInlayHintsSetPressed` for checks; hidden is cleared, shown
+  asks again), View > Inlay Hints (`MCInlayHintsMenuItem`, writes the
+  setting), `editor.inlay-hint-color`, `editor.inlay-hint-background`. The
+  label is drawn after the text in `drawRect:`, at the glyph box's right
+  edge minus the gap (the box includes the kern); a null (folded) glyph gets
+  none. **The caret beside them** (the owner's report, 2026-11-08): a click
+  never asks the view's `characterIndexForInsertionAtPoint:` but the layout
+  manager's `characterIndexForPoint:...fractionOfDistanceBetweenInsertionPoints:`,
+  so the editor's is `MCGapLayoutManager` (SourceStorage.h), which measures
+  a point against the glyph's own width and takes the room as past it (a
+  click on a hint's left half put the caret before the word's last letter).
+  The caret is drawn where typing goes, left of a `followsBefore` room
+  (`MCInlayHints caretShiftAtOffset:`): CodeTextView moves the
+  NSTextInsertionIndicator after each `updateInsertionPointStateAndRestartTimer:`,
+  undoing its own last shift when AppKit left the indicator alone (macOS 14
+  and later; earlier systems keep AppKit's place). A double-click on a hint
+  applies its `textEdits` (`Lsp::inlayHintAcceptEdits`: sorted, the import
+  too, refused when overlapping; after typing only a hint inserting at
+  itself, at its moved offset) through `replaceRanges:` as one step, "Insert
+  Inlay Hint".
 - **Problems** (Shift+Cmd+M, `MCProblemsPanel`, above the terminal):
   `problemRows` (files with errors first, then severity, line, column),
   `countProblems`, `problemCountsText`, `problemOneLine`, `stepProblem` (F8 and
@@ -3241,7 +3268,7 @@ session has a display. Check first.
   daily_work, structure, utf16, hints_panel, swatch_escape;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
-  snippets, problems, servers_by_extension, server_consent, tools_consent,
+  snippets, completion_keys, problems, servers_by_extension, server_consent, tools_consent,
   organize_on_save, format, format_consent, format_coverage;
   documents and viewers: markdown_preview, markdown_side,
   markdown_side_sync, markdown_width, markdown_math, mermaid, latex,

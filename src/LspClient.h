@@ -830,25 +830,17 @@ Range parseRange(const Json& j);
 // always the one to select. An empty prefix keeps everything as it was.
 std::vector<CompletionItem> filterCompletions(const std::vector<CompletionItem>& items,
                                               const std::string& prefix);
-// The index of an item that is exactly `typed` (its filter key or its
-// insert text, case-sensitive), or -1. With such an item in the list,
-// Return is a new line unless the arrows chose another.
-int exactCompletion(const std::vector<CompletionItem>& shown, const std::string& typed);
 
-// How the completion list came up: by itself while a word was typed, after a
-// trigger character ("." "->" "::", or the first letter after one), or asked
-// for (Ctrl+Space, Option+Esc).
-enum class CompletionOrigin { Typing, Trigger, Explicit };
-enum class CompletionKey { Return, Tab, ShiftTab };
-// Whether a key pressed while the list shows takes the selected item. When
-// it does not, the list closes and the key does what it does in the editor
-// (a new line, indentation). Tab always takes it. Return takes it when the
-// list was asked for or came after a trigger character, or once the user
-// has moved through it with the arrow keys; a list that came up by itself
-// while typing leaves Return a new line, as does an item that is exactly
-// the word already typed. Shift+Tab never takes it.
-bool completionKeyAccepts(CompletionOrigin origin, bool navigated, CompletionKey key,
-                          bool selectedEqualsTyped);
+// A key pressed while the completion list shows with an item selected.
+enum class CompletionKey { Return, ShiftReturn, Tab, ShiftTab };
+// Whether the key takes the selected item, as VS Code's do by default
+// (editor.acceptSuggestionOnEnter "on", Tab accepting): Return and Tab
+// always, however the list came up and whatever was typed (a word typed out
+// that some item is, is that item, first in the filtered list, and taking
+// it leaves the text as it was). Shift+Return and Shift+Tab never: the list
+// closes and the key does what it does in the editor (a new line, an
+// outdent).
+bool completionKeyAccepts(CompletionKey key);
 
 // The part of a settings tree a workspace/configuration item asks for:
 // "python.analysis" is settings["python"]["analysis"], "" the whole tree.

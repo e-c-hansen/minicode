@@ -685,11 +685,26 @@ MC_GUI_SUITE(keystroke) {
         const double cpu = MCGuiThreadCpuMs() - c0;
         MCGuiNote(@"Replace All of 20,000 matches in the tab shown again: %.0f ms of CPU", cpu);
         GCHECK(!catchUp.watching && !tv.layoutManager.allowsNonContiguousLayout);
-        GCHECK_TIME(cpu, 4000, @"Replace All of 20,000 matches in a tab shown again far down");
         GCHECK([tv.string rangeOfString:@"None"].location == NSNotFound);
         [tv.undoManager undo];
         GCHECK([tv.string rangeOfString:@"Nada"].location == NSNotFound);
         GCHECK(NSEqualRects([c textRectForCharacter:at], exactAt));   // contiguous: exact
+        // The same Replace All again, now that the tab is contiguous, is the
+        // baseline, measured on this thread in this step: a slow runner
+        // (4.6 s on CI's macOS runner, 1.7 s on a quiet M3) slows both. With
+        // the switch to contiguous layout it costs five to seven times the
+        // baseline (going contiguous lays the text out from the top); kept
+        // non-contiguous it took 15.5 s, about twenty-five times it.
+        const double b0 = MCGuiThreadCpuMs();
+        MCGuiUndoGroup(tv.undoManager, ^{
+            GCHECK([(CodeTextView *)tv replaceRanges:ranges withStrings:strings actionName:@"Replace All"]);
+        });
+        const double base = MCGuiThreadCpuMs() - b0;
+        MCGuiNote(@"the same Replace All in the contiguous tab: %.0f ms of CPU", base);
+        GCHECK_TIME(cpu, MAX(4000.0, 10 * base),
+                    @"Replace All of 20,000 matches in a tab shown again far down");
+        [tv.undoManager undo];
+        GCHECK([tv.string rangeOfString:@"Nada"].location == NSNotFound);
     });
     // The undo selected every piece it put back, text not laid out
     // included, which left each later keystroke three times the fresh

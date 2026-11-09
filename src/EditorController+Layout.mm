@@ -89,7 +89,8 @@
     // so the view and what it makes at init (carets, folds) watch that
     // storage; the controller keeps it, since a layout manager does not.
     _sourceStorage = [MCSourceStorage new];
-    NSLayoutManager *layout = [NSLayoutManager new];
+    // Its layout manager answers clicks beside inlay hints' gaps.
+    NSLayoutManager *layout = [MCGapLayoutManager new];
     [_sourceStorage addLayoutManager:layout];
     NSTextContainer *textBox =
         [[NSTextContainer alloc] initWithSize:NSMakeSize(NSWidth(frame), CGFLOAT_MAX)];
