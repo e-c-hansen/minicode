@@ -3953,8 +3953,9 @@ void testSettings() {
     // inlay hint keys, format.latex, editor.git-gutter with its three
     // colors, editor.bracket-pair-colorization with its four colors, and
     // syntax.escape and syntax.self, terminal.cursor-style, the two
-    // workbench.enable-preview keys, and markdown.max-width.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 122);
+    // workbench.enable-preview keys, markdown.max-width, and
+    // control.page-input.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 123);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new

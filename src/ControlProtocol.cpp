@@ -50,12 +50,12 @@ std::vector<CommandSpec> makeCommands() {
     c.push_back({"open-url", "Open a web address in the user's page of the browser pane",
                  {arg("url", ArgType::String, true), arg("terminal", ArgType::Int)}});
     {
-        // One of reload, text, screenshot, console or url (PageCheck.h).
-        CommandSpec s{"page", "Reload or read the agent page (or with yours, the user's)",
+        // One of reload, text, screenshot, console, url or paste (PageCheck.h).
+        CommandSpec s{"page", "Reload, read or paste into the agent page (or with yours, read the user's)",
                       {arg("action", ArgType::String, true), arg("wait", ArgType::Bool),
                        arg("yours", ArgType::Bool), arg("path", ArgType::String),
                        arg("full", ArgType::Bool), arg("overwrite", ArgType::Bool),
-                       arg("since", ArgType::Int)}};
+                       arg("since", ArgType::Int), arg("all", ArgType::Bool)}};
         addTarget(s.args);
         c.push_back(s);
     }
@@ -431,7 +431,13 @@ const Help kHelp[] = {
      "    --yours reads the user's own page instead (not its console). Text,\n"
      "    console and screenshots work only for local pages (localhost,\n"
      "    127.0.0.1, ::1, *.localhost, file://) unless the settings file has\n"
-     "    control.page-any-origin = true. No command runs JavaScript of yours.\n"},
+     "    control.page-any-origin = true. No command runs JavaScript of yours.\n"
+     "minicode page --paste [--all]\n"
+     "    Shows the agent page, gives it the keyboard and types Cmd+V there\n"
+     "    (Cmd+A first with --all, so the clipboard replaces what the field\n"
+     "    holds), into the field the user last clicked into on that page; it\n"
+     "    refuses when nothing there takes text. Off unless the settings file\n"
+     "    has control.page-input = true.\n"},
     {"term",
      "minicode term [--cwd DIR] [--title TITLE] [--run COMMAND]\n"
      "    Opens a new terminal tab and prints its id. --run types COMMAND at\n"
@@ -656,19 +662,21 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
         } else if ((sub == "browse" || sub == "page") && w == "--wait") {
             c.args.set("wait", true);
         } else if (sub == "page" && (w == "--reload" || w == "--text" || w == "--console" ||
-                                     w == "--url")) {
+                                     w == "--url" || w == "--paste")) {
             if (c.args.has("action")) c.error = "page takes one of --url, --text, --console, "
-                                                "--screenshot and --reload";
+                                                "--screenshot, --reload and --paste";
             c.args.set("action", w.substr(2));
         } else if (sub == "page" && takeValue(a, i, "screenshot", v, c.error)) {
             if (c.error.empty() && c.args.has("action"))
-                c.error = "page takes one of --url, --text, --console, --screenshot and --reload";
+                c.error = "page takes one of --url, --text, --console, --screenshot, --reload and --paste";
             c.args.set("action", "screenshot");
             c.args.set("path", absolutePath(v, cwd, home));
         } else if (sub == "page" && w == "--full") {
             c.args.set("full", true);
         } else if (sub == "page" && w == "--overwrite") {
             c.args.set("overwrite", true);
+        } else if (sub == "page" && w == "--all") {
+            c.args.set("all", true);
         } else if (sub == "page" && w == "--yours") {
             c.args.set("yours", true);
         } else if (sub == "page" && takeValue(a, i, "since", v, c.error)) {
@@ -791,7 +799,7 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
         if (!positional.empty()) { c.error = "page takes no argument " + positional[0]; return c; }
         const std::string action = c.args["action"].asString();
         if (action.empty()) {
-            c.error = "page needs one of --url, --text, --console, --screenshot and --reload";
+            c.error = "page needs one of --url, --text, --console, --screenshot, --reload and --paste";
             return c;
         }
         if (c.args.has("full") && action != "screenshot") {
@@ -808,6 +816,14 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
         }
         if (c.args.has("wait") && action != "reload") {
             c.error = "--wait goes with --reload";
+            return c;
+        }
+        if (c.args.has("all") && action != "paste") {
+            c.error = "--all goes with --paste";
+            return c;
+        }
+        if (c.args.has("yours") && action == "paste") {
+            c.error = "--paste types only into the agent page, never yours";
             return c;
         }
         if (action == "url" || (action == "reload" && c.args["wait"].asBool()))

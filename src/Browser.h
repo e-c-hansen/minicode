@@ -74,6 +74,14 @@
 // and this answers NO.
 - (BOOL)showAgentPageQuietly;
 - (void)showUserPage;
+// `page --paste`: shows the agent page and gives its web view the keyboard
+// (the page's own focus, the field last clicked, comes back with it). NO
+// when the pane or its window cannot take it (hidden, or not the key window).
+- (BOOL)giveKeyboardToAgentPage;
+// Types Cmd+<key> into the window as the user would: a key down and up
+// posted to the app's event queue, so they go the way the user's keys go
+// (the page first, then the menus), in order, after the current event.
+- (void)typeCommandKey:(NSString *)key keyCode:(unsigned short)keyCode;
 - (void)closeAgentPage;
 @property(nonatomic, readonly) BOOL hasAgentPage;
 @property(nonatomic, readonly) BOOL agentPageShown;

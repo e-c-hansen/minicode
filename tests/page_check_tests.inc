@@ -252,6 +252,16 @@ static void testPageCheck() {
         CHECK(!parse({"page", "--screenshot"}).error.empty());
         CHECK(!parse({"page", "--text", "extra"}).error.empty());
         CHECK(!parse({"page", "--eval", "1"}).error.empty());   // there is no eval
+        // --paste: agent page only, --all only with it.
+        c = parse({"page", "--paste", "--all"});
+        CHECK(c.error.empty() && c.args["action"].asString() == "paste" && c.args["all"].asBool() &&
+              c.output == Output::None && validateArgs(*findCommand("page"), c.args, err));
+        CHECK(parse({"page", "--paste"}).error.empty() && !parse({"page", "--paste"}).args.has("all"));
+        CHECK(!parse({"page", "--text", "--all"}).error.empty());
+        CHECK(!parse({"page", "--paste", "--yours"}).error.empty());
+        CHECK(!parse({"page", "--paste", "--text"}).error.empty());
+        CHECK(!parse({"page", "--paste", "some text"}).error.empty());   // the clipboard, never an argument
+        CHECK(usageText("page").find("control.page-input") != std::string::npos);
         CHECK(isSubcommand("page") && !launchesApp("page") && launchesApp("browse"));
         CHECK(usageText("page").find("control.page-any-origin") != std::string::npos);
         CHECK(usageText("browse").find("--wait") != std::string::npos);
@@ -314,5 +324,37 @@ static void testPageCheck() {
         CHECK(!errors.empty());
         CHECK(std::string(Settings::defaultFileText()).find("# control.page-any-origin = false\n") !=
               std::string::npos);
+        // control.page-input, off unless set.
+        errors.clear();
+        CHECK(Settings::parse("control.page-input = true\n", &errors).pageInput() && errors.empty());
+        CHECK(!Settings::parse("", nullptr).pageInput());
+        CHECK(!Settings::parse("control.page-any-origin = true\n", nullptr).pageInput());
+        CHECK(std::string(Settings::defaultFileText()).find("# control.page-input = false\n") !=
+              std::string::npos);
+        CHECK(PageCheck::inputOffError().find("control.page-input = true") != std::string::npos);
+    }
+
+    GROUP("page:focus");
+    {
+        using PageCheck::Focus;
+        using PageCheck::focusKind;
+        CHECK(focusKind("TEXTAREA", "textarea", false, false) == Focus::Field);   // Monaco, CodeMirror 5
+        CHECK(focusKind("DIV", "", true, false) == Focus::Field);                // CodeMirror 6, contenteditable
+        CHECK(focusKind("INPUT", "text", false, false) == Focus::Field);
+        CHECK(focusKind("INPUT", "", false, false) == Focus::Field);
+        CHECK(focusKind("INPUT", "search", false, false) == Focus::Field);
+        CHECK(focusKind("IFRAME", "", false, false) == Focus::Frame);
+        // Nothing focused, or nothing that takes text.
+        CHECK(focusKind("", "", false, false) == Focus::None);
+        CHECK(focusKind("BODY", "", false, false) == Focus::None);
+        CHECK(focusKind("BUTTON", "submit", false, false) == Focus::None);
+        CHECK(focusKind("A", "", false, false) == Focus::None);
+        CHECK(focusKind("INPUT", "password", false, false) == Focus::None);
+        CHECK(focusKind("INPUT", "checkbox", false, false) == Focus::None);
+        CHECK(focusKind("INPUT", "file", false, false) == Focus::None);
+        CHECK(focusKind("TEXTAREA", "textarea", false, true) == Focus::None);   // read-only or disabled
+        CHECK(focusKind("DIV", "", true, true) == Focus::None);
+        CHECK(std::string(PageCheck::focusName(Focus::Frame)) == "frame");
+        CHECK(PageCheck::noFieldError("https://x.test/").find("click where the text goes") != std::string::npos);
     }
 }

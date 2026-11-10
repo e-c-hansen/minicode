@@ -3044,7 +3044,19 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   never a search or another scheme. `page --url/--text/--console/
   --screenshot/--reload`, `--yours` for the user's page; text, console and
   screenshots only for local pages unless `control.page-any-origin`, checked
-  again when the read comes back. A screenshot never replaces a file unless
+  again when the read comes back. `page --paste [--all]` (off unless
+  `control.page-input`; 2026-11-09, for practising in an online code pad):
+  shows the agent page, gives its web view the keyboard
+  (`giveKeyboardToAgentPage`, the window must be key), reads
+  `document.activeElement` in the isolated world (`PageCheck::focusKind`: a
+  textarea, a text-like input, contenteditable, or an iframe it cannot see
+  into; never a password field), then posts Cmd+A and Cmd+V key events to the
+  app's queue (`typeCommandKey:`), so they go the way the user's keys go. It
+  never takes text as an argument: the clipboard is the caller's. Trap: in
+  the offscreen harness WebKit hands the page no key events, so the menus
+  take them (Edit > Paste reaches the page; the key downs do not), and a
+  check can see the paste but not Cmd+A reaching an editor like Monaco.
+  A screenshot never replaces a file unless
   `--overwrite` is given, and never goes through a symlink (O_EXCL, or an
   atomic rename with `--overwrite`). Status from
   `decidePolicyForNavigationResponse` (which answers as WebKit does without

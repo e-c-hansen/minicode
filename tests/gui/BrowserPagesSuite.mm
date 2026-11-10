@@ -547,6 +547,76 @@ MC_GUI_SUITE(browserpages) {
         GCHECK(s == 0 && PixelSize(behind).width > 0);
     });
 
+    // ---------------------------------------- typing into the agent page
+    // page --paste: off unless control.page-input; then it shows the agent
+    // page, gives it the keyboard and types Cmd+A, Cmd+V into the field the
+    // page has focused, refusing when none takes text. The page records the
+    // keys and the paste event and stops the paste, so the clipboard's text
+    // (WebKit reads the system's, not the harness's) never matters.
+    auto agentWeb = ^WKWebView *{ return [Pane(c) valueForKey:@"agentWeb"]; };
+    auto focusIn = ^(NSString *name, NSString *element) {
+        MCGuiAsync(name, 20, ^(MCGuiDone done) {
+            NSString *js = [NSString stringWithFormat:@"document.getElementById('%@').focus();"
+                            @"document.activeElement.id", element];
+            [agentWeb() evaluateJavaScript:js completionHandler:^(id value, NSError *error) {
+                GCHECK(!error && [value isEqual:element]);
+                done();
+            }];
+        });
+    };
+    MCGuiStep(@"a page with an editor", ^{
+        MCGuiWriteFile([gSite stringByAppendingPathComponent:@"editor.html"],
+            @"<html><head><title>Editor</title></head><body>\n"
+            @"<textarea id=code>old text</textarea><input id=pw type=password><button id=go>Go</button>\n"
+            @"<script>var seen=[];\n"
+            @"document.addEventListener('keydown',function(e){if(e.metaKey)seen.push(e.key);},true);\n"
+            @"document.addEventListener('paste',function(e){e.preventDefault();seen.push('paste');"
+            @"document.title='Editor '+seen.join(',');},true);\n"
+            @"</script></body></html>\n");
+    });
+    CLI(@"an editor page loads behind the switcher", @[@"browse", Local(@"/editor.html"), @"--wait"],
+        ^(int s, NSString *out, NSString *) {
+        GCHECK(s == 0 && [ParseJSON(out)[@"title"] isEqual:@"Editor"] && !Pane(c).agentPageShown);
+    });
+    CLI(@"page --paste is off by default", @[@"page", @"--paste", @"--all"], ^(int s, NSString *, NSString *err) {
+        GCHECK(s == 1 && [err containsString:@"control.page-input = true"]);
+        GCHECK(!Pane(c).agentPageShown && c.window.firstResponder == keyboard);   // nothing moved
+    });
+    MCGuiStep(@"the setting turns it on", ^{ MCGuiSetSettings(@"lsp.enabled = false\ncontrol.page-input = true\n"); });
+    CLI(@"with nothing focused in the page it refuses", @[@"page", @"--paste", @"--all"],
+        ^(int s, NSString *, NSString *err) {
+        GCHECK(s == 1 && [err containsString:@"click where the text goes"]);
+        // It showed the agent page and gave it the keyboard, for the click.
+        GCHECK(Pane(c).agentPageShown && c.window.firstResponder == agentWeb());
+    });
+    focusIn(@"a password field has the keyboard", @"pw");
+    CLI(@"never into a password field", @[@"page", @"--paste"], ^(int s, NSString *, NSString *err) {
+        GCHECK(s == 1 && [err containsString:@"click where the text goes"]);
+    });
+    focusIn(@"the button has the keyboard", @"go");
+    CLI(@"never into a button", @[@"page", @"--paste"], ^(int s, NSString *, NSString *) { GCHECK(s == 1); });
+    MCGuiStep(@"the user's address bar takes the keyboard back", ^{
+        NSSegmentedControl *sw = [Pane(c) valueForKey:@"switcher"];
+        sw.selectedSegment = 0;
+        [sw sendAction:sw.action to:sw.target];
+        [Pane(c) focusURLBar];
+        GCHECK(!Pane(c).agentPageShown);
+    });
+    focusIn(@"the editor's field was the page's focus", @"code");
+    CLI(@"page --paste --all types into it", @[@"page", @"--paste", @"--all"], ^(int s, NSString *, NSString *err) {
+        if (s != 0) MCGuiNote(@"paste: %@", err);
+        GCHECK(s == 0);
+        GCHECK(Pane(c).agentPageShown && c.window.firstResponder == agentWeb());
+    });
+    // Offscreen, WebKit hands the page no key events (a harness trap: the
+    // keys go straight to the menus), so the page sees the paste that Edit >
+    // Paste makes but not the key downs; in a window on screen it sees Cmd+A
+    // and Cmd+V first, as from the user's own keys.
+    MCGuiWait(@"the paste reached the page's field", 10, ^BOOL {
+        return [Pane(c).agentProbe.title hasSuffix:@"paste"];
+    });
+    MCGuiStep(@"the setting off again", ^{ MCGuiSetSettings(@"lsp.enabled = false\n"); });
+
     // ---------------------------------------------------- memory
     __block uint64_t memStart = 0, webStart = 0;
     __block pid_t webPid = 0;

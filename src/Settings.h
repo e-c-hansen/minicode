@@ -454,6 +454,10 @@ public:
     // and pictures of any page in the browser pane (`minicode page`), not
     // only local ones (off by default; PageCheck.h).
     bool pageAnyOrigin() const { return pageAnyOrigin_; }
+    // control.page-input: whether `minicode page --paste` may type Cmd+A and
+    // Cmd+V into the field the user clicked into on the agent page (off by
+    // default; PageCheck.h).
+    bool pageInput() const { return pageInput_; }
     static const std::vector<std::string>& formatLanguages();
     // git.autofetch: fetch the folder's repository in the background, as
     // VS Code's git.autofetch (off by default); git.autofetch-period, the
@@ -533,6 +537,7 @@ private:
     std::string developSource_;
     std::string agentCommand_;
     bool pageAnyOrigin_ = false;
+    bool pageInput_ = false;
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);

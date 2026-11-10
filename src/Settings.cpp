@@ -1143,6 +1143,7 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                s.gitAutoFetchPeriod_ = (int)seconds;
                return true;),
         MC_KEY("control.page-any-origin", Word, false, return boolValue(v, s.pageAnyOrigin_, e);),
+        MC_KEY("control.page-input", Word, false, return boolValue(v, s.pageInput_, e);),
         MC_KEY("agent.ide-link", Word, false, return boolValue(v, s.ideLink_, e);),
     };
     return table;
@@ -1853,6 +1854,13 @@ const char* Settings::defaultFileText() {
 # so an agent never reads a site you are logged in to. Set this to true to
 # let them read any page.
 # control.page-any-origin = false
+#
+# Nothing an agent sends types into a page either, unless this is true: then
+# minicode page --paste shows the agent page, gives it the keyboard and types
+# Cmd+V there (Cmd+A first with --all), as you would, into the field you last
+# clicked into on that page (it refuses when none has the keyboard). For
+# practising in a site's editor with your own code from the clipboard.
+# control.page-input = false
 
 # Request a Change to minicode (Shift+Cmd+K, macOS only for now) hands what
 # you describe to Claude Code, in a terminal tab opened in minicode's own

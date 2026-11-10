@@ -1030,6 +1030,29 @@ enum { kFindInPageShow = 1, kFindInPageNext = 2, kFindInPagePrevious = 3 };
 
 - (void)showUserPage { [self showPage:NO]; }
 
+- (BOOL)giveKeyboardToAgentPage {
+    MCWebView *web = self.agentWeb;
+    if (!web || !self.window.isKeyWindow || self.hiddenOrHasHiddenAncestor) return NO;
+    if (!self.agentPageShown) [self showPage:YES];
+    if (self.window.firstResponder == web) return YES;
+    web.grantKeyboard = YES;
+    const BOOL took = [self.window makeFirstResponder:web];
+    web.grantKeyboard = NO;
+    return took;
+}
+
+- (void)typeCommandKey:(NSString *)key keyCode:(unsigned short)keyCode {
+    for (NSEventType type : {NSEventTypeKeyDown, NSEventTypeKeyUp}) {
+        NSEvent *e = [NSEvent keyEventWithType:type location:NSZeroPoint
+                                 modifierFlags:NSEventModifierFlagCommand
+                                     timestamp:NSProcessInfo.processInfo.systemUptime
+                                  windowNumber:self.window.windowNumber context:nil
+                                    characters:key charactersIgnoringModifiers:key
+                                     isARepeat:NO keyCode:keyCode];
+        if (e) [NSApp postEvent:e atStart:NO];
+    }
+}
+
 - (void)closeAgentPage {
     if (!self.agentWeb) return;
     // The keyboard in the agent page goes to the user's, which it shows.

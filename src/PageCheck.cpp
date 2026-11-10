@@ -138,6 +138,32 @@ std::string originError(const std::string& url) {
            "unless the settings file has " + kAnyOriginSetting + " = true";
 }
 
+Focus focusKind(const std::string& tag, const std::string& type, bool editable, bool readOnly) {
+    if (editable) return readOnly ? Focus::None : Focus::Field;
+    if (tag == "IFRAME" || tag == "FRAME") return Focus::Frame;   // inside it cannot be seen
+    if (readOnly) return Focus::None;
+    if (tag == "TEXTAREA") return Focus::Field;
+    if (tag != "INPUT") return Focus::None;
+    // Text-like inputs only; never a password field, a button or a box.
+    for (const char* t : {"", "text", "search", "url", "email", "tel", "number"})
+        if (type == t) return Focus::Field;
+    return Focus::None;
+}
+
+const char* focusName(Focus f) {
+    return f == Focus::Field ? "field" : f == Focus::Frame ? "frame" : "none";
+}
+
+std::string inputOffError() {
+    return std::string("typing into pages is off: set ") + kInputSetting +
+           " = true in the settings file to let minicode page --paste do it";
+}
+
+std::string noFieldError(const std::string& url) {
+    return "nothing on the agent page (" + (url.empty() ? std::string("no page") : url) +
+           ") takes text: click where the text goes, then paste again";
+}
+
 std::string fileAddress(const std::string& path) {
     static const char* hex = "0123456789ABCDEF";
     std::string out = "file://";

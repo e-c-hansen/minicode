@@ -3,7 +3,9 @@
 // pane's agent page (Browser.h), never the user's, unless `yours` asks to
 // read the user's page; reads of a page (text, console, screenshot) work
 // only for local pages unless control.page-any-origin is set (PageCheck.h).
-// No command runs JavaScript an agent sent: there is no such argument.
+// No command runs JavaScript an agent sent: there is no such argument. The
+// one way in is `page --paste` (off unless control.page-input): Cmd+A and
+// Cmd+V typed as keys into the field the user clicked into on the agent page.
 #import "ControlCommands.h"
 #import "ControlServer.h"
 #import "AppSettings.h"
@@ -122,8 +124,8 @@ void MCControlRegisterPageCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         const Json &a = req.args;
         const std::string action = a["action"].asString();
         if (action != "url" && action != "text" && action != "console" &&
-            action != "screenshot" && action != "reload") {
-            respond(Result::failure("page does url, text, console, screenshot or reload, not \"" +
+            action != "screenshot" && action != "reload" && action != "paste") {
+            respond(Result::failure("page does url, text, console, screenshot, reload or paste, not \"" +
                                     action + "\""));
             return;
         }
@@ -142,6 +144,42 @@ void MCControlRegisterPageCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
 
         if (action == "url") {
             respond(Result::success(pageResult(probe, !yours)));
+            return;
+        }
+        if (action == "paste") {
+            if (yours) { respond(Result::failure("--paste types only into the agent page")); return; }
+            if (![AppSettings shared].settings.pageInput()) {
+                respond(Result::failure(PageCheck::inputOffError()));
+                return;
+            }
+            [c agentBrowserPane];   // shown beside the editor if it was hidden
+            if (![b giveKeyboardToAgentPage]) {
+                respond(Result::failure("the agent page cannot take the keyboard: its window is not "
+                                        "the one in front"));
+                return;
+            }
+            const BOOL all = a["all"].asBool();
+            NSString *url = probe.url;
+            const int window = (int)MCControlWindowID(c);
+            __weak BrowserView *weakBrowser = b;
+            [probe readFocus:^(PageCheck::Focus focus, NSString *readError) {
+                BrowserView *browser = weakBrowser;
+                // The keyboard may have moved while the page answered.
+                if (!browser || ![browser giveKeyboardToAgentPage]) {
+                    respond(Result::failure("the agent page was closed, or its window left the front"));
+                    return;
+                }
+                if (readError || focus == PageCheck::Focus::None) {
+                    respond(Result::failure(PageCheck::noFieldError(U(url))));
+                    return;
+                }
+                if (all) [browser typeCommandKey:@"a" keyCode:0 /* kVK_ANSI_A */];
+                [browser typeCommandKey:@"v" keyCode:9 /* kVK_ANSI_V */];
+                Json r = Json::object();
+                r.set("window", window);
+                r.set("into", PageCheck::focusName(focus));
+                respond(Result::success(r));
+            }];
             return;
         }
         if (action == "reload") {
