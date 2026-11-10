@@ -635,7 +635,7 @@ void Carets::drawSelections(GtkSnapshot* s, const GdkRectangle& visible) {
     drawnSelections_ = 0;
     if (!active() || !buffer_ || gtk_text_view_get_buffer(view()) != buffer_) return;
     const auto [lo, hi] = visibleChars(visible);
-    GdkRGBA color = toGdk(theme::editorSelection());
+    GdkRGBA color = toGdk(theme::editorSelection(editor_->documentSettings()));
     if (!gtk_widget_has_focus(view_)) color.alpha *= 0.6f;
     const int right = visible.x + visible.width;
     auto box = [&](int x0, int y, int x1, int h) {

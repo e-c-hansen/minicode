@@ -6,6 +6,7 @@
 #include <webkit/webkit.h>
 #include <string>
 
+#include "Appearance.h"
 #include "StartupLog.h"
 #include "ViewZoom.h"
 
@@ -50,6 +51,9 @@ Browser::Browser(const std::string& homeUrl) : home_(homeUrl) {
     g_signal_connect(root_, "map", G_CALLBACK(+[](GtkWidget*, gpointer p) {
         static_cast<Browser*>(p)->makeView("");
     }), this);
+    // Adjust Settings… in the toolbar's right click and the address bar's
+    // editing menu, as on the Mac (PARITY.md 2.11); the page's is below.
+    Appearance::attachMenu(bar, "browser");
 }
 
 Browser::~Browser() {
@@ -65,6 +69,12 @@ void Browser::makeView(const std::string& firstUrl) {
     gtk_box_append(GTK_BOX(root_), web_);
     g_signal_connect(web_, "notify::uri", G_CALLBACK(onUriChanged), this);
     g_signal_connect(web_, "load-changed", G_CALLBACK(onLoadChanged), this);
+    // The page's right click: WebKit's items, then Adjust Settings….
+    g_signal_connect(web_, "context-menu", G_CALLBACK(+[](WebKitWebView* wv, WebKitContextMenu* m,
+                                                          WebKitHitTestResult*, gpointer) -> gboolean {
+        Appearance::addToWebMenu(m, GTK_WIDGET(wv));
+        return FALSE;   // shown as WebKit shows it
+    }), this);
 
     // The home page is an address, not something typed into the bar, so it
     // is loaded as it is: through load(), the GUI checks' about:blank was a

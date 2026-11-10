@@ -201,10 +201,19 @@ MC_GUI_SUITE(keys) {
         }
     });
     MCGuiStep("the menu bar holds each command with an action once, in Linux's words", [] {
-        std::vector<std::pair<std::string, std::string>> items;
+        std::vector<std::pair<std::string, std::string>> all, items;
         std::vector<std::string> tops;
-        walkMenu(gtk_application_get_menubar(MCGuiApplication()), &items, &tops);
+        walkMenu(gtk_application_get_menubar(MCGuiApplication()), &all, &tops);
         GCHECK_EQ_STR(joined(tops), "File Edit View Terminal Navigate");
+        // View > Adjust Settings and View > Theme are no commands of the
+        // registry (a row a part of the window, a row a theme, as the Mac's
+        // main.mm adds them); the adjust_settings and themes suites have them.
+        for (const auto& item : all)
+            if (item.second != "win.adjustsettings" && item.second != "app.theme")
+                items.push_back(item);
+        size_t parts = 0;
+        for (const AppearanceSurface& s : Settings::appearanceSurfaces()) parts += !s.placeholder;
+        GCHECK(items.size() + parts + Settings::themes().size() == all.size());
         std::map<std::string, std::string> byAction;
         for (const auto& [label, action] : items)
             GCHECK(byAction.insert({action, label}).second);   // once each

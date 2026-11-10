@@ -714,6 +714,30 @@ std::string Settings::missingSurfaceLines(const std::string& text, const std::st
     return out;
 }
 
+std::string Settings::adjustSettingsAddition(const std::string& text, const std::string& surface) {
+    const AppearanceSurface* s = appearanceSurface(surface);
+    const std::string missing = missingSurfaceLines(text, surface);
+    if (!s || missing.empty()) return "";
+    std::string out;
+    if (!text.empty() && text.back() != '\n') out += "\n";
+    if (!text.empty()) out += "\n";
+    out += std::string("# Added by Adjust Settings: the ") + s->title +
+           " keys this file did not have yet.\n";
+    return out + missing;
+}
+
+std::vector<int> Settings::surfaceKeyLines(const std::string& text, const std::string& surface) {
+    std::vector<int> out;
+    const AppearanceSurface* s = appearanceSurface(surface);
+    if (!s) return out;
+    for (const char* key : s->keys) {
+        const int line = findKeyLine(text, key);
+        if (line >= 0 && std::find(out.begin(), out.end(), line) == out.end())
+            out.push_back(line);
+    }
+    return out;
+}
+
 Settings Settings::parse(const std::string& text,
                          std::vector<SettingsError>* errors) {
     Settings st;

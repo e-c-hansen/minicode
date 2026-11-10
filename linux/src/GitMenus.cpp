@@ -13,6 +13,7 @@
 // puts them in the window's action map and updateActions keeps Undo Discard
 // and Discard Changes enabled only when they can act, so the palette offers
 // them only then.
+#include "Appearance.h"
 #include "GitPanel.h"
 
 #include <glib/gstdio.h>
@@ -281,6 +282,7 @@ void GitPanel::showPanelMenu(double x, double y) {
 void GitPanel::popupMenu(GMenu* menu, double x, double y) {
     dropMenu();
     if (g_menu_model_get_n_items(G_MENU_MODEL(menu)) == 0) return;
+    Appearance::addItem(menu, "git");   // Adjust Settings… (PARITY.md 2.11)
     menu_ = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
     gtk_popover_set_has_arrow(GTK_POPOVER(menu_), FALSE);
     gtk_widget_set_halign(menu_, GTK_ALIGN_START);

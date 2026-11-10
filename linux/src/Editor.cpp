@@ -1037,8 +1037,11 @@ bool Editor::swatchAt(double x, double y, int* line) const {
     int bx, by;
     gtk_text_view_window_to_buffer_coords(GTK_TEXT_VIEW(view_), GTK_TEXT_WINDOW_WIDGET,
                                           (int)x, (int)y, &bx, &by);
+    // The character under the point (get_iter_at_location moves on to the
+    // next one over a character's right half: the swatch's last half digit).
     GtkTextIter it;
-    if (!gtk_text_view_get_iter_at_location(GTK_TEXT_VIEW(view_), &it, bx, by))
+    int trailing = 0;
+    if (!gtk_text_view_get_iter_at_position(GTK_TEXT_VIEW(view_), &it, &trailing, bx, by))
         return false;
     GSList* tags = gtk_text_iter_get_tags(&it);
     bool found = false;
@@ -1078,7 +1081,7 @@ static const Markdown::Span* previewSpanAt(GtkWidget* view, const Markdown::Page
 
 void Editor::onMotion(GtkEventControllerMotion*, double x, double y, gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
-    bool over = self->swatchAt(x, y, nullptr);
+    bool over = self->swatchAt(x, y, nullptr) || self->opacityAt(x, y, nullptr);
     if (!over && self->inMarkdownPage()) {
         const Markdown::Span* sp =
             previewSpanAt(self->view_, self->active_->pageInfo(), x, y, nullptr);
@@ -1126,9 +1129,14 @@ void Editor::onPressed(GtkGestureClick* g, int n, double x, double y, gpointer s
         return;
     }
     int line;
-    if (n != 1 || !self->swatchAt(x, y, &line)) return;
-    gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
-    self->pickColor(line);
+    if (n != 1) return;
+    if (self->swatchAt(x, y, &line)) {
+        gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+        self->pickColor(line);
+    } else if (self->opacityAt(x, y, &line)) {   // OpacityPicker.cpp
+        gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+        self->pickOpacity(line);
+    }
 }
 
 static Rgba fromGdk(const GdkRGBA& c) {

@@ -223,8 +223,10 @@ public:
 
     // Highlighting from scratch (the settings changed: the swatches).
     void restartHighlighting();
-    // It is the settings file, whose color values are swatches.
+    // It is the settings file, whose color values are swatches, and whose
+    // opacity values carry this tag, a click opening a slider.
     bool isSettingsFile() const;
+    static constexpr const char* kOpacityTag = "minicode-opacity-value";
     // The view showing the source buffer, or null: the lines on screen are
     // retagged first.
     void setShownIn(GtkTextView* view) { shownIn_ = view; }
