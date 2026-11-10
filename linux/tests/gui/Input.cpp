@@ -329,6 +329,35 @@ void MCGuiDrag(GtkWidget* widget, double x0, double y0, double x1, double y1) {
     g_timeout_add(20, playGesturePart, g);
 }
 
+void MCGuiDragThrough(GtkWidget* widget, const std::vector<std::pair<double, double>>& points) {
+    std::vector<std::pair<int, int>> root;
+    for (const auto& [x, y] : points) {
+        int rx = 0, ry = 0;
+        if (!widget || !pointOnRoot(widget, x, y, &rx, &ry)) {
+            MCGuiCheck(false, "a widget on screen to drag in", __FILE__, __LINE__);
+            return;
+        }
+        root.push_back({rx, ry});
+    }
+    if (root.size() < 2) {
+        MCGuiCheck(false, "two points or more to drag through", __FILE__, __LINE__);
+        return;
+    }
+    moveTo(root[0].first, root[0].second);
+    button(1, true);
+    auto* g = new Gesture;
+    const int steps = 8;
+    for (size_t k = 1; k < root.size(); k++) {
+        const auto [ax, ay] = root[k - 1];
+        const auto [bx, by] = root[k];
+        for (int i = 1; i <= steps; i++)
+            g->parts.push_back([=] { moveTo(ax + (bx - ax) * i / steps, ay + (by - ay) * i / steps); });
+    }
+    g->parts.push_back([] { button(1, false); });
+    gPendingGestures++;
+    g_timeout_add(20, playGesturePart, g);
+}
+
 void MCGuiScroll(GtkWidget* widget, int clicks) {
     MCGuiMoveTo(widget);
     const int b = clicks > 0 ? 5 : 4;

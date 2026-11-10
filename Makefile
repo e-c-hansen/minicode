@@ -56,7 +56,8 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/Commands.cpp src/CommandsLinux.cpp src/ProcessTable.cpp src/ClaudeHooks.cpp src/AttentionBoard.cpp \
             src/PageCheck.cpp src/IdeLink.cpp src/MermaidDiagram.cpp src/LatexScratch.cpp \
             src/LatexLog.cpp \
-            src/MarkdownHtml.cpp src/MarkdownPage.cpp src/TerminalLayout.cpp src/Snippet.cpp \
+            src/MarkdownHtml.cpp src/MarkdownPage.cpp src/TerminalLayout.cpp src/RightAreaLayout.cpp \
+            src/Snippet.cpp \
             src/BrowserTabs.cpp
 
 # Each source file compiles to its own object in build/obj (build/test-obj for

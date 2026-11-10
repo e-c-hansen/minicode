@@ -66,7 +66,12 @@ Verified by running it:
   the split comes back exactly where it was. The window can never be left empty:
   collapsing the editor opens the terminal if it was closed, and closing the
   terminal while the editor is collapsed brings the editor back. Opening a file
-  or the browser while collapsed restores the editor too.
+  or the browser while collapsed restores the editor too. (This item and the
+  one before it were replaced in November 2026 by the Mac's layout,
+  `linux/PARITY.md` item 1.13: the browser beside the editor, the terminal
+  below both with bars of the window's own instead of `GtkPaned`s, the
+  smallest top the tab strip and 40 px, and each toggle hiding only its own
+  pane; with all three hidden the file tree has the window.)
 - The shortcut hints panel (Ctrl Shift H) opens and closes, reports which panes
   are currently up, and refreshes when they change. The status bar advertises it.
 - The settings file, Ctrl+/, and the divider drags (September 2026). These were

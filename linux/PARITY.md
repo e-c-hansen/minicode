@@ -344,7 +344,7 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   Forward (`NavHistory`), Maximize Pane.
 - [ ] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
   *Done means:* a 25 MB file opens and types within the Mac's bounds.
-- [ ] **1.13 The Mac's layout.** The owner's report, 2026-11-09: the browser
+- [x] **1.13 The Mac's layout.** The owner's report, 2026-11-09: the browser
   should sit right of the editor with a drag bar between them, and the
   terminal below both, full width, as on the Mac; today the browser takes
   the editor's place. Closing the editor, the browser, and the terminal
@@ -355,6 +355,23 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   `editorHidden`, `collapseRightAreaIfEmpty`, `revealEditor`), and
   `EditorController+Layout.mm`. After 1.1; it may run beside the others,
   but it owns the window's layout code in `main.cpp`.
+  *Verified in Xvfb, 2026-11-09:* `rightarea:*` hold the core's rules
+  (`../src/RightAreaLayout.h`, the Mac's `relayoutRightArea` and its two
+  bars), and the `layout` suite, in a window of its own, presses the toggle
+  keys and drags the bars for real: the browser right of the editor at the
+  same top and the terminal below both across the whole width; the bar
+  between them dragged (both follow, and the browser keeps its width when
+  hidden and shown), and within 16 px of either edge (that side hides, and
+  comes back when the same drag goes back out); the terminal's bar to the
+  top (the editor and the browser hide) and back down; the editor, the
+  browser, and the terminal hidden in all six orders staying hidden, the
+  tree then having the window, and each coming back at its size; a click in
+  the tree or the preview key showing a hidden editor; Ctrl+B hiding only
+  the sidebar; the find bar on the editor's side. It fails with the old rule
+  that brought the editor back when the terminal closed, and with the old
+  one that hid the editor while the browser showed. Needs the owner: how the
+  bars feel with a real mouse and touchpad under GNOME (each grabs 4 px past
+  its line on either side, over the panes' edges), and how they look.
 
 *Done means, for each:* the feature's Mac GUI checks have Linux counterparts
 in `linux/tests/gui`, pressing real keys.

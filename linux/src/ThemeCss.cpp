@@ -217,6 +217,13 @@ std::string stylesheet(const Settings& s) {
     css += ".minicode-split > separator { min-width: 4px; min-height: 4px;"
            " background-color: #333333; background-clip: content-box; }";
     css += ".minicode-split > separator:hover { background-color: #007ACC; }";
+    // The right side's bars (WindowLayout.cpp), the same 4px line in the
+    // middle of a grab area 4px wider on each side that lies over the panes'
+    // edges; lit while hovered or dragged.
+    css += ".minicode-bar { background-color: #333333; background-clip: content-box; }";
+    css += ".minicode-bar.vertical { padding: 0 4px; }";
+    css += ".minicode-bar.horizontal { padding: 4px 0; }";
+    css += ".minicode-bar:hover, .minicode-bar.dragging { background-color: #007ACC; }";
 
     // Scrollbars over the dark panels. The desktop theme's are tuned for a
     // light background and all but disappear on #1E1E1E.

@@ -18,6 +18,7 @@ class GitPanel;
 class LspSession;
 class Terminal;
 class Browser;
+class WindowLayout;
 
 // One editor window's parts. Pointers are the app's own and stay valid until
 // the window closes; terminal and browser are null in a build without them.
@@ -29,6 +30,7 @@ struct MCGuiAppWindow {
     LspSession* lsp = nullptr;
     Terminal*   terminal = nullptr;
     Browser*    browser = nullptr;
+    WindowLayout* layout = nullptr;        // the panes and their bars (WindowLayout.h)
     GtkWidget*  statusLabel = nullptr;
     GtkWidget*  settingsLabel = nullptr;   // problems in settings.conf and keys.conf
     GtkWidget*  searchBar = nullptr;

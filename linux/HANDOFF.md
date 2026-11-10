@@ -1195,6 +1195,64 @@ What later items build on:
   without a current allocation" (a scroll bar mid-relayout); it was not
   reproduced outside the app and is harmless.
 
+### 16. The Mac's layout (done, November 2026; `PARITY.md` item 1.13)
+
+The browser sits right of the editor with a bar between them and the
+terminal below both, across the whole width, as on the Mac; before, the
+browser took the editor's place and closing the last pane brought the
+editor back. What later items build on:
+- **`WindowLayout`** (`src/WindowLayout.{h,cpp}`, `app->layout`) owns the
+  window's panes: the sidebar and the right side in a `GtkPaned` (the
+  sidebar's divider and its snap to the right edge moved here from
+  `main.cpp`), and on the right the editor's side (the find bar over the
+  `Editor`: its tab strip and slot), the browser, and the terminal. Each
+  toggle (`toggleEditor`, `toggleBrowser`, `toggleTerminal`,
+  `toggleSidebar`) hides or shows its own pane; with the editor, the browser
+  and the terminal hidden the sidebar's divider goes to the right edge and
+  nothing comes back until asked (`collapseRightAreaIfEmpty`). Anything
+  that puts something in the editor's slot calls `main.cpp`'s
+  `showEditorArea`, which is `revealEditor` (opening a file, Focus Editor,
+  the tabs' keys, the preview toggle, a diff, Find); a URL opened from the
+  terminal or a preview calls `showBrowser`, which leaves the keyboard where
+  it was. Where the keyboard goes when a pane hides is the window's
+  (`focusEditor`, `focusBrowser`, `focusTerminal`, `focusTree`), by the
+  Mac's `focusAfterClosingPanel`.
+- **The rules are the core's** (`../src/RightAreaLayout.h`, `rightarea:*`):
+  the browser's share of the width, 150 px a side while both fit, the
+  terminal's height, the smallest top (the tab strip and 40 px), a bar
+  dragged within 16 px of an edge hiding that side and dragging back out in
+  the same drag bringing it back, the terminal's bar to the top hiding the
+  editor and the browser. The Mac keeps its own code
+  (`EditorController+Layout.mm`), which the core follows: change both.
+- **Why not nested `GtkPaned`s:** a paned draws no handle once a child is
+  hidden, so the terminal could not be dragged back down from the top (the
+  Mac keeps that bar at the top edge), and a side a drag hid could not come
+  back in the same drag. The right side is a `GtkBox` with a custom layout
+  manager that places the panes from `RightArea::layout`, a 4 px gap for
+  each bar. One `GtkGestureDrag` on it, in the capture phase as GtkPaned's
+  own, claims a press inside a bar's grab area (4 px past its line on
+  either side, over the panes' edges) and denies every other press, so the
+  drag outlives its bar hiding mid-drag; the bars are empty boxes that only
+  draw (`.minicode-bar` in `ThemeCss.cpp`) and set the cursor. A probe
+  showed that `GtkPaned` gives proportional shares when both children
+  resize, and allocates a child shrunk past its minimum at that minimum and
+  clips it, with no warning.
+- **Minimums:** the layout measures each pane and gives the core the larger
+  of its own limits and what the pane needs, and the right side asks GTK
+  for what the panes on show need, so no pane is allocated below its
+  minimum (the sidebar's paned may still push the right side past the
+  window's edge, as before). Each pane also clips to its rectangle.
+- **The checks:** `MCGuiApp().layout` and its widgets (`area`,
+  `editorPane`, `browserPane`, `terminalPane`, the bars, `sidebar`);
+  `MCGuiDragThrough` drags through several points in one drag. The
+  `layout` suite opens its own window (Ctrl+Shift+N) and closes it.
+- **Changed for the user:** showing the browser no longer hides the
+  editor, and hiding the terminal no longer brings back a hidden editor;
+  Toggle Editor with nothing else open leaves the tree the window instead of
+  opening the terminal; a URL opened from the terminal keeps the keyboard
+  in the terminal; the find bar is above the editor only, not the browser;
+  Toggle Sidebar moves the keyboard out of a sidebar it hides.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).
@@ -1427,6 +1485,10 @@ Do not claim a GUI behaviour works when it was only compiled.
   minimum counts too. The culprit was found by running under gdb with
   `G_DEBUG=fatal-warnings`, reading the widget's address from the warning
   and walking `gtk_widget_get_parent` with `g_type_name_from_instance`.
+  Since item 16 the vertical split is `WindowLayout`'s, which never gives
+  the editor's side less than its minimum; a slot page with a large minimum
+  would now raise the window's smallest height instead, so keep them in
+  scrolled windows still.
 - GTK 4.22 plays through GstPlay, which wraps every GStreamer error in its
   own domain (`gst-play-error-quark`, code 1) with the text "Error from
   element <path>: <message>\n<message>\n<debug>". The original code

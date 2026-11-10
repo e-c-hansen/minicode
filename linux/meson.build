@@ -45,6 +45,8 @@ core_sources = [
   core_dir / 'CommandsLinux.cpp',
   # The tabs' rules (Tabs.cpp follows them, as the Mac's tabs do).
   core_dir / 'EditorTabs.cpp',
+  # How the right side of a window is shared (WindowLayout.cpp shows it).
+  core_dir / 'RightAreaLayout.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -85,6 +87,9 @@ gui_sources = [
   'src/WebImages.cpp',
   # The menu bar, the accelerators and the tree's keys, from the registry.
   'src/Keys.cpp',
+  # The window's panes: the sidebar, and the editor, browser and terminal
+  # laid out as on the Mac.
+  'src/WindowLayout.cpp',
 ]
 
 inc = include_directories('src', '../src')
