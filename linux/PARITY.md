@@ -203,6 +203,75 @@ text never changes and the gutter, undo, and copy see it whole. Check that
 carets step over it and scrolling stays right, with 50,000 fold regions. If
 the tag cannot do it, stop and ask the owner before building an alternative.
 
+*Tried on the ThinkPad, 2026-11-09 (item 1.10's branch; a throwaway GUI
+suite in the real editor, real keys through XTest, CPU time of the main
+thread, the machine at load 8 to 25).* The tag hides whole buffer lines,
+from the start of a region's second line to the start of the line after
+it, so GTK gives those lines no height. **With many small folds it does
+the job; with many lines hidden on screen it does not, and that cannot be
+fixed from outside GTK. Waiting on the owner.**
+
+What works, on 100,000 lines of `def` and one body line (50,000 regions):
+- Fold All is one `apply_tag` per outermost region: 180 to 300 ms for
+  50,000, the first frame 0.3 s after the start. GTK then measures the
+  lines again in idle slices, 1.7 to 2.3 s of CPU (opening the file costs
+  5 to 7 s that way). Unfold All is one `remove_tag` over the text: 50 to
+  100 ms, then 2.2 to 3.1 s of idle measuring.
+- Right and Left step over a fold (end of the folded line to the start of
+  the line after it, and back); Up and Down step over it; Page Down lands
+  on a shown line, on screen (65 to 70 ms; 175 to 190 ms with 5,000 folds
+  of 20 lines); 20 wheel clicks take 17 to 28 ms; Ctrl+End lands on
+  screen (45 to 70 ms). The scroll range shrinks to the shown lines.
+- The gutter numbers only the shown lines (1 3 5 7 ...), each right.
+- The tag is not in the undo history: Ctrl+Z after Fold All takes back
+  typing and the lines stay hidden.
+- Text typed at the end of a folded line, or at the start of the line
+  after a fold, is not tagged (GTK extends the tag at neither end).
+- Typing among the folds: 12 ms a key against 8 without folds (10 keys);
+  21 against 10 with 5,000 folds of 20 lines. The Mac's bound is 50.
+
+What would need code of our own, and could have it:
+- Copy leaves the hidden text out: GTK's clipboard writes the selection
+  without invisible text ("def f0(x):\ndef f1(x):\n" for two lines across
+  a fold). A copy handler would write the text with it. GTK's own copy is
+  slow for a large selection anyway, folds or not (1.6 s of CPU for
+  20,000 lines: it copies into a scratch buffer with every tag).
+- Return at the end of a folded line puts the break before the hidden
+  lines; the Mac's rule (a line below the fold) needs the key caught.
+- The gutter walks every line between the first and last on screen, the
+  hidden ones too (about 12 µs a hidden line a frame); it could jump over
+  folds by their ends.
+
+What fails: **every frame costs about 6 µs for each hidden line between the
+first and last line on screen**, in GTK's own drawing. One redraw of the
+text alone took 26 ms with 5,000 hidden lines on screen and 120 ms with
+20,000; typing there cost 7.5 ms and 37 to 42 ms a key. With one fold of
+100,000 lines on screen (with our gutter's walk on top) the first frame took
+1.2 s, Page Down 2.4 s, 20 wheel clicks 1.1 s, Ctrl+End 1.8 s, and the main
+thread spent 12 s of CPU before it was idle; selecting across it with
+Shift+Down and pressing Ctrl+C held the main loop past the harness's
+one-minute limit (GTK's copy alone, 8.6 s). Such a screen is ordinary: Fold
+All in any long file wrapped in one block (a JSON object, a namespace, a
+class, a Markdown document under one heading), or in a long file of a few
+dozen big functions, whose folds all fit on one screen. The count of regions
+does not matter; the lines hidden between the first and last shown line do.
+The cause, read in GTK 4.22's source: `gtk_text_layout_snapshot` visits
+every `GtkTextLine` from the first to the last in the clip and asks each for
+its line display, and the display cache holds three screens of lines
+(`SCREEN_HEIGHT / line height * 3` in `gtk_text_view_size_allocate`), so
+every hidden line's display is made again every frame. Neither is public
+(`gtk_text_layout_set_mru_size` is not exported), and a cap on one fold's
+size would not bound it, since forty folds of 2,500 lines on one screen hide
+100,000 lines between them.
+
+The owner's choice, none of it built: accept the tag as it is (large folds
+slow: 0.12 s a frame at 20,000 hidden lines on screen, and by the same rate
+about 0.6 s at 100,000); or an alternative to the tag, which D8 says to ask
+about first (for example a second buffer per tab holding only the shown
+lines, which breaks D2's one buffer and every offset, or a GTK patch
+upstream so the drawing skips lines of no height, which would take a release
+to reach Ubuntu). The throwaway suite is not committed.
+
 **D9. Inlay hints: try first.** The Mac leaves room with a kern. Try a
 `letter-spacing` tag on the character before the hint, with the label drawn in
 `snapshot_layer`. If Pango will not leave the room on one side, leave hints
@@ -384,7 +453,11 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
 - [ ] **1.9 Line commands and several carets (D5, D7).** `MultiCaret`, Cmd+D's
   and Shift+Cmd+L's counterparts, column selection, move and copy lines, and
   VS Code's word separators.
-- [ ] **1.10 Folding (D8).** `Folding`.
+- [ ] **1.10 Folding (D8).** `Folding`. *Waiting on the owner:* D8's try
+  (2026-11-09) found the `invisible` tag right for carets, scrolling, the
+  gutter, and undo with 50,000 folds, but every frame costs about 6 µs per
+  hidden line on screen inside GTK, 0.12 s a frame at 20,000 and about
+  0.6 s at 100,000 (D8 has the numbers). Nothing of the item is built.
 - [ ] **1.11 Getting around.** Editor zoom, word wrap toggle, Go Back and
   Forward (`NavHistory`), Maximize Pane.
 - [ ] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
