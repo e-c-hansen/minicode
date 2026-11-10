@@ -11,7 +11,11 @@
 // is a symlink into a dotfiles folder stays a link (nothing left beside
 // either), and while a tab holds it with unsaved changes the theme is
 // refused, the reason in the status bar, the tab and the disk untouched,
-// until the edit is undone. The Mac's checks: config_writes's theme steps.
+// until the edit is undone. The find bar and the Source Control panel follow
+// a theme too; a theme chosen while a refresh makes the panel's rows again
+// leaves the keyboard in the panel, one chosen from the editor leaves it in
+// the editor, and a row of the closed menu taking it (GTK's late submenu
+// timer) gives it back. The Mac's checks: config_writes's theme steps.
 #include "Harness.h"
 
 #include "Appearance.h"
@@ -47,8 +51,9 @@ size_t gWindows = 0;
 std::string gWhy;
 std::string gDisk;   // the settings file before a refused or cancelled theme
 bool gPressed = false;
-GtkWidget* gFocusBefore = nullptr;   // where the keyboard was before a menu
+GtkWidget* gPaneBefore = nullptr;    // where the keyboard was before a menu (paneOf)
 std::string gText;
+GWeakRef gRowBefore;   // the Source Control row with the keyboard before a menu
 
 std::string settingsPath() { return g_getenv("MINICODE_SETTINGS"); }
 std::string dots(const std::string& name) { return MCGuiScratch() + "/dots/" + name; }
@@ -165,6 +170,15 @@ bool anyMenuOpen() {
     return open(GTK_WIDGET(MCGuiApp().window));
 }
 
+// A label under `root`, on show or not (a closed menu's rows).
+GtkWidget* findLabelAnywhere(GtkWidget* root, const std::string& text) {
+    if (!root) return nullptr;
+    if (GTK_IS_LABEL(root) && text == gtk_label_get_text(GTK_LABEL(root))) return root;
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* hit = findLabelAnywhere(c, text)) return hit;
+    return nullptr;
+}
+
 // The GtkModelButton a menu row's label is in.
 GtkWidget* rowOf(GtkWidget* label) {
     for (GtkWidget* w = label; w; w = gtk_widget_get_parent(w))
@@ -178,11 +192,13 @@ bool rowChecked(GtkWidget* menu, const std::string& title) {
     return active;
 }
 
+GtkWidget* paneOf(GtkWidget* w);
+
 // View > Theme opened by real clicks, up to its rows.
 void openThemeMenu() {
     MCGuiWait("no menu open", 10, [] { return !anyMenuOpen() && MCGuiOnScreen(menuBar()); });
     MCGuiStep("View", [] {
-        gFocusBefore = gtk_root_get_focus(GTK_ROOT(MCGuiApp().window));
+        gPaneBefore = paneOf(gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)));
         MCGuiClick(MCGuiFindLabel(menuBar(), "View"));
     });
     MCGuiWait("the View menu", 10, [] { return popoverWith("Theme") != nullptr; });
@@ -192,15 +208,20 @@ void openThemeMenu() {
     });
 }
 
-// View > Theme > `title`.
-void chooseTheme(const std::string& title) {
-    openThemeMenu();
+// `title` from View > Theme, open.
+void pickTheme(const std::string& title) {
     MCGuiStep(title, [title] { MCGuiClick(MCGuiFindLabel(popoverWith(title), title)); });
     MCGuiWait("the menu closed", 10, [] { return !anyMenuOpen(); });
     // GTK's menu bar kept it on its item (MenuBarFocus.h).
     MCGuiWait("the keyboard back where it was", 10, [] {
-        return gFocusBefore && gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)) == gFocusBefore;
+        return gPaneBefore && paneOf(gtk_root_get_focus(GTK_ROOT(MCGuiApp().window))) == gPaneBefore;
     });
+}
+
+// View > Theme > `title`.
+void chooseTheme(const std::string& title) {
+    openThemeMenu();
+    pickTheme(title);
 }
 
 int colorScheme() {
@@ -229,6 +250,22 @@ GtkWidget* vte() {
 #else
     return nullptr;
 #endif
+}
+
+// Where the keyboard is, as a person sees it: the editor's text, the Source
+// Control panel, the tree, the find bar or the terminal (else the widget
+// itself, the menu bar's items among them). A pane may move the keyboard to
+// a widget of its own meanwhile: the Source Control panel makes its rows
+// again on every refresh, and the keyboard with them.
+GtkWidget* paneOf(GtkWidget* w) {
+    const MCGuiAppWindow app = MCGuiApp();
+    std::vector<GtkWidget*> panes = {ed()->textView(), app.tree->widget(), app.findBar->widget()};
+    if (app.git) panes.push_back(app.git->widget());
+    if (GtkWidget* t = vte()) panes.push_back(t);
+    for (GtkWidget* x = w; x; x = gtk_widget_get_parent(x))
+        for (GtkWidget* pane : panes)
+            if (x == pane) return pane;
+    return w;
 }
 
 // Whether the menu bar, which GTK's own theme draws, is dark: read from the
@@ -506,14 +543,51 @@ MC_GUI_SUITE(themes) {
     waitInTheme("solarized-dark");
 
     // ---- the find bar and the Source Control panel follow too
+    // The project a repository of its own with one new file in it, so that
+    // the panel lists a change whatever the checkout the checks run in
+    // holds (the rest ignored; all of it removed at the end of the block).
+    MCGuiAsync("the project a repository, one new file in it", 20, [](MCGuiDone done) {
+        MCGuiWriteFile(F(".gitignore"), "*\n!themes-new.txt\n");
+        MCGuiWriteFile(F("themes-new.txt"), "new\n");
+        MCGuiRunProcess({"git", "init", "-q"}, {}, [done](int status, std::string, std::string err) {
+            if (status != 0) MCGuiNote("git init: %s", err.c_str());
+            GCHECK(status == 0);
+            done();
+        });
+    });
     MCGuiStep("the find bar by its key", [] { MCGuiKey("ctrl+f"); });
     MCGuiWait("open", 10, [] { return MCGuiApp().findBar->shown(); });
     MCGuiStep("and the Source Control panel by its", [] { MCGuiKey("ctrl+shift+g"); });
-    MCGuiWait("both on screen", 10, [] {
-        return MCGuiApp().git && MCGuiOnScreen(MCGuiApp().git->widget()) &&
-               MCGuiOnScreen(MCGuiApp().findBar->widget());
+    // Opening the panel puts the keyboard on its first file once git has
+    // answered (GitPanel::focus); waited for, so that it is not the menu
+    // below that it lands after.
+    MCGuiWait("both on screen, the keyboard on the new file's row", 10, [] {
+        GitPanel* git = MCGuiApp().git;
+        if (!git || !MCGuiOnScreen(git->widget()) || !MCGuiOnScreen(MCGuiApp().findBar->widget()) ||
+            git->focusPending())
+            return false;
+        bool listed = false;
+        for (const std::string& row : git->rowDescriptions())
+            listed = listed || row.find("themes-new.txt") != std::string::npos;
+        GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(MCGuiApp().window));
+        return listed && paneOf(focus) == git->widget() && !GTK_IS_LIST_VIEW(focus);
     });
-    chooseTheme("Light Modern");
+    // A refresh while a menu is open (the window coming back to the front,
+    // a file monitor, an action) makes the panel's rows again, the one with
+    // the keyboard among them: the keyboard comes back to the list, where
+    // it was left on the menu bar.
+    MCGuiStep("the row with the keyboard", [] {
+        g_weak_ref_set(&gRowBefore, gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)));
+    });
+    openThemeMenu();
+    MCGuiStep("git asked again meanwhile", [] { MCGuiApp().git->refresh(); });
+    MCGuiWait("the rows made again", 10, [] {
+        GtkWidget* row = GTK_WIDGET(g_weak_ref_get(&gRowBefore));
+        const bool gone = !row || !gtk_widget_get_mapped(row);
+        if (row) g_object_unref(row);
+        return gone;
+    });
+    pickTheme("Light Modern");
     MCGuiWait("both in Light Modern", 10, [] {
         gWhy.clear();
         const Settings s = fileSettings();
@@ -532,6 +606,33 @@ MC_GUI_SUITE(themes) {
         if (!gWhy.empty()) MCGuiNote("not: %s", gWhy.c_str());
         MCGuiSnapshot(GTK_WIDGET(MCGuiApp().window), "theme-light-modern");
     });
+
+    // With the panel showing and the keyboard in the editor, a theme from
+    // the menu bar puts it back in the editor, not in the panel's list.
+    MCGuiStep("the keyboard in the editor, the panel still showing", [] { MCGuiKey("ctrl+1"); });
+    MCGuiWait("so", 10, [] {
+        return gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)) == ed()->textView() &&
+               MCGuiOnScreen(MCGuiApp().git->widget());
+    });
+    chooseTheme("Dark Modern");
+    MCGuiWait("written", 10, [] {
+        return MCGuiReadFile(settingsPath()).find("theme = dark-modern\n") != std::string::npos;
+    });
+    // GTK's model button opens its submenu 80 ms after the pointer last
+    // moved over it, by a timer the menu closing does not stop, and that
+    // grabs the keyboard for the row: after a quick click, with the loop
+    // kept busy by the theme's restyle and a refresh, it fired once the
+    // menu had closed, and typing went to a row no longer on show. The
+    // same grab, made at once:
+    MCGuiStep("a row of the closed menu takes the keyboard, as that timer's did", [] {
+        GtkWidget* row = rowOf(findLabelAnywhere(menuBar(), "Dark Modern"));
+        GCHECK(row && !gtk_widget_get_mapped(row));
+        if (row) gtk_widget_grab_focus(row);
+        GCHECK(row && gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)) == row);
+    });
+    MCGuiWait("the keyboard back in the editor", 10, [] {
+        return gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)) == ed()->textView();
+    });
     MCGuiStep("the tree again, the find bar closed", [] {
         MCGuiKey("ctrl+shift+g");
         MCGuiKey("ctrl+1");
@@ -539,6 +640,13 @@ MC_GUI_SUITE(themes) {
     });
     MCGuiWait("so", 10, [] {
         return !MCGuiApp().findBar->shown() && MCGuiOnScreen(MCGuiApp().tree->widget());
+    });
+    MCGuiAsync("the project no repository again", 20, [](MCGuiDone done) {
+        MCGuiRunProcess({"rm", "-rf", ".git", ".gitignore", "themes-new.txt"}, {},
+                        [done](int status, std::string, std::string) {
+            GCHECK(status == 0);
+            done();
+        });
     });
 
     // ---- done

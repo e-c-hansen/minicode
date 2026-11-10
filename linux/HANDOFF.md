@@ -2382,7 +2382,18 @@ What later items build on:
 - **Traps**: GTK 4's menu bar left the keyboard on its item after a choice
   from it, so after View > Theme typing went nowhere until a click;
   `MenuBarFocus.{h,cpp}` puts it back where it was once a menu of the bar
-  has closed and the command did not move it. One `GtkPopoverMenu` shown a
+  has closed and the command did not move it. Two more ways it was lost
+  (2026-11-10): a refresh while the menu was open made the Source Control
+  panel's rows again, so the row remembered was gone and the keyboard
+  stayed on the bar (it now goes to the nearest ancestor still on show,
+  the list, which puts it on its row); and GTK's model button opens its
+  submenu by a timer 80 ms after the pointer last moved over it, which
+  the menu closing does not stop, so after a quick click it grabbed the
+  keyboard for a row of the closed menu (a row of a menu not on show
+  taking it now counts as the menu closing). The `themes` check had
+  compared the exact widget, and failed when git's first answer moved
+  the keyboard from the panel's list onto a row after the menu: it
+  waits for that answer now and compares panes. One `GtkPopoverMenu` shown a
   second time from a right click kept the keyboard on its item after a
   click and never ran it (one run in two): `attachMenu` makes a new one
   each time, as the tab strip does. `gtk_text_view_get_iter_at_location`

@@ -6,7 +6,12 @@
 // (found by the themes checks, PARITY.md 2.11). The Mac's menu bar never
 // takes the keyboard. Here, once a menu of the bar has closed and the
 // command it ran has not put the keyboard somewhere itself, the keyboard
-// goes back to the widget that had it before the menu opened.
+// goes back to the widget that had it before the menu opened, or, when a
+// refresh made that widget again meanwhile (a Source Control row), to the
+// nearest of its ancestors still on show. The same happens when a row of
+// a menu no longer on show takes the keyboard: GTK's submenu timer, 80 ms
+// after the pointer last moved over a row, is not stopped by the menu
+// closing, and after a quick click it fired once the menu had gone.
 #pragma once
 
 #include <gtk/gtk.h>

@@ -82,6 +82,9 @@ public:
     void layout(int width, int height);
 
     // For tests and the debug log (G_MESSAGES_DEBUG=minicode-git).
+    // focusPending: focus() is still waiting for git's first answer to put
+    // the keyboard on the first file or the graph.
+    bool focusPending() const { return focusPending_; }
     std::vector<std::string> rowDescriptions() const;
     std::vector<std::string> graphDescriptions() const;
     std::string errorLine() const;
