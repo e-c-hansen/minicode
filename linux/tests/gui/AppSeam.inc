@@ -25,6 +25,8 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.consentBar = a->consentBar;
     w.format = a->format;
     w.problems = a->problems;
+    w.changeBars = a->gitGutter;
+    w.treeColors = a->treeColors;
     w.rootDir = a->rootDir;
 #ifdef MINICODE_ENABLE_TERMINAL
     w.terminal = a->terminal;

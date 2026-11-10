@@ -60,7 +60,9 @@
 #include "FindBar.h"
 #include "FolderConsent.h"
 #include "Formatting.h"
+#include "TreeGitColors.h"
 #include "Lsp.h"
+#include "GitGutter.h"
 #include "GitPanel.h"
 #include "Keys.h"
 #include "MenuBarFocus.h"
@@ -106,6 +108,9 @@ struct App {
     GtkWidget* sidebar = nullptr;
     GitPanel*  git = nullptr;
     bool       gitShown = false;
+    // The editor's change bars and the tree's git colors (PARITY.md 2.10).
+    GitGutter*     gitGutter = nullptr;
+    TreeGitColors* treeColors = nullptr;
     SearchPanel* search = nullptr;   // Find in Folder, created on first use
     SearchPanel* todos = nullptr;    // the TODOs window, the same
     LspSession*  lsp = nullptr;      // language servers for this window
@@ -325,6 +330,8 @@ static bool saveDocument(App* app, Document* d) {
     const bool ok = app->editor->saveDocument(d, &err);
     updateTitle(app);
     if (ok && app->git && app->gitShown) app->git->refresh();
+    // The tree watches only the folders it listed (TreeGitColors.h).
+    if (ok && app->treeColors) app->treeColors->changedOnDisk(d->path());
     if (!ok)
         showError(app, "Could not save “" + baseName(d->path()) + "”",
                   err + "\n\nYour changes are still here, unsaved.");
@@ -564,6 +571,7 @@ static void openFolder(App* app, const std::string& dir) {
     app->persist->saveSession();   // the old folder's tabs, for when it is back
     app->rootDir = dir;
     app->tree->setRoot(dir);
+    if (app->treeColors) app->treeColors->setRoot(dir);
     if (app->git) app->git->setRoot(dir);   // the panel follows the folder
     app->editor->closeAllTabs();
     app->nav->clear();   // Go Back's places were the old folder's
@@ -1576,6 +1584,20 @@ static void makeGitPanel(App* app) {
     app->editor->onDiffViewMade = [app](GitDiffView* view) {
         if (!app->dead && app->git) app->git->attachDiffView(view);
     };
+    // The editor's change bars (GitGutter.h), made with the panel as on the
+    // Mac; its Stage Change has the panel look again, and the panel's
+    // refresh has the bars look again.
+    app->gitGutter = new GitGutter(app->editor);
+    app->gitGutter->onNote = [app](const std::string& text) {
+        if (!app->dead) flashStatus(app, text);
+    };
+    app->gitGutter->onIndexChanged = [app] {
+        if (!app->dead && app->git) app->git->refresh();
+    };
+    app->gitGutter->installActions(G_ACTION_MAP(app->window));
+    app->git->onRefreshed = [app] {
+        if (!app->dead && app->gitGutter) app->gitGutter->refreshSoon();
+    };
 }
 
 // Ctrl+Shift+G: the Source Control panel takes the file tree's place in the
@@ -1851,6 +1873,8 @@ static std::string hintsText(App* app) {
     row("workbench.action.gotoSymbol", "Go to symbol in the file");
     row("workbench.action.navigateBack", "Go back");
     row("workbench.action.navigateForward", "Go forward");
+    row("workbench.action.editor.nextChange", "Next change (git)");
+    row("workbench.action.editor.previousChange", "Previous change");
 
     heading("View");
     row("editor.action.fontZoomIn", "Zoom in");
@@ -2104,6 +2128,7 @@ static void applyWindowSettings(App* app) {
     if (app->lsp) app->lsp->applySettings(st);   // restarts servers if lsp.* changed
     if (app->persist) app->persist->scheduleAutoSave();   // editor.auto-save may have changed
     if (app->git) app->git->applySettings(st);
+    if (app->gitGutter) app->gitGutter->applySettings(st);
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->terminal) app->terminal->applySettings(st);
 #endif
@@ -2182,6 +2207,8 @@ static void onIsActive(GObject* w, GParamSpec*, gpointer userp) {
     if (!app->dead && gtk_window_is_active(GTK_WINDOW(w))) {
         app->editor->checkExternalChange();
         if (app->git && app->gitShown) app->git->refresh();   // commits made elsewhere
+        if (app->gitGutter) app->gitGutter->refreshSoon();     // the index, staged elsewhere
+        if (app->treeColors) app->treeColors->lookSoon();      // files the tree has not listed
     } else if (!app->dead && app->persist) {
         app->persist->windowActive(false);   // focus-change auto-save
     }
@@ -2339,6 +2366,12 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     delete app->nav;       // before the editor whose buffers it watches
     app->nav = nullptr;
     FolderConsent::unlisten(app->consentListener);
+    if (app->git) app->git->onRefreshed = nullptr;
+    delete app->gitGutter;   // before the editor whose view and buffers it watches
+    app->gitGutter = nullptr;
+    delete app->treeColors;  // before the tree it colors
+    app->treeColors = nullptr;
+    if (app->tree) app->tree->setDecorator(nullptr);
     delete app->format;    // before the session and the editor it asks
     app->format = nullptr;
     delete app->problems;  // before the session it lists
@@ -2396,9 +2429,23 @@ static App* newWindow(const std::string& root, const std::string& file) {
     });
     // The tree's folder monitors see changes in the work tree; the Source
     // Control panel looks again when it is showing.
-    app->tree->setActivityCallback([app] {
-        if (!app->dead && app->git && app->gitShown) app->git->refresh();
+    app->tree->setActivityCallback([app](const std::string& path) {
+        if (app->dead) return;
+        if (app->git && app->gitShown) app->git->refresh();
+        if (app->treeColors) app->treeColors->changedOnDisk(path);
     });
+    // The rows' git colors (TreeGitColors.h).
+    app->treeColors = new TreeGitColors();
+    app->tree->setDecorator([app](const std::string& path, bool isDir, std::string* tip) {
+        if (app->dead || !app->treeColors) return (const char*)nullptr;
+        const Git::Decoration d = app->treeColors->decorationFor(path, isDir);
+        *tip = TreeGitColors::tooltip(d);
+        return TreeGitColors::cssClass(d);
+    });
+    app->treeColors->onChange = [app] {
+        if (!app->dead && app->tree) app->tree->redecorate();
+    };
+    app->treeColors->setRoot(app->rootDir);
     app->editor = new Editor();
     StartupLog::mark("window: editor");
     app->editor->setTitleCallback(updateTitle, app);

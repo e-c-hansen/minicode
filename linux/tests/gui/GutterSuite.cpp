@@ -36,7 +36,9 @@ GtkTextView* tv() { return GTK_TEXT_VIEW(ed()->textView()); }
 GtkTextBuffer* buf() { return ed()->buffer(); }
 std::string F(const std::string& name) { return MCGuiProjectFile(name); }
 
-const char* kBase = "lsp.enabled = false\n";
+// The change lane is the suite's own: its bars are set by hand, so git's
+// (GitGutter.h, which turns the lane on with the setting) stays off.
+const char* kBase = "lsp.enabled = false\neditor.git-gutter = off\n";
 
 std::string numbered(const std::string& word, int lines) {
     std::string s;
@@ -724,7 +726,7 @@ MC_GUI_SUITE(gutter) {
     });
     MCGuiStep("the tabs close", [] {
         ed()->closeAllTabs();
-        MCGuiSetSettings(kBase);
+        MCGuiSetSettings("lsp.enabled = false\n");   // the harness's own, git's lane back
     });
     waitFor("no gutter beside the welcome text", 5, [] { return !gut()->shown(); });
 }

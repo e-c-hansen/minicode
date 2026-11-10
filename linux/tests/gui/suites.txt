@@ -59,3 +59,5 @@ ProblemsSuite.cpp
 SecondServerSuite.cpp
 LspWatchSuite.cpp
 OrganizeImportsSuite.cpp
+GitGutterSuite.cpp
+TreeGitColorsSuite.cpp

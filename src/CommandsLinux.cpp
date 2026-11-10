@@ -213,6 +213,10 @@ const std::vector<LinuxRow>& linuxRows() {
         {"git.undoCommit", "", 0, nullptr, nullptr},
         {"git.stashIncludeUntracked", "", 0, nullptr, nullptr},
         {"git.stashPop", "", 0, nullptr, nullptr},
+        // The change bar on the caret's line (PARITY.md 2.10), no key, as on
+        // the Mac and in VS Code.
+        {"git.revertChange", "", 0, nullptr, nullptr},
+        {"git.stageChange", "", 0, nullptr, nullptr},
         // VS Code's Linux key (PARITY.md 2.2); with Shift, so it works from
         // the terminal too.
         {"workbench.actions.view.problems", "ctrl+shift+m", 0, nullptr, nullptr},
@@ -285,6 +289,15 @@ const std::vector<LinuxRow>& linuxRows() {
         // terminal the program has them.
         {"editor.action.marker.next", "f8", 0, nullptr, nullptr},
         {"editor.action.marker.prev", "shift+f8", 0, nullptr, nullptr},
+        // The change bars (PARITY.md 2.10): VS Code's Alt+F5 and Shift+Alt+F5
+        // on every platform. GNOME's default keys give Alt+F5 to Restore
+        // Window (Ubuntu's too); every VS Code platform has Alt+F5, so there
+        // is no other VS Code key to yield to, and it is kept: on such a
+        // desktop the Navigate menu and the palette have the command, or
+        // keys.conf gives it a key. Editor commands, so in the terminal the
+        // program has both.
+        {"workbench.action.editor.nextChange", "alt+f5", 0, nullptr, nullptr},
+        {"workbench.action.editor.previousChange", "alt+shift+f5", 0, nullptr, nullptr},
 
         // ---- the editor's own keys (PARITY.md 1.9). Move and Copy Line
         // are VS Code's (see Add Cursor above), in the Edit menu here, which

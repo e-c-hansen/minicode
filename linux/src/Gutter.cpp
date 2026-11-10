@@ -222,6 +222,14 @@ void Gutter::setColors(const GdkRGBA& background, const GdkRGBA& number, const G
     queueDraw();
 }
 
+void Gutter::setChangeColors(const GdkRGBA& added, const GdkRGBA& modified,
+                             const GdkRGBA& deleted) {
+    changeColors_[0] = added;
+    changeColors_[1] = modified;
+    changeColors_[2] = deleted;
+    queueDraw();
+}
+
 void Gutter::setChangeLane(bool on) {
     if (on == changeLane_) return;
     changeLane_ = on;
@@ -626,9 +634,7 @@ void Gutter::drawChangeBars(GtkSnapshot* s, size_t firstLine, size_t lastLine) {
                                  [](const QuickDiff::Bar& b, size_t line) {
                                      return b.line + std::max<size_t>(b.lines, 1) <= line;
                                  });
-    // VS Code's colors (editorGutter.*Background), until item 2.10 sets the
-    // settings' own.
-    static const GdkRGBA colors[3] = {hexColor(0x487E02), hexColor(0x1B81A8), hexColor(0xF14C4C)};
+    const GdkRGBA* colors = changeColors_;
     for (auto it = from; it != bars.end() && QuickDiff::anchorLine(*it) <= lastLine; ++it) {
         const graphene_rect_t r = rectOfChangeBar((int)(it - bars.begin()));
         if (r.size.width <= 0 || r.size.height <= 0) continue;
