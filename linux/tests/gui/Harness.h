@@ -214,3 +214,12 @@ void MCGuiRunProcess(const std::vector<std::string>& argv,
 // is reported in the status and nothing else is hit.
 void MCGuiRunChild(const std::string& suite, const std::string& folder,
                    std::function<void(int status, std::string out)> done);
+// Another process's windows on this display (Input.cpp, by _NET_WM_PID):
+// a program the check started that is not this app, such as the real
+// build/minicode the detach suite runs.
+struct MCGuiOtherWindow {
+    unsigned long id = 0;
+    bool viewable = false;   // mapped, and every parent mapped
+    std::string title;       // _NET_WM_NAME
+};
+std::vector<MCGuiOtherWindow> MCGuiWindowsOfProcess(int pid);
