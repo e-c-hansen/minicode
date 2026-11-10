@@ -2060,6 +2060,29 @@ GUI checks (`tests/gui`):
   turns of the main loop, and the runner waits for it.
 - GtkTextView undoes typing a piece at a time: one Ctrl+Z after typing a
   line takes back its last word or so, not the line.
+- **CPU time grows with the load on the ThinkPad** (2026-11-10). Its
+  i7-8550U (four cores, eight threads) runs a thread three to four times
+  slower in CPU time with every core busy: Replace All of 20,000 matches
+  took 170 ms quiet and 0.5 to 1.6 s loaded, its undo 1.6 s and up to 4.6
+  s. `MALLOC_PERTURB_` (meson and CI set it) made no difference measured.
+  A bound with room for that and still below the regression it guards is
+  the larger of a fixed bound and a multiple of a baseline measured on the
+  same thread in the same step or suite (`find_bar`'s plain-buffer edits,
+  `large_file`'s read into a plain buffer), as the Mac's `large_file` does.
+- **Quiet is not arrival** (2026-11-10). `MCGuiWaitQuiet` on a scroll value
+  or a row count passed under load before anything had moved: GTK's first
+  scroll, a worker's first rows, or the rest of the wheel's clicks came
+  after 0.3 to 0.5 s of stillness, and the checks after read the old
+  state (`tabs`, `gutter`, `tree_stall`, `harness`, whose double-click then
+  landed above a text scrolled on by the late clicks). Wait for the value
+  the check reads; keep `MCGuiWaitQuiet` for "and nothing more arrives",
+  after that.
+- **A condition an earlier state already meets** (2026-11-10).
+  `find_bar` waited for "200 matches, highlighted" with
+  `highlighted() > 0`, which the seed's one tagged match already made
+  true; the new matches are painted from an idle, which a loaded run
+  reached after the check. Wait for something only the new state has (the
+  selected match's own tag).
 - **A scroll to a mark in a big buffer waits for GTK's whole layout**
   (2026-11-10). `gtk_text_view_scroll_to_mark` acts at once only over a
   complete layout; while GTK is still laying a new buffer out in idle
