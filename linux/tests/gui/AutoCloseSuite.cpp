@@ -312,25 +312,30 @@ MC_GUI_SUITE(auto_close) {
         gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(ed()->textView()),
                                      gtk_text_buffer_get_insert(buf()), 0.0, TRUE, 0.0, 0.3);
     });
-    for (int on = 1; on >= 0; on--) {
+    // With and without, twice each in turn, and the sums compared: measured
+    // once each a second apart, a load that changed between them made the
+    // plain typing 1.9 ms a key against its usual 2.5 to 4, and the bound
+    // from it failed.
+    for (int round = 0; round < 4; round++) {
+        const int on = round % 2 == 0;
         MCGuiStep(on ? "( and a space, five times" : "again with the setting off", [on] {
-            if (!on) MCGuiSetSettings(std::string(kBase) + "editor.auto-close = off\n");
+            MCGuiSetSettings(std::string(kBase) + (on ? "" : "editor.auto-close = off\n"));
             gCpu0 = MCGuiThreadCpuMs();
             MCGuiType("( ( ( ( ( ");
         });
-        MCGuiWait("they arrive", 10, [on] {
+        MCGuiWait("they arrive", 10, [on, round] {
             // Closed: 15 characters; plainly: 10.
-            const size_t want = gBigChars + (on ? 15 : 25);
+            const size_t want = gBigChars + 15 * (size_t)((round + 2) / 2) + 10 * (size_t)((round + 1) / 2);
             const bool there = (size_t)gtk_text_buffer_get_char_count(buf()) == want;
-            if (there) gKeyMs[on] = MCGuiThreadCpuMs() - gCpu0;
+            if (there) gKeyMs[on] += MCGuiThreadCpuMs() - gCpu0;
             return there;
         });
     }
     MCGuiStep("about the CPU of typing them plainly", [] {
         MCGuiNote("a ( in 100,000 lines: %.2f ms of main-thread CPU a key with auto-closing, "
                   "%.2f without",
-                  gKeyMs[1] / 10, gKeyMs[0] / 10);
-        GCHECK_TIME(gKeyMs[1], 1.5 * gKeyMs[0] + 5 * 10, "typing ( with auto-closing");
+                  gKeyMs[1] / 20, gKeyMs[0] / 20);
+        GCHECK_TIME(gKeyMs[1], 1.5 * gKeyMs[0] + 5 * 20, "typing ( with auto-closing");
         countFrames();
     });
     MCGuiWait("the view has drawn it", 5, framesDrawn);

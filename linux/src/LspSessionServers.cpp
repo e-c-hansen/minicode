@@ -1,8 +1,9 @@
 // LspSessionServers.cpp — LspSession's servers (the Mac's Lsp+Servers.mm):
 // which server a file wants, starting it (launchServer, the one place a
-// program is chosen and run), what is done when one exits or refuses the
-// handshake, stopping them all for a new folder or new settings, and the
-// status bar's text.
+// program is chosen and run, where the folder's own tools are asked about:
+// LspSessionFolderTools.cpp), what is done when one exits or refuses the
+// handshake, stopping them for a new folder, new settings or a new answer
+// about the folder's tools, and the status bar's text.
 #include "LspSessionPrivate.h"
 
 using lspgtk::Server;
@@ -64,11 +65,26 @@ bool LspSession::noServer() {
 std::string LspSession::settingsSignature(const Settings& s) const {
     std::string sig = s.lspEnabled() ? "1" : "0";
     for (const std::string& k : Settings::lspServers()) sig += "|" + s.lspCommand(k);
+    // Servers of the user's own, the files every server is for, and the
+    // Python the Python servers are given.
+    for (const std::string& k : s.lspCustomServers()) sig += "|" + k + "=" + s.lspCommand(k);
+    for (const auto& e : s.lspExtensions()) {
+        sig += "|" + e.first + ":";
+        for (const std::string& x : e.second) sig += x + ",";
+    }
+    sig += "|python.interpreter=" + s.pythonInterpreter();
     return sig;
 }
 
+// The five, the servers the settings add (lsp.<name> with
+// lsp.<name>.extensions), and an optional built-in one the settings name a
+// command for (lsp.markdown = ...); the Mac also starts an optional one it
+// finds installed.
 bool LspSession::languageOf(const std::string& path, Lsp::Language& lang) const {
-    return !path.empty() && Lsp::languageForExtension(lspui::lowerExt(path), lang);
+    return !path.empty() &&
+           Lsp::languageForExtension(lspui::lowerExt(path), lang, settings_.lspExtensions()) &&
+           !(Lsp::isOptionalServer(lang.server) &&
+             (settings_.lspOff(lang.server) || settings_.lspCommand(lang.server).empty()));
 }
 
 std::shared_ptr<Server> LspSession::runningServer(const std::string& key) const {
@@ -82,10 +98,23 @@ std::shared_ptr<Server> LspSession::launchServer(const std::string& key, std::st
     std::vector<std::string> commands;
     if (!settings_.lspCommand(key).empty()) commands.push_back(settings_.lspCommand(key));
     else commands = Lsp::defaultCommands(key);
+    // The folder's own tools (LspSessionFolderTools.cpp): a Python server is
+    // looked for beside the interpreter it gets, and one that would run the
+    // folder's code starts without it, or waits for the folder's answer.
+    const std::vector<std::string> first = firstDirsForKey(key);
     for (const std::string& cmd : commands) {
-        std::vector<std::string> argv = lspgtk::resolveCommand(cmd);
+        std::vector<std::string> argv = lspgtk::resolveCommand(cmd, first);
         if (argv.empty()) continue;
-        if (std::shared_ptr<Server> server = Server::start(key, argv, root_)) return server;
+        const Lsp::ProjectCodeCheck pc = projectCodeForKey(key, argv[0]);
+        if (pc.verdict == Lsp::ProjectCode::Waits) {
+            *note = "The " + Lsp::serverDisplayName(key) +
+                    " language server waits for your answer about this folder's tools";
+            return nullptr;
+        }
+        if (std::shared_ptr<Server> server = Server::start(key, argv, root_)) {
+            configureServer(server->client(), key, argv, pc);
+            return server;
+        }
     }
     *note = "No " + Lsp::serverDisplayName(key) + " language server found";
     return nullptr;
@@ -194,6 +223,19 @@ void LspSession::serverExited(Server* s) {
     }
 }
 
+void LspSession::stopServers(const std::vector<std::string>& keys) {
+    for (const std::string& k : keys) {
+        auto it = servers_.find(k);
+        if (it != servers_.end()) {
+            forgetServerDocuments(it->second.get());
+            it->second->stop();
+            servers_.erase(it);
+        }
+        notes_.erase(k);
+        forgetProjectCode(k);
+    }
+}
+
 void LspSession::stopAllServers() {
     for (auto& kv : servers_) {
         forgetServerDocuments(kv.second.get());
@@ -201,6 +243,7 @@ void LspSession::stopAllServers() {
     }
     servers_.clear();
     notes_.clear();
+    forgetAllProjectCode();
     forgetAllDiagnostics();
 }
 

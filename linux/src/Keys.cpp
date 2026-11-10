@@ -21,6 +21,7 @@ const std::vector<Action>& actions() {
     static const std::vector<Action> table = {
         {"workbench.action.openSettings", "win.settings", true},
         {"workbench.action.openGlobalKeybindings", "win.keyboardshortcuts", false},
+        {"minicode.forgetFolderToolsAnswer", "win.forgetfoldertools", false},
         {"workbench.action.quit", "app.quit", false},
         {"explorer.newFile", "win.newfile", false},
         {"workbench.action.newWindow", "win.newwindow", false},
@@ -51,6 +52,7 @@ const std::vector<Action>& actions() {
         {"editor.action.deleteLines", "win.deleteline", false},
         {"editor.action.commentLine", "win.togglecomment", true},
         {"minicode.markdown.toggleTask", "win.toggletask", false},
+        {"editor.action.formatDocument", "win.formatdocument", false},
         {"minicode.sortLines", "win.sortlines", false},
         {"minicode.sortKeepSortedBlocks", "win.fixkeepsorted", false},
         {"editor.action.triggerSuggest", "win.complete", true},

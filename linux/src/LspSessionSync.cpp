@@ -45,6 +45,7 @@ void LspSession::closeDocument() {
     server_.reset();
     uri_.clear();
     path_.clear();
+    currentKey_.clear();
     note_.clear();
 }
 
@@ -60,7 +61,10 @@ void LspSession::documentChanged(const std::string& pathIn) {
     }
     Lsp::Language lang;
     std::shared_ptr<Server> server;
-    if (settings_.lspEnabled() && languageOf(path, lang)) server = serverForKey(lang.server);
+    if (settings_.lspEnabled() && languageOf(path, lang)) {
+        currentKey_ = lang.server;   // first: the folder's tools ask whose file is on show
+        server = serverForKey(lang.server);
+    }
     if (server) {
         server_ = server;
         uri_ = lspui::uriOf(path);

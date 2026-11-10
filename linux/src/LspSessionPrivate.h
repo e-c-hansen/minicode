@@ -193,3 +193,11 @@ struct LspSession::NavState {
     std::string lastHover;
     int hoverGen = 0, definitionGen = 0;
 };
+
+// ---- the folder's own tools (LspSessionFolderTools.cpp)
+struct LspSession::FolderToolsState {
+    std::string consentUsed;   // the folder's answer the servers were started with
+    int listener = 0;          // FolderConsent::listen's
+    // Lsp::checkProjectCode's verdict per server key, as last started.
+    std::map<std::string, Lsp::ProjectCodeCheck> projectCode;
+};

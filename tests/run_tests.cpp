@@ -10787,6 +10787,7 @@ static void testMultiCaretOccurrences() {
 #include "ide_link_tests.inc"
 #include "format_consent_tests.inc"
 #include "format_coverage_tests.inc"
+#include "format_run_tests.inc"
 #include "mathtex_isolation_tests.inc"
 #include "terminal_paste_tests.inc"
 #include "terminal_marks_tests.inc"
@@ -10892,6 +10893,8 @@ int main() {
     testFormatter();
     testFormatConsent();
     testFormatCoverage();
+    testFormatRun();
+    testFolderTools();
     testMathTexIsolation();
     testInstallHints();
     testLinuxBuildLists();

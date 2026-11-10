@@ -60,6 +60,9 @@ public:
         std::function<void(const std::string&)> note;
         // The other windows open on the same folder (key()), not this one.
         std::function<std::vector<Persistence*>()> sameFolder;
+        // A tab whose Ctrl+S waits for its formatter (Formatting.h): auto-save
+        // leaves it, as the Mac's does.
+        std::function<bool(const Document*)> saveWaits;
     };
 
     Persistence(Editor* editor, const std::string& root, Host host);

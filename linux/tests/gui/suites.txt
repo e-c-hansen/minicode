@@ -42,3 +42,8 @@ StartupSuite.cpp
 DetachSuite.cpp
 LspTabsSuite.cpp
 LspActionsSuite.cpp
+ToolsConsentSuite.cpp
+FormatSuite.cpp
+FormatConsentSuite.cpp
+FormatCoverageSuite.cpp
+ServerConsentSuite.cpp

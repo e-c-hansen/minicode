@@ -197,7 +197,12 @@ MC_GUI_SUITE(tree_stall) {
     // file in that folder selected.
     MCGuiStep("", [] { gRowsOpen = rowCount(); });
     clickRow("big");
-    MCGuiWaitQuiet("its rows arrive", 0.5, 30, [] { return (long)rowCount(); });
+    // All of them, not a pause in their coming: the folder is listed on a
+    // worker, and with three runs and four busy loops at once no row had
+    // come for half a second when the count was taken, which then made
+    // every later count wrong (their rows "go" waited 60 s for a count the
+    // tree could not reach).
+    MCGuiWait("its rows arrive", 30, [] { return rowCount() == gRowsOpen + kBigFiles + 1; });
     MCGuiStep("", [] {
         GCHECK(rowCount() == gRowsOpen + kBigFiles + 1);
         checkPhase("opening a folder of 10,000 entries");

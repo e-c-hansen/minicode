@@ -311,9 +311,12 @@ MC_GUI_SUITE(bracket_pairs) {
         for (int k = 0; k < 30000; k++) [t appendString:@"    x = g(h[1], {'k': (2)})\n"];
         NSString *wide = [dir stringByAppendingPathComponent:@"wide.py"];
         MCGuiWriteFile(wide, t);
-        double ms[2];
+        // Like against like: on, off, off, on, on, off, the best of each,
+        // so neither is only the cold first open (CI's runners measured the
+        // first, with colors, at 1.5 times the second).
+        double ms[2] = {INFINITY, INFINITY};
         NSUInteger lines = 0;
-        for (int on = 1; on >= 0; on--) {
+        for (int on : {1, 0, 0, 1, 1, 0}) {
             MCGuiSetSettings([saved stringByAppendingString:
                                         on ? @"\neditor.auto-close = off\n"
                                            : @"\neditor.auto-close = off\n"
@@ -321,7 +324,7 @@ MC_GUI_SUITE(bracket_pairs) {
             const NSUInteger p0 = Painted(c);
             const double t0 = MCGuiThreadCpuMs();
             GCHECK([c showFile:wide]);
-            ms[on] = MCGuiThreadCpuMs() - t0;
+            ms[on] = MIN(ms[on], MCGuiThreadCpuMs() - t0);
             if (on) {
                 lines = Painted(c) - p0;
                 NSString *s = Text(c).string;
@@ -332,7 +335,7 @@ MC_GUI_SUITE(bracket_pairs) {
             GCHECK([c closeTab:Active(c) prompt:NO]);
         }
         MCGuiNote(@"opening 30,000 lines: %.0f ms of CPU with bracket colors (%lu lines painted "
-                  @"for them), %.0f without", ms[1], (unsigned long)lines, ms[0]);
+                  @"for them), %.0f without, the best of three each", ms[1], (unsigned long)lines, ms[0]);
         GCHECK(lines > 0 && lines < 200);
         GCHECK_TIME(ms[1], 1.3 * ms[0] + 100, @"opening with bracket colors");
     });
@@ -358,8 +361,9 @@ MC_GUI_SUITE(bracket_pairs) {
                 [ranges addObject:[NSValue valueWithRange:NSMakeRange(r * row.length + 6 + 3 * k, 1)]];
                 [strings addObject:@"bc"];   // a length that changes, as a word's would
             }
-        double ms[2];
-        for (int on = 1; on >= 0; on--) {
+        // On, off, off, on, the best of each (as the open above).
+        double ms[2] = {INFINITY, INFINITY};
+        for (int on : {1, 0, 0, 1}) {
             MCGuiSetSettings([saved stringByAppendingString:
                                         on ? @"\neditor.auto-close = off\n"
                                            : @"\neditor.auto-close = off\n"
@@ -379,7 +383,7 @@ MC_GUI_SUITE(bracket_pairs) {
                 GCHECK([(CodeTextView *)tv replaceRanges:ranges withStrings:strings
                                               actionName:@"Typing"]);
             });
-            ms[on] = MCGuiThreadCpuMs() - t0;
+            ms[on] = MIN(ms[on], MCGuiThreadCpuMs() - t0);
             NSString *s = tv.string;
             const NSUInteger row150 = 150 * (row.length + 100);   // each row 100 longer
             GCHECK([[s substringWithRange:NSMakeRange(row150 + 6, 6)] isEqualToString:@"bc, bc"]);
@@ -393,8 +397,8 @@ MC_GUI_SUITE(bracket_pairs) {
             if (on) GCHECK_EQ_STR(ColorAt(c, 150 * row.length + 5), kGold);
             GCHECK([c closeTab:Active(c) prompt:NO]);
         }
-        MCGuiNote(@"a letter at 20,000 places: %.0f ms of CPU with bracket colors, %.0f without",
-                  ms[1], ms[0]);
+        MCGuiNote(@"a letter at 20,000 places: %.0f ms of CPU with bracket colors, %.0f without, "
+                  @"the best of two each", ms[1], ms[0]);
         GCHECK_TIME(ms[1], 1.3 * ms[0] + 150, @"a letter at 20,000 places with bracket colors");
         MCGuiSetSettings([saved stringByAppendingString:
                                     @"\neditor.font-size = 24\neditor.auto-close = off\n"]);

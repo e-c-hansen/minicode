@@ -58,10 +58,21 @@ std::string findProgram(const std::string& name) {
     return "";
 }
 
-std::vector<std::string> resolveCommand(const std::string& command) {
+std::vector<std::string> resolveCommand(const std::string& command,
+                                        const std::vector<std::string>& first) {
     std::vector<std::string> words = Lsp::splitCommand(command);
     if (words.empty()) return {};
-    std::string prog = findProgram(words[0]);
+    std::string prog;
+    if (words[0].find('/') == std::string::npos)
+        for (const std::string& dir : first) {
+            const std::string p = dir + "/" + words[0];
+            if (g_file_test(p.c_str(), G_FILE_TEST_IS_EXECUTABLE) &&
+                !g_file_test(p.c_str(), G_FILE_TEST_IS_DIR)) {
+                prog = p;
+                break;
+            }
+        }
+    if (prog.empty()) prog = findProgram(words[0]);
     if (prog.empty()) return {};
     words[0] = prog;
     return words;
@@ -383,6 +394,10 @@ void LspTerminateAllServers() {
     for (auto& s : list) s->signal(SIGKILL);
     waitForExit(list, 300);
 }
+
+std::vector<std::string> LspSearchDirs() { return lspgtk::searchDirs(); }
+
+std::string LspFindProgram(const std::string& name) { return lspgtk::findProgram(name); }
 
 std::size_t LspRunningServerCount() {
     std::size_t n = 0;

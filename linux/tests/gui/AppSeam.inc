@@ -21,6 +21,8 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.hintsHint = a->hintsHint;
     w.palette = a->palette;
     w.nav = a->nav;
+    w.consentBar = a->consentBar;
+    w.format = a->format;
     w.rootDir = a->rootDir;
 #ifdef MINICODE_ENABLE_TERMINAL
     w.terminal = a->terminal;

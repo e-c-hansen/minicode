@@ -85,11 +85,22 @@ StallMeter gMeter;
 // machine.
 constexpr double kStallBoundMs = 250;
 
+// What the open costs at the least on this thread (baselineMs), measured as
+// the suite starts.
+double gBase = 0;
+
+// A loaded machine makes this thread slower at everything, its stalls and
+// the baseline alike: with three runs at once the longest stall switching
+// tabs was 95 to 218 ms and the 60 MB open's once 260, the baseline then
+// 350 to 730 ms; every stall stayed under half the baseline but that one
+// (0.52). So the bound grows with the baseline, to three quarters of it.
+double stallBound() { return std::max(kStallBoundMs, 0.75 * gBase); }
+
 void checkStall(const std::string& what) {
     gMeter.sample();
     MCGuiNote("%s: longest main-thread stall %.0f ms of CPU (%.0f ms long)", what.c_str(),
               gMeter.worstCpu, gMeter.worstWall);
-    GCHECK_TIME(gMeter.worstCpu, kStallBoundMs, "the longest stall " + what);
+    GCHECK_TIME(gMeter.worstCpu, stallBound(), "the longest stall " + what);
     gMeter.reset();
 }
 
@@ -245,7 +256,7 @@ double baselineMs(const std::string& path) {
     return MCGuiThreadCpuMs() - c0;
 }
 
-double gBase = 0, gOpen0 = 0, gLoadedAt = 0, gWaitFrom = 0;
+double gOpen0 = 0, gLoadedAt = 0, gWaitFrom = 0;
 int gTypedAt = 0, gTopBefore = 0, gCaretBefore = 0;
 double gKeysCpu0 = 0;
 size_t gTypedKeys = 0;
@@ -318,11 +329,16 @@ MC_GUI_SUITE(large_file) {
     });
     // GTK lays the lines out for 10 to 20 s after the file comes on show,
     // and until then the view cannot be put far down for good (see
-    // settleOnCaret): revealLine keeps at it while the height grows.
+    // settleOnCaret): revealLine keeps at it while the height grows. So the
+    // caret is looked for once the layout is over. Looked for before, it
+    // could be on screen for a moment while the height had stopped growing
+    // for a frame of a loaded run; the settling then went on, put the line
+    // typed into next at the very top, a pixel of it hidden, and the tab
+    // switch below kept that place: the caret was never on screen again.
     MCGuiWait("on screen, and staying there", 180, [] {
         GtkTextIter it;
         gtk_text_buffer_get_iter_at_mark(buf(), &it, gtk_text_buffer_get_insert(buf()));
-        return gtk_text_iter_get_line(&it) == 299999 && caretShown();
+        return MCGuiTextLaidOut(ed()->textView()) && gtk_text_iter_get_line(&it) == 299999 && caretShown();
     });
     MCGuiStep("typing in it stays cheap", [] {
         MCGuiNote("line 300,000 on screen to stay %.1f s after Go to Line", (MCGuiNowMs() - gWaitFrom) / 1000);

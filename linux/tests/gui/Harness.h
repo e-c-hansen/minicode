@@ -160,6 +160,17 @@ GtkWidget* MCGuiFindLabel(GtkWidget* root, const std::string& text);
 GtkWidget* MCGuiFindButton(GtkWidget* root, const std::string& text);
 // The newest mapped toplevel of this process, the app's or an alert's.
 GtkWindow* MCGuiTopWindow();
+// Whether a GtkTextView has laid out every line of the buffer it shows.
+// After a buffer comes on show GTK lays it out in idle slices, from the
+// top, for seconds when it is big (longer on a loaded machine), and until
+// then a line it has not reached has no height: a scroll to a far line
+// lands short of it and stays there (GTK keeps the top line still as the
+// heights come), and gtk_text_view_scroll_to_mark waits, doing nothing,
+// until the layout is complete. The last line is the last to get a height,
+// unless something scrolled to the end or asked where it is (GTK lays out
+// the lines around a scroll's target at once); asking for its height lays
+// nothing out.
+bool MCGuiTextLaidOut(GtkWidget* textView);
 
 // ---- input: real X events from XTest (Input.cpp)
 // Keys go to the key window: MCGuiSetKeyWindow's, else the newest app window.

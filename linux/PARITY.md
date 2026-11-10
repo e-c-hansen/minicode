@@ -280,6 +280,19 @@ Choices item 2.1 made, by the same rules:
   keyboard. Ctrl+. outranks GtkTextView's own emoji chooser key, as Ctrl+/
   outranks its Select All.
 
+Choices items 2.3 and 2.4 made, by the same rules:
+- Format Document is VS Code's Linux Ctrl+Shift+I (the Mac's Shift+Option+F
+  is VS Code's Mac key, and Shift+Alt+F its Windows key). It is an editor
+  command, so in the terminal the key is the program's. GTK's inspector
+  takes Ctrl+Shift+I only when it is turned on (`GTK_DEBUG=interactive`,
+  or GTK's enable-inspector-keybinding setting), which it is not by
+  default.
+- Format Selection is Format Document with lines selected, as on the Mac:
+  VS Code's Linux Format Selection is a chord (Ctrl+K Ctrl+F), which
+  minicode has none of.
+- Ask Again About This Folder's Tools has no key, as on the Mac, and is in
+  the Edit menu with Settings, since the port has no minicode menu.
+
 **D2. One `GtkTextView`, one `GtkTextBuffer` per tab.** Split `Editor` into
 the view and slot, and a `Document` holding what is per file: the buffer, its
 path, undo, the highlighter and its mirror, dirty state, and disk stamp. All
@@ -948,12 +961,65 @@ its server comes first here (2.0).
   in some setups).
 - [ ] **2.2 Problems**, the second server, watched files, and Organize
   Imports. Mac: `ProblemsPanel`, `LspWatcher`.
-- [ ] **2.3 Server and tool consent.** A folder's own `.venv`, `node_modules`,
+- [x] **2.3 Server and tool consent.** A folder's own `.venv`, `node_modules`,
   and project configuration are never run unasked. Mac: "Servers that run the
   folder's code" and "needs the user's yes" in `CLAUDE.md`. This goes in with
   or before 2.4.
-- [ ] **2.4 Format Document.** `Formatter`, the server fallback, and format on
+  *Verified in Xvfb, 2026-11-10:* `folder-tools:*` hold the servers'
+  question, its words and the answers file
+  (`$XDG_STATE_HOME/minicode/folder-tools.json`), and `format-run:*` the
+  formatters' side (below); the `tools_consent` suite clicks the bar under
+  the tabs for real: with a `.venv` holding the only Python server (a
+  script recording that it ran), unasked the bar asks, nothing from it runs
+  and Ask Again is off; Use It runs the server from it and gives the
+  servers its python; Ask Again from the palette (real keys) takes the
+  answer back and the servers start again without it; Don't Use It keeps
+  "deny"; × puts the question off through tab switches and an answer given
+  meanwhile, until Ask Again. `server_consent` runs the scripted server as
+  rust-analyzer: unanswered it starts with build scripts, proc macros and
+  cargo check off (initializationOptions and its settings' answer) and the
+  bar asks; Allow starts it with its defaults; with a rust-toolchain.toml
+  and Don't Allow it does not start and the status bar says it waits, and
+  taken back the bar names the file. They fail with the folder's answer
+  taken out of the servers' interpreter and of `checkProjectCode`. Not
+  done: Select Python Interpreter, the Language Servers popover, and the
+  terminal's venv, which the port has not. Needs the owner: the bar's look
+  and its buttons with a real mouse, and a real `.venv` with basedpyright,
+  rust-analyzer, and the TypeScript server.
+- [x] **2.4 Format Document.** `Formatter`, the server fallback, and format on
   save. Mac: `FormatRunner`, `Lsp+Formatting`.
+  *Verified in Xvfb, 2026-11-10:* `format-run:*` hold the core's
+  `FormatRun` (the Mac's MCFormatText decisions and words, which copy runs
+  or why none, what an exit means, the question, the output as line runs in
+  code points). Four suites press real keys with stand-in formatters on
+  PATH. `format`: Ctrl+Shift+I on a 3,000-line file changes its 300 lines in
+  one user action (one Ctrl+Z, Ctrl+Shift+Z again), the caret on its text
+  and the top line kept, unsaved; Google's pyink found on PATH with its
+  options and the file; three selected lines give `--line-ranges=3-5`; a
+  failing formatter, one writing what is not UTF-8, and one past the 10 s
+  limit (SIGTERM ignored, so SIGKILL; its process gone) leave the buffer
+  alone with their note; a result for text typed into meanwhile is
+  dropped. `format_on_save`: Ctrl+S formats then writes; Save All and
+  auto-save write as typed; auto-save leaves a tab whose Ctrl+S waits; a
+  tab left during its format is saved as it was. `format_consent`: the
+  Mac's whole suite, with real clicks on the question (Allow, Don't Allow,
+  Cancel; Deny formats with the copy outside the folder; Ctrl+S asks too; a
+  prettier.config.js asks even for the user's own command, above the
+  folder by its whole path; npx with the folder's Prettier). `format_coverage`:
+  a README formatted by the project's Prettier, never by its server; the
+  server (the scripted one) formats it when no Prettier is set up, and a
+  `.notes` file with `lsp.notes` and `lsp.notes.extensions`, before Ctrl+S
+  writes it too. They fail with the folder's answer not passed to the
+  decision, with each line run its own user action, without the server
+  fallback, and without auto-save's guard. Changed for the user: servers the settings name by
+  extension (`lsp.<name>.extensions`) and an optional built-in one the
+  settings give a command (`lsp.markdown = ...`) now run on Linux, as on
+  the Mac, which the fallback needs. The server's edits go in through
+  item 2.1's workspace edit applier, as the Mac's go through its own.
+  editor.organize-imports-on-save waits for the port's code actions (item
+  2.2), and the note offers no install commands yet (item 2.8). Needs the
+  owner: the owner's real formatters (ruff, clang-format, prettier), Ctrl+Shift+I under
+  GNOME on Wayland with IBus, and how the note by the caret looks.
 - [ ] **2.5 Completion's additional edits and snippets.** `Snippet`,
   Tab and Return as on the Mac.
 - [ ] **2.6 Semantic tokens.** Tags, painted for the lines on screen only.
@@ -1146,4 +1212,5 @@ fixed on its own branch, with a GUI check that fails without the fix.
 ## After each stage
 
 Update `BUILD-LINUX.md` ("What is verified") and the list of what still needs
-a person. Tell the owner what to try by hand, and ask whether to release.
+a person (`BUILD-LINUX.md`, "What needs a person"). Tell the owner what to
+try by hand, and ask whether to release.

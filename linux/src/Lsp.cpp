@@ -47,7 +47,7 @@ LspSession::LspSession(Editor* editor, const std::string& root, const Settings& 
       root_(root), settings_(settings),
       sync_(std::make_unique<SyncState>()), diag_(std::make_unique<DiagState>()),
       cmp_(std::make_unique<CompletionState>()), nav_(std::make_unique<NavState>()),
-      act_(std::make_unique<ActionsState>()) {
+      act_(std::make_unique<ActionsState>()), tools_(std::make_unique<FolderToolsState>()) {
     lspAllSessions().push_back(this);
     signature_ = settingsSignature(settings);
     useBuffer(editor->sourceBuffer());
@@ -65,6 +65,10 @@ LspSession::LspSession(Editor* editor, const std::string& root, const Settings& 
         const std::string path = path_;   // a copy: documentChanged clears path_ first
         documentChanged(path);
     });
+
+    // The folder's answer about its own tools changing starts the servers
+    // that depend on it again (LspSessionFolderTools.cpp).
+    watchFolderTools();
 
     makeDiagnosticTags();
 
@@ -107,6 +111,7 @@ void LspSession::useBuffer(GtkTextBuffer* b) {
 LspSession::~LspSession() {
     auto& all = lspAllSessions();
     all.erase(std::remove(all.begin(), all.end(), this), all.end());
+    unwatchFolderTools();
     shutdown();
     g_signal_handlers_disconnect_by_data(view_, this);
     useBuffer(nullptr);

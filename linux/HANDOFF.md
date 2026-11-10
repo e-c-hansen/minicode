@@ -7,12 +7,13 @@ cost.
 The GTK4 port under `linux/` was last worked on in August 2026. Since then the
 macOS app has gained its biggest features: the LaTeX preview, the LSP client,
 incremental highlighting, image and PDF viewing, and several file tree
-actions. The Android port has caught up on most of them. This document lists
-what Linux lacks, in the order to do it, with where each thing lives on the
-Mac and what the GTK equivalent is.
+actions. The Android port has caught up on most of them. This document
+listed what Linux lacked then, in the order to do it, with where each thing
+lives on the Mac and what the GTK equivalent is.
 
 Read these first:
-- `../BUILD-LINUX.md`: build, install and what was verified in August.
+- `../BUILD-LINUX.md`: build, install, what was verified, and what still
+  needs a person at the desktop.
 - `dev/README.md`: the Docker container with a virtual display for driving
   the app from a Mac.
 - `../CLAUDE.md`, especially "LaTeX preview", "LSP", "Images" and "Gotchas".
@@ -22,69 +23,94 @@ Read these first:
 
 ## Where it stands
 
-Items 1 to 11 below are done (September 2026), so the port has what the Mac
-had then, apart from what the list at the end of item 8 leaves out. The
-registry's keys, tabs, line numbers, sessions and backups, and the command
-palette came in November 2026 (items 15 to 18, and `PARITY.md`). Almost
-everything else the Mac gained from 1.5.0 on (folding, several cursors,
-rename and the other language server commands, formatting, the viewers,
-the agent features and the command line control) is not here yet;
-`PARITY.md` is the plan, and
-`../ROADMAP.md`, "Linux parity", lists the core files that already hold its
-logic. It builds
+Items 1 to 14 below are done (September and October 2026), so the port
+has what the Mac had then, apart from what the list at the end of item 8
+leaves out. Stage 0 and Stage 1 of `PARITY.md`, and the owner's reports R1
+to R3, came in November 2026 (items 15 to 27). Almost everything else the
+Mac gained from 1.5.0 on (rename and the other language server commands,
+formatting, the problems list, the split editor, several terminals, the
+viewers, the agent features and the command line control) is not here
+yet; `PARITY.md`'s Stages 2 to 4 are the plan, and `../ROADMAP.md`, "Linux
+parity", lists the core files that already hold its logic. It builds
 without warnings at `warning_level=2` (CI: Ubuntu, GTK 4, VTE, WebKitGTK,
-poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
+poppler, and the GUI suites on Xvfb). The work up to October was checked by
+hand and with temporary hooks, much of it under GNOME on Wayland on Ubuntu
+26.04; the November work is checked by the GUI suites, and what they leave
+to a person at the desktop is in `../BUILD-LINUX.md`, "What needs a
+person". The port has:
 - data safety: "Save changes?" before anything replaces edits, failed saves
   reported, atomic saves (item 1);
 - the file tree, live-refreshing, with New File, New Folder, Rename, Move to
-  Trash, Open Containing Folder and Copy Path (item 2), and rows that drag
-  onto folders (item 13);
+  Trash, Open Containing Folder and Copy Path (item 2), rows that drag onto
+  folders (item 13), and listings that no longer hold the window while a
+  folder churns (`PARITY.md` R1);
 - the editor with incremental syntax highlighting (item 3), Ctrl+/, the
   Markdown preview, and reloading when the file changes on disk (item 8);
-- Markdown task lists: boxes to click in the preview, Ctrl+L, Return
+- the menu bar and keys from the command registry, changed by keys.conf
+  (`PARITY.md` item 0.3);
+- tabs, with preview tabs, Reopen Closed Tab and Save All (item 15, which
+  replaced Previous File), a folder's tabs coming back, backups of unsaved
+  tabs, and auto-save (item 17);
+- line numbers and the gutter (item 16), and folding, with at most 5,000
+  lines hidden in a tab (item 27);
+- the command palette, with Quick Open, Go to Line and the open file's
+  symbols from minicode's own outline (item 19);
+- Markdown task lists: boxes to click in the preview, Ctrl+Alt+L, Return
   continuing a list, the count in the title, and the TODOs window on
-  Ctrl+Shift+L (item 14);
+  Ctrl+Shift+D (item 14);
 - images and PDFs in the editor's slot (item 4), with zoom for PDFs and the
   LaTeX preview;
 - Find in Folder (item 5) with Replace in Folder, and the find and replace
   bar in the file with VS Code's options (item 20);
+- brackets boxed beside the caret and colored by depth, Go to Bracket, and
+  brackets and quotes that close as they are typed (item 21);
+- several carets and the line commands (item 26);
+- the editor's and the terminals' zoom, word wrap, Go Back and Forward, and
+  Maximize Pane (item 25);
+- large-file mode, files over 4 MB read without holding the window, and
+  lines over 10,000 characters shown a part at a time (item 22);
 - language servers: squiggles, completion, hover and go to definition
   (item 6), every tab's file open on its server, and rename, references and
   quick fixes (item 28);
+- Format Document, by the project's formatter or the file's server, and a
+  folder's own tools (its `.venv`, `node_modules` and code a server would
+  run) used only once the folder's answer allows them (item 29);
 - the LaTeX preview with double-click editing and Export PDF (item 7);
 - several windows, each with its own tree, editor, terminal, browser, search
   panel and language servers; Focus Editor, Close Window and Quit (item 8);
-- tabs, with preview tabs, Reopen Closed Tab and Save All (item 15, which
-  replaced Previous File);
-- brackets boxed beside the caret and colored by depth, Go to Bracket, and
-  brackets and quotes that close as they are typed (item 21);
-- large-file mode, files over 4 MB read without holding the window, and
-  lines over 10,000 characters shown a part at a time (item 22);
 - a VTE terminal that gets its own Ctrl keys while it has the keyboard, with
   Ctrl+click on a file:line or URL in its output (item 9), and a WebKitGTK
-  browser;
+  browser, beside the editor with the terminal below both, as the Mac lays
+  them out, each hidden on its own and its bars dragged (item 18);
 - the Source Control panel with the commit graph, in the tree's place on
   Ctrl+Shift+G (item 10);
 - video and audio in the editor's slot through GTK's GStreamer backend,
   with Play/Pause on Ctrl+Shift+Space (item 11);
 - the settings file with live colors, per-panel opacity and a live color
   picker (item 8);
-- pane hiding and divider drags, the shortcut hints panel, and opening a
-  file or folder named on the command line.
+- the shortcut hints panel, and opening a file or folder named on the
+  command line, where `minicode` gives the terminal back once its window is
+  up (item 23); the terminal and the browser are made when first shown, so
+  the window comes sooner (item 24).
 
 It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `MarkdownEdit`,
 `MarkdownTasks`, `Settings`, `LineComments`, `AutoIndent`, `KeepSorted`,
 `FolderSearch`, `TextFind`, `LatexDoc`, `SyncTex`, `Json`, `LspClient`,
 `TermLinks`, `GitStatus`, `GitGraph`, `GitModel`, `BracketMatch`, `BracketPairs`,
-`AutoClose` and `MultiCaret`. `meson.build`'s `core_sources` and
-the plain Makefile's `CORE` must name the same files: CI builds only with
+`AutoClose` and `MultiCaret`, and since November the command registry
+(`Commands`, `CommandsLinux`), `EditorTabs`, `TabSessions`, `Backups`,
+`LineIndex`, `CommandPalette`, `SymbolOutline`, `FindRules`, `EditSpans`,
+`EditBatch`, `Folding`, `NavHistory`, `NavRecorder`, `ViewZoom`,
+`RightAreaLayout` and others; `meson.build`'s `core_sources` is the list. It
+and the plain Makefile's `CORE` must name the same files: CI builds only with
 Meson, so the Makefile once fell three files behind and could not link, and
 `make test`'s `linux:build-lists` check now compares the two.
 The rest of the core (`TerminalScreen`) is portable and tested, and has not
 been added to `meson.build`, since VTE does that job here.
 
-What each item verified at run time, and what still needs a person (mostly
-real key presses and how things look), is in `../BUILD-LINUX.md`.
+What each item verified at run time is in `../BUILD-LINUX.md`, "What is
+verified", and what still needs a person (mostly real key presses, input
+methods, and how things look) in its "What needs a person".
 
 ## What to do, in order
 
@@ -1196,7 +1222,10 @@ What later items build on:
   so a second double-click within the double-click time counts as one
   click; the tabs suite pauses 0.5 s between them. A place comes back by
   setting the adjustment once the view is mapped and still
-  (`settleOnPlace`); `gtk_text_view_scroll_to_mark` lands short on a fresh
+  (`settleOnPlace`; its two seconds count from the first frame with the
+  view on screen: counted from the call, a session's tab in a window slow
+  to open, or a tab shown with the editor's pane hidden, came back at its
+  top); `gtk_text_view_scroll_to_mark` lands short on a fresh
   layout and its pending scroll can undo the user's next move, and a tab
   left while its place is still coming back keeps that place, not the
   half-done scroll. The strip's scroller has an external vertical policy:
@@ -1343,6 +1372,23 @@ What later items build on:
   again. Three suites start second apps (`MCGuiRunChild`); a child that
   fails leaves backups nobody holds, and every later child then opens a
   window on that folder at launch (`reopenFoldersWithBackups`).
+- **Trap (November 2026): a GTK question does not stop the main loop.**
+  The Mac's alerts run modally, and its timers wait; `gtk_alert_dialog_choose`
+  returns at once, and every timer keeps firing under the question. Keep
+  Mine or Reload counts the version asked about as the file's when it is
+  shown (so it is not asked about twice), and after-delay's auto-save then
+  wrote the tab's edits over that very change before the click; Reload read
+  them back. The tab being asked about is now `Editor::askingAboutDisk`
+  until the shell calls `diskQuestionAnswered`, and auto-save skips it.
+  Anything else a timer does to a document while a question about it is
+  up needs the same care.
+- **Trap (November 2026): an idle at the default priority runs after the
+  input already queued.** Focus-change's save ran from `g_idle_add`, and
+  every key waiting in GDK's queue (X events are dispatched at the default
+  priority) went first: a key typed right after Ctrl+PageUp was written
+  with the tab it went into, as if that tab had lost the keyboard too.
+  Work that must see the state of the moment it was asked for goes at
+  `G_PRIORITY_HIGH`.
 
 ### 18. The Mac's layout (done, November 2026; `PARITY.md` item 1.13)
 
@@ -2187,6 +2233,87 @@ Item 2.1 (`LspSessionActions.cpp`, `LspSessionEdits.cpp`, `LspPicker.{h,cpp}`):
   matching rule, so a rule for one action needs a `when`, or it resolves
   every action without an edit (a command action too) into that edit.
 
+### 29. The folder's own tools and Format Document (done, November 2026; `PARITY.md` items 2.3 and 2.4)
+
+What later items build on:
+- **The folder's answer** (`src/FolderConsent.{h,cpp}`): "allow", "deny"
+  or none for a window's folder (its resolved path), kept in
+  `$XDG_STATE_HOME/minicode/folder-tools.json` (the core's
+  `FolderTools::decode` and `encode`), the Mac's `MCFolderToolsConsent`.
+  One answer covers the folder's Python environment for the servers, its
+  `.venv` and `node_modules` for the formatters, a configuration that runs
+  code, and rust-analyzer's and the TypeScript server's project code.
+  `listen` tells every window of a change; the bar's × is `putOff`, for
+  this launch only, and `forget` (Ask Again About This Folder's Tools,
+  `win.forgetfoldertools`, on only while there is an answer) brings it back.
+- **The servers** (`src/LspSessionFolderTools.cpp`, LspSession's part, its
+  state in `FolderToolsState`, item 28's shape): the one hook is in
+  `launchServer` (`LspSessionServers.cpp`), where a server's program is
+  chosen and started. A Python server is
+  looked for first beside the interpreter it gets
+  (`serverPythonInterpreter`: python.interpreter, else
+  `PythonEnvs::automatic` with the folder's own environment only once
+  allowed) and is given it as on the Mac (`Lsp::pythonSettings` and
+  `pythonInitializationOptions`; before this item the port gave none).
+  rust-analyzer and the TypeScript server get `Lsp::checkProjectCode`'s
+  options, or wait (no server, a note in the status bar). An answer given
+  or taken back stops those three servers and attaches the file again.
+  Not done: re-pointing a running Python server when another file's
+  environment differs (the Mac's `applyPythonInterpreterForSwitch`), and
+  Select Python Interpreter.
+- **The bar** (`src/ConsentBar.{h,cpp}`, under the tab strip by
+  `Editor::addBar`) asks what `folderEnvironmentAwaitingConsent` and
+  `folderCodeAwaitingConsent` say, refreshed from LspSession's `onStatus`
+  and the answer's listeners. Item 2.8's install offer belongs in the same
+  bar, as the Mac's MCInstallBar does both.
+- **Format Document** (`src/Formatting.{h,cpp}`, one per window,
+  `app->format`): `win.formatdocument`, VS Code's Ctrl+Shift+I, enabled
+  while the view shows a file's editable source (`updateTitle`). The
+  decisions are the core's `FormatRun` (`src/FormatRun.{h,cpp}`, the Mac's
+  MCFormatText in plain C++ with its words; the Mac keeps its own copy
+  until it uses this one), run with the program on a thread of its own by
+  `src/FormatRunner.{h,cpp}` (`g_spawn_async_with_pipes_and_fds`, a poll
+  loop writing stdin and draining both outputs, SIGTERM at the limit and
+  SIGKILL a second later; SIGPIPE is blocked on that thread and unblocked
+  in the child). The output goes in as `FormatRun::Replacement`'s line runs
+  through `MultiEdit::apply`, one user action. Folder questions are a
+  GtkAlertDialog (Allow, Don't Allow, Cancel). Notes are a popover on the
+  text view that never takes the keyboard (autohide off), closed by the
+  caret moving, the next format or a tab switch; `lastNote`,
+  `notesShown` and `questionsAsked` are for checks.
+- **On save**: `act_save` asks `formatBeforeSaving` when format.on-save
+  is on; Save All, auto-save and the close question's Save never format.
+  Persistence's Host has `saveWaits` (auto-save leaves a tab whose Ctrl+S
+  waits) and `onActiveWillChange` calls `tabLeaving` (a waiting Ctrl+S
+  saves the tab as it is). editor.organize-imports-on-save is item 2.2's,
+  with code actions.
+- **The server fallback** (`src/LspSessionFormatting.cpp`): only when
+  nothing is planned (`Formatter::serverMayFormat`), the file's server if
+  it offers formatting (`Lsp::routeFormatting`), 5 s, its edits through
+  item 28's workspace edit applier (`applyEdit`, with the server's
+  document versions as asked), as the Mac's go through its applier.
+  For it to ever run here, `languageOf` (`LspSessionServers.cpp`, which the
+  file on show and every tab go through) now maps a file with
+  `Settings::lspExtensions` as the Mac does: servers of the user's own
+  (`lsp.<name>` with `lsp.<name>.extensions`) and an optional built-in one
+  the settings name a command for (`lsp.markdown = ...`). The Mac also
+  starts an optional one it finds installed, which this port does not yet.
+- **`LspSearchDirs` and `LspFindProgram`** (Lsp.h, in `LspProcess.cpp`)
+  are where programs are looked for after PATH; FormatRunner uses them too.
+- **For checks**: `MCGuiApp().consentBar` and `MCGuiApp().format`; the
+  suites are `tools_consent`, `server_consent`, `format`,
+  `format_on_save`, `format_consent` and `format_coverage`. The
+  suites put their stand-in formatters in a folder of the scratch world
+  first on PATH (`g_setenv`, put back at the end), so a formatter the
+  machine has is never run.
+- **Traps**: an alert closing leaves no window with the X focus (there is
+  no window manager in the checks), so `gtk_widget_has_focus` on the text
+  view stays false until the next key gives the window the focus; wait on
+  the window's focus widget (`gtk_root_get_focus`) instead. GTK lays a
+  freshly shown buffer's lines out in idle slices, which moves the line at
+  the top as estimated heights turn real: a check of "the top line kept"
+  waits for the layout to settle first.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).
@@ -2500,6 +2627,41 @@ GUI checks (`tests/gui`):
   turns of the main loop, and the runner waits for it.
 - GtkTextView undoes typing a piece at a time: one Ctrl+Z after typing a
   line takes back its last word or so, not the line.
+- **CPU time grows with the load on the ThinkPad** (2026-11-10). Its
+  i7-8550U (four cores, eight threads) runs a thread three to four times
+  slower in CPU time with every core busy: Replace All of 20,000 matches
+  took 170 ms quiet and 0.5 to 1.6 s loaded, its undo 1.6 s and up to 4.6
+  s. `MALLOC_PERTURB_` (meson and CI set it) made no difference measured.
+  A bound with room for that and still below the regression it guards is
+  the larger of a fixed bound and a multiple of a baseline measured on the
+  same thread in the same step or suite (`find_bar`'s plain-buffer edits,
+  `large_file`'s read into a plain buffer), as the Mac's `large_file` does.
+- **Quiet is not arrival** (2026-11-10). `MCGuiWaitQuiet` on a scroll value
+  or a row count passed under load before anything had moved: GTK's first
+  scroll, a worker's first rows, or the rest of the wheel's clicks came
+  after 0.3 to 0.5 s of stillness, and the checks after read the old
+  state (`tabs`, `gutter`, `tree_stall`, `harness`, whose double-click then
+  landed above a text scrolled on by the late clicks). Wait for the value
+  the check reads; keep `MCGuiWaitQuiet` for "and nothing more arrives",
+  after that.
+- **A condition an earlier state already meets** (2026-11-10).
+  `find_bar` waited for "200 matches, highlighted" with
+  `highlighted() > 0`, which the seed's one tagged match already made
+  true; the new matches are painted from an idle, which a loaded run
+  reached after the check. Wait for something only the new state has (the
+  selected match's own tag).
+- **A scroll to a mark in a big buffer waits for GTK's whole layout**
+  (2026-11-10). `gtk_text_view_scroll_to_mark` acts at once only over a
+  complete layout; while GTK is still laying a new buffer out in idle
+  slices (seconds for 100,000 lines, longer under load) it is only kept
+  pending, so asking again every poll changes nothing, and a wait of 10 or
+  20 s for the line to come on screen timed out in loaded runs
+  (`bracket_pairs`, `gutter_typing`). Wait for `MCGuiTextLaidOut` first,
+  with a limit about the machine. A scroll that GTK does carry out over
+  lines it has not laid out (Ctrl+End in a file just opened) lands short
+  and stays, since GTK keeps the top line still as heights come; the
+  `gutter` suite waits for every line to have its height before its second
+  Ctrl+End, where a quiet view for 0.3 s had let it go too early.
 - **Input that gives up the PRIMARY selection and takes it again, sent in
   one burst** (2026-11-10, `large_file` on CI one run in two): a click in a
   field whose text is selected, then Ctrl+A. GTK handles both within the

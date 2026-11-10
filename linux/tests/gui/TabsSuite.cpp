@@ -155,6 +155,12 @@ long gCaretA = 0;
 long gCaretB = 0;
 size_t gWindows = 0;
 
+// a on show with its caret and its view where they were.
+bool aBack() {
+    return caret() == gCaretA && caretOnScreen() && scrollY() > gScrollA - 20 &&
+           scrollY() < gScrollA + 20;
+}
+
 }  // namespace
 
 MC_GUI_SUITE(tabs) {
@@ -232,7 +238,12 @@ MC_GUI_SUITE(tabs) {
         MCGuiType("A typed");
     });
     MCGuiWait("a has it", 10, [] { return MCGuiEditorText() == kA + "A typed"; });
-    MCGuiWaitQuiet("a's view settles at its end", 0.4, 5, [] { return (long)scrollY(); });
+    // Each of these waits reads what the checks after it read: a quiet view
+    // alone, under load, was a view GTK had not moved yet.
+    MCGuiWait("a's view at its end", 10, [] {
+        return scrollY() > 0 && caretOnScreen() && caret() == g_utf8_strlen((kA + "A typed").c_str(), -1);
+    });
+    MCGuiWaitQuiet("and still", 0.4, 5, [] { return (long)scrollY(); });
     MCGuiStep("a's caret and scroll", [] {
         gScrollA = scrollY();
         gCaretA = caret();
@@ -261,7 +272,7 @@ MC_GUI_SUITE(tabs) {
     MCGuiWait("a, with its typing", 10, [] {
         return row() == ">tab-a.txt* tab-b.py* tab-c.txt*" && MCGuiEditorText() == kA + "A typed";
     });
-    MCGuiWaitQuiet("its view settles", 0.4, 5, [] { return (long)scrollY(); });
+    MCGuiWait("its view back", 10, aBack);
     MCGuiStep("a's caret where it was, and its view back where it was", [] {
         GCHECK(caret() == gCaretA);
         GCHECK(caretOnScreen());
@@ -303,7 +314,7 @@ MC_GUI_SUITE(tabs) {
     MCGuiPause(0.3);   // a negative check: nothing may move in this time
     MCGuiStep("then a", [] { MCGuiKey("alt+1"); });
     MCGuiWait("a on show", 10, [] { return ed()->activeIndex() == 0; });
-    MCGuiWaitQuiet("its view settles", 0.4, 5, [] { return (long)scrollY(); });
+    MCGuiWait("its view back", 10, aBack);
     MCGuiStep("a's place was kept through it, its caret too", [] {
         MCGuiNote("a's scroll: %.0f, was %.0f", scrollY(), gScrollA);
         GCHECK(scrollY() > gScrollA - 20 && scrollY() < gScrollA + 20);
@@ -379,7 +390,9 @@ MC_GUI_SUITE(tabs) {
         GCHECK_EQ_STR(MCGuiReadFile(F("tab-b.py")), kB);
         GCHECK_EQ_STR(MCGuiEditorText(), kA + "A typed");
     });
-    MCGuiWaitQuiet("a's view settles back at its place", 0.4, 5, [] { return (long)scrollY(); });
+    MCGuiWait("a's view back at its place", 10, [] {
+        return scrollY() > gScrollA - 20 && scrollY() < gScrollA + 20;
+    });
     MCGuiStep("where it was", [] {
         MCGuiNote("a's scroll: %.0f, was %.0f", scrollY(), gScrollA);
         GCHECK(scrollY() > gScrollA - 20 && scrollY() < gScrollA + 20);
@@ -398,13 +411,36 @@ MC_GUI_SUITE(tabs) {
     MCGuiWait("a, back where it was in the row, as saved", 10, [] {
         return row() == ">tab-a.txt tab-c.txt" && MCGuiEditorText() == kA + "A typed";
     });
-    MCGuiWaitQuiet("its view settles", 0.4, 5, [] { return (long)scrollY(); });
+    MCGuiWait("its view back", 10, aBack);
     MCGuiStep("with its caret and scroll, and the keyboard", [] {
         GCHECK(caret() == gCaretA);
         GCHECK(caretOnScreen());
         MCGuiNote("a's scroll: %.0f, was %.0f", scrollY(), gScrollA);
         GCHECK(scrollY() > gScrollA - 20 && scrollY() < gScrollA + 20);
         GCHECK(editorHasKeyboard());
+    });
+
+    // ---- a place waits for the view to be on screen
+    // A tab shown before its view is on screen (a session's tab, in a window
+    // slow to open on a busy machine) gave its place up two seconds after it
+    // was asked for, before the view was ever drawn, and came back at its
+    // top. A tab shown while the editor's pane is hidden is the same case,
+    // by hand.
+    MCGuiStep("c's tab, then the editor hidden (Ctrl+Shift+E)", [] {
+        ed()->activate(ed()->document(1));
+        MCGuiKey("ctrl+shift+e");
+    });
+    MCGuiWait("hidden, c on show", 10, [] {
+        return ed()->activeIndex() == 1 && !gtk_widget_get_mapped(ed()->textView());
+    });
+    MCGuiStep("a's tab shown while it is hidden", [] { ed()->activate(ed()->document(0)); });
+    MCGuiPause(2.5);   // time is the condition: hidden for longer than the place's two seconds
+    MCGuiStep("the editor shown again", [] {
+        GCHECK(ed()->activeIndex() == 0 && !gtk_widget_get_mapped(ed()->textView()));
+        MCGuiKey("ctrl+shift+e");
+    });
+    MCGuiWait("a's view back where it was", 10, [] {
+        return gtk_widget_get_mapped(ed()->textView()) && aBack();
     });
     MCGuiStep("again: b", [] { MCGuiKey("ctrl+alt+shift+t"); });
     MCGuiWait("b, from its file, where it was", 10, [] {

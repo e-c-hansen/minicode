@@ -7,8 +7,8 @@
 // Everything runs on the main thread: output is read from a non-blocking
 // pipe when the main loop says it is readable, and writes that do not fit in
 // the pipe wait for it to drain, so a server that is slow to read never
-// blocks typing. LspTerminateAllServers, LspRunningServerCount and
-// LspServerPids (Lsp.h) are this file's.
+// blocks typing. LspTerminateAllServers, LspSearchDirs, LspFindProgram,
+// LspRunningServerCount and LspServerPids (Lsp.h) are this file's.
 #pragma once
 
 #include <gio/gio.h>
@@ -30,7 +30,10 @@ std::vector<std::string> searchDirs();
 std::string findProgram(const std::string& name);
 // A command line from the settings (or the defaults) -> the program's full
 // path plus its arguments, or nothing when the program is not installed.
-std::vector<std::string> resolveCommand(const std::string& command);
+// A bare name is looked for in `first` before the usual folders (a Python
+// server beside the interpreter it is given).
+std::vector<std::string> resolveCommand(const std::string& command,
+                                        const std::vector<std::string>& first = {});
 
 class Server : public std::enable_shared_from_this<Server> {
 public:

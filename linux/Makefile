@@ -39,7 +39,9 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/NavHistory.cpp ../src/NavRecorder.cpp ../src/ViewZoom.cpp \
         ../src/CommandPalette.cpp ../src/SymbolOutline.cpp \
         ../src/BracketMatch.cpp ../src/BracketPairs.cpp ../src/AutoClose.cpp \
-        ../src/MultiCaret.cpp ../src/EditBatch.cpp ../src/Folding.cpp
+        ../src/MultiCaret.cpp ../src/EditBatch.cpp ../src/Folding.cpp \
+        ../src/Formatter.cpp ../src/FormatRun.cpp ../src/FolderTools.cpp \
+        ../src/PythonEnvs.cpp ../src/InstallHints.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
@@ -54,6 +56,8 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Document.cpp src/Tabs.cp
        src/Lsp.cpp src/LspProcess.cpp src/LspSessionServers.cpp src/LspSessionSync.cpp \
        src/LspSessionDiagnostics.cpp src/LspSessionCompletion.cpp src/LspSessionNavigation.cpp \
        src/LspSessionActions.cpp src/LspSessionEdits.cpp src/LspPicker.cpp \
+       src/LspSessionFolderTools.cpp src/FolderConsent.cpp src/ConsentBar.cpp \
+       src/Formatting.cpp src/FormatRunner.cpp src/LspSessionFormatting.cpp \
        src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \

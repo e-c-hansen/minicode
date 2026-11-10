@@ -422,12 +422,24 @@ MC_GUI_SUITE(gutter) {
         gtk_widget_grab_focus(ed()->textView());
         MCGuiKey("ctrl+end");
     });
-    MCGuiWaitQuiet("the view settles", 0.3, 5, [] {
-        return (long)gtk_adjustment_get_value(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tv())));
-    });
     // GTK's first scroll to lines it has not laid out yet can land short of
     // the caret (HANDOFF.md, settleOnCaret); the second, over laid-out
-    // lines, does not.
+    // lines, does not. So the second waits for every line to have its
+    // height: waiting for the view to stand still for 0.3 s instead let it
+    // go first under load, both landed short, and the view stayed at line
+    // 180. (The scroll lays out the lines at the end at once, so the last
+    // line's height says nothing here.)
+    MCGuiWait("GTK has laid out every line", 60, [] {
+        GtkTextBuffer* b = buf();
+        GtkTextIter it;
+        for (int line = 0; line < gtk_text_buffer_get_line_count(b); line++) {
+            gtk_text_buffer_get_iter_at_line(b, &it, line);
+            int y = 0, h = 0;
+            gtk_text_view_get_line_yrange(tv(), &it, &y, &h);
+            if (h <= 0) return false;
+        }
+        return true;
+    });
     MCGuiStep("and again", [] { MCGuiKey("ctrl+end"); });
     waitFor("the numbers at the end, 1,501 the last (empty) one, active", 10, [] {
         return rowsRight() && !gut()->drawnRows().empty() &&
