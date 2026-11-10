@@ -59,7 +59,8 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Document.cpp src/Tabs.cp
        src/LspSessionFolderTools.cpp src/FolderConsent.cpp src/ConsentBar.cpp \
        src/Formatting.cpp src/FormatRunner.cpp src/LspSessionFormatting.cpp \
        src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp \
-       src/GitDiffView.cpp src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
+       src/GitDiffView.cpp src/GitGutter.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
+       src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \

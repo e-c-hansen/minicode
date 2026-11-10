@@ -185,6 +185,12 @@ gui_sources = [
   'src/GitRun.cpp',
   'src/GitTrash.cpp',
   'src/GitDiffView.cpp',
+  # The editor's change bars (GitGutter.cpp) and the tree's colors
+  # (TreeGitColors.cpp), both watching the repository's folder
+  # (GitDirWatch.cpp).
+  'src/GitGutter.cpp',
+  'src/TreeGitColors.cpp',
+  'src/GitDirWatch.cpp',
   # Web pictures in the Markdown preview: the libsoup half (#ifdef-guarded,
   # like Terminal.cpp) over its plain C++ half.
   'src/WebImageRules.cpp',

@@ -79,9 +79,21 @@ public:
     void revealPath(const std::string& path);
 
     // Called on every change any of the tree's folder monitors reports, a
-    // file's contents included. The Source Control panel refreshes on it,
-    // as the Mac's does on the tree's FSEvents.
-    void setActivityCallback(std::function<void()> cb) { *activity_ = std::move(cb); }
+    // file's contents included, with the path that changed. The Source
+    // Control panel refreshes on it, as the Mac's does on the tree's
+    // FSEvents, and the git colors look again (TreeGitColors.h).
+    using ActivityCb = std::function<void(const std::string& path)>;
+    void setActivityCallback(ActivityCb cb) { *activity_ = std::move(cb); }
+
+    // A row's git color (TreeGitColors.h): the stylesheet class its name
+    // takes and its tooltip, for a path and whether it is a folder; null
+    // for none. Asked as each row is bound, and by redecorate().
+    using Decorator = std::function<const char*(const std::string& path, bool isDir,
+                                                std::string* tooltip)>;
+    void setDecorator(Decorator d) { decorator_ = std::move(d); }
+    // The decorator's answers changed: the rows on show ask again, nothing
+    // else of them changes.
+    void redecorate();
 
     // The right-click menu. Its items name window actions ("win.rename"),
     // which resolve because the menu is parented inside the window.
@@ -202,7 +214,8 @@ private:
     // Folders to open again after the dotfile filter changed (setShowHidden).
     std::unordered_set<std::string> pendingExpand_;
     // Shared with every folder's watch, which may outlive the tree briefly.
-    std::shared_ptr<std::function<void()>> activity_ =
-        std::make_shared<std::function<void()>>();
+    std::shared_ptr<ActivityCb> activity_ = std::make_shared<ActivityCb>();
+    Decorator decorator_;
+    void decorate(GtkWidget* label) const;
     gint64      expandDeadline_ = 0;
 };

@@ -2452,6 +2452,69 @@ Traps:
   (a throwaway program showed it); `runGitWithin` keeps git's own answer
   then.
 
+### 31. Change bars and the tree's git colors (done, November 2026; `PARITY.md` item 2.10)
+
+- **The change bars** are `GitGutter` (`src/GitGutter.{h,cpp}`), the Mac's
+  `MCGitGutter` step for step over the core's `QuickDiff`: the original is
+  the index entry (`ls-files --stage`, `cat-file blob`), read again only
+  when the file looked at or the index file's stat changed; the diff runs
+  on a thread of its own 0.3 s after typing pauses (one timer) and is
+  dropped when an edit, a tab switch or another look came meanwhile. It
+  takes two hops to the worker: the source first, then the text, copied
+  only for a file git has (`Document::text()`, a copy of the whole file).
+  Each buffer's `BufferLines` keeps its bars, so a tab shown again has them
+  and a look follows. `editor.git-gutter` turns the gutter's lane on and
+  off (`Gutter::setChangeLane`) and `setChangeColors` takes
+  `editor.git-*`; while it is off nothing looks and nothing touches the
+  bars, which is why the `gutter` suite, which sets bars by hand, runs
+  with it off. The bar's popover (a child of the text view, unparented on
+  unrealize) has Revert Change, a `MultiEdit::apply` of
+  `QuickDiff::revertEdit` (UTF-16 offsets through `utf16::toCharOffset`),
+  and Stage Change, refused when the entry no longer names the bars'
+  object. The window's actions are `nextchange`, `previouschange`,
+  `revertchange` and `stagechange`, enabled as the Mac validates them (bars
+  there, a bar on the caret's line). The panel's refresh calls
+  `GitPanel::onRefreshed`, and the window coming to the front looks again.
+- **The tree's colors** are `TreeGitColors` (`src/TreeGitColors.{h,cpp}`),
+  the Mac's `MCTreeGitColors`: one `Git::decorationArgs()` status per look,
+  0.5 s after the first change, nothing for a change inside an ignored
+  folder or `.git/objects` and `logs`. `FileTree::setDecorator` gives each
+  row's name a class (`minicode-git-modified`, ...) and a tooltip as it is
+  bound, `redecorate()` asks the rows on show again, and `ThemeCss.cpp`
+  colors the classes from `tree.git-*`. The tree's activity callback now
+  carries the changed path.
+- **Both watch the git folder** (`src/GitDirWatch.{h,cpp}`, the Mac's
+  `MCGitDirWatch`): a directory monitor on `rev-parse --absolute-git-dir`,
+  calling only when the index's or HEAD's stat changed. The tree needs it
+  more than the Mac's does: GIO's monitors see one folder each and the tree
+  watches only the folders it has listed (a closed folder has no monitor,
+  whatever item 16 assumed), so a commit, which writes only in `.git`, was
+  invisible to it. A file another program changes in a folder the tree
+  never listed is colored at the next look (the window back in front, a
+  save, the index, any change in a listed folder); the Mac sees it at once.
+- **For checks**: `MCGuiAppWindow::changeBars` and `treeColors`;
+  `GitGutter::holdLooksForChecks` makes the index move on under bars
+  already drawn (Stage Change's refusal); `barDescriptions()` spells bars
+  as the Mac's suite does. The scratch world sets `GIT_CEILING_DIRECTORIES`
+  to its root (`Wrapper.cpp`): it lives under `build/`, inside minicode's
+  own checkout, so every window's project was in that repository (ignored,
+  the whole tree gray) and every look ran git on it.
+- **Trap: ccache kept an object made from a header edited during the
+  build.** `AppSeam.h` gained two fields while a build was compiling the
+  suites; ccache stored those objects under the new header's hash, and
+  later builds took them from the cache, so `GitActionsSuite.o` and three
+  others destroyed `MCGuiAppWindow`s 184 bytes apart where `AppSeam.inc`
+  made them 200 apart: `free(): invalid size` in `OpenRepoWindow`, in the
+  normal build only (the ASan build compiled afresh). `objdump` of the
+  lambda showed the old stride. Do not edit headers while a build runs; if
+  one did, delete the objects and build with `CCACHE_DISABLE=1`.
+- **Trap: `Editor::buffer()` lags the view in `notify::buffer`.** The
+  editor sets its own pointer after `CodeView::setBuffer`, so a handler of
+  the view's `notify::buffer` that asked `editor->buffer()` read the buffer
+  just replaced, freed when a large file's loading buffer gave way
+  (`large_file` crashed in `BufferLines::of`). `GitGutter` reads
+  `gtk_text_view_get_buffer` instead.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

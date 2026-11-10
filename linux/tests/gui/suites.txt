@@ -51,3 +51,5 @@ GitSyncSuite.cpp
 GitActionsSuite.cpp
 GitHunksSuite.cpp
 GitVerbsSuite.cpp
+GitGutterSuite.cpp
+TreeGitColorsSuite.cpp

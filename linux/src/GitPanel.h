@@ -93,6 +93,9 @@ public:
     std::function<std::string()> fileOnShow;
     // The questions' window.
     GtkWindow* hostWindow = nullptr;
+    // A status was read and shown: the editor's change bars look again
+    // (GitGutter.h).
+    std::function<void()> onRefreshed;
 
     // The window's commands (View > Source Control and the palette), added
     // to its action map as Keys.cpp names them ("gitfetch", ...).

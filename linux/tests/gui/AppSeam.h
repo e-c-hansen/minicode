@@ -25,6 +25,8 @@ class WindowLayout;
 class NavHistoryUi;
 class ConsentBar;
 class Formatting;
+class GitGutter;
+class TreeGitColors;
 
 // One editor window's parts. Pointers are the app's own and stay valid until
 // the window closes; terminal and browser are null in a build without them.
@@ -48,6 +50,8 @@ struct MCGuiAppWindow {
     NavHistoryUi* nav = nullptr;           // Go Back and Go Forward's history
     ConsentBar* consentBar = nullptr;      // the folder's own tools' question (2.3)
     Formatting* format = nullptr;          // Format Document (2.4)
+    GitGutter*  changeBars = nullptr;      // the editor's change bars (2.10)
+    TreeGitColors* treeColors = nullptr;   // the tree's colors (2.10)
     std::string rootDir;
 };
 

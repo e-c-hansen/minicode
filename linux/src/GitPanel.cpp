@@ -814,6 +814,9 @@ void GitPanel::applySnapshot(const GitUi::Snapshot& s) {
     g_log(GIT_LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "status: %s | %s | error: %s | notice: %s",
           branch.c_str(), graphSummary_.c_str(), errorText_.c_str(), notice.c_str());
     debugLines("rows", rowDescriptions());
+    // The editor's change bars look again (GitGutter.h), as the Mac's
+    // MCGitPanelDidRefreshNotification has them.
+    if (onRefreshed) onRefreshed();
 }
 
 void GitPanel::applyGraph(std::shared_ptr<const GitUi::Graph> g) {

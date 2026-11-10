@@ -290,6 +290,18 @@ Choices item 2.1 made, by the same rules:
   keyboard. Ctrl+. outranks GtkTextView's own emoji chooser key, as Ctrl+/
   outranks its Select All.
 
+Choices item 2.10 made, by the same rules:
+- Go to Next Change and Go to Previous Change are VS Code's Alt+F5 and
+  Shift+Alt+F5. GNOME's own keys give Alt+F5 to Restore Window
+  (org.gnome.desktop.wm.keybindings unmaximize, Ubuntu's default too; the
+  owner's desktop has it turned off), but every VS Code platform has
+  Alt+F5, so there is no other VS Code key to yield to, as Copy Line
+  yielded to Shift+Alt+Up: the key is kept, and on such a desktop the
+  Navigate menu, the palette or keys.conf runs the command. They are editor
+  commands, so in the terminal the program has both. Revert Change and
+  Stage Change have no key, as on the Mac and in VS Code, and are in View >
+  Source Control.
+
 Choices items 2.3 and 2.4 made, by the same rules:
 - Format Document is VS Code's Linux Ctrl+Shift+I (the Mac's Shift+Option+F
   is VS Code's Mac key, and Shift+Alt+F its Windows key). It is an editor
@@ -1072,8 +1084,18 @@ its server comes first here (2.0).
   run once (2026-11-10). `large_file` failed its 250 ms bound once (263.8
   ms), not this item's. *TODO at the merge with 2.11:* end the row and file
   menus in `GitPanel::popupMenu` with `Appearance::addItem(menu, "git")`.
-- [ ] **2.10 Change bars and the tree's git colors.** `QuickDiff`,
-  `GitStatus`.
+- [x] **2.10 Change bars and the tree's git colors.** `QuickDiff`,
+  `GitStatus`. Done (`HANDOFF.md` item 31): the `git_gutter` and
+  `tree_git_colors` suites, real keys and clicks over scratch repositories
+  (bars for typed edits, moved at once, Alt+F5 and Shift+Alt+F5, the bar's
+  popover with Revert and Stage, Stage refused when the index moved on,
+  git outside with the panel hidden; the tree's modified, added,
+  untracked and ignored colors, folders two deep, a commit outside, the
+  theme's and the keys' colors), 3 of 3 runs each. Needs the owner: the
+  popover's look and placement, the bars' colors on a real screen, Alt+F5
+  under GNOME (its own keys take it unless turned off, as on this
+  ThinkPad), and a file changed by another program in a folder the tree
+  never listed (colored at the next look, not at once as on the Mac).
 - [ ] **2.11 Themes from a menu and Adjust Settings.**
 - [ ] **2.12 Symbols from the servers.** Added by item 1.5, which left them
   out because the Linux checks have no scripted server yet. Go to Symbol

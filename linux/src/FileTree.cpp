@@ -141,7 +141,7 @@ struct DirWatch {
     GListStore* store = nullptr;         // not owned; this struct hangs off it
     GFileMonitor* monitor = nullptr;
     GCancellable* cancel = nullptr;
-    std::shared_ptr<std::function<void()>> activity;   // FileTree::setActivityCallback
+    std::shared_ptr<FileTree::ActivityCb> activity;    // FileTree::setActivityCallback
     // The store's entries, in its order. Changed only once a listing is in.
     std::vector<TreeRefresh::Row> rows;
     TreeRefresh::Pacer pacer;
@@ -319,9 +319,13 @@ void startListing(DirWatch* w) {
     g_object_unref(task);
 }
 
-void onDirChanged(GFileMonitor*, GFile*, GFile*, GFileMonitorEvent ev, gpointer wp) {
+void onDirChanged(GFileMonitor*, GFile* file, GFile*, GFileMonitorEvent ev, gpointer wp) {
     auto* w = static_cast<DirWatch*>(wp);
-    if (w->activity && *w->activity) (*w->activity)();
+    if (w->activity && *w->activity) {
+        char* path = file ? g_file_get_path(file) : nullptr;
+        (*w->activity)(path ? path : "");
+        g_free(path);
+    }
     switch (ev) {
     case G_FILE_MONITOR_EVENT_CREATED:
     case G_FILE_MONITOR_EVENT_DELETED:
@@ -551,7 +555,7 @@ void FileTree::onSetup(GtkSignalListItemFactory* /*f*/, GObject* obj,
 }
 
 void FileTree::onBind(GtkSignalListItemFactory* /*f*/, GObject* obj,
-                      gpointer /*self*/) {
+                      gpointer self) {
     GtkListItem* li = GTK_LIST_ITEM(obj);
     GtkTreeExpander* expander =
         GTK_TREE_EXPANDER(gtk_list_item_get_child(li));
@@ -568,6 +572,14 @@ void FileTree::onBind(GtkSignalListItemFactory* /*f*/, GObject* obj,
     const char* name = info ? g_file_info_get_name(info) : "?";
     gtk_label_set_text(GTK_LABEL(label), name ? name : "?");
 
+    // The row's color (TreeGitColors.h): its path, kept on its label for
+    // redecorate().
+    GFile* file = fileOfInfo(info);
+    char* path = file ? g_file_get_path(file) : nullptr;
+    g_object_set_data_full(G_OBJECT(label), "minicode-path", path, g_free);
+    g_object_set_data(G_OBJECT(label), "minicode-dir", GINT_TO_POINTER(infoIsDir(info) ? 1 : 0));
+    static_cast<FileTree*>(self)->decorate(label);
+
     // Folder vs file icon (named icons from the theme; tinted via CSS class).
     if (infoIsDir(info)) {
         gtk_image_set_from_icon_name(GTK_IMAGE(icon), "folder-symbolic");
@@ -579,6 +591,37 @@ void FileTree::onBind(GtkSignalListItemFactory* /*f*/, GObject* obj,
         gtk_widget_add_css_class(icon, "minicode-file-icon");
     }
     if (info) g_object_unref(info);
+}
+
+// A row's color and tooltip, from the decorator, on its name.
+void FileTree::decorate(GtkWidget* label) const {
+    static const char* const kClasses[] = {
+        "minicode-git-ignored", "minicode-git-untracked", "minicode-git-added",
+        "minicode-git-deleted", "minicode-git-modified",  "minicode-git-conflict"};
+    const char* path = static_cast<const char*>(g_object_get_data(G_OBJECT(label), "minicode-path"));
+    const bool isDir = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(label), "minicode-dir")) != 0;
+    std::string tip;
+    const char* want = decorator_ && path ? decorator_(path, isDir, &tip) : nullptr;
+    for (const char* c : kClasses)
+        if (!want || std::strcmp(c, want) != 0) gtk_widget_remove_css_class(label, c);
+    if (want) gtk_widget_add_css_class(label, want);
+    gtk_widget_set_tooltip_text(label, tip.empty() ? nullptr : tip.c_str());
+}
+
+// The rows on show: the list view's row widgets hold the labels.
+void FileTree::redecorate() {
+    if (!listView_) return;
+    std::vector<GtkWidget*> todo = {listView_};
+    while (!todo.empty()) {
+        GtkWidget* w = todo.back();
+        todo.pop_back();
+        if (gtk_widget_has_css_class(w, "minicode-tree-label")) {
+            decorate(w);
+            continue;
+        }
+        for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+            todo.push_back(c);
+    }
 }
 
 // ---------------------------------------------------------------- activation

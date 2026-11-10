@@ -138,6 +138,15 @@ std::string stylesheet(const Settings& s) {
     css += ".minicode-tree.minicode-drop-root:drop(active) {"
            " outline: 2px solid #4EA1F7; outline-offset: -2px; }";
     css += ".minicode-tree-label { color: " + fg(Surface::Sidebar) + "; }";
+    // The rows' git colors (TreeGitColors.h): the tree.git-* keys, VS
+    // Code's dark or light defaults by the theme.
+    const struct { const char* cls; TreeGitColor color; } gitRows[] = {
+        {"modified", TreeGitColor::Modified}, {"added", TreeGitColor::Added},
+        {"untracked", TreeGitColor::Untracked}, {"deleted", TreeGitColor::Deleted},
+        {"ignored", TreeGitColor::Ignored}, {"conflict", TreeGitColor::Conflict}};
+    for (const auto& r : gitRows)
+        css += std::string(".minicode-tree-label.minicode-git-") + r.cls + " { color: " +
+               cssColor(s.treeGitColor(r.color)) + "; }";
     // The folder arrows, which otherwise take the desktop theme's text color
     // (black under a light theme, nearly invisible on the dark sidebar).
     css += ".minicode-tree expander { color: " + fg(Surface::Sidebar) + "; }";

@@ -75,10 +75,13 @@ public:
     static constexpr double kChangeBarWidth = 3;
     static constexpr double kFoldLane = 14;
     static constexpr int kMinDigits = 3;
-    // The change bars' lane, between the dots and the numbers (item 2.10
+    // The change bars' lane, between the dots and the numbers (GitGutter.h
     // turns it on with editor.git-gutter).
     void setChangeLane(bool on);
     bool changeLane() const { return changeLane_; }
+    // The bars' colors: added, modified, deleted (editor.git-added and the
+    // rest; VS Code's until set).
+    void setChangeColors(const GdkRGBA& added, const GdkRGBA& modified, const GdkRGBA& deleted);
     // A click on change bar `index` (of the buffer's changeBars), with the
     // rect it is drawn in, in the gutter's coordinates.
     std::function<void(int index, const graphene_rect_t& rect)> onChangeBar;
@@ -159,6 +162,9 @@ private:
     GdkRGBA        number_{0.522f, 0.522f, 0.522f, 1};
     GdkRGBA        active_{0.776f, 0.776f, 0.776f, 1};
     bool           changeLane_ = false;
+    GdkRGBA        changeColors_[3] = {{0.282f, 0.494f, 0.008f, 1},    // #487E02
+                                       {0.106f, 0.506f, 0.659f, 1},    // #1B81A8
+                                       {0.945f, 0.298f, 0.298f, 1}};   // #F14C4C
     int            digits_ = kMinDigits;
     size_t         caretLine_ = 0;
     bool           hovering_ = false;
