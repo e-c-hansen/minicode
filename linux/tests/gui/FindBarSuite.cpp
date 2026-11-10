@@ -27,6 +27,7 @@
 #include <vte/vte.h>
 #endif
 
+#include <algorithm>
 #include <string>
 
 namespace {
@@ -172,8 +173,20 @@ MC_GUI_SUITE(find_bar) {
         GCHECK_EQ_STR(bar()->query(), "10");
         MCGuiType("alpha");
     });
+    // Highlighted means the selected match carries its tag. The seed's one
+    // match ("10") was tagged a moment before, so highlighted() > 0 held as
+    // soon as the new matches arrived, and they are painted from an idle,
+    // which a loaded run reached only after the step below had looked: its
+    // two tag checks failed. (Here highlighted() > 0 held before the paint in
+    // 1 run of 6.)
     MCGuiWait("200 matches, case ignored, highlighted", 5, [] {
-        return settled(200) && bar()->highlighted() > 0;
+        int a = 0, b = 0;
+        selection(&a, &b);
+        GtkTextIter it;
+        gtk_text_buffer_get_iter_at_offset(buf(), &it, a + 1);
+        GtkTextTagTable* table = gtk_text_buffer_get_tag_table(buf());
+        return settled(200) && bar()->highlighted() > 0 &&
+               gtk_text_iter_has_tag(&it, gtk_text_tag_table_lookup(table, "minicode-find-current"));
     });
     MCGuiStep("the first match after the caret is selected; the count says so", [] {
         int a = 0, b = 0;
@@ -611,7 +624,15 @@ MC_GUI_SUITE(find_bar) {
                   "after each)", ms);
         // About 1.6 s on the ThinkPad. With the highlighter following each
         // of the 40,000 edits GTK replays one by one, 6.2 s (Document.cpp).
-        GCHECK_TIME(ms, 4500, "the undo of Replace All of 20,000 matches");
+        // On a loaded machine this thread is slower at everything: with three
+        // runs at once and a load of 8 to 13 the undo took 2.5 to 4.6 s, and
+        // the Replace All just before it 0.6 to 1.1 s, the undo always 3 to 5
+        // times the Replace All (3 on CI). So the bound grows with the Replace
+        // All measured on this thread moments ago: the regression above
+        // makes the undo 12 to 16 times it.
+        const double replaceAll = bar()->lastReplaceAllMs();
+        MCGuiNote("the undo is %.1f times the Replace All", replaceAll > 0 ? ms / replaceAll : 0.0);
+        GCHECK_TIME(ms, std::max(4500.0, 8 * replaceAll), "the undo of Replace All of 20,000 matches");
         GCHECK(!ed()->dirty());
         gChars = gtk_text_buffer_get_char_count(buf());
         caretAt(at("x = needle + 50000 "));

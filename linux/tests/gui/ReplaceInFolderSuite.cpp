@@ -110,9 +110,13 @@ MC_GUI_SUITE(replace_in_folder) {
         MCGuiClick(ed()->textView());
         MCGuiKey("ctrl+alt+shift+f");
     });
+    // The query laid out too, since the next step clicks it: a window maps
+    // its widgets at once and places them at its first frame, and a click
+    // in between found nothing to point at (a loaded full run, after which
+    // every later step of the suite failed).
     MCGuiWait("its window, the replace row shown, the keyboard in the replacement", 10, [] {
         return panel() && gtk_widget_get_mapped(panel()->window()) && panel()->replaceShown() &&
-               focusIn(panel()->replaceEntry());
+               focusIn(panel()->replaceEntry()) && MCGuiOnScreen(panel()->queryEntry());
     });
     MCGuiStep("the folder; \"cat\" typed in the query", [] {
         panel()->setScope(dir());
@@ -227,8 +231,8 @@ MC_GUI_SUITE(replace_in_folder) {
         MCGuiClick(panel()->detailsButton());
     });
     MCGuiWait("the include and exclude boxes, and the results", 10, [] {
-        return gtk_widget_get_mapped(panel()->excludeEntry()) && idle() &&
-               panel()->matches().size() == 3;
+        return MCGuiOnScreen(panel()->excludeEntry()) && MCGuiOnScreen(panel()->includeEntry()) &&
+               idle() && panel()->matches().size() == 3;
     });
     MCGuiStep("files to exclude: *.txt", [] { typeInto(panel()->excludeEntry(), "*.txt"); });
     MCGuiWait("nothing", 10, [] { return idle() && panel()->matches().empty() &&
