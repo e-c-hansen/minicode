@@ -394,4 +394,80 @@ Plan plan(const std::vector<Event> &events, const std::set<std::string> &loaded,
     return out;
 }
 
+bool rowBefore(const Row &a, const Row &b) {
+    if (a.folder != b.folder) return a.folder;
+    if (int c = a.key.compare(b.key)) return c < 0;
+    return a.name < b.name;
+}
+
+std::vector<Splice> splices(const std::vector<Row> &now, const std::vector<Row> &fresh) {
+    std::vector<Splice> out;
+    Splice run;
+    bool open = false;
+    auto close = [&] {
+        if (open) out.push_back(run);
+        open = false;
+    };
+    auto begin = [&](std::size_t at, std::size_t from) {
+        if (open) return;
+        run = Splice{at, 0, from, 0};
+        open = true;
+    };
+    std::size_t i = 0, j = 0;
+    while (i < now.size() || j < fresh.size()) {
+        if (i < now.size() && j < fresh.size() && now[i].folder == fresh[j].folder &&
+            now[i].name == fresh[j].name) {
+            close();   // the same entry: it stays
+            ++i;
+            ++j;
+        } else if (j == fresh.size() || (i < now.size() && rowBefore(now[i], fresh[j]))) {
+            begin(i, j);   // gone
+            ++run.removed;
+            ++i;
+        } else {
+            begin(i, j);   // new
+            ++run.added;
+            ++j;
+        }
+    }
+    close();
+    std::reverse(out.begin(), out.end());
+    return out;
+}
+
+double Pacer::wait(double now) const {
+    const double sinceLast = started_ ? lastStart_ + minInterval_ - now : 0;
+    return std::max(firstDelay_, sinceLast);
+}
+
+double Pacer::changed(double now) {
+    switch (state_) {
+    case State::Idle:
+        state_ = State::Waiting;
+        return wait(now);
+    case State::Listing:
+        state_ = State::ListingChanged;
+        return -1;
+    case State::Waiting:
+    case State::ListingChanged:
+        return -1;
+    }
+    return -1;
+}
+
+void Pacer::started(double now) {
+    state_ = State::Listing;
+    lastStart_ = now;
+    started_ = true;
+}
+
+double Pacer::finished(double now) {
+    if (state_ == State::ListingChanged) {
+        state_ = State::Waiting;
+        return wait(now);
+    }
+    state_ = State::Idle;
+    return -1;
+}
+
 }  // namespace TreeRefresh

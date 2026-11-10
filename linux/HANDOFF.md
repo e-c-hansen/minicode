@@ -1308,6 +1308,17 @@ Do not claim a GUI behaviour works when it was only compiled.
   therefore keeps each folder's list itself (`makeDirModel` in
   `FileTree.cpp`). Do not switch back without testing a create in an
   already-listed folder.
+- Never patch a list model once per `GFileMonitor` event (R1 in
+  `PARITY.md`, November 2026). GIO hands a burst of events over in one
+  dispatch, and a `GtkSortListModel` costs about 0.25 ms a change in a
+  folder of 30,000 entries (0.01 ms without it), so deleting the files of an
+  open folder held the main loop for two minutes and GNOME asked whether to
+  force quit. Each folder's store is now kept sorted by the tree itself and
+  an event only asks for a listing on a worker thread, which goes in as
+  splices a few milliseconds a turn. GtkTreeExpander asks every folder row
+  on screen whether it can expand, which makes its child model, so every
+  folder row shown has a monitor and a listing, open or not. The
+  `tree_stall` suite times the main thread's longest gap per phase.
 - `g_file_trash` refuses anything on a tmpfs such as /tmp ("Trashing on system
   internal mounts is not supported"). A test of Move to Trash needs its
   scratch project on the home filesystem, with `XDG_DATA_HOME` pointed at a

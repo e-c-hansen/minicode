@@ -5,9 +5,10 @@
 //     root  = makeDirModel(rootDir)                        (top-level entries)
 //     child = createChild(item) -> makeDirModel(item's GFile) for directories,
 //             NULL for regular files (so files are leaves)
-//   makeDirModel(dir) = GtkSortListModel( GtkFilterListModel( store, filter_ ) )
-//   store   = GListStore of the folder's GFileInfo, kept current by a
-//             GFileMonitor (see "one folder" below for why not GtkDirectoryList)
+//   makeDirModel(dir) = GtkFilterListModel( store, filter_ )
+//   store   = GListStore of the folder's GFileInfo, in the tree's order and
+//             kept current from a GFileMonitor (see "one folder" below for why
+//             not GtkDirectoryList, and why not a GtkSortListModel)
 //   filter_ = GtkCustomFilter hiding dotfiles unless showHidden_.
 //
 // The items flowing through the model are GFileInfo, each carrying its GFile
@@ -15,15 +16,22 @@
 // back with g_file_info_get_attribute_object().
 #include "FileTree.h"
 #include "Palette.h"
+#include "FileDetails.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <memory>
+#include <numeric>
 #include <string>
 #include <unordered_set>
+#include <vector>
 #include <sys/stat.h>
 
-// Attributes we request for every listing.
-static const char* kAttrs =
-    "standard::name,standard::type,standard::content-type,standard::icon";
+// Attributes we request for every listing: the rows show a name and whether
+// it is a folder, nothing more. (A content type would have GIO read the
+// start of every file in the folder.)
+static const char* kAttrs = "standard::name,standard::type";
 
 // ---------------------------------------------------------------- helpers
 
@@ -35,26 +43,6 @@ static GFile* fileOfInfo(GFileInfo* info) {
 
 static bool infoIsDir(GFileInfo* info) {
     return info && g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY;
-}
-
-// Row order, matching the macOS build (EditorController.mm -loadChildren):
-// directories first, then files, each group compared case-insensitively by
-// name. GtkDirectoryList hands entries back in raw enumeration order, which is
-// whatever order the filesystem returns, so without this the tree looks random.
-static int compareInfos(gconstpointer a, gconstpointer b, gpointer) {
-    GFileInfo* ia = G_FILE_INFO(const_cast<gpointer>(a));
-    GFileInfo* ib = G_FILE_INFO(const_cast<gpointer>(b));
-    bool da = infoIsDir(ia), db = infoIsDir(ib);
-    if (da != db) return da ? -1 : 1;
-
-    const char* na = g_file_info_get_name(ia);
-    const char* nb = g_file_info_get_name(ib);
-    char* fa = g_utf8_casefold(na ? na : "", -1);
-    char* fb = g_utf8_casefold(nb ? nb : "", -1);
-    int r = g_utf8_collate(fa, fb);
-    g_free(fa);
-    g_free(fb);
-    return r;
 }
 
 // ---------------------------------------------------------------- construction
@@ -92,7 +80,6 @@ FileTree::~FileTree() {
     if (listView_) gtk_list_view_set_model(GTK_LIST_VIEW(listView_), nullptr);
     treeModel_ = nullptr;
     if (filter_) g_object_unref(filter_);
-    if (sorter_) g_object_unref(sorter_);
     if (contextModel_) g_object_unref(contextModel_);
 }
 
@@ -102,120 +89,251 @@ FileTree::~FileTree() {
 // monitoring on, but on GTK 4.22 that never reports a change: a GFileMonitor
 // on the same folder sees every create, delete and rename while the list sits
 // unchanged, so files made in the terminal, or by New File, never appeared.
-// So the listing is a GListStore that this code fills and edits itself:
-// enumerated asynchronously (a huge folder must not stall the window), then
-// patched entry by entry from its own GFileMonitor. Patching one entry at a
-// time, rather than re-listing, is what keeps expanded folders expanded,
-// because the tree model only forgets a row's children when its item goes.
+// So the listing is a GListStore that this code fills and edits itself.
+//
+// It then patched the store for each event the monitor reported, through a
+// GtkSortListModel shared by every folder, and that froze the window (R1 in
+// linux/PARITY.md). GIO hands a burst of events over in one dispatch, the
+// sort model costs about a quarter of a millisecond a change in a folder of
+// 30,000 entries (it moves its whole array), and removing a row looked its
+// name up from the start: deleting the files of a big open folder held the
+// main loop for two minutes, and making them again for thirty-five seconds.
+// So now:
+//
+//   - An event only asks for the folder to be listed again
+//     (TreeRefresh::Pacer: 100 ms after the first, then no more than one
+//     listing every 300 ms while events keep coming, as the Mac's FSEvents
+//     stream coalesces).
+//   - The listing runs on a worker thread, which also works out each name's
+//     collation key and sorts the entries in the tree's order (folders
+//     first, then names compared as before, case folded and collated).
+//   - The store is kept in that order itself, with no sort model, and the
+//     fresh listing goes in as the fewest splices (TreeRefresh::splices),
+//     each one exact, so a row that stays is never taken out: the tree model
+//     forgets what was open below a row whose item goes, and the selection
+//     with it. The splices go in a few milliseconds' worth a turn of the
+//     main loop, the last first, so the store is in order at every step.
 namespace {
+
+// Splicing per turn of the main loop, and the rows one splice takes out or
+// puts in at most: GTK's models and the list view take about 40 µs a row,
+// so a piece is about 10 ms.
+constexpr gint64 kApplyBudgetUs = 8000;
+constexpr std::size_t kPieceRows = 250;
+
+double nowMs() { return (double)g_get_monotonic_time() / 1000.0; }
+
+// One listing, as the worker hands it over: the entries sorted in the tree's
+// order, and their rows for TreeRefresh::splices.
+struct Listing {
+    std::vector<GFileInfo*> infos;          // owned
+    std::vector<TreeRefresh::Row> rows;
+    ~Listing() {
+        for (GFileInfo* info : infos) g_object_unref(info);
+    }
+};
+
 struct DirWatch {
     GFile* dir = nullptr;
     GListStore* store = nullptr;         // not owned; this struct hangs off it
     GFileMonitor* monitor = nullptr;
     GCancellable* cancel = nullptr;
-    std::unordered_set<std::string> names;
     std::shared_ptr<std::function<void()>> activity;   // FileTree::setActivityCallback
+    // The store's entries, in its order. Changed only once a listing is in.
+    std::vector<TreeRefresh::Row> rows;
+    TreeRefresh::Pacer pacer;
+    guint timer = 0;                     // the wait before the next listing
+    // A listing going in: its splices, the next one, how many of that one's
+    // old rows are still to go, and how many of its new rows are in.
+    std::unique_ptr<Listing> fresh;
+    std::vector<TreeRefresh::Splice> splices;
+    std::size_t nextSplice = 0;
+    std::size_t rowsOut = 0;
+    std::size_t rowsIn = 0;
+    guint applyIdle = 0;
 };
 
-// The info a row needs, tagged with its GFile the way GtkDirectoryList did it,
-// so fileOfInfo reads both the same.
-void storeInfo(DirWatch* w, GFile* file, GFileInfo* info) {
-    const char* name = g_file_info_get_name(info);
-    if (!name || !w->names.insert(name).second) return;   // already listed
-    g_file_info_set_attribute_object(info, "standard::file", G_OBJECT(file));
-    g_list_store_append(w->store, info);
+DirWatch* watchOf(GListStore* store) {
+    return static_cast<DirWatch*>(g_object_get_data(G_OBJECT(store), "minicode-watch"));
 }
 
-void removeName(DirWatch* w, const char* name) {
-    if (!name || !w->names.erase(name)) return;
-    const guint n = g_list_model_get_n_items(G_LIST_MODEL(w->store));
-    for (guint i = 0; i < n; ++i) {
-        GFileInfo* info = G_FILE_INFO(g_list_model_get_item(G_LIST_MODEL(w->store), i));
-        const bool match = g_strcmp0(g_file_info_get_name(info), name) == 0;
-        g_object_unref(info);
-        if (match) { g_list_store_remove(w->store, i); return; }
+// On the worker: the folder's entries with their keys, sorted.
+void listInThread(GTask* task, gpointer, gpointer data, GCancellable* cancel) {
+    GFile* dir = G_FILE(data);
+    GError* err = nullptr;
+    GFileEnumerator* en =
+        g_file_enumerate_children(dir, kAttrs, G_FILE_QUERY_INFO_NONE, cancel, &err);
+    if (!en) {
+        g_task_return_error(task, err);
+        return;
     }
+    std::vector<GFileInfo*> infos;
+    std::vector<TreeRefresh::Row> rows;
+    for (;;) {
+        GFileInfo* info = nullptr;
+        GFile* child = nullptr;   // both owned by the enumerator
+        if (!g_file_enumerator_iterate(en, &info, &child, cancel, &err)) break;
+        if (!info) break;
+        const char* name = g_file_info_get_name(info);
+        if (!name || !child) continue;
+        g_file_info_set_attribute_object(info, "standard::file", G_OBJECT(child));
+        // Names compare as they always did, case folded and collated; a name
+        // that is not UTF-8 is made so first (GLib's collation refuses it).
+        char* valid = g_utf8_make_valid(name, -1);
+        char* folded = g_utf8_casefold(valid, -1);
+        char* key = g_utf8_collate_key(folded, -1);
+        rows.push_back({infoIsDir(info), key ? key : folded, name});
+        g_free(key);
+        g_free(folded);
+        g_free(valid);
+        infos.push_back(G_FILE_INFO(g_object_ref(info)));
+    }
+    g_object_unref(en);
+    if (err) {
+        for (GFileInfo* info : infos) g_object_unref(info);
+        g_task_return_error(task, err);
+        return;
+    }
+    std::vector<std::size_t> order(rows.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+        return TreeRefresh::rowBefore(rows[a], rows[b]);
+    });
+    auto* out = new Listing;
+    out->infos.reserve(order.size());
+    out->rows.reserve(order.size());
+    for (std::size_t i : order) {
+        out->infos.push_back(infos[i]);
+        out->rows.push_back(std::move(rows[i]));
+    }
+    g_task_return_pointer(task, out, [](gpointer p) { delete static_cast<Listing*>(p); });
 }
 
-// Each async step holds a ref on the store, so the DirWatch hanging off it
-// outlives the call; a cancelled step (the folder was collapsed away or the
-// tree re-rooted) just drops out.
-void addFile(DirWatch* w, GFile* file) {
-    g_file_query_info_async(file, kAttrs, G_FILE_QUERY_INFO_NONE,
-        G_PRIORITY_DEFAULT, w->cancel,
-        [](GObject* src, GAsyncResult* res, gpointer storep) {
+void startListing(DirWatch* w);
+
+void listSoon(DirWatch* w, double wait) {
+    if (wait < 0 || w->timer) return;
+    w->timer = g_timeout_add((guint)std::ceil(wait), [](gpointer wp) -> gboolean {
+        auto* dw = static_cast<DirWatch*>(wp);
+        dw->timer = 0;
+        dw->pacer.started(nowMs());
+        startListing(dw);
+        return G_SOURCE_REMOVE;
+    }, w);
+}
+
+// The listing is in: rows now match the store, and changes reported
+// meanwhile ask for the next one.
+void listingDone(DirWatch* w) {
+    listSoon(w, w->pacer.finished(nowMs()));
+}
+
+// Puts in a few milliseconds' worth of the fresh listing's splices; true
+// when they are all in.
+bool applySome(DirWatch* w) {
+    const gint64 until = g_get_monotonic_time() + kApplyBudgetUs;
+    while (w->nextSplice < w->splices.size()) {
+        const TreeRefresh::Splice& s = w->splices[w->nextSplice];
+        // A splice of many rows goes in pieces: the old rows out from the
+        // end of the run, then the new ones in, front to back. Taking rows
+        // out of a sorted list leaves it sorted, and so does putting in the
+        // first of the run's new rows before what follows the run.
+        if (w->rowsOut > 0) {
+            const std::size_t take = std::min(w->rowsOut, kPieceRows);
+            w->rowsOut -= take;
+            g_list_store_splice(w->store, (guint)(s.at + w->rowsOut), (guint)take, nullptr, 0);
+        } else if (w->rowsIn < s.added) {
+            const std::size_t take = std::min(s.added - w->rowsIn, kPieceRows);
+            g_list_store_splice(w->store, (guint)(s.at + w->rowsIn), 0,
+                reinterpret_cast<gpointer*>(w->fresh->infos.data() + s.from + w->rowsIn),
+                (guint)take);
+            w->rowsIn += take;
+        }
+        if (w->rowsOut == 0 && w->rowsIn == s.added) {
+            w->rowsIn = 0;
+            if (++w->nextSplice < w->splices.size())
+                w->rowsOut = w->splices[w->nextSplice].removed;
+        }
+        if (g_get_monotonic_time() >= until) break;
+    }
+    if (w->nextSplice < w->splices.size()) return false;
+    w->rows = std::move(w->fresh->rows);
+    w->fresh.reset();
+    w->splices.clear();
+    w->nextSplice = 0;
+    return true;
+}
+
+// Splices until done or out of time, then again from an idle (below drawing
+// and input, so the window stays live while a big change goes in).
+void applyFresh(DirWatch* w) {
+    // The store must outlive the splices, which run the tree's handlers.
+    GListStore* keep = G_LIST_STORE(g_object_ref(w->store));
+    if (applySome(w)) {
+        listingDone(w);
+    } else if (!w->applyIdle) {
+        w->applyIdle = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, [](gpointer wp) -> gboolean {
+            auto* dw = static_cast<DirWatch*>(wp);
+            dw->applyIdle = 0;
+            applyFresh(dw);
+            return G_SOURCE_REMOVE;
+        }, w, nullptr);
+    }
+    g_object_unref(keep);   // w may be gone after this
+}
+
+void startListing(DirWatch* w) {
+    GTask* task = g_task_new(nullptr, w->cancel,
+        [](GObject*, GAsyncResult* res, gpointer storep) {
             GListStore* store = G_LIST_STORE(storep);
-            GFileInfo* info = g_file_query_info_finish(G_FILE(src), res, nullptr);
-            auto* dw = static_cast<DirWatch*>(g_object_get_data(G_OBJECT(store), "minicode-watch"));
-            // Gone again already: the temporary file of an atomic save, say.
-            // Its deletion (or rename) may have been reported before this
-            // answer came back, and then nothing would ever take the row
-            // away again, so look once more before adding it. lstat, not
-            // stat, so a link to nothing is still listed.
-            const char* p = g_file_peek_path(G_FILE(src));
-            struct stat st;
-            const bool there = p && lstat(p, &st) == 0;
-            if (info && dw && there && !g_cancellable_is_cancelled(dw->cancel))
-                storeInfo(dw, G_FILE(src), info);
-            if (info) g_object_unref(info);
+            Listing* listing = static_cast<Listing*>(
+                g_task_propagate_pointer(G_TASK(res), nullptr));
+            DirWatch* dw = watchOf(store);
+            if (dw && !g_cancellable_is_cancelled(dw->cancel)) {
+                if (listing) {
+                    dw->splices = TreeRefresh::splices(dw->rows, listing->rows);
+                    dw->fresh.reset(listing);
+                    listing = nullptr;
+                    dw->nextSplice = 0;
+                    dw->rowsOut = dw->splices.empty() ? 0 : dw->splices[0].removed;
+                    dw->rowsIn = 0;
+                    applyFresh(dw);
+                } else {
+                    // Unreadable (gone, or not ours to read): the rows stay
+                    // as they were; a folder that went is taken away by its
+                    // parent's own listing.
+                    listingDone(dw);
+                }
+            }
+            delete listing;
             g_object_unref(store);
         }, g_object_ref(w->store));
+    g_task_set_task_data(task, g_object_ref(w->dir), g_object_unref);
+    g_task_run_in_thread(task, listInThread);
+    g_object_unref(task);
 }
 
-void onDirChanged(GFileMonitor*, GFile* file, GFile* other, GFileMonitorEvent ev,
-                  gpointer wp) {
+void onDirChanged(GFileMonitor*, GFile*, GFile*, GFileMonitorEvent ev, gpointer wp) {
     auto* w = static_cast<DirWatch*>(wp);
     if (w->activity && *w->activity) (*w->activity)();
-    char* name = g_file_get_basename(file);
     switch (ev) {
     case G_FILE_MONITOR_EVENT_CREATED:
-    case G_FILE_MONITOR_EVENT_MOVED_IN:
-        addFile(w, file);
-        break;
     case G_FILE_MONITOR_EVENT_DELETED:
+    case G_FILE_MONITOR_EVENT_MOVED_IN:
     case G_FILE_MONITOR_EVENT_MOVED_OUT:
-        removeName(w, name);
+    case G_FILE_MONITOR_EVENT_RENAMED:
+    case G_FILE_MONITOR_EVENT_MOVED:
+    case G_FILE_MONITOR_EVENT_UNMOUNTED:
+        listSoon(w, w->pacer.changed(nowMs()));
         break;
-    case G_FILE_MONITOR_EVENT_RENAMED:   // both names are in this folder
-        removeName(w, name);
-        if (other) addFile(w, other);
-        break;
-    default:
+    default:   // a file written to, or its attributes: no row changes
         break;
     }
-    g_free(name);
-}
-
-void nextFiles(GFileEnumerator* en, DirWatch* w);
-
-void gotFiles(GObject* src, GAsyncResult* res, gpointer storep) {
-    GListStore* store = G_LIST_STORE(storep);
-    GFileEnumerator* en = G_FILE_ENUMERATOR(src);
-    GList* files = g_file_enumerator_next_files_finish(en, res, nullptr);
-    auto* w = static_cast<DirWatch*>(g_object_get_data(G_OBJECT(store), "minicode-watch"));
-    if (w && files && !g_cancellable_is_cancelled(w->cancel)) {
-        for (GList* l = files; l; l = l->next) {
-            GFileInfo* info = G_FILE_INFO(l->data);
-            GFile* child = g_file_enumerator_get_child(en, info);
-            storeInfo(w, child, info);
-            g_object_unref(child);
-        }
-        nextFiles(en, w);
-    } else {
-        g_file_enumerator_close_async(en, G_PRIORITY_DEFAULT, nullptr, nullptr, nullptr);
-    }
-    g_list_free_full(files, g_object_unref);
-    g_object_unref(store);
-}
-
-void nextFiles(GFileEnumerator* en, DirWatch* w) {
-    g_file_enumerator_next_files_async(en, 200, G_PRIORITY_DEFAULT, w->cancel,
-                                       gotFiles, g_object_ref(w->store));
 }
 }  // namespace
 
-// The folder's entries, then a filter (dotfiles) and a sort (folders first),
-// both shared by every folder in the tree.
+// The folder's entries, then a filter (dotfiles) shared by every folder in
+// the tree.
 GListModel* FileTree::makeDirModel(GFile* dir) {
     GListStore* store = g_list_store_new(G_TYPE_FILE_INFO);
     auto* w = new DirWatch;
@@ -223,13 +341,15 @@ GListModel* FileTree::makeDirModel(GFile* dir) {
     w->store = store;
     w->cancel = g_cancellable_new();
     w->activity = activity_;
-    // Watch before listing, so nothing created in between is missed; the name
-    // set keeps an entry from being listed twice.
+    // Watch before listing, so nothing created in between is missed: an
+    // event during the first listing asks for a second.
     w->monitor = g_file_monitor_directory(dir, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
     if (w->monitor) g_signal_connect(w->monitor, "changed", G_CALLBACK(onDirChanged), w);
     g_object_set_data_full(G_OBJECT(store), "minicode-watch", w, [](gpointer p) {
         auto* dw = static_cast<DirWatch*>(p);
         g_cancellable_cancel(dw->cancel);
+        if (dw->timer) g_source_remove(dw->timer);
+        if (dw->applyIdle) g_source_remove(dw->applyIdle);
         if (dw->monitor) {
             g_signal_handlers_disconnect_by_data(dw->monitor, dw);
             g_file_monitor_cancel(dw->monitor);
@@ -239,29 +359,14 @@ GListModel* FileTree::makeDirModel(GFile* dir) {
         g_object_unref(dw->dir);
         delete dw;
     });
-    g_file_enumerate_children_async(dir, kAttrs, G_FILE_QUERY_INFO_NONE,
-        G_PRIORITY_DEFAULT, w->cancel,
-        [](GObject* src, GAsyncResult* res, gpointer storep) {
-            GListStore* st = G_LIST_STORE(storep);
-            GFileEnumerator* en = g_file_enumerate_children_finish(G_FILE(src), res, nullptr);
-            auto* dw = static_cast<DirWatch*>(g_object_get_data(G_OBJECT(st), "minicode-watch"));
-            if (en && dw && !g_cancellable_is_cancelled(dw->cancel)) nextFiles(en, dw);
-            if (en) g_object_unref(en);   // the pending next_files call holds its own ref
-            g_object_unref(st);
-        }, g_object_ref(store));
+    w->pacer.started(nowMs());
+    startListing(w);
 
     // gtk_filter_list_model_new is (transfer full) on BOTH arguments. It takes
     // the store outright, but filter_ is shared across every directory model,
     // so hand it a ref of its own and keep ours.
     if (filter_) g_object_ref(filter_);
-    GtkFilterListModel* fm =
-        gtk_filter_list_model_new(G_LIST_MODEL(store), filter_);
-
-    // Same sharing rule for the sorter: transfer full, so hand over a ref.
-    if (sorter_) g_object_ref(sorter_);
-    GtkSortListModel* sm =
-        gtk_sort_list_model_new(G_LIST_MODEL(fm), sorter_);
-    return G_LIST_MODEL(sm);
+    return G_LIST_MODEL(gtk_filter_list_model_new(G_LIST_MODEL(store), filter_));
 }
 
 void FileTree::build() {
@@ -271,9 +376,7 @@ void FileTree::build() {
             return static_cast<FileTree*>(self)->filterVisible(item, self);
         }, this, nullptr));
 
-    // Shared row sorter (dirs first, then case-insensitive name order).
-    sorter_ = GTK_SORTER(gtk_custom_sorter_new(compareInfos, nullptr, nullptr));
-
+    // Each folder's store is kept in the tree's order itself ("one folder").
     GFile* rootFile = g_file_new_for_path(root_.c_str());
     GListModel* rootModel = makeDirModel(rootFile);
     g_object_unref(rootFile);
@@ -603,10 +706,9 @@ void FileTree::setRoot(const std::string& rootDir) {
     pendingExpand_.clear();
     endDrop();
     dropPopovers();
-    // Rebuild the model tree against the new root. filter_ and sorter_ are
-    // recreated in build(); drop our old references first.
+    // Rebuild the model tree against the new root. filter_ is recreated in
+    // build(); drop our old reference first.
     if (filter_) { g_object_unref(filter_); filter_ = nullptr; }
-    if (sorter_) { g_object_unref(sorter_); sorter_ = nullptr; }
     build();
 }
 
