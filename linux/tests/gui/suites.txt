@@ -26,3 +26,6 @@ BracketsSuite.cpp
 BracketPairsSuite.cpp
 AutoCloseSuite.cpp
 LargeFileSuite.cpp
+FoldingSuite.cpp
+FoldBudgetSuite.cpp
+FoldPerfSuite.cpp

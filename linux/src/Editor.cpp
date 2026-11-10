@@ -8,6 +8,7 @@
 #include "BracketColors.h"
 #include "BracketView.h"
 #include "CodeView.h"
+#include "Folds.h"
 #include "Palette.h"
 #include "Markdown.h"
 #include "MarkdownEdit.h"
@@ -192,6 +193,7 @@ Editor::Editor() {
     brackets_ = new BracketView(this);       // PARITY.md 1.7
     autoClose_ = new AutoCloseInput(this);   // PARITY.md 1.8
     large_ = new LargeFileUi(this);   // big files and long lines (LargeFileView.h)
+    folds_ = new FoldUi(this);        // PARITY.md 1.10
     showActive();   // the welcome text
 }
 
@@ -199,6 +201,8 @@ Editor::Editor() {
 // (main.cpp deletes the editor from GtkApplication's window-removed), so
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
+    delete folds_;
+    folds_ = nullptr;
     delete autoClose_;
     autoClose_ = nullptr;
     delete brackets_;
@@ -243,7 +247,8 @@ Editor::~Editor() {
 
 std::vector<void*> Editor::handlerOwners() const {
     std::vector<void*> out = {(void*)this,      (void*)media_,     (void*)strip_,
-                              (void*)brackets_, (void*)autoClose_, (void*)large_};
+                              (void*)brackets_, (void*)autoClose_, (void*)large_,
+                              (void*)folds_};
     for (Document* d : tabs_)
         if (d->latexPreview()) out.push_back(d->latexPreview());
     return out;
@@ -1135,7 +1140,7 @@ void Editor::pickColor(int line) {
     gtk_text_buffer_get_iter_at_line(buffer_, &ls, line);
     le = ls;
     if (!gtk_text_iter_ends_line(&le)) gtk_text_iter_forward_to_line_end(&le);
-    char* raw = gtk_text_buffer_get_text(buffer_, &ls, &le, FALSE);
+    char* raw = gtk_text_buffer_get_text(buffer_, &ls, &le, TRUE);
     std::u16string text = utf16::fromUtf8(raw ? raw : "");
     g_free(raw);
     ColorSpan span;
@@ -1250,7 +1255,7 @@ void Editor::setLineColor(int line, const Rgba& c) {
     gtk_text_buffer_get_iter_at_line(buffer_, &ls, line);
     le = ls;
     if (!gtk_text_iter_ends_line(&le)) gtk_text_iter_forward_to_line_end(&le);
-    char* raw = gtk_text_buffer_get_text(buffer_, &ls, &le, FALSE);
+    char* raw = gtk_text_buffer_get_text(buffer_, &ls, &le, TRUE);
     std::u16string text = utf16::fromUtf8(raw ? raw : "");
     g_free(raw);
     std::u16string updated = Settings::setColor(text, c);
@@ -1287,7 +1292,9 @@ bool Editor::toggleComment() {
 
     GtkTextIter a, b;
     gtk_text_buffer_get_bounds(buffer_, &a, &b);
-    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, FALSE);
+    // Hidden text too (a fold, a long line's rest): the offsets below are
+    // the buffer's.
+    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
     const std::u16string text = utf16::fromUtf8(raw ? raw : "");
     g_free(raw);
 
@@ -2036,6 +2043,9 @@ gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifier
     const bool plain = !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK));
     const bool completion = self->observer_ && self->observer_->takesReturn();
     self->typedKey_ = 0;
+    // Beside a fold (Folds.h): Backspace or Delete opens it, and Return at
+    // the end of a folded line takes the caret below it for what follows.
+    if (!completion && self->folds_ && self->folds_->keyPressed(key, mods)) return TRUE;
     // Brackets and quotes closing, typed over, deleted in pairs, or
     // surrounding a selection (AutoCloseInput.h), before the text view or
     // its input method takes the key.

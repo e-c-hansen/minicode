@@ -304,6 +304,78 @@ static void testFolding() {
         CHECK(d.empty());
     }
 
+    GROUP("fold:budget");
+    {
+        using R = Fold::Range;
+        // Hidden lines: a fold hides the lines after its first; one inside
+        // another hides nothing more; repeats and order do not matter.
+        CHECK(Fold::hiddenLines({}) == 0);
+        CHECK(Fold::hiddenLines({{0, 4}}) == 4);
+        CHECK(Fold::hiddenLines({{0, 4}, {1, 3}, {0, 4}}) == 4);
+        CHECK(Fold::hiddenLines({{10, 12}, {0, 4}, {4, 6}}) == 8);
+        CHECK(Fold::hiddenLines({{0, 4}, {5, 9}}) == 8);   // lines 1-4 and 6-9
+        CHECK(Fold::hiddenLines({{3, 3}}) == 0);
+
+        // A file of three blocks: 0-30 (holding 2-10 and 12-28, which holds
+        // 13-20), 31-36, and 40-90 (holding 41-50 and 60-89).
+        const std::vector<R> rs = Fold::sanitize(
+            {{0, 30}, {2, 10}, {12, 28}, {13, 20}, {31, 36}, {40, 90}, {41, 50}, {60, 89}}, 100);
+        std::vector<size_t> all(rs.size());
+        for (size_t i = 0; i < all.size(); i++) all[i] = i;
+        auto starts = [&](const Fold::BudgetPick& p) {
+            std::string s;
+            for (size_t i : p.close) s += (s.empty() ? "" : " ") + std::to_string(rs[i].start);
+            return s;
+        };
+        // Room for everything: all of it closes, as Fold All always did.
+        Fold::BudgetPick p = Fold::pickWithinBudget(rs, all, {}, 1000);
+        CHECK(p.close.size() == rs.size() && p.stayedOpen == 0 && p.hidden == 30 + 5 + 50);
+        // Room for 40: the outermost first from the top (0-30, then 31-36),
+        // 40-90 (50 lines) left open, and of what is inside it the first
+        // that fits (41-50, 9 lines, would make 44); 60-89 does not.
+        p = Fold::pickWithinBudget(rs, all, {}, 40);
+        CHECK(starts(p) == "0 2 12 13 31");
+        CHECK(p.hidden == 35 && p.stayedOpen == 3);
+        p = Fold::pickWithinBudget(rs, all, {}, 44);
+        CHECK(starts(p) == "0 2 12 13 31 41" && p.hidden == 44 && p.stayedOpen == 2);
+        // Room for 20: of the outermost only 31-36 (5) fits; a level in,
+        // from the top, 2-10 (8) fits, 12-28 (16) does not, and a level
+        // further in its 13-20 (7) does: 5 + 8 + 7.
+        p = Fold::pickWithinBudget(rs, all, {}, 20);
+        CHECK(starts(p) == "2 13 31" && p.hidden == 20 && p.stayedOpen == 5);
+        // Folds closed already count, and anything inside them is free:
+        // 40-90's 50, then 31-36, 2-10 and 13-20; 0-30 and 12-28 stay open.
+        p = Fold::pickWithinBudget(rs, all, {{40, 90}}, 70);
+        CHECK(starts(p) == "2 13 31 40 41 60" && p.hidden == 70 && p.stayedOpen == 2);
+        // One candidate, as a single fold asks: too big, it stays open.
+        p = Fold::pickWithinBudget(rs, {5}, {{0, 30}}, 60);
+        CHECK(p.close.empty() && p.stayedOpen == 1 && p.hidden == 30);
+        p = Fold::pickWithinBudget(rs, {4}, {{0, 30}}, 60);
+        CHECK(starts(p) == "31" && p.hidden == 35);
+        // Unknown and repeated indexes are let go.
+        p = Fold::pickWithinBudget(rs, {4, 4, 99}, {}, 60);
+        CHECK(p.close.size() == 1 && p.stayedOpen == 0);
+
+        // 50,000 small regions under 5,000 lines: quick, and the top of the
+        // file closes.
+        std::vector<R> many;
+        for (size_t i = 0; i < 25000; i++) {
+            many.push_back({i * 4, i * 4 + 2});
+            many.push_back({i * 4 + 1, i * 4 + 2});
+        }
+        many = Fold::sanitize(many, 100000);
+        std::vector<size_t> idx(many.size());
+        for (size_t i = 0; i < idx.size(); i++) idx[i] = i;
+        const double t0 = cpuMs();
+        p = Fold::pickWithinBudget(many, idx, {}, 5000);
+        const double t1 = cpuMs();
+        CHECK(p.hidden == 5000 && p.close.size() == 5000 && p.stayedOpen == 45000);
+        CHECK(!p.close.empty() && many[p.close.front()].start == 0 &&
+              many[p.close.back()].start == 4 * 2499 + 1);
+        std::printf("  choosing within the limit among 50,000 regions: %.1f ms\n", t1 - t0);
+        CHECK_TIME(t1 - t0, 500);
+    }
+
     GROUP("fold:timing");
     {
         // 100,000 lines of Python and of C, as the editor computes them off

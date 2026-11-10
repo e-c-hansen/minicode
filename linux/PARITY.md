@@ -193,6 +193,24 @@ Choices item 1.6 made, by the same rules:
   replaces its match alone, VS Code's key in its search view.
 - Select all matches (VS Code's Alt+Enter) waits for several carets (1.9).
 
+Choices item 1.10 made, by the same rules:
+- Fold and Unfold are VS Code's Linux Ctrl+Shift+[ and Ctrl+Shift+]. GTK
+  matches them as the braces Shift makes on a US layout (`<Ctrl>braceleft`,
+  through `linuxAccelerators`), so on a layout where Shift+[ is no brace
+  they follow that layout's character.
+- VS Code's other folding keys are Ctrl+K chords, which minicode has none
+  of, so they are Ctrl+Alt with the chord's second key, as the Mac's are
+  Control+Command with it: Fold Recursively Ctrl+Alt+[, Unfold Recursively
+  Ctrl+Alt+], Fold All Ctrl+Alt+0, Unfold All Ctrl+Alt+J, Fold All Comments
+  Ctrl+Alt+/, and Fold Level 1 to 7 Ctrl+Alt+1 to 7. GNOME takes none of
+  them. Ctrl+Alt+0 is also Zoom to Fit Width in a PDF or the LaTeX preview,
+  a place the editor's commands never meet (`Commands::overlaps`): in the
+  editor it folds, in a page it fits.
+- Toggle Fold's would be Ctrl+Alt+L, the task key's, so it has no key; it is
+  in View > Folding and the palette.
+- All of them are editor commands, so while the terminal has the keyboard
+  the program in it gets every one of these keys.
+
 **D2. One `GtkTextView`, one `GtkTextBuffer` per tab.** Split `Editor` into
 the view and slot, and a `Document` holding what is per file: the buffer, its
 path, undo, the highlighter and its mirror, dirty state, and disk stamp. All
@@ -307,6 +325,25 @@ which by a rule written here when it is built) and say how many stayed
 open. The copy handler, Return after a folded line, and the gutter's jump
 over folds are part of the item. If GTK ever skips lines of no height when
 it draws, the budget can grow.
+
+*Built, 2026-11-10 (item 1.10), with this rule for what fits:* Fold All,
+Fold Level N, Fold Recursively and Fold All Comments take the regions
+outermost first and, at each depth, from the top of the file down. A region
+whose lines would take the tab past 5,000 hidden lines stays open, and the
+regions inside it get their turn at the next depth; a region inside a fold
+already closed hides nothing more and closes too. So the top of a long file
+folds as it would without the limit, and further down the big regions stay
+open with their insides folded where they fit. The status bar says "Folded
+5,000 regions; 15,000 stayed open, since this tab's folds may hide 5,000
+lines at most". A single fold (Ctrl+Shift+[, a chevron) that would pass the
+limit stays open with "Not folded: this tab's folds would hide 5,003 lines,
+and 5,000 is the most they may hide, since GTK draws hidden lines too". The
+rule is the core's `Fold::pickWithinBudget` (`fold:budget`). Measured in the
+checks at the limit, the ThinkPad at load 10 to 20: a frame of the text with
+5,000 hidden lines on screen 11 to 17 ms of CPU (0.3 with nothing folded),
+typing among them 12 to 16 ms a key, Fold All of 20,000 regions 16 ms and
+Unfold All 6 ms, then 0.5 to 0.7 s of GTK measuring lines again in idle
+slices.
 
 **D9. Inlay hints: try first.** The Mac leaves room with a kern. Try a
 `letter-spacing` tag on the character before the hint, with the label drawn in
@@ -566,10 +603,39 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
 - [ ] **1.9 Line commands and several carets (D5, D7).** `MultiCaret`, Cmd+D's
   and Shift+Cmd+L's counterparts, column selection, move and copy lines, and
   VS Code's word separators.
-- [ ] **1.10 Folding (D8).** `Folding`. D8's try (2026-11-09) found the
+- [x] **1.10 Folding (D8).** `Folding`. D8's try (2026-11-09) found the
   `invisible` tag right for carets, scrolling, the gutter, and undo with
   50,000 folds, but every frame costs about 6 µs per hidden line on screen
   inside GTK; built on the tag with D8's budget of 5,000 hidden lines.
+  *Verified in Xvfb, 2026-11-10:* `fold:budget` holds the limit's rule, and
+  the `folding`, `fold_budget`, and `foldperf` suites press real keys and
+  clicks: Ctrl+Shift+[ folding the innermost region and then the next one
+  out, with the text and undo untouched; the gutter numbering only the lines
+  on show, each at GTK's own line, and visiting none of the hidden ones (30
+  lines walked for 30 rows with 5,000 hidden on screen; 5,030 without the
+  jump); Right, Left, Up, and Down stepping over a fold; typing above a fold
+  and at the end of its line moving it, and undo putting it back; Shift+Down
+  and Ctrl+C across a fold copying what it hides; Go to Line and Find
+  opening what hides their target; Ctrl+Alt+0, Ctrl+Alt+J, and Ctrl+Alt+2;
+  a chevron's click folding and unfolding, a click on the numbers still
+  selecting the line; a click on the placeholder opening it; Backspace at
+  the start of the line after a fold and Delete at the end of a folded line
+  opening it and deleting nothing; Return at the end of a folded line making
+  a line below the fold, and its undo leaving it closed; an edit inside
+  opening it; folds per tab, kept with the source while its Markdown page
+  shows (a page of its own, D3), and forgotten on a reload from disk; a long
+  line's own hidden part left alone by folding it; none in large-file mode;
+  in the terminal no folding key bound; and the limit (Fold All closing what
+  fits and saying how many stayed open, a fold past it left open with the
+  note, then folding once room is made), a frame and a keystroke at the
+  limit, and Fold All and Unfold All of 20,000 regions (50,000 with
+  `MC_GUI_FULL_PERF=1`), each within a CPU bound (D8 has the timings). They
+  fail without the gutter's jump, without Return's move below the fold, and
+  without the limit. Not done: the language server's foldingRange (item
+  2.13). Needs the owner: how the placeholder and chevrons look in both
+  themes, the keys on a real keyboard (Ctrl+Shift+[ on layouts where Shift+[
+  is no brace), a touchpad's scrolling past folds, and how GTK's measuring
+  of thousands of lines after Fold All feels on a slower machine.
 - [ ] **1.11 Getting around.** Editor zoom, word wrap toggle, Go Back and
   Forward (`NavHistory`), Maximize Pane.
 - [x] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
@@ -679,6 +745,16 @@ its server comes first here.
   language server half of `tests/gui/SymbolsSuite.mm`. The palette asks in
   `PalettePanel::askSymbols` and says "#" is not here yet. Its checks need
   `tests/fakelsp` built for the Linux harness.
+- [ ] **2.13 Folding ranges from the servers.** Added by item 1.10, which
+  left them out: the Linux session (`Lsp.cpp`) has only the tab on show
+  open on its server and asks it nothing about folding. The Mac asks
+  `textDocument/foldingRange` 0.6 s after typing (`Client::foldingRanges`,
+  `Lsp::parseFoldingRanges`, the core's already) and hands the answer to
+  `MCFolds setServerRanges:kinds:generation:`, which takes it over the
+  computed regions only while the text is the one it was asked for.
+  `DocumentFolds` (`Folds.h`) needs the same: a `setServerRanges` taking
+  `Fold::sanitize`d ranges with its `generation()`, `regions()` and
+  `freshRegions()` preferring them. Check with `tests/gui/FakeLsp.h`.
 
 ### Stage 3: agents, 8,000 to 10,000 lines
 

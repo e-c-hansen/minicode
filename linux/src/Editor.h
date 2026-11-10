@@ -26,6 +26,7 @@
 class AutoCloseInput;
 class BracketView;
 class CodeView;
+class FoldUi;
 class MediaView;
 class LatexPreview;
 class GitDiffView;
@@ -75,6 +76,8 @@ public:
     // (BracketView.h), and auto-closing pairs (AutoCloseInput.h).
     BracketView*    brackets() const { return brackets_; }
     AutoCloseInput* autoClose() const { return autoClose_; }
+    // Folding's placeholders, keys and commands (Folds.h).
+    FoldUi*         folds() const { return folds_; }
     // The active document's own buffer (its source, while its page shows
     // too), else what the view shows.
     GtkTextBuffer* sourceBuffer() const;
@@ -441,6 +444,7 @@ private:
     CodeView*      code_     = nullptr;   // owned by the view
     BracketView*    brackets_  = nullptr;
     AutoCloseInput* autoClose_ = nullptr;
+    FoldUi*         folds_ = nullptr;
     GtkTextBuffer* buffer_   = nullptr;   // what the view shows
     GtkTextBuffer* welcome_  = nullptr;   // the view's buffer with no tab open
     char           typedKey_ = 0;         // ':' or a closer being typed (electric)

@@ -47,6 +47,7 @@
 #include "Document.h"
 #include "Editor.h"
 #include "FileTree.h"
+#include "Folds.h"
 #include "ThemeCss.h"
 #include "Palette.h"
 #include "Terminal.h"
@@ -1570,6 +1571,10 @@ static std::string hintsText(App* app) {
     row("minicode.showTodos", "TODOs in folder");
     row("editor.action.commentLine", "Toggle comment");
     row("editor.action.jumpToBracket", "Go to bracket");
+    row("editor.fold", "Fold the region at the cursor");
+    row("editor.unfold", "Unfold it");
+    row("editor.foldAll", "Fold all");
+    row("editor.unfoldAll", "Unfold all");
     plain("Tab, Shift Tab", "Indent, outdent lines");
     row("minicode.sortLines", "Sort lines");
     row("minicode.sortKeepSortedBlocks", "Sort keep-sorted blocks");
@@ -2071,6 +2076,11 @@ static App* newWindow(const std::string& root, const std::string& file) {
         }});
     app->editor->onDocumentsChanged = [app](Document* d) {
         if (!app->dead && app->persist) app->persist->changed(d);
+    };
+    // View > Folding's actions, and its notes (Folds.h).
+    app->editor->folds()->addActions(G_ACTION_MAP(app->window));
+    app->editor->folds()->onNote = [app](const std::string& note) {
+        if (!app->dead) flashStatus(app, note);
     };
 
     // The editor's side: the editor (its tab strip and slot), with the find

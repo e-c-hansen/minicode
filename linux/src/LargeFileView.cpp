@@ -7,6 +7,7 @@
 #include "CodeView.h"
 #include "Document.h"
 #include "Editor.h"
+#include "Folds.h"
 #include "LargeFile.h"   // the core's thresholds and rules
 #include "MediaView.h"
 #include "Utf8Offsets.h"
@@ -600,8 +601,10 @@ bool Document::languageServerMayRead() const {
 void Document::turnOnLargeFileFeatures() {
     if (!largeFileFeaturesOff()) return;
     largeOn_ = true;
-    // The user asked for it: the whole text is lexed now, as on the Mac.
+    // The user asked for it: the whole text is lexed now, as on the Mac, and
+    // its regions found (Folds.h).
     startHighlighting();
+    folds_->sourceChanged();
 }
 
 // ================================================================ Editor

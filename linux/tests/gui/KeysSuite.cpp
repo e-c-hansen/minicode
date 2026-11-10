@@ -20,6 +20,7 @@
 #include <vte/vte.h>
 #endif
 
+#include <algorithm>
 #include <map>
 #include <set>
 
@@ -240,10 +241,23 @@ MC_GUI_SUITE(keys) {
         for (const Keys::Action& a : Keys::actions()) {
             const Commands::Command* c = Commands::find(a.id);
             if (!c || c->language || c->when == Commands::When::Tree) continue;
-            std::vector<std::string> want;
-            for (const Commands::Key& k : Keys::keymap().keysOf(a.id))
-                for (const std::string& s : Commands::linuxAccelerators(k)) want.push_back(s);
-            GCHECK_EQ_STR(bound(a.action), canon(joined(want)));
+            std::vector<std::string> want, shared;
+            for (const Commands::Key& k : Keys::keymap().keysOf(a.id)) {
+                // A key two commands share in places that never meet (Fold
+                // All in the editor, Zoom to Fit Width in a page) is the
+                // accelerator of the one for the place with the keyboard,
+                // and of no other: the folding suite checks which.
+                bool both = false;
+                for (const Commands::Command* o : Keys::keymap().commandsFor(k))
+                    both |= o != c && !o->language;
+                for (const std::string& s : Commands::linuxAccelerators(k))
+                    (both ? shared : want).push_back(canon(s));
+            }
+            std::vector<std::string> got;
+            for (const std::string& s : accels(a.action))
+                if (std::find(shared.begin(), shared.end(), canon(s)) == shared.end())
+                    got.push_back(s);
+            GCHECK_EQ_STR(canon(joined(got)), canon(joined(want)));
         }
     });
 

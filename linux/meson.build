@@ -73,6 +73,9 @@ core_sources = [
   core_dir / 'BracketPairs.cpp',
   core_dir / 'AutoClose.cpp',
   core_dir / 'MultiCaret.cpp',
+  # The regions a file folds into, the folds that are closed, and the limit
+  # on what they hide (Folds.cpp shows them).
+  core_dir / 'Folding.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -100,6 +103,9 @@ gui_sources = [
   'src/BracketColors.cpp',
   'src/AutoCloseInput.cpp',
   'src/BufferText.cpp',
+  # Folding: each document's regions, folds and their invisible tag, and the
+  # editor's placeholders, keys and commands (PARITY.md 1.10).
+  'src/Folds.cpp',
   'src/Markdown.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.

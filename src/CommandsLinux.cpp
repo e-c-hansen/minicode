@@ -125,6 +125,29 @@ const std::vector<LinuxRow>& linuxRows() {
         {"minicode.page.zoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
         {"minicode.page.zoomOut", "ctrl+-", 0, nullptr, nullptr},
         {"minicode.page.fitWidth", "ctrl+alt+0", 0, nullptr, nullptr},
+        // Folding (PARITY.md 1.10). Fold and Unfold are VS Code's Linux
+        // Ctrl+Shift+[ and ], which GTK matches as the braces Shift makes
+        // (linuxAccelerators); the rest are Ctrl+K chords in VS Code, so
+        // Ctrl+Alt with the chord's second key, as the Mac's are
+        // Control+Command with it. Ctrl+Alt+0 is Fold All in the editor and
+        // fit width in a PDF, places that never meet. Toggle Fold's would be
+        // Ctrl+Alt+L, the task key's, so it has none. Editor commands: in
+        // the terminal the program gets every one of these keys.
+        {"editor.fold", "ctrl+shift+[", 0, nullptr, nullptr},
+        {"editor.unfold", "ctrl+shift+]", 0, nullptr, nullptr},
+        {"editor.toggleFold", "", 0, nullptr, nullptr},
+        {"editor.foldRecursively", "ctrl+alt+[", 0, nullptr, nullptr},
+        {"editor.unfoldRecursively", "ctrl+alt+]", 0, nullptr, nullptr},
+        {"editor.foldAll", "ctrl+alt+0", 0, nullptr, nullptr},
+        {"editor.unfoldAll", "ctrl+alt+j", 0, nullptr, nullptr},
+        {"editor.foldAllBlockComments", "ctrl+alt+/", 0, nullptr, nullptr},
+        {"editor.foldLevel1", "ctrl+alt+1", 0, nullptr, nullptr},
+        {"editor.foldLevel2", "ctrl+alt+2", 0, nullptr, nullptr},
+        {"editor.foldLevel3", "ctrl+alt+3", 0, nullptr, nullptr},
+        {"editor.foldLevel4", "ctrl+alt+4", 0, nullptr, nullptr},
+        {"editor.foldLevel5", "ctrl+alt+5", 0, nullptr, nullptr},
+        {"editor.foldLevel6", "ctrl+alt+6", 0, nullptr, nullptr},
+        {"editor.foldLevel7", "ctrl+alt+7", 0, nullptr, nullptr},
         {"workbench.action.toggleSidebarVisibility", "ctrl+b", 0, nullptr, nullptr},
         {"workbench.view.scm", "ctrl+shift+g", 0, nullptr, nullptr},
         {"minicode.toggleEditor", "ctrl+shift+e", 0, nullptr, nullptr},

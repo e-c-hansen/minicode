@@ -451,8 +451,9 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Focus the file tree (outside the browser and PDFs, where it is Actual Size) | Command 0 | Ctrl 0 |  |
 | Focus the editor's right group, splitting the editor if it is not split | Command 2 |  |  |
 | Focus the terminal, opening it if it is hidden | Focus Terminal in the Navigate menu |  |  |
-| Fold every region, every one at a level, or every comment, or unfold them all | Control Command 0, Control Command 1 to 7, Control Command /, Control Command J |  |  |
-| Fold the region the cursor is in, or the next one out with each press; unfold the fold on the cursor's line | Control Command [, Control Command ] (Option Command [ and ] are the terminals); or click the arrow beside the line number, or the ⋯ after a folded line |  |  |
+| Fold every region, every one at a level, or every comment, or unfold them all | Control Command 0, Control Command 1 to 7, Control Command /, Control Command J | Ctrl Alt 0, Ctrl Alt 1 to 7, Ctrl Alt /, Ctrl Alt J (a tab's folds hide 5,000 lines at most, so on a long file what would pass that stays open, and the status bar says how many) |  |
+| Fold the region the cursor is in and every region inside it, or unfold them all | Fold Recursively and Unfold Recursively in View > Folding | Ctrl Alt [, Ctrl Alt ] |  |
+| Fold the region the cursor is in, or the next one out with each press; unfold the fold on the cursor's line | Control Command [, Control Command ] (Option Command [ and ] are the terminals); or click the arrow beside the line number, or the ⋯ after a folded line | Ctrl Shift [, Ctrl Shift ]; or click the arrow beside the line number, or the ⋯ after a folded line |  |
 | Format the file, or the selected lines where the formatter can | Shift Option F |  |  |
 | Go back to where you were before a jump (a definition, a symbol, a line, a problem, another tab), or forward again | Control minus, Control Shift minus |  |  |
 | Go to a line of the open file, by its number (42:7 for a column too) | Control G | Ctrl G (in the terminal the program has it) |  |
