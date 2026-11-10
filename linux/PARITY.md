@@ -311,6 +311,17 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   Forward (`NavHistory`), Maximize Pane.
 - [ ] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
   *Done means:* a 25 MB file opens and types within the Mac's bounds.
+- [ ] **1.13 The Mac's layout.** The owner's report, 2026-11-09: the browser
+  should sit right of the editor with a drag bar between them, and the
+  terminal below both, full width, as on the Mac; today the browser takes
+  the editor's place. Closing the editor, the browser, and the terminal
+  leaves an empty window, as on the Mac; today the port reopens the first
+  one closed. Mac: "Editor, browser and terminal" in `../CLAUDE.md`'s UI
+  map (`editorRect` and `browserRect`, `browserFraction`, 150 a side, a bar
+  dragged within 16 points of an edge hides that side, the smallest top,
+  `editorHidden`, `collapseRightAreaIfEmpty`, `revealEditor`), and
+  `EditorController+Layout.mm`. After 1.1; it may run beside the others,
+  but it owns the window's layout code in `main.cpp`.
 
 *Done means, for each:* the feature's Mac GUI checks have Linux counterparts
 in `linux/tests/gui`, pressing real keys.
@@ -381,6 +392,17 @@ These may run in parallel.
   Mac's mirror.
 - [ ] **4.7 Terminal tabs and splits**, their own zoom, find, command marks
   (D10), and Run File. `TerminalLayout`, `RunFile`.
+
+## Reported by the owner
+
+Problems the owner hit in the port that no item above covers. Each is
+fixed on its own branch, with a GUI check that fails without the fix.
+
+- [ ] **R1. "minicode is not responding" while clicking around the file
+  tree** (2026-11-09, the PPA's 1.4.14). The tree's code is the same on
+  main. Find the stall, fix it, and bound it with a check.
+- Right-clicking a part of the window offers no Adjust Settings (the same
+  day): that is item 2.11.
 
 ## After each stage
 
