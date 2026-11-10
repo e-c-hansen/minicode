@@ -23,12 +23,14 @@ Read these first:
 ## Where it stands
 
 Items 1 to 11 below are done (September 2026), so the port has what the Mac
-had then, apart from what the list at the end of item 8 leaves out. Almost
-everything the Mac gained from 1.5.0 on (the command palette, folding,
-several cursors, rename and the other language server commands, formatting,
-the viewers, the agent features and the command line control) is not here
-yet; `../ROADMAP.md`, "Linux parity", lists it with the core files that
-already hold its logic. It builds
+had then, apart from what the list at the end of item 8 leaves out. The
+registry's keys, tabs, and the command palette came in November 2026
+(items 15 and 16, and `PARITY.md`). Almost everything else the Mac gained
+from 1.5.0 on (folding, several cursors, rename and the other language
+server commands, formatting, the viewers, the agent features and the
+command line control) is not here yet; `PARITY.md` is the plan, and
+`../ROADMAP.md`, "Linux parity", lists the core files that already hold its
+logic. It builds
 without warnings at `warning_level=2` (CI: Ubuntu, GTK 4, VTE, WebKitGTK,
 poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
 - data safety: "Save changes?" before anything replaces edits, failed saves
@@ -900,7 +902,8 @@ all in the core for this port to use: `GitUi::stageAllPlan` and
 `git-ui:stage-all`, `git-ui:discard` and `git-ui:switch`. GTK would use
 `g_file_trash` (which may fail on volumes without a trash: then refuse, as
 the Mac does), a `GtkPopoverMenu` on a row's right click, and a filtered
-list for the branches (there is no palette here). The Mac's Undo Discard
+list for the branches (the palette, item 16, has no pick lists of a
+caller's rows yet; the Mac's branch picker is one). The Mac's Undo Discard
 moves the trashed copy back; keep that, since a discard without it is the
 one panel action that loses work.
 
@@ -1194,6 +1197,45 @@ What later items build on:
   A key-driven switch can print GTK's "Trying to snapshot GtkGizmo trough
   without a current allocation" (a scroll bar mid-relayout); it was not
   reproduced outside the app and is harmless.
+
+### 16. The palette (done, November 2026; `PARITY.md` item 1.5)
+
+What later items build on:
+- **A new command shows in the palette by itself**: it is offered once it
+  has a row in `Keys.cpp`'s `actions()` (and so in `CommandsLinux.cpp`),
+  labelled "Menu > Title" from the registry with its first key in effect,
+  and only while its GAction is enabled when the palette opens. So an
+  action that cannot act should be disabled (`g_simple_action_set_enabled`,
+  as `win.save`, `win.exportpdf`, and the zoom keys are) rather than ring
+  the bell, or the palette offers it. Recent commands are kept by registry
+  id. The palette leaves out only itself.
+- **`linux/src/PalettePanel.{h,cpp}`** is two children of the panes'
+  `GtkOverlay` in `main.cpp` (a clear sheet under the box, and the box,
+  placed by the overlay's `get-child-position`), so no window or popover
+  takes the keyboard state; `show(text, Context)` opens it, and main.cpp's
+  `showPalette` gives the folder and how Quick Open opens a file
+  (`OpenFrom::QuickOpen`). The rows are a `GtkListView` over a
+  `GtkStringList` of indexes into its items, so only the rows on show have
+  widgets. A pick list of a caller's own rows (the Mac's `MCPalettePick`,
+  for 2.9's branch picker) is not built yet; it would be another mode
+  beside the four.
+- **Symbols**: `askSymbols` is where 2.12 asks the server first. A preview
+  calls `Editor::stopSettling` before it moves anything: for a moment after
+  a tab is shown the editor keeps putting its place back whenever the view
+  is still (`settleOnPlace`), which undid previews and the putting back when
+  frames were slow.
+- **State**: `$XDG_STATE_HOME/minicode/palette.json` holds
+  `{"commands": [...], "files": [...]}`, most recent first (20 and 50).
+- **Traps in the checks**: keys typed into the find bar while it is still
+  sliding in were lost now and then, so wait for its revealer
+  (`gtk_revealer_get_child_revealed`) before typing. A `GtkListView`
+  rebinds its rows at once after its model changes but lays them out on
+  the next frame, with any new rows all at the top and no height until
+  then; a click in between went to another row (the palette suite waits
+  for the row's label to have a height). Closing the find bar on main
+  prints "Trying to measure GtkBox ... for height of 12, but it needs at
+  least 13" for each frame of its slide (the editor's half of the vertical
+  split); it happens without the palette and is left to item 1.6.
 
 ## How to work on it
 
