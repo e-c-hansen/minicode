@@ -9412,7 +9412,8 @@ static void testInstallHints() {
     CHECK(Install::formatter("shfmt") &&
           Install::formatter("shfmt")->ways[0].command == "brew install shfmt");
     CHECK(Install::formatter("clang-format") &&
-          Install::formatter("clang-format")->ways.size() == 2);
+          Install::formatter("clang-format")->ways.size() == 3 &&
+          Install::waysOn(*Install::formatter("clang-format"), Install::Os::Mac).size() == 2);
     CHECK(Install::formatter("rustfmt") && Install::formatter("gofmt"));
     CHECK(Install::formatter("dprint") == nullptr);
     CHECK(Install::formatter("node_modules/.bin/prettier") &&
@@ -9437,56 +9438,172 @@ static void testInstallHints() {
         CHECK(t->homepage.rfind("https://", 0) == 0);
         for (const Install::Way &w : t->ways) {
             CHECK(w.command.find('\n') == std::string::npos && !w.command.empty());
-            if (!w.needs.empty()) CHECK(!Install::prerequisite(w.needs).url.empty());
+            CHECK(w.on != 0 && (w.on & ~Install::kOnBoth) == 0);
+            for (Install::Os os : {Install::Os::Mac, Install::Os::Linux})
+                if (!w.needs.empty() && (w.on & (os == Install::Os::Mac ? Install::kOnMac
+                                                                         : Install::kOnLinux)))
+                    CHECK(!Install::prerequisite(w.needs, os).url.empty());
         }
+        // Every tool installs somehow on both systems, and Linux is never
+        // offered Homebrew or the Mac's command line tools.
+        CHECK(!Install::waysOn(*t, Install::Os::Mac).empty());
+        CHECK(!Install::waysOn(*t, Install::Os::Linux).empty());
+        for (const Install::Way &w : Install::waysOn(*t, Install::Os::Linux))
+            CHECK(w.command.rfind("brew ", 0) != 0 && w.command.rfind("xcode-select", 0) != 0);
+        for (const Install::Way &w : Install::waysOn(*t, Install::Os::Mac))
+            CHECK(w.needs != "apt" && w.needs != "snap");
     }
-    CHECK(Install::prerequisite("uv").command == "brew install uv");
-    CHECK(Install::prerequisite("brew").command.empty() &&
-          Install::prerequisite("brew").url == "https://brew.sh");
+    CHECK(Install::prerequisite("uv", Install::Os::Mac).command == "brew install uv");
+    CHECK(Install::prerequisite("brew", Install::Os::Mac).command.empty() &&
+          Install::prerequisite("brew", Install::Os::Mac).url == "https://brew.sh");
+    CHECK(Install::prerequisite("pipx", Install::Os::Linux).command == "sudo apt install pipx" &&
+          Install::prerequisite("pipx", Install::Os::Linux).needs == "apt");
+    CHECK(Install::prerequisite("uv", Install::Os::Linux).command.empty() &&
+          Install::prerequisite("uv", Install::Os::Linux).url.find("astral.sh") !=
+              std::string::npos);
+    CHECK(std::string(Install::thisComputer(Install::Os::Mac)) == "this Mac" &&
+          std::string(Install::thisComputer(Install::Os::Linux)) == "this computer");
+    // The Mac's lists are as they were before Linux had ways of its own.
+    {
+        auto commands = [](const Install::Tool *t, Install::Os os) {
+            std::vector<std::string> out;
+            for (const Install::Way &w : Install::waysOn(*t, os)) out.push_back(w.command);
+            return out;
+        };
+        CHECK((commands(Install::server("cpp"), Install::Os::Mac) ==
+               std::vector<std::string>{"xcode-select --install", "brew install llvm"}));
+        CHECK((commands(Install::server("go"), Install::Os::Mac) ==
+               std::vector<std::string>{"go install golang.org/x/tools/gopls@latest",
+                                        "brew install gopls"}));
+        CHECK((commands(Install::formatter("shfmt"), Install::Os::Mac) ==
+               std::vector<std::string>{"brew install shfmt",
+                                        "go install mvdan.cc/sh/v3/cmd/shfmt@latest"}));
+        CHECK((commands(Install::server("toml"), Install::Os::Mac) ==
+               std::vector<std::string>{"brew install taplo"}));
+        CHECK((commands(Install::server("cpp"), Install::Os::Linux) ==
+               std::vector<std::string>{"sudo apt install clangd"}));
+        CHECK((commands(Install::formatter("latexindent"), Install::Os::Linux) ==
+               std::vector<std::string>{"sudo apt install texlive-extra-utils"}));
+        // A table-first way is still the front of each list, which the Mac's
+        // status line and Formatter's installHint read.
+        for (const Install::Tool *t : Install::all())
+            CHECK(t->ways.front().command == commands(t, Install::Os::Mac).front());
+    }
     CHECK(Install::serverKeys().size() == Settings::lspServers().size());
 
     GROUP("install:suggest");
     auto haveOnly = [](std::set<std::string> progs) {
-        return [progs](const std::string &p) { return progs.count(p) > 0; };
+        return std::function<bool(const std::string &)>(
+            [progs](const std::string &p) { return progs.count(p) > 0; });
     };
-    Install::Suggestion s = Install::suggest(*py, haveOnly({"uv", "brew"}));
+    // The Mac's suggestions, whichever system the tests run on.
+    auto suggestMac = [](const Install::Tool &t, const std::function<bool(const std::string &)> &h,
+                         const std::vector<const Install::Tool *> &extra = {}) {
+        return Install::suggest(t, h, extra, Install::Os::Mac);
+    };
+    Install::Suggestion s = suggestMac(*py, haveOnly({"uv", "brew"}));
     CHECK(s.command == "uv tool install basedpyright" && s.before.empty() &&
           s.beforeUrl.empty() && s.missing.empty());
     CHECK(s.alternatives.size() == 3 && s.alternatives[0] == "pipx install basedpyright" &&
           s.alternatives[1] == "npm install -g pyright");
     // No uv: the first that can run.
-    s = Install::suggest(*py, haveOnly({"npm", "brew"}));
+    s = suggestMac(*py, haveOnly({"npm", "brew"}));
     CHECK(s.command == "npm install -g pyright" && s.before.empty());
     CHECK(s.alternatives.size() == 3 && s.alternatives[0] == "uv tool install basedpyright");
-    s = Install::suggest(*py, haveOnly({"pipx"}));
+    s = suggestMac(*py, haveOnly({"pipx"}));
     CHECK(s.command == "pipx install basedpyright");
     // Nothing that can run: the best, after getting uv with Homebrew...
-    s = Install::suggest(*py, haveOnly({"brew"}));
+    s = suggestMac(*py, haveOnly({"brew"}));
     CHECK(s.command == "uv tool install basedpyright" && s.before == "brew install uv" &&
           s.missing == "uv" && s.beforeUrl.empty());
     // ...or from uv's page when Homebrew is missing too.
-    s = Install::suggest(*py, haveOnly({}));
+    s = suggestMac(*py, haveOnly({}));
     CHECK(s.command == "uv tool install basedpyright" && s.before.empty() &&
           s.missing == "uv" && s.beforeUrl.find("astral.sh") != std::string::npos);
     // Needs nothing: always first.
-    s = Install::suggest(*Install::server("cpp"), haveOnly({}));
+    s = suggestMac(*Install::server("cpp"), haveOnly({}));
     CHECK(s.command == "xcode-select --install" && s.missing.empty() &&
           s.alternatives == std::vector<std::string>{"brew install llvm"});
     // No go, but Homebrew: Homebrew's gopls.
-    s = Install::suggest(*Install::server("go"), haveOnly({"brew"}));
+    s = suggestMac(*Install::server("go"), haveOnly({"brew"}));
     CHECK(s.command == "brew install gopls" && s.before.empty());
     // No rustup and no Homebrew: rustup's page.
-    s = Install::suggest(*Install::server("rust"), haveOnly({}));
+    s = suggestMac(*Install::server("rust"), haveOnly({}));
     CHECK(s.command == "rustup component add rust-analyzer" && s.before.empty() &&
           s.beforeUrl == "https://rustup.rs");
     // Other tools that would do come after the tool's own other ways.
-    s = Install::suggest(*Install::formatter("pyink"), haveOnly({"pipx"}),
+    s = suggestMac(*Install::formatter("pyink"), haveOnly({"pipx"}),
                          {Install::formatter("pyink"), Install::formatter("yapf")});
     CHECK(s.command == "pipx install pyink");
     CHECK((s.alternatives ==
            std::vector<std::string>{"uv tool install pyink", "pipx install yapf"}));
     Install::Tool none;
-    CHECK(Install::suggest(none, haveOnly({})).command.empty());
+    CHECK(suggestMac(none, haveOnly({})).command.empty());
+    // Linux: the same ways where both have them, apt where the Mac has
+    // Homebrew or its command line tools, and never those.
+    auto suggestLinux = [](const Install::Tool &t,
+                           const std::function<bool(const std::string &)> &h,
+                           const std::vector<const Install::Tool *> &extra = {}) {
+        return Install::suggest(t, h, extra, Install::Os::Linux);
+    };
+    s = suggestLinux(*py, haveOnly({"pipx", "apt"}));
+    CHECK(s.command == "pipx install basedpyright" && s.before.empty());
+    CHECK((s.alternatives == std::vector<std::string>{"uv tool install basedpyright",
+                                                      "npm install -g pyright",
+                                                      "pipx install python-lsp-server"}));
+    s = suggestLinux(*Install::server("cpp"), haveOnly({"apt", "brew"}));
+    CHECK(s.command == "sudo apt install clangd" && s.alternatives.empty() && s.missing.empty());
+    // No apt (another distribution): the package's command, with where apt
+    // comes from.
+    s = suggestLinux(*Install::server("cpp"), haveOnly({}));
+    CHECK(s.command == "sudo apt install clangd" && s.missing == "apt" && s.before.empty() &&
+          !s.beforeUrl.empty());
+    // No go: the distribution's gopls; with go, go install first.
+    s = suggestLinux(*Install::server("go"), haveOnly({"apt"}));
+    CHECK(s.command == "sudo apt install gopls" &&
+          (s.alternatives ==
+           std::vector<std::string>{"go install golang.org/x/tools/gopls@latest"}));
+    s = suggestLinux(*Install::server("go"), haveOnly({"go", "apt"}));
+    CHECK(s.command == "go install golang.org/x/tools/gopls@latest");
+    // Nothing that can run, but apt can get the installer: one line for both.
+    s = suggestLinux(*Install::formatter("prettier"), haveOnly({"apt"}));
+    CHECK(s.command == "npm install -g prettier" && s.before == "sudo apt install npm" &&
+          s.missing == "npm" && s.alternatives.empty());
+    s = suggestLinux(*Install::server("rust"), haveOnly({}));
+    CHECK(s.command == "rustup component add rust-analyzer" && s.beforeUrl == "https://rustup.rs" &&
+          s.alternatives.empty());
+    s = suggestLinux(*Install::formatter("shfmt"), haveOnly({"apt"}));
+    CHECK(s.command == "sudo apt install shfmt" &&
+          (s.alternatives ==
+           std::vector<std::string>{"go install mvdan.cc/sh/v3/cmd/shfmt@latest"}));
+    s = suggestLinux(*Install::formatter("pyink"), haveOnly({"uv"}),
+                     {Install::formatter("pyink"), Install::formatter("yapf")});
+    CHECK(s.command == "uv tool install pyink" &&
+          (s.alternatives ==
+           std::vector<std::string>{"pipx install pyink", "uv tool install yapf"}));
+    // Whatever is installed, a Linux suggestion names neither Homebrew nor
+    // the Mac's command line tools.
+    for (const Install::Tool *t : Install::all())
+        for (const std::set<std::string> &h :
+             {std::set<std::string>{}, std::set<std::string>{"brew", "apt", "go", "npm", "uv",
+                                                             "pipx", "cargo", "snap", "rustup"}}) {
+            Install::Suggestion l = suggestLinux(*t, haveOnly(h));
+            std::vector<std::string> all = l.alternatives;
+            all.push_back(l.command);
+            all.push_back(l.before);
+            for (const std::string &c : all)
+                CHECK(c.find("brew ") == std::string::npos &&
+                      c.find("xcode-select") == std::string::npos);
+        }
+
+    GROUP("install:muted");
+    CHECK(Install::decodeMuted(Install::encodeMuted({"python", "go"})) ==
+          (std::set<std::string>{"go", "python"}));
+    CHECK(Install::decodeMuted(Install::encodeMuted({})).empty());
+    for (const char *bad : {"", "nonsense", "[]", "{\"muted\": 3}", "{\"muted\": [1, \"\"]}"})
+        CHECK(Install::decodeMuted(bad).empty());
+    CHECK(Install::decodeMuted("{\"muted\": [\"rust\", 2], \"later\": true}") ==
+          std::set<std::string>{"rust"});
 
     GROUP("install:readme");
     // The README's "Language servers and formatters" section lists every

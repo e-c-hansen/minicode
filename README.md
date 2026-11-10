@@ -197,21 +197,23 @@ The settings file can give a language its own command (format.python = yapf --st
 
 ## Installing servers and formatters
 
-minicode installs nothing itself, but it says what to install at the moment you need it, on the Mac for now. Open a Python file with no Python language server and a line over the editor says so, with an Install button. That line shows once per language each time minicode starts, its × closes it, and Don't Show Again keeps it away for that language; the status bar keeps offering the same help as long as the server is missing. Format Document does the same when the formatter is missing, and so does each missing server in the Language Servers popover.
+minicode installs nothing itself, but it says what to install at the moment you need it, on the Mac and on Linux. Open a Python file with no Python language server and a line over the editor says so, with an Install button. That line shows once per language each time minicode starts, its × closes it, and Don't Show Again keeps it away for that language; the status bar keeps offering the same help as long as the server is missing. Format Document does the same when the formatter is missing, and so does each missing server in the Language Servers popover.
 
 The help shows the command to run, with a Copy button and a Run in Terminal button. Run in Terminal types the command into minicode's terminal and leaves it for you to read and press Return; it never runs anything on its own. minicode suggests the first command your Mac can run: with uv installed it suggests uv, without it pipx or npm, and with none of them it adds the step that installs uv. The other ways are listed under it. Once the program is installed, minicode notices when the command finishes in its terminal, or when you come back to the window, and starts the server without a restart.
+
+On Linux the help is the same, except that the line over the editor is the bar under the tabs, and the commands are Linux's: the distribution's packages through apt where the Mac's come from Homebrew or the command line tools, and uv, pipx, npm, go, rustup, and cargo where they work on both. A terminal running a program is left alone, and Run in Terminal puts the command on the clipboard instead.
 
 | Language | Server | Install it with |
 |---|---|---|
 | Python | basedpyright | `uv tool install basedpyright`; or `pipx install basedpyright`, `npm install -g pyright`, or `pipx install python-lsp-server` |
 | Python, beside basedpyright, in projects that configure Ruff | Ruff (ruff server) | `uv tool install ruff`, `pipx install ruff`, or `brew install ruff` |
-| C, C++, and Objective-C | clangd | `xcode-select --install` (the command line tools), or `brew install llvm` |
-| Go | gopls | `go install golang.org/x/tools/gopls@latest`, or `brew install gopls` |
+| C, C++, and Objective-C | clangd | `xcode-select --install` (the command line tools), or `brew install llvm`; on Linux, `sudo apt install clangd` |
+| Go | gopls | `go install golang.org/x/tools/gopls@latest`, or `brew install gopls`; on Linux, `sudo apt install gopls` |
 | Rust | rust-analyzer | `rustup component add rust-analyzer`, or `brew install rust-analyzer` |
 | JavaScript and TypeScript | typescript-language-server | `npm install -g typescript-language-server typescript`, or `brew install typescript-language-server` |
-| LaTeX and BibTeX, when installed | texlab | `brew install texlab` |
-| Markdown, when installed | marksman | `brew install marksman` |
-| TOML, when installed | taplo | `brew install taplo` |
+| LaTeX and BibTeX, when installed | texlab | `brew install texlab`; on Linux, `sudo apt install texlab` |
+| Markdown, when installed | marksman | `brew install marksman`; on Linux, `sudo snap install marksman` |
+| TOML, when installed | taplo | `brew install taplo`; on Linux, `cargo install taplo-cli --locked` or `npm install -g @taplo/cli` |
 | Shell scripts, when installed | bash-language-server | `npm install -g bash-language-server`, or `brew install bash-language-server` |
 
 | Formatter | Formats | Install it with |
@@ -220,15 +222,15 @@ The help shows the command to run, with a Copy button and a Run in Terminal butt
 | yapf | Python, when pyink is missing | `uv tool install yapf`, or `pipx install yapf` |
 | Black | Python projects set up for it | `uv tool install black`, `pipx install black`, or `brew install black` |
 | Ruff | Python projects set up for it | `uv tool install ruff`, `pipx install ruff`, or `brew install ruff` |
-| clang-format | C, C++, Objective-C, Java, JavaScript, TypeScript, Protocol Buffers, and C# | `xcode-select --install`, or `brew install clang-format` |
+| clang-format | C, C++, Objective-C, Java, JavaScript, TypeScript, Protocol Buffers, and C# | `xcode-select --install`, or `brew install clang-format`; on Linux, `sudo apt install clang-format` |
 | Prettier | JavaScript, TypeScript, Markdown, JSON, YAML, and CSS in projects set up for it | `npm install -g prettier`, or `brew install prettier` |
 | Biome | JavaScript, TypeScript, JSON, and CSS in projects set up for it | `npm install -g @biomejs/biome`, or `brew install biome` |
-| gofmt | Go | `brew install go` |
+| gofmt | Go | `brew install go`; on Linux, `sudo apt install golang-go` |
 | rustfmt | Rust | `rustup component add rustfmt` |
-| shfmt | shell scripts | `brew install shfmt`, or `go install mvdan.cc/sh/v3/cmd/shfmt@latest` |
-| latexindent | LaTeX | `brew install latexindent` (TeX distributions such as MacTeX include it) |
+| shfmt | shell scripts | `brew install shfmt`, or `go install mvdan.cc/sh/v3/cmd/shfmt@latest`; on Linux, `sudo apt install shfmt` |
+| latexindent | LaTeX | `brew install latexindent` (TeX distributions such as MacTeX include it); on Linux, `sudo apt install texlive-extra-utils` |
 
-The installers come from Homebrew: `brew install uv`, `brew install pipx`, `brew install node` for npm, and `brew install go`. Rust's rustup comes from [rustup.rs](https://rustup.rs), and Homebrew itself from [brew.sh](https://brew.sh).
+The installers come from Homebrew: `brew install uv`, `brew install pipx`, `brew install node` for npm, and `brew install go`. Rust's rustup comes from [rustup.rs](https://rustup.rs), and Homebrew itself from [brew.sh](https://brew.sh). On Linux they come from the distribution: `sudo apt install pipx`, `sudo apt install npm`, and `sudo apt install golang-go`; uv from its own page, and rustup, which brings cargo, from rustup.rs.
 
 minicode looks for these programs on your PATH, in Homebrew's folders, in ~/.local/bin (where uv and pipx put them), in npm's global folder (nvm, fnm, and volta included), and in ~/go/bin and ~/.cargo/bin, after the project's own: its .venv or venv for the Python formatters, and its node_modules for Prettier and Biome. To use something else, give its command in the settings file: lsp.python = pylsp, or format.python = yapf --style=google. A command there always wins over these.
 

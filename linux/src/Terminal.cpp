@@ -13,6 +13,8 @@
 #include <vte/vte.h>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
+#include <unistd.h>
 
 namespace {
 
@@ -119,6 +121,10 @@ void Terminal::makeTerminal() {
     vte_terminal_set_cursor_blink_mode(term, VTE_CURSOR_BLINK_OFF);
 
     g_signal_connect(vte_, "child-exited", G_CALLBACK(onChildExited), this);
+    // Run in Terminal waits for the shell's prompt, and a Return typed here
+    // starts the look for the command's end (typeText, onCommandFinished).
+    g_signal_connect(vte_, "contents-changed", G_CALLBACK(onContentsChanged), this);
+    g_signal_connect(vte_, "commit", G_CALLBACK(onCommit), this);
     // The right click: Copy, Paste, Select All, Adjust Settings… (PARITY.md 2.11).
     Appearance::attachTerminalMenu(vte_);
 
@@ -248,6 +254,8 @@ Terminal::~Terminal() {
         g_object_remove_weak_pointer(G_OBJECT(keysWindow_), (gpointer*)&keysWindow_);
     }
     if (cursorIdle_) g_source_remove(cursorIdle_);
+    if (typeTimer_) g_source_remove(typeTimer_);
+    if (finishTimer_) g_source_remove(finishTimer_);
     if (underline_)
         gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(underline_), nullptr, nullptr, nullptr);
 }
@@ -620,6 +628,7 @@ void Terminal::onSpawned(VteTerminal*, GPid pid, GError* error, gpointer selfp) 
 }
 
 void Terminal::spawnShell() {
+    shellSpoke_ = false;   // a text to type waits for this shell's prompt
     const char* shell = g_getenv("SHELL");
     if (!shell || !*shell) shell = "/bin/bash";
 
@@ -645,6 +654,69 @@ void Terminal::spawnShell() {
 void Terminal::focus() {
     makeTerminal();
     gtk_widget_grab_focus(vte_);
+}
+
+// ---------------------------------------------------- typing for the user
+
+bool Terminal::busy() const {
+    if (!vte_ || shellPid_ <= 0) return false;
+    VtePty* pty = vte_terminal_get_pty(VTE_TERMINAL(vte_));
+    if (!pty) return false;
+    // The shell leads its own session and process group (VTE spawns it so);
+    // a command it runs gets the foreground group of its own.
+    const pid_t group = tcgetpgrp(vte_pty_get_fd(pty));
+    return group > 0 && group != shellPid_;
+}
+
+bool Terminal::typeText(const std::string& text) {
+    makeTerminal();
+    if (busy()) return false;
+    pendingType_ = text;
+    typeTries_ = 0;
+    typePending();
+    if (!pendingType_.empty() && !typeTimer_)
+        typeTimer_ = g_timeout_add(50, [](gpointer p) -> gboolean {
+            Terminal* self = static_cast<Terminal*>(p);
+            self->typePending();
+            if (!self->pendingType_.empty()) return G_SOURCE_CONTINUE;
+            self->typeTimer_ = 0;
+            return G_SOURCE_REMOVE;
+        }, this);
+    return true;
+}
+
+// Typed once the shell has started and printed (its prompt), else bytes
+// sent while it reads its startup files would echo before the prompt. Ten
+// seconds at most: a shell that prints nothing gets the text then.
+void Terminal::typePending() {
+    if (pendingType_.empty() || !vte_) return;
+    const bool ready = shellPid_ > 0 && shellSpoke_;
+    if (!ready && ++typeTries_ < 200) return;
+    if (busy()) {   // a program took the terminal meanwhile: never type into it
+        pendingType_.clear();
+        return;
+    }
+    // A paste, so a shell that asked for brackets (bash, zsh) shows it as
+    // pasted and Return is the user's to press.
+    vte_terminal_paste_text(VTE_TERMINAL(vte_), pendingType_.c_str());
+    pendingType_.clear();
+}
+
+void Terminal::onContentsChanged(VteTerminal*, gpointer selfp) {
+    static_cast<Terminal*>(selfp)->shellSpoke_ = true;
+}
+
+void Terminal::onCommit(VteTerminal*, char* text, guint size, gpointer selfp) {
+    Terminal* self = static_cast<Terminal*>(selfp);
+    if (!text || (!memchr(text, '\r', size) && !memchr(text, '\n', size))) return;
+    if (self->finishTimer_) return;   // already looking
+    self->finishTimer_ = g_timeout_add(250, [](gpointer p) -> gboolean {
+        Terminal* t = static_cast<Terminal*>(p);
+        if (t->busy()) return G_SOURCE_CONTINUE;
+        t->finishTimer_ = 0;
+        if (t->onCommandFinished) t->onCommandFinished();
+        return G_SOURCE_REMOVE;
+    }, self);
 }
 
 #endif // MINICODE_ENABLE_TERMINAL

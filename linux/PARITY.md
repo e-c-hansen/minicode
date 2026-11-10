@@ -1087,7 +1087,7 @@ its server comes first here (2.0).
   lines unpainted until seen, edits ending the tokens). Needs the owner: the
   colors with a real server.
 - [ ] **2.7 Inlay hints (D6, D9).** `InlayHints`.
-- [ ] **2.8 Install hints.** `InstallHints`.
+- [~] **2.8 Install hints.** `InstallHints`. Done, untested: the core's Linux ways (tests pass), LspSession's missingServer and lookAgainForMissingServer, Terminal::typeText and onCommandFinished, InstallView, and the offer in ConsentBar. Remains: wiring in main.cpp (the bar's new Host fields, Run in Terminal, onIsActive and the terminal's finish calling lookAgain), Format Document's note, a GUI suite, a compile, and HANDOFF notes.
 - [x] **2.9 Git verbs.** Push, pull, autofetch, Stage All, Discard with its
   Trash copy and undo, hunks and lines, the branch picker, commit verbs.
   `GitModel` already has the plans.

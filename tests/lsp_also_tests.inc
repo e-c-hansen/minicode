@@ -311,8 +311,14 @@ static void testLspSecondServer() {
                 return p == "uv";
             });
             CHECK(s.command == "uv tool install ruff");
-            s = Install::suggest(*ruff, [](const std::string &p) { return p == "brew"; });
+            s = Install::suggest(
+                *ruff, [](const std::string &p) { return p == "brew"; }, {}, Install::Os::Mac);
             CHECK(s.command == "brew install ruff" && s.before.empty());
+            // Linux has no Homebrew way: uv's, with where uv comes from.
+            s = Install::suggest(
+                *ruff, [](const std::string &p) { return p == "brew"; }, {}, Install::Os::Linux);
+            CHECK(s.command == "uv tool install ruff" && s.missing == "uv" &&
+                  s.beforeUrl.find("astral.sh") != std::string::npos);
         }
         CHECK(Install::server("cpp.also") == nullptr);
         bool listed = false;
