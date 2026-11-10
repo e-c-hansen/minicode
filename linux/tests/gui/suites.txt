@@ -47,3 +47,7 @@ FormatSuite.cpp
 FormatConsentSuite.cpp
 FormatCoverageSuite.cpp
 ServerConsentSuite.cpp
+AdjustSettingsSuite.cpp
+ThemesSuite.cpp
+SwatchesSuite.cpp
+ConfigWritesSuite.cpp

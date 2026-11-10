@@ -1401,4 +1401,74 @@ staging set (checked by listing the Wayland globals it offers). KDE
 Plasma's compositor has a blur protocol of its own, so a Plasma-only blur
 through GDK's Wayland surface looks possible; it was not tried or built. Transparency needs a compositor, which
 GNOME always has. A click on a color swatch opens a color picker under it,
-and the color applies live while you drag, as on the Mac.
+and the color applies live while you drag, as on the Mac; a click on an
+opacity value opens a slider. View > Theme picks one of the nine themes
+(the settings file's `theme` line), and Adjust Settings… at the end of
+every part's right click menu (the file tree, the editor, a Markdown page,
+the tabs, the status bar, the source control panel, the terminal, the
+browser) opens the settings file at that part's keys; View > Adjust
+Settings lists the same parts. GTK's own menus, dialogs and fields go dark
+or light with the theme.
+
+Besides the table, Enter and Shift Enter in the find bar find the next and
+previous match (Enter in its replacement replaces one), Tab moves between
+its two fields and Escape closes it, from the bar or the editor; Enter in
+Replace in Folder's replacement replaces all after asking, and Ctrl Shift 1
+on a result replaces that match alone; Ctrl Shift C and Ctrl Shift V copy
+and paste in the terminal, where Alt with a letter goes to the program as
+Meta; and a Ctrl click on a file:line or URL in the terminal's output opens
+it.
+
+F2 and Delete work only while the file tree has the keyboard, so Delete in the
+editor still deletes text.
+
+In the tree, one click opens a file in the preview tab, which the next
+single click replaces, and opens and closes a folder, as on the Mac; a
+double click or Ctrl click opens a file in a tab that stays. Up and Down
+move the selection without opening anything, Enter opens the selected file
+in a tab that stays and moves the keyboard to the editor, Left goes up to the
+folder and closes it, and Right opens a folder and steps into it.
+
+In the Source Control panel, Up and Down move through the files, Enter shows
+the selected file's diff in the editor's place, Space stages or unstages it,
+Tab moves between the changes, the graph and the message box, and Ctrl Enter
+in the message box commits. Enter or a click on a commit in the graph shows
+it. Find Next and Find Previous are F3 and Shift F3, VS Code's on Linux,
+rather than the Mac's Command G and Shift Command G: VS Code's Ctrl G on
+Linux is Go to Line, and Ctrl Shift G is the panel.
+
+The command palette is Ctrl Shift P or F1, VS Code's keys: type part of a
+command's name and press Enter. The same box opens empty for Ctrl P, which
+finds a file of the folder by part of its name, with ":" for Ctrl G, a line
+to go to (42, or 42:7 for a column too), and with "@" for Ctrl Shift O, a
+symbol of the open file (its classes, functions, or headings; "@:" groups
+them by kind). Up and Down choose, Escape closes it, and typing ">", ":"
+or "@" first switches between them. In the terminal Ctrl P, Ctrl G and F1
+are the program's; Ctrl Shift P and Ctrl Shift O still open the palette.
+
+Show Hidden Files is Ctrl Shift ., the Mac's Shift Command . with Ctrl for
+Command. It is bound as Ctrl and the `>` character, so it works on layouts
+where Shift . types `>`, such as US and UK English. Ctrl H, the file
+managers' key, is Replace's once the port has it, as in VS Code.
+
+The zoom keys act only while a PDF or the LaTeX preview is on screen, and
+otherwise pass through to whatever has the keyboard. Fit width is Ctrl+Alt+0,
+not the usual Ctrl+0, because Ctrl+0 is Focus the File Tree, as Command 0 is
+on the Mac, and one of the ways out of the terminal.
+
+While the terminal has the keyboard, the plain Ctrl shortcuts (Ctrl B, F, N,
+O, Q, S, Space, slash, comma, plus and minus) and the keys with no modifier
+(F3, F9, F12) belong to the program in it, so readline, vim and emacs get
+them: Ctrl W deletes a word, Ctrl H is backspace. The keys that move between
+panes and tabs stay the app's: Ctrl `, Ctrl 0, Ctrl 1, Ctrl Tab, Ctrl Shift
+Tab, Ctrl Page Down, and Ctrl Page Up (Global in `src/CommandsLinux.cpp`). Ctrl 0 reaches the Source Control panel from the
+terminal while it is open. Everything with Shift or Alt in it still works
+there, except Ctrl Shift C and Ctrl Shift V, the terminal's copy and paste
+(elsewhere Ctrl Shift V is the preview), Ctrl Shift G (Source Control),
+which the shell reads as Ctrl G, and Ctrl Shift Space (Play or Pause),
+which it reads as Ctrl Space; the editor's own keys (Ctrl Alt L, Ctrl Alt I,
+Shift F9) are not bound there at all. Ctrl click on a link in the output is
+a mouse action and is not affected. The Mac has no such split, since its
+shortcuts use Command and the terminal gets Control. The tree's right-click
+menu and the File menu both have New File, New Folder, Rename, Move to
+Trash, Open Containing Folder and Copy Path.

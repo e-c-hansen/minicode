@@ -243,9 +243,9 @@ sidebar.opacity = 0.5
 terminal.text = #E0E0E0
 ```
 
-Every color in the file shows as a swatch, and clicking one opens the color picker, with an opacity slider for see-through colors; the window follows along as you drag. An opacity value is underlined with dots, and clicking it opens a slider. Either way the line is switched on for you if it was still commented out. A line with a mistake is ignored, and the status bar says which one and why.
+Every color in the file shows as a swatch, and clicking one opens the color picker, with an opacity slider for see-through colors; the window follows along as you drag. An opacity value is underlined (with dots on the Mac), and clicking it opens a slider. Either way the line is switched on for you if it was still commented out. A line with a mistake is ignored, and the status bar says which one and why.
 
-The colors start from a theme, one of VS Code's built-in ones: Dark Modern (VS Code's own default), Dark+ (minicode's look, and the theme when none is set), Monokai, Solarized Dark, Tomorrow Night Blue, Light Modern, Light+, Quiet Light and Solarized Light. On the Mac, View > Theme switches between them, and so does typing the theme's name into the command palette; either way it is one line in the settings file, which you can also write yourself, here on Linux too:
+The colors start from a theme, one of VS Code's built-in ones: Dark Modern (VS Code's own default), Dark+ (minicode's look, and the theme when none is set), Monokai, Solarized Dark, Tomorrow Night Blue, Light Modern, Light+, Quiet Light and Solarized Light. View > Theme switches between them, and on the Mac so does typing the theme's name into the command palette; either way it is one line in the settings file, which you can also write yourself:
 
 ```
 theme = light-modern
@@ -253,7 +253,7 @@ theme = light-modern
 
 Any color the file sets of its own wins over the theme's, so you can take a theme and change the few colors you would rather have. When you pick a theme and the file already sets colors, minicode asks whether to comment those lines out so the whole theme shows; they stay in the file to switch back on. A light theme gives the window light scroll bars, fields and menus too.
 
-On the Mac you don't have to find the right line yourself. Right-click the file tree, the editor, the Markdown preview, the terminal, the browser, the status bar, the title bar, or the source control panel, and choose Adjust Settings at the bottom of the menu. The settings file opens with that part's keys in the middle of the pane and briefly highlighted, its first value selected. View > Adjust Settings lists the same parts.
+You don't have to find the right line yourself. Right-click the file tree, the editor, the Markdown preview, the tabs, the terminal, the browser, the status bar, the source control panel, or on the Mac the title bar, and choose Adjust Settings at the bottom of the menu. The settings file opens with that part's keys in view and briefly highlighted, its first value selected; a settings file older than some of those keys gets their commented-out defaults added at its end. View > Adjust Settings lists the same parts.
 
 ![Picking new colors for the file tree, the editor and the status bar](docs/demos/settings.gif)
 

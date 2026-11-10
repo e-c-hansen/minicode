@@ -1030,7 +1030,55 @@ its server comes first here (2.0).
   `GitModel` already has the plans.
 - [ ] **2.10 Change bars and the tree's git colors.** `QuickDiff`,
   `GitStatus`.
-- [ ] **2.11 Themes from a menu and Adjust Settings.**
+- [x] **2.11 Themes from a menu and Adjust Settings.** The owner's words
+  (2026-11-09): "no 'change settings' when right clicking on some portion
+  of the GUI. This should point to the relevant part of the minicode
+  config." `HANDOFF.md` item 28 says how a new part adds its item.
+  *Verified in Xvfb, 2026-11-10:* `settings:adjust-addition` and
+  `settings:surface-key-lines` hold the core's text and lines to the
+  Mac's, `theme:light` the stylesheet's light selection and scroll bars,
+  and four suites press real keys and clicks. `adjust_settings`: a right
+  click on the file tree, the editor, a Markdown page, a tab and the strip
+  past the tabs, the status bar, the Source Control panel and its message
+  box, the terminal, the browser's page (WebKit's own menu) and its
+  address bar each opens a menu whose last item is Adjust Settings…
+  for that part; clicking it opens the settings file with the keyboard
+  in it, the first key's value selected and every key's line tinted,
+  still at 1.5 s and gone by 3.3 s; an old file gets the missing keys'
+  commented defaults under one "# Added by Adjust Settings" line, saved at
+  once and taken back by one Ctrl+Z when the tab was clean, left unsaved
+  when it was not (View > Adjust Settings > Terminal through the menu
+  bar). `themes`: View > Theme by real clicks writes the line, its row is
+  checked, and the editor's text, the gutter, the tree, the terminal, the
+  status bar, the tab strip, the find bar and the Source Control panel
+  read back as the theme's pixels, the keyword tag in its color, GTK's
+  color scheme and the menu bar dark or light with it, and the keyboard
+  back where it was; a color of the
+  file's own asks (Keep My Colors, Use the Theme's Colors, Cancel each
+  doing what it says), CRLF stays, a symlinked file stays a link with
+  nothing left beside it, and a tab holding the file unsaved refuses with
+  the reason in the status bar until undone. `swatches`: a swatch's click
+  (on its last digit) opens the chooser at that color, not the caret
+  line's, writing nothing; a color typed into its field rewrites the line
+  and saves; an opacity value's click opens a slider at it, the arrow
+  keys move it, the line is uncommented and saved. `config_writes`:
+  Keyboard Shortcuts… and Adjust Settings… make keys.conf and
+  settings.conf through dangling symlinks, which stay links. They fail
+  without the item in the menus, without the color scheme and the theme
+  action's state following the file, without the menu bar giving the
+  keyboard back (GTK left it on the bar's item: `MenuBarFocus`), without
+  the character-under-the-point fix for swatches and opacities, and with
+  `g_file_set_contents` for the first writes. In two of three full runs
+  at load 40 `large_file`'s "its place as it was" timed out (180 s); it
+  passed alone twice and after every suite before it, at load 3, so it
+  is noted as a flake under load, not chased. Not done: the palette does
+  not list the themes or the parts (the Mac's reads its menu bar), and
+  the title bar has no menu (the port draws none). Needs the owner: how
+  each theme looks on the desktop, and whether GTK's menus and dialogs
+  follow a light theme under the desktop's own `Yaru-dark` (only GTK's
+  built-in theme was tried), right clicks with a real mouse and touchpad
+  under GNOME, the WebKit page's menu there, and the color chooser and
+  slider popovers' look and keyboard.
 - [ ] **2.12 Symbols from the servers.** Added by item 1.5, which left them
   out because the Linux checks have no scripted server yet. Go to Symbol
   in File asks the server first (`textDocument/documentSymbol`, the outline
@@ -1170,7 +1218,7 @@ fixed on its own branch, with a GUI check that fails without the fix.
   GNOME Terminal asks nothing first, and `systemctl --user list-units
   'app-minicode-*'` while it runs (the checks answered for systemd).
 - Right-clicking a part of the window offers no Adjust Settings (the same
-  day): that is item 2.11.
+  day): that is item 2.11, done.
 - [x] **R3. "It takes multiple seconds to open minicode on ubuntu and
   under 1 s to do the same on mac"** (2026-11-10, the PPA's 1.4.14 on
   `~/minicode`), on `worktree-agent-a4711ccfaf9d559fd`. Find where the time

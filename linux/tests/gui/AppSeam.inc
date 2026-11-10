@@ -14,6 +14,7 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.layout = a->layout;
     w.statusLabel = a->statusLabel;
     w.settingsLabel = a->settingsLabel;
+    w.statusBar = a->statusBar;
     w.findBar = a->findBar;
     w.search = a->search;
     w.hintsPanel = a->hintsPanel;

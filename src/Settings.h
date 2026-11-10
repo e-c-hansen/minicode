@@ -177,6 +177,18 @@ public:
     // default file's order and with a blank line between its sections. ""
     // when none are missing or the surface is unknown.
     static std::string missingSurfaceLines(const std::string& text, const std::string& surface);
+    // What Adjust Settings adds at the end of `text` for `surface`: the
+    // line break the text lacks at its end, a blank line, "# Added by
+    // Adjust Settings: the <title> keys this file did not have yet.", then
+    // missingSurfaceLines. "" when nothing is missing. The Mac builds the
+    // same in EditorController+Settings.mm (appendSettingsLines:).
+    static std::string adjustSettingsAddition(const std::string& text,
+                                              const std::string& surface);
+    // The 0-based lines of `text` holding a surface's keys (findKeyLine),
+    // in the surface's key order, each line once: the line Adjust Settings
+    // puts the caret on first, and every line it tints. Empty for an
+    // unknown surface or a text with none of them.
+    static std::vector<int> surfaceKeyLines(const std::string& text, const std::string& surface);
 
     // Black or white text, whichever reads better on a swatch of `c` drawn
     // over the editor background.

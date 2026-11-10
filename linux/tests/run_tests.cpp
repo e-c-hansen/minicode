@@ -317,6 +317,24 @@ void testThemeCss() {
                   " headerbar label { color: rgba(255,0,0,1.000); }"));
     CHECK(has(tb, "window.minicode-window.background { background-color: transparent; }"));
 
+    GROUP("theme:light");
+    // A light theme (View > Theme): its colors, and the selection and
+    // scroll bars no key sets made light too; a dark one keeps Dark+'s.
+    CHECK(has(d, ".minicode-editor text selection { background-color: #264F78; }"));
+    CHECK(has(d, "scrollbar slider { background-color: rgba(255,255,255,0.22);"));
+    const std::string lp = theme::stylesheet(Settings::parse("theme = light-plus\n"));
+    CHECK(has(lp, ".minicode-editor text { background-color: rgba(255,255,255,1.000)"));
+    CHECK(has(lp, ".minicode-editor text selection { background-color: #ADD6FF; }"));
+    CHECK(has(lp, ".minicode-git-message text selection { background-color: #ADD6FF; }"));
+    CHECK(has(lp, "scrollbar slider { background-color: rgba(0,0,0,0.22);"));
+    CHECK(has(lp, "scrollbar slider:hover { background-color: rgba(0,0,0,0.38); }"));
+    CHECK(!has(lp, "#264F78"));
+    const std::string sl = theme::stylesheet(Settings::parse("theme = solarized-light\n"));
+    CHECK(has(sl, ".minicode-sidebar { background-color: rgba(238,232,213,1.000); }"));
+    CHECK(has(sl, ".minicode-editor text { background-color: rgba(253,246,227,1.000)"));
+    const std::string mk = theme::stylesheet(Settings::parse("theme = monokai\n"));
+    CHECK(has(mk, "#264F78") && !has(mk, "#ADD6FF"));
+
     GROUP("theme:text");
     const std::string tx = theme::stylesheet(Settings::parse("window.text = #00FF00\n"));
     CHECK(has(tx, "color: rgba(0,255,0,1.000); }"));

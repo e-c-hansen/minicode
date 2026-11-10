@@ -4,6 +4,7 @@
 
 #ifdef MINICODE_ENABLE_TERMINAL
 
+#include "Appearance.h"
 #include "Palette.h"
 #include "StartupLog.h"
 #include "TermLinkPath.h"
@@ -118,6 +119,8 @@ void Terminal::makeTerminal() {
     vte_terminal_set_cursor_blink_mode(term, VTE_CURSOR_BLINK_OFF);
 
     g_signal_connect(vte_, "child-exited", G_CALLBACK(onChildExited), this);
+    // The right click: Copy, Paste, Select All, Adjust Settings… (PARITY.md 2.11).
+    Appearance::attachTerminalMenu(vte_);
 
     // Copy and paste, the keys every Linux terminal uses: plain Ctrl+C and
     // Ctrl+V belong to the shell. VTE itself binds neither. A controller on

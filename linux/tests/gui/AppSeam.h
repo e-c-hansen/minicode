@@ -39,6 +39,7 @@ struct MCGuiAppWindow {
     WindowLayout* layout = nullptr;        // the panes and their bars (WindowLayout.h)
     GtkWidget*  statusLabel = nullptr;
     GtkWidget*  settingsLabel = nullptr;   // problems in settings.conf and keys.conf
+    GtkWidget*  statusBar = nullptr;       // the bar holding both (its right click: 2.11)
     FindBar*    findBar = nullptr;         // the editor's find and replace bar
     SearchPanel* search = nullptr;         // Find in Folder, null until first shown
     GtkWidget*  hintsPanel = nullptr;      // the shortcut hints, and their text
