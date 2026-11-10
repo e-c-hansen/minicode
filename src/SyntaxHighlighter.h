@@ -167,6 +167,27 @@ public:
     Range edit(const TextSource<Ch>& src, size_t pos, size_t oldLen,
                size_t newLen, std::vector<Token>& out);
 
+    // Several edits at once (typing at many carets, Replace All): each
+    // replaced the units [pos, pos + oldLen) of the text before any of them
+    // with newLen units, in ascending order and apart (one may end where
+    // the next begins); src is the text after all of them. The highlighter
+    // ends exactly as edit() of each in turn would leave it, but the line
+    // table moves once, not once per edit: 1,000 edits in 100,000 lines
+    // moved 50 million line starts that way (EditBatch.h). What it re-lexed
+    // comes back as ranges of the new text, ascending and apart, each with
+    // the number of lines before the edits that its lines replaced, and its
+    // tokens appended to `out` up to tokensEnd.
+    struct Edit {
+        size_t pos = 0, oldLen = 0, newLen = 0;
+    };
+    struct EditedRange {
+        Range range;
+        size_t oldLines = 0;
+        size_t tokensEnd = 0;
+    };
+    std::vector<EditedRange> editMany(const TextSource<Ch>& src, const std::vector<Edit>& edits,
+                                      std::vector<Token>& out);
+
     // The tokens of lines [first, end) as they stand, lexed from the stored
     // states (no state changes). For a caller that applies an edit's colors
     // later than the edit itself, possibly after further edits.

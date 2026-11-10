@@ -18,8 +18,10 @@
 //     language server, and later the folds and change bars follow each one,
 //     as they follow typing. (On the Mac, one storage edit over all of them
 //     relexed the whole span and opened every fold between.) Document's
-//     highlighter stops tracking edit by edit after 64 in one user action
-//     and finds the whole change once at its end (Document.cpp, "bulk").
+//     highlighter takes the changes of an apply() of 8 ranges or more
+//     together at its end (applyingChanges(), EditBatch.h), each re-lexing
+//     only its own lines; any other user action of more than 64 edits it
+//     finds whole at its end (Document.cpp, "bulk").
 //   - With `keepCaret`, the caret keeps its place in the text around it
 //     (EditSpans::mapThrough) and the selection goes, as the Mac's find
 //     bar leaves it after Replace All; without, the marks are where GTK's
@@ -53,5 +55,12 @@ bool apply(GtkTextBuffer* buffer, const std::vector<Change>& changes, bool keepC
 
 // True while apply() is putting changes in.
 bool applying();
+
+// While apply() runs: the buffer it edits and its changes, for a listener
+// that would rather take them all at once than edit by edit (Document's
+// highlighter, which hears begin-user-action before the first edit and
+// end-user-action after the last, both inside apply()). Null otherwise.
+GtkTextBuffer* applyingTo();
+const std::vector<Change>* applyingChanges();
 
 }  // namespace MultiEdit

@@ -113,7 +113,7 @@ void BracketColors::reset(IncrementalHighlighter<char>* hl, const std::string& t
                                                 hl->lineCount(), tokens));
 }
 
-void BracketColors::edited(const IncrementalHighlighter<char>& hl, const std::string& text,
+void BracketColors::edited(const IncrementalHighlighter<char>& hl, const TextSource<char>& text,
                            const IncrementalHighlighter<char>::Range& r, size_t linesBefore,
                            const std::vector<Token>& relexed) {
     if (!on_) return;
@@ -123,7 +123,7 @@ void BracketColors::edited(const IncrementalHighlighter<char>& hl, const std::st
     const size_t replaced = now + linesBefore - hl.lineCount();
     const bool moved = depths_.replace(
         first, replaced,
-        BracketPairs::summarizeLines(StringSource<char>(text), hl, first, r.endLine, relexed));
+        BracketPairs::summarizeLines(text, hl, first, r.endLine, relexed));
     // The edited lines are not current; those after them move with their
     // text, unless the edit changed the depth they start at.
     std::vector<std::pair<size_t, size_t>> out;

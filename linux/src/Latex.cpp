@@ -271,7 +271,8 @@ std::string LatexPreview::tectonicPath() {
 std::string LatexPreview::bufferText() const {
     GtkTextIter a, b;
     gtk_text_buffer_get_bounds(buffer_, &a, &b);
-    char* t = gtk_text_buffer_get_text(buffer_, &a, &b, FALSE);   // what Save writes
+    // What Save writes: hidden text too (a fold, a long line's rest).
+    char* t = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
     std::string out = t ? t : "";
     g_free(t);
     return out;

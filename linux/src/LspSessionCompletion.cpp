@@ -22,9 +22,9 @@ void LspSession::triggerCompletion() {
 // "::"? The caret is already past it (the insert mark moves with text typed
 // at it). Anything else typed while the list is up narrows it.
 void LspSession::completionAfterEdit(const char* inserted, int len) {
-    // A rename or a fix going in is not typing.
-    if (MultiEdit::applying()) return;
-    if (inserted && len == 1) {
+    // Not at several carets, nor a rename or a fix going in (MultiEdit): the
+    // server sees no character typed alone there, as on the Mac.
+    if (inserted && len == 1 && !MultiEdit::applying()) {
         GtkTextIter cur, prev;
         cursorIter(&cur);
         prev = cur;
