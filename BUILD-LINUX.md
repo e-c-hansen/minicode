@@ -5,8 +5,11 @@ Ubuntu Linux using GTK4. It reuses the exact same portable C++ core (the syntax
 highlighter, the Markdown parser, the settings file parser, the comment
 toggle, the folder search and the language server client) that the macOS
 build uses, so highlighting, Markdown rendering, settings, Ctrl+/ and the
-language server features behave identically. Only the GUI layer is rewritten, from
-AppKit to GTK4.
+language server features behave identically. Since November 2026 it also
+shares the command registry, and the rules behind tabs, sessions and
+backups, the palette, find and replace, brackets, several cursors, folding,
+and the window's layout (`linux/PARITY.md` is the plan for the rest). Only
+the GUI layer is rewritten, from AppKit to GTK4.
 
 Everything for the Linux port lives under `linux/`. The macOS build is
 untouched.
@@ -32,13 +35,23 @@ The port now builds clean and runs, with every panel enabled. It was brought up
 on Ubuntu 26.04 with GTK 4.22.4, VTE 0.84.0 and WebKitGTK 2.52.3, compiling
 without a single warning at `warning_level=2`.
 
+Until October 2026 the checks below were temporary hooks inside the running
+app, removed afterwards, real X input in a container, and runs by hand, and
+the keys they name are the keys of the time (item 0.3 moved several; the
+Linux column of `README.md`'s table has them as they are). Since November
+(`linux/PARITY.md`) each feature has GUI suites in `linux/tests/gui` that
+run the whole app on a private Xvfb, X11 with no window manager, and press
+real keys and clicks through XTest; CI's GTK job runs them on every push.
+They put nothing on a screen, so GNOME on Wayland, input methods, how
+things look, and real hardware are left for a person: "What needs a
+person", after this section, is that list.
+
 Verified by running it:
 
 - The portable C++ core in `src/` compiles cleanly under `g++` 15 and passes
-  all 1,218 checks of the top-level `make test`, the same suite the macOS
-  build runs. This code is shared verbatim with the macOS build. CI now runs
-  it in the Linux job too.
-- The port's own pure-C++ pieces pass 327 checks (`cd linux && make test`,
+  the top-level `make test`, the same suite the macOS build runs. This code
+  is shared verbatim with the macOS build. CI runs it in the Linux job too.
+- The port's own pure-C++ pieces pass their checks (`cd linux && make test`,
   or `meson test -C build`): the byte-to-character and UTF-16 offset
   conversions in `linux/src/Utf8Offsets.h`, the theme stylesheet, the page
   word finder behind the LaTeX click, terminal link paths, and the Source
@@ -56,8 +69,8 @@ Verified by running it:
   entry navigates, plain words are sent to a web search rather than mangled
   into a URL, the URL bar follows redirects and back/forward navigation, and
   the back and forward buttons grey out correctly. Showing or hiding the panel
-  leaves the editor filling the right area with the terminal still docked
-  underneath.
+  left the editor filling the right area with the terminal still docked
+  underneath (since item 1.13 the browser sits beside the editor instead).
 - The terminal panel's top edge is a real `GtkPaned` divider. Moving it resizes
   the panel, the size survives closing and reopening it, and the clamps hold at
   both ends: the terminal will not go below 80px and the editor above it will
@@ -133,9 +146,10 @@ Verified by running it:
   is not a folder is refused; closing the window hides it and keeps the
   results. The search itself is the shared `src/FolderSearch.cpp`, with its
   own tests in the core suite.
-- All 13 window actions are registered with the intended accelerators, and the
+- All 13 window actions were registered with the intended accelerators, and the
   sidebar, dotfile, terminal, browser and preview toggles were confirmed to
-  change the state they claim to.
+  change the state they claim to. (Since item 0.3 the actions, the menu bar,
+  and their keys come from the command registry; see below.)
 - Images and PDFs (September 2026, poppler-glib 26.01, GTK 4.22.4, on the
   ThinkPad under GNOME Wayland at scale 2). A temporary test hook, since
   removed, opened files through the same path a click in the tree takes and
@@ -260,7 +274,8 @@ Verified by running it:
     bitmaps already let go (see `linux/HANDOFF.md`, item 4).
   - With the terminal focused, `win.zoomin` and `win.zoomout` had no
     accelerators and `win.zoomfit` kept Ctrl+Alt+0; with the focus back in
-    the tree, all three were bound again.
+    the tree, all three were bound again. (Since item 1.11 the same keys
+    zoom the editor elsewhere and the terminals in the terminal.)
   - The LaTeX preview: `notes.tex` typeset, the actions were enabled, and a
     double-click through `pageAtPoint` and the preview's own click handler,
     at 150%, 300%, 50% and fit, opened the right item for "draft",
@@ -436,7 +451,7 @@ Verified by running it:
   its bus name as the app exits.
   - Previous File: with no history it opens nothing; main.cpp then vec.h,
     and Ctrl+Tab goes back and forth; from an image back to vec.h and
-    forward to the image again.
+    forward to the image again. (Tabs replaced it in item 1.1.)
   - Find Next and Previous: with no query, Ctrl+G opens the find bar. With
     "vec2", the matches on lines 4, 5 and 5 come in order, Ctrl+G wraps to
     the top, Ctrl+Shift+G wraps to the last and steps back, and the entry's
@@ -571,7 +586,8 @@ Verified by running it:
     compares the keyval the key produced (`greater` on a US layout) and
     treats Shift as used up by it. It is bound as `<Ctrl>greater`, and a
     real Ctrl+Shift+. toggles the dotfiles, also with the terminal focused,
-    where it stays bound like the other shifted keys. Ctrl+H still works.
+    where it stays bound like the other shifted keys. Ctrl+H worked too
+    then; item 0.3 gave it to Replace.
     The same run found that showing or hiding dotfiles closed every open
     folder and dropped the selection whenever a dotfile sorted into the root
     (the sorted lists report every row as removed and added again). The
@@ -660,6 +676,17 @@ Verified by running it:
     refreshes ran log four times, since an unchanged repository keeps its
     graph. Closing a window with the panel open, and with a Show more still
     loading, logged no GTK warnings.
+- The GUI checks themselves (November 2026, `linux/PARITY.md` items 0.1
+  and 0.2). `meson test -C build --suite gui` runs the whole app, with
+  `main` renamed, on an Xvfb it starts itself under `dbus-run-session`, with
+  a scratch home, settings, and git config, and presses keys and clicks
+  through XTest, so GTK's own accelerator matching and gestures run as they
+  do for a keyboard and mouse. It refuses any display it did not start;
+  four runs at once pass, and nothing outlives a run, a hung step, a crash,
+  or a SIGKILL to its wrapper. Its first suite types into a file and saves
+  it with Ctrl S, and fails with the save action taken out. CI's GTK job
+  runs every suite: a check made to fail turned it red, with a picture of
+  the window kept, and WebKit's sandbox starts on the runner.
 - The keys from the command registry (November 2026, `linux/PARITY.md` item
   0.3), by the `keys` GUI suite on a private Xvfb with real key presses.
   The menu bar holds each command the port has once, in the registry's
@@ -671,7 +698,9 @@ Verified by running it:
   new file's name, Ctrl Alt N a folder's, Ctrl Shift N opens a window that
   Ctrl W leaves and Ctrl Shift W closes, Ctrl Shift . shows dotfiles and
   Ctrl H nothing, F3 opens the find bar and Ctrl G nothing, Ctrl Alt I runs
-  the hover and Ctrl I nothing. With the terminal focused, a raw `head`
+  the hover and Ctrl I nothing (since then Ctrl L, Ctrl Shift L, Ctrl H,
+  and Ctrl G have taken new jobs: Select Line, Select All Occurrences,
+  Replace, and Go to Line). With the terminal focused, a raw `head`
   received Ctrl N, L, H, G, W, I, B, O, Q, F, Ctrl Alt L, Ctrl Alt I and F3
   as their bytes, in order, while no command ran; Ctrl Shift V pasted into
   the shell; Ctrl Shift D, Ctrl Shift N, Ctrl Shift W and Ctrl Alt N acted,
@@ -700,6 +729,30 @@ Verified by running it:
   it and switching tabs, a task box clicked in it was undone from it, and
   Ctrl Z went back to the clean file. By hand against clangd, squiggles
   followed the tab on show and a fix typed in a tab cleared them.
+- Sessions, backups, and auto-save (November 2026, `linux/PARITY.md` items
+  1.2 and 1.3), by the `sessions`, `backups`, and `auto_save` GUI suites. A
+  second app opened a folder's files (a Markdown page, a named pipe, a
+  17 MB file, one deleted afterwards, the preview tab) and closed with Ctrl
+  Shift W, and a third got them back in order with their caret and scroll,
+  without the deleted one, reading only the tab on show; two windows on one
+  folder share its session. A second app that typed into three tabs and was
+  killed with a real `kill -9` came back in a third, which opened a window
+  on that folder by itself, as unsaved tabs over the disk's text, with
+  nothing to undo, the note in the status bar, the question about a file
+  changed meanwhile, and a deleted file's text; Ctrl Q with Don't Save left
+  no backup. Auto-save after a delay and on a change of focus (Ctrl 0, a
+  tab switch) saved, Close Tab wrote instead of asking, and a file changed
+  on disk, one deleted, and a dead key still composing were left alone. The
+  browser's page is not in the session yet.
+- Line numbers and the gutter (November 2026, `linux/PARITY.md` item 1.4),
+  by the `gutter`, `ruler`, and `gutter_typing` GUI suites. The numbers
+  drawn match an index made afresh and GTK's own line positions after
+  typing that adds and removes lines and pastes with a lone CR, U+2029, and
+  U+2028; the current line's color follows the caret; relative and off
+  work; the colors, `editor.opacity`, and the rulers at their columns were
+  read back as pixels; real clicks, drags, and Shift clicks select whole
+  lines; a Markdown preview has no gutter; and typing in 100,000 lines
+  costs the gutter 0.05 ms of CPU a key.
 - The palette (November 2026, `linux/PARITY.md` item 1.5), by the `palette`
   and `symbols` GUI suites on a private Xvfb with real key presses and
   clicks. Ctrl Shift P and F1 list the commands with their keys, only those
@@ -715,6 +768,92 @@ Verified by running it:
   Escape puts the selection and scroll back. In the terminal Ctrl P, Ctrl
   G and F1 reached a raw `head` as their bytes, and Ctrl Shift P opened the
   palette.
+- Find and replace (November 2026, `linux/PARITY.md` item 1.6), by the
+  `find_bar` and `replace_in_folder` GUI suites. Ctrl F seeds the query from
+  a one-line selection or the word at the caret, the options change the
+  count, a regular expression's groups go into the replacement, Preserve
+  Case and Find in Selection work, Enter, F3, and their Shift forms wrap,
+  Replace and Replace All undo in one step, and Escape closes the bar from
+  the bar or the editor. Replace All of 20,000 matches in a 100,000-line
+  file took about 170 ms of main-thread CPU and its undo 1.6 s. In the
+  terminal the options' Alt keys reach the program. Replace in Folder
+  counted and asked, changed a clean tab in place, left a tab with unsaved
+  text alone and named it, replaced a symlinked file once, refused a stale
+  row, and kept to the files to include and exclude.
+- Brackets and auto-closing pairs (November 2026, `linux/PARITY.md` items
+  1.7 and 1.8), by the `brackets`, `bracket_pairs`, and `auto_close` GUI
+  suites. The bracket by the caret and its partner are boxed (read back as
+  pixels), strings and comments skipped, nothing looked for past 20,000
+  characters, and Ctrl Shift backslash goes out and back; the three depth
+  colors and the unexpected closer were read as tags and pixels, painted
+  only for the lines on screen, with typing in 100,000 lines at 7 to 9 ms a
+  key either way. Every auto-closing case was typed through XTest: the
+  pair with the caret inside, one Ctrl Z taking it, typing over the closer
+  and Backspace between the two, Python's quotes, a selection wrapped,
+  Markdown's own pairs, nothing while a dead key composes, and the setting
+  off.
+- Several carets and the line commands (November 2026, `linux/PARITY.md`
+  item 1.9), by the `multicaret`, `multicaret_select`, `line_commands`,
+  `editor_words` and `multicaret_perf` GUI suites on a private Xvfb with
+  real key presses and clicks. Alt click adds and takes away carets, Shift
+  Alt, Alt and middle-button drags make columns, Ctrl D, Ctrl Shift L and
+  Ctrl Shift Up and Down add carets, and the find bar's Alt Enter selects
+  its matches; typing, brackets closing, Backspace, Return, the arrows,
+  Copy and Paste act at every caret, one Ctrl Z taking a key back; Ctrl L,
+  Ctrl Shift K, Alt Up and Down and Shift Alt Up and Down work on the
+  caret's lines, Ctrl C and Ctrl X with nothing selected take the whole
+  line, pasted above; double-clicks and Ctrl Left and Right go by VS Code's
+  words; and a key typed at 1,000 carets over 100,000 lines takes 35 to 55
+  ms of the main thread in its edit.
+- Folding (November 2026, `linux/PARITY.md` item 1.10, with D8's limit of
+  5,000 hidden lines a tab), by the `folding`, `fold_budget`, and
+  `foldperf` GUI suites. Ctrl Shift [ folds the innermost region and then
+  the next one out; the gutter numbers only the lines on show; the arrows
+  step over a fold; edits above and in a fold move or open it; a copy across
+  one takes what it hides; Go to Line and Find open what hides their
+  target; the chevrons and the placeholder answer clicks; Backspace,
+  Delete, and Return beside a fold act as on the Mac; folds stay with their
+  tab and go on a reload; large-file mode has none; and Fold All past the
+  limit closes what fits and says how many stayed open. Fold All and Unfold
+  All of 20,000 regions stay within a CPU bound.
+- Zoom, word wrap, Go Back, and Maximize Pane (November 2026,
+  `linux/PARITY.md` item 1.11), by the `zoom`, `word_wrap`, `go_back`, and
+  `maximize` GUI suites. Ctrl equals, Ctrl minus, and Ctrl with keypad 0
+  zoom the editor and its Markdown page a point at a time, kept across
+  launches in `$XDG_STATE_HOME/minicode/zoom.json`; the same keys zoom a
+  PDF while one shows, the browser's page while it has the keyboard, and
+  only the terminals while a terminal has it (`tput cols` read fewer
+  columns). Source wraps by default and Alt Z turns that over for the
+  session; a 30,000-character line and a file in large-file mode do not
+  wrap. Go Back and Forward follow the ten-line rule through tab switches,
+  Go to Line, symbols, a scripted language server's definition, a Find in
+  Folder result, a rename, and a deletion. Ctrl Alt M gives the pane with
+  the keyboard the right side and puts the others back.
+- Large files (November 2026, `linux/PARITY.md` item 1.12), by the
+  `large_file` GUI suite. A 25 MB file is read in the background (0.33 to
+  0.37 s of main-thread CPU in all, never more than 21 ms at a time),
+  without colors or a language server and with the status bar's note, a
+  real click on which turns them on; typing costs 0.07 to 0.18 ms a
+  key. A
+  300,001-line file is large too, a 70 MB file asks first, and a 5 MB line
+  opens and types without holding the main loop (33 and 10 ms at most),
+  shown 10,000 characters at a time, with End, the find bar, and Copy
+  reaching its hidden part.
+- The window's layout (November 2026, `linux/PARITY.md` item 1.13), by the
+  `layout` GUI suite in a window of its own. The browser sits right of the
+  editor and the terminal below both, across the whole width. The bar
+  between the editor and the browser and the terminal's bar were dragged
+  for real: within 16 px of an edge a side hides, and back out in the same
+  drag it returns. The three panes hidden in all six orders stay hidden,
+  leaving the tree the window; a click in the tree, the preview key, or
+  Focus Editor brings a hidden editor back; and the sidebar's divider no
+  longer takes presses inside the editor.
+- The file tree under churn (November 2026, `linux/PARITY.md` R1), by the
+  `tree_stall` and `tree_clicks` GUI suites. With 10,000 files deleted and
+  made again in an open folder, real clicks in the tree met a stall of 30
+  to 60 ms of CPU at most, against 18.2 s before, and a listing that lands
+  while the button is down no longer opens the wrong file. The owner's
+  freeze itself was not reproduced: none of their folders is that large.
 - `minicode` from a terminal (November 2026, `linux/PARITY.md` R2), by the
   `detach` GUI suite, which runs the real `build/minicode` on
   pseudo-terminals with `/bin/sh` as the shell, on the checks' Xvfb and a
@@ -736,19 +875,6 @@ Verified by running it:
   shown. The first frame comes about 190 ms after main with no session and
   220 ms with five tabs, 55 to 80 ms sooner than before, and the app with
   what it starts uses a seventh of the CPU it did in its first seconds.
-- Several carets and the line commands (November 2026, `linux/PARITY.md`
-  item 1.9), by the `multicaret`, `multicaret_select`, `line_commands`,
-  `editor_words` and `multicaret_perf` GUI suites on a private Xvfb with
-  real key presses and clicks. Alt click adds and takes away carets, Shift
-  Alt, Alt and middle-button drags make columns, Ctrl D, Ctrl Shift L and
-  Ctrl Shift Up and Down add carets, and the find bar's Alt Enter selects
-  its matches; typing, brackets closing, Backspace, Return, the arrows,
-  Copy and Paste act at every caret, one Ctrl Z taking a key back; Ctrl L,
-  Ctrl Shift K, Alt Up and Down and Shift Alt Up and Down work on the
-  caret's lines, Ctrl C and Ctrl X with nothing selected take the whole
-  line, pasted above; double-clicks and Ctrl Left and Right go by VS Code's
-  words; and a key typed at 1,000 carets over 100,000 lines takes 35 to 55
-  ms of the main thread in its edit.
 - Format Document and the folder's own tools (November 2026,
   `linux/PARITY.md` items 2.3 and 2.4), by the `tools_consent`,
   `server_consent`, `format`, `format_on_save`, `format_consent` and
@@ -763,40 +889,19 @@ Verified by running it:
   note; format.on-save formats before Ctrl+S writes; and a file nothing
   else formats goes to its language server.
 
-Not verified:
+Not verified, for the work before November (what the November work leaves
+to a person is in "What needs a person", below):
 
-- For Format Document and the folder's own tools: real formatters (ruff,
-  clang-format, prettier, pyink) and real servers (basedpyright with a
-  `.venv`, rust-analyzer and the TypeScript server; the checks use stand-ins),
-  Ctrl+Shift+I under
-  GNOME on Wayland with an input method, and how the bar under the tabs,
-  the question and the note by the caret look.
-
-- For `minicode` from a terminal: closing a real GNOME Terminal window
-  with minicode started from it (that it stays open, and that GNOME
-  Terminal asks nothing), and the scope against the real systemd user
-  manager (`systemctl --user list-units 'app-minicode-*'` while it runs).
-- The time to a window on GNOME on Wayland, where GTK draws on the GPU
-  (Vulkan by default) and WebKit's processes, the page and the shell's
-  startup files used to compete with the window: `startup-times.sh` there
-  is what tells (`linux/HANDOFF.md`, item 24).
-- For several carets, everything that needs GNOME on Wayland: how the
-  extra carets and their selections look (they do not blink), Alt click
-  and Shift Alt drags with IBus running, a real middle button, and an input
-  method's composed text, which goes in at the first caret only.
-- For tabs, everything that needs GNOME on Wayland: how the strip looks
-  under the desktop's theme, Alt with a digit and Ctrl Alt Shift T (which a
-  desktop or input method may take), and a held Ctrl W, which closes a tab
-  for each repeat (the Mac's closes one).
 - For the Source Control panel, everything that needs GNOME on Wayland: the
   look under the desktop's own theme (the button and check box are styled
   from the sidebar colors, the rest follows the theme), the selection and
   focus colors at 2x, tooltips on a real pointer, the window-focus refresh
   when switching from another application, and a real repository with many
   branches in All branches mode.
-- Everything driven by real keyboard and mouse input. Actions were activated
-  programmatically, which proves the wiring but not the key handling. That
-  includes scrolling a PDF with the wheel and clicking a page (the mapping
+- Much of it by real keyboard and mouse input. The September hooks
+  activated actions programmatically, which proves the wiring but not the
+  key handling, and the GUI suites since press only some of those keys, on
+  X11. That includes scrolling a PDF with the wheel and clicking a page (the mapping
   from a point to a page and PDF coordinates was checked, the click was not).
   For Find in Folder it includes pressing Ctrl+Shift+F, typing into the field (the
   test set its text, which fires the same signal), Escape, the Choose
@@ -818,13 +923,13 @@ Not verified:
 - For language servers: how the squiggles, the completion list, the hover
   popover and the tooltips look and where they sit, and the real keys and
   mouse. The test called the actions and the list's key handler directly, so
-  Ctrl+Space, F12, Ctrl+I, a Ctrl+click (its hit test in particular),
+  Ctrl+Space, F12, Ctrl+I (now Ctrl+Alt+I), a Ctrl+click (its hit test in particular),
   clicking a row of the list and resting the pointer on a word were not
   pressed or done for real. Whether an input method takes Ctrl+Space first
   is also open. Only clangd was tried.
-- PDF zoom by real input. Ctrl+Plus, Ctrl+Equal, Ctrl+Minus and Ctrl+Alt+0
-  were not pressed; the accelerators were read back from GTK and the actions
-  activated. Ctrl+wheel and a touchpad pinch were not done at all: their
+- PDF zoom by the wheel and the touchpad. Since item 1.11 the `zoom` suite
+  presses the zoom keys with a PDF on show, but Ctrl+wheel and a touchpad
+  pinch were not done at all: their
   handlers are compiled, and the zoom-about-a-point they call was tested.
   How big a step a touchpad's smooth Ctrl+scroll makes, how the view looks
   mid-pinch (the old bitmaps are stretched until 120 ms after the last
@@ -845,12 +950,12 @@ Not verified:
   window.
 - For item 8: some shortcuts as real key presses. The `keys` suite now
   presses the keys item 0.3 moved, and the plain Ctrl keys typed into the
-  terminal (see above), but Ctrl+Tab, Ctrl+1, Ctrl+Shift+G from the
-  terminal, Shift+Enter in the find bar and Ctrl+Shift+C in the terminal
-  are still not pressed by any check, and whether F10 (GTK's menu bar key)
-  still reaches the terminal was not looked at. None of the keys was
-  pressed under GNOME on Wayland with an input method, where GNOME or IBus
-  could take one first (Ctrl+Alt+L locks the screen on some desktops). How the color popover looks in place (it follows the system's
+  terminal (see above), and the tabs and find bar suites press Ctrl+Tab and
+  Shift+Enter, but Ctrl+1, Ctrl+Shift+G from the terminal and Ctrl+Shift+C
+  in the terminal are still not pressed by any check, and whether F10
+  (GTK's menu bar key) still reaches the terminal was not looked at. None
+  of the keys was pressed under GNOME on Wayland with an input method,
+  where GNOME or IBus could take one first. How the color popover looks in place (it follows the system's
   GTK theme, light on a stock Ubuntu, over the dark editor), dragging in it
   with a mouse, the Keep Mine / Reload alert on screen, where GNOME puts a
   second window, and GNOME's "New Window" dock item all need a person.
@@ -892,12 +997,177 @@ re-investigates them.
    `$SHELL` in the opened folder. What did need fixing was the browser panel's
    layout rather than its API: the web view sets `vexpand`, which propagates up
    through its `GtkRevealer`, so the panel both squashed the editor when shown
-   and held onto half the space when hidden. The editor is now hidden while the
-   browser is up, and the revealer only expands while revealed.
+   and held onto half the space when hidden. The editor was then hidden while
+   the browser was up, and the revealer expanded only while revealed. Since
+   item 1.13 the window lays its panes out itself, the browser beside the
+   editor (`linux/HANDOFF.md`, item 18).
 
 4. **GtkTextTag setup and CSS.** The tag properties and the
    `.minicode-editor text { ... }` node selector are all correct; the editor and
    Markdown preview render with the intended VS Code dark palette.
+
+## What needs a person
+
+The GUI checks run on Xvfb, an X11 display with no window manager, no IBus,
+and no GPU, so what follows is left for someone at the ThinkPad under GNOME
+on Wayland. It gathers every "Needs the owner" note of the items done in
+`linux/PARITY.md` (Stage 0, Stage 1, and R1 to R3), merged, and should take
+about an hour; what the work before November left unchecked is under "Not
+verified" above. Write down anything that does not hold, with what you
+saw.
+
+First quit every minicode, the packaged one too (a second `minicode` hands
+its folder to the one already running), build main (`meson compile -C
+build` in `linux/`, set up as in "Build with Meson" below), and keep
+scratch files in a folder of their own, such as `~/mc-check`.
+
+### Starting it (R2, R3)
+
+- [ ] In GNOME Terminal, from `linux/`, run `./build/minicode ~/minicode`.
+  The prompt comes back at once, and the window is up in well under a
+  second.
+- [ ] While it runs, `systemctl --user list-units 'app-minicode-*'` lists
+  one `app-minicode-org.minicode.Editor-<pid>.scope`, loaded and active.
+- [ ] Close that GNOME Terminal window: it asks nothing about a running
+  process, and minicode stays open.
+- [ ] Quit minicode, run `dev/startup-times.sh build/minicode ~/minicode`
+  from `linux/` (it opens and closes the window three times for each of
+  GTK's four renderers), and keep what it prints: what the GPU adds to the
+  first frame (`linux/HANDOFF.md`, item 24).
+
+### Keys under GNOME on Wayland with IBus
+
+Ubuntu runs IBus by default; leave it on. Each key should do its own job,
+not something of GNOME's or the input method's.
+
+- [ ] In a Markdown file, Ctrl Alt L makes the caret's line a task and,
+  pressed again, ticks it, without locking the screen; Alt C does the same.
+- [ ] With three files open, Alt 1, Alt 2, and Alt 3 switch between them,
+  Ctrl W closes one, and Ctrl Alt Shift T brings it back at its place.
+- [ ] F1 opens the command palette, and Ctrl Shift O the open file's
+  symbols.
+- [ ] With the find bar open (Ctrl H), Alt C, Alt W, Alt R, Alt P, and Alt
+  L each turn their button on and off.
+- [ ] Ctrl Alt M gives the editor the whole right side, and again puts the
+  panes back; Alt Z turns wrapping off and on; in a long file, Ctrl End and
+  then Ctrl Alt minus goes back to where you were.
+- [ ] With Num Lock on, Ctrl equals twice and then Ctrl with keypad 0 puts
+  the editor's text back to its size.
+- [ ] In a source file, Ctrl Shift [ folds the block at the caret and Ctrl
+  Shift ] unfolds it. If you use a layout where Shift [ types no brace, say
+  which keys fold there, if any.
+- [ ] Alt click adds a caret, and a Shift Alt drag makes a column of them.
+- [ ] Read through the menu bar: each command once, in a sensible menu,
+  with Move Line and Copy Line at the end of Edit.
+
+### Input methods
+
+- [ ] Add the layout English (US, intl., with dead keys), and in a Python
+  file type ' and then e: one é, and no closing quote. Type ( and get ()
+  with the caret between.
+- [ ] If you use an input method that composes words (Pinyin, say), type
+  with it: the text goes in once, at the caret. (At several carets it goes
+  in at the first only; that is known.)
+- [ ] If you use a layout where brackets need AltGr (German, say), type (
+  with it: it closes as () too.
+- [ ] Set `editor.auto-save = focus-change` in the settings (Ctrl comma),
+  type in a file, and Alt Tab to another app: the tab's dot goes and the
+  file on disk has the change. Type again and click the file tree: saved
+  again. Put the setting back afterwards.
+
+### How it looks
+
+Go through these once as you have it, once with `theme = light-modern` in
+the settings, and, if you can, once with the display at 200% in Settings >
+Displays.
+
+- [ ] The tab strip: the names, the preview tab in italics, the dot on an
+  unsaved tab, the ×.
+- [ ] The gutter: each number level with its line, the caret's line's
+  number brighter, the ruler at column 100, and a red dot beside a line
+  with an error (an undeclared name in a C++ file, with clangd). Press Ctrl
+  equals a few times: the text and the numbers grow together, nothing cut
+  off.
+- [ ] Brackets: a box around the bracket by the caret and its partner,
+  nested brackets in three colors, and a stray ) in red.
+- [ ] Several carets (Ctrl Shift L on a word): every caret and selection
+  drawn (the extra carets do not blink).
+- [ ] Folding: arrows in the gutter while the pointer is over it, and the ⋯
+  after a folded line.
+- [ ] The find bar with its replace row (Ctrl H), the palette (Ctrl Shift
+  P), and Replace in Folder's window (Ctrl Alt Shift F): readable and
+  aligned, and "No results" in red.
+- [ ] The bars between the editor, the browser (Ctrl Shift B), and the
+  terminal (Ctrl Shift T), and the pointer over them.
+- [ ] A large file (below): "Opening…" while it reads, the status bar's
+  "Large file: features off", and "… N more characters" after the shown
+  part of a long line.
+
+### Mouse and touchpad
+
+- [ ] Drag the bar between the editor and the browser, and the terminal's
+  top bar, with the mouse and with the touchpad. Each grabs within about 4
+  px of its line, follows smoothly, hides a side when let go within 16 px
+  of an edge, and brings it back when dragged out again in the same drag.
+- [ ] A middle-button drag in the editor makes a column of carets, and so
+  does a Shift Alt drag on the touchpad; a middle click still pastes the
+  primary selection.
+- [ ] Fold All (Ctrl Alt 0) in a long source file and scroll through it
+  with two fingers on the touchpad: smooth, with no jumps at the folds.
+  Then Unfold All (Ctrl Alt J), and say whether GTK's settling afterwards
+  is noticeable.
+
+### Real folders, files, and programs
+
+- [ ] Ctrl P in a big real folder (your home folder, or a large checkout):
+  the list fills as you type, and the window never stalls.
+- [ ] Open a real log over 20 MB and a minified JavaScript file: no "not
+  responding", quick typing, and End reaching the end of the long line.
+  Right after the log opens, Ctrl G to a line far down: say how long the
+  view jumps about before it settles. Select all of the long line, Ctrl C,
+  and paste it elsewhere: all of it comes. A middle click pastes only the
+  shown part (GTK's; say whether that matters).
+- [ ] The tree while a build runs: open `~/minicode`, run `make test` in
+  its terminal, and click around the tree meanwhile, `build/` included. If
+  "not responding" ever shows, note the folder, whether hidden files were
+  shown, and what the click opened (R1).
+- [ ] Go Back with clangd and terminal links: in `demo/vec/main.cpp`, F12
+  on `scaled` opens vec.h, and Ctrl Alt minus comes back. In the terminal,
+  run `grep -Hn scaled demo/vec/vec.h`, Ctrl click the result, and Ctrl Alt
+  minus comes back to main.cpp.
+- [ ] Replace All with the desktop's accessibility running: make
+  `~/mc-check/big.txt` with `seq 100000 | sed 's/$/ foo/'`, open it, Ctrl
+  H, foo for bar, Ctrl Alt Enter. Say how long it takes, and how long Ctrl
+  Z takes (the checks, without accessibility, measured about 0.2 s and
+  1.6 s of CPU).
+- [ ] The primary selection on Wayland: select a word in the editor and
+  press Ctrl F. The query is the word and the word stays selected in the
+  text; a middle click in another app pastes it.
+
+### Formatting and a folder's own tools (items 2.3 and 2.4)
+
+- [ ] In a Python project of yours with Ruff configured, Ctrl Shift I
+  formats the file with your real ruff in one undo step, the caret staying
+  on its line; with three lines selected, only those change.
+- [ ] Open a folder with its own `.venv`: the bar under the tabs asks before
+  the language server uses it. Choose Use It, and hover or completion then
+  knows the packages installed there; Edit > Ask Again About This Folder's
+  Tools brings the question back.
+- [ ] How the bar under the tabs, the question, and a formatter's note by
+  the caret look, and that Ctrl Shift I reaches minicode with IBus running.
+
+### Sessions and losing work
+
+- [ ] Logout: with tabs open on a folder, one with unsaved typing, log out
+  of GNOME and back in, and start minicode on that folder. The tabs come
+  back at their places, and the unsaved text comes back unsaved, with the
+  file on disk as it was. Note whether the logout waited on minicode or
+  asked anything.
+- [ ] A crash: type in a tab without saving, wait two seconds, find
+  minicode's pid with `pgrep -a minicode`, and `kill -SEGV` it. Start
+  minicode again: a window on that folder opens with the text back unsaved.
+- [ ] Last, a power loss: the same, but hold the power button until the
+  machine is off instead of killing minicode, then boot and start it.
 
 ## Install the dependencies
 
@@ -1071,10 +1341,21 @@ an instance is already running. A path that does not exist reports
 sidebar opens on the parent directory so a mistyped filename still lands in the
 right place.
 
-The window shows the file tree on the left and the editor on the right, with a
-status bar along the bottom.
+Typed in a terminal, `minicode` gives the terminal back once its window is
+up, in a session of its own, so closing the terminal leaves it open, as on
+the Mac and as VS Code's `code` does. Its output then goes nowhere, unless
+you sent it to a file. `minicode --foreground` keeps it in the terminal,
+with its output there, until it quits; `-h` lists the options and `-v`
+prints the version. The Mac's `-n` and `-r` are refused, since the port has
+neither. Started from the desktop's launcher, it does not fork at all.
 
-To see where the time to a window goes, run it with `MINICODE_STARTUP_LOG=1`:
+The window shows the file tree on the left and the editor on the right, its
+tabs above it, with a status bar along the bottom. When shown, the browser
+sits right of the editor and the terminal below both, across the whole
+width, as on the Mac.
+
+To see where the time to a window goes, run it with `MINICODE_STARTUP_LOG=1`
+(such a run stays in the terminal):
 each phase of the start is printed to the terminal with the time since the
 program began and the CPU time it took, from GTK's own start to the first
 frame drawn. `linux/dev/startup-times.sh BINARY [FOLDER]` does this three
@@ -1096,6 +1377,19 @@ with ctrl, alt, and shift only; Edit > Keyboard Shortcuts… writes it the
 first time with every command the port has, commented out, and the menus,
 the hints and the status bar follow it as it is saved.
 
+The paragraph above that table says which keys go to the program while the
+terminal has the keyboard, and `linux/PARITY.md`'s D1 and the choices after
+it say why each key is the one it is. Three things the table leaves out: F2
+and Delete act only while the file tree has the keyboard, so Delete in the
+editor still deletes text; Show Hidden Files, Fold, and Unfold are bound to
+Ctrl and a character (`>`, `{`, and `}`), not a key, so they are Ctrl Shift
+., Ctrl Shift [, and Ctrl Shift ] where Shift types those characters, as on
+a US layout, and not on a layout where it does not; and the tree's right-click menu and the File menu both have New
+File, New Folder, Rename, Move to Trash, Open Containing Folder, and Copy
+Path.
+
+## The settings file
+
 The settings file (Ctrl+,) is the same `~/.config/minicode/settings.conf` the
 macOS build reads (it follows `$XDG_CONFIG_HOME`). Every panel's background,
 opacity and text color work the same way, with two differences: on Linux the
@@ -1108,66 +1402,3 @@ Plasma's compositor has a blur protocol of its own, so a Plasma-only blur
 through GDK's Wayland surface looks possible; it was not tried or built. Transparency needs a compositor, which
 GNOME always has. A click on a color swatch opens a color picker under it,
 and the color applies live while you drag, as on the Mac.
-
-Besides the table, Enter and Shift Enter in the find bar find the next and
-previous match (Enter in its replacement replaces one), Tab moves between
-its two fields and Escape closes it, from the bar or the editor; Enter in
-Replace in Folder's replacement replaces all after asking, and Ctrl Shift 1
-on a result replaces that match alone; Ctrl Shift C and Ctrl Shift V copy
-and paste in the terminal, where Alt with a letter goes to the program as
-Meta; and a Ctrl click on a file:line or URL in the terminal's output opens
-it.
-
-F2 and Delete work only while the file tree has the keyboard, so Delete in the
-editor still deletes text.
-
-In the tree, one click opens a file in the preview tab, which the next
-single click replaces, and opens and closes a folder, as on the Mac; a
-double click or Ctrl click opens a file in a tab that stays. Up and Down
-move the selection without opening anything, Enter opens the selected file
-in a tab that stays and moves the keyboard to the editor, Left goes up to the
-folder and closes it, and Right opens a folder and steps into it.
-
-In the Source Control panel, Up and Down move through the files, Enter shows
-the selected file's diff in the editor's place, Space stages or unstages it,
-Tab moves between the changes, the graph and the message box, and Ctrl Enter
-in the message box commits. Enter or a click on a commit in the graph shows
-it. Find Next and Find Previous are F3 and Shift F3, VS Code's on Linux,
-rather than the Mac's Command G and Shift Command G: VS Code's Ctrl G on
-Linux is Go to Line, and Ctrl Shift G is the panel.
-
-The command palette is Ctrl Shift P or F1, VS Code's keys: type part of a
-command's name and press Enter. The same box opens empty for Ctrl P, which
-finds a file of the folder by part of its name, with ":" for Ctrl G, a line
-to go to (42, or 42:7 for a column too), and with "@" for Ctrl Shift O, a
-symbol of the open file (its classes, functions, or headings; "@:" groups
-them by kind). Up and Down choose, Escape closes it, and typing ">", ":"
-or "@" first switches between them. In the terminal Ctrl P, Ctrl G and F1
-are the program's; Ctrl Shift P and Ctrl Shift O still open the palette.
-
-Show Hidden Files is Ctrl Shift ., the Mac's Shift Command . with Ctrl for
-Command. It is bound as Ctrl and the `>` character, so it works on layouts
-where Shift . types `>`, such as US and UK English. Ctrl H, the file
-managers' key, is Replace's once the port has it, as in VS Code.
-
-The zoom keys act only while a PDF or the LaTeX preview is on screen, and
-otherwise pass through to whatever has the keyboard. Fit width is Ctrl+Alt+0,
-not the usual Ctrl+0, because Ctrl+0 is Focus the File Tree, as Command 0 is
-on the Mac, and one of the ways out of the terminal.
-
-While the terminal has the keyboard, the plain Ctrl shortcuts (Ctrl B, F, N,
-O, Q, S, Space, slash, comma, plus and minus) and the keys with no modifier
-(F3, F9, F12) belong to the program in it, so readline, vim and emacs get
-them: Ctrl W deletes a word, Ctrl H is backspace. The keys that move between
-panes and tabs stay the app's: Ctrl `, Ctrl 0, Ctrl 1, Ctrl Tab, Ctrl Shift
-Tab, Ctrl Page Down, and Ctrl Page Up (Global in `src/CommandsLinux.cpp`). Ctrl 0 reaches the Source Control panel from the
-terminal while it is open. Everything with Shift or Alt in it still works
-there, except Ctrl Shift C and Ctrl Shift V, the terminal's copy and paste
-(elsewhere Ctrl Shift V is the preview), Ctrl Shift G (Source Control),
-which the shell reads as Ctrl G, and Ctrl Shift Space (Play or Pause),
-which it reads as Ctrl Space; the editor's own keys (Ctrl Alt L, Ctrl Alt I,
-Shift F9) are not bound there at all. Ctrl click on a link in the output is
-a mouse action and is not affected. The Mac has no such split, since its
-shortcuts use Command and the terminal gets Control. The tree's right-click
-menu and the File menu both have New File, New Folder, Rename, Move to
-Trash, Open Containing Folder and Copy Path.

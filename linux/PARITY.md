@@ -1163,4 +1163,5 @@ fixed on its own branch, with a GUI check that fails without the fix.
 ## After each stage
 
 Update `BUILD-LINUX.md` ("What is verified") and the list of what still needs
-a person. Tell the owner what to try by hand, and ask whether to release.
+a person (`BUILD-LINUX.md`, "What needs a person"). Tell the owner what to
+try by hand, and ask whether to release.
