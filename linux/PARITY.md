@@ -1033,7 +1033,7 @@ its server comes first here (2.0).
 - [x] **2.11 Themes from a menu and Adjust Settings.** The owner's words
   (2026-11-09): "no 'change settings' when right clicking on some portion
   of the GUI. This should point to the relevant part of the minicode
-  config." `HANDOFF.md` item 28 says how a new part adds its item.
+  config." `HANDOFF.md` item 30 says how a new part adds its item.
   *Verified in Xvfb, 2026-11-10:* `settings:adjust-addition` and
   `settings:surface-key-lines` hold the core's text and lines to the
   Mac's, `theme:light` the stylesheet's light selection and scroll bars,
