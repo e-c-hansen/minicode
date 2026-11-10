@@ -12,12 +12,16 @@
 #include <unordered_set>
 #include <vector>
 
+#include "EditorTabs.h"
+
 class FileTree {
 public:
-    // Called when the user opens a regular file: a single click on its row,
-    // as on the Mac, or Enter. `fromKeyboard` is true for Enter, after which
-    // the Mac moves the keyboard to the editor.
-    using OpenCb = void(*)(const std::string& path, bool fromKeyboard, void* user);
+    // Called when the user opens a regular file, and how (EditorTabs.h): a
+    // single click on its row, as on the Mac (the preview tab), the second
+    // click of a double-click on it or a Ctrl+click (a tab of its own), or
+    // Enter (a tab of its own, after which the Mac moves the keyboard to the
+    // editor).
+    using OpenCb = void(*)(const std::string& path, EditorTabs::OpenFrom from, void* user);
     // Receives the name typed into askName's popover, trimmed and non-empty.
     using NameCb = std::function<void(const std::string& name)>;
     // Called when something is dropped on the tree: `paths` go into the
@@ -110,7 +114,7 @@ private:
     // expander's arrow, which toggles the folder by itself.
     guint rowAt(double x, double y, bool* onArrow) const;
     // A click or Enter on a row: a folder opens or closes, a file opens.
-    void actOnRow(guint pos, bool fromKeyboard);
+    void actOnRow(guint pos, EditorTabs::OpenFrom from);
     void selectRow(guint pos);
 
     // Drag and drop (see "drag and drop" in FileTree.cpp).
@@ -164,6 +168,7 @@ private:
     GtkWidget*  namePopover_  = nullptr;   // askName's popover while it is up
 
     guint       pressRow_ = GTK_INVALID_LIST_POSITION;   // where the click began
+    guint       lastReleaseRow_ = GTK_INVALID_LIST_POSITION;   // the last click's row
 
     DropCb      dropCb_;
     // The drag over the tree right now: what it carries (empty while files

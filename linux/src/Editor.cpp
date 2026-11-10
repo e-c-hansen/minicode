@@ -1,6 +1,8 @@
 // Editor.cpp — see Editor.h. Mirrors the behavior of the macOS
-// EditorController: monospace editor, VS Code dark palette, incremental
-// highlighting, and a Markdown preview that swaps the buffer contents.
+// EditorController: monospace editor, VS Code dark palette, and a Markdown
+// preview. The view shows the active tab's document; what is per file
+// (the buffer, the highlighter, the disk) is Document.cpp, and the tabs are
+// Tabs.cpp.
 #include "Editor.h"
 #include "Palette.h"
 #include "Markdown.h"
@@ -16,6 +18,7 @@
 #include "Latex.h"
 #include "PdfView.h"
 #include "ScrollSettle.h"
+#include "TabStrip.h"
 #include "WebImages.h"
 
 #include <algorithm>
@@ -24,105 +27,31 @@
 #include <functional>
 #include <cstdlib>
 #include <climits>
-#include <cerrno>
 #include <cstring>
 #include <sys/stat.h>
-#include <unistd.h>
-#include <fcntl.h>
-
-namespace {
-
-// The largest file the editor will open as text, 16 MB. Android stops at
-// 4 MB; a desktop has room for more, but a GtkTextBuffer holding hundreds of
-// megabytes (plus the highlighter's mirror and the saved copy) is not an
-// editor any more, and reading one whole on the main thread freezes every
-// window, since they all share this process.
-constexpr off_t kMaxTextBytes = 16 * 1024 * 1024;
-
-enum class ReadResult { Ok, Missing, NotRegular, TooLarge, Failed };
-
-// Reads a text file for the editor: only a regular file, only up to
-// kMaxTextBytes. The type and size are checked before the file is opened,
-// so a named pipe is never opened (opening one blocks until a writer comes)
-// and a 4 GB disk image is never read. The read itself is bounded too, in
-// case the file grows between the check and the read.
-ReadResult readTextFile(const std::string& path, std::string& out) {
-    struct stat st;
-    if (stat(path.c_str(), &st) != 0) return ReadResult::Missing;
-    if (!S_ISREG(st.st_mode)) return ReadResult::NotRegular;
-    if (st.st_size > kMaxTextBytes) return ReadResult::TooLarge;
-    int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-    if (fd < 0) return ReadResult::Failed;
-    out.clear();
-    out.reserve((size_t)st.st_size);
-    char buf[65536];
-    for (;;) {
-        ssize_t n = read(fd, buf, sizeof buf);
-        if (n < 0 && errno == EINTR) continue;
-        if (n < 0) { close(fd); return ReadResult::Failed; }
-        if (n == 0) break;
-        out.append(buf, (size_t)n);
-        if ((off_t)out.size() > kMaxTextBytes) { close(fd); return ReadResult::TooLarge; }
-    }
-    close(fd);
-    return ReadResult::Ok;
-}
-
-// Writes `text` into the existing file at `path`, keeping its inode (so hard
-// links, owner, ACLs and extended attributes stay). Space is reserved before
-// anything is overwritten, so a full disk fails with the old contents
-// intact; only a crash midway can leave the file half written, which is
-// why ordinary files take the atomic rename instead.
-bool writeInPlace(const std::string& path, const std::string& text, off_t oldSize,
-                  std::string& why) {
-    int fd = open(path.c_str(), O_WRONLY | O_CLOEXEC);
-    if (fd < 0) { why = strerror(errno); return false; }
-    const off_t size = (off_t)text.size();
-    if (size > oldSize) {
-        int r = posix_fallocate(fd, 0, size);
-        if (r != 0 && r != EOPNOTSUPP && r != EINVAL) {
-            why = std::string("Not enough space to save: ") + strerror(r);
-            close(fd);
-            return false;
-        }
-    }
-    size_t done = 0;
-    while (done < text.size()) {
-        ssize_t n = pwrite(fd, text.data() + done, text.size() - done, (off_t)done);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) { why = strerror(errno); close(fd); return false; }
-        done += (size_t)n;
-    }
-    if (ftruncate(fd, size) != 0 || fsync(fd) != 0) {
-        why = strerror(errno);
-        close(fd);
-        return false;
-    }
-    if (close(fd) != 0) { why = strerror(errno); return false; }
-    return true;
-}
-
-}  // namespace
-
-// ---------------------------------------------------------------- helpers
-
-static std::string extOf(const std::string& path) {
-    auto slash = path.find_last_of('/');
-    auto dot   = path.find_last_of('.');
-    if (dot == std::string::npos) return "";
-    if (slash != std::string::npos && dot < slash) return "";
-    std::string e = path.substr(dot + 1);
-    std::transform(e.begin(), e.end(), e.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    return e;
-}
 
 // ---------------------------------------------------------------- construction
 
 Editor::Editor() {
-    view_ = gtk_text_view_new();
-    buffer_ = gtk_text_view_get_buffer(GTK_TEXT_VIEW(view_));
+    // One tag table for every document's buffers (PARITY.md, D2), so a tag's
+    // color, set once, is every tab's.
+    tags_.table = gtk_text_tag_table_new();
+    welcome_ = gtk_text_buffer_new(tags_.table);
+    gtk_text_buffer_set_enable_undo(welcome_, FALSE);
+    ensureTags();
+    const char* welcome =
+        "\n  MiniCode — a native C++ editor, now on GTK4\n\n"
+        "  - Select a file in the sidebar to view it\n"
+        "  - Source files are syntax-highlighted by type\n"
+        "  - Markdown (.md) files render formatted (Ctrl+Shift+V)\n\n"
+        "  Ctrl+O to open a different folder.";
+    gtk_text_buffer_set_text(welcome_, welcome, -1);
+    GtkTextIter wa, wb;
+    gtk_text_buffer_get_bounds(welcome_, &wa, &wb);
+    gtk_text_buffer_apply_tag_by_name(welcome_, "plainmsg", &wa, &wb);
 
+    view_ = gtk_text_view_new_with_buffer(welcome_);
+    buffer_ = welcome_;
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), TRUE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_), GTK_WRAP_NONE);
     gtk_text_view_set_left_margin(GTK_TEXT_VIEW(view_), 8);
@@ -142,8 +71,8 @@ Editor::Editor() {
     g_signal_connect(motion, "motion", G_CALLBACK(onMotion), this);
     gtk_widget_add_controller(view_, motion);
     // Return, noted for its indent (onViewKey), and Ctrl+Z and Ctrl+Shift+Z
-    // for edits made from a Markdown preview, whose buffer holds rendered
-    // text and so has no undo of its own for them.
+    // in a Markdown page, whose buffer is never undone into: they are the
+    // source buffer's undo there.
     GtkEventController* keys = gtk_event_controller_key_new();
     gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
     g_signal_connect(keys, "key-pressed", G_CALLBACK(onViewKey), this);
@@ -154,10 +83,12 @@ Editor::Editor() {
     gtk_event_controller_set_propagation_phase(wheel, GTK_PHASE_CAPTURE);
     g_signal_connect_swapped(wheel, "scroll-begin", G_CALLBACK(+[](gpointer self) {
         static_cast<Editor*>(self)->stopHold();
+        static_cast<Editor*>(self)->stopPlace();
     }), this);
     g_signal_connect(wheel, "scroll", G_CALLBACK(+[](GtkEventControllerScroll*, double, double,
                                                    gpointer self) -> gboolean {
         static_cast<Editor*>(self)->stopHold();
+        static_cast<Editor*>(self)->stopPlace();
         return FALSE;
     }), this);
     gtk_widget_add_controller(view_, wheel);
@@ -171,6 +102,15 @@ Editor::Editor() {
     gtk_widget_add_css_class(scroller_, "minicode-editor-scroller");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller_), view_);
     settleScrollingOnUnmap(GTK_SCROLLED_WINDOW(scroller_));
+    // A press anywhere in the scroller, a scroll bar's included, is the user
+    // taking the view over: a tab's place coming back stops (settleOnPlace).
+    GtkGesture* press = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(press), 0);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(press), GTK_PHASE_CAPTURE);
+    g_signal_connect_swapped(press, "pressed", G_CALLBACK(+[](gpointer self) {
+        static_cast<Editor*>(self)->stopPlace();
+    }), this);
+    gtk_widget_add_controller(scroller_, GTK_EVENT_CONTROLLER(press));
     // A preview's tables and pictures follow the pane's width.
     g_signal_connect_swapped(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)),
                              "notify::page-size", G_CALLBACK(+[](gpointer self) {
@@ -178,18 +118,6 @@ Editor::Editor() {
     }), this);
     gtk_widget_set_hexpand(scroller_, TRUE);
     gtk_widget_set_vexpand(scroller_, TRUE);
-
-    g_signal_connect(buffer_, "changed", G_CALLBACK(onBufferChanged), this);
-    // Highlighting follows every edit. The plain handlers run before the
-    // buffer changes (both signals are RUN_LAST), while the iterators still
-    // describe the old text; the _after ones run once it has changed.
-    g_signal_connect(buffer_, "insert-text", G_CALLBACK(onInsertText), this);
-    g_signal_connect(buffer_, "delete-range", G_CALLBACK(onDeleteRange), this);
-    g_signal_connect_after(buffer_, "insert-text", G_CALLBACK(onInsertTextAfter), this);
-    g_signal_connect_after(buffer_, "delete-range", G_CALLBACK(onDeleteRangeAfter), this);
-    g_signal_connect(buffer_, "apply-tag", G_CALLBACK(onApplyTag), this);
-    g_signal_connect(buffer_, "begin-user-action", G_CALLBACK(onBeginUserAction), this);
-    g_signal_connect(buffer_, "end-user-action", G_CALLBACK(onEndUserAction), this);
 
     // Images and PDFs take the editor's slot, the way the macOS build swaps
     // an NSImageView or PDFView in for the text view.
@@ -205,16 +133,43 @@ Editor::Editor() {
     gtk_stack_add_named(GTK_STACK(slot_), media_->widget(), "media");
     gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
 
-    ensureTags();
-    showWelcome();
-}
+    // The tabs (Tabs.cpp): a click selects, the close button or a middle
+    // click asks the shell to close (it asks about unsaved changes first), a
+    // double-click keeps a preview tab, a right click opens the tab's menu,
+    // whose actions are the "tab." group on the strip.
+    strip_ = new TabStrip();
+    strip_->onSelect = [this](int i) { selectTab(i); };
+    strip_->onClose = [this](int i) {
+        Document* d = document(i);
+        if (!d) return;
+        if (onCloseRequest) onCloseRequest(d);
+        else closeTab(d);
+    };
+    strip_->onDoubleClick = [this](int i) {
+        if (Document* d = document(i)) keepPreviewTab(d);
+    };
+    strip_->menuFor = [this](int i) { return menuForTab(i); };
+    tabActions_ = g_simple_action_group_new();
+    for (const char* name : {"keep", "close", "closeothers", "closeright", "closeall", "copypath",
+                             "reveal", "revealtree"}) {
+        GSimpleAction* a = g_simple_action_new(name, G_VARIANT_TYPE_UINT64);
+        g_signal_connect(a, "activate", G_CALLBACK(+[](GSimpleAction* act, GVariant* param,
+                                                     gpointer self) {
+            static_cast<Editor*>(self)->tabMenuCommand(g_action_get_name(G_ACTION(act)), param);
+        }), this);
+        g_action_map_add_action(G_ACTION_MAP(tabActions_), G_ACTION(a));
+        g_object_unref(a);
+    }
+    gtk_widget_insert_action_group(strip_->widget(), "tab", G_ACTION_GROUP(tabActions_));
+    gtk_widget_set_visible(strip_->widget(), FALSE);   // until a tab is open
 
-void Editor::showWelcome() {
-    showMessage("\n  MiniCode — a native C++ editor, now on GTK4\n\n"
-                "  - Select a file in the sidebar to view it\n"
-                "  - Source files are syntax-highlighted by type\n"
-                "  - Markdown (.md) files render formatted (Ctrl+Shift+P)\n\n"
-                "  Ctrl+O to open a different folder.");
+    box_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_hexpand(box_, TRUE);
+    gtk_widget_set_vexpand(box_, TRUE);
+    gtk_box_append(GTK_BOX(box_), strip_->widget());
+    gtk_box_append(GTK_BOX(box_), slot_);
+
+    showActive();   // the welcome text
 }
 
 // Runs while the window is being torn down but its widgets still exist
@@ -222,10 +177,9 @@ void Editor::showWelcome() {
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
     stopSettle();
+    stopPlace();
     if (previewEntryTimer_) g_source_remove(previewEntryTimer_);
     previewEntryTimer_ = 0;
-    if (taskCountTimer_) g_source_remove(taskCountTimer_);
-    taskCountTimer_ = 0;
     alive_.reset();   // fetches still running find the editor gone
     stopHold();
     if (arrivedTimer_) g_source_remove(arrivedTimer_);
@@ -233,40 +187,50 @@ Editor::~Editor() {
     dropMdPopover();
     g_signal_handlers_disconnect_by_data(
         gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)), this);
-    stopWatchingText();
     if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
     colorSaveTimer_ = 0;
     dropColorPopover();
-    cancelDeferred();
-#ifdef MINICODE_ENABLE_PDF
-    delete latex_;
-#endif
-    g_signal_handlers_disconnect_by_data(buffer_, this);
+    active_ = nullptr;
+    for (Document* d : tabs_) destroy(d);
+    tabs_.clear();
     g_signal_handlers_disconnect_by_data(view_, this);
-    GListModel* ctrls = gtk_widget_observe_controllers(view_);
-    for (guint i = 0; i < g_list_model_get_n_items(ctrls); ++i) {
-        GObject* c = static_cast<GObject*>(g_list_model_get_item(ctrls, i));
-        g_signal_handlers_disconnect_by_data(c, this);
-        g_object_unref(c);
+    for (GtkWidget* w : {view_, scroller_}) {
+        GListModel* ctrls = gtk_widget_observe_controllers(w);
+        for (guint i = 0; i < g_list_model_get_n_items(ctrls); ++i) {
+            GObject* c = static_cast<GObject*>(g_list_model_get_item(ctrls, i));
+            g_signal_handlers_disconnect_by_data(c, this);
+            g_object_unref(c);
+        }
+        g_object_unref(ctrls);
     }
-    g_object_unref(ctrls);
+    gtk_widget_insert_action_group(strip_->widget(), "tab", nullptr);
+    g_object_unref(tabActions_);
+    delete strip_;
     delete media_;
     delete diff_;
+    g_object_unref(welcome_);
+    g_object_unref(tags_.table);
+}
+
+std::vector<void*> Editor::handlerOwners() const {
+    std::vector<void*> out = {(void*)this, (void*)media_, (void*)strip_};
+    for (Document* d : tabs_)
+        if (d->latexPreview()) out.push_back(d->latexPreview());
+    return out;
 }
 
 // ---------------------------------------------------------------- tags
 
+// Every document's buffer and page share these (one table), so their colors
+// are set once for all of them (applySettings).
 void Editor::ensureTags() {
-    if (tagsReady_) return;
-    GtkTextTagTable* table = gtk_text_buffer_get_tag_table(buffer_);
-    (void)table;
+    GtkTextBuffer* b = welcome_;   // any buffer on the shared table
 
     // One tag per syntax style.
     for (int i = 0; i < kTokenStyleCount; ++i) {
         TokenStyle s = (TokenStyle)i;
-        hlTags_.push_back(gtk_text_buffer_create_tag(buffer_, TagNameForStyle(s),
-                                                     "foreground", ColorForStyle(s),
-                                                     NULL));
+        tags_.highlight.push_back(gtk_text_buffer_create_tag(b, TagNameForStyle(s), "foreground",
+                                                             ColorForStyle(s), NULL));
     }
 
     // Markdown preview tags.
@@ -275,7 +239,7 @@ void Editor::ensureTags() {
         static const int sizes[7] = {0, 26, 22, 19, 17, 15, 14};
         char name[16];
         g_snprintf(name, sizeof(name), "h%d", lvl);
-        gtk_text_buffer_create_tag(buffer_, name,
+        gtk_text_buffer_create_tag(b, name,
                                    "foreground", pal::MdHeading,
                                    "weight", PANGO_WEIGHT_BOLD,
                                    "size-points", (double)sizes[lvl],
@@ -287,295 +251,372 @@ void Editor::ensureTags() {
     // proportional preview font. Mirrors the macOS body/mono split.
     // md_table is created before md_code/md_link: later tags win, so a code
     // span or link inside a table cell keeps its own color.
-    gtk_text_buffer_create_tag(buffer_, "md_table",
+    gtk_text_buffer_create_tag(b, "md_table",
                                "foreground", pal::EditorText,
                                "family", "monospace",
                                "size-points", 13.0, NULL);   // keeps columns aligned
     // A checked task's text (MdRun::task == 2). Before md_code and md_link,
     // so a code span or link in it keeps its color and is struck through.
-    gtk_text_buffer_create_tag(buffer_, "md_done",
+    gtk_text_buffer_create_tag(b, "md_done",
                                "foreground", pal::MdDone,
                                "strikethrough", TRUE, NULL);
-    gtk_text_buffer_create_tag(buffer_, "md_code",
+    gtk_text_buffer_create_tag(b, "md_code",
                                "foreground", pal::MdCode,
                                "background", pal::MdCodeBg,
                                "family", "monospace",
                                "size-points", 13.0, NULL);
-    gtk_text_buffer_create_tag(buffer_, "md_quote",
+    gtk_text_buffer_create_tag(b, "md_quote",
                                "foreground", pal::MdQuote,
                                "left-margin", 16,   // macOS headIndent
                                "style", PANGO_STYLE_ITALIC, NULL);
-    gtk_text_buffer_create_tag(buffer_, "md_rule",
+    gtk_text_buffer_create_tag(b, "md_rule",
                                "foreground", pal::MdRule, NULL);
-    gtk_text_buffer_create_tag(buffer_, "md_link",
+    gtk_text_buffer_create_tag(b, "md_link",
                                "foreground", pal::MdLink,
                                "underline", PANGO_UNDERLINE_SINGLE, NULL);
-    gtk_text_buffer_create_tag(buffer_, "md_bold",
+    gtk_text_buffer_create_tag(b, "md_bold",
                                "weight", PANGO_WEIGHT_BOLD, NULL);
-    gtk_text_buffer_create_tag(buffer_, "md_italic",
+    gtk_text_buffer_create_tag(b, "md_italic",
                                "style", PANGO_STYLE_ITALIC, NULL);
-    gtk_text_buffer_create_tag(buffer_, "md_strike",
+    gtk_text_buffer_create_tag(b, "md_strike",
                                "strikethrough", TRUE, NULL);
     // The empty line between two blocks (MdRun::gap), shorter than a line
     // of text, as the macOS build draws it.
-    gtk_text_buffer_create_tag(buffer_, "md_gap",
+    gtk_text_buffer_create_tag(b, "md_gap",
                                "size-points", 8.0, NULL);
-    gtk_text_buffer_create_tag(buffer_, "plainmsg",
+    gtk_text_buffer_create_tag(b, "plainmsg",
                                "foreground", pal::MdPlainMsg, NULL);
-
-    tagsReady_ = true;
 }
 
-// ---------------------------------------------------------------- file I/O
+// ---------------------------------------------------------------- the view
 
-bool Editor::openFile(const std::string& path) {
-    // A color picked a moment ago still belongs to the file it was picked in.
-    if (colorSaveTimer_) {
-        g_source_remove(colorSaveTimer_);
-        colorSaveTimer_ = 0;
-        save();
+// Source code is monospace; the Markdown preview and the plain messages use the
+// proportional UI font, with monospace reapplied per-tag for code and tables.
+// The macOS build gets this from per-run NSFonts; GtkTextView needs the widget
+// font switched, because a tag can add a family but the view's monospace flag
+// would otherwise force every run to it.
+//
+// Prose also has to WRAP, and that is not cosmetic. MarkdownParser joins every
+// consecutive non-blank line of a paragraph into one logical line, so with
+// GTK_WRAP_NONE a paragraph became a single unwrapped line as wide as the whole
+// paragraph is long. Pango measures in 1/1024 px stored in a signed int, which
+// caps a line at 2^31/1024 = 2,097,152 px, about 281k characters at the preview
+// font. Past that the width calculation overflows and the paragraph's layout
+// collapses: the text goes missing and the view misreports its own size.
+// Wrapping bounds every display line to the viewport width, so the overflow
+// cannot be reached. Source keeps GTK_WRAP_NONE, where long lines are wanted
+// and lines are bounded by the file's own line breaks. macOS gets the same
+// behavior from textContainer.widthTracksTextView = YES.
+void Editor::setProseFont(bool prose) {
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), prose ? FALSE : TRUE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_),
+                                prose ? GTK_WRAP_WORD_CHAR : GTK_WRAP_NONE);
+    if (prose) gtk_widget_add_css_class(view_, "minicode-prose");
+    else       gtk_widget_remove_css_class(view_, "minicode-prose");
+}
+
+// Switching tabs is this: the view takes the document's buffer (D2), which
+// keeps its own text, selection, undo and colors.
+void Editor::setViewBuffer(GtkTextBuffer* b, bool prose, bool editable) {
+    if (buffer_ != b) {
+        gtk_text_view_set_buffer(GTK_TEXT_VIEW(view_), b);
+        buffer_ = b;
     }
+    setProseFont(prose);
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), editable);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(view_), editable);
+}
+
+GtkTextBuffer* Editor::sourceBuffer() const { return active_ ? active_->buffer() : buffer_; }
+
+bool Editor::isSource() const {
+    return active_ && active_->kind() == Document::Kind::Text && buffer_ == active_->buffer();
+}
+
+bool Editor::inMarkdownPage() const {
+    return active_ && active_->isMarkdown() && active_->showsPreview() &&
+           buffer_ == active_->page();
+}
+
+std::string Editor::text() const { return active_ ? active_->text() : std::string(); }
+
+const std::string& Editor::currentPath() const {
+    static const std::string none;
+    return active_ ? active_->path() : none;
+}
+
+const std::string& Editor::diffTitle() const {
+    static const std::string none;
+    return isDiff() ? active_->diffTitle() : none;
+}
+
+void Editor::notifyDocument() {
+    if (observer_) observer_->documentChanged(isSource() ? active_->path() : std::string());
+}
+
+void Editor::titleChanged() {
+    if (titleCb_) titleCb_(titleUser_);
+}
+
+// The active tab leaves the screen: where its view was is kept in the
+// document, and what the shared views hold for it goes (a playing video
+// stops, the page's widgets come off the view), as the Mac's stashActiveTab.
+void Editor::stash() {
+    Document* d = active_;
+    if (!d) return;
+    // A color picked a moment ago belongs to the file it was picked in.
+    if (colorSaveTimer_) saveColorNow();
     dropColorPopover();
-    stopWatchingText();
+    dropMdPopover();
     stopSettle();
-    // Whatever was shown before goes, so a stale picture can never sit over
-    // the next file, and nothing from it can be saved.
-    showTextSlot();
-    readOnly_ = false;
-    clearTaskCount();
+    stopHold();
+    // An animated scroll ends here, where it had got to, before the view
+    // takes another buffer (ScrollSettle.h has the criticals it caused).
+    settleScrolling(nullptr, scroller_);
+    if (previewEntryTimer_) g_source_remove(previewEntryTimer_);
+    previewEntryTimer_ = 0;
+    if (arrivedTimer_) g_source_remove(arrivedTimer_);
+    arrivedTimer_ = 0;
+    arrived_.clear();
 
-    auto base = [&]() {
-        auto slash = path.find_last_of('/');
-        return slash == std::string::npos ? path : path.substr(slash + 1);
-    };
-    // Shown in place of a file that is not opened; nothing can be saved over it.
-    auto refuse = [&](const std::string& why) {
-        path_ = path;
-        source_.clear();
-        ext_.clear();
-        isMarkdown_ = false;
-        isLatex_ = false;
-        preview_ = false;
-        readOnly_ = true;
-        markDirty(false);
-        showMessage("\n  Cannot display “" + base() + "”.\n\n  (" + why + ")");
-        if (titleCb_) titleCb_(titleUser_);
-    };
-
-    // A named pipe, socket or device is refused before anything opens it:
-    // opening a pipe waits for a writer, and would hang every window.
-    struct stat st;
-    if (stat(path.c_str(), &st) == 0 && !S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)) {
-        refuse("Not a regular file.");
-        return false;
+    // Where the view is: its first line on show and how far into it the view
+    // starts. A tab left while its place is still coming back (settleOnPlace)
+    // keeps that place instead: what the view shows then is GTK's guess, and
+    // flicking through the tabs once moved every place passed to the top.
+    // While the caret was being brought on screen, the place is around it.
+    Document::Place& p = d->place();
+    GtkTextView* tv = GTK_TEXT_VIEW(view_);
+    GdkRectangle vis;
+    gtk_text_view_get_visible_rect(tv, &vis);
+    GtkTextIter top;
+    int into = 0;
+    bool known = false;
+    if (placeTick_ && placeMark_ && gtk_text_mark_get_buffer(placeMark_) == buffer_) {
+        if (placeFollowCaret_) {
+            gtk_text_buffer_get_iter_at_mark(buffer_, &top, gtk_text_buffer_get_insert(buffer_));
+            gtk_text_iter_set_line_offset(&top, 0);
+            into = -(int)(vis.height * 0.3);
+        } else {
+            gtk_text_buffer_get_iter_at_mark(buffer_, &top, placeMark_);
+            into = placeInto_;
+        }
+        known = true;
+    } else if (vis.height > 0) {
+        int lineTop = 0;
+        gtk_text_view_get_line_at_y(tv, &top, vis.y, &lineTop);
+        into = vis.y - lineTop;
+        known = true;
     }
-
-    // Images, PDFs, video and audio are routed by extension before any
-    // attempt to read them as text. An image or PDF that will not decode
-    // falls through to "Cannot display"; video or audio that cannot play
-    // says why in the media view itself.
-    if (MediaView::handles(path) && media_->show(path)) {
-        path_ = path;
-        source_.clear();
-        ext_ = extOf(path);
-        isMarkdown_ = false;
-        preview_ = false;
-        readOnly_ = true;
-        showMessage("");   // the hidden text view holds nothing
-        markDirty(false);
-        gtk_stack_set_visible_child(GTK_STACK(slot_), media_->widget());
-        if (titleCb_) titleCb_(titleUser_);
-        return true;
+    stopPlace();
+    if (known && buffer_ == d->buffer() && d->kind() == Document::Kind::Text) {
+        if (!p.top) p.top = gtk_text_buffer_create_mark(d->buffer(), nullptr, &top, TRUE);
+        else gtk_text_buffer_move_mark(d->buffer(), p.top, &top);
+        p.topInto = into;
+        p.hscroll = gtk_adjustment_get_value(
+            gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)));
+        p.haveView = true;
+    } else if (known && buffer_ == d->page()) {
+        p.pageTop = gtk_text_iter_get_offset(&top);
+        p.pageInto = into;
+        p.havePage = true;
     }
-
-    std::string content;
-    switch (readTextFile(path, content)) {
-        case ReadResult::Ok: break;
-        case ReadResult::NotRegular:
-            refuse("Not a regular file.");
-            return false;
-        case ReadResult::TooLarge:
-            refuse("Larger than 16 MB, too large to edit here.");
-            return false;
-        case ReadResult::Missing:
-        case ReadResult::Failed:
-            // The message now stands in for the file; nothing may be saved from it.
-            path_ = path;
-            source_.clear();
-            ext_.clear();
-            isMarkdown_ = false;
-            isLatex_ = false;
-            preview_ = false;
-            readOnly_ = true;
-            markDirty(false);
-            showMessage(std::string("\n  Could not open: ") + path);
-            return false;
-    }
-
-    // gtk_text_buffer_set_text requires valid UTF-8; handing it a binary file
-    // spews GTK criticals and leaves the buffer truncated at the first bad
-    // byte. Refuse up front, with the same wording as the macOS build.
-    if (!g_utf8_validate(content.data(), (gssize)content.size(), nullptr)) {
-        refuse("Binary file or unsupported encoding.");
-        return false;
-    }
-
-    path_ = path;
-
-    source_ = content;
-    mdUndo_.clear();
-    mdRedo_.clear();
-    haveSrcPos_ = false;
-    rememberDisk(content);
-    watchText();
-    ext_  = extOf(path);
-    isMarkdown_ = (ext_ == "md" || ext_ == "markdown");
+    if (d->isMarkdown()) clearPage(d);
 #ifdef MINICODE_ENABLE_PDF
-    isLatex_ = (ext_ == "tex" || ext_ == "ltx" || ext_ == "latex");
+    if (d->latexPreview()) d->latexPreview()->setActive(false);
+    if (d->kind() == Document::Kind::Media && media_->kind() == MediaView::Kind::Pdf) {
+        p.pdf = media_->pdfView()->anchor();
+        p.havePdf = true;
+    }
 #endif
-    // Markdown and LaTeX open in their previews, matching the macOS build,
-    // unless the file is empty: a blank preview looks like nothing opened.
-    const bool blank = std::all_of(content.begin(), content.end(),
-                                   [](unsigned char c) { return std::isspace(c); });
-    preview_ = (isMarkdown_ || isLatex_) && !blank;
-    markDirty(false);
+    if (d->kind() == Document::Kind::Media) media_->clear();
+    d->setShownIn(nullptr);
+}
 
-    if (isLatex_) {
-        // The buffer keeps the source, editable and highlighted, behind the
-        // pages; the preview typesets it and splices its edits into it.
-        loadRawIntoBuffer();
-        showLatex(preview_);
-    } else if (preview_) {
-        renderPreview();
-    } else {
-        loadRawIntoBuffer();
+// The active tab on screen, from what it kept (the Mac's showActiveTab); the
+// welcome text with no tab open.
+void Editor::showActive() {
+    Document* d = active_;
+    if (!d) {
+        setViewBuffer(welcome_, true, false);
+        gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+        notifyDocument();
+        refreshStrip();
+        titleChanged();
+        return;
     }
-    refreshTaskCount();
+    switch (d->kind()) {
+    case Document::Kind::Text:
+        if (d->isMarkdown() && d->showsPreview()) {
+            gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+            renderPreview();
+            const Document::Place& p = d->place();
+            if (p.havePage) {
+                GtkTextIter it;
+                gtk_text_buffer_get_iter_at_offset(buffer_, &it,
+                    std::min(p.pageTop, gtk_text_buffer_get_char_count(buffer_)));
+                settleOnPlace(gtk_text_buffer_create_mark(buffer_, nullptr, &it, TRUE),
+                              p.pageInto);
+            }
+        } else {
+            showSource(d);
+            if (d->isLatex() && d->showsPreview()) showLatex(true, false);
+            else gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+        }
+        break;
+    case Document::Kind::Message:
+        setViewBuffer(d->buffer(), true, false);
+        gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+        break;
+    case Document::Kind::Media:
+        setViewBuffer(d->buffer(), true, false);
+        if (!media_->show(d->path())) {
+            // It no longer decodes: what the text path makes of it.
+            loadText(d, d->path());
+            showActive();
+            return;
+        }
+        gtk_stack_set_visible_child(GTK_STACK(slot_), media_->widget());
+#ifdef MINICODE_ENABLE_PDF
+        if (d->place().havePdf && media_->kind() == MediaView::Kind::Pdf)
+            media_->pdfView()->scrollTo(d->place().pdf);
+#endif
+        break;
+    case Document::Kind::Diff:
+        setViewBuffer(d->buffer(), true, false);
+        if (!diff_) {
+            diff_ = new GitDiffView();
+            gtk_stack_add_named(GTK_STACK(slot_), diff_->widget(), "diff");
+        }
+        diff_->show(d->diffBytes(), d->diffIsCommit());
+        gtk_stack_set_visible_child(GTK_STACK(slot_), diff_->widget());
+        break;
+    }
+    notifyDocument();
+    refreshStrip();
+    titleChanged();
+}
+
+void Editor::showSource(Document* d) {
+    const bool already = buffer_ == d->buffer();
+    setViewBuffer(d->buffer(), false, true);
+    d->setShownIn(GTK_TEXT_VIEW(view_));
+    if (!already) restorePlace(d);
+}
+
+// The source's place as the tab left it: its first line back at the top,
+// as far into it as it was, once the view has laid it out (holdTopLine),
+// and the sideways scroll. A tab shown for the first time starts at the top,
+// where set_buffer leaves the view.
+void Editor::restorePlace(Document* d) {
+    const Document::Place& p = d->place();
+    if (!p.haveView || !p.top) return;
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_mark(d->buffer(), &it, p.top);
+    settleOnPlace(gtk_text_buffer_create_mark(d->buffer(), nullptr, &it, TRUE), p.topInto);
+    gtk_adjustment_set_value(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)),
+                             p.hscroll);
+}
+
+// ---------------------------------------------------------------- documents
+
+void Editor::documentStateChanged(Document* d) {
+    // An edit makes the preview tab an ordinary one, as on the Mac.
+    if (d->dirty() && d->isPreviewTab()) d->setPreviewTab(false);
+    refreshStrip();
+    if (d == active_) titleChanged();
+}
+
+// The language server hears of edits to the source on show, and a closer or
+// ':' typed from the keyboard (see onViewKey) may move its line back
+// (AutoIndent::typed). Return, Tab and Backspace are handled whole in
+// onViewKey.
+void Editor::documentEdited(Document* d, GtkTextIter* at, const char* inserted, int len) {
+    if (d != active_ || buffer_ != d->buffer()) return;
+    if (observer_) observer_->textEdited(inserted, len);
+    if (!inserted) return;
+    const char typed = typedKey_;
+    typedKey_ = 0;
+    if (typed && len == 1 && inserted[0] == typed && !d->showsPreview()) electric(at);
+}
+
+bool Editor::documentChangedOnDisk(Document* d) {
+    return d == active_ && extCb_ && extCb_(extUser_);
+}
+
+void Editor::documentWillReload(Document* d) {
+    reloadKeep_ = d == active_ && buffer_ == d->buffer();
+    if (!reloadKeep_) return;
+    reloadH_ = gtk_adjustment_get_value(
+        gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)));
+    reloadV_ = gtk_adjustment_get_value(
+        gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_)));
+}
+
+namespace {
+// Scroll offsets, put back once the view has laid out the new text as well
+// as straight away (the adjustment's range may lag the buffer by a frame).
+struct ScrollKeep {
+    GtkAdjustment* h;
+    GtkAdjustment* v;
+    double hv, vv;
+};
+void restoreScroll(ScrollKeep* k) {
+    gtk_adjustment_set_value(k->h, k->hv);
+    gtk_adjustment_set_value(k->v, k->vv);
+}
+}  // namespace
+
+void Editor::documentReloaded(Document* d) {
+    // A Markdown page shows the file's new text.
+    if (d == active_ && inMarkdownPage()) rerenderPreview();
+    if (reloadKeep_) {
+        reloadKeep_ = false;
+        auto* keep = new ScrollKeep{
+            gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)),
+            gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_)), reloadH_,
+            reloadV_};
+        g_object_ref(keep->h);
+        g_object_ref(keep->v);
+        restoreScroll(keep);
+        g_idle_add_full(G_PRIORITY_LOW, [](gpointer p) -> gboolean {
+            restoreScroll(static_cast<ScrollKeep*>(p));
+            return G_SOURCE_REMOVE;
+        }, keep, [](gpointer p) {
+            auto* k = static_cast<ScrollKeep*>(p);
+            g_object_unref(k->h);
+            g_object_unref(k->v);
+            delete k;
+        });
+    }
+    if (d == active_) titleChanged();
+}
+
+// ---------------------------------------------------------------- saving and the disk
+
+bool Editor::save(std::string* error) { return saveDocument(active_, error); }
+
+bool Editor::saveDocument(Document* d, std::string* error) {
+    if (!d || !d->canSave()) return true;
+    if (!d->save(error)) return false;
+    if (d->isPreviewTab()) keepPreviewTab(d);   // saved: kept, as in VS Code
+    if (d == active_ && isSource() && observer_) observer_->documentSaved();
+    refreshStrip();
+    if (d == active_) titleChanged();
     return true;
 }
 
-bool Editor::save(std::string* error) {
-    // Not the file's text: an image, a PDF, or a message such as "Cannot
-    // display". Saving a message used to write it over the file, which for a
-    // binary file destroyed it.
-    if (path_.empty() || readOnly_) return true;
-    // In preview mode the buffer holds rendered text; persist source_ instead.
-    // Not for LaTeX, whose buffer always holds the source.
-    if (!preview_ || isLatex_) {
-        GtkTextIter a, b;
-        gtk_text_buffer_get_bounds(buffer_, &a, &b);
-        char* txt = gtk_text_buffer_get_text(buffer_, &a, &b, FALSE);
-        source_ = txt ? txt : "";
-        g_free(txt);
-    }
-
-    // Write through a symlink to the file it names (a dotfile repo links its
-    // files into place), and keep the file's permissions. The write itself is
-    // atomic, a temporary file renamed over the old one, so a full disk or a
-    // crash midway leaves the previous contents intact, as the macOS build's
-    // writeToFile:atomically: does. A read-only file is refused rather than
-    // quietly replaced by that rename.
-    // A link to nothing is refused: saving would replace the link itself
-    // with a regular file, and whatever it was meant to point at would never
-    // get the edits.
-    struct stat lst;
-    char* resolved = realpath(path_.c_str(), nullptr);
-    if (!resolved && lstat(path_.c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
-        if (error) *error = "The file is a link to something that does not exist.";
-        return false;
-    }
-    const std::string target = resolved ? resolved : path_;
-    free(resolved);
-    int mode = 0666;
-    bool inPlace = false;
-    struct stat st;
-    if (stat(target.c_str(), &st) == 0) {
-        mode = st.st_mode & 07777;
-        if (access(target.c_str(), W_OK) != 0) {
-            if (error) *error = std::string("The file is not writable: ") + strerror(errno);
-            return false;
-        }
-        // The atomic rename puts a new file in the old one's place. That new
-        // file belongs to us and has no other names, so it would cut a hard
-        // link, take a group-writable file away from its owner, and fail in
-        // a folder we may not write to. Those files are written in place.
-        char* dir = g_path_get_dirname(target.c_str());
-        const bool dirWritable = access(dir, W_OK) == 0;
-        g_free(dir);
-        inPlace = st.st_nlink > 1 || st.st_uid != geteuid() || !dirWritable;
-    }
-    if (inPlace) {
-        std::string why;
-        if (!writeInPlace(target, source_, (off_t)st.st_size, why)) {
-            if (error) *error = why;
-            return false;
-        }
-    } else {
-        GError* err = nullptr;
-        if (!g_file_set_contents_full(target.c_str(), source_.data(), (gssize)source_.size(),
-                                      G_FILE_SET_CONTENTS_CONSISTENT, mode, &err)) {
-            if (error) *error = err ? err->message : "Unknown error";
-            g_clear_error(&err);
-            return false;
-        }
-    }
-    markDirty(false);
-    rememberDisk(source_);   // so this save is not taken for someone else's
-    if (observer_) observer_->documentSaved();
-    return true;
+void Editor::checkExternalChange() {
+    const std::vector<Document*> docs = tabs_;   // a question may come up meanwhile
+    for (Document* d : docs) d->checkExternalChange();
 }
 
-void Editor::closeFile() {
-    if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
-    colorSaveTimer_ = 0;
-    dropColorPopover();
-    stopWatchingText();
-    stopSettle();
-    showTextSlot();   // an image or PDF goes too
-    readOnly_ = false;
-    path_.clear();
-    source_.clear();
-    ext_.clear();
-    isMarkdown_ = false;
-    preview_ = false;
-    clearTaskCount();
-    markDirty(false);
-    showWelcome();
-    if (titleCb_) titleCb_(titleUser_);
-}
-
-void Editor::showDiff(const std::string& title, const std::string& bytes, bool commit) {
-    if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
-    colorSaveTimer_ = 0;
-    dropColorPopover();
-    stopWatchingText();
-    stopSettle();
-    showTextSlot();
-    readOnly_ = false;
-    path_.clear();
-    source_.clear();
-    ext_.clear();
-    isMarkdown_ = false;
-    preview_ = false;
-    clearTaskCount();
-    markDirty(false);
-    showMessage("");   // the hidden text view holds nothing
-    if (!diff_) {
-        diff_ = new GitDiffView();
-        gtk_stack_add_named(GTK_STACK(slot_), diff_->widget(), "diff");
-    }
-    diff_->show(bytes, commit);
-    diffShown_ = true;
-    diffTitle_ = title;
-    gtk_stack_set_visible_child(GTK_STACK(slot_), diff_->widget());
-    if (titleCb_) titleCb_(titleUser_);
-}
+bool Editor::reloadFromDisk() { return active_ && active_->reloadFromDisk(); }
 
 // ---------------------------------------------------------------- go to line
 
 bool Editor::revealLine(int line, std::size_t byteColumn, std::size_t byteLength) {
-    if (path_.empty()) return false;
-    if (preview_ && (isMarkdown_ || isLatex_)) togglePreview();
+    if (!active_ || active_->kind() != Document::Kind::Text) return false;
+    if (active_->showsPreview()) togglePreview();
     if (!gtk_text_view_get_editable(GTK_TEXT_VIEW(view_))) return false;   // a message
 
     const int lines = gtk_text_buffer_get_line_count(buffer_);
@@ -603,6 +644,7 @@ bool Editor::revealLine(int line, std::size_t byteColumn, std::size_t byteLength
     gtk_text_iter_set_line_index(&a, static_cast<int>(byteColumn));
     gtk_text_iter_set_line_index(&b, static_cast<int>(byteColumn + byteLength));
     gtk_text_buffer_select_range(buffer_, &a, &b);
+    stopPlace();   // a tab's place coming back gives way to the line asked for
     // Scroll by the insert mark rather than an iterator, so GTK scrolls once
     // the line is laid out, and then keep checking (settleOnCaret).
     gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(buffer_),
@@ -690,52 +732,65 @@ bool Editor::revealLineColumn(int line, int column) {
     return true;
 }
 
-bool Editor::isMedia() const { return media_->kind() != MediaView::Kind::None; }
+// ---------------------------------------------------------------- media, PDFs, LaTeX
 
-bool Editor::canPlayMedia() const { return media_->canPlay(); }
-
-void Editor::togglePlayMedia() { media_->togglePlay(); }
-
-std::string Editor::titleSuffix() const { return media_->titleSuffix(); }
-
-void Editor::showTextSlot() {
-    media_->clear();
-    diffShown_ = false;
-    diffTitle_.clear();
-    isLatex_ = false;
-#ifdef MINICODE_ENABLE_PDF
-    if (latex_) latex_->close();   // stops its typeset; the next file is not it
-#endif
-    gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+bool Editor::isMedia() const {
+    return active_ && active_->kind() == Document::Kind::Media &&
+           media_->kind() != MediaView::Kind::None;
 }
 
-void Editor::showLatex(bool on) {
+bool Editor::canPlayMedia() const { return isMedia() && media_->canPlay(); }
+
+void Editor::togglePlayMedia() {
+    if (isMedia()) media_->togglePlay();
+}
+
+std::string Editor::titleSuffix() const { return isMedia() ? media_->titleSuffix() : ""; }
+
+// The active tab's LaTeX preview: its own, made on first use and kept with
+// its pages until the tab closes, as each Mac tab has its own LatexView.
+LatexPreview* Editor::makeLatex(Document* d) {
 #ifdef MINICODE_ENABLE_PDF
-    if (!latex_) {
-        latex_ = new LatexPreview(buffer_);
-        latex_->pdfView()->setShownCallback(onPdfShown, this);
-        gtk_stack_add_named(GTK_STACK(slot_), latex_->widget(), "latex");
+    if (!d->latexPreview()) {
+        LatexPreview* l = new LatexPreview(d->buffer());
+        l->pdfView()->setShownCallback(onPdfShown, this);
+        gtk_stack_add_child(GTK_STACK(slot_), l->widget());
+        d->setLatexPreview(l);
     }
+    return d->latexPreview();
+#else
+    (void)d;
+    return nullptr;
+#endif
+}
+
+void Editor::showLatex(bool on, bool focus) {
+#ifdef MINICODE_ENABLE_PDF
+    Document* d = active_;
+    if (!d) return;
+    LatexPreview* l = makeLatex(d);
     if (on) {
-        latex_->setPath(path_);
-        gtk_stack_set_visible_child(GTK_STACK(slot_), latex_->widget());
-        latex_->setActive(true);
+        l->setPath(d->path());
+        gtk_stack_set_visible_child(GTK_STACK(slot_), l->widget());
+        l->setActive(true);
     } else {
-        latex_->setActive(false);
+        l->setActive(false);
         gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
-        gtk_widget_grab_focus(view_);
+        if (focus) gtk_widget_grab_focus(view_);
     }
 #else
     (void)on;
+    (void)focus;
 #endif
 }
 
 bool Editor::exportPdf(GtkWindow* parent) {
 #ifdef MINICODE_ENABLE_PDF
-    if (!isLatex_ || path_.empty()) return false;
-    if (!latex_) showLatex(false);   // made hidden, to typeset for the export
-    latex_->setPath(path_);
-    latex_->exportPdf(parent);
+    Document* d = active_;
+    if (!d || !d->isLatex() || d->path().empty()) return false;
+    LatexPreview* l = makeLatex(d);   // made hidden, to typeset for the export
+    l->setPath(d->path());
+    l->exportPdf(parent);
     return true;
 #else
     (void)parent;
@@ -744,19 +799,17 @@ bool Editor::exportPdf(GtkWindow* parent) {
 }
 
 void Editor::onMediaChanged(void* selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    if (self->titleCb_) self->titleCb_(self->titleUser_);   // page count may differ
+    static_cast<Editor*>(selfp)->titleChanged();   // page count may differ
 }
 
 void Editor::onPdfShown(void* selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    if (self->titleCb_) self->titleCb_(self->titleUser_);   // the zoom keys follow
+    static_cast<Editor*>(selfp)->titleChanged();   // the zoom keys follow
 }
 
 bool Editor::showingPdf() const {
 #ifdef MINICODE_ENABLE_PDF
     if (media_->pdfView()->shown()) return true;
-    if (latex_ && latex_->pdfView()->shown()) return true;
+    if (latex() && latex()->pdfView()->shown()) return true;
 #endif
     return false;
 }
@@ -765,7 +818,7 @@ bool Editor::zoomPdf(int step) {
 #ifdef MINICODE_ENABLE_PDF
     PdfView* pdf = nullptr;
     if (media_->pdfView()->shown()) pdf = media_->pdfView();
-    else if (latex_ && latex_->pdfView()->shown()) pdf = latex_->pdfView();
+    else if (latex() && latex()->pdfView()->shown()) pdf = latex()->pdfView();
     if (!pdf) return false;
     if (step > 0) pdf->zoomIn();
     else if (step < 0) pdf->zoomOut();
@@ -777,561 +830,15 @@ bool Editor::zoomPdf(int step) {
 #endif
 }
 
-// ---------------------------------------------------------------- buffer fills
-
-// Source code is monospace; the Markdown preview and the plain messages use the
-// proportional UI font, with monospace reapplied per-tag for code and tables.
-// The macOS build gets this from per-run NSFonts; GtkTextView needs the widget
-// font switched, because a tag can add a family but the view's monospace flag
-// would otherwise force every run to it.
-//
-// Prose also has to WRAP, and that is not cosmetic. MarkdownParser joins every
-// consecutive non-blank line of a paragraph into one logical line, so with
-// GTK_WRAP_NONE a paragraph became a single unwrapped line as wide as the whole
-// paragraph is long. Pango measures in 1/1024 px stored in a signed int, which
-// caps a line at 2^31/1024 = 2,097,152 px, about 281k characters at the preview
-// font. Past that the width calculation overflows and the paragraph's layout
-// collapses: the text goes missing and the view misreports its own size.
-// Wrapping bounds every display line to the viewport width, so the overflow
-// cannot be reached. Source keeps GTK_WRAP_NONE, where long lines are wanted
-// and lines are bounded by the file's own line breaks. macOS gets the same
-// behavior from textContainer.widthTracksTextView = YES.
-void Editor::setProseFont(bool prose) {
-    gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), prose ? FALSE : TRUE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_),
-                                prose ? GTK_WRAP_WORD_CHAR : GTK_WRAP_NONE);
-    if (prose) gtk_widget_add_css_class(view_, "minicode-prose");
-    else       gtk_widget_remove_css_class(view_, "minicode-prose");
-}
-
-void Editor::loadRawIntoBuffer() {
-    // Temporarily block change signals so filling the buffer doesn't mark dirty.
-    // Highlighting is stopped first so the fill is not fed to it as an edit;
-    // startHighlighting() lexes the new text once, whole.
-    stopHold();
-    stopHighlighting();
-    g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
-    setProseFont(false);
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), TRUE);
-    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(view_), TRUE);
-    clearPage();
-    gtk_text_buffer_set_text(buffer_, source_.c_str(), (int)source_.size());
-    g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
-    sourceMode_ = true;
-    startHighlighting();
-
-    // Scroll to top.
-    GtkTextIter start;
-    gtk_text_buffer_get_start_iter(buffer_, &start);
-    gtk_text_buffer_place_cursor(buffer_, &start);
-    notifyDocument();
-}
-
-void Editor::notifyDocument() {
-    if (observer_) observer_->documentChanged(sourceMode_ ? path_ : std::string());
-}
-
-std::string Editor::text() const {
-    if (hl_ && !bulk_) return mirror_;
-    GtkTextIter a, b;
-    gtk_text_buffer_get_bounds(buffer_, &a, &b);
-    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
-    std::string s = raw ? raw : "";
-    g_free(raw);
-    return s;
-}
-
-void Editor::showMessage(const std::string& msg) {
-    ensureTags();
-    stopHold();
-    stopHighlighting();
-    g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
-    setProseFont(true);
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);
-    clearPage();
-    gtk_text_buffer_set_text(buffer_, msg.c_str(), (int)msg.size());
-    GtkTextIter a, b;
-    gtk_text_buffer_get_bounds(buffer_, &a, &b);
-    gtk_text_buffer_apply_tag_by_name(buffer_, "plainmsg", &a, &b);
-    g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
-    notifyDocument();
-}
-
-// ---------------------------------------------------------------- highlighting
-
-// The same scheme as the macOS build (textStorage:willProcessEditing: and
-// flushHighlighting in EditorController.mm), in UTF-8 bytes rather than UTF-16:
-//
-// - startHighlighting() lexes the whole buffer once: on file load, when the
-//   grammar changes, and when the settings change.
-// - onInsertText / onDeleteRange run BEFORE the buffer changes, while the
-//   iterators still point into the old text. They turn the edit into bytes,
-//   apply it to mirror_ and to the IncrementalHighlighter (which re-lexes the
-//   edited lines and any below whose start state changed), and widen the
-//   pending byte range.
-// - Once the buffer has changed (the _after handlers, or end-user-action when
-//   the edit is part of one), flushHighlighting() retags the pending lines:
-//   highlight tags off over exactly those lines, then the tokens on.
-//
-// Retagging is what costs: GTK takes a few microseconds per tag applied, so
-// retagging every line of a 50,000-line file takes over a second. A small
-// range is retagged at once; a large one (typing "/*" near the top, opening a
-// big file) gets the lines on screen at once and the rest in idle time slices
-// of a few milliseconds, the way GtkSourceView does it. The lexer's own state
-// is always complete; only the tags lag.
-//
-// Only the tags in hlTags_ (one per token style, plus the settings file's
-// swatches) are ever removed, so find matches or any other tag survive.
-//
-// GtkTextIter speaks characters, and a byte index within its line. When GTK's
-// lines are the highlighter's lines, byte offset = the highlighter's line start
-// + the iterator's line index, with no scanning. They differ only in a file
-// holding a lone '\r' or U+2029, which GTK also ends a line at; then offsets
-// are found by counting characters through mirror_ instead.
-
-namespace {
-const size_t kSyncLines   = 1000;   // retag at once up to this many lines
-const size_t kChunkLines  = 250;    // lines per step of the idle retag
-const gint64 kSliceMicros = 5000;   // idle retag budget per main loop turn
-const int    kBulkEdits   = 64;     // edits in one user action before resyncing whole
-
-size_t byteOfChar(const std::string& s, long chars) {
-    size_t b = 0;
-    for (long c = 0; b < s.size(); ++b) {
-        if (((unsigned char)s[b] & 0xC0) == 0x80) continue;   // continuation byte
-        if (c++ == chars) break;
-    }
-    return b;
-}
-
-// Carry a byte range [s, e) across an edit that replaced [pos, pos + oldLen)
-// with newLen bytes: shifted if it lay below, stretched if the edit touched it.
-void carry(size_t& s, size_t& e, size_t pos, size_t oldLen, size_t newLen) {
-    const size_t editEnd = pos + oldLen;
-    if (s >= editEnd) {
-        s = s + newLen - oldLen;
-        e = e + newLen - oldLen;
-    } else if (e > pos) {
-        s = std::min(s, pos);
-        e = std::max(e, editEnd) + newLen - oldLen;
-    }
-}
-}  // namespace
-
-bool Editor::linesMatch() const {
-    return hl_ && (size_t)gtk_text_buffer_get_line_count(buffer_) == hl_->lineCount();
-}
-
-size_t Editor::byteOffsetOf(const GtkTextIter* it) const {
-    if (linesMatch())
-        return hl_->lineStart((size_t)gtk_text_iter_get_line(it)) +
-               (size_t)gtk_text_iter_get_line_index(it);
-    return byteOfChar(mirror_, gtk_text_iter_get_offset(it));
-}
-
-bool Editor::isHighlightTag(GtkTextTag* tag) const {
-    return std::find(hlTags_.begin(), hlTags_.end(), tag) != hlTags_.end();
-}
-
-void Editor::removeHighlightTags(const GtkTextIter* a, const GtkTextIter* b) {
-    for (GtkTextTag* t : hlTags_) gtk_text_buffer_remove_tag(buffer_, t, a, b);
-}
-
-void Editor::cancelDeferred() {
-    if (idleId_) g_source_remove(idleId_);
-    idleId_ = 0;
-    deferred_ = false;
-}
-
-void Editor::stopHighlighting() {
-    hl_.reset();
-    std::string().swap(mirror_);
-    pending_ = false;
-    bulk_ = false;
-    cancelDeferred();
-    sourceMode_ = false;
-}
-
-void Editor::startHighlighting() {
-    pending_ = false;
-    bulk_ = false;
-    cancelDeferred();
-    hl_.reset();
-    std::string().swap(mirror_);
-    if (!sourceMode_ || ext_.empty() || !SyntaxHighlighter::supports(ext_)) {
-        // No grammar (any more): no colors. Covers a rename to a plain .txt.
-        GtkTextIter a, b;
-        gtk_text_buffer_get_bounds(buffer_, &a, &b);
-        applyingTags_ = true;
-        removeHighlightTags(&a, &b);
-        applyingTags_ = false;
-        return;
-    }
-    GtkTextIter a, b;
-    gtk_text_buffer_get_bounds(buffer_, &a, &b);
-    char* text = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
-    mirror_ = text ? text : "";
-    g_free(text);
-
-    hl_ = std::make_unique<IncrementalHighlighter<char>>(ext_);
-    hl_->reset(StringSource<char>(mirror_), nullptr);
-    pendStart_ = 0;
-    pendEnd_ = mirror_.size();
-    pending_ = true;
-    flushHighlighting();
-}
-
-// Record an edit already applied to mirror_: bytes [pos, pos + oldLen) became
-// newLen bytes. The pending and deferred ranges are carried across it, then the
-// lines the highlighter re-lexed join the pending range.
-void Editor::noteEdit(size_t pos, size_t oldLen, size_t newLen) {
-    std::vector<Token> unused;   // recomputed for the final text at flush time
-    auto r = hl_->edit(StringSource<char>(mirror_), pos, oldLen, newLen, unused);
-    if (deferred_) carry(defStart_, defEnd_, pos, oldLen, newLen);
-    if (pending_) {
-        carry(pendStart_, pendEnd_, pos, oldLen, newLen);
-        pendStart_ = std::min(pendStart_, r.start);
-        pendEnd_ = std::max(pendEnd_, r.end);
-    } else {
-        pendStart_ = r.start;
-        pendEnd_ = r.end;
-        pending_ = true;
-    }
-}
-
-// The highlighter's lines on screen, with some margin. Before the view has a
-// size, the lines around the cursor.
-void Editor::visibleLines(size_t& first, size_t& end) const {
-    const size_t margin = 60;
-    GdkRectangle vis;
-    gtk_text_view_get_visible_rect(GTK_TEXT_VIEW(view_), &vis);
-    GtkTextIter top, bottom;
-    if (vis.height > 0) {
-        gtk_text_view_get_line_at_y(GTK_TEXT_VIEW(view_), &top, vis.y, nullptr);
-        gtk_text_view_get_line_at_y(GTK_TEXT_VIEW(view_), &bottom, vis.y + vis.height, nullptr);
-    } else {
-        gtk_text_buffer_get_iter_at_mark(buffer_, &top, gtk_text_buffer_get_insert(buffer_));
-        bottom = top;
-    }
-    const size_t t = (size_t)gtk_text_iter_get_line(&top);
-    const size_t b = (size_t)gtk_text_iter_get_line(&bottom);
-    first = t > margin ? t - margin : 0;
-    end = b + margin + 1;
-}
-
-void Editor::flushHighlighting() {
-    if (!hl_ || !pending_ || bulk_) return;
-    pending_ = false;
-    const size_t len = hl_->length();
-    const size_t s = std::min(pendStart_, len), e = std::min(pendEnd_, len);
-    const size_t first = hl_->lineOf(s);
-    const size_t end = e > s ? hl_->lineOf(e - 1) + 1 : first + 1;
-    if (end - first <= kSyncLines) {
-        retagSpan(first, end);
-        return;
-    }
-    // Too many lines to retag in one go: the ones on screen now, all of them
-    // later. (The visible ones are retagged twice; that is one chunk's work.)
-    if (linesMatch()) {
-        size_t vf, ve;
-        visibleLines(vf, ve);
-        vf = std::max(vf, first);
-        ve = std::min(ve, end);
-        if (vf < ve) retagSpan(vf, ve);
-    } else {
-        retagSpan(first, first + kSyncLines);
-    }
-    const size_t b0 = hl_->lineStart(first);
-    const size_t b1 = end < hl_->lineCount() ? hl_->lineStart(end) : len;
-    if (deferred_) {
-        defStart_ = std::min(defStart_, b0);
-        defEnd_ = std::max(defEnd_, b1);
-    } else {
-        defStart_ = b0;
-        defEnd_ = b1;
-        deferred_ = true;
-    }
-    // Below redraw and input, so typing and scrolling stay ahead of it.
-    if (!idleId_) idleId_ = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, onIdleRetag, this, nullptr);
-}
-
-gboolean Editor::onIdleRetag(gpointer selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    if (!self->hl_ || !self->deferred_ || self->bulk_) {
-        self->idleId_ = 0;   // resyncAfterBulk schedules it again if needed
-        return G_SOURCE_REMOVE;
-    }
-    const gint64 t0 = g_get_monotonic_time();
-    IncrementalHighlighter<char>& hl = *self->hl_;
-    while (g_get_monotonic_time() - t0 < kSliceMicros) {
-        const size_t len = hl.length();
-        const size_t s = std::min(self->defStart_, len), e = std::min(self->defEnd_, len);
-        if (e <= s) {
-            self->deferred_ = false;
-            break;
-        }
-        const size_t first = hl.lineOf(s);
-        const size_t end = std::min(first + kChunkLines, hl.lineOf(e - 1) + 1);
-        self->retagSpan(first, end);
-        self->defStart_ = end < hl.lineCount() ? hl.lineStart(end) : len;
-    }
-    if (self->deferred_) return G_SOURCE_CONTINUE;
-    self->idleId_ = 0;
-    return G_SOURCE_REMOVE;
-}
-
-void Editor::retagSpan(size_t firstLine, size_t endLine) {
-    endLine = std::min(endLine, hl_->lineCount());
-    std::vector<Token> tokens;
-    hl_->lineTokens(StringSource<char>(mirror_), firstLine, endLine, tokens);
-    retagLines(firstLine, endLine, tokens);
-}
-
-// Lines [firstLine, endLine) of the highlighter: highlight tags off over
-// exactly those lines, then `tokens` (byte offsets, ascending) on. Adjacent
-// tokens of one style are applied together, since a comment spanning lines
-// comes as one piece per line.
-void Editor::retagLines(size_t firstLine, size_t endLine,
-                        const std::vector<Token>& tokens) {
-    if (!hl_ || firstLine >= endLine) return;
-    const size_t b0 = hl_->lineStart(firstLine);
-    const size_t b1 = endLine < hl_->lineCount() ? hl_->lineStart(endLine)
-                                                 : hl_->length();
-    const bool match = linesMatch();
-    GtkTextIter a, b;
-    if (match) {
-        gtk_text_buffer_get_iter_at_line(buffer_, &a, (int)firstLine);
-    } else {
-        Utf8OffsetCursor whole(mirror_);
-        gtk_text_buffer_get_iter_at_offset(buffer_, &a, (int)whole.charOffset((long)b0));
-    }
-    const long c0 = gtk_text_iter_get_offset(&a);
-
-    // Byte -> character conversion over just these lines, one forward pass.
-    const std::string span = mirror_.substr(b0, b1 - b0);
-    gtk_text_buffer_get_iter_at_offset(buffer_, &b,
-                                       (int)(c0 + Utf8OffsetCursor(span).totalChars()));
-    Utf8OffsetCursor cursor(span);
-
-    applyingTags_ = true;
-    removeHighlightTags(&a, &b);
-    GtkTextIter ts = a, te = a;
-    for (size_t i = 0; i < tokens.size();) {
-        const size_t start = tokens[i].start;
-        size_t end = start + tokens[i].length;
-        const TokenStyle st = tokens[i].style;
-        size_t j = i + 1;
-        while (j < tokens.size() && tokens[j].style == st && tokens[j].start == end) {
-            end = tokens[j].start + tokens[j].length;
-            ++j;
-        }
-        i = j;
-        if (start < b0 || end > b1 || end <= start) continue;
-        gtk_text_iter_set_offset(&ts, (int)(c0 + cursor.charOffset((long)(start - b0))));
-        gtk_text_iter_set_offset(&te, (int)(c0 + cursor.charOffset((long)(end - b0))));
-        gtk_text_buffer_apply_tag(buffer_, hlTags_[(int)st], &ts, &te);
-    }
-    if (isSettingsFile()) {
-        if (match) decorateColors((int)firstLine, (int)endLine);
-        else       decorateColors(0, INT_MAX);
-    }
-    applyingTags_ = false;
-}
-
-// A user action with many edits in it (a paste from another GtkTextView is
-// one insert per run of tags, thousands for a large one) stops being tracked
-// edit by edit, since each costs a copy of the mirror. When the action ends,
-// the whole of it is found as one edit: the common prefix and suffix of the
-// old and new text bound the bytes it changed.
-void Editor::resyncAfterBulk() {
-    bulk_ = false;
-    if (!hl_) return;
-    GtkTextIter a, b;
-    gtk_text_buffer_get_bounds(buffer_, &a, &b);
-    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
-    std::string now = raw ? raw : "";
-    g_free(raw);
-    const size_t n = std::min(now.size(), mirror_.size());
-    size_t p = 0;
-    while (p < n && now[p] == mirror_[p]) ++p;
-    size_t q = 0;
-    while (q < n - p && now[now.size() - 1 - q] == mirror_[mirror_.size() - 1 - q]) ++q;
-    const size_t oldLen = mirror_.size() - p - q, newLen = now.size() - p - q;
-    mirror_ = std::move(now);
-    if (oldLen || newLen) noteEdit(p, oldLen, newLen);
-    flushHighlighting();
-    if (deferred_ && !idleId_)
-        idleId_ = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, onIdleRetag, this, nullptr);
-}
-
-// ------------------------------------------------ buffer signals
-
-void Editor::onInsertText(GtkTextBuffer*, GtkTextIter* loc, char* text, int len,
-                          gpointer selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    if (!self->hl_ || len <= 0 || self->bulk_) return;
-    if (self->inAction_ && ++self->actionEdits_ > kBulkEdits) {
-        self->bulk_ = true;
-        return;
-    }
-    const size_t pos = std::min(self->byteOffsetOf(loc), self->mirror_.size());
-    self->mirror_.insert(pos, text, (size_t)len);
-    self->noteEdit(pos, 0, (size_t)len);
-}
-
-void Editor::onDeleteRange(GtkTextBuffer*, GtkTextIter* start, GtkTextIter* end,
-                           gpointer selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    if (!self->hl_ || self->bulk_) return;
-    if (self->inAction_ && ++self->actionEdits_ > kBulkEdits) {
-        self->bulk_ = true;
-        return;
-    }
-    size_t a = self->byteOffsetOf(start), b = self->byteOffsetOf(end);
-    if (b < a) std::swap(a, b);
-    a = std::min(a, self->mirror_.size());
-    b = std::min(b, self->mirror_.size());
-    if (a == b) return;
-    self->mirror_.erase(a, b - a);
-    self->noteEdit(a, b - a, 0);
-}
-
-// Inside a user action the retag waits for its end, so a delete-then-insert
-// (typing over a selection, a paste) retags once.
-// The observer hears about each edit here too, once the buffer has changed
-// (never for a refill: sourceMode_ is off while the buffer is being set).
-void Editor::onInsertTextAfter(GtkTextBuffer* buf, GtkTextIter* loc, char* text, int len,
-                               gpointer selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    if (!self->inAction_) self->flushHighlighting();
-    if (self->observer_ && self->sourceMode_) self->observer_->textEdited(text, len);
-    // A closer, or ':', typed from the keyboard (see onViewKey) may move its
-    // line back (AutoIndent::typed). Return, Tab and Backspace are handled
-    // whole in onViewKey.
-    const char typed = self->typedKey_;
-    self->typedKey_ = 0;
-    (void)buf;
-    if (typed && len == 1 && text[0] == typed && self->sourceMode_ && !self->readOnly_ &&
-        !self->preview_)
-        self->electric(loc);
-}
-
-void Editor::electric(GtkTextIter* loc) {
-    GtkTextIter a, b;
-    gtk_text_buffer_get_bounds(buffer_, &a, &b);
-    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
-    const std::u16string text = utf16::fromUtf8(raw ? raw : "");
-    g_free(raw);
-    const size_t caret = utf16::fromCharOffset(text, gtk_text_iter_get_offset(loc));
-    const AutoIndent::Edit e = AutoIndent::typed(text, caret, path_);
-    if (!e.changed) return;
-    // Inside the key's own user action, so one Ctrl+Z takes back the key and
-    // the move together. The mark keeps loc valid for the handlers after us.
-    GtkTextMark* keep = gtk_text_buffer_create_mark(buffer_, nullptr, loc, FALSE);
-    GtkTextIter from, to;
-    gtk_text_buffer_get_iter_at_offset(buffer_, &from, (int)utf16::toCharOffset(text, e.replaceStart));
-    gtk_text_buffer_get_iter_at_offset(buffer_, &to,
-        (int)utf16::toCharOffset(text, e.replaceStart + e.replaceLength));
-    gtk_text_buffer_delete(buffer_, &from, &to);
-    const std::string bytes = utf16::toUtf8(e.replacement);
-    gtk_text_buffer_insert(buffer_, &from, bytes.c_str(), (int)bytes.size());
-    gtk_text_buffer_get_iter_at_mark(buffer_, loc, keep);
-    gtk_text_buffer_delete_mark(buffer_, keep);
-}
-
-void Editor::onDeleteRangeAfter(GtkTextBuffer*, GtkTextIter*, GtkTextIter*, gpointer selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    if (!self->inAction_) self->flushHighlighting();
-    if (self->observer_ && self->sourceMode_) self->observer_->textEdited(nullptr, 0);
-}
-
-// GtkTextBuffer emits these for the outermost begin/end pair only.
-void Editor::onBeginUserAction(GtkTextBuffer*, gpointer selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    self->inAction_ = true;
-    self->actionEdits_ = 0;
-}
-
-void Editor::onEndUserAction(GtkTextBuffer*, gpointer selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    self->inAction_ = false;
-    if (self->bulk_) self->resyncAfterBulk();
-    else             self->flushHighlighting();
-}
-
-// Highlight tags belong to the highlighter alone. Pasting from a GtkTextView
-// inserts the copied range with its tags (gtk_text_buffer_insert_range), which
-// would lay the source's colors over the lines just retagged; stopping the
-// emission keeps them off.
-void Editor::onApplyTag(GtkTextBuffer* buf, GtkTextTag* tag, GtkTextIter*, GtkTextIter*,
-                        gpointer selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    if (self->sourceMode_ && !self->applyingTags_ && self->isHighlightTag(tag))
-        g_signal_stop_emission_by_name(buf, "apply-tag");
-}
-
-// ------------------------------------------------ rename
-
-void Editor::setPath(const std::string& path) {
-    // A picture or PDF keeps showing, now watched under its new name.
-    if (!media_->path().empty()) {
-        media_->setPath(path);
-        path_ = path;
-        return;
-    }
-    const bool wasSettings = isSettingsFile();
-    const std::string ext = extOf(path);
-    // The name decides the mode, as it does when a file is opened: x.txt
-    // renamed to x.md gains the preview, and a preview whose file stops
-    // being Markdown or LaTeX goes back to the source. Not for a message
-    // standing in for a file, which has no mode.
-    if (!readOnly_) {
-        const bool md = (ext == "md" || ext == "markdown");
-        if (isMarkdown_ && !md && preview_) {
-            preview_ = false;
-            loadRawIntoBuffer();   // source_ is current: the preview is not editable
-        }
-        isMarkdown_ = md;
-#ifdef MINICODE_ENABLE_PDF
-        const bool tex = (ext == "tex" || ext == "ltx" || ext == "latex");
-        if (isLatex_ && !tex) {
-            if (preview_) showLatex(false);
-            preview_ = false;
-            if (latex_) latex_->close();
-        }
-        isLatex_ = tex;
-#endif
-    }
-    // Keep comparing against the same disk contents, under the new name.
-    const bool watched = textMonitor_ != nullptr;
-    const bool known = diskKnown_;
-    const std::size_t size = diskSize_, hash = diskHash_;
-    stopWatchingText();
-    path_ = path;
-    diskKnown_ = known;
-    diskSize_ = size;
-    diskHash_ = hash;
-    if (watched) watchText();
-#ifdef MINICODE_ENABLE_PDF
-    if (isLatex_ && latex_) latex_->setPath(path);   // the preview follows the rename
-#endif
-    if (ext != ext_ || wasSettings != isSettingsFile()) {
-        ext_ = ext;
-        if (sourceMode_) startHighlighting();
-    }
-    notifyDocument();   // a new name is a new document to a language server
-    refreshTaskCount();   // x.txt renamed to x.md counts its tasks
-}
-
 // ---------------------------------------------------------------- settings
 
 static GdkRGBA toGdk(const Rgba& c) {
     return GdkRGBA{c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, (float)c.a};
 }
 
-static void setTagColor(GtkTextBuffer* buf, const char* name, const char* prop,
+static void setTagColor(GtkTextTagTable* table, const char* name, const char* prop,
                         const Rgba& c) {
-    GtkTextTag* tag = gtk_text_tag_table_lookup(gtk_text_buffer_get_tag_table(buf), name);
+    GtkTextTag* tag = gtk_text_tag_table_lookup(table, name);
     if (!tag) return;
     GdkRGBA rgba = toGdk(c);
     g_object_set(tag, prop, &rgba, NULL);
@@ -1340,80 +847,40 @@ static void setTagColor(GtkTextBuffer* buf, const char* name, const char* prop,
 void Editor::applySettings(const Settings& s) {
     const bool webBefore = settings_.webImages();
     settings_ = s;
-    ensureTags();
+    // The tags are every tab's: each recolors with them.
+    GtkTextTagTable* t = tags_.table;
     for (int i = 0; i < kTokenStyleCount; ++i)
-        setTagColor(buffer_, TagNameForStyle((TokenStyle)i), "foreground-rgba",
-                    s.syntax((TokenStyle)i));
+        setTagColor(t, TagNameForStyle((TokenStyle)i), "foreground-rgba", s.syntax((TokenStyle)i));
     for (int lvl = 1; lvl <= 6; ++lvl) {
         char name[16];
         g_snprintf(name, sizeof(name), "h%d", lvl);
-        setTagColor(buffer_, name, "foreground-rgba", s.markdown(MarkdownColor::Heading));
+        setTagColor(t, name, "foreground-rgba", s.markdown(MarkdownColor::Heading));
     }
-    setTagColor(buffer_, "md_table", "foreground-rgba", s.text(Surface::Editor));
-    setTagColor(buffer_, "md_code", "foreground-rgba", s.markdown(MarkdownColor::Code));
-    setTagColor(buffer_, "md_code", "background-rgba", s.markdownCodeBackground());
-    setTagColor(buffer_, "md_quote", "foreground-rgba", s.markdown(MarkdownColor::Quote));
-    setTagColor(buffer_, "md_link", "foreground-rgba", s.markdown(MarkdownColor::Link));
-    setTagColor(buffer_, "md_done", "foreground-rgba", s.markdown(MarkdownColor::Done));
+    setTagColor(t, "md_table", "foreground-rgba", s.text(Surface::Editor));
+    setTagColor(t, "md_code", "foreground-rgba", s.markdown(MarkdownColor::Code));
+    setTagColor(t, "md_code", "background-rgba", s.markdownCodeBackground());
+    setTagColor(t, "md_quote", "foreground-rgba", s.markdown(MarkdownColor::Quote));
+    setTagColor(t, "md_link", "foreground-rgba", s.markdown(MarkdownColor::Link));
+    setTagColor(t, "md_done", "foreground-rgba", s.markdown(MarkdownColor::Done));
     // Swatch text contrast depends on the editor background.
-    if (sourceMode_ && isSettingsFile()) startHighlighting();
+    for (Document* d : tabs_)
+        if (d->isSettingsFile()) d->restartHighlighting();
     // Web pictures turned on or off: the preview shows them, or their alt
     // text, from now on.
-    if (s.webImages() != webBefore && preview_ && isMarkdown_) {
+    if (s.webImages() != webBefore && inMarkdownPage()) {
         GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
-        const bool scrolled = previewEntryV_ >= 0 &&
-                              std::fabs(gtk_adjustment_get_value(v) - previewEntryV_) > 2;
+        const double entry = active_->place().previewEntryV;
+        const bool scrolled = entry >= 0 && std::fabs(gtk_adjustment_get_value(v) - entry) > 2;
         rerenderPreview();
-        if (!scrolled) notePreviewRest();   // still where Ctrl+Shift+P left it
+        if (!scrolled) notePreviewRest();   // still where Ctrl+Shift+V left it
     }
 }
 
-bool Editor::isSettingsFile() const {
-    if (path_.empty() || settingsPath_.empty()) return false;
-    if (path_ == settingsPath_) return true;
-    char a[PATH_MAX], b[PATH_MAX];
-    return realpath(path_.c_str(), a) && realpath(settingsPath_.c_str(), b) &&
-           std::string(a) == b;
-}
-
-// Every color value in the settings file becomes a swatch of itself: the value
-// drawn on its own color, in black or white text, whichever reads.
-// Lines [firstLine, endLine), clamped to the buffer.
-void Editor::decorateColors(int firstLine, int endLine) {
-    GtkTextTagTable* table = gtk_text_buffer_get_tag_table(buffer_);
-    int lines = std::min(endLine, gtk_text_buffer_get_line_count(buffer_));
-    for (int ln = std::max(firstLine, 0); ln < lines; ++ln) {
-        GtkTextIter ls, le;
-        gtk_text_buffer_get_iter_at_line(buffer_, &ls, ln);
-        le = ls;
-        if (!gtk_text_iter_ends_line(&le)) gtk_text_iter_forward_to_line_end(&le);
-        char* raw = gtk_text_buffer_get_text(buffer_, &ls, &le, FALSE);
-        std::u16string line = utf16::fromUtf8(raw ? raw : "");
-        g_free(raw);
-        ColorSpan span;
-        if (!Settings::findColor(line, span)) continue;
-
-        Rgba text = settings_.contrastText(span.color);
-        std::string name = "swatch-" + Settings::formatColor(span.color) +
-                           (text.rgb() == 0 ? "-k" : "-w");
-        GtkTextTag* tag = gtk_text_tag_table_lookup(table, name.c_str());
-        if (!tag) {
-            GdkRGBA bg = toGdk(span.color), fg = toGdk(text);
-            tag = gtk_text_buffer_create_tag(buffer_, name.c_str(),
-                                             "background-rgba", &bg,
-                                             "foreground-rgba", &fg, NULL);
-            hlTags_.push_back(tag);
-        }
-        GtkTextIter a = ls, b = ls;
-        gtk_text_iter_forward_chars(&a, (int)utf16::toCharOffset(line, span.start));
-        gtk_text_iter_forward_chars(&b, (int)utf16::toCharOffset(line, span.start + span.length));
-        gtk_text_buffer_apply_tag(buffer_, tag, &a, &b);
-    }
-}
+bool Editor::isSettingsFile() const { return active_ && active_->isSettingsFile(); }
 
 // Is there a swatch under widget point (x, y)? Reports its line.
 bool Editor::swatchAt(double x, double y, int* line) const {
-    if (preview_ || !isSettingsFile()) return false;
+    if (!isSource() || !isSettingsFile()) return false;
     int bx, by;
     gtk_text_view_window_to_buffer_coords(GTK_TEXT_VIEW(view_), GTK_TEXT_WINDOW_WIDGET,
                                           (int)x, (int)y, &bx, &by);
@@ -1459,8 +926,9 @@ static const Markdown::Span* previewSpanAt(GtkWidget* view, const Markdown::Page
 void Editor::onMotion(GtkEventControllerMotion*, double x, double y, gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
     bool over = self->swatchAt(x, y, nullptr);
-    if (!over && self->preview_ && self->isMarkdown_) {
-        const Markdown::Span* sp = previewSpanAt(self->view_, self->page_, x, y, nullptr);
+    if (!over && self->inMarkdownPage()) {
+        const Markdown::Span* sp =
+            previewSpanAt(self->view_, self->active_->pageInfo(), x, y, nullptr);
         over = sp && !sp->url.empty();
     }
     if (over == self->overSwatch_) return;
@@ -1470,20 +938,26 @@ void Editor::onMotion(GtkEventControllerMotion*, double x, double y, gpointer se
 
 void Editor::onPressed(GtkGestureClick* g, int n, double x, double y, gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
-    if (self->preview_ && self->isMarkdown_) {
+    if (self->inMarkdownPage()) {
         GtkTextIter it;
-        const Markdown::Span* sp = previewSpanAt(self->view_, self->page_, x, y, &it);
-            if (!sp) return;
+        const Markdown::Span* sp =
+            previewSpanAt(self->view_, self->active_->pageInfo(), x, y, &it);
+        if (!sp) return;
         if (n == 1 && !sp->url.empty()) {
             gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
             // Once the click is over: the text view still puts the caret
             // where it landed, which would undo a scroll to "#section".
-            auto* job = new std::pair<Editor*, std::string>(self, sp->url);
+            struct Job {
+                std::weak_ptr<int> alive;
+                Editor* editor;
+                std::string url;
+            };
+            auto* job = new Job{self->alive_, self, sp->url};
             g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, [](gpointer d) -> gboolean {
-                auto* j = static_cast<std::pair<Editor*, std::string>*>(d);
-                j->first->openMarkdownLink(j->second);
+                auto* j = static_cast<Job*>(d);
+                if (!j->alive.expired()) j->editor->openMarkdownLink(j->url);
                 return G_SOURCE_REMOVE;
-            }, job, [](gpointer d) { delete static_cast<std::pair<Editor*, std::string>*>(d); });
+            }, job, [](gpointer d) { delete static_cast<Job*>(d); });
             return;
         }
         if (n == 2) {
@@ -1576,11 +1050,7 @@ G_GNUC_END_IGNORE_DEPRECATIONS
     // its own signal here.
     g_signal_connect(pop, "closed", G_CALLBACK(+[](GtkPopover* p, gpointer selfp) {
         Editor* self = static_cast<Editor*>(selfp);
-        if (self->colorSaveTimer_) {
-            g_source_remove(self->colorSaveTimer_);
-            self->colorSaveTimer_ = 0;
-            if (self->path_ == self->colorPath_) self->save();
-        }
+        if (self->colorSaveTimer_) self->saveColorNow();
         if (self->colorPop_ == GTK_WIDGET(p)) self->colorPop_ = nullptr;
         g_idle_add([](gpointer w) -> gboolean {
             GtkWidget* widget = GTK_WIDGET(w);
@@ -1592,13 +1062,13 @@ G_GNUC_END_IGNORE_DEPRECATIONS
 
     colorPop_ = pop;
     colorLine_ = line;
-    colorPath_ = path_;
+    colorDoc_ = active_;
     gtk_popover_popup(GTK_POPOVER(pop));
 }
 
 void Editor::onColorPicked(GObject* chooser, GParamSpec*, gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
-    if (!self->colorPop_ || self->path_ != self->colorPath_ || self->preview_) return;
+    if (!self->colorPop_ || self->active_ != self->colorDoc_ || !self->isSource()) return;
     GdkRGBA c;
 G_GNUC_BEGIN_IGNORE_DEPRECATIONS
     gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(chooser), &c);
@@ -1612,9 +1082,17 @@ void Editor::scheduleColorSave() {
     colorSaveTimer_ = g_timeout_add(150, [](gpointer p) -> gboolean {
         Editor* self = static_cast<Editor*>(p);
         self->colorSaveTimer_ = 0;
-        if (self->path_ == self->colorPath_) self->save();
+        self->saveColorNow();
         return G_SOURCE_REMOVE;
     }, this);
+}
+
+// The settings file the picker edits, written now (saving it is what
+// applies the color).
+void Editor::saveColorNow() {
+    if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
+    colorSaveTimer_ = 0;
+    if (colorDoc_) saveDocument(colorDoc_, nullptr);
 }
 
 // Take the popover down at once, without its "closed" handler: the file is
@@ -1637,7 +1115,7 @@ void Editor::onViewUnrealize(GtkWidget*, gpointer selfp) {
 // Rewrite one line's color (uncommenting it if it was a commented-out
 // default). The caller saves, which is what applies it.
 void Editor::setLineColor(int line, const Rgba& c) {
-    if (preview_ || line < 0 || line >= gtk_text_buffer_get_line_count(buffer_)) return;
+    if (!isSource() || line < 0 || line >= gtk_text_buffer_get_line_count(buffer_)) return;
     GtkTextIter ls, le;
     gtk_text_buffer_get_iter_at_line(buffer_, &ls, line);
     le = ls;
@@ -1669,203 +1147,12 @@ void Editor::setLineColor(int line, const Rgba& c) {
     }
 }
 
-// ---------------------------------------------------------------- external changes
-//
-// The Mac checks when its window becomes key (EditorController.mm
-// -checkExternalChange), comparing modification dates. Here the file is also
-// watched, so a change made in the terminal panel under the editor shows up
-// without leaving the window, and the check compares contents: an atomic save
-// by MiniCode itself, or a tool that rewrites the file unchanged, is then no
-// change at all, whatever the dates say.
-
-void Editor::rememberDisk(const std::string& content) {
-    diskKnown_ = true;
-    diskSize_ = content.size();
-    diskHash_ = std::hash<std::string>()(content);
-}
-
-bool Editor::diskMatches(const std::string& content) const {
-    return diskKnown_ && content.size() == diskSize_ &&
-           std::hash<std::string>()(content) == diskHash_;
-}
-
-void Editor::watchText() {
-    if (path_.empty() || textMonitor_) return;
-    GFile* f = g_file_new_for_path(path_.c_str());
-    // WATCH_MOVES, so a save that renames a temporary file over this one
-    // (what MiniCode and most tools do) arrives as a rename, not a deletion.
-    textMonitor_ = g_file_monitor_file(f, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
-    g_object_unref(f);
-    if (textMonitor_)
-        g_signal_connect(textMonitor_, "changed", G_CALLBACK(onTextFileChanged), this);
-}
-
-void Editor::stopWatchingText() {
-    if (textCheckTimer_) g_source_remove(textCheckTimer_);
-    textCheckTimer_ = 0;
-    if (textMonitor_) {
-        g_signal_handlers_disconnect_by_data(textMonitor_, this);
-        g_file_monitor_cancel(textMonitor_);
-        g_object_unref(textMonitor_);
-        textMonitor_ = nullptr;
-    }
-    diskKnown_ = false;
-}
-
-// A burst of events (write, close, rename) becomes one check, a moment after
-// the last of them, when the writer is done.
-void Editor::onTextFileChanged(GFileMonitor*, GFile*, GFile*, GFileMonitorEvent ev,
-                               gpointer selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    switch (ev) {
-        case G_FILE_MONITOR_EVENT_CHANGED:
-        case G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT:
-        case G_FILE_MONITOR_EVENT_CREATED:
-        case G_FILE_MONITOR_EVENT_RENAMED:
-        case G_FILE_MONITOR_EVENT_MOVED_IN:
-            break;
-        default:
-            return;   // attribute changes, and deletion (the buffer stays, as on the Mac)
-    }
-    if (self->textCheckTimer_) g_source_remove(self->textCheckTimer_);
-    self->textCheckTimer_ = g_timeout_add(200, [](gpointer p) -> gboolean {
-        Editor* s = static_cast<Editor*>(p);
-        s->textCheckTimer_ = 0;
-        s->checkExternalChange();
-        return G_SOURCE_REMOVE;
-    }, self);
-}
-
-void Editor::checkExternalChange() {
-    if (path_.empty() || readOnly_ || !diskKnown_) return;
-    // Gone, unreadable, replaced by a pipe or grown past what the editor
-    // opens: what is in the editor stays, as on the Mac.
-    std::string content;
-    if (readTextFile(path_, content) != ReadResult::Ok) return;
-    if (diskMatches(content)) return;
-    // No longer text: nothing to put in the buffer (the Mac's read fails too).
-    if (!g_utf8_validate(content.data(), (gssize)content.size(), nullptr)) return;
-    if (!dirty()) {
-        rememberDisk(content);
-        applyDiskText(content);
-        return;
-    }
-    // Edits here and a change there: the user decides. Once asked, this
-    // version on disk is not asked about again, whatever the answer.
-    if (extCb_ && extCb_(extUser_)) rememberDisk(content);
-}
-
-bool Editor::reloadFromDisk() {
-    if (path_.empty() || readOnly_) return false;
-    std::string content;
-    if (readTextFile(path_, content) != ReadResult::Ok) return false;
-    if (!g_utf8_validate(content.data(), (gssize)content.size(), nullptr)) return false;
-    rememberDisk(content);
-    applyDiskText(content);
-    return true;
-}
-
-namespace {
-// Scroll offsets, put back once the view has laid out the new text as well
-// as straight away (the adjustment's range may lag the buffer by a frame).
-struct ScrollKeep {
-    GtkAdjustment* h;
-    GtkAdjustment* v;
-    double hv, vv;
-};
-void restoreScroll(ScrollKeep* k) {
-    gtk_adjustment_set_value(k->h, k->hv);
-    gtk_adjustment_set_value(k->v, k->vv);
-}
-}  // namespace
-
-// The disk's text replaces the buffer's in place: only the bytes between the
-// common start and end of the two are replaced, as one user action, so the
-// highlighter and the language server see one edit, undo can take it back,
-// and the caret and scroll position stay where they were.
-void Editor::applyDiskText(const std::string& content) {
-    auto* keep = new ScrollKeep{
-        gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)),
-        gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_)), 0, 0};
-    keep->hv = gtk_adjustment_get_value(keep->h);
-    keep->vv = gtk_adjustment_get_value(keep->v);
-    g_object_ref(keep->h);
-    g_object_ref(keep->v);
-
-    if (isMarkdown_ && preview_) {
-        source_ = content;
-        renderPreview();   // rendered text, not the file's: re-render it
-    } else if (sourceMode_) {
-        GtkTextIter s, e;
-        gtk_text_buffer_get_bounds(buffer_, &s, &e);
-        char* raw = gtk_text_buffer_get_text(buffer_, &s, &e, TRUE);
-        const std::string old = raw ? raw : "";
-        g_free(raw);
-        // Common prefix and suffix, in bytes, backed off to character starts.
-        const std::size_t n = std::min(old.size(), content.size());
-        std::size_t p = 0;
-        while (p < n && old[p] == content[p]) ++p;
-        while (p > 0 && p < old.size() && ((unsigned char)old[p] & 0xC0) == 0x80) --p;
-        std::size_t q = 0;
-        while (q < n - p && old[old.size() - 1 - q] == content[content.size() - 1 - q]) ++q;
-        while (q > 0 && ((unsigned char)old[old.size() - q] & 0xC0) == 0x80) --q;
-
-        if (p + q < old.size() || p + q < content.size()) {
-            const long from = g_utf8_strlen(old.data(), (gssize)p);
-            const long to = g_utf8_strlen(old.data(), (gssize)(old.size() - q));
-            // Where the caret was, by line and column, for when it sat inside
-            // the replaced part (outside it, GTK carries it along by itself).
-            GtkTextIter cur;
-            gtk_text_buffer_get_iter_at_mark(buffer_, &cur, gtk_text_buffer_get_insert(buffer_));
-            const long curOff = gtk_text_iter_get_offset(&cur);
-            const int curLine = gtk_text_iter_get_line(&cur);
-            const int curCol = gtk_text_iter_get_line_offset(&cur);
-
-            g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
-            gtk_text_buffer_begin_user_action(buffer_);
-            GtkTextIter a, b;
-            gtk_text_buffer_get_iter_at_offset(buffer_, &a, (int)from);
-            gtk_text_buffer_get_iter_at_offset(buffer_, &b, (int)to);
-            gtk_text_buffer_delete(buffer_, &a, &b);
-            gtk_text_buffer_insert(buffer_, &a, content.data() + p,
-                                   (int)(content.size() - p - q));
-            gtk_text_buffer_end_user_action(buffer_);
-            g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
-
-            if (curOff > from && curOff < to) {
-                GtkTextIter back;
-                const int lines = gtk_text_buffer_get_line_count(buffer_);
-                gtk_text_buffer_get_iter_at_line(buffer_, &back, std::min(curLine, lines - 1));
-                const int len = gtk_text_iter_get_chars_in_line(&back);
-                const bool last = gtk_text_iter_get_line(&back) == lines - 1;
-                gtk_text_iter_set_line_offset(&back,
-                    std::min(curCol, std::max(0, last ? len : len - 1)));
-                gtk_text_buffer_place_cursor(buffer_, &back);
-            }
-        }
-        source_ = content;
-    }
-    markDirty(false);
-    refreshTaskCount();
-
-    restoreScroll(keep);
-    g_idle_add_full(G_PRIORITY_LOW, [](gpointer d) -> gboolean {
-        restoreScroll(static_cast<ScrollKeep*>(d));
-        return G_SOURCE_REMOVE;
-    }, keep, [](gpointer d) {
-        auto* k = static_cast<ScrollKeep*>(d);
-        g_object_unref(k->h);
-        g_object_unref(k->v);
-        delete k;
-    });
-}
-
 // ---------------------------------------------------------------- comments
 
 bool Editor::toggleComment() {
-    if (preview_ || path_.empty() || !gtk_text_view_get_editable(GTK_TEXT_VIEW(view_)))
+    if (!isSource() || inPreview() || !gtk_text_view_get_editable(GTK_TEXT_VIEW(view_)))
         return false;
-    const std::string marker = LineComments::markerFor(path_);
+    const std::string marker = LineComments::markerFor(active_->path());
     if (marker.empty()) return false;
 
     GtkTextIter a, b;
@@ -1903,55 +1190,58 @@ bool Editor::toggleComment() {
 // ---------------------------------------------------------------- preview
 
 void Editor::togglePreview() {
-    if (isLatex_) {
-        preview_ = !preview_;
-        showLatex(preview_);
+    Document* d = active_;
+    if (!d) return;
+    if (d->isLatex()) {
+        d->setShowsPreview(!d->showsPreview());
+        showLatex(d->showsPreview(), true);
         return;
     }
-    if (!isMarkdown_) return;
+    if (!d->isMarkdown()) return;
     GtkTextView* tv = GTK_TEXT_VIEW(view_);
     GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    Document::Place& p = d->place();
     int caretLine = -1, previewLine = -1;
-    if (!preview_) {
-        // Leaving the source: remember the selection and the caret's height.
+    if (!d->showsPreview()) {
+        // Leaving the source: remember the caret's height in the pane. The
+        // selection stays in the source buffer, which the page leaves alone.
         GtkTextIter a, b;
-        gtk_text_buffer_get_selection_bounds(buffer_, &a, &b);
-        srcSelStart_ = gtk_text_iter_get_offset(&a);
-        srcSelEnd_ = gtk_text_iter_get_offset(&b);
+        gtk_text_buffer_get_selection_bounds(d->buffer(), &a, &b);
         caretLine = gtk_text_iter_get_line(&a);
         GdkRectangle loc, vis;
         gtk_text_view_get_iter_location(tv, &a, &loc);
         gtk_text_view_get_visible_rect(tv, &vis);
-        srcCaretFrac_ = vis.height > 0
+        p.srcCaretFrac = vis.height > 0
             ? std::min(0.9, std::max(0.0, (double)(loc.y - vis.y) / vis.height)) : 0.3;
-        haveSrcPos_ = true;
-    } else if (previewEntryV_ >= 0 && std::fabs(gtk_adjustment_get_value(v) - previewEntryV_) > 2) {
+        p.haveSrcPos = true;
+    } else if (p.previewEntryV >= 0 &&
+               std::fabs(gtk_adjustment_get_value(v) - p.previewEntryV) > 2) {
         // Leaving a preview that was scrolled: the source opens where it was.
         GdkRectangle vis;
         gtk_text_view_get_visible_rect(tv, &vis);
         GtkTextIter top;
         gtk_text_view_get_iter_at_location(tv, &top, vis.x, vis.y + 4);
         const int at = gtk_text_iter_get_offset(&top);
-        for (const Markdown::Span& sp : page_.spans)
+        for (const Markdown::Span& sp : d->pageInfo().spans)
             if (sp.end > at && sp.line >= 0) { previewLine = sp.line; break; }
     }
     if (previewEntryTimer_) g_source_remove(previewEntryTimer_);
     previewEntryTimer_ = 0;
-    preview_ = !preview_;
+    stopSettle();
+    stopHold();
+    stopPlace();
+    settleScrolling(nullptr, scroller_);
 
-    if (preview_) {
-        // Sync source_ from the buffer first, in case of unsaved edits.
-        GtkTextIter a, b;
-        gtk_text_buffer_get_bounds(buffer_, &a, &b);
-        char* txt = gtk_text_buffer_get_text(buffer_, &a, &b, FALSE);
-        source_ = txt ? txt : "";
-        g_free(txt);
+    if (!d->showsPreview()) {
+        d->setShowsPreview(true);
+        d->setShownIn(nullptr);
+        p.havePage = false;
         renderPreview();
-        refreshTaskCount();   // typing a moment ago may not be counted yet
+        d->refreshTaskCount();   // typing a moment ago may not be counted yet
         // The part of the page the caret was in, a third of the way down.
         GtkTextIter at;
         gtk_text_buffer_get_iter_at_offset(buffer_, &at,
-            page_.offsetForLine(caretLine, gtk_text_buffer_get_char_count(buffer_)));
+            d->pageInfo().offsetForLine(caretLine, gtk_text_buffer_get_char_count(buffer_)));
         gtk_text_buffer_place_cursor(buffer_, &at);
         gtk_text_view_scroll_to_mark(tv, gtk_text_buffer_get_insert(buffer_), 0.0, TRUE, 0.0,
                                      caretLine <= 0 ? 0.0 : 0.33);
@@ -1960,47 +1250,55 @@ void Editor::togglePreview() {
         // is the user's.
         notePreviewRest();
     } else {
-        // Preview edits were undone from snapshots; the source view has its
-        // own undo from here.
-        mdUndo_.clear();
-        mdRedo_.clear();
         dropMdPopover();
-        loadRawIntoBuffer();
-        const int chars = gtk_text_buffer_get_char_count(buffer_);
+        clearPage(d);
+        d->setShowsPreview(false);
+        setViewBuffer(d->buffer(), false, true);
+        d->setShownIn(tv);
         GtkTextIter a, b;
         double yalign = 0.0;
         if (previewLine >= 0) {
             gtk_text_buffer_get_iter_at_line(buffer_, &a, previewLine);
-            b = a;
-        } else if (haveSrcPos_) {
-            gtk_text_buffer_get_iter_at_offset(buffer_, &a, std::min(srcSelStart_, chars));
-            gtk_text_buffer_get_iter_at_offset(buffer_, &b, std::min(srcSelEnd_, chars));
-            yalign = srcCaretFrac_;
+            gtk_text_buffer_select_range(buffer_, &a, &a);
+        } else if (p.haveSrcPos) {
+            // The source's own selection, kept in its buffer, as it was.
+            gtk_text_buffer_get_selection_bounds(buffer_, &a, &b);
+            yalign = p.srcCaretFrac;
         } else {
             gtk_text_buffer_get_start_iter(buffer_, &a);
-            b = a;
+            gtk_text_buffer_select_range(buffer_, &a, &a);
         }
-        gtk_text_buffer_select_range(buffer_, &a, &b);
         gtk_text_view_scroll_to_mark(tv, gtk_text_buffer_get_insert(buffer_), 0.0, TRUE, 0.0,
                                      yalign);
         settleOnCaret();
+        notifyDocument();
     }
 }
 
+// The active Markdown file's page, rendered into a buffer of its own (D3)
+// that the view then shows. The source buffer, its undo and its colors are
+// not touched.
 void Editor::renderPreview() {
+    Document* d = active_;
+    if (!d) return;
     stopHold();
-    stopHighlighting();
-    g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
-    setProseFont(true);
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);
-    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(view_), FALSE);   // a page, not a field
+    stopPlace();
+    clearPage(d);
+    GtkTextBuffer* page = d->page();
+    // The view shows the page before the page's widgets are anchored in it:
+    // an anchor's widget is added through the view of its buffer.
+    setViewBuffer(page, true, false);
     Markdown::Hooks hooks;
-    char* dir = g_path_get_dirname(path_.c_str());
+    char* dir = g_path_get_dirname(d->path().c_str());
     hooks.folder = dir ? dir : ".";
     g_free(dir);
     hooks.webImages = settings_.webImages() && WebImages::available();
-    hooks.link = [this](const std::string& url) { openMarkdownLink(url); };
-    hooks.cellDoubleClick = [this](int line, int row, int column, GtkWidget* cell) {
+    std::weak_ptr<int> alive = alive_;
+    hooks.link = [this, alive](const std::string& url) {
+        if (!alive.expired()) openMarkdownLink(url);
+    };
+    hooks.cellDoubleClick = [this, alive](int line, int row, int column, GtkWidget* cell) {
+        if (alive.expired()) return;
         graphene_rect_t r;
         GdkRectangle at{0, 0, 1, 1};
         if (gtk_widget_compute_bounds(cell, view_, &r))
@@ -2009,47 +1307,43 @@ void Editor::renderPreview() {
         // The separator row sits between the header and the first body row.
         editMarkdownBlock(line + row + (row > 0 ? 1 : 0), column, at);
     };
-    std::weak_ptr<int> alive = alive_;
     hooks.taskToggle = [this, alive](int line) {
         if (!alive.expired()) toggleTaskBox(line);
     };
-    // Rendered text is never undone into, so no history is kept of it.
-    clearPage();
-    gtk_text_buffer_begin_irreversible_action(buffer_);
-    page_ = Markdown::render(GTK_TEXT_VIEW(view_), buffer_, source_, hooks);
-    gtk_text_buffer_end_irreversible_action(buffer_);
-    g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
+    d->pageInfo() = Markdown::render(GTK_TEXT_VIEW(view_), page, d->text(), hooks);
     fitPage();
     GtkTextIter start;
-    gtk_text_buffer_get_start_iter(buffer_, &start);
-    gtk_text_buffer_place_cursor(buffer_, &start);
+    gtk_text_buffer_get_start_iter(page, &start);
+    gtk_text_buffer_place_cursor(page, &start);
     notifyDocument();
     fetchWebPictures();
 }
 
 // The page's tables, pictures and task boxes come off the view before the
-// text holding their anchors is replaced. Left to the buffer's deletion,
-// each child is unmapped from inside gtk_text_buffer_set_text, and a child
-// that is hovered or pressed changes the view's state flags there; the
-// view's handler reads the selection from a buffer half deleted and
-// crashes (GTK 4.22). A task box re-renders the page while the pointer is
-// on it and its press is in progress, which reached this every time after
-// the edit popover had been open once.
-void Editor::clearPage() {
-    for (const Markdown::Embed& e : page_.embeds)
+// text holding their anchors is replaced, or the view shows another buffer.
+// Left to the buffer's deletion, each child is unmapped from inside
+// gtk_text_buffer_set_text, and a child that is hovered or pressed changes
+// the view's state flags there; the view's handler reads the selection from
+// a buffer half deleted and crashes (GTK 4.22). A task box re-renders the
+// page while the pointer is on it and its press is in progress, which
+// reached this every time after the edit popover had been open once.
+void Editor::clearPage(Document* d) {
+    if (!d) return;
+    for (const Markdown::Embed& e : d->pageInfo().embeds)
         if (e.widget && gtk_widget_get_parent(e.widget) == view_)
             gtk_text_view_remove(GTK_TEXT_VIEW(view_), e.widget);
-    page_ = Markdown::Page();
+    d->pageInfo() = Markdown::Page();
 }
 
 void Editor::notePreviewRest() {
     if (previewEntryTimer_) g_source_remove(previewEntryTimer_);
-    previewEntryV_ = -1;
+    if (active_) active_->place().previewEntryV = -1;
     previewEntryTimer_ = g_timeout_add(700, [](gpointer selfp) -> gboolean {
         Editor* self = static_cast<Editor*>(selfp);
         self->previewEntryTimer_ = 0;
-        self->previewEntryV_ = gtk_adjustment_get_value(
-            gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scroller_)));
+        if (self->active_)
+            self->active_->place().previewEntryV = gtk_adjustment_get_value(
+                gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scroller_)));
         return G_SOURCE_REMOVE;
     }, this);
 }
@@ -2082,13 +1376,15 @@ void Editor::rerenderPreview() {
 // place of its alt text in the buffer as it stands, not by a new render:
 // GtkTextView keeps the first paragraph on screen where it is when lines
 // above it change height, so the part of the page being read stays put.
-// A result for a page that is gone (another file, the source, a new
-// render without that picture) finds nothing pending and is dropped.
+// A result for a page that is gone (another tab, the source, a new render
+// without that picture) finds nothing pending and is dropped; the page
+// rendered again later finds the picture kept in memory.
 
 void Editor::fetchWebPictures() {
+    if (!active_) return;
     std::weak_ptr<int> alive = alive_;
     std::vector<std::string> asked;
-    for (const Markdown::PendingPicture& p : page_.pending) {
+    for (const Markdown::PendingPicture& p : active_->pageInfo().pending) {
         if (std::find(asked.begin(), asked.end(), p.url) != asked.end()) continue;
         asked.push_back(p.url);
         const std::string url = p.url;
@@ -2109,13 +1405,14 @@ void Editor::fetchWebPictures() {
 void Editor::placeArrivedPictures() {
     auto batch = std::move(arrived_);
     arrived_.clear();
-    if (!preview_ || !isMarkdown_ || page_.pending.empty()) return;
+    if (!inMarkdownPage() || active_->pageInfo().pending.empty()) return;
+    Markdown::Page& page = active_->pageInfo();
     GtkTextView* tv = GTK_TEXT_VIEW(view_);
     GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
     // A preview the user has not scrolled yet is not scrolled by this
-    // either, as far as Ctrl+Shift+P is concerned.
-    const bool scrolled = previewEntryV_ >= 0 &&
-                          std::fabs(gtk_adjustment_get_value(v) - previewEntryV_) > 2;
+    // either, as far as Ctrl+Shift+V is concerned.
+    const double entry = active_->place().previewEntryV;
+    const bool scrolled = entry >= 0 && std::fabs(gtk_adjustment_get_value(v) - entry) > 2;
     // The line at the top of the view, and how far into it the view starts.
     GdkRectangle vis;
     gtk_text_view_get_visible_rect(tv, &vis);
@@ -2125,14 +1422,10 @@ void Editor::placeArrivedPictures() {
     GtkTextMark* topMark = gtk_text_buffer_create_mark(buffer_, nullptr, &top, TRUE);
 
     int placed = 0;
-    g_signal_handlers_block_by_func(buffer_, (gpointer)onBufferChanged, this);
-    gtk_text_buffer_begin_irreversible_action(buffer_);
     for (const auto& a : batch)
-        placed += Markdown::placeWebPicture(tv, buffer_, page_, a.first, a.second);
-    gtk_text_buffer_end_irreversible_action(buffer_);
-    g_signal_handlers_unblock_by_func(buffer_, (gpointer)onBufferChanged, this);
+        placed += Markdown::placeWebPicture(tv, buffer_, page, a.first, a.second);
     g_log("minicode-web", G_LOG_LEVEL_DEBUG, "placed %d pictures from %zu arrivals, %zu pending",
-          placed, batch.size(), page_.pending.size());
+          placed, batch.size(), page.pending.size());
     if (!placed) {
         gtk_text_buffer_delete_mark(buffer_, topMark);
         return;
@@ -2168,7 +1461,7 @@ void Editor::stopHold() {
     if (holdTick_) gtk_widget_remove_tick_callback(view_, holdTick_);
     holdTick_ = 0;
     if (holdMark_ && !gtk_text_mark_get_deleted(holdMark_))
-        gtk_text_buffer_delete_mark(buffer_, holdMark_);
+        gtk_text_buffer_delete_mark(gtk_text_mark_get_buffer(holdMark_), holdMark_);
     holdMark_ = nullptr;
 }
 
@@ -2176,6 +1469,7 @@ gboolean Editor::onHoldTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
     Editor* self = static_cast<Editor*>(selfp);
     GtkTextView* tv = GTK_TEXT_VIEW(self->view_);
     if (!self->holdMark_ || g_get_monotonic_time() > self->holdUntil_ ||
+        gtk_text_mark_get_buffer(self->holdMark_) != self->buffer_ ||
         !gtk_widget_get_mapped(self->view_)) {
         self->holdTick_ = 0;
         self->stopHold();
@@ -2209,14 +1503,119 @@ gboolean Editor::onHoldTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
     return G_SOURCE_CONTINUE;
 }
 
+// A tab shown again comes back to its place, as the Mac's restoreTextPlaceOf:
+// does: its first line at the top, as far into it as it was. Right after
+// gtk_text_view_set_buffer GTK lays out and moves the view more than once,
+// from heights it estimates for lines it has not laid out yet, so for up to
+// two seconds the line is looked at every frame, and once the view has
+// stopped moving it is put there, on the adjustment, until it stays for a
+// few frames. Not by gtk_text_view_scroll_to_mark: GTK keeps that pending
+// and can carry it out after the user has moved on (a Ctrl+End then ended
+// at the top). It waits while the view is off screen (the
+// browser over it), and gives way to the user scrolling, or pressing the
+// mouse anywhere in the scroller (its scroll bars included). The caret moving
+// meanwhile (typing, Ctrl+End, an undo) makes the caret the target instead:
+// it is kept on screen until the view stays still with it there, since GTK's
+// own scroll to it lands short while it lays out the lines it had only
+// estimated (settleOnCaret), and an undo does not scroll to it at all; once
+// the view was left near the top with the caret, and the edit, far below.
+void Editor::settleOnPlace(GtkTextMark* mark, int into) {
+    stopPlace();
+    placeMark_ = mark;
+    placeInto_ = into;
+    placeUntil_ = g_get_monotonic_time() + 2 * G_USEC_PER_SEC;
+    placeLastV_ = -1;
+    placeStill_ = 0;
+    placeTries_ = 0;
+    placeFollowCaret_ = false;
+    GtkTextBuffer* b = gtk_text_mark_get_buffer(mark);
+    GtkTextIter caret;
+    gtk_text_buffer_get_iter_at_mark(b, &caret, gtk_text_buffer_get_insert(b));
+    placeCaret_ = gtk_text_iter_get_offset(&caret);
+    placeTick_ = gtk_widget_add_tick_callback(view_, onPlaceTick, this, nullptr);
+}
+
+void Editor::stopPlace() {
+    if (placeTick_) gtk_widget_remove_tick_callback(view_, placeTick_);
+    placeTick_ = 0;
+    if (placeMark_ && !gtk_text_mark_get_deleted(placeMark_))
+        gtk_text_buffer_delete_mark(gtk_text_mark_get_buffer(placeMark_), placeMark_);
+    placeMark_ = nullptr;
+}
+
+gboolean Editor::onPlaceTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
+    Editor* self = static_cast<Editor*>(selfp);
+    GtkTextView* tv = GTK_TEXT_VIEW(self->view_);
+    auto done = [self] {
+        self->placeTick_ = 0;
+        self->stopPlace();
+        return G_SOURCE_REMOVE;
+    };
+    if (!self->placeMark_ || g_get_monotonic_time() > self->placeUntil_ ||
+        gtk_text_mark_get_buffer(self->placeMark_) != self->buffer_)
+        return done();
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_mark(self->buffer_, &it, gtk_text_buffer_get_insert(self->buffer_));
+    if (gtk_text_iter_get_offset(&it) != self->placeCaret_) {
+        self->placeCaret_ = gtk_text_iter_get_offset(&it);
+        self->placeFollowCaret_ = true;
+        self->placeStill_ = 0;
+        self->placeTries_ = 0;
+        self->placeUntil_ = std::max(self->placeUntil_,
+                                     g_get_monotonic_time() + G_USEC_PER_SEC * 3 / 2);
+    }
+    if (!gtk_widget_get_mapped(self->view_)) return G_SOURCE_CONTINUE;
+    GtkAdjustment* v = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tv));
+    const double now = gtk_adjustment_get_value(v);
+    const bool still = now == self->placeLastV_;
+    self->placeLastV_ = now;
+    if (!still) {
+        self->placeStill_ = 0;
+        return G_SOURCE_CONTINUE;
+    }
+    if (self->placeFollowCaret_) {
+        // The caret on screen, a third of the way down when it was not.
+        GdkRectangle vis, at;
+        gtk_text_view_get_visible_rect(tv, &vis);
+        gtk_text_view_get_iter_location(tv, &it, &at);
+        if (vis.height > 0 && at.y >= vis.y && at.y + at.height <= vis.y + vis.height) {
+            if (++self->placeStill_ >= 3) return done();
+            return G_SOURCE_CONTINUE;
+        }
+        if (self->placeTries_++ >= 8) return done();
+        self->placeStill_ = 0;
+        gtk_adjustment_set_value(v, now + at.y - vis.y - vis.height * 0.3);
+        self->placeLastV_ = gtk_adjustment_get_value(v);
+        return G_SOURCE_CONTINUE;
+    }
+    gtk_text_buffer_get_iter_at_mark(self->buffer_, &it, self->placeMark_);
+    int y = 0, h = 0;
+    gtk_text_view_get_line_yrange(tv, &it, &y, &h);
+    GdkRectangle vis;
+    gtk_text_view_get_visible_rect(tv, &vis);
+    const int off = y + self->placeInto_ - vis.y;
+    if (off == 0) {
+        if (++self->placeStill_ >= 3) return done();
+        return G_SOURCE_CONTINUE;
+    }
+    // Near the end of the text the place may not be reachable any more (the
+    // file shrank): a few tries, then it stays where GTK can put it.
+    if (self->placeTries_++ >= 8) return done();
+    self->placeStill_ = 0;
+    gtk_adjustment_set_value(v, now + off);
+    self->placeLastV_ = gtk_adjustment_get_value(v);
+    return G_SOURCE_CONTINUE;
+}
+
 void Editor::fitPage() {
-    if (page_.embeds.empty()) return;
+    if (!active_ || active_->pageInfo().embeds.empty()) return;
     const double page = gtk_adjustment_get_page_size(
         gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)));
     // Before the first layout the pane has no width yet; a notify follows.
     const int width = page > 0 ? (int)page : 600;
-    Markdown::fit(page_, width - gtk_text_view_get_left_margin(GTK_TEXT_VIEW(view_)) -
-                         gtk_text_view_get_right_margin(GTK_TEXT_VIEW(view_)) - 16);
+    Markdown::fit(active_->pageInfo(), width - gtk_text_view_get_left_margin(GTK_TEXT_VIEW(view_)) -
+                                           gtk_text_view_get_right_margin(GTK_TEXT_VIEW(view_)) -
+                                           16);
 }
 
 // ---------------------------------------------------------------- preview links
@@ -2224,7 +1623,7 @@ void Editor::fitPage() {
 // "#section" scrolls to that heading; a web address, or a path relative to
 // the Markdown file (GitHub's "#L12" names a line), goes to the shell.
 void Editor::openMarkdownLink(const std::string& url) {
-    if (url.empty()) return;
+    if (url.empty() || !active_) return;
     if (url[0] == '#') {
         if (!scrollToAnchor(url.substr(1))) gtk_widget_error_bell(view_);
         return;
@@ -2267,8 +1666,9 @@ void Editor::openMarkdownLink(const std::string& url) {
         if (!scrollToAnchor(fragment)) gtk_widget_error_bell(view_);
         return;
     }
+    const std::string& here = active_->path();
     if (path[0] != '/') {
-        char* dir = g_path_get_dirname(path_.c_str());
+        char* dir = g_path_get_dirname(here.c_str());
         path = std::string(dir) + "/" + path;
         g_free(dir);
     }
@@ -2283,7 +1683,7 @@ void Editor::openMarkdownLink(const std::string& url) {
         gtk_widget_error_bell(view_);
         return;
     }
-    if (path == path_ && !fragment.empty() && fragment[0] != 'L') {
+    if (path == here && !fragment.empty() && fragment[0] != 'L') {
         if (!scrollToAnchor(fragment)) gtk_widget_error_bell(view_);
         return;
     }
@@ -2295,12 +1695,14 @@ void Editor::openMarkdownLink(const std::string& url) {
 }
 
 bool Editor::scrollToAnchor(const std::string& anchorIn) {
+    if (!inMarkdownPage()) return false;
     char* un = g_uri_unescape_string(anchorIn.c_str(), nullptr);
     std::string key = un ? un : anchorIn;
     g_free(un);
     for (char& c : key) c = (char)std::tolower((unsigned char)c);
-    auto it = page_.anchors.find(key);
-    if (it == page_.anchors.end()) return false;
+    const Markdown::Page& page = active_->pageInfo();
+    auto it = page.anchors.find(key);
+    if (it == page.anchors.end()) return false;
     GtkTextIter at;
     gtk_text_buffer_get_iter_at_offset(buffer_, &at, it->second);
     gtk_text_buffer_place_cursor(buffer_, &at);
@@ -2315,23 +1717,26 @@ bool Editor::scrollToAnchor(const std::string& anchorIn) {
 // A double-click on rendered Markdown opens the block behind it (a
 // paragraph, heading, list item, quote, code block or table cell) in a
 // popover holding its Markdown, as the LaTeX preview does for LaTeX. Saving
-// splices just those bytes into the source (MarkdownEdit), which is then
-// unsaved until Ctrl+S, as typing leaves it.
+// splices just those bytes into the source buffer, as one undoable edit
+// (D3), which is then unsaved until Ctrl+S, as typing leaves it.
 
 void Editor::editMarkdownBlock(int line, int column, const GdkRectangle& at) {
-    MarkdownEdit::Block block = MarkdownEdit::blockAt(source_, line, column);
+    if (!inMarkdownPage()) return;
+    const std::string source = active_->text();
+    MarkdownEdit::Block block = MarkdownEdit::blockAt(source, line, column);
     if (block.kind == MarkdownEdit::Block::None) return;
     static const char* const kinds[] = {"", "Paragraph", "Heading", "List item", "Quote",
                                         "Code block", "Table cell", "Table row", "Formula",
                                         "HTML"};
     mdBlock_ = block;
-    mdEditSrc_ = source_;
+    mdEditSrc_ = source;
+    mdEditDoc_ = active_;
     mdEditValid_ = true;
     mdAdding_ = false;
     mdAnchor_ = at;
     showMdPopover(std::string(kinds[block.kind]) +
                       " (Markdown; Enter saves, Shift+Enter for a new line)",
-                  source_.substr(block.start, block.end - block.start),
+                  source.substr(block.start, block.end - block.start),
                   block.kind == MarkdownEdit::Block::ListItem);
 }
 
@@ -2428,38 +1833,53 @@ void Editor::commitMdEdit() {
     gtk_popover_popdown(GTK_POPOVER(mdPop_));
     // The block's bytes index the source it was found in; if that changed
     // while the popover was open, they may no longer be the same text.
-    if (source_ != mdEditSrc_ || !preview_ || !isMarkdown_) return;
+    if (!inMarkdownPage() || active_ != mdEditDoc_ || active_->text() != mdEditSrc_) return;
     std::string edited;
     if (adding) {
         if (text.empty()) return;
-        edited = MarkdownEdit::addItem(source_, mdBlock_, text);
+        edited = MarkdownEdit::addItem(mdEditSrc_, mdBlock_, text);
     } else {
-        edited = MarkdownEdit::replace(source_, mdBlock_, text);
+        edited = MarkdownEdit::replace(mdEditSrc_, mdBlock_, text);
     }
-    if (edited != source_) applyMarkdownSource(edited, true);
+    if (edited != mdEditSrc_) applyMarkdownSource(edited);
 }
 
 void Editor::dropMdPopover() {
     mdEditValid_ = false;
+    mdEditDoc_ = nullptr;
     if (!mdPop_) return;
     g_signal_handlers_disconnect_by_data(mdPop_, this);
     if (gtk_widget_get_parent(mdPop_)) gtk_widget_unparent(mdPop_);
     mdPop_ = mdPopLabel_ = mdPopText_ = mdPopAdd_ = nullptr;
 }
 
-void Editor::applyMarkdownSource(const std::string& source, bool undoable) {
-    if (source == source_) return;
-    if (undoable) {
-        mdUndo_.push_back(source_);
-        mdRedo_.clear();
+void Editor::applyMarkdownSource(const std::string& source) {
+    Document* d = active_;
+    if (!d || source == d->text()) return;
+    GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    const double keep = gtk_adjustment_get_value(v);
+    d->spliceText(source);
+    rerenderPreview();
+    d->place().previewEntryV = keep;
+    d->refreshTaskCount();
+}
+
+// The page is never undone into; Ctrl+Z there takes back the last change to
+// the source, the preview's edits and typing alike, and shows the page again.
+void Editor::undoFromPage(bool redo) {
+    Document* d = active_;
+    GtkTextBuffer* src = d->buffer();
+    if (!(redo ? gtk_text_buffer_get_can_redo(src) : gtk_text_buffer_get_can_undo(src))) {
+        gtk_widget_error_bell(view_);
+        return;
     }
     GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
     const double keep = gtk_adjustment_get_value(v);
-    source_ = source;
-    markDirty(true);
+    if (redo) gtk_text_buffer_redo(src);
+    else gtk_text_buffer_undo(src);
     rerenderPreview();
-    previewEntryV_ = keep;
-    refreshTaskCount();
+    d->place().previewEntryV = keep;
+    d->refreshTaskCount();
 }
 
 gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifierType mods,
@@ -2471,13 +1891,13 @@ gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifier
     const bool plain = !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK));
     const bool completion = self->observer_ && self->observer_->takesReturn();
     self->typedKey_ = 0;
-    if (plain && self->sourceMode_ && !completion) {
+    if (plain && self->isSource() && !completion) {
         const bool shift = mods & GDK_SHIFT_MASK;
         if (key == GDK_KEY_Return || key == GDK_KEY_KP_Enter || key == GDK_KEY_ISO_Enter) {
             // In a Markdown list it starts the next item, or ends the list.
             // Shift+Return is a plain new line (with the indent), for a
             // second line inside the same item.
-            if (!shift && self->isMarkdown_ && self->continueList()) return TRUE;
+            if (!shift && self->isMarkdown() && self->continueList()) return TRUE;
             if (self->indentKey(GDK_KEY_Return)) return TRUE;
         } else if ((key == GDK_KEY_Tab || key == GDK_KEY_KP_Tab) && !shift) {
             if (self->indentKey(GDK_KEY_Tab)) return TRUE;
@@ -2490,91 +1910,33 @@ gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifier
             if (c == ':' || c == ')' || c == ']' || c == '}') self->typedKey_ = (char)c;
         }
     }
-    if (!self->preview_ || !self->isMarkdown_) return FALSE;
+    if (!self->inMarkdownPage()) return FALSE;
     const bool ctrl = mods & GDK_CONTROL_MASK, shift = mods & GDK_SHIFT_MASK;
     const bool undo = ctrl && !shift && (key == GDK_KEY_z || key == GDK_KEY_Z);
     const bool redo = ctrl && ((shift && (key == GDK_KEY_z || key == GDK_KEY_Z)) ||
                                (!shift && (key == GDK_KEY_y || key == GDK_KEY_Y)));
     if (!undo && !redo) return FALSE;
-    auto& from = undo ? self->mdUndo_ : self->mdRedo_;
-    auto& to = undo ? self->mdRedo_ : self->mdUndo_;
-    if (from.empty()) {
-        gtk_widget_error_bell(self->view_);
-        return TRUE;
-    }
-    to.push_back(self->source_);
-    const std::string src = from.back();
-    from.pop_back();
-    self->applyMarkdownSource(src, false);
+    self->undoFromPage(redo);
     return TRUE;
-}
-
-// ---------------------------------------------------------------- dirty state
-
-void Editor::markDirty(bool d) {
-    if (dirty_ == d) return;
-    dirty_ = d;
-    if (titleCb_) titleCb_(titleUser_);
-}
-
-// ---------------------------------------------------------------- change hook
-
-void Editor::onBufferChanged(GtkTextBuffer* /*buf*/, gpointer selfp) {
-    Editor* self = static_cast<Editor*>(selfp);
-    self->markDirty(true);
-    // Highlighting is not done here: the insert-text and delete-range
-    // handlers retag each edit's lines as it happens.
-    if (self->sourceMode_ && self->isMarkdown_) self->scheduleTaskCount();
 }
 
 // ---------------------------------------------------------------- tasks
 //
 // Task lists ("- [ ] x"), over the shared MarkdownTasks core: a click on a
-// box in the preview, Ctrl+L on the source's lines, Return continuing a
-// list, and the count in the window title.
-
-void Editor::clearTaskCount() {
-    if (taskCountTimer_) g_source_remove(taskCountTimer_);
-    taskCountTimer_ = 0;
-    tasksDone_ = tasksTotal_ = 0;
-}
-
-void Editor::refreshTaskCount() {
-    if (taskCountTimer_) g_source_remove(taskCountTimer_);
-    taskCountTimer_ = 0;
-    int done = 0, total = 0;
-    if (isMarkdown_ && !readOnly_ && !path_.empty()) {
-        // The preview's buffer holds rendered text; source_ is the file then.
-        const MarkdownTasks::Counts c = MarkdownTasks::count(preview_ ? source_ : text());
-        done = c.done;
-        total = c.total;
-    }
-    if (done == tasksDone_ && total == tasksTotal_) return;
-    tasksDone_ = done;
-    tasksTotal_ = total;
-    if (titleCb_) titleCb_(titleUser_);
-}
-
-void Editor::scheduleTaskCount() {
-    if (taskCountTimer_) g_source_remove(taskCountTimer_);
-    taskCountTimer_ = g_timeout_add(300, [](gpointer p) -> gboolean {
-        Editor* self = static_cast<Editor*>(p);
-        self->taskCountTimer_ = 0;
-        self->refreshTaskCount();
-        return G_SOURCE_REMOVE;
-    }, this);
-}
+// box in the preview, the task key on the source's lines, and Return
+// continuing a list. The count in the title is the document's.
 
 void Editor::toggleTaskBox(int line) {
-    if (!preview_ || !isMarkdown_ || readOnly_) return;
-    const std::string edited = MarkdownTasks::toggleBox(source_, line);
-    if (edited == source_) {
+    if (!inMarkdownPage()) return;
+    const std::string source = active_->text();
+    const std::string edited = MarkdownTasks::toggleBox(source, line);
+    if (edited == source) {
         gtk_widget_error_bell(view_);
         return;
     }
     // A preview edit like the popover's: dirty until Ctrl+S, undone with
     // Ctrl+Z in the preview, and the page shown again at the same scroll.
-    applyMarkdownSource(edited, true);
+    applyMarkdownSource(edited);
 }
 
 void Editor::applyTaskEdit(const std::u16string& text, std::size_t replaceStart,
@@ -2602,7 +1964,7 @@ void Editor::applyTaskEdit(const std::u16string& text, std::size_t replaceStart,
 }
 
 bool Editor::toggleTask() {
-    if (!isMarkdown_ || preview_ || readOnly_ || !sourceMode_ ||
+    if (!isMarkdown() || inPreview() || !isSource() ||
         !gtk_text_view_get_editable(GTK_TEXT_VIEW(view_)))
         return false;
     GtkTextIter a, b;
@@ -2617,12 +1979,12 @@ bool Editor::toggleTask() {
         utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selB)));
     if (!r.changed) return false;
     applyTaskEdit(text, r.replaceStart, r.replaceLength, r.replacement, r.selStart, r.selEnd);
-    refreshTaskCount();
+    active_->refreshTaskCount();
     return true;
 }
 
 bool Editor::continueList() {
-    if (!isMarkdown_ || preview_ || readOnly_ || !sourceMode_ ||
+    if (!isMarkdown() || inPreview() || !isSource() ||
         !gtk_text_view_get_editable(GTK_TEXT_VIEW(view_)))
         return false;
     GtkTextIter a, b;
@@ -2646,7 +2008,7 @@ bool Editor::continueList() {
 // line sorting over KeepSorted. Each edit is one user action, one Ctrl+Z.
 
 bool Editor::sourceText(std::u16string& text, std::size_t& a, std::size_t& b) const {
-    if (preview_ || readOnly_ || !sourceMode_ || !gtk_text_view_get_editable(GTK_TEXT_VIEW(view_)))
+    if (!isSource() || inPreview() || !gtk_text_view_get_editable(GTK_TEXT_VIEW(view_)))
         return false;
     GtkTextIter s, e;
     gtk_text_buffer_get_bounds(buffer_, &s, &e);
@@ -2674,18 +2036,42 @@ bool Editor::indentKey(guint key) {
     std::u16string text;
     std::size_t a = 0, b = 0;
     if (!sourceText(text, a, b)) return false;
+    const std::string& path = active_->path();
     AutoIndent::Edit e;
     switch (key) {
-        case GDK_KEY_Return: e = AutoIndent::newline(text, a, b, path_); break;
-        case GDK_KEY_Tab: e = AutoIndent::tab(text, a, b, path_); break;
-        case GDK_KEY_ISO_Left_Tab: e = AutoIndent::backtab(text, a, b, path_); break;
-        case GDK_KEY_BackSpace: e = AutoIndent::backspace(text, a, b, path_); break;
+        case GDK_KEY_Return: e = AutoIndent::newline(text, a, b, path); break;
+        case GDK_KEY_Tab: e = AutoIndent::tab(text, a, b, path); break;
+        case GDK_KEY_ISO_Left_Tab: e = AutoIndent::backtab(text, a, b, path); break;
+        case GDK_KEY_BackSpace: e = AutoIndent::backspace(text, a, b, path); break;
         default: return false;
     }
     // Shift+Tab never moves the focus out of the editor.
     if (!e.changed) return key == GDK_KEY_ISO_Left_Tab;
     applyTaskEdit(text, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd);
     return true;
+}
+
+void Editor::electric(GtkTextIter* loc) {
+    GtkTextIter a, b;
+    gtk_text_buffer_get_bounds(buffer_, &a, &b);
+    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
+    const std::u16string text = utf16::fromUtf8(raw ? raw : "");
+    g_free(raw);
+    const size_t caret = utf16::fromCharOffset(text, gtk_text_iter_get_offset(loc));
+    const AutoIndent::Edit e = AutoIndent::typed(text, caret, active_->path());
+    if (!e.changed) return;
+    // Inside the key's own user action, so one Ctrl+Z takes back the key and
+    // the move together. The mark keeps loc valid for the handlers after us.
+    GtkTextMark* keep = gtk_text_buffer_create_mark(buffer_, nullptr, loc, FALSE);
+    GtkTextIter from, to;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &from, (int)utf16::toCharOffset(text, e.replaceStart));
+    gtk_text_buffer_get_iter_at_offset(buffer_, &to,
+        (int)utf16::toCharOffset(text, e.replaceStart + e.replaceLength));
+    gtk_text_buffer_delete(buffer_, &from, &to);
+    const std::string bytes = utf16::toUtf8(e.replacement);
+    gtk_text_buffer_insert(buffer_, &from, bytes.c_str(), (int)bytes.size());
+    gtk_text_buffer_get_iter_at_mark(buffer_, loc, keep);
+    gtk_text_buffer_delete_mark(buffer_, keep);
 }
 
 bool Editor::runKeepSorted(bool all, std::string* message) {

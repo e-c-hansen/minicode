@@ -43,6 +43,8 @@ core_sources = [
   # the accelerators from them).
   core_dir / 'Commands.cpp',
   core_dir / 'CommandsLinux.cpp',
+  # The tabs' rules (Tabs.cpp follows them, as the Mac's tabs do).
+  core_dir / 'EditorTabs.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -51,7 +53,12 @@ core_sources = [
 main_source = 'src/main.cpp'
 gui_sources = [
   'src/FileTree.cpp',
+  # The editor: the view (Editor.cpp), each open file (Document.cpp), the
+  # tabs (Tabs.cpp) and their strip (TabStrip.cpp).
   'src/Editor.cpp',
+  'src/Document.cpp',
+  'src/Tabs.cpp',
+  'src/TabStrip.cpp',
   'src/Markdown.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.

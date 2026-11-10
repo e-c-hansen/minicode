@@ -50,6 +50,25 @@ std::string stylesheet(const Settings& s) {
            "; color: " + fg(Surface::Editor) + "; }";
     css += ".minicode-editor text selection { background-color: #264F78; }";
     css += ".minicode-editor-scroller { background-color: transparent; }";
+    // The tabs above the editor, as the Mac's strip draws them: the strip in
+    // the sidebar's color, the active tab in the editor's with an accent
+    // line along its top, so it runs into the text; the others' titles in a
+    // dimmer sidebar text; the preview tab's title in italics; the close
+    // button lit under the pointer, and a dot in its place for unsaved
+    // changes.
+    Rgba dim = s.text(Surface::Sidebar);
+    dim.a *= 0.7;
+    css += ".minicode-tabs { background-color: " + bg(Surface::Sidebar) +
+           "; border-bottom: 1px solid #333333; }";
+    css += ".minicode-tab { padding: 5px 6px 5px 12px; border-right: 1px solid #333333;"
+           " font-size: 12px; }";
+    css += ".minicode-tab label { color: " + cssColor(dim) + "; }";
+    css += ".minicode-tab.active { background-color: " + bg(Surface::Editor) +
+           "; box-shadow: inset 0 2px #4EA1F7; }";
+    css += ".minicode-tab.active label { color: " + fg(Surface::Editor) + "; }";
+    css += ".minicode-tab.preview .minicode-tab-title { font-style: italic; }";
+    css += ".minicode-tab-close { min-width: 16px; padding: 0 2px; border-radius: 3px; }";
+    css += ".minicode-tab-close:hover { background-color: rgba(255,255,255,0.12); }";
     // Images and PDFs sit on the editor's background, in the editor's slot.
     css += ".minicode-media { background-color: " + bg(Surface::Editor) + "; }";
     css += ".minicode-pdf-page { box-shadow: 0 1px 4px rgba(0,0,0,0.5); }";

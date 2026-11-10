@@ -27,7 +27,9 @@
 class SearchPanel {
 public:
     // Called on the main thread when the user activates a match.
-    using OpenCb = void (*)(const FolderSearchMatch& match, void* user);
+    // `kept`: a double-click or Enter, which opens the file in a tab of its
+    // own; a single click opens it in the preview tab (EditorTabs.h).
+    using OpenCb = void (*)(const FolderSearchMatch& match, bool kept, void* user);
 
     enum class Mode { Find, Todos };
 
@@ -90,7 +92,7 @@ private:
     static gboolean onListKey(GtkEventControllerKey* c, guint keyval, guint keycode,
                               GdkModifierType mods, gpointer self);
     guint rowAt(double x, double y) const;
-    void openRow(guint pos);
+    void openRow(guint pos, bool kept);
     void focusFirstResult();
     static void onSetup(GtkSignalListItemFactory* f, GObject* item, gpointer self);
     static void onBind(GtkSignalListItemFactory* f, GObject* item, gpointer self);

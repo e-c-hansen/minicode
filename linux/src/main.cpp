@@ -54,6 +54,7 @@
 #include <gtk/gtk.h>
 
 #include "AppSettings.h"
+#include "Document.h"
 #include "Editor.h"
 #include "FileTree.h"
 #include "ThemeCss.h"
@@ -127,10 +128,6 @@ struct App {
 
     bool prompting = false;   // a "Save changes?" alert is up
     bool closing = false;     // the user answered it for a window close
-
-    // Files opened in this window, newest first, for Previous File (the
-    // Mac's _recent in EditorController.mm).
-    std::vector<std::string> recent;
 
     // The window is gone and everything in it deleted. The struct itself is
     // kept, a few hundred bytes, so an answer arriving later from a dialog
@@ -387,22 +384,27 @@ static void showError(App* app, const std::string& message, const std::string& d
 // unsaved on failure, so the title keeps its "*".
 static void flashStatus(App* app, const std::string& message);
 
-static bool saveCurrent(App* app) {
-    // editor.keep-sorted-on-save: the blocks are sorted first, one undo step.
+// One tab written to its file. editor.keep-sorted-on-save sorts the blocks of
+// the tab on show first, as one undo step; a tab saved in the background is
+// written as it is.
+static bool saveDocument(App* app, Document* d) {
+    if (!d) return true;
     std::string sortProblem;
-    if (g.settings->settings().keepSortedOnSave())
+    if (d == app->editor->active() && g.settings->settings().keepSortedOnSave())
         sortProblem = app->editor->sortBlocksBeforeSave();
     std::string err;
-    const bool ok = app->editor->save(&err);
+    const bool ok = app->editor->saveDocument(d, &err);
     updateTitle(app);
     if (ok && app->git && app->gitShown) app->git->refresh();
     if (!ok)
-        showError(app, "Could not save “" + baseName(app->editor->currentPath()) + "”",
+        showError(app, "Could not save “" + baseName(d->path()) + "”",
                   err + "\n\nYour changes are still here, unsaved.");
     else if (!sortProblem.empty())
         flashStatus(app, sortProblem);
     return ok;
 }
+
+static bool saveCurrent(App* app) { return saveDocument(app, app->editor->active()); }
 
 // A message in the status bar for a few seconds, then what it said before.
 static void flashStatus(App* app, const std::string& message) {
@@ -425,82 +427,136 @@ static void flashStatus(App* app, const std::string& message) {
     }, f);
 }
 
-namespace {
-struct Pending {
-    App* app;
-    std::function<void()> proceed;
-    std::function<void()> cancelled;
-};
-}  // namespace
-
-// Runs `proceed` once the current buffer's edits are safe: at once when there
-// are none, otherwise after the user picks Save (and the save worked) or Don't
-// Save. Cancel, Escape, or a failed save run `cancelled` instead.
-static void confirmUnsaved(App* app, std::function<void()> proceed,
-                           std::function<void()> cancelled = nullptr) {
-    if (!app->editor->dirty()) { proceed(); return; }
-    if (app->prompting) { if (cancelled) cancelled(); return; }   // one at a time
+// The question about unsaved changes, the Mac's: `answer` gets 0 for Save
+// (or Save All), 1 for Don't Save, 2 for Cancel or Escape. One question at
+// a time: with another up, the answer is Cancel at once. A change on disk
+// that arrived while it was up is looked at afterwards.
+static void askUnsaved(App* app, const std::string& message, const std::string& detail,
+                       bool several, std::function<void(int)> answer) {
+    if (app->prompting) { answer(2); return; }
     app->prompting = true;
-
-    const std::string name = baseName(app->editor->currentPath());
-    GtkAlertDialog* dlg = gtk_alert_dialog_new("Save changes to “%s”?",
-                                               name.empty() ? "this file" : name.c_str());
-    gtk_alert_dialog_set_detail(dlg, "Your changes will be lost if you don't save them.");
-    const char* buttons[] = {"Save", "Don't Save", "Cancel", nullptr};
+    GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", message.c_str());
+    gtk_alert_dialog_set_detail(dlg, detail.c_str());
+    const char* buttons[] = {several ? "Save All" : "Save", "Don't Save", "Cancel", nullptr};
     gtk_alert_dialog_set_buttons(dlg, buttons);
     gtk_alert_dialog_set_default_button(dlg, 0);
     gtk_alert_dialog_set_cancel_button(dlg, 2);
     gtk_alert_dialog_set_modal(dlg, TRUE);
-
-    auto* p = new Pending{app, std::move(proceed), std::move(cancelled)};
+    struct Pending {
+        App* app;
+        std::function<void(int)> answer;
+    };
     gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr,
         [](GObject* src, GAsyncResult* res, gpointer data) {
             Pending* pd = static_cast<Pending*>(data);
             App* a = pd->app;
             a->prompting = false;
-            const int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src),
-                                                              res, nullptr);
-            if (a->dead) { delete pd; return; }
-            bool go = choice == 1;                    // Don't Save
-            if (choice == 0) go = saveCurrent(a);     // Save, unless it failed
-            if (go) pd->proceed();
-            else if (pd->cancelled) pd->cancelled();
+            int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, nullptr);
+            if (choice < 0 || choice > 2) choice = 2;
+            if (!a->dead) pd->answer(choice);
             delete pd;
-            // A change on disk that arrived while this was up could not be
-            // asked about then.
             if (!a->dead) a->editor->checkExternalChange();
-        }, p);
+        }, new Pending{app, std::move(answer)});
     g_object_unref(dlg);
 }
 
-// The tree moves its selection on the click, before the question is asked;
-// after a Cancel it goes back to the file that is still open.
-static void reselectCurrentFile(App* app) {
+static const char* kLostDetail = "Your changes will be lost if you don't save them.";
+
+// Close one tab, asking Save, Don't Save or Cancel first when it has unsaved
+// changes (the Mac's confirmCloseTab:). `done` hears whether it closed; a
+// failed save keeps it, with the reason shown.
+static void closeTabAsking(App* app, Document* d, std::function<void(bool)> done = nullptr) {
+    auto finish = [done](bool closed) { if (done) done(closed); };
+    if (app->dead || !d || app->editor->indexOf(d) < 0) { finish(false); return; }
+    if (!d->dirty()) {
+        app->editor->closeTab(d);
+        refreshHints(app);
+        finish(true);
+        return;
+    }
+    const std::string name = baseName(d->path());
+    askUnsaved(app, "Save changes to “" + (name.empty() ? std::string("this file") : name) + "”?",
+               kLostDetail, false, [app, d, finish](int choice) {
+        // Closed meanwhile, or not to be closed.
+        if (app->editor->indexOf(d) < 0 || choice == 2) { finish(false); return; }
+        if (choice == 0 && !saveDocument(app, d)) { finish(false); return; }
+        app->editor->closeTab(d);
+        refreshHints(app);
+        finish(true);
+    });
+}
+
+// Close these tabs in turn; Cancel at any unsaved one stops there. They go
+// by id, since each question is answered later: one closed meanwhile is
+// passed over.
+static void closeTabsAsking(App* app, std::vector<uint64_t> ids) {
+    if (app->dead) return;
+    Document* first = nullptr;
+    while (!ids.empty() && !first) {
+        first = app->editor->documentById(ids.front());
+        ids.erase(ids.begin());
+    }
+    if (!first) return;
+    closeTabAsking(app, first, [app, ids](bool closed) {
+        if (closed) closeTabsAsking(app, ids);
+    });
+}
+
+static std::vector<uint64_t> idsOf(const std::vector<Document*>& docs) {
+    std::vector<uint64_t> out;
+    for (Document* d : docs) out.push_back(d->id());
+    return out;
+}
+
+// Before the window closes, the app quits or another folder takes over: one
+// question for every tab with unsaved changes (the Mac's
+// confirmCloseAllTabs). With one, it is put on show and asked about as a
+// tab is; with several, Save All, Don't Save or Cancel for them all. Runs
+// `proceed` once nothing unsaved is left to lose, else `cancelled`.
+static void confirmAllUnsaved(App* app, std::function<void()> proceed,
+                              std::function<void()> cancelled = nullptr) {
+    const std::vector<Document*> dirty = app->editor->dirtyDocuments();
+    auto cancel = [cancelled] { if (cancelled) cancelled(); };
+    if (dirty.empty()) { proceed(); return; }
+    if (app->prompting) { cancel(); return; }
+    if (dirty.size() == 1) {
+        Document* d = dirty[0];
+        app->editor->activate(d);   // so the file asked about is the one on show
+        const std::string name = baseName(d->path());
+        askUnsaved(app, "Save changes to “" + name + "”?", kLostDetail, false,
+                   [app, d, proceed, cancel](int choice) {
+            if (choice == 2) { cancel(); return; }
+            if (choice == 0 && app->editor->indexOf(d) >= 0 && !saveDocument(app, d)) {
+                cancel();
+                return;
+            }
+            proceed();
+        });
+        return;
+    }
+    std::string names;
+    for (Document* d : dirty) names += baseName(d->path()) + "\n";
+    askUnsaved(app, "Save changes to " + std::to_string(dirty.size()) + " files?",
+               names + "\n" + kLostDetail, true, [app, proceed, cancel](int choice) {
+        if (choice == 2) { cancel(); return; }
+        if (choice == 0)
+            for (Document* d : app->editor->dirtyDocuments())
+                if (!saveDocument(app, d)) { cancel(); return; }
+        proceed();
+    });
+}
+
+// The file tree's selection follows the tab on show, as on the Mac
+// (reselectCurrentFileInTree).
+static void revealActiveInTree(App* app) {
     const std::string& cur = app->editor->currentPath();
     if (isInside(cur, app->rootDir)) app->tree->revealPath(cur);
-    else app->tree->clearSelection();
 }
 
-// Previous File's list: newest first, each file once. The Mac adds a file
-// when it opened (text, image or PDF), not when it could not be shown.
-static void noteRecent(App* app, const std::string& path) {
-    auto& r = app->recent;
-    r.erase(std::remove(r.begin(), r.end(), path), r.end());
-    r.insert(r.begin(), path);
-    if (r.size() > 50) r.resize(50);
-}
-
-static void openFileNow(App* app, const std::string& path) {
-    showEditorArea(app);   // opening a file must not disappear into a hidden pane
-    if (app->editor->openFile(path)) noteRecent(app, path);
-    updateTitle(app);
-    refreshHints(app);   // the Markdown line depends on the open file
-}
-
-// A file changed on disk while the buffer has edits of its own: the Mac's
+// A file changed on disk while its tab has edits of its own: the Mac's
 // question, "Keep Mine" or "Reload" (EditorController.mm -checkExternalChange).
-// Returns false when another question is already up; the editor asks again
-// on its next check.
+// Only ever about the tab on show. Returns false when another question is
+// already up; the editor asks again on its next check.
 static bool askExternalChange(void* userp) {
     App* app = static_cast<App*>(userp);
     if (app->dead || app->prompting) return false;
@@ -534,52 +590,45 @@ static bool askExternalChange(void* userp) {
     return true;
 }
 
-// Open a file, asking "Save changes?" first when the open one has edits. The
-// answer may come later, so anything to do once the file is open (go to a
-// line, focus the editor) goes in `then`, which runs after the open and not
-// at all when the user cancels.
-static void openFileThen(App* app, const std::string& path, std::function<void()> then) {
-    // The file already open is not opened again, as on the Mac: a click on
-    // it in the tree (one click opens now) must not reload it over its edits,
-    // nor throw away the caret, the scroll position and a preview switched
-    // to source. Changes made elsewhere arrive through the editor's own watch
-    // on the file. Only a message ("Could not open", "Cannot display") is
-    // tried again.
-    if (path == app->editor->currentPath() &&
-        (app->editor->canSave() || app->editor->isMedia())) {
-        showEditorArea(app);
-        if (then) then();
-        return;
-    }
-    confirmUnsaved(app, [app, path, then] {
-        openFileNow(app, path);
-        if (then) then();
-    }, [app] { reselectCurrentFile(app); });
+// Open a file in its tab, or a new one: in the preview tab when `from` opens
+// there (a single click in the tree, a search result, a definition), else a
+// kept tab. The tab on show keeps its unsaved changes, so nothing is asked.
+// Anything to do once the file is on show goes in `then`.
+static void openFileThen(App* app, const std::string& path, EditorTabs::OpenFrom from,
+                         std::function<void()> then) {
+    showEditorArea(app);   // opening a file must not disappear into a hidden pane
+    app->editor->openFile(path, from);
+    updateTitle(app);
+    refreshHints(app);   // the Markdown line depends on the open file
+    if (then) then();
 }
 
-// Called by everything that opens a file with nothing to do afterwards.
+// Called by everything that opens a file with nothing to do afterwards, in a
+// tab of its own.
 static void openFileCb(const std::string& path, void* userp) {
-    openFileThen(static_cast<App*>(userp), path, nullptr);
+    openFileThen(static_cast<App*>(userp), path, EditorTabs::OpenFrom::Other, nullptr);
 }
 
-// A file opened from the tree: by a click, or by Enter, after which the
+// A file opened from the tree: a single click (the preview tab), a
+// double-click or Ctrl+click (kept), or Enter (kept), after which the
 // keyboard goes to the editor, as on the Mac (EditorController.mm
 // -activateRow:).
-static void treeOpenCb(const std::string& path, bool fromKeyboard, void* userp) {
+static void treeOpenCb(const std::string& path, EditorTabs::OpenFrom from, void* userp) {
     App* app = static_cast<App*>(userp);
-    openFileThen(app, path, [app, fromKeyboard] {
-        if (fromKeyboard) gtk_widget_grab_focus(app->editor->textView());
+    openFileThen(app, path, from, [app, from] {
+        if (from == EditorTabs::OpenFrom::TreeReturn) app->editor->focusActiveDocument();
     });
 }
 
-// Re-root on a new folder. The file from the old folder is closed, as on the
-// Mac, so the editor never holds a file the tree no longer shows.
+// Re-root on a new folder. The old folder's tabs close (the caller asked
+// about their unsaved changes), as on the Mac, so the editor never holds a
+// file the tree no longer shows.
 static void openFolder(App* app, const std::string& dir) {
     app->rootDir = dir;
     app->tree->setRoot(dir);
     if (app->git) app->git->setRoot(dir);   // the panel follows the folder
-    app->editor->closeFile();
-    // After closeFile, so the old file is not reopened under the new root.
+    app->editor->closeAllTabs();
+    // After the tabs close, so no old file is reopened under the new root.
     if (app->lsp) app->lsp->setRoot(dir);   // servers belong to a folder
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->terminal) app->terminal->setProjectRoot(dir);   // for its links
@@ -588,17 +637,18 @@ static void openFolder(App* app, const std::string& dir) {
     refreshHints(app);
 }
 
-// Closing the window with unsaved edits asks first. The answer arrives later,
-// so the close is refused now and repeated once the edits are dealt with.
+// Closing the window with unsaved tabs asks once for them all. The answer
+// arrives later, so the close is refused now and repeated once the edits are
+// dealt with.
 static gboolean onCloseRequest(GtkWindow*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    if (app->closing || !app->editor->dirty()) {
+    if (app->closing || !app->editor->anyDirty()) {
         // The window really is closing: stop its language servers
         // (shutdown, exit, then signals if they linger).
         if (app->lsp) app->lsp->shutdown();
         return FALSE;
     }
-    confirmUnsaved(app, [app] {
+    confirmAllUnsaved(app, [app] {
         app->closing = true;
         gtk_window_close(GTK_WINDOW(app->window));
     });
@@ -609,7 +659,7 @@ static gboolean onCloseRequest(GtkWindow*, gpointer userp) {
 
 static void act_open(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    confirmUnsaved(app, [app] {
+    confirmAllUnsaved(app, [app] {
         GtkFileDialog* dlg = gtk_file_dialog_new();
         gtk_file_dialog_set_title(dlg, "Open Folder");
         GFile* start = g_file_new_for_path(app->rootDir.c_str());
@@ -627,7 +677,7 @@ static void act_open(GSimpleAction*, GVariant*, gpointer userp) {
                 // user may have typed more while it was up.
                 if (path) {
                     std::string dir = path;
-                    confirmUnsaved(a, [a, dir] { openFolder(a, dir); });
+                    confirmAllUnsaved(a, [a, dir] { openFolder(a, dir); });
                     g_free(path);
                 }
                 g_object_unref(folder);
@@ -793,7 +843,7 @@ static void act_settings(GSimpleAction*, GVariant*, gpointer userp) {
                            ("Could not create " + g.settings->path()).c_str());
         return;
     }
-    openFileThen(app, g.settings->path(),
+    openFileThen(app, g.settings->path(), EditorTabs::OpenFrom::Other,
                  [app] { gtk_widget_grab_focus(app->editor->textView()); });
 }
 
@@ -806,7 +856,8 @@ static void act_keyboard_shortcuts(GSimpleAction*, GVariant*, gpointer userp) {
                            ("Could not create " + Keys::path()).c_str());
         return;
     }
-    openFileThen(app, Keys::path(), [app] { gtk_widget_grab_focus(app->editor->textView()); });
+    openFileThen(app, Keys::path(), EditorTabs::OpenFrom::Other,
+                 [app] { gtk_widget_grab_focus(app->editor->textView()); });
 }
 
 static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
@@ -855,14 +906,6 @@ static void act_quit(GSimpleAction*, GVariant*, gpointer) {
         if (!a->dead) gtk_window_close(GTK_WINDOW(a->window));
 }
 
-// Previous File, Ctrl+Tab: the file that was open before this one (the
-// Mac's Previous File before it had tabs). Pressed again, it goes back.
-static void act_previous_file(GSimpleAction*, GVariant*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    if (app->recent.size() < 2) { gtk_widget_error_bell(app->window); return; }
-    openFileCb(app->recent[1], app);
-}
-
 // The editor shown in the upper half, with the browser put away if it was
 // covering it.
 static void showEditorOverBrowser(App* app) {
@@ -879,11 +922,193 @@ static void showEditorOverBrowser(App* app) {
 }
 
 // Focus Editor: the editor gets the keyboard, shown first if it was hidden
-// (the Mac's Command 1).
+// (the Mac's Command 1): what the tab on show shows, the LaTeX pages too.
 static void act_focus_editor(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     showEditorOverBrowser(app);
-    gtk_widget_grab_focus(app->editor->textView());
+    app->editor->focusActiveDocument();
+    refreshHints(app);
+}
+
+// ---------------------------------------------------------------- tabs
+//
+// The tab on show, from the File and Navigate menus and the keys; a tab's
+// right click menu sends the same commands for its own tab
+// (Editor::onTabCommand), as the Mac's tab menu and File menu share them.
+// Closing asks about unsaved changes first (closeTabAsking).
+
+// The folder holding `path`, in the file manager, with the item selected
+// where the file manager supports that.
+static void openContainingFolder(App* app, const std::string& path) {
+    GFile* f = g_file_new_for_path(path.c_str());
+    GtkFileLauncher* launcher = gtk_file_launcher_new(f);
+    g_object_unref(f);
+    gtk_file_launcher_open_containing_folder(launcher, GTK_WINDOW(app->window), nullptr,
+        [](GObject* src, GAsyncResult* res, gpointer up) {
+            GError* err = nullptr;
+            if (!gtk_file_launcher_open_containing_folder_finish(
+                    GTK_FILE_LAUNCHER(src), res, &err) &&
+                !g_error_matches(err, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
+                !static_cast<App*>(up)->dead)
+                showError(static_cast<App*>(up), "Could not open the containing folder",
+                          err ? err->message : "");
+            g_clear_error(&err);
+        }, app);
+    g_object_unref(launcher);
+}
+
+// A tab's file selected in the tree, the tree brought back first when the
+// sidebar is hidden or shows Source Control (the Mac's revealTabInTree:).
+static void revealInTree(App* app, const std::string& path) {
+    if (!isInside(path, app->rootDir)) {
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    if (app->gitShown) act_toggle_git(nullptr, nullptr, app);
+    if (!app->sidebarVisible) act_toggle_sidebar(nullptr, nullptr, app);
+    app->tree->revealPath(path);
+    app->tree->focus();
+}
+
+static void tabCommand(App* app, const std::string& name, Document* d) {
+    if (app->dead || !d) return;
+    Editor* e = app->editor;
+    const std::vector<Document*> all = e->documents();
+    if (name == "keep") {
+        e->keepPreviewTab(d);
+    } else if (name == "close") {
+        closeTabAsking(app, d);
+    } else if (name == "closeothers") {
+        std::vector<Document*> others;
+        for (Document* t : all)
+            if (t != d) others.push_back(t);
+        closeTabsAsking(app, idsOf(others));
+    } else if (name == "closeright") {
+        const int i = e->indexOf(d);
+        if (i >= 0) closeTabsAsking(app, idsOf(std::vector<Document*>(all.begin() + i + 1, all.end())));
+    } else if (name == "closeall") {
+        closeTabsAsking(app, idsOf(all));
+    } else if (name == "copypath") {
+        if (!d->path().empty())
+            gdk_clipboard_set_text(gtk_widget_get_clipboard(app->window), d->path().c_str());
+    } else if (name == "reveal") {
+        if (!d->path().empty()) openContainingFolder(app, d->path());
+    } else if (name == "revealtree") {
+        revealInTree(app, d->path());
+    }
+    updateTitle(app);
+    refreshHints(app);
+}
+
+// The same for the tab on show; the bell with none.
+static void activeTabCommand(App* app, const char* name) {
+    Document* d = app->editor->active();
+    if (!d) {
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    tabCommand(app, name, d);
+}
+
+static void act_close_other_tabs(GSimpleAction*, GVariant*, gpointer userp) {
+    activeTabCommand(static_cast<App*>(userp), "closeothers");
+}
+static void act_close_tabs_right(GSimpleAction*, GVariant*, gpointer userp) {
+    activeTabCommand(static_cast<App*>(userp), "closeright");
+}
+static void act_close_all_tabs(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    closeTabsAsking(app, idsOf(app->editor->documents()));
+}
+static void act_copy_active_path(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->editor->currentPath().empty()) gtk_widget_error_bell(app->window);
+    else activeTabCommand(app, "copypath");
+}
+static void act_reveal_active(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->editor->currentPath().empty()) gtk_widget_error_bell(app->window);
+    else activeTabCommand(app, "reveal");
+}
+static void act_reveal_active_in_tree(GSimpleAction*, GVariant*, gpointer userp) {
+    activeTabCommand(static_cast<App*>(userp), "revealtree");
+}
+
+// Keep Open: the preview tab on show becomes an ordinary tab.
+static void act_keep_tab(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    Document* d = app->editor->active();
+    if (!d || !d->isPreviewTab()) gtk_widget_error_bell(app->window);
+    else app->editor->keepPreviewTab(d);
+}
+
+// Close Tab, Ctrl+W (the Mac's closeFocused:): what has the keyboard closes.
+// The browser panel hides while it has the keyboard, anywhere else the tab
+// on show closes (asking about unsaved changes first), and with no tab
+// left the window closes, so the key is never dead. In the terminal Ctrl+W
+// is the shell's (it deletes a word).
+static void act_close_tab(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+#ifdef MINICODE_ENABLE_BROWSER
+    GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(app->window));
+    if (app->browser && app->browserRevealer &&
+        gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer)) &&
+        Keys::within(focus, app->browser->widget())) {
+        act_toggle_browser(nullptr, nullptr, app);
+        app->editor->focusActiveDocument();
+        return;
+    }
+#endif
+    Document* d = app->editor->active();
+    if (!d) {
+        gtk_window_close(GTK_WINDOW(app->window));
+        return;
+    }
+    closeTabAsking(app, d);
+}
+
+// Reopen Closed Tab: the newest of the window's last 50 closed tabs, where
+// it was, with its preview, selection and scroll.
+static void act_reopen_tab(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    showEditorOverBrowser(app);
+    if (!app->editor->reopenClosedTab()) gtk_widget_error_bell(app->window);
+    updateTitle(app);
+    refreshHints(app);
+}
+
+// Save All: every tab with unsaved changes, by Save's rules; the first that
+// fails stops it, with the reason shown.
+static void act_save_all(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    const std::vector<Document*> dirty = app->editor->dirtyDocuments();
+    if (dirty.empty()) {
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    for (Document* d : dirty)
+        if (!saveDocument(app, d)) break;
+}
+
+// Next and previous tab, wrapping, and tab 1 to 8 and the last: the tab
+// comes on show with the keyboard, the editor brought back first.
+static void act_next_tab(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    showEditorOverBrowser(app);
+    app->editor->stepTab(1);
+    refreshHints(app);
+}
+static void act_previous_tab(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    showEditorOverBrowser(app);
+    app->editor->stepTab(-1);
+    refreshHints(app);
+}
+template <int N>
+static void act_go_to_tab(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    showEditorOverBrowser(app);
+    app->editor->selectTabNumber(N);
     refreshHints(app);
 }
 
@@ -919,7 +1144,7 @@ static void openLink(App* app, bool isUrl, const std::string& target, bool isDir
         return;
     }
     if (insideRoot) app->tree->revealPath(path);
-    openFileThen(app, path, [app, path, line, column] {
+    openFileThen(app, path, EditorTabs::OpenFrom::Other, [app, path, line, column] {
         // Opening can be refused (Cancel at "Save changes?"), and an image
         // or a PDF has no lines to go to.
         if (app->editor->currentPath() != path) return;
@@ -1007,7 +1232,7 @@ static void act_new_file(GSimpleAction*, GVariant*, gpointer userp) {
         g_output_stream_close(G_OUTPUT_STREAM(out), nullptr, nullptr);
         g_object_unref(out);
         app->tree->revealPath(path);
-        openFileCb(path, app);   // asks about unsaved edits in the open file first
+        openFileCb(path, app);
     });
 }
 
@@ -1031,20 +1256,15 @@ static void act_new_folder(GSimpleAction*, GVariant*, gpointer userp) {
 }
 
 // A file or folder moved from `src` to `dst` (Rename, or a drag in the tree).
-// The open file keeps its buffer, edits included, under the new name, in
+// Every tab of it keeps its buffer, edits included, under the new name, in
 // every window that has it open: one left on the old name would save its
 // edits back there and bring the old file back. That holds when a folder
-// above it moved, too. Previous File follows.
+// above it moved, too.
 static void followMove(const std::string& src, const std::string& dst) {
     for (App* a : g.windows) {
-        const std::string cur = a->editor->currentPath();
-        if (isInside(cur, src)) {
-            a->editor->setPath(dst + cur.substr(src.size()));
-            updateTitle(a);
-            refreshHints(a);   // the preview toggle depends on the name
-        }
-        for (std::string& r : a->recent)
-            if (isInside(r, src)) r = dst + r.substr(src.size());
+        a->editor->pathMoved(src, dst);
+        updateTitle(a);
+        refreshHints(a);   // the preview toggle depends on the name
     }
 }
 
@@ -1216,18 +1436,13 @@ static void trashNow(App* app, const std::string& path) {
         g_clear_error(&err);
         return;
     }
-    // The open file went with it (or with its folder): back to the welcome
-    // text, the way the Mac resets its editor.
-    if (isInside(app->editor->currentPath(), path)) {
-        app->editor->closeFile();
-        updateTitle(app);
-        refreshHints(app);
-    }
+    // The tabs of what went close, in every window, unless they hold unsaved
+    // changes: those stay open, and saving writes the file again (the Mac's
+    // rule).
     for (App* a : g.windows) {
-        auto& r = a->recent;
-        r.erase(std::remove_if(r.begin(), r.end(),
-                               [&](const std::string& p) { return isInside(p, path); }),
-                r.end());
+        a->editor->pathTrashed(path);
+        updateTitle(a);
+        refreshHints(a);
     }
     app->tree->clearSelection();
 }
@@ -1239,15 +1454,16 @@ static void act_trash(GSimpleAction*, GVariant*, gpointer userp) {
 
     GtkAlertDialog* dlg = gtk_alert_dialog_new("Move “%s” to the Trash?",
                                                baseName(path).c_str());
-    // The Mac asks the same question. Unsaved edits in the open file go with
-    // it, so say so rather than asking "Save changes?" about a file that is
-    // on its way out.
-    if (app->editor->dirty() && isInside(app->editor->currentPath(), path)) {
-        const std::string detail = "The open file “" +
-            baseName(app->editor->currentPath()) +
-            "” has unsaved changes, which will be lost.";
-        gtk_alert_dialog_set_detail(dlg, detail.c_str());
-    }
+    // The Mac asks the same question. A tab of it with unsaved changes stays
+    // open with them, so say so.
+    for (Document* d : app->editor->dirtyDocuments())
+        if (isInside(d->path(), path)) {
+            const std::string detail = "“" + baseName(d->path()) +
+                "” has unsaved changes. Its tab stays open with them, and saving it "
+                "writes the file again.";
+            gtk_alert_dialog_set_detail(dlg, detail.c_str());
+            break;
+        }
     const char* buttons[] = {"Move to Trash", "Cancel", nullptr};
     gtk_alert_dialog_set_buttons(dlg, buttons);
     gtk_alert_dialog_set_cancel_button(dlg, 1);
@@ -1270,21 +1486,7 @@ static void act_reveal(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     std::string path = app->tree->selectedPath();
     if (path.empty()) path = app->rootDir;
-    GFile* f = g_file_new_for_path(path.c_str());
-    GtkFileLauncher* launcher = gtk_file_launcher_new(f);
-    g_object_unref(f);
-    gtk_file_launcher_open_containing_folder(launcher, GTK_WINDOW(app->window), nullptr,
-        [](GObject* src, GAsyncResult* res, gpointer up) {
-            GError* err = nullptr;
-            if (!gtk_file_launcher_open_containing_folder_finish(
-                    GTK_FILE_LAUNCHER(src), res, &err) &&
-                !g_error_matches(err, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
-                !static_cast<App*>(up)->dead)
-                showError(static_cast<App*>(up), "Could not open the containing folder",
-                          err ? err->message : "");
-            g_clear_error(&err);
-        }, app);
-    g_object_unref(launcher);
+    openContainingFolder(app, path);
 }
 
 // The selected item's absolute path, else the open folder's, as plain text.
@@ -1307,16 +1509,13 @@ static void act_focus_tree(GSimpleAction*, GVariant*, gpointer userp) {
     app->tree->focus();
 }
 
-// A file's diff or a commit, in the editor's slot. Like opening a file it
-// asks about unsaved edits first, since the open file is closed for it.
+// A file's diff or a commit, in the tab diffs and commits share.
 static void showDiffInEditor(App* app, const std::string& title, const std::string& bytes,
                              bool commit) {
-    confirmUnsaved(app, [app, title, bytes, commit] {
-        showEditorOverBrowser(app);
-        app->editor->showDiff(title, bytes, commit);
-        updateTitle(app);
-        refreshHints(app);
-    });
+    showEditorOverBrowser(app);
+    app->editor->showDiff(title, bytes, commit);
+    updateTitle(app);
+    refreshHints(app);
 }
 
 // Ctrl+Shift+G: the Source Control panel takes the file tree's place in the
@@ -1350,22 +1549,25 @@ static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp) {
     refreshHints(app);
 }
 
-// A Find in Folder match was activated: open the file the way a click in the
-// tree does, then go to the match. If the file did not end up open (it could
-// not be read, or opening was refused), there is nowhere to go.
-// Opening may wait on a "Save changes?" answer, so going to the match is the
-// open's continuation, and the match is copied for it.
-static void openSearchMatch(const FolderSearchMatch& m, void* userp) {
-    App* app = static_cast<App*>(userp);
+// A Find in Folder match, a TODO or a definition: open the file (a single
+// click on a result in the preview tab, a double-click or Enter kept, a
+// definition's file in preview), then go to the match. If the file did not
+// end up open (it could not be read), there is nowhere to go.
+static void openMatch(App* app, const FolderSearchMatch& m, EditorTabs::OpenFrom from) {
     const std::string path = m.path;
     const int line = m.line;
     const std::size_t column = m.byteColumn, length = m.byteLength;
-    openFileThen(app, path, [app, path, line, column, length] {
+    openFileThen(app, path, from, [app, path, line, column, length] {
         if (app->editor->currentPath() == path)
             app->editor->revealLine(line, column, length);
         refreshHints(app);   // a Markdown preview may have switched to source
     });
     gtk_window_present(GTK_WINDOW(app->window));
+}
+
+static void openSearchMatch(const FolderSearchMatch& m, bool kept, void* userp) {
+    openMatch(static_cast<App*>(userp), m,
+              kept ? EditorTabs::OpenFrom::SearchOpen : EditorTabs::OpenFrom::SearchClick);
 }
 
 // Language servers (Lsp.h). Each acts on the editor, so only when it has the
@@ -1567,7 +1769,17 @@ static std::string hintsText(App* app) {
     row("workbench.action.openSettings", "Settings");
     row("workbench.action.focusSideBar", "Focus the file tree");
     row("workbench.action.focusFirstEditorGroup", "Focus the editor");
-    row("workbench.action.nextEditor", "Previous file");
+
+    heading("Tabs");
+    row("workbench.action.nextEditor", "Next tab");
+    row("workbench.action.nextEditor", "Next tab, too", 1);
+    row("workbench.action.previousEditor", "Previous tab");
+    row("workbench.action.previousEditor", "Previous tab, too", 1);
+    row("workbench.action.openEditorAtIndex1", "Tab 1 (and so on to 8)");
+    row("workbench.action.lastEditorInGroup", "The last tab");
+    row("workbench.action.closeActiveEditor", "Close tab");
+    row("workbench.action.reopenClosedEditor", "Reopen closed tab");
+    row("workbench.action.files.saveAll", "Save all");
 
     heading("Windows");
     row("workbench.action.newWindow", "New window");
@@ -1921,11 +2133,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     g.windows.erase(std::find(g.windows.begin(), g.windows.end(), app));
     app->dead = true;
 
-    std::vector<gpointer> owners = {app, app->editor, app->editor->media(), app->lsp,
-                                    app->tree, app->git};
-#ifdef MINICODE_ENABLE_PDF
-    owners.push_back(app->editor->latex());
-#endif
+    std::vector<gpointer> owners = {app, app->lsp, app->tree, app->git};
+    for (void* o : app->editor->handlerOwners()) owners.push_back(o);
 #ifdef MINICODE_ENABLE_TERMINAL
     owners.push_back(app->terminal);
 #endif
@@ -1940,6 +2149,9 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
 
     app->editor->setObserver(nullptr);
     app->editor->setTitleCallback(nullptr, nullptr);
+    app->editor->onCloseRequest = nullptr;
+    app->editor->onTabCommand = nullptr;
+    app->editor->onActiveChanged = nullptr;
     app->editor->setLinkHandler(nullptr);
     app->editor->setExternalChangeCallback(nullptr, nullptr);
     delete app->search;
@@ -1999,6 +2211,17 @@ static App* newWindow(const std::string& root, const std::string& file) {
     });
     app->editor->setExternalChangeCallback(askExternalChange, app);
     app->editor->setSettingsPath(g.settings->path());
+    app->editor->onCloseRequest = [app](Document* d) {
+        if (!app->dead) closeTabAsking(app, d);
+    };
+    app->editor->onTabCommand = [app](const std::string& name, Document* d) {
+        if (!app->dead) tabCommand(app, name, d);
+    };
+    app->editor->onActiveChanged = [app] {
+        if (app->dead) return;
+        revealActiveInTree(app);
+        refreshHints(app);
+    };
 
     // Right side: find bar + editor + collapsible panels.
     GtkWidget* rightBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -2137,7 +2360,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
         m.line = line;
         m.byteColumn = col;
         m.byteLength = len;
-        openSearchMatch(m, app);
+        openMatch(app, m, EditorTabs::OpenFrom::CodeNavigation);
     };
     app->editor->setObserver(app->lsp);   // onCloseRequest shuts it down
 
@@ -2170,7 +2393,27 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "togglegit",      G_CALLBACK(act_toggle_git));
     addAction(app, "focustree",      G_CALLBACK(act_focus_tree));
     addAction(app, "focuseditor",    G_CALLBACK(act_focus_editor));
-    addAction(app, "previousfile",   G_CALLBACK(act_previous_file));
+    addAction(app, "saveall",        G_CALLBACK(act_save_all));
+    addAction(app, "copyactivepath", G_CALLBACK(act_copy_active_path));
+    addAction(app, "revealactive",   G_CALLBACK(act_reveal_active));
+    addAction(app, "revealactiveintree", G_CALLBACK(act_reveal_active_in_tree));
+    addAction(app, "closetab",       G_CALLBACK(act_close_tab));
+    addAction(app, "reopentab",      G_CALLBACK(act_reopen_tab));
+    addAction(app, "closeothertabs", G_CALLBACK(act_close_other_tabs));
+    addAction(app, "closetabsright", G_CALLBACK(act_close_tabs_right));
+    addAction(app, "closealltabs",   G_CALLBACK(act_close_all_tabs));
+    addAction(app, "keeptab",        G_CALLBACK(act_keep_tab));
+    addAction(app, "nexttab",        G_CALLBACK(act_next_tab));
+    addAction(app, "previoustab",    G_CALLBACK(act_previous_tab));
+    addAction(app, "tab1",           G_CALLBACK(&act_go_to_tab<1>));
+    addAction(app, "tab2",           G_CALLBACK(&act_go_to_tab<2>));
+    addAction(app, "tab3",           G_CALLBACK(&act_go_to_tab<3>));
+    addAction(app, "tab4",           G_CALLBACK(&act_go_to_tab<4>));
+    addAction(app, "tab5",           G_CALLBACK(&act_go_to_tab<5>));
+    addAction(app, "tab6",           G_CALLBACK(&act_go_to_tab<6>));
+    addAction(app, "tab7",           G_CALLBACK(&act_go_to_tab<7>));
+    addAction(app, "tab8",           G_CALLBACK(&act_go_to_tab<8>));
+    addAction(app, "lasttab",        G_CALLBACK(&act_go_to_tab<9>));
     addAction(app, "togglecomment",  G_CALLBACK(act_toggle_comment));
     addAction(app, "toggletask",     G_CALLBACK(act_toggle_task));
     addAction(app, "sortlines",      G_CALLBACK(act_sort_lines));

@@ -473,17 +473,20 @@ void FileTree::onBind(GtkSignalListItemFactory* /*f*/, GObject* obj,
 
 // ---------------------------------------------------------------- activation
 
-void FileTree::actOnRow(guint pos, bool fromKeyboard) {
+void FileTree::actOnRow(guint pos, EditorTabs::OpenFrom from) {
     if (pos == GTK_INVALID_LIST_POSITION) return;
     GtkTreeListRow* row = gtk_tree_list_model_get_row(treeModel_, pos);   // transfer full
     if (!row) return;
     GFileInfo* info = G_FILE_INFO(gtk_tree_list_row_get_item(row));      // transfer full
     if (infoIsDir(info)) {
-        gtk_tree_list_row_set_expanded(row, !gtk_tree_list_row_get_expanded(row));
+        // A double-click's second click does not close the folder its first
+        // click opened.
+        if (from != EditorTabs::OpenFrom::TreeDoubleClick)
+            gtk_tree_list_row_set_expanded(row, !gtk_tree_list_row_get_expanded(row));
     } else if (openCb_) {
         if (GFile* file = fileOfInfo(info)) {
             char* path = g_file_get_path(file);
-            if (path) { openCb_(path, fromKeyboard, openUser_); g_free(path); }
+            if (path) { openCb_(path, from, openUser_); g_free(path); }
         }
     }
     if (info) g_object_unref(info);
@@ -519,19 +522,27 @@ void FileTree::onPrimaryPressed(GtkGestureClick*, int, double x, double y, gpoin
     self->pressRow_ = onArrow ? GTK_INVALID_LIST_POSITION : pos;
 }
 
-// Only the first click of a double-click acts, so a double-click on a folder
-// does not open and close it again. A press on one row released over another
-// (a drag) does nothing.
-void FileTree::onPrimaryReleased(GtkGestureClick*, int n, double x, double y,
+// The first click opens a file in the preview tab, or opens or closes a
+// folder; the second click of a double-click on the same row keeps the file
+// in a tab of its own and leaves a folder alone; Ctrl makes any click a kept
+// open (EditorTabs::treeClick, the Mac's rules). A press on one row released
+// over another (a drag) does nothing.
+void FileTree::onPrimaryReleased(GtkGestureClick* g, int n, double x, double y,
                                  gpointer selfp) {
     FileTree* self = static_cast<FileTree*>(selfp);
     const guint pressed = self->pressRow_;
     self->pressRow_ = GTK_INVALID_LIST_POSITION;
-    if (n != 1 || pressed == GTK_INVALID_LIST_POSITION) return;
+    if (n < 1 || n > 2 || pressed == GTK_INVALID_LIST_POSITION) return;
     bool onArrow = false;
     if (self->rowAt(x, y, &onArrow) != pressed || onArrow) return;
+    const GdkModifierType mods =
+        gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(g));
+    const EditorTabs::OpenFrom from = EditorTabs::treeClick(
+        n, pressed == self->lastReleaseRow_, (mods & GDK_CONTROL_MASK) != 0);
+    self->lastReleaseRow_ = pressed;
+    if (n == 2 && from != EditorTabs::OpenFrom::TreeDoubleClick) return;
     self->pendingReveal_.clear();   // the user picked a row; an older reveal gives way
-    self->actOnRow(pressed, false);
+    self->actOnRow(pressed, from);
 }
 
 // Enter opens the selected row, as on the Mac; Up and Down only move the
@@ -555,7 +566,7 @@ gboolean FileTree::onKey(GtkEventControllerKey*, guint keyval, guint, GdkModifie
     if (pos == GTK_INVALID_LIST_POSITION) return FALSE;
     self->pendingReveal_.clear();
     if (enter) {
-        self->actOnRow(pos, true);
+        self->actOnRow(pos, EditorTabs::OpenFrom::TreeReturn);
         return TRUE;
     }
     GtkTreeListRow* row = gtk_tree_list_model_get_row(self->treeModel_, pos);

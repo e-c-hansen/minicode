@@ -43,9 +43,12 @@ GtkApplication* MCGuiApplication();
 std::vector<MCGuiAppWindow> MCGuiAppWindows();   // open windows, oldest first
 MCGuiAppWindow MCGuiApp();                       // the newest; empty with none open
 
-// The file in the newest window, as a click in the tree opens it, the
-// "Save changes?" question included.
+// The file in the newest window, as a single click in the tree opens it: in
+// its tab if it has one, else in the preview tab (EditorTabs.h). The window's
+// tabs and the one on show are its editor's (Editor::documents, active).
 void MCGuiOpenFile(const std::string& path);
+// The same in a tab of its own, as a double-click or a link opens it.
+void MCGuiOpenFileKept(const std::string& path);
 // The settings file, read again now (the app also watches it).
 void MCGuiReloadSettings();
 // keys.conf, the same.

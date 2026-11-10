@@ -116,13 +116,41 @@ static void testLinuxCommandDefaults() {
           HasKey(d, "minicode.toggleHiddenFiles", "ctrl+shift+."));
     // The keys they leave are free until the commands that take them come
     // (the palette, Select Line, Select All Occurrences, Replace, the inline
-    // agent, Go to Line, Close Tab, the panel's Ctrl+J).
+    // agent, Go to Line, the panel's Ctrl+J).
     for (const char *k : {"ctrl+shift+p", "ctrl+l", "ctrl+shift+l", "ctrl+h", "ctrl+i", "ctrl+g",
-                          "ctrl+w", "ctrl+j", "ctrl+alt+t"}) {
+                          "ctrl+j", "ctrl+alt+t"}) {
         const bool free = d.commandsFor(K(k)).empty();
         if (!free) std::printf("  Linux: %s is %s\n", k, d.commandsFor(K(k))[0]->id);
         CHECK(free);
     }
+    // The tabs (PARITY.md 1.1): VS Code's Linux keys, but Reopen Closed Tab,
+    // whose Ctrl+Shift+T stays Toggle Terminal's (minicode's own Shift key),
+    // and Save All, whose VS Code key is a chord.
+    CHECK(d.keysOf("workbench.action.closeActiveEditor").size() == 2 &&
+          d.keysOf("workbench.action.closeActiveEditor")[0] == K("ctrl+w") &&
+          HasKey(d, "workbench.action.closeActiveEditor", "ctrl+f4"));
+    CHECK(d.keysOf("workbench.action.nextEditor").size() == 2 &&
+          d.keysOf("workbench.action.nextEditor")[0] == K("ctrl+pagedown") &&
+          HasKey(d, "workbench.action.nextEditor", "ctrl+tab"));
+    CHECK(d.keysOf("workbench.action.previousEditor").size() == 2 &&
+          d.keysOf("workbench.action.previousEditor")[0] == K("ctrl+pageup") &&
+          HasKey(d, "workbench.action.previousEditor", "ctrl+shift+tab"));
+    CHECK(d.commandFor(K("ctrl+shift+t"), When::Editor) ==
+          find("workbench.action.terminal.toggleTerminal"));
+    CHECK(d.keysOf("workbench.action.reopenClosedEditor").size() == 1 &&
+          HasKey(d, "workbench.action.reopenClosedEditor", "ctrl+alt+shift+t"));
+    CHECK(d.keysOf("workbench.action.files.saveAll").size() == 1 &&
+          HasKey(d, "workbench.action.files.saveAll", "ctrl+alt+s"));
+    for (int n = 1; n <= 8; n++) {
+        const std::string id = "workbench.action.openEditorAtIndex" + std::to_string(n);
+        CHECK(d.keysOf(id).size() == 1 && HasKey(d, id.c_str(), ("alt+" + std::to_string(n)).c_str()));
+    }
+    CHECK(d.keysOf("workbench.action.lastEditorInGroup").size() == 2 &&
+          d.keysOf("workbench.action.lastEditorInGroup")[0] == K("alt+9") &&
+          HasKey(d, "workbench.action.lastEditorInGroup", "alt+0"));
+    for (const char *id : {"workbench.action.closeOtherEditors", "workbench.action.closeAllEditors",
+                           "workbench.action.closeEditorsToTheRight", "workbench.action.keepEditor"})
+        CHECK(available(*find(id), Platform::Linux) && d.keysOf(id).empty());
     // No key of the Mac's anywhere.
     for (const auto &[id, keys] : d.keys)
         for (const Key &k : keys) CHECK(!(k.mods & Cmd));
@@ -184,7 +212,13 @@ static void testLinuxTerminalKeys() {
         for (const Key &k : d.keysOf(r.id))
             if (!linuxTerminalTakes(c, k) && !(k.mods & (Shift | Alt))) plain.insert(format(k));
     }
-    CHECK((plain == std::set<std::string>{"ctrl+`", "ctrl+0", "ctrl+1", "ctrl+tab"}));
+    CHECK((plain == std::set<std::string>{"ctrl+`", "ctrl+0", "ctrl+1", "ctrl+tab", "ctrl+pagedown",
+                                           "ctrl+pageup"}));
+    // Close Tab's keys are the shell's there (Ctrl+W deletes a word).
+    CHECK(takes("workbench.action.closeActiveEditor", "ctrl+w"));
+    CHECK(takes("workbench.action.closeActiveEditor", "ctrl+f4"));
+    CHECK(!takes("workbench.action.nextEditor", "ctrl+pagedown"));
+    CHECK(!takes("workbench.action.openEditorAtIndex1", "alt+1"));
 }
 
 static void testLinuxAccelerators() {

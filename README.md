@@ -411,7 +411,7 @@ cmd+k = -workbench.action.terminal.clear
 
 The menus, the command palette and the shortcut hints follow the file as soon as it is saved. A key given to a command is taken from whatever had it before, unless the two never work in the same place: one only in the editor and the other only in the terminal, say, or one only in a web page or a PDF and the other everywhere else, or the terminals' zoom and the editor's. Two lines giving one key to two commands are a mistake, and the status bar says so, as it does for the settings file. The few keys the editor and the terminal handle themselves, such as moving lines with Option Up and Down, are listed at the end of the file and cannot be changed yet.
 
-On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit menu opens it, written the first time with the commands minicode for Linux has. Its modifiers are ctrl, alt, and shift; a line with cmd, from a Mac's file, is refused. While the terminal has the keyboard, plain Ctrl keys and function keys go to the program in it, except Ctrl backtick, Ctrl 0, Ctrl 1, and Ctrl Tab, the ways out of it. Keys with Shift or Alt still work there, except Ctrl Shift C and Ctrl Shift V, the terminal's copy and paste, and Ctrl Shift G and Ctrl Shift Space, which a shell reads as Ctrl G and Ctrl Space.
+On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit menu opens it, written the first time with the commands minicode for Linux has. Its modifiers are ctrl, alt, and shift; a line with cmd, from a Mac's file, is refused. While the terminal has the keyboard, plain Ctrl keys and function keys go to the program in it, except Ctrl backtick, Ctrl 0, Ctrl 1, Ctrl Tab, Ctrl Page Down, and Ctrl Page Up, the ways out of it. Keys with Shift or Alt still work there, except Ctrl Shift C and Ctrl Shift V, the terminal's copy and paste, and Ctrl Shift G and Ctrl Shift Space, which a shell reads as Ctrl G and Ctrl Space.
 
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
@@ -422,10 +422,10 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
 | Clear the terminal, its scrollback included | Command K |  |  |
 | Close an agent's note (`minicode open --note`) in the editor | Escape, or its × |  |  |
-| Close every tab but the one on show | Option Command T |  |  |
+| Close every tab but the one on show | Option Command T | Close Other Tabs in the File menu or the tab's right click menu |  |
 | Close the active terminal | Control Shift W |  |  |
 | Close the application | Command Q | Ctrl Q |  |
-| Close the tab, the terminal the keyboard is in, or the browser's tab when it has the keyboard (the browser panel with its last tab) | Command W |  |  |
+| Close the tab, the terminal the keyboard is in, or the browser's tab when it has the keyboard (the browser panel with its last tab) | Command W | Ctrl W or Ctrl F4 (the browser panel when it has the keyboard, the window when no tab is open; in the terminal the shell has them) |  |
 | Close the window | Shift Command W | Ctrl Shift W |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N, or Ctrl N |
@@ -459,7 +459,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Go to a symbol anywhere in the folder, from the language servers running in the window (outside the browser, where it opens a tab) | Command T |  |  |
 | Go to a symbol of the open file (its functions, classes and headings, or @: grouped by kind), from its language server or minicode's own outline | Shift Command O |  |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
-| Go to tab 1 to 8, or the last tab | Control 1 to 9, or Shift Command 1 to 9 (macOS keeps Shift Command 3, 4 and 5 for screenshots) |  |  |
+| Go to tab 1 to 8, or the last tab | Control 1 to 9, or Shift Command 1 to 9 (macOS keeps Shift Command 3, 4 and 5 for screenshots) | Alt 1 to 8, and Alt 9 or Alt 0 for the last |  |
 | Go to the matching bracket, or to the closing bracket of the pair around the cursor | Shift Command backslash |  |  |
 | Go to the next or previous change bar in the file (lines changed since git last staged it) | Option F5, Shift Option F5 (F5 may need fn on a laptop) |  |  |
 | Go to the next or previous change in a side-by-side diff | F7, Shift F7 (F7 may need fn on a laptop) |  |  |
@@ -468,9 +468,8 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Go to the start or end of the file, or select to it (with several cursors, one is left) | Command Up, Command Down, Shift Command Up, Shift Command Down; or Command Home, Command End, Shift Command Home, Shift Command End (fn Command Left, Right on a laptop) |  |  |
 | Indent or outdent the selected lines, or the cursor's line | Tab, Shift Tab (the selected lines); Command ], Command [ | Tab, Shift Tab | Tab, Shift Tab |
 | Insert a line below the cursor's line, wherever the cursor is in it | Command Return (Insert Line Above is in the Edit menu) |  |  |
-| Jump to the previous file |  | Ctrl Tab |  |
 | Keep each match's case when replacing, in the find bar or Replace in Folder | Option Command P |  |  |
-| Keep a preview tab (its title in italics) as an ordinary tab | Double-click its title, edit or save it, or Keep Open in its right click menu or the File menu |  |  |
+| Keep a preview tab (its title in italics) as an ordinary tab | Double-click its title, edit or save it, or Keep Open in its right click menu or the File menu | Double-click its title, edit or save it, or Keep Open in its right click menu or the File menu |  |
 | List every problem the language servers report, grouped by file | Shift Command M, or click the problem counts in the status bar |  |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift D | W, or Ctrl Shift L |
 | Make the selection, or the word at the cursor, bold or italic in Markdown, or plain again | Toggle Bold, Toggle Italic in the Edit menu (no key by default: Command B is the sidebar and Command I the inline agent, as in VS Code; keys.conf can give them one) |  |  |
@@ -487,10 +486,10 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | New folder | Shift Command N | Ctrl Alt N |  |
 | New tab in the browser, while it has the keyboard (View > New Browser Tab anywhere) | Command T, or the + at the end of its tabs |  |  |
 | New window | Option Command N | Ctrl Shift N |  |
-| Next tab, previous tab (the browser's, while it has the keyboard and more than one tab) | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [, or Option Command Right, Option Command Left |  |  |
+| Next tab, previous tab (the browser's, while it has the keyboard and more than one tab) | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [, or Option Command Right, Option Command Left | Ctrl Page Down, Ctrl Page Up, or Ctrl Tab, Ctrl Shift Tab |  |
 | Open a file of the folder by typing part of its name, recently opened files first | Command P |  |  |
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
-| Open a file from the file tree in a tab of its own, not the preview tab | Double-click it, or Command click it |  |  |
+| Open a file from the file tree in a tab of its own, not the preview tab | Double-click it, or Command click it | Double-click it, Ctrl click it, or select it and press Enter |  |
 | Open a folder | Command O | Ctrl O | O, or Ctrl O |
 | Open a folder opened before, in this window | Control R (File > Open Recent lists them too) |  |  |
 | Open a new terminal in a new tab | Control Shift backtick |  |  |
@@ -506,7 +505,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Rename the name at the cursor wherever it is used, with a language server | F2 |  |  |
 | Rename the selected file or folder | F2, in the file tree | F2, in the file tree |  |
 | Rename the terminal, so its tab keeps the name over what the program running in it calls itself (an empty name gives that back) | Rename Terminal… in the Terminal menu or the tab's right click menu, or the command palette |  |  |
-| Reopen the tab closed last, where it was | Option Shift Command T |  |  |
+| Reopen the tab closed last, where it was | Option Shift Command T | Ctrl Alt Shift T |  |
 | Reorder the terminal tabs | Drag a tab along the strip, or Move Terminal Left and Move Terminal Right in the Terminal menu or the tab's right click menu |  |  |
 | Replace across the whole folder, after a count of what will change | Option Shift Command F |  |  |
 | Replace in the current file: the selected match and on to the next, or every match | Option Command F, then Return (or Shift Command 1) for one, Option Command Return for all |  |  |
@@ -516,7 +515,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Run the open file in the terminal | Shift Command Return |  |  |
 | Run the selected lines, or the cursor's line, in a Python REPL in a terminal tab of its own | Shift Return, in a Python file |  |  |
 | Save | Command S | Ctrl S | S, or Ctrl S |
-| Save every tab with unsaved changes | Option Command S |  |  |
+| Save every tab with unsaved changes | Option Command S | Ctrl Alt S |  |
 | Save the file under another name, the tab then showing the new file | Save As in the File menu (Shift Command S is Export PDF) |  |  |
 | See the language servers, restart one, or choose the Python interpreter | Click the server in the status bar, or the minicode menu |  |  |
 | Select a line, or every line dragged over, by its number | Click or drag in the line numbers, Shift click to extend |  |  |

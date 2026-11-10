@@ -674,9 +674,33 @@ Verified by running it:
   hints showed the new keys, its Mac line (`cmd+k`) was named in the status
   bar, and emptying the file put every key back. Edit > Keyboard
   Shortcuts… wrote the file with only the commands the port has.
+- Tabs (November 2026, `linux/PARITY.md` item 1.1), by the `tabs`,
+  `preview_tabs`, and `tab_viewers` GUI suites on a private Xvfb with real
+  key presses and clicks. Each file has a tab with its own buffer, caret,
+  scroll, and undo; the strip, Ctrl Page Down and Up, Ctrl Tab and Ctrl Shift
+  Tab (wrapping), and Alt 1 to 9 and Alt 0 switch them. A tab undone back to
+  the disk's text loses its dot. Ctrl W on a dirty tab asks, and Cancel,
+  Don't Save, and Save each did their part; a window with two dirty tabs
+  asked once. Ctrl Alt Shift T reopened tabs newest first with their caret
+  and scroll, and skipped a removed file; Ctrl Alt S saved every dirty tab;
+  two README.md files were labelled by folder. The tab menu's Close Tabs to
+  the Right, Close Other Tabs, and Copy Path did their part, and a middle
+  click on a tab or its close button closed it. A single click in the tree or Find in
+  Folder opens a preview tab (italic) that the next replaces; a double
+  click, Ctrl click, typing, saving, a double click on its title, and Keep
+  Open keep it. Pictures, PDFs, the LaTeX preview (one per tab, kept while
+  another shows), and the shared diff tab show in tabs. The Markdown preview
+  renders into a buffer of its own: typing in the source survived toggling
+  it and switching tabs, a task box clicked in it was undone from it, and
+  Ctrl Z went back to the clean file. By hand against clangd, squiggles
+  followed the tab on show and a fix typed in a tab cleared them.
 
 Not verified:
 
+- For tabs, everything that needs GNOME on Wayland: how the strip looks
+  under the desktop's theme, Alt with a digit and Ctrl Alt Shift T (which a
+  desktop or input method may take), and a held Ctrl W, which closes a tab
+  for each repeat (the Mac's closes one).
 - For the Source Control panel, everything that needs GNOME on Wayland: the
   look under the desktop's own theme (the button and check box are styled
   from the sidebar colors, the rest follows the theme), the selection and
@@ -999,9 +1023,11 @@ opens it.
 F2 and Delete work only while the file tree has the keyboard, so Delete in the
 editor still deletes text.
 
-In the tree, one click opens a file or opens and closes a folder, as on the
-Mac. Up and Down move the selection without opening anything, Enter opens
-the selected file and moves the keyboard to the editor, Left goes up to the
+In the tree, one click opens a file in the preview tab, which the next
+single click replaces, and opens and closes a folder, as on the Mac; a
+double click or Ctrl click opens a file in a tab that stays. Up and Down
+move the selection without opening anything, Enter opens the selected file
+in a tab that stays and moves the keyboard to the editor, Left goes up to the
 folder and closes it, and Right opens a folder and steps into it.
 
 In the Source Control panel, Up and Down move through the files, Enter shows
@@ -1026,8 +1052,8 @@ While the terminal has the keyboard, the plain Ctrl shortcuts (Ctrl B, F, N,
 O, Q, S, Space, slash, comma, plus and minus) and the keys with no modifier
 (F3, F9, F12) belong to the program in it, so readline, vim and emacs get
 them: Ctrl W deletes a word, Ctrl H is backspace. The keys that move between
-panes stay the app's: Ctrl `, Ctrl 0, Ctrl 1 and Ctrl Tab (Global in
-`src/CommandsLinux.cpp`). Ctrl 0 reaches the Source Control panel from the
+panes and tabs stay the app's: Ctrl `, Ctrl 0, Ctrl 1, Ctrl Tab, Ctrl Shift
+Tab, Ctrl Page Down, and Ctrl Page Up (Global in `src/CommandsLinux.cpp`). Ctrl 0 reaches the Source Control panel from the
 terminal while it is open. Everything with Shift or Alt in it still works
 there, except Ctrl Shift C and Ctrl Shift V, the terminal's copy and paste
 (elsewhere Ctrl Shift V is the preview), Ctrl Shift G (Source Control),

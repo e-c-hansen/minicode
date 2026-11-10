@@ -248,13 +248,11 @@ MC_GUI_SUITE(harness) {
                gtk_text_iter_get_offset(&b) - gtk_text_iter_get_offset(&a) > 4;
     });
 
-    MCGuiStep("an edit, then asks to open another file", [] {
+    MCGuiStep("an edit, then a question about it", [] {
         MCGuiType("x");
     });
     MCGuiWait("the edit arrives", 10, [] { return MCGuiApp().editor->dirty(); });
-    MCGuiStep("the open asks about the unsaved edit", [] {
-        MCGuiOpenFile(MCGuiProjectFile("README.md"));
-    });
+    MCGuiStep("Close Tab asks about the unsaved edit", [] { MCGuiKey("ctrl+w"); });
     MCGuiWait("the question is up, a window of its own", 10, [] {
         return MCGuiTopWindow() != MCGuiApp().window &&
                MCGuiFindButton(GTK_WIDGET(MCGuiTopWindow()), "Cancel") != nullptr;
@@ -267,9 +265,7 @@ MC_GUI_SUITE(harness) {
         GCHECK(MCGuiApp().editor->dirty());
         GCHECK(MCGuiApp().editor->currentPath() == MCGuiProjectFile("big.txt"));
     });
-    MCGuiStep("a question answered from the keyboard", [] {
-        MCGuiOpenFile(MCGuiProjectFile("README.md"));
-    });
+    MCGuiStep("a question answered from the keyboard", [] { MCGuiKey("ctrl+w"); });
     MCGuiWait("up again", 10, [] { return MCGuiTopWindow() != MCGuiApp().window; });
     MCGuiStep("Escape, in the question's own window", [] {
         MCGuiSetKeyWindow(MCGuiTopWindow());
