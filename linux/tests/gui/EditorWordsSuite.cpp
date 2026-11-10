@@ -66,8 +66,7 @@ MC_GUI_SUITE(editor_words) {
         double x0, y0, x1, y1;
         middleOf(5, &x0, &y0);
         middleOf(9, &x1, &y1);
-        MCGuiClick(view(), x0, y0);
-        MCGuiDrag(view(), x0, y0, x1, y1);
+        MCGuiDoubleClickDrag(view(), x0, y0, x1, y1);
     });
     waitCarets("whole words, arr to size", "4>12");
     MCGuiPause(0.6);
@@ -75,17 +74,14 @@ MC_GUI_SUITE(editor_words) {
         double x0, y0, x1, y1;
         middleOf(10, &x0, &y0);
         middleOf(5, &x1, &y1);
-        MCGuiClick(view(), x0, y0);
-        MCGuiDrag(view(), x0, y0, x1, y1);
+        MCGuiDoubleClickDrag(view(), x0, y0, x1, y1);
     });
     waitCarets("still whole words, the other way", "12>4");
     MCGuiPause(0.6);
     MCGuiStep("a triple click on arr", [] {
         double x, y;
         middleOf(5, &x, &y);
-        MCGuiClick(view(), x, y);
-        MCGuiClick(view(), x, y);
-        MCGuiClick(view(), x, y);
+        MCGuiClicks(view(), x, y, 3);
     });
     waitCarets("the whole line with its break", "0>13");
     MCGuiPause(0.6);

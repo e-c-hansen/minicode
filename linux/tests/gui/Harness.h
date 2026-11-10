@@ -191,7 +191,12 @@ void MCGuiType(const std::string& utf8);
 // click at the window's corner.
 void MCGuiMoveTo(GtkWidget* widget, double x = -1, double y = -1);
 void MCGuiClick(GtkWidget* widget, double x = -1, double y = -1, int button = 1);
-void MCGuiDoubleClick(GtkWidget* widget, double x = -1, double y = -1);
+// `count` clicks at one point as a hand makes them: the first now, each next
+// 60 ms of the X server's time after the one before, while the app runs on
+// (well within GTK's double-click time); the next step waits until they
+// are in.
+void MCGuiClicks(GtkWidget* widget, double x, double y, int count);
+void MCGuiDoubleClick(GtkWidget* widget, double x = -1, double y = -1);   // two of them
 // A button held down on `widget`, and let go later, wherever the pointer is
 // then: what happens in between (a listing moving rows under it) is the
 // check's.
@@ -204,6 +209,9 @@ void MCGuiClickWith(const std::string& modifiers, GtkWidget* widget, double x = 
 // Press at one point of `widget`, release at another, moving between over a
 // few turns of the main loop; the next step waits until it is over.
 void MCGuiDrag(GtkWidget* widget, double x0, double y0, double x1, double y1);
+// A double-click whose second press drags: a click, then the drag pressed
+// where it was a hand's moment later (MCGuiClicks).
+void MCGuiDoubleClickDrag(GtkWidget* widget, double x0, double y0, double x1, double y1);
 // The same with modifiers held throughout ("alt", "shift+alt", "" for
 // none) and any button (2 the middle one): a column dragged out with
 // Shift+Alt or the middle button (Carets.h).
