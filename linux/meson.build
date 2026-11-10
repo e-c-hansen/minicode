@@ -44,12 +44,22 @@ core_sources = [
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp',
   core_dir / 'GitModel.cpp',
+  # The tree's listings: the splices a fresh listing makes, and their pace.
+  core_dir / 'FileDetails.cpp',
   # The command registry and its Linux keys (Keys.cpp drives the menus and
   # the accelerators from them).
   core_dir / 'Commands.cpp',
   core_dir / 'CommandsLinux.cpp',
   # The tabs' rules (Tabs.cpp follows them, as the Mac's tabs do).
   core_dir / 'EditorTabs.cpp',
+  # Unsaved buffers kept on disk, and the tabs each folder had open
+  # (BackupStore.cpp and Persistence.cpp keep them).
+  core_dir / 'Backups.cpp',
+  core_dir / 'TabSessions.cpp',
+  # The gutter's line index, and the change bars it moves with the lines.
+  core_dir / 'LineIndex.cpp',
+  core_dir / 'QuickDiff.cpp',
+  core_dir / 'LineDiff.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -64,6 +74,11 @@ gui_sources = [
   'src/Document.cpp',
   'src/Tabs.cpp',
   'src/TabStrip.cpp',
+  # The view itself (CodeView.cpp: its drawing passes and the ruler), its
+  # line-number gutter (Gutter.cpp) and each buffer's lines (BufferLines.cpp).
+  'src/CodeView.cpp',
+  'src/Gutter.cpp',
+  'src/BufferLines.cpp',
   'src/Markdown.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.
@@ -93,6 +108,10 @@ gui_sources = [
   'src/WebImages.cpp',
   # The menu bar, the accelerators and the tree's keys, from the registry.
   'src/Keys.cpp',
+  # Between runs: each folder's tabs, the backups of unsaved tabs, and
+  # auto-save (the Mac's BackupStore and EditorController+Persistence).
+  'src/BackupStore.cpp',
+  'src/Persistence.cpp',
 ]
 
 inc = include_directories('src', '../src')

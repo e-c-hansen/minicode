@@ -237,6 +237,11 @@ state are JSON (`Json`) under `$XDG_STATE_HOME/minicode` (default
 `~/.local/state/minicode`); backups under `$XDG_DATA_HOME/minicode/Backups`.
 `MINICODE_BACKUP_DIR` overrides as on the Mac, and every one of these moves
 with the harness's scratch home.
+Items 1.2 and 1.3 made it `sessions.json` (the core's `TabSessions`, one
+object keyed by the folder's resolved path), and a backup's owner start is
+the process's start in seconds since boot from `/proc`, not wall-clock time
+as on the Mac, so a clock set forward or back never orphans a running
+window's backups.
 
 **D12. The registry builds the menu bar, and the palette reads the
 registry.** Today `main.cpp` writes its `GMenu` and accelerators by hand. A
@@ -340,17 +345,57 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   preview tab. A run by hand against clangd saw the squiggles follow the tab
   on show. Needs the owner: the strip's look, and Alt+digits and
   Ctrl+Alt+Shift+T under GNOME on Wayland.
-- [ ] **1.2 Sessions (D11).** A folder reopens its tabs. Mac: `MCTabSessions`.
-- [ ] **1.3 Backups, hot exit, and auto-save (D11).** `Backups` over its POSIX
+- [x] **1.2 Sessions (D11).** A folder reopens its tabs. Mac: `MCTabSessions`.
+  *Verified in Xvfb, 2026-11-09:* `tab-sessions:*` hold the file's format,
+  the 50 folders and the merging of windows on one folder; in the `sessions`
+  suite a second app opens a folder's files (a Markdown page, a named pipe,
+  a 17 MB file, one deleted afterwards, the preview tab), moves the caret by
+  keys and closes with Ctrl+Shift+W, and a third gets them back in order
+  without the deleted one, the preview tab as one, the caret and scroll as
+  they were, and only the tab on show read (never the pipe or the large
+  file at launch); two windows on one folder share it, and one that closes
+  drops out. It fails with the restore taken out of `newWindow`. Not done:
+  the browser's page, which the Mac's session keeps too (after 1.13).
+  Needs the owner: a logout under GNOME.
+- [x] **1.3 Backups, hot exit, and auto-save (D11).** `Backups` over its POSIX
   `Fs`. Mac: `BackupStore`, `+Persistence`. Check with a real SIGKILL.
-- [ ] **1.4 Line numbers and the gutter (D4).** `LineIndex`, the
+  *Verified in Xvfb, 2026-11-09:* in the `backups` suite a second app types
+  into three tabs and is killed with a real `kill -9`; a third, started on
+  another folder, opens a window on the first by itself and has every
+  buffer back unsaved over the disk's text, nothing to undo, the note in the
+  status bar, the question about the file changed meanwhile, and the
+  deleted file's text; Ctrl+Q with Don't Save leaves no backup. The
+  `auto_save` suite presses keys for after-delay, focus-change (Ctrl+0, a
+  tab switch), Close Tab writing instead of asking, a file changed on disk
+  left alone and named, one deleted not made again, a dead key composing,
+  and off. They fail with backups never written, auto-save off, or any of
+  its three guards taken out. Needs the
+  owner: a real power loss, a crash or logout under GNOME, and focus-change
+  with Wayland's focus and an IBus input method.
+- [x] **1.4 Line numbers and the gutter (D4).** `LineIndex`, the
   current-line color, click and drag to select lines.
+  *Verified in Xvfb, 2026-11-09:* `lineindex:utf8` holds the code-point
+  index to a full one under 20,000 random edits; the `gutter`, `ruler`, and
+  `gutter_typing` suites hold the numbers drawn to an index made afresh and
+  to GTK's line positions after typing that adds and removes lines and a
+  paste with a lone CR, U+2029, and U+2028, and check the active color
+  following the caret, relative and off, the colors and `editor.opacity` as
+  pixels, real clicks, drags up and down, and Shift+click selecting whole
+  lines, no gutter in a Markdown preview, each tab's numbers and width, the
+  dots from the squiggle tags, the change and fold lanes' APIs, the rulers
+  at their columns' x as pixels, and typing in 100,000 lines (0.05 ms of
+  gutter CPU a key; 8 to 9 ms a key for the main thread, with the gutter or
+  without). They fail without the line-start rule, without the ruler pass,
+  and with the index counted again per key. Needs the owner: how it looks
+  (font, alignment, colors) and HiDPI. The window's divider takes presses
+  in the gutter's first 14 px (`HANDOFF.md` item 16), for 1.13 to narrow
+  before 2.10's change bars take clicks.
 - [ ] **1.5 The palette (D12).** Commands, Quick Open, Go to Line, and
   file symbols without a server. `CommandPalette`, `SymbolOutline`. Mac:
   `PalettePanel`.
 - [x] **1.6 Find and replace.** The find bar with case, word, regex, preserve
   case, and in selection; Replace in Folder. `TextFind`, `FolderSearch`.
-  D5's function is `MultiEdit::apply` (HANDOFF.md item 16).
+  D5's function is `MultiEdit::apply` (HANDOFF.md item 18).
   *Verified in Xvfb, 2026-11-09:* `findrules:*` and `editspans:*` hold the
   core's rules (the seed, the count, the search in UTF-16 and code points,
   the changes, the colors against the Mac's table), and the `find_bar` and
@@ -381,6 +426,12 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   Forward (`NavHistory`), Maximize Pane.
 - [ ] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
   *Done means:* a 25 MB file opens and types within the Mac's bounds.
+  Measured for R1 on main with tabs (2026-11-09, the main thread held by
+  one `Editor::openFile`): a 15 MB C file of 300,000 lines, 0.6 s of CPU
+  (0.2 s as .txt, so most of it `Document::startHighlighting`); a 5 MB
+  file on one line, 1.5 to 3.0 s of CPU, and once 5.2 s long at load
+  average 8, past GNOME's 5 s before "not responding". Before tabs these
+  were 3.0 s and about 5 s of CPU.
 - [ ] **1.13 The Mac's layout.** The owner's report, 2026-11-09: the browser
   should sit right of the editor with a drag bar between them, and the
   terminal below both, full width, as on the Mac; today the browser takes
@@ -453,7 +504,12 @@ These may run in parallel.
 - [ ] **4.1 Viewers.** CSV, JSON outline, notebooks, and SQLite, with the
   same read-only rules. `FileSniff`, `Csv`, `JsonOutline`, `Notebook`.
 - [ ] **4.2 The preview to the side and scroll sync.** `MarkdownPage`,
-  `PreviewScroll`.
+  `PreviewScroll`. Measured for R1 (2026-11-09): opening README.md in the
+  preview holds the main thread for 0.3 to 0.6 s of CPU, the same without
+  its pictures, while CLAUDE.md (twice the size, few tables) never holds it
+  20 ms. The cost is GTK measuring the tables, each a `GtkGrid` of wrapping
+  labels (`buildTable` in `Markdown.cpp`, about 540 cells in README). Its
+  eight GIFs add about 130 ms of waiting on the image loader's process.
 - [ ] **4.3 Math, Mermaid, and Export as HTML.** `MathTex`, `MermaidDiagram`,
   `MarkdownHtml`.
 - [ ] **4.4 LaTeX problems, warnings, and forward search.** `LatexLog`,
@@ -470,9 +526,30 @@ These may run in parallel.
 Problems the owner hit in the port that no item above covers. Each is
 fixed on its own branch, with a GUI check that fails without the fix.
 
-- [ ] **R1. "minicode is not responding" while clicking around the file
+- [x] **R1. "minicode is not responding" while clicking around the file
   tree** (2026-11-09, the PPA's 1.4.14). The tree's code is the same on
   main. Find the stall, fix it, and bound it with a check.
+  *Found and verified on the ThinkPad, 2026-11-09:* the tree patched a
+  folder's rows once per `GFileMonitor` event, through a sort model costing
+  0.25 ms a change in a big folder, with GIO handing bursts over in one
+  dispatch. Deleting the 30,000 files of an open folder held the main loop
+  for 117 s, making them again for 36 s, and opening that folder cost 7.6 s
+  of main-thread CPU in pieces. Now an event only asks for a listing
+  (`TreeRefresh::Pacer`), made on a worker thread and put in as
+  `TreeRefresh::splices` 8 ms a turn. The `tree_stall` suite (real clicks,
+  a churning folder, 10,000 files deleted and made in an open folder) bounds
+  each phase's longest stall at 500 ms of CPU: it measures 30 to 60 ms, and
+  without the fix 18.2 s and 5.6 s. The owner's own folders hold nothing
+  that large (`~/minicode`'s biggest folder has 363 entries), so their
+  freeze was not reproduced as it happened. `~/minicode` opened read only
+  in the harness, with a build churning an open `build/test-obj`, stalled
+  at most 43 ms, except README.md's preview: 0.8 s of CPU, 2.1 s long at
+  load average 8, from its tables (item 4.2). Ask the owner which folder
+  was open, whether hidden files were shown, and what the click opened.
+  Measured on the way, not fixed here: on main a one-line 5 MB file holds
+  the main loop 1.5 to 3 s of CPU, 5.2 s long once on a loaded machine
+  (item 1.12). Needs the owner: the tree under GNOME on Wayland while a
+  build runs in an open folder.
 - Right-clicking a part of the window offers no Adjust Settings (the same
   day): that is item 2.11.
 

@@ -40,6 +40,16 @@ void LineIndex::edit(size_t pos, size_t oldLen, const char16_t* inserted, size_t
                      char16_t before, char16_t after) {
     if (pos > length_) pos = length_;
     if (pos + oldLen > length_) oldLen = length_ - pos;
+    std::vector<size_t> fresh;
+    if (pos > 0 && breaksAfter(before, newLen ? inserted[0] : after)) fresh.push_back(pos);
+    for (size_t i = 0; i < newLen; i++)
+        if (breaksAfter(inserted[i], i + 1 < newLen ? inserted[i + 1] : after))
+            fresh.push_back(pos + i + 1);
+    splice(pos, oldLen, newLen, fresh);
+}
+
+void LineIndex::splice(size_t pos, size_t oldLen, size_t newLen,
+                       const std::vector<size_t>& fresh) {
     // The starts the edit can change: the one at pos (a '\r' before it ends
     // a line only if what now follows it is not '\n'), and those in
     // (pos, pos + oldLen], which followed a unit that was replaced.
@@ -48,11 +58,6 @@ void LineIndex::edit(size_t pos, size_t oldLen, const char16_t* inserted, size_t
     // Everything from `last` on is counted from the end, which the edit
     // does not move.
     moveGap(last);
-    std::vector<size_t> fresh;
-    if (pos > 0 && breaksAfter(before, newLen ? inserted[0] : after)) fresh.push_back(pos);
-    for (size_t i = 0; i < newLen; i++)
-        if (breaksAfter(inserted[i], i + 1 < newLen ? inserted[i + 1] : after))
-            fresh.push_back(pos + i + 1);
     const size_t removed = last - first, added = fresh.size();
     if (added > removed)
         starts_.insert(starts_.begin() + (ptrdiff_t)last, added - removed, 0);
@@ -62,6 +67,57 @@ void LineIndex::edit(size_t pos, size_t oldLen, const char16_t* inserted, size_t
     for (size_t k = 0; k < added; k++) starts_[first + k] = fresh[k];
     gap_ = first + added;
     length_ = length_ + newLen - oldLen;
+}
+
+// ---- code points from UTF-8
+namespace {
+
+// Whether byte i of s starts a code point (is not a continuation byte).
+inline bool leads(const char* s, size_t i) { return ((unsigned char)s[i] & 0xC0) != 0x80; }
+
+// Whether the code point starting at byte i ends a line: '\n', U+2029, or a
+// '\r' not followed by '\n' (`nextIsNewline` when i is the last byte).
+inline bool breaksAt(const char* s, size_t i, size_t n, bool nextIsNewline) {
+    const unsigned char b = (unsigned char)s[i];
+    if (b == '\n') return true;
+    if (b == '\r') return !(i + 1 < n ? s[i + 1] == '\n' : nextIsNewline);
+    return b == 0xE2 && i + 2 < n && (unsigned char)s[i + 1] == 0x80 &&
+           (unsigned char)s[i + 2] == 0xA9;
+}
+
+inline bool codePointBreaksAfter(char32_t c, char32_t next) {
+    return c == U'\n' || c == 0x2029 || (c == U'\r' && next != U'\n');
+}
+
+}  // namespace
+
+void LineIndex::resetUtf8(const char* text, size_t bytes) {
+    starts_.assign(1, 0);
+    size_t units = 0;
+    for (size_t i = 0; i < bytes; i++) {
+        if (!leads(text, i)) continue;
+        units++;
+        if (breaksAt(text, i, bytes, false)) starts_.push_back(units);
+    }
+    length_ = units;
+    gap_ = starts_.size();
+}
+
+void LineIndex::editUtf8(size_t pos, size_t oldLen, const char* inserted, size_t bytes,
+                         char32_t before, char32_t after) {
+    if (pos > length_) pos = length_;
+    if (pos + oldLen > length_) oldLen = length_ - pos;
+    std::vector<size_t> fresh;
+    // Only whether it is '\n' matters to a '\r' before it.
+    const char32_t first = bytes ? (inserted[0] == '\n' ? U'\n' : U'x') : after;
+    if (pos > 0 && codePointBreaksAfter(before, first)) fresh.push_back(pos);
+    size_t units = 0;
+    for (size_t i = 0; i < bytes; i++) {
+        if (!leads(inserted, i)) continue;
+        units++;
+        if (breaksAt(inserted, i, bytes, after == U'\n')) fresh.push_back(pos + units);
+    }
+    splice(pos, oldLen, units, fresh);
 }
 
 size_t LineIndex::lineOf(size_t pos) const {

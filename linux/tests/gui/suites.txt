@@ -4,8 +4,15 @@
 SaveSuite.cpp
 HarnessSuite.cpp
 KeysSuite.cpp
+TreeStallSuite.cpp
 TabsSuite.cpp
 PreviewTabsSuite.cpp
 TabViewersSuite.cpp
 FindBarSuite.cpp
 ReplaceInFolderSuite.cpp
+SessionsSuite.cpp
+BackupsSuite.cpp
+AutoSaveSuite.cpp
+GutterSuite.cpp
+RulerSuite.cpp
+GutterTypingSuite.cpp
