@@ -32,3 +32,8 @@ GoBackSuite.cpp
 MaximizeSuite.cpp
 StartupSuite.cpp
 DetachSuite.cpp
+ToolsConsentSuite.cpp
+FormatSuite.cpp
+FormatConsentSuite.cpp
+FormatCoverageSuite.cpp
+ServerConsentSuite.cpp

@@ -44,6 +44,7 @@
 
 #include "AppSettings.h"
 #include "BracketView.h"
+#include "ConsentBar.h"
 #include "Detach.h"
 #include "Document.h"
 #include "Editor.h"
@@ -54,6 +55,8 @@
 #include "Browser.h"
 #include "Search.h"
 #include "FindBar.h"
+#include "FolderConsent.h"
+#include "Formatting.h"
 #include "Lsp.h"
 #include "GitPanel.h"
 #include "Keys.h"
@@ -106,6 +109,12 @@ struct App {
     PalettePanel* palette = nullptr; // the palette, over the panes (PalettePanel.h)
     NavHistoryUi* nav = nullptr;     // Go Back and Go Forward (NavHistoryUi.h)
     int zoomListener = 0;            // the zoom and word wrap's (Zoom.h)
+    // Format Document (Formatting.h), and the bar under the tabs that asks
+    // about the folder's own tools for the servers (ConsentBar.h), with the
+    // folder's answer's listener (Ask Again's enabled state).
+    Formatting* format = nullptr;
+    ConsentBar* consentBar = nullptr;
+    int consentListener = 0;
 
 #ifdef MINICODE_ENABLE_TERMINAL
     Terminal* terminal = nullptr;
@@ -244,6 +253,9 @@ static void updateTitle(void* userp) {
         g_simple_action_set_enabled(G_SIMPLE_ACTION(save), app->editor->canSave());
     if (GAction* exp = g_action_map_lookup_action(G_ACTION_MAP(app->window), "exportpdf"))
         g_simple_action_set_enabled(G_SIMPLE_ACTION(exp), app->editor->isLatex());
+    // Format Document acts on a file's editable source only.
+    if (GAction* fmt = g_action_map_lookup_action(G_ACTION_MAP(app->window), "formatdocument"))
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(fmt), app->format && app->format->canFormat());
     updatePageZoom(app);
     updateMediaKey(app);
     updateKeyPlace();    // a Markdown file's own keys
@@ -603,7 +615,41 @@ static void act_open(GSimpleAction*, GVariant*, gpointer userp) {
 }
 
 static void act_save(GSimpleAction*, GVariant*, gpointer userp) {
-    saveCurrent(static_cast<App*>(userp));
+    App* app = static_cast<App*>(userp);
+    // format.on-save: Ctrl+S formats first and saves when that is done (Save
+    // All, auto-save and the close question's Save never format).
+    if (g.settings->settings().formatOnSave() && app->format && app->format->formatBeforeSaving())
+        return;
+    saveCurrent(app);
+}
+
+// Format Document (PARITY.md 2.4), and with lines selected those lines.
+static void act_format_document(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->format) app->format->formatDocument();
+}
+
+// Ask Again About This Folder's Tools (PARITY.md 2.3): on only while the
+// folder has an answer to take back.
+static void updateFolderToolsAction(App* app) {
+    if (app->dead) return;
+    if (GAction* a = g_action_map_lookup_action(G_ACTION_MAP(app->window), "forgetfoldertools"))
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(a),
+                                    !FolderConsent::answer(app->rootDir).empty());
+}
+
+// The answer the bar or Format Document stored goes: the servers stop using
+// the folder's environment (they start again), the bar asks again over a
+// Python file (also when its question was put off with ×), and so does the
+// next format with a formatter from the folder.
+static void act_forget_folder_tools(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (FolderConsent::answer(app->rootDir).empty()) {
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    FolderConsent::forget(app->rootDir);
+    flashStatus(app, "minicode will ask before running this folder's own tools again");
 }
 
 // Ctrl+Shift+S: the typeset PDF of a LaTeX file, as on the Mac (Shift+Cmd+S).
@@ -684,6 +730,7 @@ static void act_toggle_preview(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     showEditorArea(app);   // the preview shows in the editor's slot
     app->editor->togglePreview();
+    updateTitle(app);      // Format Document only on the source
     refreshHints(app);
 }
 
@@ -1658,6 +1705,7 @@ static std::string hintsText(App* app) {
     row("editor.action.commentLine", "Toggle comment");
     row("editor.action.jumpToBracket", "Go to bracket");
     plain("Tab, Shift Tab", "Indent, outdent lines");
+    row("editor.action.formatDocument", "Format document (or the selected lines)");
     row("minicode.sortLines", "Sort lines");
     row("minicode.sortKeepSortedBlocks", "Sort keep-sorted blocks");
     row("workbench.action.openSettings", "Settings");
@@ -2109,6 +2157,11 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->palette = nullptr;
     delete app->nav;       // before the editor whose buffers it watches
     app->nav = nullptr;
+    FolderConsent::unlisten(app->consentListener);
+    delete app->format;    // before the session and the editor it asks
+    app->format = nullptr;
+    delete app->consentBar;
+    app->consentBar = nullptr;
     delete app->lsp;
     app->lsp = nullptr;
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -2186,7 +2239,10 @@ static App* newWindow(const std::string& root, const std::string& file) {
             if (!app->dead) gtk_widget_error_bell(app->window);
         }});
     app->editor->onActiveWillChange = [app] {
-        if (!app->dead && app->nav) app->nav->tabWillSwitch();
+        if (app->dead) return;
+        if (app->nav) app->nav->tabWillSwitch();
+        // A Ctrl+S waiting for its formatter saves the tab as it leaves.
+        if (app->format) app->format->tabLeaving();
     };
     app->editor->onActiveChanged = [app] {
         if (app->dead) return;
@@ -2218,7 +2274,8 @@ static App* newWindow(const std::string& root, const std::string& file) {
                 if (a != app && !a->dead && a->persist && a->persist->key() == app->persist->key())
                     out.push_back(a->persist);
             return out;
-        }});
+        },
+        [app](const Document* d) { return !app->dead && app->format && app->format->saveWaits(d); }});
     app->editor->onDocumentsChanged = [app](Document* d) {
         if (!app->dead && app->persist) app->persist->changed(d);
     };
@@ -2337,7 +2394,24 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->lsp = new LspSession(app->editor, app->rootDir, g.settings->settings());
     app->lsp->onStatus = [app](const std::string& text) {
         gtk_label_set_text(GTK_LABEL(app->lspLabel), text.c_str());
+        if (!app->dead && app->consentBar) app->consentBar->refresh();
     };
+    // The folder's own tools (PARITY.md 2.3): the bar under the tabs asks
+    // about them for the servers, and Format Document asks for its own.
+    app->consentBar = new ConsentBar(ConsentBar::Host{
+        [app] { return app->rootDir; },
+        [app] { return app->dead ? std::string() : app->lsp->folderEnvironmentAwaitingConsent(); },
+        [app] { return app->dead ? std::string() : app->lsp->folderCodeAwaitingConsent(); },
+        [app] { return app->dead ? std::string() : app->lsp->folderCodeQuestion(); }});
+    app->editor->addBar(app->consentBar->widget());
+    app->format = new Formatting(GTK_WINDOW(app->window), app->editor, app->lsp, Formatting::Host{
+        [app] { return app->rootDir; },
+        [app](Document* d) {
+            if (!app->dead) saveDocument(app, d);
+        }});
+    app->consentListener = FolderConsent::listen([app](const std::string&) {
+        updateFolderToolsAction(app);
+    });
     app->lsp->onReveal = [app](const std::string& path, int line, std::size_t col,
                                std::size_t len) {
         FolderSearchMatch m;
@@ -2435,6 +2509,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "quickopen",      G_CALLBACK(act_quick_open));
     addAction(app, "gotoline",       G_CALLBACK(act_go_to_line));
     addAction(app, "gotosymbol",     G_CALLBACK(act_go_to_symbol));
+    addAction(app, "formatdocument", G_CALLBACK(act_format_document));
+    addAction(app, "forgetfoldertools", G_CALLBACK(act_forget_folder_tools));
+    updateFolderToolsAction(app);
     for (const char* off : {"zoomin", "zoomout", "zoomfit", "playpause"})   // until shown
         g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
                                         G_ACTION_MAP(app->window), off)), FALSE);

@@ -58,6 +58,40 @@ public:
     void goToDefinition();      // F12, at the caret
     void showHoverInfo();       // Ctrl+I, at the caret
 
+    // ---- the folder's own tools (LspFolderTools.cpp, PARITY.md 2.3)
+    // Until the folder's answer (FolderConsent.h) is "allow", the Python
+    // servers neither run the folder's own environment nor are looked for
+    // in it, rust-analyzer starts without build scripts and proc macros (or
+    // waits), and the TypeScript server uses the user's own TypeScript (or
+    // waits): the Mac's Lsp+Python.mm and checkProjectCode. An answer given
+    // or taken back starts those servers again.
+    // The folder's own Python environment to ask about for a Python file on
+    // show (".venv"), or "".
+    std::string folderEnvironmentAwaitingConsent() const;
+    // The file on show's server that runs without what would run the
+    // folder's code, or waits for the answer ("rust", "typescript"), or "";
+    // and the bar's question about it.
+    std::string folderCodeAwaitingConsent() const;
+    std::string folderCodeQuestion() const;
+    // The interpreter the Python servers get ("" leaves them to choose) and
+    // where it came from ("settings", "automatic; the folder's own
+    // environment waits for your answer").
+    std::string serverPythonInterpreter(std::string* source = nullptr) const;
+    const std::string& root() const { return root_; }
+
+    // ---- Format Document through the file's server (LspFormatting.cpp,
+    // PARITY.md 2.4), for a file no formatter is planned for
+    // (Formatter::serverMayFormat).
+    // A running server for the file on show that offers formatting.
+    bool canFormatDocument() const;
+    // textDocument/formatting (or rangeFormatting for selected characters,
+    // where offered), its edits as one undo step. False when no server
+    // formats the file; else `done` comes once: with no note, a note
+    // ("Already formatted (fakelsp)."), or an error (the server's
+    // complaint, or no answer within 5 s).
+    bool formatDocument(long selStart, long selEnd,
+                        std::function<void(const std::string& note, bool error)> done);
+
     // EditorObserver
     void documentChanged(const std::string& path) override;
     void documentSaved() override;
@@ -143,6 +177,27 @@ private:
     void flushChanges();
     void scheduleChange();
 
+    // The folder's own tools (LspFolderTools.cpp).
+    std::string currentKey_;   // the file on show's server key, "" for none
+    std::string consentUsed_;  // the folder's answer the servers were started with
+    int folderToolsListener_ = 0;
+    std::map<std::string, Lsp::ProjectCodeCheck> projectCode_;   // per key, as last started
+    // Where a server is looked for before the usual folders: for Python,
+    // the interpreter's own bin.
+    std::vector<std::string> firstDirsForKey(const std::string& key) const;
+    Lsp::ProjectCodeCheck projectCodeForKey(const std::string& key,
+                                            const std::string& program) const;
+    void configureServer(Lsp::Client& c, const std::string& key,
+                         const std::vector<std::string>& argv, const Lsp::ProjectCodeCheck& pc);
+    void folderToolsChanged(const std::string& key);
+    // These servers stopped and forgotten, so the next file of theirs
+    // starts them again (their notes and checks too).
+    void stopServers(const std::vector<std::string>& keys);
+    // The file on show's server's client and name, when it has the file
+    // open; and that client when it formats (LspFormatting.cpp).
+    Lsp::Client* clientOnShow(std::string* name = nullptr) const;
+    Lsp::Client* formattingClient(bool range, bool* useRange, std::string* name) const;
+
     void diagnosticsArrived(const std::string& uri, const std::vector<Lsp::Diagnostic>& list);
     void clearMarks();
     bool sameFile(const std::string& uriA, const std::string& uriB) const;
@@ -184,6 +239,12 @@ private:
 // SIGKILL for any still running a moment later. For the application's
 // "shutdown" signal; it waits (up to about a second) without the main loop.
 void LspTerminateAllServers();
+// The folders programs are looked for in after PATH (a launcher from the
+// dock may have a short PATH), and a program by name in PATH and those, or
+// a path as given (~ expanded) when it can run; "" when none. Format
+// Document looks for formatters the same way.
+std::vector<std::string> LspSearchDirs();
+std::string LspFindProgram(const std::string& name);
 // How many server processes are running (tests).
 std::size_t LspRunningServerCount();
 // Their process ids (tests).

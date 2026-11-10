@@ -2,6 +2,7 @@
 // diagnostics tags, the completion popover, hover and go to definition. The
 // macOS counterpart is src/Lsp.mm, and the behaviour follows it closely.
 #include "Lsp.h"
+#include "FolderConsent.h"
 #include "Palette.h"
 #include "StartupLog.h"
 #include "WhenDrawn.h"
@@ -86,10 +87,23 @@ std::string findProgram(const std::string& name) {
 
 // A command line from the settings (or the defaults) -> the program's full
 // path plus its arguments, or nothing when the program is not installed.
-std::vector<std::string> resolveCommand(const std::string& command) {
+// A bare name is looked for in `first` before the usual folders (a Python
+// server beside the interpreter it is given).
+std::vector<std::string> resolveCommand(const std::string& command,
+                                        const std::vector<std::string>& first = {}) {
     std::vector<std::string> words = Lsp::splitCommand(command);
     if (words.empty()) return {};
-    std::string prog = findProgram(words[0]);
+    std::string prog;
+    if (words[0].find('/') == std::string::npos)
+        for (const std::string& dir : first) {
+            const std::string p = dir + "/" + words[0];
+            if (g_file_test(p.c_str(), G_FILE_TEST_IS_EXECUTABLE) &&
+                !g_file_test(p.c_str(), G_FILE_TEST_IS_DIR)) {
+                prog = p;
+                break;
+            }
+        }
+    if (prog.empty()) prog = findProgram(words[0]);
     if (prog.empty()) return {};
     words[0] = prog;
     return words;
@@ -503,6 +517,10 @@ void LspTerminateAllServers() {
     waitForExit(list, 300);
 }
 
+std::vector<std::string> LspSearchDirs() { return searchDirs(); }
+
+std::string LspFindProgram(const std::string& name) { return findProgram(name); }
+
 std::size_t LspRunningServerCount() {
     std::size_t n = 0;
     for (auto& s : *lspgtk::gServers) if (s->running()) ++n;
@@ -534,6 +552,12 @@ LspSession::LspSession(Editor* editor, const std::string& root, const Settings& 
         held_ = false;
         const std::string path = path_;   // a copy: documentChanged clears path_ first
         documentChanged(path);
+    });
+    // The folder's answer about its own tools changed: the servers that
+    // depend on it start again (LspFolderTools.cpp).
+    consentUsed_ = FolderConsent::answer(root_);
+    folderToolsListener_ = FolderConsent::listen([this, alive](const std::string& key) {
+        if (!alive.expired()) folderToolsChanged(key);
     });
 
     // Squiggles: tags of their own, never among the highlighter's (it removes
@@ -602,6 +626,7 @@ void LspSession::useBuffer(GtkTextBuffer* b) {
 }
 
 LspSession::~LspSession() {
+    FolderConsent::unlisten(folderToolsListener_);
     shutdown();
     g_signal_handlers_disconnect_by_data(view_, this);
     useBuffer(nullptr);
@@ -680,6 +705,14 @@ bool LspSession::noServer() {
 std::string LspSession::settingsSignature(const Settings& s) const {
     std::string sig = s.lspEnabled() ? "1" : "0";
     for (const std::string& k : Settings::lspServers()) sig += "|" + s.lspCommand(k);
+    // Servers of the user's own, the files every server is for, and the
+    // Python the Python servers are given.
+    for (const std::string& k : s.lspCustomServers()) sig += "|" + k + "=" + s.lspCommand(k);
+    for (const auto& e : s.lspExtensions()) {
+        sig += "|" + e.first + ":";
+        for (const std::string& x : e.second) sig += x + ",";
+    }
+    sig += "|python.interpreter=" + s.pythonInterpreter();
     return sig;
 }
 
@@ -699,11 +732,26 @@ std::shared_ptr<Server> LspSession::serverForKey(const std::string& key) {
     if (!settings_.lspCommand(key).empty()) commands.push_back(settings_.lspCommand(key));
     else commands = Lsp::defaultCommands(key);
     std::shared_ptr<Server> server;
+    // The folder's own tools (LspFolderTools.cpp): a Python server is looked
+    // for beside the interpreter it gets, and one that would run the
+    // folder's code starts without it, or waits for the folder's answer.
+    const std::vector<std::string> first = firstDirsForKey(key);
     for (const std::string& cmd : commands) {
-        std::vector<std::string> argv = resolveCommand(cmd);
+        std::vector<std::string> argv = resolveCommand(cmd, first);
         if (argv.empty()) continue;
+        const Lsp::ProjectCodeCheck pc = projectCodeForKey(key, argv[0]);
+        projectCode_[key] = pc;
+        if (pc.verdict == Lsp::ProjectCode::Waits) {
+            note_ = "The " + Lsp::serverDisplayName(key) +
+                    " language server waits for your answer about this folder's tools";
+            notes_[key] = note_;
+            return nullptr;
+        }
         server = Server::start(key, argv, root_);
-        if (server) break;
+        if (server) {
+            configureServer(server->client(), key, argv, pc);
+            break;
+        }
     }
     if (!server) {
         note_ = "No " + Lsp::serverDisplayName(key) + " language server found";
@@ -781,10 +829,29 @@ void LspSession::serverExited(Server* s) {
     }
 }
 
+Lsp::Client* LspSession::clientOnShow(std::string* name) const {
+    if (!server_ || uri_.empty() || server_->stopping()) return nullptr;
+    if (name) *name = server_->name();
+    return &server_->client();
+}
+
+void LspSession::stopServers(const std::vector<std::string>& keys) {
+    for (const std::string& k : keys) {
+        auto it = servers_.find(k);
+        if (it != servers_.end()) {
+            it->second->stop();
+            servers_.erase(it);
+        }
+        notes_.erase(k);
+        projectCode_.erase(k);
+    }
+}
+
 void LspSession::stopAllServers() {
     for (auto& kv : servers_) kv.second->stop();
     servers_.clear();
     notes_.clear();
+    projectCode_.clear();
     diags_.clear();
 }
 
@@ -829,6 +896,7 @@ void LspSession::closeDocument() {
     server_.reset();
     uri_.clear();
     path_.clear();
+    currentKey_.clear();
     note_.clear();
     clearMarks();
     ++docGen_;
@@ -845,12 +913,19 @@ void LspSession::documentChanged(const std::string& path) {
         updateStatus();
         return;
     }
+    // The five, the servers the settings add (lsp.<name> with
+    // lsp.<name>.extensions), and an optional built-in one the settings name
+    // a command for (lsp.markdown = ...); the Mac also starts an optional
+    // one it finds installed.
     Lsp::Language lang;
     if (path.empty() || !settings_.lspEnabled() ||
-        !Lsp::languageForExtension(lowerExt(path), lang)) {
+        !Lsp::languageForExtension(lowerExt(path), lang, settings_.lspExtensions()) ||
+        (Lsp::isOptionalServer(lang.server) &&
+         (settings_.lspOff(lang.server) || settings_.lspCommand(lang.server).empty()))) {
         updateStatus();
         return;
     }
+    currentKey_ = lang.server;
     std::shared_ptr<Server> server = serverForKey(lang.server);
     if (!server) {
         updateStatus();

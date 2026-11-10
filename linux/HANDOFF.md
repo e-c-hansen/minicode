@@ -1894,6 +1894,86 @@ What later items build on:
   caret far (to its end), which the ten-line rule records: a check that
   wants an empty history clears it after the click.
 
+### 26. The folder's own tools and Format Document (done, November 2026; `PARITY.md` items 2.3 and 2.4)
+
+What later items build on:
+- **The folder's answer** (`src/FolderConsent.{h,cpp}`): "allow", "deny"
+  or none for a window's folder (its resolved path), kept in
+  `$XDG_STATE_HOME/minicode/folder-tools.json` (the core's
+  `FolderTools::decode` and `encode`), the Mac's `MCFolderToolsConsent`.
+  One answer covers the folder's Python environment for the servers, its
+  `.venv` and `node_modules` for the formatters, a configuration that runs
+  code, and rust-analyzer's and the TypeScript server's project code.
+  `listen` tells every window of a change; the bar's × is `putOff`, for
+  this launch only, and `forget` (Ask Again About This Folder's Tools,
+  `win.forgetfoldertools`, on only while there is an answer) brings it back.
+- **The servers** (`src/LspFolderTools.cpp`, LspSession's part): the one
+  hook is in `serverForKey`, where a server is chosen. A Python server is
+  looked for first beside the interpreter it gets
+  (`serverPythonInterpreter`: python.interpreter, else
+  `PythonEnvs::automatic` with the folder's own environment only once
+  allowed) and is given it as on the Mac (`Lsp::pythonSettings` and
+  `pythonInitializationOptions`; before this item the port gave none).
+  rust-analyzer and the TypeScript server get `Lsp::checkProjectCode`'s
+  options, or wait (no server, a note in the status bar). An answer given
+  or taken back stops those three servers and attaches the file again.
+  Not done: re-pointing a running Python server when another file's
+  environment differs (the Mac's `applyPythonInterpreterForSwitch`), and
+  Select Python Interpreter.
+- **The bar** (`src/ConsentBar.{h,cpp}`, under the tab strip by
+  `Editor::addBar`) asks what `folderEnvironmentAwaitingConsent` and
+  `folderCodeAwaitingConsent` say, refreshed from LspSession's `onStatus`
+  and the answer's listeners. Item 2.8's install offer belongs in the same
+  bar, as the Mac's MCInstallBar does both.
+- **Format Document** (`src/Formatting.{h,cpp}`, one per window,
+  `app->format`): `win.formatdocument`, VS Code's Ctrl+Shift+I, enabled
+  while the view shows a file's editable source (`updateTitle`). The
+  decisions are the core's `FormatRun` (`src/FormatRun.{h,cpp}`, the Mac's
+  MCFormatText in plain C++ with its words; the Mac keeps its own copy
+  until it uses this one), run with the program on a thread of its own by
+  `src/FormatRunner.{h,cpp}` (`g_spawn_async_with_pipes_and_fds`, a poll
+  loop writing stdin and draining both outputs, SIGTERM at the limit and
+  SIGKILL a second later; SIGPIPE is blocked on that thread and unblocked
+  in the child). The output goes in as `FormatRun::Replacement`'s line runs
+  through `MultiEdit::apply`, one user action. Folder questions are a
+  GtkAlertDialog (Allow, Don't Allow, Cancel). Notes are a popover on the
+  text view that never takes the keyboard (autohide off), closed by the
+  caret moving, the next format or a tab switch; `lastNote`,
+  `notesShown` and `questionsAsked` are for checks.
+- **On save**: `act_save` asks `formatBeforeSaving` when format.on-save
+  is on; Save All, auto-save and the close question's Save never format.
+  Persistence's Host has `saveWaits` (auto-save leaves a tab whose Ctrl+S
+  waits) and `onActiveWillChange` calls `tabLeaving` (a waiting Ctrl+S
+  saves the tab as it is). editor.organize-imports-on-save is item 2.2's,
+  with code actions.
+- **The server fallback** (`src/LspFormatting.cpp`): only when nothing is
+  planned (`Formatter::serverMayFormat`), the file's server if it offers
+  formatting (`Lsp::routeFormatting`), 5 s, its edits through
+  `MultiEdit::apply` on the file's buffer. **Item 2.1's workspace edit
+  applier should take this over** (the Mac's goes through its applier).
+  For it to ever run here, `documentChanged` now maps a file with
+  `Settings::lspExtensions` as the Mac does: servers of the user's own
+  (`lsp.<name>` with `lsp.<name>.extensions`) and an optional built-in one
+  the settings name a command for (`lsp.markdown = ...`). The Mac also
+  starts an optional one it finds installed, which this port does not yet.
+- **`LspSearchDirs` and `LspFindProgram`** (Lsp.h) are where programs are
+  looked for after PATH; FormatRunner uses them too.
+- **For checks**: `MCGuiApp().consentBar` and `MCGuiApp().format`; the
+  suites are `tools_consent`, `server_consent`, `format`,
+  `format_on_save`, `format_consent` and `format_coverage`. The
+  suites put their stand-in formatters in a folder of the scratch world
+  first on PATH (`g_setenv`, put back at the end), so a formatter the
+  machine has is never run.
+- **Traps**: an alert closing leaves no window with the X focus (there is
+  no window manager in the checks), so `gtk_widget_has_focus` on the text
+  view stays false until the next key gives the window the focus; wait on
+  the window's focus widget (`gtk_root_get_focus`) instead. GTK lays a
+  freshly shown buffer's lines out in idle slices, which moves the line at
+  the top as estimated heights turn real: a check of "the top line kept"
+  waits for the layout to settle first. `lspgtk::Server` is defined in
+  Lsp.cpp only, so code in another file reaches a server through
+  LspSession members defined there (`clientOnShow`, `stopServers`).
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

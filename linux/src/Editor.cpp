@@ -367,6 +367,10 @@ void Editor::setViewBuffer(GtkTextBuffer* b, bool prose, bool editable) {
 
 GtkTextBuffer* Editor::sourceBuffer() const { return active_ ? active_->buffer() : buffer_; }
 
+void Editor::addBar(GtkWidget* w) {
+    gtk_box_insert_child_after(GTK_BOX(box_), w, strip_->widget());
+}
+
 bool Editor::isSource() const {
     return active_ && active_->kind() == Document::Kind::Text && buffer_ == active_->buffer();
 }

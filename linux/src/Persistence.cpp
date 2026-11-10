@@ -410,6 +410,8 @@ void Persistence::autoSaveNow() {
         // Text an input method is still composing is not written; the edit
         // that ends the composition schedules the next auto-save.
         if (d == editor_->active() && editor_->composing()) continue;
+        // Its Ctrl+S waits for the formatter, and saves when that is done.
+        if (host_.saveWaits && host_.saveWaits(d)) continue;
         // Moved or deleted: not written again unasked.
         if (d->goneFromDisk()) continue;
         // Changed (or made) on disk since it was read: never written over

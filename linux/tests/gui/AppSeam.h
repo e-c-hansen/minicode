@@ -23,6 +23,8 @@ class Terminal;
 class Browser;
 class WindowLayout;
 class NavHistoryUi;
+class ConsentBar;
+class Formatting;
 
 // One editor window's parts. Pointers are the app's own and stay valid until
 // the window closes; terminal and browser are null in a build without them.
@@ -44,6 +46,8 @@ struct MCGuiAppWindow {
     GtkWidget*  hintsHint = nullptr;       // the status bar's note on them
     PalettePanel* palette = nullptr;       // the palette over the panes
     NavHistoryUi* nav = nullptr;           // Go Back and Go Forward's history
+    ConsentBar* consentBar = nullptr;      // the folder's own tools' question (2.3)
+    Formatting* format = nullptr;          // Format Document (2.4)
     std::string rootDir;
 };
 

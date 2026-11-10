@@ -63,6 +63,9 @@ public:
     // A widget over the slot (under the tabs), placed by its own alignment
     // and margins: the find bar (FindBar.h).
     void addOverlay(GtkWidget* w) { gtk_overlay_add_overlay(GTK_OVERLAY(slotOverlay_), w); }
+    // A bar across the slot's top, under the tabs, as the Mac's install bar
+    // (ConsentBar.h).
+    void addBar(GtkWidget* w);
 
     // The GtkTextView, and the buffer it shows: the active document's source,
     // its Markdown page, a message, or the welcome text with no tab open.

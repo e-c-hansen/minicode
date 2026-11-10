@@ -736,8 +736,28 @@ Verified by running it:
   shown. The first frame comes about 190 ms after main with no session and
   220 ms with five tabs, 55 to 80 ms sooner than before, and the app with
   what it starts uses a seventh of the CPU it did in its first seconds.
+- Format Document and the folder's own tools (November 2026,
+  `linux/PARITY.md` items 2.3 and 2.4), by the `tools_consent`,
+  `server_consent`, `format`, `format_on_save`, `format_consent` and
+  `format_coverage` GUI suites on a
+  private Xvfb, with real keys and clicks and stand-in formatters and
+  servers (scripts that record being run, and the scripted language
+  server): nothing in a folder's `.venv` or `node_modules`, and no
+  configuration that runs code, runs before the folder's answer allows it,
+  and a server standing in for rust-analyzer starts restricted or waits;
+  Ctrl+Shift+I formats in one undo step, keeping the caret; failures,
+  output that is not UTF-8 and the 10 s limit leave the buffer alone with a
+  note; format.on-save formats before Ctrl+S writes; and a file nothing
+  else formats goes to its language server.
 
 Not verified:
+
+- For Format Document and the folder's own tools: real formatters (ruff,
+  clang-format, prettier, pyink) and real servers (basedpyright with a
+  `.venv`, rust-analyzer and the TypeScript server; the checks use stand-ins),
+  Ctrl+Shift+I under
+  GNOME on Wayland with an input method, and how the bar under the tabs,
+  the question and the note by the caret look.
 
 - For `minicode` from a terminal: closing a real GNOME Terminal window
   with minicode started from it (that it stays open, and that GNOME

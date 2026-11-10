@@ -79,6 +79,15 @@ core_sources = [
   core_dir / 'BracketPairs.cpp',
   core_dir / 'AutoClose.cpp',
   core_dir / 'MultiCaret.cpp',
+  # Format Document and the folder's own tools (PARITY.md 2.3 and 2.4): the
+  # plan, the decisions around it, the folder's question, the Python
+  # environments, and what to install (Formatting.cpp, FormatRunner.cpp,
+  # ConsentBar.cpp and LspFolderTools.cpp use them).
+  core_dir / 'Formatter.cpp',
+  core_dir / 'FormatRun.cpp',
+  core_dir / 'FolderTools.cpp',
+  core_dir / 'PythonEnvs.cpp',
+  core_dir / 'InstallHints.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -118,6 +127,19 @@ gui_sources = [
   'src/FindBar.cpp',
   'src/MultiEdit.cpp',
   'src/Lsp.cpp',
+  # The language servers and the folder's own tools (PARITY.md 2.3): its
+  # .venv, and the code rust-analyzer and the TypeScript server would run,
+  # only once the folder's answer allows them (LspFolderTools.cpp, the
+  # answer in FolderConsent.cpp, the bar's question in ConsentBar.cpp).
+  'src/LspFolderTools.cpp',
+  'src/FolderConsent.cpp',
+  'src/ConsentBar.cpp',
+  # Format Document (PARITY.md 2.4): the window's side (Formatting.cpp),
+  # the formatter's process (FormatRunner.cpp), and a server's formatting
+  # for files nothing else formats (LspFormatting.cpp).
+  'src/Formatting.cpp',
+  'src/FormatRunner.cpp',
+  'src/LspFormatting.cpp',
   'src/MediaView.cpp',
   # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp, and so
   # are the LaTeX preview's two files, which need poppler too.

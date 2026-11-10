@@ -31,6 +31,9 @@ const std::vector<LinuxRow>& linuxRows() {
         // GNOME's applications.
         {"workbench.action.openSettings", "ctrl+,", 0, nullptr, "Edit"},
         {"workbench.action.openGlobalKeybindings", "", 0, nullptr, "Edit"},
+        // Takes back the folder's answer about running its own tools
+        // (PARITY.md 2.3); no key, as on the Mac.
+        {"minicode.forgetFolderToolsAnswer", "", 0, nullptr, "Edit"},
         {"workbench.action.quit", "ctrl+q", 0, "Quit", "File"},
 
         // ---- File
@@ -81,6 +84,11 @@ const std::vector<LinuxRow>& linuxRows() {
         // Ctrl+L is Select Line's (D1), so the task key is the Mac's Option+Cmd+L
         // with Alt and Ctrl; Alt+C is markdown-all-in-one's, in Markdown only.
         {"minicode.markdown.toggleTask", "ctrl+alt+l alt+c", 0, nullptr, nullptr},
+        // VS Code's Linux key (PARITY.md 2.4; the Mac's Shift+Option+F is VS
+        // Code's Mac and Windows key). With lines selected it formats those
+        // lines, as on the Mac: VS Code's Format Selection is a chord. An
+        // editor command, so in the terminal the key is the program's.
+        {"editor.action.formatDocument", "ctrl+shift+i", 0, nullptr, nullptr},
         {"minicode.sortLines", "f9", 0, nullptr, nullptr},
         {"minicode.sortKeepSortedBlocks", "shift+f9", 0, nullptr, nullptr},
         {"editor.action.triggerSuggest", "ctrl+space", 0, nullptr, nullptr},
