@@ -61,3 +61,7 @@ LspWatchSuite.cpp
 OrganizeImportsSuite.cpp
 GitGutterSuite.cpp
 TreeGitColorsSuite.cpp
+CompletionKeysSuite.cpp
+SnippetsSuite.cpp
+CompletionEditsSuite.cpp
+SignatureHelpSuite.cpp

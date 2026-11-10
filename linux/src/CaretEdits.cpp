@@ -163,6 +163,12 @@ void Carets::insertStrings(const std::vector<std::string>& texts) {
     applyEdit(MultiCaret::insert(current(), units), &text);
 }
 
+bool Carets::insertText(const std::string& utf8) {
+    if (!active() || !applies()) return false;
+    insertStrings({utf8});
+    return true;
+}
+
 void Carets::typeChar(gunichar c) {
     const std::vector<Caret> carets = current();
     AutoCloseInput* ac = editor_->autoClose();

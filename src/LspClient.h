@@ -121,6 +121,9 @@ struct PointEdit {
     std::string text;
 };
 std::vector<PointEdit> pointEdits(const std::u16string& text, const std::vector<TextEdit>& edits);
+// The same for edits already in UTF-16 units of `text`, ascending and apart
+// (completionEdits' and lateAdditionalEdits' answers).
+std::vector<PointEdit> pointEdits(const std::u16string& text, const std::vector<OffsetEdit>& units);
 
 // textDocument/prepareRename: a Range, {range, placeholder}, or
 // {defaultBehavior: true} (rename the word at the position). Null, or

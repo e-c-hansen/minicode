@@ -905,6 +905,23 @@ Verified by running it:
   several rows by Ctrl and Shift clicks and Shift with the arrows; Discard
   refused for a submodule, a file added with git add -N, a conflict and a
   staged row, and Stage All asking first while a conflict is left.
+- Completion's edits, snippets and the signature hint (November 2026,
+  `linux/PARITY.md` item 2.5), by the `completion_keys`, `snippets`,
+  `completion_edits` and `signature_help` GUI suites on a private Xvfb with
+  real key presses, against the scripted language server: the list coming
+  up by itself on a word's second letter; Tab and Return taking the item
+  (a word typed out, the arrows, a letter and Tab pressed together, inside
+  auto-closed brackets, at a snippet's stop), Shift+Return and Escape not;
+  a snippet expanded with its line's indentation and the file's unit, its
+  stops walked by Tab and Shift+Tab and drawn, ended by Escape, by the
+  caret leaving and at its end; a mirror following typing at two carets; a
+  choice's options listed and taken at both places; `$CLIPBOARD`; an import
+  added with its word and taken back with it by one Ctrl+Z; a word that
+  only inserts an undo step apart from the typing before it; an import
+  that comes from resolve half a second later joining the word's undo
+  step, or a step of its own after typing, dropped after an undo, left out
+  with a note after an edit above, and noted when it takes over a second;
+  and the signature hint on "(" and ",", closed by Escape.
 
 
 Not verified, for the work before November (what the November work leaves
@@ -1173,6 +1190,16 @@ Displays.
   Tools brings the question back.
 - [ ] How the bar under the tabs, the question, and a formatter's note by
   the caret look, and that Ctrl Shift I reaches minicode with IBus running.
+
+### Completion and snippets (item 2.5)
+
+- [ ] With real clangd (C++) and basedpyright (Python): the list coming up
+  as you type, Tab and Return taking an item, an auto-import or `#include`
+  going in with its word (one Ctrl Z takes both back), clangd's snippets
+  (a function's arguments as stops that Tab walks), and the signature hint
+  after `(` and `,`.
+- [ ] How the stops' boxes, the list and the hint look, and Tab, Shift Tab
+  and Escape under GNOME on Wayland with IBus running.
 
 ### Source Control (item 2.9)
 

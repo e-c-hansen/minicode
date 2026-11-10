@@ -153,6 +153,10 @@ bool editsHold(const std::u16string& now, const std::u16string& base,
 std::vector<PointEdit> pointEdits(const std::u16string& text, const std::vector<TextEdit>& edits) {
     std::vector<OffsetEdit> units = offsetEdits(text, edits);   // last first
     std::reverse(units.begin(), units.end());
+    return pointEdits(text, units);
+}
+
+std::vector<PointEdit> pointEdits(const std::u16string& text, const std::vector<OffsetEdit>& units) {
     // Every start and end, in order, turned into code points in one pass.
     std::vector<size_t> at;
     at.reserve(units.size() * 2);

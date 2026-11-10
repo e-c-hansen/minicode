@@ -39,7 +39,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/NavHistory.cpp ../src/NavRecorder.cpp ../src/ViewZoom.cpp \
         ../src/CommandPalette.cpp ../src/SymbolOutline.cpp \
         ../src/BracketMatch.cpp ../src/BracketPairs.cpp ../src/AutoClose.cpp \
-        ../src/MultiCaret.cpp ../src/EditBatch.cpp ../src/Folding.cpp \
+        ../src/MultiCaret.cpp ../src/Snippet.cpp ../src/EditBatch.cpp ../src/Folding.cpp \
         ../src/Formatter.cpp ../src/FormatRun.cpp ../src/FolderTools.cpp \
         ../src/PythonEnvs.cpp ../src/InstallHints.cpp
 
@@ -49,13 +49,14 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
 GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Document.cpp src/Tabs.cpp \
        src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp \
        src/BracketView.cpp src/BracketColors.cpp src/AutoCloseInput.cpp src/BufferText.cpp \
-       src/Carets.cpp src/CaretEdits.cpp src/Folds.cpp \
+       src/Carets.cpp src/CaretEdits.cpp src/SnippetSession.cpp src/Folds.cpp \
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/Appearance.cpp src/MenuBarFocus.cpp \
        src/ThemeCss.cpp \
        src/Search.cpp src/FindBar.cpp src/MultiEdit.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
        src/LatexClick.cpp src/Latex.cpp src/TermLinkPath.cpp \
        src/Lsp.cpp src/LspProcess.cpp src/LspSessionServers.cpp src/LspSessionSync.cpp \
-       src/LspSessionDiagnostics.cpp src/LspSessionCompletion.cpp src/LspSessionNavigation.cpp \
+       src/LspSessionDiagnostics.cpp src/LspSessionCompletion.cpp src/LspSessionSignature.cpp \
+       src/LspSessionNavigation.cpp \
        src/LspSessionActions.cpp src/LspSessionEdits.cpp src/LspPicker.cpp \
        src/LspSessionFolderTools.cpp src/FolderConsent.cpp src/ConsentBar.cpp \
        src/Formatting.cpp src/FormatRunner.cpp src/LspSessionFormatting.cpp \

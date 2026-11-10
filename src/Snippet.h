@@ -149,12 +149,23 @@ inline Expansion expand(const std::string& snippet, const Context& ctx) {
     return expand(parse(snippet), ctx);
 }
 
+// The expansion as the GTK port's buffer counts it: its stops' ranges in
+// code points of its text (a character outside the Basic Multilingual
+// Plane is one, where UTF-16 counts two; an offset inside a pair counts as
+// its start), and *points the text's length so. The text itself is left as
+// it is; a Session made from the result with that length follows the
+// stops in code points.
+Expansion inCodePoints(const Expansion& e, size_t* points);
+
 // The stops of an expansion put into a text at `base`, followed through
 // edits. Offsets are in the text as it is.
 class Session {
 public:
     Session() = default;
     Session(const Expansion& e, size_t base);
+    // The same with the offsets counted otherwise than in the text's UTF-16
+    // units (inCodePoints): `length` is the text's length in that count.
+    Session(const Expansion& e, size_t base, size_t length);
 
     bool active() const { return active_; }
     void end() { active_ = false; }

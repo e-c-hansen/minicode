@@ -72,6 +72,16 @@ static void testLspApplier() {
         // An offset inside the pair counts as its start.
         std::vector<Lsp::PointEdit> q = Lsp::pointEdits(t, {ApplierEdit(0, 2, 0, 2, "x")});
         CHECK(q.size() == 1 && q[0].start == 1 && q[0].length == 0);
+        // Edits already in units (a completion's), ascending: the same answer.
+        const std::vector<Lsp::OffsetEdit> units = {{3, 1, u"cc"}, {9, 1, u"cc"}, {13, 1, u"é"}};
+        std::vector<Lsp::PointEdit> r = Lsp::pointEdits(t, units);
+        CHECK(r.size() == 3);
+        if (r.size() == 3) {
+            CHECK(r[0].start == 2 && r[0].length == 1 && r[0].text == "cc");
+            CHECK(r[1].start == 8 && r[1].length == 1 && r[1].text == "cc");
+            CHECK(r[2].start == 12 && r[2].length == 1 && r[2].text == "\xC3\xA9");
+        }
+        CHECK(Lsp::pointEdits(t, std::vector<Lsp::OffsetEdit>{}).empty());
         // Applied as code points, last first, they make what applyTextEdits
         // makes, on random texts and edits.
         unsigned seed = 11;
