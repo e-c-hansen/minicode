@@ -340,6 +340,43 @@ void MCGuiDrag(GtkWidget* widget, double x0, double y0, double x1, double y1) {
     g_timeout_add(20, playGesturePart, g);
 }
 
+void MCGuiDragWith(const std::string& modifiers, GtkWidget* widget, double x0, double y0,
+                   double x1, double y1, int b) {
+    int ax = 0, ay = 0, bx = 0, by = 0;
+    if (!widget || !pointOnRoot(widget, x0, y0, &ax, &ay) || !pointOnRoot(widget, x1, y1, &bx, &by)) {
+        MCGuiCheck(false, "a widget on screen to drag in", __FILE__, __LINE__);
+        return;
+    }
+    std::vector<KeySym> held;
+    std::string rest = modifiers;
+    while (!rest.empty()) {
+        const size_t plus = rest.find('+');
+        std::string m = rest.substr(0, plus);
+        rest = plus == std::string::npos ? "" : rest.substr(plus + 1);
+        for (char& c : m) c = (char)std::tolower((unsigned char)c);
+        if (m == "ctrl" || m == "control") held.push_back(XK_Control_L);
+        else if (m == "shift") held.push_back(XK_Shift_L);
+        else if (m == "alt") held.push_back(XK_Alt_L);
+        else MCGuiCheck(false, "known modifier in \"" + modifiers + "\": " + m, __FILE__, __LINE__);
+    }
+    MCGuiFocusKeyWindow();
+    moveTo(ax, ay);
+    for (KeySym m : held) sendKey(codeOf(m), true);
+    XSync(Dpy(), False);
+    button(b, true);
+    auto* g = new Gesture;
+    const int steps = 8;
+    for (int i = 1; i <= steps; i++)
+        g->parts.push_back([=] { moveTo(ax + (bx - ax) * i / steps, ay + (by - ay) * i / steps); });
+    g->parts.push_back([held, b] {
+        button(b, false);
+        for (auto it = held.rbegin(); it != held.rend(); ++it) sendKey(codeOf(*it), false);
+        XSync(Dpy(), False);
+    });
+    gPendingGestures++;
+    g_timeout_add(20, playGesturePart, g);
+}
+
 void MCGuiDragThrough(GtkWidget* widget, const std::vector<std::pair<double, double>>& points) {
     std::vector<std::pair<int, int>> root;
     for (const auto& [x, y] : points) {

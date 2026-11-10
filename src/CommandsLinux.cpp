@@ -15,10 +15,10 @@
 //   - Nothing GNOME takes: Super, Ctrl+Alt+arrows, Ctrl+Alt+T,
 //     Ctrl+Alt+Delete.
 // A command the port does not have yet has no row, so its key is free until
-// the item that brings it (Ctrl+L for Select Line, Ctrl+Shift+L for Select
-// All Occurrences, Ctrl+I for the inline agent, Ctrl+T for Go to Symbol in
-// Workspace). The port's table of GActions (linux/src/Keys.cpp) has the same
-// commands.
+// the item that brings it (Ctrl+I for the inline agent, Ctrl+T for Go to
+// Symbol in Workspace). The port's table of GActions (linux/src/Keys.cpp)
+// has the same commands, but those the registry marks Fixed, which are a
+// view's own keys.
 #include "Commands.h"
 
 
@@ -77,6 +77,21 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.closeWindow", "ctrl+shift+w", 0, nullptr, nullptr},
 
         // ---- Edit
+        // Several carets and the line commands (PARITY.md 1.9), VS Code's
+        // Linux keys: Ctrl+D, Ctrl+Shift+L, Ctrl+L and Ctrl+Shift+K. Add
+        // Cursor is VS Code's Linux second key, Ctrl+Shift+Up and Down: its
+        // first, Shift+Alt+Up and Down, is Copy Line's here, as on Windows
+        // and the Mac, since VS Code's Linux Copy Line keys
+        // (Ctrl+Shift+Alt+Up and Down) are GNOME's, moving a window to the
+        // workspace above or below (and Ctrl+Alt+Up and Down switch to it).
+        // Editor commands: the program in the terminal keeps Ctrl+D and
+        // Ctrl+L.
+        {"editor.action.addSelectionToNextFindMatch", "ctrl+d", 0, nullptr, nullptr},
+        {"editor.action.selectHighlights", "ctrl+shift+l", 0, nullptr, nullptr},
+        {"editor.action.insertCursorAbove", "ctrl+shift+up", 0, nullptr, nullptr},
+        {"editor.action.insertCursorBelow", "ctrl+shift+down", 0, nullptr, nullptr},
+        {"expandLineSelection", "ctrl+l", 0, nullptr, nullptr},
+        {"editor.action.deleteLines", "ctrl+shift+k", 0, nullptr, nullptr},
         {"editor.action.commentLine", "ctrl+/", 0, nullptr, nullptr},
         // Ctrl+L is Select Line's (D1), so the task key is the Mac's Option+Cmd+L
         // with Alt and Ctrl; Alt+C is markdown-all-in-one's, in Markdown only.
@@ -172,6 +187,20 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.openEditorAtIndex8", "alt+8", 0, nullptr, nullptr},
         {"workbench.action.lastEditorInGroup", "alt+9 alt+0", 0, nullptr, nullptr},
         {"editor.action.revealDefinition", "f12", 0, nullptr, nullptr},
+
+        // ---- the editor's own keys (PARITY.md 1.9). Move and Copy Line
+        // are VS Code's (see Add Cursor above), in the Edit menu here, which
+        // the Mac's are not. Ctrl+Home and Ctrl+End are GtkTextView's own
+        // with one caret and Carets.cpp's with several; listed, not
+        // actions, so they never leave an entry or the terminal.
+        {"editor.action.moveLinesDownAction", "alt+down", 0, nullptr, "Edit"},
+        {"editor.action.moveLinesUpAction", "alt+up", 0, nullptr, "Edit"},
+        {"editor.action.copyLinesDownAction", "alt+shift+down", 0, nullptr, "Edit"},
+        {"editor.action.copyLinesUpAction", "alt+shift+up", 0, nullptr, "Edit"},
+        {"cursorTop", "ctrl+home", 0, nullptr, nullptr},
+        {"cursorTopSelect", "ctrl+shift+home", 0, nullptr, nullptr},
+        {"cursorBottom", "ctrl+end", 0, nullptr, nullptr},
+        {"cursorBottomSelect", "ctrl+shift+end", 0, nullptr, nullptr},
     };
     return rows;
 }

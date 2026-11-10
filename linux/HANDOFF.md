@@ -1686,6 +1686,92 @@ Traps:
   went nowhere until the field was clicked.
 - `g_format_size` puts a no-break space before the unit.
 
+### 23. Several carets and the line commands (done, November 2026; `PARITY.md` item 1.9)
+
+What later items build on (`src/Carets.{h,cpp}`, `src/CaretEdits.cpp`,
+`src/CaretText.h`; the core's `MultiCaret.h` and `EditBatch.h`):
+- **`Carets`** (one per editor, `Editor::carets()`) holds the carets as
+  character offsets, two or more while `active()`, the first being the
+  buffer's own selection (GTK draws and blinks it), the others drawn by two
+  `CodeView` passes, selections at `BelowText` 5 and carets at `AboveText`
+  10, only those on screen, and given to the gutter through
+  `BufferLines::extraCarets`. `current()` is every caret, or the buffer's
+  selection as one; `set()` shows carets (one goes back to being the
+  buffer's selection). Any edit or caret move it did not make (a click,
+  Page Down, Select All, an undo, a reload, Find, a tab switch) ends them;
+  `applying()` is true while it edits or moves the selection itself.
+- **Every edit is one `MultiEdit::apply`** (D5), one user action and one
+  Ctrl+Z, the carets then where the core's `MultiCaret::Edit` says. Text a
+  command copies from the buffer (Move Line, Copy Line, Paste) goes
+  through `CaretText`, which reads a character outside the BMP as a unit
+  of the Private Use Area from a table and writes it back, where
+  `BufferText` would give U+FFFD. Rename, formatting and agent edits that
+  move carets can call `Carets::set` afterwards.
+- **Keys**: typing, Return, Tab, Backspace and Escape at several carets
+  come first in `Editor::onViewKey` (`keyPressed`); everything else is
+  GTK's own key bindings caught by their signals on the view (`move-cursor`
+  for the arrows, Home, End, words, Ctrl+Home and Ctrl+Up;
+  `delete-from-cursor`; `copy-clipboard`, `cut-clipboard`,
+  `paste-clipboard`), so they hold whatever keys GTK gives them. With one
+  caret only the word moves and deletes (VS Code's words) and Ctrl+Up and
+  Ctrl+Down (a line's scroll) are taken; a Markdown page or a message keeps
+  GTK's. Auto-closing pairs go through `AutoCloseInput::typed` and
+  `deletePair` with every caret; its `carets()` answers every caret while
+  several are in play, and it ignores the mark moves of a carets' edit.
+- **The mouse** is a click and a drag gesture grouped, in the capture
+  phase, claiming only what is theirs: Alt (a caret, or a column dragged),
+  Shift+Alt (a column from the caret), the middle button (a column dragged;
+  a click pastes the primary selection, as GTK would), a plain double and
+  triple click in source text (VS Code's word, the line with its break, and
+  a drag after either by words or lines). Presses over the gutter are left
+  alone (`gtk_widget_pick`).
+- **Commands**: `Carets::addActions` adds the window's ten actions
+  (`win.addnextoccurrence` ... `win.copylinesdown`), each acting while the
+  view has the keyboard. Ctrl+Home and Ctrl+End are rows of the Linux table
+  without an action (the registry's Fixed), and Keys.cpp's table check
+  passes them. The find bar's Alt+Enter is `FindBar::selectAllMatches`.
+- **The highlighter's batch** (`Document::startBatch`, `finishBatch`): a
+  `MultiEdit` of 8 ranges or more on a document's buffer is taken in bytes
+  at begin-user-action (`MultiEdit::applyingChanges`), and at
+  end-user-action given to `IncrementalHighlighter::editMany` together;
+  only the lines it re-lexed are retagged, those on screen at once, the
+  rest from `Document::later_` in idle time (byte ranges carried through
+  later edits). Replace All uses it too. If anything else edits the buffer
+  in the same user action, the old resync runs instead. Lsp.cpp gives no
+  trigger character to completion during a `MultiEdit`.
+- **For checks**: `drawnCarets()`, `drawnSelections()`, `lastEditMs()`;
+  `tests/gui/CaretSuites.h` (where a character is on screen, the carets as
+  text, the clipboard); `MCGuiDragWith` (a drag with modifiers held, any
+  button).
+
+Traps:
+- Taking the view's primary clipboard off a buffer that holds the primary
+  selection makes GtkTextBuffer give up its selection (a mark set, which
+  ended the carets in the middle of setting them, and indexed an emptied
+  vector). `Carets` takes it off around its own selection changes and
+  edits, as one of its own moves, and puts it back after; several carets'
+  selections never reach the primary clipboard.
+- The caret's box (`gtk_text_view_get_cursor_locations`) is a pixel
+  shorter than its line: Up and Down at several carets look for the first
+  y past it that lands on another display line.
+- A click computed in the same step as an edit that moves the text lands
+  on the old layout: in the checks, wait for the text before clicking
+  (`waitCarets`, the suites' `queueReset`).
+- A Shift+Alt press is VS Code's box selection from the caret, wherever
+  the press is: click first where the column should start.
+- While the caret blinks, GTK 4.22 draws the view every frame for seconds
+  after any key (Shift alone included): 1.7 ms a frame, 100 ms of CPU a
+  second at 100,000 lines. A CPU measure that waits for the main thread to
+  go quiet catches it at random; `multicaret_perf` turns the blink off.
+- A double-click in a Markdown page edits the block (Editor.cpp), so a
+  page has no word selection to keep; the carets never claim a press
+  there.
+
+Not done: an input method's composed text goes in at the first caret and
+ends the others; the extra carets do not blink; a column drag does not
+scroll the view when the pointer leaves it; the Mac's Cmd+Shift click
+pairs (Ctrl+click is Go to Definition here).
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

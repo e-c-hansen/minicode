@@ -43,7 +43,13 @@ const std::vector<Action>& actions() {
         {"workbench.action.closeAllEditors", "win.closealltabs", false},
         {"workbench.action.keepEditor", "win.keeptab", false},
         {"workbench.action.closeWindow", "win.close", true},
-        {"editor.action.commentLine", "win.togglecomment", false},
+        {"editor.action.addSelectionToNextFindMatch", "win.addnextoccurrence", false},
+        {"editor.action.selectHighlights", "win.selectalloccurrences", false},
+        {"editor.action.insertCursorAbove", "win.addcursorabove", false},
+        {"editor.action.insertCursorBelow", "win.addcursorbelow", false},
+        {"expandLineSelection", "win.selectline", false},
+        {"editor.action.deleteLines", "win.deleteline", false},
+        {"editor.action.commentLine", "win.togglecomment", true},
         {"minicode.markdown.toggleTask", "win.toggletask", false},
         {"minicode.sortLines", "win.sortlines", false},
         {"minicode.sortKeepSortedBlocks", "win.fixkeepsorted", false},
@@ -94,6 +100,10 @@ const std::vector<Action>& actions() {
         {"workbench.action.openEditorAtIndex8", "win.tab8", false},
         {"workbench.action.lastEditorInGroup", "win.lasttab", false},
         {"editor.action.revealDefinition", "win.definition", true},
+        {"editor.action.moveLinesDownAction", "win.movelinesdown", true},
+        {"editor.action.moveLinesUpAction", "win.movelinesup", false},
+        {"editor.action.copyLinesDownAction", "win.copylinesdown", false},
+        {"editor.action.copyLinesUpAction", "win.copylinesup", false},
     };
     return table;
 }
@@ -106,9 +116,14 @@ const Action* actionFor(const std::string& commandId) {
 
 std::vector<std::string> tableProblems() {
     std::vector<std::string> out;
-    for (const Commands::LinuxRow& r : Commands::linuxRows())
+    for (const Commands::LinuxRow& r : Commands::linuxRows()) {
+        // A view's own keys (the registry's Fixed: Ctrl+Home in the editor)
+        // need none, and are no accelerator.
+        const Command* c = Commands::find(r.id);
+        if (c && (c->flags & Commands::Fixed) && !actionFor(r.id)) continue;
         if (!actionFor(r.id))
             out.push_back(std::string(r.id) + " has Linux keys but no action in Keys.cpp");
+    }
     for (const Action& a : actions()) {
         if (!Commands::find(a.id)) out.push_back(std::string(a.id) + " is no command");
         else if (!Commands::linuxRow(a.id))

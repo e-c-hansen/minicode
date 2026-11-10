@@ -2,6 +2,7 @@
 // diagnostics tags, the completion popover, hover and go to definition. The
 // macOS counterpart is src/Lsp.mm, and the behaviour follows it closely.
 #include "Lsp.h"
+#include "MultiEdit.h"
 #include "Palette.h"
 #include "Utf8Offsets.h"
 
@@ -876,7 +877,9 @@ void LspSession::textEdited(const char* inserted, int len) {
 
     // One character typed: is it the end of ".", "->" or "::"? The caret is
     // already past it (the insert mark moves with text typed at it).
-    if (inserted && len == 1) {
+    // Not at several carets (MultiEdit): the server sees no character
+    // typed alone there, as on the Mac.
+    if (inserted && len == 1 && !MultiEdit::applying()) {
         GtkTextIter cur, prev;
         cursorIter(&cur);
         prev = cur;

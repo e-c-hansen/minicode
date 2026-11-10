@@ -715,8 +715,26 @@ Verified by running it:
   Escape puts the selection and scroll back. In the terminal Ctrl P, Ctrl
   G and F1 reached a raw `head` as their bytes, and Ctrl Shift P opened the
   palette.
+- Several carets and the line commands (November 2026, `linux/PARITY.md`
+  item 1.9), by the `multicaret`, `multicaret_select`, `line_commands`,
+  `editor_words` and `multicaret_perf` GUI suites on a private Xvfb with
+  real key presses and clicks. Alt click adds and takes away carets, Shift
+  Alt, Alt and middle-button drags make columns, Ctrl D, Ctrl Shift L and
+  Ctrl Shift Up and Down add carets, and the find bar's Alt Enter selects
+  its matches; typing, brackets closing, Backspace, Return, the arrows,
+  Copy and Paste act at every caret, one Ctrl Z taking a key back; Ctrl L,
+  Ctrl Shift K, Alt Up and Down and Shift Alt Up and Down work on the
+  caret's lines, Ctrl C and Ctrl X with nothing selected take the whole
+  line, pasted above; double-clicks and Ctrl Left and Right go by VS Code's
+  words; and a key typed at 1,000 carets over 100,000 lines takes 35 to 55
+  ms of the main thread in its edit.
 
 Not verified:
+
+- For several carets, everything that needs GNOME on Wayland: how the
+  extra carets and their selections look (they do not blink), Alt click
+  and Shift Alt drags with IBus running, a real middle button, and an input
+  method's composed text, which goes in at the first caret only.
 
 - For tabs, everything that needs GNOME on Wayland: how the strip looks
   under the desktop's theme, Alt with a digit and Ctrl Alt Shift T (which a

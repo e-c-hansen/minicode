@@ -26,3 +26,8 @@ BracketsSuite.cpp
 BracketPairsSuite.cpp
 AutoCloseSuite.cpp
 LargeFileSuite.cpp
+MultiCaretSuite.cpp
+MultiCaretSelectSuite.cpp
+LineCommandsSuite.cpp
+EditorWordsSuite.cpp
+MultiCaretPerfSuite.cpp

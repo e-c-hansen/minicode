@@ -7,6 +7,7 @@
 #include "AutoCloseInput.h"
 #include "BracketColors.h"
 #include "BracketView.h"
+#include "Carets.h"
 #include "CodeView.h"
 #include "Palette.h"
 #include "Markdown.h"
@@ -191,6 +192,7 @@ Editor::Editor() {
 
     brackets_ = new BracketView(this);       // PARITY.md 1.7
     autoClose_ = new AutoCloseInput(this);   // PARITY.md 1.8
+    carets_ = new Carets(this);              // PARITY.md 1.9
     large_ = new LargeFileUi(this);   // big files and long lines (LargeFileView.h)
     showActive();   // the welcome text
 }
@@ -199,6 +201,8 @@ Editor::Editor() {
 // (main.cpp deletes the editor from GtkApplication's window-removed), so
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
+    delete carets_;
+    carets_ = nullptr;
     delete autoClose_;
     autoClose_ = nullptr;
     delete brackets_;
@@ -243,7 +247,8 @@ Editor::~Editor() {
 
 std::vector<void*> Editor::handlerOwners() const {
     std::vector<void*> out = {(void*)this,      (void*)media_,     (void*)strip_,
-                              (void*)brackets_, (void*)autoClose_, (void*)large_};
+                              (void*)brackets_, (void*)autoClose_, (void*)large_,
+                              (void*)carets_};
     for (Document* d : tabs_)
         if (d->latexPreview()) out.push_back(d->latexPreview());
     return out;
@@ -2036,6 +2041,8 @@ gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifier
     const bool plain = !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK));
     const bool completion = self->observer_ && self->observer_->takesReturn();
     self->typedKey_ = 0;
+    // Typing, Return, Tab, Backspace and Escape at several carets (Carets.h).
+    if (self->carets_ && self->carets_->keyPressed(key, mods)) return TRUE;
     // Brackets and quotes closing, typed over, deleted in pairs, or
     // surrounding a selection (AutoCloseInput.h), before the text view or
     // its input method takes the key.

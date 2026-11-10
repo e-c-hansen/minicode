@@ -25,6 +25,7 @@
 
 class AutoCloseInput;
 class BracketView;
+class Carets;
 class CodeView;
 class MediaView;
 class LatexPreview;
@@ -75,6 +76,8 @@ public:
     // (BracketView.h), and auto-closing pairs (AutoCloseInput.h).
     BracketView*    brackets() const { return brackets_; }
     AutoCloseInput* autoClose() const { return autoClose_; }
+    // Several carets and the line commands (Carets.h).
+    Carets*         carets() const { return carets_; }
     // The active document's own buffer (its source, while its page shows
     // too), else what the view shows.
     GtkTextBuffer* sourceBuffer() const;
@@ -441,6 +444,7 @@ private:
     CodeView*      code_     = nullptr;   // owned by the view
     BracketView*    brackets_  = nullptr;
     AutoCloseInput* autoClose_ = nullptr;
+    Carets*         carets_    = nullptr;
     GtkTextBuffer* buffer_   = nullptr;   // what the view shows
     GtkTextBuffer* welcome_  = nullptr;   // the view's buffer with no tab open
     char           typedKey_ = 0;         // ':' or a closer being typed (electric)

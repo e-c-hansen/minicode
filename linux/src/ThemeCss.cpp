@@ -14,6 +14,8 @@ std::string cssColor(const Rgba& c) {
            ")";
 }
 
+Rgba editorSelection() { return Rgba::hex(0x264F78); }
+
 std::string stylesheet(const Settings& s) {
     auto bg = [&](Surface x) { return cssColor(s.background(x)); };
     auto fg = [&](Surface x) { return cssColor(s.text(x)); };
@@ -48,7 +50,8 @@ std::string stylesheet(const Settings& s) {
            fg(Surface::Editor) + "; }";
     css += ".minicode-editor text { background-color: " + bg(Surface::Editor) +
            "; color: " + fg(Surface::Editor) + "; }";
-    css += ".minicode-editor text selection { background-color: #264F78; }";
+    css += ".minicode-editor text selection { background-color: " + cssColor(editorSelection()) +
+           "; }";
     css += ".minicode-editor-scroller { background-color: transparent; }";
     // The line-number gutter (Gutter.cpp) paints editor.gutter-background
     // itself; the view's border window under it stays clear.

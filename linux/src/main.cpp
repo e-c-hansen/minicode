@@ -44,6 +44,7 @@
 
 #include "AppSettings.h"
 #include "BracketView.h"
+#include "Carets.h"
 #include "Document.h"
 #include "Editor.h"
 #include "FileTree.h"
@@ -1577,6 +1578,23 @@ static std::string hintsText(App* app) {
     row("workbench.action.focusSideBar", "Focus the file tree");
     row("workbench.action.focusFirstEditorGroup", "Focus the editor");
 
+    heading("Several carets and lines");
+    row("editor.action.addSelectionToNextFindMatch", "Add the next occurrence");
+    row("editor.action.selectHighlights", "Select all occurrences");
+    row("editor.action.insertCursorBelow", "Add a cursor below");
+    row("editor.action.insertCursorAbove", "Add a cursor above");
+    plain("Alt click", "Add or remove a cursor");
+    plain("Shift Alt drag", "A column (or a middle-button drag)");
+    plain("Escape", "Back to one cursor");
+    row("expandLineSelection", "Select line");
+    row("editor.action.deleteLines", "Delete line");
+    row("editor.action.moveLinesDownAction", "Move line down");
+    row("editor.action.moveLinesUpAction", "Move line up");
+    row("editor.action.copyLinesDownAction", "Copy line down");
+    row("editor.action.copyLinesUpAction", "Copy line up");
+    row("cursorTop", "Start of the file");
+    row("cursorBottom", "End of the file");
+
     heading("Navigation");
     row("workbench.action.showCommands", "Command palette");
     row("workbench.action.quickOpen", "Go to file");
@@ -2081,6 +2099,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->findBar->onNote = [app](const std::string& note) {
         if (!app->dead) flashStatus(app, note);
     };
+    app->editor->carets()->onNote = [app](const std::string& note) {
+        if (!app->dead) flashStatus(app, note);
+    };
     gtk_box_append(GTK_BOX(editorPane), app->editor->widget());
 
     GtkWidget* browserPane = nullptr;
@@ -2258,6 +2279,8 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "quickopen",      G_CALLBACK(act_quick_open));
     addAction(app, "gotoline",       G_CALLBACK(act_go_to_line));
     addAction(app, "gotosymbol",     G_CALLBACK(act_go_to_symbol));
+    // Several carets and the line commands (Carets.h).
+    Carets::addActions(G_ACTION_MAP(app->window), app->editor);
     for (const char* off : {"zoomin", "zoomout", "zoomfit", "playpause"})   // until shown
         g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
                                         G_ACTION_MAP(app->window), off)), FALSE);

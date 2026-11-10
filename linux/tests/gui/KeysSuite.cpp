@@ -607,7 +607,9 @@ MC_GUI_SUITE(keys) {
         GCHECK_EQ_STR(keyOf("Find next"), "F3");
         GCHECK_EQ_STR(keyOf("Hidden files ("), "Ctrl Shift .");
         GCHECK_EQ_STR(keyOf("Rename (in the tree)"), "Ctrl Alt R");
-        GCHECK(hints.find("Ctrl Shift L") == std::string::npos);
+        // The task's old Ctrl+Shift+L is Select All Occurrences' (item 1.9).
+        GCHECK_EQ_STR(keyOf("Select all occurrences"), "Ctrl Shift L");
+        GCHECK(hints.find("Ctrl Shift L") == hints.rfind("Ctrl Shift L"));
         // Ctrl Shift P only for the palette, no longer the preview.
         GCHECK_EQ_STR(keyOf("Command palette"), "Ctrl Shift P");
         GCHECK(hints.find("Ctrl Shift P") == hints.rfind("Ctrl Shift P"));

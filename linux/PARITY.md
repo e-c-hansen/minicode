@@ -193,6 +193,35 @@ Choices item 1.6 made, by the same rules:
   replaces its match alone, VS Code's key in its search view.
 - Select all matches (VS Code's Alt+Enter) waits for several carets (1.9).
 
+Choices item 1.9 made, by the same rules:
+- Ctrl+D, Ctrl+Shift+L, Ctrl+L, Ctrl+Shift+K, Alt+Up and Alt+Down are VS
+  Code's Linux keys. Its Linux Copy Line keys, Ctrl+Shift+Alt+Up and Down,
+  are GNOME's (move the window to the workspace above or below, beside
+  Ctrl+Alt+Up and Down switching to it), so Copy Line is Shift+Alt+Up and
+  Down, VS Code's key on Windows and the Mac's; that is VS Code's first
+  Linux key for Add Cursor, which takes its second, Ctrl+Shift+Up and Down.
+  The core's check of GNOME's keys now holds Ctrl+Shift+Alt+arrows too.
+- All are editor commands, so in the terminal the shell keeps Ctrl+D and
+  Ctrl+L. Move and Copy Line, which the Mac's registry keeps out of the
+  menus as the text view's own, are in the Edit menu here (and so in the
+  palette), at its end after Settings, as the moved items are.
+- Ctrl+Home and Ctrl+End (with Shift) are rows of the Linux table, the
+  registry's Fixed commands, with no action and no accelerator: GTK's own
+  keys with one caret, Carets.cpp's with several, so they never leave an
+  entry. Keys.cpp's table check passes a Fixed row without an action.
+- Ctrl+Up and Ctrl+Down scroll a line (VS Code's scrollLineUp and
+  scrollLineDown, which the registry has no row for), and Ctrl+Left,
+  Ctrl+Right, Ctrl+Backspace and Ctrl+Delete move and delete by VS Code's
+  words; with Ctrl+C, Ctrl+X, Ctrl+V, Escape and the find bar's Alt+Enter
+  they act on the text view's own signals, and README's check counts them
+  as the view's own keys.
+- The mouse is VS Code's on Linux: Alt+click adds or removes a caret and
+  Shift+Alt+click or drag makes a column from the caret; a middle-button
+  drag makes a column and a middle click still pastes the primary
+  selection. Alt+drag makes a fresh column, as the Mac's Option+drag (VS
+  Code's adds a selection). The Mac's Cmd+Shift click pairs are not
+  ported: Ctrl+click is Go to Definition.
+
 **D2. One `GtkTextView`, one `GtkTextBuffer` per tab.** Split `Editor` into
 the view and slot, and a `Document` holding what is per file: the buffer, its
 path, undo, the highlighter and its mirror, dirty state, and disk stamp. All
@@ -223,6 +252,51 @@ language server sees.
 **D7. Several carets: try first.** Keep them in `MultiCaret` as `GtkTextMark`s
 and draw them in `snapshot_layer`, with the real insertion mark on the first.
 Measure typing at 1,000 carets before the rest of the item.
+
+*Tried on the ThinkPad, 2026-11-10 (item 1.9's branch; a throwaway suite
+putting a character at 1,000 carets through `MultiEdit::apply` in a
+100,000-line Python file, main-thread CPU, load 4 to 8 unless said).*
+**Reasonable, once the highlighter takes such an edit as what it is.** The
+carets are character offsets, not marks: the core says where each goes
+after an edit, and any edit or caret move not made by the carets ends them
+(as on the Mac), so nothing has to follow edits. Marks cost about as much
+(a mark each changed an edit at 1,000 carets by noise, moving 1,000 of
+them took 2 to 6 ms, reading them 0.2 to 1 ms) and bought nothing.
+
+What a character at 1,000 carets cost, the edit itself and then the main
+thread until idle again (GTK laying out the changed lines, the lines off
+screen retagged in idle time):
+- Before: a column of 1,000 lines, 61 to 96 ms and 79 to 122 ms; carets
+  one line in a hundred over the whole file, 115 to 143 ms and 1.0 to
+  1.2 s. A user action of more than 64 edits made `Document` read the
+  buffer back whole (55 ms for 3.5 MB) and take the change as one edit
+  from its first range to its last: every line between re-lexed (110 ms
+  for the spread carets) and retagged, the rest in idle time. A plain
+  text file, no highlighter: 18 to 24 and 40 to 48 ms for the column, 23
+  to 79 and 46 to 131 for the spread.
+- After: 22 to 33 ms and 51 to 70 ms for the column, 22 to 31 ms and 129
+  to 156 ms for the spread; the plain file 12 to 26 and 31 to 73. The
+  changes of a `MultiEdit` of 8 ranges or more are taken in bytes at
+  begin-user-action, before the buffer changes; at its end the new mirror
+  is made from the old in one pass and the highlighter takes the edits
+  together (`IncrementalHighlighter::editMany`, the core's `EditBatch.h`,
+  `editbatch:*`), each re-lexing its own lines, the line table moved once
+  (edit() of each in turn moved 50 million line starts for 1,000 carets);
+  only the lines re-lexed are retagged, those on screen at once and the
+  others in idle time.
+- Through real keys (`multicaret_perf`, Ctrl+Shift+L on 1,000 places, five
+  letters then a quote that opens a string on each line): 35 to 55 ms a key
+  in the edit, 100 to 200 in all; the quote 30 ms in the edit (and as much
+  again in the auto-closing rules), about 210 in all. Without the batch,
+  195 ms a key in the edit and 650 in all, the quote 2.3 s.
+Drawing costs nothing that grows with the carets: only those on screen are
+placed (a few `gtk_text_view_get_cursor_locations` a frame).
+
+Found on the way, not the carets': while the caret blinks GTK 4.22 draws the
+text view every frame, for seconds after any key press (Shift too), about
+1.7 ms a frame and 100 ms of CPU a second at 100,000 lines; a measure that
+caught it put half a second on one key. `multicaret_perf` turns the blink
+off for its measures.
 
 **D8. Folding: try first.** An `invisible` tag over the hidden lines, so the
 text never changes and the gutter, undo, and copy see it whole. Check that
@@ -563,9 +637,38 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   selection a moment later). Needs the owner: IBus and other input methods,
   and keyboard layouts where brackets need AltGr. Several carets come with
   1.9 (`AutoCloseInput`'s calls take carets).
-- [ ] **1.9 Line commands and several carets (D5, D7).** `MultiCaret`, Cmd+D's
+- [x] **1.9 Line commands and several carets (D5, D7).** `MultiCaret`, Cmd+D's
   and Shift+Cmd+L's counterparts, column selection, move and copy lines, and
   VS Code's word separators.
+  *Verified in Xvfb, 2026-11-10:* `editbatch:*` hold the highlighter's
+  batch (D7) to edit() of each change in turn and to a fresh lex, and
+  `commands:linux-*` the keys (D1's choices above). The `multicaret`,
+  `multicaret_select`, `line_commands`, `editor_words` and
+  `multicaret_perf` suites press real keys and clicks: Alt+click adding and
+  taking away carets, drawn (pixels) with their lines active in the
+  gutter; typing, Backspace, Return keeping each line's indentation, and
+  brackets closing, typed over and deleted in pairs at every caret, one
+  Ctrl+Z taking a key back from all; Shift+Alt, Alt and middle-button
+  drags making columns (their selections as pixels), a middle click still
+  pasting the primary selection, Shift+Alt+click from the caret; Copy at
+  several selections and Paste of as many lines as carets one at each;
+  the arrows, Home, End, Ctrl+End and Ctrl+Shift+Home; the find bar's
+  Alt+Enter; Ctrl+D (not "arrays" for "arr"), Ctrl+Shift+L, Ctrl+Shift+Up
+  and Down, and the 10,000 limit with its note; Ctrl+L, Ctrl+Shift+K,
+  Alt+Up and Down and Shift+Alt+Up and Down at the edges, an emoji moved
+  whole; whole lines copied and cut and pasted above, other text pasted at
+  the caret; double-clicks and their drags by VS Code's words (arr.size,
+  $el, value_2), a triple click, Ctrl+Left and Right, Ctrl+Backspace and
+  Delete, a Markdown page's double-click left alone, Ctrl+Up and Down
+  scrolling; and five letters and a quote typed at 1,000 carets over
+  100,000 lines (35 to 55 ms a key in the edit, 100 to 200 in all; the
+  colors held to a fresh lex after). They fail without the batch (195 and
+  650 ms a key), without the word selection, and before the keys existed.
+  Needs the owner: the carets and their selections on a real screen and
+  HiDPI, the keys under GNOME on Wayland with IBus (whether an input method
+  takes Alt+click or Shift+Alt drags; text it composes goes in at the first
+  caret only), a real middle button and touchpad, and how the Edit menu
+  reads with Move and Copy Line at its end.
 - [ ] **1.10 Folding (D8).** `Folding`. D8's try (2026-11-09) found the
   `invisible` tag right for carets, scrolling, the gutter, and undo with
   50,000 folds, but every frame costs about 6 µs per hidden line on screen

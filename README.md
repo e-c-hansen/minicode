@@ -415,9 +415,9 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
-| Add a cursor on the line below or above each cursor, at the same column | Option Command Down, Option Command Up |  |  |
-| Add a cursor, or take one away, to type in several places at once | Option click |  |  |
-| Add the next place the selected text occurs to the selection, or select the word at the cursor | Command D |  |  |
+| Add a cursor on the line below or above each cursor, at the same column | Option Command Down, Option Command Up | Ctrl Shift Down, Ctrl Shift Up |  |
+| Add a cursor, or take one away, to type in several places at once | Option click | Alt click |  |
+| Add the next place the selected text occurs to the selection, or select the word at the cursor | Command D | Ctrl D |  |
 | Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | Command I |  |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
 | Clear the terminal, its scrollback included | Command K |  |  |
@@ -429,13 +429,13 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Close the window | Shift Command W | Ctrl Shift W |  |
 | Comment or uncomment the selected lines | Command / | Ctrl / |  |
 | Complete the word at the cursor, with a language server | Control Space, or Option Escape | Ctrl Space | N, or Ctrl N |
-| Copy or cut the line the cursor is on when nothing is selected, and paste such a line above the cursor's line | Command C, Command X, then Command V |  |  |
-| Copy the line, or the selected lines, below or above | Shift Option Down, Shift Option Up |  |  |
+| Copy or cut the line the cursor is on when nothing is selected, and paste such a line above the cursor's line | Command C, Command X, then Command V | Ctrl C, Ctrl X, then Ctrl V |  |
+| Copy the line, or the selected lines, below or above | Shift Option Down, Shift Option Up | Shift Alt Down, Shift Alt Up |  |
 | Copy what the terminal's last command printed | Copy Last Command Output in the Terminal menu, or the command palette |  |  |
-| Delete the line, or every line the selection touches, at every cursor | Control Shift K |  |  |
+| Delete the line, or every line the selection touches, at every cursor | Control Shift K | Ctrl Shift K |  |
 | Delete to the start of the line, at every cursor | Command Delete |  |  |
 | Delete the word before the cursor in the terminal's input line, or everything before it | Control W, Control U |  |  |
-| Edit a column: a cursor on every line between two points, so typing adds the same text to each | Shift Command click at one end and Shift Command click (or drag) to the other; Shift Option click (or drag) for a column from the cursor, as in VS Code; Option drag, or a middle-button drag; Escape goes back to one cursor |  |  |
+| Edit a column: a cursor on every line between two points, so typing adds the same text to each | Shift Command click at one end and Shift Command click (or drag) to the other; Shift Option click (or drag) for a column from the cursor, as in VS Code; Option drag, or a middle-button drag; Escape goes back to one cursor | Shift Alt click (or drag) for a column from the cursor, as in VS Code; Alt drag, or a middle-button drag (a middle click still pastes the primary selection); Escape goes back to one cursor |  |
 | Export a Markdown file as a standalone HTML page | Export as HTML in the File menu, or the command palette |  |  |
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
@@ -465,7 +465,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Go to the next or previous change in a side-by-side diff | F7, Shift F7 (F7 may need fn on a laptop) |  |  |
 | Go to the next or previous problem in the file, with its message at the cursor | F8, Shift F8 (F8 may need fn on a laptop) |  |  |
 | Go to the next or previous stop of an agent's tour (`minicode tour`) | Option ], Option [ |  |  |
-| Go to the start or end of the file, or select to it (with several cursors, one is left) | Command Up, Command Down, Shift Command Up, Shift Command Down; or Command Home, Command End, Shift Command Home, Shift Command End (fn Command Left, Right on a laptop) |  |  |
+| Go to the start or end of the file, or select to it (with several cursors, one is left) | Command Up, Command Down, Shift Command Up, Shift Command Down; or Command Home, Command End, Shift Command Home, Shift Command End (fn Command Left, Right on a laptop) | Ctrl Home, Ctrl End, Ctrl Shift Home, Ctrl Shift End |  |
 | Indent or outdent the selected lines, or the cursor's line | Tab, Shift Tab (the selected lines); Command ], Command [ | Tab, Shift Tab | Tab, Shift Tab |
 | Insert a line below the cursor's line, wherever the cursor is in it | Command Return (Insert Line Above is in the Edit menu) |  |  |
 | Keep each match's case when replacing, in the find bar or Replace in Folder | Option Command P | Alt P |  |
@@ -474,7 +474,8 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift D | W, or Ctrl Shift L |
 | Make the selection, or the word at the cursor, bold or italic in Markdown, or plain again | Toggle Bold, Toggle Italic in the Edit menu (no key by default: Command B is the sidebar and Command I the inline agent, as in VS Code; keys.conf can give them one) |  |  |
 | Move a word left or right at the terminal's prompt | Option Left, Option Right |  |  |
-| Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up |  |  |
+| Move by words, delete a word, or select one by a double-click, with VS Code's word separators in source text (arr.size is two words, value_2 one) | Option Left, Option Right, Option Delete; double-click | Ctrl Left, Ctrl Right, Ctrl Backspace, Ctrl Delete; double-click |  |
+| Move the line, or the selected lines, down or up, at every cursor | Option Down, Option Up | Alt Down, Alt Up |  |
 | Move the selected file to the Trash | Command Delete or Command Forward Delete, in the file tree | Delete, in the file tree |  |
 | Move the tab on show to the other editor group, making one on the right if the editor is not split | Control Command Right, Control Command Left, in the editor |  |  |
 | Move to the next or previous placeholder of a snippet completion, or leave the snippet | Tab, Shift Tab, or Escape |  |  |
@@ -517,11 +518,12 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Save | Command S | Ctrl S | S, or Ctrl S |
 | Save every tab with unsaved changes | Option Command S | Ctrl Alt S |  |
 | Save the file under another name, the tab then showing the new file | Save As in the File menu (Shift Command S is Export PDF) |  |  |
+| Scroll the editor a line up or down, the cursor staying where it is |  | Ctrl Up, Ctrl Down |  |
 | See the language servers, restart one, or choose the Python interpreter | Click the server in the status bar, or the minicode menu |  |  |
 | Select a line, or every line dragged over, by its number | Click or drag in the line numbers, Shift click to extend |  |  |
 | Select all the text | Command A |  |  |
-| Select every place the selected text, or the word at the cursor, occurs | Shift Command L |  |  |
-| Select the cursor's line, and the next line with each press after | Command L |  |  |
+| Select every place the selected text, or the word at the cursor, occurs | Shift Command L | Ctrl Shift L; in the find bar, Alt Enter selects its matches |  |
+| Select the cursor's line, and the next line with each press after | Command L | Ctrl L |  |
 | Select the terminal's commands and what they printed, back to the previous command or on to the next | Shift Command Up, Shift Command Down, in the terminal |  |  |
 | Show or hide dotfiles | Shift Command . | Ctrl Shift . |  |
 | Show or hide the on-screen keyboard, for symbols the phone's keyboard lacks |  |  | Y, or the keyboard button in the title bar |
