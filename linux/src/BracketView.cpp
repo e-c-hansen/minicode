@@ -129,7 +129,9 @@ gboolean BracketView::onIdle(gpointer selfp) {
 
 void BracketView::paintOnScreen() {
     Document* d = editor_->active();
-    if (d && editor_->isSource()) d->paintBracketsOnScreen();
+    if (!d || !editor_->isSource()) return;
+    d->paintBracketsOnScreen();
+    d->paintSemanticOnScreen();   // a server's colors too (SemanticColors.h)
 }
 
 // ---------------------------------------------------------------- the match

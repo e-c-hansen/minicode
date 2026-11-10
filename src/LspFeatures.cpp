@@ -4,6 +4,7 @@
 // their kinds' names, glyphs and colors.
 #include "LspClient.h"
 #include "LspInternal.h"
+#include "SyntaxHighlighter.h"
 #include <algorithm>
 #include <set>
 #include <tuple>
@@ -274,6 +275,63 @@ std::vector<SemanticSpan> decodeSemanticTokens(const std::vector<uint32_t>& data
         if (!out.empty() && a < lastEnd) continue;
         out.push_back({(uint32_t)a, (uint32_t)(b - a), st});
         lastEnd = b;
+    }
+    return out;
+}
+
+std::vector<SemanticSpan> semanticSpansInUtf8(const std::u16string& text,
+                                             const std::vector<SemanticSpan>& spans,
+                                             size_t* utf8Length) {
+    std::vector<SemanticSpan> out;
+    out.reserve(spans.size());
+    size_t unit = 0, byte = 0;
+    // Forward to UTF-16 offset `to` (never past the text), counting bytes;
+    // a surrogate pair is crossed whole or not at all.
+    auto advance = [&](size_t to) {
+        to = std::min(to, text.size());
+        while (unit < to) {
+            const char16_t c = text[unit];
+            if (c >= 0xD800 && c < 0xDC00 && unit + 1 < text.size() && text[unit + 1] >= 0xDC00 &&
+                text[unit + 1] < 0xE000) {
+                if (unit + 2 > to) break;
+                byte += 4;
+                unit += 2;
+                continue;
+            }
+            byte += c < 0x80 ? 1 : c < 0x800 ? 2 : 3;
+            unit++;
+        }
+        return byte;
+    };
+    for (const SemanticSpan& s : spans) {
+        if (s.start < unit) continue;   // not ascending: left out
+        const size_t a = advance(s.start);
+        const size_t b = advance((size_t)s.start + s.length);
+        if (b > a && b <= 0xFFFFFFFFu) out.push_back({(uint32_t)a, (uint32_t)(b - a), s.style});
+    }
+    if (utf8Length) *utf8Length = advance(text.size());
+    return out;
+}
+
+std::vector<SemanticSpan> semanticSpansOverCode(const std::vector<SemanticSpan>& spans,
+                                               const std::vector<Token>& tokens) {
+    std::vector<SemanticSpan> out;
+    out.reserve(spans.size());
+    size_t first = 0;   // the first token that may reach past where a span starts
+    for (const SemanticSpan& s : spans) {
+        const size_t end = (size_t)s.start + s.length;
+        size_t at = s.start;
+        while (first < tokens.size() && tokens[first].start + tokens[first].length <= s.start)
+            first++;
+        for (size_t k = first; k < tokens.size() && tokens[k].start < end; k++) {
+            const Token& t = tokens[k];
+            if (!isStringStyle(t.style) && t.style != TokenStyle::Comment) continue;
+            const size_t a = std::max(at, t.start), b = std::min(end, t.start + t.length);
+            if (b <= a) continue;
+            if (a > at) out.push_back({(uint32_t)at, (uint32_t)(a - at), s.style});
+            at = b;
+        }
+        if (end > at) out.push_back({(uint32_t)at, (uint32_t)(end - at), s.style});
     }
     return out;
 }

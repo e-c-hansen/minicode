@@ -23,6 +23,8 @@
 #include <string>
 #include <vector>
 
+struct Token;   // SyntaxHighlighter.h: a lexer token, for semanticSpansOverCode
+
 namespace Lsp {
 
 struct Position {
@@ -798,6 +800,20 @@ struct SemanticSpan {
 std::vector<SemanticSpan> decodeSemanticTokens(const std::vector<uint32_t>& data,
                                                const SemanticLegend& legend,
                                                const PositionIndex& index);
+// The spans (UTF-16 offsets of `text`, ascending and apart, as
+// decodeSemanticTokens gives them) as UTF-8 byte offsets of the same text,
+// for the GTK port, whose highlighter reads UTF-8. An offset inside a
+// surrogate pair counts as the pair's start; a span left empty so is left
+// out. *utf8Length, when asked for, is the whole text's length in UTF-8.
+std::vector<SemanticSpan> semanticSpansInUtf8(const std::u16string& text,
+                                             const std::vector<SemanticSpan>& spans,
+                                             size_t* utf8Length = nullptr);
+// The parts of `spans` (ascending and apart) that lie over code: each cut
+// where one of the lexer's `tokens` (ascending, in the same units) is a
+// string, an escape or a comment, whose colors a server's token never
+// covers (as the Mac's restyleChangedIn:overlays: paints them).
+std::vector<SemanticSpan> semanticSpansOverCode(const std::vector<SemanticSpan>& spans,
+                                               const std::vector<Token>& tokens);
 
 // ------------------------------------------------------------ symbols
 // LSP's SymbolKind numbers, the ones named here; any of 1 to 26 may come.

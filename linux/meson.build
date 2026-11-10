@@ -191,6 +191,10 @@ gui_sources = [
   'src/LspSessionWatch.cpp',
   'src/LspWatcher.cpp',
   'src/LspSessionImports.cpp',
+  # Semantic tokens (PARITY.md 2.6): asked for by the session
+  # (LspSessionSemantic.cpp), painted by each document (SemanticColors.cpp).
+  'src/LspSessionSemantic.cpp',
+  'src/SemanticColors.cpp',
   'src/MediaView.cpp',
   # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp, and so
   # are the LaTeX preview's two files, which need poppler too.

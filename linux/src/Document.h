@@ -46,6 +46,10 @@
 #endif
 
 class BracketColors;
+class SemanticColors;
+namespace Lsp {
+struct SemanticSpan;
+}
 class DocumentFolds;
 class Document;
 class LatexPreview;
@@ -245,6 +249,17 @@ public:
     void paintBracketsOnScreen();
     // editor.bracket-pair-colorization changed: on or off from now on.
     void bracketSettingChanged();
+    // A language server's semantic tokens (SemanticColors.h, PARITY.md
+    // 2.6): the spans for the text as it is now, in UTF-8 bytes of it,
+    // `textBytes` its length. Kept and painted on screen when the document
+    // has a highlighter in step with that text (so none in large-file mode
+    // or without a grammar); false, nothing kept, otherwise.
+    bool takeSemanticSpans(std::vector<Lsp::SemanticSpan>&& spans, size_t textBytes);
+    SemanticColors* semanticColors() const { return semantic_.get(); }
+    // The lines on screen get the semantic colors they lack (a scroll).
+    void paintSemanticOnScreen();
+    // editor.semantic-highlighting turned off: every semantic color goes.
+    void semanticSettingChanged();
     // Its folds (Folds.h, PARITY.md 1.10): the regions, the closed folds and
     // their tag, made with the buffer.
     DocumentFolds* folds() const { return folds_.get(); }
@@ -432,6 +447,7 @@ private:
     void carryLater(size_t pos, size_t oldLen, size_t newLen);
     bool   applyingTags_ = false;
     std::unique_ptr<BracketColors> brackets_;
+    std::unique_ptr<SemanticColors> semantic_;
     std::unique_ptr<DocumentFolds> folds_;
 
     int   tasksDone_ = 0, tasksTotal_ = 0;

@@ -9,6 +9,7 @@
 #include "Folds.h"
 #include "LargeFileView.h"
 #include "MultiEdit.h"
+#include "SemanticColors.h"
 #include "MarkdownTasks.h"
 #include "StartupLog.h"
 #include "Utf8Offsets.h"
@@ -158,6 +159,7 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     // keeps them.
     LongLines::attach(buffer_);
     brackets_ = std::make_unique<BracketColors>(buffer_);
+    semantic_ = std::make_unique<SemanticColors>(buffer_);
 }
 
 Document::~Document() {
@@ -782,6 +784,7 @@ void Document::carryLater(size_t pos, size_t oldLen, size_t newLen) {
 
 void Document::stopHighlighting() {
     brackets_->reset(nullptr, mirror_, {});
+    semantic_->clear();
     hl_.reset();
     std::string().swap(mirror_);
     pending_ = false;
@@ -799,6 +802,7 @@ void Document::startHighlighting() {
     // them off a whole large file on show cost about 25 ms a tag, on every
     // change to the settings.
     const bool hadColors = hl_ != nullptr;
+    semantic_->clear();   // a server's colors come again with its next answer
     pending_ = false;
     bulk_ = false;
     cancelDeferred();
@@ -930,6 +934,31 @@ void Document::paintBracketsOnScreen() {
         brackets_->paintVisible(shownIn_, *hl_, mirror_);
 }
 
+// ------------------------------------------------ semantic tokens
+// (SemanticColors.h: the session hands them over, each character edit ends
+// them, the lexer's retag of a line takes them off it, and the lines on
+// screen are painted on arrival, on every scroll through the editor's
+// BracketView, and after an idle retag.)
+
+bool Document::takeSemanticSpans(std::vector<Lsp::SemanticSpan>&& spans, size_t textBytes) {
+    if (!hl_ || bulk_ || kind_ != Kind::Text || largeFileFeaturesOff() ||
+        textBytes != mirror_.size() || hl_->length() != mirror_.size() ||
+        !host_->documentSettings().semanticHighlighting())
+        return false;
+    semantic_->set(std::move(spans));
+    paintSemanticOnScreen();
+    return true;
+}
+
+void Document::paintSemanticOnScreen() {
+    if (hl_ && !bulk_ && shownIn_ && semantic_->current())
+        semantic_->paintVisible(shownIn_, *hl_, mirror_);
+}
+
+void Document::semanticSettingChanged() {
+    if (!host_->documentSettings().semanticHighlighting()) semantic_->clear();
+}
+
 void Document::bracketSettingChanged() {
     const bool want = hl_ && !bulk_ && wantsBracketColors();
     if (want == brackets_->on()) return;
@@ -973,6 +1002,9 @@ gboolean Document::onIdleRetag(gpointer selfp) {
         if (e <= s || r.first >= std::min(r.second, len))
             self->later_.erase(self->later_.begin());
     }
+    // A retag took a server's colors off the lines it reached; those on
+    // screen get them back while the tokens are current.
+    self->paintSemanticOnScreen();
     if (self->deferred_ || !self->later_.empty()) return G_SOURCE_CONTINUE;
     self->idleId_ = 0;
     return G_SOURCE_REMOVE;
@@ -1020,6 +1052,7 @@ void Document::retagLines(size_t firstLine, size_t endLine, const std::vector<To
 
     applyingTags_ = true;
     removeHighlightTags(&a, &b);
+    semantic_->lexed(&a, &b, firstLine, endLine);   // the lexer's colors alone, until painted
     GtkTextIter ts = a, te = a;
     for (size_t i = 0; i < tokens.size();) {
         const size_t start = tokens[i].start;
@@ -1253,6 +1286,8 @@ void Document::decorateColors(int firstLine, int endLine) {
 void Document::onInsertText(GtkTextBuffer*, GtkTextIter* loc, char* text, int len,
                             gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
+    // A server's tokens are for the text before any character edit.
+    if (len > 0) self->semantic_->edited();
     if (self->batching_) {
         if (len > 0) self->batchEdits_++;
         return;
@@ -1270,6 +1305,7 @@ void Document::onInsertText(GtkTextBuffer*, GtkTextIter* loc, char* text, int le
 void Document::onDeleteRange(GtkTextBuffer*, GtkTextIter* start, GtkTextIter* end,
                              gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
+    if (!gtk_text_iter_equal(start, end)) self->semantic_->edited();
     if (self->batching_) {
         if (!gtk_text_iter_equal(start, end)) self->batchEdits_++;
         return;

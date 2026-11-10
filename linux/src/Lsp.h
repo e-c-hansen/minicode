@@ -41,6 +41,8 @@
 //   LspSessionWatch.cpp        files changed on disk, for the servers'
 //                              registered watchers (LspWatcher.{h,cpp})
 //   LspSessionImports.cpp      Organize Imports, and on save
+//   LspSessionSemantic.cpp     semantic tokens for the file on show, which
+//                              its document paints (SemanticColors.h)
 // A later item adds a file of its own and a struct for its state.
 #pragma once
 
@@ -246,6 +248,11 @@ public:
     std::size_t watchedBatchesMatchedHere() const;
     double lastWatchedBatchCpuMs() const;
     void injectWatchedPaths(const std::vector<std::string>& paths, int type);
+    // Semantic tokens (LspSessionSemantic.cpp): requests sent (/full and
+    // /full/delta), of them deltas, and answers handed to the document.
+    std::size_t semanticRequests() const;
+    std::size_t semanticDeltaRequests() const;
+    std::size_t semanticAnswers() const;
 
     // The parts' state (LspSessionPrivate.h).
     struct SyncState;
@@ -258,6 +265,7 @@ public:
     struct AlsoState;
     struct ProblemsState;
     struct WatchState;
+    struct SemanticState;
 
 private:
     // ---- shared by the parts (Lsp.cpp)
@@ -569,6 +577,23 @@ private:
                             const std::vector<Lsp::WatchedBatch>& batches);
     // Every server stopping: no watcher remade for each, then none.
     void stopWatchingFiles();
+
+    // ---- semantic tokens (LspSessionSemantic.cpp)
+    std::unique_ptr<SemanticState> sem_;
+    // The file on show is source with a highlighter, has a server, and
+    // editor.semantic-highlighting is on.
+    bool semanticWanted() const;
+    // A request `ms` from now (0: the next turn), replacing one waiting.
+    void scheduleSemanticTokens(guint ms);
+    void requestSemanticTokens();
+    void semanticAnswer(Json& result, const Json& error, lspgtk::Server* server,
+                        const std::string& uri, int gen);
+    // The file leaves the view: the request out let go, the tokens forgotten.
+    void forgetSemanticTokens();
+    // A server of the file on show became ready, or says its tokens changed.
+    void semanticServerChanged(lspgtk::Server* s);
+    // editor.semantic-highlighting turned on or off.
+    void semanticSettingChanged(bool before);
 };
 
 // Stop every server the app started, now: shutdown and exit, then SIGTERM and

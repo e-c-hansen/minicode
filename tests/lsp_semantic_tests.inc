@@ -141,6 +141,83 @@ static void testLspSemanticTokens() {
         CHECK(cpu < 1.0);
     }
 
+    GROUP("lsp:semantic-utf8");
+    {
+        // The GTK port's spans: UTF-8 bytes of the same text. "é" is two
+        // bytes and one unit, "€" three and one, the emoji four and two.
+        using Lsp::SemanticSpan;
+        using Lsp::SemanticStyle;
+        const std::string utf8 = "ab \xC3\xA9x \xE2\x82\xAC y \xF0\x9F\x98\x80z w";
+        const std::u16string text = Lsp::toUtf16(utf8);
+        CHECK(text.size() == 15);
+        std::vector<SemanticSpan> spans = {
+            {0, 2, SemanticStyle::Class},      // ab
+            {3, 2, SemanticStyle::Variable},   // éx
+            {8, 1, SemanticStyle::Function},   // y
+            {10, 1, SemanticStyle::Constant},  // half the emoji: its start both ends, empty
+            {11, 2, SemanticStyle::Property},  // the emoji's second half and z: from its start
+            {14, 5, SemanticStyle::Parameter}, // w, running past the end: cut there
+        };
+        size_t length = 0;
+        std::vector<SemanticSpan> out = Lsp::semanticSpansInUtf8(text, spans, &length);
+        CHECK(length == utf8.size());
+        CHECK(out.size() == 5);
+        if (out.size() == 5) {
+            CHECK(out[0].start == 0 && out[0].length == 2 && out[0].style == SemanticStyle::Class);
+            CHECK(out[1].start == 3 && out[1].length == 3);
+            CHECK(utf8.substr(out[2].start, out[2].length) == "y");
+            CHECK(utf8.substr(out[3].start, out[3].length) == "\xF0\x9F\x98\x80z" &&
+                  out[3].style == SemanticStyle::Property);
+            CHECK(utf8.substr(out[4].start, out[4].length) == "w");
+        }
+        // Plain ASCII: the same offsets.
+        const std::u16string ascii = Lsp::toUtf16("one two\nthree");
+        out = Lsp::semanticSpansInUtf8(ascii, {{4, 3, SemanticStyle::Variable},
+                                               {8, 5, SemanticStyle::Class}});
+        CHECK(out.size() == 2 && out[0].start == 4 && out[1].start == 8 && out[1].length == 5);
+        CHECK(Lsp::semanticSpansInUtf8(ascii, {}).empty());
+    }
+
+    GROUP("lsp:semantic-over-code");
+    {
+        // A server's token over a string, an escape or a comment leaves it
+        // the lexer's: only the parts over code keep the token.
+        using Lsp::SemanticSpan;
+        using Lsp::SemanticStyle;
+        const std::string line = "label = f\"Wid{name}\\n\" # Widget";
+        std::vector<Token> tokens;
+        IncrementalHighlighter<char> hl("py");
+        hl.reset(StringSource<char>(line), &tokens);
+        auto styleAt = [&](size_t i) {
+            for (const Token &t : tokens)
+                if (t.start <= i && i < t.start + t.length) return t.style;
+            return TokenStyle::Plain;
+        };
+        const size_t brace = line.find('{'), comment = line.find('#');
+        CHECK(isStringStyle(styleAt(line.find("Wid"))) && !isStringStyle(styleAt(brace + 1)));
+        CHECK(styleAt(comment + 2) == TokenStyle::Comment);
+        std::vector<SemanticSpan> spans = {
+            {0, 5, SemanticStyle::Variable},                          // label: code
+            {(uint32_t)line.find("Wid"), 13, SemanticStyle::Class},   // Wid{name}\n": cut
+            {(uint32_t)comment + 2, 6, SemanticStyle::Class},         // in the comment: gone
+        };
+        std::vector<SemanticSpan> out = Lsp::semanticSpansOverCode(spans, tokens);
+        std::vector<std::string> kept;
+        for (const SemanticSpan &s : out) kept.push_back(line.substr(s.start, s.length));
+        // Only label and the field's code (its braces are code too).
+        CHECK(!kept.empty() && kept[0] == "label");
+        bool overString = false, field = false;
+        for (const SemanticSpan &s : out)
+            for (size_t i = s.start; i < s.start + s.length; i++) {
+                if (isStringStyle(styleAt(i)) || styleAt(i) == TokenStyle::Comment)
+                    overString = true;
+                if (i == brace + 1) field = true;
+            }
+        CHECK(!overString && field);
+        // No lexer tokens: the spans as they are.
+        CHECK(Lsp::semanticSpansOverCode(spans, {}).size() == 3);
+    }
+
     GROUP("lsp:semantic-delta");
     {
         std::vector<uint32_t> data = {0, 0, 3, 1, 0, 1, 2, 4, 1, 0, 0, 6, 2, 2, 0};

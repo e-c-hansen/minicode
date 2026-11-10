@@ -6,6 +6,7 @@
 #include "Editor.h"
 #include "AutoCloseInput.h"
 #include "BracketColors.h"
+#include "SemanticColors.h"
 #include "BracketView.h"
 #include "Carets.h"
 #include "SnippetSession.h"
@@ -1004,6 +1005,9 @@ void Editor::applySettings(const Settings& s) {
     brackets_->applySettings(s);
     BracketColors::applySettings(tags_.table, s);
     for (Document* d : tabs_) d->bracketSettingChanged();
+    // Semantic tokens' tags (every tab's), and off with their setting.
+    SemanticColors::applySettings(tags_.table, s);
+    for (Document* d : tabs_) d->semanticSettingChanged();
     // The tags are every tab's: each recolors with them.
     GtkTextTagTable* t = tags_.table;
     for (int i = 0; i < kTokenStyleCount; ++i)

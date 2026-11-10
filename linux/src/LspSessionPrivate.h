@@ -299,6 +299,18 @@ struct LspSession::ProblemsState {
     long stepIndex = -1;
 };
 
+// ---- semantic tokens (LspSessionSemantic.cpp)
+struct LspSession::SemanticState {
+    int request = 0;                         // the request out, 0 with none
+    std::weak_ptr<lspgtk::Server> server;    // whom the tokens are from
+    std::string uri;                         // and for which file
+    Lsp::SemanticTokens tokens;              // the last answer, for the next delta
+    bool again = false;                      // wanted again while one was out
+    gint64 askedAt = 0;                      // g_get_monotonic_time when sent
+    guint timer = 0;                         // the next request (0.3 s after typing)
+    size_t requests = 0, deltas = 0, answers = 0;   // for the checks
+};
+
 // ---- watched files (LspSessionWatch.cpp)
 struct LspSession::WatchState {
     std::unique_ptr<lspgtk::FileWatcher> watcher;

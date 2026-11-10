@@ -144,12 +144,17 @@ std::shared_ptr<Server> LspSession::serverForKey(const std::string& key) {
         if (alive.expired() || self->stopping()) return;
         updateStatus();
         problemsChanged();   // the counts show once a server runs
+        semanticServerChanged(self);   // its tokens for the file on show
     };
     // Files changed on disk, for the watchers the server registers
     // (LspSessionWatch.cpp): offered because this port sends them.
     c.setFileWatching(true);
     c.onWatchersChanged = [alive, this, self] {
         if (!alive.expired() && !self->stopping()) scheduleWatcherUpdate();
+    };
+    // workspace/semanticTokens/refresh: the file on show's tokens again.
+    c.onSemanticTokensRefresh = [alive, this, self] {
+        if (!alive.expired() && !self->stopping()) semanticServerChanged(self);
     };
     c.onDiagnostics = [alive, this, self](const std::string& uri,
                                           const std::vector<Lsp::Diagnostic>& list) {
@@ -276,9 +281,13 @@ void LspSession::stopAllServers() {
 }
 
 void LspSession::applySettings(const Settings& settings) {
+    const bool semantic = settings_.semanticHighlighting();
     settings_ = settings;
     std::string sig = settingsSignature(settings);
-    if (sig == signature_) return;
+    if (sig == signature_) {
+        semanticSettingChanged(semantic);   // LspSessionSemantic.cpp
+        return;
+    }
     signature_ = sig;
     std::string path = path_;
     closeDocument();
