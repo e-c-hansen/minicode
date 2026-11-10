@@ -7,12 +7,13 @@ cost.
 The GTK4 port under `linux/` was last worked on in August 2026. Since then the
 macOS app has gained its biggest features: the LaTeX preview, the LSP client,
 incremental highlighting, image and PDF viewing, and several file tree
-actions. The Android port has caught up on most of them. This document lists
-what Linux lacks, in the order to do it, with where each thing lives on the
-Mac and what the GTK equivalent is.
+actions. The Android port has caught up on most of them. This document
+listed what Linux lacked then, in the order to do it, with where each thing
+lives on the Mac and what the GTK equivalent is.
 
 Read these first:
-- `../BUILD-LINUX.md`: build, install and what was verified in August.
+- `../BUILD-LINUX.md`: build, install, what was verified, and what still
+  needs a person at the desktop.
 - `dev/README.md`: the Docker container with a virtual display for driving
   the app from a Mac.
 - `../CLAUDE.md`, especially "LaTeX preview", "LSP", "Images" and "Gotchas".
@@ -22,68 +23,90 @@ Read these first:
 
 ## Where it stands
 
-Items 1 to 11 below are done (September 2026), so the port has what the Mac
-had then, apart from what the list at the end of item 8 leaves out. The
-registry's keys, tabs, line numbers, sessions and backups, and the command
-palette came in November 2026 (items 15 to 18, and `PARITY.md`). Almost
-everything else the Mac gained from 1.5.0 on (folding, several cursors,
-rename and the other language server commands, formatting, the viewers,
-the agent features and the command line control) is not here yet;
-`PARITY.md` is the plan, and
-`../ROADMAP.md`, "Linux parity", lists the core files that already hold its
-logic. It builds
+Items 1 to 14 below are done (September and October 2026), so the port
+has what the Mac had then, apart from what the list at the end of item 8
+leaves out. Stage 0 and Stage 1 of `PARITY.md`, and the owner's reports R1
+to R3, came in November 2026 (items 15 to 27). Almost everything else the
+Mac gained from 1.5.0 on (rename and the other language server commands,
+formatting, the problems list, the split editor, several terminals, the
+viewers, the agent features and the command line control) is not here
+yet; `PARITY.md`'s Stages 2 to 4 are the plan, and `../ROADMAP.md`, "Linux
+parity", lists the core files that already hold its logic. It builds
 without warnings at `warning_level=2` (CI: Ubuntu, GTK 4, VTE, WebKitGTK,
-poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
+poppler, and the GUI suites on Xvfb). The work up to October was checked by
+hand and with temporary hooks, much of it under GNOME on Wayland on Ubuntu
+26.04; the November work is checked by the GUI suites, and what they leave
+to a person at the desktop is in `../BUILD-LINUX.md`, "What needs a
+person". The port has:
 - data safety: "Save changes?" before anything replaces edits, failed saves
   reported, atomic saves (item 1);
 - the file tree, live-refreshing, with New File, New Folder, Rename, Move to
-  Trash, Open Containing Folder and Copy Path (item 2), and rows that drag
-  onto folders (item 13);
+  Trash, Open Containing Folder and Copy Path (item 2), rows that drag onto
+  folders (item 13), and listings that no longer hold the window while a
+  folder churns (`PARITY.md` R1);
 - the editor with incremental syntax highlighting (item 3), Ctrl+/, the
   Markdown preview, and reloading when the file changes on disk (item 8);
-- Markdown task lists: boxes to click in the preview, Ctrl+L, Return
+- the menu bar and keys from the command registry, changed by keys.conf
+  (`PARITY.md` item 0.3);
+- tabs, with preview tabs, Reopen Closed Tab and Save All (item 15, which
+  replaced Previous File), a folder's tabs coming back, backups of unsaved
+  tabs, and auto-save (item 17);
+- line numbers and the gutter (item 16), and folding, with at most 5,000
+  lines hidden in a tab (item 27);
+- the command palette, with Quick Open, Go to Line and the open file's
+  symbols from minicode's own outline (item 19);
+- Markdown task lists: boxes to click in the preview, Ctrl+Alt+L, Return
   continuing a list, the count in the title, and the TODOs window on
-  Ctrl+Shift+L (item 14);
+  Ctrl+Shift+D (item 14);
 - images and PDFs in the editor's slot (item 4), with zoom for PDFs and the
   LaTeX preview;
 - Find in Folder (item 5) with Replace in Folder, and the find and replace
   bar in the file with VS Code's options (item 20);
+- brackets boxed beside the caret and colored by depth, Go to Bracket, and
+  brackets and quotes that close as they are typed (item 21);
+- several carets and the line commands (item 26);
+- the editor's and the terminals' zoom, word wrap, Go Back and Forward, and
+  Maximize Pane (item 25);
+- large-file mode, files over 4 MB read without holding the window, and
+  lines over 10,000 characters shown a part at a time (item 22);
 - language servers: squiggles, completion, hover and go to definition
   (item 6);
 - the LaTeX preview with double-click editing and Export PDF (item 7);
 - several windows, each with its own tree, editor, terminal, browser, search
   panel and language servers; Focus Editor, Close Window and Quit (item 8);
-- tabs, with preview tabs, Reopen Closed Tab and Save All (item 15, which
-  replaced Previous File);
-- brackets boxed beside the caret and colored by depth, Go to Bracket, and
-  brackets and quotes that close as they are typed (item 21);
-- large-file mode, files over 4 MB read without holding the window, and
-  lines over 10,000 characters shown a part at a time (item 22);
 - a VTE terminal that gets its own Ctrl keys while it has the keyboard, with
   Ctrl+click on a file:line or URL in its output (item 9), and a WebKitGTK
-  browser;
+  browser, beside the editor with the terminal below both, as the Mac lays
+  them out, each hidden on its own and its bars dragged (item 18);
 - the Source Control panel with the commit graph, in the tree's place on
   Ctrl+Shift+G (item 10);
 - video and audio in the editor's slot through GTK's GStreamer backend,
   with Play/Pause on Ctrl+Shift+Space (item 11);
 - the settings file with live colors, per-panel opacity and a live color
   picker (item 8);
-- pane hiding and divider drags, the shortcut hints panel, and opening a
-  file or folder named on the command line.
+- the shortcut hints panel, and opening a file or folder named on the
+  command line, where `minicode` gives the terminal back once its window is
+  up (item 23); the terminal and the browser are made when first shown, so
+  the window comes sooner (item 24).
 
 It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `MarkdownEdit`,
 `MarkdownTasks`, `Settings`, `LineComments`, `AutoIndent`, `KeepSorted`,
 `FolderSearch`, `TextFind`, `LatexDoc`, `SyncTex`, `Json`, `LspClient`,
 `TermLinks`, `GitStatus`, `GitGraph`, `GitModel`, `BracketMatch`, `BracketPairs`,
-`AutoClose` and `MultiCaret`. `meson.build`'s `core_sources` and
-the plain Makefile's `CORE` must name the same files: CI builds only with
+`AutoClose` and `MultiCaret`, and since November the command registry
+(`Commands`, `CommandsLinux`), `EditorTabs`, `TabSessions`, `Backups`,
+`LineIndex`, `CommandPalette`, `SymbolOutline`, `FindRules`, `EditSpans`,
+`EditBatch`, `Folding`, `NavHistory`, `NavRecorder`, `ViewZoom`,
+`RightAreaLayout` and others; `meson.build`'s `core_sources` is the list. It
+and the plain Makefile's `CORE` must name the same files: CI builds only with
 Meson, so the Makefile once fell three files behind and could not link, and
 `make test`'s `linux:build-lists` check now compares the two.
 The rest of the core (`TerminalScreen`) is portable and tested, and has not
 been added to `meson.build`, since VTE does that job here.
 
-What each item verified at run time, and what still needs a person (mostly
-real key presses and how things look), is in `../BUILD-LINUX.md`.
+What each item verified at run time is in `../BUILD-LINUX.md`, "What is
+verified", and what still needs a person (mostly real key presses, input
+methods, and how things look) in its "What needs a person".
 
 ## What to do, in order
 
