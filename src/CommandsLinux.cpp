@@ -15,8 +15,7 @@
 //   - Nothing GNOME takes: Super, Ctrl+Alt+arrows, Ctrl+Alt+T,
 //     Ctrl+Alt+Delete.
 // A command the port does not have yet has no row, so its key is free until
-// the item that brings it (Ctrl+I for the inline agent, Ctrl+T for Go to
-// Symbol in Workspace). The port's table of GActions (linux/src/Keys.cpp)
+// the item that brings it (Ctrl+I for the inline agent). The port's table of GActions (linux/src/Keys.cpp)
 // has the same commands, but those the registry marks Fixed, which are a
 // view's own keys.
 #include "Commands.h"
@@ -243,14 +242,14 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.terminal.fontZoomReset", "ctrl+alt+0 ctrl+numpad0", 0, nullptr, nullptr},
 
         // ---- Navigate
-        // The palette's other ways in, VS Code's Linux keys. Ctrl+P and
-        // Ctrl+G are plain Ctrl keys, so the program in the terminal keeps
-        // them (readline's previous line, Emacs's quit), as the Mac's grid
-        // keeps Ctrl+G. Go to Symbol in Workspace (VS Code's Ctrl+T) waits
-        // for the language server work of Stage 2.
+        // The palette's other ways in, VS Code's Linux keys. Ctrl+P, Ctrl+G
+        // and Ctrl+T are plain Ctrl keys, so the program in the terminal
+        // keeps them (readline's previous line and transpose, Emacs's quit,
+        // fzf's file widget), as the Mac's grid keeps Ctrl+G.
         {"workbench.action.quickOpen", "ctrl+p", 0, nullptr, nullptr},
         {"workbench.action.gotoLine", "ctrl+g", 0, nullptr, nullptr},
         {"workbench.action.gotoSymbol", "ctrl+shift+o", 0, nullptr, nullptr},
+        {"workbench.action.showAllSymbols", "ctrl+t", 0, nullptr, nullptr},
         // VS Code's Linux keys (PARITY.md 1.11). In the terminal Ctrl+Shift+-
         // is the program's (readline's undo reads it as Ctrl+_), as the
         // Mac's grid keeps Ctrl+-; Ctrl+Alt+- still goes back from there.

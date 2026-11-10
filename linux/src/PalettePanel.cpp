@@ -32,7 +32,7 @@ const size_t kRecentCommands = 20;        // the Mac's caps
 const size_t kRecentFiles = 50;
 const char* kAccent = "#4EA1F7";
 const char* kMuted = "#9CA3AF";
-const char* kPlaceholder = "Search files by name (> commands, : a line, @ a symbol)";
+const char* kPlaceholder = "Search files by name (> commands, : a line, @ a symbol, # in the workspace)";
 
 // ------------------------------------------------------------ recent lists
 // The commands run lately (by registry id) and the files Quick Open opened
@@ -248,6 +248,8 @@ PalettePanel::PalettePanel(GtkWindow* window, GtkOverlay* overlay, Editor* edito
 
 PalettePanel::~PalettePanel() {
     life_.reset();
+    if (wsTimer_) g_source_remove(wsTimer_);
+    wsTimer_ = 0;
     if (cancelListing_) cancelListing_->store(true);
     forgetRestore();
     // By data, not by id: main.cpp's teardown may have taken them off
@@ -422,6 +424,10 @@ void PalettePanel::open(const std::string& text) {
     caretSymbol_ = preselect_ = -1;
     symbolSource_.clear();
     previewed_ = ran_ = false;
+    wsSymbols_.clear();
+    wsPaths_.clear();
+    wsComplete_ = false;
+    wsNote_.clear();
     if (onOpenChanged) onOpenChanged(true);   // before anything is previewed
     open_ = true;
     gtk_widget_set_visible(sheet_, TRUE);
@@ -436,6 +442,7 @@ void PalettePanel::close(bool restoreFocus) {
     closing_ = true;
     if (cancelListing_) cancelListing_->store(true);
     cancelListing_.reset();
+    stopWorkspace();
     // Closed without going to a symbol: the editor goes back as it was.
     if (previewed_ && !ran_) endPreview();
     if (restoreFocus) this->restoreFocus();
@@ -759,39 +766,76 @@ bool PalettePanel::symbolsAvailable() const {
     return editor_->isSource();
 }
 
-// The outline of the file on show, and the symbol the caret is in; handed
-// over on the next turn, never in the middle of a refilter.
+// Where the caret is in the file on show's source, as LSP counts it; false
+// on a Markdown page.
+bool PalettePanel::caretPosition(Document* d, Lsp::Position* p) const {
+    if (!d || d->showsPreview()) return false;
+    GtkTextBuffer* b = d->buffer();
+    GtkTextIter at, start;
+    gtk_text_buffer_get_iter_at_mark(b, &at, gtk_text_buffer_get_insert(b));
+    start = at;
+    gtk_text_iter_set_line_offset(&start, 0);
+    char* raw = gtk_text_buffer_get_slice(b, &start, &at, TRUE);
+    p->line = gtk_text_iter_get_line(&at);
+    p->character = (int)Lsp::toUtf16(raw ? raw : "").size();
+    g_free(raw);
+    return true;
+}
+
+// minicode's own outline of a file, and the symbol the caret is in.
+std::vector<Lsp::Symbol> PalettePanel::outlineSymbols(Document* d, int* caret) const {
+    std::vector<Lsp::Symbol> syms = Outline::outline(baseName(d->path()), Lsp::toUtf16(d->text()));
+    Lsp::Position p;
+    *caret = caretPosition(d, &p) ? Lsp::symbolAt(syms, p) : -1;
+    return syms;
+}
+
+// The file's symbols, from its language server when one lists them (not on
+// a Markdown page, whose headings are the outline's), else the outline, and
+// the symbol the caret is in; handed over on a later turn, never in the
+// middle of a refilter.
 void PalettePanel::askSymbols() {
     Document* d = editor_->active();
     if (!d) return;
-    std::vector<Lsp::Symbol> syms = Outline::outline(baseName(d->path()), Lsp::toUtf16(d->text()));
-    int caret = -1;
-    if (!d->showsPreview()) {
-        GtkTextBuffer* b = d->buffer();
-        GtkTextIter at, start;
-        gtk_text_buffer_get_iter_at_mark(b, &at, gtk_text_buffer_get_insert(b));
-        start = at;
-        gtk_text_iter_set_line_offset(&start, 0);
-        char* raw = gtk_text_buffer_get_slice(b, &start, &at, TRUE);
-        Lsp::Position p;
-        p.line = gtk_text_iter_get_line(&at);
-        p.character = (int)Lsp::toUtf16(raw ? raw : "").size();
-        g_free(raw);
-        caret = Lsp::symbolAt(syms, p);
-    }
     const unsigned session = session_;
-    auto shared = std::make_shared<std::vector<Lsp::Symbol>>(std::move(syms));
+    const uint64_t docId = d->id();
+    if (!d->showsPreview() && ctx_.documentSymbols) {
+        std::weak_ptr<int> alive = life_;
+        auto done = [this, alive, session, docId](std::vector<Lsp::Symbol> syms, bool refused,
+                                                   const std::string& source) {
+            if (alive.expired()) return;
+            auto shared = std::make_shared<std::vector<Lsp::Symbol>>(std::move(syms));
+            later([this, session, docId, shared, refused, source] {
+                if (!open_ || session != session_) return;
+                Document* doc = editor_->active();
+                if (!doc || doc->id() != docId) return;
+                int caret = -1;
+                if (refused) {   // the outline stands in
+                    std::vector<Lsp::Symbol> outline = outlineSymbols(doc, &caret);
+                    setSymbols(std::move(outline), caret, "outline");
+                    return;
+                }
+                Lsp::Position p;
+                if (caretPosition(doc, &p)) caret = Lsp::symbolAt(*shared, p);
+                setSymbols(std::move(*shared), caret, source);
+            });
+        };
+        if (ctx_.documentSymbols(done)) return;
+    }
+    int caret = -1;
+    auto shared = std::make_shared<std::vector<Lsp::Symbol>>(outlineSymbols(d, &caret));
     later([this, session, shared, caret] {
         if (!open_ || session != session_) return;
-        setSymbols(std::move(*shared), caret);
+        setSymbols(std::move(*shared), caret, "outline");
     });
 }
 
-void PalettePanel::setSymbols(std::vector<Lsp::Symbol> symbols, int caret) {
+void PalettePanel::setSymbols(std::vector<Lsp::Symbol> symbols, int caret,
+                              const std::string& source) {
     symbols_ = std::move(symbols);
     caretSymbol_ = caret;
     haveSymbols_ = true;
-    symbolSource_ = "outline";
+    symbolSource_ = source;
     const std::string text = gtk_editable_get_text(GTK_EDITABLE(entry_));
     if (CommandPalette::parse(Lsp::toUtf16(text)).mode == CommandPalette::Mode::Symbols) refilter();
 }
@@ -835,6 +879,7 @@ void PalettePanel::symbolItems(const std::u16string& query, bool byKind, std::st
         if (!extra.empty())
             it.markup += std::string("   <span foreground=\"") + kMuted + "\" size=\"small\">" +
                          escaped(extra) + "</span>";
+        it.detail = extra;
         it.keys = std::to_string(s.selectionRange.start.line + 1);
         it.preview = [this, index] {
             if (index >= symbols_.size()) return;
@@ -852,7 +897,110 @@ void PalettePanel::symbolItems(const std::u16string& query, bool byKind, std::st
     }
     preselect_ = pre;
     if (!items_.empty()) return;
-    *empty = symbols_.empty() ? "No symbols found in this file" : "No matching symbols";
+    if (!symbols_.empty()) *empty = "No matching symbols";
+    else if (symbolSource_ == "outline") *empty = "No symbols found in this file";
+    else *empty = "The language server lists no symbols here";
+}
+
+// ------------------------------------------------------------ workspace
+// Go to Symbol in Workspace ("#"): the last answer ranked against what is
+// typed now, while the servers are asked again a moment after typing stops,
+// as on the Mac.
+void PalettePanel::workspaceItems(const std::u16string& query, std::string* empty) {
+    if (!ctx_.workspaceSymbols) {
+        *empty = "No language server is running in this window";
+        return;
+    }
+    const std::string q = Lsp::toUtf8(query);
+    if (q.empty()) {
+        stopWorkspace();
+        wsSymbols_.clear();
+        wsPaths_.clear();
+        wsComplete_ = false;
+        *empty = "Type the name of a symbol to look for it in the workspace";
+        return;
+    }
+    if (q != wsAsked_) {
+        wsAsked_ = q;
+        wsComplete_ = false;
+        if (wsTimer_) g_source_remove(wsTimer_);
+        wsTimer_ = g_timeout_add(150, [](gpointer p) -> gboolean {
+            PalettePanel* self = static_cast<PalettePanel*>(p);
+            self->wsTimer_ = 0;
+            self->askWorkspace(self->wsAsked_);
+            return G_SOURCE_REMOVE;
+        }, this);
+    }
+    std::string prefix = ctx_.root;
+    if (!prefix.empty() && prefix.back() != '/') prefix += '/';
+    const auto open = ctx_.openWorkspaceSymbol;
+    int pre = -1;
+    for (const CommandPalette::SymbolRow& r :
+         CommandPalette::symbolRows(wsSymbols_, query, false, -1, &pre, 300)) {
+        if (r.heading || r.symbol >= wsSymbols_.size()) continue;
+        const Lsp::Symbol& s = wsSymbols_[r.symbol];
+        std::string path = r.symbol < wsPaths_.size() ? wsPaths_[r.symbol] : "";
+        if (!prefix.empty() && path.rfind(prefix, 0) == 0) path = path.substr(prefix.size());
+        Item it;
+        char color[16];
+        std::snprintf(color, sizeof color, "#%06X", Lsp::symbolKindColor(s.kind) & 0xFFFFFF);
+        it.symbol = true;
+        it.label = s.name;
+        it.markup = std::string("<span foreground=\"") + color + "\" weight=\"bold\">" +
+                    escaped(Lsp::toUtf8(Lsp::symbolKindGlyph(s.kind))) + "</span>  " +
+                    marked(Lsp::toUtf16(s.name), 0, r.match.positions);
+        if (!s.container.empty())
+            it.markup += std::string("   <span foreground=\"") + kMuted + "\" size=\"small\">" +
+                         escaped(s.container) + "</span>";
+        it.detail = s.container;
+        it.keys = path + ":" + std::to_string(s.selectionRange.start.line + 1);
+        const Lsp::Symbol sym = s;
+        it.run = [this, sym, open] {
+            ran_ = true;
+            close(true);
+            later([this, sym, open] {
+                if (open) move([open, sym] { open(sym); });
+            });
+        };
+        items_.push_back(std::move(it));
+    }
+    if (!items_.empty()) return;
+    if (!wsComplete_) *empty = "Searching the workspace's symbols…";
+    else *empty = wsNote_.empty() ? "No matching symbols" : wsNote_;
+}
+
+void PalettePanel::askWorkspace(const std::string& query) {
+    if (!open_ || closing_ || query != wsAsked_ || !ctx_.workspaceSymbols) return;
+    wsQuestions_++;
+    const unsigned session = session_;
+    std::weak_ptr<int> alive = life_;
+    ctx_.workspaceSymbols(query, [this, alive, session, query](
+                                     std::vector<Lsp::Symbol> symbols,
+                                     std::vector<std::string> paths, bool complete,
+                                     const std::string& note) {
+        if (alive.expired() || !open_ || session != session_ || query != wsAsked_) return;
+        // A partial answer with nothing in it leaves the last list up, so a
+        // slow server never empties what another has filled.
+        if (!symbols.empty() || complete) {
+            wsSymbols_ = std::move(symbols);
+            wsPaths_ = std::move(paths);
+        }
+        wsComplete_ = complete;
+        wsNote_ = note;
+        const std::string text = gtk_editable_get_text(GTK_EDITABLE(entry_));
+        if (CommandPalette::parse(Lsp::toUtf16(text)).mode ==
+            CommandPalette::Mode::WorkspaceSymbols)
+            refilter();
+    });
+}
+
+// Out of "#", or closed: no question waits, and those out are cancelled.
+void PalettePanel::stopWorkspace() {
+    if (wsTimer_) g_source_remove(wsTimer_);
+    wsTimer_ = 0;
+    if (wsAsked_.empty()) return;
+    wsAsked_.clear();
+    if (ctx_.cancelWorkspaceSymbols) ctx_.cancelWorkspaceSymbols();
 }
 
 // Where the editor is, before the first symbol is shown in it: the document
@@ -960,13 +1108,13 @@ void PalettePanel::refilter() {
     case CommandPalette::Mode::Commands: commandItems(p.query, &empty); break;
     case CommandPalette::Mode::Line: lineItem(p); break;
     case CommandPalette::Mode::Symbols: symbolItems(p.query, p.byKind, &empty); break;
-    case CommandPalette::Mode::WorkspaceSymbols:
-        empty = "Go to Symbol in Workspace is not on Linux yet; @ lists this file's symbols";
-        break;
+    case CommandPalette::Mode::WorkspaceSymbols: workspaceItems(p.query, &empty); break;
     case CommandPalette::Mode::Files: fileItems(p.query, &empty); break;
     }
-    // Out of "@", the editor goes back to where it was.
+    // Out of "@", the editor goes back to where it was; out of "#", the
+    // servers' questions are cancelled.
     if (p.mode != CommandPalette::Mode::Symbols && previewed_) endPreview();
+    if (p.mode != CommandPalette::Mode::WorkspaceSymbols) stopWorkspace();
     int first = -1;
     for (size_t i = 0; i < items_.size() && first < 0; i++)
         if (!items_[i].heading) first = (int)i;
@@ -1213,5 +1361,11 @@ std::string PalettePanel::emptyText() const {
 std::vector<std::string> PalettePanel::keys() const {
     std::vector<std::string> out;
     for (const Item& it : items_) out.push_back(it.keys);
+    return out;
+}
+
+std::vector<std::string> PalettePanel::details() const {
+    std::vector<std::string> out;
+    for (const Item& it : items_) out.push_back(it.detail);
     return out;
 }

@@ -122,9 +122,12 @@ static void testLinuxCommandDefaults() {
           HasKey(d, "editor.action.nextMatchFindAction", "f3"));
     CHECK(d.keysOf("minicode.toggleHiddenFiles").size() == 1 &&
           HasKey(d, "minicode.toggleHiddenFiles", "ctrl+shift+."));
+    // Go to Symbol in Workspace is VS Code's Ctrl+T (PARITY.md 2.12).
+    CHECK(d.keysOf("workbench.action.showAllSymbols").size() == 1 &&
+          HasKey(d, "workbench.action.showAllSymbols", "ctrl+t"));
     // The keys they leave are free until the commands that take them come
-    // (the inline agent, Go to Symbol in Workspace, the panel's Ctrl+J).
-    for (const char *k : {"ctrl+i", "ctrl+t", "ctrl+j", "ctrl+alt+t"}) {
+    // (the inline agent, the panel's Ctrl+J).
+    for (const char *k : {"ctrl+i", "ctrl+j", "ctrl+alt+t"}) {
         const bool free = d.commandsFor(K(k)).empty();
         if (!free) std::printf("  Linux: %s is %s\n", k, d.commandsFor(K(k))[0]->id);
         CHECK(free);
@@ -244,6 +247,7 @@ static void testLinuxTerminalKeys() {
     // Shift keys open it from the terminal.
     CHECK(takes("workbench.action.quickOpen", "ctrl+p"));
     CHECK(takes("workbench.action.gotoLine", "ctrl+g"));
+    CHECK(takes("workbench.action.showAllSymbols", "ctrl+t"));   // fzf's, readline's
     CHECK(takes("workbench.action.showCommands", "f1"));
     CHECK(!takes("workbench.action.showCommands", "ctrl+shift+p"));
     CHECK(!takes("workbench.action.gotoSymbol", "ctrl+shift+o"));

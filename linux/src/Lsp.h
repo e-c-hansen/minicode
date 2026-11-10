@@ -41,6 +41,8 @@
 //   LspSessionWatch.cpp        files changed on disk, for the servers'
 //                              registered watchers (LspWatcher.{h,cpp})
 //   LspSessionImports.cpp      Organize Imports, and on save
+//   LspSessionSymbols.cpp      Go to Symbol in File and in Workspace
+//   LspSessionFolding.cpp      the server's folding ranges, for the folds
 // A later item adds a file of its own and a struct for its state.
 #pragma once
 
@@ -190,6 +192,31 @@ public:
     // `done` comes once, after the edit, nothing to do, a failure, or 5 s.
     bool organizeImportsBeforeSave(std::function<void()> done);
 
+    // ---- symbols (LspSessionSymbols.cpp, PARITY.md 2.12)
+    // Go to Symbol in File: the file on show's server that lists symbols
+    // (the main one, else the second when it does) asked for
+    // textDocument/documentSymbol. False when none does (the palette's own
+    // outline stands in); else `done` comes once: the symbols, a tree
+    // flattened parent first (Lsp::parseDocumentSymbols), and the server's
+    // name, or `refused` when it refused, exited, or the file left the view.
+    using DocumentSymbolsDone = std::function<void(std::vector<Lsp::Symbol> symbols, bool refused,
+                                                   const std::string& server)>;
+    bool documentSymbols(DocumentSymbolsDone done);
+    // Go to Symbol in Workspace: workspace/symbol to every running server
+    // that offers it, the file on show's first, the question before
+    // cancelled. `done` after each answer, with the answers so far merged
+    // (Lsp::mergeSymbols) and each symbol's file as the tree spells it,
+    // `complete` once every server answered (an exit counts), and a note
+    // when there was no server to ask.
+    using WorkspaceSymbolsDone =
+        std::function<void(std::vector<Lsp::Symbol> symbols, std::vector<std::string> paths,
+                           bool complete, const std::string& note)>;
+    void workspaceSymbols(const std::string& query, WorkspaceSymbolsDone done);
+    void cancelWorkspaceSymbols();
+    // A workspace symbol's name selected, its file opened first when it is
+    // another (through onReveal).
+    void revealSymbol(const Lsp::Symbol& symbol);
+
     // EditorObserver
     void documentChanged(const std::string& path) override;
     void documentSaved(Document* d) override;
@@ -258,6 +285,8 @@ public:
     struct AlsoState;
     struct ProblemsState;
     struct WatchState;
+    struct SymbolsState;
+    struct FoldingState;
 
 private:
     // ---- shared by the parts (Lsp.cpp)
@@ -569,6 +598,21 @@ private:
                             const std::vector<Lsp::WatchedBatch>& batches);
     // Every server stopping: no watcher remade for each, then none.
     void stopWatchingFiles();
+
+    // ---- symbols (LspSessionSymbols.cpp)
+    std::unique_ptr<SymbolsState> sym_;
+    // A server exiting: what it was asked counts as answered with nothing.
+    void finishSymbolRequestsOf(lspgtk::Server* s);
+    std::vector<Lsp::Symbol> mergedWorkspaceSymbols(std::vector<std::string>* paths) const;
+
+    // ---- the server's folding ranges (LspSessionFolding.cpp)
+    std::unique_ptr<FoldingState> fold_;
+    // textDocument/foldingRange for the file on show `ms` from now (0.1 s
+    // after it comes on show, 0.6 s after typing), its answer handed to the
+    // document's folds (DocumentFolds::setServerRanges).
+    void scheduleFoldingRanges(guint ms);
+    void requestFoldingRanges();
+    void forgetFoldingRanges();
 };
 
 // Stop every server the app started, now: shutdown and exit, then SIGTERM and

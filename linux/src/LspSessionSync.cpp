@@ -35,6 +35,7 @@ void LspSession::detachDocument() {
     closeHover();
     forgetHover();
     forgetActionRequests();
+    forgetFoldingRanges();
     clearMarks();
     ++docGen_;
 }
@@ -87,12 +88,14 @@ void LspSession::documentChanged(const std::string& pathIn) {
     syncOpenDocuments();
     paintDiagnostics();
     updateStatus();
+    if (!uri_.empty()) scheduleFoldingRanges(100);
 }
 
 void LspSession::textEdited(const char* inserted, int len) {
     ++docGen_;
     forgetHover();
     actionsFollowCaret();
+    if (!uri_.empty()) scheduleFoldingRanges(600);
     // The session's own edits going in (an accept, the applier) are not typing.
     if (uri_.empty() || applyingEdit_) return;
     signatureAfterEdit(inserted, len);

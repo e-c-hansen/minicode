@@ -194,6 +194,7 @@ void LspSession::initializeFailed(Server* s, const std::string& message) {
     }
     notes_[s->key()] = note;   // not tried again until the folder or settings change
     forgetServerDocuments(s);
+    finishSymbolRequestsOf(s);
     scheduleWatcherUpdate();
     if (alsoServer_.get() == s) {
         alsoServer_.reset();
@@ -224,6 +225,7 @@ void LspSession::serverExited(Server* s) {
         if (!s->stopping()) notes_[s->key()] = s->name() + " stopped";
     }
     forgetServerDocuments(s);
+    finishSymbolRequestsOf(s);
     scheduleWatcherUpdate();
     if (alsoServer_.get() == s) {
         alsoServer_.reset();

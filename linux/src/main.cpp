@@ -1709,16 +1709,30 @@ static void act_previous_problem(GSimpleAction*, GVariant*, gpointer userp) {
 }
 
 // The palette (PalettePanel.h): the commands (Ctrl+Shift+P, F1), the folder's
-// files (Ctrl+P), Go to Line (Ctrl+G) and the file's symbols (Ctrl+Shift+O)
-// are one box, chosen by its first character. A file from Quick Open opens
-// as on the Mac (OpenFrom::QuickOpen, a kept tab unless the settings say),
-// and the tree follows it.
+// files (Ctrl+P), Go to Line (Ctrl+G), the file's symbols (Ctrl+Shift+O) and
+// the workspace's (Ctrl+T) are one box, chosen by its first character. A
+// file from Quick Open opens as on the Mac (OpenFrom::QuickOpen, a kept tab
+// unless the settings say), and the tree follows it. The symbols come from
+// the window's language servers (LspSessionSymbols.cpp, PARITY.md 2.12).
 static void showPalette(App* app, const char* text) {
     PalettePanel::Context ctx;
     ctx.root = app->rootDir;
     ctx.useIgnoreFiles = g.settings->settings().searchUseIgnoreFiles();
     ctx.openFile = [app](const std::string& path) {
         if (!app->dead) openFileThen(app, path, EditorTabs::OpenFrom::QuickOpen, nullptr);
+    };
+    ctx.documentSymbols = [app](PalettePanel::Context::SymbolsDone done) {
+        return !app->dead && app->lsp && app->lsp->documentSymbols(std::move(done));
+    };
+    ctx.workspaceSymbols = [app](const std::string& query,
+                                 PalettePanel::Context::WorkspaceDone done) {
+        if (!app->dead && app->lsp) app->lsp->workspaceSymbols(query, std::move(done));
+    };
+    ctx.cancelWorkspaceSymbols = [app] {
+        if (!app->dead && app->lsp) app->lsp->cancelWorkspaceSymbols();
+    };
+    ctx.openWorkspaceSymbol = [app](const Lsp::Symbol& symbol) {
+        if (!app->dead && app->lsp) app->lsp->revealSymbol(symbol);
     };
     app->palette->show(text, ctx);
 }
@@ -1734,6 +1748,9 @@ static void act_go_to_line(GSimpleAction*, GVariant*, gpointer userp) {
 }
 static void act_go_to_symbol(GSimpleAction*, GVariant*, gpointer userp) {
     showPalette(static_cast<App*>(userp), "@");
+}
+static void act_workspace_symbol(GSimpleAction*, GVariant*, gpointer userp) {
+    showPalette(static_cast<App*>(userp), "#");
 }
 
 // Go to Bracket (BracketView.h): the bell when there is none to go to.
@@ -1871,6 +1888,7 @@ static std::string hintsText(App* app) {
     row("workbench.action.quickOpen", "Go to file");
     row("workbench.action.gotoLine", "Go to line");
     row("workbench.action.gotoSymbol", "Go to symbol in the file");
+    row("workbench.action.showAllSymbols", "Go to symbol in the workspace");
     row("workbench.action.navigateBack", "Go back");
     row("workbench.action.navigateForward", "Go forward");
     row("workbench.action.editor.nextChange", "Next change (git)");
@@ -2791,6 +2809,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "quickopen",      G_CALLBACK(act_quick_open));
     addAction(app, "gotoline",       G_CALLBACK(act_go_to_line));
     addAction(app, "gotosymbol",     G_CALLBACK(act_go_to_symbol));
+    addAction(app, "workspacesymbol", G_CALLBACK(act_workspace_symbol));
     {   // Adjust Settings…, its target the part of the window (Appearance.h)
         GSimpleAction* a = g_simple_action_new(Appearance::kAction, G_VARIANT_TYPE_STRING);
         g_signal_connect(a, "activate", G_CALLBACK(act_adjust_settings), app);

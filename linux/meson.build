@@ -191,6 +191,10 @@ gui_sources = [
   'src/LspSessionWatch.cpp',
   'src/LspWatcher.cpp',
   'src/LspSessionImports.cpp',
+  # Symbols for the palette's "@" and "#" (LspSessionSymbols.cpp), and the
+  # server's folding ranges (LspSessionFolding.cpp).
+  'src/LspSessionSymbols.cpp',
+  'src/LspSessionFolding.cpp',
   'src/MediaView.cpp',
   # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp, and so
   # are the LaTeX preview's two files, which need poppler too.

@@ -7,9 +7,11 @@
 //         registry), each "Menu > Title" with its key in effect, only those
 //         whose action is enabled when the palette opens (Ctrl+Shift+P, F1)
 //   ":"   a line of the file on show, "42", "42:7" or "42,7" (Ctrl+G)
-//   "@"   a symbol of the file on show from minicode's own outline
-//         (SymbolOutline.h), "@:" grouped by kind (Ctrl+Shift+O)
-//   "#"   the workspace's symbols, which Linux does not have yet
+//   "@"   a symbol of the file on show, from its language server when one
+//         lists them, else minicode's own outline (SymbolOutline.h), "@:"
+//         grouped by kind (Ctrl+Shift+O)
+//   "#"   a symbol anywhere in the folder, from every language server
+//         running in the window (Ctrl+T)
 //   else  the window's folder's files, Quick Open (Ctrl+P opens it empty)
 //
 // Typing filters by the core's rules (CommandPalette::rank and rankFiles:
@@ -66,6 +68,27 @@ public:
         // Open a file of the folder (an absolute path below root), on the
         // turn after the palette closed.
         std::function<void(const std::string& path)> openFile;
+        // Go to Symbol in File from the file's language server (PARITY.md
+        // 2.12, LspSession::documentSymbols): false when none of its
+        // servers lists symbols (the outline stands in); else `done` comes
+        // once, with the symbols and the server's name, or `refused` (the
+        // outline stands in).
+        using SymbolsDone = std::function<void(std::vector<Lsp::Symbol> symbols, bool refused,
+                                               const std::string& source)>;
+        std::function<bool(SymbolsDone done)> documentSymbols;
+        // Go to Symbol in Workspace (LspSession::workspaceSymbols): the
+        // servers asked for `query`, the question before cancelled; `done`
+        // after each answer with the merged list so far, each symbol's
+        // file, whether every server answered, and a note when none could
+        // be asked. Unset: no language server for this window.
+        using WorkspaceDone =
+            std::function<void(std::vector<Lsp::Symbol> symbols, std::vector<std::string> paths,
+                               bool complete, const std::string& note)>;
+        std::function<void(const std::string& query, WorkspaceDone done)> workspaceSymbols;
+        std::function<void()> cancelWorkspaceSymbols;
+        // Open a workspace symbol (its file, its name selected), on the
+        // turn after the palette closed, inside aroundMove.
+        std::function<void(const Lsp::Symbol& symbol)> openWorkspaceSymbol;
     };
 
     // Adds its children to `overlay`, hidden until shown.
@@ -124,8 +147,14 @@ public:
     bool filesListed() const { return filesListed_; }
     // The last listing ran on a thread other than the main loop's.
     bool filesListedOffMainThread() const { return filesOffMain_; }
-    // "outline" once the file's symbols are in, "" before.
+    // "outline" once the file's symbols are in from the outline, the
+    // server's name once they are from a server, "" before.
     const std::string& symbolSource() const { return symbolSource_; }
+    // Each row's muted note: a symbol's container or detail.
+    std::vector<std::string> details() const;
+    // "#": the questions put to the servers, and the last answer's state.
+    unsigned workspaceQuestions() const { return wsQuestions_; }
+    bool workspaceComplete() const { return wsComplete_; }
     // The file the recent lists persist in.
     static std::string statePath();
 
@@ -134,6 +163,7 @@ private:
         std::string label;    // the row's text, plain (matched and shown)
         std::string markup;   // the same with its matches marked
         std::string keys;     // at the right, muted
+        std::string detail;   // a symbol's container or detail (for the checks)
         bool heading = false; // a kind's heading in "@:": never selected
         bool symbol = false;  // a symbol's row: its end gives way, not its start
         std::function<void()> run;       // empty: nothing to run
@@ -164,7 +194,12 @@ private:
     void fileItems(const std::u16string& query, std::string* empty);
     void symbolItems(const std::u16string& query, bool byKind, std::string* empty);
     void askSymbols();
-    void setSymbols(std::vector<Lsp::Symbol> symbols, int caret);
+    void setSymbols(std::vector<Lsp::Symbol> symbols, int caret, const std::string& source);
+    std::vector<Lsp::Symbol> outlineSymbols(Document* d, int* caret) const;
+    bool caretPosition(Document* d, Lsp::Position* p) const;
+    void workspaceItems(const std::u16string& query, std::string* empty);
+    void askWorkspace(const std::string& query);
+    void stopWorkspace();
     void select(int row);
     void page(int delta);
     void runRow(int row);
@@ -240,6 +275,15 @@ private:
     std::string symbolSource_;
     int preselect_ = -1;
     bool previewed_ = false, ran_ = false;
+    // "#": the query the servers were asked (a moment after typing stops),
+    // their merged answer and each symbol's file, and whether all answered.
+    std::string wsAsked_;
+    guint wsTimer_ = 0;
+    std::vector<Lsp::Symbol> wsSymbols_;
+    std::vector<std::string> wsPaths_;
+    bool wsComplete_ = false;
+    std::string wsNote_;
+    unsigned wsQuestions_ = 0;
     uint64_t openDocId_ = 0;   // the document on show when it opened
     Place place_;
 

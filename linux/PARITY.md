@@ -1184,7 +1184,12 @@ its server comes first here (2.0).
   built-in theme was tried), right clicks with a real mouse and touchpad
   under GNOME, the WebKit page's menu there, and the color chooser and
   slider popovers' look and keyboard.
-- [ ] **2.12 Symbols from the servers.** Added by item 1.5, which left them
+- [~] **2.12 Symbols from the servers.** Built (`LspSessionSymbols.cpp`, the
+  palette's "@" and "#", Ctrl+T; suite `server_symbols` passes three times
+  and fails without the fix). Remains: `tests/commands_linux_tests.inc`
+  lines 78-80, 390-391 and 464 still use showAllSymbols as the command
+  Linux lacks (pick another), then `make test`, `meson test`, the full GUI
+  run, and HANDOFF's notes. Added by item 1.5, which left them
   out because the Linux checks have no scripted server yet. Go to Symbol
   in File asks the server first (`textDocument/documentSymbol`, the outline
   standing in when there is none or it refuses), and Go to Symbol in
@@ -1194,7 +1199,10 @@ its server comes first here (2.0).
   language server half of `tests/gui/SymbolsSuite.mm`. The palette asks in
   `PalettePanel::askSymbols` and says "#" is not here yet. Its checks need
   `tests/fakelsp` built for the Linux harness.
-- [ ] **2.13 Folding ranges from the servers.** Added by item 1.10, which
+- [~] **2.13 Folding ranges from the servers.** Built
+  (`LspSessionFolding.cpp`, `DocumentFolds::setServerRanges`; suite
+  `server_folding` passes three times and fails without the fix). Remains:
+  `meson test`, the full GUI run, and HANDOFF's notes. Added by item 1.10, which
   left them out: the Linux session (`Lsp.cpp`) has only the tab on show
   open on its server and asks it nothing about folding. The Mac asks
   `textDocument/foldingRange` 0.6 s after typing (`Client::foldingRanges`,

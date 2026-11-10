@@ -62,6 +62,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Do
        src/Formatting.cpp src/FormatRunner.cpp src/LspSessionFormatting.cpp \
        src/LspSessionProblems.cpp src/ProblemsPanel.cpp src/LspSessionAlso.cpp \
        src/LspSessionWatch.cpp src/LspWatcher.cpp src/LspSessionImports.cpp \
+       src/LspSessionSymbols.cpp src/LspSessionFolding.cpp \
        src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp \
        src/GitDiffView.cpp src/GitGutter.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
        src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
