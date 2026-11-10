@@ -23,6 +23,7 @@
 #include "MarkdownEdit.h"
 #include "Settings.h"
 
+class CodeView;
 class MediaView;
 class LatexPreview;
 class GitDiffView;
@@ -61,6 +62,9 @@ public:
     // its Markdown page, a message, or the welcome text with no tab open.
     GtkWidget*     textView() const { return view_; }
     GtkTextBuffer* buffer() const { return buffer_; }
+    // The view's own drawing passes, the ruler and the line-number gutter
+    // (CodeView.h).
+    CodeView*      codeView() const { return code_; }
     // The active document's own buffer (its source, while its page shows
     // too), else what the view shows.
     GtkTextBuffer* sourceBuffer() const;
@@ -383,7 +387,8 @@ private:
     GitDiffView*   diff_     = nullptr;   // made on the first diff
     MediaView*     media_    = nullptr;
     GtkWidget*     scroller_ = nullptr;
-    GtkWidget*     view_     = nullptr;   // GtkTextView
+    GtkWidget*     view_     = nullptr;   // GtkTextView: code_'s
+    CodeView*      code_     = nullptr;   // owned by the view
     GtkTextBuffer* buffer_   = nullptr;   // what the view shows
     GtkTextBuffer* welcome_  = nullptr;   // the view's buffer with no tab open
     char           typedKey_ = 0;         // ':' or a closer being typed (electric)

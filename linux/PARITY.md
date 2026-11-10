@@ -326,8 +326,24 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
 - [ ] **1.2 Sessions (D11).** A folder reopens its tabs. Mac: `MCTabSessions`.
 - [ ] **1.3 Backups, hot exit, and auto-save (D11).** `Backups` over its POSIX
   `Fs`. Mac: `BackupStore`, `+Persistence`. Check with a real SIGKILL.
-- [ ] **1.4 Line numbers and the gutter (D4).** `LineIndex`, the
+- [x] **1.4 Line numbers and the gutter (D4).** `LineIndex`, the
   current-line color, click and drag to select lines.
+  *Verified in Xvfb, 2026-11-09:* `lineindex:utf8` holds the code-point
+  index to a full one under 20,000 random edits; the `gutter`, `ruler`, and
+  `gutter_typing` suites hold the numbers drawn to an index made afresh and
+  to GTK's line positions after typing that adds and removes lines and a
+  paste with a lone CR, U+2029, and U+2028, and check the active color
+  following the caret, relative and off, the colors and `editor.opacity` as
+  pixels, real clicks, drags up and down, and Shift+click selecting whole
+  lines, no gutter in a Markdown preview, each tab's numbers and width, the
+  dots from the squiggle tags, the change and fold lanes' APIs, the rulers
+  at their columns' x as pixels, and typing in 100,000 lines (0.05 ms of
+  gutter CPU a key; 8 to 9 ms a key for the main thread, with the gutter or
+  without). They fail without the line-start rule, without the ruler pass,
+  and with the index counted again per key. Needs the owner: how it looks
+  (font, alignment, colors) and HiDPI. The window's divider takes presses
+  in the gutter's first 14 px (`HANDOFF.md` item 16), for 1.13 to narrow
+  before 2.10's change bars take clicks.
 - [ ] **1.5 The palette (D12).** Commands, Quick Open, Go to Line, and
   file symbols without a server. `CommandPalette`, `SymbolOutline`. Mac:
   `PalettePanel`.

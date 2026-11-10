@@ -45,6 +45,10 @@ core_sources = [
   core_dir / 'CommandsLinux.cpp',
   # The tabs' rules (Tabs.cpp follows them, as the Mac's tabs do).
   core_dir / 'EditorTabs.cpp',
+  # The gutter's line index, and the change bars it moves with the lines.
+  core_dir / 'LineIndex.cpp',
+  core_dir / 'QuickDiff.cpp',
+  core_dir / 'LineDiff.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -59,6 +63,11 @@ gui_sources = [
   'src/Document.cpp',
   'src/Tabs.cpp',
   'src/TabStrip.cpp',
+  # The view itself (CodeView.cpp: its drawing passes and the ruler), its
+  # line-number gutter (Gutter.cpp) and each buffer's lines (BufferLines.cpp).
+  'src/CodeView.cpp',
+  'src/Gutter.cpp',
+  'src/BufferLines.cpp',
   'src/Markdown.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.

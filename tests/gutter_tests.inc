@@ -117,6 +117,99 @@ static void testLineIndex() {
         CHECK(mismatches == 0);
     }
 
+    GROUP("lineindex:utf8");
+    {
+        // The GTK port's index: one unit per code point, GtkTextIter's
+        // offsets. The same breaks as UTF-16 ('\n', a lone '\r', U+2029;
+        // never U+2028), wherever the text has multi-byte characters.
+        auto utf8Of = [](const std::string &t) {
+            LineIndex ix;
+            ix.resetUtf8(t.data(), t.size());
+            return ix;
+        };
+        CHECK(startsOf(utf8Of("ab\ncd\n\nef")) == (std::vector<size_t>{0, 3, 6, 7}));
+        CHECK(startsOf(utf8Of("a\r\nb\rc")) == (std::vector<size_t>{0, 3, 5}));
+        CHECK(startsOf(utf8Of("\xC3\xA9\xE2\x80\xA9" "b\xE2\x80\xA8" "c")) ==
+              (std::vector<size_t>{0, 2}));                          // é U+2029 b U+2028 c
+        CHECK(utf8Of("\xF0\x9F\x98\x80\n\xF0\x9F\x98\x80").length() == 3);   // emoji, 1 unit each
+        CHECK(startsOf(utf8Of("\xF0\x9F\x98\x80\nx")) == (std::vector<size_t>{0, 2}));
+        CHECK(utf8Of("").lineCount() == 1 && utf8Of("x\n").lineCount() == 2);
+        // A BMP-only text indexes as its UTF-16 form does.
+        const std::string bmp = "caf\xC3\xA9\r\nna\xC3\xAFve\rx\xE2\x80\xA9y\n";
+        const std::u16string bmp16 = u"café\r\nnaïve\rx y\n";
+        CHECK(startsOf(utf8Of(bmp)) == startsOf(indexOf(bmp16)));
+
+        // Edits as a GtkTextBuffer reports them (insert-text and
+        // delete-range, character offsets, the neighbours as code points),
+        // heavy in '\r', '\n' and multi-byte characters, against a full index.
+        std::vector<char32_t> text = {U'x', U'\r', U'y', U'\r', U'\n', U'z'};
+        auto encode = [](const std::vector<char32_t> &cps, size_t from, size_t to) {
+            std::string out;
+            for (size_t i = from; i < to; i++) {
+                const char32_t c = cps[i];
+                if (c < 0x80) out += (char)c;
+                else if (c < 0x800) { out += (char)(0xC0 | (c >> 6)); out += (char)(0x80 | (c & 0x3F)); }
+                else if (c < 0x10000) {
+                    out += (char)(0xE0 | (c >> 12));
+                    out += (char)(0x80 | ((c >> 6) & 0x3F));
+                    out += (char)(0x80 | (c & 0x3F));
+                } else {
+                    out += (char)(0xF0 | (c >> 18));
+                    out += (char)(0x80 | ((c >> 12) & 0x3F));
+                    out += (char)(0x80 | ((c >> 6) & 0x3F));
+                    out += (char)(0x80 | (c & 0x3F));
+                }
+            }
+            return out;
+        };
+        LineIndex ix;
+        {
+            const std::string all = encode(text, 0, text.size());
+            ix.resetUtf8(all.data(), all.size());
+        }
+        std::mt19937 rng(23);
+        const char32_t alphabet[] = {U'a', U'\r', U'\n', U'\r', U'\n', 0x2029, 0x2028,
+                                     0xE9, 0x1F600, U' '};
+        int mismatches = 0;
+        for (int i = 0; i < 20000; i++) {
+            const size_t pos = text.empty() ? 0 : rng() % (text.size() + 1);
+            size_t del = pos < text.size() ? rng() % std::min<size_t>(text.size() - pos + 1, 4) : 0;
+            if (text.size() > 300) del = std::min<size_t>(text.size() - pos, 30);
+            std::vector<char32_t> ins;
+            for (size_t n = rng() % 4; n > 0; n--) ins.push_back(alphabet[rng() % 10]);
+            // A replacement comes as a deletion, then an insertion.
+            if (del) {
+                text.erase(text.begin() + (ptrdiff_t)pos, text.begin() + (ptrdiff_t)(pos + del));
+                ix.editUtf8(pos, del, nullptr, 0, pos ? text[pos - 1] : 0,
+                            pos < text.size() ? text[pos] : 0);
+            }
+            if (!ins.empty()) {
+                const std::string bytes = encode(ins, 0, ins.size());
+                const char32_t before = pos ? text[pos - 1] : 0;
+                const char32_t after = pos < text.size() ? text[pos] : 0;
+                text.insert(text.begin() + (ptrdiff_t)pos, ins.begin(), ins.end());
+                ix.editUtf8(pos, 0, bytes.data(), bytes.size(), before, after);
+            }
+            LineIndex full;
+            const std::string all = encode(text, 0, text.size());
+            full.resetUtf8(all.data(), all.size());
+            // And independently: the code points' own breaks.
+            std::vector<size_t> want{0};
+            for (size_t k = 0; k < text.size(); k++) {
+                const char32_t c = text[k], next = k + 1 < text.size() ? text[k + 1] : 0;
+                if (c == U'\n' || c == 0x2029 || (c == U'\r' && next != U'\n')) want.push_back(k + 1);
+            }
+            if (startsOf(ix) != startsOf(full) || startsOf(ix) != want || ix.length() != text.size())
+                mismatches++;
+        }
+        CHECK(mismatches == 0);
+        // A whole replacement, as gtk_text_buffer_set_text makes one.
+        const std::string fresh = "one\ntwo\r\nthree\rfour";
+        ix.editUtf8(0, ix.length(), nullptr, 0, 0, 0);
+        ix.editUtf8(0, 0, fresh.data(), fresh.size(), 0, 0);
+        CHECK(startsOf(ix) == (std::vector<size_t>{0, 4, 9, 15}) && ix.length() == 19);
+    }
+
     GROUP("lineindex:speed");
     {
         // 100,000 lines: one keystroke near the top shifts every start after
