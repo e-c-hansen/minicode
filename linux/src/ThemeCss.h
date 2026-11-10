@@ -16,4 +16,8 @@ std::string cssColor(const Rgba& c);
 // The whole stylesheet: layout constants plus every configurable color.
 std::string stylesheet(const Settings& s);
 
+// The editor's selection, which GTK draws for the buffer's own selection
+// from the stylesheet and Carets.cpp draws for the other carets' (item 1.9).
+Rgba editorSelection(const Settings& s);
+
 }  // namespace theme

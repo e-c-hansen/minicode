@@ -67,7 +67,8 @@ private:
     bool applies() const;   // editable source on show, nothing composing
     bool closing() const;   // editor.auto-close
     const AutoClose::Language& language() const;
-    std::vector<MultiCaret::Caret> carets() const;
+    std::vector<MultiCaret::Caret> carets() const;   // every caret (Carets.h)
+    bool caretsApplying() const;
     // The edit as typing makes it: one user action, each change put in at a
     // caret placed there, last first; then the carets.
     void apply(const MultiCaret::Edit& e);

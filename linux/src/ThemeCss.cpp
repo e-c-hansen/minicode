@@ -14,6 +14,10 @@ std::string cssColor(const Rgba& c) {
            ")";
 }
 
+// VS Code's editor.selectionBackground in Dark+ and in Light+, by the
+// theme's darkness as drawn (View > Theme, PARITY.md 2.11).
+Rgba editorSelection(const Settings& s) { return Rgba::hex(s.isDark() ? 0x264F78 : 0xADD6FF); }
+
 std::string stylesheet(const Settings& s) {
     auto bg = [&](Surface x) { return cssColor(s.background(x)); };
     auto fg = [&](Surface x) { return cssColor(s.text(x)); };
@@ -21,7 +25,7 @@ std::string stylesheet(const Settings& s) {
     // is VS Code's editor.selectionBackground in Dark+ and Light+, and the
     // scroll bars and the close button's light are white or black tints.
     const bool dark = s.isDark();
-    const std::string selection = dark ? "#264F78" : "#ADD6FF";
+    const std::string selection = dark ? "#264F78" : "#ADD6FF";   // editorSelection's
     const std::string slider = dark ? "rgba(255,255,255," : "rgba(0,0,0,";
     std::string css;
 

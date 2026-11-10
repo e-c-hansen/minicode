@@ -39,8 +39,9 @@
 //     the keyboard back if the bar had it.
 //
 // Keys while a field of the bar has the keyboard: Enter (in the
-// replacement, Replace), Shift+Enter, Escape, and Tab between the two
-// fields. The rest are the registry's (CommandsLinux.cpp), so they work
+// replacement, Replace), Shift+Enter, Alt+Enter in the query (a caret at
+// every match, VS Code's Select All Matches; Carets.h), Escape, and Tab
+// between the two fields. The rest are the registry's (CommandsLinux.cpp), so they work
 // from the editor too: Ctrl+F, Ctrl+H, F3, Shift+F3, Alt+C, Alt+W, Alt+R,
 // Alt+P, Alt+L, Ctrl+Shift+1, Ctrl+Alt+Enter.
 #pragma once
@@ -78,6 +79,7 @@ public:
     void findNext(bool forward);     // F3, Shift+F3 (no query: as Ctrl+F)
     void replaceOne();               // Ctrl+Shift+1
     void replaceAll();               // Ctrl+Alt+Enter
+    bool selectAllMatches();         // Alt+Enter in the query: a caret at each (Carets.h)
     void toggleMatchCase();
     void toggleWholeWord();
     void toggleRegex();

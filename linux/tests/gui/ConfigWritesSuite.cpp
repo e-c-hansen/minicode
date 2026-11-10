@@ -3,7 +3,7 @@
 // writes of keys.conf and settings.conf go through the atomic writer
 // (writeConfigFile in AppSettings.h, FolderSearch::writeFileAtomically), so
 // with either file a dangling symlink into a dotfiles folder, Edit >
-// Keyboard Shortcuts… (from the menu bar) and Adjust Settings… (from the
+// Keyboard Shortcuts… (from the palette) and Adjust Settings… (from the
 // status bar's right click) make the file the link names, leave the link a
 // link, and open it; g_file_set_contents replaced the link with a plain
 // file. View > Theme's own write through a link is the themes suite's.
@@ -12,6 +12,7 @@
 #include "Document.h"
 #include "Editor.h"
 #include "Keys.h"
+#include "PalettePanel.h"
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -33,16 +34,6 @@ bool isLink(const std::string& path) {
     struct stat st;
     return lstat(path.c_str(), &st) == 0 && S_ISLNK(st.st_mode);
 }
-
-GtkWidget* find(GtkWidget* root, bool (*is)(GtkWidget*)) {
-    if (!root) return nullptr;
-    if (is(root)) return root;
-    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
-        if (GtkWidget* hit = find(c, is)) return hit;
-    return nullptr;
-}
-bool isBar(GtkWidget* w) { return GTK_IS_POPOVER_MENU_BAR(w); }
-GtkWidget* menuBar() { return find(GTK_WIDGET(MCGuiApp().window), isBar); }
 
 GtkWidget* menuWith(GtkWidget* root, const std::string& label) {
     if (!root || !gtk_widget_get_mapped(root)) return nullptr;
@@ -77,12 +68,12 @@ MC_GUI_SUITE(config_writes) {
         unlink(dots("keys.conf").c_str());
         GCHECK(symlink(dots("keys.conf").c_str(), Keys::path().c_str()) == 0);
         GCHECK(isLink(Keys::path()) && !MCGuiFileExists(dots("keys.conf")));
-        MCGuiClick(MCGuiFindLabel(menuBar(), "Edit"));
+        // From the palette: the Edit menu has grown taller than the checks'
+        // screen, and Keyboard Shortcuts… is its last row.
+        MCGuiKey("ctrl+shift+p");
     });
-    MCGuiWait("the Edit menu", 10, [] { return popoverWith("Keyboard Shortcuts…") != nullptr; });
-    MCGuiStep("Keyboard Shortcuts…", [] {
-        MCGuiClick(MCGuiFindLabel(popoverWith("Keyboard Shortcuts…"), "Keyboard Shortcuts…"));
-    });
+    MCGuiWait("the palette", 10, [] { return MCGuiApp().palette && MCGuiApp().palette->isOpen(); });
+    MCGuiStep("Keyboard Shortcuts… typed and run", [] { MCGuiType("keyboard shortcuts\n"); });
     MCGuiWait("the dotfiles copy written and open", 10, [] {
         return MCGuiReadFile(dots("keys.conf")).size() > 100 && ed()->currentPath() == Keys::path();
     });

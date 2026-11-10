@@ -5,6 +5,8 @@
 #include "SyntaxHighlighter.h"
 #include <algorithm>
 #include <cctype>
+#include <iterator>
+#include <map>
 
 namespace Fold {
 
@@ -567,6 +569,91 @@ size_t contentEnd(const char16_t* text, size_t lineStart, size_t lineEnd) {
         e--;
     }
     return e;
+}
+
+// ---- the limit on hidden lines
+namespace {
+
+// Disjoint ranges of hidden lines, [first, last], by first line.
+class HiddenSet {
+public:
+    // Lines of [a, b] not in the set yet.
+    size_t missing(size_t a, size_t b) const {
+        size_t have = 0;
+        auto it = set_.upper_bound(a);
+        if (it != set_.begin()) --it;
+        for (; it != set_.end() && it->first <= b; ++it) {
+            if (it->second < a) continue;
+            have += std::min(b, it->second) - std::max(a, it->first) + 1;
+        }
+        return b - a + 1 - have;
+    }
+    // Adds [a, b], joining whatever it overlaps or touches.
+    void add(size_t a, size_t b) {
+        auto it = set_.upper_bound(a);
+        if (it != set_.begin()) {
+            auto prev = std::prev(it);
+            if (prev->second + 1 >= a) it = prev;
+        }
+        while (it != set_.end() && it->first <= b + 1) {
+            a = std::min(a, it->first);
+            b = std::max(b, it->second);
+            it = set_.erase(it);
+        }
+        set_.emplace(a, b);
+    }
+    size_t size() const {
+        size_t n = 0;
+        for (const auto& r : set_) n += r.second - r.first + 1;
+        return n;
+    }
+
+private:
+    std::map<size_t, size_t> set_;
+};
+
+}  // namespace
+
+size_t hiddenLines(const std::vector<Range>& closed) {
+    HiddenSet h;
+    for (const Range& r : closed)
+        if (r.end > r.start) h.add(r.start + 1, r.end);
+    return h.size();
+}
+
+BudgetPick pickWithinBudget(const std::vector<Range>& ranges,
+                            const std::vector<size_t>& candidates,
+                            const std::vector<Range>& closed, size_t limit) {
+    BudgetPick out;
+    HiddenSet h;
+    for (const Range& r : closed)
+        if (r.end > r.start) h.add(r.start + 1, r.end);
+    out.hidden = h.size();
+    const std::vector<int> depth = depths(ranges);
+    std::vector<size_t> order;
+    order.reserve(candidates.size());
+    for (size_t i : candidates)
+        if (i < ranges.size()) order.push_back(i);
+    // Outermost first, then from the top down (a sanitized list is in file
+    // order, so the index breaks ties).
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return depth[a] != depth[b] ? depth[a] < depth[b] : a < b;
+    });
+    order.erase(std::unique(order.begin(), order.end()), order.end());
+    for (size_t i : order) {
+        const Range& r = ranges[i];
+        if (r.end <= r.start) continue;
+        const size_t cost = h.missing(r.start + 1, r.end);
+        if (out.hidden + cost > limit) {
+            out.stayedOpen++;
+            continue;
+        }
+        if (cost) h.add(r.start + 1, r.end);
+        out.hidden += cost;
+        out.close.push_back(i);
+    }
+    std::sort(out.close.begin(), out.close.end());
+    return out;
 }
 
 // ---- Collapsed

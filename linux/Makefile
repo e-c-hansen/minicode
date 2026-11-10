@@ -39,7 +39,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/NavHistory.cpp ../src/NavRecorder.cpp ../src/ViewZoom.cpp \
         ../src/CommandPalette.cpp ../src/SymbolOutline.cpp \
         ../src/BracketMatch.cpp ../src/BracketPairs.cpp ../src/AutoClose.cpp \
-        ../src/MultiCaret.cpp
+        ../src/MultiCaret.cpp ../src/EditBatch.cpp ../src/Folding.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
@@ -47,6 +47,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
 GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Document.cpp src/Tabs.cpp \
        src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp \
        src/BracketView.cpp src/BracketColors.cpp src/AutoCloseInput.cpp src/BufferText.cpp \
+       src/Carets.cpp src/CaretEdits.cpp src/Folds.cpp \
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/Appearance.cpp src/MenuBarFocus.cpp \
        src/ThemeCss.cpp \
        src/Search.cpp src/FindBar.cpp src/MultiEdit.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \

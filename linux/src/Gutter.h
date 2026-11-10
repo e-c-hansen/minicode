@@ -115,6 +115,9 @@ public:
     const std::vector<Row>& drawnRows() const { return rows_; }
     unsigned drawCount() const { return draws_; }
     int changeBarsDrawn() const { return barsDrawn_; }
+    // GTK lines the last snapshot visited, those passed over included: no
+    // more than are on screen, however many a fold hides (D8).
+    unsigned linesWalked() const { return walked_; }
 
     // GtkWidget vfuncs (Gutter.cpp's widget type calls them).
     void measure(GtkOrientation o, int* min, int* nat);
@@ -171,5 +174,6 @@ private:
 
     std::vector<Row> rows_;
     unsigned draws_ = 0;
+    unsigned walked_ = 0;
     int barsDrawn_ = 0;
 };
