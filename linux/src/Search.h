@@ -1,28 +1,53 @@
-// Search.h — Find in Folder (Ctrl+Shift+F): the GTK front end for the shared
-// FolderSearch core (../src/FolderSearch.h). A separate window, like the macOS
-// SearchPanel (src/Search.mm): a scope row naming the folder, a search entry,
-// a status line and a list of matches. Activating a match (a click, or
-// Enter) hands it to the open callback, which opens the file at that line.
+// Search.h — Find in Folder (Ctrl+Shift+F) and Replace in Folder
+// (Ctrl+Alt+Shift+F): the GTK front end for the shared FolderSearch core
+// (../src/FolderSearch.h). A separate window, like the macOS SearchPanel
+// (src/Search.mm): a scope row naming the folder; the query with Match Case,
+// Whole Word and Regular Expression beside it, and the chevron that shows
+// the replace row (the replacement with Preserve Case, and Replace All);
+// files to include and exclude behind "…" (FolderSearch::PathFilter, VS
+// Code's rules); a status line; and a list of matches. Activating a match (a
+// click, or Enter) hands it to the open callback, which opens the file at
+// that line.
 //
 // Searching runs on a GTask worker thread. Every new search bumps a generation
 // counter and raises the previous search's cancel flag, and a result that comes
 // back from a superseded generation is dropped, so typing quickly never shows a
 // stale list.
 //
-// The same panel, made with Mode::Todos, is the TODOs window (Ctrl+Shift+L):
+// Replace in Folder has the Mac's rules (Search.mm, replaceAll:):
+//   - Replace All counts first, on a worker (FolderSearch::planReplace), and
+//     asks "Replace 5 matches in 3 files?", naming files reached through a
+//     symbolic link from outside the folder and files left alone. A file
+//     under two names (a symlink, a hard link, a symlinked folder) is
+//     counted and replaced once.
+//   - A file with unsaved text in a tab of any window is left alone and
+//     named. One open in a clean tab of this window is changed in the tab,
+//     unsaved and undoable there, through MultiEdit::apply; the rest are
+//     written with FolderSearch::writeFileAtomically (a clean tab of
+//     another window follows the disk).
+//   - Ctrl+Shift+1 on a selected row replaces only that row's match, and
+//     only while its line still reads as it did when searched.
+//   - What was done goes in the status line, before the new results.
+//
+// The same panel, made with Mode::Todos, is the TODOs window (Ctrl+Shift+D):
 // FolderSearch::findTodos over the scope in place of a query, scanned again
 // every time it is shown, and the field filters the list it found (by path
-// or text, any case) without scanning again.
+// or text, any case) without scanning again. It has no options and no
+// replace row.
 #pragma once
 
 #include <gtk/gtk.h>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "FolderSearch.h"
+
+class Editor;
+class Document;
 
 class SearchPanel {
 public:
@@ -43,6 +68,12 @@ public:
     SearchPanel& operator=(const SearchPanel&) = delete;
 
     void setOpenCallback(OpenCb cb, void* user) { openCb_ = cb; openUser_ = user; }
+    // Replace in Folder's view of the tabs: every window's editor, asked
+    // each time, and this window's, whose clean tabs it edits.
+    void setEditors(std::function<std::vector<Editor*>()> all, Editor* mine) {
+        editors_ = std::move(all);
+        mine_ = mine;
+    }
 
     // The open folder. Relative paths typed into the scope field resolve
     // against it, and when it changes (Open Folder) the scope resets to it.
@@ -56,13 +87,31 @@ public:
     // Present the window with the query field focused. The TODOs window
     // scans its scope again.
     void show();
+    // The same with the replace row shown and the keyboard in it.
+    void showReplace();
 
-    // For the headless test hook and for anyone who needs to look inside.
+    // Replace All: count, ask, then replace (see above).
+    void replaceAll();
+    // The match row `row` stands for, alone.
+    void replaceMatchAt(guint row);
+
+    // For the checks, and for anyone who needs to look inside.
     GtkWidget* window() const { return window_; }
     GtkWidget* queryEntry() const { return entry_; }
+    GtkWidget* replaceEntry() const { return replaceEntry_; }
+    GtkWidget* includeEntry() const { return includeEntry_; }
+    GtkWidget* excludeEntry() const { return excludeEntry_; }
     GtkWidget* listView() const { return listView_; }
+    GtkWidget* caseButton() const { return case_; }
+    GtkWidget* wordButton() const { return word_; }
+    GtkWidget* regexButton() const { return regex_; }
+    GtkWidget* preserveButton() const { return preserve_; }
+    GtkWidget* replaceAllButton() const { return replaceAllButton_; }
+    GtkWidget* detailsButton() const { return details_; }
+    bool replaceShown() const { return replaceShown_; }
     const std::vector<FolderSearchMatch>& matches() const { return hits_; }
     bool searching() const { return searching_; }
+    bool replacing() const { return replacing_; }
     std::string statusText() const;
 
     // Run the query now, without waiting for the typing pause.
@@ -70,6 +119,9 @@ public:
 
 private:
     struct Job;
+    struct PlanJob;
+    struct WriteJob;
+    enum class Hold { None, Here, Conflict };
 
     void build();
     void setStatus(const std::string& s);
@@ -81,6 +133,17 @@ private:
     void scopeEntered();
     void chooseScope();
     void updateScopeField();
+    void setReplaceShown(bool on);
+    FolderSearchOptions options() const;
+    std::string replacement() const;
+
+    // Replace in Folder.
+    bool readyToReplace();
+    Hold holdOf(const std::string& path, Document** here) const;
+    void planned(PlanJob* job);
+    void replaceInPaths(const std::vector<std::string>& paths, const FolderSearchMatch* hit,
+                        std::vector<std::string> held);
+    void written(WriteJob* job);
 
     static void onSearchChanged(GtkSearchEntry* e, gpointer self);
     static void onQueryActivate(GtkSearchEntry* e, gpointer self);
@@ -91,7 +154,10 @@ private:
     static void onRowReleased(GtkGestureClick* g, int n, double x, double y, gpointer self);
     static gboolean onListKey(GtkEventControllerKey* c, guint keyval, guint keycode,
                               GdkModifierType mods, gpointer self);
+    static gboolean onWindowKey(GtkEventControllerKey* c, guint keyval, guint keycode,
+                                GdkModifierType mods, gpointer self);
     guint rowAt(double x, double y) const;
+    guint selectedRow() const;
     void openRow(guint pos, bool kept);
     void focusFirstResult();
     static void onSetup(GtkSignalListItemFactory* f, GObject* item, gpointer self);
@@ -107,6 +173,20 @@ private:
     GtkWidget*     listView_   = nullptr;
     GtkStringList* rows_       = nullptr;   // one display string per match
     guint          pressRow_   = GTK_INVALID_LIST_POSITION;   // where a click began
+    // Find mode only (null in the TODOs window).
+    GtkWidget* chevron_ = nullptr;
+    GtkWidget* case_ = nullptr;
+    GtkWidget* word_ = nullptr;
+    GtkWidget* regex_ = nullptr;
+    GtkWidget* details_ = nullptr;
+    GtkWidget* replaceRow_ = nullptr;
+    GtkWidget* replaceEntry_ = nullptr;
+    GtkWidget* preserve_ = nullptr;
+    GtkWidget* replaceAllButton_ = nullptr;
+    GtkWidget* detailsBox_ = nullptr;
+    GtkWidget* includeEntry_ = nullptr;
+    GtkWidget* excludeEntry_ = nullptr;
+    guint      rerunTimer_ = 0;             // files to include or exclude typed
 
     Mode           mode_       = Mode::Find;
     std::vector<FolderSearchMatch> hits_;   // row i of the list is hits_[i]
@@ -118,10 +198,16 @@ private:
     std::string lastQuery_;                 // the query the current list is for
     unsigned    generation_ = 0;            // bumped by every search
     bool        searching_  = false;
+    bool        replaceShown_ = false;
+    bool        replacing_ = false;         // a Replace All or Replace Match under way
+    std::string afterNote_;                 // what a replace did, shown with the next results
+    bool        afterNoteError_ = false;
     std::shared_ptr<std::atomic<bool>> cancel_;   // the running search's flag
 
     OpenCb openCb_   = nullptr;
     void*  openUser_ = nullptr;
+    std::function<std::vector<Editor*>()> editors_;
+    Editor* mine_ = nullptr;
     // A finished search checks this before touching the panel, which may
     // have been deleted while it ran.
     std::shared_ptr<int> life_ = std::make_shared<int>(0);

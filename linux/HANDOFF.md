@@ -43,8 +43,8 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
   Ctrl+Shift+L (item 14);
 - images and PDFs in the editor's slot (item 4), with zoom for PDFs and the
   LaTeX preview;
-- Find in Folder (item 5) and find in the file with Find Next and Find
-  Previous (item 8);
+- Find in Folder (item 5) with Replace in Folder, and the find and replace
+  bar in the file with VS Code's options (item 16);
 - language servers: squiggles, completion, hover and go to definition
   (item 6);
 - the LaTeX preview with double-click editing and Export PDF (item 7);
@@ -372,7 +372,7 @@ word and regex options and plans Replace in Folder, matching through
 `../src/TextFind.cpp` (which is why that file is in both build lists); the
 call this port makes is unchanged and still searches plain text, ignoring
 case. The Mac's find bar options and Replace in Folder would build on the
-same functions here.
+same functions here, and since item 16 they do.
 
 The GTK side is `src/Search.{h,cpp}`: a separate window like the Mac's, with
 a folder field and Choose button, a `GtkSearchEntry` (0.35 s typing pause, as
@@ -1195,6 +1195,73 @@ What later items build on:
   without a current allocation" (a scroll bar mid-relayout); it was not
   reproduced outside the app and is harmless.
 
+### 16. Find and replace (done, November 2026; `PARITY.md` item 1.6)
+
+What later items build on:
+- **`MultiEdit::apply(buffer, changes, keepCaret)`** (`src/MultiEdit.{h,cpp}`,
+  D5) is the one way to make an edit with several ranges, the counterpart
+  of the Mac's `replaceRanges:withStrings:actionName:`. Changes are
+  `{start, length, text}` in characters (what `GtkTextIter` counts) with
+  UTF-8 text, ascending and apart (`EditSpans::valid`, in the core); anything
+  else is refused whole. They go in as one user action (one Ctrl+Z), last
+  first, each range its own delete and insert, so the highlighter and the
+  language server follow each one as they follow typing. With `keepCaret`
+  the caret keeps its place in the text around it
+  (`EditSpans::mapThrough`) and the selection goes; without, the selection
+  is carried through the edits and the caller places carets itself.
+  `MultiEdit::applying()` is true meanwhile, for anything that reacts to
+  one typed character. Replace All and Replace in Folder's tabs use it;
+  several carets (1.9), rename, formatting (Stage 2) and agent edits are
+  to. A UTF-16 edit from the core (`TextFind::Edit16`, `MultiCaret::Change`)
+  becomes one with `EditSpans::codePoints` over the text it was made from.
+- **`FindBar`** (`src/FindBar.{h,cpp}`) hangs over the editor's slot
+  (`Editor::addOverlay`, a `GtkOverlay` round the stack), follows the
+  view's buffer (`notify::buffer`), and is hidden while the slot shows
+  something other than text. Its rules are the core's `FindRules` (the
+  seed, the count, the search in UTF-16 and code points, Replace and
+  Replace All's changes, the theme colors, held to the Mac's table by a
+  test). Matches near the lines on screen carry text tags
+  (`minicode-find-match`, `-current`, `-scope`), never a snapshot pass.
+  Searching runs on a `GTask` over a copy of the text made once per edit.
+  Keys are the registry's; in the bar itself Enter, Shift+Enter, Escape and
+  Tab. `MCGuiApp().findBar` reaches it from a suite.
+- **Replace in Folder** is `SearchPanel`'s (`setEditors` gives it every
+  window's editors and its own): it counts and asks, edits a clean tab of
+  this window through `MultiEdit`, leaves a file with unsaved text in any
+  window alone and names it, writes the rest atomically, matches tabs to
+  files by device and inode, and replaces a row's match alone with
+  Ctrl+Shift+1 only while its line reads as searched. Files to include and
+  exclude are behind "…". The panel's window is no application window, so
+  it reads the registry's option keys itself (`onWindowKey`). There is no
+  right click menu on a row yet, and no replace preview in the rows.
+- **Keys**: Alt with a letter alone now goes to the program while the
+  terminal has the keyboard (`linuxTerminalTakes`), as Meta, so the
+  options' Alt keys never take readline's word keys.
+- **Traps paid for** (each found by the suites):
+  - The primary selection has one owner, and the one it is taken from
+    drops its selection: a `GtkText` collapses to its caret, which it had
+    put at the start (the query typed after Ctrl+F went in before the seed,
+    "alpha10"), and a `GtkTextBuffer` collapses to its insert mark (focusing
+    the query, all of it selected, dropped the editor's selection Ctrl+F had
+    seeded from). While the bar's fields have the keyboard, a selection in
+    the text is made with the view's primary clipboard taken off the buffer
+    for the moment (`FindBar::selectInText`), and the editor's selection is
+    put back that way after a field takes the keyboard.
+  - A `GtkTextBuffer` with a selection offers it to the primary clipboard
+    again after every delete, an X round trip each: 40,000 deletes took
+    58 s. `MultiEdit` takes the selection away first and carries it
+    through.
+  - GTK replays an undo step edit by edit with no user action around it, so
+    the highlighter followed each of 40,000 edits alone (19 s).
+    `Document` takes "undo" and "redo" as one action of its own (its flags
+    only: a user action on the buffer would clear GTK's redo queue). The
+    undo of Replace All of 20,000 matches still costs about 1.6 s: GTK
+    places the caret after each edit it puts back, and the view lays out
+    that line for the input method. Not done: undoing such a step faster.
+  - The checks run with `GTK_A11Y=none`. Whether GTK's accessibility
+    (AT-SPI on the owner's desktop) costs something per edit of a large
+    Replace All has not been measured.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).
@@ -1294,6 +1361,10 @@ Do not claim a GUI behaviour works when it was only compiled.
   Put the command in a script under the scratchpad, `docker cp` it into the
   container and run it by path.
 
+- Selecting text takes the primary selection, and whoever had it drops its
+  own selection (a `GtkText` and a `GtkTextBuffer` both do), and a buffer
+  with a selection offers it again after every delete, an X round trip
+  each. See item 16 before selecting from code or editing many ranges.
 - Byte offsets versus character offsets: the core speaks UTF-8 bytes and
   `GtkTextIter` speaks characters. `Utf8Offsets.h` converts, with 47 tests;
   use it for every range that crosses over.

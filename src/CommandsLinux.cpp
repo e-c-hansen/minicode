@@ -16,8 +16,8 @@
 //     Ctrl+Alt+Delete.
 // A command the port does not have yet has no row, so its key is free until
 // the item that brings it (Ctrl+Shift+P for the palette, Ctrl+L for Select
-// Line, Ctrl+Shift+L for Select All Occurrences, Ctrl+H for Replace, Ctrl+I
-// for the inline agent, Ctrl+G for Go to Line). The port's table of
+// Line, Ctrl+Shift+L for Select All Occurrences, Ctrl+I for the inline
+// agent, Ctrl+G for Go to Line). The port's table of
 // GActions (linux/src/Keys.cpp) has the same commands.
 #include "Commands.h"
 
@@ -88,10 +88,28 @@ const std::vector<LinuxRow>& linuxRows() {
         // agent's (D1), so the Mac's Option+Cmd+I with Alt and Ctrl.
         {"editor.action.showHover", "ctrl+alt+i", 0, nullptr, nullptr},
         {"actions.find", "ctrl+f", 0, nullptr, nullptr},
-        // VS Code's Linux keys; its Ctrl+G is Go to Line.
+        // The find bar (PARITY.md 1.6), VS Code's Linux keys: Ctrl+H shows
+        // the replace row, F3 and Shift+F3 step (its Ctrl+G is Go to Line),
+        // Ctrl+Shift+1 replaces one and Ctrl+Alt+Enter all, and Alt with the
+        // option's letter flips it. Alt+L is Find in Selection's here, as in
+        // VS Code: the task key, which took it on the Mac, is Ctrl+Alt+L.
+        // In the terminal the Alt letters are the program's
+        // (linuxTerminalTakes).
+        {"editor.action.startFindReplaceAction", "ctrl+h", 0, nullptr, nullptr},
         {"editor.action.nextMatchFindAction", "f3", 0, nullptr, nullptr},
         {"editor.action.previousMatchFindAction", "shift+f3", 0, nullptr, nullptr},
+        {"editor.action.replaceOne", "ctrl+shift+1", 0, nullptr, nullptr},
+        {"editor.action.replaceAll", "ctrl+alt+enter", 0, nullptr, nullptr},
+        {"toggleFindCaseSensitive", "alt+c", 0, nullptr, nullptr},
+        {"toggleFindWholeWord", "alt+w", 0, nullptr, nullptr},
+        {"toggleFindRegex", "alt+r", 0, nullptr, nullptr},
+        {"togglePreserveCase", "alt+p", 0, nullptr, nullptr},
+        {"toggleFindInSelection", "alt+l", 0, nullptr, nullptr},
         {"workbench.action.findInFiles", "ctrl+shift+f", 0, nullptr, nullptr},
+        // VS Code's Ctrl+Shift+H is the shortcut hints' (minicode's own
+        // Shift key, which does not move), so the Mac's Option+Shift+Cmd+F
+        // with Ctrl+Alt for Option+Cmd, as Reopen Closed Tab's.
+        {"workbench.action.replaceInFiles", "ctrl+alt+shift+f", 0, nullptr, nullptr},
         {"minicode.showTodos", "ctrl+shift+d", 0, nullptr, nullptr},
 
         // ---- View
@@ -164,6 +182,10 @@ bool linuxTerminalTakes(const Command& c, const Key& k) {
     // A terminal sends these as Ctrl+G and Ctrl+Space, which Emacs and
     // readline use (keyboard-quit, set-mark).
     if (isKey(k, Ctrl | Shift, "g") || isKey(k, Ctrl | Shift, "space")) return true;
+    // Alt with a letter alone is Meta to a terminal: readline's word moves
+    // and case changes. The find bar's options have these keys (item 1.6).
+    if (k.mods == Alt && k.name.size() == 1 && k.name[0] >= 'a' && k.name[0] <= 'z')
+        return !(flagsOf(c, Platform::Linux) & Global);
     if (k.mods & (Shift | Alt | Cmd)) return false;
     return !(flagsOf(c, Platform::Linux) & Global);
 }

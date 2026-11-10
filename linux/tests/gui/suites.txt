@@ -7,3 +7,5 @@ KeysSuite.cpp
 TabsSuite.cpp
 PreviewTabsSuite.cpp
 TabViewersSuite.cpp
+FindBarSuite.cpp
+ReplaceInFolderSuite.cpp

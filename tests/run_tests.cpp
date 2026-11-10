@@ -53,6 +53,8 @@
 #include "JsonOutline.h"
 #include "Notebook.h"
 #include "Commands.h"
+#include "EditSpans.h"
+#include "FindRules.h"
 #include "PageMeasure.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
@@ -10798,6 +10800,7 @@ static void testMultiCaretOccurrences() {
 #include "multiedit_tests.inc"
 #include "folder_search_tests.inc"
 #include "auto_close_tests.inc"
+#include "find_rules_tests.inc"
 #include "side_by_side_tests.inc"
 #include "lsp_inlay_tests.inc"
 #include "lsp_semantic_tests.inc"
@@ -10901,6 +10904,7 @@ int main() {
     testRegex();
     testIgnoreFiles();
     testFolderReplace();
+    testEditSpansAndFindRules();
     testSavingToDisk();
     testSymbols();
     testLineIndex();

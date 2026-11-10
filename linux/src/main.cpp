@@ -10,10 +10,10 @@
 //           [start] sidebar stack: FileTree, or the Source Control panel
 //                   (GitPanel) in its place
 //           [end]   right vbox
-//                     editor find-bar (GtkSearchBar)
 //                     vpaned  (movable divider)
 //                       [start] upper vbox
-//                                 Editor (GtkTextView, vexpand)
+//                                 Editor (GtkTextView, vexpand), the find
+//                                   bar (FindBar) over its text
 //                                 browser revealer  (#ifdef MINICODE_ENABLE_BROWSER)
 //                       [end]   Terminal panel      (#ifdef MINICODE_ENABLE_TERMINAL)
 //       status bar (GtkLabel, VS Code blue)
@@ -62,6 +62,7 @@
 #include "Terminal.h"
 #include "Browser.h"
 #include "Search.h"
+#include "FindBar.h"
 #include "Lsp.h"
 #include "GitPanel.h"
 #include "Keys.h"
@@ -84,14 +85,13 @@ struct App {
     GtkWidget*      window = nullptr;
     GtkWidget*      hpaned = nullptr;
     GtkWidget*      statusLabel = nullptr;
-    GtkWidget*      searchBar = nullptr;
-    GtkWidget*      searchEntry = nullptr;
     GtkWidget*      settingsLabel = nullptr;   // first problem in the settings file
 
     int  sidebarWidth = 240;      // where the sidebar divider was before collapsing
     bool adjustingPaned = false;  // a snap is moving a divider; ignore the notify
 
     Editor*   editor = nullptr;
+    FindBar*  findBar = nullptr;     // the editor's find and replace bar
     FileTree* tree = nullptr;
     // The sidebar is a stack: the file tree, or the Source Control panel in
     // its place, made on first use.
@@ -860,31 +860,36 @@ static void act_keyboard_shortcuts(GSimpleAction*, GVariant*, gpointer userp) {
                  [app] { gtk_widget_grab_focus(app->editor->textView()); });
 }
 
-static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    gboolean on = gtk_search_bar_get_search_mode(GTK_SEARCH_BAR(app->searchBar));
-    gtk_search_bar_set_search_mode(GTK_SEARCH_BAR(app->searchBar), !on);
-    if (!on) gtk_widget_grab_focus(app->searchEntry);
+// The find bar (FindBar.h): Find and Replace seed the query from the
+// selection or the word at the caret; Find Next and Find Previous (VS Code's
+// F3 and Shift+F3 on Linux) step from the selection, wrapping, with the bar
+// open or closed, and open it when there is nothing to look for; the
+// options flip from the editor or the bar; Replace and Replace All act on
+// the matches as the bar shows them.
+static FindBar* findBarOf(gpointer userp) { return static_cast<App*>(userp)->findBar; }
+static void act_find(GSimpleAction*, GVariant*, gpointer p) { findBarOf(p)->showFind(); }
+static void act_replace(GSimpleAction*, GVariant*, gpointer p) { findBarOf(p)->showReplace(); }
+static void act_find_next(GSimpleAction*, GVariant*, gpointer p) { findBarOf(p)->findNext(true); }
+static void act_find_previous(GSimpleAction*, GVariant*, gpointer p) {
+    findBarOf(p)->findNext(false);
+}
+static void act_replace_one(GSimpleAction*, GVariant*, gpointer p) { findBarOf(p)->replaceOne(); }
+static void act_replace_all(GSimpleAction*, GVariant*, gpointer p) { findBarOf(p)->replaceAll(); }
+static void act_find_case(GSimpleAction*, GVariant*, gpointer p) {
+    findBarOf(p)->toggleMatchCase();
+}
+static void act_find_word(GSimpleAction*, GVariant*, gpointer p) {
+    findBarOf(p)->toggleWholeWord();
+}
+static void act_find_regex(GSimpleAction*, GVariant*, gpointer p) { findBarOf(p)->toggleRegex(); }
+static void act_find_preserve(GSimpleAction*, GVariant*, gpointer p) {
+    findBarOf(p)->togglePreserveCase();
+}
+static void act_find_in_selection(GSimpleAction*, GVariant*, gpointer p) {
+    findBarOf(p)->toggleFindInSelection();
 }
 
 static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp);
-
-// Defined with the find bar's search further down.
-static bool findStep(App* app, bool forward);
-
-// Find Next and Find Previous (VS Code's F3 and Shift+F3 on Linux): the
-// next or previous match of what the find bar holds, from the selection,
-// wrapping at either end, as the Mac's do (Command G, Shift Command G). They
-// work with the bar closed too. With nothing to look for, they open the bar
-// instead. In the bar Ctrl+G and Ctrl+Shift+G step too (GtkSearchEntry's own
-// keys).
-static void act_find_next(GSimpleAction*, GVariant*, gpointer userp) {
-    findStep(static_cast<App*>(userp), true);
-}
-
-static void act_find_previous(GSimpleAction*, GVariant*, gpointer userp) {
-    findStep(static_cast<App*>(userp), false);
-}
 
 // New Window: one on this window's folder, as the Mac's opens one on the
 // front window's root.
@@ -1596,16 +1601,33 @@ static void act_hover(GSimpleAction*, GVariant*, gpointer userp) {
 
 // Find in Folder: search the folder selected in the tree, or else the open
 // folder, which is what the Mac's Shift+Cmd+F does.
-static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
+static SearchPanel* findInFolderPanel(App* app) {
     if (!app->search) {
         app->search = new SearchPanel(GTK_WINDOW(app->window));
         app->search->setOpenCallback(openSearchMatch, app);
+        // Replace in Folder looks at every window's tabs, and edits this
+        // window's (Search.h).
+        app->search->setEditors([] {
+            std::vector<Editor*> all;
+            for (App* a : g.windows)
+                if (!a->dead && a->editor) all.push_back(a->editor);
+            return all;
+        }, app->editor);
     }
     app->search->setRoot(app->rootDir);   // resets the scope after Open Folder
     const std::string dir = app->tree->selectedDir();
     if (!dir.empty()) app->search->setScope(dir);
-    app->search->show();
+    return app->search;
+}
+
+static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
+    findInFolderPanel(static_cast<App*>(userp))->show();
+}
+
+// Replace in Folder: the same window with its replace row, the keyboard in
+// the replacement (the Mac's Option+Shift+Cmd+F).
+static void act_replace_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
+    findInFolderPanel(static_cast<App*>(userp))->showReplace();
 }
 
 // TODOs in Folder: the window, scoped as Find in Folder is, and scanned
@@ -1620,107 +1642,6 @@ static void act_todos(GSimpleAction*, GVariant*, gpointer userp) {
     const std::string dir = app->tree->selectedDir();
     if (!dir.empty()) app->todos->setScope(dir);
     app->todos->show();
-}
-
-// ---------------------------------------------------------------- find impl
-
-// Find the next match at or after `from`, wrapping to the top of the buffer.
-static bool findFrom(App* app, const GtkTextIter& from) {
-    const char* q = gtk_editable_get_text(GTK_EDITABLE(app->searchEntry));
-    if (!q || !*q) return false;
-
-    GtkTextBuffer* buf = app->editor->buffer();
-    GtkTextIter mstart, mend;
-    gboolean found = gtk_text_iter_forward_search(
-        &from, q, GTK_TEXT_SEARCH_CASE_INSENSITIVE, &mstart, &mend, nullptr);
-    if (!found) {
-        GtkTextIter top;
-        gtk_text_buffer_get_start_iter(buf, &top);
-        found = gtk_text_iter_forward_search(
-            &top, q, GTK_TEXT_SEARCH_CASE_INSENSITIVE, &mstart, &mend, nullptr);
-    }
-    if (!found) return false;
-
-    gtk_text_buffer_select_range(buf, &mstart, &mend);
-    gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(app->editor->textView()),
-                                 &mstart, 0.1, FALSE, 0, 0);
-    return true;
-}
-
-// The last match that ends before `before`, wrapping to the bottom.
-static bool findBackFrom(App* app, const GtkTextIter& before) {
-    const char* q = gtk_editable_get_text(GTK_EDITABLE(app->searchEntry));
-    if (!q || !*q) return false;
-
-    GtkTextBuffer* buf = app->editor->buffer();
-    GtkTextIter mstart, mend;
-    gboolean found = gtk_text_iter_backward_search(
-        &before, q, GTK_TEXT_SEARCH_CASE_INSENSITIVE, &mstart, &mend, nullptr);
-    if (!found) {
-        GtkTextIter bottom;
-        gtk_text_buffer_get_end_iter(buf, &bottom);
-        found = gtk_text_iter_backward_search(
-            &bottom, q, GTK_TEXT_SEARCH_CASE_INSENSITIVE, &mstart, &mend, nullptr);
-    }
-    if (!found) return false;
-
-    gtk_text_buffer_select_range(buf, &mstart, &mend);
-    gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(app->editor->textView()),
-                                 &mstart, 0.1, FALSE, 0, 0);
-    return true;
-}
-
-// Typing in the find bar re-searches from the start of the current selection,
-// so the match under the cursor keeps growing with the query instead of the
-// search jumping ahead on every keystroke.
-static void onSearchChanged(GtkSearchEntry*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    GtkTextBuffer* buf = app->editor->buffer();
-    GtkTextIter start;
-    gtk_text_buffer_get_iter_at_mark(buf, &start,
-                                     gtk_text_buffer_get_selection_bound(buf));
-    GtkTextIter insert;
-    gtk_text_buffer_get_iter_at_mark(buf, &insert,
-                                     gtk_text_buffer_get_insert(buf));
-    if (gtk_text_iter_compare(&insert, &start) < 0) start = insert;
-    findFrom(app, start);
-}
-
-// One step through the matches. Forward starts one character past the start
-// of the selection, otherwise forward_search finds the same match again and
-// Enter does nothing; backward ends before the selection's start.
-static bool findStep(App* app, bool forward) {
-    const char* q = gtk_editable_get_text(GTK_EDITABLE(app->searchEntry));
-    if (!q || !*q) {
-        // Nothing to look for yet: open the bar to type it in.
-        gtk_search_bar_set_search_mode(GTK_SEARCH_BAR(app->searchBar), TRUE);
-        gtk_widget_grab_focus(app->searchEntry);
-        return false;
-    }
-    GtkTextBuffer* buf = app->editor->buffer();
-    GtkTextIter selStart, selEnd;
-    const bool sel = gtk_text_buffer_get_selection_bounds(buf, &selStart, &selEnd);
-    if (!sel)
-        gtk_text_buffer_get_iter_at_mark(buf, &selStart, gtk_text_buffer_get_insert(buf));
-    bool found;
-    if (forward) {
-        if (sel) gtk_text_iter_forward_char(&selStart);
-        found = findFrom(app, selStart);
-    } else {
-        found = findBackFrom(app, selStart);
-    }
-    if (!found) gtk_widget_error_bell(app->editor->textView());
-    return found;
-}
-
-// Enter and Ctrl+G in the find bar: the next match. Shift+Enter and
-// Shift+F3: the previous one.
-static void onSearchNext(GtkSearchEntry*, gpointer userp) {
-    findStep(static_cast<App*>(userp), true);
-}
-
-static void onSearchPrevious(GtkSearchEntry*, gpointer userp) {
-    findStep(static_cast<App*>(userp), false);
 }
 
 // ---------------------------------------------------------- shortcut hints
@@ -1758,9 +1679,17 @@ static std::string hintsText(App* app) {
     row("workbench.action.files.openFolder", "Open folder");
     row("workbench.action.files.save", "Save");
     row("actions.find", "Find in file");
+    row("editor.action.startFindReplaceAction", "Replace in file");
     row("editor.action.nextMatchFindAction", "Find next");
     row("editor.action.previousMatchFindAction", "Find previous");
+    row("editor.action.replaceAll", "Replace all");
+    row("toggleFindCaseSensitive", "Match case");
+    row("toggleFindWholeWord", "Match whole word");
+    row("toggleFindRegex", "Regular expression");
+    row("togglePreserveCase", "Preserve case");
+    row("toggleFindInSelection", "Find in selection");
     row("workbench.action.findInFiles", "Find in folder");
+    row("workbench.action.replaceInFiles", "Replace in folder");
     row("minicode.showTodos", "TODOs in folder");
     row("editor.action.commentLine", "Toggle comment");
     plain("Tab, Shift Tab", "Indent, outdent lines");
@@ -1986,6 +1915,7 @@ static void showConfigErrors(App* app) {
 static void applyWindowSettings(App* app) {
     const Settings& st = g.settings->settings();
     app->editor->applySettings(st);
+    app->findBar->applySettings(st);
     if (app->lsp) app->lsp->applySettings(st);   // restarts servers if lsp.* changed
     if (app->git) app->git->applySettings(st);
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -2133,7 +2063,7 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     g.windows.erase(std::find(g.windows.begin(), g.windows.end(), app));
     app->dead = true;
 
-    std::vector<gpointer> owners = {app, app->lsp, app->tree, app->git};
+    std::vector<gpointer> owners = {app, app->lsp, app->tree, app->git, app->findBar};
     for (void* o : app->editor->handlerOwners()) owners.push_back(o);
 #ifdef MINICODE_ENABLE_TERMINAL
     owners.push_back(app->terminal);
@@ -2172,6 +2102,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->git = nullptr;
     delete app->tree;
     app->tree = nullptr;
+    delete app->findBar;   // before the editor, whose view it follows
+    app->findBar = nullptr;
     delete app->editor;
     app->editor = nullptr;
     // The App itself is kept (see App::dead).
@@ -2223,31 +2155,14 @@ static App* newWindow(const std::string& root, const std::string& file) {
         refreshHints(app);
     };
 
-    // Right side: find bar + editor + collapsible panels.
-    GtkWidget* rightBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    // The find and replace bar hangs over the editor's text (FindBar.h).
+    app->findBar = new FindBar(app->editor);
+    app->findBar->onNote = [app](const std::string& note) {
+        if (!app->dead) flashStatus(app, note);
+    };
 
-    app->searchBar = gtk_search_bar_new();
-    app->searchEntry = gtk_search_entry_new();
-    gtk_search_bar_set_child(GTK_SEARCH_BAR(app->searchBar), app->searchEntry);
-    gtk_search_bar_connect_entry(GTK_SEARCH_BAR(app->searchBar),
-                                 GTK_EDITABLE(app->searchEntry));
-    g_signal_connect(app->searchEntry, "search-changed",
-                     G_CALLBACK(onSearchChanged), app);
-    g_signal_connect(app->searchEntry, "activate",
-                     G_CALLBACK(onSearchNext), app);
-    g_signal_connect(app->searchEntry, "next-match",
-                     G_CALLBACK(onSearchNext), app);
-    g_signal_connect(app->searchEntry, "previous-match",
-                     G_CALLBACK(onSearchPrevious), app);
-    // Shift+Enter in the find bar goes back, as in most editors' find bars.
-    GtkEventController* findKeys = gtk_shortcut_controller_new();
-    gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(findKeys),
-        gtk_shortcut_new(gtk_keyval_trigger_new(GDK_KEY_Return, GDK_SHIFT_MASK),
-                         gtk_named_action_new("win.findprevious")));
-    gtk_widget_add_controller(app->searchEntry, findKeys);
-    // Deliberately no gtk_search_bar_set_key_capture_widget: in an editor that
-    // would auto-reveal the find bar on any keystroke and swallow typing.
-    gtk_box_append(GTK_BOX(rightBox), app->searchBar);
+    // Right side: editor + collapsible panels.
+    GtkWidget* rightBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
     // Order matters: the browser sits with the editor in the upper area and the
     // terminal is docked below both, the same arrangement the macOS build lays
@@ -2381,9 +2296,18 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "reveal",         G_CALLBACK(act_reveal));
     addAction(app, "copypath",       G_CALLBACK(act_copy_path));
     addAction(app, "find",           G_CALLBACK(act_find));
+    addAction(app, "replace",        G_CALLBACK(act_replace));
     addAction(app, "findnext",       G_CALLBACK(act_find_next));
     addAction(app, "findprevious",   G_CALLBACK(act_find_previous));
+    addAction(app, "replaceone",     G_CALLBACK(act_replace_one));
+    addAction(app, "replaceall",     G_CALLBACK(act_replace_all));
+    addAction(app, "findcase",       G_CALLBACK(act_find_case));
+    addAction(app, "findword",       G_CALLBACK(act_find_word));
+    addAction(app, "findregex",      G_CALLBACK(act_find_regex));
+    addAction(app, "findpreservecase", G_CALLBACK(act_find_preserve));
+    addAction(app, "findinselection", G_CALLBACK(act_find_in_selection));
     addAction(app, "findinfolder",   G_CALLBACK(act_find_in_folder));
+    addAction(app, "replaceinfolder", G_CALLBACK(act_replace_in_folder));
     addAction(app, "togglepreview",  G_CALLBACK(act_toggle_preview));
     addAction(app, "togglehints",    G_CALLBACK(act_toggle_hints));
     addAction(app, "togglesidebar",  G_CALLBACK(act_toggle_sidebar));

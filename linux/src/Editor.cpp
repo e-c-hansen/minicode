@@ -167,7 +167,13 @@ Editor::Editor() {
     gtk_widget_set_hexpand(box_, TRUE);
     gtk_widget_set_vexpand(box_, TRUE);
     gtk_box_append(GTK_BOX(box_), strip_->widget());
-    gtk_box_append(GTK_BOX(box_), slot_);
+    // The slot in an overlay, so the find bar (FindBar.h) can hang over the
+    // text's top right as VS Code's find widget does.
+    slotOverlay_ = gtk_overlay_new();
+    gtk_widget_set_hexpand(slotOverlay_, TRUE);
+    gtk_widget_set_vexpand(slotOverlay_, TRUE);
+    gtk_overlay_set_child(GTK_OVERLAY(slotOverlay_), slot_);
+    gtk_box_append(GTK_BOX(box_), slotOverlay_);
 
     showActive();   // the welcome text
 }
