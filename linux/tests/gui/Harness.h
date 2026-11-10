@@ -168,6 +168,10 @@ void MCGuiType(const std::string& utf8);
 void MCGuiMoveTo(GtkWidget* widget, double x = -1, double y = -1);
 void MCGuiClick(GtkWidget* widget, double x = -1, double y = -1, int button = 1);
 void MCGuiDoubleClick(GtkWidget* widget, double x = -1, double y = -1);
+// A click with modifiers held around it, "ctrl", "shift", "alt" or several
+// ("ctrl+shift"), as a hand holds them.
+void MCGuiClickWith(const std::string& modifiers, GtkWidget* widget, double x = -1,
+                    double y = -1, int button = 1);
 // Press at one point of `widget`, release at another, moving between over a
 // few turns of the main loop; the next step waits until it is over.
 void MCGuiDrag(GtkWidget* widget, double x0, double y0, double x1, double y1);

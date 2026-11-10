@@ -430,12 +430,12 @@ gboolean SearchPanel::onQueryKey(GtkEventControllerKey*, guint keyval, guint,
     return TRUE;
 }
 
-void SearchPanel::openRow(guint pos) {
+void SearchPanel::openRow(guint pos, bool kept) {
     if (pos >= hits_.size() || !openCb_) return;
     // A copy, because the callback may come back into the panel (a new
     // search replaces hits_).
     const FolderSearchMatch m = hits_[pos];
-    openCb_(m, openUser_);
+    openCb_(m, kept, openUser_);
 }
 
 // The result row under a point in the list's coordinates.
@@ -453,14 +453,16 @@ void SearchPanel::onRowPressed(GtkGestureClick*, int, double x, double y, gpoint
     self->pressRow_ = self->rowAt(x, y);
 }
 
-// The first click of a double-click opens the match; the second does
-// nothing. A press released over another row does nothing either.
+// The first click of a double-click opens the match in the preview tab; the
+// second keeps it in a tab of its own, as on the Mac. A press released over
+// another row does nothing.
 void SearchPanel::onRowReleased(GtkGestureClick*, int n, double x, double y, gpointer selfp) {
     SearchPanel* self = static_cast<SearchPanel*>(selfp);
     const guint pressed = self->pressRow_;
     self->pressRow_ = GTK_INVALID_LIST_POSITION;
-    if (n == 1 && pressed != GTK_INVALID_LIST_POSITION && self->rowAt(x, y) == pressed)
-        self->openRow(pressed);
+    if ((n == 1 || n == 2) && pressed != GTK_INVALID_LIST_POSITION &&
+        self->rowAt(x, y) == pressed)
+        self->openRow(pressed, n == 2);
 }
 
 // Enter on a result opens it.
@@ -473,7 +475,7 @@ gboolean SearchPanel::onListKey(GtkEventControllerKey*, guint keyval, guint,
     GtkSelectionModel* model = gtk_list_view_get_model(GTK_LIST_VIEW(self->listView_));
     const guint pos = gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(model));
     if (pos == GTK_INVALID_LIST_POSITION) return FALSE;
-    self->openRow(pos);
+    self->openRow(pos, true);
     return TRUE;
 }
 

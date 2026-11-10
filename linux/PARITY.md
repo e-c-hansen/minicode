@@ -135,8 +135,9 @@ Choices item 0.3 made where D1 left room, each by the rule:
 - Toggle Terminal is Ctrl+Shift+T and Ctrl+` without the Mac's Cmd+J: it is
   Global, and Ctrl+J would be taken from the shell, which ends a line with it.
 - Ctrl+0, Ctrl+1 and Ctrl+Tab are Global, as the port's pane keys always
-  were, so they leave the terminal. Ctrl+Tab is the registry's
-  workbench.action.nextEditor titled Previous File until the port has tabs.
+  were, so they leave the terminal. Ctrl+Tab was the registry's
+  workbench.action.nextEditor titled Previous File until item 1.1 made it
+  Next Tab.
 - In the terminal Ctrl+Shift+C and Ctrl+Shift+V stay VTE's copy and paste,
   so the preview's Ctrl+Shift+V does not apply there; Ctrl+Shift+G and
   Ctrl+Shift+Space still go to the shell, as before.
@@ -146,6 +147,25 @@ Choices item 0.3 made where D1 left room, each by the rule:
 - Settings… and Keyboard Shortcuts… are in the Edit menu and Quit in the File
   menu, Reveal in Finder is Open Containing Folder. On Linux keys.conf refuses
   a line with cmd (a Mac's file) and a command the port does not have.
+
+Choices item 1.1 made, by the same rules:
+- Reopen Closed Tab is Ctrl+Alt+Shift+T and Save All Ctrl+Alt+S, the Mac's
+  Option+Shift+Cmd+T and Option+Cmd+S with Ctrl+Alt for Option+Cmd: VS
+  Code's Ctrl+Shift+T is Toggle Terminal here, and its Save All a chord.
+- Next and Previous Tab are VS Code's Ctrl+Page Down and Ctrl+Page Up, with
+  the Mac's Ctrl+Tab and Ctrl+Shift+Tab too, all Global, so they leave the
+  terminal. Go to Tab is VS Code's Alt+1 to Alt+8, and Alt+9 or Alt+0 the
+  last.
+- Close Tab is VS Code's Ctrl+W and Ctrl+F4, not Global: in the terminal
+  the shell has them (Ctrl+W deletes a word). With the browser's keyboard it
+  hides the browser, and with no tab open it closes the window, as the
+  Mac's Cmd+W. Unlike the Mac's, a held Ctrl+W is not yet ignored after the
+  first close.
+- Close Other Tabs, Close Tabs to the Right, Close All Tabs, Keep Open, Copy
+  Path of Active File, Open Containing Folder of Active File, and Reveal in
+  File Tree have no key (VS Code's are Ctrl+K chords). Previous File is
+  gone; its Ctrl+Tab steps through the tabs.
+- Tabs are not reordered by dragging, as the Mac's editor strip is not.
 
 **D2. One `GtkTextView`, one `GtkTextBuffer` per tab.** Split `Editor` into
 the view and slot, and a `Document` holding what is per file: the buffer, its
@@ -287,9 +307,22 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
 1.1 goes first, alone. After it, items may run in parallel in worktrees, but
 1.9 and 1.10 only after 1.4.
 
-- [ ] **1.1 Tabs (D2, D3).** `Document`, `EditorTabs`, a tab strip, the
+- [x] **1.1 Tabs (D2, D3).** `Document`, `EditorTabs`, a tab strip, the
   preview tab, closing and reopening, and Save All. Mac: `EditorTab`,
   `TabStrip`, `EditorController+Tabs`. Unsaved tabs are never dropped.
+  *Verified in Xvfb, 2026-11-09:* `tabs:closed` holds the reopen list, and
+  the `tabs`, `preview_tabs`, and `tab_viewers` suites press real keys and
+  clicks: switching by the strip, Ctrl+Page Down and Up, Ctrl+Tab, and
+  Alt+digits; each tab's text, caret, scroll, and undo; the dot gone once
+  undone to the disk's text; Cancel, Don't Save, and Save on a dirty tab,
+  and one question for a window's several; Reopen with its place, skipping
+  a removed file; Save All; folder labels; the tab menu; preview tabs from
+  the tree and Find in Folder; pictures, PDFs, LaTeX, and diffs in tabs; and
+  the Markdown preview in a buffer of its own that leaves the source's undo
+  alone. They fail with the old dirty rule and with typing not keeping a
+  preview tab. A run by hand against clangd saw the squiggles follow the tab
+  on show. Needs the owner: the strip's look, and Alt+digits and
+  Ctrl+Alt+Shift+T under GNOME on Wayland.
 - [ ] **1.2 Sessions (D11).** A folder reopens its tabs. Mac: `MCTabSessions`.
 - [ ] **1.3 Backups, hot exit, and auto-save (D11).** `Backups` over its POSIX
   `Fs`. Mac: `BackupStore`, `+Persistence`. Check with a real SIGKILL.
@@ -335,7 +368,9 @@ in `linux/tests/gui`, pressing real keys.
 ### Stage 2: language and git, 6,000 to 8,000 lines
 
 These may run in parallel. They need Stage 1's tabs (every open tab stays open
-on its server) and D5.
+on its server) and D5. Item 1.1 left the session on the tab on show
+(`LspSession::useBuffer`, re-pointed on every switch); keeping every tab open on
+its server comes first here.
 
 - [ ] **2.1 Rename, references, and quick fixes.** The all-or-nothing
   workspace edit applier. Mac: `Lsp+WorkspaceEdit`, `Lsp+Actions`, `LspPicker`.

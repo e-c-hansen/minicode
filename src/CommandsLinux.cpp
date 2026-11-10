@@ -17,8 +17,8 @@
 // A command the port does not have yet has no row, so its key is free until
 // the item that brings it (Ctrl+Shift+P for the palette, Ctrl+L for Select
 // Line, Ctrl+Shift+L for Select All Occurrences, Ctrl+H for Replace, Ctrl+I
-// for the inline agent, Ctrl+G for Go to Line, Ctrl+W for Close Tab). The
-// port's table of GActions (linux/src/Keys.cpp) has the same commands.
+// for the inline agent, Ctrl+G for Go to Line). The port's table of
+// GActions (linux/src/Keys.cpp) has the same commands.
 #include "Commands.h"
 
 
@@ -44,6 +44,9 @@ const std::vector<LinuxRow>& linuxRows() {
         // minicode does not have: Ctrl+O stays the folder's.
         {"workbench.action.files.openFolder", "ctrl+o", 0, nullptr, nullptr},
         {"workbench.action.files.save", "ctrl+s", 0, nullptr, nullptr},
+        // VS Code's Linux Save All is a chord (Ctrl+K S), so the Mac's
+        // Option+Cmd+S with Alt and Ctrl, as Show Hover's.
+        {"workbench.action.files.saveAll", "ctrl+alt+s", 0, nullptr, nullptr},
         {"minicode.latex.exportPDF", "ctrl+shift+s", 0, nullptr, nullptr},
         {"explorer.newFolder", "ctrl+alt+n", 0, nullptr, nullptr},
         // The tree's own keys, as in VS Code's explorer on Linux. The port
@@ -53,8 +56,24 @@ const std::vector<LinuxRow>& linuxRows() {
         {"moveFileToTrash", "delete", 0, nullptr, nullptr},
         {"revealFileInOS", "", 0, "Open Containing Folder", nullptr},
         {"copyFilePath", "", 0, nullptr, nullptr},
-        // VS Code's Linux key. Its Ctrl+W, Close Editor, waits for tabs
-        // (PARITY.md 1.1).
+        // The tab on show (PARITY.md 1.1): VS Code's Linux keys where it has
+        // them, the rest from the menu and the tab's right click menu, as on
+        // the Mac. Ctrl+W and Ctrl+F4 are plain Ctrl keys, so the shell keeps
+        // them while the terminal has the keyboard. Reopen Closed Tab is VS
+        // Code's Ctrl+Shift+T, which is Toggle Terminal's here (minicode's
+        // own Shift key does not move), so the Mac's Option+Shift+Cmd+T with
+        // Alt and Ctrl, as the Mac moved it off Shift+Cmd+T.
+        {"workbench.action.files.copyPathOfActiveFile", "", 0, nullptr, nullptr},
+        {"workbench.action.files.revealActiveFileInWindows", "", 0,
+         "Open Containing Folder of Active File", nullptr},
+        {"workbench.files.action.showActiveFileInExplorer", "", 0, nullptr, nullptr},
+        {"workbench.action.closeActiveEditor", "ctrl+w ctrl+f4", 0, nullptr, nullptr},
+        {"workbench.action.reopenClosedEditor", "ctrl+alt+shift+t", 0, nullptr, nullptr},
+        {"workbench.action.closeOtherEditors", "", 0, nullptr, nullptr},
+        {"workbench.action.closeEditorsToTheRight", "", 0, nullptr, nullptr},
+        {"workbench.action.closeAllEditors", "", 0, nullptr, nullptr},
+        {"workbench.action.keepEditor", "", 0, nullptr, nullptr},
+        // VS Code's Linux key.
         {"workbench.action.closeWindow", "ctrl+shift+w", 0, nullptr, nullptr},
 
         // ---- Edit
@@ -101,9 +120,24 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.focusSideBar", "ctrl+0", Global, nullptr, nullptr},
         // One editor until the split editor (PARITY.md 4.6).
         {"workbench.action.focusFirstEditorGroup", "ctrl+1", Global, "Focus Editor", nullptr},
-        // Until the port has tabs (PARITY.md 1.1), Ctrl+Tab goes back to the
-        // file open before this one, as it did on the Mac before its tabs.
-        {"workbench.action.nextEditor", "ctrl+tab", Global, "Previous File", nullptr},
+        // VS Code's Linux Ctrl+PageDown and Ctrl+PageUp, and the Mac's Ctrl+Tab
+        // and Ctrl+Shift+Tab (VS Code's are its recently used list, which
+        // minicode has not). Global, as Ctrl+Tab was before the tabs, so they
+        // leave the terminal too.
+        {"workbench.action.nextEditor", "ctrl+pagedown ctrl+tab", Global, nullptr, nullptr},
+        {"workbench.action.previousEditor", "ctrl+pageup ctrl+shift+tab", Global, nullptr,
+         nullptr},
+        // VS Code's Alt+1 to Alt+8; the last tab is Alt+9, where the Mac's
+        // Ctrl+9 is, and VS Code's Alt+0.
+        {"workbench.action.openEditorAtIndex1", "alt+1", 0, nullptr, nullptr},
+        {"workbench.action.openEditorAtIndex2", "alt+2", 0, nullptr, nullptr},
+        {"workbench.action.openEditorAtIndex3", "alt+3", 0, nullptr, nullptr},
+        {"workbench.action.openEditorAtIndex4", "alt+4", 0, nullptr, nullptr},
+        {"workbench.action.openEditorAtIndex5", "alt+5", 0, nullptr, nullptr},
+        {"workbench.action.openEditorAtIndex6", "alt+6", 0, nullptr, nullptr},
+        {"workbench.action.openEditorAtIndex7", "alt+7", 0, nullptr, nullptr},
+        {"workbench.action.openEditorAtIndex8", "alt+8", 0, nullptr, nullptr},
+        {"workbench.action.lastEditorInGroup", "alt+9 alt+0", 0, nullptr, nullptr},
         {"editor.action.revealDefinition", "f12", 0, nullptr, nullptr},
     };
     return rows;

@@ -515,8 +515,9 @@ std::vector<int> LspServerPids() {
 // ------------------------------------------------------------ LspSession
 
 LspSession::LspSession(Editor* editor, const std::string& root, const Settings& settings)
-    : editor_(editor), view_(editor->textView()), buffer_(editor->buffer()),
+    : editor_(editor), view_(editor->textView()),
       root_(root), settings_(settings), signature_(settingsSignature(settings)) {
+    useBuffer(editor->sourceBuffer());
     installCss();
 
     // Squiggles: tags of their own, never among the highlighter's (it removes
@@ -564,13 +565,30 @@ LspSession::LspSession(Editor* editor, const std::string& root, const Settings& 
     // never closed). So they go when the view is unrealized, which comes
     // before dispose, and are built again on next use.
     g_signal_connect(view_, "unrealize", G_CALLBACK(onUnrealize), this);
+}
+
+// The buffer the session's marks, squiggles and positions are in: the tab on
+// show's source, held so that a tab closing cannot pull it away first.
+void LspSession::useBuffer(GtkTextBuffer* b) {
+    if (b == buffer_) return;
+    if (buffer_) {
+        g_signal_handlers_disconnect_by_data(buffer_, this);
+        // The completion's anchor is a mark of this buffer's.
+        if (anchor_ && !gtk_text_mark_get_deleted(anchor_))
+            gtk_text_buffer_delete_mark(buffer_, anchor_);
+        anchor_ = nullptr;
+        g_object_unref(buffer_);
+    }
+    buffer_ = b;
+    if (!buffer_) return;
+    g_object_ref(buffer_);
     g_signal_connect(buffer_, "mark-set", G_CALLBACK(onMarkSet), this);
 }
 
 LspSession::~LspSession() {
     shutdown();
     g_signal_handlers_disconnect_by_data(view_, this);
-    g_signal_handlers_disconnect_by_data(buffer_, this);
+    useBuffer(nullptr);
     if (refilterId_) g_source_remove(refilterId_);
     if (triggerId_) g_source_remove(triggerId_);
     if (flashId_) g_source_remove(flashId_);
@@ -803,7 +821,8 @@ void LspSession::closeDocument() {
 }
 
 void LspSession::documentChanged(const std::string& path) {
-    closeDocument();
+    closeDocument();   // its marks come off the buffer they are in
+    useBuffer(editor_->sourceBuffer());
     path_ = path;
     Lsp::Language lang;
     if (path.empty() || !settings_.lspEnabled() ||

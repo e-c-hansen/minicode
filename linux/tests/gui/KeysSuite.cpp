@@ -371,15 +371,20 @@ MC_GUI_SUITE(keys) {
         MCGuiKey("ctrl+shift+n");
     });
     MCGuiWait("a second window", 10, [] { return MCGuiAppWindows().size() == gWindows + 1; });
-    MCGuiStep("Ctrl+W, Close Window's old key, leaves it (Close Tab's, when there are tabs)", [] {
+    MCGuiStep("Ctrl+W, Close Window's old key, is Close Tab's: in a window with no tab open it "
+              "closes the window, as on the Mac", [] {
+        GCHECK(MCGuiApp().editor->tabCount() == 0);
         MCGuiKey("ctrl+w");   // to the new window, the newest
     });
-    MCGuiPause(0.3);   // a negative check
-    MCGuiStep("still two", [] {
-        GCHECK(MCGuiAppWindows().size() == gWindows + 1);
-        MCGuiKey("ctrl+shift+w");
+    MCGuiWait("the new window closes", 10, [] { return MCGuiAppWindows().size() == gWindows; });
+    MCGuiStep("the first window still has its tabs; another new window", [] {
+        GCHECK(MCGuiApp().editor->tabCount() > 0);
+        MCGuiClick(MCGuiApp().editor->textView());
+        MCGuiKey("ctrl+shift+n");
     });
-    MCGuiWait("Ctrl+Shift+W closes it", 10, [] { return MCGuiAppWindows().size() == gWindows; });
+    MCGuiWait("a second window", 10, [] { return MCGuiAppWindows().size() == gWindows + 1; });
+    MCGuiStep("Ctrl+Shift+W closes it", [] { MCGuiKey("ctrl+shift+w"); });
+    MCGuiWait("one again", 10, [] { return MCGuiAppWindows().size() == gWindows; });
 
     MCGuiStep("Ctrl+H, the dotfiles' old key, is free (Replace's)", [] {
         MCGuiClick(MCGuiApp().editor->textView());
@@ -445,6 +450,16 @@ MC_GUI_SUITE(keys) {
         GCHECK_EQ_STR(bound("win.toggleterminal"), canon("<Ctrl><Shift>t <Ctrl>grave"));
         GCHECK_EQ_STR(bound("win.focustree"), canon("<Ctrl>0"));
         GCHECK(accels("win.togglegit").empty());   // the shell reads it as Ctrl+G
+        // The tabs: their Ctrl keys leave the terminal (Global), Alt and
+        // Shift ones are the app's anyway, and Close Tab's are the shell's
+        // (Ctrl+W deletes a word).
+        GCHECK_EQ_STR(bound("win.nexttab"), canon("<Ctrl>Page_Down <Ctrl>Tab"));
+        GCHECK_EQ_STR(bound("win.previoustab"), canon("<Ctrl>Page_Up <Ctrl><Shift>Tab"));
+        GCHECK_EQ_STR(bound("win.tab1"), canon("<Alt>1"));
+        GCHECK_EQ_STR(bound("win.lasttab"), canon("<Alt>9 <Alt>0"));
+        GCHECK_EQ_STR(bound("win.reopentab"), canon("<Ctrl><Alt><Shift>t"));
+        GCHECK_EQ_STR(bound("win.saveall"), canon("<Ctrl><Alt>s"));
+        GCHECK(accels("win.closetab").empty());
     });
     MCGuiStep("a program that writes the bytes it reads", [] {
         MCGuiType("stty raw -echo; head -c 17 > keys.bin; stty sane\n");
@@ -530,7 +545,11 @@ MC_GUI_SUITE(keys) {
         GCHECK(note.rfind("Keys line 5:", 0) == 0);
         GCHECK_EQ_STR(bound("win.newfile"), canon("<Ctrl>n"));   // the rest as they were
     });
-    MCGuiStep("the Markdown file again", [] { MCGuiOpenFile(keysMd()); });
+    MCGuiStep("the Markdown file's tab again, rendered", [] {
+        MCGuiOpenFile(keysMd());
+        // Its tab kept the source it was left showing.
+        if (!MCGuiApp().editor->inPreview()) MCGuiApp().editor->togglePreview();
+    });
     MCGuiWait("it shows, rendered", 10, [] {
         return MCGuiApp().editor->currentPath() == keysMd() && MCGuiApp().editor->inPreview();
     });

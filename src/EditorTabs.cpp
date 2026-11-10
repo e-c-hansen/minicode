@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <set>
 
 namespace EditorTabs {
@@ -131,6 +132,32 @@ int dropIndex(const std::vector<double> &widths, int from, double x) {
         left += widths[(size_t)i];
     }
     return before;
+}
+
+void ClosedTabs::remember(const ClosedTab &t) {
+    if (t.path.empty() || limit_ == 0) return;
+    list_.push_back(t);
+    if (list_.size() > limit_)
+        list_.erase(list_.begin(), list_.begin() + (std::ptrdiff_t)(list_.size() - limit_));
+}
+
+bool ClosedTabs::take(ClosedTab *out,
+                      const std::function<bool(const std::string &)> &reopenable) {
+    while (!list_.empty()) {
+        ClosedTab t = list_.back();
+        list_.pop_back();
+        if (!reopenable || reopenable(t.path)) {
+            if (out) *out = t;
+            return true;
+        }
+    }
+    return false;
+}
+
+int ClosedTabs::indexIn(const ClosedTab &t, int count) {
+    if (count <= 0) return 0;
+    if (t.index < 0) return 0;
+    return t.index > count ? count : t.index;
 }
 
 bool opensInPreview(OpenFrom from, const PreviewSettings &s) {

@@ -39,6 +39,10 @@ MCGuiAppWindow MCGuiApp() {
 }
 
 void MCGuiOpenFile(const std::string& path) {
+    if (!g.windows.empty()) treeOpenCb(path, EditorTabs::OpenFrom::TreeClick, g.windows.back());
+}
+
+void MCGuiOpenFileKept(const std::string& path) {
     if (!g.windows.empty()) openFileCb(path, g.windows.back());
 }
 

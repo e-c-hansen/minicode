@@ -1,0 +1,301 @@
+// Document.h — one open file of a window's editor (linux/PARITY.md, D2 and
+// D3): what belongs to the file rather than to the view, so that a tab keeps
+// it while another tab is on show. The window's one GtkTextView shows a
+// document with gtk_text_view_set_buffer; the editor keeps its documents in
+// tab order (Editor.h, Tabs.cpp). The Mac's counterpart is MCTab
+// (src/EditorTab.h).
+//
+// A document holds:
+//   - its source in a GtkTextBuffer of its own, over the tag table every
+//     document shares, with GTK's own undo, so each tab keeps its history;
+//   - the incremental highlighter and its UTF-8 mirror, fed by every edit of
+//     the buffer whether it is on show or not;
+//   - whether it differs from the disk: the text as last read or saved is
+//     kept, and every edit compares with it, lengths first, so an edit taken
+//     back (typed and deleted, undone) leaves nothing unsaved, as on the Mac;
+//   - a watch on its file: a clean document takes a change made elsewhere in
+//     place, on show or not; one with unsaved edits has its host ask;
+//   - for Markdown, a buffer of its own for the rendered page (D3), so the
+//     preview never touches the source, its undo or its colors, and an edit
+//     made from the page is a splice into the source;
+//   - for LaTeX, its own preview (Latex.h), so its pages and typeset stay;
+//   - where its view was while another tab was on show.
+//
+// Nothing is ever put in the source buffer that is not in the file (D6).
+#pragma once
+
+#include <gtk/gtk.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "Markdown.h"
+#include "Settings.h"
+#include "SyntaxHighlighter.h"
+
+#ifdef MINICODE_ENABLE_PDF
+#include "PdfView.h"
+#endif
+
+class Document;
+class LatexPreview;
+
+// What every document of an editor shares: one tag table, and of its tags
+// the ones the highlighter owns (one per token style, and the settings
+// file's swatches as they are made). A retag removes only these.
+struct DocumentTags {
+    GtkTextTagTable* table = nullptr;
+    std::vector<GtkTextTag*> highlight;
+};
+
+// The editor, as the documents see it.
+class DocumentHost {
+public:
+    virtual ~DocumentHost() = default;
+    // Whether it has unsaved changes, its task count or its name changed.
+    virtual void documentStateChanged(Document* d) = 0;
+    // Its source was edited; the buffer has changed. `inserted` is the text
+    // of an insertion of `len` bytes ending at `at`, or null for a deletion.
+    virtual void documentEdited(Document* d, GtkTextIter* at, const char* inserted, int len) = 0;
+    // Its file changed on disk while it has unsaved edits. True when the
+    // user is being asked, and that version on disk is then not asked about
+    // again; false to hear of it again at the next check.
+    virtual bool documentChangedOnDisk(Document* d) = 0;
+    // For the settings file's swatches.
+    virtual const Settings& documentSettings() const = 0;
+    virtual const std::string& settingsPath() const = 0;
+    // Around a change from the disk taken in place, so the editor can keep
+    // the scroll position of the document on show.
+    virtual void documentWillReload(Document*) {}
+    virtual void documentReloaded(Document*) {}
+};
+
+class Document {
+public:
+    enum class Kind {
+        Text,      // a file's text, editable
+        Message,   // a file that cannot be shown as text: why, in the buffer
+        Media,     // an image, a PDF, video or audio (the editor's MediaView)
+        Diff,      // a diff or a commit from Source Control (GitDiffView)
+    };
+    // Reading a file as text (readText).
+    enum class Read { Ok, Missing, NotRegular, TooLarge, NotText, Failed };
+
+    Document(DocumentHost* host, DocumentTags* tags);
+    // Takes every handler off its buffers and its file's watch. The editor
+    // takes its LaTeX preview's widget off the screen first.
+    ~Document();
+    Document(const Document&) = delete;
+    Document& operator=(const Document&) = delete;
+
+    // A regular file of at most 16 MB, as UTF-8 text. The type and size are
+    // checked before it is opened, so a named pipe is never opened (that
+    // blocks until a writer comes) and a disk image is never read.
+    static Read readText(const std::string& path, std::string& out);
+    static std::string extensionOf(const std::string& path);   // lowercase, no dot
+
+    // What it holds. Each sets the kind; loadText watches the file.
+    void loadText(const std::string& path, const std::string& content);
+    void setMessage(const std::string& path, const std::string& message);
+    void setMedia(const std::string& path);
+    void setDiff(const std::string& title, const std::string& bytes, bool commit);
+
+    Kind kind() const { return kind_; }
+    const std::string& path() const { return path_; }
+    const std::string& ext() const { return ext_; }
+    bool isMarkdown() const { return kind_ == Kind::Text && markdown_; }
+    bool isLatex() const { return kind_ == Kind::Text && latex_; }
+    // The tab shows the Markdown page or the LaTeX pages rather than the
+    // source. Only the flag: the editor shows it.
+    bool showsPreview() const { return showsPreview_; }
+    void setShowsPreview(bool on) { showsPreview_ = on; }
+    // The window's preview tab (EditorTabs.h): its title in italics, and
+    // the next file opened in preview replaces it.
+    bool isPreviewTab() const { return previewTab_; }
+    void setPreviewTab(bool on) { previewTab_ = on; }
+
+    // The source (Text) or the message (Message). Media and Diff have an
+    // empty one, which is what the view holds while they are shown.
+    GtkTextBuffer* buffer() const { return buffer_; }
+    // The rendered Markdown page, made on first use; never undone into.
+    GtkTextBuffer* page();
+    Markdown::Page& pageInfo() { return page_; }
+    // The whole source as UTF-8: the highlighter's mirror when it is in
+    // step, else a copy out of the buffer.
+    std::string text() const;
+    // Replace the source with `to`: only the part between the common start
+    // and end, as one user action, so undo, the highlighter and the language
+    // server see one edit. An edit from the Markdown page, or its undo.
+    void spliceText(const std::string& to);
+
+    // A diff's title ("name (diff)", "<hash> <subject>"), bytes, and whether
+    // it is a commit.
+    const std::string& diffTitle() const { return diffTitle_; }
+    const std::string& diffBytes() const { return diffBytes_; }
+    bool diffIsCommit() const { return diffCommit_; }
+
+    // Text only; a message, a picture or a diff is never written.
+    bool canSave() const { return kind_ == Kind::Text && !path_.empty(); }
+    // Differs from the file as last read or saved.
+    bool dirty() const { return kind_ == Kind::Text && dirty_; }
+    // Write the source to the file: through a symlink to what it names, in
+    // place for a file with other hard links or another owner, else as an
+    // atomic rename. False, with the reason, when it failed; it stays dirty.
+    bool save(std::string* error);
+
+    // The file now lives at `path` (a rename): the buffer, its undo and the
+    // watch stay; the grammar changes with the extension, and a file that is
+    // no longer Markdown or LaTeX loses its preview flag.
+    void setPath(const std::string& path);
+
+    // Changes made to the file by something else. Compares what is on disk
+    // with the text last read or saved: no change, nothing; a clean document
+    // takes the new text in place; one with edits asks its host.
+    void checkExternalChange();
+    // Reload chosen: the disk's text replaces the buffer's, in place, as one
+    // undoable edit. False when it can no longer be read as text.
+    bool reloadFromDisk();
+
+    // Highlighting from scratch (the settings changed: the swatches).
+    void restartHighlighting();
+    // It is the settings file, whose color values are swatches.
+    bool isSettingsFile() const;
+    // The view showing the source buffer, or null: the lines on screen are
+    // retagged first.
+    void setShownIn(GtkTextView* view) { shownIn_ = view; }
+    GtkTextView* shownIn() const { return shownIn_; }
+
+    // A Markdown file's tasks, done and in all, recounted 0.3 s after typing
+    // stops; 0 and 0 for any other file.
+    int tasksDone() const { return tasksDone_; }
+    int tasksTotal() const { return tasksTotal_; }
+    void refreshTaskCount();
+
+    // Its LaTeX preview, null until the editor makes one.
+    LatexPreview* latexPreview() const { return latexPreview_; }
+    void setLatexPreview(LatexPreview* p) { latexPreview_ = p; }
+
+    // Where its view was while another tab took over (the editor keeps it).
+    struct Place {
+        bool haveView = false;
+        GtkTextMark* top = nullptr;   // the source's first line on show
+        int topInto = 0;              // how far into that line the view started
+        double hscroll = 0;
+        // The Markdown page: its first character on show, rendered again.
+        bool havePage = false;
+        int pageTop = 0;
+        int pageInto = 0;
+        // Ctrl+Shift+V keeping its place (see Editor::togglePreview).
+        bool haveSrcPos = false;
+        double srcCaretFrac = 0.3;
+        double previewEntryV = -1;
+#ifdef MINICODE_ENABLE_PDF
+        bool havePdf = false;
+        PdfView::Anchor pdf;
+#endif
+    };
+    Place& place() { return place_; }
+
+    // A stamp of when it was last on show (EditorTabs::activeAfterClose).
+    uint64_t lastUsed = 0;
+    // Its id, for the tab's right click menu (unique in the process).
+    uint64_t id() const { return id_; }
+
+private:
+    void clearSource();
+    void fill(const std::string& text);   // set whole: no edit, nothing unsaved
+    void markDirty(bool d);
+    void checkDirty();
+    bool matchesSaved();
+
+    // Highlighting (see the comment at the top of the highlighting section in
+    // Document.cpp).
+    void startHighlighting();
+    void stopHighlighting();
+    void flushHighlighting();
+    void retagSpan(size_t firstLine, size_t endLine);
+    void retagLines(size_t firstLine, size_t endLine, const std::vector<Token>& tokens);
+    void visibleLines(size_t& first, size_t& end) const;
+    void cancelDeferred();
+    void resyncAfterBulk();
+    void removeHighlightTags(const GtkTextIter* a, const GtkTextIter* b);
+    size_t byteOffsetOf(const GtkTextIter* it) const;
+    bool linesMatch() const;
+    bool isHighlightTag(GtkTextTag* tag) const;
+    void noteEdit(size_t pos, size_t oldLen, size_t newLen);
+    void decorateColors(int firstLine, int endLine);
+
+    static void onInsertText(GtkTextBuffer* buf, GtkTextIter* loc, char* text, int len,
+                             gpointer self);
+    static void onDeleteRange(GtkTextBuffer* buf, GtkTextIter* a, GtkTextIter* b, gpointer self);
+    static void onInsertTextAfter(GtkTextBuffer* buf, GtkTextIter* loc, char* text, int len,
+                                  gpointer self);
+    static void onDeleteRangeAfter(GtkTextBuffer* buf, GtkTextIter* a, GtkTextIter* b,
+                                   gpointer self);
+    static void onApplyTag(GtkTextBuffer* buf, GtkTextTag* tag, GtkTextIter* a, GtkTextIter* b,
+                           gpointer self);
+    static void onBeginUserAction(GtkTextBuffer* buf, gpointer self);
+    static void onEndUserAction(GtkTextBuffer* buf, gpointer self);
+    static void onChanged(GtkTextBuffer* buf, gpointer self);
+    static gboolean onIdleRetag(gpointer self);
+
+    // The disk.
+    void watch();
+    void stopWatching();
+    void rememberDisk(const std::string& content);
+    void applyDiskText(const std::string& content);
+    static void onFileChanged(GFileMonitor* m, GFile* f, GFile* other, GFileMonitorEvent ev,
+                              gpointer self);
+    void scheduleTaskCount();
+
+    DocumentHost* host_;
+    DocumentTags* tags_;
+    uint64_t      id_;
+    Kind          kind_ = Kind::Text;
+    std::string   path_, ext_;
+    bool          markdown_ = false, latex_ = false;
+    bool          showsPreview_ = false;
+    bool          previewTab_ = false;
+
+    GtkTextBuffer* buffer_ = nullptr;
+    bool           filling_ = false;
+    GtkTextBuffer* pageBuffer_ = nullptr;
+    Markdown::Page page_;
+    GtkTextView*   shownIn_ = nullptr;
+
+    std::string diffTitle_, diffBytes_;
+    bool        diffCommit_ = false;
+
+    // The file as last read or saved, and whether the buffer differs.
+    bool        diskKnown_ = false;
+    std::string saved_;
+    long        savedChars_ = 0;
+    bool        dirty_ = false;
+    bool        dirtyCheckPending_ = false;   // an edit inside a user action
+    GFileMonitor* monitor_ = nullptr;
+    guint         checkTimer_ = 0;
+
+    // Highlighting, live while the buffer holds text of a language the lexer
+    // knows. mirror_ is a UTF-8 copy of the buffer kept in step edit by
+    // edit, the TextSource the highlighter reads.
+    std::unique_ptr<IncrementalHighlighter<char>> hl_;
+    std::string mirror_;
+    size_t pendStart_ = 0, pendEnd_ = 0;
+    bool   pending_ = false;
+    size_t defStart_ = 0, defEnd_ = 0;
+    bool   deferred_ = false;
+    guint  idleId_ = 0;
+    bool   inAction_ = false;
+    int    actionEdits_ = 0;
+    bool   bulk_ = false;
+    bool   applyingTags_ = false;
+
+    int   tasksDone_ = 0, tasksTotal_ = 0;
+    guint taskTimer_ = 0;
+
+    LatexPreview* latexPreview_ = nullptr;
+    Place place_;
+};

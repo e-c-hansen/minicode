@@ -24,7 +24,7 @@ Read these first:
 
 Items 1 to 11 below are done (September 2026), so the port has what the Mac
 had then, apart from what the list at the end of item 8 leaves out. Almost
-everything the Mac gained from 1.5.0 on (tabs, the command palette, folding,
+everything the Mac gained from 1.5.0 on (the command palette, folding,
 several cursors, rename and the other language server commands, formatting,
 the viewers, the agent features and the command line control) is not here
 yet; `../ROADMAP.md`, "Linux parity", lists it with the core files that
@@ -49,8 +49,9 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
   (item 6);
 - the LaTeX preview with double-click editing and Export PDF (item 7);
 - several windows, each with its own tree, editor, terminal, browser, search
-  panel and language servers; Previous File, Focus Editor, Close Window and
-  Quit (item 8);
+  panel and language servers; Focus Editor, Close Window and Quit (item 8);
+- tabs, with preview tabs, Reopen Closed Tab and Save All (item 15, which
+  replaced Previous File);
 - a VTE terminal that gets its own Ctrl keys while it has the keyboard, with
   Ctrl+click on a file:line or URL in its output (item 9), and a WebKitGTK
   browser;
@@ -1156,11 +1157,50 @@ in the container; the code path is `takesReturn`), the look under GNOME's
 theme and at 2x, and the box's height against the text on the ThinkPad
 (it sits a pixel or two above the text's middle here).
 
+### 15. Tabs (done, November 2026; `PARITY.md` item 1.1)
+
+What later items build on:
+- **`Document`** (`src/Document.{h,cpp}`) is one open file: its own
+  `GtkTextBuffer` over the editor's one tag table, GTK's undo, the
+  highlighter and its mirror, `dirty()` (the text differs from the text last
+  read or saved), its file watch, a page buffer for the Markdown preview
+  (`page()`), its LaTeX preview, and `place()`, where its view was. State
+  that belongs to a file (folds, carets, change bars, backups) goes here;
+  state of the view stays in `Editor`. `kind()` is Text, Message (a file
+  that cannot show as text), Media (pictures, PDFs, video) or Diff.
+- **`Editor`** keeps the documents in tab order (`src/Tabs.cpp`):
+  `openFile(path, EditorTabs::OpenFrom)`, `active()`, `document(i)`,
+  `documentFor(path)`, `activate`, `closeTab` (asks nothing; main.cpp's
+  `closeTabAsking` asks), `reopenClosedTab`, `dirtyDocuments`. Switching is
+  `stash()` then `showActive()`. `buffer()` is what the view shows (the page
+  in a preview) and `sourceBuffer()` the active document's source;
+  `onActiveChanged` fires on every switch (main.cpp reveals the file in the
+  tree there), and the observer's `documentChanged` too, where the language
+  server session re-points to the new buffer (`LspSession::useBuffer`). The tab rules are the core's
+  `EditorTabs`, with `ClosedTabs` for Reopen.
+- **The harness**: `MCGuiApp().editor->active()` is the document on show.
+  `MCGuiOpenFile` opens as a single click in the tree does, in the preview
+  tab, which the next one replaces; `MCGuiOpenFileKept` opens a kept tab.
+  `MCGuiClickWith("ctrl", w)` clicks with modifiers.
+- **Traps**: GTK starts its double-click timer again from a double-click,
+  so a second double-click within the double-click time counts as one
+  click; the tabs suite pauses 0.5 s between them. A place comes back by
+  setting the adjustment once the view is mapped and still
+  (`settleOnPlace`); `gtk_text_view_scroll_to_mark` lands short on a fresh
+  layout and its pending scroll can undo the user's next move, and a tab
+  left while its place is still coming back keeps that place, not the
+  half-done scroll. The strip's scroller has an external vertical policy:
+  any minimum height there made GTK warn about measuring the editor's box.
+  A key-driven switch can print GTK's "Trying to snapshot GtkGizmo trough
+  without a current allocation" (a scroll bar mid-relayout); it was not
+  reproduced outside the app and is harmless.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).
   From `linux/`, `meson test -C build --suite gui` runs every suite (about
-  8 seconds in November 2026, 5 of them the `keys` suite); `./build/minicode-guitest save harness` runs
+  23 seconds in November 2026: 4 for the `keys` suite and 15 for the tab
+  suites, most of it waiting out GTK's double-click time between clicks); `./build/minicode-guitest save harness` runs
   some with their output as it comes, and `SUITES="save" meson test -C build
   --suite gui -v` does the same through Meson. Plain `meson test -C build`
   leaves them out. The program starts its own Xvfb on a display number the
@@ -1180,7 +1220,7 @@ theme and at 2x, and the box's height against the text on the ThinkPad
   `MCGuiSnapshot` and one of the window on top at each failed check. Two
   lines of noise are expected on every run, a libEGL "DRI3" warning and
   WebKit's "Can't connect to a11y bus". CI's GTK job runs every suite
-  (`.github/workflows/ci.yml`, about 7 seconds there); when they fail, the
+  (`.github/workflows/ci.yml`, about 7 seconds there before the tab suites); when they fail, the
   run keeps those pictures and Meson's log as its `gui-checks` artifact
   (`gh run download <id> -n gui-checks`).
 

@@ -5,6 +5,7 @@
 // the tabs themselves.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -58,6 +59,44 @@ std::vector<std::string> labels(const std::vector<std::string> &paths);
 // middle is left of the pointer comes before it. `from` itself when out of
 // range.
 int dropIndex(const std::vector<double> &widths, int from, double x);
+
+// ---- Reopen Closed Tab
+// What a closed tab leaves behind, so it can come back where it was: its
+// file, its place in the row, whether it showed its preview (a Markdown or
+// LaTeX file), and, when it had been on show, its view: the selection and
+// the first character on show, in characters, and how far below that
+// character's line the view's top was. The Mac keeps the same in
+// EditorController+Tabs.mm (rememberClosedTab:); the GTK port keeps it here.
+struct ClosedTab {
+    std::string path;
+    int index = 0;
+    bool preview = false;
+    bool haveView = false;
+    long selStart = 0, selEnd = 0;
+    long top = 0;
+    double topOffset = 0;
+};
+
+// A window's closed tabs, the newest last, at most `limit` of them (50, as
+// on the Mac). A tab with no file (a diff) is not remembered.
+class ClosedTabs {
+public:
+    explicit ClosedTabs(size_t limit = 50) : limit_(limit) {}
+    void remember(const ClosedTab &t);
+    bool empty() const { return list_.empty(); }
+    size_t size() const { return list_.size(); }
+    // The newest one whose file `reopenable` accepts, taken off the list,
+    // with the newer ones it rejected (a file gone, or a folder now)
+    // dropped on the way. False, with the list empty, when none is left.
+    bool take(ClosedTab *out, const std::function<bool(const std::string &)> &reopenable);
+    // Where a reopened tab goes in a row of `count`: its old place, or the
+    // end when the row is shorter now.
+    static int indexIn(const ClosedTab &t, int count);
+
+private:
+    size_t limit_;
+    std::vector<ClosedTab> list_;
+};
 
 // ---- The preview tab (VS Code's workbench.editor.enablePreview)
 // A file opened by a single click in the file tree goes in the window's

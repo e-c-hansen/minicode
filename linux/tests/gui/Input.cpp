@@ -261,6 +261,29 @@ void MCGuiClick(GtkWidget* widget, double x, double y, int b) {
     button(b, false);
 }
 
+void MCGuiClickWith(const std::string& modifiers, GtkWidget* widget, double x, double y, int b) {
+    MCGuiFocusKeyWindow();
+    std::vector<KeySym> held;
+    std::string rest = modifiers;
+    while (!rest.empty()) {
+        const size_t plus = rest.find('+');
+        std::string m = rest.substr(0, plus);
+        rest = plus == std::string::npos ? "" : rest.substr(plus + 1);
+        for (char& c : m) c = (char)std::tolower((unsigned char)c);
+        if (m == "ctrl" || m == "control") held.push_back(XK_Control_L);
+        else if (m == "shift") held.push_back(XK_Shift_L);
+        else if (m == "alt") held.push_back(XK_Alt_L);
+        else MCGuiCheck(false, "known modifier in \"" + modifiers + "\": " + m, __FILE__, __LINE__);
+    }
+    MCGuiMoveTo(widget, x, y);
+    for (KeySym m : held) sendKey(codeOf(m), true);
+    XSync(Dpy(), False);
+    button(b, true);
+    button(b, false);
+    for (auto it = held.rbegin(); it != held.rend(); ++it) sendKey(codeOf(*it), false);
+    XSync(Dpy(), False);
+}
+
 void MCGuiDoubleClick(GtkWidget* widget, double x, double y) {
     MCGuiClick(widget, x, y);
     MCGuiClick(widget, x, y);

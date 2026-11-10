@@ -1,6 +1,13 @@
-// Editor.h — the text editing surface: a GtkTextView + GtkTextBuffer with
-// syntax highlighting driven by the shared IncrementalHighlighter core, plus a
-// Markdown preview toggle backed by Markdown.{h,cpp}.
+// Editor.h — a window's editor: the row of tabs (TabStrip.h) over the slot,
+// a stack holding the one GtkTextView and what takes its place (pictures,
+// PDFs, video and audio, the LaTeX preview, a diff). Every open file is a
+// Document (Document.h) with a buffer of its own; the view shows the active
+// one with gtk_text_view_set_buffer (linux/PARITY.md, D2 and D3). The tabs
+// follow the core's rules (../src/EditorTabs.h) and are kept in Tabs.cpp, the
+// counterpart of the Mac's EditorController+Tabs.mm; this file and
+// Editor.cpp are the view: everything below "The document on show" acts on
+// the active document, as the Mac's EditorController reads and writes its
+// active tab.
 #pragma once
 
 #include <gtk/gtk.h>
@@ -10,78 +17,140 @@
 #include <string>
 #include <vector>
 
+#include "Document.h"
+#include "EditorTabs.h"
 #include "Markdown.h"
 #include "MarkdownEdit.h"
 #include "Settings.h"
-#include "SyntaxHighlighter.h"
 
 class MediaView;
 class LatexPreview;
 class GitDiffView;
+class TabStrip;
 
-// Told what the buffer holds and how it changes, for the language server
+// Told what the view shows and how it changes, for the language server
 // session (Lsp.h). Three calls, so the editor knows nothing about LSP.
 class EditorObserver {
 public:
     virtual ~EditorObserver() = default;
-    // The buffer now holds another document: `path` when it is that file's
-    // editable source, "" for a message or a Markdown preview.
+    // The view now shows another document: `path` when it is that file's
+    // editable source, "" for a message, a picture, a diff, a Markdown page
+    // or no tab. Editor::sourceBuffer() is the buffer by then.
     virtual void documentChanged(const std::string& path) = 0;
     virtual void documentSaved() = 0;
-    // The source was edited; the buffer has already changed. `inserted` is
-    // the text of an insertion (len bytes), or null for a deletion.
+    // The source on show was edited; the buffer has already changed.
+    // `inserted` is the text of an insertion (len bytes), or null for a
+    // deletion.
     virtual void textEdited(const char* inserted, int len) = 0;
     // The observer has a use for the Return key just pressed (a completion
     // list is open), so the editor must not continue a Markdown list with it.
     virtual bool takesReturn() const { return false; }
 };
 
-class Editor {
+class Editor : public DocumentHost {
 public:
     Editor();
-    ~Editor();
+    // Runs while the window's widgets still exist (main.cpp deletes the
+    // editor from GtkApplication's window-removed).
+    ~Editor() override;
 
-    // The widget to drop into the layout: a stack holding the text editor
-    // and the image / PDF viewer, which take the same slot.
-    GtkWidget* widget() const { return slot_; }
+    // The widget to drop into the layout: the tabs over the slot.
+    GtkWidget* widget() const { return box_; }
 
-    // The GtkTextView / GtkTextBuffer themselves, for the shell's find bar.
+    // The GtkTextView, and the buffer it shows: the active document's source,
+    // its Markdown page, a message, or the welcome text with no tab open.
     GtkWidget*     textView() const { return view_; }
-    GtkTextBuffer* buffer()   const { return buffer_; }
+    GtkTextBuffer* buffer() const { return buffer_; }
+    // The active document's own buffer (its source, while its page shows
+    // too), else what the view shows.
+    GtkTextBuffer* sourceBuffer() const;
 
-    // Load a file from disk into the buffer, detect its extension and
-    // re-highlight. Returns false if the file could not be read.
-    bool openFile(const std::string& path);
+    // ------------------------------------------------------------ tabs
+    // (Tabs.cpp; the rules are EditorTabs.h's, as on the Mac.)
 
-    // Write the current buffer (or the raw source, in preview mode) to disk.
-    // Returns false, with the reason in *error, when the write failed; the
-    // buffer then stays marked unsaved. When there is nothing to save (no
-    // file, or the slot shows something that is not the file's text: an image,
-    // a PDF, the "Cannot display" message) it writes nothing and returns true.
+    // Show a file in its tab, else in a new one: the preview tab when `from`
+    // opens in preview (replacing the old preview tab, which has no unsaved
+    // changes, since an edit keeps it), else a kept tab just right of the
+    // active one. The tab that was on show keeps its text, unsaved changes,
+    // undo and place. False when the file could not be shown as it is (its
+    // tab then says why: missing, not text, too large).
+    bool openFile(const std::string& path,
+                  EditorTabs::OpenFrom from = EditorTabs::OpenFrom::Other);
+    int tabCount() const { return (int)tabs_.size(); }
+    Document* document(int index) const;
+    const std::vector<Document*>& documents() const { return tabs_; }   // in tab order
+    Document* active() const { return active_; }
+    int activeIndex() const;
+    int indexOf(const Document* d) const;
+    Document* documentFor(const std::string& path) const;   // its tab, or null
+    Document* documentById(uint64_t id) const;               // by Document::id, or null
+    // Put a tab on show (the keyboard stays where it is).
+    void activate(Document* d);
+    // A tab by index, by step (wrapping) or by number (1 to 8, 9 the last),
+    // with the keyboard given to it; the bell when there is none.
+    void selectTab(int index);
+    void stepTab(int delta);
+    void selectTabNumber(int n);
+    // The keyboard to what the active tab shows.
+    void focusActiveDocument();
+    // Close a tab without asking; the caller asks about unsaved changes.
+    // The tab shown next is the one used most recently.
+    void closeTab(Document* d);
+    // Every tab, without asking and without remembering them (Open Folder).
+    void closeAllTabs();
+    // The tab closed last in this window, where it was, with its preview,
+    // selection and scroll; files no longer there are passed over. A file
+    // open again meanwhile is only shown. False when none is left.
+    bool reopenClosedTab();
+    bool canReopenClosedTab() const { return !closed_.empty(); }
+    size_t closedTabCount() const { return closed_.size(); }
+    // An ordinary tab now, no longer the preview tab.
+    void keepPreviewTab(Document* d);
+    Document* previewTab() const;
+    std::vector<Document*> dirtyDocuments() const;
+    bool anyDirty() const { return !dirtyDocuments().empty(); }
+    // A file or folder moved (a rename, a drag in the tree): every tab of it,
+    // or under it, follows, unsaved changes included.
+    void pathMoved(const std::string& from, const std::string& to);
+    // It went to the Trash: tabs of it, or under it, close, unless they hold
+    // unsaved changes, which stay, so saving writes the file again (the
+    // Mac's rule).
+    void pathTrashed(const std::string& path);
+    TabStrip* strip() const { return strip_; }
+    // A tab's close button or a middle click on it: the caller asks about
+    // unsaved changes, then calls closeTab.
+    std::function<void(Document*)> onCloseRequest;
+    // A command from a tab's right click menu: keep, close, closeothers,
+    // closeright, closeall, copypath, reveal, revealtree.
+    std::function<void(const std::string& command, Document*)> onTabCommand;
+    // Another tab came on show (the file tree follows it).
+    std::function<void()> onActiveChanged;
+    // Every object of the editor's that handlers on its widgets name, for
+    // main.cpp's teardown (disconnectOwners): never null.
+    std::vector<void*> handlerOwners() const;
+
+    // ------------------------------------------------ the document on show
+
+    // Write the active document (or `d`) to its file. False, with the reason
+    // in *error, when the write failed; it then stays unsaved. Nothing to
+    // save (no tab, a picture, a message, a diff) writes nothing and is true.
     bool save(std::string* error = nullptr);
-    // False while an image, a PDF or a binary file's message is shown.
-    bool canSave() const { return !path_.empty() && !readOnly_; }
+    bool saveDocument(Document* d, std::string* error);
+    bool canSave() const { return active_ && active_->canSave(); }
 
-    // Close the file and show the welcome text, dropping any unsaved edits.
-    // The shell asks "Save changes?" before calling this.
-    void closeFile();
-
-    // Changes made to the open text file by something else (the Mac's
-    // checkExternalChange). The file is watched while it is open, and the
-    // shell also calls checkExternalChange when the window becomes active.
-    // What is on disk is compared with what was last loaded or saved, by
-    // content, so MiniCode's own atomic saves never count. When it differs:
-    // a clean buffer takes the new text in place, keeping the caret and the
-    // scroll position; a buffer with unsaved edits is left alone and the
-    // callback is asked to put the question to the user. It returns false if
-    // it cannot ask now (another question is up), and then the change is
-    // reported again on the next check. Images and PDFs reload on their own
-    // (MediaView) and are not watched here.
+    // Changes made to the open files by something else (the Mac's
+    // checkExternalChange). Each file is watched while its tab is open, and
+    // the shell also calls this when the window becomes active. A clean tab
+    // takes the new text in place, keeping the caret and the scroll; a tab
+    // with unsaved edits has the callback put the question to the user, but
+    // only while it is on show (a tab in the background is asked about when
+    // it is shown). The callback returns false if it cannot ask now (another
+    // question is up); the change is then reported again on the next check.
     using ExternalCb = bool(*)(void* user);
     void setExternalChangeCallback(ExternalCb cb, void* user) { extCb_ = cb; extUser_ = user; }
     void checkExternalChange();
-    // The user chose Reload: the disk's text replaces the buffer and its
-    // edits, in place. False if the file can no longer be read as text.
+    // The user chose Reload: the disk's text replaces the active tab's and
+    // its edits, in place. False if the file can no longer be read as text.
     bool reloadFromDisk();
 
     // Images, PDFs, video and audio (MediaView). isMedia() is true while one
@@ -103,46 +172,43 @@ public:
     bool showingPdf() const;
     bool zoomPdf(int step);
 
-    // Toggle between the raw editable buffer and the rendered Markdown preview,
-    // or for LaTeX between the source and the typeset pages. No-op for other
-    // files.
+    // Toggle between the source and the rendered Markdown page (a buffer of
+    // the document's own, D3), or for LaTeX between the source and the
+    // typeset pages. No-op for other files.
     void togglePreview();
-    bool isMarkdown() const { return isMarkdown_; }
-    bool inPreview() const { return preview_; }
+    bool isMarkdown() const { return active_ && active_->isMarkdown(); }
+    bool inPreview() const { return active_ && active_->showsPreview(); }
     // A .tex/.ltx/.latex file, in a build with poppler: it opens in the LaTeX
     // preview (Latex.h), which takes the slot while the buffer keeps the
-    // source. latex() is null until the first one opens.
-    bool isLatex() const { return isLatex_; }
-    LatexPreview* latex() const { return latex_; }
+    // source. latex() is the active tab's, null until it first shows.
+    bool isLatex() const { return active_ && active_->isLatex(); }
+    LatexPreview* latex() const { return active_ ? active_->latexPreview() : nullptr; }
     // Ctrl+Shift+S: save the typeset PDF somewhere of the user's choosing.
     // False when the open file is not LaTeX.
     bool exportPdf(GtkWindow* parent);
 
     // A file's diff or a commit from the Source Control panel, read-only in
-    // the editor's slot the way an image takes it. The open file is closed
-    // first (the shell asks "Save changes?" before calling this), so there is
-    // nothing to save; opening any file puts the editor back. `title` is what
-    // the window title shows: "name (diff)" or "<short hash> <subject>".
+    // the editor's slot. Diffs and commits share one tab, as on the Mac.
+    // `title` is what the tab and the window title show: "name (diff)" or
+    // "<short hash> <subject>".
     void showDiff(const std::string& title, const std::string& bytes, bool commit);
-    bool isDiff() const { return diffShown_; }
-    const std::string& diffTitle() const { return diffTitle_; }
+    bool isDiff() const { return active_ && active_->kind() == Document::Kind::Diff; }
+    const std::string& diffTitle() const;
     GitDiffView* diffView() const { return diff_; }
 
-    const std::string& currentPath() const { return path_; }
-    bool dirty() const { return dirty_ && !readOnly_; }
+    // The active tab's file ("" with none, or a diff), and whether it holds
+    // unsaved changes.
+    const std::string& currentPath() const;
+    bool dirty() const { return active_ && active_->dirty(); }
 
-    // Optional: called whenever the dirty/title state changes so the shell can
-    // refresh the window title. Set by main.cpp.
+    // Optional: called whenever what the title shows changes (the tab on
+    // show, its unsaved changes, its tasks). Set by main.cpp.
     using TitleCb = void(*)(void* user);
     void setTitleCallback(TitleCb cb, void* user) { titleCb_ = cb; titleUser_ = user; }
 
-    // Show a plain gray message (welcome screen / errors), not editable.
-    void showMessage(const std::string& msg);
-    void showWelcome();
-
-    // Colors from the settings file: syntax and Markdown tags, and the swatches
-    // shown while the settings file itself is open. The panel background and
-    // text come from the stylesheet (ThemeCss).
+    // Colors from the settings file: syntax and Markdown tags, which every
+    // tab shares, and the swatches shown while the settings file itself is
+    // open. The panel background and text come from the stylesheet.
     void applySettings(const Settings& s);
     // The settings file's path. While that file is open its color values are
     // clickable swatches that open a color picker.
@@ -153,9 +219,9 @@ public:
     // with no line comments).
     bool toggleComment();
 
-    // Ctrl+L in a Markdown file's source: the task key over the lines the
-    // selection touches (MarkdownTasks::toggle), as one undo step. False when
-    // there is nothing to do it to (not Markdown, the preview, a heading).
+    // The task key in a Markdown file's source: MarkdownTasks::toggle over
+    // the lines the selection touches, as one undo step. False when there is
+    // nothing to do it to (not Markdown, the preview, a heading).
     bool toggleTask();
 
     // F9: the selected lines sorted, or with no selection the keep-sorted
@@ -168,11 +234,9 @@ public:
     // editor.keep-sorted-on-save: every block sorted before a save, as one
     // undo step. Returns a problem to show, or "".
     std::string sortBlocksBeforeSave();
-    // A Markdown file's tasks, done and in all, kept current as it is edited
-    // (0.3 s after typing stops) and toggled; 0 and 0 for any other file.
-    // The title callback is called when they change.
-    int tasksDone() const { return tasksDone_; }
-    int tasksTotal() const { return tasksTotal_; }
+    // The active Markdown file's tasks, done and in all; 0 and 0 otherwise.
+    int tasksDone() const { return active_ ? active_->tasksDone() : 0; }
+    int tasksTotal() const { return active_ ? active_->tasksTotal() : 0; }
 
     // Put the caret on a 1-based line and select `byteLength` bytes starting
     // `byteColumn` bytes into it (a Find in Folder match), scrolled into view
@@ -185,11 +249,6 @@ public:
     // `column` characters into the 1-based line, 0 or 1 meaning its start,
     // and no further than its end. The Mac counts the column the same way.
     bool revealLineColumn(int line, int column);
-
-    // The open file now lives at `path` (a rename or save-as). Keeps the
-    // buffer and its undo history, and re-highlights the whole buffer only if
-    // the extension, and so the grammar, changed.
-    void setPath(const std::string& path);
 
     // A link clicked in a Markdown preview that the editor does not handle
     // itself ("#section" it scrolls to): a web address, or a file or folder,
@@ -205,62 +264,63 @@ public:
 
     // One observer (the language server session), not owned.
     void setObserver(EditorObserver* o) { observer_ = o; }
-    // True while the buffer holds a file's editable source.
-    bool isSource() const { return sourceMode_; }
-    // The whole source as UTF-8: the highlighter's mirror when there is one,
-    // else a copy out of the buffer.
+    // True while the view shows the active file's editable source.
+    bool isSource() const;
+    // The active file's whole source as UTF-8.
     std::string text() const;
 
+    // DocumentHost
+    void documentStateChanged(Document* d) override;
+    void documentEdited(Document* d, GtkTextIter* at, const char* inserted, int len) override;
+    bool documentChangedOnDisk(Document* d) override;
+    const Settings& documentSettings() const override { return settings_; }
+    const std::string& settingsPath() const override { return settingsPath_; }
+    void documentWillReload(Document* d) override;
+    void documentReloaded(Document* d) override;
+
 private:
-    // Highlighting. startHighlighting() lexes the whole buffer and retags it
-    // (file load, grammar change, settings change). After that every edit is
-    // fed to the IncrementalHighlighter from the buffer's insert-text and
-    // delete-range signals, and only the lines it reports are retagged: at
-    // once if they are few or on screen, otherwise in idle time slices.
-    void startHighlighting();
-    void stopHighlighting();     // buffer no longer holds source (preview, message)
-    void flushHighlighting();    // retag the lines pending since the last flush
-    void retagSpan(size_t firstLine, size_t endLine);   // lex from stored states, retag
-    void retagLines(size_t firstLine, size_t endLine, const std::vector<Token>& tokens);
-    void visibleLines(size_t& first, size_t& end) const;
-    void cancelDeferred();
-    void resyncAfterBulk();      // one prefix/suffix diff for a many-edit user action
-    void removeHighlightTags(const GtkTextIter* a, const GtkTextIter* b);
-    size_t byteOffsetOf(const GtkTextIter* it) const;
-    bool linesMatch() const;     // GTK's lines are the highlighter's '\n' lines
-    bool isHighlightTag(GtkTextTag* tag) const;
-    void noteEdit(size_t pos, size_t oldLen, size_t newLen);
+    // ---- tabs (Tabs.cpp)
+    bool loadInto(Document* d, const std::string& path);   // reads the file
+    bool loadText(Document* d, const std::string& path);
+    bool opensInPreview(EditorTabs::OpenFrom from) const;
+    void dropTab(Document* d, bool remember);   // out of the row, and deleted
+    void destroy(Document* d);
+    void refreshStrip();
+    GMenuModel* menuForTab(int index);
+    void tabMenuCommand(const std::string& name, GVariant* param);
 
-    static void onInsertText(GtkTextBuffer* buf, GtkTextIter* loc, char* text,
-                             int len, gpointer self);
-    static void onDeleteRange(GtkTextBuffer* buf, GtkTextIter* a, GtkTextIter* b,
-                              gpointer self);
-    static void onInsertTextAfter(GtkTextBuffer* buf, GtkTextIter* loc, char* text,
-                                  int len, gpointer self);
-    static void onDeleteRangeAfter(GtkTextBuffer* buf, GtkTextIter* a, GtkTextIter* b,
-                                   gpointer self);
-    static void onApplyTag(GtkTextBuffer* buf, GtkTextTag* tag, GtkTextIter* a,
-                           GtkTextIter* b, gpointer self);
-    static void onBeginUserAction(GtkTextBuffer* buf, gpointer self);
-    static void onEndUserAction(GtkTextBuffer* buf, gpointer self);
-    static gboolean onIdleRetag(gpointer self);
+    // ---- the view
+    void stash();                 // the active tab leaves the screen: its place kept
+    void showActive();            // the active tab (or the welcome text) on screen
+    void setViewBuffer(GtkTextBuffer* b, bool prose, bool editable);
+    void showSource(Document* d);
+    void restorePlace(Document* d);
+    void notifyDocument();        // tell the observer what the view shows now
+    void titleChanged();
+    bool inMarkdownPage() const;  // the view shows the active Markdown page
 
-    void renderPreview();        // build the Markdown preview into the buffer
+    void renderPreview();        // build the active Markdown page into its buffer
     void rerenderPreview();      // the same again, at the same scroll
     void fitPage();              // size the preview's tables and pictures to the pane
-    void clearPage();            // its widgets off the view first, then page_ emptied
+    void clearPage(Document* d); // its widgets off the view first, then its page forgotten
     // Web pictures (WebImages.h): the page's pending ones are fetched after
     // a render; those that arrive are put in together, shortly after the
     // first of them, in place of their alt text.
     void fetchWebPictures();
     void placeArrivedPictures();
-    // Where the preview comes to rest (previewEntryV_), measured 700 ms on.
+    // Where the preview comes to rest (place().previewEntryV), measured 700 ms on.
     void notePreviewRest();
     // Keeping the line at the top of the view in place while pictures placed
     // above it are laid out (see holdTopLine in Editor.cpp).
     void holdTopLine(GtkTextMark* mark, int into);
     void stopHold();
     static gboolean onHoldTick(GtkWidget* w, GdkFrameClock* clock, gpointer self);
+    // A tab shown again, back at its place: `mark`'s line at the top, `into`
+    // pixels into it (see settleOnPlace in Editor.cpp). The mark is the
+    // editor's to delete.
+    void settleOnPlace(GtkTextMark* mark, int into);
+    void stopPlace();
+    static gboolean onPlaceTick(GtkWidget* w, GdkFrameClock* clock, gpointer self);
     void openMarkdownLink(const std::string& url);
     bool scrollToAnchor(const std::string& anchor);
     // Editing from the preview: the block on source `line` (a cell, when
@@ -269,9 +329,11 @@ private:
     void showMdPopover(const std::string& title, const std::string& text, bool allowsItem);
     void commitMdEdit();
     void dropMdPopover();
-    // A new source from a preview edit (or its undo): dirty, shown again at
-    // the same scroll. `undoable` puts the old source on the undo stack.
-    void applyMarkdownSource(const std::string& source, bool undoable);
+    // A new source from a preview edit: spliced into the source buffer as one
+    // undoable edit (D3), then the page shown again at the same scroll.
+    void applyMarkdownSource(const std::string& source);
+    // Ctrl+Z, Ctrl+Shift+Z in the Markdown page: the source buffer's undo.
+    void undoFromPage(bool redo);
     // A click on a task's box in the preview: that one byte of the source
     // flipped (MarkdownTasks::toggleBox), as a preview edit.
     void toggleTaskBox(int line);
@@ -283,11 +345,8 @@ private:
     void applyTaskEdit(const std::u16string& text, std::size_t replaceStart,
                        std::size_t replaceLength, const std::u16string& replacement,
                        std::size_t selStart, std::size_t selEnd);
-    void refreshTaskCount();     // count now; the title callback if it changed
-    void scheduleTaskCount();    // 0.3 s after the last edit
-    void clearTaskCount();
     // The editable source as UTF-16 and the selection in it; false when the
-    // buffer is not editable source (preview, message, read-only).
+    // view does not show editable source.
     bool sourceText(std::u16string& text, std::size_t& a, std::size_t& b) const;
     // Return, Tab, Shift+Tab or Backspace by AutoIndent's rules: true when
     // it acted (or, for Shift+Tab, when the key must not move the focus).
@@ -298,76 +357,45 @@ private:
     bool runKeepSorted(bool all, std::string* message);
     static gboolean onViewKey(GtkEventControllerKey* c, guint key, guint code,
                               GdkModifierType mods, gpointer self);
-    void loadRawIntoBuffer();    // put source_ back as editable, highlighted text
-    void ensureTags();           // create the per-style + markdown GtkTextTags once
+    void ensureTags();           // the per-style and Markdown tags, in the shared table
     void setProseFont(bool prose);  // proportional for preview/messages, mono for code
-    void markDirty(bool d);
-
-    static void onBufferChanged(GtkTextBuffer* buf, gpointer self);
 
     bool isSettingsFile() const;
-    void decorateColors(int firstLine, int endLine);   // swatch tags over color values
     bool swatchAt(double x, double y, int* line) const;   // widget coords
     void pickColor(int line);
     void setLineColor(int line, const Rgba& c);
     void dropColorPopover();
     void scheduleColorSave();
+    void saveColorNow();
     static void onColorPicked(GObject* chooser, GParamSpec* pspec, gpointer self);
     static void onViewUnrealize(GtkWidget* view, gpointer self);
     static void onPressed(GtkGestureClick* g, int n, double x, double y, gpointer self);
     static void onMotion(GtkEventControllerMotion* m, double x, double y, gpointer self);
 
-    // External changes (checkExternalChange).
-    void watchText();                     // start watching path_ as text
-    void stopWatchingText();
-    void rememberDisk(const std::string& content);
-    bool diskMatches(const std::string& content) const;
-    void applyDiskText(const std::string& content);   // in place, caret and scroll kept
-    static void onTextFileChanged(GFileMonitor* m, GFile* f, GFile* other,
-                                  GFileMonitorEvent ev, gpointer self);
-
-    void showTextSlot();                 // the text view back in the slot
-    void showLatex(bool on);             // the LaTeX preview in the slot, or the source
+    void showLatex(bool on, bool focus);   // the LaTeX preview in the slot, or the source
+    LatexPreview* makeLatex(Document* d);  // its own, made on first use
     static void onMediaChanged(void* self);   // reloaded from disk
     static void onPdfShown(void* self);       // a PDF view came on or off screen
 
-    GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_ or the media view
+    GtkWidget*     box_      = nullptr;   // the strip over the slot
+    TabStrip*      strip_    = nullptr;
+    GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_, media, LaTeX previews, diff
     GitDiffView*   diff_     = nullptr;   // made on the first diff
-    bool           diffShown_ = false;
-    std::string    diffTitle_;
     MediaView*     media_    = nullptr;
-    bool           readOnly_ = false;     // the buffer is not the file's text
     GtkWidget*     scroller_ = nullptr;
     GtkWidget*     view_     = nullptr;   // GtkTextView
-    GtkTextBuffer* buffer_   = nullptr;
+    GtkTextBuffer* buffer_   = nullptr;   // what the view shows
+    GtkTextBuffer* welcome_  = nullptr;   // the view's buffer with no tab open
+    char           typedKey_ = 0;         // ':' or a closer being typed (electric)
 
-    std::string path_;
-    std::string ext_;         // lowercase, no dot
-    std::string source_;      // authoritative UTF-8 source text
-    bool        isMarkdown_ = false;
-    bool        isLatex_    = false;
-    LatexPreview* latex_    = nullptr;
-    bool        preview_    = false;
-    bool        dirty_      = false;
-    bool        tagsReady_  = false;
-    bool        sourceMode_ = false;   // the buffer holds editable source text
-    char        typedKey_   = 0;       // ':' or a closer being typed (electric)
-
-    // Highlighting state, live only while the buffer holds source of a
-    // language the lexer knows. mirror_ is a UTF-8 copy of the buffer kept in
-    // step edit by edit, the TextSource the highlighter reads.
-    std::unique_ptr<IncrementalHighlighter<char>> hl_;
-    std::string  mirror_;
-    size_t       pendStart_ = 0, pendEnd_ = 0;   // bytes still to retag
-    bool         pending_ = false;
-    size_t       defStart_ = 0, defEnd_ = 0;     // bytes left to the idle retag
-    bool         deferred_ = false;
-    guint        idleId_ = 0;
-    bool         inAction_ = false;    // between begin- and end-user-action
-    int          actionEdits_ = 0;     // edits seen in the current user action
-    bool         bulk_ = false;        // stopped tracking edits one by one
-    bool         applyingTags_ = false;
-    std::vector<GtkTextTag*> hlTags_;   // syntax tags plus swatches: all a retag owns
+    // The documents, in tab order, and the one on show.
+    DocumentTags           tags_;
+    std::vector<Document*> tabs_;
+    Document*              active_ = nullptr;
+    Document*              diffDoc_ = nullptr;   // the tab diffs and commits share
+    uint64_t               stamp_ = 0;           // for Document::lastUsed
+    EditorTabs::ClosedTabs closed_;
+    GSimpleActionGroup*    tabActions_ = nullptr;   // "tab.", the tab menu's
 
     std::string settingsPath_;
     Settings    settings_;    // for tag colors and swatch text contrast
@@ -378,18 +406,14 @@ private:
     // the file is saved 150 ms after the last one, as on the Mac.
     GtkWidget*  colorPop_ = nullptr;
     int         colorLine_ = -1;
-    std::string colorPath_;             // the file the popover was opened for
+    Document*   colorDoc_ = nullptr;    // the tab the popover was opened for
     guint       colorSaveTimer_ = 0;
 
-    // What the open text file held on disk when it was last loaded or saved
-    // (size and hash; the content itself is not kept twice).
-    bool          diskKnown_ = false;
-    std::size_t   diskSize_ = 0;
-    std::size_t   diskHash_ = 0;
-    GFileMonitor* textMonitor_ = nullptr;
-    guint         textCheckTimer_ = 0;
     ExternalCb    extCb_ = nullptr;
     void*         extUser_ = nullptr;
+    // The scroll of the tab on show around a change from the disk.
+    double        reloadH_ = 0, reloadV_ = 0;
+    bool          reloadKeep_ = false;
 
     // After revealLine: the caret is checked every frame until it has stayed
     // on screen for a few frames, and scrolled to again if a layout that was
@@ -404,35 +428,21 @@ private:
     void stopSettle();
     static gboolean onSettleTick(GtkWidget* w, GdkFrameClock* clock, gpointer self);
 
-    // The Markdown preview: what each stretch of the rendered text came
-    // from, and its tables and pictures (Markdown.h).
-    Markdown::Page page_;
     std::function<void(const Link&)> linkHandler_;
     // Editing from the preview (editMarkdownBlock): the popover, the block
     // being edited, and the source it was found in; the edit is refused if
-    // the source changed meanwhile. Undo and redo of preview edits are
-    // source snapshots, since the buffer holds rendered text.
+    // the source, or the tab, changed meanwhile.
     GtkWidget*  mdPop_ = nullptr;
     GtkWidget*  mdPopLabel_ = nullptr;
     GtkWidget*  mdPopText_ = nullptr;
     GtkWidget*  mdPopAdd_ = nullptr;
     MarkdownEdit::Block mdBlock_;
     std::string mdEditSrc_;
+    Document*   mdEditDoc_ = nullptr;
     bool        mdEditValid_ = false;
     bool        mdAdding_ = false;
     GdkRectangle mdAnchor_{0, 0, 1, 1};
-    std::vector<std::string> mdUndo_, mdRedo_;
-    // Ctrl+Shift+P keeps the place: the source's selection and how far down
-    // the pane the caret sat, and the preview's scroll when it came up (a
-    // preview scrolled since sends the source to where it was looking).
-    bool   haveSrcPos_ = false;
-    int    srcSelStart_ = 0, srcSelEnd_ = 0;
-    double srcCaretFrac_ = 0.3;
-    double previewEntryV_ = -1;
     guint  previewEntryTimer_ = 0;
-
-    int   tasksDone_ = 0, tasksTotal_ = 0;
-    guint taskCountTimer_ = 0;
 
     // Web pictures that arrived since the last placing, and the timer that
     // places them. The fetches' callbacks can outlive the editor, so they
@@ -446,9 +456,17 @@ private:
     gint64 holdUntil_ = 0;
     int    holdStill_ = 0;              // frames in a row it needed no move
     int    holdMoves_ = 0;              // moves made so far
+    GtkTextMark* placeMark_ = nullptr;  // settleOnPlace's line
+    int    placeInto_ = 0;
+    guint  placeTick_ = 0;
+    gint64 placeUntil_ = 0;
+    double placeLastV_ = -1;
+    int    placeStill_ = 0;
+    int    placeTries_ = 0;
+    int    placeCaret_ = -1;            // the caret's offset; if it moves, the user has
+    bool   placeFollowCaret_ = false;   // the user moved the caret first: show it
 
     EditorObserver* observer_ = nullptr;
-    void notifyDocument();    // tell the observer what the buffer holds now
 
     TitleCb titleCb_ = nullptr;
     void*   titleUser_ = nullptr;

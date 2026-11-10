@@ -5,3 +5,6 @@ SaveSuite.cpp
 HarnessSuite.cpp
 KeysSuite.cpp
 TreeStallSuite.cpp
+TabsSuite.cpp
+PreviewTabsSuite.cpp
+TabViewersSuite.cpp

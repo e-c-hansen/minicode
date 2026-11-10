@@ -5,7 +5,11 @@
 //
 // main.cpp owns one LspSession per window and makes it the Editor's observer,
 // so the session hears about every file opened, saved and edited without
-// hooks of its own in main.cpp's open and save paths. What main.cpp does call:
+// hooks of its own in main.cpp's open and save paths. Each tab has a buffer
+// of its own (Document.h); the session has the tab on show open on its
+// server, and follows the editor's buffer when another tab comes on show
+// (every open tab's file staying open on its server, as on the Mac, is
+// PARITY.md's Stage 2). What main.cpp does call:
 // setRoot (Open Folder), applySettings (settings file changed), shutdown
 // (window closing), the three actions, and LspTerminateAllServers at quit.
 #pragma once
@@ -81,7 +85,8 @@ private:
 
     Editor*        editor_;
     GtkWidget*     view_;
-    GtkTextBuffer* buffer_;
+    GtkTextBuffer* buffer_ = nullptr;   // the tab on show's source, held
+    void useBuffer(GtkTextBuffer* b);
     std::string    root_;
     Settings       settings_;
     std::string    signature_;   // the lsp.* settings the servers were started with

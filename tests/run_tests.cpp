@@ -8896,6 +8896,79 @@ static void testEditorTabs() {
     CHECK((labels({"/p/q.md", "/p/q.md"}) == std::vector<std::string>{"q.md", "q.md"}));
     CHECK((labels({"/m.c", "/x/m.c"}) == std::vector<std::string>{"m.c", "x/m.c"}));
     CHECK(labels({}).empty());
+
+    GROUP("tabs:closed");
+    {   // the newest comes back first, with what it kept
+        ClosedTabs c;
+        CHECK(c.empty());
+        ClosedTab a;
+        a.path = "/p/a";
+        a.index = 2;
+        a.haveView = true;
+        a.selStart = 5;
+        a.selEnd = 9;
+        a.top = 120;
+        a.topOffset = 3.5;
+        c.remember(a);
+        ClosedTab b;
+        b.path = "/p/b";
+        b.preview = true;
+        c.remember(b);
+        ClosedTab none;   // a tab with no file (a diff) is not remembered
+        c.remember(none);
+        CHECK(c.size() == 2);
+        ClosedTab got;
+        CHECK(c.take(&got, nullptr) && got.path == "/p/b" && got.preview);
+        CHECK(c.take(&got, [](const std::string &) { return true; }));
+        CHECK(got.path == "/p/a" && got.index == 2 && got.haveView && got.selStart == 5 &&
+              got.selEnd == 9 && got.top == 120 && got.topOffset == 3.5);
+        CHECK(c.empty() && !c.take(&got, nullptr));
+    }
+    {   // files gone on the way are passed over, and dropped
+        ClosedTabs c;
+        for (const char *p : {"/p/old", "/p/gone", "/p/also-gone"}) {
+            ClosedTab t;
+            t.path = p;
+            c.remember(t);
+        }
+        ClosedTab got;
+        CHECK(c.take(&got, [](const std::string &p) { return p == "/p/old"; }));
+        CHECK(got.path == "/p/old" && c.empty());
+        c.remember(got);
+        CHECK(!c.take(&got, [](const std::string &) { return false; }) && c.empty());
+    }
+    {   // at most the limit, the oldest dropped
+        ClosedTabs c;
+        for (int i = 0; i < 53; i++) {
+            ClosedTab t;
+            t.path = "/p/" + std::to_string(i);
+            c.remember(t);
+        }
+        CHECK(c.size() == 50);
+        ClosedTab got;
+        CHECK(c.take(&got, nullptr) && got.path == "/p/52");
+        std::string last;
+        while (c.take(&got, nullptr)) last = got.path;
+        CHECK(last == "/p/3");
+        ClosedTabs two(2);
+        for (const char *p : {"/a", "/b", "/c"}) {
+            ClosedTab t;
+            t.path = p;
+            two.remember(t);
+        }
+        CHECK(two.size() == 2 && two.take(&got, nullptr) && got.path == "/c");
+        CHECK(two.take(&got, nullptr) && got.path == "/b" && two.empty());
+    }
+    {   // its old place, or the end of a shorter row
+        ClosedTab t;
+        t.index = 3;
+        CHECK(ClosedTabs::indexIn(t, 5) == 3);
+        CHECK(ClosedTabs::indexIn(t, 3) == 3);
+        CHECK(ClosedTabs::indexIn(t, 1) == 1);
+        CHECK(ClosedTabs::indexIn(t, 0) == 0);
+        t.index = -2;
+        CHECK(ClosedTabs::indexIn(t, 4) == 0);
+    }
 }
 
 // ------------------------------------------------------------------ formatting
