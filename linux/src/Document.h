@@ -46,6 +46,7 @@
 #endif
 
 class BracketColors;
+class DocumentFolds;
 class Document;
 class LatexPreview;
 
@@ -242,6 +243,9 @@ public:
     void paintBracketsOnScreen();
     // editor.bracket-pair-colorization changed: on or off from now on.
     void bracketSettingChanged();
+    // Its folds (Folds.h, PARITY.md 1.10): the regions, the closed folds and
+    // their tag, made with the buffer.
+    DocumentFolds* folds() const { return folds_.get(); }
 
     // A Markdown file's tasks, done and in all, recounted 0.3 s after typing
     // stops; 0 and 0 for any other file.
@@ -426,6 +430,7 @@ private:
     void carryLater(size_t pos, size_t oldLen, size_t newLen);
     bool   applyingTags_ = false;
     std::unique_ptr<BracketColors> brackets_;
+    std::unique_ptr<DocumentFolds> folds_;
 
     int   tasksDone_ = 0, tasksTotal_ = 0;
     guint taskTimer_ = 0;

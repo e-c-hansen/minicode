@@ -453,8 +453,9 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Focus the file tree (outside the browser and PDFs, where it is Actual Size) | Command 0 | Ctrl 0 |  |
 | Focus the editor's right group, splitting the editor if it is not split | Command 2 |  |  |
 | Focus the terminal, opening it if it is hidden | Focus Terminal in the Navigate menu |  |  |
-| Fold every region, every one at a level, or every comment, or unfold them all | Control Command 0, Control Command 1 to 7, Control Command /, Control Command J |  |  |
-| Fold the region the cursor is in, or the next one out with each press; unfold the fold on the cursor's line | Control Command [, Control Command ] (Option Command [ and ] are the terminals); or click the arrow beside the line number, or the ⋯ after a folded line |  |  |
+| Fold every region, every one at a level, or every comment, or unfold them all | Control Command 0, Control Command 1 to 7, Control Command /, Control Command J | Ctrl Alt 0, Ctrl Alt 1 to 7, Ctrl Alt /, Ctrl Alt J (a tab's folds hide 5,000 lines at most, so on a long file what would pass that stays open, and the status bar says how many) |  |
+| Fold the region the cursor is in and every region inside it, or unfold them all | Fold Recursively and Unfold Recursively in View > Folding | Ctrl Alt [, Ctrl Alt ] |  |
+| Fold the region the cursor is in, or the next one out with each press; unfold the fold on the cursor's line | Control Command [, Control Command ] (Option Command [ and ] are the terminals); or click the arrow beside the line number, or the ⋯ after a folded line | Ctrl Shift [, Ctrl Shift ]; or click the arrow beside the line number, or the ⋯ after a folded line |  |
 | Format the file, or the selected lines where the formatter can | Shift Option F |  |  |
 | Go back to where you were before a jump (a definition, a symbol, a line, a problem, another tab), or forward again | Control minus, Control Shift minus | Ctrl Alt minus, Ctrl Shift minus (in the terminal Ctrl Shift minus is the program's) |  |
 | Go to a line of the open file, by its number (42:7 for a column too) | Control G | Ctrl G (in the terminal the program has it) |  |
@@ -560,7 +561,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Zoom every terminal in or out, or back to terminal.font-size, while a terminal has the keyboard | Command equals (or Command plus), Command minus, Option Command 0 (or Command with keypad 0); or Zoom In, Zoom Out, Reset Zoom in the Terminal menu | Ctrl equals (or Ctrl plus), Ctrl minus, Ctrl Alt 0 (or Ctrl with keypad 0); or Zoom In, Zoom Out, Reset Zoom in the Terminal menu |  |
 | Zoom the browser's page, a PDF or the LaTeX preview in or out, or back to actual size, while it has the keyboard or you last scrolled or clicked in it | Command equals (or Command plus), Command minus, Command 0 |  |  |
 | Zoom the browser's page or a PDF to the width of the pane, or a PDF's page to fit the pane | View > Page Zoom > Zoom to Fit Width, Zoom to Fit Page |  |  |
-| Zoom the editor's text and the Markdown preview in or out, or back to their sizes in the settings, while the keyboard is anywhere but a terminal, a web page, or a PDF | Command equals (or Command plus), Command minus, Option Command 0 (or Command with keypad 0) | Ctrl equals (or Ctrl plus), Ctrl minus, Ctrl Alt 0 (or Ctrl with keypad 0), while no PDF or LaTeX preview shows |  |
+| Zoom the editor's text and the Markdown preview in or out, or back to their sizes in the settings, while the keyboard is anywhere but a terminal, a web page, or a PDF | Command equals (or Command plus), Command minus, Option Command 0 (or Command with keypad 0) | Ctrl equals (or Ctrl plus), Ctrl minus, Ctrl with keypad 0 (Ctrl Alt 0 folds every region there), while no PDF or LaTeX preview shows |  |
 | Zoom a PDF or the LaTeX preview back to the width of the pane, or the browser's page back to 100% |  | Ctrl Alt 0 |  |
 
 ## Limitations

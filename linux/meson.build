@@ -82,6 +82,9 @@ core_sources = [
   # A MultiEdit's ranges given to the highlighter one at a time (Document's
   # batches: typing at many carets, Replace All).
   core_dir / 'EditBatch.cpp',
+  # The regions a file folds into, the folds that are closed, and the limit
+  # on what they hide (Folds.cpp shows them).
+  core_dir / 'Folding.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -112,6 +115,9 @@ gui_sources = [
   # Several carets, the line commands and VS Code's words (PARITY.md 1.9).
   'src/Carets.cpp',
   'src/CaretEdits.cpp',
+  # Folding: each document's regions, folds and their invisible tag, and the
+  # editor's placeholders, keys and commands (PARITY.md 1.10).
+  'src/Folds.cpp',
   'src/Markdown.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.

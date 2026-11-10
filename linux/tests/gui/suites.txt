@@ -31,6 +31,9 @@ MultiCaretSelectSuite.cpp
 LineCommandsSuite.cpp
 EditorWordsSuite.cpp
 MultiCaretPerfSuite.cpp
+FoldingSuite.cpp
+FoldBudgetSuite.cpp
+FoldPerfSuite.cpp
 ZoomSuite.cpp
 WordWrapSuite.cpp
 GoBackSuite.cpp

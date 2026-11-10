@@ -6,6 +6,7 @@
 #include "BackupStore.h"
 #include "BracketColors.h"
 #include "BufferLines.h"
+#include "Folds.h"
 #include "LargeFileView.h"
 #include "MultiEdit.h"
 #include "MarkdownTasks.h"
@@ -128,6 +129,11 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     id_ = ++next;
     buffer_ = gtk_text_buffer_new(tags_->table);
     gtk_text_buffer_set_enable_undo(buffer_, FALSE);
+    // Where its lines start, for the gutter; the buffer keeps it. Then its
+    // folds (Folds.h), whose handlers come first of all after an edit: they
+    // fix the fold tag before the host's own (an electric dedent) edit again.
+    BufferLines::attach(buffer_);
+    folds_ = std::make_unique<DocumentFolds>(this, buffer_);
     // Highlighting follows every edit. The plain handlers run before the
     // buffer changes (both signals are RUN_LAST), while the iterators still
     // describe the old text; the _after ones run once it has changed.
@@ -148,9 +154,8 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     g_signal_connect_after(buffer_, "undo", G_CALLBACK(onEndUserAction), this);
     g_signal_connect(buffer_, "redo", G_CALLBACK(onBeginUserAction), this);
     g_signal_connect_after(buffer_, "redo", G_CALLBACK(onEndUserAction), this);
-    // Where its lines start, for the gutter; the buffer keeps it. Its long
-    // lines shown a part at a time (LargeFileView.h), the same.
-    BufferLines::attach(buffer_);
+    // Its long lines shown a part at a time (LargeFileView.h); the buffer
+    // keeps them.
     LongLines::attach(buffer_);
     brackets_ = std::make_unique<BracketColors>(buffer_);
 }
@@ -159,6 +164,7 @@ Document::~Document() {
     // Saved, or let go when asked: its unsaved text is not kept any more. A
     // crash or a SIGKILL never gets here, and leaves the backup.
     if (backup_.written) BackupStore::shared().remove(backup_.id);
+    folds_.reset();
     cancelLoading();
     stopWatching();
     if (taskTimer_) g_source_remove(taskTimer_);
@@ -509,6 +515,7 @@ void Document::setPath(const std::string& path) {
     const bool regrammar = ext != ext_ || wasSettings != isSettingsFile();
     ext_ = ext;
     if (regrammar && kind_ == Kind::Text) startHighlighting();
+    if (regrammar) folds_->sourceChanged();   // maybe another way of folding
     refreshTaskCount();   // x.txt renamed to x.md counts its tasks
     host_->documentStateChanged(this);
 }
@@ -605,6 +612,7 @@ bool Document::reloadFromDisk() {
 // its line and column). The editor keeps the scroll position of one on show.
 void Document::applyDiskText(const std::string& content) {
     host_->documentWillReload(this);
+    folds_->forget();   // as on the Mac, a reload forgets the folds
     rememberDisk(content);
     const std::string old = text();
     std::size_t p = 0, q = 0;
@@ -1195,7 +1203,7 @@ void Document::decorateColors(int firstLine, int endLine) {
         gtk_text_buffer_get_iter_at_line(buffer_, &ls, ln);
         le = ls;
         if (!gtk_text_iter_ends_line(&le)) gtk_text_iter_forward_to_line_end(&le);
-        char* raw = gtk_text_buffer_get_text(buffer_, &ls, &le, FALSE);
+        char* raw = gtk_text_buffer_get_text(buffer_, &ls, &le, TRUE);
         std::u16string line = utf16::fromUtf8(raw ? raw : "");
         g_free(raw);
         ColorSpan span;

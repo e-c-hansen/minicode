@@ -1880,7 +1880,10 @@ What later items build on:
   `Terminal` command keeps its plain Ctrl keys in the terminal
   (`Commands::linuxTerminalTakes`). The Terminal menu is new, with the
   terminals' zoom in it. A keypad key is bound with Num Lock on and off
-  (`<Ctrl>KP_0` and `<Ctrl>KP_Insert`), since GTK matches the keyval.
+  (`<Ctrl>KP_0` and `<Ctrl>KP_Insert`), since GTK matches the keyval. The
+  editor's zoom reset is Ctrl+keypad 0 alone: Ctrl+Alt+0 is Fold All in the
+  editor, and the terminals' reset and a page's fit width elsewhere
+  (`PARITY.md` D1, the decision after 1.11's choices).
 - **For checks**: `MCGuiApp().nav` (entries "path:line" and `index`);
   `MCGuiKey` now takes a GDK name with capitals ("ctrl+KP_Insert", the
   keypad's 0 as the checks' display gives it with Num Lock off). The four
@@ -1979,6 +1982,89 @@ Not done: an input method's composed text goes in at the first caret and
 ends the others; the extra carets do not blink; a column drag does not
 scroll the view when the pointer leaves it; the Mac's Cmd+Shift click
 pairs (Ctrl+click is Go to Definition here).
+
+### 27. Folding (done, November 2026; `PARITY.md` item 1.10)
+
+What later items build on (`src/Folds.{h,cpp}`, the core's
+`../src/Folding.h`):
+- **`DocumentFolds`**, one per `Document` (`Document::folds()`, made in its
+  constructor right after `BufferLines`, and found from a buffer with
+  `DocumentFolds::of`): the regions (`Fold::compute` on a worker thread
+  0.3 s after the text last changed, generation counted; `freshRegions()`
+  works them out on the spot for a command), the closed folds
+  (`Fold::Collapsed` in characters, which follows edits and opens a fold an
+  edit touches), the invisible tag `minicode-fold` over the whole lines
+  each outermost fold hides, and the gutter's fold lane (`GutterFolds`,
+  with `lastHiddenLine` for the gutter's jump). Nothing for anything but a
+  text file's source, and nothing in large-file mode
+  (`applies()`); `forget()` on a reload from disk, `sourceChanged()` when
+  the name or large-file mode changes.
+- **`FoldUi`**, one per `Editor` (`Editor::folds()`): the placeholder pass
+  (`AboveText` order 20) and its click, the keys beside a fold (asked first
+  in `Editor::onViewKey`), and View > Folding's fifteen actions, added to the
+  window by `main.cpp` (`addActions`), with notes to the status bar
+  (`onNote`). Commands run only while the editor has the keyboard.
+- **The limit** (D8): `DocumentFolds::kMaxHiddenLines`, 5,000 lines hidden
+  by a tab's folds; `closeWithinLimit` asks `Fold::pickWithinBudget` which
+  candidates fit. Opening a fold never adds hidden lines, and an edit never
+  closes one, so only closing checks it.
+- **Several carets** (item 1.9): the commands already take
+  `BufferLines::extraCarets` as more carets; the keys beside a fold leave
+  them alone. An edit with several ranges through `MultiEdit` opens what it
+  touches by itself.
+- **For checks**: `FoldUi::drawnPlaceholders()`, `Gutter::linesWalked()`,
+  `DocumentFolds::computes()`, `hiddenLines()`, `outermost()`.
+
+Traps:
+- **Order of the buffer's handlers.** A tag changed in a handler
+  invalidates every iterator, and the host's handler after an edit makes
+  edits of its own (an electric dedent from `documentEdited`). The folds'
+  after-handlers come first of all (made before Document connects its own),
+  fix the tag around the edit, and set the signal's iterators again from
+  their offsets; `Collapsed::edit` runs in the before-handlers, which see
+  the edits in the order they happen.
+- **Never change a tag inside `mark-set`.** `gtk_text_buffer_select_range`
+  emits it for the insert mark and then for the selection bound with an
+  iterator of its own; a reveal there would leave that iterator stale. A
+  caret landing in hidden text opens its folds from an idle at
+  `G_PRIORITY_HIGH_IDLE`, before GTK lays out, draws, or carries out a
+  scroll it was asked for.
+- **Text typed inside a tagged range is tagged**, and at either end it is
+  not (the toggles' gravities): a line break put in at the end of a fold's
+  last line would be hidden, and one typed at the start of the line after
+  it would not end the fold. `retag` makes the tag right over a few
+  characters around every edit, from the folds as they are.
+- **There is no caret place after the placeholder.** GTK puts the caret at
+  the end of the folded line (before the placeholder) or at the start of
+  the line after the fold. So Return at the end of a folded line moves the
+  caret to the end of the fold's last line for the key (no reveal for that
+  move) and the editor's own Return (AutoIndent, a Markdown list) makes the
+  line there, below the fold; Backspace "after the placeholder" is
+  Backspace at the start of the line after a fold. GTK's undo of that
+  Return puts the caret back at the end of the fold's last line, in hidden
+  text: an empty selection exactly there goes to the end of the folded line
+  instead of opening the fold.
+- **The copy** of a selection across a fold is `LargeFileUi::copyWhole`'s
+  (item 22), which takes any selection holding invisible text.
+- **Read the buffer with its hidden text** (`gtk_text_buffer_get_text` and
+  `get_slice` with `TRUE`). Toggle Comment, the settings file's swatches
+  and the LaTeX preview read it without, so with a fold above the caret
+  Ctrl+/ commented the wrong line and the preview would have typeset the
+  document without its folded sections; they read it whole now, and the
+  `folding` suite presses Ctrl+/ below a fold.
+- **A gutter draw outside an edit** (the regions arriving), with a
+  5,000,000-character line on screen, left GTK drawing the view every frame
+  for over ten seconds in `large_file` (its "drawn" wait timed out). The
+  regions now draw the gutter only when they differ. Hovering the gutter
+  there may do the same; not looked into (item 22's ground).
+- **Frames.** GTK still visits every hidden line between the first and the
+  last on screen when it draws (D8); the limit keeps that under about 15 ms
+  a frame here. After Fold All or Unfold All of thousands of lines GTK
+  measures them again in idle slices (0.5 to 0.7 s of CPU for 5,000 folds),
+  never long at a time.
+- **Not done**: the language server's foldingRange (`PARITY.md` 2.13); a
+  fold whose first line is a long line's hidden part draws its placeholder
+  where GTK puts that hidden position.
 
 ## How to work on it
 

@@ -43,6 +43,10 @@ public:
     virtual bool startsRegion(size_t line) const = 0;   // a region could fold here
     virtual bool startsClosedFold(size_t line) const = 0;
     virtual void toggle(size_t line) = 0;
+    // The last line the closed fold starting on `line` hides (the outermost
+    // one's), or `line` when none starts there: the gutter's walk down the
+    // lines on screen jumps over what a fold hides (Folds.h, D8).
+    virtual size_t lastHiddenLine(size_t line) const { return line; }
 };
 
 class BufferLines {
