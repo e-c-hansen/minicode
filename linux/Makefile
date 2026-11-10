@@ -44,7 +44,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Document.cpp src/Tabs.cp
        src/Search.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
        src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp src/TermLinkPath.cpp \
        src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
-       src/BackupStore.cpp src/Persistence.cpp
+       src/BackupStore.cpp src/Persistence.cpp src/LargeFileView.cpp
 
 SRCS := $(GUI) $(CORE)
 

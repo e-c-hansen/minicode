@@ -104,6 +104,9 @@ gui_sources = [
   # auto-save (the Mac's BackupStore and EditorController+Persistence).
   'src/BackupStore.cpp',
   'src/Persistence.cpp',
+  # Big files and long lines: large-file mode, the question past 50 MB,
+  # reading in the background, and a long line shown a part at a time.
+  'src/LargeFileView.cpp',
 ]
 
 inc = include_directories('src', '../src')
@@ -269,10 +272,23 @@ if xtst_dep.found() and x11_dep.found() and gtk_x11_dep.found()
     link_args : ['-rdynamic'],
     install : false)
 
+  # The Mac's scripted language server (tests/gui/FakeLsp.h), plain C++ over
+  # the core's JSON and framing, found beside minicode-guitest.
+  fakelsp = executable('fakelsp',
+    sources : ['..' / 'tests' / 'fakelsp' / 'fakelsp.cpp', core_dir / 'Json.cpp',
+               core_dir / 'LspClient.cpp', core_dir / 'LspProtocol.cpp',
+               core_dir / 'LspText.cpp', core_dir / 'LspServers.cpp',
+               core_dir / 'LspDiagnostics.cpp', core_dir / 'LspCompletion.cpp',
+               core_dir / 'LspSync.cpp', core_dir / 'LspFeatures.cpp',
+               core_dir / 'LspEdits.cpp'],
+    include_directories : inc,
+    install : false)
+
   # `meson test -C build` leaves these out (the setup below), so it stays
   # quick and needs no display; `meson test -C build --suite gui` runs them.
   # The harness has its own limits, well inside this one.
-  test('gui', guitest, suite : 'gui', is_parallel : false, timeout : 1800)
+  test('gui', guitest, suite : 'gui', is_parallel : false, timeout : 1800,
+       depends : [fakelsp])
   add_test_setup('default', exclude_suites : ['gui'], is_default : true)
 else
   message('GUI checks: not built (they need libxtst-dev)')

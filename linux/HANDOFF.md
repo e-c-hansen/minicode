@@ -52,6 +52,8 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
   panel and language servers; Focus Editor, Close Window and Quit (item 8);
 - tabs, with preview tabs, Reopen Closed Tab and Save All (item 15, which
   replaced Previous File);
+- large-file mode, files over 4 MB read without holding the window, and
+  lines over 10,000 characters shown a part at a time (item 18);
 - a VTE terminal that gets its own Ctrl keys while it has the keyboard, with
   Ctrl+click on a file:line or URL in its output (item 9), and a WebKitGTK
   browser;
@@ -1263,7 +1265,8 @@ What later items build on:
   gutter on or off: `Editor::revealLine(50000, ...)` in a 100,000-line file
   left the view near line 100 or 900, not 50,000 (GTK's height guesses
   outlast `settleOnCaret`'s two seconds); the suite scrolls by asking again
-  until the line is on screen.
+  until the line is on screen. (Item 18: `settleOnCaret` now keeps at it
+  while GTK is still laying the buffer out.)
 
 ### 17. Sessions, backups and auto-save (done, November 2026; `PARITY.md` items 1.2 and 1.3)
 
@@ -1318,6 +1321,113 @@ What later items build on:
   again. Three suites start second apps (`MCGuiRunChild`); a child that
   fails leaves backups nobody holds, and every later child then opens a
   window on that folder at launch (`reopenFoldersWithBackups`).
+
+### 18. Big files and long lines (done, November 2026; `PARITY.md` item 1.12)
+
+What later items build on (`src/LargeFileView.{h,cpp}`, the core's
+`../src/LargeFile.h`):
+- **Large-file mode**: `Document::largeFileFeaturesOff()` is true for a text
+  over 20 MB or 300,000 lines, read with `editor.large-file-optimizations`
+  on, until the status bar's note turns the features on for its tab. Every
+  feature VS Code turns off there asks it: the highlighter does
+  (`startHighlighting`), and folding (1.10) and bracket boxes and colors
+  (1.7) must. `Editor::notifyDocument` gives a server no such document
+  (`languageServerMayRead`, which also keeps files past VS Code's 50 MB sync
+  limit from any server). `Editor::turnOnLargeFileFeatures` (the note's
+  click) restarts the highlighter and tells the server; a feature that
+  works its state out when a file loads should start it there too.
+- **Reading in the background**: a file over 4 MB is read, checked,
+  measured and lexed on a worker thread (`Document::beginLoading`), then put
+  in its buffer a piece at a time, 8 ms a turn (`LargeFile::pieceEnd` says
+  where to cut). Meanwhile `Document::loading()` is true: the tab is Text
+  but not editable or saved, the view shows `loadingBuffer()` ("Opening…",
+  in the source's font, since a font change made GTK invalidate every line
+  of the text coming on show), and no server has it. Anything that acts on
+  the text once it opens must wait: `revealLine`, `revealLineColumn` and
+  `placeTab` do, through `whenLoaded` and the place a session or Reopen
+  Closed Tab gives (`place().haveRestore`, as for a tab not read yet). The
+  host hears `documentLoaded`. Files over 50 MB opened by hand ask first
+  (`LargeFileUi::mayOpen`, from `openFile`), and over 256 MB are refused.
+- **Long lines**: `LongLines::of(buffer)` hides what a line over 10,000
+  characters does not show, under the invisible tag
+  `minicode-long-line-rest` (never in the file, the undo history, a copy, or
+  a server's text, D6). `partOf(line)` is the part shown; the caret's line's
+  part follows the caret a turn after it moves (a search, Go to Line, End);
+  `LargeFileUi` draws "… N more characters" after each part (a `CodeView`
+  pass, AboveText order 40), and puts End, Home and the arrows right where
+  GtkTextView would skip the hidden text. Folding's invisible tag (D8) must
+  leave this tag alone, and the other way round.
+- **Copy and cut of hidden text**: GTK's copy leaves out what an invisible
+  tag hides (Select All and Copy on a 300,000-character line handed over
+  10,001 characters). `LargeFileUi` takes the view's `copy-clipboard` and
+  `cut-clipboard` when the selection holds any invisible text, folds
+  included, and puts all of it on the clipboard as plain text. Not done:
+  the X11 primary selection (a middle click pastes the visible part) and
+  dragging a selection, both GTK's.
+- **AutoIndent on big buffers** reads the 2,000 lines above the caret, not
+  the whole buffer (`LargeFileView::indentSlice`, from `sourceText` and
+  `electric`): Return and Tab copied all 25 MB each time.
+- **For checks**: `tests/gui/FakeLsp.h` is the Mac's scripted language
+  server (`tests/fakelsp`, built by meson.build beside minicode-guitest);
+  `LongLines::cpuMs`, `LargeFileUi::questionsAsked` and `notesDrawn`.
+
+Measured on the ThinkPad (load 1 to 5 unless said), main-thread CPU:
+- **A 5 MB line**: GtkTextView lays a line out as one Pango layout. The
+  open held the loop for 4 to 7 s at once (6.7 s at load 25) and each
+  keystroke 3 to 9 s; wrap CHAR or WORD_CHAR made no difference (4.3 and
+  4.5 s), and past about 260,000 characters a line without wrapping is not
+  drawn right anyway (Pango's widths overflow; pixman warns of an invalid
+  rectangle). Shown 10,000 characters at a time: the longest stall opening
+  it 33 ms, a keystroke 2.5 to 3 ms, mostly GTK laying out the part shown.
+  Setting the tags again on every key cost 20 ms a key (GTK joins and
+  splits the line's text), so a part may grow to twice its size first; and
+  the highlighter copied the whole line on every key though it never lexes
+  it (`retagLines` now skips a line with no tokens).
+- **A 25 MB file of 470,000 lines**: 0.33 to 0.37 s to open in all, against
+  0.33 s to read it and put it in a buffer in one go, never more than 13 to
+  21 ms at a time (0.6 s at once before); a keystroke 0.07 to 0.18 ms;
+  Return and Tab never more than 25 ms (0.45 to 0.6 s before, AutoIndent's
+  copy); switching to and from its tab 8 to 60 ms (100 to 130 ms of it was
+  the language server session taking its squiggles off the whole buffer,
+  see the traps). A 60 MB file of 10 MB lines after Open Anyway:
+  never more than 75 ms.
+- **GTK lays out every line once** after a buffer comes on show, in idle
+  slices: 10.7 s for a bare GtkTextView with 25 MB, 13 to 17 s in the
+  editor, never more than 60 ms at a time, and again each time the tab is
+  shown again. GtkTextView has no way round it.
+- The find bar's case-insensitive search through the 5 MB line holds the
+  loop 0.3 to 0.6 s (GtkTextIter folds the whole line); item 1.6 replaces
+  that search.
+
+Traps:
+- **GTK gives a line no height until it has laid it out.** Right after a big
+  buffer comes on show, line 300,000 sits at a small y with thousands of
+  lines of no height at the same pixel; `gtk_text_view_get_line_at_y` at
+  that pixel answers the first of them, GTK keeps that line at the top as
+  heights arrive, and the view drifted from line 300,000 to line 2,000 in a
+  few seconds. `settleOnCaret` and `settleOnPlace` now keep at it while the
+  height grows (up to three minutes), `settleOnCaret` with the caret's line
+  one pixel past the top margin and following the caret as it is typed
+  into, and ask for the top line a pixel into the view. A check of "on
+  screen" in a big file must also check the top line (the suite's
+  `caretShown`). Holding the view by setting the adjustment each frame did
+  not work: GTK clamped it back to the bottom of what it had laid out.
+- `gtk_text_buffer_remove_tag` over the whole buffer queues a redisplay of
+  all of it whether the tag was there or not: about 25 ms a tag at 470,000
+  lines while the buffer is on show. `LspSession::clearMarks` took its four
+  tags off the whole buffer at every tab switch; it now takes each off its
+  own mark's range.
+- GtkTextView's own scroll to the caret after a key measures a line with
+  hidden text as it was before the key, and left the caret past the right
+  edge; `LargeFileUi` scrolls again a turn later.
+- Text typed at either end of a tagged range is outside it (a toggle-on
+  segment has right gravity, a toggle-off left).
+- A wait that searches the buffer on every poll holds the main thread
+  itself (100 ms a poll in a 5 MB line): work offsets out from what was
+  written.
+- After Ctrl+F the find field has the focus, but keys typed in the checks
+  went nowhere until the field was clicked.
+- `g_format_size` puts a no-break space before the unit.
 
 ## How to work on it
 
@@ -1543,11 +1653,12 @@ Do not claim a GUI behaviour works when it was only compiled.
 - A test of a click on a PDF page must check `pageAtPoint`'s return value:
   at a low zoom a point that was on the page before can be in the margin
   after, and the outputs are then left as they were.
-- The editor reads text only from a regular file of at most 16 MB, and
-  checks both before opening it (`readTextFile` in `Editor.cpp`): opening a
-  named pipe blocks until a writer comes, and every window shares one
-  process, so either a pipe or a multi-gigabyte file used to freeze or kill
-  all of them, unsaved edits included. Android stops at 4 MB.
+- The editor reads text only from a regular file of at most 256 MB (16 MB
+  until item 1.12), and checks both before opening it
+  (`Document::readText`): opening a named pipe blocks until a writer comes,
+  and every window shares one process, so either a pipe or a multi-gigabyte
+  file used to freeze or kill all of them, unsaved edits included. Files
+  over 4 MB are read on a worker thread (item 18). Android stops at 4 MB.
 - Saves are an atomic rename, except for a file with another hard link, one
   owned by someone else, or one in a folder we cannot write: those are
   written in place (`writeInPlace`, space reserved first), since the rename

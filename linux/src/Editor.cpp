@@ -13,6 +13,7 @@
 #include "LineComments.h"
 #include "AutoIndent.h"
 #include "KeepSorted.h"
+#include "LargeFileView.h"
 #include "Utf8Offsets.h"
 #include "MediaView.h"
 #include "GitPanel.h"
@@ -91,11 +92,13 @@ Editor::Editor() {
     g_signal_connect_swapped(wheel, "scroll-begin", G_CALLBACK(+[](gpointer self) {
         static_cast<Editor*>(self)->stopHold();
         static_cast<Editor*>(self)->stopPlace();
+        static_cast<Editor*>(self)->stopSettle();
     }), this);
     g_signal_connect(wheel, "scroll", G_CALLBACK(+[](GtkEventControllerScroll*, double, double,
                                                    gpointer self) -> gboolean {
         static_cast<Editor*>(self)->stopHold();
         static_cast<Editor*>(self)->stopPlace();
+        static_cast<Editor*>(self)->stopSettle();
         return FALSE;
     }), this);
     gtk_widget_add_controller(view_, wheel);
@@ -116,6 +119,7 @@ Editor::Editor() {
     gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(press), GTK_PHASE_CAPTURE);
     g_signal_connect_swapped(press, "pressed", G_CALLBACK(+[](gpointer self) {
         static_cast<Editor*>(self)->stopPlace();
+        static_cast<Editor*>(self)->stopSettle();
     }), this);
     gtk_widget_add_controller(scroller_, GTK_EVENT_CONTROLLER(press));
     // A preview's tables and pictures follow the pane's width.
@@ -176,6 +180,7 @@ Editor::Editor() {
     gtk_box_append(GTK_BOX(box_), strip_->widget());
     gtk_box_append(GTK_BOX(box_), slot_);
 
+    large_ = new LargeFileUi(this);   // big files and long lines (LargeFileView.h)
     showActive();   // the welcome text
 }
 
@@ -200,6 +205,8 @@ Editor::~Editor() {
     active_ = nullptr;
     for (Document* d : tabs_) destroy(d);
     tabs_.clear();
+    delete large_;
+    large_ = nullptr;
     g_signal_handlers_disconnect_by_data(view_, this);
     for (GtkWidget* w : {view_, scroller_}) {
         GListModel* ctrls = gtk_widget_observe_controllers(w);
@@ -220,7 +227,7 @@ Editor::~Editor() {
 }
 
 std::vector<void*> Editor::handlerOwners() const {
-    std::vector<void*> out = {(void*)this, (void*)media_, (void*)strip_};
+    std::vector<void*> out = {(void*)this, (void*)media_, (void*)strip_, (void*)large_};
     for (Document* d : tabs_)
         if (d->latexPreview()) out.push_back(d->latexPreview());
     return out;
@@ -358,8 +365,12 @@ const std::string& Editor::diffTitle() const {
     return isDiff() ? active_->diffTitle() : none;
 }
 
+// A large file with its features off, or one past the sync limit, is no
+// document to a language server (LargeFileView.h), like a message.
 void Editor::notifyDocument() {
-    if (observer_) observer_->documentChanged(isSource() ? active_->path() : std::string());
+    if (observer_)
+        observer_->documentChanged(isSource() && active_->languageServerMayRead() ? active_->path()
+                                                                                 : std::string());
 }
 
 void Editor::titleChanged() {
@@ -467,7 +478,13 @@ void Editor::showActive() {
     }
     switch (d->kind()) {
     case Document::Kind::Text:
-        if (d->isMarkdown() && d->showsPreview()) {
+        if (d->loading()) {   // read in the background: "Opening…" until it is in
+            // In the source's font and wrapping, so the text coming on show
+            // changes no style: in the prose font, the change cost 20 to 30
+            // ms more at 470,000 lines.
+            setViewBuffer(d->loadingBuffer(), false, false);
+            gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+        } else if (d->isMarkdown() && d->showsPreview()) {
             gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
             renderPreview();
             const Document::Place& p = d->place();
@@ -637,6 +654,13 @@ bool Editor::reloadFromDisk() { return active_ && active_->reloadFromDisk(); }
 // ---------------------------------------------------------------- go to line
 
 bool Editor::revealLine(int line, std::size_t byteColumn, std::size_t byteLength) {
+    if (active_ && active_->loading()) {   // read in the background: once it is in
+        Document* d = active_;
+        d->whenLoaded([this, d, line, byteColumn, byteLength] {
+            if (d == active_) revealLine(line, byteColumn, byteLength);
+        });
+        return true;
+    }
     if (!active_ || active_->kind() != Document::Kind::Text) return false;
     if (active_->showsPreview()) togglePreview();
     if (!gtk_text_view_get_editable(GTK_TEXT_VIEW(view_))) return false;   // a message
@@ -697,6 +721,9 @@ void Editor::settleOnCaret() {
     settleLastV_ = -1;
     settleStill_ = 0;
     settleTries_ = 0;
+    settleUpper_ = gtk_adjustment_get_upper(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(view_)));
+    settleCap_ = g_get_monotonic_time() + 180 * G_USEC_PER_SEC;
+    settleTop_ = false;
     settleTick_ = gtk_widget_add_tick_callback(view_, onSettleTick, this, nullptr);
 }
 
@@ -711,6 +738,11 @@ gboolean Editor::onSettleTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
     GtkTextIter it;
     gtk_text_buffer_get_iter_at_mark(self->buffer_, &it,
                                      gtk_text_buffer_get_insert(self->buffer_));
+    // The caret moved: the user has taken over, unless GTK is still laying
+    // out a big buffer (below), when typing moves the caret and the view
+    // must still follow it there.
+    if (gtk_text_iter_get_offset(&it) != self->settleOffset_ && self->settleTop_)
+        self->settleOffset_ = gtk_text_iter_get_offset(&it);
     if (gtk_text_iter_get_offset(&it) != self->settleOffset_ ||
         g_get_monotonic_time() > self->settleUntil_ || !gtk_widget_get_mapped(self->view_)) {
         self->settleTick_ = 0;
@@ -720,9 +752,50 @@ gboolean Editor::onSettleTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
     gtk_text_view_get_visible_rect(tv, &vis);
     gtk_text_view_get_iter_location(tv, &it, &at);
     const bool seen = vis.height > 0 && at.y >= vis.y && at.y + at.height <= vis.y + vis.height;
-    const double v = gtk_adjustment_get_value(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tv)));
+    GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tv));
+    const double v = gtk_adjustment_get_value(adj);
     const bool still = v == self->settleLastV_;
     self->settleLastV_ = v;
+    // While GTK is still laying out a big buffer its height grows, and lines
+    // it has not laid out have no height, so a line far up can share the
+    // caret's y. GTK keeps the view on its top line meanwhile: with the
+    // caret a third of the way down, that was such a line far up, and the
+    // caret drifted off as the lines between got their heights. So until
+    // the height stops growing the caret's line is put at the very top,
+    // where it is the one GTK keeps, and a third of the way down after.
+    if (gtk_adjustment_get_upper(adj) != self->settleUpper_) {
+        self->settleUpper_ = gtk_adjustment_get_upper(adj);
+        self->settleTries_ = 0;
+        self->settleStill_ = 0;
+        self->settleUntil_ = std::min(self->settleCap_,
+                                      std::max(self->settleUntil_, g_get_monotonic_time() + G_USEC_PER_SEC));
+        int y = 0, h = 0;
+        gtk_text_view_get_line_yrange(tv, &it, &y, &h);
+        // Shown means among the lines drawn: seen, with the top line no
+        // more lines up than fit.
+        GtkTextIter top;
+        gtk_text_view_get_line_at_y(tv, &top, vis.y + 1, nullptr);
+        const int below = gtk_text_iter_get_line(&it) - gtk_text_iter_get_line(&top);
+        const bool shown = seen && below >= 0 && h > 0 && below <= vis.height / h;
+        // A pixel into the line, past the top margin: at its top edge, lines
+        // with no height yet share the pixel, and GTK keeps the first of
+        // them instead.
+        const int in = gtk_text_view_get_top_margin(tv) + 1;
+        if (!shown || self->settleTop_) {
+            if (y + in != vis.y) {
+                gtk_adjustment_set_value(adj, v + (y + in - vis.y));
+                self->settleLastV_ = gtk_adjustment_get_value(adj);
+            }
+            self->settleTop_ = true;
+        }
+        return G_SOURCE_CONTINUE;
+    }
+    if (still && seen && self->settleTop_) {
+        self->settleTop_ = false;
+        self->settleStill_ = 0;
+        gtk_text_view_scroll_to_mark(tv, gtk_text_buffer_get_insert(self->buffer_), 0.1, TRUE, 0.0, 0.3);
+        return G_SOURCE_CONTINUE;
+    }
     if (!still) {
         self->settleStill_ = 0;
     } else if (seen) {
@@ -739,6 +812,13 @@ gboolean Editor::onSettleTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
 }
 
 bool Editor::revealLineColumn(int line, int column) {
+    if (active_ && active_->loading()) {   // read in the background: once it is in
+        Document* d = active_;
+        d->whenLoaded([this, d, line, column] {
+            if (d == active_) revealLineColumn(line, column);
+        });
+        return true;
+    }
     // revealLine first: it switches a preview back to the source, so the
     // buffer holds the lines the column counts in.
     if (!revealLine(line, 0, 0)) return false;
@@ -1550,6 +1630,8 @@ void Editor::settleOnPlace(GtkTextMark* mark, int into) {
     placeLastV_ = -1;
     placeStill_ = 0;
     placeTries_ = 0;
+    placeUpper_ = gtk_adjustment_get_upper(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(view_)));
+    placeCap_ = g_get_monotonic_time() + 180 * G_USEC_PER_SEC;
     placeFollowCaret_ = false;
     GtkTextBuffer* b = gtk_text_mark_get_buffer(mark);
     GtkTextIter caret;
@@ -1592,6 +1674,19 @@ gboolean Editor::onPlaceTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
     const double now = gtk_adjustment_get_value(v);
     const bool still = now == self->placeLastV_;
     self->placeLastV_ = now;
+    // GTK gives a line no height until it has laid it out, and lays a big
+    // buffer out in idle slices for seconds after it comes on show (13 s at
+    // 470,000 lines): until then a line far down sits far too high, and the
+    // view cannot be put there. While the height still grows the place is
+    // tried again, for up to three minutes (LargeFileView.h).
+    const bool growing = gtk_adjustment_get_upper(v) != self->placeUpper_;
+    self->placeUpper_ = gtk_adjustment_get_upper(v);
+    if (growing) {
+        self->placeTries_ = 0;
+        self->placeStill_ = 0;
+        self->placeUntil_ = std::min(self->placeCap_,
+                                     std::max(self->placeUntil_, g_get_monotonic_time() + G_USEC_PER_SEC));
+    }
     if (!still) {
         self->placeStill_ = 0;
         return G_SOURCE_CONTINUE;
@@ -1964,12 +2059,12 @@ void Editor::toggleTaskBox(int line) {
 
 void Editor::applyTaskEdit(const std::u16string& text, std::size_t replaceStart,
                            std::size_t replaceLength, const std::u16string& replacement,
-                           std::size_t selStart, std::size_t selEnd) {
+                           std::size_t selStart, std::size_t selEnd, long base) {
     GtkTextIter from, to;
     gtk_text_buffer_get_iter_at_offset(buffer_, &from,
-        (int)utf16::toCharOffset(text, replaceStart));
+        (int)(base + utf16::toCharOffset(text, replaceStart)));
     gtk_text_buffer_get_iter_at_offset(buffer_, &to,
-        (int)utf16::toCharOffset(text, replaceStart + replaceLength));
+        (int)(base + utf16::toCharOffset(text, replaceStart + replaceLength)));
     const std::string bytes = utf16::toUtf8(replacement);
     // One user action, so one Ctrl+Z takes it back.
     gtk_text_buffer_begin_user_action(buffer_);
@@ -1980,8 +2075,10 @@ void Editor::applyTaskEdit(const std::u16string& text, std::size_t replaceStart,
     std::u16string after = text;
     after.replace(replaceStart, replaceLength, replacement);
     GtkTextIter ns, ne;
-    gtk_text_buffer_get_iter_at_offset(buffer_, &ns, (int)utf16::toCharOffset(after, selStart));
-    gtk_text_buffer_get_iter_at_offset(buffer_, &ne, (int)utf16::toCharOffset(after, selEnd));
+    gtk_text_buffer_get_iter_at_offset(buffer_, &ns,
+                                       (int)(base + utf16::toCharOffset(after, selStart)));
+    gtk_text_buffer_get_iter_at_offset(buffer_, &ne,
+                                       (int)(base + utf16::toCharOffset(after, selEnd)));
     gtk_text_buffer_select_range(buffer_, &ns, &ne);
     gtk_text_view_scroll_mark_onscreen(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(buffer_));
 }
@@ -2030,18 +2127,23 @@ bool Editor::continueList() {
 // Return, Tab, Shift+Tab and Backspace over the shared AutoIndent core, and
 // line sorting over KeepSorted. Each edit is one user action, one Ctrl+Z.
 
-bool Editor::sourceText(std::u16string& text, std::size_t& a, std::size_t& b) const {
+bool Editor::sourceText(std::u16string& text, std::size_t& a, std::size_t& b,
+                        long* base) const {
     if (!isSource() || inPreview() || !gtk_text_view_get_editable(GTK_TEXT_VIEW(view_)))
         return false;
-    GtkTextIter s, e;
-    gtk_text_buffer_get_bounds(buffer_, &s, &e);
-    char* raw = gtk_text_buffer_get_text(buffer_, &s, &e, TRUE);
-    text = utf16::fromUtf8(raw ? raw : "");
-    g_free(raw);
     GtkTextIter selA, selB;
     gtk_text_buffer_get_selection_bounds(buffer_, &selA, &selB);
-    a = utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selA));
-    b = utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selB));
+    long start = 0;
+    if (!base || !LargeFileView::indentSlice(buffer_, &selA, &selB, text, start)) {
+        GtkTextIter s, e;
+        gtk_text_buffer_get_bounds(buffer_, &s, &e);
+        char* raw = gtk_text_buffer_get_text(buffer_, &s, &e, TRUE);
+        text = utf16::fromUtf8(raw ? raw : "");
+        g_free(raw);
+    }
+    if (base) *base = start;
+    a = utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selA) - start);
+    b = utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selB) - start);
     return true;
 }
 
@@ -2058,7 +2160,8 @@ bool Editor::indentKey(guint key) {
     }
     std::u16string text;
     std::size_t a = 0, b = 0;
-    if (!sourceText(text, a, b)) return false;
+    long base = 0;   // a big buffer gives only the lines around the caret
+    if (!sourceText(text, a, b, &base)) return false;
     const std::string& path = active_->path();
     AutoIndent::Edit e;
     switch (key) {
@@ -2070,26 +2173,32 @@ bool Editor::indentKey(guint key) {
     }
     // Shift+Tab never moves the focus out of the editor.
     if (!e.changed) return key == GDK_KEY_ISO_Left_Tab;
-    applyTaskEdit(text, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd);
+    applyTaskEdit(text, e.replaceStart, e.replaceLength, e.replacement, e.selStart, e.selEnd,
+                  base);
     return true;
 }
 
 void Editor::electric(GtkTextIter* loc) {
-    GtkTextIter a, b;
-    gtk_text_buffer_get_bounds(buffer_, &a, &b);
-    char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
-    const std::u16string text = utf16::fromUtf8(raw ? raw : "");
-    g_free(raw);
-    const size_t caret = utf16::fromCharOffset(text, gtk_text_iter_get_offset(loc));
+    std::u16string text;
+    long base = 0;   // a big buffer gives only the lines around the caret
+    if (!LargeFileView::indentSlice(buffer_, loc, loc, text, base)) {
+        GtkTextIter a, b;
+        gtk_text_buffer_get_bounds(buffer_, &a, &b);
+        char* raw = gtk_text_buffer_get_text(buffer_, &a, &b, TRUE);
+        text = utf16::fromUtf8(raw ? raw : "");
+        g_free(raw);
+    }
+    const size_t caret = utf16::fromCharOffset(text, gtk_text_iter_get_offset(loc) - base);
     const AutoIndent::Edit e = AutoIndent::typed(text, caret, active_->path());
     if (!e.changed) return;
     // Inside the key's own user action, so one Ctrl+Z takes back the key and
     // the move together. The mark keeps loc valid for the handlers after us.
     GtkTextMark* keep = gtk_text_buffer_create_mark(buffer_, nullptr, loc, FALSE);
     GtkTextIter from, to;
-    gtk_text_buffer_get_iter_at_offset(buffer_, &from, (int)utf16::toCharOffset(text, e.replaceStart));
+    gtk_text_buffer_get_iter_at_offset(buffer_, &from,
+        (int)(base + utf16::toCharOffset(text, e.replaceStart)));
     gtk_text_buffer_get_iter_at_offset(buffer_, &to,
-        (int)utf16::toCharOffset(text, e.replaceStart + e.replaceLength));
+        (int)(base + utf16::toCharOffset(text, e.replaceStart + e.replaceLength)));
     gtk_text_buffer_delete(buffer_, &from, &to);
     const std::string bytes = utf16::toUtf8(e.replacement);
     gtk_text_buffer_insert(buffer_, &from, bytes.c_str(), (int)bytes.size());

@@ -955,11 +955,19 @@ bool LspSession::sameFile(const std::string& a, const std::string& b) const {
     return !pa.empty() && realPath(pa) == realPath(pb);
 }
 
+// Each tag comes off its own mark's range, which always holds it (the start
+// mark stays left of text typed there, the end mark goes right of it, and
+// text typed at a tag's ends is never tagged). Taking every tag off the
+// whole buffer, on every tab switch, cost about 25 ms a tag in a file of
+// 470,000 lines: GTK queues a redisplay of the whole range for a tag taken
+// off, whether it was there or not (PARITY.md 1.12).
 void LspSession::clearMarks() {
-    GtkTextIter a, b;
-    gtk_text_buffer_get_bounds(buffer_, &a, &b);
-    for (GtkTextTag* t : tags_) gtk_text_buffer_remove_tag(buffer_, t, &a, &b);
+    if (!buffer_) return;
     for (Mark& m : marks_) {
+        GtkTextIter a, b;
+        gtk_text_buffer_get_iter_at_mark(buffer_, &a, m.start);
+        gtk_text_buffer_get_iter_at_mark(buffer_, &b, m.end);
+        gtk_text_buffer_remove_tag(buffer_, tags_[m.severity - 1], &a, &b);
         gtk_text_buffer_delete_mark(buffer_, m.start);
         gtk_text_buffer_delete_mark(buffer_, m.end);
     }

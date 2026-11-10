@@ -30,6 +30,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -74,6 +75,13 @@ public:
     // the scroll position of the document on show.
     virtual void documentWillReload(Document*) {}
     virtual void documentReloaded(Document*) {}
+    // A file read in the background (Document::beginLoading) is in its
+    // buffer, or could not be read (`result`); `blank` when it holds only
+    // white space.
+    virtual void documentLoaded(Document*, int /* Document::Read */ result, bool blank) {
+        (void)result;
+        (void)blank;
+    }
 };
 
 class Document {
@@ -187,8 +195,9 @@ public:
     const std::string& diffBytes() const { return diffBytes_; }
     bool diffIsCommit() const { return diffCommit_; }
 
-    // Text only; a message, a picture or a diff is never written.
-    bool canSave() const { return kind_ == Kind::Text && !path_.empty(); }
+    // Text only; a message, a picture or a diff is never written, nor a file
+    // still being read.
+    bool canSave() const { return kind_ == Kind::Text && !path_.empty() && !loading(); }
     // Differs from the file as last read or saved.
     bool dirty() const { return kind_ == Kind::Text && dirty_; }
     // Write the source to the file: through a symlink to what it names, in
@@ -258,7 +267,42 @@ public:
     // Its id, for the tab's right click menu (unique in the process).
     uint64_t id() const { return id_; }
 
+    // ---- Big files (LargeFileView.cpp, PARITY.md item 1.12)
+    // Over ../src/LargeFile.h's thresholds (20 MB or 300,000 lines) when it was
+    // read. With editor.large-file-optimizations on, and until the user
+    // turns them on for the tab, its features are off: every feature that
+    // VS Code turns off for such a file (highlighting, folding, bracket boxes
+    // and colors) and the language server check largeFileFeaturesOff().
+    bool isLargeFile() const { return largeFile_; }
+    bool largeFileFeaturesOff() const { return largeFile_ && largeOff_ && !largeOn_; }
+    // A language server may have its text: not while it is read, not with
+    // its features off, and never past VS Code's 50 MB sync limit.
+    bool languageServerMayRead() const;
+    // The status bar's note: everything a small file has, for this tab.
+    void turnOnLargeFileFeatures();
+    // A file over LargeFileView::kBackgroundBytes: read, checked and lexed on
+    // a worker thread, then put in the buffer a piece at a time. Meanwhile it
+    // is Text but not editable, saved, or given to a server, and the view
+    // shows loadingBuffer() ("Opening…"). The host hears documentLoaded
+    // when it is done or failed; whenLoaded runs `f` then (now, if it is not
+    // loading).
+    void beginLoading(const std::string& path);
+    bool loading() const { return load_ != nullptr; }
+    GtkTextBuffer* loadingBuffer() const;
+    void whenLoaded(std::function<void()> f);
+
 private:
+    struct Load;
+    void noteLargeFile(const std::string& content);   // decided as it is read
+    void cancelLoading();
+    void loadRead();                                  // the worker's result is in
+    bool putPieces();                                 // a turn's pieces; true when all are in
+    void finishLoading();
+    static gboolean onLoadRead(gpointer job);
+    static gboolean onLoadIdle(gpointer self);
+    Load*  load_ = nullptr;
+    bool   largeFile_ = false, largeOff_ = false, largeOn_ = false;
+    size_t utf16Length_ = 0;   // as read, for the sync limit
     void clearSource();
     void fill(const std::string& text);   // set whole: no edit, nothing unsaved
     void markDirty(bool d);

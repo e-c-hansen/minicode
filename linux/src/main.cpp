@@ -2379,6 +2379,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     gtk_box_append(GTK_BOX(statusBar), app->statusLabel);
     app->lspLabel = gtk_label_new("");
     gtk_label_set_ellipsize(GTK_LABEL(app->lspLabel), PANGO_ELLIPSIZE_START);
+    gtk_box_append(GTK_BOX(statusBar), app->editor->largeFileNote());   // LargeFileView.h
     gtk_box_append(GTK_BOX(statusBar), app->lspLabel);
     gtk_box_append(GTK_BOX(statusBar), app->settingsLabel);
     gtk_box_append(GTK_BOX(statusBar), app->hintsHint);
