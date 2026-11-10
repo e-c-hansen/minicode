@@ -131,10 +131,12 @@ MC_GUI_SUITE(gutter_typing) {
         MCGuiNote("%d keys: %.1f ms of the main thread (%.2f a key), %.2f ms of it the gutter's "
                   "(%.3f a key)", kKeys, total, total / kKeys, gutter, gutter / kKeys);
         // The gutter's own work stays well under a millisecond a key at
-        // 100,000 lines: an index counted through the buffer again per key
-        // costs several.
+        // 100,000 lines (0.05 ms on the ThinkPad): an index counted through
+        // the buffer again per key cost 38. The whole thread took 8 to 10 ms
+        // a key there, gutter or not; the bound leaves room for a slower
+        // runner and still catches a relayout of the file per key.
         GCHECK_TIME(gutter, 0.5 * kKeys, "the gutter's CPU time over the typing");
-        GCHECK_TIME(total, 25.0 * kKeys, "the main thread's CPU time over the typing");
+        GCHECK_TIME(total, 50.0 * kKeys, "the main thread's CPU time over the typing");
     });
     MCGuiWait("the numbers on screen are right, the caret's line active", 10, rowsRight);
     MCGuiStep("and the text is as typed", [] {
