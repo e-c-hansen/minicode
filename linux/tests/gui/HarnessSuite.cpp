@@ -217,6 +217,13 @@ MC_GUI_SUITE(harness) {
         GtkAdjustment* v = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(MCGuiApp().editor->textView()));
         return gtk_adjustment_get_value(v) > 0;
     });
+    // And every click of the wheel has: with three runs and four busy loops
+    // at once the first had moved the text when the step below put it back
+    // at the top, and the rest then took it down again for good.
+    MCGuiWaitQuiet("the wheel's clicks all arrive", 0.3, 10, [] {
+        GtkAdjustment* v = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(MCGuiApp().editor->textView()));
+        return (long)gtk_adjustment_get_value(v);
+    });
     MCGuiStep("back to the top", [] {
         GtkAdjustment* v = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(MCGuiApp().editor->textView()));
         gtk_adjustment_set_value(v, 0);

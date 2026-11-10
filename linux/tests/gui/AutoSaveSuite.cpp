@@ -98,12 +98,21 @@ MC_GUI_SUITE(auto_save) {
         GCHECK(ed()->dirtyDocuments().empty());
     });
     OpenForTyping("tab.txt");
-    MCGuiStep("type, then the tab before it, by its key", [] {
+    MCGuiStep("type, then the tab before it, by its key, and type there at once", [] {
         MCGuiType("t");
         MCGuiKey("ctrl+pageup");
+        MCGuiType("j");
     });
     MCGuiWait("written when another tab is shown", 10, [] {
         return MCGuiReadFile(F("tab.txt")) == "ttab.txt\n" && ed()->currentPath() == F("focus.txt");
+    });
+    // The key typed right after the switch is the shown tab's own edit, not
+    // written by the switch's save: that save ran after every key already
+    // waiting, and wrote it too.
+    MCGuiWait("the key arrives there", 10, [] { return MCGuiEditorText() == "kjfocus.txt\n"; });
+    MCGuiStep("unsaved", [] {
+        GCHECK_EQ_STR(MCGuiReadFile(F("focus.txt")), "kfocus.txt\n");
+        GCHECK(ed()->dirty());
     });
 
     // ---- the close question runs it first
@@ -144,6 +153,16 @@ MC_GUI_SUITE(auto_save) {
         MCGuiKey("ctrl+pageup");
     });
     MCGuiWait("shown, it asks", 10, QuestionUp);
+    // The question does not stop the main loop. Showing the tab started the
+    // delay's timer, and its auto-save came while the question was up: it
+    // wrote the tab's edits over the very change asked about, and Reload
+    // then read them back ("mine outside.txt", in loaded runs, where the
+    // click came after the 200 ms).
+    MCGuiPause(0.6);   // a negative check: the delay passes with the question up
+    MCGuiStep("not written while it asks", [] {
+        GCHECK_EQ_STR(MCGuiReadFile(F("outside.txt")), "from outside\n");
+        GCHECK(QuestionUp());
+    });
     MCGuiStep("Reload", [] { Answer("Reload"); });
     MCGuiWait("the disk's text, clean", 10, [] {
         return MCGuiEditorText() == "from outside\n" && !ed()->dirty();

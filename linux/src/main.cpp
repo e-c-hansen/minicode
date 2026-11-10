@@ -503,6 +503,10 @@ static bool askExternalChange(void* userp) {
             const int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src),
                                                               res, nullptr);
             if (a->dead) return;
+            // Auto-save may write the tab again: Reload's text is the disk's,
+            // and Keep Mine's goes over the version it was asked about.
+            a->editor->diskQuestionAnswered();
+            a->persist->scheduleAutoSave();
             if (choice == 1) {
                 if (!a->editor->reloadFromDisk())
                     showError(a, "Could not reload “" +

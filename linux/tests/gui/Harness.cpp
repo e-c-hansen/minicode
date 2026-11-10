@@ -315,6 +315,15 @@ GtkWidget* MCGuiFindButton(GtkWidget* root, const std::string& text) {
     return nullptr;
 }
 
+bool MCGuiTextLaidOut(GtkWidget* textView) {
+    if (!textView || !GTK_IS_TEXT_VIEW(textView)) return false;
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(gtk_text_view_get_buffer(GTK_TEXT_VIEW(textView)), &end);
+    int y = 0, h = 0;
+    gtk_text_view_get_line_yrange(GTK_TEXT_VIEW(textView), &end, &y, &h);
+    return h > 0;
+}
+
 GtkWindow* MCGuiTopWindow() {
     std::set<GtkWindow*> apps;
     for (const MCGuiAppWindow& w : MCGuiAppWindows()) apps.insert(w.window);
@@ -419,6 +428,39 @@ void runGuarded(const std::string& what, const std::function<void()>& body) {
     }
 }
 
+// After a wait that timed out, what the window was doing, so that a failure
+// on CI says more than the wait's name: whether the key window is active and
+// where its keyboard is, whether another window is on top, and the editor's
+// file, selection, scroll and first characters. (In November 2026 they showed
+// a tab clean with its own edits after Reload, which led to auto-save writing
+// while a question was up.)
+void noteState() {
+    GtkWindow* kw = MCGuiKeyWindow();
+    GtkWidget* f = kw ? gtk_root_get_focus(GTK_ROOT(kw)) : nullptr;
+    // The widget with the keyboard and the style classes of it and its
+    // ancestors, which name the pane ("minicode-editor-scroller", ...).
+    std::string where = f ? G_OBJECT_TYPE_NAME(f) : "nothing";
+    for (GtkWidget* w = f; w; w = gtk_widget_get_parent(w)) {
+        char** classes = gtk_widget_get_css_classes(w);
+        for (char** c = classes; c && *c; c++)
+            if (g_str_has_prefix(*c, "minicode")) where += std::string(" .") + *c;
+        g_strfreev(classes);
+    }
+    MCGuiNote("state: the key window %s, the keyboard in a %s, %s on top",
+              kw && gtk_window_is_active(kw) ? "active" : "not active", where.c_str(),
+              MCGuiTopWindow() == MCGuiApp().window ? "the app's window" : "another window");
+    Editor* ed = MCGuiApp().editor;
+    if (!ed) return;
+    GtkTextIter a, b;
+    gtk_text_buffer_get_selection_bounds(ed->buffer(), &a, &b);
+    GtkAdjustment* v = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(ed->textView()));
+    const std::string text = MCGuiEditorText();
+    MCGuiNote("state: the editor on %s%s, the selection %d to %d, scrolled to %.0f, text \"%.60s\"",
+              ed->currentPath().empty() ? "(no file)" : ed->currentPath().c_str(),
+              ed->dirty() ? " (unsaved)" : "", gtk_text_iter_get_offset(&a),
+              gtk_text_iter_get_offset(&b), gtk_adjustment_get_value(v), text.c_str());
+}
+
 // Steps are played on a timer at the loop's default priority, as X events are,
 // so the events a step sends arrive before the next step reads anything.
 bool gFinished = false;
@@ -447,6 +489,7 @@ gboolean tick(gpointer) {
             snprintf(text, sizeof text, "timed out after %.0f s: %s", gWaiting->timeout,
                      gWaiting->name.c_str());
             MCGuiCheck(false, text, __FILE__, __LINE__);
+            noteState();
         }
         gWaiting = nullptr;
     }

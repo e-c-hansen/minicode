@@ -1218,7 +1218,10 @@ What later items build on:
   so a second double-click within the double-click time counts as one
   click; the tabs suite pauses 0.5 s between them. A place comes back by
   setting the adjustment once the view is mapped and still
-  (`settleOnPlace`); `gtk_text_view_scroll_to_mark` lands short on a fresh
+  (`settleOnPlace`; its two seconds count from the first frame with the
+  view on screen: counted from the call, a session's tab in a window slow
+  to open, or a tab shown with the editor's pane hidden, came back at its
+  top); `gtk_text_view_scroll_to_mark` lands short on a fresh
   layout and its pending scroll can undo the user's next move, and a tab
   left while its place is still coming back keeps that place, not the
   half-done scroll. The strip's scroller has an external vertical policy:
@@ -1365,6 +1368,23 @@ What later items build on:
   again. Three suites start second apps (`MCGuiRunChild`); a child that
   fails leaves backups nobody holds, and every later child then opens a
   window on that folder at launch (`reopenFoldersWithBackups`).
+- **Trap (November 2026): a GTK question does not stop the main loop.**
+  The Mac's alerts run modally, and its timers wait; `gtk_alert_dialog_choose`
+  returns at once, and every timer keeps firing under the question. Keep
+  Mine or Reload counts the version asked about as the file's when it is
+  shown (so it is not asked about twice), and after-delay's auto-save then
+  wrote the tab's edits over that very change before the click; Reload read
+  them back. The tab being asked about is now `Editor::askingAboutDisk`
+  until the shell calls `diskQuestionAnswered`, and auto-save skips it.
+  Anything else a timer does to a document while a question about it is
+  up needs the same care.
+- **Trap (November 2026): an idle at the default priority runs after the
+  input already queued.** Focus-change's save ran from `g_idle_add`, and
+  every key waiting in GDK's queue (X events are dispatched at the default
+  priority) went first: a key typed right after Ctrl+PageUp was written
+  with the tab it went into, as if that tab had lost the keyboard too.
+  Work that must see the state of the moment it was asked for goes at
+  `G_PRIORITY_HIGH`.
 
 ### 18. The Mac's layout (done, November 2026; `PARITY.md` item 1.13)
 
@@ -2482,6 +2502,41 @@ GUI checks (`tests/gui`):
   turns of the main loop, and the runner waits for it.
 - GtkTextView undoes typing a piece at a time: one Ctrl+Z after typing a
   line takes back its last word or so, not the line.
+- **CPU time grows with the load on the ThinkPad** (2026-11-10). Its
+  i7-8550U (four cores, eight threads) runs a thread three to four times
+  slower in CPU time with every core busy: Replace All of 20,000 matches
+  took 170 ms quiet and 0.5 to 1.6 s loaded, its undo 1.6 s and up to 4.6
+  s. `MALLOC_PERTURB_` (meson and CI set it) made no difference measured.
+  A bound with room for that and still below the regression it guards is
+  the larger of a fixed bound and a multiple of a baseline measured on the
+  same thread in the same step or suite (`find_bar`'s plain-buffer edits,
+  `large_file`'s read into a plain buffer), as the Mac's `large_file` does.
+- **Quiet is not arrival** (2026-11-10). `MCGuiWaitQuiet` on a scroll value
+  or a row count passed under load before anything had moved: GTK's first
+  scroll, a worker's first rows, or the rest of the wheel's clicks came
+  after 0.3 to 0.5 s of stillness, and the checks after read the old
+  state (`tabs`, `gutter`, `tree_stall`, `harness`, whose double-click then
+  landed above a text scrolled on by the late clicks). Wait for the value
+  the check reads; keep `MCGuiWaitQuiet` for "and nothing more arrives",
+  after that.
+- **A condition an earlier state already meets** (2026-11-10).
+  `find_bar` waited for "200 matches, highlighted" with
+  `highlighted() > 0`, which the seed's one tagged match already made
+  true; the new matches are painted from an idle, which a loaded run
+  reached after the check. Wait for something only the new state has (the
+  selected match's own tag).
+- **A scroll to a mark in a big buffer waits for GTK's whole layout**
+  (2026-11-10). `gtk_text_view_scroll_to_mark` acts at once only over a
+  complete layout; while GTK is still laying a new buffer out in idle
+  slices (seconds for 100,000 lines, longer under load) it is only kept
+  pending, so asking again every poll changes nothing, and a wait of 10 or
+  20 s for the line to come on screen timed out in loaded runs
+  (`bracket_pairs`, `gutter_typing`). Wait for `MCGuiTextLaidOut` first,
+  with a limit about the machine. A scroll that GTK does carry out over
+  lines it has not laid out (Ctrl+End in a file just opened) lands short
+  and stays, since GTK keeps the top line still as heights come; the
+  `gutter` suite waits for every line to have its height before its second
+  Ctrl+End, where a quiet view for 0.3 s had let it go too early.
 - **Input that gives up the PRIMARY selection and takes it again, sent in
   one burst** (2026-11-10, `large_file` on CI one run in two): a click in a
   field whose text is selected, then Ctrl+A. GTK handles both within the

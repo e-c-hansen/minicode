@@ -20,6 +20,7 @@
 #include "Editor.h"
 #include "FindBar.h"
 #include "Keys.h"
+#include "MultiEdit.h"
 #include "TextFind.h"
 
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -101,6 +102,24 @@ std::string bigText;
 std::string longPath() { return MCGuiProjectFile("find/long.txt"); }
 size_t gCopies = 0;
 double gCpu = 0;
+double gReplaceBase = 0;
+
+// What Replace All's edits cost at the least on this thread, now: the same
+// replacements of "needle" through MultiEdit into a plain buffer of the
+// same text, with no view, highlighter, find bar, or selection clipboard.
+double replaceAllBaseline() {
+    GtkTextBuffer* b = gtk_text_buffer_new(nullptr);
+    gtk_text_buffer_set_text(b, bigText.data(), (int)bigText.size());
+    std::vector<MultiEdit::Change> changes;
+    // The text is ASCII, so byte offsets are character offsets.
+    for (size_t p = bigText.find("needle"); p != std::string::npos; p = bigText.find("needle", p + 6))
+        changes.push_back({p, 6, "pin"});
+    const double c0 = MCGuiThreadCpuMs();
+    MultiEdit::apply(b, changes, true);
+    const double ms = MCGuiThreadCpuMs() - c0;
+    g_object_unref(b);
+    return ms;
+}
 int gChars = 0;
 
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -593,7 +612,10 @@ MC_GUI_SUITE(find_bar) {
         return bar()->query() == "needle" && bar()->resultsCurrent() &&
                bar()->matches().size() == FindRules::kMatchLimit;
     });
-    MCGuiStep("Replace All", [] { MCGuiKey("ctrl+alt+enter"); });
+    MCGuiStep("Replace All", [] {
+        gReplaceBase = replaceAllBaseline();
+        MCGuiKey("ctrl+alt+enter");
+    });
     MCGuiWait("every needle replaced", 30, [] { return MCGuiEditorText().find("needle") == std::string::npos; });
     MCGuiStep("all 20,000, each its own edit, within a CPU bound", [] {
         const std::string t = MCGuiEditorText();
@@ -603,8 +625,22 @@ MC_GUI_SUITE(find_bar) {
                   bar()->lastReplaceAllMs(), bar()->lastReplaceAllWorkerMs());
         // About 170 and 25 ms on the ThinkPad. While the selection stayed
         // during the edits it was close to a minute for twice as many
-        // (MultiEdit.cpp).
-        GCHECK_TIME(bar()->lastReplaceAllMs(), 1500, "Replace All of 20,000 matches (main thread)");
+        // (MultiEdit.cpp), an X round trip a delete.
+        //
+        // On a loaded machine this thread is several times slower: 0.5 to
+        // 0.9 s at a load of 5, and 1.5 and 1.6 s, over the old bound of
+        // 1.5 s, in loaded runs. Not from MALLOC_PERTURB_'s filling of every
+        // block, which meson and CI set: with and without it, 496 and 526 ms,
+        // 586 and 532. So the
+        // bound grows with the same edits put through MultiEdit into a plain
+        // buffer just before, on this thread (the edits cost about 10 times
+        // that, the view and every listener of the buffer included). With
+        // the selection kept through them (MultiEdit's place_cursor taken out
+        // to see) they took 9.3 s, 166 times it.
+        const double ra = bar()->lastReplaceAllMs();
+        MCGuiNote("the same edits in a plain buffer just before: %.0f ms (%.1f times)", gReplaceBase,
+                  gReplaceBase > 0 ? ra / gReplaceBase : 0.0);
+        GCHECK_TIME(ra, std::max(1500.0, 30 * gReplaceBase), "Replace All of 20,000 matches (main thread)");
         GCHECK_TIME(bar()->lastReplaceAllWorkerMs(), 1000, "Replace All of 20,000 matches (worker)");
         GCHECK_EQ_STR(statusText(), "Replaced 20000 matches");
         MCGuiClick(ed()->textView());
