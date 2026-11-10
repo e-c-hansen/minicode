@@ -329,6 +329,29 @@ NSString *WholePage(EditorController *c) {
     return [c markdownPageFor:c.sourceText width:Side(c).pageWidth anchors:NULL].string;
 }
 
+// The last render built only what changed: under `bound` ms of CPU on a
+// Mac as fast as the one these were set on (an M3, where a whole render of
+// the same text took `wholeHere` ms), and in proportion on a slower one
+// (CI's runners, an efficiency core under load), which a whole render of
+// the same text, measured now on the same thread (the best of three), says
+// how much slower it is. Like against like, so the bound is as tight
+// everywhere: a render that built every piece again costs a whole one.
+void CheckRenderCost(EditorController *c, double bound, double wholeHere, NSString *what,
+                     const char *file, int line) {
+    const double ms = Side(c).lastRenderCpuMilliseconds;
+    double whole = INFINITY;
+    for (int k = 0; k < 3; k++) {
+        const double t0 = MCGuiThreadCpuMs();
+        (void)WholePage(c);
+        whole = MIN(whole, MCGuiThreadCpuMs() - t0);
+    }
+    const double slower = MAX(1.0, whole / wholeHere);
+    MCGuiNote(@"%@: %.2f ms of CPU; a whole render %.2f, %.2f times the M3's", what, ms, whole, slower);
+    MCGuiCheckTime(ms, bound * slower, what, file, line);
+}
+#define CHECK_RENDER_COST(c, bound, wholeHere, what) \
+    CheckRenderCost((c), (bound), (wholeHere), (what), __FILE__, __LINE__)
+
 // How the two strings differ: the one stretch of `a` that `b` replaces.
 NSRange Changed(NSString *a, NSString *b, NSString **with) {
     NSUInteger p = 0, s = 0;
@@ -422,7 +445,7 @@ MC_GUI_SUITE(markdown_side_sync) {
         // Only the edited piece was built: the page is what a whole render
         // makes, and it cost little of the main thread.
         GCHECK_EQ_STR(Page(c), WholePage(c));
-        GCHECK_TIME(Side(c).lastRenderCpuMilliseconds, 10, @"a pause's render at 1,200 lines");
+        CHECK_RENDER_COST(c, 10, 14, @"a pause's render at 1,200 lines");
     });
 
     __block NSTextBlock *codeBox = nil;
@@ -457,7 +480,7 @@ MC_GUI_SUITE(markdown_side_sync) {
         // The anchors moved with the text.
         const NSUInteger heading = [Side(c).anchors[@"section-110"] unsignedIntegerValue];
         GCHECK([[Page(c) substringFromIndex:heading] hasPrefix:@"Section 110"]);
-        GCHECK_TIME(Side(c).lastRenderCpuMilliseconds, 10, @"a render after a line on top");
+        CHECK_RENDER_COST(c, 10, 14, @"a render after a line on top");
         // Taken out again.
         NSTextView *tv = Source(c);
         Replace(tv, NSMakeRange(0, [@"A line on top.\n\n" length]), @"");
@@ -603,7 +626,7 @@ MC_GUI_SUITE(markdown_side_sync) {
         return [Page(c) containsString:@"Typed Paragraph 1001"];
     });
     MCGuiStep(@"the pause cost under 30 ms of the main thread, and the page is right", ^{
-        GCHECK_TIME(Side(c).lastRenderCpuMilliseconds, 30, @"a pause's render at 20,000 lines");
+        CHECK_RENDER_COST(c, 30, 205, @"a pause's render at 20,000 lines");
         // The page at the source's line (the source's view, its own height
         // not yet back after the edit, may stop a few lines short of 10,000).
         MCGuiNote(@"source %lu, page %ld", (unsigned long)SourceTop(c), (long)PageTop(c));
@@ -622,7 +645,7 @@ MC_GUI_SUITE(markdown_side_sync) {
         return [Page(c) hasSuffix:@"The last words.\n"];
     });
     MCGuiStep(@"at the end too", ^{
-        GCHECK_TIME(Side(c).lastRenderCpuMilliseconds, 30, @"a render at the end of 20,000 lines");
+        CHECK_RENDER_COST(c, 30, 205, @"a render at the end of 20,000 lines");
         [Source(c).undoManager removeAllActions];
         for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy])
             if ([t.currentPath isEqualToString:big]) [c closeTab:t prompt:NO];
