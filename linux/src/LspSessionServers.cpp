@@ -47,6 +47,11 @@ void LspSession::flash(const std::string& message) {
     }, this);
 }
 
+void LspSession::note(const std::string& message) {
+    lastNote_ = message;
+    flash(message);
+}
+
 bool LspSession::noServer() {
     if (server_ && !uri_.empty()) return false;
     gtk_widget_error_bell(view_);
@@ -131,6 +136,17 @@ std::shared_ptr<Server> LspSession::serverForKey(const std::string& key) {
     };
     server->onExit = [alive, this](Server* s) {
         if (!alive.expired()) serverExited(s);
+    };
+    // workspace/applyEdit (often while a command the server was asked to run
+    // goes on): the same applier as rename's (LspSessionActions.cpp).
+    std::weak_ptr<Server> weakServer = server;
+    c.onApplyEdit = [alive, this, weakServer](const Json& params,
+                                              Lsp::Client::ApplyEditReply reply) {
+        if (alive.expired()) {
+            reply(false, "the window closed");
+            return;
+        }
+        serverAppliesEdit(weakServer, params, reply);
     };
     c.initialize(root_, (int)getpid());
     servers_[key] = server;

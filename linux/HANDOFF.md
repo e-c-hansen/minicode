@@ -49,7 +49,8 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
 - Find in Folder (item 5) with Replace in Folder, and the find and replace
   bar in the file with VS Code's options (item 20);
 - language servers: squiggles, completion, hover and go to definition
-  (item 6);
+  (item 6), every tab's file open on its server, and rename, references and
+  quick fixes (item 26);
 - the LaTeX preview with double-click editing and Export PDF (item 7);
 - several windows, each with its own tree, editor, terminal, browser, search
   panel and language servers; Focus Editor, Close Window and Quit (item 8);
@@ -1894,7 +1895,7 @@ What later items build on:
   caret far (to its end), which the ten-line rule records: a check that
   wants an empty history clears it after the click.
 
-### 26. The language server session's parts, and every tab open (done, November 2026; `PARITY.md` item 2.0)
+### 26. The language server session's parts, every tab open, and rename, references and quick fixes (done, November 2026; `PARITY.md` items 2.0 and 2.1)
 
 What later items build on:
 - **The session is split by concern**, as the Mac's `LspSession` is split
@@ -1960,6 +1961,59 @@ What later items build on:
   the window may not be active when a suite starts (the suite before it
   started another program): `MCGuiFocusKeyWindow()` before checking
   `gtk_widget_has_focus`.
+
+Item 2.1 (`LspSessionActions.cpp`, `LspSessionEdits.cpp`, `LspPicker.{h,cpp}`):
+- **The workspace edit applier** is `LspSession::applyWorkspaceEdit(we,
+  &failure)` (public, for Format Document's server fallback in 2.4 and
+  anything else with a `Lsp::WorkspaceEdit`), over the private `applyEdit(we,
+  server, asked, &failure)`, which also refuses a file that moved on since
+  the server computed the edit (`Lsp::staleEditFile` against the
+  versions when it was asked). Every file or none: each read from its tab
+  (on show or not) or the disk; refused when another window's tab has
+  unsaved changes to it; checked against the text the server's positions
+  are for (`Client::textFor`, else the disk's) with the core's
+  `Lsp::editsHold`; then every file without a tab opened in a kept tab
+  (`OpenFrom::Other`), each checked to be text to edit (not a preview: a
+  Markdown file opens in its page, which the Mac also refuses) holding that
+  text; then each file's edits as one `MultiEdit::apply` on its own buffer
+  (`Lsp::pointEdits` turns the UTF-16 edits into code points), one undo
+  step per file, background tabs included without showing them. A failure
+  part way undoes the files edited (`gtk_text_buffer_undo`) and closes the
+  tabs it opened; the tab on show is put back on show; nothing is saved.
+  `applyingEdit_` is set meanwhile, so the tabs it opens do not close the
+  lists or forget the rename, and `MultiEdit::applying()` keeps completion
+  from taking the edits for typing.
+- **Rename** (F2): `prepareRename` when the server offers it, its range and
+  placeholder; the box (`lspgtk::RenameBox`, an autohide popover with an
+  entry, which takes the keyboard and gives it back to the view when it
+  closes); the request after every tab's text is flushed and synced, with
+  the versions as asked; the answer applied in an idle (`later`, as the
+  Mac's dispatch_async: applying switches tabs, which talks to the server
+  mid-answer otherwise), with "Renamed N occurrences in M files".
+- **References** (Shift+F12) and **Quick Fix** (Ctrl+.) share
+  `lspgtk::Picker`, a popover that never takes the keyboard, as the
+  completion list: the view's capture key controller (`onKey`) hands it Up,
+  Down, Page Up, Page Down, Enter and Escape (`pickerKey`); a click on a row
+  takes it; the caret moving, typing, or the view losing the keyboard closes
+  it. A reference in another file opens through `onReveal` (a Go Back jump,
+  as the definition), in the same file through the editor's reveal. Quick
+  Fix asks with `Lsp::quickFixRange` (the selection, or the caret's line's
+  first diagnostic when none touches the caret) and the stored diagnostics
+  there as the context; an action without its edit is resolved first, then
+  its edit applied, then its command run. `workspace/applyEdit` from a
+  server (`Client::onApplyEdit`, set in `serverForKey`) goes through the
+  same applier in an idle and is answered whether it went in. GTK has no
+  undo names, so the Mac's action names are not kept.
+- **For checks**: `lastNote()`, `pickerKind()`, `pickerRows()`,
+  `pickerSelectedRow()`, `pickerRowWidget(row)`, `renameBoxVisible()`,
+  `renameEntry()`; the scripted server's `${version:name-1}` makes an edit
+  for an older version, and `${uri:/absolute/path}` names a file it does not
+  have open.
+- **Not done here**: Organize Imports and the second server's merged code
+  actions (item 2.2), and the Mac's undo names.
+- **Traps**: the scripted server answers `codeAction/resolve` by its first
+  matching rule, so a rule for one action needs a `when`, or it resolves
+  every action without an edit (a command action too) into that edit.
 
 ## How to work on it
 

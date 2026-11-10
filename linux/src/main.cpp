@@ -1528,6 +1528,22 @@ static void act_hover(GSimpleAction*, GVariant*, gpointer userp) {
     if (editorFocused(app)) app->lsp->showHoverInfo();
 }
 
+// Rename, references and quick fixes (PARITY.md 2.1, LspSessionActions.cpp).
+static void act_rename_symbol(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (editorFocused(app)) app->lsp->renameSymbol();
+}
+
+static void act_references(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (editorFocused(app)) app->lsp->findReferences();
+}
+
+static void act_quick_fix(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (editorFocused(app)) app->lsp->showQuickFixes();
+}
+
 // The palette (PalettePanel.h): the commands (Ctrl+Shift+P, F1), the folder's
 // files (Ctrl+P), Go to Line (Ctrl+G) and the file's symbols (Ctrl+Shift+O)
 // are one box, chosen by its first character. A file from Quick Open opens
@@ -1707,6 +1723,9 @@ static std::string hintsText(App* app) {
     row("editor.action.triggerSuggest", "Complete");
     row("editor.action.revealDefinition", "Go to definition (or Ctrl click)");
     row("editor.action.showHover", "Hover info");
+    row("editor.action.rename", "Rename symbol");
+    row("editor.action.goToReferences", "Find all references");
+    row("editor.action.quickFix", "Quick fix");
 
     heading("Panes");
     row("workbench.action.toggleSidebarVisibility", "Sidebar");
@@ -2357,6 +2376,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "complete",       G_CALLBACK(act_complete));
     addAction(app, "definition",     G_CALLBACK(act_definition));
     addAction(app, "hoverinfo",      G_CALLBACK(act_hover));
+    addAction(app, "renamesymbol",   G_CALLBACK(act_rename_symbol));
+    addAction(app, "references",     G_CALLBACK(act_references));
+    addAction(app, "quickfix",       G_CALLBACK(act_quick_fix));
     addAction(app, "gotobracket",    G_CALLBACK(act_go_to_bracket));
     addAction(app, "open",           G_CALLBACK(act_open));
     addAction(app, "save",           G_CALLBACK(act_save));

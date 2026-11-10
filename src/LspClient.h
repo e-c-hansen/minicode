@@ -101,6 +101,26 @@ struct OffsetEdit {
 std::vector<OffsetEdit> offsetEdits(const std::u16string& text,
                                     const std::vector<TextEdit>& edits);
 std::u16string applyTextEdits(const std::u16string& text, const std::vector<TextEdit>& edits);
+// Whether a file's edits, computed by a server on `base` (the text it had
+// been sent, or the disk's for a file it did not have open), may go into
+// `now` (the text the editor has): every edit's range holds the same text
+// in both and starts on the same line. True when the two are the same.
+// The workspace edit applier refuses a file otherwise, since the edits
+// would land in the wrong places: a tab typed in since, or with unsaved
+// text the server never saw, is edited only where it still reads as the
+// server's text does.
+bool editsHold(const std::u16string& now, const std::u16string& base,
+               const std::vector<TextEdit>& edits);
+// One file's edits in code points of `text` (what a GtkTextIter counts: a
+// character outside the Basic Multilingual Plane is one, where UTF-16
+// counts two), in ascending order, each with its new text in UTF-8: the
+// changes the GTK port's MultiEdit::apply takes. An offset inside a
+// surrogate pair counts as the pair's start.
+struct PointEdit {
+    size_t start = 0, length = 0;
+    std::string text;
+};
+std::vector<PointEdit> pointEdits(const std::u16string& text, const std::vector<TextEdit>& edits);
 
 // textDocument/prepareRename: a Range, {range, placeholder}, or
 // {defaultBehavior: true} (rename the word at the position). Null, or
@@ -152,6 +172,11 @@ std::vector<CodeAction> parseCodeActions(const Json& result, bool canResolve = f
 // it sits in or at either end of), as the server sent them, for a
 // codeAction request's context.
 Json diagnosticsInRange(const std::vector<Diagnostic>& diags, Range range);
+// The range Quick Fix asks the servers about: the selection, or, with
+// nothing selected and no diagnostic touching the caret, the first
+// diagnostic on the caret's line (clang reports a missing ';' at the next
+// token), as the Mac's showQuickFixes picks it.
+Range quickFixRange(const std::vector<Diagnostic>& diags, Range selection);
 // Code actions from several servers for one place, as one list. Each
 // server's list is as parseCodeActions gave it, and `origin` is set to the
 // server's index in `perServer`. Then, keeping the servers' order within

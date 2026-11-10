@@ -135,6 +135,60 @@ std::u16string applyTextEdits(const std::u16string& text, const std::vector<Text
     return out;
 }
 
+bool editsHold(const std::u16string& now, const std::u16string& base,
+               const std::vector<TextEdit>& edits) {
+    if (now == base) return true;
+    const PositionIndex in(now), ib(base);
+    for (const TextEdit& e : edits) {
+        size_t a0 = in.offset(e.range.start), a1 = in.offset(e.range.end);
+        size_t b0 = ib.offset(e.range.start), b1 = ib.offset(e.range.end);
+        if (a1 < a0) a1 = a0;
+        if (b1 < b0) b1 = b0;
+        if (now.compare(a0, a1 - a0, base, b0, b1 - b0) != 0) return false;
+        if (in.position(a0).line != e.range.start.line) return false;
+    }
+    return true;
+}
+
+std::vector<PointEdit> pointEdits(const std::u16string& text, const std::vector<TextEdit>& edits) {
+    std::vector<OffsetEdit> units = offsetEdits(text, edits);   // last first
+    std::reverse(units.begin(), units.end());
+    // Every start and end, in order, turned into code points in one pass.
+    std::vector<size_t> at;
+    at.reserve(units.size() * 2);
+    for (const OffsetEdit& e : units) {
+        at.push_back(e.start);
+        at.push_back(e.start + e.length);
+    }
+    std::vector<size_t> sorted = at;
+    std::sort(sorted.begin(), sorted.end());
+    sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
+    std::vector<size_t> points(sorted.size());
+    size_t unit = 0, point = 0;
+    for (size_t k = 0; k < sorted.size(); k++) {
+        const size_t want = std::min(sorted[k], text.size());
+        while (unit < want) {
+            const bool pair = text[unit] >= 0xD800 && text[unit] <= 0xDBFF &&
+                              unit + 1 < text.size() && text[unit + 1] >= 0xDC00 &&
+                              text[unit + 1] <= 0xDFFF;
+            if (pair && unit + 1 == want) break;   // inside the pair: its start
+            unit += pair ? 2 : 1;
+            point++;
+        }
+        points[k] = point;
+    }
+    auto pointOf = [&](size_t u) {
+        return points[(size_t)(std::lower_bound(sorted.begin(), sorted.end(), u) - sorted.begin())];
+    };
+    std::vector<PointEdit> out;
+    out.reserve(units.size());
+    for (const OffsetEdit& e : units) {
+        const size_t a = pointOf(e.start), b = pointOf(e.start + e.length);
+        out.push_back(PointEdit{a, b - a, toUtf8(e.text)});
+    }
+    return out;
+}
+
 PrepareRename parsePrepareRename(const Json& result) {
     PrepareRename p;
     if (!result.isObject()) return p;

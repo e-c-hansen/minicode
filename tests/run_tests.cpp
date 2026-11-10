@@ -10761,6 +10761,7 @@ static void testMultiCaretOccurrences() {
 #include "agent_tests.inc"
 #include "lsp_also_tests.inc"
 #include "lsp_fixes_tests.inc"
+#include "lsp_applier_tests.inc"
 #include "find_tests.inc"
 #include "symbols_tests.inc"
 #include "gutter_tests.inc"
@@ -10908,6 +10909,7 @@ int main() {
     testInlineAgent();
     testLspSecondServer();
     testLspReviewFixes();
+    testLspApplier();
     testTextFind();
     testRegex();
     testIgnoreFiles();

@@ -33,3 +33,4 @@ MaximizeSuite.cpp
 StartupSuite.cpp
 DetachSuite.cpp
 LspTabsSuite.cpp
+LspActionsSuite.cpp

@@ -5,6 +5,7 @@
 // request sends (diagnosticsInRange).
 #include "LspClient.h"
 #include <algorithm>
+#include <climits>
 #include <set>
 
 namespace Lsp {
@@ -291,6 +292,15 @@ Json diagnosticsInRange(const std::vector<Diagnostic>& diags, Range range) {
         out.push(j);
     }
     return out;
+}
+
+Range quickFixRange(const std::vector<Diagnostic>& diags, Range selection) {
+    if (!(selection.start == selection.end)) return selection;
+    if (diagnosticsInRange(diags, selection).size() > 0) return selection;
+    const Range line{{selection.start.line, 0}, {selection.start.line, INT_MAX}};
+    const Json onLine = diagnosticsInRange(diags, line);
+    if (onLine.size() > 0) return parseRange(onLine[0]["range"]);
+    return selection;
 }
 
 }  // namespace Lsp

@@ -441,7 +441,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Export a Markdown file as a standalone HTML page | Export as HTML in the File menu, or the command palette |  |  |
 | Export the typeset PDF of a LaTeX file | Shift Command S | Ctrl Shift S |  |
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
-| Find every reference to the name at the cursor, with a language server | Shift F12 |  |  |
+| Find every reference to the name at the cursor, with a language server | Shift F12 | Shift F12 |  |
 | Find in the current file, every match highlighted, Return and Shift Return for the next and previous one | Command F | Ctrl F |  |
 | Find with match case, whole word, or a regular expression, in the find bar or Find in Folder | Option Command C, Option Command W, Option Command R | Alt C, Alt W, Alt R |  |
 | Find only in the selected text, while the find bar has the keyboard | Option Command L | Alt L |  |
@@ -504,7 +504,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Play or pause a video or audio file | Shift Command Space | Ctrl Shift Space | Space in the player, or Ctrl Shift Space |
 | Preview the selected file in the tree with Quick Look, as in Finder, and close the preview | Space, then Space or Escape |  |  |
 | Refresh the file tree | Command R |  |  |
-| Rename the name at the cursor wherever it is used, with a language server | F2 |  |  |
+| Rename the name at the cursor wherever it is used, with a language server | F2 | F2 (in the editor) |  |
 | Rename the selected file or folder | F2, in the file tree | F2, in the file tree |  |
 | Rename the terminal, so its tab keeps the name over what the program running in it calls itself (an empty name gives that back) | Rename Terminal… in the Terminal menu or the tab's right click menu, or the command palette |  |  |
 | Reopen the tab closed last, where it was | Option Shift Command T | Ctrl Alt Shift T |  |
@@ -531,7 +531,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Show or hide when each file in the file tree was created | Control Shift Command I |  |  |
 | Show or hide when each file in the file tree was last saved, and when the open file was saved | Option Shift Command I |  |  |
 | Show the cursor's line of a LaTeX file on the typeset page | Option Command J |  |  |
-| Show the language server's quick fixes for the cursor or the selection | Command period |  |  |
+| Show the language server's quick fixes for the cursor or the selection | Command period | Ctrl period |  |
 | Show the type and documentation under the cursor | Option Command I | Ctrl Alt I | K, or Ctrl K |
 | Split the editor: the file on show in a second group beside it, with its own tabs | Command backslash, in the editor |  |  |
 | Split the terminal, with a new one beside it | Command backslash, in the terminal |  |  |

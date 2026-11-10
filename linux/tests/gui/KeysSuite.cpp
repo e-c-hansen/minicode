@@ -240,15 +240,23 @@ MC_GUI_SUITE(keys) {
         // The tree's keys are its own controller's, never the window's.
         GCHECK(accels("win.rename").empty() && accels("win.trash").empty());
         // Every other command's are its keys, as GTK writes them; those of a
-        // page and of the terminal only there.
+        // page and of the terminal only there. While the tree has the
+        // keyboard a key of its own (F2, Rename File's) is not the editor
+        // command's that shares it (Rename Symbol's), since the two places do
+        // not overlap.
+        GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(MCGuiApp().window));
+        const bool tree = Keys::within(focus, MCGuiApp().tree->widget());
         for (const Keys::Action& a : Keys::actions()) {
             const Commands::Command* c = Commands::find(a.id);
             if (!c || c->language || c->when == Commands::When::Tree ||
                 c->when == Commands::When::Page || c->when == Commands::When::Terminal)
                 continue;
             std::vector<std::string> want;
-            for (const Commands::Key& k : Keys::keymap().keysOf(a.id))
+            for (const Commands::Key& k : Keys::keymap().keysOf(a.id)) {
+                const Commands::Command* own = Keys::keymap().commandFor(k, Commands::When::Tree);
+                if (tree && own && own != c && own->when == Commands::When::Tree) continue;
                 for (const std::string& s : Commands::linuxAccelerators(k)) want.push_back(s);
+            }
             GCHECK_EQ_STR(bound(a.action), canon(joined(want)));
         }
     });

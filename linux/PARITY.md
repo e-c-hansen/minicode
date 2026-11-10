@@ -213,6 +213,15 @@ Choices item 1.11 made, by the same rules:
   chord), so the Mac's Ctrl+Cmd+M with Ctrl+Alt: Ctrl+Alt+M, which GNOME
   leaves alone, and which works from the terminal.
 
+Choices item 2.1 made, by the same rules:
+- Rename Symbol, Find All References and Quick Fix are VS Code's Linux F2,
+  Shift+F12 and Ctrl+.. They are editor commands, so in the terminal the
+  program has all three; in the tree F2 stays Rename File's (the tree's own
+  controller, the places do not overlap), and the keys suite now leaves a
+  tree key out of the editor command's accelerators while the tree has the
+  keyboard. Ctrl+. outranks GtkTextView's own emoji chooser key, as Ctrl+/
+  outranks its Select All.
+
 **D2. One `GtkTextView`, one `GtkTextBuffer` per tab.** Split `Editor` into
 the view and slot, and a `Document` holding what is per file: the buffer, its
 path, undo, the highlighter and its mirror, dirty state, and disk stamp. All
@@ -731,8 +740,31 @@ its server comes first here (2.0).
   tab on show synced (13 checks) and with a background tab starting its
   server (3). Needs the owner: real clangd, basedpyright, or rust-analyzer
   with several tabs (their memory and indexing with every tab open).
-- [ ] **2.1 Rename, references, and quick fixes.** The all-or-nothing
+- [x] **2.1 Rename, references, and quick fixes.** The all-or-nothing
   workspace edit applier. Mac: `Lsp+WorkspaceEdit`, `Lsp+Actions`, `LspPicker`.
+  *Verified in Xvfb, 2026-11-10:* `lsp:edits-hold`, `lsp:point-edits` and
+  `lsp:quick-fix-range` hold the core's new rules, and the `lsp_actions`
+  suite presses F2, Shift+F12, Ctrl+. and the lists' keys against the
+  scripted server: references grouped by file with the one under the caret
+  selected, Down past a heading, Enter into another file as a jump Go Back
+  returns from, a click on a row, Escape; prepareRename's refusal ("This
+  can't be renamed"); a rename typed into the box across the clean tab on
+  show, a tab with unsaved text the server has, a tab the server was never
+  sent whose change is elsewhere (checked against the disk), and a file with
+  no tab, opened as a kept tab and left unsaved, one Ctrl+Z each; refused
+  whole, nothing changed anywhere, when a file moved on (an older version),
+  when a range no longer reads what the server saw, and when a file it
+  opens shows as a preview (the tabs it opened closed again); a quick fix
+  for the caret's line's diagnostic with an edit, one resolved first, and
+  one whose command the server answers with `workspace/applyEdit`, answered
+  applied; and the three keys unbound in the terminal, F2 the tree's
+  Rename File there. It fails without the ranges' check and the tabs'
+  closing (17 checks) and without the list's keys (Down, Enter). Keys (D1):
+  VS Code's Linux F2, Shift+F12 and Ctrl+., editor commands. Needs the
+  owner: rename, references and fixes with a real clangd, basedpyright or
+  rust-analyzer; the list's and the box's look; the box's keyboard under
+  GNOME on Wayland with IBus, and Ctrl+. there (an input method's emoji key
+  in some setups).
 - [ ] **2.2 Problems**, the second server, watched files, and Organize
   Imports. Mac: `ProblemsPanel`, `LspWatcher`.
 - [ ] **2.3 Server and tool consent.** A folder's own `.venv`, `node_modules`,

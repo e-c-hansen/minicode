@@ -49,6 +49,8 @@ const std::vector<Action>& actions() {
         {"minicode.sortKeepSortedBlocks", "win.fixkeepsorted", false},
         {"editor.action.triggerSuggest", "win.complete", true},
         {"editor.action.showHover", "win.hoverinfo", false},
+        {"editor.action.rename", "win.renamesymbol", false},
+        {"editor.action.quickFix", "win.quickfix", false},
         {"actions.find", "win.find", true},
         {"editor.action.startFindReplaceAction", "win.replace", false},
         {"editor.action.nextMatchFindAction", "win.findnext", false},
@@ -104,6 +106,7 @@ const std::vector<Action>& actions() {
         {"workbench.action.openEditorAtIndex8", "win.tab8", false},
         {"workbench.action.lastEditorInGroup", "win.lasttab", false},
         {"editor.action.revealDefinition", "win.definition", true},
+        {"editor.action.goToReferences", "win.references", false},
     };
     return table;
 }

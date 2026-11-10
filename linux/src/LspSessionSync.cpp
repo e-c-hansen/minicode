@@ -32,6 +32,7 @@ void LspSession::detachDocument() {
     closeCompletion();
     closeHover();
     forgetHover();
+    forgetActionRequests();
     clearMarks();
     ++docGen_;
 }
@@ -74,6 +75,7 @@ void LspSession::documentChanged(const std::string& pathIn) {
 void LspSession::textEdited(const char* inserted, int len) {
     ++docGen_;
     forgetHover();
+    actionsFollowCaret();
     if (!server_ || uri_.empty()) return;
     completionAfterEdit(inserted, len);
 }

@@ -87,6 +87,11 @@ const std::vector<LinuxRow>& linuxRows() {
         // VS Code's is a chord (Ctrl+K Ctrl+I) and Ctrl+I is the inline
         // agent's (D1), so the Mac's Option+Cmd+I with Alt and Ctrl.
         {"editor.action.showHover", "ctrl+alt+i", 0, nullptr, nullptr},
+        // VS Code's Linux keys (PARITY.md 2.1). Editor commands, so the
+        // program in the terminal keeps F2 and Ctrl+.; the tree's F2 is
+        // Rename File's, on its own controller (the places do not overlap).
+        {"editor.action.rename", "f2", 0, nullptr, nullptr},
+        {"editor.action.quickFix", "ctrl+.", 0, nullptr, nullptr},
         {"actions.find", "ctrl+f", 0, nullptr, nullptr},
         // The find bar (PARITY.md 1.6), VS Code's Linux keys: Ctrl+H shows
         // the replace row, F3 and Shift+F3 step (its Ctrl+G is Go to Line),
@@ -203,6 +208,8 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.openEditorAtIndex8", "alt+8", 0, nullptr, nullptr},
         {"workbench.action.lastEditorInGroup", "alt+9 alt+0", 0, nullptr, nullptr},
         {"editor.action.revealDefinition", "f12", 0, nullptr, nullptr},
+        // VS Code's Linux key (PARITY.md 2.1); in the terminal the program's.
+        {"editor.action.goToReferences", "shift+f12", 0, nullptr, nullptr},
     };
     return rows;
 }

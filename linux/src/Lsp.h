@@ -28,6 +28,9 @@
 //   LspSessionDiagnostics.cpp  squiggles and their messages
 //   LspSessionCompletion.cpp   the completion list
 //   LspSessionNavigation.cpp   hover and go to definition
+//   LspSessionActions.cpp      rename, references, quick fixes, applyEdit
+//   LspSessionEdits.cpp        the workspace edit applier, every file or none
+//   LspPicker.{h,cpp}          the references and fixes list, the rename box
 // A later item adds a file of its own and a struct for its state.
 #pragma once
 
@@ -44,7 +47,12 @@
 #include "LspClient.h"
 #include "Settings.h"
 
-namespace lspgtk { class Server; }
+namespace lspgtk {
+class Server;
+class Picker;
+struct PickerRow;
+class RenameBox;
+}
 
 class LspSession : public EditorObserver {
 public:
@@ -74,13 +82,28 @@ public:
     void triggerCompletion();   // Ctrl+Space
     void goToDefinition();      // F12, at the caret
     void showHoverInfo();       // Ctrl+Alt+I, at the caret
+    void renameSymbol();        // F2: prepareRename where offered, then a box for the name
+    void findReferences();      // Shift+F12: a list by the caret, grouped by file
+    void showQuickFixes();      // Ctrl+.: the server's code actions for the caret
+
+    // The workspace edit applier (LspSessionEdits.cpp), which rename, quick
+    // fixes, a server's workspace/applyEdit and Format Document's server
+    // fallback share: every file of the edit or none, each read and checked
+    // (a tab's text, else the disk's; a range the server computed on other
+    // text than the editor has must still read the same), a file with no
+    // tab opened in one, then each file's edits as one multi-range
+    // replacement (MultiEdit::apply), one undo step per file. A failure part
+    // way puts back what was edited and closes the tabs it opened. Nothing
+    // is saved, and the tab on show stays on show. Returns how many files
+    // changed, or -1 with *failure saying why.
+    int applyWorkspaceEdit(const Lsp::WorkspaceEdit& we, std::string* failure);
 
     // EditorObserver
     void documentChanged(const std::string& path) override;
     void documentSaved(Document* d) override;
     void textEdited(const char* inserted, int len) override;
     void tabsChanged() override;
-    bool takesReturn() const override { return completionVisible(); }
+    bool takesReturn() const override { return completionVisible() || pickerVisible(); }
 
     // Test hooks.
     bool completionVisible() const;
@@ -97,12 +120,25 @@ public:
     std::vector<std::string> openDocuments() const;
     std::size_t rangedChangesSent() const;
     std::size_t wholeChangesSent() const;
+    // The last note in the status bar ("Renamed 4 occurrences in 2 files").
+    const std::string& lastNote() const { return lastNote_; }
+    // The references or quick fix list: "references", "fixes" or "" when
+    // none shows; its rows as text, the selected one, and a row's widget.
+    bool pickerVisible() const;
+    std::string pickerKind() const;
+    std::vector<std::string> pickerRows() const;
+    int pickerSelectedRow() const;
+    GtkWidget* pickerRowWidget(int row) const;
+    // The rename box, and its field.
+    bool renameBoxVisible() const;
+    GtkWidget* renameEntry() const;
 
     // The parts' state (LspSessionPrivate.h).
     struct SyncState;
     struct DiagState;
     struct CompletionState;
     struct NavState;
+    struct ActionsState;
 
 private:
     // ---- shared by the parts (Lsp.cpp)
@@ -119,7 +155,12 @@ private:
     std::shared_ptr<lspgtk::Server> server_;
     std::string note_;
     int docGen_ = 0;   // bumped by every edit of the file on show and every switch
+    bool applyingEdit_ = false;   // the applier is at work: no typing, no lists closing
+    std::string lastNote_;
     void useBuffer(GtkTextBuffer* b);
+    // `fn` once what is being handled now is done (an answer read, a key
+    // press), unless the session is gone by then.
+    void later(std::function<void()> fn);
     Lsp::Position positionOf(const GtkTextIter* it) const;
     void iterAt(Lsp::Position p, GtkTextIter* it) const;
     void cursorIter(GtkTextIter* it) const;
@@ -143,6 +184,7 @@ private:
     guint flashId_ = 0;
     void updateStatus();
     void flash(const std::string& message);
+    void note(const std::string& message);   // flash, kept as lastNote_
     bool noServer();              // bell + note when there is no server
     std::string settingsSignature(const Settings& s) const;
     // The running server for a settings key, started when there is none;
@@ -189,10 +231,12 @@ private:
     void countProblems(int& errors, int& warnings) const;
     bool sameFile(const std::string& uriA, const std::string& uriB) const;
     std::string diagnosticAt(const GtkTextIter* it) const;
+    std::vector<Lsp::Diagnostic> diagnosticsOf(const std::string& uri) const;
 
     // ---- completion (LspSessionCompletion.cpp)
     std::unique_ptr<CompletionState> cmp_;
     void completionAfterEdit(const char* inserted, int len);
+    void completionFollowsCaret();
     void requestCompletion(const std::string& trigger);
     void completionArrived(const Json& result, int gen, const std::string& uri);
     void refilter();
@@ -217,9 +261,47 @@ private:
                       bool popup);
     void showHoverPopover(const std::string& text);
     void installNavigation();
+    // A location's file opened (through onReveal, a jump for Go Back, when
+    // it is another file) and its range selected.
+    void revealLocation(const Lsp::Location& loc);
     static void onCtrlClick(GtkGestureClick* g, int n, double x, double y, gpointer self);
     static gboolean onQueryTooltip(GtkWidget* w, int x, int y, gboolean keyboard,
                                    GtkTooltip* tip, gpointer self);
+
+    // ---- the workspace edit applier (LspSessionEdits.cpp)
+    // `server` computed the edit and `asked` holds its documents' versions
+    // when it was asked for (null: not known), to refuse a file that moved
+    // on since.
+    int applyEdit(const Lsp::WorkspaceEdit& we, lspgtk::Server* server,
+                  const Lsp::DocVersions* asked, std::string* failure);
+    std::string treePathForUri(const std::string& uri) const;
+    Document* documentForPath(const std::string& path) const;
+    std::shared_ptr<const std::u16string> serverTextOf(const std::string& uri) const;
+
+    // ---- rename, references, quick fixes (LspSessionActions.cpp)
+    std::unique_ptr<ActionsState> act_;
+    void closeTransients();
+    void closePicker();
+    void closeRenameBox();
+    void forgetActionRequests();
+    void dropActionPopovers();
+    void actionsFollowCaret();
+    bool pickerKey(guint keyval);
+    void showPicker(const std::vector<lspgtk::PickerRow>& rows, int select, int width,
+                    int maxRows);
+    void acceptPickerRow(int row);
+    bool serverOffers(Lsp::Feature what, const char* missing);
+    void rememberAsked();
+    bool stillAsAsked(int gen, int wanted, const std::string& uri) const;
+    std::pair<int, int> nameRangeAt(int offset) const;
+    void openRename(int a, int b, int gen, const std::string& placeholder);
+    void commitRename(const std::string& name, int gen);
+    std::string editorTextOf(const std::string& path) const;
+    void referencesArrived(const Json& result, const Json& error, int gen, const std::string& uri);
+    void runCodeAction(const Lsp::CodeAction& action, std::shared_ptr<lspgtk::Server> server);
+    void performCodeAction(const Lsp::CodeAction& action, std::shared_ptr<lspgtk::Server> server);
+    void serverAppliesEdit(const std::weak_ptr<lspgtk::Server>& server, const Json& params,
+                           Lsp::Client::ApplyEditReply reply);
 };
 
 // Stop every server the app started, now: shutdown and exit, then SIGTERM and

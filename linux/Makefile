@@ -25,7 +25,7 @@ BIN      := $(BUILD)/minicode
 CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEdit.cpp \
         ../src/MarkdownTasks.cpp ../src/Settings.cpp ../src/LineComments.cpp \
         ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
-        ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp ../src/MultiCaret.cpp \
+        ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp \
         ../src/LatexDoc.cpp ../src/SyncTex.cpp \
         ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp \
         ../src/LspProtocol.cpp ../src/LspText.cpp ../src/LspServers.cpp \
@@ -52,6 +52,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Document.cpp src/Tabs.cp
        src/LatexClick.cpp src/Latex.cpp src/TermLinkPath.cpp \
        src/Lsp.cpp src/LspProcess.cpp src/LspSessionServers.cpp src/LspSessionSync.cpp \
        src/LspSessionDiagnostics.cpp src/LspSessionCompletion.cpp src/LspSessionNavigation.cpp \
+       src/LspSessionActions.cpp src/LspSessionEdits.cpp src/LspPicker.cpp \
        src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \

@@ -85,6 +85,11 @@ void LspSession::forgetAllDiagnostics() {
     clearMarks();
 }
 
+std::vector<Lsp::Diagnostic> LspSession::diagnosticsOf(const std::string& uri) const {
+    auto it = diag_->byUri.find(lspui::canonicalUri(uri));
+    return it == diag_->byUri.end() ? std::vector<Lsp::Diagnostic>() : it->second.list;
+}
+
 void LspSession::countProblems(int& errors, int& warnings) const {
     errors = warnings = 0;
     auto it = diag_->byUri.find(lspui::canonicalUri(uri_));

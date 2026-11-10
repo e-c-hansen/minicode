@@ -324,11 +324,7 @@ bool LspSession::completionKey(guint keyval) {
     }
 }
 
-void LspSession::onFocusLeave(GtkEventControllerFocus*, gpointer selfp) {
-    static_cast<LspSession*>(selfp)->closeCompletion();
-}
-
-void LspSession::onMarkSet(GtkTextBuffer* buf, GtkTextIter*, GtkTextMark* mark, gpointer selfp) {
-    LspSession* self = static_cast<LspSession*>(selfp);
-    if (self->cmp_->completing && mark == gtk_text_buffer_get_insert(buf)) self->scheduleRefilter();
+// The caret moved: the list follows the word, or closes.
+void LspSession::completionFollowsCaret() {
+    if (cmp_->completing) scheduleRefilter();
 }

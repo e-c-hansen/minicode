@@ -127,6 +127,11 @@ gui_sources = [
   'src/LspSessionDiagnostics.cpp',
   'src/LspSessionCompletion.cpp',
   'src/LspSessionNavigation.cpp',
+  # Rename, references and quick fixes, the workspace edit applier, and the
+  # list and the box they show (PARITY.md 2.1).
+  'src/LspSessionActions.cpp',
+  'src/LspSessionEdits.cpp',
+  'src/LspPicker.cpp',
   'src/MediaView.cpp',
   # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp, and so
   # are the LaTeX preview's two files, which need poppler too.

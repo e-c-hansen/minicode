@@ -37,11 +37,18 @@ void installCss() {
 
 }  // namespace
 
+std::vector<LspSession*>& lspAllSessions() {
+    static std::vector<LspSession*>* all = new std::vector<LspSession*>();
+    return *all;
+}
+
 LspSession::LspSession(Editor* editor, const std::string& root, const Settings& settings)
     : editor_(editor), view_(editor->textView()),
       root_(root), settings_(settings),
       sync_(std::make_unique<SyncState>()), diag_(std::make_unique<DiagState>()),
-      cmp_(std::make_unique<CompletionState>()), nav_(std::make_unique<NavState>()) {
+      cmp_(std::make_unique<CompletionState>()), nav_(std::make_unique<NavState>()),
+      act_(std::make_unique<ActionsState>()) {
+    lspAllSessions().push_back(this);
     signature_ = settingsSignature(settings);
     useBuffer(editor->sourceBuffer());
     installCss();
@@ -61,7 +68,7 @@ LspSession::LspSession(Editor* editor, const std::string& root, const Settings& 
 
     makeDiagnosticTags();
 
-    // Keys for the completion list, ahead of the text view's own handling.
+    // Keys for the completion list and the picker, ahead of the text view's own handling.
     GtkEventController* keys = gtk_event_controller_key_new();
     gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
     g_signal_connect(keys, "key-pressed", G_CALLBACK(onKey), this);
@@ -98,6 +105,8 @@ void LspSession::useBuffer(GtkTextBuffer* b) {
 }
 
 LspSession::~LspSession() {
+    auto& all = lspAllSessions();
+    all.erase(std::remove(all.begin(), all.end(), this), all.end());
     shutdown();
     g_signal_handlers_disconnect_by_data(view_, this);
     useBuffer(nullptr);
@@ -110,6 +119,33 @@ LspSession::~LspSession() {
 void LspSession::dropPopovers() {
     dropCompletionPopover();
     dropHoverPopover();
+    dropActionPopovers();
+}
+
+void LspSession::later(std::function<void()> fn) {
+    std::weak_ptr<int> alive = life_;
+    auto* job = new std::function<void()>([alive, fn = std::move(fn)] {
+        if (!alive.expired()) fn();
+    });
+    g_idle_add_full(G_PRIORITY_DEFAULT, [](gpointer p) -> gboolean {
+        (*static_cast<std::function<void()>*>(p))();
+        return G_SOURCE_REMOVE;
+    }, job, [](gpointer p) { delete static_cast<std::function<void()>*>(p); });
+}
+
+// The view lost the keyboard: the lists by the caret close (the rename box
+// takes it, and closes them too).
+void LspSession::onFocusLeave(GtkEventControllerFocus*, gpointer selfp) {
+    LspSession* self = static_cast<LspSession*>(selfp);
+    self->closeCompletion();
+    if (!self->applyingEdit_) self->closePicker();
+}
+
+void LspSession::onMarkSet(GtkTextBuffer* buf, GtkTextIter*, GtkTextMark* mark, gpointer selfp) {
+    LspSession* self = static_cast<LspSession*>(selfp);
+    if (mark != gtk_text_buffer_get_insert(buf)) return;
+    self->completionFollowsCaret();
+    self->actionsFollowCaret();
 }
 
 void LspSession::onUnrealize(GtkWidget*, gpointer selfp) {
@@ -120,7 +156,7 @@ gboolean LspSession::onKey(GtkEventControllerKey*, guint keyval, guint, GdkModif
                            gpointer selfp) {
     if (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK)) return FALSE;
     LspSession* self = static_cast<LspSession*>(selfp);
-    return self->completionKey(keyval) ? TRUE : FALSE;
+    return self->completionKey(keyval) || self->pickerKey(keyval) ? TRUE : FALSE;
 }
 
 // ---- positions

@@ -189,7 +189,13 @@ void LspSession::definitionArrived(const Json& result, int gen, const std::strin
         flash("No definition found");
         return;
     }
-    const Lsp::Location& loc = locs[0];
+    revealLocation(locs[0]);
+}
+
+// Within the file on show, the editor's own reveal (the ten-line rule of Go
+// Back's history records a far one); another file through onReveal, as a
+// Find in Folder match opens, a jump.
+void LspSession::revealLocation(const Lsp::Location& loc) {
     const std::string target = Lsp::pathFromUri(loc.uri);
     if (target.empty()) return;
     const Lsp::Position s = loc.range.start, e = loc.range.end;
@@ -211,16 +217,11 @@ void LspSession::definitionArrived(const Json& result, int gen, const std::strin
 
     // Another file: opened under the tree's own spelling of the path when it
     // is inside the folder (clangd answers with resolved paths), then the
-    // same open-and-reveal as a Find in Folder match.
-    std::string path = target;
-    const std::string real = lspui::realPath(target), rootReal = lspui::realPath(root_);
-    if (!rootReal.empty() && real.rfind(rootReal + "/", 0) == 0)
-        path = root_ + real.substr(rootReal.size());
-    gchar* raw = nullptr;
-    gsize rawLen = 0;
-    if (!g_file_get_contents(path.c_str(), &raw, &rawLen, nullptr)) return;
-    const std::string content(raw, rawLen);
-    g_free(raw);
+    // same open-and-reveal as a Find in Folder match. Its text is its tab's
+    // when it has one (unsaved changes move the lines), else the disk's.
+    const std::string path = treePathForUri(loc.uri);
+    const std::string content = editorTextOf(path);
+    if (content.empty() && !g_file_test(path.c_str(), G_FILE_TEST_EXISTS)) return;
     std::string line;
     size_t a = 0, b = 0;
     if (lspui::lineOf(content, s.line, line)) {

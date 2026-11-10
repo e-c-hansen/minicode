@@ -11,6 +11,7 @@
 #pragma once
 
 #include "Lsp.h"
+#include "LspPicker.h"
 #include "LspProcess.h"
 #include "Utf8Offsets.h"
 
@@ -159,6 +160,27 @@ struct LspSession::CompletionState {
     guint refilterId = 0;
     guint triggerId = 0;             // a typed trigger character's request, next idle
     std::string pendingTrigger;
+};
+
+// Every window's session, oldest first (Lsp.cpp): the applier asks the
+// others about unsaved changes to a file it edits.
+std::vector<LspSession*>& lspAllSessions();
+
+// ---- rename, references, quick fixes (LspSessionActions.cpp)
+struct LspSession::ActionsState {
+    std::unique_ptr<lspgtk::Picker> picker;
+    std::unique_ptr<lspgtk::RenameBox> rename;
+    std::string pickerKind;                  // "references", "fixes", "" for none
+    std::vector<Lsp::Location> refRows;      // a references row's place; a heading's empty
+    std::vector<Lsp::CodeAction> actions;    // the fixes list's
+    std::weak_ptr<lspgtk::Server> actionServer;
+    int renameGen = 0, referencesGen = 0, actionGen = 0;
+    // The caret, the selection and the text (docGen_) when a request went
+    // out: an answer is for that, or dropped.
+    int askedInsert = -1, askedBound = -1, askedDocGen = -1;
+    std::weak_ptr<lspgtk::Server> renameServer;
+    int renameStart = 0, renameEnd = 0;      // the name, in characters
+    std::string renameOld;
 };
 
 // ---- hover and definition (LspSessionNavigation.cpp)
