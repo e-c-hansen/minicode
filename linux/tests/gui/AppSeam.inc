@@ -62,3 +62,5 @@ void MCGuiCloseAllWindows() {
         gtk_window_close(GTK_WINDOW(a->window));
     }
 }
+
+void MCGuiOpenWindow(const std::string& folder) { newWindow(folder, ""); }

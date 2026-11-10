@@ -64,3 +64,6 @@ void MCGuiReloadKeys();
 // Every window, closed as the app closes one, with no questions about unsaved
 // text.
 void MCGuiCloseAllWindows();
+// A new window on `folder`, as a second `minicode <folder>` opens one (the
+// Mac's suites open theirs through application:openURLs:).
+void MCGuiOpenWindow(const std::string& folder);

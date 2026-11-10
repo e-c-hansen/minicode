@@ -50,7 +50,8 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Document.cpp src/Tabs.cp
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp \
        src/Search.cpp src/FindBar.cpp src/MultiEdit.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
        src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp src/TermLinkPath.cpp \
-       src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
+       src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp \
+       src/GitDiffView.cpp src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \

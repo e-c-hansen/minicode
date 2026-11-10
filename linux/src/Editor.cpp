@@ -20,7 +20,7 @@
 #include "Utf8Offsets.h"
 #include "MediaView.h"
 #include "StartupLog.h"
-#include "GitPanel.h"
+#include "GitDiffView.h"
 #include "Latex.h"
 #include "PdfView.h"
 #include "ScrollSettle.h"
@@ -547,6 +547,7 @@ void Editor::showActive() {
         if (!diff_) {
             diff_ = new GitDiffView();
             gtk_stack_add_named(GTK_STACK(slot_), diff_->widget(), "diff");
+            if (onDiffViewMade) onDiffViewMade(diff_);
         }
         diff_->show(d->diffBytes(), d->diffIsCommit());
         gtk_stack_set_visible_child(GTK_STACK(slot_), diff_->widget());

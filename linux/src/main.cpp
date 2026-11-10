@@ -1449,23 +1449,52 @@ static void showDiffInEditor(App* app, const std::string& title, const std::stri
     refreshHints(app);
 }
 
+// The Source Control panel's object, made with the window as the Mac's is
+// (EditorController+Git.mm's ensureGitPanel), so autofetch and View > Source
+// Control's commands (GitPanel.h) work before it is first shown; its widget
+// joins the sidebar on the first Ctrl+Shift+G.
+static void makeGitPanel(App* app) {
+    app->git = new GitPanel(app->rootDir);
+    app->git->applySettings(g.settings->settings());
+    app->git->hostWindow = GTK_WINDOW(app->window);
+    app->git->onShowDiff = [app](const std::string& name, const std::string&,
+                                 const std::string& diff) {
+        if (!app->dead) showDiffInEditor(app, name + " (diff)", diff, false);
+    };
+    app->git->onShowCommit = [app](const std::string& title, const std::string& show) {
+        if (!app->dead) showDiffInEditor(app, title, show, true);
+    };
+    app->git->onNote = [app](const std::string& text) {
+        if (!app->dead) flashStatus(app, text);
+    };
+    app->git->onOpenFile = [app](const std::string& path) {
+        if (!app->dead) openFileThen(app, path, EditorTabs::OpenFrom::Other, nullptr);
+    };
+    app->git->onRevealFile = [app](const std::string& path) {
+        if (!app->dead) revealInTree(app, path);
+    };
+    app->git->showPick = [app](const PalettePanel::Pick& pick) {
+        if (!app->dead && app->palette) app->palette->showPick(pick);
+    };
+    app->git->isActive = [app] {
+        return !app->dead && !app->closing && gtk_window_is_active(GTK_WINDOW(app->window));
+    };
+    app->git->fileOnShow = [app] {
+        return app->dead || app->editor->isDiff() ? std::string() : app->editor->currentPath();
+    };
+    app->git->installActions(G_ACTION_MAP(app->window));
+    app->editor->onDiffViewMade = [app](GitDiffView* view) {
+        if (!app->dead && app->git) app->git->attachDiffView(view);
+    };
+}
+
 // Ctrl+Shift+G: the Source Control panel takes the file tree's place in the
 // sidebar and gives it back when pressed again, the Mac's
 // toggleSourceControl:. The sidebar keeps its width, and a hidden one opens.
 static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    if (!app->git) {
-        app->git = new GitPanel(app->rootDir);
-        app->git->applySettings(g.settings->settings());
-        app->git->onShowDiff = [app](const std::string& name, const std::string&,
-                                     const std::string& diff) {
-            if (!app->dead) showDiffInEditor(app, name + " (diff)", diff, false);
-        };
-        app->git->onShowCommit = [app](const std::string& title, const std::string& show) {
-            if (!app->dead) showDiffInEditor(app, title, show, true);
-        };
+    if (!gtk_widget_get_parent(app->git->widget()))
         gtk_stack_add_named(GTK_STACK(app->sidebar), app->git->widget(), "git");
-    }
     app->gitShown = !app->gitShown;
     if (app->gitShown) {
         if (!app->layout->sidebarShown()) act_toggle_sidebar(nullptr, nullptr, app);
@@ -1732,6 +1761,8 @@ static std::string hintsText(App* app) {
         plain("Space", "Stage or unstage");
         // Ctrl+Enter to commit is written in the message box itself.
         plain("Tab", "Changes, graph, message");
+        plain("Ctrl or Shift click", "Choose several files");
+        plain("Right click", "Push, pull, stage all, discard, stash");
     }
     if (app->editor->isMarkdown()) {
         row("markdown.showPreview", std::string("Markdown    (") +
@@ -1978,6 +2009,7 @@ static void onFocusWidget(GObject*, GParamSpec*, gpointer userp) {
     updatePageZoom(app);   // the browser's page took or left the keyboard
     if (!app->dead && app->persist)   // focus-change auto-save
         app->persist->focusMoved(gtk_root_get_focus(GTK_ROOT(app->window)));
+    if (!app->dead && app->git) app->git->updateActions();   // the panel's list has the keyboard
 }
 
 // Coming back to a window is when the Mac looks for changes made elsewhere
@@ -2098,6 +2130,7 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->editor->onActiveChanged = nullptr;
     app->editor->onActiveWillChange = nullptr;
     app->editor->onDocumentsChanged = nullptr;
+    app->editor->onDiffViewMade = nullptr;
     Zoom::unlisten(app->zoomListener);
     app->editor->setLinkHandler(nullptr);
     app->editor->setExternalChangeCallback(nullptr, nullptr);
@@ -2194,6 +2227,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
         revealActiveInTree(app);
         refreshHints(app);
         if (app->persist) app->persist->tabShown();
+        if (app->git) app->git->updateActions();   // Discard Changes acts on the file on show
     };
     // The zoom and word wrap are every window's (Zoom.h): the editor's text
     // follows the stylesheet by itself, its preview's tags and the
@@ -2435,6 +2469,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "quickopen",      G_CALLBACK(act_quick_open));
     addAction(app, "gotoline",       G_CALLBACK(act_go_to_line));
     addAction(app, "gotosymbol",     G_CALLBACK(act_go_to_symbol));
+    makeGitPanel(app);   // and View > Source Control's actions
     for (const char* off : {"zoomin", "zoomout", "zoomfit", "playpause"})   // until shown
         g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
                                         G_ACTION_MAP(app->window), off)), FALSE);

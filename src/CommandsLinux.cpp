@@ -140,6 +140,21 @@ const std::vector<LinuxRow>& linuxRows() {
         {"editor.action.toggleWordWrap", "alt+z", 0, nullptr, nullptr},
         {"workbench.action.toggleSidebarVisibility", "ctrl+b", 0, nullptr, nullptr},
         {"workbench.view.scm", "ctrl+shift+g", 0, nullptr, nullptr},
+        // View > Source Control (PARITY.md 2.9). VS Code has these without
+        // keys on Linux too.
+        {"git.fetch", "", 0, nullptr, nullptr},
+        {"git.pull", "", 0, nullptr, nullptr},
+        {"git.push", "", 0, nullptr, nullptr},
+        {"git.sync", "", 0, nullptr, nullptr},
+        {"git.stageAll", "", 0, nullptr, nullptr},
+        {"git.unstageAll", "", 0, nullptr, nullptr},
+        {"git.clean", "", 0, nullptr, nullptr},
+        {"minicode.git.undoDiscard", "", 0, nullptr, nullptr},
+        {"git.checkout", "", 0, nullptr, nullptr},
+        {"git.commitAmend", "", 0, nullptr, nullptr},
+        {"git.undoCommit", "", 0, nullptr, nullptr},
+        {"git.stashIncludeUntracked", "", 0, nullptr, nullptr},
+        {"git.stashPop", "", 0, nullptr, nullptr},
         {"minicode.toggleEditor", "ctrl+shift+e", 0, nullptr, nullptr},
         // The Mac's Ctrl+Cmd+M; VS Code has no key (its Toggle Maximize
         // Editor Group is a chord), so Ctrl+Alt with the letter, which GNOME

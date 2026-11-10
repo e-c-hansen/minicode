@@ -226,6 +226,9 @@ public:
     bool isDiff() const { return active_ && active_->kind() == Document::Kind::Diff; }
     const std::string& diffTitle() const;
     GitDiffView* diffView() const { return diff_; }
+    // The diff view was made (on the first diff): the window's Source
+    // Control panel gives it the hunk actions (GitPanel::attachDiffView).
+    std::function<void(GitDiffView*)> onDiffViewMade;
 
     // The active tab's file ("" with none, or a diff), and whether it holds
     // unsaved changes.

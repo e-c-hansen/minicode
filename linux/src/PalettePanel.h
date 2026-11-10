@@ -32,6 +32,12 @@
 // symlinked folders once, at most 20,000), which closing the palette stops.
 // The commands run lately and the files Quick Open opened persist in
 // $XDG_STATE_HOME/minicode/palette.json (PARITY.md D11), for every window.
+//
+// A pick list (showPick) puts a caller's own rows in place of the modes, as
+// VS Code's quick picks and the Mac's MCPalettePick: the branch picker
+// (PARITY.md 2.9) is one. Typing filters them by the same rules, the whole
+// text being the query (no prefixes), and the keys, the click, Escape and
+// putting the keyboard back are the palette's.
 #pragma once
 
 #include <gtk/gtk.h>
@@ -72,9 +78,28 @@ public:
     // Open with `text` in the field (">", ":", "@" or ""), or, when it is
     // open already, give it that text and the keyboard. The commands are
     // read now, before the keyboard moves, so their actions' enabled state
-    // is the one for where the keyboard was.
+    // is the one for where the keyboard was. An open pick list closes first.
     void show(const std::string& text, const Context& context);
     bool isOpen() const { return open_; }
+
+    // A list of the caller's own, in place of the modes.
+    struct Pick {
+        std::string placeholder;            // the field's hint
+        std::vector<std::string> labels;    // matched and shown
+        std::vector<std::string> details;   // muted, at the right (may be fewer)
+        // A row chosen, by its index in `labels`, on the turn after the
+        // palette closed and the keyboard went back.
+        std::function<void(int index)> choose;
+        // A last row made from what is typed ("Create branch “x” from
+        // main"), "" for none; choosing it runs chooseTyped with the text.
+        std::function<std::string(const std::string& text)> typedRow;
+        std::function<void(const std::string& text)> chooseTyped;
+        std::string emptyText = "Nothing matches";   // when no row matches
+    };
+    // Opens as `pick`'s list, always afresh: an open palette or pick list
+    // closes first, putting the keyboard back.
+    void showPick(const Pick& pick);
+    bool isPick() const { return open_ && pick_ != nullptr; }
     // Close; with `restoreFocus` the keyboard goes back where it was.
     void close(bool restoreFocus);
 
@@ -129,6 +154,8 @@ private:
     };
 
     void build();
+    void open(const std::string& text);   // shown, the keyboard in the field
+    void pickItems(std::string* empty);
     void collectCommands();
     void listFiles();
     void refilter();
@@ -187,6 +214,7 @@ private:
     bool open_ = false, closing_ = false;
     unsigned session_ = 0;   // one a showing, for answers that come later
     Context ctx_;
+    std::unique_ptr<Pick> pick_;   // the list on show is a caller's
     std::vector<std::u16string> recentKeys_;   // recent files, relative to the root
     std::vector<Item> items_;
     int selected_ = -1;

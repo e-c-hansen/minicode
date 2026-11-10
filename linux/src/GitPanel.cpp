@@ -1,261 +1,19 @@
-// GitPanel.cpp — see GitPanel.h. The Mac's src/GitPanel.mm, in GTK.
+// GitPanel.cpp — see GitPanel.h. The Mac's src/GitPanel.mm, in GTK: the
+// panel, its lists and their keys, the refresh, and the drawing. Running git
+// is GitRun.cpp, the commands GitVerbs.cpp, the menus GitMenus.cpp, the diff
+// view GitDiffView.cpp.
 #include "GitPanel.h"
-#include "StartupLog.h"
 
-#include <signal.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include <limits.h>
+#include <stdlib.h>
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <ctime>
-#include <mutex>
 
 #define GIT_LOG_DOMAIN "minicode-git"
 
 namespace {
-
-// ------------------------------------------------------------ running git
-struct GitResult {
-    int status = -1;
-    std::string out, err;
-    bool timedOut = false;   // stopped at its time limit; err says so
-    bool ok() const { return status == 0; }
-};
-
-std::string bytesOf(GBytes* b) {
-    if (!b) return std::string();
-    gsize n = 0;
-    const char* p = static_cast<const char*>(g_bytes_get_data(b, &n));
-    return std::string(p ? p : "", n);
-}
-
-// Runs in the child between fork and exec: git leads a process group of its
-// own, so a time limit stops the hooks, filters and credential helpers it
-// started along with it. setpgid is async-signal-safe.
-void ownProcessGroup(gpointer) { setpgid(0, 0); }
-
-// What the two callbacks of one run hand back. Each holds a reference, so a
-// callback that comes late (or never, for a git stuck in the kernel) finds
-// it still there.
-struct GitRun {
-    bool waited = false;        // the wait callback ran
-    bool communicated = false;  // the communicate callback ran
-    GBytes* out = nullptr;
-    GBytes* err = nullptr;
-    GError* error = nullptr;
-    ~GitRun() {
-        if (out) g_bytes_unref(out);
-        if (err) g_bytes_unref(err);
-        g_clear_error(&error);
-    }
-};
-
-void gitWaited(GObject* src, GAsyncResult* res, gpointer data) {
-    auto* run = static_cast<std::shared_ptr<GitRun>*>(data);
-    g_subprocess_wait_finish(G_SUBPROCESS(src), res, nullptr);
-    (*run)->waited = true;
-    delete run;
-}
-
-void gitCommunicated(GObject* src, GAsyncResult* res, gpointer data) {
-    auto* run = static_cast<std::shared_ptr<GitRun>*>(data);
-    GitRun& r = **run;
-    g_subprocess_communicate_finish(G_SUBPROCESS(src), res, &r.out, &r.err, &r.error);
-    r.communicated = true;
-    delete run;
-}
-
-// Iterates `ctx` until `done` holds or `deadline` (monotonic microseconds)
-// passes; says whether it held.
-bool iterateUntil(GMainContext* ctx, gint64 deadline, const std::function<bool()>& done) {
-    while (!done()) {
-        const gint64 left = deadline - g_get_monotonic_time();
-        if (left <= 0) return false;
-        GSource* t = g_timeout_source_new((guint)std::min<gint64>((left + 999) / 1000, G_MAXINT));
-        g_source_set_callback(t, [](gpointer) -> gboolean { return G_SOURCE_REMOVE; }, nullptr,
-                              nullptr);
-        g_source_attach(t, ctx);
-        g_main_context_iteration(ctx, TRUE);
-        g_source_destroy(t);
-        g_source_unref(t);
-    }
-    return true;
-}
-
-// Runs one git, blocking; only ever called on the panel's git thread. An
-// argument vector, never a shell; stdin is /dev/null (GSubprocess's
-// default), and stdout and stderr are read together, so a chatty stderr
-// cannot fill its pipe and stall git.
-//
-// runGit gives every command the Mac's time limit (Git::timeoutFor: 30
-// seconds for reading, 2 minutes for add, restore and rm, 10 minutes for
-// commit; `limit` is in seconds), so a
-// git hung on a network filesystem, a lock or a credential helper cannot
-// hold the panel's one thread for ever. Past it git's whole process group
-// gets SIGTERM, then SIGKILL 2 seconds later, and the result says "git did
-// not answer within 30 seconds: git status ...", with timedOut set and
-// status -1. A git that exits while something it started keeps its pipes
-// open gets the same treatment, with its own message.
-GitResult runGitWithin(const std::string& dir, const std::vector<std::string>& args,
-                       double limit) {
-    GitResult r;
-    const std::string& git = gitExecutable();
-    if (git.empty()) {
-        r.err = "Git was not found. Install it with your package manager, "
-                "for example sudo apt install git.";
-        return r;
-    }
-    GSubprocessLauncher* l = g_subprocess_launcher_new(
-        (GSubprocessFlags)(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE));
-    for (const GitUi::EnvVar& e : GitUi::gitEnvironment())
-        g_subprocess_launcher_setenv(l, e.name, e.value, TRUE);
-    g_subprocess_launcher_set_cwd(l, dir.c_str());
-    g_subprocess_launcher_set_child_setup(l, ownProcessGroup, nullptr, nullptr);
-    std::vector<const char*> argv;
-    argv.push_back(git.c_str());
-    for (const std::string& a : args) argv.push_back(a.c_str());
-    argv.push_back(nullptr);
-    GError* err = nullptr;
-    StartupLog::once("git", "git: first command (git %s)", args.empty() ? "" : args[0].c_str());
-    GSubprocess* p = g_subprocess_launcher_spawnv(l, argv.data(), &err);
-    g_object_unref(l);
-    if (!p) {
-        r.err = err ? err->message : "Git could not be started.";
-        g_clear_error(&err);
-        return r;
-    }
-    // The group's id is git's pid. Never 0 below: kill(0, ...) would signal
-    // minicode's own group.
-    const char* id = g_subprocess_get_identifier(p);
-    const pid_t pid = id ? (pid_t)std::atol(id) : 0;
-    auto killGroup = [pid](int sig) {
-        if (pid > 0) kill(-pid, sig);
-    };
-
-    // The callbacks come to a context of this thread's own, iterated only
-    // here, so nothing waits on the main loop.
-    GMainContext* ctx = g_main_context_new();
-    g_main_context_push_thread_default(ctx);
-    GCancellable* cancel = g_cancellable_new();
-    auto run = std::make_shared<GitRun>();
-    g_subprocess_wait_async(p, cancel, gitWaited, new std::shared_ptr<GitRun>(run));
-    g_subprocess_communicate_async(p, nullptr, cancel, gitCommunicated,
-                                   new std::shared_ptr<GitRun>(run));
-
-    auto in =[](double seconds) {
-        return g_get_monotonic_time() + (gint64)(seconds * G_USEC_PER_SEC);
-    };
-    const gint64 deadline = in(limit);
-    // A wait that failed for any reason but cancelling counts as over too.
-    auto exited = [&run] { return run->waited; };
-    auto communicated = [&run] { return run->communicated; };
-    if (!iterateUntil(ctx, deadline, exited)) {
-        r.timedOut = true;
-        r.err = Git::timeoutMessage(args, limit);
-        killGroup(SIGTERM);
-        if (!iterateUntil(ctx, in(2), exited)) {
-            killGroup(SIGKILL);
-            iterateUntil(ctx, in(2), exited);
-        } else {
-            killGroup(SIGKILL);   // what git started and left in its group
-        }
-    } else if (!iterateUntil(ctx, deadline, communicated) &&
-               !iterateUntil(ctx, in(2), communicated)) {
-        // git exited, but something it started (outside its group, or still
-        // running in it) holds the pipes open, which is a hang of its own.
-        r.timedOut = true;
-        r.err = Git::heldOutputMessage(args, limit);
-        killGroup(SIGKILL);
-    } else if (run->error) {
-        r.err = run->error->message;
-    } else {
-        r.out = bytesOf(run->out);
-        r.err = bytesOf(run->err);
-        if (g_subprocess_get_if_exited(p))
-            r.status = g_subprocess_get_exit_status(p);
-        else if (g_subprocess_get_if_signaled(p))
-            r.status = 128 + g_subprocess_get_term_sig(p);
-    }
-    // Whatever is still pending ends now, so neither callback is left for a
-    // context nobody iterates. One for a git stuck in the kernel may never
-    // come; its GitRun then simply stays allocated.
-    g_cancellable_cancel(cancel);
-    iterateUntil(ctx, in(2), [&run] { return run->waited && run->communicated; });
-    g_main_context_pop_thread_default(ctx);
-    g_main_context_unref(ctx);
-    g_object_unref(cancel);
-    g_object_unref(p);
-    return r;
-}
-
-GitResult runGit(const std::string& dir, const std::vector<std::string>& args) {
-    return runGitWithin(dir, args, Git::timeoutFor(args));
-}
-
-std::string failure(const GitResult& r) {
-    return GitUi::failureText(r.status, r.out, r.err);
-}
-
-// What the list shows about the folder, read off the main thread.
-GitUi::Snapshot snapshotAt(const std::string& root) {
-    GitUi::Snapshot s;
-    if (gitExecutable().empty()) {
-        s.notice = "Git was not found. Install it with your package manager, "
-                   "for example sudo apt install git.";
-        return s;
-    }
-    GitResult top = runGit(root, GitUi::topLevelArgs());
-    if (!top.ok()) {
-        if (top.err.find("not a git repository") != std::string::npos)
-            s.notice = "This folder is not in a git repository.";
-        else
-            s.errorText = failure(top);
-        return s;
-    }
-    if (!GitUi::parseTopLevel(top.out, s.topLevel, s.gitDir)) {
-        s.errorText = failure(top);
-        return s;
-    }
-    s.inRepository = true;
-    GitResult st = runGit(s.topLevel, GitUi::statusArgs());
-    if (!st.ok()) {
-        s.errorText = failure(st);
-        return s;
-    }
-    GitUi::applyStatus(s, Git::parseStatus(st.out));
-    return s;
-}
-
-// The graph, or the previous one when nothing it depends on changed (most
-// refreshes come from saving a file, and then this costs one for-each-ref).
-std::shared_ptr<const GitUi::Graph> graphFor(const GitUi::Snapshot& s, int limit, bool all,
-                                             std::shared_ptr<const GitUi::Graph> previous) {
-    const bool compare = GitUi::compareWithUpstream(s);
-    GitResult refs = runGit(s.topLevel, GitUi::refArgs());
-    if (refs.timedOut) {   // a log now would only wait as long again
-        auto g = std::make_shared<GitUi::Graph>();
-        g->errorText = failure(refs);
-        return g;
-    }
-    std::string key = GitUi::graphKey(s, limit, all, compare, refs.out);
-    if (previous && previous->key == key) return previous;
-    auto g = std::make_shared<GitUi::Graph>();
-    g->key = key;
-    g->limit = limit;
-    GitResult log = runGit(s.topLevel, GitUi::logArgs(limit, all, compare));
-    if (!log.ok()) {
-        g->errorText = failure(log);
-        return g;
-    }
-    GitUi::buildGraph(*g, s, log.out, refs.out, limit);
-    if (compare && (s.ahead || s.behind)) {
-        GitResult lr = runGit(s.topLevel, GitUi::leftRightArgs());
-        if (lr.ok()) g->divergence = Git::parseLeftRight(lr.out);
-    }
-    return g;
-}
 
 std::string baseName(const std::string& p) {
     size_t slash = p.find_last_of('/');
@@ -390,102 +148,11 @@ void debugLines(const char* what, const std::vector<std::string>& lines) {
         g_log(GIT_LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "  %s", lines[i].c_str());
 }
 
-}  // namespace
-
-const std::string& gitExecutable() {
-    static std::string git;
-    static std::once_flag once;
-    std::call_once(once, [] {
-        if (char* p = g_find_program_in_path("git")) {
-            git = p;
-            g_free(p);
-        }
-    });
-    return git;
-}
-
-// ================================================================ diff view
-GitDiffView::GitDiffView() {
-    buffer_ = gtk_text_buffer_new(nullptr);
-    auto tag = [&](const char* name, const char* color, bool bold) {
-        GtkTextTag* t = gtk_text_buffer_create_tag(buffer_, name, nullptr);
-        if (color) g_object_set(t, "foreground", color, nullptr);
-        if (bold) g_object_set(t, "weight", PANGO_WEIGHT_BOLD, nullptr);
-    };
-    tag("added", "#73C991", false);
-    tag("removed", "#F14C4C", false);
-    tag("muted", "#9CA3AF", false);
-    tag("fileheader", "#9CA3AF", true);
-    tag("hash", "#E2C08D", false);
-    tag("bold", nullptr, true);
-    view_ = gtk_text_view_new_with_buffer(buffer_);
-    g_object_unref(buffer_);   // the view holds it
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), FALSE);
-    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(view_), FALSE);
-    gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), TRUE);
-    // Long lines wrap, as on the Mac.
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_), GTK_WRAP_WORD_CHAR);
-    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(view_), 8);
-    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(view_), 8);
-    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(view_), 8);
-    gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(view_), 8);
-    // The editor's own colors: its background and text come from the
-    // settings through the stylesheet, so a settings change recolors this too.
-    gtk_widget_add_css_class(view_, "minicode-editor");
-    scroller_ = gtk_scrolled_window_new();
-    gtk_widget_add_css_class(scroller_, "minicode-scroller");
-    gtk_widget_add_css_class(scroller_, "minicode-editor-scroller");
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller_), view_);
-    gtk_widget_set_hexpand(scroller_, TRUE);
-    gtk_widget_set_vexpand(scroller_, TRUE);
-}
-
-void GitDiffView::show(const std::string& bytes, bool commit) {
-    const GitUi::StyledText st =
-        commit ? GitUi::commitText(bytes, (long long)time(nullptr)) : GitUi::diffText(bytes);
-    gtk_text_buffer_set_text(buffer_, st.text.c_str(), (int)st.text.size());
-    for (const GitUi::StyledText::Run& r : st.runs) {
-        const char* name = nullptr;
-        switch (r.style) {
-        case GitUi::Style::Added: name = "added"; break;
-        case GitUi::Style::Removed: name = "removed"; break;
-        case GitUi::Style::Muted: name = "muted"; break;
-        case GitUi::Style::FileHeader: name = "fileheader"; break;
-        case GitUi::Style::Hash: name = "hash"; break;
-        case GitUi::Style::Bold: name = "bold"; break;
-        case GitUi::Style::Plain: break;
-        }
-        if (!name) continue;
-        GtkTextIter a, b;
-        gtk_text_buffer_get_iter_at_offset(buffer_, &a, (int)r.start);
-        gtk_text_buffer_get_iter_at_offset(buffer_, &b, (int)(r.start + r.length));
-        gtk_text_buffer_apply_tag_by_name(buffer_, name, &a, &b);
-    }
-    GtkTextIter start;
-    gtk_text_buffer_get_start_iter(buffer_, &start);
-    gtk_text_buffer_place_cursor(buffer_, &start);
-    gtk_adjustment_set_value(
-        gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_)), 0);
-}
-
-// ==================================================================== panel
-namespace {
 struct Delivery {
     std::shared_ptr<bool> alive;
     GitPanel* panel;
     std::function<void(GitPanel*)> fn;
 };
-
-// From the git thread to the main loop, and only if the panel still exists.
-void deliver(std::shared_ptr<bool> alive, GitPanel* panel, std::function<void(GitPanel*)> fn) {
-    auto* d = new Delivery{std::move(alive), panel, std::move(fn)};
-    g_idle_add_full(G_PRIORITY_DEFAULT, [](gpointer p) -> gboolean {
-        auto* d = static_cast<Delivery*>(p);
-        if (*d->alive) d->fn(d->panel);
-        delete d;
-        return G_SOURCE_REMOVE;
-    }, d, nullptr);
-}
 
 void runJob(gpointer data, gpointer) {
     auto* job = static_cast<std::function<void()>*>(data);
@@ -506,28 +173,62 @@ void layoutMeasure(GtkWidget*, GtkOrientation o, int, int* min, int* nat, int* m
     *nat = o == GTK_ORIENTATION_HORIZONTAL ? 240 : 400;
     *minB = *natB = -1;
 }
+
 }  // namespace
 
+// From the git thread to the main loop, and only if the panel still exists.
+void GitPanel::deliver(std::shared_ptr<bool> alive, GitPanel* panel,
+                       std::function<void(GitPanel*)> fn) {
+    auto* d = new Delivery{std::move(alive), panel, std::move(fn)};
+    g_idle_add_full(G_PRIORITY_DEFAULT, [](gpointer p) -> gboolean {
+        auto* d = static_cast<Delivery*>(p);
+        if (*d->alive) d->fn(d->panel);
+        delete d;
+        return G_SOURCE_REMOVE;
+    }, d, nullptr);
+}
+
+// ==================================================================== panel
 GitPanel::GitPanel(const std::string& root) : rootDir_(root) {
     alive_ = std::make_shared<bool>(true);
     ref_ = std::make_shared<GitPanel*>(this);
     // One thread: git runs one command at a time, in the order asked.
     pool_ = g_thread_pool_new(runJob, nullptr, 1, FALSE, nullptr);
     build();
+    buildActions();
+    // git.autofetch: a look every 30 seconds whether a fetch is due.
+    autoTimer_ = g_timeout_add_seconds(30, [](gpointer p) -> gboolean {
+        static_cast<GitPanel*>(p)->autoFetchTickAt(g_get_monotonic_time() / 1e6);
+        return G_SOURCE_CONTINUE;
+    }, this);
 }
 
 GitPanel::~GitPanel() {
     *alive_ = false;
     *ref_ = nullptr;   // rows drawn after this draw nothing
+    dropMenu();
+    if (diffView_) {
+        diffView_->hunksFor = nullptr;
+        diffView_->onHunk = nullptr;
+    }
+    for (GSimpleAction* a : ownActions_) {
+        g_signal_handlers_disconnect_by_data(a, this);
+        g_object_unref(a);
+    }
+    ownActions_.clear();
     g_signal_handlers_disconnect_by_data(gtk_text_view_get_buffer(GTK_TEXT_VIEW(message_)), this);
+    g_signal_handlers_disconnect_by_data(listSel_, this);
     for (GtkWidget* v : {list_, graphList_})
         if (GtkListItemFactory* f = gtk_list_view_get_factory(GTK_LIST_VIEW(v)))
             g_signal_handlers_disconnect_by_data(f, this);
     if (refreshTimer_) g_source_remove(refreshTimer_);
     refreshTimer_ = 0;
+    if (autoTimer_) g_source_remove(autoTimer_);
+    autoTimer_ = 0;
     unwatch();
     g_object_set_data(G_OBJECT(root_), "minicode-git", nullptr);
-    for (GtkWidget* w : {list_, graphList_, message_, commitButton_, allToggle_}) {
+    for (GtkWidget* w : {root_, list_, graphList_, message_, commitButton_, syncButton_,
+                         allToggle_, branchLabel_}) {
         g_signal_handlers_disconnect_by_data(w, this);
         GListModel* ctrls = gtk_widget_observe_controllers(w);
         for (guint i = 0; i < g_list_model_get_n_items(ctrls); ++i) {
@@ -536,6 +237,15 @@ GitPanel::~GitPanel() {
             g_object_unref(c);
         }
         g_object_unref(ctrls);
+    }
+    if (menuActions_) {
+        gchar** names = g_action_group_list_actions(G_ACTION_GROUP(menuActions_));
+        for (gchar** n = names; n && *n; n++)
+            if (GAction* a = g_action_map_lookup_action(G_ACTION_MAP(menuActions_), *n))
+                g_signal_handlers_disconnect_by_data(a, this);
+        g_strfreev(names);
+        gtk_widget_insert_action_group(root_, "gitpanel", nullptr);
+        g_object_unref(menuActions_);
     }
     // Git already running finishes on the pool's thread; what it delivers
     // finds alive_ false and is dropped. The pool frees itself after.
@@ -559,10 +269,22 @@ void GitPanel::build() {
     gtk_widget_set_hexpand(root_, TRUE);
     gtk_widget_set_vexpand(root_, TRUE);
 
+    // The branch: a click opens the branch picker, as VS Code's status bar
+    // item and the Mac's label do.
     branchLabel_ = gtk_label_new("Source Control");
     gtk_label_set_xalign(GTK_LABEL(branchLabel_), 0);
     gtk_label_set_ellipsize(GTK_LABEL(branchLabel_), PANGO_ELLIPSIZE_END);
     gtk_widget_add_css_class(branchLabel_, "minicode-git-branch");
+    gtk_widget_set_tooltip_text(branchLabel_, "Switch Branch…");
+    gtk_widget_set_cursor_from_name(branchLabel_, "pointer");
+    GtkGesture* branchClick = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(branchClick), GDK_BUTTON_PRIMARY);
+    g_signal_connect(branchClick, "released", G_CALLBACK(+[](GtkGestureClick*, int n, double,
+                                                              double, gpointer selfp) {
+        GitPanel* self = static_cast<GitPanel*>(selfp);
+        if (n == 1 && self->inRepository_) self->chooseBranch();
+    }), this);
+    gtk_widget_add_controller(branchLabel_, GTK_EVENT_CONTROLLER(branchClick));
     gtk_box_append(GTK_BOX(root_), branchLabel_);
 
     // The message box: Ctrl+Return commits, Tab goes back to the list, and a
@@ -611,6 +333,16 @@ void GitPanel::build() {
     }), this);
     gtk_box_append(GTK_BOX(root_), commitButton_);
 
+    // Pushing and pulling, under Commit: "Sync Changes  ↓ 1  ↑ 2" or
+    // "Publish Branch" (GitUi::syncButtonTitle), styled as Commit is.
+    syncButton_ = gtk_button_new_with_label("");
+    gtk_widget_add_css_class(syncButton_, "minicode-git-commit");
+    g_signal_connect_swapped(syncButton_, "clicked", G_CALLBACK(+[](GitPanel* self) {
+        self->sync();
+    }), this);
+    gtk_widget_set_visible(syncButton_, FALSE);
+    gtk_box_append(GTK_BOX(root_), syncButton_);
+
     errorLabel_ = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(errorLabel_), 0);
     gtk_label_set_wrap(GTK_LABEL(errorLabel_), TRUE);
@@ -631,22 +363,21 @@ void GitPanel::build() {
 
     // The change lists and the graph: list views of hand-drawn rows, the way
     // the Mac's are table views of hand-drawn cells. The models hold nothing
-    // but a count; the rows are drawn from rows_ and graph_ by position.
-    auto makeList = [&](GtkStringList** model, GtkSingleSelection** sel,
-                        GCallback setup, GCallback bind) {
-        *model = gtk_string_list_new(nullptr);
-        *sel = gtk_single_selection_new(G_LIST_MODEL(*model));
-        gtk_single_selection_set_autoselect(*sel, FALSE);
-        gtk_single_selection_set_can_unselect(*sel, TRUE);
+    // but a count; the rows are drawn from rows_ and graph_ by position. The
+    // change lists take several rows (GtkMultiSelection: Ctrl and Shift
+    // clicks), the graph one.
+    auto makeView = [&](GtkSelectionModel* sel, GCallback setup, GCallback bind) {
         GtkListItemFactory* f = gtk_signal_list_item_factory_new();
         g_signal_connect(f, "setup", setup, this);
         g_signal_connect(f, "bind", bind, this);
-        GtkWidget* view = gtk_list_view_new(GTK_SELECTION_MODEL(*sel), f);
+        GtkWidget* view = gtk_list_view_new(sel, f);
         gtk_widget_add_css_class(view, "minicode-git-list");
         return view;
     };
-
-    list_ = makeList(&listModel_, &listSel_,
+    listModel_ = gtk_string_list_new(nullptr);
+    listSel_ = gtk_multi_selection_new(G_LIST_MODEL(listModel_));
+    g_signal_connect(listSel_, "selection-changed", G_CALLBACK(onSelectionChanged), this);
+    list_ = makeView(GTK_SELECTION_MODEL(listSel_),
         G_CALLBACK(+[](GtkSignalListItemFactory*, GObject* obj, gpointer selfp) {
             GtkListItem* item = GTK_LIST_ITEM(obj);
             GtkWidget* da = gtk_drawing_area_new();
@@ -708,7 +439,11 @@ void GitPanel::build() {
     gtk_widget_add_css_class(summaryLabel_, "minicode-git-summary");
     gtk_box_append(GTK_BOX(root_), summaryLabel_);
 
-    graphList_ = makeList(&graphModel_, &graphSel_,
+    graphModel_ = gtk_string_list_new(nullptr);
+    graphSel_ = gtk_single_selection_new(G_LIST_MODEL(graphModel_));
+    gtk_single_selection_set_autoselect(graphSel_, FALSE);
+    gtk_single_selection_set_can_unselect(graphSel_, TRUE);
+    graphList_ = makeView(GTK_SELECTION_MODEL(graphSel_),
         G_CALLBACK(+[](GtkSignalListItemFactory*, GObject* obj, gpointer selfp) {
             GtkListItem* item = GTK_LIST_ITEM(obj);
             GtkWidget* da = gtk_drawing_area_new();
@@ -749,7 +484,8 @@ void GitPanel::build() {
 
     // A click shows the diff or the commit, as the Mac's mouseDown does; the
     // rows' own handling (bubble phase, so first) has selected it by then.
-    // Only a single click, released on the row it was pressed on.
+    // Only a single click, released on the row it was pressed on; a Ctrl or
+    // Shift click chooses rows without showing a diff, as in VS Code.
     for (GtkWidget* view : {list_, graphList_}) {
         GtkGesture* click = gtk_gesture_click_new();
         gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
@@ -766,8 +502,19 @@ void GitPanel::build() {
             self->pressRow_ = -1;
             if (n != 1 || pressed < 0 || rowAt(v, x, y) != pressed) return;
             if (v == self->list_) {
-                if (pressed >= (int)self->rows_.size() || self->rows_[pressed].header) return;
-                self->selectRow(pressed, true);
+                if (!self->fileRow(pressed)) return;
+                const GdkModifierType mods =
+                    gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(g));
+                if (mods & GDK_SHIFT_MASK) {
+                    // The list chose the range; the keyboard is at its end.
+                    self->cursor_ = pressed;
+                    return;
+                }
+                if (mods & GDK_CONTROL_MASK) {
+                    self->cursor_ = self->anchor_ = pressed;
+                    return;
+                }
+                self->cursor_ = self->anchor_ = pressed;
                 self->showDiff(pressed);
             } else {
                 self->selectGraphRow(pressed, true);
@@ -777,6 +524,14 @@ void GitPanel::build() {
         gtk_widget_add_controller(view, GTK_EVENT_CONTROLLER(click));
     }
 
+    // The right click: a file row's menu on a file, the panel's anywhere else
+    // but the message box, which has its text's own (GitMenus.cpp).
+    GtkGesture* menuClick = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(menuClick), GDK_BUTTON_SECONDARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(menuClick), GTK_PHASE_CAPTURE);
+    g_signal_connect(menuClick, "pressed", G_CALLBACK(onMenuPressed), this);
+    gtk_widget_add_controller(root_, GTK_EVENT_CONTROLLER(menuClick));
+
     showGraph(false);
     showMessageArea(false);
 }
@@ -784,6 +539,8 @@ void GitPanel::build() {
 void GitPanel::applySettings(const Settings& s) {
     text_ = s.text(Surface::Sidebar);
     panelBg_ = s.background(Surface::Sidebar);
+    autoFetchOn_ = s.gitAutoFetch();
+    autoFetchPeriod_ = s.gitAutoFetchPeriod();
     gtk_widget_queue_draw(list_);
     gtk_widget_queue_draw(graphList_);
     for (GtkWidget* c = gtk_widget_get_first_child(list_); c; c = gtk_widget_get_next_sibling(c))
@@ -802,6 +559,7 @@ void GitPanel::showGraph(bool show) {
 void GitPanel::showMessageArea(bool show) {
     gtk_widget_set_visible(messageFrame_, show);
     gtk_widget_set_visible(commitButton_, show);
+    updateSyncButton();
 }
 
 // ------------------------------------------------------------------ layout
@@ -823,6 +581,9 @@ void GitPanel::layout(int W, int H) {
         gtk_widget_measure(c, GTK_ORIENTATION_VERTICAL, w, &minH, &natH, nullptr, nullptr);
         return natH;
     };
+    // A right click menu is the panel's child only by gtk_widget_set_parent:
+    // a widget placing its children by hand presents its popovers.
+    if (menu_ && gtk_widget_get_visible(menu_)) gtk_popover_present(GTK_POPOVER(menu_));
     int y = 8;
     y += std::max(18, place(branchLabel_, pad, y, inner, natHeight(branchLabel_, inner))) + 6;
     if (gtk_widget_get_visible(messageFrame_)) {
@@ -830,6 +591,7 @@ void GitPanel::layout(int W, int H) {
         y += 66;
         y += place(commitButton_, pad, y, inner, 28) + 4;
     }
+    if (gtk_widget_get_visible(syncButton_)) y += place(syncButton_, pad, y, inner, 28) + 4;
     if (gtk_widget_get_visible(errorLabel_)) {
         const int h = std::min(natHeight(errorLabel_, inner), 120);
         y += place(errorLabel_, pad, y, inner, h) + 6;
@@ -870,12 +632,18 @@ void GitPanel::setRoot(const std::string& root) {
     rows_.clear();
     topLevel_.clear();
     inRepository_ = false;
+    haveShown_ = false;
+    shown_ = GitUi::Snapshot();
+    autoKey_.clear();
+    shownDiff_ = ShownDiff();
     graph_.reset();
     graphLimit_ = GitUi::kGraphBatch;
+    cursor_ = anchor_ = -1;
     showGraph(false);
     reloadList();
     reloadGraph();
     setError("", false);
+    updateSyncButton();
     unwatch();
     refresh();
 }
@@ -910,13 +678,44 @@ void GitPanel::runRefresh() {
     std::shared_ptr<bool> alive = alive_;
     GitPanel* self = this;
     post([=] {
-        auto snap = std::make_shared<GitUi::Snapshot>(snapshotAt(root));
+        auto snap = std::make_shared<GitUi::Snapshot>(gitSnapshotAt(root));
         deliver(alive, self, [root, snap](GitPanel* p) {
             if (root != p->rootDir_) return;   // the folder changed
             p->applySnapshot(*snap);
         });
         if (!GitUi::graphWanted(*snap)) return;
-        std::shared_ptr<const GitUi::Graph> g = graphFor(*snap, limit, all, previous);
+        // The graph, or the previous one when nothing it depends on changed
+        // (most refreshes come from saving a file, and then this costs one
+        // for-each-ref).
+        const GitUi::Snapshot& s = *snap;
+        const bool compare = GitUi::compareWithUpstream(s);
+        GitResult refs = runGit(s.topLevel, GitUi::refArgs());
+        std::shared_ptr<const GitUi::Graph> g;
+        if (refs.timedOut) {   // a log now would only wait as long again
+            auto e = std::make_shared<GitUi::Graph>();
+            e->errorText = gitFailure(refs);
+            g = e;
+        } else {
+            std::string key = GitUi::graphKey(s, limit, all, compare, refs.out);
+            if (previous && previous->key == key) {
+                g = previous;
+            } else {
+                auto fresh = std::make_shared<GitUi::Graph>();
+                fresh->key = key;
+                fresh->limit = limit;
+                GitResult log = runGit(s.topLevel, GitUi::logArgs(limit, all, compare));
+                if (!log.ok()) {
+                    fresh->errorText = gitFailure(log);
+                } else {
+                    GitUi::buildGraph(*fresh, s, log.out, refs.out, limit);
+                    if (compare && (s.ahead || s.behind)) {
+                        GitResult lr = runGit(s.topLevel, GitUi::leftRightArgs());
+                        if (lr.ok()) fresh->divergence = Git::parseLeftRight(lr.out);
+                    }
+                }
+                g = fresh;
+            }
+        }
         deliver(alive, self, [root, gen, g](GitPanel* p) {
             if (root != p->rootDir_ || gen != p->graphGeneration_) return;
             p->applyGraph(g);
@@ -926,8 +725,10 @@ void GitPanel::runRefresh() {
 
 void GitPanel::applySnapshot(const GitUi::Snapshot& s) {
     // Keep the selection on the same file, or at the same place in the same
-    // list, so Space can be pressed down a list of files.
+    // list, so Space can be pressed down a list of files; several rows
+    // chosen stay chosen while they are there (GitUi::keepChosen).
     const int was = selectedRow();
+    const std::vector<int> chosen = chosenRows();
     const std::vector<GitUi::Row> oldRows = rows_;
     const bool listHadFocus = gtk_widget_has_focus(list_) ||
                               gtk_widget_get_focus_child(list_) != nullptr;
@@ -936,8 +737,12 @@ void GitPanel::applySnapshot(const GitUi::Snapshot& s) {
     topLevel_ = s.topLevel;
     initial_ = s.initial;
     rows_ = s.rows;
+    shown_ = s;
+    haveShown_ = true;
+    if (!s.topLevel.empty()) autoKey_ = s.topLevel;
     const std::string branch = s.inRepository ? GitUi::validUtf8(s.branchText)
                                               : std::string("Source Control");
+    branchText_ = s.inRepository ? branch : std::string();
     gtk_label_set_text(GTK_LABEL(branchLabel_), branch.c_str());
     showMessageArea(s.inRepository);
     const std::string notice = GitUi::validUtf8(s.notice);
@@ -951,18 +756,33 @@ void GitPanel::applySnapshot(const GitUi::Snapshot& s) {
     } else if (errorFromStatus_) {
         setError("", false);
     }
+    cursor_ = anchor_ = -1;
     reloadList();
     const bool graph = GitUi::graphWanted(s);
     showGraph(graph);
-    const std::string summary = graph ? GitUi::validUtf8(GitUi::summaryText(s)) : std::string();
-    gtk_label_set_text(GTK_LABEL(summaryLabel_), summary.c_str());
-    gtk_widget_set_tooltip_text(summaryLabel_, summary.empty() ? nullptr : summary.c_str());
+    graphSummary_ = graph ? GitUi::validUtf8(GitUi::summaryText(s)) : std::string();
+    gtk_label_set_text(GTK_LABEL(summaryLabel_), graphSummary_.c_str());
+    gtk_widget_set_tooltip_text(summaryLabel_, graphSummary_.empty() ? nullptr
+                                                                     : graphSummary_.c_str());
+    updateSyncButton();
     if (!graph && graph_) {
         graph_.reset();
         reloadGraph();
     }
-    const int pick = GitUi::pickAfterRefresh(oldRows, was, rows_);
-    selectRow(pick, listHadFocus && pick >= 0);
+    const std::vector<int> still =
+        chosen.size() > 1 ? GitUi::keepChosen(oldRows, chosen, rows_) : std::vector<int>();
+    if (still.size() > 1) {
+        GtkBitset* set = gtk_bitset_new_empty();
+        for (int i : still) gtk_bitset_add(set, (guint)i);
+        GtkBitset* all = gtk_bitset_new_range(0, (guint)rows_.size());
+        gtk_selection_model_set_selection(GTK_SELECTION_MODEL(listSel_), set, all);
+        gtk_bitset_unref(set);
+        gtk_bitset_unref(all);
+        cursor_ = anchor_ = still.front();
+    } else {
+        const int pick = GitUi::pickAfterRefresh(oldRows, was, rows_);
+        selectRow(pick, listHadFocus && pick >= 0);
+    }
     if (focusPending_ && GitUi::nextFileRow(rows_, -1, 1) >= 0) {
         focusPending_ = false;
         if (panelHasFocus()) focusList();
@@ -972,9 +792,10 @@ void GitPanel::applySnapshot(const GitUi::Snapshot& s) {
     }
     gtk_widget_queue_allocate(root_);
     if (s.inRepository) watch(s);
+    updateActions();
 
     g_log(GIT_LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "status: %s | %s | error: %s | notice: %s",
-          branch.c_str(), summary.c_str(), errorText_.c_str(), notice.c_str());
+          branch.c_str(), graphSummary_.c_str(), errorText_.c_str(), notice.c_str());
     debugLines("rows", rowDescriptions());
 }
 
@@ -1003,11 +824,9 @@ void GitPanel::applyGraph(std::shared_ptr<const GitUi::Graph> g) {
     debugLines("graph", graphDescriptions());
 }
 
-// Run one git that changes the index or makes a commit, then refresh.
-// `done` gets the result on the main loop first.
-void GitPanel::runAction(std::vector<std::string> args,
-                         std::function<void(int status, const std::string& out)> done) {
-    const std::string dir = topLevel_, root = rootDir_;
+void GitPanel::runAction(std::vector<std::string> args, const std::string& dir,
+                         std::function<void(const GitResult&)> done) {
+    const std::string root = rootDir_;
     if (dir.empty()) return;
     std::shared_ptr<bool> alive = alive_;
     GitPanel* self = this;
@@ -1018,8 +837,9 @@ void GitPanel::runAction(std::vector<std::string> args,
         auto r = std::make_shared<GitResult>(runGit(dir, args));
         deliver(alive, self, [root, r, done](GitPanel* p) {
             if (root != p->rootDir_) return;
-            p->setError(r->ok() ? std::string() : failure(*r), false);
-            if (done) done(r->status, r->out);
+            if (r->ok()) p->setError("", false);
+            else p->say(gitFailure(*r), false);
+            if (done) done(*r);
             p->runRefresh();
         });
     });
@@ -1091,7 +911,9 @@ void GitPanel::unwatch() {
 
 // -------------------------------------------------------------- the lists
 void GitPanel::reloadList() {
+    fixingSelection_ = true;
     resetModel(listModel_, (guint)rows_.size());
+    fixingSelection_ = false;
 }
 
 int GitPanel::graphRowCount() const {
@@ -1103,9 +925,33 @@ void GitPanel::reloadGraph() {
     resetModel(graphModel_, (guint)graphRowCount());
 }
 
+const GitUi::Row* GitPanel::fileRow(int row) const {
+    if (row < 0 || row >= (int)rows_.size() || rows_[(size_t)row].header) return nullptr;
+    return &rows_[(size_t)row];
+}
+
+int GitPanel::listRowAt(double x, double y) const { return rowAt(list_, x, y); }
+
+std::vector<int> GitPanel::chosenRows() const {
+    std::vector<int> out;
+    GtkBitset* set = gtk_selection_model_get_selection(GTK_SELECTION_MODEL(listSel_));
+    GtkBitsetIter it;
+    guint pos = 0;
+    for (bool ok = gtk_bitset_iter_init_first(&it, set, &pos); ok;
+         ok = gtk_bitset_iter_next(&it, &pos))
+        if (fileRow((int)pos)) out.push_back((int)pos);
+    gtk_bitset_unref(set);
+    return out;
+}
+
+// The row the keyboard is on: the one last clicked or moved to while it is
+// still chosen, else the first chosen.
 int GitPanel::selectedRow() const {
-    guint p = gtk_single_selection_get_selected(listSel_);
-    return p == GTK_INVALID_LIST_POSITION ? -1 : (int)p;
+    if (cursor_ >= 0 && fileRow(cursor_) &&
+        gtk_selection_model_is_selected(GTK_SELECTION_MODEL(listSel_), (guint)cursor_))
+        return cursor_;
+    const std::vector<int> chosen = chosenRows();
+    return chosen.empty() ? -1 : chosen.front();
 }
 
 int GitPanel::selectedGraphRow() const {
@@ -1113,27 +959,90 @@ int GitPanel::selectedGraphRow() const {
     return p == GTK_INVALID_LIST_POSITION ? -1 : (int)p;
 }
 
+std::vector<GitUi::Row> GitPanel::rowsActingWith(int row) const {
+    std::vector<GitUi::Row> out;
+    const GitUi::Row* r = fileRow(row);
+    if (!r) return out;
+    const std::vector<int> chosen = chosenRows();
+    if (chosen.size() > 1 && std::find(chosen.begin(), chosen.end(), row) != chosen.end()) {
+        for (int i : chosen) out.push_back(rows_[(size_t)i]);
+        return out;
+    }
+    out.push_back(*r);
+    return out;
+}
+
+// A range chosen with Shift (an arrow, a click) takes headings with it; they
+// are never chosen.
+void GitPanel::onSelectionChanged(GtkSelectionModel* model, guint pos, guint n, gpointer selfp) {
+    GitPanel* self = static_cast<GitPanel*>(selfp);
+    if (self->fixingSelection_) return;
+    self->fixingSelection_ = true;
+    for (guint i = pos; i < pos + n && i < self->rows_.size(); i++)
+        if (self->rows_[i].header && gtk_selection_model_is_selected(model, i))
+            gtk_selection_model_unselect_item(model, i);
+    self->fixingSelection_ = false;
+    self->updateActions();
+}
+
 // Selecting without `focus` leaves the keyboard where it is: a refresh must
 // never pull it out of the message box.
-static void selectIn(GtkWidget* view, GtkSingleSelection* sel, int row, bool focus) {
+void GitPanel::selectRow(int row, bool focus) {
     if (row < 0) {
-        gtk_selection_model_unselect_all(GTK_SELECTION_MODEL(sel));
+        gtk_selection_model_unselect_all(GTK_SELECTION_MODEL(listSel_));
+        cursor_ = anchor_ = -1;
         return;
     }
+    cursor_ = anchor_ = row;
     if (focus) {
         // FOCUS makes the row the list's cursor; the keyboard only moves
         // into the list with the grab.
-        gtk_list_view_scroll_to(GTK_LIST_VIEW(view), (guint)row,
+        gtk_list_view_scroll_to(GTK_LIST_VIEW(list_), (guint)row,
             (GtkListScrollFlags)(GTK_LIST_SCROLL_FOCUS | GTK_LIST_SCROLL_SELECT), nullptr);
-        gtk_widget_grab_focus(view);
+        gtk_widget_grab_focus(list_);
     } else {
-        gtk_selection_model_select_item(GTK_SELECTION_MODEL(sel), (guint)row, TRUE);
-        gtk_list_view_scroll_to(GTK_LIST_VIEW(view), (guint)row, GTK_LIST_SCROLL_NONE, nullptr);
+        gtk_selection_model_select_item(GTK_SELECTION_MODEL(listSel_), (guint)row, TRUE);
+        gtk_list_view_scroll_to(GTK_LIST_VIEW(list_), (guint)row, GTK_LIST_SCROLL_NONE, nullptr);
     }
 }
 
-void GitPanel::selectRow(int row, bool focus) { selectIn(list_, listSel_, row, focus); }
-void GitPanel::selectGraphRow(int row, bool focus) { selectIn(graphList_, graphSel_, row, focus); }
+void GitPanel::selectGraphRow(int row, bool focus) {
+    if (row < 0) {
+        gtk_selection_model_unselect_all(GTK_SELECTION_MODEL(graphSel_));
+        return;
+    }
+    if (focus) {
+        gtk_list_view_scroll_to(GTK_LIST_VIEW(graphList_), (guint)row,
+            (GtkListScrollFlags)(GTK_LIST_SCROLL_FOCUS | GTK_LIST_SCROLL_SELECT), nullptr);
+        gtk_widget_grab_focus(graphList_);
+    } else {
+        gtk_selection_model_select_item(GTK_SELECTION_MODEL(graphSel_), (guint)row, TRUE);
+        gtk_list_view_scroll_to(GTK_LIST_VIEW(graphList_), (guint)row, GTK_LIST_SCROLL_NONE,
+                                nullptr);
+    }
+}
+
+// The file rows from `from` to `to` chosen, the rest not, the keyboard on
+// `to` (Shift with an arrow, as the Mac's table extends its selection).
+void GitPanel::chooseRange(int from, int to) {
+    GtkBitset* set = gtk_bitset_new_empty();
+    for (int i = std::min(from, to); i <= std::max(from, to); i++)
+        if (fileRow(i)) gtk_bitset_add(set, (guint)i);
+    GtkBitset* all = gtk_bitset_new_range(0, (guint)rows_.size());
+    gtk_selection_model_set_selection(GTK_SELECTION_MODEL(listSel_), set, all);
+    gtk_bitset_unref(set);
+    gtk_bitset_unref(all);
+    cursor_ = to;
+    gtk_list_view_scroll_to(GTK_LIST_VIEW(list_), (guint)to, GTK_LIST_SCROLL_FOCUS, nullptr);
+}
+
+GtkWidget* GitPanel::rowWidget(int row) const {
+    for (GtkWidget* c = gtk_widget_get_first_child(list_); c; c = gtk_widget_get_next_sibling(c)) {
+        GtkWidget* da = gtk_widget_get_first_child(c);
+        if (da && GTK_IS_DRAWING_AREA(da) && positionOf(GTK_DRAWING_AREA(da)) == row) return da;
+    }
+    return nullptr;
+}
 
 bool GitPanel::graphHasRows() const { return graphShown_ && graphRowCount() > 0; }
 
@@ -1146,6 +1055,10 @@ void GitPanel::focusList() {
         if (graphHasRows()) focusGraph();
         else if (gtk_widget_get_visible(messageFrame_)) focusMessage();
         else gtk_widget_grab_focus(list_);
+        return;
+    }
+    if (chosenRows().size() > 1) {
+        gtk_widget_grab_focus(list_);   // the rows chosen stay chosen
         return;
     }
     selectRow(sel, true);
@@ -1163,6 +1076,13 @@ bool GitPanel::panelHasFocus() const {
     GtkRoot* r = gtk_widget_get_root(root_);
     GtkWidget* f = r ? gtk_root_get_focus(r) : nullptr;
     return f && (f == root_ || gtk_widget_is_ancestor(f, root_));
+}
+
+bool GitPanel::listHasKeyboard() const {
+    if (!active_) return false;
+    GtkRoot* r = gtk_widget_get_root(root_);
+    GtkWidget* f = r ? gtk_root_get_focus(r) : nullptr;
+    return f && (f == list_ || gtk_widget_is_ancestor(f, list_));
 }
 
 void GitPanel::focusMessage() {
@@ -1199,6 +1119,17 @@ gboolean GitPanel::onListKey(GtkEventControllerKey*, guint key, guint, GdkModifi
     if (mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK)) return FALSE;
     const bool shift = mods & GDK_SHIFT_MASK;
     const int sel = self->selectedRow();
+    // The menu from the keyboard: the row's, or the panel's.
+    if (key == GDK_KEY_Menu || (key == GDK_KEY_F10 && shift)) {
+        graphene_point_t at = GRAPHENE_POINT_INIT(20, 20);
+        if (GtkWidget* w = sel >= 0 ? self->rowWidget(sel) : nullptr) {
+            graphene_point_t p = GRAPHENE_POINT_INIT(20, (float)gtk_widget_get_height(w));
+            if (!gtk_widget_compute_point(w, self->root_, &p, &at)) at = GRAPHENE_POINT_INIT(20, 20);
+        }
+        if (sel >= 0) self->showRowMenu(sel, at.x, at.y);
+        else self->showPanelMenu(at.x, at.y);
+        return TRUE;
+    }
     if (isEnter(key) && !shift) { self->showDiff(sel); return TRUE; }
     if (key == GDK_KEY_space && !shift) { self->toggleStage(sel); return TRUE; }
     if (key == GDK_KEY_ISO_Left_Tab || (key == GDK_KEY_Tab && shift)) {
@@ -1210,7 +1141,16 @@ gboolean GitPanel::onListKey(GtkEventControllerKey*, guint key, guint, GdkModifi
     const bool down = key == GDK_KEY_Down || key == GDK_KEY_KP_Down;
     if (!up && !down) return FALSE;
     const int step = up ? -1 : 1;
-    const int next = GitUi::nextFileRow(self->rows_, sel, step);
+    const int from = self->cursor_ >= 0 ? self->cursor_ : sel;
+    const int next = GitUi::nextFileRow(self->rows_, from, step);
+    if (shift) {
+        // More rows chosen, from where the keyboard came into them.
+        if (next < 0) return TRUE;
+        const int anchor = self->anchor_ >= 0 ? self->anchor_ : (from >= 0 ? from : next);
+        self->anchor_ = anchor;
+        self->chooseRange(anchor, next);
+        return TRUE;
+    }
     if (next >= 0) self->selectRow(next, true);
     else if (step > 0) self->focusGraph();
     return TRUE;
@@ -1254,51 +1194,64 @@ gboolean GitPanel::onMessageKey(GtkEventControllerKey*, guint key, guint, GdkMod
     return FALSE;
 }
 
-// ---------------------------------------------------------------- actions
-void GitPanel::toggleStage(int row) {
-    if (row < 0 || row >= (int)rows_.size() || rows_[row].header) {
-        gtk_widget_error_bell(list_);
-        return;
-    }
-    runAction(GitUi::stageArgs(rows_[row], initial_), nullptr);
-}
-
-void GitPanel::commit() {
-    if (!inRepository_) return;
+std::string GitPanel::message() const {
     GtkTextBuffer* b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(message_));
     GtkTextIter s, e;
     gtk_text_buffer_get_bounds(b, &s, &e);
     char* raw = gtk_text_buffer_get_text(b, &s, &e, FALSE);
-    const std::string msg = raw ? raw : "";
+    std::string out = raw ? raw : "";
     g_free(raw);
-    runAction(GitUi::commitArgs(msg), [this](int status, const std::string& out) {
-        if (status != 0) return;   // the message is kept when a commit fails
-        gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(message_)), "", 0);
-        setError(GitUi::firstLine(out), true);   // "[main 1a2b3c4] Subject"
-    });
+    return out;
+}
+
+void GitPanel::setMessage(const std::string& text) {
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(message_)), text.c_str(),
+                             (int)text.size());
+}
+
+// git names files from its top level with links resolved; the tree and the
+// tabs spell them from the window's folder.
+std::string GitPanel::inRoot(const std::string& path) const {
+    char buf[PATH_MAX];
+    if (!realpath(rootDir_.c_str(), buf)) return path;
+    const std::string real = buf;
+    if (path == real) return rootDir_;
+    if (path.compare(0, real.size() + 1, real + "/") == 0)
+        return rootDir_ + path.substr(real.size());
+    return path;
 }
 
 void GitPanel::showDiff(int row) {
-    if (row < 0 || row >= (int)rows_.size() || rows_[row].header || topLevel_.empty()) return;
-    const GitUi::Row r = rows_[row];
+    const GitUi::Row* r = fileRow(row);
+    if (!r || topLevel_.empty()) return;
+    showDiffOf(*r, topLevel_);
+}
+
+// The row's diff, run in `top` (its top level); also after a hunk action,
+// for the same file in the same list, so the diff shows what is left.
+void GitPanel::showDiffOf(const GitUi::Row& r, const std::string& top) {
     const unsigned gen = ++diffGeneration_;
-    const std::string dir = topLevel_, root = rootDir_;
-    const std::string path = dir + "/" + r.path;
+    const std::string root = rootDir_;
+    const std::string path = top + "/" + r.path;
     const std::string name = GitUi::validUtf8(baseName(r.path));
     const std::vector<std::string> args = GitUi::diffArgs(r);
     std::shared_ptr<bool> alive = alive_;
     GitPanel* self = this;
     post([=] {
-        auto res = std::make_shared<GitResult>(runGit(dir, args));
+        auto res = std::make_shared<GitResult>(runGit(top, args));
         deliver(alive, self, [=](GitPanel* p) {
             if (gen != p->diffGeneration_ || root != p->rootDir_) return;
             // Exit status 1 from --no-index means "differs".
             if (!(res->ok() || (r.untracked && res->status == 1))) {
-                p->setError(failure(*res), false);
+                p->setError(gitFailure(*res), false);
                 return;
             }
             g_log(GIT_LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "diff: %s, %zu bytes", r.path.c_str(),
                   res->out.size());
+            p->shownDiff_.valid = true;
+            p->shownDiff_.row = r;
+            p->shownDiff_.top = top;
+            p->shownDiff_.bytes = res->out;
             if (p->onShowDiff) p->onShowDiff(name, path, res->out);
         });
     });
@@ -1325,7 +1278,7 @@ void GitPanel::showCommit(int row) {
         deliver(alive, self, [=](GitPanel* p) {
             if (gen != p->diffGeneration_ || root != p->rootDir_) return;
             if (!res->ok()) {
-                p->setError(failure(*res), false);
+                p->setError(gitFailure(*res), false);
                 return;
             }
             g_log(GIT_LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "commit view: %s, %zu bytes",
@@ -1340,6 +1293,19 @@ void GitPanel::showCommit(int row) {
 void GitPanel::showMore() {
     graphLimit_ += GitUi::kGraphBatch;
     runRefresh();
+}
+
+void GitPanel::attachDiffView(GitDiffView* view) {
+    diffView_ = view;
+    if (!view) return;
+    view->hunksFor = [this](const std::string& bytes, GitUi::DiffSide* side) {
+        if (!shownDiff_.valid || shownDiff_.bytes != bytes) return false;
+        *side = GitUi::diffSideOf(shownDiff_.row);
+        return true;
+    };
+    view->onHunk = [this](GitUi::HunkOp op, size_t first, size_t last, bool lines) {
+        runHunkOp(op, first, last, lines);
+    };
 }
 
 // ----------------------------------------------------------------- drawing
@@ -1546,3 +1512,8 @@ std::vector<std::string> GitPanel::graphDescriptions() const {
 }
 
 std::string GitPanel::errorLine() const { return errorText_; }
+
+std::string GitPanel::syncButtonTitle() const {
+    const char* t = gtk_button_get_label(GTK_BUTTON(syncButton_));
+    return gtk_widget_get_visible(syncButton_) && t ? std::string(t) : std::string();
+}
