@@ -4,6 +4,7 @@
 // (the buffer, the highlighter, the disk) is Document.cpp, and the tabs are
 // Tabs.cpp.
 #include "Editor.h"
+#include "CodeView.h"
 #include "Palette.h"
 #include "Markdown.h"
 #include "MarkdownEdit.h"
@@ -50,7 +51,8 @@ Editor::Editor() {
     gtk_text_buffer_get_bounds(welcome_, &wa, &wb);
     gtk_text_buffer_apply_tag_by_name(welcome_, "plainmsg", &wa, &wb);
 
-    view_ = gtk_text_view_new_with_buffer(welcome_);
+    code_ = CodeView::create(welcome_);
+    view_ = code_->widget();
     buffer_ = welcome_;
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), TRUE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_), GTK_WRAP_NONE);
@@ -77,6 +79,11 @@ Editor::Editor() {
     gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
     g_signal_connect(keys, "key-pressed", G_CALLBACK(onViewKey), this);
     gtk_widget_add_controller(view_, keys);
+    // An input method composing text: auto-save waits for it (Persistence.h).
+    g_signal_connect(view_, "preedit-changed", G_CALLBACK(+[](GtkTextView*, char* preedit,
+                                                            gpointer self) {
+        static_cast<Editor*>(self)->composing_ = preedit && *preedit;
+    }), this);
     // A scroll by the user ends holding the top line in place (holdTopLine).
     GtkEventController* wheel =
         gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
@@ -321,6 +328,7 @@ void Editor::setViewBuffer(GtkTextBuffer* b, bool prose, bool editable) {
     if (buffer_ != b) {
         gtk_text_view_set_buffer(GTK_TEXT_VIEW(view_), b);
         buffer_ = b;
+        composing_ = false;   // a new buffer resets the input method
     }
     setProseFont(prose);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(view_), editable);
@@ -379,11 +387,26 @@ void Editor::stash() {
     arrivedTimer_ = 0;
     arrived_.clear();
 
-    // Where the view is: its first line on show and how far into it the view
-    // starts. A tab left while its place is still coming back (settleOnPlace)
-    // keeps that place instead: what the view shows then is GTK's guess, and
-    // flicking through the tabs once moved every place passed to the top.
-    // While the caret was being brought on screen, the place is around it.
+    capturePlace(d);
+    stopPlace();
+    if (d->isMarkdown()) clearPage(d);
+#ifdef MINICODE_ENABLE_PDF
+    if (d->latexPreview()) d->latexPreview()->setActive(false);
+    if (d->kind() == Document::Kind::Media && media_->kind() == MediaView::Kind::Pdf) {
+        d->place().pdf = media_->pdfView()->anchor();
+        d->place().havePdf = true;
+    }
+#endif
+    if (d->kind() == Document::Kind::Media) media_->clear();
+    d->setShownIn(nullptr);
+}
+
+// Where the view is: its first line on show and how far into it the view
+// starts. A tab left while its place is still coming back (settleOnPlace)
+// keeps that place instead: what the view shows then is GTK's guess, and
+// flicking through the tabs once moved every place passed to the top.
+// While the caret was being brought on screen, the place is around it.
+void Editor::capturePlace(Document* d) {
     Document::Place& p = d->place();
     GtkTextView* tv = GTK_TEXT_VIEW(view_);
     GdkRectangle vis;
@@ -407,7 +430,6 @@ void Editor::stash() {
         into = vis.y - lineTop;
         known = true;
     }
-    stopPlace();
     if (known && buffer_ == d->buffer() && d->kind() == Document::Kind::Text) {
         if (!p.top) p.top = gtk_text_buffer_create_mark(d->buffer(), nullptr, &top, TRUE);
         else gtk_text_buffer_move_mark(d->buffer(), p.top, &top);
@@ -415,27 +437,26 @@ void Editor::stash() {
         p.hscroll = gtk_adjustment_get_value(
             gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)));
         p.haveView = true;
-    } else if (known && buffer_ == d->page()) {
+    } else if (known && d->isMarkdown() && buffer_ == d->page()) {
         p.pageTop = gtk_text_iter_get_offset(&top);
         p.pageInto = into;
         p.havePage = true;
     }
-    if (d->isMarkdown()) clearPage(d);
-#ifdef MINICODE_ENABLE_PDF
-    if (d->latexPreview()) d->latexPreview()->setActive(false);
-    if (d->kind() == Document::Kind::Media && media_->kind() == MediaView::Kind::Pdf) {
-        p.pdf = media_->pdfView()->anchor();
-        p.havePdf = true;
-    }
-#endif
-    if (d->kind() == Document::Kind::Media) media_->clear();
-    d->setShownIn(nullptr);
 }
 
 // The active tab on screen, from what it kept (the Mac's showActiveTab); the
 // welcome text with no tab open.
 void Editor::showActive() {
     Document* d = active_;
+    // A tab come back from a session is read when it is first shown, and
+    // given the selection and view it came back with.
+    if (d && d->unread()) {
+        loadInto(d, d->path());
+        if (d->place().haveRestore) {
+            d->place().haveRestore = false;
+            placeTab(d, d->place().restore);
+        }
+    }
     if (!d) {
         setViewBuffer(welcome_, true, false);
         gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
@@ -531,6 +552,7 @@ void Editor::documentStateChanged(Document* d) {
 // (AutoIndent::typed). Return, Tab and Backspace are handled whole in
 // onViewKey.
 void Editor::documentEdited(Document* d, GtkTextIter* at, const char* inserted, int len) {
+    if (onDocumentsChanged) onDocumentsChanged(d);
     if (d != active_ || buffer_ != d->buffer()) return;
     if (observer_) observer_->textEdited(inserted, len);
     if (!inserted) return;
@@ -847,6 +869,7 @@ static void setTagColor(GtkTextTagTable* table, const char* name, const char* pr
 void Editor::applySettings(const Settings& s) {
     const bool webBefore = settings_.webImages();
     settings_ = s;
+    code_->applySettings(s);   // the ruler and the gutter
     // The tags are every tab's: each recolors with them.
     GtkTextTagTable* t = tags_.table;
     for (int i = 0; i < kTokenStyleCount; ++i)

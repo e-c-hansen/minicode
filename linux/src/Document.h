@@ -19,7 +19,9 @@
 //     preview never touches the source, its undo or its colors, and an edit
 //     made from the page is a splice into the source;
 //   - for LaTeX, its own preview (Latex.h), so its pages and typeset stay;
-//   - where its view was while another tab was on show.
+//   - where its view was while another tab was on show;
+//   - its backup (BackupStore.h, Persistence.h): the id its unsaved text is
+//     kept under on disk, removed when the document goes.
 //
 // Nothing is ever put in the source buffer that is not in the file (D6).
 #pragma once
@@ -32,6 +34,7 @@
 #include <string>
 #include <vector>
 
+#include "EditorTabs.h"
 #include "Markdown.h"
 #include "Settings.h"
 #include "SyntaxHighlighter.h"
@@ -85,8 +88,10 @@ public:
     enum class Read { Ok, Missing, NotRegular, TooLarge, NotText, Failed };
 
     Document(DocumentHost* host, DocumentTags* tags);
-    // Takes every handler off its buffers and its file's watch. The editor
-    // takes its LaTeX preview's widget off the screen first.
+    // Takes every handler off its buffers and its file's watch, and removes
+    // its backup: a document goes when its tab closes (asked about first) or
+    // its window does. The editor takes its LaTeX preview's widget off the
+    // screen first.
     ~Document();
     Document(const Document&) = delete;
     Document& operator=(const Document&) = delete;
@@ -102,6 +107,51 @@ public:
     void setMessage(const std::string& path, const std::string& message);
     void setMedia(const std::string& path);
     void setDiff(const std::string& title, const std::string& bytes, bool commit);
+    // A tab come back from a session whose file is not read until it is
+    // first shown (Editor::showActive reads it): a Message with nothing in
+    // it meanwhile, so it is never saved or counted unsaved.
+    void setUnread(const std::string& path);
+    bool unread() const { return unread_; }
+
+    // How the file stood when last read or saved: whether it was there, and
+    // its date, inode and size.
+    struct DiskStamp {
+        bool exists = false;
+        double mtime = 0;
+        uint64_t inode = 0;
+        int64_t size = -1;
+    };
+    const DiskStamp& diskStamp() const { return diskStamp_; }
+    // A tab come back from its backup (Persistence.h): `text` is the buffer,
+    // with nothing to undo; `disk` the file's text now, which counts as
+    // saved, or null when it cannot be read (gone, or no longer text), and
+    // then it stays unsaved until it is saved. `base` is what the backup was
+    // based on, kept as the stamp when the file is gone or `changed` since.
+    void restoreText(const std::string& path, const std::string& text, const std::string* disk,
+                     const DiskStamp& base, bool changed);
+    // Its file changed on disk since the text it holds was based on it: the
+    // next check while it is on show asks Keep Mine or Reload, even though
+    // its saved text is the disk's.
+    void askAboutDiskChange();
+    // For auto-save: the file is gone since it was read, or it is not what
+    // was last read or saved (by its date, inode and size first, then by its
+    // text, so a file rewritten unchanged is no change).
+    bool goneFromDisk() const;
+    bool changedOnDisk() const;
+    // Counts every change to its text, for knowing what a backup holds.
+    uint64_t edits() const { return edits_; }
+
+    // Its backup (Persistence.h): the id, whether one is on disk, and the
+    // edit count and path it was written at; and what to say in the status
+    // bar when it is first shown after coming back from one.
+    struct Backup {
+        std::string id;
+        bool written = false;
+        uint64_t writtenEdits = 0;
+        std::string writtenPath;
+        std::string note;
+    };
+    Backup& backup() { return backup_; }
 
     Kind kind() const { return kind_; }
     const std::string& path() const { return path_; }
@@ -196,6 +246,10 @@ public:
         bool havePdf = false;
         PdfView::Anchor pdf;
 #endif
+        // A tab come back from a session, not read yet: its selection and
+        // view, given to it once it is (Editor::placeTab).
+        bool haveRestore = false;
+        EditorTabs::ClosedTab restore;
     };
     Place& place() { return place_; }
 
@@ -259,6 +313,7 @@ private:
     bool          markdown_ = false, latex_ = false;
     bool          showsPreview_ = false;
     bool          previewTab_ = false;
+    bool          unread_ = false;
 
     GtkTextBuffer* buffer_ = nullptr;
     bool           filling_ = false;
@@ -275,6 +330,10 @@ private:
     long        savedChars_ = 0;
     bool        dirty_ = false;
     bool        dirtyCheckPending_ = false;   // an edit inside a user action
+    DiskStamp   diskStamp_;
+    bool        diskQuestion_ = false;        // askAboutDiskChange
+    uint64_t    edits_ = 0;
+    Backup      backup_;
     GFileMonitor* monitor_ = nullptr;
     guint         checkTimer_ = 0;
 

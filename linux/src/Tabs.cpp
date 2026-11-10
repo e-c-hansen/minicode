@@ -145,8 +145,9 @@ bool Editor::openFile(const std::string& path, EditorTabs::OpenFrom from) {
         // A kept open of the preview tab's file keeps it; an open in preview
         // never makes a kept tab a preview.
         if (d->isPreviewTab() && !EditorTabs::staysPreview(true, inPreview)) keepPreviewTab(d);
-        // Only a message ("Could not open", "Cannot display") is tried again.
-        if (d->kind() == Document::Kind::Message) {
+        // Only a message ("Could not open", "Cannot display") is tried again;
+        // a tab not read yet is read as it is shown.
+        if (d->kind() == Document::Kind::Message && !d->unread()) {
             loadInto(d, path);
             if (d == active_) {
                 showActive();
@@ -182,6 +183,14 @@ bool Editor::openFile(const std::string& path, EditorTabs::OpenFrom from) {
     // replaced preview editor out of its recently closed list.
     if (old && old->isPreviewTab() && !old->dirty()) dropTab(old, false);
     return ok;
+}
+
+Document* Editor::addTab(const std::string& path) {
+    Document* d = new Document(this, &tags_);
+    d->setUnread(path);
+    tabs_.push_back(d);
+    refreshStrip();
+    return d;
 }
 
 void Editor::showDiff(const std::string& title, const std::string& bytes, bool commit) {
@@ -275,28 +284,8 @@ void Editor::dropTab(Document* d, bool remember) {
     const bool wasActive = d == active_;
     if (wasActive) stash();
     if (remember && d->kind() != Document::Kind::Diff && !d->path().empty()) {
-        EditorTabs::ClosedTab c;
-        c.path = d->path();
+        EditorTabs::ClosedTab c = closedTabOf(d);
         c.index = index;
-        c.preview = d->showsPreview();
-        const Document::Place& p = d->place();
-        if (d->kind() == Document::Kind::Text) {
-            GtkTextIter a, b;
-            gtk_text_buffer_get_selection_bounds(d->buffer(), &a, &b);
-            c.selStart = gtk_text_iter_get_offset(&a);
-            c.selEnd = gtk_text_iter_get_offset(&b);
-            if (c.preview && d->isMarkdown() && p.havePage) {
-                c.haveView = true;
-                c.top = p.pageTop;
-                c.topOffset = p.pageInto;
-            } else if (p.haveView && p.top) {
-                GtkTextIter top;
-                gtk_text_buffer_get_iter_at_mark(d->buffer(), &top, p.top);
-                c.haveView = true;
-                c.top = gtk_text_iter_get_offset(&top);
-                c.topOffset = p.topInto;
-            }
-        }
         closed_.remember(c);
     }
     std::vector<uint64_t> stamps;
@@ -353,6 +342,73 @@ void Editor::keepPreviewTab(Document* d) {
     refreshStrip();
 }
 
+// ---------------------------------------------------------------- places
+
+// What a tab keeps of where its view was, from its place: the selection, the
+// first character on show (in the page, for a Markdown file showing it) and
+// how far into its line the view started.
+EditorTabs::ClosedTab Editor::closedTabOf(Document* d) const {
+    EditorTabs::ClosedTab c;
+    c.path = d->path();
+    const Document::Place& p = d->place();
+    if (d->unread()) {
+        if (p.haveRestore) c = p.restore;
+        c.path = d->path();
+        return c;
+    }
+    c.preview = d->showsPreview();
+    if (d->kind() != Document::Kind::Text) return c;
+    GtkTextIter a, b;
+    gtk_text_buffer_get_selection_bounds(d->buffer(), &a, &b);
+    c.selStart = gtk_text_iter_get_offset(&a);
+    c.selEnd = gtk_text_iter_get_offset(&b);
+    if (c.preview && d->isMarkdown() && p.havePage) {
+        c.haveView = true;
+        c.top = p.pageTop;
+        c.topOffset = p.pageInto;
+    } else if (p.haveView && p.top) {
+        GtkTextIter top;
+        gtk_text_buffer_get_iter_at_mark(d->buffer(), &top, p.top);
+        c.haveView = true;
+        c.top = gtk_text_iter_get_offset(&top);
+        c.topOffset = p.topInto;
+    }
+    return c;
+}
+
+EditorTabs::ClosedTab Editor::placeOf(Document* d) {
+    if (d == active_ && !d->unread()) capturePlace(d);
+    return closedTabOf(d);
+}
+
+void Editor::placeTab(Document* d, const EditorTabs::ClosedTab& c) {
+    if (d->unread()) {
+        d->place().haveRestore = true;
+        d->place().restore = c;
+        return;
+    }
+    if (d->isMarkdown() || d->isLatex()) d->setShowsPreview(c.preview);
+    if (d->kind() != Document::Kind::Text) return;
+    const int chars = gtk_text_buffer_get_char_count(d->buffer());
+    GtkTextIter a, b;
+    gtk_text_buffer_get_iter_at_offset(d->buffer(), &a, (int)std::min<long>(c.selStart, chars));
+    gtk_text_buffer_get_iter_at_offset(d->buffer(), &b, (int)std::min<long>(c.selEnd, chars));
+    gtk_text_buffer_select_range(d->buffer(), &b, &a);
+    Document::Place& p = d->place();
+    if (c.haveView && d->isMarkdown() && d->showsPreview()) {
+        p.havePage = true;
+        p.pageTop = (int)c.top;
+        p.pageInto = (int)c.topOffset;
+    } else if (c.haveView) {
+        GtkTextIter top;
+        gtk_text_buffer_get_iter_at_offset(d->buffer(), &top, (int)std::min<long>(c.top, chars));
+        if (!p.top) p.top = gtk_text_buffer_create_mark(d->buffer(), nullptr, &top, TRUE);
+        else gtk_text_buffer_move_mark(d->buffer(), p.top, &top);
+        p.topInto = (int)c.topOffset;
+        p.haveView = true;
+    }
+}
+
 // ---------------------------------------------------------------- reopening
 
 bool Editor::reopenClosedTab() {
@@ -364,26 +420,7 @@ bool Editor::reopenClosedTab() {
         }
         Document* d = new Document(this, &tags_);
         loadInto(d, c.path);
-        if (d->isMarkdown() || d->isLatex()) d->setShowsPreview(c.preview);
-        if (d->kind() == Document::Kind::Text) {
-            const int chars = gtk_text_buffer_get_char_count(d->buffer());
-            GtkTextIter a, b;
-            gtk_text_buffer_get_iter_at_offset(d->buffer(), &a, (int)std::min<long>(c.selStart, chars));
-            gtk_text_buffer_get_iter_at_offset(d->buffer(), &b, (int)std::min<long>(c.selEnd, chars));
-            gtk_text_buffer_select_range(d->buffer(), &b, &a);
-            Document::Place& p = d->place();
-            if (c.haveView && d->isMarkdown() && d->showsPreview()) {
-                p.havePage = true;
-                p.pageTop = (int)c.top;
-                p.pageInto = (int)c.topOffset;
-            } else if (c.haveView) {
-                GtkTextIter top;
-                gtk_text_buffer_get_iter_at_offset(d->buffer(), &top, (int)std::min<long>(c.top, chars));
-                p.top = gtk_text_buffer_create_mark(d->buffer(), nullptr, &top, TRUE);
-                p.topInto = (int)c.topOffset;
-                p.haveView = true;
-            }
-        }
+        placeTab(d, c);
         tabs_.insert(tabs_.begin() + EditorTabs::ClosedTabs::indexIn(c, tabCount()), d);
         activate(d);
         focusActiveDocument();
@@ -449,6 +486,7 @@ void Editor::refreshStrip() {
     }
     strip_->setItems(items, activeIndex());
     gtk_widget_set_visible(strip_->widget(), !tabs_.empty());
+    if (onDocumentsChanged) onDocumentsChanged(nullptr);
 }
 
 // A right click on a tab: keeping a preview tab, closing it and its

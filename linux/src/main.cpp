@@ -56,6 +56,8 @@
 #include "Keys.h"
 #include "TabStrip.h"
 #include "WindowLayout.h"
+#include "BackupStore.h"
+#include "Persistence.h"
 
 #include <algorithm>
 #include <functional>
@@ -92,6 +94,8 @@ struct App {
     SearchPanel* search = nullptr;   // Find in Folder, created on first use
     SearchPanel* todos = nullptr;    // the TODOs window, the same
     LspSession*  lsp = nullptr;      // language servers for this window
+    // Its tabs between runs, the backups of its unsaved tabs, and auto-save.
+    Persistence* persist = nullptr;
     GtkWidget*   lspLabel = nullptr; // their status, in the status bar
 
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -129,6 +133,9 @@ struct Shared {
     // Dotfiles in the tree: the application's setting, as the Mac's
     // gShowHidden is one flag for every window.
     bool showHidden = false;
+    // A quit is under way: every window's session was saved before the
+    // windows began to close, so a window closing saves none of its own.
+    bool quitting = false;
 };
 Shared g;
 }  // namespace
@@ -341,6 +348,9 @@ static const char* kLostDetail = "Your changes will be lost if you don't save th
 static void closeTabAsking(App* app, Document* d, std::function<void(bool)> done = nullptr) {
     auto finish = [done](bool closed) { if (done) done(closed); };
     if (app->dead || !d || app->editor->indexOf(d) < 0) { finish(false); return; }
+    // With auto-save on, what it would write once the tab goes is written
+    // first, so it is not asked about.
+    if (d->dirty()) app->persist->autoSaveNow();
     if (!d->dirty()) {
         app->editor->closeTab(d);
         refreshHints(app);
@@ -388,6 +398,7 @@ static std::vector<uint64_t> idsOf(const std::vector<Document*>& docs) {
 // `proceed` once nothing unsaved is left to lose, else `cancelled`.
 static void confirmAllUnsaved(App* app, std::function<void()> proceed,
                               std::function<void()> cancelled = nullptr) {
+    app->persist->autoSaveNow();   // auto-save's writes first: only what it skips is asked about
     const std::vector<Document*> dirty = app->editor->dirtyDocuments();
     auto cancel = [cancelled] { if (cancelled) cancelled(); };
     if (dirty.empty()) { proceed(); return; }
@@ -497,6 +508,7 @@ static void treeOpenCb(const std::string& path, EditorTabs::OpenFrom from, void*
 // about their unsaved changes), as on the Mac, so the editor never holds a
 // file the tree no longer shows.
 static void openFolder(App* app, const std::string& dir) {
+    app->persist->saveSession();   // the old folder's tabs, for when it is back
     app->rootDir = dir;
     app->tree->setRoot(dir);
     if (app->git) app->git->setRoot(dir);   // the panel follows the folder
@@ -506,6 +518,8 @@ static void openFolder(App* app, const std::string& dir) {
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->terminal) app->terminal->setProjectRoot(dir);   // for its links
 #endif
+    app->persist->setRoot(dir);
+    app->persist->restoreSession();   // the new folder's tabs from last time
     updateTitle(app);
     refreshHints(app);
 }
@@ -524,7 +538,7 @@ static gboolean onCloseRequest(GtkWindow*, gpointer userp) {
     confirmAllUnsaved(app, [app] {
         app->closing = true;
         gtk_window_close(GTK_WINDOW(app->window));
-    });
+    }, [] { g.quitting = false; });   // a quit stops at a window kept open
     return TRUE;
 }
 
@@ -732,6 +746,12 @@ static void act_close_window(GSimpleAction*, GVariant*, gpointer userp) {
 // cancelled stays open, and so does the application with it.
 static void act_quit(GSimpleAction*, GVariant*, gpointer) {
     const std::vector<App*> open = g.windows;   // closing edits the list
+    // Every window's tabs first, each with the others on its folder, so a
+    // quit with two windows on one folder reopens the files of both, as on
+    // the Mac (windows closing one by one would leave only the last one's).
+    for (App* a : open)
+        if (!a->dead) a->persist->saveSession();
+    g.quitting = true;
     for (App* a : open)
         if (!a->dead) gtk_window_close(GTK_WINDOW(a->window));
 }
@@ -1800,6 +1820,7 @@ static void applyWindowSettings(App* app) {
     const Settings& st = g.settings->settings();
     app->editor->applySettings(st);
     if (app->lsp) app->lsp->applySettings(st);   // restarts servers if lsp.* changed
+    if (app->persist) app->persist->scheduleAutoSave();   // editor.auto-save may have changed
     if (app->git) app->git->applySettings(st);
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->terminal) app->terminal->applySettings(st);
@@ -1857,8 +1878,11 @@ static void updateKeyPlace() {
 }
 
 static void onFocusWidget(GObject*, GParamSpec*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
     updateKeyPlace();
-    updateMediaKey(static_cast<App*>(userp));
+    updateMediaKey(app);
+    if (!app->dead && app->persist)   // focus-change auto-save
+        app->persist->focusMoved(gtk_root_get_focus(GTK_ROOT(app->window)));
 }
 
 // Coming back to a window is when the Mac looks for changes made elsewhere
@@ -1869,6 +1893,8 @@ static void onIsActive(GObject* w, GParamSpec*, gpointer userp) {
     if (!app->dead && gtk_window_is_active(GTK_WINDOW(w))) {
         app->editor->checkExternalChange();
         if (app->git && app->gitShown) app->git->refresh();   // commits made elsewhere
+    } else if (!app->dead && app->persist) {
+        app->persist->windowActive(false);   // focus-change auto-save
     }
 }
 
@@ -1945,6 +1971,11 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     if (!app) return;   // the Find in Folder window, an alert
     g.windows.erase(std::find(g.windows.begin(), g.windows.end(), app));
     app->dead = true;
+    // Its tabs for the folder's next window, unless a quit saved every
+    // window's already. Then nothing more is written for it.
+    if (!g.quitting) app->persist->saveSessionClosing();
+    delete app->persist;
+    app->persist = nullptr;
 
     std::vector<gpointer> owners = {app, app->lsp, app->tree, app->git, app->layout};
     for (void* o : app->editor->handlerOwners()) owners.push_back(o);
@@ -1965,6 +1996,7 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->editor->onCloseRequest = nullptr;
     app->editor->onTabCommand = nullptr;
     app->editor->onActiveChanged = nullptr;
+    app->editor->onDocumentsChanged = nullptr;
     app->editor->setLinkHandler(nullptr);
     app->editor->setExternalChangeCallback(nullptr, nullptr);
     delete app->search;
@@ -1987,8 +2019,9 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->layout = nullptr;
     delete app->tree;
     app->tree = nullptr;
-    delete app->editor;
+    delete app->editor;   // its tabs' backups go with them (Document::~Document)
     app->editor = nullptr;
+    BackupStore::shared().flush();   // gone from disk before anything can end the process
     // The App itself is kept (see App::dead).
     updateKeyPlace();
 }
@@ -2036,6 +2069,22 @@ static App* newWindow(const std::string& root, const std::string& file) {
         if (app->dead) return;
         revealActiveInTree(app);
         refreshHints(app);
+        if (app->persist) app->persist->tabShown();
+    };
+    // The window's tabs between runs, their backups, and auto-save.
+    app->persist = new Persistence(app->editor, app->rootDir, Persistence::Host{
+        [app](const std::string& note) {
+            if (!app->dead) flashStatus(app, note);
+        },
+        [app]() {
+            std::vector<Persistence*> out;
+            for (App* a : g.windows)
+                if (a != app && !a->dead && a->persist && a->persist->key() == app->persist->key())
+                    out.push_back(a->persist);
+            return out;
+        }});
+    app->editor->onDocumentsChanged = [app](Document* d) {
+        if (!app->dead && app->persist) app->persist->changed(d);
     };
 
     // The editor's side: the find bar above the editor (its tab strip and
@@ -2235,6 +2284,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     g_signal_connect(app->window, "notify::focus-widget", G_CALLBACK(onFocusWidget), app);
     g_signal_connect(app->window, "notify::is-active", G_CALLBACK(onIsActive), app);
     applyWindowSettings(app);   // now that the editor, terminal and status bar exist
+    app->persist->restoreSession();   // the files open here last time
 
     // A file named on the command line opens before the window is shown, so it
     // is already rendered when the window appears rather than flashing the
@@ -2244,6 +2294,28 @@ static App* newWindow(const std::string& root, const std::string& file) {
 
     gtk_window_present(GTK_WINDOW(app->window));
     return app;
+}
+
+// After the windows the first launch opens: a window for every folder whose
+// unsaved buffers outlived a crash, a SIGKILL or a power loss, with no
+// running window holding them (the Mac's reopenFoldersWithBackups), and the
+// launch's own window brought back to the front.
+static void reopenFoldersWithBackups() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    std::vector<std::string> open;
+    for (App* a : g.windows)
+        if (!a->dead) open.push_back(a->persist->key());
+    App* front = g.windows.empty() ? nullptr : g.windows.back();
+    bool opened = false;
+    for (const std::string& root : BackupStore::shared().foldersToReopenExcept(open)) {
+        // A folder no longer there: its backups wait, and go after 30 days.
+        if (!g_file_test(root.c_str(), G_FILE_TEST_IS_DIR)) continue;
+        newWindow(root, "");
+        opened = true;
+    }
+    if (opened && front && !front->dead) gtk_window_present(GTK_WINDOW(front->window));
 }
 
 // ---------------------------------------------------------------- main
@@ -2341,6 +2413,7 @@ static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
         return 0;
     }
     newWindow(st.root, st.file);
+    reopenFoldersWithBackups();   // once, at the first launch
     return 0;
 }
 
@@ -2357,6 +2430,7 @@ int main(int argc, char** argv) {
     // stopped by now, so this waits on the processes directly.
     g_signal_connect(gapp, "shutdown", G_CALLBACK(+[](GApplication*, gpointer) {
         LspTerminateAllServers();
+        BackupStore::shared().flush();   // what the last windows let go is gone from disk
     }), nullptr);
     int status = g_application_run(G_APPLICATION(gapp), argc, argv);
     g_object_unref(gapp);

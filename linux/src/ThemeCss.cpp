@@ -50,6 +50,9 @@ std::string stylesheet(const Settings& s) {
            "; color: " + fg(Surface::Editor) + "; }";
     css += ".minicode-editor text selection { background-color: #264F78; }";
     css += ".minicode-editor-scroller { background-color: transparent; }";
+    // The line-number gutter (Gutter.cpp) paints editor.gutter-background
+    // itself; the view's border window under it stays clear.
+    css += ".minicode-editor > border { background-color: transparent; }";
     // The tabs above the editor, as the Mac's strip draws them: the strip in
     // the sidebar's color, the active tab in the editor's with an accent
     // line along its top, so it runs into the text; the others' titles in a

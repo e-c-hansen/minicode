@@ -33,6 +33,7 @@
 #include "AutoClose.h"
 #include "CommandPalette.h"
 #include "Backups.h"
+#include "TabSessions.h"
 #include "InlineAgent.h"
 #include "SymbolOutline.h"
 #include "NavHistory.h"
@@ -10754,6 +10755,7 @@ static void testMultiCaretOccurrences() {
     }
 }
 #include "backups_tests.inc"
+#include "tab_sessions_tests.inc"
 #include "agent_tests.inc"
 #include "lsp_also_tests.inc"
 #include "lsp_fixes_tests.inc"
@@ -10897,6 +10899,7 @@ int main() {
     testCommandPalette();
     testMultiCaretOccurrences();
     testBackups();
+    testTabSessions();
     testInlineAgent();
     testLspSecondServer();
     testLspReviewFixes();

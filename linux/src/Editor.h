@@ -23,6 +23,7 @@
 #include "MarkdownEdit.h"
 #include "Settings.h"
 
+class CodeView;
 class MediaView;
 class LatexPreview;
 class GitDiffView;
@@ -61,6 +62,9 @@ public:
     // its Markdown page, a message, or the welcome text with no tab open.
     GtkWidget*     textView() const { return view_; }
     GtkTextBuffer* buffer() const { return buffer_; }
+    // The view's own drawing passes, the ruler and the line-number gutter
+    // (CodeView.h).
+    CodeView*      codeView() const { return code_; }
     // The active document's own buffer (its source, while its page shows
     // too), else what the view shows.
     GtkTextBuffer* sourceBuffer() const;
@@ -104,6 +108,17 @@ public:
     bool reopenClosedTab();
     bool canReopenClosedTab() const { return !closed_.empty(); }
     size_t closedTabCount() const { return closed_.size(); }
+    // A tab for `path` at the end of the row, not put on show, its file not
+    // read until it first is (a session coming back, Persistence.h).
+    Document* addTab(const std::string& path);
+    // Where a tab's view was, to keep (a session, Reopen Closed Tab): its
+    // selection, its first character on show and whether it showed its
+    // page, the tab on show's taken from the view as it is now. A tab not
+    // read yet gives what it came back with.
+    EditorTabs::ClosedTab placeOf(Document* d);
+    // The other way: the selection and view a tab is given back (a tab not
+    // read yet gets them once it is).
+    void placeTab(Document* d, const EditorTabs::ClosedTab& c);
     // An ordinary tab now, no longer the preview tab.
     void keepPreviewTab(Document* d);
     Document* previewTab() const;
@@ -125,6 +140,10 @@ public:
     std::function<void(const std::string& command, Document*)> onTabCommand;
     // Another tab came on show (the file tree follows it).
     std::function<void()> onActiveChanged;
+    // A document's text was edited (`d`), or the tabs changed: one opened,
+    // closed, renamed or put on show, or its unsaved state changed (null).
+    // main.cpp keeps the session, the backups and auto-save from it.
+    std::function<void(Document* d)> onDocumentsChanged;
     // Every object of the editor's that handlers on its widgets name, for
     // main.cpp's teardown (disconnectOwners): never null.
     std::vector<void*> handlerOwners() const;
@@ -266,6 +285,8 @@ public:
     void setObserver(EditorObserver* o) { observer_ = o; }
     // True while the view shows the active file's editable source.
     bool isSource() const;
+    // An input method is composing text in the view, not yet in the buffer.
+    bool composing() const { return composing_; }
     // The active file's whole source as UTF-8.
     std::string text() const;
 
@@ -291,6 +312,8 @@ private:
 
     // ---- the view
     void stash();                 // the active tab leaves the screen: its place kept
+    void capturePlace(Document* d);   // where the view is, into the tab on show's place
+    EditorTabs::ClosedTab closedTabOf(Document* d) const;   // from its place as kept
     void showActive();            // the active tab (or the welcome text) on screen
     void setViewBuffer(GtkTextBuffer* b, bool prose, bool editable);
     void showSource(Document* d);
@@ -383,10 +406,12 @@ private:
     GitDiffView*   diff_     = nullptr;   // made on the first diff
     MediaView*     media_    = nullptr;
     GtkWidget*     scroller_ = nullptr;
-    GtkWidget*     view_     = nullptr;   // GtkTextView
+    GtkWidget*     view_     = nullptr;   // GtkTextView: code_'s
+    CodeView*      code_     = nullptr;   // owned by the view
     GtkTextBuffer* buffer_   = nullptr;   // what the view shows
     GtkTextBuffer* welcome_  = nullptr;   // the view's buffer with no tab open
     char           typedKey_ = 0;         // ':' or a closer being typed (electric)
+    bool           composing_ = false;    // an input method's text in the view
 
     // The documents, in tab order, and the one on show.
     DocumentTags           tags_;

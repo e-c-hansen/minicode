@@ -373,6 +373,9 @@ MC_GUI_SUITE(keys) {
     MCGuiWait("a second window", 10, [] { return MCGuiAppWindows().size() == gWindows + 1; });
     MCGuiStep("Ctrl+W, Close Window's old key, is Close Tab's: in a window with no tab open it "
               "closes the window, as on the Mac", [] {
+        // A new window on the folder has the folder's tabs (its session, as
+        // on the Mac); they go first, so it has none.
+        MCGuiApp().editor->closeAllTabs();
         GCHECK(MCGuiApp().editor->tabCount() == 0);
         MCGuiKey("ctrl+w");   // to the new window, the newest
     });

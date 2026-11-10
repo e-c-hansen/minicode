@@ -1195,7 +1195,130 @@ What later items build on:
   without a current allocation" (a scroll bar mid-relayout); it was not
   reproduced outside the app and is harmless.
 
-### 16. The Mac's layout (done, November 2026; `PARITY.md` item 1.13)
+### 16. Line numbers, the gutter and the drawing seam (done, November 2026; `PARITY.md` item 1.4)
+
+What later items build on:
+- **The view is a `CodeView`** (`src/CodeView.{h,cpp}`): a `GtkTextView`
+  subclass made by `CodeView::create`, owned by its widget (deleted first
+  thing in the view's dispose); `Editor::codeView()` reaches it. Its
+  `snapshot_layer` runs **drawing passes**: `addPass(Layer, order, fn)`
+  with `fn(GtkSnapshot*, visible)` in buffer coordinates (GTK translates
+  the snapshot; x = 0 is left of `gtk_text_view_get_left_margin`), in
+  `BelowText` (over the text's background, under the text and the
+  selection) or `AboveText`, in ascending order; `removePass(id)`,
+  `queueDraw()`. The ruler is `BelowText` order 0. Suggested places: bracket
+  boxes (1.7) `BelowText` 10; carets (1.9) `AboveText` 10, fold
+  placeholders (1.10) `AboveText` 20, inlay labels (2.7) `AboveText` 30. A
+  pass draws only what is in `visible`, keeps its own state, and calls
+  `queueDraw` when that changes; it never lays the whole buffer out.
+- **Each buffer's lines are a `BufferLines`** (`src/BufferLines.{h,cpp}`),
+  attached to every document's source buffer in `Document`'s constructor
+  and owned by the buffer (`BufferLines::of(buffer)`): the core's
+  `LineIndex` in characters, GtkTextIter's offsets, fed from `insert-text`
+  and `delete-range` through `LineIndex::editUtf8` before the buffer
+  changes, so an edit costs the text it inserts. It is also where per-file
+  gutter state goes: `setChangeBars` (`QuickDiff::Bar`, moved by
+  `QuickDiff::shift` with each edit, cleared by a whole new text),
+  `setFolds(GutterFolds*)` (the fold lane's source: `hasClosedFolds`,
+  `startsRegion`, `startsClosedFold`, `toggle`), `extraCarets` (offsets of
+  carets besides the insert mark), and `changed()` to have every gutter
+  showing the buffer draw again.
+- **The gutter** (`src/Gutter.{h,cpp}`, the widget `MinicodeGutter` set with
+  `gtk_text_view_set_gutter(LEFT)`) follows the view: `notify::buffer` (a
+  tab switch), `notify::editable` (shown only for editable source with
+  `BufferLines` and `editor.line-numbers` not off), the buffer's `changed`
+  and the insert mark, the diagnostic tags, the adjustment, and the view's
+  reallocation (`CodeView::allocated`; a scroll only reallocates the
+  gutter, it does not draw it). Lanes left to right: dots (`kDotLane` 12;
+  the tags `lsp-error` and `lsp-warning` by default, `setDiagnosticTags`
+  for more, colored by each tag's underline color; a dot on the line a
+  tag range starts on), change bars (`kChangeLane` 5, only while
+  `setChangeLane(true)`; `onChangeBar(index, rect)` on a click,
+  `rectOfChangeBar`), the numbers (digits of the line count, three at
+  least, in the view's font with the monospace family set explicitly), and
+  the fold lane (`kFoldLane` 14). It visits only the display lines on
+  screen (`gtk_text_view_get_line_at_y`, `forward_display_line`) and numbers
+  each logical line on the display line it starts on
+  (`BufferLines::isLineStart`). Item 2.10 sets the bars and colors from
+  `editor.git-*`; item 1.10 gives `setFolds` a source.
+- **For checks**: `Gutter::drawnRows()` is what the last snapshot drew
+  (line, label, y in the gutter's coordinates, active, dot, chevron);
+  `CodeView::rulerXs()` the rulers' x; `gutterCpuMs()` the CPU time of the
+  gutter's handlers and drawing. `GutterSuite` holds rows to an index made
+  afresh and to GTK's own line positions.
+- **Traps**: GtkTextBuffer's lines are not always the Mac's: a `\n` typed
+  right after a lone `\r` stays a line of its own (an empty display line,
+  unnumbered here), and text typed between `\r\n` keeps the `\r` inside its
+  GTK line; the index and the numbers follow the Mac's rule (`\r\n` one
+  break). The view's style lags behind `gtk_text_view_set_monospace` until
+  the next frame, so a measure from the view's font as it was came out two
+  pixels narrow beside the welcome text's font; the numbers' font is set
+  explicitly, and a draw in another font size than the measure's measures
+  again from an idle. The window's divider (Adwaita's 8 px of padding
+  around the `GtkPaned` handle, plus GtkPaned's 6) took presses up to
+  14 px into the editor, over the dot lane and the change lane's left part;
+  item 18 (the layout) took that away, and the `gutter` suite now clicks a
+  change bar 13 px from the edge. Seen while writing `gutter_typing`, with the
+  gutter on or off: `Editor::revealLine(50000, ...)` in a 100,000-line file
+  left the view near line 100 or 900, not 50,000 (GTK's height guesses
+  outlast `settleOnCaret`'s two seconds); the suite scrolls by asking again
+  until the line is on screen.
+
+### 17. Sessions, backups and auto-save (done, November 2026; `PARITY.md` items 1.2 and 1.3)
+
+What later items build on:
+- **`Persistence`** (`src/Persistence.{h,cpp}`, the Mac's
+  `EditorController+Persistence.mm`) is one per window, `App::persist`. It
+  hears everything through four hooks: `Editor::onDocumentsChanged` (an
+  edit, `d` set, or a change to the tabs, null, fired from `refreshStrip`),
+  `onActiveChanged` (`tabShown`: a restored tab's note, focus-change),
+  `notify::focus-widget` (`focusMoved`) and `notify::is-active`
+  (`windowActive`). main.cpp calls `restoreSession` when a window opens and
+  after Open Folder, `saveSessionClosing` from `onWindowRemoved`, and
+  `autoSaveNow` before every close question (`closeTabAsking`,
+  `confirmAllUnsaved`). The sessions file is the core's `TabSessions`;
+  backups are the core's `Backups` through `src/BackupStore.{h,cpp}`, one
+  per process, writing on a thread of its own.
+- **When the session is written**: a second after the tabs change, when a
+  window closes (or, if another window stays on the folder, by that one),
+  before Open Folder, and for every window at the start of a quit
+  (`g.quitting` then stops the closing windows from writing their own). A
+  new window on a folder already open gets the folder's tabs, as on the
+  Mac; a check that wants a new window with no tab closes them first
+  (`keys`, `tabs`).
+- **Tabs not read yet**: a session's tabs are `Document::setUnread`
+  documents (a Message with an empty buffer, never dirty or saved) made by
+  `Editor::addTab`; `Editor::showActive` reads one when it is first shown
+  and gives it the place it came back with (`Place::restore`,
+  `Editor::placeTab`). Code that walks the tabs must not take an unread
+  one's empty buffer for its text. `Editor::placeOf` is what a tab keeps
+  of its place (Reopen Closed Tab uses the same).
+- **Per file**: `Document::backup()` (id, what was written, the note),
+  `edits()`, `diskStamp()` (taken in `rememberDisk`), `restoreText`,
+  `askAboutDiskChange`, `goneFromDisk`, `changedOnDisk`. A document's
+  destructor removes its backup, so anything that destroys a dirty
+  document must have asked first (or be a window closing after its
+  question). The port still has no "(deleted)" state for a tab whose file
+  went; auto-save leaves such a tab alone.
+- **A restored file that changed since** asks Keep Mine or Reload when its
+  window becomes active, or when its tab is shown; the harness's first
+  wait now accepts a window that opens with such a question up.
+- **Input methods**: `Editor::composing()` follows GtkTextView's
+  `preedit-changed`. The checks now run with `GTK_IM_MODULE=
+  gtk-im-context-simple` (`Wrapper.cpp`): IBus is installed on the
+  ThinkPad and not on CI, and with no daemon on the private bus it showed
+  no preedit for a dead key, which GTK's own input method does.
+- **Not done**: the browser's page in the session (the Mac keeps its
+  address, history and whether it showed); it waits for item 1.13's
+  layout.
+- **Traps**: `Ctrl+End` in a file GtkTextView has not laid out yet scrolls
+  by guessed line heights and can leave the caret below the view; the
+  `sessions` suite waits for the view to settle and steps up and down
+  again. Three suites start second apps (`MCGuiRunChild`); a child that
+  fails leaves backups nobody holds, and every later child then opens a
+  window on that folder at launch (`reopenFoldersWithBackups`).
+
+### 18. The Mac's layout (done, November 2026; `PARITY.md` item 1.13)
 
 The browser sits right of the editor with a bar between them and the
 terminal below both, across the whole width, as on the Mac; before, the
@@ -1265,8 +1388,9 @@ editor back. What later items build on:
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).
   From `linux/`, `meson test -C build --suite gui` runs every suite (about
-  23 seconds in November 2026: 4 for the `keys` suite and 15 for the tab
-  suites, most of it waiting out GTK's double-click time between clicks); `./build/minicode-guitest save harness` runs
+  37 seconds in November 2026: 4 for the `keys` suite, 15 for the tab
+  suites, most of it waiting out GTK's double-click time between clicks,
+  and 15 for `sessions`, `backups` and `auto_save`, which start second apps); `./build/minicode-guitest save harness` runs
   some with their output as it comes, and `SUITES="save" meson test -C build
   --suite gui -v` does the same through Meson. Plain `meson test -C build`
   leaves them out. The program starts its own Xvfb on a display number the
@@ -1504,7 +1628,7 @@ Do not claim a GUI behaviour works when it was only compiled.
   minimum counts too. The culprit was found by running under gdb with
   `G_DEBUG=fatal-warnings`, reading the widget's address from the warning
   and walking `gtk_widget_get_parent` with `g_type_name_from_instance`.
-  Since item 16 the vertical split is `WindowLayout`'s, which never gives
+  Since item 18 the vertical split is `WindowLayout`'s, which never gives
   the editor's side less than its minimum; a slot page with a large minimum
   would now raise the window's smallest height instead, so keep them in
   scrolled windows still.
