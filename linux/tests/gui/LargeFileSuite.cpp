@@ -659,7 +659,12 @@ MC_GUI_SUITE(large_file) {
     });
     // A click in the field: after Ctrl+F the field has the focus here, but
     // keys typed without a window manager went nowhere until it was clicked.
-    MCGuiStep("", [] { MCGuiClick(MCGuiApp().findBar->findField()); });
+    // The query the window's bar still holds from an earlier suite ("needle"
+    // after find_bar) selected, so that typing replaces it.
+    MCGuiStep("", [] {
+        MCGuiClick(MCGuiApp().findBar->findField());
+        MCGuiKey("ctrl+a");
+    });
     MCGuiStep("NEEDLE", [] {
         GtkTextIter start;
         gtk_text_buffer_get_start_iter(buf(), &start);
