@@ -1996,6 +1996,19 @@ GUI checks (`tests/gui`):
   turns of the main loop, and the runner waits for it.
 - GtkTextView undoes typing a piece at a time: one Ctrl+Z after typing a
   line takes back its last word or so, not the line.
+- **Input that gives up the PRIMARY selection and takes it again, sent in
+  one burst** (2026-11-10, `large_file` on CI one run in two): a click in a
+  field whose text is selected, then Ctrl+A. GTK handles both within the
+  same millisecond of the X server's time, and X's notice that the first
+  was given up (a SelectionClear and an XFixes notice for owner None) comes
+  after the second claim with the same time on it. GDK ignores only notices
+  older than its claim, so it takes this one for another program taking the
+  selection, and the `GtkText` drops Ctrl+A's selection to its start: the
+  query typed next went in before the old one ("NEEDLEneedle"). Give up and
+  take again in one step from code and the selection was lost in 4 rounds
+  of 12; with a wait between, in none of 50. Wait for the click to land (no
+  selection in the field) before Ctrl+A. A person cannot press keys that
+  close together.
 - GTK 4.18 deprecated its X11 API. `tests/gui/Input.cpp` is the only file
   that uses it and defines `GDK_DISABLE_DEPRECATION_WARNINGS`.
 - In the checks the browser pane's home page is `about:blank`
