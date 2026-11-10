@@ -52,12 +52,13 @@ bool activeIs(const std::string& name) { return ed()->currentPath() == F(name); 
 
 bool editorHasKeyboard() { return gtk_widget_has_focus(ed()->textView()); }
 
-// The first mapped label under `root` whose text holds `part`.
+// The first label on screen under `root` whose text holds `part`.
 GtkWidget* labelHolding(GtkWidget* root, const std::string& part) {
     if (!root || !gtk_widget_get_mapped(root)) return nullptr;
     if (GTK_IS_LABEL(root)) {
         const char* text = gtk_label_get_text(GTK_LABEL(root));
-        if (text && std::string(text).find(part) != std::string::npos) return root;
+        if (text && std::string(text).find(part) != std::string::npos)
+            return MCGuiOnScreen(root) ? root : nullptr;
     }
     for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
         if (GtkWidget* hit = labelHolding(c, part)) return hit;
@@ -173,7 +174,7 @@ MC_GUI_SUITE(preview_tabs) {
     MCGuiStep("a preview tab once more", [] { MCGuiClick(treeRow("p-e.txt")); });
     MCGuiWait("a preview tab, drawn", 10, [] {
         return row() == "p-b.txt [p-e.txt] p-c.txt p-d.txt" &&
-               gtk_widget_get_mapped(strip()->titleWidget(1));
+               MCGuiOnScreen(strip()->titleWidget(1));
     });
     MCGuiStep("a double-click on its title keeps it", [] { MCGuiDoubleClick(strip()->titleWidget(1)); });
     MCGuiWait("kept", 10, [] { return row() == "p-b.txt p-e.txt p-c.txt p-d.txt" && italicsAgree(); });
@@ -183,7 +184,7 @@ MC_GUI_SUITE(preview_tabs) {
     MCGuiStep("and once more", [] { MCGuiClick(treeRow("p-e.txt")); });
     MCGuiWait("a preview tab, drawn", 10, [] {
         return row() == "p-b.txt [p-e.txt] p-c.txt p-d.txt" &&
-               gtk_widget_get_mapped(strip()->titleWidget(1));
+               MCGuiOnScreen(strip()->titleWidget(1));
     });
     MCGuiStep("its right click menu", [] { MCGuiClick(strip()->titleWidget(1), -1, -1, 3); });
     MCGuiWait("offers Keep Open", 10, [] {

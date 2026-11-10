@@ -67,7 +67,7 @@ bool stripAgrees() {
 
 bool tabsOnScreen() {
     for (int i = 0; i < strip()->count(); i++)
-        if (!gtk_widget_get_mapped(strip()->titleWidget(i))) return false;
+        if (!MCGuiOnScreen(strip()->titleWidget(i))) return false;
     return strip()->count() > 0;
 }
 
@@ -104,7 +104,8 @@ std::string title() { return gtk_window_get_title(MCGuiApp().window); }
 // A Markdown page's task box, on screen in the view.
 GtkWidget* taskBox(GtkWidget* root) {
     if (!root || !gtk_widget_get_mapped(root)) return nullptr;
-    if (GTK_IS_CHECK_BUTTON(root) && gtk_widget_has_css_class(root, "minicode-md-task")) return root;
+    if (GTK_IS_CHECK_BUTTON(root) && gtk_widget_has_css_class(root, "minicode-md-task"))
+        return MCGuiOnScreen(root) ? root : nullptr;
     for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
         if (GtkWidget* hit = taskBox(c)) return hit;
     return nullptr;

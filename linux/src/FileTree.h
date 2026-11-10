@@ -113,9 +113,16 @@ private:
     // GTK_INVALID_LIST_POSITION. `onArrow` says whether the point is on the
     // expander's arrow, which toggles the folder by itself.
     guint rowAt(double x, double y, bool* onArrow) const;
+    // The row drawn under a point, as its row object (its list item's), or
+    // null: what the user sees there, even when a listing has just moved the
+    // rows and the list is not laid out again yet.
+    GtkTreeListRow* rowObjectAt(double x, double y, bool* onArrow) const;
+    GtkListItem* listItemAt(double x, double y, bool* onArrow) const;
     // A click or Enter on a row: a folder opens or closes, a file opens.
-    void actOnRow(guint pos, EditorTabs::OpenFrom from);
+    void actOnRow(GtkTreeListRow* row, EditorTabs::OpenFrom from);
     void selectRow(guint pos);
+    // Keeps `row` (a reference of its own) in one of the click slots below.
+    static void holdRow(GtkTreeListRow** slot, GtkTreeListRow* row);
 
     // Drag and drop (see "drag and drop" in FileTree.cpp).
     static GdkContentProvider* onDragPrepare(GtkDragSource* s, double x, double y,
@@ -166,8 +173,14 @@ private:
     GtkWidget*  contextMenu_  = nullptr;   // GtkPopoverMenu, parented to listView_
     GtkWidget*  namePopover_  = nullptr;   // askName's popover while it is up
 
-    guint       pressRow_ = GTK_INVALID_LIST_POSITION;   // where the click began
-    guint       lastReleaseRow_ = GTK_INVALID_LIST_POSITION;   // the last click's row
+    // The row a click began on and where, and the last click's row, held as
+    // row objects: a folder's listing can move the rows between a press and
+    // its release, or between the two clicks of a double-click, and a
+    // position would then name another row (R1's follow-up). A row that
+    // stays keeps its object.
+    GtkTreeListRow* pressRow_ = nullptr;
+    double          pressX_ = 0, pressY_ = 0;
+    GtkTreeListRow* lastReleaseRow_ = nullptr;
 
     DropCb      dropCb_;
     // The drag over the tree right now: what it carries (empty while files

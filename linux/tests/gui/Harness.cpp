@@ -271,9 +271,33 @@ void MCGuiSnapshot(GtkWidget* widget, const std::string& name) {
 }
 
 // --------------------------------------------------------- finding widgets
+bool MCGuiOnScreen(GtkWidget* widget) {
+    if (!widget || !gtk_widget_get_mapped(widget) || gtk_widget_get_width(widget) <= 0 ||
+        gtk_widget_get_height(widget) <= 0)
+        return false;
+    // What a click at its center would reach: GTK's own pick, which knows
+    // what is clipped (a row scrolled just out of a list stays mapped) and
+    // what is on top.
+    GtkNative* native = gtk_widget_get_native(widget);
+    if (!native) return false;
+    graphene_point_t center = GRAPHENE_POINT_INIT(gtk_widget_get_width(widget) / 2.0f,
+                                                  gtk_widget_get_height(widget) / 2.0f);
+    graphene_point_t at;
+    if (!gtk_widget_compute_point(widget, GTK_WIDGET(native), &center, &at)) return false;
+    GtkWidget* hit = gtk_widget_pick(GTK_WIDGET(native), at.x, at.y, GTK_PICK_DEFAULT);
+    for (GtkWidget* w = hit; w; w = gtk_widget_get_parent(w))
+        if (w == widget) return true;   // the widget, or a part of it
+    // A widget that takes no input itself is reached through what holds it.
+    int up = 0;
+    for (GtkWidget* w = widget; w && up <= 3; w = gtk_widget_get_parent(w), up++)
+        if (w == hit) return true;
+    return false;
+}
+
 GtkWidget* MCGuiFindLabel(GtkWidget* root, const std::string& text) {
     if (!root || !gtk_widget_get_mapped(root)) return nullptr;
-    if (GTK_IS_LABEL(root) && text == gtk_label_get_text(GTK_LABEL(root))) return root;
+    if (GTK_IS_LABEL(root) && text == gtk_label_get_text(GTK_LABEL(root)))
+        return MCGuiOnScreen(root) ? root : nullptr;
     for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
         if (GtkWidget* hit = MCGuiFindLabel(c, text)) return hit;
     return nullptr;
@@ -283,7 +307,8 @@ GtkWidget* MCGuiFindButton(GtkWidget* root, const std::string& text) {
     if (!root || !gtk_widget_get_mapped(root)) return nullptr;
     if (GTK_IS_BUTTON(root)) {
         const char* label = gtk_button_get_label(GTK_BUTTON(root));
-        if ((label && text == label) || MCGuiFindLabel(root, text)) return root;
+        if ((label && text == label) || MCGuiFindLabel(root, text))
+            return MCGuiOnScreen(root) ? root : nullptr;
     }
     for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
         if (GtkWidget* hit = MCGuiFindButton(c, text)) return hit;

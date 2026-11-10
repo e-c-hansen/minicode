@@ -1444,6 +1444,18 @@ Do not claim a GUI behaviour works when it was only compiled.
   on screen whether it can expand, which makes its child model, so every
   folder row shown has a monitor and a listing, open or not. The
   `tree_stall` suite times the main thread's longest gap per phase.
+- Rows move under the pointer when a listing comes in, so the tree keeps
+  the row a click was pressed on (and the last click's row) as its
+  `GtkTreeListRow`, never a position; a row that stays keeps its object.
+- A list view maps a new row's widgets when the row is added and places
+  them at the next frame. In between, a GUI check that finds the row's
+  label and clicks it hits the window's top left corner. A row scrolled
+  just out of the view also stays mapped and placed. Find click targets
+  with `MCGuiFindLabel` or `MCGuiOnScreen` (mapped, with a size, and what
+  GTK picks at its center), never `gtk_widget_get_mapped` alone;
+  `tree_clicks` checks it. A row put in above the top row on show stays
+  above the view (GTK keeps the rows on show still), so scroll a list only
+  once the row is in it.
 - `g_file_trash` refuses anything on a tmpfs such as /tmp ("Trashing on system
   internal mounts is not supported"). A test of Move to Trash needs its
   scratch project on the home filesystem, with `XDG_DATA_HOME` pointed at a

@@ -513,6 +513,17 @@ fixed on its own branch, with a GUI check that fails without the fix.
   the main loop 1.5 to 3 s of CPU, 5.2 s long once on a loaded machine
   (item 1.12). Needs the owner: the tree under GNOME on Wayland while a
   build runs in an open folder.
+  *Follow-up, 2026-11-09:* after R1 about one GUI run in five failed at the
+  save suite's first tree click. A listing adds a row whose widgets GTK maps
+  at once and places at the next frame; the harness counted mapped as on
+  show and clicked the unplaced label, which lands on the window's corner
+  (the File menu). The harness now hands out only widgets with a size that
+  GTK picks at their center (`MCGuiOnScreen`), so neither an unplaced row
+  nor one scrolled just out of view. The tree also kept the pressed row
+  and the last click's row by position, so a listing landing while the
+  button was down opened the file put in under the pointer, or nothing; it
+  now keeps row objects. The `tree_clicks` suite checks both and fails
+  without either fix.
 - Right-clicking a part of the window offers no Adjust Settings (the same
   day): that is item 2.11.
 

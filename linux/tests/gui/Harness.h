@@ -142,8 +142,18 @@ std::string MCGuiEditorText();
 void MCGuiSnapshot(GtkWidget* widget, const std::string& name);
 
 // ---- finding widgets
+// Whether a widget is on screen where a click would reach it: mapped, laid
+// out with a size, and what GTK picks at its center (not clipped away, not
+// covered). A list view maps a new row's widgets the moment the row is
+// added and places them at its next layout; a click aimed at one in between
+// went to the window's top left corner (the File menu), which made the save
+// suite's first click flaky once the tree's listings came from a worker
+// (R1). A row scrolled just out of a list stays mapped and placed, and a
+// click at it lands on whatever is drawn there.
+bool MCGuiOnScreen(GtkWidget* widget);
 // The first label under `root` showing exactly `text`, or null. Only
-// mapped widgets count, so a list's recycled rows off screen are not found.
+// widgets on screen count, so a list's recycled rows off screen, and rows
+// not laid out yet, are not found.
 GtkWidget* MCGuiFindLabel(GtkWidget* root, const std::string& text);
 // The first button under `root` labelled `text`, or null.
 GtkWidget* MCGuiFindButton(GtkWidget* root, const std::string& text);
@@ -164,10 +174,17 @@ void MCGuiKey(const std::string& chord);
 // Types text as key presses. Characters the layout lacks are put on spare
 // key codes first ("é", "→"); "\n" is Return and "\t" Tab.
 void MCGuiType(const std::string& utf8);
-// Pointer, at a point in `widget`'s coordinates (center by default).
+// Pointer, at a point in `widget`'s coordinates (center by default). A
+// widget that is not on screen (MCGuiOnScreen) is a failed check, never a
+// click at the window's corner.
 void MCGuiMoveTo(GtkWidget* widget, double x = -1, double y = -1);
 void MCGuiClick(GtkWidget* widget, double x = -1, double y = -1, int button = 1);
 void MCGuiDoubleClick(GtkWidget* widget, double x = -1, double y = -1);
+// A button held down on `widget`, and let go later, wherever the pointer is
+// then: what happens in between (a listing moving rows under it) is the
+// check's.
+void MCGuiPress(GtkWidget* widget, double x = -1, double y = -1, int button = 1);
+void MCGuiRelease(int button = 1);
 // A click with modifiers held around it, "ctrl", "shift", "alt" or several
 // ("ctrl+shift"), as a hand holds them.
 void MCGuiClickWith(const std::string& modifiers, GtkWidget* widget, double x = -1,
