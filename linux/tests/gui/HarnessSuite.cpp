@@ -6,6 +6,7 @@
 #include "Harness.h"
 
 #include "Editor.h"
+#include "WindowLayout.h"
 
 #ifdef MINICODE_ENABLE_BROWSER
 #include "Browser.h"
@@ -126,7 +127,14 @@ MC_GUI_SUITE(harness) {
     // profile, a container) the page's process dies as it starts and the
     // browser pane stays blank; nothing else in the window notices. A page
     // that answers JavaScript has a live process, and the process tree says
-    // whether it is in the sandbox.
+    // whether it is in the sandbox. The web view is made when the pane is
+    // first shown (R3), so the pane is shown first, and hidden again after.
+    MCGuiStep("the browser pane shown", [] {
+        MCGuiSetKeyWindow(nullptr);
+        GCHECK(MCGuiApp().browser && !MCGuiApp().layout->browserShown());
+        MCGuiKey("ctrl+shift+b");
+    });
+    MCGuiWait("its web view made", 10, [] { return browserWebView() != nullptr; });
     MCGuiAsync("the browser pane's page runs JavaScript", 30, [](MCGuiDone done) {
         WebKitWebView* web = browserWebView();
         GCHECK(web != nullptr);
@@ -155,10 +163,12 @@ MC_GUI_SUITE(harness) {
             },
             new MCGuiDone(done));
     });
-    MCGuiStep("the page's process is in WebKit's sandbox", [] {
+    MCGuiStep("WebKit's sandbox is not turned off", [] {
         GCHECK(g_getenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS") == nullptr);
-        GCHECK(webProcessInSandbox());
     });
+    MCGuiWait("the page's process is in WebKit's sandbox", 10, webProcessInSandbox);
+    MCGuiStep("the browser pane hidden again", [] { MCGuiKey("ctrl+shift+b"); });
+    MCGuiWait("hidden", 10, [] { return !MCGuiApp().layout->browserShown(); });
 #endif
 
     MCGuiStep("a file to type into", [] {

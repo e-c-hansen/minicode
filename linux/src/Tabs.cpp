@@ -235,6 +235,7 @@ void Editor::activate(Document* d) {
         refreshStrip();
         return;
     }
+    if (onActiveWillChange) onActiveWillChange();
     stash();
     active_ = d;
     showActive();
@@ -297,6 +298,7 @@ void Editor::dropTab(Document* d, bool remember) {
     const int index = indexOf(d);
     if (index < 0) return;
     const bool wasActive = d == active_;
+    if (wasActive && onActiveWillChange) onActiveWillChange();
     if (wasActive) stash();
     if (remember && d->kind() != Document::Kind::Diff && !d->path().empty()) {
         EditorTabs::ClosedTab c = closedTabOf(d);
@@ -341,6 +343,7 @@ void Editor::destroy(Document* d) {
 }
 
 void Editor::closeAllTabs() {
+    if (onActiveWillChange) onActiveWillChange();
     stash();
     active_ = nullptr;
     diffDoc_ = nullptr;

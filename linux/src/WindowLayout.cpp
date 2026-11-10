@@ -125,6 +125,10 @@ WindowLayout::~WindowLayout() {
 // ------------------------------------------------------------ the state
 
 void WindowLayout::apply() {
+    // A maximized pane hidden some other way (Close Tab hid the browser)
+    // ends Maximize Pane, so showing it again does not bring that back.
+    if (state_.maximized && !RightArea::maximizedNow(state_, nullptr, parts_))
+        state_.maximized = false;
     const RightArea::Frames f = RightArea::layout(state_, 0, 0, limits_, parts_);
     gtk_widget_set_visible(editor_, f.editor);
     if (browser_) gtk_widget_set_visible(browser_, f.browser);
@@ -159,7 +163,29 @@ void WindowLayout::focusAfterClosingPanel() {
     }
 }
 
+bool WindowLayout::toggleMaximized() {
+    std::optional<RightArea::Pane> keyboard;
+    if (focusInside(browser_)) keyboard = RightArea::Pane::Browser;
+    else if (focusInside(terminal_)) keyboard = RightArea::Pane::Terminal;
+    if (!RightArea::toggleMaximized(state_, keyboard, parts_)) return false;
+    if (state_.maximized) showRightArea();
+    apply();
+    return true;
+}
+
+bool WindowLayout::leaveMaximizedFor(RightArea::Pane pane) {
+    if (!RightArea::leaveMaximizedFor(state_, pane, parts_)) return false;
+    apply();
+    return true;
+}
+
 void WindowLayout::toggleEditor() {
+    // Hidden only by another pane's Maximize Pane: shown, not hidden.
+    if (leaveMaximizedFor(RightArea::Pane::Editor) && editorShown()) {
+        showRightArea();
+        if (focusEditor) focusEditor();
+        return;
+    }
     if (!editorShown() || rightCollapsed()) {
         revealEditor();
         if (focusEditor) focusEditor();
@@ -179,6 +205,11 @@ void WindowLayout::toggleEditor() {
 
 void WindowLayout::toggleBrowser() {
     if (!browser_) return;
+    if (leaveMaximizedFor(RightArea::Pane::Browser) && state_.browserVisible) {
+        showRightArea();
+        if (focusBrowser) focusBrowser();
+        return;
+    }
     const bool had = focusInside(browser_);
     RightArea::toggle(state_, RightArea::Pane::Browser);
     if (state_.browserVisible) showRightArea();
@@ -193,6 +224,11 @@ void WindowLayout::toggleBrowser() {
 
 void WindowLayout::toggleTerminal() {
     if (!terminal_) return;
+    if (leaveMaximizedFor(RightArea::Pane::Terminal) && state_.terminalVisible) {
+        showRightArea();
+        if (focusTerminal) focusTerminal();
+        return;
+    }
     const bool had = focusInside(terminal_);
     RightArea::toggle(state_, RightArea::Pane::Terminal);
     if (state_.terminalVisible) showRightArea();
@@ -228,14 +264,17 @@ void WindowLayout::toggleSidebar() {
 }
 
 void WindowLayout::revealEditor() {
-    const bool was = !editorShown() || rightCollapsed();
+    const bool left = RightArea::leaveMaximizedFor(state_, RightArea::Pane::Editor, parts_);
+    const bool was = !editorShown() || rightCollapsed() || left;
     state_.editorHidden = false;
     showRightArea();
     if (was) apply();
 }
 
 void WindowLayout::showBrowser() {
-    if (!browser_ || state_.browserVisible) return;
+    if (!browser_) return;
+    const bool left = RightArea::leaveMaximizedFor(state_, RightArea::Pane::Browser, parts_);
+    if (state_.browserVisible && !left) return;
     state_.browserVisible = true;
     showRightArea();
     apply();

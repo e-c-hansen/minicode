@@ -273,6 +273,11 @@ public:
     // 72). Zooming (Cmd+= and Cmd+-) adds to it without touching the file.
     double editorFontSize() const { return editorFontSize_; }
     static constexpr double kMinFontSize = 6, kMaxFontSize = 72;
+    // Whether the file sets editor.font-size (or terminal.font-size) at
+    // all. The GTK port starts from the desktop's own size when it does
+    // not, as it always did; the Mac uses the defaults.
+    bool editorFontSizeSet() const { return editorFontSizeSet_; }
+    bool terminalFontSizeSet() const { return terminalFontSizeSet_; }
     // editor.line-numbers: the gutter beside the editor with each line's
     // number (on, the default), none (off), or numbers counted from the
     // caret's line, which shows its own (relative, as VS Code's).
@@ -499,6 +504,7 @@ private:
     std::vector<int> rulers_ = {100};
     std::optional<Rgba> rulerColor_;
     double editorFontSize_ = 13;
+    bool editorFontSizeSet_ = false, terminalFontSizeSet_ = false;
     LineNumbers lineNumbers_ = LineNumbers::On;
     bool wordWrap_ = true;
     bool autoClose_ = true;

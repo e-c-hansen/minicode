@@ -1747,6 +1747,173 @@ and asks the session bus's systemd for `app-minicode-org.minicode.Editor-<pid>.s
   dispositions and mask unless they are reset before `execve`: a SIGHUP
   ignored there would let the hang-up check pass without the fix.
 
+### 24. The time to a usable window (done, November 2026; `PARITY.md` item R3)
+
+What later items build on:
+- **`MINICODE_STARTUP_LOG=1`** (`src/StartupLog.{h,cpp}`) prints a line to
+  stderr for each phase of the start, with the time since main and the
+  main thread's CPU time: how long the process ran before main, GTK's
+  startup, the command line, the settings, keys and menu bar, each pane of
+  the first window, the session's tabs, the first file read and
+  highlighted, the window realized and presented, the first three frames
+  (update and layout, paint), the first frame with the process's CPU and
+  what it had started, the tree's first listing, the first idle after it
+  ("settled"), and the first time each thing starting on its own does
+  (the shell, the web view, the browser's first page, each language
+  server, git). A new thing a window starts at launch, or a new pane,
+  gets a `StartupLog::mark` or `once`, so it shows. Without the variable
+  each call tests one flag; `StartupLog::firstFrame()` is kept either way
+  for the checks. A run with the log stays in the foreground (main.cpp sets
+  `MINICODE_FOREGROUND` for `Detach::start`, item 23): a detached app puts
+  `/dev/null` on its stderr once its window is made, which would cut the
+  log off before the first frame. `begin()` runs after the fork, so its
+  clock is the main thread's of the process that runs the app.
+- **Nothing hidden is made at launch.** `Terminal` and `Browser` make their
+  widget at once, and the terminal and its shell, or the WebKitWebView,
+  when the panel first maps, as the Mac makes its terminal dock and its
+  browser when first shown (`makeTerminalPanel`, `makeBrowserWithHome:`).
+  The terminal is also made by `focus()`, and keeps settings told to it
+  before; the browser's `load()` makes the view and loads that page
+  instead of the home page, which is why `openLink` loads before it shows
+  the pane. `made()` and `webView()` say whether they exist yet. So the
+  real binary's browser loads DuckDuckGo only once shown. A future
+  browser page in the session (the Mac's `restoreBrowserFromSession`) makes
+  the view at launch only when the session had it.
+- **Work after the first frame:** `whenDrawn(widget, fn)` (`src/WhenDrawn.h`)
+  calls `fn` from the idle after the widget's window has drawn its first
+  frame. `LspSession` holds a document that comes before that (the tab a
+  session brings back) and starts its server then.
+- **For the owner's desktop**, where the checks cannot go:
+  `linux/dev/startup-times.sh [-n runs] [-r renderers] BINARY [FOLDER]`
+  opens the app with the log on, three times for each of GTK's default
+  renderer, `gl`, `vulkan` and `cairo`, waits until it settles, ends it by
+  its PID and prints the phases. Every other minicode must be quit first,
+  or the run hands its folder to the running one and logs nothing. For
+  main before R3, build commit 3a5016d (the log without the fix) in a
+  worktree of its own.
+
+Measured on the ThinkPad's Xvfb (cairo drawing, `~/minicode` read only,
+medians of six warm runs with main and the fix interleaved, load 3 to 6;
+milliseconds after main, wall / main-thread CPU):
+
+| phase | main | R3 |
+|---|---|---|
+| GTK's own start (`gtk: started`) | 100 / 93 | 96 / 93 |
+| the browser's part of the window | 39 / 23 | 0 / 0 |
+| the window built, no session | 164 / 142 | 115 / 110 |
+| realized, then presented | 185 / 162, 217 / 182 | 139 / 132, 166 / 150 |
+| first frame, no session | 244 / 203 | 189 / 170 |
+| first frame, five session tabs | 299 / 248 | 220 / 197 |
+| clangd started (five tabs) | 185, before the frame | 307, after it |
+| CPU of the app and all it started, first 3 s | 1.87 s | 0.26 s |
+
+The process runs 47 to 50 ms before main (GTK alone is about 25 ms of it,
+WebKit about 17, VTE and poppler about 13: what they map and construct).
+A bare GtkApplication window reaches its first frame at about 170 ms of
+CPU here, so GTK is most of what is left. The PPA's 1.4.14, timed from exec
+by an LD_PRELOAD probe that wraps `gtk_window_present`, drew its first
+frame at 268 ms with 1.91 s of CPU in all: on Xvfb nothing takes seconds.
+The renderer is the likely difference on the desktop: on Xvfb `gl` runs
+on llvmpipe, and its first frame's paint took 410 to 560 ms with an empty
+Mesa shader cache and 58 ms with a warm one, against 17 to 30 ms for
+cairo; the desktop's GPU, Vulkan by default on Wayland, was not measured.
+
+Traps:
+- WebKit waits on the main thread for each sandboxed process it starts
+  (a poll on the bwrap's info pipe, 40 to 140 ms each on Xvfb), so a
+  WebKitWebView costs the window even hidden.
+- A widget made from a parent's `map` handler is realized as it is added,
+  since the parent is mapped by then: a `realize` handler connected after
+  `gtk_*_set_child` never runs. `Terminal::makeTerminal` puts the terminal
+  into its panel last; the `startup` suite checks that its key controller
+  on the window was added.
+- `LspSession::documentChanged(path_)` passes a reference to the member
+  it clears first; take a copy.
+- `perf` is closed to users here (`perf_event_paranoid` 4) and the owner
+  wants no debugger, so the log, `strace -f -tt -T` and a bare GTK program
+  timed the same way are what there is.
+
+### 25. Zoom, word wrap, Go Back and Maximize Pane (done, November 2026; `PARITY.md` item 1.11)
+
+What later items build on:
+- **`Zoom`** (`src/Zoom.{h,cpp}`, over the core's `../src/ViewZoom.h`)
+  holds what every window shares: the editor's zoom and the terminals'
+  (points, in `$XDG_STATE_HOME/minicode/zoom.json`, read once at the first
+  window, written on each change, never the settings file) and the word
+  wrap toggle (for the session). The editor's size is one rule of a
+  display-wide stylesheet on the view `attachEditor` marked (class
+  `minicode-zoom`): its source at editor.font-size points when the file
+  sets it (`Settings::editorFontSizeSet`), else the desktop's size as
+  before, plus the zoom; its prose (a Markdown page, a message) at the
+  desktop's size times `previewScale`. With no zoom and no size set there
+  is no rule at all. Each window listens (`Zoom::listen`): "editor" scales
+  its Markdown tags (`scaleTags`, which keeps each tag's first size as its
+  base), "terminal" sets the terminal's font (`Terminal::setFontSize`: the
+  setting's or the desktop's size, and VTE's font scale for the zoom),
+  "wrap" calls `Editor::applyWordWrap`. The gutter follows the view's font
+  by itself. The LSP popups, the find bar and the palette do not follow the
+  zoom yet (the Mac's completion list and hover do).
+- **Word wrap**: `Editor::setProseFont` wraps source as `Zoom::wordWrap()`
+  says (editor.word-wrap, on by default, as on the Mac; before this item
+  source never wrapped), and prose always. Two exceptions keep item 22's
+  paths as they were. In large-file mode wrapping is one of the features
+  off (as in VS Code; the Mac keeps it): GTK laid 470,000 lines out half as
+  long again wrapped (47 s against 34 to keep line 300,000 on screen), and
+  the note's click turns it back on with the rest
+  (`turnOnLargeFileFeatures` calls `applyWordWrap`). And a long line
+  (`LongLines`) never wraps: GTK takes a paragraph's wrap mode from the
+  tags on its first character, so `LongLines::keepUnwrapped` puts
+  `minicode-long-line-nowrap` (wrap-mode none) on that one character after
+  every edit of the line; wrapped, End went to the end of the part's first
+  row instead of on into the hidden rest, and opening a 300,000-character
+  line held the loop 93 ms against 16.
+- **`NavHistoryUi`** (`src/NavHistoryUi.{h,cpp}`, one per window,
+  `app->nav`) is the host of the core's `Nav::Recorder`
+  (`../src/NavRecorder.h`, the Mac's `MCNavigator` over `NavHistory.h`).
+  It watches the source buffer on show (`mark-set` for the ten-line rule,
+  `insert-text` and `delete-range` so places follow edits; replacing the
+  whole text, a reload, moves none), and hears every tab switch through
+  `Editor::onActiveWillChange` and `onActiveChanged`. main.cpp runs
+  `openMatch` (Find in Folder, TODOs, the server's definition in another
+  file) and `openLink` (terminal and Markdown links) inside `nav->jump`,
+  calls `moved` from `followMove` and `removed` from `trashNow`, and
+  `clear` from Open Folder. The palette tells it when it opens and closes
+  (`PalettePanel::onOpenChanged`: nothing previewed is a jump) and runs Go
+  to Line's and a symbol's move through `aroundMove`, a jump from where it
+  opened. A definition in the same file is no `onReveal`: the ten-line rule
+  records it. A new feature that moves somewhere far calls `nav->jump`
+  around the move; one that previews calls `paletteOpened`/`Closed` or the
+  recorder's `beginQuiet`/`endQuiet`.
+- **Maximize Pane** is the core's (`RightArea::State::maximized`,
+  `toggleMaximized`, `leaveMaximizedFor`, `onScreen`; `rightarea:maximize`)
+  shown by `WindowLayout::toggleMaximized`. Each toggle of a pane hidden
+  only by it shows that pane (as the Mac's), and `revealEditor` and
+  `showBrowser` end it; `apply` drops a maximized pane hidden some other
+  way (Close Tab on the browser). The panes' `browserShown()` and
+  `terminalShown()` still say what the user asked for; `maximized()` says
+  whether one pane has the right side.
+- **Keys**: `Keys::Place::page` is the browser with the keyboard, or
+  outside the terminal a PDF or the LaTeX preview on show (the PDF view
+  takes no keyboard, and the port's PDF zoom always worked so): a `Page`
+  command is bound only there, a `NotPageOrTerminal` one (the editor's
+  zoom) only elsewhere, and Focus File Tree keeps Ctrl+0 in both. A
+  `Terminal` command keeps its plain Ctrl keys in the terminal
+  (`Commands::linuxTerminalTakes`). The Terminal menu is new, with the
+  terminals' zoom in it. A keypad key is bound with Num Lock on and off
+  (`<Ctrl>KP_0` and `<Ctrl>KP_Insert`), since GTK matches the keyval.
+- **For checks**: `MCGuiApp().nav` (entries "path:line" and `index`);
+  `MCGuiKey` now takes a GDK name with capitals ("ctrl+KP_Insert", the
+  keypad's 0 as the checks' display gives it with Num Lock off). The four
+  suites are `zoom` (with `_zoom_child`), `word_wrap`, `go_back` and
+  `maximize`.
+- **Traps**: a `font-size` on a text view's `text` node changes nothing:
+  GtkTextView takes its font from the view's own node (a throwaway program
+  showed it), so `ThemeCss.cpp`'s `.minicode-prose text { font-size: 15pt }`
+  never applied and the Markdown body is the desktop's size; the zoom's
+  rule is on the view. Clicking the middle of a short file's view moves the
+  caret far (to its end), which the ten-line rule records: a check that
+  wants an empty history clears it after the click.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

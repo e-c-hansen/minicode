@@ -82,6 +82,18 @@ public:
     // focusAfterClosingPanel).
     void focusAfterClosingPanel();
 
+    // Maximize Pane (PARITY.md 1.11, the Mac's Ctrl+Cmd+M): the pane with
+    // the keyboard (the browser or the terminal; anywhere else the editor
+    // if it shows, else whichever does) takes the whole right side, with
+    // no bars; again, and everything is back where it was. False when no
+    // pane shows. Showing another pane ends it (each toggle, revealEditor,
+    // showBrowser), and a toggle of a pane hidden only by it shows that
+    // pane rather than closing it, as on the Mac.
+    bool toggleMaximized();
+    bool maximized() const { return RightArea::maximizedNow(state_, nullptr, parts_); }
+    // `pane` was shown or focused: Maximize Pane ends if it holds another.
+    bool leaveMaximizedFor(RightArea::Pane pane);
+
     // For the checks (tests/gui/AppSeam.h).
     GtkWidget* area() const { return area_; }
     GtkWidget* sidebar() const { return sidebar_; }

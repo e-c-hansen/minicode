@@ -728,6 +728,14 @@ Verified by running it:
   terminal, as the desktop entry starts it, it did not fork.
   `minicode --foreground` held the terminal in its session until the
   hang-up closed it, and `--version` and `-h` printed and returned.
+- The time to a window (November 2026, `linux/PARITY.md` item R3), by the
+  `startup` GUI suite on a private Xvfb and by `MINICODE_STARTUP_LOG=1`
+  runs on `~/minicode`: a window opening with the terminal and the browser
+  hidden starts no shell and no WebKit process, the language server for a
+  session's tab starts after the first frame, and both panes work once
+  shown. The first frame comes about 190 ms after main with no session and
+  220 ms with five tabs, 55 to 80 ms sooner than before, and the app with
+  what it starts uses a seventh of the CPU it did in its first seconds.
 
 Not verified:
 
@@ -735,7 +743,10 @@ Not verified:
   with minicode started from it (that it stays open, and that GNOME
   Terminal asks nothing), and the scope against the real systemd user
   manager (`systemctl --user list-units 'app-minicode-*'` while it runs).
-
+- The time to a window on GNOME on Wayland, where GTK draws on the GPU
+  (Vulkan by default) and WebKit's processes, the page and the shell's
+  startup files used to compete with the window: `startup-times.sh` there
+  is what tells (`linux/HANDOFF.md`, item 24).
 - For tabs, everything that needs GNOME on Wayland: how the strip looks
   under the desktop's theme, Alt with a digit and Ctrl Alt Shift T (which a
   desktop or input method may take), and a held Ctrl W, which closes a tab
@@ -1025,6 +1036,13 @@ right place.
 
 The window shows the file tree on the left and the editor on the right, with a
 status bar along the bottom.
+
+To see where the time to a window goes, run it with `MINICODE_STARTUP_LOG=1`:
+each phase of the start is printed to the terminal with the time since the
+program began and the CPU time it took, from GTK's own start to the first
+frame drawn. `linux/dev/startup-times.sh BINARY [FOLDER]` does this three
+times for each of GTK's renderers and prints the phases (quit every other
+minicode first; `linux/HANDOFF.md`, item 24).
 
 ## Keyboard shortcuts
 

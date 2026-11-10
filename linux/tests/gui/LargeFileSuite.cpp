@@ -114,10 +114,14 @@ bool tagsIn(int from, int to) {
         GSList* tags = gtk_text_iter_get_toggled_tags(&it, TRUE);
         GSList* off = gtk_text_iter_get_toggled_tags(&it, FALSE);
         bool other = false;
+        // LongLines' own tags (what is hidden, and no wrapping) are no colors.
+        auto own = [lines](gpointer t) {
+            return lines && (t == lines->hiddenTag() || t == lines->noWrapTag());
+        };
         for (GSList* l = tags; l; l = l->next)
-            if (!lines || l->data != lines->hiddenTag()) other = true;
+            if (!own(l->data)) other = true;
         for (GSList* l = off; l; l = l->next)
-            if (!lines || l->data != lines->hiddenTag()) other = true;
+            if (!own(l->data)) other = true;
         g_slist_free(tags);
         g_slist_free(off);
         if (other) return true;

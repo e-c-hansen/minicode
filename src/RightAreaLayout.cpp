@@ -34,23 +34,83 @@ bool empty(const State &s, const Parts &parts) {
     return !topShown(s, parts) && !terminalShows(s, parts);
 }
 
+bool maximizedNow(const State &s, Pane *which, const Parts &parts) {
+    if (!s.maximized || !shows(s, s.maximizedPane, parts)) return false;
+    if (which) *which = s.maximizedPane;
+    return true;
+}
+
+bool onScreen(const State &s, Pane p, const Parts &parts) {
+    Pane m;
+    if (maximizedNow(s, &m, parts)) return p == m;
+    return shows(s, p, parts);
+}
+
+bool toggleMaximized(State &s, std::optional<Pane> keyboard, const Parts &parts) {
+    if (maximizedNow(s, nullptr, parts)) {
+        s.maximized = false;
+        return true;
+    }
+    // The browser or the terminal with the keyboard; elsewhere (the editor,
+    // the tree, a panel in the sidebar) the editor if it shows, else
+    // whichever pane does.
+    std::optional<Pane> pane;
+    if (keyboard && *keyboard != Pane::Editor && shows(s, *keyboard, parts)) pane = keyboard;
+    for (Pane p : {Pane::Editor, Pane::Browser, Pane::Terminal})
+        if (!pane && shows(s, p, parts)) pane = p;
+    if (!pane) {
+        s.maximized = false;
+        return false;
+    }
+    s.maximized = true;
+    s.maximizedPane = *pane;
+    return true;
+}
+
+bool leaveMaximizedFor(State &s, Pane p, const Parts &parts) {
+    Pane m;
+    if (!maximizedNow(s, &m, parts)) {
+        s.maximized = false;
+        return false;
+    }
+    if (m == p) return false;
+    s.maximized = false;
+    return true;
+}
+
 bool toggle(State &s, Pane p) {
+    bool now = false;
     switch (p) {
     case Pane::Editor:
         s.editorHidden = !s.editorHidden;
-        return !s.editorHidden;
+        now = !s.editorHidden;
+        break;
     case Pane::Browser:
         s.browserVisible = !s.browserVisible;
-        return s.browserVisible;
+        now = s.browserVisible;
+        break;
     case Pane::Terminal:
         s.terminalVisible = !s.terminalVisible;
-        return s.terminalVisible;
+        now = s.terminalVisible;
+        break;
     }
-    return false;
+    if (!now && s.maximized && s.maximizedPane == p) s.maximized = false;
+    return now;
 }
 
 Frames layout(const State &s, double W, double H, const Limits &lim, const Parts &parts) {
     Frames f;
+    Pane m;
+    if (maximizedNow(s, &m, parts)) {
+        // That pane alone, the whole of the right side, no bars to drag.
+        const Rect all{0, 0, std::max(0.0, W), std::max(0.0, H)};
+        f.editor = m == Pane::Editor;
+        f.browser = m == Pane::Browser;
+        f.terminal = m == Pane::Terminal;
+        (m == Pane::Editor ? f.editorRect : m == Pane::Browser ? f.browserRect : f.terminalRect) =
+            all;
+        return f;
+    }
     f.editor = !s.editorHidden;
     f.browser = browserShows(s, parts);
     f.terminal = terminalShows(s, parts);
@@ -102,6 +162,18 @@ Frames layout(const State &s, double W, double H, const Limits &lim, const Parts
 
 void minimumSize(const State &s, const Limits &lim, const Minimums &m, double *width,
                  double *height, const Parts &parts) {
+    Pane max;
+    if (maximizedNow(s, &max, parts)) {
+        if (width)
+            *width = max == Pane::Editor    ? m.editorWidth
+                     : max == Pane::Browser ? m.browserWidth
+                                            : m.terminalWidth;
+        if (height)
+            *height = max == Pane::Editor    ? m.editorHeight
+                      : max == Pane::Browser ? m.browserHeight
+                                             : m.terminalHeight;
+        return;
+    }
     const bool editor = !s.editorHidden, browser = browserShows(s, parts),
                terminal = terminalShows(s, parts);
     double w = 0, h = 0;
@@ -127,7 +199,7 @@ void minimumSize(const State &s, const Limits &lim, const Minimums &m, double *w
 }
 
 Hid dragBrowserBar(State &s, double x, double W, const Limits &lim, const Parts &parts) {
-    if (W <= 0 || !parts.browser) return Hid::Nothing;
+    if (W <= 0 || !parts.browser || maximizedNow(s, nullptr, parts)) return Hid::Nothing;
     if (x <= lim.snap) {
         if (!s.editorHidden && s.browserVisible) {
             s.editorHidden = true;
@@ -153,7 +225,7 @@ Hid dragBrowserBar(State &s, double x, double W, const Limits &lim, const Parts 
 }
 
 Hid dragTerminalBar(State &s, double y, double H, const Limits &lim, const Parts &parts) {
-    if (H <= 0 || !parts.terminal) return Hid::Nothing;
+    if (H <= 0 || !parts.terminal || maximizedNow(s, nullptr, parts)) return Hid::Nothing;
     const bool top = topShown(s, parts);
     if (y <= lim.snap) {
         if (top) {

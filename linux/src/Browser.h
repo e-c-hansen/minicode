@@ -14,11 +14,23 @@
 
 class Browser {
 public:
+    // The panel's widget at once; the web view, and with it WebKit's
+    // processes and the home page, when the panel is first shown or a page
+    // is loaded into it (PARITY.md R3).
     explicit Browser(const std::string& homeUrl);
+    ~Browser();
+    Browser(const Browser&) = delete;
+    Browser& operator=(const Browser&) = delete;
     GtkWidget* widget() const { return root_; }
+    // The web view, or null before the panel was first shown (for the checks).
+    GtkWidget* webView() const { return web_; }
     void focusUrlBar();
     // Go to a URL, or to what the URL bar would make of text typed into it.
     void load(const std::string& url);
+    // Page Zoom on Safari's steps (ViewZoom::pageStep): in (+1), out (-1),
+    // back to 100% (0). Not kept per site yet (PARITY.md 4.5).
+    void zoom(int step);
+    double zoomLevel() const;
 
 private:
     static void onGo(GtkWidget* w, gpointer self);
@@ -33,9 +45,11 @@ private:
     static void onUriChanged(GObject* obj, GParamSpec* pspec, gpointer self);
     static void onLoadChanged(WebKitWebView* wv, WebKitLoadEvent ev, gpointer self);
 
+    void makeView(const std::string& firstUrl);   // once; "" loads the home page
     void syncUrlBar();   // URL bar text only
     void syncChrome();   // URL bar text + back/forward sensitivity
 
+    std::string home_;
     GtkWidget* root_  = nullptr;
     GtkWidget* entry_ = nullptr;
     GtkWidget* web_   = nullptr;   // WebKitWebView

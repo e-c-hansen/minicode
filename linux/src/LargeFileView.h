@@ -82,6 +82,9 @@ public:
     LongLines& operator=(const LongLines&) = delete;
 
     GtkTextTag* hiddenTag() const { return tag_; }
+    // On a long line's first character: the line never wraps, word wrap on
+    // or not (PARITY.md 1.11), so End goes on into its hidden rest.
+    GtkTextTag* noWrapTag() const { return noWrap_; }
 
     // A line as shown: its characters (without its break), and the part
     // [start, end) not hidden. False when the line is no long line.
@@ -115,8 +118,12 @@ private:
                            gpointer self);
     static void onMarkSet(GtkTextBuffer* b, GtkTextIter* at, GtkTextMark* mark, gpointer self);
 
+    // The no-wrap tag on a long line's first character.
+    void keepUnwrapped(int line);
+
     GtkTextBuffer* buffer_;
     GtkTextTag*    tag_ = nullptr;
+    GtkTextTag*    noWrap_ = nullptr;   // a long line's first character: no wrapping
     GtkTextMark*   follow_ = nullptr;   // where the caret's line's part starts
     guint          followIdle_ = 0;
     bool           applying_ = false;
