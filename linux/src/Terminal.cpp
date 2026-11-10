@@ -512,6 +512,17 @@ void Terminal::applyTheme() {
     pango_font_description_free(font);
 }
 
+void Terminal::setFontSize(double basePoints, double scale) {
+    VteTerminal* term = VTE_TERMINAL(vte_);
+    PangoFontDescription* font = systemMonospaceFont();
+    if (basePoints > 0)
+        pango_font_description_set_size(font, (gint)std::lround(basePoints * PANGO_SCALE));
+    const PangoFontDescription* now = vte_terminal_get_font(term);
+    if (!now || !pango_font_description_equal(now, font)) vte_terminal_set_font(term, font);
+    pango_font_description_free(font);
+    if (vte_terminal_get_font_scale(term) != scale) vte_terminal_set_font_scale(term, scale);
+}
+
 void Terminal::applySettings(const Settings& s) {
     auto gdk = [](const Rgba& c) {
         return GdkRGBA{c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, (float)c.a};

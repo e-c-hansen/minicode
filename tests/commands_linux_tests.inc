@@ -252,8 +252,9 @@ static void testLinuxTerminalKeys() {
         for (const Key &k : d.keysOf(r.id))
             if (!linuxTerminalTakes(c, k) && !(k.mods & (Shift | Alt))) plain.insert(format(k));
     }
+    // The terminals' own zoom keeps its keys there (PARITY.md 1.11).
     CHECK((plain == std::set<std::string>{"ctrl+`", "ctrl+0", "ctrl+1", "ctrl+tab", "ctrl+pagedown",
-                                           "ctrl+pageup"}));
+                                           "ctrl+pageup", "ctrl+=", "ctrl+-", "ctrl+numpad0"}));
     // Alt with a letter alone is Meta to the program: the find bar's
     // options leave it its word keys; Alt with a digit (the tabs) and with
     // Ctrl stays the app's.
@@ -307,7 +308,9 @@ static void testLinuxAccelerators() {
     CHECK(linuxAccelerators(K("ctrl+shift+space")) == V{"<Ctrl><Shift>space"});
     CHECK(linuxAccelerators(K("ctrl+tab")) == V{"<Ctrl>Tab"});
     CHECK(linuxAccelerators(K("delete")) == V{"Delete"});
-    CHECK(linuxAccelerators(K("ctrl+numpad0")) == V{"<Ctrl>KP_0"});
+    // The keypad's key with Num Lock on and with it off.
+    CHECK((linuxAccelerators(K("ctrl+numpad0")) == V{"<Ctrl>KP_0", "<Ctrl>KP_Insert"}));
+    CHECK((linuxAccelerators(K("alt+numpad9")) == V{"<Alt>KP_9", "<Alt>KP_Prior"}));
     CHECK(linuxAccelerators(K("shift+pageup")) == V{"<Shift>Page_Up"});
     CHECK(linuxAccelerators(K("cmd+s")).empty());
     CHECK(linuxAccelerators(Key()).empty());

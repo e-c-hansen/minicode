@@ -6,6 +6,8 @@
 #include <webkit/webkit.h>
 #include <string>
 
+#include "ViewZoom.h"
+
 Browser::Browser(const std::string& homeUrl) {
     root_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
@@ -125,5 +127,12 @@ void Browser::onReload(GtkWidget* /*w*/, gpointer selfp) {
 void Browser::focusUrlBar() {
     if (entry_) gtk_widget_grab_focus(entry_);
 }
+
+void Browser::zoom(int step) {
+    WebKitWebView* wv = WEBKIT_WEB_VIEW(web_);
+    webkit_web_view_set_zoom_level(wv, ViewZoom::pageStep(webkit_web_view_get_zoom_level(wv), step));
+}
+
+double Browser::zoomLevel() const { return webkit_web_view_get_zoom_level(WEBKIT_WEB_VIEW(web_)); }
 
 #endif // MINICODE_ENABLE_BROWSER

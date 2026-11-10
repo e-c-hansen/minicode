@@ -102,6 +102,7 @@ void pressPlace(const KeyPlace& place, bool withShift) {
 
 // The registry's key names (src/Commands.h), and any GDK key name besides.
 KeySym keysymForName(std::string name) {
+    const std::string asGiven = name;
     if (g_utf8_strlen(name.c_str(), -1) == 1) {
         const gunichar c = g_utf8_get_char(name.c_str());
         return gdk_unicode_to_keyval(g_unichar_tolower(c));
@@ -120,7 +121,9 @@ KeySym keysymForName(std::string name) {
     if (name.size() > 1 && name[0] == 'f' && std::isdigit((unsigned char)name[1]))
         return XK_F1 + (KeySym)(atoi(name.c_str() + 1) - 1);
     if (name.rfind("numpad", 0) == 0) return XK_KP_0 + (KeySym)atoi(name.c_str() + 6);
-    return gdk_keyval_from_name(name.c_str());
+    const KeySym lower = gdk_keyval_from_name(name.c_str());
+    // A GDK name with capitals ("KP_Insert", the keypad's 0 with Num Lock off).
+    return lower != GDK_KEY_VoidSymbol ? lower : gdk_keyval_from_name(asGiven.c_str());
 }
 
 Window xidOf(GtkWindow* w) {

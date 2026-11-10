@@ -204,7 +204,7 @@ MC_GUI_SUITE(keys) {
         std::vector<std::pair<std::string, std::string>> items;
         std::vector<std::string> tops;
         walkMenu(gtk_application_get_menubar(MCGuiApplication()), &items, &tops);
-        GCHECK_EQ_STR(joined(tops), "File Edit View Navigate");
+        GCHECK_EQ_STR(joined(tops), "File Edit View Terminal Navigate");
         std::map<std::string, std::string> byAction;
         for (const auto& [label, action] : items)
             GCHECK(byAction.insert({action, label}).second);   // once each
@@ -233,13 +233,19 @@ MC_GUI_SUITE(keys) {
         GCHECK_EQ_STR(bound("win.hoverinfo"), canon("<Ctrl><Alt>i"));
         GCHECK_EQ_STR(bound("win.findnext"), canon("F3"));
         GCHECK_EQ_STR(bound("app.showhidden"), canon("<Ctrl>greater"));
-        GCHECK_EQ_STR(bound("win.zoomin"), canon("<Ctrl>equal <Ctrl>plus <Ctrl>KP_Add"));
+        // The zoom keys are the editor's outside a page and the terminal
+        // (the zoom suite has them in those).
+        GCHECK_EQ_STR(bound("win.editorzoomin"), canon("<Ctrl>equal <Ctrl>plus <Ctrl>KP_Add"));
+        GCHECK(accels("win.zoomin").empty() && accels("win.terminalzoomin").empty());
         // The tree's keys are its own controller's, never the window's.
         GCHECK(accels("win.rename").empty() && accels("win.trash").empty());
-        // Every other command's are its keys, as GTK writes them.
+        // Every other command's are its keys, as GTK writes them; those of a
+        // page and of the terminal only there.
         for (const Keys::Action& a : Keys::actions()) {
             const Commands::Command* c = Commands::find(a.id);
-            if (!c || c->language || c->when == Commands::When::Tree) continue;
+            if (!c || c->language || c->when == Commands::When::Tree ||
+                c->when == Commands::When::Page || c->when == Commands::When::Terminal)
+                continue;
             std::vector<std::string> want;
             for (const Commands::Key& k : Keys::keymap().keysOf(a.id))
                 for (const std::string& s : Commands::linuxAccelerators(k)) want.push_back(s);

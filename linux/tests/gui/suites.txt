@@ -26,3 +26,7 @@ BracketsSuite.cpp
 BracketPairsSuite.cpp
 AutoCloseSuite.cpp
 LargeFileSuite.cpp
+ZoomSuite.cpp
+WordWrapSuite.cpp
+GoBackSuite.cpp
+MaximizeSuite.cpp

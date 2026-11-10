@@ -51,7 +51,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/InlineAgent.cpp src/LineIndex.cpp src/BracketMatch.cpp src/BracketPairs.cpp \
             src/ControlProtocol.cpp src/SideBySide.cpp src/PreviewScroll.cpp \
             src/AgentTranscript.cpp src/AgentIndex.cpp src/AgentEvidence.cpp src/AgentView.cpp \
-            src/SymbolOutline.cpp src/NavHistory.cpp \
+            src/SymbolOutline.cpp src/NavHistory.cpp src/NavRecorder.cpp src/ViewZoom.cpp \
             src/Folding.cpp \
             src/FileSniff.cpp src/Csv.cpp src/JsonOutline.cpp src/Notebook.cpp \
             src/Commands.cpp src/CommandsLinux.cpp src/ProcessTable.cpp src/ClaudeHooks.cpp src/AttentionBoard.cpp \

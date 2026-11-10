@@ -54,6 +54,12 @@ core_sources = [
   core_dir / 'EditorTabs.cpp',
   # How the right side of a window is shared (WindowLayout.cpp shows it).
   core_dir / 'RightAreaLayout.cpp',
+  # Getting around (PARITY.md 1.11): Go Back and Forward's history and what
+  # a window records in it (NavHistoryUi.cpp drives it), and the zoom and
+  # word wrap rules (Zoom.cpp keeps their state).
+  core_dir / 'NavHistory.cpp',
+  core_dir / 'NavRecorder.cpp',
+  core_dir / 'ViewZoom.cpp',
   # Unsaved buffers kept on disk, and the tabs each folder had open
   # (BackupStore.cpp and Persistence.cpp keep them).
   core_dir / 'Backups.cpp',
@@ -141,6 +147,10 @@ gui_sources = [
   # Big files and long lines: large-file mode, the question past 50 MB,
   # reading in the background, and a long line shown a part at a time.
   'src/LargeFileView.cpp',
+  # The editor's and the terminals' zoom and the word wrap toggle, for
+  # every window (Zoom.cpp), and Go Back and Forward (NavHistoryUi.cpp).
+  'src/Zoom.cpp',
+  'src/NavHistoryUi.cpp',
 ]
 
 inc = include_directories('src', '../src')

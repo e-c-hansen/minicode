@@ -1686,6 +1686,87 @@ Traps:
   went nowhere until the field was clicked.
 - `g_format_size` puts a no-break space before the unit.
 
+### 23. Zoom, word wrap, Go Back and Maximize Pane (done, November 2026; `PARITY.md` item 1.11)
+
+What later items build on:
+- **`Zoom`** (`src/Zoom.{h,cpp}`, over the core's `../src/ViewZoom.h`)
+  holds what every window shares: the editor's zoom and the terminals'
+  (points, in `$XDG_STATE_HOME/minicode/zoom.json`, read once at the first
+  window, written on each change, never the settings file) and the word
+  wrap toggle (for the session). The editor's size is one rule of a
+  display-wide stylesheet on the view `attachEditor` marked (class
+  `minicode-zoom`): its source at editor.font-size points when the file
+  sets it (`Settings::editorFontSizeSet`), else the desktop's size as
+  before, plus the zoom; its prose (a Markdown page, a message) at the
+  desktop's size times `previewScale`. With no zoom and no size set there
+  is no rule at all. Each window listens (`Zoom::listen`): "editor" scales
+  its Markdown tags (`scaleTags`, which keeps each tag's first size as its
+  base), "terminal" sets the terminal's font (`Terminal::setFontSize`: the
+  setting's or the desktop's size, and VTE's font scale for the zoom),
+  "wrap" calls `Editor::applyWordWrap`. The gutter follows the view's font
+  by itself. The LSP popups, the find bar and the palette do not follow the
+  zoom yet (the Mac's completion list and hover do).
+- **Word wrap**: `Editor::setProseFont` wraps source as `Zoom::wordWrap()`
+  says (editor.word-wrap, on by default, as on the Mac; before this item
+  source never wrapped), and prose always. Two exceptions keep item 22's
+  paths as they were. In large-file mode wrapping is one of the features
+  off (as in VS Code; the Mac keeps it): GTK laid 470,000 lines out half as
+  long again wrapped (47 s against 34 to keep line 300,000 on screen), and
+  the note's click turns it back on with the rest
+  (`turnOnLargeFileFeatures` calls `applyWordWrap`). And a long line
+  (`LongLines`) never wraps: GTK takes a paragraph's wrap mode from the
+  tags on its first character, so `LongLines::keepUnwrapped` puts
+  `minicode-long-line-nowrap` (wrap-mode none) on that one character after
+  every edit of the line; wrapped, End went to the end of the part's first
+  row instead of on into the hidden rest, and opening a 300,000-character
+  line held the loop 93 ms against 16.
+- **`NavHistoryUi`** (`src/NavHistoryUi.{h,cpp}`, one per window,
+  `app->nav`) is the host of the core's `Nav::Recorder`
+  (`../src/NavRecorder.h`, the Mac's `MCNavigator` over `NavHistory.h`).
+  It watches the source buffer on show (`mark-set` for the ten-line rule,
+  `insert-text` and `delete-range` so places follow edits; replacing the
+  whole text, a reload, moves none), and hears every tab switch through
+  `Editor::onActiveWillChange` and `onActiveChanged`. main.cpp runs
+  `openMatch` (Find in Folder, TODOs, the server's definition in another
+  file) and `openLink` (terminal and Markdown links) inside `nav->jump`,
+  calls `moved` from `followMove` and `removed` from `trashNow`, and
+  `clear` from Open Folder. The palette tells it when it opens and closes
+  (`PalettePanel::onOpenChanged`: nothing previewed is a jump) and runs Go
+  to Line's and a symbol's move through `aroundMove`, a jump from where it
+  opened. A definition in the same file is no `onReveal`: the ten-line rule
+  records it. A new feature that moves somewhere far calls `nav->jump`
+  around the move; one that previews calls `paletteOpened`/`Closed` or the
+  recorder's `beginQuiet`/`endQuiet`.
+- **Maximize Pane** is the core's (`RightArea::State::maximized`,
+  `toggleMaximized`, `leaveMaximizedFor`, `onScreen`; `rightarea:maximize`)
+  shown by `WindowLayout::toggleMaximized`. Each toggle of a pane hidden
+  only by it shows that pane (as the Mac's), and `revealEditor` and
+  `showBrowser` end it; `apply` drops a maximized pane hidden some other
+  way (Close Tab on the browser). The panes' `browserShown()` and
+  `terminalShown()` still say what the user asked for; `maximized()` says
+  whether one pane has the right side.
+- **Keys**: `Keys::Place::page` is the browser with the keyboard, or
+  outside the terminal a PDF or the LaTeX preview on show (the PDF view
+  takes no keyboard, and the port's PDF zoom always worked so): a `Page`
+  command is bound only there, a `NotPageOrTerminal` one (the editor's
+  zoom) only elsewhere, and Focus File Tree keeps Ctrl+0 in both. A
+  `Terminal` command keeps its plain Ctrl keys in the terminal
+  (`Commands::linuxTerminalTakes`). The Terminal menu is new, with the
+  terminals' zoom in it. A keypad key is bound with Num Lock on and off
+  (`<Ctrl>KP_0` and `<Ctrl>KP_Insert`), since GTK matches the keyval.
+- **For checks**: `MCGuiApp().nav` (entries "path:line" and `index`);
+  `MCGuiKey` now takes a GDK name with capitals ("ctrl+KP_Insert", the
+  keypad's 0 as the checks' display gives it with Num Lock off). The four
+  suites are `zoom` (with `_zoom_child`), `word_wrap`, `go_back` and
+  `maximize`.
+- **Traps**: a `font-size` on a text view's `text` node changes nothing:
+  GtkTextView takes its font from the view's own node (a throwaway program
+  showed it), so `ThemeCss.cpp`'s `.minicode-prose text { font-size: 15pt }`
+  never applied and the Markdown body is the desktop's size; the zoom's
+  rule is on the view. Clicking the middle of a short file's view moves the
+  caret far (to its end), which the ten-line rule records: a check that
+  wants an empty history clears it after the click.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

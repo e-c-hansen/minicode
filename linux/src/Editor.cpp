@@ -25,6 +25,7 @@
 #include "ScrollSettle.h"
 #include "TabStrip.h"
 #include "WebImages.h"
+#include "Zoom.h"
 
 #include <algorithm>
 #include <cmath>
@@ -334,13 +335,18 @@ void Editor::ensureTags() {
 // font. Past that the width calculation overflows and the paragraph's layout
 // collapses: the text goes missing and the view misreports its own size.
 // Wrapping bounds every display line to the viewport width, so the overflow
-// cannot be reached. Source keeps GTK_WRAP_NONE, where long lines are wanted
-// and lines are bounded by the file's own line breaks. macOS gets the same
-// behavior from textContainer.widthTracksTextView = YES.
+// cannot be reached. Source wraps as editor.word-wrap and Alt+Z say
+// (Zoom::wordWrap, PARITY.md 1.11), as the Mac's editor does, except in
+// large-file mode, where wrapping is one of the features off, as in VS
+// Code (GTK took half as long again to lay out 470,000 lines wrapped);
+// a line too long to lay out is shown a part at a time, unwrapped, either
+// way (LongLines, LargeFileView.h). macOS gets the same behavior from
+// textContainer.widthTracksTextView = YES.
 void Editor::setProseFont(bool prose) {
+    prose_ = prose;
+    const bool wraps = prose || (Zoom::wordWrap() && !(active_ && active_->largeFileFeaturesOff()));
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), prose ? FALSE : TRUE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_),
-                                prose ? GTK_WRAP_WORD_CHAR : GTK_WRAP_NONE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_), wraps ? GTK_WRAP_WORD_CHAR : GTK_WRAP_NONE);
     if (prose) gtk_widget_add_css_class(view_, "minicode-prose");
     else       gtk_widget_remove_css_class(view_, "minicode-prose");
 }

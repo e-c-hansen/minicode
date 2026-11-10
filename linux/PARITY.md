@@ -193,6 +193,26 @@ Choices item 1.6 made, by the same rules:
   replaces its match alone, VS Code's key in its search view.
 - Select all matches (VS Code's Alt+Enter) waits for several carets (1.9).
 
+Choices item 1.11 made, by the same rules:
+- The editor's zoom is VS Code's Linux Ctrl+= (Ctrl+Shift+=, Ctrl+plus,
+  too) and Ctrl+-, and its reset the Mac's Option+Cmd+0 with Ctrl+Alt,
+  since Ctrl+0 is Focus File Tree, and VS Code's Ctrl+keypad 0. A page (a
+  PDF or the LaTeX preview on show, or the browser with the keyboard) has
+  the same keys for its own zoom, and Ctrl+Alt+0 for fit width (a web page:
+  100%), as the Mac's Page context; Ctrl+0 stays Focus File Tree there.
+- The terminals' zoom has the same keys while the terminal has the
+  keyboard, as on the Mac (and GNOME Terminal's Ctrl+= and Ctrl+-); they
+  are in a new Terminal menu. A Terminal command keeps its plain Ctrl keys
+  in the terminal (`linuxTerminalTakes`), since it applies nowhere else.
+- Word wrap is VS Code's Alt+Z, an editor command, so Meta Z to the program
+  in the terminal, as Option+Z is on the Mac.
+- Go Back and Go Forward are VS Code's Ctrl+Alt+- and Ctrl+Shift+-. In the
+  terminal Ctrl+Shift+- is the program's (readline's undo, Ctrl+_), as the
+  Mac's grid keeps Ctrl+-; Ctrl+Alt+- still goes back from there.
+- Maximize Pane has no VS Code key (its Toggle Maximize Editor Group is a
+  chord), so the Mac's Ctrl+Cmd+M with Ctrl+Alt: Ctrl+Alt+M, which GNOME
+  leaves alone, and which works from the terminal.
+
 **D2. One `GtkTextView`, one `GtkTextBuffer` per tab.** Split `Editor` into
 the view and slot, and a `Document` holding what is per file: the buffer, its
 path, undo, the highlighter and its mirror, dirty state, and disk stamp. All
@@ -570,8 +590,54 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   `invisible` tag right for carets, scrolling, the gutter, and undo with
   50,000 folds, but every frame costs about 6 µs per hidden line on screen
   inside GTK; built on the tag with D8's budget of 5,000 hidden lines.
-- [ ] **1.11 Getting around.** Editor zoom, word wrap toggle, Go Back and
+- [x] **1.11 Getting around.** Editor zoom, word wrap toggle, Go Back and
   Forward (`NavHistory`), Maximize Pane.
+  *Verified in Xvfb, 2026-11-10:* `zoom:*`, `navrecorder:*` (the Mac's
+  MCNavigator as the core's `Nav::Recorder`), `rightarea:maximize`,
+  `settings:font-size-set` and `commands:linux-getting-around` hold the
+  rules, and four suites press real keys. `zoom`: Ctrl+=, Ctrl+Shift+=,
+  Ctrl+-, Ctrl+Alt+0 and Ctrl+keypad 0 change the editor's font a point at
+  a time (never under 6 points) and the gutter's width with it, scale the
+  Markdown page's sizes by (13 + zoom) / 13, keep the zoom in
+  `zoom.json` and not the settings file, and a second app opens at it; with
+  a PDF on show the keys zoom the PDF and Ctrl+0 still focuses the tree,
+  with the browser's keyboard they zoom its page on Safari's steps; with the
+  terminal's the same keys zoom only the terminals (VTE's font scale: fewer
+  columns, which `tput cols` reads), while Ctrl+W, Ctrl+B, Ctrl+E, Alt+Z
+  and Ctrl+Shift+- still reach the program as bytes. `word_wrap`: a long
+  line wraps by default with nothing to scroll sideways, Alt+Z turns that
+  over in every window for the session (nothing typed, the settings file
+  untouched), a Markdown page still wraps, editor.word-wrap = off keeps it
+  off and a setting changed since Alt+Z wins; a 30,000-character line is
+  still shown a part at a time, on one row while the view wraps, End going
+  on into its hidden rest and text typed at its start keeping it so; and a
+  file of 300,001 lines, in large-file mode, does not wrap (wrapping is one
+  of the features off there, as in VS Code: GTK took half as long again to
+  lay it out wrapped).
+  `go_back`: the ten-line rule (eight Downs no jump, Ctrl+End one), typing
+  no jump, Back and Forward stopping at the ends, a tab switch by
+  Ctrl+Page Up, Go to Line, a symbol from the palette (its previews and
+  Escape no jump), the server's definition in another file (the scripted
+  server), a Find in Folder hit, a new jump dropping what lay ahead, a file
+  renamed in the tree followed, and one deleted from the disk passed over.
+  `maximize`: Ctrl+Alt+M from the browser, the terminal, the editor and the
+  tree, each alone over the right side with no bars and everything back as
+  it was; Toggle Terminal showing the terminal rather than closing it, Focus
+  Editor, a file opened from the tree, and Toggle Editor hiding the
+  maximized editor each ending it. They fail without the editor's size
+  rule, the Terminal commands' keys in the terminal, source wrapping, the
+  long lines' no-wrap tag, the palette telling the history it is open, the
+  jump around a Find in Folder result, and revealEditor ending Maximize
+  Pane. Changed for the user: source now wraps
+  by default (editor.word-wrap, as on the Mac), editor.font-size and
+  terminal.font-size apply when the settings file sets them (unset, the
+  desktop's size as before), and the menu bar has a Terminal menu. Not
+  done: the browser's zoom kept per site (item 4.5), and the completion
+  list, hover and find bar following the zoom. Needs the owner: the keys
+  under GNOME on Wayland with IBus (Ctrl+Alt+M, Ctrl+Alt+-, Alt+Z), the
+  keypad with Num Lock on (only off is pressed in the checks), how the
+  zoomed text and gutter look and HiDPI, and Go Back with a real
+  language server and terminal links.
 - [x] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
   *Done means:* a 25 MB file opens and types within the Mac's bounds.
   Measured for R1 on main with tabs (2026-11-09, the main thread held by

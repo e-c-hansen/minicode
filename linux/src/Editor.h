@@ -148,8 +148,10 @@ public:
     // A command from a tab's right click menu: keep, close, closeothers,
     // closeright, closeall, copypath, reveal, revealtree.
     std::function<void(const std::string& command, Document*)> onTabCommand;
-    // Another tab came on show (the file tree follows it).
+    // Another tab came on show (the file tree follows it), and just before
+    // the one on show leaves (Go Back's history, NavHistoryUi.h).
     std::function<void()> onActiveChanged;
+    std::function<void()> onActiveWillChange;
     // A document's text was edited (`d`), or the tabs changed: one opened,
     // closed, renamed or put on show, or its unsaved state changed (null).
     // main.cpp keeps the session, the backups and auto-save from it.
@@ -303,6 +305,9 @@ public:
     LargeFileUi* largeFileUi() const { return large_; }
     void turnOnLargeFileFeatures();
 
+    // Word wrap turned over (Alt+Z) or set: the view follows (Zoom.h).
+    void applyWordWrap() { setProseFont(prose_); }
+
     // One observer (the language server session), not owned.
     void setObserver(EditorObserver* o) { observer_ = o; }
     // True while the view shows the active file's editable source.
@@ -444,6 +449,7 @@ private:
     GtkTextBuffer* buffer_   = nullptr;   // what the view shows
     GtkTextBuffer* welcome_  = nullptr;   // the view's buffer with no tab open
     char           typedKey_ = 0;         // ':' or a closer being typed (electric)
+    bool           prose_ = true;         // the view shows prose, not source (setProseFont)
     bool           composing_ = false;    // an input method's text in the view
 
     // The documents, in tab order, and the one on show.

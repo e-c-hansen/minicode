@@ -41,6 +41,22 @@ GtkTextTag* hiddenTagIn(GtkTextTagTable* table) {
     return t;
 }
 
+// A long line never wraps, word wrap on or not (PARITY.md 1.11): GTK takes
+// a paragraph's wrap mode from the tags on its first character, so this
+// tag on that one character keeps the part shown on one row, End going to
+// its end and on into the hidden rest, as before wrapping.
+GtkTextTag* noWrapTagIn(GtkTextTagTable* table) {
+    static const char* kName = "minicode-long-line-nowrap";
+    GtkTextTag* t = gtk_text_tag_table_lookup(table, kName);
+    if (!t) {
+        t = gtk_text_tag_new(kName);
+        g_object_set(t, "wrap-mode", GTK_WRAP_NONE, NULL);
+        gtk_text_tag_table_add(table, t);
+        g_object_unref(t);   // the table holds it
+    }
+    return t;
+}
+
 // Line `line`'s start and end (before its break), and its characters.
 size_t lineSpan(GtkTextBuffer* b, int line, GtkTextIter* start, GtkTextIter* end) {
     gtk_text_buffer_get_iter_at_line(b, start, line);
@@ -131,6 +147,7 @@ LongLines* LongLines::of(GtkTextBuffer* buffer) {
 
 LongLines::LongLines(GtkTextBuffer* buffer) : buffer_(buffer) {
     tag_ = hiddenTagIn(gtk_text_buffer_get_tag_table(buffer));
+    noWrap_ = noWrapTagIn(gtk_text_buffer_get_tag_table(buffer));
     g_signal_connect_after(buffer, "insert-text", G_CALLBACK(onInsertAfter), this);
     g_signal_connect_after(buffer, "delete-range", G_CALLBACK(onDeleteAfter), this);
     g_signal_connect(buffer, "apply-tag", G_CALLBACK(onApplyTag), this);
@@ -217,7 +234,7 @@ void LongLines::apply(int line) {
     GtkTextIter ls, le;
     const size_t len = lineSpan(buffer_, line, &ls, &le);
     const bool longLine = len > LargeFile::kLongLineShown;
-    if (!longLine && !tagIn(tag_, &ls, &le)) return;
+    if (!longLine && !tagIn(tag_, &ls, &le) && !tagIn(noWrap_, &ls, &le)) return;
     const int at = gtk_text_iter_get_offset(&ls);
     const LargeFile::Shown s = LargeFile::shownPart(len, followedStart(line));
     if (longLine) {
@@ -226,7 +243,10 @@ void LongLines::apply(int line) {
         if (!runs.empty() && runs[0].first == s.start && runs[0].second - runs[0].first >= w / 2 &&
             runs[0].second - runs[0].first <= 2 * w &&
             !(runs.size() == 1 && runs[0].first == 0 && runs[0].second == len)) {
-            if (runs.size() == 1) return;   // as it should be
+            if (runs.size() == 1) {   // as it should be
+                keepUnwrapped(line);
+                return;
+            }
             applying_ = true;
             ++applies_;
             for (size_t i = 1; i < runs.size(); i++) {
@@ -236,12 +256,19 @@ void LongLines::apply(int line) {
                 gtk_text_buffer_apply_tag(buffer_, tag_, &a, &b);
             }
             applying_ = false;
+            keepUnwrapped(line);
             return;
         }
     }
     applying_ = true;
     ++applies_;
     gtk_text_buffer_remove_tag(buffer_, tag_, &ls, &le);
+    if (!longLine) {   // the iterators again: a tag changed
+        GtkTextIter a, b;
+        gtk_text_buffer_get_iter_at_offset(buffer_, &a, at);
+        gtk_text_buffer_get_iter_at_offset(buffer_, &b, at + (int)len);
+        gtk_text_buffer_remove_tag(buffer_, noWrap_, &a, &b);
+    }
     if (longLine) {
         GtkTextIter a, b;
         if (s.start > 0) {
@@ -263,6 +290,21 @@ void LongLines::apply(int line) {
             }
         }
     }
+    applying_ = false;
+    if (longLine) keepUnwrapped(line);
+}
+
+// The no-wrap tag on the long line's first character (noWrapTagIn); text
+// typed before it, or its character deleted, leaves the line's start
+// without it, so it is looked for after every edit of the line.
+void LongLines::keepUnwrapped(int line) {
+    GtkTextIter a;
+    gtk_text_buffer_get_iter_at_line(buffer_, &a, line);
+    if (gtk_text_iter_ends_line(&a) || gtk_text_iter_has_tag(&a, noWrap_)) return;
+    GtkTextIter b = a;
+    gtk_text_iter_forward_char(&b);
+    applying_ = true;
+    gtk_text_buffer_apply_tag(buffer_, noWrap_, &a, &b);
     applying_ = false;
 }
 
@@ -317,7 +359,8 @@ void LongLines::onDeleteAfter(GtkTextBuffer* b, GtkTextIter* from, GtkTextIter* 
 void LongLines::onApplyTag(GtkTextBuffer* b, GtkTextTag* tag, GtkTextIter*, GtkTextIter*,
                            gpointer p) {
     LongLines* self = static_cast<LongLines*>(p);
-    if (tag == self->tag_ && !self->applying_) g_signal_stop_emission_by_name(b, "apply-tag");
+    if ((tag == self->tag_ || tag == self->noWrap_) && !self->applying_)
+        g_signal_stop_emission_by_name(b, "apply-tag");
 }
 
 void LongLines::onMarkSet(GtkTextBuffer* b, GtkTextIter*, GtkTextMark* mark, gpointer p) {
@@ -612,6 +655,7 @@ void Editor::turnOnLargeFileFeatures() {
     if (!active_ || !active_->largeFileFeaturesOff()) return;
     active_->turnOnLargeFileFeatures();
     notifyDocument();   // a language server may have it now
+    applyWordWrap();    // wrapping is one of them (Editor::setProseFont)
     large_->update();
 }
 
