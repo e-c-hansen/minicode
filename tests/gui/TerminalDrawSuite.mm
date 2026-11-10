@@ -81,6 +81,7 @@ struct Rig {
     TerminalGridView *grid = nil;
     NSBitmapImageRep *picture = nil;
     CGFloat scale = 2;
+    std::vector<double> fullCpu;   // MatchesFullDraw's full draws, CPU ms
 
     Rig(int cols, int rows) {
         screen = std::make_unique<TerminalScreen>(cols, rows);
@@ -172,7 +173,9 @@ struct Rig {
     // The picture built up so far is what drawing the whole view gives.
     bool MatchesFullDraw() {
         NSBitmapImageRep *full = NewPicture();
+        const uint64_t c = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID);
         [grid cacheDisplayInRect:grid.bounds toBitmapImageRep:full];
+        fullCpu.push_back((clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - c) / 1e6);
         [grid takeRecordedInvalidations];
         size_t bytes = (size_t)picture.bytesPerRow * (size_t)picture.pixelsHigh;
         bool same = full.bytesPerRow == picture.bytesPerRow &&
@@ -279,8 +282,9 @@ MC_GUI_SUITE(terminal_draw) {
                   sa.n, sa.median, sa.p95, ca.median, ca.p95, sa.total, rows.median, rows.p95);
         MCGuiNote(@"build pieces (16 KB, scrolling): %zu, draw median %.2f ms, p95 %.2f ms "
                   @"(CPU %.2f, %.2f)", sb.n, sb.median, sb.p95, cb.median, cb.p95);
-        MCGuiNote(@"whole replay %.0f ms at scale %.0f; %d pictures compared with a full draw",
-                  wall, rig.scale, compared);
+        Stats full = Summarize(rig.fullCpu);
+        MCGuiNote(@"whole replay %.0f ms at scale %.0f; %d pictures compared with a full draw "
+                  @"(CPU median %.2f ms)", wall, rig.scale, compared, full.median);
         MCGuiSnapshot(rig.grid, @"terminal-draw-replay");
         GCHECK(differed == 0);
         // Most agent frames change the spinner line and the newest words:
@@ -292,7 +296,14 @@ MC_GUI_SUITE(terminal_draw) {
         // ms; build pieces median 15 ms, p95 18 ms. After (2026-11-07): about 0.2
         // and 1.0 ms, and 1.3 and 1.6 ms.
         GCHECK(ca.p95 < 8);
-        GCHECK(cb.p95 < 15);
+        // A build piece scrolls the whole screen, about 1.4 full draws here
+        // (each rect drawn into a bitmap of its own); a slower machine
+        // (CI's runners, an efficiency core under load) gets room in
+        // proportion, measured by the full draws of this same replay on
+        // the same thread: under 15 ms, or under 8 full draws.
+        MCGuiCheckTime(cb.p95, MAX(15.0, 8 * full.median),
+                       [NSString stringWithFormat:@"build pieces' p95 (full draw median %.2f)", full.median],
+                       __FILE__, __LINE__);
     });
 
     MCGuiStep(@"an echoed character invalidates its row only", ^{
