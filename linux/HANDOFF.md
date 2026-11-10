@@ -1880,7 +1880,10 @@ What later items build on:
   `Terminal` command keeps its plain Ctrl keys in the terminal
   (`Commands::linuxTerminalTakes`). The Terminal menu is new, with the
   terminals' zoom in it. A keypad key is bound with Num Lock on and off
-  (`<Ctrl>KP_0` and `<Ctrl>KP_Insert`), since GTK matches the keyval.
+  (`<Ctrl>KP_0` and `<Ctrl>KP_Insert`), since GTK matches the keyval. The
+  editor's zoom reset is Ctrl+keypad 0 alone: Ctrl+Alt+0 is Fold All in the
+  editor, and the terminals' reset and a page's fit width elsewhere
+  (`PARITY.md` D1, the decision after 1.11's choices).
 - **For checks**: `MCGuiApp().nav` (entries "path:line" and `index`);
   `MCGuiKey` now takes a GDK name with capitals ("ctrl+KP_Insert", the
   keypad's 0 as the checks' display gives it with Num Lock off). The four
@@ -1894,7 +1897,176 @@ What later items build on:
   caret far (to its end), which the ten-line rule records: a check that
   wants an empty history clears it after the click.
 
-### 26. The folder's own tools and Format Document (done, November 2026; `PARITY.md` items 2.3 and 2.4)
+### 26. Several carets and the line commands (done, November 2026; `PARITY.md` item 1.9)
+
+What later items build on (`src/Carets.{h,cpp}`, `src/CaretEdits.cpp`,
+`src/CaretText.h`; the core's `MultiCaret.h` and `EditBatch.h`):
+- **`Carets`** (one per editor, `Editor::carets()`) holds the carets as
+  character offsets, two or more while `active()`, the first being the
+  buffer's own selection (GTK draws and blinks it), the others drawn by two
+  `CodeView` passes, selections at `BelowText` 5 and carets at `AboveText`
+  10, only those on screen, and given to the gutter through
+  `BufferLines::extraCarets`. `current()` is every caret, or the buffer's
+  selection as one; `set()` shows carets (one goes back to being the
+  buffer's selection). Any edit or caret move it did not make (a click,
+  Page Down, Select All, an undo, a reload, Find, a tab switch) ends them;
+  `applying()` is true while it edits or moves the selection itself.
+- **Every edit is one `MultiEdit::apply`** (D5), one user action and one
+  Ctrl+Z, the carets then where the core's `MultiCaret::Edit` says. Text a
+  command copies from the buffer (Move Line, Copy Line, Paste) goes
+  through `CaretText`, which reads a character outside the BMP as a unit
+  of the Private Use Area from a table and writes it back, where
+  `BufferText` would give U+FFFD. Rename, formatting and agent edits that
+  move carets can call `Carets::set` afterwards.
+- **Keys**: typing, Return, Tab, Backspace and Escape at several carets
+  come first in `Editor::onViewKey` (`keyPressed`); everything else is
+  GTK's own key bindings caught by their signals on the view (`move-cursor`
+  for the arrows, Home, End, words, Ctrl+Home and Ctrl+Up;
+  `delete-from-cursor`; `copy-clipboard`, `cut-clipboard`,
+  `paste-clipboard`), so they hold whatever keys GTK gives them. With one
+  caret only the word moves and deletes (VS Code's words) and Ctrl+Up and
+  Ctrl+Down (a line's scroll) are taken; a Markdown page or a message keeps
+  GTK's. Auto-closing pairs go through `AutoCloseInput::typed` and
+  `deletePair` with every caret; its `carets()` answers every caret while
+  several are in play, and it ignores the mark moves of a carets' edit.
+- **The mouse** is a click and a drag gesture grouped, in the capture
+  phase, claiming only what is theirs: Alt (a caret, or a column dragged),
+  Shift+Alt (a column from the caret), the middle button (a column dragged;
+  a click pastes the primary selection, as GTK would), a plain double and
+  triple click in source text (VS Code's word, the line with its break, and
+  a drag after either by words or lines). Presses over the gutter are left
+  alone (`gtk_widget_pick`).
+- **Commands**: `Carets::addActions` adds the window's ten actions
+  (`win.addnextoccurrence` ... `win.copylinesdown`), each acting while the
+  view has the keyboard. Ctrl+Home and Ctrl+End are rows of the Linux table
+  without an action (the registry's Fixed), and Keys.cpp's table check
+  passes them. The find bar's Alt+Enter is `FindBar::selectAllMatches`.
+- **The highlighter's batch** (`Document::startBatch`, `finishBatch`): a
+  `MultiEdit` of 8 ranges or more on a document's buffer is taken in bytes
+  at begin-user-action (`MultiEdit::applyingChanges`), and at
+  end-user-action given to `IncrementalHighlighter::editMany` together;
+  only the lines it re-lexed are retagged, those on screen at once, the
+  rest from `Document::later_` in idle time (byte ranges carried through
+  later edits). Replace All uses it too. If anything else edits the buffer
+  in the same user action, the old resync runs instead. Lsp.cpp gives no
+  trigger character to completion during a `MultiEdit`.
+- **For checks**: `drawnCarets()`, `drawnSelections()`, `lastEditMs()`;
+  `tests/gui/CaretSuites.h` (where a character is on screen, the carets as
+  text, the clipboard); `MCGuiDragWith` (a drag with modifiers held, any
+  button).
+
+Traps:
+- Taking the view's primary clipboard off a buffer that holds the primary
+  selection makes GtkTextBuffer give up its selection (a mark set, which
+  ended the carets in the middle of setting them, and indexed an emptied
+  vector). `Carets` takes it off around its own selection changes and
+  edits, as one of its own moves, and puts it back after; several carets'
+  selections never reach the primary clipboard.
+- The caret's box (`gtk_text_view_get_cursor_locations`) is a pixel
+  shorter than its line: Up and Down at several carets look for the first
+  y past it that lands on another display line.
+- A click computed in the same step as an edit that moves the text lands
+  on the old layout: in the checks, wait for the text before clicking
+  (`waitCarets`, the suites' `queueReset`).
+- A Shift+Alt press is VS Code's box selection from the caret, wherever
+  the press is: click first where the column should start.
+- While the caret blinks, GTK 4.22 draws the view every frame for seconds
+  after any key (Shift alone included): 1.7 ms a frame, 100 ms of CPU a
+  second at 100,000 lines. A CPU measure that waits for the main thread to
+  go quiet catches it at random; `multicaret_perf` turns the blink off.
+- A double-click in a Markdown page edits the block (Editor.cpp), so a
+  page has no word selection to keep; the carets never claim a press
+  there.
+
+Not done: an input method's composed text goes in at the first caret and
+ends the others; the extra carets do not blink; a column drag does not
+scroll the view when the pointer leaves it; the Mac's Cmd+Shift click
+pairs (Ctrl+click is Go to Definition here).
+
+### 27. Folding (done, November 2026; `PARITY.md` item 1.10)
+
+What later items build on (`src/Folds.{h,cpp}`, the core's
+`../src/Folding.h`):
+- **`DocumentFolds`**, one per `Document` (`Document::folds()`, made in its
+  constructor right after `BufferLines`, and found from a buffer with
+  `DocumentFolds::of`): the regions (`Fold::compute` on a worker thread
+  0.3 s after the text last changed, generation counted; `freshRegions()`
+  works them out on the spot for a command), the closed folds
+  (`Fold::Collapsed` in characters, which follows edits and opens a fold an
+  edit touches), the invisible tag `minicode-fold` over the whole lines
+  each outermost fold hides, and the gutter's fold lane (`GutterFolds`,
+  with `lastHiddenLine` for the gutter's jump). Nothing for anything but a
+  text file's source, and nothing in large-file mode
+  (`applies()`); `forget()` on a reload from disk, `sourceChanged()` when
+  the name or large-file mode changes.
+- **`FoldUi`**, one per `Editor` (`Editor::folds()`): the placeholder pass
+  (`AboveText` order 20) and its click, the keys beside a fold (asked first
+  in `Editor::onViewKey`), and View > Folding's fifteen actions, added to the
+  window by `main.cpp` (`addActions`), with notes to the status bar
+  (`onNote`). Commands run only while the editor has the keyboard.
+- **The limit** (D8): `DocumentFolds::kMaxHiddenLines`, 5,000 lines hidden
+  by a tab's folds; `closeWithinLimit` asks `Fold::pickWithinBudget` which
+  candidates fit. Opening a fold never adds hidden lines, and an edit never
+  closes one, so only closing checks it.
+- **Several carets** (item 1.9): the commands already take
+  `BufferLines::extraCarets` as more carets; the keys beside a fold leave
+  them alone. An edit with several ranges through `MultiEdit` opens what it
+  touches by itself.
+- **For checks**: `FoldUi::drawnPlaceholders()`, `Gutter::linesWalked()`,
+  `DocumentFolds::computes()`, `hiddenLines()`, `outermost()`.
+
+Traps:
+- **Order of the buffer's handlers.** A tag changed in a handler
+  invalidates every iterator, and the host's handler after an edit makes
+  edits of its own (an electric dedent from `documentEdited`). The folds'
+  after-handlers come first of all (made before Document connects its own),
+  fix the tag around the edit, and set the signal's iterators again from
+  their offsets; `Collapsed::edit` runs in the before-handlers, which see
+  the edits in the order they happen.
+- **Never change a tag inside `mark-set`.** `gtk_text_buffer_select_range`
+  emits it for the insert mark and then for the selection bound with an
+  iterator of its own; a reveal there would leave that iterator stale. A
+  caret landing in hidden text opens its folds from an idle at
+  `G_PRIORITY_HIGH_IDLE`, before GTK lays out, draws, or carries out a
+  scroll it was asked for.
+- **Text typed inside a tagged range is tagged**, and at either end it is
+  not (the toggles' gravities): a line break put in at the end of a fold's
+  last line would be hidden, and one typed at the start of the line after
+  it would not end the fold. `retag` makes the tag right over a few
+  characters around every edit, from the folds as they are.
+- **There is no caret place after the placeholder.** GTK puts the caret at
+  the end of the folded line (before the placeholder) or at the start of
+  the line after the fold. So Return at the end of a folded line moves the
+  caret to the end of the fold's last line for the key (no reveal for that
+  move) and the editor's own Return (AutoIndent, a Markdown list) makes the
+  line there, below the fold; Backspace "after the placeholder" is
+  Backspace at the start of the line after a fold. GTK's undo of that
+  Return puts the caret back at the end of the fold's last line, in hidden
+  text: an empty selection exactly there goes to the end of the folded line
+  instead of opening the fold.
+- **The copy** of a selection across a fold is `LargeFileUi::copyWhole`'s
+  (item 22), which takes any selection holding invisible text.
+- **Read the buffer with its hidden text** (`gtk_text_buffer_get_text` and
+  `get_slice` with `TRUE`). Toggle Comment, the settings file's swatches
+  and the LaTeX preview read it without, so with a fold above the caret
+  Ctrl+/ commented the wrong line and the preview would have typeset the
+  document without its folded sections; they read it whole now, and the
+  `folding` suite presses Ctrl+/ below a fold.
+- **A gutter draw outside an edit** (the regions arriving), with a
+  5,000,000-character line on screen, left GTK drawing the view every frame
+  for over ten seconds in `large_file` (its "drawn" wait timed out). The
+  regions now draw the gutter only when they differ. Hovering the gutter
+  there may do the same; not looked into (item 22's ground).
+- **Frames.** GTK still visits every hidden line between the first and the
+  last on screen when it draws (D8); the limit keeps that under about 15 ms
+  a frame here. After Fold All or Unfold All of thousands of lines GTK
+  measures them again in idle slices (0.5 to 0.7 s of CPU for 5,000 folds),
+  never long at a time.
+- **Not done**: the language server's foldingRange (`PARITY.md` 2.13); a
+  fold whose first line is a long line's hidden part draws its placeholder
+  where GTK puts that hidden position.
+
+### 28. The folder's own tools and Format Document (done, November 2026; `PARITY.md` items 2.3 and 2.4)
 
 What later items build on:
 - **The folder's answer** (`src/FolderConsent.{h,cpp}`): "allow", "deny"

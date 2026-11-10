@@ -530,7 +530,13 @@ void Gutter::snapshot(GtkSnapshot* s, int width, int height) {
     int lineTop = 0;
     gtk_text_view_get_line_at_y(view_, &line, vis.y, &lineTop);
     size_t firstLine = l->lineOf(offsetOf(&line)), lastLine = firstLine;
+    // The lines a closed fold hides have no height: the walk jumps from a
+    // folded line to the line after its fold, never through them (with
+    // thousands hidden on screen, the walk cost 12 µs each a frame).
+    GutterFolds* jumps = folds && folds->hasClosedFolds() ? folds : nullptr;
+    walked_ = 0;
     for (int guard = 0; guard < 100000; guard++) {
+        walked_++;
         int ly = 0, lh = 0;
         gtk_text_view_get_line_yrange(view_, &line, &ly, &lh);
         if (ly >= bottom) break;
@@ -551,6 +557,15 @@ void Gutter::snapshot(GtkSnapshot* s, int width, int height) {
                 gtk_text_view_forward_display_line(view_, &next);
                 if (gtk_text_iter_compare(&next, &d) <= 0) break;
                 d = next;
+            }
+        }
+        if (jumps) {
+            const size_t here = l->lineOf(offsetOf(&line));
+            const size_t last = jumps->lastHiddenLine(here);
+            if (last > here) {
+                if (last + 1 >= l->lineCount()) break;
+                gtk_text_buffer_get_iter_at_offset(buffer_, &line, (int)l->lineStart(last + 1));
+                continue;
             }
         }
         // The next line; from the last but one, the empty line after a final

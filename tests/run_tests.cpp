@@ -56,6 +56,7 @@
 #include "Notebook.h"
 #include "Commands.h"
 #include "EditSpans.h"
+#include "EditBatch.h"
 #include "FindRules.h"
 #include "PageMeasure.h"
 #include "LegacyHighlighter.h"
@@ -10802,6 +10803,7 @@ static void testMultiCaretOccurrences() {
 #include "lsp_sync_tests.inc"
 #include "lsp_trust_tests.inc"
 #include "multiedit_tests.inc"
+#include "edit_batch_tests.inc"
 #include "folder_search_tests.inc"
 #include "auto_close_tests.inc"
 #include "find_rules_tests.inc"
@@ -10960,6 +10962,7 @@ int main() {
     testLspSync();
     testLspProjectCode();
     testMultiEdit();
+    testEditBatch();
     testFolderSearchParallel();
     testAutoClose();
     testLspInlayHints();

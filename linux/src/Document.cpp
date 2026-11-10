@@ -6,7 +6,9 @@
 #include "BackupStore.h"
 #include "BracketColors.h"
 #include "BufferLines.h"
+#include "Folds.h"
 #include "LargeFileView.h"
+#include "MultiEdit.h"
 #include "MarkdownTasks.h"
 #include "StartupLog.h"
 #include "Utf8Offsets.h"
@@ -127,6 +129,11 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     id_ = ++next;
     buffer_ = gtk_text_buffer_new(tags_->table);
     gtk_text_buffer_set_enable_undo(buffer_, FALSE);
+    // Where its lines start, for the gutter; the buffer keeps it. Then its
+    // folds (Folds.h), whose handlers come first of all after an edit: they
+    // fix the fold tag before the host's own (an electric dedent) edit again.
+    BufferLines::attach(buffer_);
+    folds_ = std::make_unique<DocumentFolds>(this, buffer_);
     // Highlighting follows every edit. The plain handlers run before the
     // buffer changes (both signals are RUN_LAST), while the iterators still
     // describe the old text; the _after ones run once it has changed.
@@ -147,9 +154,8 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     g_signal_connect_after(buffer_, "undo", G_CALLBACK(onEndUserAction), this);
     g_signal_connect(buffer_, "redo", G_CALLBACK(onBeginUserAction), this);
     g_signal_connect_after(buffer_, "redo", G_CALLBACK(onEndUserAction), this);
-    // Where its lines start, for the gutter; the buffer keeps it. Its long
-    // lines shown a part at a time (LargeFileView.h), the same.
-    BufferLines::attach(buffer_);
+    // Its long lines shown a part at a time (LargeFileView.h); the buffer
+    // keeps them.
     LongLines::attach(buffer_);
     brackets_ = std::make_unique<BracketColors>(buffer_);
 }
@@ -158,6 +164,7 @@ Document::~Document() {
     // Saved, or let go when asked: its unsaved text is not kept any more. A
     // crash or a SIGKILL never gets here, and leaves the backup.
     if (backup_.written) BackupStore::shared().remove(backup_.id);
+    folds_.reset();
     cancelLoading();
     stopWatching();
     if (taskTimer_) g_source_remove(taskTimer_);
@@ -508,6 +515,7 @@ void Document::setPath(const std::string& path) {
     const bool regrammar = ext != ext_ || wasSettings != isSettingsFile();
     ext_ = ext;
     if (regrammar && kind_ == Kind::Text) startHighlighting();
+    if (regrammar) folds_->sourceChanged();   // maybe another way of folding
     refreshTaskCount();   // x.txt renamed to x.md counts its tasks
     host_->documentStateChanged(this);
 }
@@ -604,6 +612,7 @@ bool Document::reloadFromDisk() {
 // its line and column). The editor keeps the scroll position of one on show.
 void Document::applyDiskText(const std::string& content) {
     host_->documentWillReload(this);
+    folds_->forget();   // as on the Mac, a reload forgets the folds
     rememberDisk(content);
     const std::string old = text();
     std::size_t p = 0, q = 0;
@@ -710,6 +719,7 @@ const size_t kSyncLines   = 1000;   // retag at once up to this many lines
 const size_t kChunkLines  = 250;    // lines per step of the idle retag
 const gint64 kSliceMicros = 5000;   // idle retag budget per main loop turn
 const int    kBulkEdits   = 64;     // edits in one user action before resyncing whole
+const size_t kBatchEdits  = 8;      // a MultiEdit with this many ranges goes as a batch
 
 size_t byteOfChar(const std::string& s, long chars) {
     size_t b = 0;
@@ -758,6 +768,16 @@ void Document::cancelDeferred() {
     if (idleId_) g_source_remove(idleId_);
     idleId_ = 0;
     deferred_ = false;
+    later_.clear();
+}
+
+void Document::carryLater(size_t pos, size_t oldLen, size_t newLen) {
+    if (later_.empty()) return;
+    // The ranges are apart, so their ends ascend: the first ending past pos
+    // is the first an edit there can touch.
+    auto it = std::upper_bound(later_.begin(), later_.end(), pos,
+                               [](size_t p, const std::pair<size_t, size_t>& r) { return p < r.second; });
+    for (; it != later_.end(); ++it) carry(it->first, it->second, pos, oldLen, newLen);
 }
 
 void Document::stopHighlighting() {
@@ -824,8 +844,9 @@ void Document::noteEdit(size_t pos, size_t oldLen, size_t newLen) {
     std::vector<Token> relexed;
     const size_t linesBefore = hl_->lineCount();
     auto r = hl_->edit(StringSource<char>(mirror_), pos, oldLen, newLen, relexed);
-    brackets_->edited(*hl_, mirror_, r, linesBefore, relexed);
+    brackets_->edited(*hl_, StringSource<char>(mirror_), r, linesBefore, relexed);
     if (deferred_) carry(defStart_, defEnd_, pos, oldLen, newLen);
+    carryLater(pos, oldLen, newLen);
     if (pending_) {
         carry(pendStart_, pendEnd_, pos, oldLen, newLen);
         pendStart_ = std::min(pendStart_, r.start);
@@ -920,7 +941,7 @@ void Document::bracketSettingChanged() {
 
 gboolean Document::onIdleRetag(gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
-    if (!self->hl_ || !self->deferred_ || self->bulk_) {
+    if (!self->hl_ || (!self->deferred_ && self->later_.empty()) || self->bulk_) {
         self->idleId_ = 0;   // resyncAfterBulk schedules it again if needed
         return G_SOURCE_REMOVE;
     }
@@ -928,17 +949,31 @@ gboolean Document::onIdleRetag(gpointer selfp) {
     IncrementalHighlighter<char>& hl = *self->hl_;
     while (g_get_monotonic_time() - t0 < kSliceMicros) {
         const size_t len = hl.length();
-        const size_t s = std::min(self->defStart_, len), e = std::min(self->defEnd_, len);
-        if (e <= s) {
-            self->deferred_ = false;
-            break;
+        if (self->deferred_) {
+            const size_t s = std::min(self->defStart_, len), e = std::min(self->defEnd_, len);
+            if (e <= s) {
+                self->deferred_ = false;
+                continue;
+            }
+            const size_t first = hl.lineOf(s);
+            const size_t end = std::min(first + kChunkLines, hl.lineOf(e - 1) + 1);
+            self->retagSpan(first, end);
+            self->defStart_ = end < hl.lineCount() ? hl.lineStart(end) : len;
+            continue;
         }
-        const size_t first = hl.lineOf(s);
-        const size_t end = std::min(first + kChunkLines, hl.lineOf(e - 1) + 1);
-        self->retagSpan(first, end);
-        self->defStart_ = end < hl.lineCount() ? hl.lineStart(end) : len;
+        if (self->later_.empty()) break;
+        auto& r = self->later_.front();
+        const size_t s = std::min(r.first, len), e = std::min(r.second, len);
+        if (e > s) {
+            const size_t first = hl.lineOf(s);
+            const size_t end = std::min(first + kChunkLines, hl.lineOf(e - 1) + 1);
+            self->retagSpan(first, end);
+            r.first = end < hl.lineCount() ? hl.lineStart(end) : len;
+        }
+        if (e <= s || r.first >= std::min(r.second, len))
+            self->later_.erase(self->later_.begin());
     }
-    if (self->deferred_) return G_SOURCE_CONTINUE;
+    if (self->deferred_ || !self->later_.empty()) return G_SOURCE_CONTINUE;
     self->idleId_ = 0;
     return G_SOURCE_REMOVE;
 }
@@ -1034,6 +1069,128 @@ void Document::resyncAfterBulk() {
         idleId_ = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, onIdleRetag, this, nullptr);
 }
 
+// A MultiEdit of many ranges (several carets typing, Replace All; D5).
+// Read back whole at its end, as resyncAfterBulk does, the edit ran from its
+// first range to its last: with carets spread through a file every line
+// between was re-lexed and retagged, about a second of CPU for a keystroke
+// at 1,000 carets in 100,000 lines (linux/PARITY.md, D7), and copying the
+// buffer out alone cost 55 ms of it. Instead its changes are taken in bytes
+// at begin-user-action, while the buffer still holds the text before them;
+// at its end they make the new mirror in one pass and go to the
+// highlighter together (EditBatch.h), each re-lexing its own lines, and only
+// those lines are retagged, the ones on screen at once. Anything else
+// editing the buffer inside the same action (the count of edits differs)
+// falls back to the resync.
+void Document::startBatch() {
+    batching_ = false;
+    const std::vector<MultiEdit::Change>* changes = MultiEdit::applyingChanges();
+    if (MultiEdit::applyingTo() != buffer_ || !changes || changes->size() < kBatchEdits ||
+        !hl_ || bulk_ || kind_ != Kind::Text || filling_ || !linesMatch())
+        return;
+    batch_.clear();
+    batch_.reserve(changes->size());
+    batchExpected_ = 0;
+    for (const MultiEdit::Change& c : *changes) {
+        GtkTextIter a, b;
+        gtk_text_buffer_get_iter_at_offset(buffer_, &a, (int)c.start);
+        gtk_text_buffer_get_iter_at_offset(buffer_, &b, (int)(c.start + c.length));
+        const size_t pa = byteOffsetOf(&a), pb = c.length ? byteOffsetOf(&b) : pa;
+        batch_.push_back({pa, pb > pa ? pb - pa : 0, c.text});
+        batchExpected_ += (c.length > 0 ? 1 : 0) + (c.text.empty() ? 0 : 1);
+    }
+    if (!EditBatch::valid(batch_, mirror_.size())) return;
+    batching_ = true;
+    batchEdits_ = 0;
+    bulk_ = true;   // the mirror is behind the buffer until the batch ends
+}
+
+void Document::finishBatch() {
+    batching_ = false;
+    if (!hl_ || batchEdits_ != batchExpected_) {
+        resyncAfterBulk();
+        return;
+    }
+    bulk_ = false;
+    // Byte ranges kept across edits (pending, deferred, later) follow the
+    // changes as carry() follows one edit: moved by what the changes before
+    // them add, stretched over a change they touch.
+    std::vector<long long> added(batch_.size() + 1, 0);   // by the changes before k
+    for (size_t k = 0; k < batch_.size(); k++)
+        added[k + 1] = added[k] + (long long)batch_[k].text.size() - (long long)batch_[k].oldLen;
+    auto map = [&](size_t x, bool end) {
+        // The first change ending after x (for an end, at or after it).
+        size_t lo = 0, hi = batch_.size();
+        while (lo < hi) {
+            const size_t mid = (lo + hi) / 2;
+            const size_t e = batch_[mid].pos + batch_[mid].oldLen;
+            if (end ? e < x : e <= x) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo < batch_.size() && batch_[lo].pos < x)   // inside it: its edge
+            return (size_t)((long long)(end ? batch_[lo].pos + batch_[lo].oldLen : batch_[lo].pos) +
+                            added[lo] + (end ? (long long)batch_[lo].text.size() -
+                                                   (long long)batch_[lo].oldLen
+                                             : 0));
+        return (size_t)((long long)x + added[lo]);
+    };
+    if (deferred_) {
+        defStart_ = map(defStart_, false);
+        defEnd_ = map(defEnd_, true);
+    }
+    if (pending_) {
+        pendStart_ = map(pendStart_, false);
+        pendEnd_ = map(pendEnd_, true);
+    }
+    for (auto& r : later_) {
+        r.first = map(r.first, false);
+        r.second = map(r.second, true);
+    }
+    std::vector<std::pair<size_t, size_t>> lines;   // re-lexed: [first, end), ascending, apart
+    std::string after = EditBatch::apply(
+        *hl_, mirror_, batch_,
+        [&](const TextSource<char>& now, const IncrementalHighlighter<char>::Range& r,
+            size_t linesBefore, const std::vector<Token>& relexed) {
+            brackets_->edited(*hl_, now, r, linesBefore, relexed);
+            lines.push_back({r.firstLine, r.endLine});
+        });
+    mirror_ = std::move(after);
+    // The lines on screen now; the rest in idle time, each line costing a
+    // retag of its own (about 80 us: every highlight tag taken off it), so
+    // 1,000 carets spread through a file left 85 ms in the keystroke.
+    size_t vf = 0, ve = hl_->lineCount();
+    if (shownIn_) visibleLines(vf, ve);
+    std::vector<std::pair<size_t, size_t>> rest;
+    auto byteOf = [&](size_t line) {
+        return line < hl_->lineCount() ? hl_->lineStart(line) : hl_->length();
+    };
+    for (const auto& l : lines) {
+        const size_t a = std::max(l.first, vf), b = std::min(l.second, ve);
+        if (a < b) retagSpan(a, b);
+        if (l.first < vf)
+            rest.push_back({byteOf(l.first), byteOf(std::min(l.second, vf))});
+        if (l.second > ve && l.second > l.first)
+            rest.push_back({byteOf(std::max(l.first, ve)), byteOf(l.second)});
+    }
+    if (!rest.empty()) {
+        // Into the list, which stays ascending and apart.
+        std::vector<std::pair<size_t, size_t>> merged;
+        merged.reserve(later_.size() + rest.size());
+        std::merge(later_.begin(), later_.end(), rest.begin(), rest.end(), std::back_inserter(merged));
+        later_.clear();
+        for (const auto& r : merged) {
+            if (r.second <= r.first) continue;
+            if (!later_.empty() && r.first <= later_.back().second)
+                later_.back().second = std::max(later_.back().second, r.second);
+            else
+                later_.push_back(r);
+        }
+    }
+    if (pending_) flushHighlighting();
+    else paintBracketsOnScreen();
+    if ((deferred_ || !later_.empty()) && !idleId_)
+        idleId_ = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, onIdleRetag, this, nullptr);
+}
+
 // Every color value in the settings file becomes a swatch of itself: the value
 // drawn on its own color, in black or white text, whichever reads.
 // Lines [firstLine, endLine), clamped to the buffer.
@@ -1046,7 +1203,7 @@ void Document::decorateColors(int firstLine, int endLine) {
         gtk_text_buffer_get_iter_at_line(buffer_, &ls, ln);
         le = ls;
         if (!gtk_text_iter_ends_line(&le)) gtk_text_iter_forward_to_line_end(&le);
-        char* raw = gtk_text_buffer_get_text(buffer_, &ls, &le, FALSE);
+        char* raw = gtk_text_buffer_get_text(buffer_, &ls, &le, TRUE);
         std::u16string line = utf16::fromUtf8(raw ? raw : "");
         g_free(raw);
         ColorSpan span;
@@ -1076,6 +1233,10 @@ void Document::decorateColors(int firstLine, int endLine) {
 void Document::onInsertText(GtkTextBuffer*, GtkTextIter* loc, char* text, int len,
                             gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
+    if (self->batching_) {
+        if (len > 0) self->batchEdits_++;
+        return;
+    }
     if (!self->hl_ || len <= 0 || self->bulk_) return;
     if (self->inAction_ && ++self->actionEdits_ > kBulkEdits) {
         self->bulk_ = true;
@@ -1089,6 +1250,10 @@ void Document::onInsertText(GtkTextBuffer*, GtkTextIter* loc, char* text, int le
 void Document::onDeleteRange(GtkTextBuffer*, GtkTextIter* start, GtkTextIter* end,
                              gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
+    if (self->batching_) {
+        if (!gtk_text_iter_equal(start, end)) self->batchEdits_++;
+        return;
+    }
     if (!self->hl_ || self->bulk_) return;
     if (self->inAction_ && ++self->actionEdits_ > kBulkEdits) {
         self->bulk_ = true;
@@ -1126,12 +1291,14 @@ void Document::onBeginUserAction(GtkTextBuffer*, gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
     self->inAction_ = true;
     self->actionEdits_ = 0;
+    self->startBatch();
 }
 
 void Document::onEndUserAction(GtkTextBuffer*, gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
     self->inAction_ = false;
-    if (self->bulk_) self->resyncAfterBulk();
+    if (self->batching_) self->finishBatch();
+    else if (self->bulk_) self->resyncAfterBulk();
     else self->flushHighlighting();
     if (self->dirtyCheckPending_) self->checkDirty();
 }

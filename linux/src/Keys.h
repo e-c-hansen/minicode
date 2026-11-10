@@ -8,7 +8,9 @@
 // A command the port has is a row in CommandsLinux.cpp and a row in
 // actions() here, and the GUI checks hold the two to each other. A command
 // with neither is shown nowhere. A new command adds both rows, its GAction
-// in main.cpp (addAction), and its README row.
+// in main.cpp (addAction), and its README row. A view's own keys (the
+// registry's Fixed: Ctrl+Home in the editor) have a Linux row for the
+// table, the hints and README, but no action and no accelerator.
 //
 // The accelerators follow what has the keyboard in the active window
 // (setPlace), since GTK's are the application's and go to the key window:
