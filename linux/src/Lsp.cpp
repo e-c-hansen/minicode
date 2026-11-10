@@ -6,6 +6,7 @@
 #include "LspSessionPrivate.h"
 
 #include "Palette.h"
+#include "SnippetSession.h"
 #include "StartupLog.h"
 #include "WhenDrawn.h"
 
@@ -26,7 +27,12 @@ void installCss() {
         "popover.minicode-completion row { padding: 1px 8px; min-height: 0;"
         "  font-family: monospace; }"
         "popover.minicode-completion row:selected { background-color: #04395E; }"
-        "popover.minicode-hover label { font-family: monospace; padding: 8px 10px; }";
+        "popover.minicode-hover label { font-family: monospace; padding: 8px 10px; }"
+        "popover.minicode-signature > contents {"
+        "  background-color: " + std::string(pal::SidebarBg) + ";"
+        "  color: " + pal::EditorText + ";"
+        "  border: 1px solid #454545; border-radius: 4px; padding: 0; }"
+        "popover.minicode-signature label { padding: 4px 8px; }";
     GtkCssProvider* p = gtk_css_provider_new();
     gtk_css_provider_load_from_string(p, css.c_str());
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),
@@ -48,7 +54,8 @@ LspSession::LspSession(Editor* editor, const std::string& root, const Settings& 
       also_(std::make_unique<AlsoState>()),
       sync_(std::make_unique<SyncState>()), diag_(std::make_unique<DiagState>()),
       probs_(std::make_unique<ProblemsState>()),
-      cmp_(std::make_unique<CompletionState>()), nav_(std::make_unique<NavState>()),
+      cmp_(std::make_unique<CompletionState>()), sig_(std::make_unique<SignatureState>()),
+      nav_(std::make_unique<NavState>()),
       act_(std::make_unique<ActionsState>()), tools_(std::make_unique<FolderToolsState>()),
       watch_(std::make_unique<WatchState>()) {
     lspAllSessions().push_back(this);
@@ -84,6 +91,12 @@ LspSession::LspSession(Editor* editor, const std::string& root, const Settings& 
     // Ctrl+click for the definition, and hover info in the tooltip.
     installNavigation();
 
+    // A snippet's choice stop lists its options in the completion list.
+    if (SnippetSession* sn = editor->snippets())
+        sn->onChoices = [this](const std::vector<std::string>& choices, size_t a, size_t b) {
+            showSnippetChoices(choices, a, b);
+        };
+
     GtkEventController* focus = gtk_event_controller_focus_new();
     g_signal_connect(focus, "leave", G_CALLBACK(onFocusLeave), this);
     gtk_widget_add_controller(view_, focus);
@@ -115,6 +128,10 @@ LspSession::~LspSession() {
     auto& all = lspAllSessions();
     all.erase(std::remove(all.begin(), all.end(), this), all.end());
     unwatchFolderTools();
+    if (SnippetSession* sn = editor_->snippets()) sn->onChoices = nullptr;
+    dropPendingAccepts();
+    if (sig_->updateTimer) g_source_remove(sig_->updateTimer);
+    sig_->updateTimer = 0;
     shutdown();
     g_signal_handlers_disconnect_by_data(view_, this);
     useBuffer(nullptr);
@@ -128,6 +145,7 @@ LspSession::~LspSession() {
 
 void LspSession::dropPopovers() {
     dropCompletionPopover();
+    dropSignaturePopover();
     dropHoverPopover();
     dropActionPopovers();
 }
@@ -148,6 +166,7 @@ void LspSession::later(std::function<void()> fn) {
 void LspSession::onFocusLeave(GtkEventControllerFocus*, gpointer selfp) {
     LspSession* self = static_cast<LspSession*>(selfp);
     self->closeCompletion();
+    self->closeSignature();
     if (!self->applyingEdit_) self->closePicker();
 }
 
@@ -155,6 +174,7 @@ void LspSession::onMarkSet(GtkTextBuffer* buf, GtkTextIter*, GtkTextMark* mark, 
     LspSession* self = static_cast<LspSession*>(selfp);
     if (mark != gtk_text_buffer_get_insert(buf)) return;
     self->completionFollowsCaret();
+    self->signatureFollowsCaret();
     self->actionsFollowCaret();
     self->hoverFollowsCaret();
 }
@@ -163,11 +183,22 @@ void LspSession::onUnrealize(GtkWidget*, gpointer selfp) {
     static_cast<LspSession*>(selfp)->dropPopovers();
 }
 
+// The lists' keys, from this controller or from the editor's own, which
+// asks first (EditorObserver::listKey): whichever runs first takes the key.
 gboolean LspSession::onKey(GtkEventControllerKey*, guint keyval, guint, GdkModifierType state,
                            gpointer selfp) {
-    if (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK)) return FALSE;
-    LspSession* self = static_cast<LspSession*>(selfp);
-    return self->completionKey(keyval) || self->pickerKey(keyval) ? TRUE : FALSE;
+    return static_cast<LspSession*>(selfp)->listKey(keyval, state) ? TRUE : FALSE;
+}
+
+bool LspSession::listKey(guint keyval, GdkModifierType mods) {
+    if (mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK)) return false;
+    if (completionKey(keyval, mods) || pickerKey(keyval)) return true;
+    // Escape closes the signature hint before anything else has it.
+    if (keyval == GDK_KEY_Escape && !(mods & GDK_SHIFT_MASK) && signatureVisible()) {
+        closeSignature();
+        return true;
+    }
+    return false;
 }
 
 // ---- positions

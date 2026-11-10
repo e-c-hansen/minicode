@@ -443,6 +443,36 @@ static void testSnippets() {
         std::vector<Session::Replacement> reps = s.transformsFor(u"value");
         CHECK(reps.size() == 1 && reps[0].start == 5 && snipU8(reps[0].text) == "VALUE");
     }
+
+    GROUP("snippet:code-points");
+    {
+        // The GTK port counts code points: an emoji before a stop is one,
+        // and the session's span is the text's length so.
+        Context flat = snipContext();
+        Expansion e = expand("\U0001F600 ${1:a\U0001F600b} = $1$0", flat);
+        size_t points = 0;
+        Expansion c = inCodePoints(e, &points);
+        CHECK(e.text.size() == 14 && points == 11);
+        CHECK(c.text == e.text);
+        CHECK(c.stops.size() == 2);
+        if (c.stops.size() == 2) {
+            CHECK(c.stops[0].ranges.size() == 2);
+            if (c.stops[0].ranges.size() == 2) {
+                CHECK(c.stops[0].ranges[0] == (Range{2, 5}));
+                CHECK(c.stops[0].ranges[1] == (Range{8, 11}));
+            }
+            CHECK(c.stops[1].ranges[0] == (Range{11, 11}));
+        }
+        Session s(c, 10, points);
+        CHECK(s.span() == (Range{10, 21}));
+        CHECK(s.caretRanges().size() == 2 && s.caretRanges()[0] == (Range{12, 15}));
+        // Text without pairs is the same in both counts.
+        Expansion plain = expand("f(${1:x})$0", flat);
+        size_t n = 0;
+        Expansion same = inCodePoints(plain, &n);
+        CHECK(n == plain.text.size() && same.stops[0].ranges[0] == plain.stops[0].ranges[0]);
+        CHECK(Session(same, 3, n).span() == Session(plain, 3).span());
+    }
 }
 
 static void testSnippetCompletionItems() {

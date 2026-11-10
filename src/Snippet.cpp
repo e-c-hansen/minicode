@@ -888,9 +888,35 @@ Expansion expand(const std::vector<Node>& nodes, const Context& ctx) {
     return out;
 }
 
+Expansion inCodePoints(const Expansion& e, size_t* points) {
+    // Each unit offset's code point, one past the end included.
+    const std::u16string& t = e.text;
+    std::vector<size_t> at(t.size() + 1, 0);
+    size_t point = 0;
+    for (size_t i = 0; i < t.size();) {
+        at[i] = point;
+        const bool pair = t[i] >= 0xD800 && t[i] <= 0xDBFF && i + 1 < t.size() &&
+                          t[i + 1] >= 0xDC00 && t[i + 1] <= 0xDFFF;
+        if (pair) at[i + 1] = point;   // inside the pair: its start
+        i += pair ? 2 : 1;
+        point++;
+    }
+    at[t.size()] = point;
+    if (points) *points = point;
+    Expansion out = e;
+    for (Stop& s : out.stops)
+        for (Range& r : s.ranges) {
+            r.start = at[std::min(r.start, t.size())];
+            r.end = at[std::min(r.end, t.size())];
+        }
+    return out;
+}
+
 // ---- the session
 
-Session::Session(const Expansion& e, size_t base) {
+Session::Session(const Expansion& e, size_t base) : Session(e, base, e.text.size()) {}
+
+Session::Session(const Expansion& e, size_t base, size_t length) {
     // Each range's place in the text, for ties between ranges at one point.
     struct Ref { size_t stop, range, start, end; };
     std::vector<Ref> refs;
@@ -916,7 +942,7 @@ Session::Session(const Expansion& e, size_t base) {
     });
     for (size_t k = 0; k < refs.size(); k++) order_[refs[k].stop][refs[k].range] = k;
     for (const Stop& s : stops_) dead_.push_back(std::vector<bool>(s.ranges.size(), false));
-    span_ = {base, base + e.text.size()};
+    span_ = {base, base + length};
     current_ = 0;
     active_ = !stops_.empty();
 }

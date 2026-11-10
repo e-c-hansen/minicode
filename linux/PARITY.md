@@ -1055,8 +1055,19 @@ its server comes first here (2.0).
   2.2), and the note offers no install commands yet (item 2.8). Needs the
   owner: the owner's real formatters (ruff, clang-format, prettier), Ctrl+Shift+I under
   GNOME on Wayland with IBus, and how the note by the caret looks.
-- [ ] **2.5 Completion's additional edits and snippets.** `Snippet`,
+- [x] **2.5 Completion's additional edits and snippets.** `Snippet`,
   Tab and Return as on the Mac.
+  *Verified in Xvfb, 2026-11-10* (`HANDOFF.md` item 33): the
+  `completion_keys`, `snippets`, `completion_edits` and `signature_help`
+  suites, real keys against the scripted server, show the list opening by
+  itself, Tab and Return taking an item whenever it shows (Shift+Return
+  and Escape not), snippets expanded with stops that Tab and Shift+Tab walk
+  and Escape ends, a mirror following typing, a choice's options in the
+  list, an import going in with its word and out with one Ctrl+Z, a late
+  import from resolve in the word's step or its own, and the signature
+  hint on "(" and ","; they fail without the accept's own undo step and
+  without the late import's replay. Needs the owner: real clangd and
+  basedpyright, and the keys and look under GNOME on Wayland with IBus.
 - [ ] **2.6 Semantic tokens.** Tags, painted for the lines on screen only.
 - [ ] **2.7 Inlay hints (D6, D9).** `InlayHints`.
 - [ ] **2.8 Install hints.** `InstallHints`.

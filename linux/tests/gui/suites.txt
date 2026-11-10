@@ -59,3 +59,7 @@ ProblemsSuite.cpp
 SecondServerSuite.cpp
 LspWatchSuite.cpp
 OrganizeImportsSuite.cpp
+CompletionKeysSuite.cpp
+SnippetsSuite.cpp
+CompletionEditsSuite.cpp
+SignatureHelpSuite.cpp

@@ -170,10 +170,58 @@ struct LspSession::CompletionState {
     std::vector<Lsp::CompletionItem> items, shown;
     bool completing = false;
     bool gotItems = false;
+    bool incomplete = false;         // the server will list more as the word grows
+    bool navigated = false;          // the arrows chose the highlighted item
+    std::string filteredFor;         // the word the list was last filtered for
     int gen = 0;
     guint refilterId = 0;
-    guint triggerId = 0;             // a typed trigger character's request, next idle
+    guint triggerId = 0;             // a request after a typed character, next idle
     std::string pendingTrigger;
+    // A choice stop's options (SnippetSession.h) in the list: taking one
+    // replaces the stop's text at every caret. The stop, in characters.
+    bool choiceMode = false;
+    size_t choiceStart = 0, choiceEnd = 0;
+    guint choiceCheckId = 0;
+    // An accept being taken back and put in again with its late import:
+    // that undo is not the user's.
+    bool replaying = false;
+    // A completion accepted before its server's completionItem/resolve
+    // answered, waiting (a second at most) for the additional edits that
+    // answer may bring, as the Mac's MCPendingAccept.
+    struct Pending {
+        LspSession* self = nullptr;
+        int key = 0;
+        int requestId = 0;
+        std::weak_ptr<lspgtk::Server> server;
+        std::string uri, label;
+        GtkTextBuffer* buffer = nullptr;   // held
+        int docGen = 0;                    // docGen_ once the word was in
+        // Everything before it (characters) is as it was when the item was
+        // accepted: the word's start, or the start of an edit made since.
+        size_t limit = 0;
+        // The accept itself, to put it in again with the late edits as one
+        // undo step: `removed` characters at `start` (reading
+        // `removedText`) became `insert`, in a text `before` long.
+        size_t start = 0, removed = 0, before = 0;
+        std::string removedText, insert;
+        // Where the inserted text is, and whether an undo came since: both
+        // say whether the accept was taken back before the answer.
+        GtkTextMark* wordStart = nullptr;
+        GtkTextMark* wordEnd = nullptr;
+        bool sawUndo = false;
+        guint timer = 0;
+    };
+    std::vector<std::unique_ptr<Pending>> pending;
+    int nextPendingKey = 0;
+};
+
+// ---- the signature hint (LspSessionSignature.cpp)
+struct LspSession::SignatureState {
+    GtkWidget* popover = nullptr;
+    GtkWidget* label = nullptr;
+    std::string text;      // what it shows, as plain text, for the checks
+    int gen = 0;
+    guint updateTimer = 0;   // brought up to date 0.15 s after an edit or a caret move
 };
 
 // Every window's session, oldest first (Lsp.cpp): the applier asks the

@@ -26,7 +26,8 @@
 //   LspSessionServers.cpp      choosing, starting and stopping servers; status
 //   LspSessionSync.cpp         the documents the servers have open
 //   LspSessionDiagnostics.cpp  squiggles and their messages
-//   LspSessionCompletion.cpp   the completion list
+//   LspSessionCompletion.cpp   the completion list, its edits and snippets
+//   LspSessionSignature.cpp    the signature hint while typing a call
 //   LspSessionNavigation.cpp   hover and go to definition
 //   LspSessionActions.cpp      rename, references, quick fixes, applyEdit
 //   LspSessionEdits.cpp        the workspace edit applier, every file or none
@@ -195,13 +196,19 @@ public:
     void textEdited(const char* inserted, int len) override;
     void tabsChanged() override;
     bool takesReturn() const override { return completionVisible() || pickerVisible(); }
+    bool listKey(guint keyval, GdkModifierType mods) override;
 
     // Test hooks.
     bool completionVisible() const;
     std::vector<std::string> completionLabels() const;
+    std::string completionSelectedLabel() const;   // "" with none
+    // The signature hint, as plain text ("" when none shows).
+    std::string signatureText() const;
     const std::string& statusText() const { return status_; }
     const std::string& lastHoverText() const;
-    bool completionKey(guint keyval);   // what the key controller does
+    // A completion accepted whose server's resolve answer may still bring
+    // an import (a second at most).
+    std::size_t pendingAccepts() const;
     // The tooltip text at a buffer position; *requested is set when a hover
     // request went out for it (the tooltip is re-queried when it answers).
     std::string tooltipAt(const GtkTextIter* it, bool* requested = nullptr);
@@ -244,6 +251,7 @@ public:
     struct SyncState;
     struct DiagState;
     struct CompletionState;
+    struct SignatureState;
     struct NavState;
     struct ActionsState;
     struct FolderToolsState;
@@ -271,7 +279,9 @@ private:
     std::shared_ptr<lspgtk::Server> alsoServer_;
     std::string note_;
     int docGen_ = 0;   // bumped by every edit of the file on show and every switch
-    bool applyingEdit_ = false;   // the applier is at work: no typing, no lists closing
+    // The applier, or a completion accepted, is putting edits in: they are not
+    // typing (no list or hint opens for them), and no list closes.
+    bool applyingEdit_ = false;
     std::string lastNote_;
     void useBuffer(GtkTextBuffer* b);
     // `fn` once what is being handled now is done (an answer read, a key
@@ -398,21 +408,55 @@ private:
 
     // ---- completion (LspSessionCompletion.cpp)
     std::unique_ptr<CompletionState> cmp_;
+    // The keys while the list shows: Up, Down, Tab and Return taking the
+    // item, Shift+Tab and Shift+Return closing it for the editor, Escape.
+    bool completionKey(guint keyval, GdkModifierType mods);
     void completionAfterEdit(const char* inserted, int len);
     void completionFollowsCaret();
     void requestCompletion(const std::string& trigger);
+    void requestCompletionSoon(const std::string& trigger);
     void completionArrived(const Json& result, int gen, const std::string& uri);
+    std::string typedPrefix() const;
     void refilter();
     void scheduleRefilter();
+    void showList(int select, const GtkTextIter* at);
     void closeCompletion();
     void cancelCompletionTrigger();
     void acceptCompletion(int row);
+    // A snippet's choice stop (SnippetSession.h): its options listed, and
+    // one taken at the stop and its mirrors.
+    void showSnippetChoices(const std::vector<std::string>& choices, size_t start, size_t end);
+    void acceptChoice(int row);
+    // The edits of an accept as one undo step of their own (one Ctrl+Z),
+    // never joined to the typing before them; false when refused.
+    bool applyAcceptEdits(const std::vector<Lsp::PointEdit>& edits);
+    // An item whose additional edits come only from completionItem/resolve:
+    // they follow when the answer comes, in the accept's undo step when
+    // nothing changed meanwhile, else as a step of their own.
+    void resolveAfterAccepting(const Lsp::CompletionItem& item,
+                               const std::shared_ptr<lspgtk::Server>& server, size_t start,
+                               size_t removed, const std::string& removedText,
+                               const std::string& insert, size_t before);
+    void pendingAcceptResolved(int key, const Lsp::CompletionItem& item);
+    void pendingAcceptTimedOut(int key);
+    void dropPendingAccepts();
     void buildPopover();
     void moveSelection(int delta);
     int selectedRow() const;
     void forgetCompletionAnchor();
     void dropCompletionPopover();
     static void onRowActivated(GtkListBox* box, GtkListBoxRow* row, gpointer self);
+
+    // ---- the signature hint (LspSessionSignature.cpp)
+    std::unique_ptr<SignatureState> sig_;
+    void signatureAfterEdit(const char* inserted, int len);
+    void signatureFollowsCaret();
+    void requestSignature(const std::string& trigger);
+    void signatureArrived(const Json& result, int gen, const std::string& uri, int cursor);
+    void scheduleSignatureUpdate();
+    void closeSignature();
+    bool signatureVisible() const;
+    void dropSignaturePopover();
 
     // ---- hover and definition (LspSessionNavigation.cpp)
     std::unique_ptr<NavState> nav_;
