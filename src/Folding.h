@@ -94,6 +94,32 @@ Span spanOf(size_t firstLineContentEnd, size_t lastLineContentEnd);
 // next line starts, or the text's length).
 size_t contentEnd(const char16_t* text, size_t lineStart, size_t lineEnd);
 
+// ---- a limit on what closed folds hide (the GTK port's, linux/PARITY.md D8)
+// GTK draws every line between the first and the last line on screen,
+// hidden ones too, so the GTK port lets the folds closed in a tab hide only
+// so many lines between them. The Mac has no such limit and calls none of
+// this.
+//
+// How many lines `closed` hide together: a fold of lines [start, end]
+// hides start+1 to end, and a fold inside another hides nothing more. Any
+// order; nested and repeated ranges are fine.
+size_t hiddenLines(const std::vector<Range>& closed);
+
+struct BudgetPick {
+    std::vector<size_t> close;   // indexes into the ranges, in file order
+    size_t stayedOpen = 0;       // candidates that would have passed the limit
+    size_t hidden = 0;           // lines hidden once `close` are closed too
+};
+// Which of `candidates` (indexes into the sanitized `ranges`) to close,
+// beside the folds already `closed`, so that at most `limit` lines are
+// hidden in all: outermost first, and at each depth from the top of the
+// file down. A region whose lines would take the total past the limit
+// stays open, and the regions inside it get their turn at the next depth;
+// a region inside one closed already hides nothing more and closes too.
+BudgetPick pickWithinBudget(const std::vector<Range>& ranges,
+                            const std::vector<size_t>& candidates,
+                            const std::vector<Range>& closed, size_t limit);
+
 // The folds that are closed, following edits.
 class Collapsed {
 public:

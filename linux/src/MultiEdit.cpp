@@ -7,9 +7,13 @@ namespace MultiEdit {
 
 namespace {
 int gDepth = 0;
+GtkTextBuffer* gBuffer = nullptr;
+const std::vector<Change>* gChanges = nullptr;
 }  // namespace
 
 bool applying() { return gDepth > 0; }
+GtkTextBuffer* applyingTo() { return gBuffer; }
+const std::vector<Change>* applyingChanges() { return gChanges; }
 
 bool apply(GtkTextBuffer* buffer, const std::vector<Change>& changes, bool keepCaret) {
     if (!buffer || changes.empty()) return false;
@@ -30,6 +34,10 @@ bool apply(GtkTextBuffer* buffer, const std::vector<Change>& changes, bool keepC
     const std::size_t boundAt = (std::size_t)gtk_text_iter_get_offset(&bound);
 
     gDepth++;
+    GtkTextBuffer* outerBuffer = gBuffer;
+    const std::vector<Change>* outerChanges = gChanges;
+    gBuffer = buffer;
+    gChanges = &changes;
     gtk_text_buffer_begin_user_action(buffer);
     // No selection while the changes go in: with one, every delete offers
     // it to the primary clipboard again (update_selection_clipboards),
@@ -56,6 +64,8 @@ bool apply(GtkTextBuffer* buffer, const std::vector<Change>& changes, bool keepC
         gtk_text_buffer_select_range(buffer, &at, &other);
     }
     gtk_text_buffer_end_user_action(buffer);
+    gBuffer = outerBuffer;
+    gChanges = outerChanges;
     gDepth--;
     return true;
 }

@@ -63,7 +63,9 @@ public:
                const std::vector<Token>& tokens);
     // The highlighter re-lexed lines [r.firstLine, r.endLine) for an edit
     // (their tokens `relexed`, in order); it had `linesBefore` lines before.
-    void edited(const IncrementalHighlighter<char>& hl, const std::string& text,
+    // `text` is the source as it is after the edit (a batch's edits come
+    // one at a time, each over the text as it then is: EditBatch.h).
+    void edited(const IncrementalHighlighter<char>& hl, const TextSource<char>& text,
                 const IncrementalHighlighter<char>::Range& r, size_t linesBefore,
                 const std::vector<Token>& relexed);
     // The lines `view` has on screen that are not current, painted.

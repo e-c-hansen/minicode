@@ -3,6 +3,7 @@
 // are FindRules.h's.
 #include "FindBar.h"
 
+#include "Carets.h"
 #include "Editor.h"
 #include "EditSpans.h"
 #include "Keys.h"
@@ -326,6 +327,10 @@ void FindBar::build() {
         case GDK_KEY_Return:
         case GDK_KEY_KP_Enter:
         case GDK_KEY_ISO_Enter:
+            if ((mods & other) == GDK_ALT_MASK && !inReplace) {
+                if (!self->selectAllMatches()) gtk_widget_error_bell(self->box_);
+                return TRUE;
+            }
             if (mods & other) return FALSE;   // Ctrl+Alt+Enter is Replace All's
             if (inReplace) self->replaceOne();
             else self->findNext(!(mods & GDK_SHIFT_MASK));
@@ -426,6 +431,20 @@ long FindBar::currentIndex() const {
 
 bool FindBar::canReplace() const {
     return editor_->isSource() && gtk_text_view_get_editable(GTK_TEXT_VIEW(view_));
+}
+
+// Alt+Enter, VS Code's Select All Matches: a selection at every match (in
+// the scope), a caret each (Carets.h, at most 10,000, those around the
+// selected match), and the editor takes the keyboard. The bar stays.
+bool FindBar::selectAllMatches() {
+    Carets* carets = editor_->carets();
+    if (!carets || !canReplace() || !resultsCurrent() || found_.points.empty()) return false;
+    std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    ranges.reserve(found_.points.size());
+    for (const TextFind::Match& m : found_.points) ranges.push_back({m.start, m.length});
+    const long at = currentIndex();
+    gtk_widget_grab_focus(view_);
+    return carets->selectRanges(ranges, at < 0 ? 0 : (std::size_t)at);
 }
 
 void FindBar::setReplaceShown(bool on) {

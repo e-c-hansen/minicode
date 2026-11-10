@@ -54,9 +54,13 @@ static void testLinuxCommandTable() {
             // file tree, which takes no text (Delete, as in VS Code).
             if (!(c->flags & Fixed) && !c->language && c->when != When::Tree)
                 CHECK(!typesText(k));
+            // Ctrl+Alt+arrows switch workspaces and Ctrl+Shift+Alt+arrows
+            // move a window to another (VS Code's Linux Copy Line keys).
+            const bool arrow = k.name == "up" || k.name == "down" || k.name == "left" ||
+                               k.name == "right";
             const bool gnome = (k.mods == (Ctrl | Alt) &&
-                                (k.name == "up" || k.name == "down" || k.name == "left" ||
-                                 k.name == "right" || k.name == "t" || k.name == "delete"));
+                                (arrow || k.name == "t" || k.name == "delete")) ||
+                               (k.mods == (Ctrl | Alt | Shift) && arrow);
             if (gnome) std::printf("  %s: %s is GNOME's\n", r.id, word.c_str());
             CHECK(!gnome);
             n++;
@@ -119,13 +123,35 @@ static void testLinuxCommandDefaults() {
     CHECK(d.keysOf("minicode.toggleHiddenFiles").size() == 1 &&
           HasKey(d, "minicode.toggleHiddenFiles", "ctrl+shift+."));
     // The keys they leave are free until the commands that take them come
-    // (Select Line, Select All Occurrences, the inline agent, Go to Symbol
-    // in Workspace, the panel's Ctrl+J).
-    for (const char *k : {"ctrl+l", "ctrl+shift+l", "ctrl+i", "ctrl+t", "ctrl+j", "ctrl+alt+t"}) {
+    // (the inline agent, Go to Symbol in Workspace, the panel's Ctrl+J).
+    for (const char *k : {"ctrl+i", "ctrl+t", "ctrl+j", "ctrl+alt+t"}) {
         const bool free = d.commandsFor(K(k)).empty();
         if (!free) std::printf("  Linux: %s is %s\n", k, d.commandsFor(K(k))[0]->id);
         CHECK(free);
     }
+    // Several carets and the line commands (PARITY.md 1.9): VS Code's Linux
+    // keys, but Add Cursor's first (Shift+Alt+Up and Down, Copy Line's
+    // here, since VS Code's Linux Copy Line keys are GNOME's) and Copy
+    // Line's (Ctrl+Shift+Alt+Up and Down). Ctrl+L and Ctrl+Shift+L, which
+    // D1 freed, are Select Line's and Select All Occurrences'.
+    CHECK(d.keysOf("expandLineSelection").size() == 1 && HasKey(d, "expandLineSelection", "ctrl+l"));
+    CHECK(d.keysOf("editor.action.selectHighlights").size() == 1 &&
+          HasKey(d, "editor.action.selectHighlights", "ctrl+shift+l"));
+    CHECK(d.keysOf("editor.action.addSelectionToNextFindMatch").size() == 1 &&
+          HasKey(d, "editor.action.addSelectionToNextFindMatch", "ctrl+d"));
+    CHECK(HasKey(d, "editor.action.insertCursorAbove", "ctrl+shift+up") &&
+          HasKey(d, "editor.action.insertCursorBelow", "ctrl+shift+down"));
+    CHECK(HasKey(d, "editor.action.deleteLines", "ctrl+shift+k"));
+    CHECK(HasKey(d, "editor.action.moveLinesUpAction", "alt+up") &&
+          HasKey(d, "editor.action.moveLinesDownAction", "alt+down"));
+    CHECK(HasKey(d, "editor.action.copyLinesUpAction", "alt+shift+up") &&
+          HasKey(d, "editor.action.copyLinesDownAction", "alt+shift+down"));
+    CHECK(HasKey(d, "cursorTop", "ctrl+home") && HasKey(d, "cursorBottomSelect", "ctrl+shift+end"));
+    CHECK(std::string(menuOf(*find("editor.action.moveLinesUpAction"), Platform::Linux)) == "Edit");
+    CHECK(std::string(menuOf(*find("editor.action.moveLinesUpAction"), Platform::Mac)) == "Editor");
+    // Editor commands: in the terminal the shell keeps Ctrl+D and Ctrl+L.
+    CHECK(d.commandFor(K("ctrl+d"), When::Terminal) == nullptr);
+    CHECK(d.commandFor(K("ctrl+l"), When::Terminal) == nullptr);
     // The palette (PARITY.md 1.5): VS Code's Linux keys.
     CHECK(d.keysOf("workbench.action.showCommands").size() == 2 &&
           d.keysOf("workbench.action.showCommands")[0] == K("ctrl+shift+p") &&
@@ -421,7 +447,15 @@ static void testLinuxKeymapFile() {
         if (!(a == b)) { sameKeys = false; std::printf("  Linux file-text changes %s\n", c.id); }
     }
     CHECK(sameKeys);
-    for (const LinuxRow &r : linuxRows()) CHECK(text.find(std::string(" = ") + r.id) != std::string::npos);
+    // Every row but a view's own keys (Fixed: Move Line, Ctrl+Home), which
+    // keys.conf cannot change yet and the file leaves out, as the Mac's does.
+    for (const LinuxRow &r : linuxRows()) {
+        if (find(r.id)->flags & Fixed) {
+            CHECK(text.find(std::string(" = ") + r.id) == std::string::npos);
+            continue;
+        }
+        CHECK(text.find(std::string(" = ") + r.id) != std::string::npos);
+    }
     // Only Linux's commands, in Linux's words, with no Mac key.
     CHECK(text.find("workbench.action.showAllSymbols") == std::string::npos);
     CHECK(text.find("# ctrl+shift+p = workbench.action.showCommands") != std::string::npos);
@@ -469,9 +503,14 @@ static void testLinuxCommandsReadme() {
             CHECK(found);
         }
     // The text view's undo and indent keys and the tree's arrows, which no
-    // command has.
+    // command has; and since item 1.9 its clipboard keys, word moves and
+    // scrolling by a line, Escape back to one caret, and the find bar's
+    // Alt+Enter (Carets.h), which act on the view's own signals.
     const std::set<std::string> own = {"ctrl+z", "ctrl+shift+z", "tab", "shift+tab", "up",
-                                       "down", "left", "right", "enter"};
+                                       "down", "left", "right", "enter",
+                                       "ctrl+c", "ctrl+x", "ctrl+v", "escape", "alt+enter",
+                                       "ctrl+left", "ctrl+right", "ctrl+backspace", "ctrl+delete",
+                                       "ctrl+up", "ctrl+down"};
     for (const std::string &k : listed) {
         Key key;
         parseKey(k, &key);

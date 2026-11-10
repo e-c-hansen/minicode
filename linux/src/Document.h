@@ -35,6 +35,7 @@
 #include <string>
 #include <vector>
 
+#include "EditBatch.h"
 #include "EditorTabs.h"
 #include "Markdown.h"
 #include "Settings.h"
@@ -45,6 +46,7 @@
 #endif
 
 class BracketColors;
+class DocumentFolds;
 class Document;
 class LatexPreview;
 
@@ -241,6 +243,9 @@ public:
     void paintBracketsOnScreen();
     // editor.bracket-pair-colorization changed: on or off from now on.
     void bracketSettingChanged();
+    // Its folds (Folds.h, PARITY.md 1.10): the regions, the closed folds and
+    // their tag, made with the buffer.
+    DocumentFolds* folds() const { return folds_.get(); }
 
     // A Markdown file's tasks, done and in all, recounted 0.3 s after typing
     // stops; 0 and 0 for any other file.
@@ -334,6 +339,11 @@ private:
     void visibleLines(size_t& first, size_t& end) const;
     void cancelDeferred();
     void resyncAfterBulk();
+    // A MultiEdit of many ranges (typing at many carets): its changes taken
+    // in bytes before the first edit, given to the highlighter edit by edit
+    // at its end (EditBatch.h) instead of read back whole.
+    void startBatch();
+    void finishBatch();
     void removeHighlightTags(const GtkTextIter* a, const GtkTextIter* b);
     size_t byteOffsetOf(const GtkTextIter* it) const;
     bool linesMatch() const;
@@ -410,8 +420,17 @@ private:
     bool   inAction_ = false;
     int    actionEdits_ = 0;
     bool   bulk_ = false;
+    std::vector<EditBatch::Change> batch_;   // startBatch's, in the text before it
+    bool   batching_ = false;
+    int    batchEdits_ = 0, batchExpected_ = 0;   // buffer edits seen, and to come
+    // Lines a batch re-lexed off screen, retagged in idle time after the
+    // deferred range: byte ranges, ascending and apart, carried through
+    // every later edit.
+    std::vector<std::pair<size_t, size_t>> later_;
+    void carryLater(size_t pos, size_t oldLen, size_t newLen);
     bool   applyingTags_ = false;
     std::unique_ptr<BracketColors> brackets_;
+    std::unique_ptr<DocumentFolds> folds_;
 
     int   tasksDone_ = 0, tasksTotal_ = 0;
     guint taskTimer_ = 0;
