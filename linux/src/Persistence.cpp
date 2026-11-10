@@ -413,8 +413,9 @@ void Persistence::autoSaveNow() {
         // Moved or deleted: not written again unasked.
         if (d->goneFromDisk()) continue;
         // Changed (or made) on disk since it was read: never written over
-        // unasked. The tab asks Keep Mine or Reload when it is shown.
-        if (d->changedOnDisk()) {
+        // unasked. The tab asks Keep Mine or Reload when it is shown, and is
+        // left alone until the answer (Editor::askingAboutDisk).
+        if (d->changedOnDisk() || editor_->askingAboutDisk(d)) {
             changed.push_back(baseName(d->path()));
             continue;
         }

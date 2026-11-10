@@ -595,7 +595,9 @@ void Editor::documentEdited(Document* d, GtkTextIter* at, const char* inserted, 
 }
 
 bool Editor::documentChangedOnDisk(Document* d) {
-    return d == active_ && extCb_ && extCb_(extUser_);
+    if (d != active_ || !extCb_ || !extCb_(extUser_)) return false;
+    askingAbout_ = d->id();
+    return true;
 }
 
 void Editor::documentWillReload(Document* d) {

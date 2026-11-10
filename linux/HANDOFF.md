@@ -1342,6 +1342,16 @@ What later items build on:
   again. Three suites start second apps (`MCGuiRunChild`); a child that
   fails leaves backups nobody holds, and every later child then opens a
   window on that folder at launch (`reopenFoldersWithBackups`).
+- **Trap (November 2026): a GTK question does not stop the main loop.**
+  The Mac's alerts run modally, and its timers wait; `gtk_alert_dialog_choose`
+  returns at once, and every timer keeps firing under the question. Keep
+  Mine or Reload counts the version asked about as the file's when it is
+  shown (so it is not asked about twice), and after-delay's auto-save then
+  wrote the tab's edits over that very change before the click; Reload read
+  them back. The tab being asked about is now `Editor::askingAboutDisk`
+  until the shell calls `diskQuestionAnswered`, and auto-save skips it.
+  Anything else a timer does to a document while a question about it is
+  up needs the same care.
 
 ### 18. The Mac's layout (done, November 2026; `PARITY.md` item 1.13)
 

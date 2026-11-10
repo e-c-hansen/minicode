@@ -12,6 +12,7 @@
 
 #include <gtk/gtk.h>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -177,6 +178,13 @@ public:
     // question is up); the change is then reported again on the next check.
     using ExternalCb = bool(*)(void* user);
     void setExternalChangeCallback(ExternalCb cb, void* user) { extCb_ = cb; extUser_ = user; }
+    // The tab the callback is asking about, until the shell says the user
+    // answered. The question does not stop the main loop, and the tab already
+    // counts the version asked about as its file's, so auto-save must leave
+    // it alone meanwhile: its after-delay timer wrote the tab's edits over
+    // the very change asked about, and Reload then read them back.
+    bool askingAboutDisk(const Document* d) const { return d && askingAbout_ == d->id(); }
+    void diskQuestionAnswered() { askingAbout_ = 0; }
     void checkExternalChange();
     // The user chose Reload: the disk's text replaces the active tab's and
     // its edits, in place. False if the file can no longer be read as text.
@@ -469,6 +477,7 @@ private:
 
     ExternalCb    extCb_ = nullptr;
     void*         extUser_ = nullptr;
+    uint64_t      askingAbout_ = 0;   // a Document's id (from 1), 0 for none
     // The scroll of the tab on show around a change from the disk.
     double        reloadH_ = 0, reloadV_ = 0;
     bool          reloadKeep_ = false;
