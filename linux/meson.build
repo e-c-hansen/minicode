@@ -39,6 +39,8 @@ core_sources = [
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp',
   core_dir / 'GitModel.cpp',
+  # The tree's listings: the splices a fresh listing makes, and their pace.
+  core_dir / 'FileDetails.cpp',
   # The command registry and its Linux keys (Keys.cpp drives the menus and
   # the accelerators from them).
   core_dir / 'Commands.cpp',
