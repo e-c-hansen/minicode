@@ -4,13 +4,15 @@
 // after-delay writes once typing pauses; focus-change writes when the
 // editor loses the keyboard and when another tab is shown, and not before;
 // closing a tab writes it first instead of asking; a file changed on disk
-// since it was read is not written over, and the status bar names it; text
-// an input method is still composing waits; and with the setting off
-// nothing is written.
+// since it was read is not written over, and the status bar names it; one
+// deleted outside is not made again; text an input method is still
+// composing waits; and with the setting off nothing is written.
 #include "Harness.h"
 
 #include "Document.h"
 #include "Editor.h"
+
+#include <glib/gstdio.h>
 
 #include <string>
 
@@ -47,7 +49,7 @@ MC_GUI_SUITE(auto_save) {
     MCGuiStep("files, and auto-save after 200 ms", [] {
         MCGuiSetKeyWindow(nullptr);
         for (const char* n : {"delay.txt", "focus.txt", "tab.txt", "close.txt", "outside.txt",
-                              "other.txt", "ime.txt", "off.txt"})
+                              "other.txt", "ime.txt", "off.txt", "witness.txt", "deleted.txt"})
             MCGuiWriteFile(F(n), std::string(n) + "\n");
         ed()->closeAllTabs();
         MCGuiSetSettings("lsp.enabled = false\neditor.auto-save = after-delay\n"
@@ -145,6 +147,31 @@ MC_GUI_SUITE(auto_save) {
     MCGuiStep("Reload", [] { Answer("Reload"); });
     MCGuiWait("the disk's text, clean", 10, [] {
         return MCGuiEditorText() == "from outside\n" && !ed()->dirty();
+    });
+
+    // ---- a file deleted outside is not written again
+    MCGuiStep("auto-save off, to set up", [] { MCGuiSetSettings("lsp.enabled = false\n"); });
+    OpenForTyping("witness.txt");
+    MCGuiStep("an edit", [] { MCGuiType("w"); });
+    MCGuiWait("unsaved", 10, [] { return ed()->dirty(); });
+    OpenForTyping("deleted.txt");
+    MCGuiStep("an edit", [] { MCGuiType("d"); });
+    MCGuiWait("unsaved", 10, [] { return ed()->dirty(); });
+    MCGuiStep("its file deleted outside", [] { g_remove(F("deleted.txt").c_str()); });
+    MCGuiPause(0.4);   // a negative check: the deletion is seen and nothing is asked
+    MCGuiStep("after-delay again", [] {
+        GCHECK(!QuestionUp());
+        MCGuiSetSettings("lsp.enabled = false\neditor.auto-save = after-delay\n"
+                         "editor.auto-save-delay = 200\n");
+    });
+    MCGuiWait("the other tab is written", 10, [] {
+        return MCGuiReadFile(F("witness.txt")) == "wwitness.txt\n";
+    });
+    MCGuiStep("by the same auto-save, the deleted file is not made again", [] {
+        GCHECK(!MCGuiFileExists(F("deleted.txt")));
+        Document* d = ed()->documentFor(F("deleted.txt"));
+        GCHECK(d && d->dirty());
+        if (d) ed()->closeTab(d);   // let go, unasked
     });
 
     // ---- an input method composing

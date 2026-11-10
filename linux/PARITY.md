@@ -350,8 +350,9 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   deleted file's text; Ctrl+Q with Don't Save leaves no backup. The
   `auto_save` suite presses keys for after-delay, focus-change (Ctrl+0, a
   tab switch), Close Tab writing instead of asking, a file changed on disk
-  left alone and named, a dead key composing, and off. They fail with
-  backups never written, auto-save off, or either guard taken out. Needs the
+  left alone and named, one deleted not made again, a dead key composing,
+  and off. They fail with backups never written, auto-save off, or any of
+  its three guards taken out. Needs the
   owner: a real power loss, a crash or logout under GNOME, and focus-change
   with Wayland's focus and an IBus input method.
 - [ ] **1.4 Line numbers and the gutter (D4).** `LineIndex`, the
