@@ -2418,6 +2418,20 @@ Do not claim a GUI behaviour works when it was only compiled.
   own selection (a `GtkText` and a `GtkTextBuffer` both do), and a buffer
   with a selection offers it again after every delete, an X round trip
   each. See item 20 before selecting from code or editing many ranges.
+- A double-click sent as two clicks in one go (2026-11-10, CI's GTK job,
+  `editor_words`): the app handled both within one millisecond of the X
+  server's time, the first giving up PRIMARY (the selection emptied) and
+  the second taking it back with a word; X's late SelectionClear for the
+  first had the same time, which GDK ignores only when older, and
+  GtkTextBuffer then collapsed the word to a caret at its end. A hand's
+  clicks are tens of milliseconds apart. `MCGuiClicks` (and
+  `MCGuiDoubleClick`, `MCGuiDoubleClickDrag`) now has the server hold each
+  later click 60 ms (XTest's delay, on a connection of the harness's own),
+  so the app's main loop runs between them and a stall cannot stretch the
+  gap past the double-click time, and raises the clicked window again
+  first: there is no window manager to keep Find in Folder's window, a
+  transient, over the editor's, which a result's first click presents.
+  Never send the clicks of a double-click by hand in one step.
 - Byte offsets versus character offsets: the core speaks UTF-8 bytes and
   `GtkTextIter` speaks characters. `Utf8Offsets.h` converts, with 47 tests;
   use it for every range that crosses over.

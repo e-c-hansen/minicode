@@ -299,33 +299,145 @@ void MCGuiClickWith(const std::string& modifiers, GtkWidget* widget, double x, d
     XSync(Dpy(), False);
 }
 
-void MCGuiDoubleClick(GtkWidget* widget, double x, double y) {
-    MCGuiClick(widget, x, y);
-    MCGuiClick(widget, x, y);
-}
-
 // A drag is played over several turns of the main loop, as a hand moves. Sent
 // in one go (press, motion, release), a drag in the text view right after a
 // double-click selected nothing in 3 runs of 8 (GDK merges motion events that
 // arrive together); played this way it selected in 12 of 12. The runner waits
 // until it is over (MCGuiInputPending).
+//
+// The clicks of a double-click come a hand's moment apart, timed by the X
+// server. Sent in one go, the app handled both within one millisecond of
+// the server's time on CI's runner. The first click empties the selection,
+// so GtkTextBuffer gives up the PRIMARY selection; the second selects a word
+// and takes it back; X's word that the first gave it up (a SelectionClear)
+// came after that with the same time, which GDK ignores only when older, so
+// it took it for another program's claim and GtkTextBuffer collapsed the
+// word to a caret at its end (editor_words, 2026-11-10: every run there, 1
+// in 10 here). A hand's clicks are tens of milliseconds apart, and the app
+// has that word before the second. Timed by a timer of the app's main loop
+// instead, a stall after the first click would hold the second back past the
+// double-click time, which a hand's never is. Each later click lands on the
+// window the first was aimed at, raised again just before it: a window
+// manager keeps a transient window (Find in Folder's) over its parent, and
+// this Xvfb has none, so the first click on a result, which presents the
+// editor's window, put it over the result for the second.
 namespace {
 int gPendingGestures = 0;
+// Well inside GTK's double-click time (gtk-double-click-time, 400 ms), and a
+// quick hand's.
+constexpr unsigned long kClickGapMs = 60;
 struct Gesture {
-    std::vector<std::function<void()>> parts;
+    struct Part {
+        guint delayMs;
+        std::function<void()> run;
+    };
+    std::vector<Part> parts;
     size_t next = 0;
+    void after(guint delayMs, std::function<void()> run) {
+        parts.push_back({delayMs, std::move(run)});
+    }
+    // A moment of a moving hand later.
+    void move(std::function<void()> run) { after(20, std::move(run)); }
 };
+gboolean playGesturePart(gpointer data);
+void scheduleNext(Gesture* g) {
+    g_timeout_add(g->parts[g->next].delayMs, playGesturePart, g);
+}
 gboolean playGesturePart(gpointer data) {
     auto* g = static_cast<Gesture*>(data);
-    g->parts[g->next++]();
-    if (g->next < g->parts.size()) return G_SOURCE_CONTINUE;
-    delete g;
-    gPendingGestures--;
+    g->parts[g->next++].run();
+    if (g->next < g->parts.size()) {
+        scheduleNext(g);
+    } else {
+        delete g;
+        gPendingGestures--;
+    }
     return G_SOURCE_REMOVE;
+}
+void play(Gesture* g) {
+    if (g->parts.empty()) {
+        delete g;
+        return;
+    }
+    gPendingGestures++;
+    scheduleNext(g);
+}
+void clickAt(int rootX, int rootY) {
+    moveTo(rootX, rootY);
+    button(1, true);
+    button(1, false);
+}
+// A connection of the harness's own for presses the X server holds back:
+// XTest's delay puts the connection that asks to sleep until it is over, and
+// on GDK's (Dpy) the app's own round trips would wait with it.
+Display* LaterDpy() {
+    static Display* d = XOpenDisplay(DisplayString(Dpy()));
+    return d;
+}
+// The X window `widget` is drawn in (a popover's own, or its window's).
+Window surfaceOf(GtkWidget* widget) {
+    GtkNative* native = gtk_widget_get_native(widget);
+    GdkSurface* surface = native ? gtk_native_get_surface(native) : nullptr;
+    return surface ? gdk_x11_surface_get_xid(surface) : 0;
+}
+// `presses` presses of the first button at (rootX, rootY) on `window`, each
+// kClickGapMs of the server's time after the one before (the delay rides on
+// the pointer's move there, and the window is raised after it), let go at
+// once when `release`. Waits for none of it: the gesture's part that syncs
+// LaterDpy does.
+bool pressLater(int rootX, int rootY, Window window, int presses, bool release) {
+    Display* d = LaterDpy();
+    if (!d) {
+        MCGuiCheck(false, "a second connection to the display, for timed clicks", __FILE__, __LINE__);
+        return false;
+    }
+    for (int i = 0; i < presses; i++) {
+        XTestFakeMotionEvent(d, DefaultScreen(d), rootX, rootY, kClickGapMs);
+        if (window) XRaiseWindow(d, window);
+        XTestFakeButtonEvent(d, 1, True, CurrentTime);
+        if (release) XTestFakeButtonEvent(d, 1, False, CurrentTime);
+    }
+    XFlush(d);
+    return true;
+}
+// A press at (ax, ay), after `clicksBefore` clicks there on `window`,
+// dragged to (bx, by).
+void drag(int ax, int ay, int bx, int by, int clicksBefore, Window window) {
+    moveTo(ax, ay);
+    if (clicksBefore > 0) {
+        clickAt(ax, ay);
+        if (clicksBefore > 1 && !pressLater(ax, ay, window, clicksBefore - 1, true)) return;
+        if (!pressLater(ax, ay, window, 1, false)) return;
+    } else {
+        button(1, true);
+    }
+    auto* g = new Gesture;
+    if (clicksBefore > 0)
+        g->after((guint)(clicksBefore * kClickGapMs + 10), [] { XSync(LaterDpy(), False); });
+    const int steps = 8;
+    for (int i = 1; i <= steps; i++)
+        g->move([=] { moveTo(ax + (bx - ax) * i / steps, ay + (by - ay) * i / steps); });
+    g->move([] { button(1, false); });
+    play(g);
 }
 }  // namespace
 
 bool MCGuiInputPending() { return gPendingGestures > 0; }
+
+void MCGuiClicks(GtkWidget* widget, double x, double y, int count) {
+    int rx = 0, ry = 0;
+    if (!widget || !pointOnRoot(widget, x, y, &rx, &ry)) {
+        MCGuiCheck(false, "a widget on screen to click", __FILE__, __LINE__);
+        return;
+    }
+    clickAt(rx, ry);
+    if (count < 2 || !pressLater(rx, ry, surfaceOf(widget), count - 1, true)) return;
+    auto* g = new Gesture;
+    g->after((guint)((count - 1) * kClickGapMs + 10), [] { XSync(LaterDpy(), False); });
+    play(g);
+}
+
+void MCGuiDoubleClick(GtkWidget* widget, double x, double y) { MCGuiClicks(widget, x, y, 2); }
 
 void MCGuiDrag(GtkWidget* widget, double x0, double y0, double x1, double y1) {
     int ax = 0, ay = 0, bx = 0, by = 0;
@@ -333,15 +445,16 @@ void MCGuiDrag(GtkWidget* widget, double x0, double y0, double x1, double y1) {
         MCGuiCheck(false, "a widget on screen to drag in", __FILE__, __LINE__);
         return;
     }
-    moveTo(ax, ay);
-    button(1, true);
-    auto* g = new Gesture;
-    const int steps = 8;
-    for (int i = 1; i <= steps; i++)
-        g->parts.push_back([=] { moveTo(ax + (bx - ax) * i / steps, ay + (by - ay) * i / steps); });
-    g->parts.push_back([] { button(1, false); });
-    gPendingGestures++;
-    g_timeout_add(20, playGesturePart, g);
+    drag(ax, ay, bx, by, 0, 0);
+}
+
+void MCGuiDoubleClickDrag(GtkWidget* widget, double x0, double y0, double x1, double y1) {
+    int ax = 0, ay = 0, bx = 0, by = 0;
+    if (!widget || !pointOnRoot(widget, x0, y0, &ax, &ay) || !pointOnRoot(widget, x1, y1, &bx, &by)) {
+        MCGuiCheck(false, "a widget on screen to drag in", __FILE__, __LINE__);
+        return;
+    }
+    drag(ax, ay, bx, by, 1, surfaceOf(widget));
 }
 
 void MCGuiDragWith(const std::string& modifiers, GtkWidget* widget, double x0, double y0,
@@ -371,14 +484,13 @@ void MCGuiDragWith(const std::string& modifiers, GtkWidget* widget, double x0, d
     auto* g = new Gesture;
     const int steps = 8;
     for (int i = 1; i <= steps; i++)
-        g->parts.push_back([=] { moveTo(ax + (bx - ax) * i / steps, ay + (by - ay) * i / steps); });
-    g->parts.push_back([held, b] {
+        g->move([=] { moveTo(ax + (bx - ax) * i / steps, ay + (by - ay) * i / steps); });
+    g->move([held, b] {
         button(b, false);
         for (auto it = held.rbegin(); it != held.rend(); ++it) sendKey(codeOf(*it), false);
         XSync(Dpy(), False);
     });
-    gPendingGestures++;
-    g_timeout_add(20, playGesturePart, g);
+    play(g);
 }
 
 void MCGuiDragThrough(GtkWidget* widget, const std::vector<std::pair<double, double>>& points) {
@@ -403,11 +515,10 @@ void MCGuiDragThrough(GtkWidget* widget, const std::vector<std::pair<double, dou
         const auto [ax, ay] = root[k - 1];
         const auto [bx, by] = root[k];
         for (int i = 1; i <= steps; i++)
-            g->parts.push_back([=] { moveTo(ax + (bx - ax) * i / steps, ay + (by - ay) * i / steps); });
+            g->move([=] { moveTo(ax + (bx - ax) * i / steps, ay + (by - ay) * i / steps); });
     }
-    g->parts.push_back([] { button(1, false); });
-    gPendingGestures++;
-    g_timeout_add(20, playGesturePart, g);
+    g->move([] { button(1, false); });
+    play(g);
 }
 
 void MCGuiScroll(GtkWidget* widget, int clicks) {
