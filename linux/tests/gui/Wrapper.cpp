@@ -285,9 +285,13 @@ void setWorld(const std::string& root, const std::string& shortRoot) {
     setenv("GSK_RENDERER", "cairo", 1);
     // The color chooser and the like save to GSettings: not the user's dconf.
     setenv("GSETTINGS_BACKEND", "memory", 1);
-    // The same text and the same input method on every machine.
+    // The same text and the same input method on every machine: GTK's own,
+    // which composes dead keys and Compose sequences, and not IBus, which
+    // is installed on some machines and not others (and has no daemon on
+    // the private bus).
     setenv("LANG", "C.UTF-8", 1);
     setenv("LC_ALL", "C.UTF-8", 1);
+    setenv("GTK_IM_MODULE", "gtk-im-context-simple", 1);
 }
 
 bool makeWorld(const std::string& root, const std::string& shortRoot) {

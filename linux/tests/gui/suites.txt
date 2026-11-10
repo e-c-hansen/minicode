@@ -10,3 +10,9 @@ PreviewTabsSuite.cpp
 TabViewersSuite.cpp
 PaletteSuite.cpp
 SymbolsSuite.cpp
+SessionsSuite.cpp
+BackupsSuite.cpp
+AutoSaveSuite.cpp
+GutterSuite.cpp
+RulerSuite.cpp
+GutterTypingSuite.cpp

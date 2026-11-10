@@ -229,6 +229,11 @@ state are JSON (`Json`) under `$XDG_STATE_HOME/minicode` (default
 `~/.local/state/minicode`); backups under `$XDG_DATA_HOME/minicode/Backups`.
 `MINICODE_BACKUP_DIR` overrides as on the Mac, and every one of these moves
 with the harness's scratch home.
+Items 1.2 and 1.3 made it `sessions.json` (the core's `TabSessions`, one
+object keyed by the folder's resolved path), and a backup's owner start is
+the process's start in seconds since boot from `/proc`, not wall-clock time
+as on the Mac, so a clock set forward or back never orphans a running
+window's backups.
 
 **D12. The registry builds the menu bar, and the palette reads the
 registry.** Today `main.cpp` writes its `GMenu` and accelerators by hand. A
@@ -332,11 +337,51 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   preview tab. A run by hand against clangd saw the squiggles follow the tab
   on show. Needs the owner: the strip's look, and Alt+digits and
   Ctrl+Alt+Shift+T under GNOME on Wayland.
-- [ ] **1.2 Sessions (D11).** A folder reopens its tabs. Mac: `MCTabSessions`.
-- [ ] **1.3 Backups, hot exit, and auto-save (D11).** `Backups` over its POSIX
+- [x] **1.2 Sessions (D11).** A folder reopens its tabs. Mac: `MCTabSessions`.
+  *Verified in Xvfb, 2026-11-09:* `tab-sessions:*` hold the file's format,
+  the 50 folders and the merging of windows on one folder; in the `sessions`
+  suite a second app opens a folder's files (a Markdown page, a named pipe,
+  a 17 MB file, one deleted afterwards, the preview tab), moves the caret by
+  keys and closes with Ctrl+Shift+W, and a third gets them back in order
+  without the deleted one, the preview tab as one, the caret and scroll as
+  they were, and only the tab on show read (never the pipe or the large
+  file at launch); two windows on one folder share it, and one that closes
+  drops out. It fails with the restore taken out of `newWindow`. Not done:
+  the browser's page, which the Mac's session keeps too (after 1.13).
+  Needs the owner: a logout under GNOME.
+- [x] **1.3 Backups, hot exit, and auto-save (D11).** `Backups` over its POSIX
   `Fs`. Mac: `BackupStore`, `+Persistence`. Check with a real SIGKILL.
-- [ ] **1.4 Line numbers and the gutter (D4).** `LineIndex`, the
+  *Verified in Xvfb, 2026-11-09:* in the `backups` suite a second app types
+  into three tabs and is killed with a real `kill -9`; a third, started on
+  another folder, opens a window on the first by itself and has every
+  buffer back unsaved over the disk's text, nothing to undo, the note in the
+  status bar, the question about the file changed meanwhile, and the
+  deleted file's text; Ctrl+Q with Don't Save leaves no backup. The
+  `auto_save` suite presses keys for after-delay, focus-change (Ctrl+0, a
+  tab switch), Close Tab writing instead of asking, a file changed on disk
+  left alone and named, one deleted not made again, a dead key composing,
+  and off. They fail with backups never written, auto-save off, or any of
+  its three guards taken out. Needs the
+  owner: a real power loss, a crash or logout under GNOME, and focus-change
+  with Wayland's focus and an IBus input method.
+- [x] **1.4 Line numbers and the gutter (D4).** `LineIndex`, the
   current-line color, click and drag to select lines.
+  *Verified in Xvfb, 2026-11-09:* `lineindex:utf8` holds the code-point
+  index to a full one under 20,000 random edits; the `gutter`, `ruler`, and
+  `gutter_typing` suites hold the numbers drawn to an index made afresh and
+  to GTK's line positions after typing that adds and removes lines and a
+  paste with a lone CR, U+2029, and U+2028, and check the active color
+  following the caret, relative and off, the colors and `editor.opacity` as
+  pixels, real clicks, drags up and down, and Shift+click selecting whole
+  lines, no gutter in a Markdown preview, each tab's numbers and width, the
+  dots from the squiggle tags, the change and fold lanes' APIs, the rulers
+  at their columns' x as pixels, and typing in 100,000 lines (0.05 ms of
+  gutter CPU a key; 8 to 9 ms a key for the main thread, with the gutter or
+  without). They fail without the line-start rule, without the ruler pass,
+  and with the index counted again per key. Needs the owner: how it looks
+  (font, alignment, colors) and HiDPI. The window's divider takes presses
+  in the gutter's first 14 px (`HANDOFF.md` item 16), for 1.13 to narrow
+  before 2.10's change bars take clicks.
 - [x] **1.5 The palette (D12).** Commands, Quick Open, Go to Line, and
   file symbols without a server. `CommandPalette`, `SymbolOutline`. Mac:
   `PalettePanel`.

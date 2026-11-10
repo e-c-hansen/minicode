@@ -596,9 +596,10 @@ MC_GUI_SUITE(tabs) {
         gWindows = MCGuiAppWindows().size();
         MCGuiKey("ctrl+shift+n");
     });
-    MCGuiWait("it is up, with no tab", 10, [] {
-        return MCGuiAppWindows().size() == gWindows + 1 && ed()->tabCount() == 0;
-    });
+    MCGuiWait("it is up", 10, [] { return MCGuiAppWindows().size() == gWindows + 1; });
+    // It has the folder's tabs (its session, as on the Mac); they go first.
+    MCGuiStep("with no tab", [] { ed()->closeAllTabs(); });
+    MCGuiWait("none left", 10, [] { return ed()->tabCount() == 0; });
     MCGuiStep("two files in it, each typed in", [] {
         MCGuiOpenFileKept(F("tab-a.txt"));
         MCGuiOpenFileKept(F("tab-c.txt"));

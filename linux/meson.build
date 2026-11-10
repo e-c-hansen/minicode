@@ -47,6 +47,14 @@ core_sources = [
   core_dir / 'CommandsLinux.cpp',
   # The tabs' rules (Tabs.cpp follows them, as the Mac's tabs do).
   core_dir / 'EditorTabs.cpp',
+  # Unsaved buffers kept on disk, and the tabs each folder had open
+  # (BackupStore.cpp and Persistence.cpp keep them).
+  core_dir / 'Backups.cpp',
+  core_dir / 'TabSessions.cpp',
+  # The gutter's line index, and the change bars it moves with the lines.
+  core_dir / 'LineIndex.cpp',
+  core_dir / 'QuickDiff.cpp',
+  core_dir / 'LineDiff.cpp',
   # The palette's matching, modes and Quick Open's walk, and the outline
   # Go to Symbol lists without a server (PalettePanel.cpp shows them).
   core_dir / 'CommandPalette.cpp',
@@ -65,6 +73,11 @@ gui_sources = [
   'src/Document.cpp',
   'src/Tabs.cpp',
   'src/TabStrip.cpp',
+  # The view itself (CodeView.cpp: its drawing passes and the ruler), its
+  # line-number gutter (Gutter.cpp) and each buffer's lines (BufferLines.cpp).
+  'src/CodeView.cpp',
+  'src/Gutter.cpp',
+  'src/BufferLines.cpp',
   'src/Markdown.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.
@@ -91,6 +104,10 @@ gui_sources = [
   'src/WebImages.cpp',
   # The menu bar, the accelerators and the tree's keys, from the registry.
   'src/Keys.cpp',
+  # Between runs: each folder's tabs, the backups of unsaved tabs, and
+  # auto-save (the Mac's BackupStore and EditorController+Persistence).
+  'src/BackupStore.cpp',
+  'src/Persistence.cpp',
   # The palette over the window: commands, Quick Open, Go to Line, symbols.
   'src/PalettePanel.cpp',
 ]
