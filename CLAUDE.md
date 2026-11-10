@@ -758,7 +758,11 @@ container (PanelHost, laid out by hand in layoutContainer)
   view that leaves lines above the pane unlaid has them laid out as it
   ends (`NSTextDidChangeNotification`) with the pane's scroll kept, so the
   text moves as contiguous layout moves it; a new width or a jump far down
-  goes to the pieces. **Traps**: turning `allowsNonContiguousLayout` off
+  goes to the pieces. A turn's chunks are sized from the pace of text not
+  laid out at all, never from a stretch that was cheap because most of it
+  was laid out already: sizing from the last piece's cost grew pieces over
+  such a stretch to 278,000 characters and one turn to 149 ms
+  (2026-11-09). **Traps**: turning `allowsNonContiguousLayout` off
   throws all layout away (0.7 s to lay out to the middle again), so the
   flag stays on until the tab leaves (`displaySourceEditable` and
   `makeEditorReadOnly` set it per tab). With it on, NSTextView scrolls to

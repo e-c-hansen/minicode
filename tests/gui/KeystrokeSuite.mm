@@ -566,13 +566,23 @@ MC_GUI_SUITE(keystroke) {
                                                              actualGlyphRange:NULL]) - 1;
     };
     MCGuiWait(@"the lines above the pane are laid out", 120, allLaidOut);
+    // Turns of about 8 ms (LayoutCatchUp.mm). The bounds leave room for a
+    // runner's noise: the 95th percentile at two and a half times that,
+    // and the longest turn, the noisiest number there is, at 100 ms; turns
+    // sized wrongly cost hundreds (149 ms after the stretch below).
+    void (^checkTurns)(NSString *) = ^(NSString *what) {
+        const double p95 = [catchUp turnMillisecondsAtFraction:0.95];
+        MCGuiNote(@"%@: caught up in %lu turns, %.0f ms of CPU, the 95th percentile %.1f ms, "
+                  @"the longest %.1f ms", what, (unsigned long)catchUp.pieces,
+                  catchUp.totalMilliseconds, p95, catchUp.longestPieceMilliseconds);
+        GCHECK(catchUp.pieces > 10);
+        GCHECK_TIME(p95, 20, ([NSString stringWithFormat:@"the 95th percentile turn %@", what]));
+        GCHECK_TIME(catchUp.longestPieceMilliseconds, 100,
+                    ([NSString stringWithFormat:@"the longest turn %@", what]));
+    };
     MCGuiStep(@"laid out: the rects are exact and the place kept", ^{
-        MCGuiNote(@"caught up in %lu pieces, %.0f ms of CPU, the longest %.1f ms",
-                  (unsigned long)catchUp.pieces, catchUp.totalMilliseconds,
-                  catchUp.longestPieceMilliseconds);
-        GCHECK(catchUp.watching && catchUp.pieces > 10);
-        // Each piece is sized to about 5 ms from what the last one cost.
-        GCHECK_TIME(catchUp.longestPieceMilliseconds, 50, @"the longest piece of the catch-up");
+        GCHECK(catchUp.watching);
+        checkTurns(@"of the catch-up");
         const NSRect now = [c textRectForCharacter:at];
         MCGuiNote(@"the caret's rect: %@ (laid out from the top before: %@)",
                   NSStringFromRect(now), NSStringFromRect(exactAt));
@@ -627,6 +637,32 @@ MC_GUI_SUITE(keystroke) {
     });
     MCGuiWait(@"laid out again after going back", 30, allLaidOut);
     MCGuiStep(@"and exactly where it was", ^{
+        GCHECK(NSEqualRects([c textRectForCharacter:at], exactAt));
+        CGFloat offset = 0;
+        GCHECK(topOfPane(&offset) == topBefore);
+        GCHECK(fabs(offset - topOffsetBefore) < 1);
+    });
+    // Text above the pane mostly laid out already, with small gaps (screens
+    // passed while dragging the scroller up, say), then text not laid out
+    // at all. Each piece over the gaps was cheap for its size, which
+    // doubled the next piece every turn, so the first piece past them laid
+    // out 278,000 characters of fresh text in one turn (149 ms of CPU).
+    MCGuiStep(@"the tab shown again, with the text above the place mostly laid out", ^{
+        GCHECK([c showFile:other]);
+        GCHECK([c showFile:path]);
+        catchUp = [c valueForKey:@"layoutCatchUp"];
+        GCHECK(catchUp.watching && catchUp.running && tv.layoutManager.allowsNonContiguousLayout);
+        NSLayoutManager *lm = tv.layoutManager;
+        const NSUInteger from = at > 700000 ? at - 700000 : 0;
+        for (NSUInteger x = at - 30000; x > from + 4000; x -= 4000)
+            [lm ensureLayoutForCharacterRange:NSMakeRange(x - 3800, 3800)];
+        NSUInteger first = 0, glyph = 0;
+        [lm getFirstUnlaidCharacterIndex:&first glyphIndex:&glyph];
+        GCHECK(first < from);   // fresh text above the stretch
+    });
+    MCGuiWait(@"the lines above the pane are laid out past the stretch", 120, allLaidOut);
+    MCGuiStep(@"and no turn laid out the fresh text above it in one go", ^{
+        checkTurns(@"past a stretch mostly laid out");
         GCHECK(NSEqualRects([c textRectForCharacter:at], exactAt));
         CGFloat offset = 0;
         GCHECK(topOfPane(&offset) == topBefore);

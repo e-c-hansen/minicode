@@ -3,8 +3,8 @@
 // contiguous, so its rects are exact, and showing a 100,000-line tab again
 // at its middle laid out 50,000 lines on the main thread before it could
 // draw (1.5 to 3.9 s). Instead the place is laid out alone, with
-// non-contiguous layout, and this object lays out the lines above it a
-// piece of about 5 ms at a time on the main thread's idle turns, upward
+// non-contiguous layout, and this object lays out the lines above it about
+// 8 ms at a time on the main thread's idle turns, upward
 // from the pane, keeping what is on screen where it is while the estimate
 // above it becomes the real height. Once nothing between the top of the
 // text and the pane is unlaid, every rect from the top through the pane is
@@ -55,9 +55,11 @@ extern NSNotificationName const MCTextViewWillReplaceManyRangesNotification;
 @property (nonatomic, readonly) BOOL running;
 // Started and not cancelled: keeping the text above the pane laid out.
 @property (nonatomic, readonly) BOOL watching;
-// Main-thread CPU since `start`: the longest turn, all of them, how many.
+// Main-thread CPU since `start`: the longest turn, all of them, how many,
+// and the turn at a fraction of them in order (0.95: the 95th percentile).
 @property (nonatomic, readonly) double longestPieceMilliseconds;
 @property (nonatomic, readonly) double totalMilliseconds;
 @property (nonatomic, readonly) NSUInteger pieces;
+- (double)turnMillisecondsAtFraction:(double)fraction;
 
 @end

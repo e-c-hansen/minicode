@@ -1,6 +1,8 @@
 // LayoutCatchUp.mm — see LayoutCatchUp.h.
 #import "LayoutCatchUp.h"
+#include <algorithm>
 #include <time.h>
+#include <vector>
 
 namespace {
 
@@ -9,7 +11,14 @@ double ThreadCpuMs() { return (double)clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME
 // About this much of the main thread a run-loop turn, so typing, scrolling
 // and clicks during the catch-up wait at most that long.
 const double kPieceBudgetMs = 8;
-const NSUInteger kFirstPiece = 4 * 1024, kMinPiece = 1024, kMaxPiece = 1 << 20;
+// A turn lays out chunks of about half the budget, each as large as text
+// not laid out at all costs in that time, until it has spent three
+// quarters of the budget: one more chunk of fresh text then ends it near
+// the budget, and stretches already laid out go by many to a turn.
+const double kChunkMs = kPieceBudgetMs / 2, kTurnMs = kPieceBudgetMs * 0.75;
+const NSUInteger kMinPiece = 1024, kMaxPiece = 1 << 20;
+// Before anything is measured: a 4 KB chunk.
+const double kFirstCharsPerMs = 4096 / kChunkMs;
 // After an edit or a new width, how long to wait before laying out again,
 // so typing is not followed by a piece per keystroke.
 const NSTimeInterval kAfterChange = 0.3;
@@ -23,7 +32,10 @@ NSNotificationName const MCTextViewWillReplaceManyRangesNotification =
     __weak NSTextView *_tv;
     __weak NSScrollView *_scroll;
     __weak NSTextStorage *_observedStorage;
-    NSUInteger _piece;
+    // How many characters of text not laid out at all a millisecond lays
+    // out (see -measure:characters:).
+    double _charsPerMs;
+    std::vector<double> _turns;   // each turn's CPU, for the checks
     NSUInteger _below;   // where the next piece ends: laid out from here down to the pane
     // Nothing was unlaid above the pane when last looked, and the width is
     // the same since: a gap there now is the latest edit's.
@@ -53,7 +65,8 @@ NSNotificationName const MCTextViewWillReplaceManyRangesNotification =
     NSTextView *tv = _tv;
     if (!tv.layoutManager.allowsNonContiguousLayout) return;
     _watching = YES;
-    _piece = kFirstPiece;
+    _charsPerMs = kFirstCharsPerMs;
+    _turns.clear();
     _below = NSNotFound;
     _settled = NO;
     _width = tv.textContainer.size.width;
@@ -159,21 +172,23 @@ NSNotificationName const MCTextViewWillReplaceManyRangesNotification =
     if (first >= top) return;
     const double c0 = ThreadCpuMs();
     const NSPoint place = clip.bounds.origin;
-    NSUInteger piece = kFirstPiece;
-    while (first < top && ThreadCpuMs() - c0 < 30) {
-        [lm ensureLayoutForCharacterRange:NSMakeRange(first, MIN(piece, top - first))];
+    // Glyphs that only moved cost little, so the passes double; none is
+    // larger than fresh text could lay out in the time left.
+    NSUInteger piece = [self chunkFor:kChunkMs];
+    for (double spent = 0; first < top && spent < 30; spent = ThreadCpuMs() - c0) {
+        const NSUInteger n = MIN(MIN(piece, [self chunkFor:30 - spent]), top - first);
+        const double p0 = ThreadCpuMs();
+        [lm ensureLayoutForCharacterRange:NSMakeRange(first, n)];
+        [self measure:ThreadCpuMs() - p0 characters:n];
         [lm getFirstUnlaidCharacterIndex:&first glyphIndex:&firstGlyph];
-        piece = MIN(piece * 2, (NSUInteger)kMaxPiece);
+        piece = MIN(piece * 2, kMaxPiece);
     }
     if (first >= top && !NSEqualPoints(clip.bounds.origin, place)) {
         [clip scrollToPoint:place];
         [_scroll reflectScrolledClipView:clip];
     }
     if (first < top) _settled = NO;   // the rest is the pieces' (storageEdited asked for them)
-    const double spent = ThreadCpuMs() - c0;
-    _pieces++;
-    _totalMilliseconds += spent;
-    _longestPieceMilliseconds = MAX(_longestPieceMilliseconds, spent);
+    [self noteTurn:ThreadCpuMs() - c0];
 }
 
 // A new width (a resize, word wrap, the zoom) lays out again; so may folds.
@@ -223,10 +238,47 @@ NSNotificationName const MCTextViewWillReplaceManyRangesNotification =
     [scroll reflectScrolledClipView:clip];
 }
 
+// The pace of fresh text, from a stretch just laid out. A stretch partly
+// laid out already costs less for its size, and sizing the next from it
+// grew the pieces over a run of such stretches (screens passed while
+// dragging the scroller, say) to a megabyte, which the first fresh text
+// after them laid out in one turn: 149 ms in the keystroke suite. So a
+// stretch counts only when it cost at least half of what fresh text of its
+// size costs at the pace known (at a quarter, a stretch partly laid out
+// made the pace 2.8 times the real one and a chunk 12 ms), and the pace
+// moves at most 1.5 times up and half down a stretch: up, so a chunk of
+// fresh text costs at most the budget; down, so one stretch slowed by
+// the machine leaves the pace within reach of the next one's count.
+- (void)measure:(double)ms characters:(NSUInteger)n {
+    if (ms < 0.5 || n == 0) return;   // too short to time
+    const double expected = n / _charsPerMs;
+    if (ms < expected / 2) return;
+    _charsPerMs = std::clamp(n / ms, _charsPerMs / 2, _charsPerMs * 1.5);
+}
+
+- (NSUInteger)chunkFor:(double)ms {
+    return (NSUInteger)std::clamp(_charsPerMs * ms, (double)kMinPiece, (double)kMaxPiece);
+}
+
+- (void)noteTurn:(double)ms {
+    _pieces++;
+    _totalMilliseconds += ms;
+    _longestPieceMilliseconds = MAX(_longestPieceMilliseconds, ms);
+    _turns.push_back(ms);
+}
+
+- (double)turnMillisecondsAtFraction:(double)fraction {
+    if (_turns.empty()) return 0;
+    std::vector<double> t = _turns;
+    const size_t k = std::min(t.size() - 1, (size_t)(fraction * (t.size() - 1) + 0.5));
+    std::nth_element(t.begin(), t.begin() + (long)k, t.end());
+    return t[k];
+}
+
 // One piece: the stretch just above what is laid out down to the pane,
 // upward from the pane, until nothing above the pane's top is unlaid (the
 // lines nearest the pane are exact first, and nothing below it is waited
-// for). Pieces of about 8 ms, not less: after each hole it fills TextKit
+// for). Turns of about 8 ms, not less: after each hole it fills TextKit
 // looks up the attributes at the pane and the caret (the visible range,
 // the blink rect), and with the highlighter's hundreds of thousands of
 // color runs a lookup far from the last one walks the runs between, a
@@ -258,23 +310,15 @@ NSNotificationName const MCTextViewWillReplaceManyRangesNotification =
     const double c0 = ThreadCpuMs();
     NSString *text = tv.textStorage.string;
     if (_below == NSNotFound || _below > at) _below = at;
-    // Stretches already laid out cost next to nothing: several go in one
-    // turn, until a piece does real work.
-    double spent = 0;
-    for (int tries = 0; tries < 64 && _below > first; tries++) {
-        NSUInteger from = _below > _piece ? _below - _piece : 0;
+    // Chunks until three quarters of the budget is spent (see kChunkMs).
+    for (int chunks = 0; chunks < 1024 && _below > first && ThreadCpuMs() - c0 < kTurnMs; chunks++) {
+        const NSUInteger chunk = [self chunkFor:kChunkMs];
+        NSUInteger from = _below > chunk ? _below - chunk : 0;
         from = MAX(first, [text lineRangeForRange:NSMakeRange(from, 0)].location);
         const double p0 = ThreadCpuMs();
         [lm ensureLayoutForCharacterRange:NSMakeRange(from, _below - from)];
+        [self measure:ThreadCpuMs() - p0 characters:_below - from];
         _below = from;
-        const double piece = ThreadCpuMs() - p0;
-        spent += piece;
-        if (piece > 0.5) {
-            // The next piece sized to the budget from what this one cost.
-            _piece = (NSUInteger)MIN((double)kMaxPiece,
-                                     MAX((double)kMinPiece, _piece * MIN(2.0, kPieceBudgetMs / piece)));
-            break;
-        }
     }
     // What is on screen stays put while the estimate above it is replaced
     // by the real height. NSTextView does that itself with non-contiguous
@@ -283,10 +327,7 @@ NSNotificationName const MCTextViewWillReplaceManyRangesNotification =
     // The top hole is closed; another may be left between it and the pane
     // (a jump far down and back): from the pane upward again.
     if (_below <= first) _below = NSNotFound;
-    spent = ThreadCpuMs() - c0;
-    _pieces++;
-    _totalMilliseconds += spent;
-    _longestPieceMilliseconds = MAX(_longestPieceMilliseconds, spent);
+    [self noteTurn:ThreadCpuMs() - c0];
     [self performSelector:@selector(step) withObject:nil afterDelay:0
                   inModes:@[NSDefaultRunLoopMode]];
 }
