@@ -57,6 +57,8 @@ FileTree::FileTree(const std::string& rootDir, bool showHidden)
 
 FileTree::~FileTree() {
     *activity_ = nullptr;   // folder watches still running call nothing now
+    holdRow(&pressRow_, nullptr);
+    holdRow(&lastReleaseRow_, nullptr);
     if (revealIdle_) g_source_remove(revealIdle_);
     revealIdle_ = 0;
     endDrop();
@@ -576,9 +578,9 @@ void FileTree::onBind(GtkSignalListItemFactory* /*f*/, GObject* obj,
 
 // ---------------------------------------------------------------- activation
 
-void FileTree::actOnRow(guint pos, EditorTabs::OpenFrom from) {
-    if (pos == GTK_INVALID_LIST_POSITION) return;
-    GtkTreeListRow* row = gtk_tree_list_model_get_row(treeModel_, pos);   // transfer full
+// `row` is held by the caller. A row whose entry went meanwhile has no item
+// any more, and nothing happens.
+void FileTree::actOnRow(GtkTreeListRow* row, EditorTabs::OpenFrom from) {
     if (!row) return;
     GFileInfo* info = G_FILE_INFO(gtk_tree_list_row_get_item(row));      // transfer full
     if (infoIsDir(info)) {
@@ -593,7 +595,12 @@ void FileTree::actOnRow(guint pos, EditorTabs::OpenFrom from) {
         }
     }
     if (info) g_object_unref(info);
-    g_object_unref(row);
+}
+
+void FileTree::holdRow(GtkTreeListRow** slot, GtkTreeListRow* row) {
+    if (row) g_object_ref(row);
+    if (*slot) g_object_unref(*slot);
+    *slot = row;
 }
 
 void FileTree::selectRow(guint pos) {
@@ -602,6 +609,20 @@ void FileTree::selectRow(guint pos) {
 }
 
 guint FileTree::rowAt(double x, double y, bool* onArrow) const {
+    GtkListItem* li = listItemAt(x, y, onArrow);
+    return li ? gtk_list_item_get_position(li) : GTK_INVALID_LIST_POSITION;
+}
+
+GtkTreeListRow* FileTree::rowObjectAt(double x, double y, bool* onArrow) const {
+    GtkListItem* li = listItemAt(x, y, onArrow);
+    gpointer item = li ? gtk_list_item_get_item(li) : nullptr;   // transfer none
+    return GTK_IS_TREE_LIST_ROW(item) ? GTK_TREE_LIST_ROW(item) : nullptr;
+}
+
+// The list item whose row widget is drawn under the point: GTK picks by the
+// widgets' allocations, which are what is on screen, and a row widget stays
+// bound to its row while a listing moves the rows.
+GtkListItem* FileTree::listItemAt(double x, double y, bool* onArrow) const {
     if (onArrow) *onArrow = false;
     for (GtkWidget* w = gtk_widget_pick(listView_, x, y, GTK_PICK_DEFAULT);
          w && w != listView_; w = gtk_widget_get_parent(w)) {
@@ -612,40 +633,55 @@ guint FileTree::rowAt(double x, double y, bool* onArrow) const {
             *onArrow = true;
         if (auto* li = static_cast<GtkListItem*>(
                 g_object_get_data(G_OBJECT(w), "minicode-list-item")))
-            return gtk_list_item_get_position(li);
+            return li;
     }
-    return GTK_INVALID_LIST_POSITION;
+    return nullptr;
 }
 
 void FileTree::onPrimaryPressed(GtkGestureClick*, int, double x, double y, gpointer selfp) {
     FileTree* self = static_cast<FileTree*>(selfp);
     bool onArrow = false;
-    const guint pos = self->rowAt(x, y, &onArrow);
+    GtkTreeListRow* row = self->rowObjectAt(x, y, &onArrow);
     // A press on the arrow is the expander's; this click leaves it alone.
-    self->pressRow_ = onArrow ? GTK_INVALID_LIST_POSITION : pos;
+    holdRow(&self->pressRow_, onArrow ? nullptr : row);
+    self->pressX_ = x;
+    self->pressY_ = y;
 }
 
 // The first click opens a file in the preview tab, or opens or closes a
 // folder; the second click of a double-click on the same row keeps the file
 // in a tab of its own and leaves a folder alone; Ctrl makes any click a kept
-// open (EditorTabs::treeClick, the Mac's rules). A press on one row released
-// over another (a drag) does nothing.
+// open (EditorTabs::treeClick, the Mac's rules). A press released further
+// away than GTK's drag threshold (a drag) does nothing.
+//
+// The click acts on the row it was pressed on, kept as its row object, not
+// on whatever row is under the pointer at the release: a folder's listing
+// can put rows in above it while the button is down, and the row under a
+// pointer held still is then another one. Rows were once kept by position,
+// and such a click opened the file above the one pressed, or nothing.
 void FileTree::onPrimaryReleased(GtkGestureClick* g, int n, double x, double y,
                                  gpointer selfp) {
     FileTree* self = static_cast<FileTree*>(selfp);
-    const guint pressed = self->pressRow_;
-    self->pressRow_ = GTK_INVALID_LIST_POSITION;
-    if (n < 1 || n > 2 || pressed == GTK_INVALID_LIST_POSITION) return;
+    GtkTreeListRow* pressed = self->pressRow_;   // our reference now
+    self->pressRow_ = nullptr;
+    int threshold = 8;
+    g_object_get(gtk_widget_get_settings(self->listView_), "gtk-dnd-drag-threshold", &threshold,
+                 nullptr);
     bool onArrow = false;
-    if (self->rowAt(x, y, &onArrow) != pressed || onArrow) return;
-    const GdkModifierType mods =
-        gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(g));
-    const EditorTabs::OpenFrom from = EditorTabs::treeClick(
-        n, pressed == self->lastReleaseRow_, (mods & GDK_CONTROL_MASK) != 0);
-    self->lastReleaseRow_ = pressed;
-    if (n == 2 && from != EditorTabs::OpenFrom::TreeDoubleClick) return;
-    self->pendingReveal_.clear();   // the user picked a row; an older reveal gives way
-    self->actOnRow(pressed, from);
+    self->rowObjectAt(x, y, &onArrow);
+    const bool moved = std::hypot(x - self->pressX_, y - self->pressY_) > threshold;
+    if (n >= 1 && n <= 2 && pressed && !moved && !onArrow) {
+        const GdkModifierType mods =
+            gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(g));
+        const EditorTabs::OpenFrom from = EditorTabs::treeClick(
+            n, pressed == self->lastReleaseRow_, (mods & GDK_CONTROL_MASK) != 0);
+        holdRow(&self->lastReleaseRow_, pressed);
+        if (n != 2 || from == EditorTabs::OpenFrom::TreeDoubleClick) {
+            self->pendingReveal_.clear();   // the user picked a row; an older reveal gives way
+            self->actOnRow(pressed, from);
+        }
+    }
+    if (pressed) g_object_unref(pressed);
 }
 
 // Enter opens the selected row, as on the Mac; Up and Down only move the
@@ -669,7 +705,10 @@ gboolean FileTree::onKey(GtkEventControllerKey*, guint keyval, guint, GdkModifie
     if (pos == GTK_INVALID_LIST_POSITION) return FALSE;
     self->pendingReveal_.clear();
     if (enter) {
-        self->actOnRow(pos, EditorTabs::OpenFrom::TreeReturn);
+        if (GtkTreeListRow* row = gtk_tree_list_model_get_row(self->treeModel_, pos)) {
+            self->actOnRow(row, EditorTabs::OpenFrom::TreeReturn);
+            g_object_unref(row);
+        }
         return TRUE;
     }
     GtkTreeListRow* row = gtk_tree_list_model_get_row(self->treeModel_, pos);
@@ -702,6 +741,8 @@ static std::string pathOfRow(GtkTreeListRow* row);
 
 void FileTree::setRoot(const std::string& rootDir) {
     root_ = rootDir;
+    holdRow(&pressRow_, nullptr);
+    holdRow(&lastReleaseRow_, nullptr);
     pendingReveal_.clear();
     pendingExpand_.clear();
     endDrop();

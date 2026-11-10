@@ -133,6 +133,10 @@ GtkWindow* gKeyWindow = nullptr;
 // A point in `widget` on the root window: through the widget's window, its
 // surface's offset (the window's shadow), and X's own translation.
 bool pointOnRoot(GtkWidget* widget, double x, double y, int* rootX, int* rootY) {
+    // A widget not laid out yet has no place (its points map to the window's
+    // corner), and one clipped or covered gets clicks meant for something
+    // else (MCGuiOnScreen).
+    if (!MCGuiOnScreen(widget)) return false;
     GtkNative* native = gtk_widget_get_native(widget);
     if (!native) return false;
     if (x < 0) x = gtk_widget_get_width(widget) / 2.0;
@@ -260,6 +264,13 @@ void MCGuiClick(GtkWidget* widget, double x, double y, int b) {
     button(b, true);
     button(b, false);
 }
+
+void MCGuiPress(GtkWidget* widget, double x, double y, int b) {
+    MCGuiMoveTo(widget, x, y);
+    button(b, true);
+}
+
+void MCGuiRelease(int b) { button(b, false); }
 
 void MCGuiClickWith(const std::string& modifiers, GtkWidget* widget, double x, double y, int b) {
     MCGuiFocusKeyWindow();
