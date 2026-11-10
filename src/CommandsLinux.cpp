@@ -15,10 +15,10 @@
 //   - Nothing GNOME takes: Super, Ctrl+Alt+arrows, Ctrl+Alt+T,
 //     Ctrl+Alt+Delete.
 // A command the port does not have yet has no row, so its key is free until
-// the item that brings it (Ctrl+Shift+P for the palette, Ctrl+L for Select
-// Line, Ctrl+Shift+L for Select All Occurrences, Ctrl+H for Replace, Ctrl+I
-// for the inline agent, Ctrl+G for Go to Line). The port's table of
-// GActions (linux/src/Keys.cpp) has the same commands.
+// the item that brings it (Ctrl+L for Select Line, Ctrl+Shift+L for Select
+// All Occurrences, Ctrl+H for Replace, Ctrl+I for the inline agent, Ctrl+T
+// for Go to Symbol in Workspace). The port's table of GActions
+// (linux/src/Keys.cpp) has the same commands.
 #include "Commands.h"
 
 
@@ -95,6 +95,10 @@ const std::vector<LinuxRow>& linuxRows() {
         {"minicode.showTodos", "ctrl+shift+d", 0, nullptr, nullptr},
 
         // ---- View
+        // VS Code's Linux keys (PARITY.md 1.5). F1 has no modifier, so the
+        // program in the terminal gets it there, as it gets F3; Ctrl+Shift+P
+        // still opens the palette from the terminal.
+        {"workbench.action.showCommands", "ctrl+shift+p f1", 0, nullptr, nullptr},
         // In the terminal Ctrl+Shift+V pastes (linuxTerminalOwnKey).
         {"markdown.showPreview", "ctrl+shift+v", 0, nullptr, nullptr},
         {"minicode.toggleShortcutHints", "ctrl+shift+h", 0, nullptr, nullptr},
@@ -115,6 +119,14 @@ const std::vector<LinuxRow>& linuxRows() {
         {"minicode.togglePlayback", "ctrl+shift+space", 0, nullptr, nullptr},
 
         // ---- Navigate
+        // The palette's other ways in, VS Code's Linux keys. Ctrl+P and
+        // Ctrl+G are plain Ctrl keys, so the program in the terminal keeps
+        // them (readline's previous line, Emacs's quit), as the Mac's grid
+        // keeps Ctrl+G. Go to Symbol in Workspace (VS Code's Ctrl+T) waits
+        // for the language server work of Stage 2.
+        {"workbench.action.quickOpen", "ctrl+p", 0, nullptr, nullptr},
+        {"workbench.action.gotoLine", "ctrl+g", 0, nullptr, nullptr},
+        {"workbench.action.gotoSymbol", "ctrl+shift+o", 0, nullptr, nullptr},
         // The keys out of the terminal without the mouse: Global, so the
         // shell never gets them.
         {"workbench.action.focusSideBar", "ctrl+0", Global, nullptr, nullptr},

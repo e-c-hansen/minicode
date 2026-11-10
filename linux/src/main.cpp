@@ -65,6 +65,7 @@
 #include "Lsp.h"
 #include "GitPanel.h"
 #include "Keys.h"
+#include "PalettePanel.h"
 
 #include <algorithm>
 #include <functional>
@@ -102,6 +103,7 @@ struct App {
     SearchPanel* todos = nullptr;    // the TODOs window, the same
     LspSession*  lsp = nullptr;      // language servers for this window
     GtkWidget*   lspLabel = nullptr; // their status, in the status bar
+    PalettePanel* palette = nullptr; // the palette, over the panes (PalettePanel.h)
 
     GtkWidget* vpaned = nullptr;          // editor/browser above, terminal below
     GtkWidget* upperBox = nullptr;        // the editor/browser half of the vpaned
@@ -1594,6 +1596,34 @@ static void act_hover(GSimpleAction*, GVariant*, gpointer userp) {
     if (editorFocused(app)) app->lsp->showHoverInfo();
 }
 
+// The palette (PalettePanel.h): the commands (Ctrl+Shift+P, F1), the folder's
+// files (Ctrl+P), Go to Line (Ctrl+G) and the file's symbols (Ctrl+Shift+O)
+// are one box, chosen by its first character. A file from Quick Open opens
+// as on the Mac (OpenFrom::QuickOpen, a kept tab unless the settings say),
+// and the tree follows it.
+static void showPalette(App* app, const char* text) {
+    PalettePanel::Context ctx;
+    ctx.root = app->rootDir;
+    ctx.useIgnoreFiles = g.settings->settings().searchUseIgnoreFiles();
+    ctx.openFile = [app](const std::string& path) {
+        if (!app->dead) openFileThen(app, path, EditorTabs::OpenFrom::QuickOpen, nullptr);
+    };
+    app->palette->show(text, ctx);
+}
+
+static void act_show_commands(GSimpleAction*, GVariant*, gpointer userp) {
+    showPalette(static_cast<App*>(userp), ">");
+}
+static void act_quick_open(GSimpleAction*, GVariant*, gpointer userp) {
+    showPalette(static_cast<App*>(userp), "");
+}
+static void act_go_to_line(GSimpleAction*, GVariant*, gpointer userp) {
+    showPalette(static_cast<App*>(userp), ":");
+}
+static void act_go_to_symbol(GSimpleAction*, GVariant*, gpointer userp) {
+    showPalette(static_cast<App*>(userp), "@");
+}
+
 // Find in Folder: search the folder selected in the tree, or else the open
 // folder, which is what the Mac's Shift+Cmd+F does.
 static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
@@ -1769,6 +1799,12 @@ static std::string hintsText(App* app) {
     row("workbench.action.openSettings", "Settings");
     row("workbench.action.focusSideBar", "Focus the file tree");
     row("workbench.action.focusFirstEditorGroup", "Focus the editor");
+
+    heading("Navigation");
+    row("workbench.action.showCommands", "Command palette");
+    row("workbench.action.quickOpen", "Go to file");
+    row("workbench.action.gotoLine", "Go to line");
+    row("workbench.action.gotoSymbol", "Go to symbol in the file");
 
     heading("Tabs");
     row("workbench.action.nextEditor", "Next tab");
@@ -2003,6 +2039,7 @@ static void applyStylesheet() {
             GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     }
     gtk_css_provider_load_from_string(g.css, theme::stylesheet(g.settings->settings()).c_str());
+    PalettePanel::applySettings(g.settings->settings());
 }
 
 // The settings file changed on disk: every window follows.
@@ -2133,7 +2170,7 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     g.windows.erase(std::find(g.windows.begin(), g.windows.end(), app));
     app->dead = true;
 
-    std::vector<gpointer> owners = {app, app->lsp, app->tree, app->git};
+    std::vector<gpointer> owners = {app, app->lsp, app->tree, app->git, app->palette};
     for (void* o : app->editor->handlerOwners()) owners.push_back(o);
 #ifdef MINICODE_ENABLE_TERMINAL
     owners.push_back(app->terminal);
@@ -2158,6 +2195,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->search = nullptr;
     delete app->todos;
     app->todos = nullptr;
+    delete app->palette;   // before the editor it previews symbols in
+    app->palette = nullptr;
     delete app->lsp;
     app->lsp = nullptr;
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -2340,6 +2379,8 @@ static App* newWindow(const std::string& root, const std::string& file) {
     GtkWidget* overlay = gtk_overlay_new();
     gtk_overlay_set_child(GTK_OVERLAY(overlay), app->hpaned);
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), buildHintsPanel(app));
+    // The palette over the panes and the hints, hidden until opened.
+    app->palette = new PalettePanel(GTK_WINDOW(app->window), GTK_OVERLAY(overlay), app->editor);
     gtk_widget_set_vexpand(overlay, TRUE);
 
     GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -2425,6 +2466,10 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "zoomout",        G_CALLBACK(act_zoom_out));
     addAction(app, "zoomfit",        G_CALLBACK(act_zoom_fit));
     addAction(app, "playpause",      G_CALLBACK(act_play_pause));
+    addAction(app, "showcommands",   G_CALLBACK(act_show_commands));
+    addAction(app, "quickopen",      G_CALLBACK(act_quick_open));
+    addAction(app, "gotoline",       G_CALLBACK(act_go_to_line));
+    addAction(app, "gotosymbol",     G_CALLBACK(act_go_to_symbol));
     for (const char* off : {"zoomin", "zoomout", "zoomfit", "playpause"})   // until shown
         g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
                                         G_ACTION_MAP(app->window), off)), FALSE);

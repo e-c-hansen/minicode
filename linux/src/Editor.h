@@ -249,6 +249,11 @@ public:
     // `column` characters into the 1-based line, 0 or 1 meaning its start,
     // and no further than its end. The Mac counts the column the same way.
     bool revealLineColumn(int line, int column);
+    // The scroll stays where it is now: a tab's place still coming back, a
+    // revealed line still being kept in view, or a Markdown page's top line
+    // held while its pictures load stop following. For the palette, whose
+    // symbol previews scroll the view themselves and put it back.
+    void stopSettling();
 
     // A link clicked in a Markdown preview that the editor does not handle
     // itself ("#section" it scrolls to): a web address, or a file or folder,

@@ -45,6 +45,10 @@ core_sources = [
   core_dir / 'CommandsLinux.cpp',
   # The tabs' rules (Tabs.cpp follows them, as the Mac's tabs do).
   core_dir / 'EditorTabs.cpp',
+  # The palette's matching, modes and Quick Open's walk, and the outline
+  # Go to Symbol lists without a server (PalettePanel.cpp shows them).
+  core_dir / 'CommandPalette.cpp',
+  core_dir / 'SymbolOutline.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -85,6 +89,8 @@ gui_sources = [
   'src/WebImages.cpp',
   # The menu bar, the accelerators and the tree's keys, from the registry.
   'src/Keys.cpp',
+  # The palette over the window: commands, Quick Open, Go to Line, symbols.
+  'src/PalettePanel.cpp',
 ]
 
 inc = include_directories('src', '../src')
