@@ -344,12 +344,12 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   Forward (`NavHistory`), Maximize Pane.
 - [ ] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
   *Done means:* a 25 MB file opens and types within the Mac's bounds.
-  Measured for R1 (2026-11-09, the main thread blocked, one click): a 15 MB
-  C file of 300,000 lines spends 3.0 s in `Editor::openFile`, nearly all of
-  it `startHighlighting` (the buffer copied to `mirror_` and lexed whole);
-  the same text as .txt takes 0.3 s. A 5 MB file on one line takes 1.9 s in
-  `openFile` and then 3.1 s more in GtkTextView's first layout of that one
-  paragraph, about 5 s, which is GNOME's limit before "not responding".
+  Measured for R1 on main with tabs (2026-11-09, the main thread held by
+  one `Editor::openFile`): a 15 MB C file of 300,000 lines, 0.6 s of CPU
+  (0.2 s as .txt, so most of it `Document::startHighlighting`); a 5 MB
+  file on one line, 1.5 to 3.0 s of CPU, and once 5.2 s long at load
+  average 8, past GNOME's 5 s before "not responding". Before tabs these
+  were 3.0 s and about 5 s of CPU.
 - [ ] **1.13 The Mac's layout.** The owner's report, 2026-11-09: the browser
   should sit right of the editor with a drag bar between them, and the
   terminal below both, full width, as on the Mac; today the browser takes
@@ -464,9 +464,10 @@ fixed on its own branch, with a GUI check that fails without the fix.
   at most 43 ms, except README.md's preview: 0.8 s of CPU, 2.1 s long at
   load average 8, from its tables (item 4.2). Ask the owner which folder
   was open, whether hidden files were shown, and what the click opened.
-  Other stalls measured on the way, not fixed here: a 15 MB C file opens
-  in 3.0 s and a one-line 5 MB file in 5 s (item 1.12). Needs the owner:
-  the tree under GNOME on Wayland while a build runs in an open folder.
+  Measured on the way, not fixed here: on main a one-line 5 MB file holds
+  the main loop 1.5 to 3 s of CPU, 5.2 s long once on a loaded machine
+  (item 1.12). Needs the owner: the tree under GNOME on Wayland while a
+  build runs in an open folder.
 - Right-clicking a part of the window offers no Adjust Settings (the same
   day): that is item 2.11.
 
