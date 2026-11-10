@@ -108,7 +108,9 @@ bool onScreen(size_t offset) {
 }
 
 // Scrolls `offset` on screen (asked again while GTK's height guesses for
-// lines not laid out yet leave it off), true once it is.
+// lines not laid out yet leave it off), true once it is. A scroll asked for
+// while GTK is still laying the buffer out waits until it has finished
+// (laidOut), unless something on screen changes meanwhile.
 bool bringOnScreen(size_t offset) {
     if (onScreen(offset)) return true;
     GtkTextIter it;
@@ -118,6 +120,19 @@ bool bringOnScreen(size_t offset) {
     gtk_text_buffer_move_mark(buf(), m, &it);
     gtk_text_view_scroll_to_mark(tv(), m, 0.0, TRUE, 0.0, 0.3);
     return false;
+}
+
+// GTK has laid out every line of the buffer on show. It does so in idle
+// slices after a buffer comes on show, from the top, and a line has no
+// height until then, so the last line is the last to get one. Until then
+// GtkTextView keeps a scroll to a mark pending (it carries one out at once
+// only over a complete layout), and the main thread is busy laying out.
+bool laidOut() {
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(buf(), &end);
+    int y = 0, h = 0;
+    gtk_text_view_get_line_yrange(tv(), &end, &y, &h);
+    return h > 0;
 }
 
 void visibleRange(int* top, int* bottom) {
@@ -284,6 +299,7 @@ double gOpenMs[2] = {0, 0};
 size_t gOpenLines = 0;
 double gKeysMs[2] = {0, 0};
 size_t gBigChars = 0;
+double gLayoutFrom = 0;
 const std::string kTyped = "x = f(a[1]) ";   // no Return: AutoIndent stays out of it
 
 }  // namespace
@@ -484,6 +500,16 @@ MC_GUI_SUITE(bracket_pairs) {
         MCGuiSetSettings(kBase);
         MCGuiOpenFileKept(F("big.py"));
         gtk_widget_grab_focus(ed()->textView());
+        gLayoutFrom = MCGuiNowMs();
+    });
+    // The scroll to line 50,000 below waits for GTK's layout of the whole
+    // file, which took 7 s of wall time with two runs at once and more than
+    // the scroll's 10 s with three (the wait then failed); the typing is
+    // measured once it is over, too. How long the layout takes is the
+    // machine's load, not what is checked here.
+    MCGuiWait("GTK has laid out the 100,000 lines", 120, laidOut);
+    MCGuiStep("", [] {
+        MCGuiNote("the layout of 100,000 lines: %.1f s", (MCGuiNowMs() - gLayoutFrom) / 1000);
     });
     for (int on = 1; on >= 0; on--) {
         MCGuiStep(on ? "the caret at line 50,000, with bracket colors" : "again without them", [on] {

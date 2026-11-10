@@ -831,8 +831,77 @@ fixed on its own branch, with a GUI check that fails without the fix.
   button was down opened the file put in under the pointer, or nothing; it
   now keeps row objects. The `tree_clicks` suite checks both and fails
   without either fix.
+- [x] **R2. `minicode` from a terminal holds the terminal** (2026-11-10):
+  "if I launch a minicode application instance from the terminal on mac,
+  it doesn't block. If I close that terminal, the process is not bound and
+  I'm not warned that closing the terminal window will also kill the
+  minicode instance. On linux, it is bound and does block the terminal."
+  Started from a terminal, `minicode` gives the terminal back at once and
+  is not tied to it, as on the Mac and as VS Code's `code` on Linux;
+  `--foreground` keeps the old way.
+  *Done, 2026-11-10 (`HANDOFF.md` item 23):* `main` first calls
+  `Detach::start` (`src/Detach.{h,cpp}`, the rules in
+  `src/LaunchOptions.{h,cpp}`), which forks with a terminal on hand: the
+  child takes a session of its own and runs the app, the parent returns
+  once the child's first window is made, or with the child's status when
+  it ends first (a second `minicode` handing its path over, no display).
+  The child then puts `/dev/null` on its standard streams, keeping a file
+  the user sent them to, and asks systemd for
+  `app-minicode-org.minicode.Editor-<pid>.scope`. `-h`, `-v`,
+  `--foreground`, and `--` are the port's options; the Mac's `-n` and `-r`
+  are refused, since the port has neither behaviour. GNOME Terminal never
+  stops a shell's scope (libvte 0.84 has no StopUnit), so only the
+  hang-up's SIGHUP had closed minicode. The `detach` suite runs the real
+  `build/minicode` on pseudo-terminals, on the checks' Xvfb and a session
+  bus of its own (58 checks, about 5 s; 33 fail with the old `main`): it
+  returns 0 in under half a second with its window up, in its own session
+  with no controlling terminal and nothing of the terminal open, outlives
+  the terminal's hang-up, hands a second `minicode notes.txt` over, keeps
+  a log file it was sent to, returns 1 with GTK's message when there is no
+  display, does not fork when started as the desktop starts it, and with
+  `--foreground` holds the terminal and goes with it. Needs the owner:
+  closing a real GNOME Terminal window with minicode started from it, that
+  GNOME Terminal asks nothing first, and `systemctl --user list-units
+  'app-minicode-*'` while it runs (the checks answered for systemd).
 - Right-clicking a part of the window offers no Adjust Settings (the same
   day): that is item 2.11.
+- [x] **R3. "It takes multiple seconds to open minicode on ubuntu and
+  under 1 s to do the same on mac"** (2026-11-10, the PPA's 1.4.14 on
+  `~/minicode`), on `worktree-agent-a4711ccfaf9d559fd`. Find where the time
+  to a usable window goes, cut what need not happen before it as the Mac
+  does, and bound it with a check.
+  *Measured and fixed on the ThinkPad's Xvfb, 2026-11-10* (`HANDOFF.md`
+  item 24): `MINICODE_STARTUP_LOG=1` prints each phase of the start with
+  the time since main and the main thread's CPU. Every window made its
+  hidden terminal and browser at once: VTE started the shell, and the
+  WebKitWebView started WebKit's network and web processes in bwrap
+  sandboxes the main thread waited for, with xdg-dbus-proxy, and loaded
+  DuckDuckGo. The Mac makes both when first shown, and now so does the
+  port; the language server for a session's tab starts after the first
+  frame. Medians of six warm runs on `~/minicode`, interleaved, load 3 to
+  6, milliseconds after main (wall / main-thread CPU), main then this
+  branch: GTK's own start 100/93 and 96/93 (a bare GtkApplication window
+  takes the same); the window built 164/142 and 115/110 (the browser was
+  39/23 of it); realized and presented 217/182 and 166/150; first frame
+  244/203 and 189/170. With a session of five tabs: first frame 299/248
+  and 220/197, clangd started before it and 90 ms after it. The process
+  ran 47 to 50 ms before main in both. The app and what it started used
+  1.87 s of CPU in its first three seconds, and 0.26 s now. The PPA's
+  1.4.14, timed from exec by an LD_PRELOAD probe, drew its first frame at
+  268 ms with 1.91 s of CPU in all. So on Xvfb, with GTK drawing in
+  software, no version takes seconds; the owner's seconds are on the
+  desktop, where GTK and WebKit draw on the Intel GPU and WebKit's
+  processes, the page and the shell's startup files compete with the
+  window for four cores. The `startup` suite bounds the first frame at
+  1500 ms of main-thread CPU (165 to 300 here) and 20 s, checks that no
+  shell, WebKit process, bwrap or xdg-dbus-proxy runs below the app at
+  its first frame and neither pane's part is made, that the server starts
+  after it, and that both panes work once shown; without the fix it fails
+  eight checks. Needs the owner: the same log on the desktop,
+  `linux/dev/startup-times.sh` with the build of main and this branch
+  (item 24 has the commands), for GTK's default renderer, `gl`, `vulkan`
+  and `cairo`, to see what the GPU renderer's first frame and the desktop
+  add; and whether the window now opens in well under a second there.
 
 ## After each stage
 

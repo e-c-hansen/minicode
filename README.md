@@ -386,6 +386,8 @@ You can alias the local build, if you'd like:
 alias minicode="$PWD/build/minicode"
 ```
 
+As on the Mac, `minicode` typed in a terminal gives the terminal back as soon as the window is up, and closing the terminal leaves minicode open, with no warning about a running process. A minicode that is already running opens the path itself. `minicode --foreground` keeps it in the terminal, with its output there, until it quits, and `minicode -h` lists the options.
+
 
 [BUILD-LINUX.md](BUILD-LINUX.md) covers installing it as a desktop app and which shortcuts go to the terminal.
 
@@ -557,7 +559,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Zoom the browser's page, a PDF or the LaTeX preview in or out, or back to actual size, while it has the keyboard or you last scrolled or clicked in it | Command equals (or Command plus), Command minus, Command 0 |  |  |
 | Zoom the browser's page or a PDF to the width of the pane, or a PDF's page to fit the pane | View > Page Zoom > Zoom to Fit Width, Zoom to Fit Page |  |  |
 | Zoom the editor's text and the Markdown preview in or out, or back to their sizes in the settings, while the keyboard is anywhere but a terminal, a web page, or a PDF | Command equals (or Command plus), Command minus, Option Command 0 (or Command with keypad 0) | Ctrl equals (or Ctrl plus), Ctrl minus, Ctrl Alt 0 (or Ctrl with keypad 0), while no PDF or LaTeX preview shows |  |
-| Zoom a PDF or the LaTeX preview back to the width of the pane |  | Ctrl Alt 0 |  |
+| Zoom a PDF or the LaTeX preview back to the width of the pane, or the browser's page back to 100% |  | Ctrl Alt 0 |  |
 
 ## Limitations
 

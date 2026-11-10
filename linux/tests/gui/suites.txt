@@ -30,3 +30,5 @@ ZoomSuite.cpp
 WordWrapSuite.cpp
 GoBackSuite.cpp
 MaximizeSuite.cpp
+StartupSuite.cpp
+DetachSuite.cpp

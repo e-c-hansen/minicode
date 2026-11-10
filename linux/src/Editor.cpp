@@ -19,6 +19,7 @@
 #include "LargeFileView.h"
 #include "Utf8Offsets.h"
 #include "MediaView.h"
+#include "StartupLog.h"
 #include "GitPanel.h"
 #include "Latex.h"
 #include "PdfView.h"
@@ -1446,7 +1447,10 @@ void Editor::renderPreview() {
     hooks.taskToggle = [this, alive](int line) {
         if (!alive.expired()) toggleTaskBox(line);
     };
+    const double renderStart = StartupLog::cpuMs();
     d->pageInfo() = Markdown::render(GTK_TEXT_VIEW(view_), page, d->text(), hooks);
+    StartupLog::once("first-page", "editor: first Markdown page rendered (%.1f ms of cpu)",
+                     StartupLog::cpuMs() - renderStart);
     fitPage();
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(page, &start);

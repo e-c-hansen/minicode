@@ -44,6 +44,7 @@
 
 #include "AppSettings.h"
 #include "BracketView.h"
+#include "Detach.h"
 #include "Document.h"
 #include "Editor.h"
 #include "FileTree.h"
@@ -63,6 +64,7 @@
 #include "PalettePanel.h"
 #include "NavHistoryUi.h"
 #include "Zoom.h"
+#include "StartupLog.h"
 
 #include <algorithm>
 #include <functional>
@@ -1044,9 +1046,10 @@ static void openLink(App* app, bool isUrl, const std::string& target, bool isDir
 #ifdef MINICODE_ENABLE_BROWSER
         if (app->browser) {
             // Shown beside the editor, the keyboard kept where it was, as the
-            // Mac's openWebAddressFromTerminal: does.
-            app->layout->showBrowser();
+            // Mac's openWebAddressFromTerminal: does. Loaded first, so a
+            // browser not shown before loads this page, not its home page.
             app->browser->load(target);
+            app->layout->showBrowser();
             return;
         }
 #endif
@@ -2014,7 +2017,9 @@ static void initShared() {
     if (g.settings) return;
     g.settings = new AppSettings();
     g.settings->setChangeCallback(onSettingsChanged, nullptr);
+    StartupLog::mark("settings read");
     applyStylesheet();   // before any widget is drawn
+    StartupLog::mark("stylesheet");
 
     GSimpleAction* quit = g_simple_action_new("quit", nullptr);
     g_signal_connect(quit, "activate", G_CALLBACK(act_quit), nullptr);
@@ -2034,6 +2039,7 @@ static void initShared() {
     // The tree's right-click menu, in the Mac's order and grouping.
     g.treeMenu = Keys::menuOf({"explorer.newFile", "explorer.newFolder", "", "renameFile",
                                "moveFileToTrash", "", "revealFileInOS", "copyFilePath"});
+    StartupLog::mark("keys and the menu bar");
 }
 
 // ---------------------------------------------------------------- windows
@@ -2144,6 +2150,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
 
     // Core widgets.
     app->tree = new FileTree(app->rootDir, g.showHidden);
+    StartupLog::mark("window: file tree");
     app->tree->setOpenCallback(treeOpenCb, app);
     app->tree->setDropCallback([app](const std::vector<std::string>& paths,
                                      const std::string& dir, bool move) {
@@ -2155,6 +2162,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
         if (!app->dead && app->git && app->gitShown) app->git->refresh();
     });
     app->editor = new Editor();
+    StartupLog::mark("window: editor");
     app->editor->setTitleCallback(updateTitle, app);
     app->editor->setLinkHandler([app](const Editor::Link& link) {
         if (!app->dead) openEditorLink(app, link);
@@ -2224,11 +2232,13 @@ static App* newWindow(const std::string& root, const std::string& file) {
         if (!app->dead) flashStatus(app, note);
     };
     gtk_box_append(GTK_BOX(editorPane), app->editor->widget());
+    StartupLog::mark("window: sessions and the find bar");
 
     GtkWidget* browserPane = nullptr;
 #ifdef MINICODE_ENABLE_BROWSER
     app->browser = new Browser(MINICODE_BROWSER_HOME);
     browserPane = app->browser->widget();
+    StartupLog::mark("window: browser");
 #endif
     GtkWidget* terminalPane = nullptr;
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -2238,6 +2248,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->terminal->setLinkHandler([app](const Terminal::Link& link) {
         if (!app->dead) openTerminalLink(app, link);
     });
+    StartupLog::mark("window: terminal");
 #endif
 
     // The sidebar beside the editor, the browser to the editor's right and
@@ -2268,6 +2279,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->layout->onChanged = [app] {
         if (!app->dead) refreshHints(app);
     };
+    StartupLog::mark("window: layout");
 
     // Status bar: the current path on the left, and the hint that advertises the
     // shortcuts panel on the right. The macOS build carries the same pair, and
@@ -2318,6 +2330,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     gtk_box_append(GTK_BOX(vbox), overlay);
     gtk_box_append(GTK_BOX(vbox), statusBar);
     gtk_window_set_child(GTK_WINDOW(app->window), vbox);
+    StartupLog::mark("window: status bar, hints and palette");
 
     // Language servers: one session for the window, told about every file the
     // editor opens, saves and edits through the editor's observer hook.
@@ -2335,6 +2348,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
         openMatch(app, m, EditorTabs::OpenFrom::CodeNavigation);
     };
     app->editor->setObserver(app->lsp);   // onCloseRequest shuts it down
+    StartupLog::mark("window: language server session");
 
     // Actions. The menu bar and the accelerators are the application's
     // (initShared); these are what they name in this window.
@@ -2437,7 +2451,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
     g_signal_connect(app->window, "notify::focus-widget", G_CALLBACK(onFocusWidget), app);
     g_signal_connect(app->window, "notify::is-active", G_CALLBACK(onIsActive), app);
     applyWindowSettings(app);   // now that the editor, terminal and status bar exist
+    StartupLog::mark("window: actions and settings applied");
     app->persist->restoreSession();   // the files open here last time
+    StartupLog::markf("window: session restored (%d tabs)", app->editor->tabCount());
 
     // A file named on the command line opens before the window is shown, so it
     // is already rendered when the window appears rather than flashing the
@@ -2445,7 +2461,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
     // sidebar would give (Editor::openFile decides that).
     if (!file.empty()) openFileCb(file, app);
 
+    StartupLog::watchFrames(app->window);
     gtk_window_present(GTK_WINDOW(app->window));
+    StartupLog::mark("window: presented");
     return app;
 }
 
@@ -2548,6 +2566,7 @@ static Startup resolveStartupPath(const char* arg, const char* cwdIn) {
 // argv[1] ourselves: it can be a directory or a file, and GApplication must not
 // guess which.
 static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
+    StartupLog::mark("command line");
     int n = 0;
     char** args = g_application_command_line_get_arguments(cl, &n);
     const Startup st = resolveStartupPath(n > 1 ? args[1] : nullptr,
@@ -2571,6 +2590,18 @@ static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
 }
 
 int main(int argc, char** argv) {
+#ifndef MINICODE_GUITEST
+    // A run with the startup log stays in the terminal it was asked from: a
+    // detached app gives that terminal up, and the log with it (Detach.h).
+    const bool logStays = StartupLog::wanted() && !g_getenv("MINICODE_FOREGROUND");
+    if (logStays) g_setenv("MINICODE_FOREGROUND", "1", TRUE);
+    // The options, and a terminal given back at once (Detach.h, PARITY.md R2).
+    if (const int status = Detach::start(&argc, &argv); status >= 0) return status;
+    if (logStays) g_unsetenv("MINICODE_FOREGROUND");   // not for the shells it starts
+#endif
+    // MINICODE_STARTUP_LOG=1: each phase's time on stderr. After the fork,
+    // so its clock is this process's main thread's.
+    StartupLog::begin();
     GtkApplication* gapp = gtk_application_new("org.minicode.Editor",
                                               G_APPLICATION_HANDLES_COMMAND_LINE);
     g.gapp = gapp;
@@ -2578,6 +2609,11 @@ int main(int argc, char** argv) {
     // argc/argv go to g_application_run so that a remote invocation forwards
     // them to the running instance; onCommandLine is where they are read.
     g_signal_connect(gapp, "command-line", G_CALLBACK(onCommandLine), nullptr);
+    // After GtkApplication's own startup, which opens the display and loads
+    // the theme.
+    g_signal_connect(gapp, "startup", G_CALLBACK(+[](GApplication*, gpointer) {
+        StartupLog::mark("gtk: started (the display, the theme, the session bus name)");
+    }), nullptr);
     g_signal_connect(gapp, "window-removed", G_CALLBACK(onWindowRemoved), nullptr);
     // Quitting: no language server may outlive the app. The main loop has
     // stopped by now, so this waits on the processes directly.

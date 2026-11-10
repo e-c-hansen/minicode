@@ -8,6 +8,7 @@
 #include "BufferLines.h"
 #include "LargeFileView.h"
 #include "MarkdownTasks.h"
+#include "StartupLog.h"
 #include "Utf8Offsets.h"
 #ifdef MINICODE_ENABLE_PDF
 #include "Latex.h"
@@ -230,6 +231,8 @@ void Document::loadText(const std::string& path, const std::string& content) {
     startHighlighting();
     watch();
     refreshTaskCount();
+    StartupLog::once("first-text", "editor: first file in its buffer and highlighted (%s, %zu bytes)",
+                     ext_.empty() ? "no extension" : ext_.c_str(), content.size());
 }
 
 void Document::setMessage(const std::string& path, const std::string& message) {

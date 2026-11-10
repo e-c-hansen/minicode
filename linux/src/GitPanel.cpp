@@ -1,5 +1,6 @@
 // GitPanel.cpp — see GitPanel.h. The Mac's src/GitPanel.mm, in GTK.
 #include "GitPanel.h"
+#include "StartupLog.h"
 
 #include <signal.h>
 #include <sys/types.h>
@@ -117,6 +118,7 @@ GitResult runGitWithin(const std::string& dir, const std::vector<std::string>& a
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
     GError* err = nullptr;
+    StartupLog::once("git", "git: first command (git %s)", args.empty() ? "" : args[0].c_str());
     GSubprocess* p = g_subprocess_launcher_spawnv(l, argv.data(), &err);
     g_object_unref(l);
     if (!p) {
