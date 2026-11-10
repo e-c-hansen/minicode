@@ -27,6 +27,10 @@ public:
     void focusUrlBar();
     // Go to a URL, or to what the URL bar would make of text typed into it.
     void load(const std::string& url);
+    // Page Zoom on Safari's steps (ViewZoom::pageStep): in (+1), out (-1),
+    // back to 100% (0). Not kept per site yet (PARITY.md 4.5).
+    void zoom(int step);
+    double zoomLevel() const;
 
 private:
     static void onGo(GtkWidget* w, gpointer self);

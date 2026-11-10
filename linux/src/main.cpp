@@ -63,6 +63,8 @@
 #include "BackupStore.h"
 #include "Persistence.h"
 #include "PalettePanel.h"
+#include "NavHistoryUi.h"
+#include "Zoom.h"
 #include "StartupLog.h"
 
 #include <algorithm>
@@ -103,6 +105,8 @@ struct App {
     Persistence* persist = nullptr;
     GtkWidget*   lspLabel = nullptr; // their status, in the status bar
     PalettePanel* palette = nullptr; // the palette, over the panes (PalettePanel.h)
+    NavHistoryUi* nav = nullptr;     // Go Back and Go Forward (NavHistoryUi.h)
+    int zoomListener = 0;            // the zoom and word wrap's (Zoom.h)
 
 #ifdef MINICODE_ENABLE_TERMINAL
     Terminal* terminal = nullptr;
@@ -172,6 +176,29 @@ static void showEditorArea(App* app) {
 
 // ---------------------------------------------------------------- helpers
 
+// The browser's page or its address bar has the keyboard: Page Zoom's keys
+// are the page's then (PARITY.md 1.11).
+static bool browserHasKeyboard(App* app) {
+#ifdef MINICODE_ENABLE_BROWSER
+    if (!app->dead && app->browser && app->layout && app->layout->browserShown())
+        return Keys::within(gtk_root_get_focus(GTK_ROOT(app->window)), app->browser->widget());
+#else
+    (void)app;
+#endif
+    return false;
+}
+
+// The page zoom keys act on a PDF or the LaTeX preview on screen, or on the
+// browser's page while it has the keyboard; disabled otherwise, their keys
+// go on to whatever has the focus (and the editor's zoom has them).
+static void updatePageZoom(App* app) {
+    if (app->dead || !app->editor) return;
+    const bool on = app->editor->showingPdf() || browserHasKeyboard(app);
+    for (const char* zoom : {"zoomin", "zoomout", "zoomfit"})
+        if (GAction* z = g_action_map_lookup_action(G_ACTION_MAP(app->window), zoom))
+            g_simple_action_set_enabled(G_SIMPLE_ACTION(z), on);
+}
+
 // Play/Pause (Ctrl+Shift+Space) acts only while video or audio that can play
 // is shown, and never while the keyboard is typing somewhere: in the
 // terminal, whose Ctrl+Shift+Space is the shell's, or in a text field such
@@ -218,11 +245,7 @@ static void updateTitle(void* userp) {
         g_simple_action_set_enabled(G_SIMPLE_ACTION(save), app->editor->canSave());
     if (GAction* exp = g_action_map_lookup_action(G_ACTION_MAP(app->window), "exportpdf"))
         g_simple_action_set_enabled(G_SIMPLE_ACTION(exp), app->editor->isLatex());
-    // The zoom keys act only on a PDF or the LaTeX preview on screen; disabled,
-    // their keys go on to whatever has the focus.
-    for (const char* zoom : {"zoomin", "zoomout", "zoomfit"})
-        if (GAction* z = g_action_map_lookup_action(G_ACTION_MAP(app->window), zoom))
-            g_simple_action_set_enabled(G_SIMPLE_ACTION(z), app->editor->showingPdf());
+    updatePageZoom(app);
     updateMediaKey(app);
     updateKeyPlace();    // a Markdown file's own keys
     refreshHints(app);   // Play/Pause is listed while video or audio can play
@@ -519,6 +542,7 @@ static void openFolder(App* app, const std::string& dir) {
     app->tree->setRoot(dir);
     if (app->git) app->git->setRoot(dir);   // the panel follows the folder
     app->editor->closeAllTabs();
+    app->nav->clear();   // Go Back's places were the old folder's
     // After the tabs close, so no old file is reopened under the new root.
     if (app->lsp) app->lsp->setRoot(dir);   // servers belong to a folder
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -595,14 +619,66 @@ static void act_play_pause(GSimpleAction*, GVariant*, gpointer userp) {
     static_cast<App*>(userp)->editor->togglePlayMedia();
 }
 
+// Page Zoom: the browser's page while it has the keyboard (Safari's steps,
+// and 100% for Ctrl+Alt+0), else the PDF on screen.
+static void pageZoom(App* app, int step) {
+#ifdef MINICODE_ENABLE_BROWSER
+    if (browserHasKeyboard(app)) {
+        app->browser->zoom(step);
+        return;
+    }
+#endif
+    app->editor->zoomPdf(step);
+}
 static void act_zoom_in(GSimpleAction*, GVariant*, gpointer userp) {
-    static_cast<App*>(userp)->editor->zoomPdf(1);
+    pageZoom(static_cast<App*>(userp), 1);
 }
 static void act_zoom_out(GSimpleAction*, GVariant*, gpointer userp) {
-    static_cast<App*>(userp)->editor->zoomPdf(-1);
+    pageZoom(static_cast<App*>(userp), -1);
 }
 static void act_zoom_fit(GSimpleAction*, GVariant*, gpointer userp) {
-    static_cast<App*>(userp)->editor->zoomPdf(0);
+    pageZoom(static_cast<App*>(userp), 0);
+}
+
+// The editor's zoom and the terminals', for every window (Zoom.h, PARITY.md
+// 1.11): a point at a time, or back to none; the bell at a limit.
+static void act_editor_zoom_in(GSimpleAction*, GVariant*, gpointer userp) {
+    if (!Zoom::zoomEditor(1)) gtk_widget_error_bell(static_cast<App*>(userp)->window);
+}
+static void act_editor_zoom_out(GSimpleAction*, GVariant*, gpointer userp) {
+    if (!Zoom::zoomEditor(-1)) gtk_widget_error_bell(static_cast<App*>(userp)->window);
+}
+static void act_editor_zoom_reset(GSimpleAction*, GVariant*, gpointer) { Zoom::zoomEditor(0); }
+static void act_terminal_zoom_in(GSimpleAction*, GVariant*, gpointer userp) {
+    if (!Zoom::zoomTerminal(1)) gtk_widget_error_bell(static_cast<App*>(userp)->window);
+}
+static void act_terminal_zoom_out(GSimpleAction*, GVariant*, gpointer userp) {
+    if (!Zoom::zoomTerminal(-1)) gtk_widget_error_bell(static_cast<App*>(userp)->window);
+}
+static void act_terminal_zoom_reset(GSimpleAction*, GVariant*, gpointer) { Zoom::zoomTerminal(0); }
+
+// Word wrap (Alt+Z): turned over for the session, in every window.
+static void act_toggle_word_wrap(GSimpleAction*, GVariant*, gpointer) { Zoom::toggleWordWrap(); }
+
+// Maximize Pane (Ctrl+Alt+M): the pane with the keyboard takes the right
+// side, or gives it back (WindowLayout::toggleMaximized).
+static void act_toggle_maximize(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->layout->toggleMaximized()) gtk_widget_error_bell(app->window);
+    refreshHints(app);
+}
+
+// Go Back and Go Forward (NavHistoryUi.h); the bell when there is nowhere
+// to go.
+static void act_go_back(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    app->nav->goBack();
+    refreshHints(app);
+}
+static void act_go_forward(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    app->nav->goForward();
+    refreshHints(app);
 }
 
 static void act_toggle_preview(GSimpleAction*, GVariant*, gpointer userp) {
@@ -995,15 +1071,18 @@ static void openLink(App* app, bool isUrl, const std::string& target, bool isDir
         return;
     }
     if (insideRoot) app->tree->revealPath(path);
-    openFileThen(app, path, EditorTabs::OpenFrom::Other, [app, path, line, column] {
-        // Opening can be refused (Cancel at "Save changes?"), and an image
-        // or a PDF has no lines to go to.
-        if (app->editor->currentPath() != path) return;
-        showEditorArea(app);
-        if (app->editor->isMedia()) return;
-        if (line > 0) app->editor->revealLineColumn(line, column);
-        else gtk_widget_grab_focus(app->editor->textView());
-        refreshHints(app);   // a Markdown preview may have switched to source
+    // A jump, for Go Back (NavHistoryUi.h).
+    app->nav->jump([app, path, line, column] {
+        openFileThen(app, path, EditorTabs::OpenFrom::Other, [app, path, line, column] {
+            // Opening can be refused (Cancel at "Save changes?"), and an
+            // image or a PDF has no lines to go to.
+            if (app->editor->currentPath() != path) return;
+            showEditorArea(app);
+            if (app->editor->isMedia()) return;
+            if (line > 0) app->editor->revealLineColumn(line, column);
+            else gtk_widget_grab_focus(app->editor->textView());
+            refreshHints(app);   // a Markdown preview may have switched to source
+        });
     });
 }
 
@@ -1114,6 +1193,7 @@ static void act_new_folder(GSimpleAction*, GVariant*, gpointer userp) {
 static void followMove(const std::string& src, const std::string& dst) {
     for (App* a : g.windows) {
         a->editor->pathMoved(src, dst);
+        a->nav->moved(src, dst);   // Go Back's places follow it
         updateTitle(a);
         refreshHints(a);   // the preview toggle depends on the name
     }
@@ -1292,6 +1372,7 @@ static void trashNow(App* app, const std::string& path) {
     // rule).
     for (App* a : g.windows) {
         a->editor->pathTrashed(path);
+        a->nav->removed(path);   // no place to go back to
         updateTitle(a);
         refreshHints(a);
     }
@@ -1408,10 +1489,13 @@ static void openMatch(App* app, const FolderSearchMatch& m, EditorTabs::OpenFrom
     const std::string path = m.path;
     const int line = m.line;
     const std::size_t column = m.byteColumn, length = m.byteLength;
-    openFileThen(app, path, from, [app, path, line, column, length] {
-        if (app->editor->currentPath() == path)
-            app->editor->revealLine(line, column, length);
-        refreshHints(app);   // a Markdown preview may have switched to source
+    // A jump, for Go Back (NavHistoryUi.h).
+    app->nav->jump([app, path, from, line, column, length] {
+        openFileThen(app, path, from, [app, path, line, column, length] {
+            if (app->editor->currentPath() == path)
+                app->editor->revealLine(line, column, length);
+            refreshHints(app);   // a Markdown preview may have switched to source
+        });
     });
     gtk_window_present(GTK_WINDOW(app->window));
 }
@@ -1590,6 +1674,15 @@ static std::string hintsText(App* app) {
     row("workbench.action.quickOpen", "Go to file");
     row("workbench.action.gotoLine", "Go to line");
     row("workbench.action.gotoSymbol", "Go to symbol in the file");
+    row("workbench.action.navigateBack", "Go back");
+    row("workbench.action.navigateForward", "Go forward");
+
+    heading("View");
+    row("editor.action.fontZoomIn", "Zoom in");
+    row("editor.action.fontZoomOut", "Zoom out");
+    row("editor.action.fontZoomReset", "Reset zoom");
+    row("editor.action.toggleWordWrap",
+        std::string("Word wrap   (") + (Zoom::wordWrap() ? "on" : "off") + ")");
 
     heading("Tabs");
     row("workbench.action.nextEditor", "Next tab");
@@ -1624,6 +1717,8 @@ static std::string hintsText(App* app) {
     row("workbench.action.toggleSidebarVisibility", "Sidebar");
     row("minicode.toggleEditor",
         std::string("Editor      (") + (app->layout->editorShown() ? "shown" : "collapsed") + ")");
+    row("minicode.toggleMaximizedPane",
+        std::string("Maximize    (") + (app->layout->maximized() ? "maximized" : "off") + ")");
 #ifdef MINICODE_ENABLE_TERMINAL
     row("workbench.action.terminal.toggleTerminal",
         std::string("Terminal    (") +
@@ -1801,10 +1896,23 @@ static void showConfigErrors(App* app) {
     gtk_widget_set_tooltip_text(app->settingsLabel, tip.empty() ? nullptr : tip.c_str());
 }
 
+// A terminal's font: terminal.font-size or the desktop's size, scaled for
+// the terminals' zoom (Zoom.h).
+static void applyTerminalZoom(App* app) {
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (app->dead || !app->terminal) return;
+    const double base = Zoom::terminalBasePoints();
+    app->terminal->setFontSize(base, Zoom::terminalPoints() / base);
+#else
+    (void)app;
+#endif
+}
+
 // One window's share of the settings: the editor's tags, the language
 // servers, the terminal's colors, and the status-bar note about bad lines.
 static void applyWindowSettings(App* app) {
     const Settings& st = g.settings->settings();
+    Zoom::applySettings(st);   // every window's; each follows through its listener
     app->editor->applySettings(st);
     app->findBar->applySettings(st);
     if (app->lsp) app->lsp->applySettings(st);   // restarts servers if lsp.* changed
@@ -1813,6 +1921,7 @@ static void applyWindowSettings(App* app) {
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->terminal) app->terminal->applySettings(st);
 #endif
+    applyTerminalZoom(app);
     showConfigErrors(app);
 }
 
@@ -1860,6 +1969,7 @@ static void updateKeyPlace() {
 #endif
             place.editor = focus && focus == a->editor->textView();
             place.tree = Keys::within(focus, a->tree->widget());
+            place.page = browserHasKeyboard(a) || (!place.terminal && a->editor->showingPdf());
             place.language = Commands::languageOfPath(a->editor->currentPath());
         }
     }
@@ -1870,6 +1980,7 @@ static void onFocusWidget(GObject*, GParamSpec*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     updateKeyPlace();
     updateMediaKey(app);
+    updatePageZoom(app);   // the browser's page took or left the keyboard
     if (!app->dead && app->persist)   // focus-change auto-save
         app->persist->focusMoved(gtk_root_get_focus(GTK_ROOT(app->window)));
 }
@@ -1925,6 +2036,7 @@ static void initShared() {
     g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(hidden));
     g_object_unref(hidden);
 
+    Zoom::applySettings(g.settings->settings());   // the zoom from last time, before any view
     Keys::init(g.gapp, onKeysChanged);
     GMenuModel* bar = Keys::menuBar();
     gtk_application_set_menubar(g.gapp, bar);
@@ -1989,7 +2101,9 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->editor->onCloseRequest = nullptr;
     app->editor->onTabCommand = nullptr;
     app->editor->onActiveChanged = nullptr;
+    app->editor->onActiveWillChange = nullptr;
     app->editor->onDocumentsChanged = nullptr;
+    Zoom::unlisten(app->zoomListener);
     app->editor->setLinkHandler(nullptr);
     app->editor->setExternalChangeCallback(nullptr, nullptr);
     delete app->search;
@@ -1998,6 +2112,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->todos = nullptr;
     delete app->palette;   // before the editor it previews symbols in
     app->palette = nullptr;
+    delete app->nav;       // before the editor whose buffers it watches
+    app->nav = nullptr;
     delete app->lsp;
     app->lsp = nullptr;
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -2064,12 +2180,38 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->editor->onTabCommand = [app](const std::string& name, Document* d) {
         if (!app->dead) tabCommand(app, name, d);
     };
+    // Go Back and Go Forward: every tab switch is a jump (NavHistoryUi.h).
+    app->nav = new NavHistoryUi(app->editor, NavHistoryUi::Host{
+        [app](const std::string& path) {
+            if (app->dead) return false;
+            openFileThen(app, path, EditorTabs::OpenFrom::Other, nullptr);
+            return app->editor->currentPath() == path;
+        },
+        [app] {
+            if (!app->dead) gtk_widget_error_bell(app->window);
+        }});
+    app->editor->onActiveWillChange = [app] {
+        if (!app->dead && app->nav) app->nav->tabWillSwitch();
+    };
     app->editor->onActiveChanged = [app] {
         if (app->dead) return;
+        if (app->nav) app->nav->tabDidSwitch();
         revealActiveInTree(app);
         refreshHints(app);
         if (app->persist) app->persist->tabShown();
     };
+    // The zoom and word wrap are every window's (Zoom.h): the editor's text
+    // follows the stylesheet by itself, its preview's tags and the
+    // terminal's font here.
+    Zoom::attachEditor(app->editor->textView());
+    Zoom::scaleTags(gtk_text_buffer_get_tag_table(app->editor->buffer()));
+    app->zoomListener = Zoom::listen([app](const std::string& what) {
+        if (app->dead) return;
+        if (what == "editor") Zoom::scaleTags(gtk_text_buffer_get_tag_table(app->editor->buffer()));
+        else if (what == "terminal") applyTerminalZoom(app);
+        else if (what == "wrap") app->editor->applyWordWrap();
+        refreshHints(app);
+    });
     // The window's tabs between runs, their backups, and auto-save.
     app->persist = new Persistence(app->editor, app->rootDir, Persistence::Host{
         [app](const std::string& note) {
@@ -2181,6 +2323,17 @@ static App* newWindow(const std::string& root, const std::string& file) {
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), buildHintsPanel(app));
     // The palette over the panes and the hints, hidden until opened.
     app->palette = new PalettePanel(GTK_WINDOW(app->window), GTK_OVERLAY(overlay), app->editor);
+    // What it previews is no jump; Go to Line and a symbol are, from where
+    // the editor was when it opened.
+    app->palette->onOpenChanged = [app](bool open) {
+        if (app->dead || !app->nav) return;
+        if (open) app->nav->paletteOpened();
+        else app->nav->paletteClosed();
+    };
+    app->palette->aroundMove = [app](const std::function<void()>& body) {
+        if (app->dead || !app->nav) body();
+        else app->nav->paletteJump(body);
+    };
     gtk_widget_set_vexpand(overlay, TRUE);
 
     GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -2277,6 +2430,16 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "zoomin",         G_CALLBACK(act_zoom_in));
     addAction(app, "zoomout",        G_CALLBACK(act_zoom_out));
     addAction(app, "zoomfit",        G_CALLBACK(act_zoom_fit));
+    addAction(app, "editorzoomin",   G_CALLBACK(act_editor_zoom_in));
+    addAction(app, "editorzoomout",  G_CALLBACK(act_editor_zoom_out));
+    addAction(app, "editorzoomreset", G_CALLBACK(act_editor_zoom_reset));
+    addAction(app, "terminalzoomin", G_CALLBACK(act_terminal_zoom_in));
+    addAction(app, "terminalzoomout", G_CALLBACK(act_terminal_zoom_out));
+    addAction(app, "terminalzoomreset", G_CALLBACK(act_terminal_zoom_reset));
+    addAction(app, "togglewordwrap", G_CALLBACK(act_toggle_word_wrap));
+    addAction(app, "togglemaximize", G_CALLBACK(act_toggle_maximize));
+    addAction(app, "goback",         G_CALLBACK(act_go_back));
+    addAction(app, "goforward",      G_CALLBACK(act_go_forward));
     addAction(app, "playpause",      G_CALLBACK(act_play_pause));
     addAction(app, "showcommands",   G_CALLBACK(act_show_commands));
     addAction(app, "quickopen",      G_CALLBACK(act_quick_open));
@@ -2285,6 +2448,11 @@ static App* newWindow(const std::string& root, const std::string& file) {
     for (const char* off : {"zoomin", "zoomout", "zoomfit", "playpause"})   // until shown
         g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
                                         G_ACTION_MAP(app->window), off)), FALSE);
+#ifndef MINICODE_ENABLE_TERMINAL
+    for (const char* off : {"terminalzoomin", "terminalzoomout", "terminalzoomreset"})   // no terminal
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
+                                        G_ACTION_MAP(app->window), off)), FALSE);
+#endif
     app->tree->setContextMenu(g.treeMenu);
     // Rename and Move to Trash (F2 and Delete) only while the tree has the
     // keyboard. As window accelerators they would take Delete from the editor.

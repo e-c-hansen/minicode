@@ -120,19 +120,36 @@ const std::vector<LinuxRow>& linuxRows() {
         // In the terminal Ctrl+Shift+V pastes (linuxTerminalOwnKey).
         {"markdown.showPreview", "ctrl+shift+v", 0, nullptr, nullptr},
         {"minicode.toggleShortcutHints", "ctrl+shift+h", 0, nullptr, nullptr},
-        // A PDF or the LaTeX preview. Ctrl+0 is Focus File Tree, as Cmd+0 is
-        // outside a page on the Mac, so fit width is Ctrl+Alt+0.
+        // The editor's zoom (PARITY.md 1.11), VS Code's Linux Ctrl+= and
+        // Ctrl+- (its window's zoom; here the editor's and the Markdown
+        // preview's). The reset is VS Code's Ctrl+keypad 0 alone, since
+        // Ctrl+0 is Focus File Tree and Ctrl+Alt+0 is Fold All in the editor
+        // (the Mac's reset is Option+Cmd+0; PARITY.md D1).
+        // NotPageOrTerminal: in a page the same keys zoom it, and in the
+        // terminal the terminals (below).
+        {"editor.action.fontZoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
+        {"editor.action.fontZoomOut", "ctrl+-", 0, nullptr, nullptr},
+        {"editor.action.fontZoomReset", "ctrl+numpad0", 0, nullptr, nullptr},
+        // A PDF or the LaTeX preview on show, or the browser with the
+        // keyboard. Ctrl+0 is Focus File Tree, as Cmd+0 is outside a page on
+        // the Mac, so fit width is Ctrl+Alt+0, Fold All in the editor.
         {"minicode.page.zoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
         {"minicode.page.zoomOut", "ctrl+-", 0, nullptr, nullptr},
         {"minicode.page.fitWidth", "ctrl+alt+0", 0, nullptr, nullptr},
+        // VS Code's Linux key. An editor command, so in the terminal Alt+Z
+        // is the program's (Meta), as Option+Z is on the Mac.
+        {"editor.action.toggleWordWrap", "alt+z", 0, nullptr, nullptr},
         // Folding (PARITY.md 1.10). Fold and Unfold are VS Code's Linux
         // Ctrl+Shift+[ and ], which GTK matches as the braces Shift makes
         // (linuxAccelerators); the rest are Ctrl+K chords in VS Code, so
         // Ctrl+Alt with the chord's second key, as the Mac's are
-        // Control+Command with it. Ctrl+Alt+0 is Fold All in the editor and
-        // fit width in a PDF, places that never meet. Toggle Fold's would be
-        // Ctrl+Alt+L, the task key's, so it has none. Editor commands: in
-        // the terminal the program gets every one of these keys.
+        // Control+Command with it. Ctrl+Alt+0 is Fold All in the editor, the
+        // family's key (VS Code's Ctrl+K Ctrl+0), and outside it the
+        // terminals' zoom reset and a page's fit width, places that never
+        // meet the editor; the editor's zoom reset keeps VS Code's own
+        // Ctrl+keypad 0 (PARITY.md D1). Toggle Fold's would be Ctrl+Alt+L,
+        // the task key's, so it has none. Editor commands: in the terminal
+        // the program gets every one of these keys.
         {"editor.fold", "ctrl+shift+[", 0, nullptr, nullptr},
         {"editor.unfold", "ctrl+shift+]", 0, nullptr, nullptr},
         {"editor.toggleFold", "", 0, nullptr, nullptr},
@@ -151,6 +168,10 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.toggleSidebarVisibility", "ctrl+b", 0, nullptr, nullptr},
         {"workbench.view.scm", "ctrl+shift+g", 0, nullptr, nullptr},
         {"minicode.toggleEditor", "ctrl+shift+e", 0, nullptr, nullptr},
+        // The Mac's Ctrl+Cmd+M; VS Code has no key (its Toggle Maximize
+        // Editor Group is a chord), so Ctrl+Alt with the letter, which GNOME
+        // leaves alone. It has Alt, so it works from the terminal too.
+        {"minicode.toggleMaximizedPane", "ctrl+alt+m", 0, nullptr, nullptr},
         {"minicode.toggleHiddenFiles", "ctrl+shift+.", 0, nullptr, nullptr},
         // The Mac's Cmd+J would be Ctrl+J here, which a Global command would
         // take from the shell (it ends a line), so Ctrl+` and Ctrl+Shift+T.
@@ -158,6 +179,15 @@ const std::vector<LinuxRow>& linuxRows() {
          nullptr},
         {"minicode.toggleBrowser", "ctrl+shift+b", 0, nullptr, nullptr},
         {"minicode.togglePlayback", "ctrl+shift+space", 0, nullptr, nullptr},
+
+        // ---- Terminal
+        // The terminals' own zoom, with the editor's keys while the terminal
+        // has the keyboard, as on the Mac (and GNOME Terminal's own Ctrl+=
+        // and Ctrl+-). A Terminal command keeps its plain Ctrl keys there
+        // (linuxTerminalTakes), and applies nowhere else.
+        {"workbench.action.terminal.fontZoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
+        {"workbench.action.terminal.fontZoomOut", "ctrl+-", 0, nullptr, nullptr},
+        {"workbench.action.terminal.fontZoomReset", "ctrl+alt+0 ctrl+numpad0", 0, nullptr, nullptr},
 
         // ---- Navigate
         // The palette's other ways in, VS Code's Linux keys. Ctrl+P and
@@ -168,6 +198,11 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.quickOpen", "ctrl+p", 0, nullptr, nullptr},
         {"workbench.action.gotoLine", "ctrl+g", 0, nullptr, nullptr},
         {"workbench.action.gotoSymbol", "ctrl+shift+o", 0, nullptr, nullptr},
+        // VS Code's Linux keys (PARITY.md 1.11). In the terminal Ctrl+Shift+-
+        // is the program's (readline's undo reads it as Ctrl+_), as the
+        // Mac's grid keeps Ctrl+-; Ctrl+Alt+- still goes back from there.
+        {"workbench.action.navigateBack", "ctrl+alt+-", 0, nullptr, nullptr},
+        {"workbench.action.navigateForward", "ctrl+shift+-", 0, nullptr, nullptr},
         // VS Code's Linux key (PARITY.md 1.7). An editor command, so while
         // the terminal has the keyboard the program in it gets the key.
         {"editor.action.jumpToBracket", "ctrl+shift+\\", 0, nullptr, nullptr},
@@ -217,9 +252,14 @@ bool linuxTerminalOwnKey(const Key& k) {
 
 bool linuxTerminalTakes(const Command& c, const Key& k) {
     if (linuxTerminalOwnKey(k)) return true;
-    // A terminal sends these as Ctrl+G and Ctrl+Space, which Emacs and
-    // readline use (keyboard-quit, set-mark).
-    if (isKey(k, Ctrl | Shift, "g") || isKey(k, Ctrl | Shift, "space")) return true;
+    // A terminal sends these as Ctrl+G, Ctrl+Space and Ctrl+_, which Emacs
+    // and readline use (keyboard-quit, set-mark, undo).
+    if (isKey(k, Ctrl | Shift, "g") || isKey(k, Ctrl | Shift, "space") ||
+        isKey(k, Ctrl | Shift, "-"))
+        return true;
+    // A command of the terminal's own (its zoom) keeps its keys there: it
+    // applies nowhere else, so its plain Ctrl keys are no one else's.
+    if (c.when == When::Terminal) return false;
     // Alt with a letter alone is Meta to a terminal: readline's word moves
     // and case changes. The find bar's options have these keys (item 1.6).
     if (k.mods == Alt && k.name.size() == 1 && k.name[0] >= 'a' && k.name[0] <= 'z')
@@ -290,6 +330,13 @@ std::vector<std::string> linuxAccelerators(const Key& k) {
     }
     if (n.size() == 7 && n.compare(0, 6, "numpad") == 0) {
         out.push_back(mods + "KP_" + n.substr(6));
+        // With Num Lock off the same key is a cursor key, and GTK matches
+        // the keyval it gives (the zoom's Ctrl+keypad 0 is Ctrl+KP_Insert).
+        static const char* const kNoNumLock[10] = {"KP_Insert", "KP_End",  "KP_Down", "KP_Next",
+                                                   "KP_Left",   "KP_Begin", "KP_Right", "KP_Home",
+                                                   "KP_Up",     "KP_Prior"};
+        const int digit = n[6] - '0';
+        if (digit >= 0 && digit <= 9) out.push_back(mods + kNoNumLock[digit]);
         return out;
     }
     return out;

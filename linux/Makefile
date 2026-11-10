@@ -36,6 +36,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/EditorTabs.cpp ../src/Backups.cpp ../src/TabSessions.cpp \
         ../src/LineIndex.cpp ../src/QuickDiff.cpp ../src/LineDiff.cpp \
         ../src/RightAreaLayout.cpp \
+        ../src/NavHistory.cpp ../src/NavRecorder.cpp ../src/ViewZoom.cpp \
         ../src/CommandPalette.cpp ../src/SymbolOutline.cpp \
         ../src/BracketMatch.cpp ../src/BracketPairs.cpp ../src/AutoClose.cpp \
         ../src/MultiCaret.cpp ../src/Folding.cpp
@@ -54,7 +55,8 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Document.cpp src/Tabs.cp
        src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \
-       src/StartupLog.cpp src/WhenDrawn.cpp
+       src/StartupLog.cpp src/WhenDrawn.cpp \
+       src/Zoom.cpp src/NavHistoryUi.cpp
 
 SRCS := $(GUI) $(CORE)
 

@@ -7,6 +7,7 @@
 #include <string>
 
 #include "StartupLog.h"
+#include "ViewZoom.h"
 
 // The toolbar is made at once and the web view when the panel is first
 // shown (makeView), as the Mac makes its browser on the first Toggle Browser
@@ -159,6 +160,16 @@ void Browser::onReload(GtkWidget* /*w*/, gpointer selfp) {
 
 void Browser::focusUrlBar() {
     if (entry_) gtk_widget_grab_focus(entry_);
+}
+
+void Browser::zoom(int step) {
+    if (!web_) return;   // no page yet (makeView)
+    WebKitWebView* wv = WEBKIT_WEB_VIEW(web_);
+    webkit_web_view_set_zoom_level(wv, ViewZoom::pageStep(webkit_web_view_get_zoom_level(wv), step));
+}
+
+double Browser::zoomLevel() const {
+    return web_ ? webkit_web_view_get_zoom_level(WEBKIT_WEB_VIEW(web_)) : 1.0;
 }
 
 #endif // MINICODE_ENABLE_BROWSER

@@ -46,6 +46,10 @@ public:
     // Background (with its opacity) and text color from the settings file.
     // VTE redraws everything already on screen in the new colors.
     void applySettings(const Settings& s);
+    // The font: the desktop's monospace at `basePoints` (0: the desktop's
+    // own size, as before), scaled by VTE's font scale for the terminals'
+    // zoom (Zoom.h). VTE gives the shell the rows and columns that fit.
+    void setFontSize(double basePoints, double scale);
 
     // Ctrl+click on terminal output (the Mac's Cmd+click, Terminal.mm). The
     // shared TermLinks core finds URLs and file references such as
@@ -116,6 +120,10 @@ private:
     int         rapidExits_ = 0;   // consecutive exits inside a second
     GdkRGBA     palette_[16];
     std::unique_ptr<Settings> settings_;   // the app's last, for a terminal made later
+    // setFontSize's, for a terminal made later.
+    void applyFont();
+    double fontBase_ = 0, fontScale_ = 1;
+    bool   fontSet_ = false;
     GCancellable* spawnCancel_ = g_cancellable_new();
 };
 

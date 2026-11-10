@@ -22,13 +22,23 @@
 // window out from it (linux/src/WindowLayout.cpp), with a gap of `bar`
 // points between panes for its bars; the Mac keeps its own code, whose bars
 // overlap the panes (bar 0), and which this follows.
+//
+// Maximize Pane (the Mac's Ctrl+Cmd+M, toggleMaximizedPane:) gives one pane
+// the whole right side while it shows, with no bars; the others keep what
+// the user asked of them and come back as they were when it ends. Showing
+// or focusing another pane ends it (leaveMaximizedFor), as does hiding the
+// pane itself.
 #pragma once
+
+#include <optional>
 
 namespace RightArea {
 
 struct Rect {
     double x = 0, y = 0, w = 0, h = 0;   // y from the top
 };
+
+enum class Pane { Editor, Browser, Terminal };
 
 // What the user asked to see, and the sizes remembered for when it shows.
 struct State {
@@ -37,6 +47,10 @@ struct State {
     bool terminalVisible = false;
     double browserFraction = 0.5;   // the browser's share of the width
     double terminalHeight = 220;    // the dock's height while the top shows
+    // Maximize Pane: `maximizedPane` alone, while it shows (the Mac's
+    // _maximizedPane).
+    bool maximized = false;
+    Pane maximizedPane = Pane::Editor;
 };
 
 struct Limits {
@@ -55,21 +69,36 @@ struct Parts {
     bool terminal = true;
 };
 
-enum class Pane { Editor, Browser, Terminal };
-
-// Whether a pane shows.
+// Whether a pane shows: what the user asked to see, Maximize Pane aside.
 bool shows(const State &s, Pane p, const Parts &parts = {});
 // The editor or the browser shows.
 bool topShown(const State &s, const Parts &parts = {});
 // Nothing shows: the window collapses its right side.
 bool empty(const State &s, const Parts &parts = {});
 
+// The pane Maximize Pane gives the right side to, in *which: false when it
+// is off, or that pane does not show (which ends it).
+bool maximizedNow(const State &s, Pane *which = nullptr, const Parts &parts = {});
+// Whether a pane is on screen: it shows, and Maximize Pane does not hide it.
+bool onScreen(const State &s, Pane p, const Parts &parts = {});
+// Maximize Pane: on again, everything comes back as it was; else the pane
+// with the keyboard (`keyboard`, the browser or the terminal, when it
+// shows), else the editor if it shows, else the browser, else the
+// terminal, as the Mac's toggleMaximizedPane: chooses. False, with nothing
+// changed, when no pane shows.
+bool toggleMaximized(State &s, std::optional<Pane> keyboard, const Parts &parts = {});
+// `p` was shown or focused: Maximize Pane ends if it holds another pane.
+// Whether it did (the Mac's leaveMaximizedPaneFor:).
+bool leaveMaximizedFor(State &s, Pane p, const Parts &parts = {});
+
 // Toggle Editor, Toggle Browser or Toggle Terminal: that pane alone hides
-// or shows. Whether it shows now.
+// or shows. Whether it shows now. A maximized pane hidden ends Maximize
+// Pane.
 bool toggle(State &s, Pane p);
 
 // Where everything goes in a right side `width` by `height` points.
-// Rectangles of panes that do not show are empty.
+// Rectangles of panes that do not show are empty. A maximized pane has the
+// whole of it, with no bars.
 struct Frames {
     bool editor = false, browser = false, terminal = false;
     bool browserBar = false;    // between the editor and the browser

@@ -29,5 +29,9 @@ LargeFileSuite.cpp
 FoldingSuite.cpp
 FoldBudgetSuite.cpp
 FoldPerfSuite.cpp
+ZoomSuite.cpp
+WordWrapSuite.cpp
+GoBackSuite.cpp
+MaximizeSuite.cpp
 StartupSuite.cpp
 DetachSuite.cpp

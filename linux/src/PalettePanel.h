@@ -82,6 +82,12 @@ public:
     // so this is once for every window).
     static void applySettings(const Settings& settings);
 
+    // Go Back's history (NavHistoryUi.h): told when the palette opens and
+    // closes, so nothing it previews counts as a jump, and run around the
+    // move a row makes to a line or a symbol (on the turn after it closed).
+    std::function<void(bool open)> onOpenChanged;
+    std::function<void(const std::function<void()>& move)> aroundMove;
+
     // ---- for the checks
     GtkWidget* box() const { return box_; }
     GtkWidget* entry() const { return entry_; }
@@ -148,6 +154,8 @@ private:
     std::vector<std::u16string> recentFileKeys() const;
     // Runs `fn` on the next turn of the main loop, if the palette lives.
     void later(std::function<void()> fn);
+    // A row's move, through aroundMove when it is set.
+    void move(const std::function<void()>& body);
 
     static void onSetup(GtkSignalListItemFactory*, GtkListItem* item, gpointer self);
     static void onBind(GtkSignalListItemFactory*, GtkListItem* item, gpointer self);

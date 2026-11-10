@@ -104,6 +104,7 @@ void Terminal::makeTerminal() {
 
     applyTheme();
     if (settings_) applyColors(*settings_);   // the app's, told before the terminal existed
+    if (fontSet_) applyFont();                // the zoom's (Zoom.h), the same
 
     VteTerminal* term = VTE_TERMINAL(vte_);
     vte_terminal_set_scrollback_lines(term, 10000);
@@ -528,6 +529,25 @@ void Terminal::applyTheme() {
     PangoFontDescription* font = systemMonospaceFont();
     vte_terminal_set_font(term, font);
     pango_font_description_free(font);
+}
+
+void Terminal::setFontSize(double basePoints, double scale) {
+    fontBase_ = basePoints;
+    fontScale_ = scale;
+    fontSet_ = true;
+    if (vte_) applyFont();   // else when it is made
+}
+
+void Terminal::applyFont() {
+    VteTerminal* term = VTE_TERMINAL(vte_);
+    const double scale = fontScale_;
+    PangoFontDescription* font = systemMonospaceFont();
+    if (fontBase_ > 0)
+        pango_font_description_set_size(font, (gint)std::lround(fontBase_ * PANGO_SCALE));
+    const PangoFontDescription* now = vte_terminal_get_font(term);
+    if (!now || !pango_font_description_equal(now, font)) vte_terminal_set_font(term, font);
+    pango_font_description_free(font);
+    if (vte_terminal_get_font_scale(term) != scale) vte_terminal_set_font_scale(term, scale);
 }
 
 void Terminal::applySettings(const Settings& s) {

@@ -22,6 +22,7 @@
 #include "Folds.h"
 #include "Gutter.h"
 #include "PalettePanel.h"
+#include "Zoom.h"
 
 #ifdef MINICODE_ENABLE_TERMINAL
 #include "Terminal.h"
@@ -29,6 +30,7 @@
 #endif
 
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -162,6 +164,15 @@ VteTerminal* findVte(GtkWidget* root) {
 
 bool terminalHasKeyboard() {
     return MCGuiApp().terminal->owns(gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)));
+}
+
+std::string terminalText() {
+    VteTerminal* vte = findVte(MCGuiApp().terminal->widget());
+    if (!vte) return "";
+    char* text = vte_terminal_get_text_format(vte, VTE_FORMAT_TEXT);
+    std::string out = text ? text : "";
+    g_free(text);
+    return out;
 }
 
 std::vector<std::string> accels(const char* action) {
@@ -575,16 +586,31 @@ MC_GUI_SUITE(folding) {
         else MCGuiKey("ctrl+`");
     });
     MCGuiWait("it has it", 10, terminalHasKeyboard);
-    MCGuiStep("no folding key is an accelerator there; pressed anyway", [] {
+    MCGuiWait("the shell is up", 20, [] {
+        return terminalText().find_first_not_of(" \n") != std::string::npos;
+    });
+    MCGuiStep("no folding key is an accelerator there; a program reads what comes", [] {
         for (const char* a : {"win.fold", "win.unfold", "win.foldrecursively", "win.unfoldrecursively",
                               "win.foldall", "win.unfoldall", "win.foldcomments", "win.foldlevel1",
                               "win.foldlevel7"})
             GCHECK(accels(a).empty());
-        MCGuiKey("ctrl+shift+[");
-        MCGuiKey("ctrl+alt+0");
+        // Ctrl+Alt+0 is the terminals' zoom reset there (PARITY.md D1).
+        unlink(F("fold-ready").c_str());
+        unlink(F("fold-keys.bin").c_str());
+        MCGuiType("cd '" + MCGuiProject() + "'; stty raw -echo; : > fold-ready; "
+                  "IFS= read -r -d q k; stty sane; printf '%s' \"$k\" > fold-keys.bin\n");
     });
-    MCGuiPause(0.5);   // a negative check: nothing may fold
-    MCGuiStep("nothing folded; the terminal put away", [] {
+    MCGuiWait("it is reading", 20, [] { return MCGuiFileExists(F("fold-ready")); });
+    MCGuiStep("Ctrl+Shift+[ and Ctrl+Alt+1, then q", [] {
+        MCGuiKey("ctrl+shift+[");
+        MCGuiKey("ctrl+alt+1");
+        MCGuiKey("q");
+    });
+    MCGuiWait("the program got them", 20, [] { return MCGuiFileExists(F("fold-keys.bin")); });
+    MCGuiStep("as bytes, and nothing folded; the terminal put away", [] {
+        const std::string got = MCGuiReadFile(F("fold-keys.bin"));
+        for (unsigned char c : got) MCGuiNote("the program read %02x", c);
+        GCHECK(got.size() >= 2);
         GCHECK(!folds()->hasClosedFolds());
         if (!gTerminalWasOpen) MCGuiKey("ctrl+`");
         else MCGuiClick(ed()->textView());
@@ -595,22 +621,37 @@ MC_GUI_SUITE(folding) {
     });
     MCGuiWait("the accelerators follow the keyboard", 5, [] {
         const std::vector<std::string> fold = accels("win.fold"), all = accels("win.foldall");
+        bool resetOnAlt0 = false;
+        for (const std::string& a : accels("win.editorzoomreset"))
+            resetOnAlt0 |= canon(a) == canon("<Ctrl><Alt>0");
         return fold.size() == 1 && canon(fold[0]) == canon("<Ctrl>braceleft") && all.size() == 1 &&
-               canon(all[0]) == canon("<Ctrl><Alt>0") && accels("win.zoomfit").empty();
-    });
-    // Ctrl+Alt+0 is Zoom to Fit Width's outside the editor (a PDF, the
-    // LaTeX preview), places folding never meets.
-    MCGuiStep("the tree with the keyboard (Ctrl+0)", [] { MCGuiKey("ctrl+0"); });
-    MCGuiWait("Ctrl+Alt+0 is fit width's there", 5, [] {
-        const std::vector<std::string> fit = accels("win.zoomfit");
-        return !editorHasKeyboard() && accels("win.foldall").empty() && fit.size() == 1 &&
-               canon(fit[0]) == canon("<Ctrl><Alt>0");
-    });
-    MCGuiStep("back to the editor (Ctrl+1)", [] { MCGuiKey("ctrl+1"); });
-    MCGuiWait("Fold All's again", 5, [] {
-        return editorHasKeyboard() && accels("win.foldall").size() == 1 && accels("win.zoomfit").empty();
+               canon(all[0]) == canon("<Ctrl><Alt>0") && !resetOnAlt0 &&
+               accels("win.zoomfit").empty() && accels("win.terminalzoomreset").empty();
     });
 #endif
+
+    // ---- Ctrl+Alt+0 in the editor is Fold All's, not the zoom's (D1)
+    MCGuiStep("zoomed in a point; Ctrl+Alt+0", [] {
+        gtk_widget_grab_focus(ed()->textView());
+        GCHECK(Zoom::editorZoom() == 0);
+        MCGuiKey("ctrl+=");
+        MCGuiKey("ctrl+alt+0");
+    });
+    MCGuiWait("everything folded, the zoom left as it was", 5, [] {
+        return shows("1 2 3 7 8 12 13 14 15") && Zoom::editorZoom() == 1;
+    });
+    MCGuiStep("Ctrl+keypad 0 puts the zoom back; Ctrl+Alt+J unfolds", [] {
+        // The placeholders take the zoomed line's height and the zoomed
+        // font's "000".
+        const auto& ph = ed()->folds()->drawnPlaceholders();
+        GCHECK(!ph.empty());
+        MCGuiSnapshot(GTK_WIDGET(MCGuiApp().window), "fold-zoomed");
+        MCGuiKey("ctrl+KP_Insert");
+        MCGuiKey("ctrl+alt+j");
+    });
+    MCGuiWait("no zoom, nothing folded", 5, [] {
+        return Zoom::editorZoom() == 0 && !folds()->hasClosedFolds();
+    });
 
     // ---- a long line inside a fold: its own hidden part stays its own
     MCGuiStep("a function holding a line of 30,000 characters", [] {
