@@ -27,3 +27,4 @@ BracketPairsSuite.cpp
 AutoCloseSuite.cpp
 LargeFileSuite.cpp
 StartupSuite.cpp
+DetachSuite.cpp

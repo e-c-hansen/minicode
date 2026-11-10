@@ -18,6 +18,8 @@
 #include "TermLinkPath.h"
 #include "TermLinks.h"
 #include "WebImageRules.h"
+#include "LaunchOptions.h"
+#include <algorithm>
 #include <cstdio>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -673,6 +675,89 @@ static void testWebImageRules() {
     CHECK(fails.size() == 300 && fails.recent("u599", 100) && !fails.recent("u0", 100));
 }
 
+// What `minicode` makes of its command line, and when it leaves the
+// terminal (PARITY.md R2; the detach GUI suite runs the real binary).
+static void testLaunchOptions() {
+    using namespace LaunchOptions;
+    typedef std::vector<std::string> Args;
+
+    GROUP("launch: options");
+    Parsed p = parse(Args{"minicode"});
+    CHECK(!p.help && !p.version && !p.foreground && p.error.empty());
+    CHECK(p.args == Args{"minicode"});
+    p = parse(Args{"/usr/bin/minicode", "notes.md"});
+    CHECK(p.args == (Args{"/usr/bin/minicode", "notes.md"}));
+    CHECK(parse(Args{"minicode", "-h"}).help && parse(Args{"minicode", "--help"}).help);
+    CHECK(parse(Args{"minicode", "-v"}).version && parse(Args{"minicode", "--version"}).version);
+    // --foreground anywhere, and taken out of what GApplication gets, so a
+    // running minicode is handed the path alone.
+    p = parse(Args{"minicode", "--foreground", "src"});
+    CHECK(p.foreground && p.args == (Args{"minicode", "src"}));
+    p = parse(Args{"minicode", "src", "--foreground"});
+    CHECK(p.foreground && p.args == (Args{"minicode", "src"}));
+    // An option the port does not have is a usage error, as the Mac's
+    // launcher says it; -n and -r are the Mac's and not the port's.
+    for (const char* o : {"-n", "-r", "--new-window", "--reuse-window", "-x", "-hv", "--bogus"}) {
+        p = parse(Args{"minicode", o});
+        CHECK(p.error == std::string("minicode: unknown option ") + o + "\nTry 'minicode --help'.\n");
+    }
+    // The first unknown option is the one named.
+    CHECK(parse(Args{"minicode", "-x", "-y"}).error.find("-x") != std::string::npos);
+    // "--" ends the options: what follows is a path, an option-like one
+    // made relative so nothing after reads it as an option.
+    p = parse(Args{"minicode", "--", "--foreground"});
+    CHECK(!p.foreground && p.error.empty() && p.args == (Args{"minicode", "./--foreground"}));
+    p = parse(Args{"minicode", "--", "-notes.md", "/abs/-x"});
+    CHECK(p.args == (Args{"minicode", "./-notes.md", "/abs/-x"}));
+    // "-" alone is a name, as for most programs; an empty argument stays.
+    CHECK(parse(Args{"minicode", "-"}).args == (Args{"minicode", "-"}));
+    CHECK(parse(Args{"minicode", ""}).args == (Args{"minicode", ""}));
+    // GApplication's own option goes through to it.
+    p = parse(Args{"minicode", "--gapplication-service"});
+    CHECK(p.error.empty() && p.args == (Args{"minicode", "--gapplication-service"}));
+    // No argv[0] at all.
+    CHECK(parse(Args{}).args == Args{"minicode"});
+
+    GROUP("launch: when to leave the terminal");
+    const Parsed plain = parse(Args{"minicode", "src"});
+    CHECK(shouldDetach(plain, true, nullptr));
+    CHECK(!shouldDetach(plain, false, nullptr));   // the desktop's launch: no terminal
+    CHECK(!shouldDetach(parse(Args{"minicode", "--foreground"}), true, nullptr));
+    CHECK(!shouldDetach(plain, true, "1"));
+    CHECK(!shouldDetach(plain, true, "yes"));
+    CHECK(shouldDetach(plain, true, ""));
+    CHECK(shouldDetach(plain, true, "0"));
+    // What prints and returns never forks.
+    CHECK(!shouldDetach(parse(Args{"minicode", "-h"}), true, nullptr));
+    CHECK(!shouldDetach(parse(Args{"minicode", "--version"}), true, nullptr));
+    CHECK(!shouldDetach(parse(Args{"minicode", "-q"}), true, nullptr));
+
+    GROUP("launch: help and version");
+    const std::string help = helpText();
+    CHECK(help.rfind("Usage: minicode [options] [path]\n", 0) == 0);
+    for (const char* line : {"      --foreground", "MINICODE_FOREGROUND=1", "  -v, --version",
+                             "  -h, --help", "returns"})
+        CHECK(help.find(line) != std::string::npos);
+    // Only what the port has.
+    CHECK(help.find("--new-window") == std::string::npos);
+    CHECK(help.find("--reuse-window") == std::string::npos);
+    // Within 80 columns, for a terminal.
+    size_t start = 0, widest = 0;
+    for (size_t nl; (nl = help.find('\n', start)) != std::string::npos; start = nl + 1)
+        widest = std::max(widest, nl - start);
+    CHECK(widest <= 80);
+    CHECK(help.back() == '\n');
+    CHECK(versionText("1.5.17") == "minicode 1.5.17\n");
+    CHECK(versionText("") == "minicode unknown\n");
+
+    GROUP("launch: scope name");
+    CHECK(scopeName("org.minicode.Editor", 4242) == "app-minicode-org.minicode.Editor-4242.scope");
+    // systemd's escaping, as in app-gnome-org.gnome.Evolution\x2dalarm\x2dnotify-5346.scope.
+    CHECK(scopeName("org.gnome.Evolution-alarm-notify", 7) ==
+          "app-minicode-org.gnome.Evolution\\x2dalarm\\x2dnotify-7.scope");
+    CHECK(scopeName(".x y", 1) == "app-minicode-\\x2ex\\x20y-1.scope");
+}
+
 int main() {
     std::printf("Running MiniCode Linux port tests...\n\n");
     testAscii();
@@ -688,6 +773,7 @@ int main() {
     testPageWords();
     testTermLinkPath();
     testWebImageRules();
+    testLaunchOptions();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

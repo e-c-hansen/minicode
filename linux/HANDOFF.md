@@ -1686,7 +1686,48 @@ Traps:
   went nowhere until the field was clicked.
 - `g_format_size` puts a no-break space before the unit.
 
-### 23. The time to a usable window (done, November 2026; `PARITY.md` item R3)
+### 23. Leaving the terminal (done, November 2026; `PARITY.md` R2)
+
+`minicode` typed in a terminal used to be the app in the foreground: the
+shell waited, GNOME Terminal warned that closing it would kill a process,
+and closing it did. Now `main` calls `Detach::start` first
+(`src/Detach.{h,cpp}`, the rules in `src/LaunchOptions.{h,cpp}`), which
+reads `-h`, `-v`, `--foreground` and `--` itself, and with a terminal on a
+standard stream forks: the child calls `setsid` and runs the app, the
+parent waits on a pipe until the child's first window (an emission hook on
+GtkApplication's `window-added`, so the command line's own messages, such
+as a path that is not there, still reach the terminal), then exits 0; or it
+exits with the child's status when the child ends first (a second
+`minicode` handing its path over, `--help`, no display). At the window the
+child puts `/dev/null` on every standard stream that is not a regular file
+and asks the session bus's systemd for `app-minicode-org.minicode.Editor-<pid>.scope`.
+- **Fork before anything starts a thread.** Nothing before `Detach::start`
+  may touch GLib or GTK, and it checks `/proc/self/status` and stays in the
+  foreground if a library's constructor ever started a thread.
+- GNOME Terminal never stops a shell's `vte-spawn-*.scope` (libvte 0.84 and
+  gnome-terminal-server have no StopUnit or KillUnit; the scope's drop-in
+  is `KillMode=process`), and the journal showed the owner's terminal
+  scopes ending when the processes in them did. Only the hang-up's SIGHUP
+  closed minicode, which a process in another session never gets. The
+  scope of its own is for `systemctl --user` and systemd-oomd, which judge a
+  scope as one; a refusal changes nothing.
+- The GUI checks' build leaves the hook out (`MINICODE_GUITEST`): the
+  harness's app must stay its child. The `detach` suite runs the real
+  `build/minicode` on pseudo-terminals instead, with three traps of its own.
+  On the harness's session bus this app owns `org.minicode.Editor`, and the
+  real binary handed it its command line and exited, so the suite starts a
+  dbus-daemon of its own from the harness's `dbus.conf`. VTE in the real
+  binary asks that bus's systemd for a `vte-spawn-*.scope` per shell, so
+  the suite's stand-in systemd hears those too. And the real binary's
+  browser pane loads DuckDuckGo (only the checks' build has about:blank),
+  so it runs with `http_proxy` and `https_proxy` at a listener in the suite
+  that answers nothing; WebKitGTK 2.52 honours them (the listener hears
+  `CONNECT duckduckgo.com:443`).
+- A shell started for a check from inside the harness inherits its signal
+  dispositions and mask unless they are reset before `execve`: a SIGHUP
+  ignored there would let the hang-up check pass without the fix.
+
+### 24. The time to a usable window (done, November 2026; `PARITY.md` item R3)
 
 What later items build on:
 - **`MINICODE_STARTUP_LOG=1`** (`src/StartupLog.{h,cpp}`) prints a line to
@@ -1702,7 +1743,11 @@ What later items build on:
   server, git). A new thing a window starts at launch, or a new pane,
   gets a `StartupLog::mark` or `once`, so it shows. Without the variable
   each call tests one flag; `StartupLog::firstFrame()` is kept either way
-  for the checks.
+  for the checks. A run with the log stays in the foreground (main.cpp sets
+  `MINICODE_FOREGROUND` for `Detach::start`, item 23): a detached app puts
+  `/dev/null` on its stderr once its window is made, which would cut the
+  log off before the first frame. `begin()` runs after the fork, so its
+  clock is the main thread's of the process that runs the app.
 - **Nothing hidden is made at launch.** `Terminal` and `Browser` make their
   widget at once, and the terminal and its shell, or the WebKitWebView,
   when the panel first maps, as the Mac makes its terminal dock and its
@@ -1710,7 +1755,8 @@ What later items build on:
   The terminal is also made by `focus()`, and keeps settings told to it
   before; the browser's `load()` makes the view and loads that page
   instead of the home page, which is why `openLink` loads before it shows
-  the pane. `made()` and `webView()` say whether they exist yet. A future
+  the pane. `made()` and `webView()` say whether they exist yet. So the
+  real binary's browser loads DuckDuckGo only once shown. A future
   browser page in the session (the Mac's `restoreBrowserFromSession`) makes
   the view at launch only when the session had it.
 - **Work after the first frame:** `whenDrawn(widget, fn)` (`src/WhenDrawn.h`)
@@ -1915,7 +1961,10 @@ Do not claim a GUI behaviour works when it was only compiled.
 - A test launch on the ThinkPad should run under `dbus-run-session`. The app
   is a single-instance GApplication, so a plain launch would hand its
   arguments to whatever MiniCode is already running, the user's or another
-  session's, and exit.
+  session's, and exit. Since R2 (item 23), add `--foreground` when it is
+  typed in a terminal: otherwise the command returns once the window is up,
+  `dbus-run-session` then stops its bus, and the app, its session bus gone,
+  quits within a second (seen in the `detach` suite's world).
 - Pages of a `PdfView` that have never been on screen may not be allocated
   yet, and then `gtk_widget_compute_point` maps every page to the same place.
   A real click only reaches pages that are drawn, but a test that clicks

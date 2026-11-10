@@ -52,7 +52,8 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Document.cpp src/Tabs.cp
        src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \
-       src/LargeFileView.cpp src/StartupLog.cpp src/WhenDrawn.cpp
+       src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \
+       src/StartupLog.cpp src/WhenDrawn.cpp
 
 SRCS := $(GUI) $(CORE)
 
@@ -109,7 +110,7 @@ test:
 	    src/PageWords.cpp ../src/LatexDoc.cpp ../src/SyncTex.cpp \
 	    ../src/TermLinks.cpp src/TermLinkPath.cpp \
 	    ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp \
-	    src/WebImageRules.cpp \
+	    src/WebImageRules.cpp src/LaunchOptions.cpp \
 	    -o $(TEST_BIN)
 	@$(TEST_BIN)
 

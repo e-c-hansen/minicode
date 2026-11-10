@@ -3423,7 +3423,10 @@ session has a display. Check first.
   container with the repo mounted; `linux/dev/README.md` has the workflow.
   Build into `/build` inside; `Xvfb :99` plus `xcompmgr`; launch with
   `GDK_BACKEND=x11 GTK_A11Y=none` under `dbus-run-session`, a scratch HOME, and
-  `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` (bubblewrap cannot start there).
+  `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` (bubblewrap cannot start there),
+  and `--foreground` when a terminal runs it (else the command returns once
+  the window is up, `dbus-run-session` stops its bus, and the app quits:
+  `linux/HANDOFF.md` item 23).
   Drive with `xdotool`, capture with `import -window root` (dotted debris is
   xcompmgr's). `pkill -x minicode`, never `pkill -f` with a path (it kills the
   `docker exec`). The image is about 1.8 GB on a tight disk. **Docker trap**:
@@ -3433,7 +3436,8 @@ session has a display. Check first.
   `$WAYLAND_DISPLAY`): `meson test -C build`; `setsid gtk-launch
   org.minicode.Editor &` then `pgrep -a minicode` (a real window: say so, leave
   none behind); `systemctl --user list-units --type=scope | grep minicode`
-  (`app-gnome-org.minicode.Editor-*.scope` proves the dock association, a
+  (`app-gnome-org.minicode.Editor-*.scope` proves the dock association,
+  `app-minicode-org.minicode.Editor-*.scope` a start from a terminal, a
   nested `vte-spawn-*.scope` the terminal); `journalctl --user --since "-15
   min"`. Real input: a private rootful Xwayland driven by XTest
   (`linux/HANDOFF.md`, "How to work on it"); prefer it to hooks, which passed

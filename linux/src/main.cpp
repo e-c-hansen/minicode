@@ -44,6 +44,7 @@
 
 #include "AppSettings.h"
 #include "BracketView.h"
+#include "Detach.h"
 #include "Document.h"
 #include "Editor.h"
 #include "FileTree.h"
@@ -2421,7 +2422,18 @@ static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
 }
 
 int main(int argc, char** argv) {
-    StartupLog::begin();   // MINICODE_STARTUP_LOG=1: each phase's time on stderr
+#ifndef MINICODE_GUITEST
+    // A run with the startup log stays in the terminal it was asked from: a
+    // detached app gives that terminal up, and the log with it (Detach.h).
+    const bool logStays = StartupLog::wanted() && !g_getenv("MINICODE_FOREGROUND");
+    if (logStays) g_setenv("MINICODE_FOREGROUND", "1", TRUE);
+    // The options, and a terminal given back at once (Detach.h, PARITY.md R2).
+    if (const int status = Detach::start(&argc, &argv); status >= 0) return status;
+    if (logStays) g_unsetenv("MINICODE_FOREGROUND");   // not for the shells it starts
+#endif
+    // MINICODE_STARTUP_LOG=1: each phase's time on stderr. After the fork,
+    // so its clock is this process's main thread's.
+    StartupLog::begin();
     GtkApplication* gapp = gtk_application_new("org.minicode.Editor",
                                               G_APPLICATION_HANDLES_COMMAND_LINE);
     g.gapp = gapp;

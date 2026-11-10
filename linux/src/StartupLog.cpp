@@ -177,14 +177,18 @@ void onAfterPaint(GdkFrameClock*, gpointer fp) {
 
 }  // namespace
 
+bool wanted() {
+    const char* v = g_getenv("MINICODE_STARTUP_LOG");
+    return v && *v && strcmp(v, "0") != 0;
+}
+
 void begin() {
     if (gBegun) return;
     gBegun = true;
     gWall0 = clockMs(CLOCK_MONOTONIC);
     pthread_getcpuclockid(pthread_self(), &gMainClock);
     gCpu0 = clockMs(gMainClock);
-    const char* v = g_getenv("MINICODE_STARTUP_LOG");
-    gOn = v && *v && strcmp(v, "0") != 0;
+    gOn = wanted();
     if (gOn) {
         const char* renderer = g_getenv("GSK_RENDERER");
         print("main (the process ran %.0f ms before it; GSK_RENDERER=%s, GDK_BACKEND=%s)",

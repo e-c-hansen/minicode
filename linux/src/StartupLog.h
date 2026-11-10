@@ -20,13 +20,18 @@
 //
 // Run from a build folder on the desktop, the owner's numbers:
 //   MINICODE_STARTUP_LOG=1 ./build/minicode ~/minicode
+// A run with the log stays in the foreground, as with --foreground: a
+// detached minicode puts /dev/null on its stderr once its window is made
+// (Detach.h), which would cut the log short.
 #pragma once
 
 #include <gtk/gtk.h>
 
 namespace StartupLog {
 
-// First thing in main: the clocks start, and the variable is read.
+// Whether MINICODE_STARTUP_LOG asks for the log (set, and not "" or "0").
+bool wanted();
+// First thing in main, in the process that runs the app: the clocks start.
 void begin();
 bool on();
 
