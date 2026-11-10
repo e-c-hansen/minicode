@@ -7,6 +7,7 @@
 #include "Editor.h"
 
 #include "GitPanel.h"
+#include "LargeFileView.h"
 #include "Latex.h"
 #include "MediaView.h"
 #include "TabStrip.h"
@@ -88,19 +89,31 @@ bool Editor::opensInPreview(EditorTabs::OpenFrom from) const {
 // their previews, as on the Mac, unless the file is empty: a blank page
 // looks like nothing opened.
 bool Editor::loadText(Document* d, const std::string& path) {
+    // A big file is read on a worker thread and put in a piece at a time
+    // (LargeFileView.h); documentLoaded finishes the job.
+    if (LargeFileView::readsInBackground(path)) {
+        d->beginLoading(path);
+        return true;
+    }
+    std::string content;
+    const Document::Read r = Document::readText(path, content);
+    return textRead(d, path, (int)r, content);
+}
+
+bool Editor::textRead(Document* d, const std::string& path, int result,
+                      const std::string& content) {
     const std::string name = baseName(path);
     auto refuse = [&](const std::string& why) {
         d->setMessage(path, "\n  Cannot display “" + name + "”.\n\n  (" + why + ")");
         return false;
     };
-    std::string content;
-    switch (Document::readText(path, content)) {
+    switch ((Document::Read)result) {
     case Document::Read::Ok:
         break;
     case Document::Read::NotRegular:
         return refuse("Not a regular file.");
     case Document::Read::TooLarge:
-        return refuse("Larger than 16 MB, too large to edit here.");
+        return refuse("Larger than 256 MB, too large to edit here.");
     case Document::Read::NotText:
         return refuse("Binary file or unsupported encoding.");
     case Document::Read::Missing:
@@ -157,6 +170,8 @@ bool Editor::openFile(const std::string& path, EditorTabs::OpenFrom from) {
         activate(d);
         return d->kind() != Document::Kind::Message;
     }
+    // A file over 50 MB asks first (LargeFileView.h); Open Anyway opens it then.
+    if (!large_->mayOpen(path, from)) return false;
     Document* d = new Document(this, &tags_);
     const bool ok = loadInto(d, path);
     Document* old = inPreview ? previewTab() : nullptr;
@@ -351,7 +366,7 @@ EditorTabs::ClosedTab Editor::closedTabOf(Document* d) const {
     EditorTabs::ClosedTab c;
     c.path = d->path();
     const Document::Place& p = d->place();
-    if (d->unread()) {
+    if (d->unread() || (d->loading() && p.haveRestore)) {
         if (p.haveRestore) c = p.restore;
         c.path = d->path();
         return c;
@@ -382,7 +397,8 @@ EditorTabs::ClosedTab Editor::placeOf(Document* d) {
 }
 
 void Editor::placeTab(Document* d, const EditorTabs::ClosedTab& c) {
-    if (d->unread()) {
+    // Not read yet, or still being read: given its place once it is.
+    if (d->unread() || d->loading()) {
         d->place().haveRestore = true;
         d->place().restore = c;
         return;

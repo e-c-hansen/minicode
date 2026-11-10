@@ -6,6 +6,7 @@
 #include "BackupStore.h"
 #include "BracketColors.h"
 #include "BufferLines.h"
+#include "LargeFileView.h"
 #include "MarkdownTasks.h"
 #include "Utf8Offsets.h"
 #ifdef MINICODE_ENABLE_PDF
@@ -25,12 +26,12 @@
 
 namespace {
 
-// The largest file the editor will open as text, 16 MB. Android stops at
-// 4 MB; a desktop has room for more, but a GtkTextBuffer holding hundreds of
-// megabytes (plus the highlighter's mirror and the saved copy) is not an
-// editor any more, and reading one whole on the main thread freezes every
-// window, since they all share this process.
-constexpr off_t kMaxTextBytes = 16 * 1024 * 1024;
+// The largest file the editor will open as text (LargeFileView.h): 256 MB.
+// Android stops at 4 MB; past a size like this a GtkTextBuffer (plus the
+// highlighter's mirror and the saved copy) is not an editor any more, and
+// every window shares this process. Files over 4 MB are read on a worker
+// thread (Document::beginLoading), so none of this holds the main loop.
+constexpr off_t kMaxTextBytes = (off_t)LargeFileView::kMaxTextBytes;
 
 // Writes `text` into the existing file at `path`, keeping its inode (so hard
 // links, owner, ACLs and extended attributes stay). Space is reserved before
@@ -145,8 +146,10 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     g_signal_connect_after(buffer_, "undo", G_CALLBACK(onEndUserAction), this);
     g_signal_connect(buffer_, "redo", G_CALLBACK(onBeginUserAction), this);
     g_signal_connect_after(buffer_, "redo", G_CALLBACK(onEndUserAction), this);
-    // Where its lines start, for the gutter; the buffer keeps it.
+    // Where its lines start, for the gutter; the buffer keeps it. Its long
+    // lines shown a part at a time (LargeFileView.h), the same.
     BufferLines::attach(buffer_);
+    LongLines::attach(buffer_);
     brackets_ = std::make_unique<BracketColors>(buffer_);
 }
 
@@ -154,6 +157,7 @@ Document::~Document() {
     // Saved, or let go when asked: its unsaved text is not kept any more. A
     // crash or a SIGKILL never gets here, and leaves the backup.
     if (backup_.written) BackupStore::shared().remove(backup_.id);
+    cancelLoading();
     stopWatching();
     if (taskTimer_) g_source_remove(taskTimer_);
     taskTimer_ = 0;
@@ -178,6 +182,8 @@ GtkTextBuffer* Document::page() {
 // The buffer holds something new, set whole: not an edit, never undone into,
 // never "unsaved".
 void Document::clearSource() {
+    cancelLoading();
+    largeFile_ = largeOff_ = largeOn_ = false;
     stopWatching();
     stopHighlighting();
     if (taskTimer_) g_source_remove(taskTimer_);
@@ -215,6 +221,7 @@ void Document::loadText(const std::string& path, const std::string& content) {
     latex_ = ext_ == "tex" || ext_ == "ltx" || ext_ == "latex";
 #endif
     rememberDisk(content);
+    noteLargeFile(content);
     gtk_text_buffer_set_enable_undo(buffer_, TRUE);
     fill(content);
     GtkTextIter start;
@@ -287,6 +294,7 @@ void Document::restoreText(const std::string& path, const std::string& text,
     // Gone, or changed since: what the backup was based on stays the stamp,
     // so the next backup still says so.
     if (!disk || changed) diskStamp_ = base;
+    noteLargeFile(text);
     gtk_text_buffer_set_enable_undo(buffer_, TRUE);
     fill(text);
     GtkTextIter start;
@@ -763,13 +771,21 @@ void Document::restartHighlighting() {
 }
 
 void Document::startHighlighting() {
+    // Highlight tags are only ever put on by a highlighter (onApplyTag keeps
+    // a paste's off), so without one there are none to take off: taking
+    // them off a whole large file on show cost about 25 ms a tag, on every
+    // change to the settings.
+    const bool hadColors = hl_ != nullptr;
     pending_ = false;
     bulk_ = false;
     cancelDeferred();
     hl_.reset();
     std::string().swap(mirror_);
-    if (kind_ != Kind::Text || ext_.empty() || !SyntaxHighlighter::supports(ext_)) {
-        // No grammar (any more): no colors. Covers a rename to a plain .txt.
+    if (kind_ != Kind::Text || ext_.empty() || !SyntaxHighlighter::supports(ext_) ||
+        largeFileFeaturesOff()) {
+        // No grammar (any more), or a large file (LargeFileView.h): no colors.
+        // Covers a rename to a plain .txt.
+        if (!hadColors) return;
         GtkTextIter a, b;
         gtk_text_buffer_get_bounds(buffer_, &a, &b);
         applyingTags_ = true;
@@ -949,10 +965,19 @@ void Document::retagLines(size_t firstLine, size_t endLine, const std::vector<To
     }
     const long c0 = gtk_text_iter_get_offset(&a);
 
-    // Byte -> character conversion over just these lines, one forward pass.
-    const std::string span = mirror_.substr(b0, b1 - b0);
-    gtk_text_buffer_get_iter_at_offset(buffer_, &b,
-                                       (int)(c0 + Utf8OffsetCursor(span).totalChars()));
+    // Byte -> character conversion over just these lines, one forward pass,
+    // and only when there are tokens to place: a line too long to lex
+    // (kMaxTokenizationLineLength) has none, and its megabytes were copied
+    // and counted on every keystroke in it. GTK's own lines give the end.
+    const bool copy = !tokens.empty() || !match;
+    const std::string span = copy ? mirror_.substr(b0, b1 - b0) : std::string();
+    if (!match)
+        gtk_text_buffer_get_iter_at_offset(buffer_, &b,
+                                           (int)(c0 + Utf8OffsetCursor(span).totalChars()));
+    else if (endLine < hl_->lineCount())
+        gtk_text_buffer_get_iter_at_line(buffer_, &b, (int)endLine);
+    else
+        gtk_text_buffer_get_end_iter(buffer_, &b);
     Utf8OffsetCursor cursor(span);
 
     applyingTags_ = true;

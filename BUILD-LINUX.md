@@ -588,7 +588,8 @@ Verified by running it:
     file.)" without hanging; the next click on a text file opens it. Text
     files are read only if they are regular files of at most 16 MB, checked
     before the file is opened, and the external-change reload uses the same
-    read.
+    read. (256 MB since November 2026, files over 4 MB read on a worker
+    thread: `PARITY.md` item 1.12.)
   - Two windows with the same file, the first with unsaved edits. Renaming
     it from the second window (File > Rename) renamed it in both titles;
     Ctrl+S in the first wrote the edits to the new name and the old name did

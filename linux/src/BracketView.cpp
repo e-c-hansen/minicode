@@ -159,7 +159,10 @@ bool BracketView::window(size_t caret, Window& w) {
 void BracketView::update() {
     updates_++;
     std::vector<size_t> boxes;
-    if (applies() && !gtk_text_buffer_get_has_selection(buffer_)) {
+    // No boxes in large-file mode, as on the Mac (PARITY.md 1.12); Go to
+    // Bracket still goes.
+    if (applies() && !editor_->active()->largeFileFeaturesOff() &&
+        !gtk_text_buffer_get_has_selection(buffer_)) {
         GtkTextIter at;
         gtk_text_buffer_get_iter_at_mark(buffer_, &at, gtk_text_buffer_get_insert(buffer_));
         GtkTextIter before = at;

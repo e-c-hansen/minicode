@@ -207,10 +207,14 @@ MC_GUI_SUITE(_sessions_first) {
     MCGuiWait("the caret on line 391, on screen", 10, [] {
         return Caret() == kCaret && CaretOnScreen();
     });
-    MCGuiStep("huge.log on show, a file too big to edit", [] { MCGuiKey("alt+4"); });
-    MCGuiWait("on show", 10, [] { return ed()->currentPath() == In("huge.log"); });
+    // Over 16 MB: read in the background (item 1.12), and never at launch.
+    MCGuiStep("huge.log on show, a file read in the background", [] { MCGuiKey("alt+4"); });
+    MCGuiWait("on show, and in", 30, [] {
+        return ed()->currentPath() == In("huge.log") && ed()->active() &&
+               !ed()->active()->loading() && ed()->isSource();
+    });
     MCGuiStep("Ctrl+Shift+W", [] {
-        GCHECK(ed()->active() && ed()->active()->kind() == Document::Kind::Message);
+        GCHECK(ed()->active() && ed()->active()->kind() == Document::Kind::Text);
         MCGuiKey("ctrl+shift+w");
     });
     MCGuiWait("the window closes", 10, [] { return MCGuiAppWindows().empty(); });

@@ -267,4 +267,125 @@ void testLargeFiles() {
         m = modeFor(1000, false, true, false);
         CHECK(!m.large && !m.featuresOff && m.languageServer);
     }
+
+    GROUP("large-file:utf8");
+    {
+        // The GTK port's UTF-8 twins agree with the UTF-16 ones.
+        using namespace LargeFile;
+        const std::string mixed = "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80z";   // a é € 😀 z
+        CHECK(utf16Length(mixed.data(), mixed.size()) == toU16(mixed).size());
+        CHECK(utf16Length(mixed.data(), mixed.size()) == 6);
+        const std::string t = "a\r\nb\rc\nd\xE2\x80\xA9" "e\r";
+        CHECK(countLinesUtf8(t.data(), t.size(), 100) == 6);
+        CHECK(countLinesUtf8(t.data(), t.size(), 2) == 3);
+        const std::u16string tu = toU16(t);
+        CHECK(countLines(tu.data(), tu.size(), 100) == 6);
+        // A break split across the end counts as the UTF-16 one does: a
+        // final '\r' is a break, and "\r\n" is one.
+        CHECK(countLinesUtf8("x\r", 2, 10) == 2 && countLinesUtf8("\r\n", 2, 10) == 2);
+        std::string many(kLineCountThreshold, '\n');        // 300,001 lines
+        CHECK(isLargeUtf8(many.data(), many.size()));
+        many.pop_back();
+        CHECK(!isLargeUtf8(many.data(), many.size()));
+        // Over 20 MB of bytes, but not of UTF-16 units: 21 MB of three-byte
+        // characters is 7 M units, on one line.
+        std::string wide;
+        while (wide.size() < (21u << 20)) wide += "\xE2\x82\xAC";
+        CHECK(!isLargeUtf8(wide.data(), wide.size()));
+        std::string ascii(kSizeThreshold + 1, 'x');
+        CHECK(isLargeUtf8(ascii.data(), ascii.size()));
+        // Pieces for a buffer put in a piece at a time: cut after a line's
+        // break; inside a long line up to its end or the line piece, never
+        // between "\r\n" nor inside a character; together, the whole text.
+        {
+            std::string t = "ab\r\ncd\r\nef";
+            CHECK(pieceEnd(t.data(), t.size(), 0, 5, 100) == 4);    // after "ab\r\n"
+            CHECK(pieceEnd(t.data(), t.size(), 4, 5, 100) == 8);    // after "cd\r\n"
+            CHECK(pieceEnd(t.data(), t.size(), 8, 5, 100) == t.size());
+            CHECK(pieceEnd("\r\n", 2, 0, 1, 1) == 2);              // never "\r" alone before "\n"
+            std::string lng = std::string(10, 'x') + "\r\n" + "tail";
+            CHECK(pieceEnd(lng.data(), lng.size(), 0, 4, 100) == 12);   // to the long line's end
+            CHECK(pieceEnd(lng.data(), lng.size(), 0, 4, 6) == 6);       // or the line piece
+            std::string cr = std::string(5, 'x') + "\r\n";
+            CHECK(pieceEnd(cr.data(), cr.size(), 0, 2, 6) == 5);         // not between \r and \n
+            std::string e;
+            for (int i = 0; i < 10; i++) e += "\xC3\xA9";                // 20 bytes, no break
+            const size_t at = pieceEnd(e.data(), e.size(), 0, 3, 5);
+            CHECK(at == 4);                                              // a character's start
+            CHECK(pieceEnd("", 0, 0, 4, 8) == 0);
+            // Random texts: every piece moves on, starts on a character and
+            // never parts "\r\n"; the pieces put together are the text.
+            std::mt19937 rng(1212);
+            const char* bits[] = {"a", "\n", "\r", "\r\n", "\xC3\xA9", "\xE2\x80\xA9", "\xF0\x9F\x98\x80"};
+            for (int round = 0; round < 300; round++) {
+                std::string s;
+                const int parts = (int)(rng() % 200);
+                for (int i = 0; i < parts; i++) s += bits[rng() % 7];
+                std::string back;
+                size_t p = 0;
+                bool ok = true;
+                while (p < s.size() && ok) {
+                    const size_t q = pieceEnd(s.data(), s.size(), p, 1 + rng() % 9, 1 + rng() % 30);
+                    ok = q > p && q <= s.size() &&
+                         (q == s.size() || (((unsigned char)s[q] & 0xC0) != 0x80 &&
+                                            !(s[q - 1] == '\r' && s[q] == '\n')));
+                    back += s.substr(p, q - p);
+                    p = q;
+                }
+                CHECK(ok && back == s);
+            }
+        }
+        // Opening by hand: at once, asked, refused.
+        CHECK(openingFor(50ull << 20, 256ull << 20) == Opening::Open);
+        CHECK(openingFor((50ull << 20) + 1, 256ull << 20) == Opening::Ask);
+        CHECK(openingFor((256ull << 20) + 1, 256ull << 20) == Opening::TooLarge);
+    }
+
+    GROUP("large-file:long-lines");
+    {
+        using namespace LargeFile;
+        // A line up to the limit is shown whole.
+        Shown s = shownPart(kLongLineShown, 0);
+        CHECK(s.start == 0 && s.end == kLongLineShown);
+        s = shownPart(10, 5, 3);
+        CHECK(s.start == 0 && s.end == 10);
+        // A longer one from its start, until the caret leaves the part.
+        const size_t n = 5000000;
+        s = shownPart(n, 0);
+        CHECK(s.start == 0 && s.end == kLongLineShown);
+        s = shownPart(n, 0, kLongLineShown);             // at the part's end: stays
+        CHECK(s.start == 0);
+        s = shownPart(n, 0, kLongLineShown + 1);         // past it: centered on the caret
+        CHECK(s.start == kLongLineShown + 1 - kLongLineShown / 2 && s.end == s.start + kLongLineShown);
+        s = shownPart(n, 0, 2500000);
+        CHECK(s.start == 2500000 - kLongLineShown / 2);
+        s = shownPart(n, 2495000, 2490000);              // before it: centered again
+        CHECK(s.start == 2490000 - kLongLineShown / 2);
+        s = shownPart(n, 0, n);                          // the line's end: its last part
+        CHECK(s.start == n - kLongLineShown && s.end == n);
+        s = shownPart(n, 2500000, 100);                  // near its start: from 0
+        CHECK(s.start == 0);
+        s = shownPart(20000, 15000);                     // the line got shorter
+        CHECK(s.start == 10000 && s.end == 20000);
+        // Long lines of a text, with every break, and characters not bytes.
+        const std::string longA(12000, 'a');
+        std::string longE;
+        for (int i = 0; i < 6000; i++) longE += "\xC3\xA9";   // 12,000 bytes, 6,000 characters
+        std::string longF;
+        for (int i = 0; i < 10001; i++) longF += "\xC3\xA9";
+        const std::string text = "short\n" + longA + "\r\n" + longE + "\r" + longF +
+                                 "\xE2\x80\xA9" "x\n" + longA;
+        const auto found = longLinesUtf8(text.data(), text.size(), kLongLineShown);
+        CHECK(found.size() == 3);
+        CHECK(found.size() == 3 && found[0] == std::make_pair(size_t(1), size_t(12000)));
+        CHECK(found.size() == 3 && found[1] == std::make_pair(size_t(3), size_t(10001)));
+        CHECK(found.size() == 3 && found[2] == std::make_pair(size_t(5), size_t(12000)));
+        CHECK(longLinesUtf8("", 0, 10).empty());
+        // The note after the part shown.
+        CHECK(hiddenNote(0, 4990000) == "4,990,000 more characters");
+        CHECK(hiddenNote(2500000, 2490000) == "2,490,000 more characters, 2,500,000 before");
+        CHECK(hiddenNote(990, 0) == "990 characters before");
+        CHECK(hiddenNote(0, 1) == "1 more character");
+        CHECK(hiddenNote(1000, 1) == "1 more character, 1,000 before");
+    }
 }

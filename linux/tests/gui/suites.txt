@@ -25,3 +25,4 @@ TabCloseNowSuite.cpp
 BracketsSuite.cpp
 BracketPairsSuite.cpp
 AutoCloseSuite.cpp
+LargeFileSuite.cpp

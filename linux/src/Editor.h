@@ -29,6 +29,7 @@ class CodeView;
 class MediaView;
 class LatexPreview;
 class GitDiffView;
+class LargeFileUi;
 class TabStrip;
 
 // Told what the view shows and how it changes, for the language server
@@ -295,6 +296,13 @@ public:
     };
     void setLinkHandler(std::function<void(const Link&)> h) { linkHandler_ = std::move(h); }
 
+    // Big files (LargeFileView.h): the status bar's "Large file: features off"
+    // (main.cpp puts the widget in the status bar), and its click, which
+    // turns the features on for the tab on show.
+    GtkWidget* largeFileNote() const;
+    LargeFileUi* largeFileUi() const { return large_; }
+    void turnOnLargeFileFeatures();
+
     // One observer (the language server session), not owned.
     void setObserver(EditorObserver* o) { observer_ = o; }
     // True while the view shows the active file's editable source.
@@ -312,11 +320,15 @@ public:
     const std::string& settingsPath() const override { return settingsPath_; }
     void documentWillReload(Document* d) override;
     void documentReloaded(Document* d) override;
+    void documentLoaded(Document* d, int result, bool blank) override;   // LargeFileView.cpp
 
 private:
     // ---- tabs (Tabs.cpp)
     bool loadInto(Document* d, const std::string& path);   // reads the file
     bool loadText(Document* d, const std::string& path);
+    // The file as read (`result`, a Document::Read): in the document, or a
+    // message saying why not.
+    bool textRead(Document* d, const std::string& path, int result, const std::string& content);
     bool opensInPreview(EditorTabs::OpenFrom from) const;
     void dropTab(Document* d, bool remember);   // out of the row, and deleted
     void destroy(Document* d);
@@ -378,13 +390,17 @@ private:
     // made the new item, or ended the list, itself.
     bool continueList();
     // One replacement from MarkdownTasks in the UTF-16 `text` the buffer
-    // held, as one user action, and the selection it gives.
+    // held, as one user action, and the selection it gives. `text` starts
+    // `base` characters into the buffer (a slice, see sourceText).
     void applyTaskEdit(const std::u16string& text, std::size_t replaceStart,
                        std::size_t replaceLength, const std::u16string& replacement,
-                       std::size_t selStart, std::size_t selEnd);
+                       std::size_t selStart, std::size_t selEnd, long base = 0);
     // The editable source as UTF-16 and the selection in it; false when the
-    // view does not show editable source.
-    bool sourceText(std::u16string& text, std::size_t& a, std::size_t& b) const;
+    // view does not show editable source. Given `base`, a big buffer gives
+    // only the lines around the selection, starting `*base` characters in
+    // (LargeFileView::indentSlice).
+    bool sourceText(std::u16string& text, std::size_t& a, std::size_t& b,
+                    long* base = nullptr) const;
     // Return, Tab, Shift+Tab or Backspace by AutoIndent's rules: true when
     // it acted (or, for Shift+Tab, when the key must not move the focus).
     bool indentKey(guint key);
@@ -466,6 +482,9 @@ private:
     double settleLastV_ = -1;      // the scroll position at the last frame
     int    settleStill_ = 0;       // frames in a row with the caret seen, not moving
     int    settleTries_ = 0;
+    double settleUpper_ = -1;      // the height last seen (see settleOnPlace)
+    gint64 settleCap_ = 0;         // never later than this
+    bool   settleTop_ = false;     // its line put at the top while GTK lays out
     void settleOnCaret();
     void stopSettle();
     static gboolean onSettleTick(GtkWidget* w, GdkFrameClock* clock, gpointer self);
@@ -505,10 +524,13 @@ private:
     double placeLastV_ = -1;
     int    placeStill_ = 0;
     int    placeTries_ = 0;
+    double placeUpper_ = -1;            // the height last seen: still growing while GTK lays out
+    gint64 placeCap_ = 0;               // never later than this
     int    placeCaret_ = -1;            // the caret's offset; if it moves, the user has
     bool   placeFollowCaret_ = false;   // the user moved the caret first: show it
 
     EditorObserver* observer_ = nullptr;
+    LargeFileUi*    large_ = nullptr;   // LargeFileView.h
 
     TitleCb titleCb_ = nullptr;
     void*   titleUser_ = nullptr;

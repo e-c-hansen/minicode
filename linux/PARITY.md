@@ -490,7 +490,7 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
 - [ ] **1.10 Folding (D8).** `Folding`.
 - [ ] **1.11 Getting around.** Editor zoom, word wrap toggle, Go Back and
   Forward (`NavHistory`), Maximize Pane.
-- [ ] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
+- [x] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
   *Done means:* a 25 MB file opens and types within the Mac's bounds.
   Measured for R1 on main with tabs (2026-11-09, the main thread held by
   one `Editor::openFile`): a 15 MB C file of 300,000 lines, 0.6 s of CPU
@@ -498,6 +498,32 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   file on one line, 1.5 to 3.0 s of CPU, and once 5.2 s long at load
   average 8, past GNOME's 5 s before "not responding". Before tabs these
   were 3.0 s and about 5 s of CPU.
+  *Verified in Xvfb, 2026-11-10:* `large-file:utf8` and
+  `large-file:long-lines` hold the UTF-8 thresholds, the pieces a big file
+  goes in by, and the part of a long line shown. The `large_file` suite
+  opens a 25 MB Python file read in the background (0.33 to 0.37 s of
+  main-thread CPU in all, never more than 21 ms at a time, against 0.6 s
+  at once before): plain, kept from a scripted server, with the status
+  bar's note; 200 characters at 0.07 to 0.18 ms each, and Return and Tab
+  from the keyboard never more than 25 ms (0.45 to 0.6 s before); away and
+  back in 8 to 60 ms, at its place; a backup; Reopen Closed Tab with its
+  selection. A 300,001-line file is large too, and a real click on the
+  note turns colors and the server on; the setting off opens it as any
+  file; a 70 MB file asks Open Anyway or Cancel, and no server gets it past
+  the sync limit. A 5 MB line opens and types without holding the main
+  loop (33 and 10 ms at most; 6.7 s and 3 to 9 s a key before), shown
+  10,000 characters at a time, End and the find bar reaching its hidden
+  part, and Select All and Copy taking all of it. Each phase's longest
+  stall is bounded at 250 ms of CPU, timed as R1's `tree_stall` does. It
+  fails without the long lines' hiding (17 s), without reading in the
+  background (0.58 and 1.9 s), without the server gate, without
+  AutoIndent's slice (0.45 s), and without the copy of hidden text.
+  `HANDOFF.md` item 22 has the rest. Needs the owner: how "Opening…", the
+  note after a long line's part, and the status bar's note look; a real big
+  log and minified file on the desktop; a middle-click paste of hidden text
+  (GTK's, the visible part only); GTK spends 10 to 20 s laying a
+  470,000-line file out after it comes on show, during which a jump far
+  down jumps about before it settles.
 - [x] **1.13 The Mac's layout.** The owner's report, 2026-11-09: the browser
   should sit right of the editor with a drag bar between them, and the
   terminal below both, full width, as on the Mac; today the browser takes
@@ -644,7 +670,7 @@ fixed on its own branch, with a GUI check that fails without the fix.
   was open, whether hidden files were shown, and what the click opened.
   Measured on the way, not fixed here: on main a one-line 5 MB file holds
   the main loop 1.5 to 3 s of CPU, 5.2 s long once on a loaded machine
-  (item 1.12). Needs the owner: the tree under GNOME on Wayland while a
+  (fixed by item 1.12: 33 ms at most). Needs the owner: the tree under GNOME on Wayland while a
   build runs in an open folder.
   *Follow-up, 2026-11-09:* after R1 about one GUI run in five failed at the
   save suite's first tree click. A listing adds a row whose widgets GTK maps
