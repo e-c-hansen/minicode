@@ -1352,6 +1352,13 @@ What later items build on:
   until the shell calls `diskQuestionAnswered`, and auto-save skips it.
   Anything else a timer does to a document while a question about it is
   up needs the same care.
+- **Trap (November 2026): an idle at the default priority runs after the
+  input already queued.** Focus-change's save ran from `g_idle_add`, and
+  every key waiting in GDK's queue (X events are dispatched at the default
+  priority) went first: a key typed right after Ctrl+PageUp was written
+  with the tab it went into, as if that tab had lost the keyboard too.
+  Work that must see the state of the moment it was asked for goes at
+  `G_PRIORITY_HIGH`.
 
 ### 18. The Mac's layout (done, November 2026; `PARITY.md` item 1.13)
 

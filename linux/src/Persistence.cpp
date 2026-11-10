@@ -390,15 +390,18 @@ void Persistence::scheduleAutoSave() {
 }
 
 // Saved on the next turn of the main loop, not inside the focus change, and
-// never cancelled by the delay's timer.
+// never cancelled by the delay's timer. Ahead of the input events waiting
+// then: at the default idle priority every key already queued went first,
+// so a key typed right after Ctrl+PageUp was written with the tab it went
+// into, as if that tab had lost the keyboard too (auto_save, under load).
 void Persistence::autoSaveOnFocusChange() {
     if (closing_ || autoSaveMode() != Settings::AutoSave::FocusChange || focusSaveIdle_) return;
-    focusSaveIdle_ = g_idle_add([](gpointer p) -> gboolean {
+    focusSaveIdle_ = g_idle_add_full(G_PRIORITY_HIGH, [](gpointer p) -> gboolean {
         Persistence* self = static_cast<Persistence*>(p);
         self->focusSaveIdle_ = 0;
         self->autoSaveNow();
         return G_SOURCE_REMOVE;
-    }, this);
+    }, this, nullptr);
 }
 
 void Persistence::autoSaveNow() {

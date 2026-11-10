@@ -98,12 +98,21 @@ MC_GUI_SUITE(auto_save) {
         GCHECK(ed()->dirtyDocuments().empty());
     });
     OpenForTyping("tab.txt");
-    MCGuiStep("type, then the tab before it, by its key", [] {
+    MCGuiStep("type, then the tab before it, by its key, and type there at once", [] {
         MCGuiType("t");
         MCGuiKey("ctrl+pageup");
+        MCGuiType("j");
     });
     MCGuiWait("written when another tab is shown", 10, [] {
         return MCGuiReadFile(F("tab.txt")) == "ttab.txt\n" && ed()->currentPath() == F("focus.txt");
+    });
+    // The key typed right after the switch is the shown tab's own edit, not
+    // written by the switch's save: that save ran after every key already
+    // waiting, and wrote it too.
+    MCGuiWait("the key arrives there", 10, [] { return MCGuiEditorText() == "kjfocus.txt\n"; });
+    MCGuiStep("unsaved", [] {
+        GCHECK_EQ_STR(MCGuiReadFile(F("focus.txt")), "kfocus.txt\n");
+        GCHECK(ed()->dirty());
     });
 
     // ---- the close question runs it first
