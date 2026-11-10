@@ -8,6 +8,7 @@
 #include "BracketColors.h"
 #include "BracketView.h"
 #include "Carets.h"
+#include "SnippetSession.h"
 #include "CodeView.h"
 #include "Folds.h"
 #include "Palette.h"
@@ -196,6 +197,7 @@ Editor::Editor() {
     brackets_ = new BracketView(this);       // PARITY.md 1.7
     autoClose_ = new AutoCloseInput(this);   // PARITY.md 1.8
     carets_ = new Carets(this);              // PARITY.md 1.9
+    snippets_ = new SnippetSession(this);    // PARITY.md 2.5
     large_ = new LargeFileUi(this);   // big files and long lines (LargeFileView.h)
     folds_ = new FoldUi(this);        // PARITY.md 1.10
     showActive();   // the welcome text
@@ -207,6 +209,8 @@ Editor::Editor() {
 Editor::~Editor() {
     delete folds_;
     folds_ = nullptr;
+    delete snippets_;
+    snippets_ = nullptr;
     delete carets_;
     carets_ = nullptr;
     delete autoClose_;
@@ -254,7 +258,7 @@ Editor::~Editor() {
 std::vector<void*> Editor::handlerOwners() const {
     std::vector<void*> out = {(void*)this,      (void*)media_,     (void*)strip_,
                               (void*)brackets_, (void*)autoClose_, (void*)large_,
-                              (void*)carets_,   (void*)folds_};
+                              (void*)carets_,   (void*)folds_,     (void*)snippets_};
     for (Document* d : tabs_)
         if (d->latexPreview()) out.push_back(d->latexPreview());
     return out;
@@ -2068,8 +2072,14 @@ gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifier
     // indentation (AutoIndent), unless a completion list is open and wants
     // the key.
     const bool plain = !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK));
-    const bool completion = self->observer_ && self->observer_->takesReturn();
     self->typedKey_ = 0;
+    // A list by the caret keeps its keys (the language server session's
+    // completion list, references and fixes, signature hint), then a
+    // snippet's Tab, Shift+Tab and Escape come before the carets'. A key
+    // the list lets go of (Shift+Return closes it) is the editor's.
+    if (self->observer_ && self->observer_->listKey(key, mods)) return TRUE;
+    const bool completion = self->observer_ && self->observer_->takesReturn();
+    if (self->snippets_ && self->snippets_->keyPressed(key, mods)) return TRUE;
     // Typing, Return, Tab, Backspace and Escape at several carets (Carets.h).
     if (self->carets_ && self->carets_->keyPressed(key, mods)) return TRUE;
     // Beside a fold (Folds.h): Backspace or Delete opens it, and Return at

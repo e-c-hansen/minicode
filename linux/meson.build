@@ -28,6 +28,9 @@ core_sources = [
   core_dir / 'FindRules.cpp',
   core_dir / 'EditSpans.cpp',
   core_dir / 'MultiCaret.cpp',
+  # A snippet completion's expansion and tab stops (SnippetSession.cpp and
+  # LspSessionCompletion.cpp, PARITY.md 2.5).
+  core_dir / 'Snippet.cpp',
   core_dir / 'LatexDoc.cpp',
   core_dir / 'SyncTex.cpp',
   core_dir / 'Json.cpp',
@@ -124,6 +127,8 @@ gui_sources = [
   # Several carets, the line commands and VS Code's words (PARITY.md 1.9).
   'src/Carets.cpp',
   'src/CaretEdits.cpp',
+  # A snippet completion's tab stops in the view (PARITY.md 2.5).
+  'src/SnippetSession.cpp',
   # Folding: each document's regions, folds and their invisible tag, and the
   # editor's placeholders, keys and commands (PARITY.md 1.10).
   'src/Folds.cpp',
@@ -147,6 +152,7 @@ gui_sources = [
   'src/LspSessionSync.cpp',
   'src/LspSessionDiagnostics.cpp',
   'src/LspSessionCompletion.cpp',
+  'src/LspSessionSignature.cpp',
   'src/LspSessionNavigation.cpp',
   # Rename, references and quick fixes, the workspace edit applier, and the
   # list and the box they show (PARITY.md 2.1).

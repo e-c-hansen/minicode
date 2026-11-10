@@ -89,6 +89,10 @@ public:
     void set(std::vector<MultiCaret::Caret> carets);
     // Back to the buffer's own selection as it is.
     void clear();
+    // Text put in at every caret over its selection, as one undo step (a
+    // snippet's choice taken at a stop and its mirrors, SnippetSession.h);
+    // false, doing nothing, with fewer than two carets.
+    bool insertText(const std::string& utf8);
 
     // ---- input, from Editor's key handler (capture phase): true when the
     // key was taken here.

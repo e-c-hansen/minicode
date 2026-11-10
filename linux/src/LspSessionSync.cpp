@@ -30,6 +30,8 @@ bool serverMayHave(Document* d) {
 void LspSession::detachDocument() {
     cancelCompletionTrigger();
     closeCompletion();
+    closeSignature();
+    dropPendingAccepts();
     closeHover();
     forgetHover();
     forgetActionRequests();
@@ -80,7 +82,9 @@ void LspSession::textEdited(const char* inserted, int len) {
     ++docGen_;
     forgetHover();
     actionsFollowCaret();
-    if (!server_ || uri_.empty()) return;
+    // The session's own edits going in (an accept, the applier) are not typing.
+    if (!server_ || uri_.empty() || applyingEdit_) return;
+    signatureAfterEdit(inserted, len);
     completionAfterEdit(inserted, len);
 }
 

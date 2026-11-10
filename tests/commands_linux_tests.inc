@@ -505,9 +505,10 @@ static void testLinuxCommandsReadme() {
     // The text view's undo and indent keys and the tree's arrows, which no
     // command has; and since item 1.9 its clipboard keys, word moves and
     // scrolling by a line, Escape back to one caret, and the find bar's
-    // Alt+Enter (Carets.h), which act on the view's own signals.
+    // Alt+Enter (Carets.h), which act on the view's own signals; and since
+    // item 2.5 the completion list's Shift+Enter (a new line instead).
     const std::set<std::string> own = {"ctrl+z", "ctrl+shift+z", "tab", "shift+tab", "up",
-                                       "down", "left", "right", "enter",
+                                       "down", "left", "right", "enter", "shift+enter",
                                        "ctrl+c", "ctrl+x", "ctrl+v", "escape", "alt+enter",
                                        "ctrl+left", "ctrl+right", "ctrl+backspace", "ctrl+delete",
                                        "ctrl+up", "ctrl+down"};

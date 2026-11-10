@@ -2452,6 +2452,86 @@ Traps:
   (a throwaway program showed it); `runGitWithin` keeps git's own answer
   then.
 
+### 31. Completion's edits, snippets and the signature hint (done, November 2026; `PARITY.md` item 2.5)
+
+The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
+(`LspSessionCompletion.cpp`, `LspSessionSignature.cpp`,
+`SnippetSession.{h,cpp}`). What later items build on:
+- **The completion list** now opens by itself as on the Mac: after ".",
+  "->" or "::" (the server's trigger characters), on the first letter
+  after one of those, and on the second letter of any other word (not a
+  number); a list the server called incomplete is asked again at each
+  letter, the old one staying up until the answer. A request goes only to
+  a server that offers completion, or one still starting. Tab and Return
+  take the selected item whenever the list shows
+  (`Lsp::completionKeyAccepts`, VS Code's defaults; `../CLAUDE.md`'s LSP
+  bullet still describes the rule before 2026-11-08, when Return took an
+  item only in some cases); Shift+Tab and Shift+Return close it and are
+  the editor's; a key pressed before the list was filtered for the last
+  letter has it filtered first. The highlight is the best match unless the
+  arrows chose an item still listed. Not done: the documentation panel
+  beside the list (`completionItem/resolve` is asked only for late edits),
+  parsing a big list off the main thread, and the list following the zoom.
+- **The keys' order** (`Editor::onViewKey`): a list showing by the caret
+  first (`EditorObserver::listKey`, which the session answers for the
+  completion list, the references and fixes and the signature hint; its
+  own capture controller calls the same, so the order of the two
+  controllers does not matter), then the snippet's Tab, Shift+Tab and
+  Escape, then the several carets, folds, auto-closing and indentation.
+  `takesReturn` is asked after the list had its chance, so Shift+Return
+  closing the list is an indented new line.
+- **Accepting** is one `MultiEdit::apply` inside one user action: the
+  word and its `additionalTextEdits` (`Lsp::completionEdits`, then the new
+  `Lsp::pointEdits(text, OffsetEdits)` for code points). **Trap:**
+  GtkTextHistory joins an action that only inserts to the typing just
+  before it (a throwaway program showed it: "os." typed, "path" put in,
+  one Ctrl+Z took "os.path" away), and no call breaks that chain (a cursor
+  move, an empty user action, set_modified, max-undo-levels: tried). An
+  action that also deletes is a step of its own, so an accept that only
+  inserts takes its last character out and puts it back in the same
+  action (`applyAcceptEdits`). `applyingEdit_` is set meanwhile, so the
+  session's own edits open no list or hint (`textEdited`).
+- **Late edits** (an item whose server sends its import only from
+  resolve): the word goes in at once, and the answer has a second
+  (`CompletionState::Pending`, its limit moved back by every edit before
+  it, as the Mac's). GtkTextHistory cannot add to a step once made, so
+  "the same undo step when nothing changed" is the accept undone and put in
+  again with the edits as one action, after checking the undo gave back the
+  very text the accept was made on (else it is redone, and the edits go as
+  a step of their own). The snippet session is held meanwhile and moved
+  by the edits (`SnippetSession::hold`, `release`), and the carets are put
+  back mapped through them. An undo of the accept before the answer
+  (the buffer's `undo` signal, and the word no longer between its marks)
+  drops the import; an edit before it leaves it out with a note; no answer
+  in a second, a note.
+- **Snippets**: `Snippet::expand` with the Mac's context (the line's
+  indentation, `AutoIndent::detect`'s unit, the file's line break, the
+  variables); `$CLIPBOARD` is minicode's own clipboard only, since GTK
+  reads another program's asynchronously. `SnippetSession` (one per
+  editor, `Editor::snippets()`) keeps the core's `Snippet::Session` in
+  characters (the new `Snippet::inCodePoints` and the session's `length`),
+  follows the buffer's `insert-text` and `delete-range` before they
+  happen, ends on `undo` and `redo`, on the view showing another buffer,
+  and when a mark-set leaves the selection outside the stop (looked at in
+  an idle). Mirrors are carets through `Carets::set`; a choice's option
+  goes in at every caret through the new `Carets::insertText`. The stops
+  are drawn by a `BelowText` pass at order 6.
+- **The signature hint** (`LspSessionSignature.cpp`): a popover above the
+  caret (no autohide, never focusable), opened by the server's trigger
+  characters, asked again after a retrigger character, and 0.15 s after
+  any other edit or caret move while it shows; Escape, the view losing the
+  keyboard, an empty answer or the file leaving the view close it.
+- **For checks**: `LspSession::completionSelectedLabel()`,
+  `signatureText()`, `pendingAccepts()`; `SnippetSession::active()`,
+  `currentStopIndex()`, `currentRanges()`, `allRanges()`, `drawnBoxes()`;
+  `tests/gui/CompletionChecks.h` (the text and caret, a file shown with the
+  keyboard, the scripted server's JSON). The suites: `completion_keys`,
+  `snippets`, `completion_edits`, `signature_help`.
+- **Traps**: the scripted server keeps an unknown `${...}` as written, so
+  snippet text goes in its script as is; an item with no
+  `additionalTextEdits` field is resolved after it is accepted when the
+  server resolves (give it `[]` in a check that is not about that).
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

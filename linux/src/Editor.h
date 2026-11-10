@@ -30,6 +30,7 @@ class Carets;
 class CodeView;
 class FoldUi;
 class MediaView;
+class SnippetSession;
 class LatexPreview;
 class GitDiffView;
 class LargeFileUi;
@@ -57,6 +58,15 @@ public:
     // The observer has a use for the Return key just pressed (a completion
     // list is open), so the editor must not continue a Markdown list with it.
     virtual bool takesReturn() const { return false; }
+    // A key for a list showing by the caret (the completion list, the
+    // references or fixes, the signature hint), asked before anything else
+    // in the view has it (a snippet's stops, several carets, the
+    // indentation): true when the list took it.
+    virtual bool listKey(guint keyval, GdkModifierType mods) {
+        (void)keyval;
+        (void)mods;
+        return false;
+    }
 };
 
 class Editor : public DocumentHost {
@@ -88,6 +98,8 @@ public:
     AutoCloseInput* autoClose() const { return autoClose_; }
     // Several carets and the line commands (Carets.h).
     Carets*         carets() const { return carets_; }
+    // A snippet completion's tab stops (SnippetSession.h).
+    SnippetSession* snippets() const { return snippets_; }
     // Folding's placeholders, keys and commands (Folds.h).
     FoldUi*         folds() const { return folds_; }
     // The active document's own buffer (its source, while its page shows
@@ -472,6 +484,7 @@ private:
     BracketView*    brackets_  = nullptr;
     AutoCloseInput* autoClose_ = nullptr;
     Carets*         carets_    = nullptr;
+    SnippetSession* snippets_  = nullptr;
     FoldUi*         folds_ = nullptr;
     GtkTextBuffer* buffer_   = nullptr;   // what the view shows
     GtkTextBuffer* welcome_  = nullptr;   // the view's buffer with no tab open
