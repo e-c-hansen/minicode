@@ -16,8 +16,13 @@ compared with the macOS app, and the order to do it in, see `HANDOFF.md`.
   WebKit and poppler-glib and builds the panels only when present.
 - `Makefile` — plain pkg-config fallback that builds at least the core viewer.
 - `src/main.cpp` — the GtkApplication: its windows (each an `App`), the
-  actions the menu bar and the keys name, the sidebar/editor split, status
-  bar, the shortcut hints, and the collapsible panels.
+  actions the menu bar and the keys name, the status bar, and the shortcut
+  hints.
+- `src/WindowLayout.{h,cpp}` — a window's panes, as the Mac lays them out:
+  the sidebar beside the right side, and there the editor with the browser
+  to its right and the terminal below both, each hidden or shown by its own
+  toggle, with bars to drag. The rules are `../src/RightAreaLayout`, tested
+  in the core's `rightarea:*` groups.
 - `src/FileTree.{h,cpp}` — the sidebar file browser (a list per folder +
   GtkTreeListModel + GtkListView), lazy-loaded and live-refreshing from a
   GFileMonitor per folder (GtkDirectoryList's own monitoring reports nothing

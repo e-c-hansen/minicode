@@ -47,6 +47,8 @@ core_sources = [
   core_dir / 'CommandsLinux.cpp',
   # The tabs' rules (Tabs.cpp follows them, as the Mac's tabs do).
   core_dir / 'EditorTabs.cpp',
+  # How the right side of a window is shared (WindowLayout.cpp shows it).
+  core_dir / 'RightAreaLayout.cpp',
   # Unsaved buffers kept on disk, and the tabs each folder had open
   # (BackupStore.cpp and Persistence.cpp keep them).
   core_dir / 'Backups.cpp',
@@ -100,6 +102,9 @@ gui_sources = [
   'src/WebImages.cpp',
   # The menu bar, the accelerators and the tree's keys, from the registry.
   'src/Keys.cpp',
+  # The window's panes: the sidebar, and the editor, browser and terminal
+  # laid out as on the Mac.
+  'src/WindowLayout.cpp',
   # Between runs: each folder's tabs, the backups of unsaved tabs, and
   # auto-save (the Mac's BackupStore and EditorController+Persistence).
   'src/BackupStore.cpp',

@@ -73,6 +73,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "AppSeam.h"
@@ -192,6 +193,9 @@ void MCGuiClickWith(const std::string& modifiers, GtkWidget* widget, double x = 
 // Press at one point of `widget`, release at another, moving between over a
 // few turns of the main loop; the next step waits until it is over.
 void MCGuiDrag(GtkWidget* widget, double x0, double y0, double x1, double y1);
+// The same through several points in turn, pressed at the first and let go
+// at the last: a hand that goes to an edge and comes back in one drag.
+void MCGuiDragThrough(GtkWidget* widget, const std::vector<std::pair<double, double>>& points);
 bool MCGuiInputPending();   // a drag still being played
 // Wheel clicks: positive scrolls down, negative up.
 void MCGuiScroll(GtkWidget* widget, int clicks);

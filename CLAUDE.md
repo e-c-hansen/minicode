@@ -155,7 +155,8 @@ goes here first, with tests; the GUI only displays it.
   command registry and keys.conf; the GTK port's keys are a table of their
   own in `CommandsLinux.cpp`, the Mac's rows untouched), `EditorTabs` (tab rules), `Backups` (backups
   of unsaved tabs, with a POSIX `Fs`), `FileDetails` (tree sorts, ages, folder
-  totals), `RunFile` (Run File's quoting).
+  totals), `RunFile` (Run File's quoting), `RightAreaLayout` (the right
+  side's panes and bars by the Mac's rules, which the GTK port lays out from).
 - Editing: `LineDiff` (Myers, split at lines unique on both sides past
   1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,
   `mapOffset`), `LineComments`,
@@ -375,7 +376,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   `editorHidden`; `collapseRightAreaIfEmpty`; opening a file, Cmd+1 and the
   preview toggle call `revealEditor`. Cmd+1 focuses what the tab shows
   (`focusActiveDocument`), never a text view hidden behind a viewer. The GTK
-  port still puts the browser in the editor's place.
+  port lays its right side out the same way (November 2026,
+  `linux/src/WindowLayout.cpp` over the core's `RightAreaLayout`, which
+  follows these rules with a 4 px gap for each bar); a rule changed here
+  changes there too.
 - **The page never takes the keyboard by itself.** WebKit makes the web view
   first responder whenever the page focuses a field, even hidden. The window is
   an `MCKeyboardWindow`, whose `makeFirstResponder:` asks `MCWebView

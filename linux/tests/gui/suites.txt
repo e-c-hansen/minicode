@@ -8,6 +8,7 @@ TreeStallSuite.cpp
 TabsSuite.cpp
 PreviewTabsSuite.cpp
 TabViewersSuite.cpp
+LayoutSuite.cpp
 SessionsSuite.cpp
 BackupsSuite.cpp
 AutoSaveSuite.cpp

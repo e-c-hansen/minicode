@@ -370,9 +370,10 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   gutter CPU a key; 8 to 9 ms a key for the main thread, with the gutter or
   without). They fail without the line-start rule, without the ruler pass,
   and with the index counted again per key. Needs the owner: how it looks
-  (font, alignment, colors) and HiDPI. The window's divider takes presses
-  in the gutter's first 14 px (`HANDOFF.md` item 16), for 1.13 to narrow
-  before 2.10's change bars take clicks.
+  (font, alignment, colors) and HiDPI. The window's divider took presses
+  in the gutter's first 14 px; 1.13 narrowed it to none over the editor
+  (`HANDOFF.md` item 18), and the `gutter` suite's change bar click is now
+  13 px from the edge, inside the old reach.
 - [ ] **1.5 The palette (D12).** Commands, Quick Open, Go to Line, and
   file symbols without a server. `CommandPalette`, `SymbolOutline`. Mac:
   `PalettePanel`.
@@ -395,7 +396,7 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   file on one line, 1.5 to 3.0 s of CPU, and once 5.2 s long at load
   average 8, past GNOME's 5 s before "not responding". Before tabs these
   were 3.0 s and about 5 s of CPU.
-- [ ] **1.13 The Mac's layout.** The owner's report, 2026-11-09: the browser
+- [x] **1.13 The Mac's layout.** The owner's report, 2026-11-09: the browser
   should sit right of the editor with a drag bar between them, and the
   terminal below both, full width, as on the Mac; today the browser takes
   the editor's place. Closing the editor, the browser, and the terminal
@@ -406,6 +407,26 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   `editorHidden`, `collapseRightAreaIfEmpty`, `revealEditor`), and
   `EditorController+Layout.mm`. After 1.1; it may run beside the others,
   but it owns the window's layout code in `main.cpp`.
+  *Verified in Xvfb, 2026-11-09:* `rightarea:*` hold the core's rules
+  (`../src/RightAreaLayout.h`, the Mac's `relayoutRightArea` and its two
+  bars), and the `layout` suite, in a window of its own, presses the toggle
+  keys and drags the bars for real: the browser right of the editor at the
+  same top and the terminal below both across the whole width; the bar
+  between them dragged (both follow, and the browser keeps its width when
+  hidden and shown), and within 16 px of either edge (that side hides, and
+  comes back when the same drag goes back out); the terminal's bar to the
+  top (the editor and the browser hide) and back down; the editor, the
+  browser, and the terminal hidden in all six orders staying hidden, the
+  tree then having the window, and each coming back at its size; a click in
+  the tree, the preview key, or Focus Editor showing a hidden editor; the
+  sidebar's divider dragged to the right edge giving the tree the window,
+  and a drag from 3 px inside the editor's left edge leaving it alone (it
+  took presses 14 px into the editor); Ctrl+B hiding only the sidebar; the
+  find bar on the editor's side. It fails with the old rule
+  that brought the editor back when the terminal closed, and with the old
+  one that hid the editor while the browser showed. Needs the owner: how the
+  bars feel with a real mouse and touchpad under GNOME (each grabs 4 px past
+  its line on either side, over the panes' edges), and how they look.
 
 *Done means, for each:* the feature's Mac GUI checks have Linux counterparts
 in `linux/tests/gui`, pressing real keys.

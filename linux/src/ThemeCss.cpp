@@ -217,9 +217,29 @@ std::string stylesheet(const Settings& s) {
     // The theme pads a thin handle out into a wider, invisible grab zone that
     // overlaps the neighboring panels; content-box keeps the color off that
     // zone, which would otherwise show through a see-through panel.
-    css += ".minicode-split > separator { min-width: 4px; min-height: 4px;"
-           " background-color: #333333; background-clip: content-box; }";
-    css += ".minicode-split > separator:hover { background-color: #007ACC; }";
+    // The sidebar's divider (WindowLayout.cpp) takes presses on its line and
+    // 5 px before it, painted as the sidebar (the Mac's split view grabs 5 px
+    // either side), and never over the editor, whose left edge holds the
+    // gutter's lanes. The handle is a wide one, which GTK does not grow by its
+    // own 6 px, and its box is all its own: with the theme's padding and that
+    // 6 px it took presses 14 px into the editor, and a negative margin
+    // instead made GtkPaned, which measures a drag from the handle's box,
+    // jump 5 px at the press.
+    css += ".minicode-split > separator { min-width: 4px; min-height: 4px; margin: 0;"
+           " padding: 0 0 0 5px; border: none; background-image: none;"
+           " background-color: " + bg(Surface::Sidebar) + ";"
+           " box-shadow: inset -4px 0 #333333; }";
+    css += ".minicode-split > separator:hover { box-shadow: inset -4px 0 #007ACC; }";
+    css += ".minicode-split > separator:dir(rtl) { padding: 0 5px 0 0;"
+           " box-shadow: inset 4px 0 #333333; }";
+    css += ".minicode-split > separator:dir(rtl):hover { box-shadow: inset 4px 0 #007ACC; }";
+    // The right side's bars (WindowLayout.cpp), the same 4px line in the
+    // middle of a grab area 4px wider on each side that lies over the panes'
+    // edges; lit while hovered or dragged.
+    css += ".minicode-bar { background-color: #333333; background-clip: content-box; }";
+    css += ".minicode-bar.vertical { padding: 0 4px; }";
+    css += ".minicode-bar.horizontal { padding: 4px 0; }";
+    css += ".minicode-bar:hover, .minicode-bar.dragging { background-color: #007ACC; }";
 
     // Scrollbars over the dark panels. The desktop theme's are tuned for a
     // light background and all but disappear on #1E1E1E.

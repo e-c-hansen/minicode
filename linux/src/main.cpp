@@ -6,34 +6,23 @@
 //   GtkApplicationWindow
 //     vbox
 //       overlay  (the shortcut list floats over the panes)
-//         hpaned  (movable divider)
+//         WindowLayout (WindowLayout.h): a GtkPaned
 //           [start] sidebar stack: FileTree, or the Source Control panel
 //                   (GitPanel) in its place
-//           [end]   right vbox
-//                     editor find-bar (GtkSearchBar)
-//                     vpaned  (movable divider)
-//                       [start] upper vbox
-//                                 Editor (GtkTextView, vexpand)
-//                                 browser revealer  (#ifdef MINICODE_ENABLE_BROWSER)
-//                       [end]   Terminal panel      (#ifdef MINICODE_ENABLE_TERMINAL)
+//           [end]   the right side, laid out as the Mac's relayoutRightArea:
+//                     the editor's side (the find bar, then the Editor: its
+//                     tab strip and slot) at the top left
+//                     the browser at the top right, a bar between them
+//                                         (#ifdef MINICODE_ENABLE_BROWSER)
+//                     the terminal below both, full width, a bar above it
+//                                         (#ifdef MINICODE_ENABLE_TERMINAL)
 //       status bar (GtkLabel, VS Code blue)
 //
-// The editor and the browser share the upper area — showing the browser hides
-// the editor — and the terminal is docked below both. That mirrors the macOS
-// -relayoutRightArea, which is why the browser is appended before the terminal.
-//
-// The terminal hangs off a GtkPaned rather than sitting in the box, so its top
-// edge can be dragged the way the macOS build's can. Toggling it visible and
-// invisible is what opens and closes the panel: GtkPaned draws no handle while
-// one of its children is hidden, and the place the user dragged the divider to
-// is remembered in App::termSplit so reopening restores it. Hiding the upper
-// box the same way is how the terminal gets the whole window (win.toggleeditor);
-// showEditorArea is the single place that brings it back.
-//
-// Both dividers can be dragged all the way: the terminal's to the top of the
-// window, which snaps the editor shut, and the sidebar's to the right edge,
-// which collapses the right side and leaves the file tree. Anything that needs
-// to show something there opens it again (showEditorArea, showRightArea).
+// Toggle Editor, Toggle Browser, Toggle Terminal and Toggle Sidebar each hide
+// or show their own pane; with the editor, the browser and the terminal all
+// hidden the file tree has the window, and nothing comes back until asked
+// (WindowLayout::collapseRightAreaIfEmpty). Opening a file and the other ways
+// of putting one in front of the user call WindowLayout::revealEditor.
 //
 // Colors come from the settings file (AppSettings, shared Settings parser):
 // ThemeCss turns them into the stylesheet, and the editor tags and VTE colors
@@ -65,6 +54,8 @@
 #include "Lsp.h"
 #include "GitPanel.h"
 #include "Keys.h"
+#include "TabStrip.h"
+#include "WindowLayout.h"
 #include "BackupStore.h"
 #include "Persistence.h"
 
@@ -84,14 +75,14 @@
 
 struct App {
     GtkWidget*      window = nullptr;
-    GtkWidget*      hpaned = nullptr;
     GtkWidget*      statusLabel = nullptr;
     GtkWidget*      searchBar = nullptr;
     GtkWidget*      searchEntry = nullptr;
     GtkWidget*      settingsLabel = nullptr;   // first problem in the settings file
 
-    int  sidebarWidth = 240;      // where the sidebar divider was before collapsing
-    bool adjustingPaned = false;  // a snap is moving a divider; ignore the notify
+    // The panes: the sidebar beside the editor, browser and terminal, each
+    // shown or hidden there (WindowLayout.h).
+    WindowLayout* layout = nullptr;
 
     Editor*   editor = nullptr;
     FileTree* tree = nullptr;
@@ -107,15 +98,8 @@ struct App {
     Persistence* persist = nullptr;
     GtkWidget*   lspLabel = nullptr; // their status, in the status bar
 
-    GtkWidget* vpaned = nullptr;          // editor/browser above, terminal below
-    GtkWidget* upperBox = nullptr;        // the editor/browser half of the vpaned
-    GtkWidget* termPanel = nullptr;       // the terminal's own widget, or null
-    GtkWidget* browserRevealer = nullptr;
 #ifdef MINICODE_ENABLE_TERMINAL
     Terminal* terminal = nullptr;
-    // Where the terminal divider sits, as a distance from the bottom of the
-    // paned. Survives closing and reopening the panel. See placeTerminalDivider.
-    int termSplit = Terminal::kDefaultHeight;
 #endif
 #ifdef MINICODE_ENABLE_BROWSER
     Browser* browser = nullptr;
@@ -128,7 +112,6 @@ struct App {
     GtkWidget* hintsHint  = nullptr;
 
     std::string rootDir;
-    bool sidebarVisible = true;
 
     bool prompting = false;   // a "Save changes?" alert is up
     bool closing = false;     // the user answered it for a window close
@@ -165,11 +148,6 @@ static void refreshHints(App* app);
 // Tells Keys what has the keyboard (see "keys" below).
 static void updateKeyPlace();
 
-// A divider dragged this close to the top (terminal) or the right edge
-// (sidebar) snaps the rest of the way.
-static const int kTopSnap = 40;
-static const int kRightSnap = 60;
-
 // The status bar's note on the shortcut hints, with their key as keys.conf
 // leaves it.
 static std::string hintsHintText(bool showing) {
@@ -178,117 +156,12 @@ static std::string hintsHintText(bool showing) {
            (showing ? "Hide shortcuts" : "Shortcuts");
 }
 
-// ------------------------------------------------- the editor/terminal split
-#ifdef MINICODE_ENABLE_TERMINAL
-// Put the divider back where the user left it. gtk_paned_set_position measures
-// from the TOP, so the saved distance has to be turned around against the
-// paned's current height, which also keeps the panel proportionate when the
-// window has been resized in the meantime.
-static void placeTerminalDivider(App* app) {
-    const int H = gtk_widget_get_height(app->vpaned);
-    if (H <= 0) return;   // not laid out yet; GTK's own default is fine
-
-    // The same clamp the macOS drag handler applies (EditorController.mm): at
-    // least 80px of terminal, and never less than 120px of editor above it.
-    const int split = MIN(MAX(app->termSplit, Terminal::kMinHeight),
-                          MAX(120, H - 120));
-    gtk_paned_set_position(GTK_PANED(app->vpaned), MAX(0, H - split));
-}
-
-// Save the divider as its distance from the BOTTOM of the paned, which is the
-// quantity set_position round-trips exactly. Saving the panel's pixel height
-// instead would drop the divider's own thickness on every close/reopen, and the
-// terminal would creep smaller each time it was toggled.
-static void rememberTerminalSplit(App* app) {
-    const int H = gtk_widget_get_height(app->vpaned);
-    const int pos = gtk_paned_get_position(GTK_PANED(app->vpaned));
-    // Not while the editor is snapped shut: that is not a height to come back to.
-    if (H > 0 && pos >= kTopSnap && H - pos >= Terminal::kMinHeight)
-        app->termSplit = H - pos;
-}
-#endif
-
-// The editor half is out of the way: hidden by Ctrl+Shift+E, or dragged shut.
-static bool editorCollapsed(App* app) {
-    if (!gtk_widget_get_visible(app->upperBox)) return true;
-    return app->termPanel && gtk_widget_get_visible(app->termPanel) &&
-           gtk_paned_get_position(GTK_PANED(app->vpaned)) < kTopSnap;
-}
-
-// Dragging the terminal's divider near the top closes the editor completely,
-// instead of leaving a sliver of it. The divider stays at the top edge, so it
-// can be dragged back down.
-static void onVpanedPosition(GObject*, GParamSpec*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    if (app->adjustingPaned || !app->termPanel ||
-        !gtk_widget_get_visible(app->termPanel))
-        return;
-    int pos = gtk_paned_get_position(GTK_PANED(app->vpaned));
-    if (pos > 0 && pos < kTopSnap) {
-        app->adjustingPaned = true;
-        gtk_paned_set_position(GTK_PANED(app->vpaned), 0);
-        app->adjustingPaned = false;
-    }
-    refreshHints(app);
-}
-
-// ------------------------------------------------- the sidebar/right split
-static bool rightCollapsed(App* app) {
-    int maxPos = 0;
-    g_object_get(app->hpaned, "max-position", &maxPos, NULL);
-    return gtk_widget_get_visible(app->sidebar) && maxPos > 0 &&
-           gtk_paned_get_position(GTK_PANED(app->hpaned)) >= maxPos;
-}
-
-// Dragging the sidebar's divider to the right edge collapses the editor,
-// terminal and browser, leaving the file tree.
-static void onHpanedPosition(GObject*, GParamSpec*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    if (app->adjustingPaned) return;
-    int maxPos = 0;
-    g_object_get(app->hpaned, "max-position", &maxPos, NULL);
-    int pos = gtk_paned_get_position(GTK_PANED(app->hpaned));
-    if (maxPos <= 0) return;
-    if (pos < maxPos && maxPos - pos < kRightSnap) {
-        app->adjustingPaned = true;
-        gtk_paned_set_position(GTK_PANED(app->hpaned), maxPos);
-        app->adjustingPaned = false;
-    }
-}
-
-// Remember the sidebar width when a drag starts, so collapsing and reopening
-// comes back to the width it had, not somewhere along the way.
-static void onHpanedPressed(GtkGestureClick*, int, double, double, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    if (!rightCollapsed(app))
-        app->sidebarWidth = gtk_paned_get_position(GTK_PANED(app->hpaned));
-}
-
-// Bring the right side back if it was dragged shut.
-static void showRightArea(App* app) {
-    if (!rightCollapsed(app)) return;
-    int maxPos = 0;
-    g_object_get(app->hpaned, "max-position", &maxPos, NULL);
-    int width = app->sidebarWidth;
-    if (width <= 0 || width > maxPos - kRightSnap) width = MIN(240, maxPos / 3);
-    app->adjustingPaned = true;
-    gtk_paned_set_position(GTK_PANED(app->hpaned), width);
-    app->adjustingPaned = false;
-}
-
-// Bring the editor/browser half back after it was collapsed, restoring the
-// terminal to the height it had. Anything that needs to show something up there
-// calls this first, so the editor cannot stay hidden behind new content.
+// The editor shown, and the right side opened if it was collapsed: anything
+// that puts a file in front of the user calls this first (the Mac's
+// revealEditor), so opening one never seems to do nothing. The browser and
+// the terminal stay as they are.
 static void showEditorArea(App* app) {
-    showRightArea(app);
-    if (!editorCollapsed(app)) return;
-    gtk_widget_set_visible(app->upperBox, TRUE);
-#ifdef MINICODE_ENABLE_TERMINAL
-    app->adjustingPaned = true;
-    placeTerminalDivider(app);
-    app->adjustingPaned = false;
-#endif
-    refreshHints(app);
+    app->layout->revealEditor();
 }
 
 // ---------------------------------------------------------------- helpers
@@ -728,17 +601,15 @@ static void act_zoom_fit(GSimpleAction*, GVariant*, gpointer userp) {
 
 static void act_toggle_preview(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
+    showEditorArea(app);   // the preview shows in the editor's slot
     app->editor->togglePreview();
     refreshHints(app);
 }
 
+// Toggle Sidebar: the tree, or the panel in its place, hides or shows at the
+// width it had (WindowLayout::toggleSidebar).
 static void act_toggle_sidebar(GSimpleAction*, GVariant*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    // Hiding the tree with the right side collapsed would leave nothing.
-    if (app->sidebarVisible) showRightArea(app);
-    app->sidebarVisible = !app->sidebarVisible;
-    gtk_widget_set_visible(app->sidebar, app->sidebarVisible);
-    refreshHints(app);
+    static_cast<App*>(userp)->layout->toggleSidebar();
 }
 
 // View > Show Hidden Files, Ctrl+Shift+.: the Mac's Shift+Cmd+.
@@ -753,65 +624,23 @@ static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer
     for (App* a : g.windows) a->tree->setShowHidden(g.showHidden);
 }
 
+// Toggle Terminal, Toggle Editor and Toggle Browser each hide or show their
+// own pane and nothing else, as the Mac's toggleTerminal:, toggleEditor: and
+// toggleBrowser:. A pane shown again comes back at the size it had; with the
+// editor, the browser and the terminal all hidden the file tree has the
+// window, and none of them comes back until asked (the owner's report of
+// 2026-11-09: the port used to reopen the editor when the last of them
+// closed). WindowLayout.cpp has the rules and where the keyboard goes.
 static void act_toggle_terminal(GSimpleAction*, GVariant*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    if (!app->termPanel) return;
-#ifdef MINICODE_ENABLE_TERMINAL
-    if (gtk_widget_get_visible(app->termPanel)) {
-        rememberTerminalSplit(app);   // only readable while it is still up
-        gtk_widget_set_visible(app->termPanel, FALSE);
-        // Closing the terminal while the editor is collapsed would leave an
-        // empty window, so the editor comes back with it.
-        showEditorArea(app);
-    } else {
-        showRightArea(app);
-        gtk_widget_set_visible(app->termPanel, TRUE);
-        placeTerminalDivider(app);
-        if (app->terminal) app->terminal->focus();
-    }
-    refreshHints(app);
-#endif
+    static_cast<App*>(userp)->layout->toggleTerminal();
 }
 
-// Collapse the editor/browser half entirely so the terminal owns the window.
-// Dragging cannot do this — the divider stops at a 120px editor, deliberately,
-// so a stray drag can't leave an unusable sliver — so hiding the whole widget
-// is what takes the minimum out of the picture. This is the same trick the
-// macOS build uses for Cmd+B on the sidebar, where a collapse flag lets the
-// split's 160px minimum drop to zero.
 static void act_toggle_editor(GSimpleAction*, GVariant*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    if (editorCollapsed(app) || rightCollapsed(app)) { showEditorArea(app); return; }
-
-#ifdef MINICODE_ENABLE_TERMINAL
-    if (!app->termPanel) return;   // nothing else could fill the window
-    if (gtk_widget_get_visible(app->termPanel)) rememberTerminalSplit(app);
-    else gtk_widget_set_visible(app->termPanel, TRUE);
-    gtk_widget_set_visible(app->upperBox, FALSE);
-    if (app->terminal) app->terminal->focus();
-    refreshHints(app);
-#endif
+    static_cast<App*>(userp)->layout->toggleEditor();
 }
 
 static void act_toggle_browser(GSimpleAction*, GVariant*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    if (!app->browserRevealer) return;
-    showEditorArea(app);   // the browser lives up there too
-    gboolean shown = gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer));
-    gtk_revealer_set_reveal_child(GTK_REVEALER(app->browserRevealer), !shown);
-    // The macOS build docks the terminal at the bottom and lets the editor OR
-    // the browser fill the area above it (EditorController.mm
-    // -relayoutRightArea). Hide the editor while the browser is up; otherwise
-    // the browser's vexpand squeezes the editor down to a single line.
-    gtk_widget_set_visible(app->editor->widget(), shown);
-    // The web view's vexpand propagates up to the revealer, so a collapsed
-    // revealer would still claim half the leftover space and leave a dead gap
-    // under the editor. Only let it expand while it is actually revealed.
-    gtk_widget_set_vexpand(app->browserRevealer, !shown);
-#ifdef MINICODE_ENABLE_BROWSER
-    if (!shown && app->browser) app->browser->focusUrlBar();
-#endif
-    refreshHints(app);
+    static_cast<App*>(userp)->layout->toggleBrowser();
 }
 
 // Toggle Comment: only when the editor has the keyboard, so the shortcut
@@ -877,6 +706,7 @@ static void act_keyboard_shortcuts(GSimpleAction*, GVariant*, gpointer userp) {
 static void act_find(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     gboolean on = gtk_search_bar_get_search_mode(GTK_SEARCH_BAR(app->searchBar));
+    if (!on) showEditorArea(app);   // the find bar is on the editor's side
     gtk_search_bar_set_search_mode(GTK_SEARCH_BAR(app->searchBar), !on);
     if (!on) gtk_widget_grab_focus(app->searchEntry);
 }
@@ -926,26 +756,11 @@ static void act_quit(GSimpleAction*, GVariant*, gpointer) {
         if (!a->dead) gtk_window_close(GTK_WINDOW(a->window));
 }
 
-// The editor shown in the upper half, with the browser put away if it was
-// covering it.
-static void showEditorOverBrowser(App* app) {
-    showEditorArea(app);
-#ifdef MINICODE_ENABLE_BROWSER
-    // The browser shares the editor's half; the editor is what was asked for.
-    if (app->browserRevealer &&
-        gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer))) {
-        gtk_revealer_set_reveal_child(GTK_REVEALER(app->browserRevealer), FALSE);
-        gtk_widget_set_visible(app->editor->widget(), TRUE);
-        gtk_widget_set_vexpand(app->browserRevealer, FALSE);
-    }
-#endif
-}
-
 // Focus Editor: the editor gets the keyboard, shown first if it was hidden
 // (the Mac's Command 1): what the tab on show shows, the LaTeX pages too.
 static void act_focus_editor(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    showEditorOverBrowser(app);
+    showEditorArea(app);
     app->editor->focusActiveDocument();
     refreshHints(app);
 }
@@ -985,7 +800,7 @@ static void revealInTree(App* app, const std::string& path) {
         return;
     }
     if (app->gitShown) act_toggle_git(nullptr, nullptr, app);
-    if (!app->sidebarVisible) act_toggle_sidebar(nullptr, nullptr, app);
+    if (!app->layout->sidebarShown()) act_toggle_sidebar(nullptr, nullptr, app);
     app->tree->revealPath(path);
     app->tree->focus();
 }
@@ -1071,11 +886,9 @@ static void act_close_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
 #ifdef MINICODE_ENABLE_BROWSER
     GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(app->window));
-    if (app->browser && app->browserRevealer &&
-        gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer)) &&
+    if (app->browser && app->layout->browserShown() &&
         Keys::within(focus, app->browser->widget())) {
-        act_toggle_browser(nullptr, nullptr, app);
-        app->editor->focusActiveDocument();
+        app->layout->hideBrowser();   // the keyboard to what is left
         return;
     }
 #endif
@@ -1091,7 +904,7 @@ static void act_close_tab(GSimpleAction*, GVariant*, gpointer userp) {
 // it was, with its preview, selection and scroll.
 static void act_reopen_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    showEditorOverBrowser(app);
+    showEditorArea(app);
     if (!app->editor->reopenClosedTab()) gtk_widget_error_bell(app->window);
     updateTitle(app);
     refreshHints(app);
@@ -1114,20 +927,20 @@ static void act_save_all(GSimpleAction*, GVariant*, gpointer userp) {
 // comes on show with the keyboard, the editor brought back first.
 static void act_next_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    showEditorOverBrowser(app);
+    showEditorArea(app);
     app->editor->stepTab(1);
     refreshHints(app);
 }
 static void act_previous_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    showEditorOverBrowser(app);
+    showEditorArea(app);
     app->editor->stepTab(-1);
     refreshHints(app);
 }
 template <int N>
 static void act_go_to_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    showEditorOverBrowser(app);
+    showEditorArea(app);
     app->editor->selectTabNumber(N);
     refreshHints(app);
 }
@@ -1140,9 +953,10 @@ static void openLink(App* app, bool isUrl, const std::string& target, bool isDir
                      bool insideRoot, int line, int column) {
     if (isUrl) {
 #ifdef MINICODE_ENABLE_BROWSER
-        if (app->browser && app->browserRevealer) {
-            if (!gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer)))
-                act_toggle_browser(nullptr, nullptr, app);
+        if (app->browser) {
+            // Shown beside the editor, the keyboard kept where it was, as the
+            // Mac's openWebAddressFromTerminal: does.
+            app->layout->showBrowser();
             app->browser->load(target);
             return;
         }
@@ -1158,7 +972,7 @@ static void openLink(App* app, bool isUrl, const std::string& target, bool isDir
     if (isDir) {
         // Only the tree can show a folder, and only one inside it.
         if (!insideRoot) { gtk_widget_error_bell(app->window); return; }
-        if (!app->sidebarVisible) act_toggle_sidebar(nullptr, nullptr, app);
+        if (!app->layout->sidebarShown()) act_toggle_sidebar(nullptr, nullptr, app);
         if (app->gitShown) act_toggle_git(nullptr, nullptr, app);   // the tree back
         app->tree->revealPath(path);
         return;
@@ -1168,7 +982,7 @@ static void openLink(App* app, bool isUrl, const std::string& target, bool isDir
         // Opening can be refused (Cancel at "Save changes?"), and an image
         // or a PDF has no lines to go to.
         if (app->editor->currentPath() != path) return;
-        showEditorOverBrowser(app);
+        showEditorArea(app);
         if (app->editor->isMedia()) return;
         if (line > 0) app->editor->revealLineColumn(line, column);
         else gtk_widget_grab_focus(app->editor->textView());
@@ -1522,7 +1336,7 @@ static void act_copy_path(GSimpleAction*, GVariant*, gpointer userp) {
 static void act_focus_tree(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     if (app->gitShown) {
-        if (!app->sidebarVisible) act_toggle_sidebar(nullptr, nullptr, app);
+        if (!app->layout->sidebarShown()) act_toggle_sidebar(nullptr, nullptr, app);
         app->git->focus();
         return;
     }
@@ -1532,7 +1346,7 @@ static void act_focus_tree(GSimpleAction*, GVariant*, gpointer userp) {
 // A file's diff or a commit, in the tab diffs and commits share.
 static void showDiffInEditor(App* app, const std::string& title, const std::string& bytes,
                              bool commit) {
-    showEditorOverBrowser(app);
+    showEditorArea(app);
     app->editor->showDiff(title, bytes, commit);
     updateTitle(app);
     refreshHints(app);
@@ -1557,7 +1371,7 @@ static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp) {
     }
     app->gitShown = !app->gitShown;
     if (app->gitShown) {
-        if (!app->sidebarVisible) act_toggle_sidebar(nullptr, nullptr, app);
+        if (!app->layout->sidebarShown()) act_toggle_sidebar(nullptr, nullptr, app);
         gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->git->widget());
         app->git->setActive(true);
         app->git->focus();
@@ -1822,19 +1636,17 @@ static std::string hintsText(App* app) {
     heading("Panes");
     row("workbench.action.toggleSidebarVisibility", "Sidebar");
     row("minicode.toggleEditor",
-        std::string("Editor      (") + (editorCollapsed(app) ? "collapsed" : "shown") + ")");
+        std::string("Editor      (") + (app->layout->editorShown() ? "shown" : "collapsed") + ")");
 #ifdef MINICODE_ENABLE_TERMINAL
     row("workbench.action.terminal.toggleTerminal",
         std::string("Terminal    (") +
-            (app->termPanel && gtk_widget_get_visible(app->termPanel) ? "open" : "hidden") + ")");
+            (app->layout->terminalShown() ? "open" : "hidden") + ")");
     row("workbench.action.terminal.toggleTerminal", "Terminal, too", 1);
 #endif
 #ifdef MINICODE_ENABLE_BROWSER
     row("minicode.toggleBrowser",
         std::string("Browser     (") +
-            (app->browserRevealer &&
-                     gtk_revealer_get_reveal_child(GTK_REVEALER(app->browserRevealer))
-                 ? "open" : "hidden") + ")");
+            (app->layout->browserShown() ? "open" : "hidden") + ")");
 #endif
     row("workbench.view.scm",
         std::string("Git panel   (") + (app->gitShown ? "open" : "hidden") + ")");
@@ -1956,6 +1768,7 @@ static GtkWidget* buildHintsPanel(App* app) {
 // while it is open has to redraw it. The macOS build refreshes from the same
 // four places (EditorController.mm).
 static void refreshHints(App* app) {
+    if (app->dead || !app->layout) return;
     if (app->hintsPanel && gtk_widget_get_visible(app->hintsPanel))
         gtk_label_set_text(GTK_LABEL(app->hintsLabel), hintsText(app).c_str());
 }
@@ -2164,7 +1977,7 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     delete app->persist;
     app->persist = nullptr;
 
-    std::vector<gpointer> owners = {app, app->lsp, app->tree, app->git};
+    std::vector<gpointer> owners = {app, app->lsp, app->tree, app->git, app->layout};
     for (void* o : app->editor->handlerOwners()) owners.push_back(o);
 #ifdef MINICODE_ENABLE_TERMINAL
     owners.push_back(app->terminal);
@@ -2202,6 +2015,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
 #endif
     delete app->git;
     app->git = nullptr;
+    delete app->layout;
+    app->layout = nullptr;
     delete app->tree;
     app->tree = nullptr;
     delete app->editor;   // its tabs' backups go with them (Document::~Document)
@@ -2272,8 +2087,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
         if (!app->dead && app->persist) app->persist->changed(d);
     };
 
-    // Right side: find bar + editor + collapsible panels.
-    GtkWidget* rightBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    // The editor's side: the find bar above the editor (its tab strip and
+    // slot), so that it stays with the editor when the browser is beside it.
+    GtkWidget* editorPane = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
     app->searchBar = gtk_search_bar_new();
     app->searchEntry = gtk_search_entry_new();
@@ -2296,69 +2112,52 @@ static App* newWindow(const std::string& root, const std::string& file) {
     gtk_widget_add_controller(app->searchEntry, findKeys);
     // Deliberately no gtk_search_bar_set_key_capture_widget: in an editor that
     // would auto-reveal the find bar on any keystroke and swallow typing.
-    gtk_box_append(GTK_BOX(rightBox), app->searchBar);
+    gtk_box_append(GTK_BOX(editorPane), app->searchBar);
+    gtk_box_append(GTK_BOX(editorPane), app->editor->widget());
 
-    // Order matters: the browser sits with the editor in the upper area and the
-    // terminal is docked below both, the same arrangement the macOS build lays
-    // out by hand in -relayoutRightArea.
-    GtkWidget* upperBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    app->upperBox = upperBox;
-    gtk_box_append(GTK_BOX(upperBox), app->editor->widget());
+    GtkWidget* browserPane = nullptr;
 #ifdef MINICODE_ENABLE_BROWSER
     app->browser = new Browser(MINICODE_BROWSER_HOME);
-    app->browserRevealer = gtk_revealer_new();
-    gtk_revealer_set_child(GTK_REVEALER(app->browserRevealer),
-                           app->browser->widget());
-    gtk_revealer_set_reveal_child(GTK_REVEALER(app->browserRevealer), FALSE);
-    gtk_widget_set_vexpand(app->browserRevealer, FALSE);  // see act_toggle_browser
-    gtk_box_append(GTK_BOX(upperBox), app->browserRevealer);
+    browserPane = app->browser->widget();
 #endif
-
-    app->vpaned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
-    gtk_widget_add_css_class(app->vpaned, "minicode-split");
-    gtk_paned_set_start_child(GTK_PANED(app->vpaned), upperBox);
-    // The editor absorbs window resizes; the terminal keeps the height it was
-    // dragged to. Neither may be shrunk past its minimum, which is what stops a
-    // drag from collapsing the terminal into an unusable sliver.
-    gtk_paned_set_resize_start_child(GTK_PANED(app->vpaned), TRUE);
-    // The editor may be dragged all the way shut; onVpanedPosition snaps a
-    // near-miss the rest of the way so no sliver is left.
-    gtk_paned_set_shrink_start_child(GTK_PANED(app->vpaned), TRUE);
-    g_signal_connect(app->vpaned, "notify::position",
-                     G_CALLBACK(onVpanedPosition), app);
-    gtk_widget_set_vexpand(app->vpaned, TRUE);
+    GtkWidget* terminalPane = nullptr;
 #ifdef MINICODE_ENABLE_TERMINAL
     app->terminal = new Terminal(app->rootDir);
-    app->termPanel = app->terminal->widget();
+    terminalPane = app->terminal->widget();
     app->terminal->setProjectRoot(app->rootDir);
     app->terminal->setLinkHandler([app](const Terminal::Link& link) {
         if (!app->dead) openTerminalLink(app, link);
     });
-    gtk_paned_set_end_child(GTK_PANED(app->vpaned), app->termPanel);
-    gtk_paned_set_resize_end_child(GTK_PANED(app->vpaned), FALSE);
-    gtk_paned_set_shrink_end_child(GTK_PANED(app->vpaned), FALSE);
-    gtk_widget_set_visible(app->termPanel, FALSE);   // opens on Ctrl+Shift+T
 #endif
-    gtk_box_append(GTK_BOX(rightBox), app->vpaned);
 
-    // Sidebar | editor split.
-    app->hpaned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_widget_add_css_class(app->hpaned, "minicode-split");
+    // The sidebar beside the editor, the browser to the editor's right and
+    // the terminal below both, as on the Mac (WindowLayout.h). The terminal
+    // and the browser start hidden.
     app->sidebar = gtk_stack_new();
     gtk_stack_add_named(GTK_STACK(app->sidebar), app->tree->widget(), "tree");
-    gtk_paned_set_start_child(GTK_PANED(app->hpaned), app->sidebar);
-    gtk_paned_set_end_child(GTK_PANED(app->hpaned), rightBox);
-    gtk_paned_set_position(GTK_PANED(app->hpaned), 240);
-    gtk_paned_set_resize_start_child(GTK_PANED(app->hpaned), FALSE);
-    gtk_paned_set_shrink_end_child(GTK_PANED(app->hpaned), TRUE);
-    g_signal_connect(app->hpaned, "notify::position",
-                     G_CALLBACK(onHpanedPosition), app);
-    GtkGesture* hpanedPress = gtk_gesture_click_new();
-    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(hpanedPress),
-                                               GTK_PHASE_CAPTURE);
-    g_signal_connect(hpanedPress, "pressed", G_CALLBACK(onHpanedPressed), app);
-    gtk_widget_add_controller(app->hpaned, GTK_EVENT_CONTROLLER(hpanedPress));
-    gtk_widget_set_vexpand(app->hpaned, TRUE);
+    app->layout = new WindowLayout(app->sidebar, editorPane, app->editor->strip()->widget(),
+                                   browserPane, terminalPane);
+    app->layout->focusEditor = [app] {
+        if (!app->dead) app->editor->focusActiveDocument();
+    };
+    app->layout->focusBrowser = [app] {
+#ifdef MINICODE_ENABLE_BROWSER
+        if (!app->dead && app->browser) app->browser->focusUrlBar();
+#endif
+    };
+    app->layout->focusTerminal = [app] {
+#ifdef MINICODE_ENABLE_TERMINAL
+        if (!app->dead && app->terminal) app->terminal->focus();
+#endif
+    };
+    app->layout->focusTree = [app] {
+        if (app->dead) return;
+        if (app->gitShown && app->git) app->git->focus();
+        else app->tree->focus();
+    };
+    app->layout->onChanged = [app] {
+        if (!app->dead) refreshHints(app);
+    };
 
     // Status bar: the current path on the left, and the hint that advertises the
     // shortcuts panel on the right. The macOS build carries the same pair, and
@@ -2387,7 +2186,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     // needs a GtkOverlay. The status bar stays outside it: a long list then
     // stops above the bar, and the bar's "Hide shortcuts" stays in sight.
     GtkWidget* overlay = gtk_overlay_new();
-    gtk_overlay_set_child(GTK_OVERLAY(overlay), app->hpaned);
+    gtk_overlay_set_child(GTK_OVERLAY(overlay), app->layout->widget());
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), buildHintsPanel(app));
     gtk_widget_set_vexpand(overlay, TRUE);
 

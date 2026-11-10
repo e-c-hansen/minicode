@@ -654,10 +654,11 @@ MC_GUI_SUITE(gutter) {
     });
     MCGuiStep("a click on the added bar", [] {
         gSel = selection();
-        // In the lane's right part: the window's divider takes presses up to
-        // 14 px into the editor (the theme's 8 px of padding around its handle
-        // and GtkPaned's 6), which covers the lane's left part.
-        MCGuiClick(gut()->widget(), Gutter::kDotLane + 4, rowY(4));
+        // In the lane's left part, 13 px from the editor's edge: the window's
+        // divider once took presses 14 px into the editor (the theme's 8 px
+        // of padding around its handle and GtkPaned's 6), and takes none
+        // there now (WindowLayout, ThemeCss.cpp).
+        MCGuiClick(gut()->widget(), Gutter::kDotLane + 1, rowY(4));
     });
     waitFor("tells its owner, and selects nothing", 5, [] { return gBarClicks == 1; });
     MCGuiStep("bar 0, the selection as it was", [] {
