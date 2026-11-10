@@ -33,7 +33,7 @@ class LargeFileUi;
 class TabStrip;
 
 // Told what the view shows and how it changes, for the language server
-// session (Lsp.h). Three calls, so the editor knows nothing about LSP.
+// session (Lsp.h). A few calls, so the editor knows nothing about LSP.
 class EditorObserver {
 public:
     virtual ~EditorObserver() = default;
@@ -41,7 +41,12 @@ public:
     // editable source, "" for a message, a picture, a diff, a Markdown page
     // or no tab. Editor::sourceBuffer() is the buffer by then.
     virtual void documentChanged(const std::string& path) = 0;
-    virtual void documentSaved() = 0;
+    // A tab's file was written, on show or not (Save All, auto-save).
+    virtual void documentSaved(Document* d) = 0;
+    // A tab opened, closed, was renamed, read, or changed its unsaved state
+    // (from the strip's refresh): every tab's file stays open on its
+    // language server.
+    virtual void tabsChanged() {}
     // The source on show was edited; the buffer has already changed.
     // `inserted` is the text of an insertion (len bytes), or null for a
     // deletion.

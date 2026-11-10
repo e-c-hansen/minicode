@@ -1894,6 +1894,73 @@ What later items build on:
   caret far (to its end), which the ten-line rule records: a check that
   wants an empty history clears it after the click.
 
+### 26. The language server session's parts, and every tab open (done, November 2026; `PARITY.md` item 2.0)
+
+What later items build on:
+- **The session is split by concern**, as the Mac's `LspSession` is split
+  into `Lsp+<Concern>.mm` categories. `Lsp.h` is the one class, its methods
+  grouped by the file that has them; `LspSessionPrivate.h` holds what the
+  parts share (`lspui::` helpers: `realPath`, `uriOf`, `canonicalUri`,
+  `lineOf`, `byteColumn`, `bufferText`) and **each part's state in a struct
+  of its own** (`SyncState`, `DiagState`, `CompletionState`, `NavState`),
+  held by the class as a `unique_ptr`, which no other part touches: a part
+  reaches another's through a method (`detachDocument` asks each to forget
+  what it holds for the file leaving the view). State two parts use stays
+  in the class. The files: `Lsp.cpp` (made and destroyed, the buffer on
+  show, positions, the view's key controller, the popovers' teardown),
+  `LspProcess.{h,cpp}` (one server process, `lspgtk::Server`, moved
+  unchanged), `LspSessionServers.cpp` (which server, starting, exits,
+  stopping, the status bar; `launchServer` is the one place a program is
+  chosen and started, where item 2.3's consent hooks in),
+  `LspSessionSync.cpp` (documents), `LspSessionDiagnostics.cpp`,
+  `LspSessionCompletion.cpp`, `LspSessionNavigation.cpp` (hover and
+  definition). **A later item adds a file of its own** (2.2's Problems and
+  second server, 2.5's completion edits in `LspSessionCompletion.cpp`, 2.6
+  semantic tokens, 2.7 inlay hints, 2.12 symbols in
+  `LspSessionNavigation.cpp`, 2.13), a struct for its state in
+  `LspSessionPrivate.h`, a `unique_ptr` and its methods in `Lsp.h`, and its
+  file to both build lists. The names carry `LspSession` so they never
+  read as the core's `../src/Lsp*.cpp`.
+- **Every tab's file is open on its server** (`syncOpenDocuments`, the
+  Mac's): every tab that is read text with a path (not a tab still waiting
+  to be read, nor a large file with its features off), whose language has
+  a server running, is opened there with its own buffer's text, once;
+  files whose tabs went, or whose path or server changed, are closed.
+  Only a running server takes a tab: the file on show is what starts one
+  (`documentChanged`), and a server just started is given every tab of its
+  language. It runs on show, when the tabs change (`EditorObserver::
+  tabsChanged`, from `Editor::refreshStrip`, in an idle), and should run
+  before any request about other files (rename and references do).
+  Leaving a tab no longer closes it on the server, and its diagnostics stay
+  (`DiagState::byUri`, with the text they were computed on), drawn when it
+  is back on show, placed on its text as it is then
+  (`Lsp::diagnosticSpans`: one about text typed over since is left out).
+- **Edits follow each buffer**, not only the one on show: the session
+  watches each open document's buffer (`insert-text` and `delete-range`,
+  before the change) into a `Lsp::ChangeTracker` per document and server,
+  and 0.3 s after the last edit sends `didChange` for each document edited,
+  ranged where the server takes ranges (the core decides; a change whose
+  ranges cost as much as the text goes whole, so small files always do).
+  The buffer counts characters and the server UTF-16 units, the same until
+  a character outside the Basic Multilingual Plane is in the text: then
+  that document sends its whole text until one is sent without any. So a
+  background tab's edit (Replace in Folder, the applier) reaches the
+  server too. `EditorObserver::documentSaved(Document*)` now comes for
+  every tab saved (Save All, auto-save), with `didSave`.
+- **For checks**: `LspSession::openDocuments()` ("<server key> <path>"),
+  `rangedChangesSent()`, `wholeChangesSent()`; `tests/gui/FakeLspLog.h`
+  reads the scripted server's log: every message, a file's text as the
+  server has it after the client's didOpen, didChange and didClose
+  (`MCGuiFakeLspText`), and its ranged changes. The scripted server's
+  default capabilities are full sync; a check of ranged sync says
+  `"change": 2` itself.
+- **Traps**: a file shorter than about 100 characters per change is always
+  sent whole (each ranged entry costs 96 in `Client::didChange`'s
+  reckoning), so a check of ranges needs longer files. In a whole GUI run
+  the window may not be active when a suite starts (the suite before it
+  started another program): `MCGuiFocusKeyWindow()` before checking
+  `gtk_widget_has_focus`.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

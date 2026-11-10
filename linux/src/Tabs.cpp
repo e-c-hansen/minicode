@@ -506,6 +506,7 @@ void Editor::refreshStrip() {
     strip_->setItems(items, activeIndex());
     gtk_widget_set_visible(strip_->widget(), !tabs_.empty());
     if (onDocumentsChanged) onDocumentsChanged(nullptr);
+    if (observer_) observer_->tabsChanged();   // every tab's file on its server
 }
 
 // A right click on a tab: keeping a preview tab, closing it and its

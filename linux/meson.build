@@ -117,7 +117,16 @@ gui_sources = [
   # The find and replace bar, and edits with several ranges (PARITY.md D5).
   'src/FindBar.cpp',
   'src/MultiEdit.cpp',
+  # Language servers (Lsp.h lists the parts): the session's life (Lsp.cpp),
+  # a server process (LspProcess.cpp), and the session split by concern as
+  # the Mac's LspSession is (PARITY.md 2.0).
   'src/Lsp.cpp',
+  'src/LspProcess.cpp',
+  'src/LspSessionServers.cpp',
+  'src/LspSessionSync.cpp',
+  'src/LspSessionDiagnostics.cpp',
+  'src/LspSessionCompletion.cpp',
+  'src/LspSessionNavigation.cpp',
   'src/MediaView.cpp',
   # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp, and so
   # are the LaTeX preview's two files, which need poppler too.

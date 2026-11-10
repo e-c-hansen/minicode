@@ -49,7 +49,9 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Document.cpp src/Tabs.cp
        src/BracketView.cpp src/BracketColors.cpp src/AutoCloseInput.cpp src/BufferText.cpp \
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp \
        src/Search.cpp src/FindBar.cpp src/MultiEdit.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
-       src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp src/TermLinkPath.cpp \
+       src/LatexClick.cpp src/Latex.cpp src/TermLinkPath.cpp \
+       src/Lsp.cpp src/LspProcess.cpp src/LspSessionServers.cpp src/LspSessionSync.cpp \
+       src/LspSessionDiagnostics.cpp src/LspSessionCompletion.cpp src/LspSessionNavigation.cpp \
        src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \

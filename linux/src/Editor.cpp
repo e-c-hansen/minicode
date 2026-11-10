@@ -661,7 +661,7 @@ bool Editor::saveDocument(Document* d, std::string* error) {
     if (!d || !d->canSave()) return true;
     if (!d->save(error)) return false;
     if (d->isPreviewTab()) keepPreviewTab(d);   // saved: kept, as in VS Code
-    if (d == active_ && isSource() && observer_) observer_->documentSaved();
+    if (observer_) observer_->documentSaved(d);
     refreshStrip();
     if (d == active_) titleChanged();
     return true;

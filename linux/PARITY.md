@@ -712,8 +712,25 @@ in `linux/tests/gui`, pressing real keys.
 These may run in parallel. They need Stage 1's tabs (every open tab stays open
 on its server) and D5. Item 1.1 left the session on the tab on show
 (`LspSession::useBuffer`, re-pointed on every switch); keeping every tab open on
-its server comes first here.
+its server comes first here (2.0).
 
+- [x] **2.0 The client's shape, and every tab open on its server.**
+  `linux/src/Lsp.cpp` split by concern as the Mac's `LspSession` is
+  (`HANDOFF.md` item 26 has the shape, for 2.2, 2.5, 2.6, 2.7, 2.12 and 2.13
+  to each add a file), and every tab's file kept open on its language's
+  running server, as the Mac's `syncOpenDocuments`.
+  *Verified in Xvfb, 2026-11-10:* the `lsp_tabs` suite, against the scripted
+  server taking ranged changes, opens three Python tabs and a Go tab: each
+  Python file opened once and none closed by leaving it; keys typed into two
+  tabs reach the server as ranges with each tab's own text (an emoji
+  included, which sends the whole text), and an edit to a tab in the
+  background (as Replace in Folder makes) too; a server started by a
+  settings change is given every Python tab with its unsaved text, while
+  the Go tab in the background starts no server until it comes on show;
+  Ctrl+W (Don't Save) closes the file on the server. It fails with only the
+  tab on show synced (13 checks) and with a background tab starting its
+  server (3). Needs the owner: real clangd, basedpyright, or rust-analyzer
+  with several tabs (their memory and indexing with every tab open).
 - [ ] **2.1 Rename, references, and quick fixes.** The all-or-nothing
   workspace edit applier. Mac: `Lsp+WorkspaceEdit`, `Lsp+Actions`, `LspPicker`.
 - [ ] **2.2 Problems**, the second server, watched files, and Organize

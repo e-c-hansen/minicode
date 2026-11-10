@@ -1,17 +1,34 @@
-// Lsp.h — the GTK half of the language server client: the server processes,
-// and what the editor shows from them (error underlines, the completion list,
-// go to definition, hover info). The protocol itself is the shared
-// ../src/LspClient.{h,cpp}; the macOS counterpart of this file is src/Lsp.mm.
+// Lsp.h — the GTK half of the language server client: the servers a window
+// runs, the documents they have open, and what the editor shows from them
+// (error underlines, the completion list, go to definition, hover info). The
+// protocol itself is the shared ../src/LspClient.{h,cpp}; the macOS
+// counterpart of this file is src/Lsp.h, and of its parts src/Lsp+*.mm.
 //
 // main.cpp owns one LspSession per window and makes it the Editor's observer,
 // so the session hears about every file opened, saved and edited without
-// hooks of its own in main.cpp's open and save paths. Each tab has a buffer
-// of its own (Document.h); the session has the tab on show open on its
-// server, and follows the editor's buffer when another tab comes on show
-// (every open tab's file staying open on its server, as on the Mac, is
-// PARITY.md's Stage 2). What main.cpp does call:
-// setRoot (Open Folder), applySettings (settings file changed), shutdown
-// (window closing), the three actions, and LspTerminateAllServers at quit.
+// hooks of its own in main.cpp's open and save paths. What main.cpp does
+// call: setRoot (Open Folder), applySettings (settings file changed),
+// shutdown (window closing), the actions, and LspTerminateAllServers at
+// quit.
+//
+// Every tab's file stays open on its server (PARITY.md item 2.0, the Mac's
+// syncOpenDocuments): each document's own buffer is its text, its edits go
+// to the server as they are made (ranged where the server takes ranges),
+// and it is closed there when its tab closes. Only a server already running
+// takes a tab in the background; the file on show is what starts one.
+//
+// The session is split by concern, as the Mac's LspSession is split into
+// categories (PARITY.md item 2.0). Each part is its own file, with its state
+// in a struct of its own (LspSessionPrivate.h), and the methods below are
+// grouped by the file that has them:
+//   Lsp.cpp                    the session's life: made, destroyed, its buffer
+//   LspProcess.{h,cpp}         one server process (lspgtk::Server)
+//   LspSessionServers.cpp      choosing, starting and stopping servers; status
+//   LspSessionSync.cpp         the documents the servers have open
+//   LspSessionDiagnostics.cpp  squiggles and their messages
+//   LspSessionCompletion.cpp   the completion list
+//   LspSessionNavigation.cpp   hover and go to definition
+// A later item adds a file of its own and a struct for its state.
 #pragma once
 
 #include <gtk/gtk.h>
@@ -48,7 +65,7 @@ public:
     void setRoot(const std::string& root);
     // A different lsp.* setting restarts the servers.
     void applySettings(const Settings& settings);
-    // The window is closing: close the document, shut the servers down
+    // The window is closing: close the documents, shut the servers down
     // (shutdown, exit, then signals if they linger).
     void shutdown();
 
@@ -56,128 +73,153 @@ public:
     // file has no server.
     void triggerCompletion();   // Ctrl+Space
     void goToDefinition();      // F12, at the caret
-    void showHoverInfo();       // Ctrl+I, at the caret
+    void showHoverInfo();       // Ctrl+Alt+I, at the caret
 
     // EditorObserver
     void documentChanged(const std::string& path) override;
-    void documentSaved() override;
+    void documentSaved(Document* d) override;
     void textEdited(const char* inserted, int len) override;
+    void tabsChanged() override;
     bool takesReturn() const override { return completionVisible(); }
 
     // Test hooks.
     bool completionVisible() const;
     std::vector<std::string> completionLabels() const;
     const std::string& statusText() const { return status_; }
-    const std::string& lastHoverText() const { return lastHover_; }
+    const std::string& lastHoverText() const;
     bool completionKey(guint keyval);   // what the key controller does
     // The tooltip text at a buffer position; *requested is set when a hover
     // request went out for it (the tooltip is re-queried when it answers).
     std::string tooltipAt(const GtkTextIter* it, bool* requested = nullptr);
     void definitionAt(const GtkTextIter* it);
+    // The documents open on the servers, as "<server key> <path>", sorted;
+    // and how many didChange notifications went out ranged and whole.
+    std::vector<std::string> openDocuments() const;
+    std::size_t rangedChangesSent() const;
+    std::size_t wholeChangesSent() const;
+
+    // The parts' state (LspSessionPrivate.h).
+    struct SyncState;
+    struct DiagState;
+    struct CompletionState;
+    struct NavState;
 
 private:
-    struct Mark {
-        GtkTextMark* start = nullptr;
-        GtkTextMark* end = nullptr;
-        int severity = 1;
-        std::string message;
-    };
-
+    // ---- shared by the parts (Lsp.cpp)
     Editor*        editor_;
     GtkWidget*     view_;
     GtkTextBuffer* buffer_ = nullptr;   // the tab on show's source, held
-    void useBuffer(GtkTextBuffer* b);
     std::string    root_;
     Settings       settings_;
-    std::string    signature_;   // the lsp.* settings the servers were started with
     std::shared_ptr<int> life_ = std::make_shared<int>(0);   // callbacks check it
+    // The file on show: its path even with no server, its URI and server
+    // when one has it open, and why there is none.
+    std::string path_;
+    std::string uri_;
+    std::shared_ptr<lspgtk::Server> server_;
+    std::string note_;
+    int docGen_ = 0;   // bumped by every edit of the file on show and every switch
+    void useBuffer(GtkTextBuffer* b);
+    Lsp::Position positionOf(const GtkTextIter* it) const;
+    void iterAt(Lsp::Position p, GtkTextIter* it) const;
+    void cursorIter(GtkTextIter* it) const;
+    void caretRect(const GtkTextIter* it, GdkRectangle* r) const;
+    static gboolean onKey(GtkEventControllerKey* c, guint keyval, guint keycode,
+                          GdkModifierType state, gpointer self);
+    static void onFocusLeave(GtkEventControllerFocus* c, gpointer self);
+    static void onMarkSet(GtkTextBuffer* b, GtkTextIter* it, GtkTextMark* m, gpointer self);
+    static void onUnrealize(GtkWidget* view, gpointer self);
+    void dropPopovers();
 
+    // ---- servers and the status bar (LspSessionServers.cpp)
     // key -> running server; notes_ holds why a key has none ("" = switched off).
     std::map<std::string, std::shared_ptr<lspgtk::Server>> servers_;
     std::map<std::string, std::string> notes_;
-    bool drawn_ = false;     // the window has drawn its first frame (WhenDrawn.h)
-    bool held_ = false;      // a document came before that, and waits for it
-    std::string path_;       // the file in the editor, even with no server
-    std::string uri_;        // its URI, when a server has it open
-    std::shared_ptr<lspgtk::Server> server_;
-    std::string note_;       // why there is no server
-    std::string transient_;  // a brief message ("No definition found")
+    std::string signature_;   // the lsp.* settings the servers were started with
+    bool drawn_ = false;      // the window has drawn its first frame (WhenDrawn.h)
+    bool held_ = false;       // a document came before that, and waits for it
+    std::string transient_;   // a brief message ("No definition found")
     std::string status_;
     guint flashId_ = 0;
-    guint changeTimer_ = 0;
-    std::map<std::string, std::vector<Lsp::Diagnostic>> diags_;
-    std::vector<Mark> marks_;
-    GtkTextTag* tags_[4] = {};   // error, warning, information, hint
-
-    // Completion.
-    GtkWidget* popover_ = nullptr;
-    GtkWidget* list_ = nullptr;
-    GtkWidget* listScroll_ = nullptr;
-    GtkTextMark* anchor_ = nullptr;   // where the word being completed starts
-    std::vector<Lsp::CompletionItem> items_, shown_;
-    bool completing_ = false;
-    bool gotItems_ = false;
-    int completionGen_ = 0, definitionGen_ = 0, hoverGen_ = 0;
-    guint refilterId_ = 0;
-    guint triggerId_ = 0;         // a typed trigger character's request, next idle
-    std::string pendingTrigger_;
-
-    // Hover.
-    GtkWidget* hoverPopover_ = nullptr;
-    GtkWidget* hoverLabel_ = nullptr;
-    long hoverKey_ = -1;          // word start (characters) the hover text is for
-    long hoverAsked_ = -1;        // word start a request is out for
-    std::string hoverText_;
-    std::string lastHover_;
-    int docGen_ = 0;              // bumped by every edit and document switch
-
     void updateStatus();
     void flash(const std::string& message);
     bool noServer();              // bell + note when there is no server
     std::string settingsSignature(const Settings& s) const;
+    // The running server for a settings key, started when there is none;
+    // null (and note_ says why) when it cannot be.
     std::shared_ptr<lspgtk::Server> serverForKey(const std::string& key);
+    // The one place a server's program is chosen and started (item 2.3's
+    // consent hooks in here): null when none could be, with the note why.
+    std::shared_ptr<lspgtk::Server> launchServer(const std::string& key, std::string* note);
+    std::shared_ptr<lspgtk::Server> runningServer(const std::string& key) const;
     void serverExited(lspgtk::Server* s);
     void initializeFailed(lspgtk::Server* s, const std::string& message);
     void stopAllServers();
+    bool languageOf(const std::string& path, Lsp::Language& lang) const;
+
+    // ---- documents (LspSessionSync.cpp)
+    std::unique_ptr<SyncState> sync_;
+    // The file on show leaves the view; it stays open on its server while its
+    // tab is open.
+    void detachDocument();
     void closeDocument();
+    // Every tab's file open on its running server with its own text, files
+    // whose tabs went closed; called on show, on a server's start, before a
+    // request about other files, and when the tabs change.
+    void syncOpenDocuments();
+    void scheduleSync();
+    void forgetServerDocuments(lspgtk::Server* s);
     void flushChanges();
     void scheduleChange();
+    void watchBuffers();
+    void noteEdit(uint64_t docId, size_t start, size_t removed, const char* inserted, int len);
+    static void onSyncInsert(GtkTextBuffer* b, GtkTextIter* at, char* text, int len,
+                             gpointer watch);
+    static void onSyncDelete(GtkTextBuffer* b, GtkTextIter* a, GtkTextIter* z, gpointer watch);
 
-    void diagnosticsArrived(const std::string& uri, const std::vector<Lsp::Diagnostic>& list);
+    // ---- diagnostics (LspSessionDiagnostics.cpp)
+    std::unique_ptr<DiagState> diag_;
+    void makeDiagnosticTags();
+    void diagnosticsArrived(lspgtk::Server* s, const std::string& uri,
+                            const std::vector<Lsp::Diagnostic>& list);
+    void paintDiagnostics();
     void clearMarks();
+    void forgetDiagnostics(const std::string& uri);
+    void forgetAllDiagnostics();
+    void countProblems(int& errors, int& warnings) const;
     bool sameFile(const std::string& uriA, const std::string& uriB) const;
-
-    Lsp::Position positionOf(const GtkTextIter* it) const;
-    void iterAt(Lsp::Position p, GtkTextIter* it) const;
-    void cursorIter(GtkTextIter* it) const;
     std::string diagnosticAt(const GtkTextIter* it) const;
 
+    // ---- completion (LspSessionCompletion.cpp)
+    std::unique_ptr<CompletionState> cmp_;
+    void completionAfterEdit(const char* inserted, int len);
     void requestCompletion(const std::string& trigger);
     void completionArrived(const Json& result, int gen, const std::string& uri);
     void refilter();
     void scheduleRefilter();
     void closeCompletion();
+    void cancelCompletionTrigger();
     void acceptCompletion(int row);
     void buildPopover();
     void moveSelection(int delta);
     int selectedRow() const;
-    void caretRect(const GtkTextIter* it, GdkRectangle* r) const;
+    void forgetCompletionAnchor();
+    void dropCompletionPopover();
+    static void onRowActivated(GtkListBox* box, GtkListBoxRow* row, gpointer self);
 
+    // ---- hover and definition (LspSessionNavigation.cpp)
+    std::unique_ptr<NavState> nav_;
+    void forgetHover();
+    void closeHover();
+    void dropHoverPopover();
     void definitionArrived(const Json& result, int gen, const std::string& uri);
     void hoverArrived(const Json& result, int gen, const std::string& uri, long key,
                       bool popup);
     void showHoverPopover(const std::string& text);
-
-    static gboolean onKey(GtkEventControllerKey* c, guint keyval, guint keycode,
-                          GdkModifierType state, gpointer self);
+    void installNavigation();
     static void onCtrlClick(GtkGestureClick* g, int n, double x, double y, gpointer self);
     static gboolean onQueryTooltip(GtkWidget* w, int x, int y, gboolean keyboard,
                                    GtkTooltip* tip, gpointer self);
-    static void onFocusLeave(GtkEventControllerFocus* c, gpointer self);
-    static void onMarkSet(GtkTextBuffer* b, GtkTextIter* it, GtkTextMark* m, gpointer self);
-    static void onRowActivated(GtkListBox* box, GtkListBoxRow* row, gpointer self);
-    static void onUnrealize(GtkWidget* view, gpointer self);
-    void dropPopovers();
 };
 
 // Stop every server the app started, now: shutdown and exit, then SIGTERM and

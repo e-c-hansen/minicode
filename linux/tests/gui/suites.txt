@@ -32,3 +32,4 @@ GoBackSuite.cpp
 MaximizeSuite.cpp
 StartupSuite.cpp
 DetachSuite.cpp
+LspTabsSuite.cpp
