@@ -16,3 +16,4 @@ RulerSuite.cpp
 GutterTypingSuite.cpp
 GutterSwitchSuite.cpp
 TreeClicksSuite.cpp
+TabCloseNowSuite.cpp
