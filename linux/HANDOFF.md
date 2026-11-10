@@ -1357,10 +1357,7 @@ What later items build on:
   rebinds its rows at once after its model changes but lays them out on
   the next frame, with any new rows all at the top and no height until
   then; a click in between went to another row (the palette suite waits
-  for the row's label to have a height). Closing the find bar on main
-  prints "Trying to measure GtkBox ... for height of 12, but it needs at
-  least 13" for each frame of its slide (the editor's half of the vertical
-  split); it happens without the palette and is left to item 1.6.
+  for the row's label to have a height).
 
 ## How to work on it
 
