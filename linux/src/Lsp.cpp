@@ -3,6 +3,7 @@
 // macOS counterpart is src/Lsp.mm, and the behaviour follows it closely.
 #include "Lsp.h"
 #include "Palette.h"
+#include "StartupLog.h"
 #include "Utf8Offsets.h"
 
 #include <glib-unix.h>
@@ -276,6 +277,7 @@ std::shared_ptr<Server> Server::start(const std::string& key,
     ignoreSigpipeHere();
     const char* id = g_subprocess_get_identifier(s->proc_);
     s->pid_ = id ? atoi(id) : 0;
+    StartupLog::once(("lsp " + s->name_).c_str(), "language server started: %s", s->name_.c_str());
     s->inFd_ = toServer[1];
     s->outFd_ = fromServer[0];
     g_unix_set_fd_nonblocking(s->inFd_, TRUE, nullptr);

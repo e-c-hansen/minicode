@@ -6,6 +6,8 @@
 #include <webkit/webkit.h>
 #include <string>
 
+#include "StartupLog.h"
+
 Browser::Browser(const std::string& homeUrl) {
     root_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
@@ -96,7 +98,10 @@ void Browser::onUriChanged(GObject*, GParamSpec*, gpointer selfp) {
     static_cast<Browser*>(selfp)->syncUrlBar();
 }
 
-void Browser::onLoadChanged(WebKitWebView*, WebKitLoadEvent ev, gpointer selfp) {
+void Browser::onLoadChanged(WebKitWebView* wv, WebKitLoadEvent ev, gpointer selfp) {
+    if (ev == WEBKIT_LOAD_COMMITTED)
+        StartupLog::once("browser-page", "browser: first page committed (%s)",
+                         webkit_web_view_get_uri(wv) ? webkit_web_view_get_uri(wv) : "?");
     if (ev == WEBKIT_LOAD_COMMITTED || ev == WEBKIT_LOAD_FINISHED)
         static_cast<Browser*>(selfp)->syncChrome();
 }

@@ -141,6 +141,8 @@ gui_sources = [
   # Big files and long lines: large-file mode, the question past 50 MB,
   # reading in the background, and a long line shown a part at a time.
   'src/LargeFileView.cpp',
+  # MINICODE_STARTUP_LOG=1: where the time to a usable window goes (R3).
+  'src/StartupLog.cpp',
 ]
 
 inc = include_directories('src', '../src')

@@ -5,6 +5,7 @@
 #ifdef MINICODE_ENABLE_TERMINAL
 
 #include "Palette.h"
+#include "StartupLog.h"
 #include "TermLinkPath.h"
 #include "TermLinks.h"
 
@@ -563,6 +564,7 @@ void Terminal::onChildExited(VteTerminal*, gint /*status*/, gpointer selfp) {
 void Terminal::onSpawned(VteTerminal*, GPid pid, GError* error, gpointer selfp) {
     if (pid != -1 && !error) {
         static_cast<Terminal*>(selfp)->shellPid_ = pid;   // for its directory
+        StartupLog::once("shell", "terminal: shell started (pid %d)", (int)pid);
         return;
     }
     // The window closed while the shell was starting: this object is gone.
