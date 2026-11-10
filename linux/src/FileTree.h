@@ -1,5 +1,5 @@
 // FileTree.h — the left sidebar: a lazy, live-refreshing file browser rooted
-// at a folder. Each folder is a list kept current by its own GFileMonitor (the
+// at a folder. Each folder is a list kept current from its own GFileMonitor (the
 // Linux equivalent of the macOS FSEvents watcher), wrapped in a
 // GtkTreeListModel for expand/collapse, shown in a GtkListView with
 // GtkTreeExpander rows.
@@ -93,7 +93,7 @@ public:
     void askName(const std::string& prompt, const std::string& initial, NameCb cb);
 
 private:
-    GListModel* makeDirModel(GFile* dir);   // one folder, filtered and sorted
+    GListModel* makeDirModel(GFile* dir);   // one folder, sorted, then filtered
     void build();
     void dropPopovers();                    // before the list view is replaced
     bool tryReveal();
@@ -156,7 +156,6 @@ private:
     GtkWidget*   scroller_ = nullptr;
     GtkWidget*   listView_ = nullptr;
     GtkFilter*   filter_   = nullptr;     // shared dotfile filter
-    GtkSorter*   sorter_   = nullptr;     // shared dirs-first, name-order sorter
     GtkTreeListModel* treeModel_ = nullptr;
 
     OpenCb openCb_   = nullptr;

@@ -9,13 +9,17 @@
 //     background thread, kept per folder and thrown away along the path to
 //     the root when something below changes.
 //   - TreeRefresh: which folders the tree lists again for one batch of
-//     FSEvents, so a change lists only the folders it touched.
+//     FSEvents, so a change lists only the folders it touched; and for the
+//     GTK port's tree, the splices that put a fresh listing in a folder's
+//     rows and when a changing folder is listed again.
 //
-// The Mac's EditorController and TreeDetails.mm use it; nothing here touches
-// a GUI. measure() reads the disk with POSIX calls, so it runs on Linux too.
+// The Mac's EditorController and TreeDetails.mm use it, and the GTK port's
+// FileTree.cpp its TreeRefresh; nothing here touches a GUI. measure() reads
+// the disk with POSIX calls, so it runs on Linux too.
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <mutex>
@@ -214,5 +218,75 @@ struct Plan {
 // nothing deeper than the loaded folders is ever listed.
 Plan plan(const std::vector<Event> &events, const std::set<std::string> &loaded,
           const std::string &root);
+
+// ---- A folder's rows as one sorted list (the GTK port's tree, R1 in
+// linux/PARITY.md). GIO reports every entry made, removed or renamed in a
+// folder on show, thousands a second in a folder being rebuilt, and the port
+// once patched its rows for each one, at a cost growing with the folder:
+// deleting 30,000 files of an open folder held the window for two minutes.
+// Now a change only asks for the folder to be listed again (Pacer), and the
+// fresh listing goes in as the fewest edits (splices).
+
+// One entry: whether it is a folder, the caller's collation key for its name
+// (GLib's, of the case-folded name, in the GTK port), and the name itself.
+struct Row {
+    bool folder = false;
+    std::string key;
+    std::string name;
+};
+
+// The tree's order: folders first, then keys by their bytes, then names by
+// theirs, so two names with one key (README and readme) still have an order.
+bool rowBefore(const Row &a, const Row &b);
+
+// One edit of the list: `removed` rows at `at` go, and the fresh listing's
+// rows [from, from + added) take their place.
+struct Splice {
+    std::size_t at = 0;
+    std::size_t removed = 0;
+    std::size_t from = 0;
+    std::size_t added = 0;
+};
+
+// The edits that turn the rows on show, `now`, into a fresh listing, both
+// sorted by rowBefore with no row twice: one for each run of changed rows
+// between rows that stay, and never a row that stays taken out and put back
+// (the tree would forget what was open below it, and the selection). An
+// entry whose kind changed (a file replaced by a folder) goes and comes back.
+// Positions are in `now`, and the edits come last first, so each one's place
+// is still right once those before it are made.
+std::vector<Splice> splices(const std::vector<Row> &now, const std::vector<Row> &fresh);
+
+// When a folder that reported a change is listed again: `firstDelay` after
+// the first change, so a file made in a terminal shows at once (the batch of
+// events behind it gathered), and while changes keep coming no sooner than
+// `minInterval` after the last listing began, one listing at a time. The
+// Mac's FSEvents stream coalesces for 0.3 s. Times are milliseconds on a
+// clock that only goes forward.
+class Pacer {
+public:
+    explicit Pacer(double firstDelay = 100, double minInterval = 300)
+        : firstDelay_(firstDelay), minInterval_(minInterval) {}
+    // A change at `now`: the wait before listing, for the caller to start a
+    // timer with; negative when a listing is already waiting or under way
+    // (finished() asks for the next one then).
+    double changed(double now);
+    // A listing begins at `now`: the timer fired, or the folder is listed
+    // for the first time.
+    void started(double now);
+    // The listing is on show: the wait before the next one when changes came
+    // in meanwhile, else negative.
+    double finished(double now);
+    // A listing is waiting for its timer or under way.
+    bool pending() const { return state_ != State::Idle; }
+
+private:
+    enum class State { Idle, Waiting, Listing, ListingChanged };
+    double wait(double now) const;
+    double firstDelay_, minInterval_;
+    double lastStart_ = 0;
+    bool started_ = false;
+    State state_ = State::Idle;
+};
 
 }  // namespace TreeRefresh

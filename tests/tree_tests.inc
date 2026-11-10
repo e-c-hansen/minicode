@@ -1,7 +1,9 @@
 // tree_tests.inc — the `tree:changed-folders`, `tree:spelling`,
-// `git:decorations` and `settings:tree-git` groups of run_tests.cpp: which
-// folders the file tree lists again for a batch of FSEvents, and the colors
-// git status gives its rows. Included there.
+// `tree:splices`, `tree:pacer`, `git:decorations` and `settings:tree-git`
+// groups of run_tests.cpp: which folders the file tree lists again for a
+// batch of FSEvents, how a fresh listing goes into a folder's rows and when
+// it is made (the GTK port's tree), and the colors git status gives its rows.
+// Included there.
 
 static void testTreeRefresh() {
     using TreeRefresh::Event;
@@ -85,6 +87,178 @@ static void testTreeRefresh() {
         const double ms = cpuMs() - t0;
         CHECK(pl.list.empty() && pl.restat.size() == 10000);
         CHECK_TIME(ms, 500);
+    }
+
+    GROUP("tree:splices");
+    {
+        using TreeRefresh::Row;
+        using TreeRefresh::Splice;
+        using TreeRefresh::splices;
+        // Rows as the GTK port makes them, with the name standing in for its
+        // collation key (lowercase, as a case-folded key sorts).
+        auto row = [](const std::string &name, bool folder = false) {
+            std::string key = name;
+            for (char &c : key)
+                if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+            return Row{folder, key, name};
+        };
+        auto sorted = [](std::vector<Row> v) {
+            std::sort(v.begin(), v.end(), TreeRefresh::rowBefore);
+            return v;
+        };
+        auto same = [](const Row &a, const Row &b) { return a.folder == b.folder && a.name == b.name; };
+        // Applies the edits in the order given, as the tree does, checking
+        // that no row that stays is ever taken out, and returns the list.
+        auto apply = [&](std::vector<Row> list, const std::vector<Row> &fresh,
+                         const std::vector<Splice> &edits, bool *keptRowsStayed) {
+            *keptRowsStayed = true;
+            for (const Splice &s : edits) {
+                if (s.at + s.removed > list.size() || s.from + s.added > fresh.size()) {
+                    *keptRowsStayed = false;
+                    return list;
+                }
+                for (std::size_t k = s.at; k < s.at + s.removed; k++)
+                    for (const Row &f : fresh)
+                        if (same(f, list[k])) *keptRowsStayed = false;
+                list.erase(list.begin() + (long)s.at, list.begin() + (long)(s.at + s.removed));
+                list.insert(list.begin() + (long)s.at, fresh.begin() + (long)s.from,
+                            fresh.begin() + (long)(s.from + s.added));
+            }
+            return list;
+        };
+        auto equal = [&](const std::vector<Row> &a, const std::vector<Row> &b) {
+            if (a.size() != b.size()) return false;
+            for (std::size_t k = 0; k < a.size(); k++)
+                if (!same(a[k], b[k])) return false;
+            return true;
+        };
+
+        // Folders first, then the key, then the name: README and readme
+        // share a key and still have an order.
+        CHECK(TreeRefresh::rowBefore(row("zeta", true), row("alpha")));
+        CHECK(TreeRefresh::rowBefore(row("Alpha"), row("beta")));
+        CHECK(TreeRefresh::rowBefore(row("README"), row("readme")));
+        CHECK(!TreeRefresh::rowBefore(row("readme"), row("README")));
+        CHECK(!TreeRefresh::rowBefore(row("a"), row("a")));
+
+        const std::vector<Row> c3 = sorted({row("src", true), row("a.c"), row("b.c"), row("c.c")});
+        // Nothing changed: nothing to do.
+        CHECK(splices(c3, c3).empty());
+        // The first listing is one edit, and so is an emptied folder.
+        std::vector<Splice> e = splices({}, c3);
+        CHECK(e.size() == 1 && e[0].at == 0 && e[0].removed == 0 && e[0].from == 0 && e[0].added == 4);
+        e = splices(c3, {});
+        CHECK(e.size() == 1 && e[0].at == 0 && e[0].removed == 4 && e[0].added == 0);
+        // An object file beside each source: an edit for each, last first,
+        // so each place is still right when its turn comes.
+        const std::vector<Row> built = sorted({row("src", true), row("a.c"), row("a.o"), row("b.c"),
+                                               row("b.o"), row("c.c"), row("c.o")});
+        e = splices(c3, built);
+        CHECK(e.size() == 3);
+        CHECK(e.size() == 3 && e[0].at == 4 && e[1].at == 3 && e[2].at == 2);
+        CHECK(e.size() == 3 && e[0].from == 6 && e[2].from == 2 && e[0].added == 1 && e[0].removed == 0);
+        bool stayed = false;
+        CHECK(equal(apply(c3, built, e, &stayed), built) && stayed);
+        // And back: three removals.
+        e = splices(built, c3);
+        CHECK(e.size() == 3 && e[0].removed == 1 && e[0].added == 0);
+        CHECK(equal(apply(built, c3, e, &stayed), c3) && stayed);
+        // A run of changes between rows that stay is one edit: b.c renamed
+        // to b2.c is a removal and an addition in one place.
+        const std::vector<Row> renamed = sorted({row("src", true), row("a.c"), row("b2.c"), row("c.c")});
+        e = splices(c3, renamed);
+        CHECK(e.size() == 1 && e[0].at == 2 && e[0].removed == 1 && e[0].added == 1 && e[0].from == 2);
+        // A file replaced by a folder of the same name goes and comes back
+        // (in another place: folders come first).
+        const std::vector<Row> retyped = sorted({row("a.c", true), row("src", true), row("b.c"), row("c.c")});
+        e = splices(c3, retyped);
+        CHECK(equal(apply(c3, retyped, e, &stayed), retyped) && stayed);
+        CHECK(e.size() == 2);
+
+        // Random folders against random changes: the result is the fresh
+        // listing, no row that stays is touched, and two edits never touch
+        // (between any two lies a row that stays).
+        std::mt19937 rng(11);
+        bool allRight = true, allStayed = true, apart = true;
+        for (int round = 0; round < 300; round++) {
+            std::vector<Row> a, b;
+            const int n = (int)(rng() % 40);
+            for (int k = 0; k < n; k++) {
+                const std::string name = std::string(1, (char)('a' + rng() % 6)) + std::to_string(rng() % 8);
+                const bool folder = rng() % 4 == 0;
+                if (rng() % 3) a.push_back(row(name, folder));
+                if (rng() % 3) b.push_back(row(name, rng() % 7 == 0 ? !folder : folder));
+            }
+            auto dedupe = [&](std::vector<Row> v) {
+                v = sorted(v);
+                v.erase(std::unique(v.begin(), v.end(), same), v.end());
+                // One entry a name, as in a real folder.
+                std::vector<Row> out;
+                for (const Row &r : v) {
+                    bool dup = false;
+                    for (const Row &o : out) dup = dup || o.name == r.name;
+                    if (!dup) out.push_back(r);
+                }
+                return sorted(out);
+            };
+            a = dedupe(a);
+            b = dedupe(b);
+            const std::vector<Splice> ed = splices(a, b);
+            bool st = false;
+            if (!equal(apply(a, b, ed, &st), b)) allRight = false;
+            if (!st) allStayed = false;
+            for (std::size_t k = 1; k < ed.size(); k++)
+                if (ed[k].at + ed[k].removed >= ed[k - 1].at) apart = false;
+        }
+        CHECK(allRight);
+        CHECK(allStayed);
+        CHECK(apart);
+
+        // A folder of 30,000 entries with every other one new is diffed at once.
+        std::vector<Row> big, bigger;
+        for (int k = 0; k < 30000; k++) {
+            char name[32];
+            snprintf(name, sizeof name, "file%05d.c", k);
+            big.push_back(row(name));
+            bigger.push_back(row(name));
+            snprintf(name, sizeof name, "file%05d.o", k);
+            bigger.push_back(row(name));
+        }
+        const double t0 = cpuMs();
+        e = splices(big, bigger);
+        const double ms = cpuMs() - t0;
+        CHECK(e.size() == 30000 && e.front().at == 30000 && e.back().at == 1);
+        CHECK_TIME(ms, 300);
+    }
+
+    GROUP("tree:pacer");
+    {
+        TreeRefresh::Pacer p(100, 300);
+        CHECK(!p.pending());
+        // The first listing of a folder starts at once, when it is opened.
+        p.started(0);
+        CHECK(p.pending());
+        CHECK(p.finished(40) < 0);
+        CHECK(!p.pending());
+        // A change soon after: the listing waits out the interval.
+        CHECK(p.changed(50) == 250);
+        // More changes while it waits ask for nothing more.
+        CHECK(p.changed(60) < 0 && p.changed(200) < 0);
+        p.started(300);
+        // Changes while it lists: one more listing once it is on show, no
+        // sooner than the interval after this one began.
+        CHECK(p.changed(320) < 0);
+        CHECK(p.finished(350) == 250);
+        CHECK(p.pending());
+        p.started(600);
+        CHECK(p.finished(620) < 0);
+        // A change after a quiet spell is listed after the short wait.
+        CHECK(p.changed(5000) == 100);
+        p.started(5100);
+        // A listing that took longer than the interval: the next one still
+        // gathers for the short wait.
+        CHECK(p.changed(5200) < 0);
+        CHECK(p.finished(5900) == 100);
     }
 
     GROUP("git:decorations");
