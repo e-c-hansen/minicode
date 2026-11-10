@@ -5,8 +5,10 @@
 // panel's own (Pull, Push, Fetch and Sync; Commit and Amend and Undo Last
 // Commit; Stage All, Unstage All and Undo Discard; Stash and Pop Stash;
 // Switch Branch), the Mac's menuForRow: and menuForEvent: in src/
-// GitPanel.mm, item for item. Every menu goes up through popupMenu, where an
-// item common to all of the window's menus would be added.
+// GitPanel.mm, item for item. Every menu goes up through popupMenu, which
+// ends it with Adjust Settings… (PARITY.md 2.11) as the Mac's are ended; a
+// part with nothing of its own gets that item alone, and the message box's
+// text menu ends with it too.
 //
 // The window's commands are View > Source Control's (Keys.cpp: win.gitfetch
 // and the rest), which the menu bar and the palette offer; installActions
@@ -73,6 +75,9 @@ void GitPanel::buildActions() {
         g_object_unref(a);
     }
     gtk_widget_insert_action_group(root_, "gitpanel", G_ACTION_GROUP(menuActions_));
+    // The message box keeps its text's own menu, which ends with Adjust
+    // Settings… like every menu of the panel (the Mac's MCCommitTextView).
+    Appearance::addToTextMenus(message_, "git");
 }
 
 void GitPanel::onMenuAction(GSimpleAction* a, GVariant*, gpointer selfp) {
@@ -165,15 +170,22 @@ void GitPanel::enable(const char* action, bool on) {
 }
 
 // ------------------------------------------------------------------ menus
-// The right click: a file row's menu on a file (the row chosen first unless
-// it is one of several chosen, which the menu then acts on, as in VS Code),
-// the panel's anywhere else but the message box, which keeps its own.
+// The right click, part by part as the Mac's (GitPanel.mm): a file row's
+// menu on a file (the row chosen first unless it is one of several chosen,
+// which the menu then acts on, as in VS Code); Adjust Settings… alone
+// elsewhere in the change list (a heading, the empty part) and on the
+// graph, as the Mac's MCGitTable off a file row; the panel's own on the
+// rest (the branch, the buttons, the graph's heading, the edges). The
+// message box keeps its text's own menu (buildActions).
 void GitPanel::onMenuPressed(GtkGestureClick* g, int, double x, double y, gpointer selfp) {
     GitPanel* self = static_cast<GitPanel*>(selfp);
     GtkWidget* hit = gtk_widget_pick(self->root_, x, y, GTK_PICK_DEFAULT);
-    if (hit && (hit == self->message_ || gtk_widget_is_ancestor(hit, self->message_))) return;
+    auto inside = [hit](GtkWidget* w) {
+        return hit && (hit == w || gtk_widget_is_ancestor(hit, w));
+    };
+    if (inside(self->message_)) return;
     int row = -1;
-    if (hit && (hit == self->list_ || gtk_widget_is_ancestor(hit, self->list_))) {
+    if (inside(self->list_)) {
         graphene_point_t in = GRAPHENE_POINT_INIT((float)x, (float)y), out;
         if (gtk_widget_compute_point(self->root_, self->list_, &in, &out))
             row = self->listRowAt(out.x, out.y);
@@ -183,6 +195,11 @@ void GitPanel::onMenuPressed(GtkGestureClick* g, int, double x, double y, gpoint
         if (!gtk_selection_model_is_selected(GTK_SELECTION_MODEL(self->listSel_), (guint)row))
             self->selectRow(row, false);
         self->showRowMenu(row, x, y);
+    } else if (inside(self->list_) || inside(self->graphList_)) {
+        self->menuRow_ = -1;
+        GMenu* menu = g_menu_new();
+        self->popupMenu(menu, x, y);   // Adjust Settings… alone
+        g_object_unref(menu);
     } else {
         self->showPanelMenu(x, y);
     }
@@ -247,7 +264,7 @@ void GitPanel::showRowMenu(int row, double x, double y) {
 void GitPanel::showPanelMenu(double x, double y) {
     menuRow_ = -1;
     GMenu* menu = g_menu_new();
-    if (!inRepository_) {   // nothing of the panel's own outside a repository
+    if (!inRepository_) {   // outside a repository, Adjust Settings… alone
         popupMenu(menu, x, y);
         g_object_unref(menu);
         return;
@@ -277,12 +294,13 @@ void GitPanel::showPanelMenu(double x, double y) {
 
 // Every menu of the panel goes up here, under the pointer: a popover
 // parented to the panel, so its items' actions ("gitpanel.") resolve
-// through it. An item every menu of the panel ends with goes in here, as
-// a last section of `menu`; a menu with nothing in it does not go up.
+// through it. Adjust Settings… (PARITY.md 2.11) ends every one, as a last
+// section of `menu`, and is all of a menu with nothing of its own, as the
+// Mac's MCAdjustSettingsMenu.
 void GitPanel::popupMenu(GMenu* menu, double x, double y) {
     dropMenu();
+    Appearance::addItem(menu, "git");
     if (g_menu_model_get_n_items(G_MENU_MODEL(menu)) == 0) return;
-    Appearance::addItem(menu, "git");   // Adjust Settings… (PARITY.md 2.11)
     menu_ = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
     gtk_popover_set_has_arrow(GTK_POPOVER(menu_), FALSE);
     gtk_widget_set_halign(menu_, GTK_ALIGN_START);

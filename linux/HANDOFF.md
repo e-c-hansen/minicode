@@ -2378,9 +2378,12 @@ on:
   the commands and `GitMenus.cpp` the row menu, the panel's menu and the
   window's actions.
 - **The menus are built in one place**, `GitMenus.cpp`, and every one goes
-  up through `GitPanel::popupMenu`, where an item every panel menu ends
-  with (item 2.11's Adjust Settings) goes, as a last section; an empty
-  menu (the panel's outside a repository) does not go up. A disabled
+  up through `GitPanel::popupMenu`, which ends it with item 2.11's Adjust
+  Settings… as a last section. Part by part as the Mac's: a file row has
+  its menu, the rest of the change list (headings, the empty part) and the
+  graph only Adjust Settings…, the rest of the panel its own menu (only the
+  item outside a repository), and the message box its text's menu, which
+  `buildActions` ends with the item (`Appearance::addToTextMenus`). A disabled
   Discard item's reason is its tooltip, set on the item's `GtkModelButton`
   found by its label, since a popover menu's model has no tooltips.
 - **Several rows**: the change lists are a `GtkMultiSelection` (GTK's own

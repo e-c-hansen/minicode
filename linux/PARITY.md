@@ -1071,7 +1071,10 @@ its server comes first here (2.0).
   load 11 to 13), `git_hunks` alone 10 of 10 so loaded, and the whole GUI
   run once (2026-11-10). `large_file` failed its 250 ms bound once (263.8
   ms), not this item's. Since the merge with 2.11, every menu of the panel
-  ends with Adjust Settings… (`GitPanel::popupMenu`).
+  ends with Adjust Settings… (`GitPanel::popupMenu`), the message box's
+  text menu too, and a part with nothing of its own on the Mac (the change
+  list off a file row, the graph, the panel outside a repository) shows it
+  alone.
 - [ ] **2.10 Change bars and the tree's git colors.** `QuickDiff`,
   `GitStatus`.
 - [x] **2.11 Themes from a menu and Adjust Settings.** The owner's words

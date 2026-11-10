@@ -8,7 +8,8 @@
 // and Undo Discard puts each back; the same through the real Trash of the
 // scratch world (GIO's, found again afterwards); Discard Changes from the
 // palette acts on the file on show, whose clean tab follows; a file row's
-// right click has its commands; the branch picker (a click on the branch,
+// right click has its commands, a heading's and the graph's only Adjust
+// Settings…, which ends every menu; the branch picker (a click on the branch,
 // and the palette) switches branches, makes one from a typed name, refuses
 // a bad name, and shows git's words when a switch would overwrite a change;
 // a submodule's Discard is refused with what to do instead, from its menu
@@ -48,6 +49,19 @@ void PanelMenu(const std::string& item) {
 }
 
 bool Done() { return Panel()->actionsDone() > gActions; }
+
+// The graph: the panel's list view that is not the change list.
+GtkWidget* GraphView() {
+    std::vector<GtkWidget*> todo = {Panel()->widget()};
+    while (!todo.empty()) {
+        GtkWidget* w = todo.back();
+        todo.pop_back();
+        if (GTK_IS_LIST_VIEW(w) && w != Panel()->list()) return w;
+        for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+            todo.push_back(c);
+    }
+    return nullptr;
+}
 
 std::string TrashDir() { return std::string(g_get_user_data_dir()) + "/Trash"; }
 
@@ -237,15 +251,35 @@ MC_GUI_SUITE(git_actions) {
         for (const std::string& s : l) all += s + " | ";
         MCGuiNote("row menu: %s", all.c_str());
         GCHECK(l == std::vector<std::string>({"Open File", "Open Changes", "Stage Changes",
-                                              "Discard (Move to Trash)…", "Reveal in File Tree"}));
+                                              "Discard (Move to Trash)…", "Reveal in File Tree",
+                                              "Adjust Settings…"}));
+        MCGuiKey("escape");
+    });
+    MCGuiWait("closed", 10, [] { return !Panel()->menu() || !gtk_widget_get_mapped(Panel()->menu()); });
+    // A heading of the list and the graph have nothing of their own, as on
+    // the Mac: Adjust Settings… alone.
+    ClickRow("# Changes  1", "", 3);
+    MCGuiWait("its menu", 10, [] { return MenuHas(Panel()->menu(), "Adjust Settings…"); });
+    MCGuiStep("Adjust Settings… alone", [] {
+        GCHECK(MenuLabels(Panel()->menu()) == std::vector<std::string>({"Adjust Settings…"}));
+        MCGuiKey("escape");
+    });
+    MCGuiWait("closed", 10, [] { return !Panel()->menu() || !gtk_widget_get_mapped(Panel()->menu()); });
+    WaitOnScreen("the graph", GraphView);
+    MCGuiStep("a right click on the graph", [] { MCGuiClick(GraphView(), -1, -1, 3); });
+    MCGuiWait("its menu", 10, [] { return MenuHas(Panel()->menu(), "Adjust Settings…"); });
+    MCGuiStep("Adjust Settings… alone there too", [] {
+        GCHECK(MenuLabels(Panel()->menu()) == std::vector<std::string>({"Adjust Settings…"}));
         MCGuiKey("escape");
     });
     MCGuiWait("closed", 10, [] { return !Panel()->menu() || !gtk_widget_get_mapped(Panel()->menu()); });
     ClickBranch("the panel's own has the whole-list commands", 3);
     MCGuiWait("its menu", 10, [] { return MenuHas(Panel()->menu(), "Pull"); });
-    MCGuiStep("Stage All, Unstage All, Switch Branch", [] {
+    MCGuiStep("Stage All, Unstage All, Switch Branch; Adjust Settings… last", [] {
         for (const char* t : {"Stage All Changes", "Unstage All Changes", "Switch Branch…"})
             GCHECK(MenuHas(Panel()->menu(), t));
+        const std::vector<std::string> l = MenuLabels(Panel()->menu());
+        GCHECK(!l.empty() && l.back() == "Adjust Settings…");
         MCGuiKey("escape");
     });
     MCGuiWait("closed", 10, [] { return !Panel()->menu() || !gtk_widget_get_mapped(Panel()->menu()); });

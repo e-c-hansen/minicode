@@ -547,7 +547,7 @@ MC_GUI_SUITE(themes) {
     // the panel lists a change whatever the checkout the checks run in
     // holds (the rest ignored; all of it removed at the end of the block).
     MCGuiAsync("the project a repository, one new file in it", 20, [](MCGuiDone done) {
-        MCGuiWriteFile(F(".gitignore"), "*\n!themes-new.txt\n");
+        MCGuiWriteFile(F(".gitignore"), "*\n!themes-new*.txt\n");
         MCGuiWriteFile(F("themes-new.txt"), "new\n");
         MCGuiRunProcess({"git", "init", "-q"}, {}, [done](int status, std::string, std::string err) {
             if (status != 0) MCGuiNote("git init: %s", err.c_str());
@@ -573,19 +573,26 @@ MC_GUI_SUITE(themes) {
         return listed && paneOf(focus) == git->widget() && !GTK_IS_LIST_VIEW(focus);
     });
     // A refresh while a menu is open (the window coming back to the front,
-    // a file monitor, an action) makes the panel's rows again, the one with
-    // the keyboard among them: the keyboard comes back to the list, where
-    // it was left on the menu bar.
+    // a file monitor, an action) that finds other changes makes the panel's
+    // rows again (the same rows stay as they are), the one with the
+    // keyboard among them: the keyboard comes back to the list, where it was
+    // left on the menu bar.
     MCGuiStep("the row with the keyboard", [] {
         g_weak_ref_set(&gRowBefore, gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)));
     });
     openThemeMenu();
-    MCGuiStep("git asked again meanwhile", [] { MCGuiApp().git->refresh(); });
+    MCGuiStep("a second new file, and git asked again meanwhile", [] {
+        MCGuiWriteFile(F("themes-new2.txt"), "new\n");
+        MCGuiApp().git->refresh();
+    });
     MCGuiWait("the rows made again", 10, [] {
+        bool listed = false;
+        for (const std::string& row : MCGuiApp().git->rowDescriptions())
+            listed = listed || row.find("themes-new2.txt") != std::string::npos;
         GtkWidget* row = GTK_WIDGET(g_weak_ref_get(&gRowBefore));
         const bool gone = !row || !gtk_widget_get_mapped(row);
         if (row) g_object_unref(row);
-        return gone;
+        return listed && gone;
     });
     pickTheme("Light Modern");
     MCGuiWait("both in Light Modern", 10, [] {
@@ -642,7 +649,7 @@ MC_GUI_SUITE(themes) {
         return !MCGuiApp().findBar->shown() && MCGuiOnScreen(MCGuiApp().tree->widget());
     });
     MCGuiAsync("the project no repository again", 20, [](MCGuiDone done) {
-        MCGuiRunProcess({"rm", "-rf", ".git", ".gitignore", "themes-new.txt"}, {},
+        MCGuiRunProcess({"rm", "-rf", ".git", ".gitignore", "themes-new.txt", "themes-new2.txt"}, {},
                         [done](int status, std::string, std::string) {
             GCHECK(status == 0);
             done();

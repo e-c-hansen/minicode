@@ -3,8 +3,9 @@
 // clicking on some portion of the GUI. This should point to the relevant part
 // of the minicode config."). In a window of its own, a real right click on
 // each part of the window (the file tree, the editor, a Markdown page, a tab
-// and the tab strip, the status bar, the Source Control panel, the terminal,
-// the browser's page and its address bar) opens a menu whose last item is
+// and the tab strip, the status bar, the Source Control panel's branch line,
+// change list and message box, the terminal, the browser's page and its
+// address bar) opens a menu whose last item is
 // Adjust Settings…; a real click on it opens the settings file with the
 // keyboard there, the first of that part's keys' value selected, and every
 // one of its keys' lines tinted for about three seconds (the Mac's
@@ -79,6 +80,15 @@ GtkWidget* menuWith(GtkWidget* root, const std::string& label) {
 }
 
 GtkWidget* openMenu() { return menuWith(GTK_WIDGET(MCGuiApp().window), Appearance::kItemLabel); }
+
+// A mapped popover under `root`, any, or null.
+GtkWidget* anyPopover(GtkWidget* root) {
+    if (!root || !gtk_widget_get_mapped(root)) return nullptr;
+    if (GTK_IS_POPOVER(root)) return root;
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* hit = anyPopover(c)) return hit;
+    return nullptr;
+}
 
 // The last item of a menu model, sections flattened: its label, action and
 // string target.
@@ -209,7 +219,13 @@ void rightClickChoose(const std::string& name, std::function<GtkWidget*()> targe
     MCGuiStep("its last item is Adjust Settings… for " + surface + ", chosen", [name, surface, action] {
         GtkWidget* menu = openMenu();
         GCHECK(menu != nullptr);
-        if (!menu) return;
+        if (!menu) {
+            // A menu without the item, if one came up, holds the keyboard:
+            // closed, so that the parts after are not failed by this one.
+            if (GtkWidget* other = anyPopover(GTK_WIDGET(MCGuiApp().window)))
+                gtk_popover_popdown(GTK_POPOVER(other));
+            return;
+        }
         Item last;
         GCHECK(lastItem(gtk_popover_menu_get_menu_model(GTK_POPOVER_MENU(menu)), &last));
         MCGuiNote("%s: last item \"%s\" %s(%s)", name.c_str(), last.label.c_str(),
@@ -241,14 +257,6 @@ GtkWidget* findVte(GtkWidget* root) {
     return nullptr;
 }
 #endif
-
-GtkWidget* findTextView(GtkWidget* root) {
-    if (!root) return nullptr;
-    if (GTK_IS_TEXT_VIEW(root)) return root;
-    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
-        if (GtkWidget* hit = findTextView(c)) return hit;
-    return nullptr;
-}
 
 GtkWidget* findEntry(GtkWidget* root) {
     if (!root) return nullptr;
@@ -332,17 +340,38 @@ MC_GUI_SUITE(adjust_settings) {
     rightClickChoose("the status bar", [] { return MCGuiApp().statusBar; }, "statusbar", 6, -1);
 
     // ---- the Source Control panel
+    // The project a repository of its own with nothing listed, so that the
+    // panel shows its message box whatever the checks run in (removed after).
+    MCGuiAsync("the project a repository", 20, [](MCGuiDone done) {
+        MCGuiWriteFile(F(".gitignore"), "*\n");
+        MCGuiRunProcess({"git", "init", "-q"}, {}, [done](int status, std::string, std::string err) {
+            if (status != 0) MCGuiNote("git init: %s", err.c_str());
+            GCHECK(status == 0);
+            done();
+        });
+    });
     MCGuiStep("the Source Control panel by its key", [] { MCGuiKey("ctrl+shift+g"); });
-    rightClickChoose("the Source Control panel", [] {
+    MCGuiWait("git's answer: the message box on show", 15, [] {
         GitPanel* git = MCGuiApp().git;
-        return git ? git->widget() : nullptr;
-    }, "git", 40, 4);
-    rightClickChoose("the commit message box", [] {
-        GitPanel* git = MCGuiApp().git;
-        return git ? findTextView(git->widget()) : nullptr;
-    }, "git");
+        return git && git->inRepository() && MCGuiOnScreen(git->messageView());
+    });
+    // The branch line has the panel's own menu; the change list's empty part
+    // nothing of its own (Adjust Settings… alone, as on the Mac); the message
+    // box its text's menu.
+    rightClickChoose("the Source Control panel's branch line",
+                     [] { return MCGuiApp().git->branchLabel(); }, "git");
+    rightClickChoose("the change list's empty part", [] { return MCGuiApp().git->list(); }, "git",
+                     -1, -20);
+    rightClickChoose("the commit message box", [] { return MCGuiApp().git->messageView(); }, "git");
     MCGuiStep("the tree again", [] { MCGuiKey("ctrl+shift+g"); });
     MCGuiWait("the tree on show", 10, [] { return MCGuiOnScreen(MCGuiApp().tree->widget()); });
+    MCGuiAsync("the project no repository again", 20, [](MCGuiDone done) {
+        MCGuiRunProcess({"rm", "-rf", ".git", ".gitignore"}, {},
+                        [done](int status, std::string, std::string) {
+            GCHECK(status == 0);
+            done();
+        });
+    });
 
 #ifdef MINICODE_ENABLE_TERMINAL
     // ---- the terminal

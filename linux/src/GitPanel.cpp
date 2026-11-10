@@ -524,8 +524,9 @@ void GitPanel::build() {
         gtk_widget_add_controller(view, GTK_EVENT_CONTROLLER(click));
     }
 
-    // The right click: a file row's menu on a file, the panel's anywhere else
-    // but the message box, which has its text's own (GitMenus.cpp).
+    // The right click: a file row's menu on a file, Adjust Settings… alone
+    // elsewhere in the lists, the panel's on the rest; the message box has
+    // its text's own (GitMenus.cpp).
     GtkGesture* menuClick = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(menuClick), GDK_BUTTON_SECONDARY);
     gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(menuClick), GTK_PHASE_CAPTURE);
