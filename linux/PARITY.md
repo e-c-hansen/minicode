@@ -920,7 +920,7 @@ its server comes first here.
 - [ ] **2.6 Semantic tokens.** Tags, painted for the lines on screen only.
 - [ ] **2.7 Inlay hints (D6, D9).** `InlayHints`.
 - [ ] **2.8 Install hints.** `InstallHints`.
-- [~] worktree-agent-abc58ac191887b7c4 **2.9 Git verbs.** Push, pull, autofetch, Stage All, Discard with its
+- [x] **2.9 Git verbs.** Push, pull, autofetch, Stage All, Discard with its
   Trash copy and undo, hunks and lines, the branch picker, commit verbs.
   `GitModel` already has the plans.
   *Verified in Xvfb, 2026-11-10* (`HANDOFF.md` item 28): `git-ui:*` hold
@@ -949,13 +949,14 @@ its server comes first here.
   keys, an agent, a GUI askpass or a credential helper; the desktop's real
   Trash and GNOME Files' Restore From Trash; how the menus, links and
   button look; Ctrl and Shift clicks and Shift+F10 under GNOME on Wayland.
-  *Open before merging:* the four suites pass alone and together, but in
-  whole GUI runs at load 13 to 14 `git_actions` failed once in two of
-  three runs at its first row click (the message box not on screen for
-  `ClickRow` to rest the pointer on), and `git_sync` run just before
-  `git_actions` once could not reach the branch label for its right
-  click; the cause is not found yet. `large_file` failed its 250 ms bound
-  once (263.8 ms), not this item's.
+  The flakes of whole runs were the checks clicking before GTK had laid a
+  widget or a new diff out (`HANDOFF.md` item 28's traps); every click
+  now waits for its target, and `tabs palette git_sync git_actions
+  git_hunks git_verbs` passed 6 of 6 runs (4 beside a dozen busy loops,
+  load 11 to 13), `git_hunks` alone 10 of 10 so loaded, and the whole GUI
+  run once (2026-11-10). `large_file` failed its 250 ms bound once (263.8
+  ms), not this item's. *TODO at the merge with 2.11:* end the row and file
+  menus in `GitPanel::popupMenu` with `Appearance::addItem(menu, "git")`.
 - [ ] **2.10 Change bars and the tree's git colors.** `QuickDiff`,
   `GitStatus`.
 - [ ] **2.11 Themes from a menu and Adjust Settings.**

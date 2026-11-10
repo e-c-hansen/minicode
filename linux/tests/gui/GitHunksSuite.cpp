@@ -140,13 +140,15 @@ MC_GUI_SUITE(git_hunks) {
         GCHECK(Trashed(kBoth));
         GCHECK_EQ_STR(Panel()->undoDiscardTitle(), "Undo Discard of f.txt");
         gActions = Panel()->actionsDone();
-        MCGuiClick(Panel()->branchLabel(), -1, -1, 3);
     });
+    ClickBranch("the panel's right click", 3);
     MCGuiWait("the panel's menu", 10, [] { return MenuHas(Panel()->menu(), "Undo Discard of f.txt"); });
     MCGuiStep("Undo Discard of f.txt", [] { MCGuiClick(MenuItem(Panel()->menu(), "Undo Discard of f.txt")); });
     MCGuiWait("undone", 15, [] { return Done() && MCGuiReadFile(In("f.txt")) == kBoth; });
-    MCGuiStep("the diff on show is the one from before the undo", [] {
-        GCHECK(LinkCount() == 2 && Diff()->text().find("+B") == std::string::npos);
+    // The diff shown again after the discard (the panel says the discard is
+    // done as it asks git for it), laid out, and not shown again by the undo.
+    MCGuiWait("the diff on show is the one from before the undo", 10, [] {
+        return LinkCount() == 2 && Diff()->text().find("+B") == std::string::npos;
     });
     Shell("f.txt staged from outside, so the diff on show is stale",
           "cd '" + R() + "' && " + G() + " add f.txt");

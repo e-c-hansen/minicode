@@ -2167,6 +2167,19 @@ Traps:
   had reached it), so a Ctrl click on b.txt right below a.txt reached no
   window at all. The suites' `ClickRow` rests the pointer on the message
   box first. A person's pointer moves there and the tooltip goes first.
+- **A wait on the panel's data ends before GTK has laid the widget out.**
+  The message box and the Sync button turn visible with the status that
+  fills the rows, and GTK places them on its next frame, so `git_actions`'
+  first `ClickRow`, in the step after its rows wait, pointed at a 0x0 text
+  view (in every run after `tabs` and `palette`, and in whole GUI runs at
+  load 13 to 14); the branch line `git_sync` once could not right-click
+  was most likely the same (that click, too, followed a wait on data only).
+  A diff just shown is the same in its text: GTK gives its lines heights in
+  idle slices, and a point worked out before then for "+k2" selected the
+  line below under load. Every click in the git suites now waits for its
+  widget on screen first (`WaitOnScreen`, `ClickBranch`, `ClickEditor` in
+  `GitChecks.h`), `DiffOnShow` also wants the diff's last line to have a
+  height, and a failed point says why (`a GtkTextView, 0x0`).
 - **A refresh made every row again.** `applySnapshot` reset the lists'
   model on every status, so a refresh landing between a click's press and
   its release, or between finding a row and clicking it, lost the click (a

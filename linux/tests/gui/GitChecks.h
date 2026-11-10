@@ -99,6 +99,30 @@ inline GtkWidget* RowWidget(const std::string& description) {
     return MCGuiOnScreen(w) ? w : nullptr;
 }
 
+// A wait for the widget a step is about to click to be on screen. GTK gives
+// a widget its place on the frame clock, after the status that made it
+// visible (the message box and the Sync button come with the first status
+// of a repository) or the Ctrl+Shift+G that showed the panel; the waits on
+// the rows' data can end before that, and a click aimed then found no
+// widget to point at (in whole GUI runs at load 13 to 14). So every click
+// on a widget of the panel or the editor waits for its widget first.
+inline void WaitOnScreen(const std::string& what, std::function<GtkWidget*()> widget) {
+    MCGuiWait(what + " on screen", 10, [widget] { return MCGuiOnScreen(widget()); });
+}
+
+// A click on the branch line, for real: the left button opens the branch
+// picker, the right one the panel's own menu.
+inline void ClickBranch(const std::string& what, int button = 1) {
+    WaitOnScreen("the branch line", [] { return Panel()->branchLabel(); });
+    MCGuiStep(what, [button] { MCGuiClick(Panel()->branchLabel(), -1, -1, button); });
+}
+
+// A click in the editor of the suite's window.
+inline void ClickEditor(const std::string& what) {
+    WaitOnScreen("the editor", [] { return RepoWindow().editor->textView(); });
+    MCGuiStep(what, [] { MCGuiClick(RepoWindow().editor->textView()); });
+}
+
 // A click on a row, for real, with modifiers ("ctrl", "shift") or another
 // button. A row's tooltip, shown below the pointer after it rested on the
 // row above, took an XTest click sent at once (GTK hides it on the next
@@ -106,6 +130,7 @@ inline GtkWidget* RowWidget(const std::string& description) {
 // a.txt reached no window. So the pointer rests on the message box, which
 // has no tooltip, first.
 inline void ClickRow(const std::string& row, const std::string& mods = "", int button = 1) {
+    WaitOnScreen("the message box", [] { return Panel()->messageView(); });
     MCGuiStep("the pointer off the rows", [] { MCGuiMoveTo(Panel()->messageView()); });
     MCGuiPause(0.6);   // time is the condition: the last row's tooltip gone, no double-click
     MCGuiWait(row + " on screen", 10, [row] { return RowWidget(row) != nullptr; });
@@ -225,9 +250,23 @@ inline GitDiffView* Diff() {
     Editor* e = RepoWindow().editor;
     return e ? e->diffView() : nullptr;
 }
+// Whether GTK has laid the diff's text out: a diff just shown has its lines
+// placed in idle slices, and until then a line not reached has no height,
+// so a point worked out for a character (a link, "+k2") lands on another
+// line. Under load a click on "+k2" selected the line below it, and the
+// click before Shift+F10 put the caret outside the hunk. The last line is
+// the last to get a height, and asking for it lays nothing out.
+inline bool DiffLaidOut() {
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(Diff()->buffer(), &end);
+    int y = 0, h = 0;
+    gtk_text_view_get_line_yrange(GTK_TEXT_VIEW(Diff()->textView()), &end, &y, &h);
+    return h > 0;
+}
+// The diff on show, on screen and laid out, so its points can be clicked.
 inline bool DiffOnShow() {
     Editor* e = RepoWindow().editor;
-    return e && e->isDiff() && Diff() && MCGuiOnScreen(Diff()->textView());
+    return e && e->isDiff() && Diff() && MCGuiOnScreen(Diff()->textView()) && DiffLaidOut();
 }
 inline size_t LinkCount() { return DiffOnShow() ? Diff()->links().size() : 0; }
 // Where the `i`-th link's words are, in the text view's coordinates.

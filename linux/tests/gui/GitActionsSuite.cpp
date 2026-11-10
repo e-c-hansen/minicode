@@ -39,7 +39,7 @@ void RowMenu(const std::string& row, const std::string& item) {
 }
 
 void PanelMenu(const std::string& item) {
-    MCGuiStep("right click on the panel", [] { MCGuiClick(Panel()->branchLabel(), -1, -1, 3); });
+    ClickBranch("right click on the panel", 3);
     MCGuiWait("its menu has " + item, 10, [item] { return MenuHas(Panel()->menu(), item); });
     MCGuiStep(item, [item] {
         gActions = Panel()->actionsDone();
@@ -212,7 +212,7 @@ MC_GUI_SUITE(git_actions) {
         MCGuiOpenFile(In("a.txt"));
     });
     MCGuiWait("on show", 10, [] { return RepoWindow().editor->currentPath() == In("a.txt"); });
-    MCGuiStep("a click in it", [] { MCGuiClick(RepoWindow().editor->textView()); });
+    ClickEditor("a click in it");
     MCGuiWait("it has the keyboard", 10, [] { return Focused(RepoWindow().editor->textView()); });
     MCGuiStep("counting", [] { gActions = Panel()->actionsDone(); });
     RunFromPalette("discard", "View > Source Control > Discard Changes…");
@@ -241,9 +241,7 @@ MC_GUI_SUITE(git_actions) {
         MCGuiKey("escape");
     });
     MCGuiWait("closed", 10, [] { return !Panel()->menu() || !gtk_widget_get_mapped(Panel()->menu()); });
-    MCGuiStep("the panel's own has the whole-list commands", [] {
-        MCGuiClick(Panel()->branchLabel(), -1, -1, 3);
-    });
+    ClickBranch("the panel's own has the whole-list commands", 3);
     MCGuiWait("its menu", 10, [] { return MenuHas(Panel()->menu(), "Pull"); });
     MCGuiStep("Stage All, Unstage All, Switch Branch", [] {
         for (const char* t : {"Stage All Changes", "Unstage All Changes", "Switch Branch…"})
@@ -272,7 +270,7 @@ MC_GUI_SUITE(git_actions) {
         GCHECK_EQ_STR(Panel()->errorLine(), "Switched to feature.");
         GCHECK(MCGuiFileExists(In("f.txt")));
     });
-    MCGuiStep("a click on the branch", [] { MCGuiClick(Panel()->branchLabel()); });
+    ClickBranch("a click on the branch");
     MCGuiWait("the picker again", 10, [] { return Pal()->isPick() && Pal()->labels().size() == 2; });
     MCGuiStep("\"new topic\"", [] { MCGuiType("new topic"); });
     MCGuiWait("offers to make new-topic", 10, [] {
@@ -287,7 +285,7 @@ MC_GUI_SUITE(git_actions) {
         GCHECK_EQ_STR(Panel()->errorLine(), "Created new-topic and switched to it.");
     });
     MCGuiPause(0.5);   // the double-click interval: the label was clicked last
-    MCGuiStep("a click on the branch", [] { MCGuiClick(Panel()->branchLabel()); });
+    ClickBranch("a click on the branch");
     MCGuiWait("the picker, three branches", 10, [] {
         return Pal()->isPick() && Pal()->labels().size() == 3;
     });
@@ -306,7 +304,7 @@ MC_GUI_SUITE(git_actions) {
     Shell("a commit on new-topic, and a change to the same file left uncommitted",
           "cd '" + R() + "' && echo X > a.txt && " + G() + " commit -qam x && echo Y > a.txt");
     MCGuiPause(0.5);   // the double-click interval: the label was clicked last
-    MCGuiStep("switching to main would overwrite it", [] { MCGuiClick(Panel()->branchLabel()); });
+    ClickBranch("switching to main would overwrite it");
     MCGuiWait("the picker", 10, [] { return Pal()->isPick() && Pal()->labels().size() == 3; });
     MCGuiStep("\"main\"", [] { MCGuiType("main"); });
     MCGuiWait("main first", 10, [] { return PaletteSelected() == "main"; });

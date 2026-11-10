@@ -25,7 +25,7 @@ bool Done() { return Panel()->actionsDone() > gActions; }
 size_t Chosen() { return Panel()->chosenRows().size(); }
 
 void PanelMenu(const std::string& item) {
-    MCGuiStep("right click on the panel", [] { MCGuiClick(Panel()->branchLabel(), -1, -1, 3); });
+    ClickBranch("right click on the panel", 3);
     MCGuiWait("its menu has " + item, 10, [item] { return MenuHas(Panel()->menu(), item); });
     MCGuiStep(item, [item] {
         gActions = Panel()->actionsDone();
@@ -127,7 +127,7 @@ MC_GUI_SUITE(git_verbs) {
     MCGuiWait("n.txt back", 15, [] { return Done() && RowOf("W U n.txt") >= 0; });
 
     // ------------------------------------------------------ the verbs
-    MCGuiStep("the panel's menu has the verbs", [] { MCGuiClick(Panel()->branchLabel(), -1, -1, 3); });
+    ClickBranch("the panel's menu has the verbs", 3);
     MCGuiWait("its menu", 10, [] { return MenuHas(Panel()->menu(), "Pull"); });
     MCGuiStep("Commit and Amend, Undo Last Commit, Stash, Pop Stash", [] {
         for (const char* t : {"Commit and Amend", "Undo Last Commit", "Stash", "Pop Stash"})
@@ -143,6 +143,7 @@ MC_GUI_SUITE(git_verbs) {
     MCGuiWait("chosen", 10, [] { return Panel()->selectedRow() == RowOf("W M a.txt"); });
     MCGuiStep("Space", [] { MCGuiKey("space"); });
     MCGuiWait("staged", 15, [] { return RowOf("S M a.txt") >= 0; });
+    WaitOnScreen("the message box", [] { return Panel()->messageView(); });
     MCGuiStep("a message, typed", [] { MCGuiClick(Panel()->messageView()); });
     MCGuiWait("the box has the keyboard", 10, [] { return gtk_widget_has_focus(Panel()->messageView()); });
     MCGuiStep("\"second\"", [] { MCGuiType("second"); });

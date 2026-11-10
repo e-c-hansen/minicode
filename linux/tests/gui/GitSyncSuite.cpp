@@ -43,11 +43,6 @@ std::string StatusText() {
     return l ? gtk_label_get_text(GTK_LABEL(l)) : "";
 }
 
-void RightClickPanel() {
-    // The panel's own menu: a right click on the branch line.
-    MCGuiClick(Panel()->branchLabel(), -1, -1, 3);
-}
-
 }  // namespace
 
 MC_GUI_SUITE(git_sync) {
@@ -68,9 +63,7 @@ MC_GUI_SUITE(git_sync) {
           PushFromOther("theirs") + " && cd '" + Work() + "' && echo two > a.txt && " + G() +
               " commit -qam mine");
     OpenRepoWindow(Work(), false);
-    MCGuiStep("a click in the editor, so the palette has the keyboard to give back", [] {
-        MCGuiClick(RepoWindow().editor->textView());
-    });
+    ClickEditor("a click in the editor, so the palette has the keyboard to give back");
     RunFromPalette("fetch", "View > Source Control > Fetch");
     MCGuiWait("fetched, with the panel hidden", 30, [] {
         return Panel()->lastSync() == "fetch ok";
@@ -84,11 +77,11 @@ MC_GUI_SUITE(git_sync) {
         return Panel()->active() &&
                Panel()->graphSummary().find("↑ 1 to push, ↓ 1 to pull") != std::string::npos;
     });
-    MCGuiStep("the button says so; the panel's right click has the four", [] {
+    MCGuiStep("the button says so", [] {
         GCHECK_EQ_STR(Panel()->syncButtonTitle(), "Sync Changes  ↓ 1  ↑ 1");
         GCHECK(Panel()->errorLine().rfind("Fetched from origin", 0) == 0);
-        RightClickPanel();
     });
+    ClickBranch("the panel's right click has the four", 3);   // the panel's own menu
     MCGuiWait("the menu", 10, [] { return MenuHas(Panel()->menu(), "Pull"); });
     MCGuiStep("Pull, Push, Fetch, Sync first; Escape", [] {
         const std::vector<std::string> l = MenuLabels(Panel()->menu());
@@ -100,6 +93,7 @@ MC_GUI_SUITE(git_sync) {
         MCGuiKey("escape");
     });
     MCGuiWait("closed", 10, [] { return !Panel()->menu() || !gtk_widget_get_mapped(Panel()->menu()); });
+    WaitOnScreen("the Sync Changes button", [] { return Panel()->syncButton(); });
     MCGuiStep("the Sync Changes button", [] { MCGuiClick(Panel()->syncButton()); });
     MCGuiWait("synced", 60, [] { return Panel()->lastSync() == "sync ok" && !Panel()->syncing(); });
     MCGuiStep("merged and pushed, nothing asked", [] {
@@ -121,10 +115,8 @@ MC_GUI_SUITE(git_sync) {
     });
 
     // ------------------------------------- amending a commit already pushed
-    MCGuiStep("Commit and Amend from the right click on a pushed commit", [] {
-        Panel()->setMessage("rewritten");
-        RightClickPanel();
-    });
+    MCGuiStep("a message for Commit and Amend", [] { Panel()->setMessage("rewritten"); });
+    ClickBranch("Commit and Amend from the right click on a pushed commit", 3);
     MCGuiWait("the menu", 10, [] { return MenuHas(Panel()->menu(), "Commit and Amend"); });
     MCGuiStep("Commit and Amend", [] { MCGuiClick(MenuItem(Panel()->menu(), "Commit and Amend")); });
     MCGuiWait("it asks first", 10, QuestionUp);
@@ -149,7 +141,7 @@ MC_GUI_SUITE(git_sync) {
         if (Panel()->syncButtonTitle() != "Publish Branch") Panel()->refresh();
         return Panel()->syncButtonTitle() == "Publish Branch";
     });
-    MCGuiStep("the right click's Push publishes it", [] { RightClickPanel(); });
+    ClickBranch("the right click's Push publishes it", 3);
     MCGuiWait("the menu", 10, [] { return MenuHas(Panel()->menu(), "Push"); });
     MCGuiStep("Push", [] { MCGuiClick(MenuItem(Panel()->menu(), "Push")); });
     MCGuiWait("published", 30, [] { return Panel()->lastSync() == "push ok"; });
@@ -169,7 +161,7 @@ MC_GUI_SUITE(git_sync) {
           "cd '" + Base() + "/other' && " + G() + " checkout -q -b topic && echo t > t.txt && " + G() +
               " add -A && " + G() + " commit -qm topic && " + G() + " push -q -u origin topic && " +
               G() + " checkout -q main && cd '" + Work() + "' && " + G() + " fetch -q");
-    MCGuiStep("a click on the branch opens the picker", [] { MCGuiClick(Panel()->branchLabel()); });
+    ClickBranch("a click on the branch opens the picker");
     MCGuiWait("the picker, origin/topic among the branches", 10, [] {
         const std::vector<std::string> l = Pal()->isPick() ? Pal()->labels() : std::vector<std::string>();
         return std::find(l.begin(), l.end(), "origin/topic") != l.end();
@@ -217,10 +209,8 @@ MC_GUI_SUITE(git_sync) {
                             "/fake-ssh' && " + G() +
                             " remote set-url --push origin ssh://git@example.invalid/x.git && " + G() +
                             " commit -qam again");
-    MCGuiStep("Push from the palette", [] {
-        gPushed = MCGuiNowMs();
-        MCGuiClick(RepoWindow().editor->textView());
-    });
+    ClickEditor("a click in the editor, for Push from the palette");
+    MCGuiStep("the time", [] { gPushed = MCGuiNowMs(); });
     RunFromPalette("push", "View > Source Control > Push");
     MCGuiWait("refused", 30, [] { return Panel()->lastSync() == "push failed"; });
     MCGuiStep("at once, with ssh's words and what to do, ssh in a session of its own", [] {
@@ -328,8 +318,8 @@ MC_GUI_SUITE(git_sync) {
         GCHECK(Panel()->autoFetches() == 0);
         GCHECK(Panel()->errorLine().empty());
         GCHECK(!Panel()->autoFetchTickAt(gT0 + 60));
-        MCGuiClick(RepoWindow().editor->textView());
     });
+    ClickEditor("a click in the editor, for Fetch from the palette");
     RunFromPalette("fetch", "View > Source Control > Fetch");
     MCGuiWait("refused by hand", 20, [] {
         return Panel()->lastSync() == "fetch refused" && !Panel()->errorLine().empty();
