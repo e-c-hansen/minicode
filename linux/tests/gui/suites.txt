@@ -32,3 +32,7 @@ GoBackSuite.cpp
 MaximizeSuite.cpp
 StartupSuite.cpp
 DetachSuite.cpp
+AdjustSettingsSuite.cpp
+ThemesSuite.cpp
+SwatchesSuite.cpp
+ConfigWritesSuite.cpp

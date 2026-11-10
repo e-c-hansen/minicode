@@ -1,6 +1,8 @@
 // Keys.cpp — see Keys.h.
 #include "Keys.h"
 
+#include "AppSettings.h"   // writeConfigFile
+
 #include <glib/gstdio.h>
 
 #include <algorithm>
@@ -240,9 +242,13 @@ bool ensureFileExists() {
     gchar* dir = g_path_get_dirname(s.path.c_str());
     g_mkdir_with_parents(dir, 0755);
     g_free(dir);
-    const std::string body = Commands::defaultFileText(Platform::Linux);
-    if (!g_file_set_contents(s.path.c_str(), body.c_str(), (gssize)body.size(), nullptr))
+    // Through the atomic writer, as settings.conf: a dangling symlink into a
+    // dotfiles folder stays a link (PARITY.md 2.11).
+    std::string why;
+    if (!writeConfigFile(s.path, Commands::defaultFileText(Platform::Linux), false, &why)) {
+        std::fprintf(stderr, "minicode: %s\n", why.c_str());
         return false;
+    }
     // Watching a path in a folder that did not exist yet may have failed.
     if (!s.monitor) watch();
     reload();
@@ -439,10 +445,11 @@ GMenu* buildMenu(const std::string& top) {
 
 }  // namespace
 
-GMenuModel* menuBar() {
+GMenuModel* menuBar(const std::function<void(const std::string& top, GMenu* menu)>& extend) {
     GMenu* bar = g_menu_new();
     for (const char* top : {"File", "Edit", "View", "Terminal", "Navigate"}) {
         GMenu* menu = buildMenu(top);
+        if (extend) extend(top, menu);
         if (g_menu_model_get_n_items(G_MENU_MODEL(menu)) > 0)
             g_menu_append_submenu(bar, top, G_MENU_MODEL(menu));
         g_object_unref(menu);

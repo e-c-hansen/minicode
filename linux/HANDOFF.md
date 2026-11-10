@@ -1894,6 +1894,86 @@ What later items build on:
   caret far (to its end), which the ten-line rule records: a check that
   wants an empty history clears it after the click.
 
+### 26. Themes from a menu and Adjust Settings (done, November 2026; `PARITY.md` item 2.11)
+
+What later items build on:
+- **A new part of the window adds Adjust Settings… with one call**
+  (`src/Appearance.h`), where its menu is made, with its id from
+  `Settings::appearanceSurfaces()`: `Appearance::addItem(menu, "git")` at
+  the end of a `GMenu` the part builds (the tree's `g.treeMenu`, a tab's
+  `Editor::menuForTab`); `Appearance::attachMenu(widget, "statusbar")` for
+  a widget with no menu of its own (a right click there that no child takes
+  pops one holding only the item, and every text field and text view under
+  it gets the item in its editing menu, as `addToTextMenus` does alone);
+  `Appearance::attachEditorMenu` for the editor's view ("editor", or
+  "markdown" while a page shows, followed on `notify::buffer` and as a
+  right click starts); `attachTerminalMenu` for VTE (Copy, Paste, Select
+  All, the item, through `vte_terminal_set_context_menu_model`); and
+  `addToWebMenu` from a `WebKitWebView`'s `context-menu` signal. The items
+  name the window's `win.adjustsettings` with the part's id as target;
+  main.cpp's `act_adjust_settings` opens the settings file and
+  `Appearance::showSurfaceKeys` does the rest: the part's missing keys'
+  commented defaults appended (`Settings::adjustSettingsAddition`, one
+  user action, saved through main.cpp's `saveDocument` only when the tab
+  was clean), the first key's value selected by `Editor::revealLine`, and
+  the keys' lines (`Settings::surfaceKeyLines`) tinted with the
+  `minicode-adjust-tint` tag at priority 0 (a swatch keeps its color) for
+  3.3 s, fading as the Mac's. Item 2.9's row and file menus in the Source
+  Control panel should end with `addItem(menu, "git")`; the panel itself
+  and its message box have it already (`act_toggle_git`).
+- **View > Theme and View > Adjust Settings** are no registry commands, as
+  on the Mac, where main.mm adds them by hand: `Keys::menuBar` takes an
+  `extend` callback, `Appearance::extendMenu`, which appends both submenus
+  to View. The theme rows name the application's stateful `app.theme`
+  (the theme's id; `Appearance::settingsChanged` moves the check after
+  every reload of the file), whose activation is `Appearance::chooseTheme`:
+  refused before asking while a tab holds settings.conf with unsaved
+  changes (`AppSettings::unsavedTextCheck`, set in `initShared`), else
+  the Mac's question when `Settings::colorOverrides` finds colors of the
+  file's own (a `GtkAlertDialog`: Use the Theme's Colors, Keep My Colors,
+  Cancel), then `AppSettings::writeTheme`. The keys suite leaves those two
+  submenus out of its count of the registry's items. The palette does not
+  list them (the Mac's reads its menu bar; the port's reads the registry).
+- **minicode's own writes** of settings.conf and keys.conf go through
+  `writeConfigFile` (AppSettings.h, the Mac's `MCWriteConfigFile` over
+  `FolderSearch::writeFileAtomically`): `AppSettings::ensureFileExists`,
+  `Keys::ensureFileExists` and the theme. `g_file_set_contents` replaced a
+  symlinked dotfile with a plain file.
+- **GTK's own widgets follow the theme's darkness**:
+  `Appearance::applyColorScheme` sets `gtk-interface-color-scheme` (GTK
+  4.20 and later) from `Settings::isDark()` on every settings change. A
+  throwaway program on the ThinkPad showed GTK 4.22's own theme ignoring
+  `gtk-application-prefer-dark-theme` and following the color scheme. A
+  desktop theme whose name fixes its look (the owner's `Yaru-dark`) may
+  keep it: not tried on the desktop. The stylesheet's selection, scroll
+  bar sliders and the tab close button's light follow too
+  (`theme:light`).
+- **The settings file's opacity values** are underlined
+  (`Document::kOpacityTag`, applied by `decorateColors` beside the
+  swatches) and a click opens a slider (`OpacityPicker.cpp`, Editor's
+  members, in the color picker's popover slot, the same 150 ms save).
+- **For checks**: `MCGuiApp().statusBar`; `Editor::pickerPopover()` (the
+  color chooser's or the slider's popover); `Appearance::tintedLines`,
+  `editorMenuSurface`. The suites are `adjust_settings`, `themes`,
+  `swatches` and `config_writes`. A suite that picks from the menu bar
+  finds the `GtkPopoverMenuBar` under the window and clicks labels in the
+  mapped `GtkPopoverMenu`s; a submenu slides in, so wait for one of its
+  rows to be on screen before clicking.
+- **Traps**: GTK 4's menu bar left the keyboard on its item after a choice
+  from it, so after View > Theme typing went nowhere until a click;
+  `MenuBarFocus.{h,cpp}` puts it back where it was once a menu of the bar
+  has closed and the command did not move it. One `GtkPopoverMenu` shown a
+  second time from a right click kept the keyboard on its item after a
+  click and never ran it (one run in two): `attachMenu` makes a new one
+  each time, as the tab strip does. `gtk_text_view_get_iter_at_location`
+  answers the next character over a character's right half (GTK 4 adds
+  the trailing offset), so a one-digit opacity, and a swatch's last digit,
+  missed half their clicks; `swatchAt` and `opacityAt` use
+  `gtk_text_view_get_iter_at_position`. A right click at a fixed point near
+  the top of a Markdown page opened no menu in two runs of four (the
+  heading and its rule are there); aimed at the paragraph's text
+  (`pointAtText` in the suite) it never failed.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

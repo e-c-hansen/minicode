@@ -242,8 +242,12 @@ public:
     // open. The panel background and text come from the stylesheet.
     void applySettings(const Settings& s);
     // The settings file's path. While that file is open its color values are
-    // clickable swatches that open a color picker.
+    // clickable swatches that open a color picker, and its opacity values
+    // open a slider.
     void setSettingsPath(const std::string& path) { settingsPath_ = path; }
+    // The color picker's or the opacity slider's popover while one is up
+    // (for the checks).
+    GtkWidget* pickerPopover() const { return colorPop_; }
 
     // Ctrl+/ : comment or uncomment the lines the selection touches. Returns
     // false when there is nothing to do it to (preview, message, a file type
@@ -426,6 +430,12 @@ private:
     void scheduleColorSave();
     void saveColorNow();
     static void onColorPicked(GObject* chooser, GParamSpec* pspec, gpointer self);
+    // The settings file's opacity values: a click opens a slider in the
+    // color picker's place (OpacityPicker.cpp, PARITY.md 2.11).
+    bool opacityAt(double x, double y, int* line) const;   // widget coords
+    void pickOpacity(int line);
+    void setLineOpacity(int line, double value);
+    static void onOpacityChanged(GtkRange* range, gpointer self);
     static void onViewUnrealize(GtkWidget* view, gpointer self);
     static void onPressed(GtkGestureClick* g, int n, double x, double y, gpointer self);
     static void onMotion(GtkEventControllerMotion* m, double x, double y, gpointer self);

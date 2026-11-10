@@ -1,8 +1,36 @@
 // AppSettings.cpp — see AppSettings.h.
 #include "AppSettings.h"
 
+#include "FolderSearch.h"
+
 #include <glib/gstdio.h>
 #include <cstdio>
+
+std::function<bool(const std::string& path)> AppSettings::unsavedTextCheck;
+
+static std::string baseNameOf(const std::string& path) {
+    const size_t slash = path.find_last_of('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+static std::string unsavedTabWhy(const std::string& path) {
+    return baseNameOf(path) + " was not changed: a tab holds it with unsaved changes. Save "
+                              "or close that tab, then try again.";
+}
+
+bool writeConfigFile(const std::string& path, const std::string& text, bool checkTabs,
+                     std::string* why) {
+    if (checkTabs && AppSettings::unsavedTextCheck && AppSettings::unsavedTextCheck(path)) {
+        if (why) *why = unsavedTabWhy(path);
+        return false;
+    }
+    std::string error;
+    if (!FolderSearch::writeFileAtomically(path, text, &error)) {
+        if (why) *why = "Could not write " + baseNameOf(path) + ": " + error + ".";
+        return false;
+    }
+    return true;
+}
 
 AppSettings::AppSettings() {
     const char* env = g_getenv("MINICODE_SETTINGS");
@@ -83,10 +111,59 @@ bool AppSettings::ensureFileExists() {
     char* dir = g_path_get_dirname(path_.c_str());
     g_mkdir_with_parents(dir, 0755);
     g_free(dir);
-    const char* body = Settings::defaultFileText();
-    if (!g_file_set_contents(path_.c_str(), body, -1, nullptr)) return false;
+    // A dangling symlink (a dotfiles folder whose copy is not there yet)
+    // stays a link, and the file it names is made: g_file_set_contents
+    // replaced the link with a plain file.
+    std::string why;
+    if (!writeConfigFile(path_, Settings::defaultFileText(), false, &why)) {
+        std::fprintf(stderr, "minicode: %s\n", why.c_str());
+        return false;
+    }
     // Watching a path in a directory that didn't exist yet may have failed.
     if (!monitor_) watch();
     reload();
     return true;
+}
+
+std::string AppSettings::fileText() const {
+    char* contents = nullptr;
+    gsize len = 0;
+    std::string text;
+    if (g_file_get_contents(path_.c_str(), &contents, &len, nullptr)) {
+        text.assign(contents, len);
+        g_free(contents);
+    }
+    return text;
+}
+
+// The file rewritten by minicode itself, refused while a tab holds it with
+// unsaved changes, and applied at once rather than when the monitor notices.
+bool AppSettings::rewriteFileWith(const std::string& text, std::string* why) {
+    std::string problem;
+    if (!writeConfigFile(path_, text, true, &problem)) {
+        std::fprintf(stderr, "minicode: %s\n", problem.c_str());
+        if (why) *why = problem;
+        return false;
+    }
+    if (!monitor_) watch();
+    reload();
+    return true;
+}
+
+bool AppSettings::writeTheme(const std::string& id, bool commentColors, std::string* why) {
+    if (!Settings::findTheme(id)) {
+        if (why) *why = "There is no theme called " + id + ".";
+        return false;
+    }
+    // Asked before anything is written, so a refused theme makes no default
+    // file either.
+    if (unsavedTextCheck && unsavedTextCheck(path_)) {
+        if (why) *why = unsavedTabWhy(path_);
+        return false;
+    }
+    if (!ensureFileExists()) {
+        if (why) *why = "Could not create " + path_ + ".";
+        return false;
+    }
+    return rewriteFileWith(Settings::withTheme(fileText(), id, commentColors), why);
 }

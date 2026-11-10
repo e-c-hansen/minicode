@@ -43,6 +43,7 @@
 #include <gtk/gtk.h>
 
 #include "AppSettings.h"
+#include "Appearance.h"
 #include "BracketView.h"
 #include "Detach.h"
 #include "Document.h"
@@ -57,6 +58,7 @@
 #include "Lsp.h"
 #include "GitPanel.h"
 #include "Keys.h"
+#include "MenuBarFocus.h"
 #include "TabStrip.h"
 #include "WindowLayout.h"
 #include "BackupStore.h"
@@ -84,6 +86,7 @@ struct App {
     GtkWidget*      window = nullptr;
     GtkWidget*      statusLabel = nullptr;
     GtkWidget*      settingsLabel = nullptr;   // first problem in the settings file
+    GtkWidget*      statusBar = nullptr;       // the bar holding both
 
     // The panes: the sidebar beside the editor, browser and terminal, each
     // shown or hidden there (WindowLayout.h).
@@ -784,6 +787,28 @@ static void act_keyboard_shortcuts(GSimpleAction*, GVariant*, gpointer userp) {
                  [app] { gtk_widget_grab_focus(app->editor->textView()); });
 }
 
+// Adjust Settings… from a part's right click menu or View > Adjust Settings
+// (the target is the part, Settings::appearanceSurfaces): the settings file
+// opened at that part's keys (Appearance.h, the Mac's showSettingsForSurface:).
+static void act_adjust_settings(GSimpleAction*, GVariant* param, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->dead || !param) return;
+    const std::string surface = g_variant_get_string(param, nullptr);
+    if (!Settings::appearanceSurface(surface)) return;
+    if (!g.settings->ensureFileExists()) {
+        gtk_label_set_text(GTK_LABEL(app->settingsLabel),
+                           ("Could not create " + g.settings->path()).c_str());
+        return;
+    }
+    openFileThen(app, g.settings->path(), EditorTabs::OpenFrom::Other, [app, surface] {
+        Appearance::showSurfaceKeys(app->editor, surface, Appearance::FileHost{
+            [app](Document* d) { return !app->dead && saveDocument(app, d); },
+            [app](const std::string& note) {
+                if (!app->dead) flashStatus(app, note);
+            }});
+    });
+}
+
 // The find bar (FindBar.h): Find and Replace seed the query from the
 // selection or the word at the caret; Find Next and Find Previous (VS Code's
 // F3 and Shift+F3 on Linux) step from the selection, wrapping, with the bar
@@ -1465,6 +1490,7 @@ static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp) {
             if (!app->dead) showDiffInEditor(app, title, show, true);
         };
         gtk_stack_add_named(GTK_STACK(app->sidebar), app->git->widget(), "git");
+        Appearance::attachMenu(app->git->widget(), "git");   // PARITY.md 2.11
     }
     app->gitShown = !app->gitShown;
     if (app->gitShown) {
@@ -1930,6 +1956,8 @@ static void applyStylesheet() {
     }
     gtk_css_provider_load_from_string(g.css, theme::stylesheet(g.settings->settings()).c_str());
     PalettePanel::applySettings(g.settings->settings());
+    // View > Theme's check, and GTK's own widgets dark or light with it.
+    Appearance::settingsChanged(g.gapp, g.settings->settings());
 }
 
 // The settings file changed on disk: every window follows.
@@ -2033,12 +2061,46 @@ static void initShared() {
 
     Zoom::applySettings(g.settings->settings());   // the zoom from last time, before any view
     Keys::init(g.gapp, onKeysChanged);
-    GMenuModel* bar = Keys::menuBar();
+    // minicode's own writes to the settings file (a theme) wait while any
+    // window's tab holds it with unsaved changes; the reason goes to the
+    // front window's status bar (PARITY.md 2.11, the Mac's unsavedTextCheck).
+    AppSettings::unsavedTextCheck = [](const std::string& path) {
+        char want[PATH_MAX];
+        const std::string resolved = realpath(path.c_str(), want) ? want : path;
+        for (App* a : g.windows) {
+            if (a->dead || !a->editor) continue;
+            for (Document* d : a->editor->documents()) {
+                if (!d->dirty()) continue;
+                char got[PATH_MAX];
+                if (d->path() == path ||
+                    (realpath(d->path().c_str(), got) && resolved == got))
+                    return true;
+            }
+        }
+        return false;
+    };
+    Appearance::installThemeAction(g.gapp, Appearance::ThemeHost{
+        g.settings,
+        [] {
+            App* a = appForWindow(gtk_application_get_active_window(g.gapp));
+            if ((!a || a->dead) && !g.windows.empty()) a = g.windows.back();
+            return a && !a->dead ? GTK_WINDOW(a->window) : nullptr;
+        },
+        [](const std::string& note) {
+            App* a = appForWindow(gtk_application_get_active_window(g.gapp));
+            if ((!a || a->dead) && !g.windows.empty()) a = g.windows.back();
+            if (a && !a->dead) flashStatus(a, note);
+        }});
+    // The menu bar, with View > Adjust Settings and View > Theme after the
+    // registry's View commands.
+    GMenuModel* bar = Keys::menuBar(Appearance::extendMenu);
     gtk_application_set_menubar(g.gapp, bar);
     g_object_unref(bar);
-    // The tree's right-click menu, in the Mac's order and grouping.
+    // The tree's right-click menu, in the Mac's order and grouping, ending
+    // with Adjust Settings… for the tree's keys.
     g.treeMenu = Keys::menuOf({"explorer.newFile", "explorer.newFolder", "", "renameFile",
                                "moveFileToTrash", "", "revealFileInOS", "copyFilePath"});
+    Appearance::addItem(G_MENU(g.treeMenu), "tree");
     StartupLog::mark("keys and the menu bar");
 }
 
@@ -2147,6 +2209,8 @@ static App* newWindow(const std::string& root, const std::string& file) {
     gtk_window_set_title(GTK_WINDOW(app->window), "MiniCode");
     gtk_application_window_set_show_menubar(
         GTK_APPLICATION_WINDOW(app->window), TRUE);
+    // The keyboard back where it was after a choice from the menu bar.
+    MenuBarFocus::attach(GTK_WINDOW(app->window));
 
     // Core widgets.
     app->tree = new FileTree(app->rootDir, g.showHidden);
@@ -2304,6 +2368,20 @@ static App* newWindow(const std::string& root, const std::string& file) {
     gtk_box_append(GTK_BOX(statusBar), app->lspLabel);
     gtk_box_append(GTK_BOX(statusBar), app->settingsLabel);
     gtk_box_append(GTK_BOX(statusBar), app->hintsHint);
+    app->statusBar = statusBar;
+
+    // Adjust Settings… at the end of each part's right click menu
+    // (Appearance.h): the editor's (the Markdown page's while one shows),
+    // the tab strip's empty part (a tab's own menu adds it in Tabs.cpp), and
+    // the status bar's. The tree's is in g.treeMenu, the Source Control
+    // panel's is added when it is made, the terminal's and the browser's in
+    // their own files.
+    Appearance::attachEditorMenu(app->editor->textView(), [app]() -> std::string {
+        if (app->dead || !app->editor) return "editor";
+        return app->editor->isMarkdown() && app->editor->inPreview() ? "markdown" : "editor";
+    });
+    Appearance::attachMenu(app->editor->strip()->widget(), "tabs");
+    Appearance::attachMenu(statusBar, "statusbar");
 
     // The hints panel floats over the panes rather than displacing them, so it
     // needs a GtkOverlay. The status bar stays outside it: a long list then
@@ -2435,6 +2513,12 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "quickopen",      G_CALLBACK(act_quick_open));
     addAction(app, "gotoline",       G_CALLBACK(act_go_to_line));
     addAction(app, "gotosymbol",     G_CALLBACK(act_go_to_symbol));
+    {   // Adjust Settings…, its target the part of the window (Appearance.h)
+        GSimpleAction* a = g_simple_action_new(Appearance::kAction, G_VARIANT_TYPE_STRING);
+        g_signal_connect(a, "activate", G_CALLBACK(act_adjust_settings), app);
+        g_action_map_add_action(G_ACTION_MAP(app->window), G_ACTION(a));
+        g_object_unref(a);
+    }
     for (const char* off : {"zoomin", "zoomout", "zoomfit", "playpause"})   // until shown
         g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
                                         G_ACTION_MAP(app->window), off)), FALSE);

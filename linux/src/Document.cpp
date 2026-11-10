@@ -1050,7 +1050,27 @@ void Document::decorateColors(int firstLine, int endLine) {
         std::u16string line = utf16::fromUtf8(raw ? raw : "");
         g_free(raw);
         ColorSpan span;
-        if (!Settings::findColor(line, span)) continue;
+        if (!Settings::findColor(line, span)) {
+            // An opacity is a link too, opening a slider (Editor::pickOpacity);
+            // an underline in the accent says it can be clicked without
+            // looking like a swatch, as the Mac's dotted one does.
+            ValueSpan os;
+            double value = 0;
+            if (!Settings::findOpacity(line, os, value)) continue;
+            GtkTextTag* tag = gtk_text_tag_table_lookup(table, kOpacityTag);
+            if (!tag) {
+                const GdkRGBA accent{0x4E / 255.0f, 0xA1 / 255.0f, 0xF7 / 255.0f, 1};
+                tag = gtk_text_buffer_create_tag(buffer_, kOpacityTag, "underline",
+                                                 PANGO_UNDERLINE_SINGLE, "underline-rgba",
+                                                 &accent, NULL);
+                tags_->highlight.push_back(tag);
+            }
+            GtkTextIter a = ls, b = ls;
+            gtk_text_iter_forward_chars(&a, (int)utf16::toCharOffset(line, os.start));
+            gtk_text_iter_forward_chars(&b, (int)utf16::toCharOffset(line, os.start + os.length));
+            gtk_text_buffer_apply_tag(buffer_, tag, &a, &b);
+            continue;
+        }
 
         Rgba text = settings.contrastText(span.color);
         std::string name = "swatch-" + Settings::formatColor(span.color) +

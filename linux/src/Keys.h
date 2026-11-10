@@ -89,7 +89,11 @@ bool within(GtkWidget* focus, GtkWidget* area);
 // The menu bar: File, Edit, View, Terminal and Navigate as the registry
 // orders them, with only the commands that have an action, and those Linux
 // moves (Quit, Settings) at the end of their new menu. New reference.
-GMenuModel* menuBar();
+// `extend` may add to a top-level menu ("View") after its commands: the
+// submenus that are no commands of the registry, View > Adjust Settings and
+// View > Theme (Appearance.h), as the Mac's main.mm adds them by hand.
+GMenuModel* menuBar(const std::function<void(const std::string& top, GMenu* menu)>& extend =
+                        nullptr);
 // A menu of these commands in this order, "" for a separator. New reference.
 GMenuModel* menuOf(const std::vector<std::string>& ids);
 

@@ -1070,7 +1070,14 @@ staging set (checked by listing the Wayland globals it offers). KDE
 Plasma's compositor has a blur protocol of its own, so a Plasma-only blur
 through GDK's Wayland surface looks possible; it was not tried or built. Transparency needs a compositor, which
 GNOME always has. A click on a color swatch opens a color picker under it,
-and the color applies live while you drag, as on the Mac.
+and the color applies live while you drag, as on the Mac; a click on an
+opacity value opens a slider. View > Theme picks one of the nine themes
+(the settings file's `theme` line), and Adjust Settings… at the end of
+every part's right click menu (the file tree, the editor, a Markdown page,
+the tabs, the status bar, the source control panel, the terminal, the
+browser) opens the settings file at that part's keys; View > Adjust
+Settings lists the same parts. GTK's own menus, dialogs and fields go dark
+or light with the theme.
 
 Besides the table, Enter and Shift Enter in the find bar find the next and
 previous match (Enter in its replacement replaces one), Tab moves between

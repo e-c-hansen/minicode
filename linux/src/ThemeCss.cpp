@@ -17,6 +17,12 @@ std::string cssColor(const Rgba& c) {
 std::string stylesheet(const Settings& s) {
     auto bg = [&](Surface x) { return cssColor(s.background(x)); };
     auto fg = [&](Surface x) { return cssColor(s.text(x)); };
+    // The few colors no key sets follow the theme's darkness: the selection
+    // is VS Code's editor.selectionBackground in Dark+ and Light+, and the
+    // scroll bars and the close button's light are white or black tints.
+    const bool dark = s.isDark();
+    const std::string selection = dark ? "#264F78" : "#ADD6FF";
+    const std::string slider = dark ? "rgba(255,255,255," : "rgba(0,0,0,";
     std::string css;
 
     // The window itself paints nothing once any panel is see-through;
@@ -48,7 +54,7 @@ std::string stylesheet(const Settings& s) {
            fg(Surface::Editor) + "; }";
     css += ".minicode-editor text { background-color: " + bg(Surface::Editor) +
            "; color: " + fg(Surface::Editor) + "; }";
-    css += ".minicode-editor text selection { background-color: #264F78; }";
+    css += ".minicode-editor text selection { background-color: " + selection + "; }";
     css += ".minicode-editor-scroller { background-color: transparent; }";
     // The line-number gutter (Gutter.cpp) paints editor.gutter-background
     // itself; the view's border window under it stays clear.
@@ -71,7 +77,7 @@ std::string stylesheet(const Settings& s) {
     css += ".minicode-tab.active label { color: " + fg(Surface::Editor) + "; }";
     css += ".minicode-tab.preview .minicode-tab-title { font-style: italic; }";
     css += ".minicode-tab-close { min-width: 16px; padding: 0 2px; border-radius: 3px; }";
-    css += ".minicode-tab-close:hover { background-color: rgba(255,255,255,0.12); }";
+    css += ".minicode-tab-close:hover { background-color: " + std::string(dark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.10)") + "; }";
     // Images and PDFs sit on the editor's background, in the editor's slot.
     css += ".minicode-media { background-color: " + bg(Surface::Editor) + "; }";
     css += ".minicode-pdf-page { box-shadow: 0 1px 4px rgba(0,0,0,0.5); }";
@@ -157,7 +163,7 @@ std::string stylesheet(const Settings& s) {
     css += ".minicode-git-message scrolledwindow, .minicode-git-message textview,"
            " .minicode-git-message text { background-color: transparent; color: " +
            fg(Surface::Sidebar) + "; font-size: 12px; }";
-    css += ".minicode-git-message text selection { background-color: #264F78; }";
+    css += ".minicode-git-message text selection { background-color: " + selection + "; }";
     css += ".minicode-git checkbutton label { color: #9CA3AF; font-size: 11px; }";
     // The button and the check box would otherwise take the desktop theme's
     // light look on the dark sidebar; tints of the sidebar's text fit any.
@@ -241,13 +247,14 @@ std::string stylesheet(const Settings& s) {
     css += ".minicode-bar.horizontal { padding: 4px 0; }";
     css += ".minicode-bar:hover, .minicode-bar.dragging { background-color: #007ACC; }";
 
-    // Scrollbars over the dark panels. The desktop theme's are tuned for a
-    // light background and all but disappear on #1E1E1E.
+    // Scrollbars over the panels: white sliders on a dark theme, where the
+    // desktop theme's all but disappear on #1E1E1E, and black ones on a
+    // light theme (View > Theme, PARITY.md 2.11).
     css += ".minicode-scroller scrollbar { background-color: transparent; border: none; }";
-    css += ".minicode-scroller scrollbar slider { background-color: rgba(255,255,255,0.22);"
+    css += ".minicode-scroller scrollbar slider { background-color: " + slider + "0.22);"
            " border: none; min-width: 8px; min-height: 8px; }";
     css += ".minicode-scroller scrollbar slider:hover {"
-           " background-color: rgba(255,255,255,0.38); }";
+           " background-color: " + slider + "0.38); }";
 
     // The floating shortcut list: an overlay, not a pane, so not configurable.
     css += ".minicode-hints { background-color: #252526; border: 1px solid #333333;"

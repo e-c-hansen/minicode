@@ -90,6 +90,8 @@ gui_sources = [
   # The editor: the view (Editor.cpp), each open file (Document.cpp), the
   # tabs (Tabs.cpp) and their strip (TabStrip.cpp).
   'src/Editor.cpp',
+  # The settings file's opacity values open a slider (PARITY.md 2.11).
+  'src/OpacityPicker.cpp',
   'src/Document.cpp',
   'src/Tabs.cpp',
   'src/TabStrip.cpp',
@@ -112,6 +114,11 @@ gui_sources = [
   'src/Terminal.cpp',
   'src/Browser.cpp',
   'src/AppSettings.cpp',
+  # Adjust Settings… in every right click menu, View > Theme, and what
+  # they write (PARITY.md 2.11).
+  'src/Appearance.cpp',
+  # The keyboard back where it was after a choice from the menu bar.
+  'src/MenuBarFocus.cpp',
   'src/ThemeCss.cpp',
   'src/Search.cpp',
   # The find and replace bar, and edits with several ranges (PARITY.md D5).

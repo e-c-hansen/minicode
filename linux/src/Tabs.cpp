@@ -4,6 +4,7 @@
 // which are the core's (../src/EditorTabs.h). Questions about unsaved
 // changes are the shell's (main.cpp): nothing here asks, and nothing here
 // drops unsaved changes without being told to.
+#include "Appearance.h"
 #include "Editor.h"
 
 #include "GitPanel.h"
@@ -551,6 +552,7 @@ GMenuModel* Editor::menuForTab(int index) {
         else
             section({{"Copy Path", "copypath"}});
     }
+    Appearance::addItem(menu, "tabs");   // PARITY.md 2.11; a window action
     return G_MENU_MODEL(menu);
 }
 
