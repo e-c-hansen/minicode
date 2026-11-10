@@ -4,3 +4,4 @@
 SaveSuite.cpp
 HarnessSuite.cpp
 KeysSuite.cpp
+TreeStallSuite.cpp
