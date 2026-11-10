@@ -326,7 +326,7 @@ void Editor::setProseFont(bool prose) {
 // keeps its own text, selection, undo and colors.
 void Editor::setViewBuffer(GtkTextBuffer* b, bool prose, bool editable) {
     if (buffer_ != b) {
-        gtk_text_view_set_buffer(GTK_TEXT_VIEW(view_), b);
+        code_->setBuffer(b);   // never gtk_text_view_set_buffer itself (CodeView.h)
         buffer_ = b;
         composing_ = false;   // a new buffer resets the input method
     }

@@ -103,11 +103,21 @@ bool rowsRight(bool relative = false) {
     const size_t caretLine = ix.lineOf(caretOffset());
     GdkRectangle vis;
     gtk_text_view_get_visible_rect(tv(), &vis);
-    // The lines starting on screen, top to bottom.
+    // The lines starting on screen, top to bottom, from the one the top of
+    // the view is in. Only lines GTK has laid out are asked where they are
+    // (CodeView::setBuffer says why).
     std::vector<size_t> want;
-    for (size_t line = 0; line < ix.lineCount(); line++) {
+    GtkTextIter top;
+    int topY = 0;
+    gtk_text_view_get_line_at_y(tv(), &top, vis.y, &topY);
+    for (size_t line = ix.lineOf((size_t)gtk_text_iter_get_offset(&top)); line < ix.lineCount();
+         line++) {
         GtkTextIter it;
         gtk_text_buffer_get_iter_at_offset(buf(), &it, (int)ix.lineStart(line));
+        int ly = 0, lh = 0;
+        gtk_text_view_get_line_yrange(tv(), &it, &ly, &lh);
+        if (ly >= vis.y + vis.height) break;
+        if (lh <= 0) continue;
         GdkRectangle r;
         gtk_text_view_get_iter_location(tv(), &it, &r);
         if (r.y >= vis.y + vis.height) break;

@@ -81,6 +81,25 @@ CodeView::CodeView(GtkWidget* view) : view_(view) {
 
 CodeView::~CodeView() { gutter_.reset(); }
 
+// ---------------------------------------------------------------- the buffer
+
+void CodeView::setBuffer(GtkTextBuffer* buffer) {
+    GtkTextBuffer* old = gtk_text_view_get_buffer(textView());
+    if (old == buffer) return;
+    if (old) {
+        static const char kFlush[] = "minicode-layout-flush";
+        GtkTextTagTable* table = gtk_text_buffer_get_tag_table(old);
+        GtkTextTag* tag = gtk_text_tag_table_lookup(table, kFlush);
+        if (!tag) {
+            tag = gtk_text_tag_new(kFlush);   // never applied to any text
+            gtk_text_tag_table_add(table, tag);
+            g_object_unref(tag);
+        }
+        gtk_text_tag_changed(tag, FALSE);
+    }
+    gtk_text_view_set_buffer(textView(), buffer);
+}
+
 // ---------------------------------------------------------------- passes
 
 int CodeView::addPass(Layer layer, int order, Pass pass) {

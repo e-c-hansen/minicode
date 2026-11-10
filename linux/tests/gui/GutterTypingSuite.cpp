@@ -100,12 +100,15 @@ MC_GUI_SUITE(gutter_typing) {
     // laid out, and lands short; asked again as the guesses firm up, it gets
     // there (Editor's settleOnCaret does the same for a search result).
     MCGuiWait("line 50,000 on screen, numbered and active", 20, [] {
-        GdkRectangle vis, at;
+        // Where GTK has the line, from its heights: asking where a character
+        // is would lay out a line far off screen (CodeView::setBuffer).
+        GdkRectangle vis;
         gtk_text_view_get_visible_rect(tv(), &vis);
         GtkTextIter it;
         gtk_text_buffer_get_iter_at_mark(buf(), &it, gtk_text_buffer_get_insert(buf()));
-        gtk_text_view_get_iter_location(tv(), &it, &at);
-        if (at.y < vis.y || at.y + at.height > vis.y + vis.height) {
+        int ly = 0, lh = 0;
+        gtk_text_view_get_line_yrange(tv(), &it, &ly, &lh);
+        if (lh <= 0 || ly < vis.y || ly + lh > vis.y + vis.height) {
             gtk_text_view_scroll_to_mark(tv(), gtk_text_buffer_get_insert(buf()), 0, TRUE, 0, 0.5);
             return false;
         }

@@ -48,6 +48,22 @@ public:
     GtkTextView* textView() const { return GTK_TEXT_VIEW(view_); }
     Gutter* gutter() const { return gutter_.get(); }
 
+    // Show another buffer: what gtk_text_view_set_buffer does, after
+    // emptying the view's cache of laid-out lines while the old buffer still
+    // exists. GtkTextLayout keeps a display per line it laid out, and on
+    // leaving a buffer drops only those of lines it had validated; a display
+    // of any other line (one asked for by a scroll to a far line, a caret
+    // check, a lookup past the screen) outlived its buffer, and the next
+    // display the cache sorted in read the freed line (CI's GTK job crashed
+    // in `tabs`, 2026-11-10; `gutter_switch` crashes without this under
+    // MALLOC_PERTURB_, and under ASan, which sees only the segfault, GTK not
+    // being instrumented). The cache is emptied the one public way GTK has:
+    // a tag of the buffer's table reported changed with no change of size
+    // makes each layout showing that table's buffers throw its displays away
+    // (gtk_text_tag_changed; GTK's tag_changed_cb invalidates y 0 with equal
+    // heights, which empties the cache whole).
+    void setBuffer(GtkTextBuffer* buffer);
+
     // ---- drawing passes
     enum class Layer { BelowText, AboveText };
     using Pass = std::function<void(GtkSnapshot* snapshot, const GdkRectangle& visible)>;

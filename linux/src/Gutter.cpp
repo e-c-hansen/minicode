@@ -343,20 +343,27 @@ size_t Gutter::lineAtY(double y) const {
     int bx = 0, by = 0;
     gtk_text_view_window_to_buffer_coords(view_, GTK_TEXT_WINDOW_LEFT, 0, (int)std::floor(y),
                                           &bx, &by);
-    // The display line at that height: its first character's logical line.
+    // GTK's line at that height, and within it, when GTK has laid it out and
+    // it is on screen, the display line there: its first character's logical
+    // line. Past the screen (a drag beyond an edge) the line's start is
+    // enough, and nothing is laid out for it (see the snapshot's loop).
     GtkTextIter it;
     int top = 0;
     gtk_text_view_get_line_at_y(view_, &it, by, &top);
-    for (;;) {
-        GtkTextIter next = it;
-        if (!gtk_text_view_forward_display_line(view_, &next) &&
-            !gtk_text_view_starts_display_line(view_, &next))
-            break;
-        if (gtk_text_iter_equal(&next, &it)) break;
-        GdkRectangle r;
-        gtk_text_view_get_iter_location(view_, &next, &r);
-        if (r.y > by) break;
-        it = next;
+    int ly = 0, lh = 0;
+    gtk_text_view_get_line_yrange(view_, &it, &ly, &lh);
+    GdkRectangle vis;
+    gtk_text_view_get_visible_rect(view_, &vis);
+    if (lh > 0 && ly < vis.y + vis.height && ly + lh > vis.y) {
+        for (int k = 0; k < 100000; k++) {
+            GdkRectangle r;
+            gtk_text_view_get_iter_location(view_, &it, &r);
+            if (by < r.y + r.height || r.y + r.height >= ly + lh) break;
+            GtkTextIter next = it;
+            gtk_text_view_forward_display_line(view_, &next);
+            if (gtk_text_iter_compare(&next, &it) <= 0) break;
+            it = next;
+        }
     }
     return l->lineOf(offsetOf(&it));
 }
@@ -513,35 +520,44 @@ void Gutter::snapshot(GtkSnapshot* s, int width, int height) {
         rows_.push_back(row);
     };
 
-    // The display lines on screen, from the first one the top of the view
-    // is in (or the start of its paragraph).
-    GtkTextIter it;
+    // The lines on screen, from the one the top of the view is in. GTK's
+    // lines are walked with the buffer's iterators and their heights from
+    // the layout, which lay nothing out; only a line GTK has laid out (one
+    // with a height, as every line on screen has) is asked about its display
+    // lines, so the gutter never makes the layout cache a line it had not
+    // laid out (see CodeView::setBuffer for what that cost).
+    GtkTextIter line;
     int lineTop = 0;
-    gtk_text_view_get_line_at_y(view_, &it, vis.y, &lineTop);
-    size_t firstLine = l->lineOf(offsetOf(&it)), lastLine = firstLine;
+    gtk_text_view_get_line_at_y(view_, &line, vis.y, &lineTop);
+    size_t firstLine = l->lineOf(offsetOf(&line)), lastLine = firstLine;
     for (int guard = 0; guard < 100000; guard++) {
-        GdkRectangle r;
-        gtk_text_view_get_iter_location(view_, &it, &r);
-        if (r.y >= bottom) break;
-        if (r.y + r.height > vis.y && l->isLineStart(offsetOf(&it))) {
-            drawRow(it, r);
-            lastLine = rows_.back().line;
-        }
-        GtkTextIter next = it;
-        const bool more = gtk_text_view_forward_display_line(view_, &next);
-        if (gtk_text_iter_equal(&next, &it)) break;
-        it = next;
-        // At the end: an empty last line (after a final break) is a display
-        // line of its own; the end of a line with text is not.
-        if (!more && !gtk_text_view_starts_display_line(view_, &it)) break;
-        if (!more) {
-            gtk_text_view_get_iter_location(view_, &it, &r);
-            if (r.y < bottom && l->isLineStart(offsetOf(&it))) {
-                drawRow(it, r);
-                lastLine = rows_.back().line;
+        int ly = 0, lh = 0;
+        gtk_text_view_get_line_yrange(view_, &line, &ly, &lh);
+        if (ly >= bottom) break;
+        if (lh > 0 && ly + lh > vis.y) {
+            // Its display lines (a wrapped line's, or after a U+2028), each
+            // numbered when a logical line starts on it.
+            GtkTextIter d = line;
+            for (int k = 0; k < 100000; k++) {
+                GdkRectangle r;
+                gtk_text_view_get_iter_location(view_, &d, &r);
+                if (r.y >= bottom) break;
+                if (r.y + r.height > vis.y && l->isLineStart(offsetOf(&d))) {
+                    drawRow(d, r);
+                    lastLine = rows_.back().line;
+                }
+                if (r.y + r.height >= ly + lh) break;   // the line's last display line
+                GtkTextIter next = d;
+                gtk_text_view_forward_display_line(view_, &next);
+                if (gtk_text_iter_compare(&next, &d) <= 0) break;
+                d = next;
             }
-            break;
         }
+        // The next line; from the last but one, the empty line after a final
+        // break (forward_line says false there, but it moved).
+        const int number = gtk_text_iter_get_line(&line);
+        gtk_text_iter_forward_line(&line);
+        if (gtk_text_iter_get_line(&line) == number) break;
     }
     g_object_unref(layout);
     if (changeLane_ && !l->changeBars().empty())

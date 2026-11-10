@@ -1264,6 +1264,21 @@ What later items build on:
   left the view near line 100 or 900, not 50,000 (GTK's height guesses
   outlast `settleOnCaret`'s two seconds); the suite scrolls by asking again
   until the line is on screen.
+- **Trap (CI's GTK job, 2026-11-10): GtkTextLayout's display cache outlives
+  a buffer.** The layout keeps a display for each line anything asked about
+  (`gtk_text_view_get_iter_location`, `forward_display_line`, a scroll to a
+  far line), and on `gtk_text_view_set_buffer` drops only the displays of
+  lines it had validated. A display of any other line stayed, its line
+  freed with the tab's buffer, and the next display the cache sorted in
+  read it: a crash in `g_sequence_insert_sorted` under
+  `gtk_text_view_get_cursor_locations`, one run in four, at random places
+  in `tabs`. So the view's buffer changes only through
+  `CodeView::setBuffer`, which empties the cache first (a tag reported
+  changed with no change of size, the one public way), and code drawing
+  beside the text asks only about lines with a height
+  (`gtk_text_view_get_line_yrange`, which lays nothing out). The
+  `gutter_switch` suite crashes in its first round without the first, under
+  `MALLOC_PERTURB_`; plain runs may pass without it.
 
 ### 17. Sessions, backups and auto-save (done, November 2026; `PARITY.md` items 1.2 and 1.3)
 
