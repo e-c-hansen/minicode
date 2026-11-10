@@ -715,8 +715,26 @@ Verified by running it:
   Escape puts the selection and scroll back. In the terminal Ctrl P, Ctrl
   G and F1 reached a raw `head` as their bytes, and Ctrl Shift P opened the
   palette.
+- `minicode` from a terminal (November 2026, `linux/PARITY.md` R2), by the
+  `detach` GUI suite, which runs the real `build/minicode` on
+  pseudo-terminals with `/bin/sh` as the shell, on the checks' Xvfb and a
+  session bus of its own. `minicode <folder>` returned 0 in under half a
+  second while its window stayed up, in a session of its own with no
+  controlling terminal and `/dev/null` on its standard streams; it asked
+  systemd (answered by the check) for `app-minicode-org.minicode.Editor-<pid>.scope`
+  and carried on when refused; closing the terminal's master and sending
+  SIGHUP to its session left it running. A second `minicode notes.txt`
+  returned 0 and the running window showed the file. Started with no
+  terminal, as the desktop entry starts it, it did not fork.
+  `minicode --foreground` held the terminal in its session until the
+  hang-up closed it, and `--version` and `-h` printed and returned.
 
 Not verified:
+
+- For `minicode` from a terminal: closing a real GNOME Terminal window
+  with minicode started from it (that it stays open, and that GNOME
+  Terminal asks nothing), and the scope against the real systemd user
+  manager (`systemctl --user list-units 'app-minicode-*'` while it runs).
 
 - For tabs, everything that needs GNOME on Wayland: how the strip looks
   under the desktop's theme, Alt with a digit and Ctrl Alt Shift T (which a

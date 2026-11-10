@@ -147,6 +147,10 @@ gui_sources = [
   # Big files and long lines: large-file mode, the question past 50 MB,
   # reading in the background, and a long line shown a part at a time.
   'src/LargeFileView.cpp',
+  # The command line's options, and a terminal given back at once: the
+  # plain C++ rules (LaunchOptions.cpp) and the fork (Detach.cpp).
+  'src/LaunchOptions.cpp',
+  'src/Detach.cpp',
 ]
 
 inc = include_directories('src', '../src')
@@ -256,7 +260,7 @@ port_tests = executable('minicode-linux-tests',
              core_dir / 'TermLinks.cpp',
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp', core_dir / 'GitModel.cpp',
-  'src/WebImageRules.cpp'],
+  'src/WebImageRules.cpp', 'src/LaunchOptions.cpp'],
   include_directories : inc,
   install : false)
 test('linux port core', port_tests)
@@ -327,8 +331,9 @@ if xtst_dep.found() and x11_dep.found() and gtk_x11_dep.found()
   # `meson test -C build` leaves these out (the setup below), so it stays
   # quick and needs no display; `meson test -C build --suite gui` runs them.
   # The harness has its own limits, well inside this one.
+  # The detach suite runs the real minicode as well.
   test('gui', guitest, suite : 'gui', is_parallel : false, timeout : 1800,
-       depends : [fakelsp])
+       depends : [fakelsp, minicode_exe])
   add_test_setup('default', exclude_suites : ['gui'], is_default : true)
 else
   message('GUI checks: not built (they need libxtst-dev)')

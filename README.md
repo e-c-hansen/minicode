@@ -386,6 +386,8 @@ You can alias the local build, if you'd like:
 alias minicode="$PWD/build/minicode"
 ```
 
+As on the Mac, `minicode` typed in a terminal gives the terminal back as soon as the window is up, and closing the terminal leaves minicode open, with no warning about a running process. A minicode that is already running opens the path itself. `minicode --foreground` keeps it in the terminal, with its output there, until it quits, and `minicode -h` lists the options.
+
 
 [BUILD-LINUX.md](BUILD-LINUX.md) covers installing it as a desktop app and which shortcuts go to the terminal.
 
