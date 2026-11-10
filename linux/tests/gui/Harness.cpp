@@ -437,9 +437,17 @@ void runGuarded(const std::string& what, const std::function<void()>& body) {
 void noteState() {
     GtkWindow* kw = MCGuiKeyWindow();
     GtkWidget* f = kw ? gtk_root_get_focus(GTK_ROOT(kw)) : nullptr;
+    // The widget with the keyboard and the style classes of it and its
+    // ancestors, which name the pane ("minicode-editor-scroller", ...).
+    std::string where = f ? G_OBJECT_TYPE_NAME(f) : "nothing";
+    for (GtkWidget* w = f; w; w = gtk_widget_get_parent(w)) {
+        char** classes = gtk_widget_get_css_classes(w);
+        for (char** c = classes; c && *c; c++)
+            if (g_str_has_prefix(*c, "minicode")) where += std::string(" .") + *c;
+        g_strfreev(classes);
+    }
     MCGuiNote("state: the key window %s, the keyboard in a %s, %s on top",
-              kw && gtk_window_is_active(kw) ? "active" : "not active",
-              f ? G_OBJECT_TYPE_NAME(f) : "nothing",
+              kw && gtk_window_is_active(kw) ? "active" : "not active", where.c_str(),
               MCGuiTopWindow() == MCGuiApp().window ? "the app's window" : "another window");
     Editor* ed = MCGuiApp().editor;
     if (!ed) return;
