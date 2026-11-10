@@ -47,3 +47,7 @@ FormatSuite.cpp
 FormatConsentSuite.cpp
 FormatCoverageSuite.cpp
 ServerConsentSuite.cpp
+GitSyncSuite.cpp
+GitActionsSuite.cpp
+GitHunksSuite.cpp
+GitVerbsSuite.cpp

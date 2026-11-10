@@ -32,6 +32,7 @@ const size_t kRecentCommands = 20;        // the Mac's caps
 const size_t kRecentFiles = 50;
 const char* kAccent = "#4EA1F7";
 const char* kMuted = "#9CA3AF";
+const char* kPlaceholder = "Search files by name (> commands, : a line, @ a symbol)";
 
 // ------------------------------------------------------------ recent lists
 // The commands run lately (by registry id) and the files Quick Open opened
@@ -288,8 +289,7 @@ void PalettePanel::build() {
 
     entry_ = gtk_entry_new();
     gtk_widget_add_css_class(entry_, "minicode-palette-field");
-    gtk_entry_set_placeholder_text(GTK_ENTRY(entry_),
-                                   "Search files by name (> commands, : a line, @ a symbol)");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry_), kPlaceholder);
     changedHandler_ = g_signal_connect(entry_, "changed", G_CALLBACK(onChanged), this);
     // Before the field's own keys: Up and Down would otherwise move the
     // keyboard out of it, and Tab leave it open without the keyboard.
@@ -383,6 +383,8 @@ void PalettePanel::applySettings(const Settings& s) {
 
 // ------------------------------------------------------------ open, close
 void PalettePanel::show(const std::string& text, const Context& context) {
+    // A pick list is its own palette: one never takes over the other.
+    if (open_ && pick_) close(true);
     if (open_) {
         gtk_widget_grab_focus(entry_);
         takeText(text);
@@ -392,6 +394,20 @@ void PalettePanel::show(const std::string& text, const Context& context) {
     // Read before the keyboard moves, so each action's enabled state is the
     // one for where the keyboard was (Play/Pause is off while it types).
     collectCommands();
+    open(text);
+}
+
+void PalettePanel::showPick(const Pick& pick) {
+    if (open_) close(true);
+    ctx_ = Context();   // no folder: nothing is listed
+    commands_.clear();
+    entries_.clear();
+    pick_ = std::make_unique<Pick>(pick);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry_), pick_->placeholder.c_str());
+    open("");
+}
+
+void PalettePanel::open(const std::string& text) {
     rememberFocus();
     place_ = Place();
     openDocId_ = editor_->active() ? editor_->active()->id() : 0;
@@ -429,6 +445,10 @@ void PalettePanel::close(bool restoreFocus) {
     selected_ = -1;
     gtk_string_list_splice(model_, 0, g_list_model_get_n_items(G_LIST_MODEL(model_)), nullptr);
     forgetRestore();
+    if (pick_) {
+        pick_.reset();
+        gtk_entry_set_placeholder_text(GTK_ENTRY(entry_), kPlaceholder);
+    }
     open_ = false;
     closing_ = false;
     if (onOpenChanged) onOpenChanged(false);
@@ -681,6 +701,53 @@ void PalettePanel::fileItems(const std::u16string& query, std::string* empty) {
     if (items_.empty()) *empty = files_.empty() ? "No files in this folder" : "No matching files";
 }
 
+// ------------------------------------------------------------ pick lists
+// The caller's rows that match what is typed, best first (the palette's
+// commands' rules, with nothing run lately), then the row made from the
+// typed text, if any; the Mac's pickItems:.
+void PalettePanel::pickItems(std::string* empty) {
+    const Pick& pick = *pick_;
+    const std::string text = gtk_editable_get_text(GTK_EDITABLE(entry_));
+    std::vector<CommandPalette::Entry> entries;
+    entries.reserve(pick.labels.size());
+    for (const std::string& label : pick.labels) {
+        CommandPalette::Entry e;
+        e.label = e.title = Lsp::toUtf16(label);
+        e.id = label;
+        entries.push_back(std::move(e));
+    }
+    for (const CommandPalette::Match& m : CommandPalette::rank(entries, Lsp::toUtf16(text), {})) {
+        const int index = (int)m.index;
+        Item it;
+        it.label = pick.labels[(size_t)index];
+        it.markup = marked(entries[(size_t)index].label, 0, m.positions);
+        if ((size_t)index < pick.details.size()) it.keys = pick.details[(size_t)index];
+        auto choose = pick.choose;
+        it.run = [this, choose, index] {
+            close(true);
+            later([choose, index] {
+                if (choose) choose(index);
+            });
+        };
+        items_.push_back(std::move(it));
+    }
+    const std::string typed = pick.typedRow ? pick.typedRow(text) : std::string();
+    if (!typed.empty()) {
+        Item it;
+        it.label = typed;
+        it.markup = escaped("+ " + typed);
+        auto chooseTyped = pick.chooseTyped;
+        it.run = [this, chooseTyped, text] {
+            close(true);
+            later([chooseTyped, text] {
+                if (chooseTyped) chooseTyped(text);
+            });
+        };
+        items_.push_back(std::move(it));
+    }
+    if (items_.empty()) *empty = pick.emptyText;
+}
+
 // ------------------------------------------------------------ symbols
 // The file on show has an outline to list: its editable source, or its
 // rendered Markdown page (the headings, from the source). A LaTeX file's
@@ -884,10 +951,12 @@ void PalettePanel::goToSymbol(const Lsp::Symbol& s) {
 // ------------------------------------------------------------ the list
 void PalettePanel::refilter() {
     const std::string text = gtk_editable_get_text(GTK_EDITABLE(entry_));
-    const CommandPalette::Parsed p = CommandPalette::parse(Lsp::toUtf16(text));
+    CommandPalette::Parsed p = CommandPalette::parse(Lsp::toUtf16(text));
+    if (pick_) p.mode = CommandPalette::Mode::Files;   // a pick list has no prefixes
     items_.clear();
     std::string empty;
-    switch (p.mode) {
+    if (pick_) pickItems(&empty);
+    else switch (p.mode) {
     case CommandPalette::Mode::Commands: commandItems(p.query, &empty); break;
     case CommandPalette::Mode::Line: lineItem(p); break;
     case CommandPalette::Mode::Symbols: symbolItems(p.query, p.byKind, &empty); break;

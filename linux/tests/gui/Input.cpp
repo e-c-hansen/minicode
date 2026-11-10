@@ -254,10 +254,29 @@ void MCGuiType(const std::string& utf8) {
     XSync(Dpy(), False);
 }
 
+namespace {
+// Why `widget` is not on screen, for the failed check: not there, not
+// mapped, not laid out yet (no size), or what a click at its center reaches.
+std::string whyNotOnScreen(GtkWidget* widget) {
+    if (!widget) return "no widget";
+    std::string why = std::string("a ") + G_OBJECT_TYPE_NAME(widget);
+    if (!gtk_widget_get_mapped(widget)) return why + ", not mapped";
+    const int w = gtk_widget_get_width(widget), h = gtk_widget_get_height(widget);
+    if (w <= 0 || h <= 0) return why + ", " + std::to_string(w) + "x" + std::to_string(h);
+    GtkNative* native = gtk_widget_get_native(widget);
+    graphene_point_t c = GRAPHENE_POINT_INIT(w / 2.0f, h / 2.0f), at;
+    if (!native || !gtk_widget_compute_point(widget, GTK_WIDGET(native), &c, &at))
+        return why + ", no place in its window";
+    GtkWidget* hit = gtk_widget_pick(GTK_WIDGET(native), at.x, at.y, GTK_PICK_DEFAULT);
+    return why + ", its center reaching " + (hit ? G_OBJECT_TYPE_NAME(hit) : "nothing");
+}
+}  // namespace
+
 void MCGuiMoveTo(GtkWidget* widget, double x, double y) {
     int rx = 0, ry = 0;
     if (!widget || !pointOnRoot(widget, x, y, &rx, &ry)) {
-        MCGuiCheck(false, "a widget on screen to point at", __FILE__, __LINE__);
+        MCGuiCheck(false, "a widget on screen to point at (" + whyNotOnScreen(widget) + ")",
+                   __FILE__, __LINE__);
         return;
     }
     moveTo(rx, ry);

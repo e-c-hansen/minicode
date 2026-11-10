@@ -91,6 +91,14 @@ int pickAfterRefresh(const std::vector<Row>& oldRows, int oldSel,
 // The last file row, or -1.
 int lastFileRow(const std::vector<Row>& rows);
 
+// Several rows chosen before a refresh (`chosen`, indexes into oldRows),
+// after it: the same files in the same lists while at least two of them are
+// still there, else the same files in either list (Stage on them moved them
+// all to the other list), else none, and the caller keeps one row as
+// pickAfterRefresh says. The Mac's applySnapshot does the same in place.
+std::vector<int> keepChosen(const std::vector<Row>& oldRows, const std::vector<int>& chosen,
+                            const std::vector<Row>& rows);
+
 // "path, staged", "new (renamed from old), changed", "x, conflict".
 std::string rowToolTip(const Row& r);
 
@@ -232,6 +240,22 @@ HunkPlan hunkPlan(const std::string& diff, DiffSide side, HunkOp op, size_t firs
 std::string hunkFailureText(int status, const std::string& out, const std::string& err,
                             const std::string& path);
 
+// The diff's right click (or the keyboard's menu key): for each of the
+// side's actions, the hunk holding `clicked` (a line of the diff), then the
+// changed lines among first..last when `selection` covers some, as the
+// Mac's diff menu orders them ("Stage Hunk", "Stage Selected Lines",
+// "Discard Hunk…", "Discard Selected Lines…"). `first` and `last` are what
+// hunkPlan is given. Empty when the side has no actions, or the click is in
+// no hunk and no changed line is chosen.
+struct HunkMenuItem {
+    HunkOp op = HunkOp::Stage;
+    bool lines = false;
+    size_t first = 0, last = 0;
+    std::string title;
+};
+std::vector<HunkMenuItem> hunkMenu(const std::string& diff, DiffSide side, size_t clicked,
+                                   size_t first, size_t last, bool selection);
+
 
 // ------------------------------------- amend, undo the last commit, stash
 // VS Code's git.commitAmend (Commit and Amend), git.undoCommit, git.stash
@@ -365,8 +389,10 @@ std::string syncButtonToolTip(const Snapshot& s);
 
 // A failed push, pull or fetch, as failureText says it, with a line on
 // what to do when git wanted a password, a token or an ssh key it could
-// not ask for.
-std::string networkFailureText(int status, const std::string& out, const std::string& err);
+// not ask for: the Mac's keychain, or with `forLinux` what a Linux desktop
+// has (a libsecret credential helper, plain ssh-add).
+std::string networkFailureText(int status, const std::string& out, const std::string& err,
+                               bool forLinux = false);
 
 // ------------------------------------------------------------ autofetch
 // git.autofetch, as VS Code's: the folder's repository is fetched in the

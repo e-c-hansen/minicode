@@ -175,8 +175,16 @@ gui_sources = [
   'src/Latex.cpp',
   # Resolves the terminal's Ctrl+click file references; plain C++.
   'src/TermLinkPath.cpp',
-  # The Source Control panel, over the core's GitModel (../src).
+  # The Source Control panel, over the core's GitModel (../src): the panel
+  # (GitPanel.cpp), its commands (GitVerbs.cpp) and menus (GitMenus.cpp),
+  # running git (GitRun.cpp), the Trash for Discard (GitTrash.cpp), and the
+  # diff view with its hunk actions (GitDiffView.cpp).
   'src/GitPanel.cpp',
+  'src/GitVerbs.cpp',
+  'src/GitMenus.cpp',
+  'src/GitRun.cpp',
+  'src/GitTrash.cpp',
+  'src/GitDiffView.cpp',
   # Web pictures in the Markdown preview: the libsoup half (#ifdef-guarded,
   # like Terminal.cpp) over its plain C++ half.
   'src/WebImageRules.cpp',

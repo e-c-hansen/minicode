@@ -177,7 +177,14 @@ MC_GUI_SUITE(palette) {
         MCGuiOpenFileKept(F("big.txt"));
     });
     MCGuiWait("it shows", 10, [] { return ed()->currentPath() == F("big.txt"); });
-    MCGuiStep("a click in the text", [] { MCGuiClick(ed()->textView()); });
+    // The window first takes the X focus, as a desktop gives it to a window
+    // clicked: the suite before may leave it on a window it closed (tabs
+    // does), and the harness gives it back only before a key, so the click
+    // alone left the window inactive and gtk_widget_has_focus false.
+    MCGuiStep("a click in the text", [] {
+        MCGuiFocusKeyWindow();
+        MCGuiClick(ed()->textView());
+    });
     MCGuiWait("the editor has the keyboard", 10, editorHasKeyboard);
 
     // ---------------------------------------------------------- commands

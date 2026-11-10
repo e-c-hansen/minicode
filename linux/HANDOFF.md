@@ -83,7 +83,9 @@ person". The port has:
   browser, beside the editor with the terminal below both, as the Mac lays
   them out, each hidden on its own and its bars dragged (item 18);
 - the Source Control panel with the commit graph, in the tree's place on
-  Ctrl+Shift+G (item 10);
+  Ctrl+Shift+G (item 10), which pushes, pulls, fetches in the background,
+  stages and discards whole files, hunks and lines, switches branches, and
+  amends, undoes and stashes (item 30);
 - video and audio in the editor's slot through GTK's GStreamer backend,
   with Play/Pause on Ctrl+Shift+Space (item 11);
 - the settings file with live colors, per-panel opacity and a live color
@@ -923,8 +925,10 @@ is tested in the core's `tests/gitmodel_tests.inc`.
 Checked in the Docker container with real X input; `../BUILD-LINUX.md` has
 what was covered and what still needs the ThinkPad.
 
-**Not followed yet (2026-11-07): Stage All, Discard, the file menu and the
-branch picker.** The Mac's panel gained them (round 4, W19); the rules are
+**Followed since (2026-11-10, item 30 below): everything in the next two
+paragraphs, and push, pull, autofetch and the commit verbs.** As written
+before then: **Not followed yet (2026-11-07): Stage All, Discard, the file
+menu and the branch picker.** The Mac's panel gained them (round 4, W19); the rules are
 all in the core for this port to use: `GitUi::stageAllPlan` and
 `unstageAllPlan` (Stage All asks first when a file has a conflict),
 `discardPlan` (always asks; the file goes to the trash first, then `restore
@@ -1474,9 +1478,9 @@ What later items build on:
   `showPalette` gives the folder and how Quick Open opens a file
   (`OpenFrom::QuickOpen`). The rows are a `GtkListView` over a
   `GtkStringList` of indexes into its items, so only the rows on show have
-  widgets. A pick list of a caller's own rows (the Mac's `MCPalettePick`,
-  for 2.9's branch picker) is not built yet; it would be another mode
-  beside the four.
+  widgets. A pick list of a caller's own rows (the Mac's `MCPalettePick`)
+  is `showPick` (item 30), a mode beside the four, which the branch picker
+  uses.
 - **Symbols**: `askSymbols` is where 2.12 asks the server first. A preview
   calls `Editor::stopSettling` before it moves anything: for a moment after
   a tab is shown the editor keeps putting its place back whenever the view
@@ -2313,6 +2317,140 @@ What later items build on:
   freshly shown buffer's lines out in idle slices, which moves the line at
   the top as estimated heights turn real: a check of "the top line kept"
   waits for the layout to settle first.
+
+### 30. The Source Control panel's verbs (done, November 2026; `PARITY.md` item 2.9)
+
+The Mac's View > Source Control in the GTK panel, rule for rule and word
+for word from the core's `GitUi` plans (`../src/GitModel.h`): Fetch, Pull,
+Push and Sync with the Sync Changes or Publish Branch button under Commit,
+and autofetch; Stage All and Unstage All; Discard Changes with the file as
+it was in the Trash, and Undo Discard (the last 20); the hunk and line
+actions in a file's diff; the branch picker; Commit and Amend, Undo Last
+Commit, Stash and Pop Stash; several rows at once. What later items build
+on:
+- **The palette's pick list** (`PalettePanel::showPick(const Pick&)`, the
+  Mac's `MCPalettePick`): a list of the caller's own rows in place of the
+  modes. `Pick` holds `placeholder` (the field's hint), `labels` (matched
+  by the palette's own rules, the whole text the query, no prefixes),
+  `details` (muted at the right, may be fewer), `choose(index)`, an
+  optional `typedRow(text)` that makes a last row from what is typed ("+
+  Create branch “x” from main", "" for none) with `chooseTyped(text)`, and
+  `emptyText`. It always opens afresh (an open palette or pick list closes
+  first, putting the keyboard back), and a later `show()` closes an open
+  pick list; the keys, the click, Escape and putting the keyboard back are
+  the palette's, and `choose` runs on the turn after it closed, so a
+  command it starts acts where the keyboard was. `isPick()` says one is
+  up. Another chooser (an interpreter, a server) is another `Pick`.
+- **The panel is made with its window** (`makeGitPanel` in `main.cpp`), as
+  the Mac's `ensureGitPanel`, so autofetch's 30-second tick and the
+  commands work before it is first shown; its widget joins the sidebar's
+  stack only at the first Ctrl+Shift+G, which keeps the sidebar's minimum
+  as it was at launch. The window's commands are `win.gitfetch` and the
+  rest, added by `GitPanel::installActions`; `updateActions` (from the
+  tab switch and focus hooks) keeps Undo Discard enabled only with a
+  discard to undo and Discard Changes only with a file on show or a row
+  chosen in the list while it has the keyboard, so the palette offers them
+  only then. Each command reads the status anew on the git thread, so it
+  acts on the repository as it is; asks with a `GtkAlertDialog` (the plan's
+  button first and the default, Cancel the Escape); and says what happened
+  under the button and, while the panel is hidden, in the status bar
+  (`onNote`).
+- **Files**: `GitRun.{h,cpp}` runs git (moved from `GitPanel.cpp`), with
+  an input on stdin for `git apply` and, for fetch, pull and push
+  (`Git::talksToRemote`), `setsid` in the child instead of `setpgid`, as
+  the Mac's `POSIX_SPAWN_SETSID`: ssh then has no terminal to ask on and
+  fails at once, as git does for a password with `GIT_TERMINAL_PROMPT=0`.
+  A GUI askpass (`SSH_ASKPASS`) is left as the desktop sets it.
+  `GitTrash.{h,cpp}` moves a file to the Trash with `g_file_trash` and then
+  finds where it went (GIO does not say): the newest `.trashinfo` naming
+  it in the home Trash or the `.Trash/<uid>`, `.Trash-<uid>` at the top of
+  its filesystem; `trashCopy` (Discard Hunk) copies the file into a folder
+  of ours beside it and trashes that copy; `putBack` moves it back and
+  drops its `.trashinfo`. A volume with no Trash (a tmpfs) refuses, and
+  nothing is discarded. `GitDiffView.{h,cpp}` is the diff view (moved from
+  `GitPanel.cpp`) with the hunk links (a tag over the words of
+  `GitUi::diffTextWithActions`, a pointer cursor and a tooltip over them)
+  and its own right click, Menu key and Shift+F10 menu
+  (`GitUi::hunkMenu`) above Copy and Select All; a diff without actions
+  keeps the text view's own menu. `Editor::onDiffViewMade` lets the window
+  hand the new view to the panel (`attachDiffView`), which decorates only
+  the diff it showed last (`hunksFor`, by its bytes). `GitVerbs.cpp` has
+  the commands and `GitMenus.cpp` the row menu, the panel's menu and the
+  window's actions.
+- **The menus are built in one place**, `GitMenus.cpp`, and every one goes
+  up through `GitPanel::popupMenu`, where an item every panel menu ends
+  with (item 2.11's Adjust Settings) goes, as a last section; an empty
+  menu (the panel's outside a repository) does not go up. A disabled
+  Discard item's reason is its tooltip, set on the item's `GtkModelButton`
+  found by its label, since a popover menu's model has no tooltips.
+- **Several rows**: the change lists are a `GtkMultiSelection` (GTK's own
+  Ctrl and Shift clicks); headings never stay chosen (`onSelectionChanged`
+  takes them off); the row the keyboard is on is the panel's `cursor_`,
+  Shift with the arrows chooses from `anchor_`; a refresh keeps them chosen
+  by `GitUi::keepChosen`. A right click on a row among several chosen acts
+  on all of them, as in VS Code.
+- **Words that differ from the Mac's**: `networkFailureText(..., true)`
+  names git-credential-libsecret and plain ssh-add; Undo Discard in the
+  menu bar and the palette keeps that title (a GMenu's labels are fixed),
+  while the panel's own menu names the file; a Fetch, Pull, Push or Sync
+  asked for with the panel hidden says its result in the status bar too
+  (the Mac only puts it under the button). The core's discard texts still
+  say Put Back in the Trash, the Finder's words.
+- **For checks**: `GitPanel`'s `lastSync()` ("fetch ok", "push failed",
+  "fetch refused"), `autoFetches()`, `autoFetchTickAt(now)` with a time of
+  the check's own (the monotonic clock in seconds otherwise) and
+  `isActive`, `actionsDone()`, `chosenRows()`, `rowWidget(row)`, `menu()`,
+  `syncButtonTitle()`, `undoDiscardTitle()`, `message()`; `GitDiffView`'s
+  `links()` and `menu()`; `MCGuiOpenWindow(folder)` (a new window on a
+  folder, as a second `minicode <folder>`); `GitTrash::useFolderForChecks`
+  (a folder of the scratch world stands in for the Trash). The suites'
+  helpers are `tests/gui/GitChecks.h`; `git_actions` also makes one round
+  trip through GIO's real Trash, after checking that the scratch world's
+  home and data folder hold it.
+
+Traps:
+- **A row's tooltip took a click.** GTK shows a list row's tooltip below
+  the pointer; an XTest click sent at once to the row underneath went to
+  the tooltip's surface (GTK hides it on the next motion, after the click
+  had reached it), so a Ctrl click on b.txt right below a.txt reached no
+  window at all. The suites' `ClickRow` rests the pointer on the message
+  box first. A person's pointer moves there and the tooltip goes first.
+- **A wait on the panel's data ends before GTK has laid the widget out.**
+  The message box and the Sync button turn visible with the status that
+  fills the rows, and GTK places them on its next frame, so `git_actions`'
+  first `ClickRow`, in the step after its rows wait, pointed at a 0x0 text
+  view (in every run after `tabs` and `palette`, and in whole GUI runs at
+  load 13 to 14); the branch line `git_sync` once could not right-click
+  was most likely the same (that click, too, followed a wait on data only).
+  A diff just shown is the same in its text: GTK gives its lines heights in
+  idle slices, and a point worked out before then for "+k2" selected the
+  line below under load. Every click in the git suites now waits for its
+  widget on screen first (`WaitOnScreen`, `ClickBranch`, `ClickEditor` in
+  `GitChecks.h`), `DiffOnShow` also wants the diff's last line to have a
+  height, and a failed point says why (`a GtkTextView, 0x0`).
+- **A refresh made every row again.** `applySnapshot` reset the lists'
+  model on every status, so a refresh landing between a click's press and
+  its release, or between finding a row and clicking it, lost the click (a
+  whole GUI run at load 14 lost two). A status with the same rows now
+  leaves the list, what is chosen and the keyboard's row as they are; most
+  refreshes (a save, the window coming back, git's own files) are such.
+- **`gtk_widget_has_focus` wants an active window**, which the harness's
+  window is only after it gives it the X focus (before a key). Check the
+  root's focus (`GitChecks.h`'s `Focused`) after a click.
+- **Two clicks on one place within GTK's double-click time are one double
+  click** (n_press 2), however much happened between: a third click on the
+  branch label soon after the second opened nothing. The suites pause
+  between clicks on the same widget.
+- **`Git` is a namespace** (`GitStatus.h`): a suite helper called `Git()`
+  is ambiguous under `using namespace`; the suites call the panel
+  `Panel()`.
+- **A popover child of a widget that places its children by hand** is
+  presented by that widget (`GitPanel::layout` calls
+  `gtk_popover_present`), as GTK asks of a custom `size_allocate`.
+- **A patch on stdin to a git that stops reading** ends in GIO's
+  `G_IO_ERROR_BROKEN_PIPE` from `g_subprocess_communicate`, not a SIGPIPE
+  (a throwaway program showed it); `runGitWithin` keeps git's own answer
+  then.
 
 ## How to work on it
 

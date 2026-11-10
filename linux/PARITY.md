@@ -259,6 +259,16 @@ Choices item 1.11 made, by the same rules:
   chord), so the Mac's Ctrl+Cmd+M with Ctrl+Alt: Ctrl+Alt+M, which GNOME
   leaves alone, and which works from the terminal.
 
+Choices item 2.9 made, by the same rules:
+- View > Source Control's thirteen commands (Fetch, Pull, Push, Sync,
+  Stage All, Unstage All, Discard Changes, Undo Discard, Switch Branch,
+  Commit and Amend, Undo Last Commit, Stash, Pop Stash) have no keys, as in
+  VS Code on Linux and on the Mac; the menu bar, the palette and the
+  panel's right click have them.
+- In the panel's lists a Ctrl click chooses another row, as the Mac's
+  Command click; Shift click and Shift with the arrows as on the Mac. The
+  Menu key and Shift+F10 open a row's menu, and the diff's.
+
 Decided when items 1.10 and 1.11 met (the coordinator, 2026-11-10): both
 gave the editor Ctrl+Alt+0, 1.10 to Fold All and 1.11 to the editor's zoom
 reset (the Mac's Option+Cmd+0 with Ctrl+Alt). In the editor it is Fold
@@ -1025,9 +1035,43 @@ its server comes first here (2.0).
 - [ ] **2.6 Semantic tokens.** Tags, painted for the lines on screen only.
 - [ ] **2.7 Inlay hints (D6, D9).** `InlayHints`.
 - [ ] **2.8 Install hints.** `InstallHints`.
-- [ ] **2.9 Git verbs.** Push, pull, autofetch, Stage All, Discard with its
+- [x] **2.9 Git verbs.** Push, pull, autofetch, Stage All, Discard with its
   Trash copy and undo, hunks and lines, the branch picker, commit verbs.
   `GitModel` already has the plans.
+  *Verified in Xvfb, 2026-11-10* (`HANDOFF.md` item 30): `git-ui:*` hold
+  the new rules (`keepChosen`, `hunkMenu`, Linux's words in
+  `networkFailureText`), and four suites over scratch repositories and a
+  bare remote press real keys and clicks: `git_sync` (Fetch from the
+  palette with the panel hidden, said in the status bar; the right click's
+  four, Sync Changes, Publish Branch, Amend asking for a pushed commit, the
+  picker tracking `origin/topic`, a push whose ssh wants a key failing in
+  0.2 s with ssh's words, in a session apart from minicode's; autofetch's
+  three minutes, the period, backoff after failures and recovery, no remote
+  never fetched), `git_actions` (Stage All, Unstage All, Discard asking,
+  restoring from the index not HEAD, untracked to the Trash, a deletion
+  restored, Undo Discard, a round trip through the scratch world's real GIO
+  Trash, Discard from the palette on the file on show, the row menu, the
+  picker by a click and the palette, a bad name, git's refusal, a
+  submodule, an `add -N` file, a conflict and a staged row refused, each
+  with its reason, and Stage All asking with a conflict left), `git_hunks`
+  (the links, Stage Hunk, Unstage Selected Lines from the right click,
+  Discard Hunk and its undo, a stale diff refused, Shift+F10), and
+  `git_verbs` (Shift with the arrows, Ctrl and Shift clicks, Space and the
+  row menu on two rows, Discard of three, Commit by Ctrl+Return, Amend,
+  Undo Last Commit, Stash, Pop Stash). They fail without the session of
+  its own, the hunk links, the pick list, or the rows kept chosen. Needs
+  the owner: push, pull and autofetch against their real remotes with ssh
+  keys, an agent, a GUI askpass or a credential helper; the desktop's real
+  Trash and GNOME Files' Restore From Trash; how the menus, links and
+  button look; Ctrl and Shift clicks and Shift+F10 under GNOME on Wayland.
+  The flakes of whole runs were the checks clicking before GTK had laid a
+  widget or a new diff out (`HANDOFF.md` item 30's traps); every click
+  now waits for its target, and `tabs palette git_sync git_actions
+  git_hunks git_verbs` passed 6 of 6 runs (4 beside a dozen busy loops,
+  load 11 to 13), `git_hunks` alone 10 of 10 so loaded, and the whole GUI
+  run once (2026-11-10). `large_file` failed its 250 ms bound once (263.8
+  ms), not this item's. *TODO at the merge with 2.11:* end the row and file
+  menus in `GitPanel::popupMenu` with `Appearance::addItem(menu, "git")`.
 - [ ] **2.10 Change bars and the tree's git colors.** `QuickDiff`,
   `GitStatus`.
 - [ ] **2.11 Themes from a menu and Adjust Settings.**

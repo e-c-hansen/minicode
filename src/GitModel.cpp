@@ -176,6 +176,28 @@ int pickAfterRefresh(const std::vector<Row>& oldRows, int sel, const std::vector
     return -1;
 }
 
+std::vector<int> keepChosen(const std::vector<Row>& oldRows, const std::vector<int>& chosen,
+                            const std::vector<Row>& rows) {
+    std::vector<std::string> keys, paths;
+    for (int i : chosen)
+        if (i >= 0 && i < (int)oldRows.size() && !oldRows[(size_t)i].header) {
+            keys.push_back(oldRows[(size_t)i].key());
+            paths.push_back(oldRows[(size_t)i].path);
+        }
+    std::vector<int> still;
+    for (int byPath = 0; byPath < 2 && still.size() < 2 && !keys.empty(); byPath++) {
+        still.clear();
+        const std::vector<std::string>& want = byPath ? paths : keys;
+        for (size_t i = 0; i < rows.size(); i++)
+            if (!rows[i].header &&
+                std::find(want.begin(), want.end(), byPath ? rows[i].path : rows[i].key()) !=
+                    want.end())
+                still.push_back((int)i);
+    }
+    if (still.size() < 2) still.clear();
+    return still;
+}
+
 std::string rowToolTip(const Row& r) {
     if (r.header) return "";
     const char* what = r.unmerged ? "conflict" : r.untracked ? "untracked"
@@ -957,6 +979,33 @@ std::string hunkFailureText(int status, const std::string& out, const std::strin
     return failureText(status, out, err);
 }
 
+std::vector<HunkMenuItem> hunkMenu(const std::string& diff, DiffSide side, size_t clicked,
+                                   size_t first, size_t last, bool selection) {
+    std::vector<HunkMenuItem> out;
+    const std::vector<HunkOp> ops = hunkOps(side);
+    if (ops.empty()) return out;
+    if (last < first) std::swap(first, last);
+    const std::vector<DiffHunk> hunks = diffHunks(diff);
+    bool linesChosen = false;
+    for (const DiffHunk& h : hunks)
+        for (size_t l = std::max(first, h.firstLine);
+             selection && !linesChosen && l <= last && l < h.firstLine + h.lineCount; l++)
+            if (h.changes(l)) linesChosen = true;
+    const bool inHunk = hunkAt(hunks, clicked) >= 0;
+    for (HunkOp op : ops)
+        for (int lines = 0; lines < 2; lines++) {
+            if (lines ? !linesChosen : !inHunk) continue;
+            HunkMenuItem it;
+            it.op = op;
+            it.lines = lines != 0;
+            it.first = lines ? first : clicked;
+            it.last = lines ? last : clicked;
+            it.title = hunkOpTitle(op, it.lines) + (op == HunkOp::Discard ? "…" : "");
+            out.push_back(it);
+        }
+    return out;
+}
+
 // ------------------------------------------------------ the branch picker
 std::vector<std::string> branchListArgs() {
     return {"for-each-ref", "--sort=-committerdate", std::string("--format=") + Git::refFormat(),
@@ -1192,20 +1241,23 @@ std::string syncButtonToolTip(const Snapshot& s) {
     return t + (s.behind ? " from and to " : " to ") + s.upstream;
 }
 
-std::string networkFailureText(int status, const std::string& out, const std::string& err) {
+std::string networkFailureText(int status, const std::string& out, const std::string& err,
+                               bool forLinux) {
     std::string t = failureText(status, out, err);
     auto has = [&](const char* needle) { return t.find(needle) != std::string::npos; };
     if (has("terminal prompts disabled") || has("could not read Username") ||
         has("could not read Password") || has("Authentication failed") ||
         has("Invalid username or password"))
         return t + "\nminicode never asks for a password: set up a credential helper "
-                   "(gh auth setup-git, or the macOS keychain), or push once from the "
-                   "terminal.";
+                   "(gh auth setup-git, or " +
+               (forLinux ? "git-credential-libsecret" : "the macOS keychain") +
+               "), or push once from the terminal.";
     if (has("Permission denied (publickey") || has("Host key verification failed") ||
         has("passphrase"))
         return t + "\nminicode cannot type an ssh passphrase or accept a new host key: "
-                   "add the key to the agent (ssh-add --apple-use-keychain) or connect "
-                   "once from the terminal.";
+                   "add the key to the agent (" +
+               (forLinux ? "ssh-add" : "ssh-add --apple-use-keychain") +
+               ") or connect once from the terminal.";
     return t;
 }
 

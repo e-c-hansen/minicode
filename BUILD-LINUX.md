@@ -888,6 +888,24 @@ Verified by running it:
   output that is not UTF-8 and the 10 s limit leave the buffer alone with a
   note; format.on-save formats before Ctrl+S writes; and a file nothing
   else formats goes to its language server.
+- The Source Control panel's commands (November 2026, `linux/PARITY.md`
+  item 2.9), by the `git_sync`, `git_actions`, `git_hunks` and `git_verbs`
+  GUI suites on a private Xvfb with real key presses and clicks, over
+  scratch repositories and a bare remote. Fetch, Pull, Push and Sync from
+  the palette, the panel's right click and the Sync Changes button, a
+  branch published, a push over ssh without a key refused at once with
+  ssh's words and git in a session of its own; autofetch on its tick, its
+  period and its backoff; Stage All and Unstage All; Discard Changes asking
+  first, restoring from the index, moving an untracked file to the Trash
+  (a scratch folder, and once the scratch world's own GIO Trash), and Undo
+  Discard; Stage Hunk, Unstage Selected Lines and Discard Hunk from the
+  diff's links and right click, a stale diff refused; the branch picker
+  switching, tracking a remote branch, creating one and refusing a bad
+  name; Commit, Commit and Amend, Undo Last Commit, Stash and Pop Stash;
+  several rows by Ctrl and Shift clicks and Shift with the arrows; Discard
+  refused for a submodule, a file added with git add -N, a conflict and a
+  staged row, and Stage All asking first while a conflict is left.
+
 
 Not verified, for the work before November (what the November work leaves
 to a person is in "What needs a person", below):
@@ -1155,6 +1173,14 @@ Displays.
   Tools brings the question back.
 - [ ] How the bar under the tabs, the question, and a formatter's note by
   the caret look, and that Ctrl Shift I reaches minicode with IBus running.
+
+### Source Control (item 2.9)
+
+- [ ] Push, pull and autofetch
+  against a real remote with ssh keys, an agent, a GUI askpass or a
+  credential helper; the desktop's real Trash and Restore From Trash in
+  GNOME Files after a discard; how the menus, the hunk links and the Sync
+  button look; Ctrl and Shift clicks and Shift F10 under GNOME on Wayland.
 
 ### Sessions and losing work
 

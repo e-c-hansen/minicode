@@ -299,6 +299,19 @@ static void testGitModel() {
         CHECK(ssh.find("ssh-add --apple-use-keychain") != std::string::npos);
         CHECK(networkFailureText(1, "", "! [rejected] main -> main (fetch first)\n") ==
               "! [rejected] main -> main (fetch first)");
+        // The GTK port's words: a Linux desktop has neither keychain.
+        const std::string linuxHttps = networkFailureText(
+            128, "", "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n",
+            true);
+        CHECK(linuxHttps.find("(gh auth setup-git, or git-credential-libsecret)") != std::string::npos &&
+              linuxHttps.find("macOS") == std::string::npos);
+        const std::string linuxSsh = networkFailureText(
+            255, "", "git@example.invalid: Permission denied (publickey).\n", true);
+        CHECK(linuxSsh.find("add the key to the agent (ssh-add) or connect once from the terminal.") !=
+                  std::string::npos &&
+              linuxSsh.find("apple") == std::string::npos);
+        CHECK(networkFailureText(1, "", "! [rejected] main -> main (fetch first)\n", true) ==
+              "! [rejected] main -> main (fetch first)");
     }
 
     GROUP("git-ui:autofetch");
@@ -939,6 +952,78 @@ static void testGitModel() {
               std::vector<std::string>({"--literal-pathspecs", "rm", "--cached", "--force", "-q",
                                         "--", "s.txt"}));
         CHECK(stageRowsArgs({a, u}, false, false).empty() && stageRowsArgs({st}, false, true).empty());
+    }
+
+    GROUP("git-ui:keep-chosen");
+    {
+        // Rows: 0 # Staged, 1 S s.txt, 2 # Changes, 3 W a.txt, 4 W b.txt, 5 W u.txt.
+        Snapshot was;
+        was.inRepository = true;
+        applyStatus(was, Git::parseStatus(nul({
+            "# branch.oid " + h40, "# branch.head main",
+            "1 M. N..." + modes + h40 + " " + h40 + " s.txt",
+            "1 .M N..." + modes + h40 + " " + h40 + " a.txt",
+            "1 .M N..." + modes + h40 + " " + h40 + " b.txt", "? u.txt"})));
+        CHECK(was.rows.size() == 6 && was.rows[3].path == "a.txt" && was.rows[5].path == "u.txt");
+        // Nothing changed: the same rows.
+        CHECK(keepChosen(was.rows, {3, 4}, was.rows) == std::vector<int>({3, 4}));
+        // a and b staged: by path, now in the other list.
+        Snapshot staged;
+        staged.inRepository = true;
+        applyStatus(staged, Git::parseStatus(nul({
+            "# branch.oid " + h40, "# branch.head main",
+            "1 M. N..." + modes + h40 + " " + h40 + " a.txt",
+            "1 M. N..." + modes + h40 + " " + h40 + " b.txt",
+            "1 M. N..." + modes + h40 + " " + h40 + " s.txt", "? u.txt"})));
+        CHECK(keepChosen(was.rows, {3, 4}, staged.rows) == std::vector<int>({1, 2}));
+        // One of the two left: none, so the caller keeps one as usual.
+        Snapshot gone;
+        gone.inRepository = true;
+        applyStatus(gone, Git::parseStatus(nul({
+            "# branch.oid " + h40, "# branch.head main",
+            "1 .M N..." + modes + h40 + " " + h40 + " a.txt"})));
+        CHECK(keepChosen(was.rows, {3, 4}, gone.rows).empty());
+        // A heading or a row out of range counts for nothing.
+        CHECK(keepChosen(was.rows, {0, 2, 99, -1}, was.rows).empty());
+        CHECK(keepChosen(was.rows, {}, was.rows).empty());
+    }
+
+    GROUP("git-ui:hunk-menu");
+    {
+        // Lines: 0 diff, 1 index, 2 ---, 3 +++, 4 @@, 5 a, 6 -b, 7 +B, 8 c,
+        // 9 d, 10 @@, 11 j, 12 k, 13 +k2, 14 +k3, 15 l.
+        const std::string two =
+            "diff --git a/f.txt b/f.txt\nindex 1111111..2222222 100644\n--- a/f.txt\n"
+            "+++ b/f.txt\n@@ -1,4 +1,4 @@\n a\n-b\n+B\n c\n d\n@@ -10,3 +10,5 @@ fn\n"
+            " j\n k\n+k2\n+k3\n l\n";
+        auto titles = [](const std::vector<HunkMenuItem>& items) {
+            std::vector<std::string> out;
+            for (const HunkMenuItem& it : items) out.push_back(it.title);
+            return out;
+        };
+        // A click in a hunk with nothing selected: the hunk's own.
+        std::vector<HunkMenuItem> m = hunkMenu(two, DiffSide::Changes, 12, 12, 12, false);
+        CHECK(titles(m) == std::vector<std::string>({"Stage Hunk", "Discard Hunk…"}));
+        CHECK(m[0].op == HunkOp::Stage && !m[0].lines && m[0].first == 12 && m[0].last == 12);
+        CHECK(m[1].op == HunkOp::Discard);
+        // The staged diff with +k2 selected: its hunk, then the lines.
+        m = hunkMenu(two, DiffSide::Staged, 13, 13, 13, true);
+        CHECK(titles(m) == std::vector<std::string>({"Unstage Hunk", "Unstage Selected Lines"}));
+        CHECK(m[1].lines && m[1].first == 13 && m[1].last == 13 && m[1].op == HunkOp::Unstage);
+        // Lines chosen across both hunks, clicked outside any hunk.
+        m = hunkMenu(two, DiffSide::Changes, 2, 15, 6, true);
+        CHECK(titles(m) == std::vector<std::string>({"Stage Selected Lines", "Discard Selected Lines…"}));
+        CHECK(m[0].first == 6 && m[0].last == 15);
+        // Context only selected, clicked in no hunk: nothing.
+        CHECK(hunkMenu(two, DiffSide::Changes, 1, 11, 12, true).empty());
+        CHECK(hunkMenu(two, DiffSide::Changes, 1, 1, 1, false).empty());
+        // An untracked file's diff has no actions.
+        CHECK(hunkMenu(two, DiffSide::Untracked, 12, 13, 13, true).empty());
+        // What each item gives hunkPlan stages what the Mac's menu stages.
+        m = hunkMenu(two, DiffSide::Changes, 13, 13, 13, true);
+        CHECK(m.size() == 4 && m[1].lines);
+        CHECK(hunkPlan(two, DiffSide::Changes, m[1].op, m[1].first, m[1].last, m[1].lines).patch ==
+              buildPatch(two, HunkOp::Stage, 13, 13, nullptr));
     }
 
     GROUP("git-ui:amend");
