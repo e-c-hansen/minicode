@@ -749,6 +749,23 @@ Verified by running it:
   line, pasted above; double-clicks and Ctrl Left and Right go by VS Code's
   words; and a key typed at 1,000 carets over 100,000 lines takes 35 to 55
   ms of the main thread in its edit.
+- The Source Control panel's commands (November 2026, `linux/PARITY.md`
+  item 2.9), by the `git_sync`, `git_actions`, `git_hunks` and `git_verbs`
+  GUI suites on a private Xvfb with real key presses and clicks, over
+  scratch repositories and a bare remote. Fetch, Pull, Push and Sync from
+  the palette, the panel's right click and the Sync Changes button, a
+  branch published, a push over ssh without a key refused at once with
+  ssh's words and git in a session of its own; autofetch on its tick, its
+  period and its backoff; Stage All and Unstage All; Discard Changes asking
+  first, restoring from the index, moving an untracked file to the Trash
+  (a scratch folder, and once the scratch world's own GIO Trash), and Undo
+  Discard; Stage Hunk, Unstage Selected Lines and Discard Hunk from the
+  diff's links and right click, a stale diff refused; the branch picker
+  switching, tracking a remote branch, creating one and refusing a bad
+  name; Commit, Commit and Amend, Undo Last Commit, Stash and Pop Stash;
+  several rows by Ctrl and Shift clicks and Shift with the arrows; Discard
+  refused for a submodule, a file added with git add -N, a conflict and a
+  staged row, and Stage All asking first while a conflict is left.
 
 Not verified:
 
@@ -760,6 +777,11 @@ Not verified:
   (Vulkan by default) and WebKit's processes, the page and the shell's
   startup files used to compete with the window: `startup-times.sh` there
   is what tells (`linux/HANDOFF.md`, item 24).
+- For the Source Control panel's commands: push, pull and autofetch
+  against a real remote with ssh keys, an agent, a GUI askpass or a
+  credential helper; the desktop's real Trash and Restore From Trash in
+  GNOME Files after a discard; how the menus, the hunk links and the Sync
+  button look; Ctrl and Shift clicks and Shift F10 under GNOME on Wayland.
 - For several carets, everything that needs GNOME on Wayland: how the
   extra carets and their selections look (they do not blink), Alt click
   and Shift Alt drags with IBus running, a real middle button, and an input

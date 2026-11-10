@@ -732,6 +732,19 @@ void GitPanel::applySnapshot(const GitUi::Snapshot& s) {
     const std::vector<GitUi::Row> oldRows = rows_;
     const bool listHadFocus = gtk_widget_has_focus(list_) ||
                               gtk_widget_get_focus_child(list_) != nullptr;
+    // The same rows as before (most refreshes: a save, the window coming
+    // back, git's own files changing): the list stays as it is, with what is
+    // chosen and where the keyboard is, so no row is made again under the
+    // pointer or between a press and its release.
+    auto sameRow = [](const GitUi::Row& a, const GitUi::Row& b) {
+        return a.header == b.header && a.title == b.title && a.staged == b.staged &&
+               a.letter == b.letter && a.path == b.path && a.origPath == b.origPath &&
+               a.untracked == b.untracked && a.unmerged == b.unmerged &&
+               a.submodule == b.submodule;
+    };
+    const bool sameRows =
+        haveShown_ && oldRows.size() == s.rows.size() &&
+        std::equal(oldRows.begin(), oldRows.end(), s.rows.begin(), sameRow);
 
     inRepository_ = s.inRepository;
     topLevel_ = s.topLevel;
@@ -756,8 +769,10 @@ void GitPanel::applySnapshot(const GitUi::Snapshot& s) {
     } else if (errorFromStatus_) {
         setError("", false);
     }
-    cursor_ = anchor_ = -1;
-    reloadList();
+    if (!sameRows) {
+        cursor_ = anchor_ = -1;
+        reloadList();
+    }
     const bool graph = GitUi::graphWanted(s);
     showGraph(graph);
     graphSummary_ = graph ? GitUi::validUtf8(GitUi::summaryText(s)) : std::string();
@@ -771,7 +786,9 @@ void GitPanel::applySnapshot(const GitUi::Snapshot& s) {
     }
     const std::vector<int> still =
         chosen.size() > 1 ? GitUi::keepChosen(oldRows, chosen, rows_) : std::vector<int>();
-    if (still.size() > 1) {
+    if (sameRows) {
+        // Chosen as they were.
+    } else if (still.size() > 1) {
         GtkBitset* set = gtk_bitset_new_empty();
         for (int i : still) gtk_bitset_add(set, (guint)i);
         GtkBitset* all = gtk_bitset_new_range(0, (guint)rows_.size());

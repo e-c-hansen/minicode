@@ -106,9 +106,9 @@ inline GtkWidget* RowWidget(const std::string& description) {
 // a.txt reached no window. So the pointer rests on the message box, which
 // has no tooltip, first.
 inline void ClickRow(const std::string& row, const std::string& mods = "", int button = 1) {
-    MCGuiWait(row + " on screen", 10, [row] { return RowWidget(row) != nullptr; });
     MCGuiStep("the pointer off the rows", [] { MCGuiMoveTo(Panel()->messageView()); });
     MCGuiPause(0.6);   // time is the condition: the last row's tooltip gone, no double-click
+    MCGuiWait(row + " on screen", 10, [row] { return RowWidget(row) != nullptr; });
     MCGuiStep((mods.empty() ? std::string("a click") : mods + " click") +
                   (button == 3 ? " (right)" : "") + " on " + row,
               [row, mods, button] {

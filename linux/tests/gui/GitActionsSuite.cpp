@@ -13,8 +13,11 @@
 // a bad name, and shows git's words when a switch would overwrite a change;
 // a submodule's Discard is refused with what to do instead, from its menu
 // (disabled, the reason as its tooltip) and the palette, its diff has no
-// hunk links, and staging it still runs. The Trash is a folder of the
-// scratch world but where the real one is said.
+// hunk links, and staging it still runs; a file added with git add -N and a
+// conflict are refused the same way, a staged row has no Discard and is
+// refused from the palette, and Stage All asks first while a conflict is
+// left. The Trash is a folder of the scratch world but where the real one is
+// said.
 #include "GitChecks.h"
 
 using namespace gitchecks;
@@ -369,6 +372,72 @@ MC_GUI_SUITE(git_actions) {
     MCGuiStep("Space stages it", [] { MCGuiKey("space"); });
     MCGuiWait("add ran (a change inside a submodule stays one: nothing to stage)", 15, [] {
         return Panel()->errorLine().empty() && RowOf("W M lib") >= 0;
+    });
+
+    // ----------- refused too: a file added with git add -N, a staged row,
+    // and a conflict (its three stages put in the index by hand)
+    Shell("ita.txt added with -N, s.txt staged, k.txt in conflict",
+          "set -e; cd '" + R() + "'; echo i > ita.txt; " + G() + " add -N ita.txt; echo s > s.txt; " +
+              G() + " add s.txt; b=$(echo base | " + G() + " hash-object -w --stdin); o=$(echo ours | " +
+              G() + " hash-object -w --stdin); t=$(echo theirs | " + G() +
+              " hash-object -w --stdin); printf '100644 %s 1\\tk.txt\\n100644 %s 2\\tk.txt\\n100644 %s "
+              "3\\tk.txt\\n' \"$b\" \"$o\" \"$t\" | " + G() +
+              " update-index --index-info; echo '<<<<<<< ours' > k.txt");
+    MCGuiWait("all three listed", 15, [] {
+        const bool there = RowOf("W A ita.txt") >= 0 && RowOf("S A s.txt") >= 0 && RowOf("W C k.txt") >= 0;
+        if (!there) Panel()->refresh();
+        return there;
+    });
+    ClickRow("W A ita.txt", "", 3);
+    MCGuiWait("its menu", 10, [] { return MenuHas(Panel()->menu(), "Discard Changes…"); });
+    MCGuiStep("Discard disabled: unstage it first", [] {
+        GtkWidget* item = MenuItem(Panel()->menu(), "Discard Changes…");
+        GCHECK(item && !gtk_widget_is_sensitive(item));
+        const char* tip = item ? gtk_widget_get_tooltip_text(item) : nullptr;
+        MCGuiNote("-N's tooltip: %s", tip ? tip : "(none)");
+        GCHECK(tip && std::string(tip).find("git add -N") != std::string::npos);
+        MCGuiKey("escape");
+    });
+    MCGuiWait("closed", 10, [] { return !Panel()->menu() || !gtk_widget_get_mapped(Panel()->menu()); });
+    ClickRow("W C k.txt", "", 3);
+    MCGuiWait("its menu", 10, [] { return MenuHas(Panel()->menu(), "Discard Changes…"); });
+    MCGuiStep("Discard disabled: a conflict", [] {
+        GtkWidget* item = MenuItem(Panel()->menu(), "Discard Changes…");
+        GCHECK(item && !gtk_widget_is_sensitive(item));
+        const char* tip = item ? gtk_widget_get_tooltip_text(item) : nullptr;
+        MCGuiNote("conflict's tooltip: %s", tip ? tip : "(none)");
+        GCHECK(tip && std::string(tip).find("has a conflict") != std::string::npos);
+        MCGuiKey("escape");
+    });
+    MCGuiWait("closed", 10, [] { return !Panel()->menu() || !gtk_widget_get_mapped(Panel()->menu()); });
+    ClickRow("S A s.txt", "", 3);
+    MCGuiWait("its menu", 10, [] { return MenuHas(Panel()->menu(), "Unstage Changes"); });
+    MCGuiStep("a staged row has no Discard", [] {
+        GCHECK(!MenuHas(Panel()->menu(), "Discard Changes…"));
+        MCGuiKey("escape");
+    });
+    MCGuiWait("closed", 10, [] { return !Panel()->menu() || !gtk_widget_get_mapped(Panel()->menu()); });
+    ClickRow("S A s.txt");   // the keyboard in the list, on it
+    MCGuiStep("counting", [] { gActions = Panel()->actionsDone(); });
+    RunFromPalette("discard", "View > Source Control > Discard Changes…");
+    MCGuiWait("refused", 10, Done);
+    MCGuiStep("unstage it first, it says; nothing asked", [] {
+        GCHECK_EQ_STR(Panel()->errorLine(), "s.txt is staged: unstage it first, then discard its changes.");
+        GCHECK(QuestionGone());
+        GCHECK_EQ_STR(MCGuiReadFile(In("s.txt")), "s\n");
+        gActions = Panel()->actionsDone();
+    });
+    RunFromPalette("stage all", "View > Source Control > Stage All Changes");
+    MCGuiWait("Stage All asks first, with a conflict left", 10, QuestionUp);
+    MCGuiStep("that staging marks it resolved; Cancel", [] {
+        MCGuiNote("question: %s", QuestionText().c_str());
+        GCHECK(QuestionText().find("Stage 1 file that still has conflicts?") != std::string::npos);
+        Answer("Cancel");
+    });
+    MCGuiWait("the question goes", 10, QuestionGone);
+    MCGuiStep("still in conflict", [] {
+        MCGuiSetKeyWindow(nullptr);
+        GCHECK(RowOf("W C k.txt") >= 0);
     });
     CloseRepoWindow();
 }
