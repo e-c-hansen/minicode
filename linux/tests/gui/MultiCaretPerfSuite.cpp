@@ -98,7 +98,13 @@ size_t count(const std::string& t, const std::string& what) {
     return n;
 }
 
+// The lines off screen are retagged in idle time, and a look at the colors
+// reads the whole text back and lexes it (well over 50 ms here): polled
+// every 50 ms it starved the retag it waited for, which at load 28 had
+// reached line 22,500 in 30 s. So the main thread goes quiet first.
 void waitForColors(const std::string& what) {
+    MCGuiWaitQuiet(what + ": the main thread idle", 0.5, 120,
+                   [] { return (long)(MCGuiThreadCpuMs() / 10); });
     MCGuiWait(what, 30, [] { return colorsRight(sampled(), false); });
     MCGuiStep(what + " (the first line that differs, if one does)",
               [] { GCHECK(colorsRight(sampled(), true)); });
