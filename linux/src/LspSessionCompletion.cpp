@@ -39,8 +39,9 @@ void LspSession::completionAfterEdit(const char* inserted, int len) {
             else if (c == '>' && before == '-') trigger = ">";
             else if (c == ':' && before == ':') trigger = ":";
         }
-        if (!trigger.empty()) {
-            std::vector<std::string> triggers = server_->client().completionTriggers();
+        std::shared_ptr<lspgtk::Server> server = serverFor(Lsp::Feature::Completion);
+        if (!trigger.empty() && server) {
+            std::vector<std::string> triggers = server->client().completionTriggers();
             if (triggers.empty() ||
                 std::find(triggers.begin(), triggers.end(), trigger) != triggers.end()) {
                 // Once the text view has finished with the key press.
@@ -65,7 +66,9 @@ void LspSession::cancelCompletionTrigger() {
 }
 
 void LspSession::requestCompletion(const std::string& trigger) {
-    if (!server_ || uri_.empty()) return;
+    // The main server, else the second one when it completes (serverFor).
+    std::shared_ptr<lspgtk::Server> server = serverFor(Lsp::Feature::Completion);
+    if (!server) return;
     flushChanges();
     GtkTextIter cur, a;
     cursorIter(&cur);
@@ -81,7 +84,7 @@ void LspSession::requestCompletion(const std::string& trigger) {
     const int gen = ++cmp_->gen;
     const std::string uri = uri_;
     std::weak_ptr<int> alive = life_;
-    server_->client().completion(uri, positionOf(&cur),
+    server->client().completion(uri, positionOf(&cur),
         [alive, this, gen, uri](const Json& r, const Json&) {
             if (!alive.expired()) completionArrived(r, gen, uri);
         }, trigger);

@@ -43,9 +43,11 @@ void LspSession::detachDocument() {
 void LspSession::closeDocument() {
     detachDocument();
     server_.reset();
+    alsoServer_.reset();
     uri_.clear();
     path_.clear();
     currentKey_.clear();
+    alsoKey_.clear();
     note_.clear();
 }
 
@@ -60,15 +62,24 @@ void LspSession::documentChanged(const std::string& pathIn) {
         return;
     }
     Lsp::Language lang;
-    std::shared_ptr<Server> server;
+    std::shared_ptr<Server> server, also;
+    // A project file may have been added or changed since (a ruff.toml).
+    forgetRuffConfiguration();
     if (settings_.lspEnabled() && languageOf(path, lang)) {
         currentKey_ = lang.server;   // first: the folder's tools ask whose file is on show
         server = serverForKey(lang.server);
+        const std::string mainNote = note_;
+        // Its second server, when the language wants one for it
+        // (LspSessionAlso.cpp): Ruff beside the Python server.
+        if (!alsoCommandFor(lang.server, path).empty()) {
+            alsoKey_ = Lsp::alsoKey(lang.server);
+            also = serverForKey(alsoKey_);
+        }
+        note_ = mainNote;   // the status bar says why the main one is missing
     }
-    if (server) {
-        server_ = server;
-        uri_ = lspui::uriOf(path);
-    }
+    server_ = server;
+    alsoServer_ = also;
+    if (server || also) uri_ = lspui::uriOf(path);
     // It, and every other tab a running server takes (a server just started
     // gets them all); a tab that closed or stopped showing text is closed.
     syncOpenDocuments();
@@ -80,7 +91,7 @@ void LspSession::textEdited(const char* inserted, int len) {
     ++docGen_;
     forgetHover();
     actionsFollowCaret();
-    if (!server_ || uri_.empty()) return;
+    if (uri_.empty()) return;
     completionAfterEdit(inserted, len);
 }
 
@@ -140,11 +151,16 @@ void LspSession::syncOpenDocuments() {
             if (!serverMayHave(d)) continue;
             Lsp::Language lang;
             if (!languageOf(d->path(), lang)) continue;
-            std::shared_ptr<Server> server = runningServer(lang.server);
-            if (!server) continue;
-            const std::string uri = lspui::uriOf(d->path());
-            if (!seen.insert(lang.server + " " + uri).second) continue;
-            wanted[{d->id(), lang.server}] = Want{d, uri, lang.languageId, server};
+            // Its language's main server, and the second one where it wants
+            // the file (Ruff in a project that configures it).
+            for (const std::string& key : {lang.server, Lsp::alsoKey(lang.server)}) {
+                std::shared_ptr<Server> server = runningServer(key);
+                if (!server) continue;
+                if (Lsp::isAlsoKey(key) && !alsoWantsPath(d->path(), key)) continue;
+                const std::string uri = lspui::uriOf(d->path());
+                if (!seen.insert(key + " " + uri).second) continue;
+                wanted[{d->id(), key}] = Want{d, uri, lang.languageId, server};
+            }
         }
     // Closed first, so a file that moved to another name or server is closed
     // on the old one before it opens again.
@@ -158,9 +174,9 @@ void LspSession::syncOpenDocuments() {
             continue;
         }
         if (e.server->running() && !e.server->stopping()) e.server->client().didClose(e.uri);
-        const std::string uri = e.uri;
+        const std::string uri = e.uri, key = it->first.second;
         it = entries.erase(it);
-        forgetDiagnostics(uri);
+        forgetDiagnostics(uri, key);   // what that server said about it while open
     }
     for (auto& [key, w] : wanted) {
         if (entries.count(key)) continue;
@@ -205,19 +221,21 @@ void LspSession::watchBuffers() {
 }
 
 // A server going (stopped, exited, refused): its documents are forgotten
-// without a didClose, and so is what it published.
+// without a didClose, and so is everything it published, about files no
+// tab has too.
 void LspSession::forgetServerDocuments(Server* s) {
     auto& entries = sync_->entries;
     for (auto it = entries.begin(); it != entries.end();) {
-        if (it->second.server.get() != s) {
-            ++it;
-            continue;
-        }
-        const std::string uri = it->second.uri;
-        it = entries.erase(it);
-        forgetDiagnostics(uri);
+        if (it->second.server.get() != s) ++it;
+        else it = entries.erase(it);
     }
+    forgetServerDiagnostics(s->key());
     watchBuffers();
+}
+
+uint64_t LspSession::documentEdits(uint64_t docId) const {
+    auto it = sync_->edits.find(docId);
+    return it == sync_->edits.end() ? 0 : it->second;
 }
 
 std::vector<std::string> LspSession::openDocuments() const {
@@ -261,6 +279,7 @@ void LspSession::onSyncDelete(GtkTextBuffer*, GtkTextIter* a, GtkTextIter* z, gp
 // that is makes the next send the whole text (ChangeTracker::invalidate).
 void LspSession::noteEdit(uint64_t docId, size_t start, size_t removed, const char* inserted,
                           int len) {
+    sync_->edits[docId]++;
     const bool astral = inserted && len > 0 && lspui::hasAstral(inserted, (size_t)len);
     const size_t units = inserted && len > 0 ? (size_t)g_utf8_strlen(inserted, len) : 0;
     bool any = false;

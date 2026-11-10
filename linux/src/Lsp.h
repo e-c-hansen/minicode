@@ -33,6 +33,13 @@
 //   LspPicker.{h,cpp}          the references and fixes list, the rename box
 //   LspSessionFolderTools.cpp  the folder's own tools: what a server may run
 //   LspSessionFormatting.cpp   Format Document through the file's server
+//   LspSessionAlso.cpp         the second server (Ruff beside the Python
+//                              server), and which of a file's servers
+//                              answers a request
+//   LspSessionProblems.cpp     the Problems list's rows, F8 and Shift+F8
+//   LspSessionWatch.cpp        files changed on disk, for the servers'
+//                              registered watchers (LspWatcher.{h,cpp})
+//   LspSessionImports.cpp      Organize Imports, and on save
 // A later item adds a file of its own and a struct for its state.
 #pragma once
 
@@ -55,6 +62,20 @@ class Picker;
 struct PickerRow;
 class RenameBox;
 }
+
+// One row of the Problems list (LspSession::problemRows): a heading for a
+// file with its counts, or one of its problems, as the Mac's MCProblem.
+struct LspProblem {
+    bool heading = false;
+    std::string path;              // the file, as the tree spells it
+    // Where it is now: 0-based lines, UTF-16 columns.
+    int line = 0, column = 0, endLine = 0, endColumn = 0;
+    int severity = 1;              // 1 error, 2 warning, 3 information
+    std::string message;           // on one line (Lsp::problemOneLine)
+    std::string fullMessage;       // as the server sent it
+    std::string source, code;
+    int errors = 0, warnings = 0, others = 0;   // a heading's counts
+};
 
 class LspSession : public EditorObserver {
 public:
@@ -135,6 +156,39 @@ public:
     bool formatDocument(long selStart, long selEnd,
                         std::function<void(const std::string& note, bool error)> done);
 
+    // ---- the Problems list (LspSessionProblems.cpp, PARITY.md 2.2)
+    // Every diagnostic the window's servers published, a heading per file
+    // (files with errors first) and a row per problem, placed in each open
+    // tab's text as it is now; hints are left out, as VS Code's Problems
+    // leaves them. onProblemsChanged comes 50 ms after the last change.
+    std::function<void()> onProblemsChanged;
+    std::vector<LspProblem> problemRows();
+    // "2 errors, 1 warning", "No problems"; and the counts alone.
+    std::string problemCountsText();
+    int problemErrors();
+    int problemWarnings();
+    // Something to count: a server publishing or running for the window.
+    bool problemsKnown() const;
+    // A problem's file opened (a jump for Go Back when it is another) and
+    // its range selected.
+    void openProblem(const LspProblem& problem);
+    // F8 and Shift+F8: the next or previous problem in the file on show,
+    // wrapping, its message in the box at the caret, which the next caret
+    // move closes.
+    void nextProblem();
+    void previousProblem();
+
+    // ---- Organize Imports (LspSessionImports.cpp, PARITY.md 2.2)
+    // Shift+Alt+O: the servers' source.organizeImports action for the whole
+    // file, a tool's own (source.organizeImports.ruff) before a general
+    // server's (Lsp::pickOrganizeImports), through the workspace edit
+    // applier.
+    void organizeImports();
+    // editor.organize-imports-on-save, before Ctrl+S formats: false when no
+    // server of the file offers code actions (the save goes on); else
+    // `done` comes once, after the edit, nothing to do, a failure, or 5 s.
+    bool organizeImportsBeforeSave(std::function<void()> done);
+
     // EditorObserver
     void documentChanged(const std::string& path) override;
     void documentSaved(Document* d) override;
@@ -169,6 +223,22 @@ public:
     // The rename box, and its field.
     bool renameBoxVisible() const;
     GtkWidget* renameEntry() const;
+    // The hover box (Ctrl+Alt+I, F8's message) shows.
+    bool hoverVisible() const;
+    // The file on show's servers by name, the main one first ("fakelsp",
+    // "ruff").
+    std::vector<std::string> fileServerNames() const;
+    // Watched files (LspSessionWatch.cpp): the folders watched (and every
+    // folder below them, counted), the batches handed over, those the main
+    // thread had to match itself, the main thread's CPU time for the last
+    // one, and changes put through the watcher as a batch from the disk
+    // would go (type 1 created, 2 changed, 3 deleted).
+    std::vector<std::string> watchedFolders() const;
+    std::size_t watchedFolderCount() const;
+    std::size_t watchedBatches() const;
+    std::size_t watchedBatchesMatchedHere() const;
+    double lastWatchedBatchCpuMs() const;
+    void injectWatchedPaths(const std::vector<std::string>& paths, int type);
 
     // The parts' state (LspSessionPrivate.h).
     struct SyncState;
@@ -177,6 +247,9 @@ public:
     struct NavState;
     struct ActionsState;
     struct FolderToolsState;
+    struct AlsoState;
+    struct ProblemsState;
+    struct WatchState;
 
 private:
     // ---- shared by the parts (Lsp.cpp)
@@ -190,8 +263,12 @@ private:
     // when one has it open, and why there is none.
     std::string path_;
     std::string uri_;
-    std::shared_ptr<lspgtk::Server> server_;
+    std::shared_ptr<lspgtk::Server> server_;   // its main server
     std::string currentKey_;   // the file on show's server key, "" for none
+    // Its second server (Ruff beside the Python server), when it has one:
+    // the key ("python.also") and the server, running.
+    std::string alsoKey_;
+    std::shared_ptr<lspgtk::Server> alsoServer_;
     std::string note_;
     int docGen_ = 0;   // bumped by every edit of the file on show and every switch
     bool applyingEdit_ = false;   // the applier is at work: no typing, no lists closing
@@ -240,6 +317,31 @@ private:
     // starts them again (their notes and checks too).
     void stopServers(const std::vector<std::string>& keys);
     bool languageOf(const std::string& path, Lsp::Language& lang) const;
+    // The command lines to try for a key: the settings' own, else the
+    // defaults; a second server's the one it was wanted with.
+    std::vector<std::string> commandsForKey(const std::string& key) const;
+
+    // ---- the second server, and which of a file's servers answers
+    // (LspSessionAlso.cpp)
+    std::unique_ptr<AlsoState> also_;
+    // The second server a language wants for `path`, as the command to run,
+    // remembered for its key, or "": lsp.<server>.also from the settings,
+    // else Ruff's own server in a project that configures Ruff, and only
+    // when ruff is installed (Lsp::defaultAlsoCommand).
+    std::string alsoCommandFor(const std::string& server, const std::string& path);
+    // A running second server takes a tab's file: always when the settings
+    // name it, else when the project around the file configures Ruff.
+    bool alsoWantsPath(const std::string& path, const std::string& key);
+    bool projectConfiguresRuff(const std::string& path);
+    void forgetRuffConfiguration();
+    // The file on show's servers, the main one first; the one that answers
+    // a one-server request (Lsp::routeRequest: the main one, else another
+    // that offers it); and those asked for code actions.
+    std::vector<std::shared_ptr<lspgtk::Server>> fileServers() const;
+    std::shared_ptr<lspgtk::Server> serverFor(Lsp::Feature f) const;
+    std::vector<std::shared_ptr<lspgtk::Server>> serversFor(Lsp::Feature f) const;
+    // The status bar's line for the file's servers (Lsp::statusLine).
+    std::string serversStatus(int errors, int warnings) const;
 
     // ---- documents (LspSessionSync.cpp)
     std::unique_ptr<SyncState> sync_;
@@ -253,6 +355,8 @@ private:
     void syncOpenDocuments();
     void scheduleSync();
     void forgetServerDocuments(lspgtk::Server* s);
+    // How many edits a tab's document has had while a server has it open.
+    uint64_t documentEdits(uint64_t docId) const;
     void flushChanges();
     void scheduleChange();
     void watchBuffers();
@@ -268,12 +372,29 @@ private:
                             const std::vector<Lsp::Diagnostic>& list);
     void paintDiagnostics();
     void clearMarks();
-    void forgetDiagnostics(const std::string& uri);
+    // What one server said about a file (it closed there), what one server
+    // said about any file (it went), and everything.
+    void forgetDiagnostics(const std::string& uri, const std::string& serverKey);
+    void forgetServerDiagnostics(const std::string& serverKey);
     void forgetAllDiagnostics();
-    void countProblems(int& errors, int& warnings) const;
+    // The squiggles drawn on the file on show, by severity.
+    void countDrawn(int& errors, int& warnings) const;
     bool sameFile(const std::string& uriA, const std::string& uriB) const;
     std::string diagnosticAt(const GtkTextIter* it) const;
+    // Every server's diagnostics for a file, and one server's.
     std::vector<Lsp::Diagnostic> diagnosticsOf(const std::string& uri) const;
+    std::vector<Lsp::Diagnostic> diagnosticsOf(const std::string& uri,
+                                               const std::string& serverKey) const;
+    const Lsp::DiagnosticStore& diagnosticStore() const;
+    // The squiggles drawn now, hints left out, as character offsets, and
+    // their generation (it moves whenever they are drawn again).
+    std::vector<std::pair<size_t, size_t>> problemMarks(uint64_t* generation) const;
+
+    // ---- the Problems list (LspSessionProblems.cpp)
+    std::unique_ptr<ProblemsState> probs_;
+    void problemsChanged();
+    std::vector<Lsp::Problem> collectProblems();
+    void goToProblem(bool forward);
 
     // ---- completion (LspSessionCompletion.cpp)
     std::unique_ptr<CompletionState> cmp_;
@@ -301,7 +422,11 @@ private:
     void definitionArrived(const Json& result, int gen, const std::string& uri);
     void hoverArrived(const Json& result, int gen, const std::string& uri, long key,
                       bool popup);
-    void showHoverPopover(const std::string& text);
+    void showHoverPopover(const std::string& text, bool autohide = true);
+    // F8's message in the box at the caret, without the keyboard; the
+    // caret moving away closes it (hoverFollowsCaret).
+    void showProblemNote(const std::string& text);
+    void hoverFollowsCaret();
     void installNavigation();
     // A location's file opened (through onReveal, a jump for Go Back, when
     // it is another file) and its range selected.
@@ -332,7 +457,21 @@ private:
     void showPicker(const std::vector<lspgtk::PickerRow>& rows, int select, int width,
                     int maxRows);
     void acceptPickerRow(int row);
-    bool serverOffers(Lsp::Feature what, const char* missing);
+    // The file's server that answers `what` (serverFor), when it is ready
+    // and offers it; else null, the bell and a note, `missing` saying what
+    // it cannot do.
+    std::shared_ptr<lspgtk::Server> serverOffers(Lsp::Feature what, const char* missing);
+    // Every one of the file's servers offering code actions asked for those
+    // at `range` (each with its own diagnostics there), and `done` given the
+    // merged list (Lsp::mergeCodeActions, each action's origin an index
+    // into the servers) once all have answered, or after 3 s with what has;
+    // never when the file, the caret or the text has moved on meanwhile.
+    using CodeActionsDone =
+        std::function<void(std::vector<Lsp::CodeAction> actions,
+                           std::vector<std::shared_ptr<lspgtk::Server>> servers,
+                           const std::string& error)>;
+    void askCodeActions(Lsp::Range range, const std::vector<std::string>& only,
+                        CodeActionsDone done);
     void rememberAsked();
     bool stillAsAsked(int gen, int wanted, const std::string& uri) const;
     std::pair<int, int> nameRangeAt(int offset) const;
@@ -340,8 +479,12 @@ private:
     void commitRename(const std::string& name, int gen);
     std::string editorTextOf(const std::string& path) const;
     void referencesArrived(const Json& result, const Json& error, int gen, const std::string& uri);
-    void runCodeAction(const Lsp::CodeAction& action, std::shared_ptr<lspgtk::Server> server);
-    void performCodeAction(const Lsp::CodeAction& action, std::shared_ptr<lspgtk::Server> server);
+    // `then` runs once the action's edit went in, or its command was run
+    // (never after a failure).
+    void runCodeAction(const Lsp::CodeAction& action, std::shared_ptr<lspgtk::Server> server,
+                       std::function<void()> then = nullptr);
+    void performCodeAction(const Lsp::CodeAction& action, std::shared_ptr<lspgtk::Server> server,
+                           std::function<void()> then);
     void serverAppliesEdit(const std::weak_ptr<lspgtk::Server>& server, const Json& params,
                            Lsp::Client::ApplyEditReply reply);
 
@@ -366,10 +509,22 @@ private:
     void folderToolsChanged(const std::string& key);
 
     // ---- Format Document through the server (LspSessionFormatting.cpp)
-    // The file on show's server's client and name, when it has the file
-    // open; and that client when it formats.
-    Lsp::Client* clientOnShow(std::string* name = nullptr) const;
-    Lsp::Client* formattingClient(bool range, bool* useRange, std::string* name) const;
+    // The file on show's server that formats it (Lsp::routeFormatting over
+    // its servers, the main one first), and whether it formats a range.
+    std::shared_ptr<lspgtk::Server> formattingServer(bool range, bool* useRange) const;
+
+    // ---- watched files (LspSessionWatch.cpp)
+    std::unique_ptr<WatchState> watch_;
+    // The folders watched and the servers' watchers, after a server
+    // registered or dropped some, or started or stopped (in an idle).
+    void scheduleWatcherUpdate();
+    void updateFileWatcher();
+    std::vector<std::shared_ptr<lspgtk::Server>> watchingServers() const;
+    std::vector<Lsp::WatchTarget> watchTargets() const;
+    void filesChangedOnDisk(const std::vector<Lsp::FileChange>& changes,
+                            const std::vector<Lsp::WatchedBatch>& batches);
+    // Every server stopping: no watcher remade for each, then none.
+    void stopWatchingFiles();
 };
 
 // Stop every server the app started, now: shutdown and exit, then SIGTERM and

@@ -137,8 +137,43 @@ void WindowLayout::apply() {
     // nothing with it: the gesture is the right side's, not the bar's.
     gtk_widget_set_visible(browserBar_, f.browserBar);
     gtk_widget_set_visible(terminalBar_, f.terminalBar);
+    if (problems_)
+        gtk_widget_set_visible(problems_, problemsShown_ && !RightArea::maximizedNow(state_, nullptr, parts_));
     gtk_widget_queue_allocate(area_);
     if (onChanged) onChanged();
+}
+
+void WindowLayout::setProblemsPane(GtkWidget* problems) {
+    problems_ = problems;
+    gtk_widget_set_overflow(problems_, GTK_OVERFLOW_HIDDEN);
+    // Under the bars, which stay on top where they meet it.
+    gtk_widget_insert_before(problems_, area_, browserBar_);
+    apply();
+}
+
+void WindowLayout::setProblemsShown(bool shown) {
+    if (shown) {
+        // Maximize Pane ends: the list shows beside what was maximized.
+        if (state_.maximized) state_.maximized = false;
+        showRightArea();
+    }
+    problemsShown_ = shown;
+    apply();
+    if (!shown) collapseRightAreaIfEmpty();
+}
+
+// The Mac's: 30% of the height, at least 100 points, but never so tall that
+// the top goes under its smallest height (and the terminal under 80); with
+// nothing above or below it, all of it.
+double WindowLayout::problemsHeight(double H) const {
+    if (!problems_ || !problemsShown_ || RightArea::maximizedNow(state_, nullptr, parts_)) return 0;
+    const bool top = RightArea::topShown(state_, parts_);
+    const bool term = RightArea::shows(state_, RightArea::Pane::Terminal, parts_);
+    if (!top && !term) return H;
+    const double want = std::max(std::round(H * 0.3), 100.0);
+    const double room = std::max(60.0, H - limits_.minTop - (term ? limits_.minTerminal : 0) -
+                                            (top && term ? kBar : 0));
+    return std::max(0.0, std::min(want, room));
 }
 
 bool WindowLayout::focusInside(GtkWidget* pane) const {
@@ -311,7 +346,7 @@ void WindowLayout::showRightArea() {
 }
 
 void WindowLayout::collapseRightAreaIfEmpty() {
-    if (!RightArea::empty(state_, parts_) || rightCollapsed()) return;
+    if (!RightArea::empty(state_, parts_) || rightCollapsed() || problemsShown_) return;
     if (sidebarVisible_) sidebarWidth_ = gtk_paned_get_position(GTK_PANED(hpaned_));
     // Never a window with nothing in it: a hidden sidebar comes back.
     if (!sidebarVisible_) {
@@ -391,6 +426,12 @@ void WindowLayout::areaMeasure(GtkWidget* w, GtkOrientation o, int, int* min, in
     const RightArea::Minimums m = self->measureMinimums();
     double width = 0, height = 0;
     RightArea::minimumSize(self->state_, self->limitsFor(m), m, &width, &height, self->parts_);
+    // The Problems list's smallest share, and its own smallest width.
+    if (self->problems_ && self->problemsShown_ &&
+        !RightArea::maximizedNow(self->state_, nullptr, self->parts_)) {
+        height += 60;
+        width = std::max<double>(width, measureMin(self->problems_, GTK_ORIENTATION_HORIZONTAL));
+    }
     *min = *nat = (int)std::ceil(o == GTK_ORIENTATION_HORIZONTAL ? width : height);
 }
 
@@ -403,7 +444,19 @@ void WindowLayout::allocateArea(int W, int H) {
     // from the same numbers.
     const RightArea::Minimums m = measureMinimums();
     limits_ = limitsFor(m);
-    frames_ = RightArea::layout(state_, W, H, limits_, parts_);
+    // The Problems list takes its height from between the top and the
+    // terminal: the rest is laid out as before in what is left, and the
+    // terminal and its bar move down below the list.
+    problemsH_ = problemsHeight(H);
+    const double rest = std::max(0.0, H - problemsH_);
+    frames_ = RightArea::layout(state_, W, rest, limits_, parts_);
+    double listTop = rest;
+    if (frames_.terminal)
+        listTop = frames_.terminalBar ? frames_.terminalBarRect.y : frames_.terminalRect.y;
+    if (problemsH_ > 0) {
+        frames_.terminalRect.y += problemsH_;
+        frames_.terminalBarRect.y += problemsH_;
+    }
     auto place = [](GtkWidget* child, bool on, const RightArea::Rect& r) {
         if (!child || !on || !gtk_widget_get_visible(child)) return;
         const GdkRectangle a = pixels(r);
@@ -412,6 +465,12 @@ void WindowLayout::allocateArea(int W, int H) {
     place(editor_, frames_.editor, frames_.editorRect);
     place(browser_, frames_.browser, frames_.browserRect);
     place(terminal_, frames_.terminal, frames_.terminalRect);
+    if (problems_ && gtk_widget_get_visible(problems_)) {
+        int min = 0, nat = 0;
+        gtk_widget_measure(problems_, GTK_ORIENTATION_HORIZONTAL, -1, &min, &nat, nullptr, nullptr);
+        gtk_widget_measure(problems_, GTK_ORIENTATION_VERTICAL, -1, &min, &nat, nullptr, nullptr);
+        place(problems_, problemsH_ > 0, RightArea::Rect{0, listTop, (double)W, problemsH_});
+    }
     for (Dragging which : {Dragging::Browser, Dragging::Terminal}) {
         GtkWidget* bar = which == Dragging::Browser ? browserBar_ : terminalBar_;
         if (!gtk_widget_get_visible(bar)) continue;
@@ -495,8 +554,12 @@ void WindowLayout::dragTo(double pos) {
     const RightArea::State before = state_;
     const double W = gtk_widget_get_width(area_), H = gtk_widget_get_height(area_);
     const RightArea::Hid hid =
-        dragging_ == Dragging::Browser ? RightArea::dragBrowserBar(state_, pos, W, limits_, parts_)
-                                       : RightArea::dragTerminalBar(state_, pos, H, limits_, parts_);
+        dragging_ == Dragging::Browser
+            ? RightArea::dragBrowserBar(state_, pos, W, limits_, parts_)
+            // The terminal's bar is laid out below the Problems list, in
+            // what the list leaves.
+            : RightArea::dragTerminalBar(state_, pos - problemsH_, std::max(0.0, H - problemsH_),
+                                         limits_, parts_);
     const bool shownChanged = before.editorHidden != state_.editorHidden ||
                               before.browserVisible != state_.browserVisible;
     if (shownChanged) {

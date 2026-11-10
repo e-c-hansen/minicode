@@ -187,6 +187,27 @@ bool Formatting::formatBeforeSaving() {
     return true;
 }
 
+bool Formatting::beforeSaving(bool organize, bool format) {
+    if (organize && canFormat()) {
+        const uint64_t tab = editor_->active()->id();
+        std::weak_ptr<int> alive = alive_;
+        const bool started = lsp_->organizeImportsBeforeSave([this, alive, tab, format] {
+            // Dropped meanwhile: the tab left the screen and was saved then.
+            if (alive.expired() || saveTab_ != tab || !editor_->active() ||
+                editor_->active()->id() != tab)
+                return;
+            saveTab_ = 0;
+            if (format && formatBeforeSaving()) return;
+            if (host_.save) host_.save(editor_->active());
+        });
+        if (started) {
+            saveTab_ = tab;
+            return true;
+        }
+    }
+    return format && formatBeforeSaving();
+}
+
 // The formatter is done (or its result was dropped): the save Ctrl+S asked
 // for happens now, if it still waits.
 void Formatting::finishSave() {

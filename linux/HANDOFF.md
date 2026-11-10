@@ -2452,6 +2452,60 @@ Traps:
   (a throwaway program showed it); `runGitWithin` keeps git's own answer
   then.
 
+### 31. Problems, the second server, watched files and Organize Imports (done, November 2026; `PARITY.md` item 2.2)
+
+What later items build on:
+- **Diagnostics are kept per file and per server** (`Lsp::DiagnosticStore`
+  in `DiagState`, keyed by the server's settings key, "python" or
+  "python.also"), drawn merged (`Lsp::mergedDiagnosticSpans`), each
+  message tagged with its source and code ("(Ruff F401)"). A server
+  going erases all it said (`forgetServerDiagnostics`), a file closing
+  on one server what that server said about it. Files no tab has keep
+  what their server published, for the list.
+- **The Problems list** (`src/ProblemsPanel.{h,cpp}`, rows from
+  `LspSessionProblems.cpp`): `LspSession::problemRows()` places each open
+  tab's problems on its text as it is now and caches each file's rows by
+  the store's generation and the tab's edit count (`documentEdits`, from
+  the sync part); `onProblemsChanged` comes 50 ms after a change. The
+  panel sits between the top and the terminal (`WindowLayout::
+  setProblemsPane` and `setProblemsShown`, the Mac's 30% rule; the
+  terminal's bar is dragged in what the list leaves), its counts in the
+  status bar left of the servers' line. F8's message uses the hover box
+  without autohide (`showProblemNote`), so the keyboard stays in the
+  editor and the next F8 works; the caret leaving closes it.
+- **The second server** (`LspSessionAlso.cpp`): `alsoKey_` and
+  `alsoServer_` beside `server_` for the file on show; `uri_` is set when
+  either runs. One-server requests go through `serverFor(feature)`
+  (`Lsp::routeRequest`), code actions through `askCodeActions` (every
+  server offering them, each with its own diagnostics, merged, 3 s at
+  most), which Organize Imports shares (`LspSessionImports.cpp`). The
+  status line is `Lsp::statusLine`; with the main server missing its note
+  comes first.
+- **Watched files** (`LspSessionWatch.cpp`, the watcher in
+  `src/LspWatcher.{h,cpp}`): every client offers dynamic registration
+  (`setFileWatching(true)` in `serverForKey`). inotify watches one folder
+  at a time, so the watcher keeps a `GFileMonitor` per folder below the
+  roots (`Lsp::watchRoots`, `Lsp::watchDescends`: never .git or a
+  package's folders), at most 16,384, on a thread with its own main
+  context; a folder that appears is read and its files reported as
+  created. Batches are classified, coalesced and matched there
+  (`Lsp::prepareWatched`); the main thread only writes the message.
+- **Organize on save**: `Formatting::beforeSaving(organize, format)` from
+  `act_save`, the same `saveTab_` marker as the formatter's wait.
+- **For checks**: `MCGuiApp().problems` (`rowTexts`, `selectedRow`,
+  `rowWidget`, `statusText`), `LspSession::fileServerNames`,
+  `hoverVisible`, `watchedFolders`, `watchedFolderCount`,
+  `watchedBatches`, `injectWatchedPaths`. A stand-in `ruff` (a script
+  exec'ing build/fakelsp) gives a server the name ruff.
+- **Traps**: replacing the list's model takes the keyboard from the row
+  that had it (the focused GtkListItemWidget goes); `setRows` does
+  nothing for the same rows and gives the list the keyboard back after a
+  real change. An autohide popover takes the keyboard, so a window
+  accelerator that checks the editor has it (F8) then rings the bell.
+- **Not done**: the Mac's Language Servers popover and its cards, the
+  Problems list's right-click menu (Copy, Copy Message), and restarting a
+  crashed server.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

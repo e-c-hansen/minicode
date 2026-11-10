@@ -25,8 +25,12 @@
 //   - format.on-save: Ctrl+S formats, then saves; Save All and auto-save
 //     never format, and auto-save leaves a tab whose Ctrl+S waits. A Ctrl+S
 //     is never lost: the tab leaving the screen first is saved as it is.
-//   - editor.organize-imports-on-save waits for the port's code actions
-//     (item 2.2).
+//   - editor.organize-imports-on-save (PARITY.md 2.2): Ctrl+S first runs
+//     the servers' source.organizeImports (LspSession::
+//     organizeImportsBeforeSave, Ruff's own before a general server's),
+//     then formats when format.on-save is on, then saves; the same marker
+//     as the formatter's wait, so auto-save and a tab switch treat it the
+//     same way.
 #pragma once
 
 #include <gtk/gtk.h>
@@ -63,6 +67,11 @@ public:
     // save comes when it is done; false when the file has nothing to format
     // it, and the caller saves at once.
     bool formatBeforeSaving();
+    // Ctrl+S: imports organized first (`organize`, editor.organize-imports-
+    // on-save), then formatted (`format`, format.on-save), then saved. True
+    // when either started, and the save comes when they are done; false
+    // when neither has anything to do, and the caller saves at once.
+    bool beforeSaving(bool organize, bool format);
     // A tab whose Ctrl+S waits for its formatter (auto-save leaves it).
     bool saveWaits(const Document* d) const;
     // The tab on show is about to leave the screen (another tab, or it

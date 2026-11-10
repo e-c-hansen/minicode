@@ -115,6 +115,9 @@ const std::vector<LinuxRow>& linuxRows() {
         // Rename File's, on its own controller (the places do not overlap).
         {"editor.action.rename", "f2", 0, nullptr, nullptr},
         {"editor.action.quickFix", "ctrl+.", 0, nullptr, nullptr},
+        // VS Code's Linux key (PARITY.md 2.2); an editor command, so the
+        // program in the terminal keeps it.
+        {"editor.action.organizeImports", "alt+shift+o", 0, nullptr, nullptr},
         {"actions.find", "ctrl+f", 0, nullptr, nullptr},
         // The find bar (PARITY.md 1.6), VS Code's Linux keys: Ctrl+H shows
         // the replace row, F3 and Shift+F3 step (its Ctrl+G is Go to Line),
@@ -210,6 +213,9 @@ const std::vector<LinuxRow>& linuxRows() {
         {"git.undoCommit", "", 0, nullptr, nullptr},
         {"git.stashIncludeUntracked", "", 0, nullptr, nullptr},
         {"git.stashPop", "", 0, nullptr, nullptr},
+        // VS Code's Linux key (PARITY.md 2.2); with Shift, so it works from
+        // the terminal too.
+        {"workbench.actions.view.problems", "ctrl+shift+m", 0, nullptr, nullptr},
         {"minicode.toggleEditor", "ctrl+shift+e", 0, nullptr, nullptr},
         // The Mac's Ctrl+Cmd+M; VS Code has no key (its Toggle Maximize
         // Editor Group is a chord), so Ctrl+Alt with the letter, which GNOME
@@ -275,6 +281,10 @@ const std::vector<LinuxRow>& linuxRows() {
         {"editor.action.revealDefinition", "f12", 0, nullptr, nullptr},
         // VS Code's Linux key (PARITY.md 2.1); in the terminal the program's.
         {"editor.action.goToReferences", "shift+f12", 0, nullptr, nullptr},
+        // VS Code's Linux keys (PARITY.md 2.2); editor commands, so in the
+        // terminal the program has them.
+        {"editor.action.marker.next", "f8", 0, nullptr, nullptr},
+        {"editor.action.marker.prev", "shift+f8", 0, nullptr, nullptr},
 
         // ---- the editor's own keys (PARITY.md 1.9). Move and Copy Line
         // are VS Code's (see Add Cursor above), in the Edit menu here, which

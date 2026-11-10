@@ -166,6 +166,18 @@ gui_sources = [
   'src/Formatting.cpp',
   'src/FormatRunner.cpp',
   'src/LspSessionFormatting.cpp',
+  # Problems, the second server, watched files and Organize Imports
+  # (PARITY.md 2.2): the list's rows and F8 (LspSessionProblems.cpp) and the
+  # list itself (ProblemsPanel.cpp), Ruff beside the Python server and which
+  # server answers what (LspSessionAlso.cpp), files changed on disk for the
+  # servers' watchers (LspSessionWatch.cpp, the watcher's thread in
+  # LspWatcher.cpp), and Organize Imports (LspSessionImports.cpp).
+  'src/LspSessionProblems.cpp',
+  'src/ProblemsPanel.cpp',
+  'src/LspSessionAlso.cpp',
+  'src/LspSessionWatch.cpp',
+  'src/LspWatcher.cpp',
+  'src/LspSessionImports.cpp',
   'src/MediaView.cpp',
   # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp, and so
   # are the LaTeX preview's two files, which need poppler too.

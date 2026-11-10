@@ -3,7 +3,9 @@
 // program is chosen and run, where the folder's own tools are asked about:
 // LspSessionFolderTools.cpp), what is done when one exits or refuses the
 // handshake, stopping them for a new folder, new settings or a new answer
-// about the folder's tools, and the status bar's text.
+// about the folder's tools, and the status bar's text. A file's second
+// server (Ruff beside the Python server) is chosen in LspSessionAlso.cpp and
+// started here like any other.
 #include "LspSessionPrivate.h"
 
 using lspgtk::Server;
@@ -14,20 +16,12 @@ void LspSession::updateStatus() {
     std::string s;
     if (!transient_.empty()) {
         s = transient_;
-    } else if (server_) {
-        if (server_->client().state() != Lsp::Client::State::Ready) {
-            s = server_->name() + " starting…";
-        } else {
-            int errors = 0, warnings = 0;
-            countProblems(errors, warnings);
-            std::string parts;
-            if (errors)
-                parts = std::to_string(errors) + (errors == 1 ? " error" : " errors");
-            if (warnings)
-                parts += (parts.empty() ? "" : ", ") + std::to_string(warnings) +
-                         (warnings == 1 ? " warning" : " warnings");
-            s = server_->name() + ": " + (parts.empty() ? "no problems" : parts);
-        }
+    } else if (server_ || alsoServer_) {
+        // The squiggles drawn, which leave out diagnostics about text typed
+        // over since they came, so the count says what the squiggles say.
+        int errors = 0, warnings = 0;
+        countDrawn(errors, warnings);
+        s = serversStatus(errors, warnings);
     } else {
         s = note_;
     }
@@ -54,7 +48,7 @@ void LspSession::note(const std::string& message) {
 }
 
 bool LspSession::noServer() {
-    if (server_ && !uri_.empty()) return false;
+    if ((server_ || alsoServer_) && !uri_.empty()) return false;
     gtk_widget_error_bell(view_);
     flash(note_.empty() ? "No language server for this file" : note_);
     return true;
@@ -64,7 +58,8 @@ bool LspSession::noServer() {
 
 std::string LspSession::settingsSignature(const Settings& s) const {
     std::string sig = s.lspEnabled() ? "1" : "0";
-    for (const std::string& k : Settings::lspServers()) sig += "|" + s.lspCommand(k);
+    for (const std::string& k : Settings::lspServers())
+        sig += "|" + s.lspCommand(k) + "|" + s.lspCommand(Lsp::alsoKey(k));
     // Servers of the user's own, the files every server is for, and the
     // Python the Python servers are given.
     for (const std::string& k : s.lspCustomServers()) sig += "|" + k + "=" + s.lspCommand(k);
@@ -95,9 +90,7 @@ std::shared_ptr<Server> LspSession::runningServer(const std::string& key) const 
 }
 
 std::shared_ptr<Server> LspSession::launchServer(const std::string& key, std::string* note) {
-    std::vector<std::string> commands;
-    if (!settings_.lspCommand(key).empty()) commands.push_back(settings_.lspCommand(key));
-    else commands = Lsp::defaultCommands(key);
+    const std::vector<std::string> commands = commandsForKey(key);
     // The folder's own tools (LspSessionFolderTools.cpp): a Python server is
     // looked for beside the interpreter it gets, and one that would run the
     // folder's code starts without it, or waits for the folder's answer.
@@ -148,7 +141,15 @@ std::shared_ptr<Server> LspSession::serverForKey(const std::string& key) {
     // stopping server is dropped rather than drawn over the new one's.
     Server* self = server.get();
     c.onReady = [alive, this, self] {
-        if (!alive.expired() && !self->stopping()) updateStatus();
+        if (alive.expired() || self->stopping()) return;
+        updateStatus();
+        problemsChanged();   // the counts show once a server runs
+    };
+    // Files changed on disk, for the watchers the server registers
+    // (LspSessionWatch.cpp): offered because this port sends them.
+    c.setFileWatching(true);
+    c.onWatchersChanged = [alive, this, self] {
+        if (!alive.expired() && !self->stopping()) scheduleWatcherUpdate();
     };
     c.onDiagnostics = [alive, this, self](const std::string& uri,
                                           const std::vector<Lsp::Diagnostic>& list) {
@@ -193,11 +194,21 @@ void LspSession::initializeFailed(Server* s, const std::string& message) {
     }
     notes_[s->key()] = note;   // not tried again until the folder or settings change
     forgetServerDocuments(s);
+    scheduleWatcherUpdate();
+    if (alsoServer_.get() == s) {
+        alsoServer_.reset();
+        if (!server_) uri_.clear();
+        updateStatus();
+    }
     if (server_.get() == s) {
         server_.reset();
-        uri_.clear();
         note_ = note;
-        clearMarks();
+        if (!alsoServer_) {
+            uri_.clear();
+            clearMarks();
+        } else {
+            paintDiagnostics();
+        }
         closeCompletion();
         updateStatus();
     }
@@ -213,11 +224,24 @@ void LspSession::serverExited(Server* s) {
         if (!s->stopping()) notes_[s->key()] = s->name() + " stopped";
     }
     forgetServerDocuments(s);
+    scheduleWatcherUpdate();
+    if (alsoServer_.get() == s) {
+        alsoServer_.reset();
+        if (!server_) {
+            uri_.clear();
+            clearMarks();
+        }
+        updateStatus();
+    }
     if (server_.get() == s) {
         server_.reset();
-        uri_.clear();
         note_ = s->stopping() ? "" : notes_[s->key()];
-        clearMarks();
+        if (!alsoServer_) {
+            uri_.clear();
+            clearMarks();
+        } else {
+            paintDiagnostics();
+        }
         closeCompletion();
         updateStatus();
     }
@@ -234,15 +258,19 @@ void LspSession::stopServers(const std::vector<std::string>& keys) {
         notes_.erase(k);
         forgetProjectCode(k);
     }
+    scheduleWatcherUpdate();
 }
 
 void LspSession::stopAllServers() {
+    watch_->stoppingAll = true;
     for (auto& kv : servers_) {
         forgetServerDocuments(kv.second.get());
         kv.second->stop();
     }
     servers_.clear();
     notes_.clear();
+    watch_->stoppingAll = false;
+    stopWatchingFiles();
     forgetAllProjectCode();
     forgetAllDiagnostics();
 }

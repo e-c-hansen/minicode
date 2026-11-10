@@ -969,8 +969,33 @@ its server comes first here (2.0).
   rust-analyzer; the list's and the box's look; the box's keyboard under
   GNOME on Wayland with IBus, and Ctrl+. there (an input method's emoji key
   in some setups).
-- [ ] **2.2 Problems**, the second server, watched files, and Organize
+- [x] **2.2 Problems**, the second server, watched files, and Organize
   Imports. Mac: `ProblemsPanel`, `LspWatcher`.
+  *Verified in Xvfb, 2026-11-10* (`HANDOFF.md` item 31): `lsp:watch-roots`
+  holds the core's new rules, and four suites against the scripted server
+  press real keys and clicks. `problems`: Ctrl+Shift+M lists three files'
+  problems (one no tab has) by file, errors first, hints left out, the
+  status bar counting them; Down and Up skip a heading, Enter and a click
+  open a problem, Escape and Ctrl+W, F8 and Shift+F8 wrapping with the
+  message at the caret, a closed tab's problems dropped, the counts' click.
+  `second_server`: a stand-in ruff on PATH runs as "ruff server" for a file
+  below a ruff.toml only; both servers' diagnostics drawn, listed and
+  tagged "(Ruff F401)"; hover to the main server only; Ctrl+. lists both
+  servers' fixes, each naming its server, and runs Ruff's. `lsp_watch`:
+  registered globs get created, changed and deleted files (in a folder
+  made after watching began, and below a folder outside the project),
+  never a .txt, .git or anything after unregistering; 20,000 changes
+  matched off the main thread (0.4 ms of its CPU). `organize_imports`:
+  Shift+Alt+O runs Ruff's source.organizeImports.ruff over the main
+  server's bare one, one undo step; Ctrl+S organizes, then formats, then
+  writes; off, or by auto-save, nothing is asked; a silent server holds a
+  save 3 s. They fail without the tag (1 check), without watching new
+  folders (3), and without organizing on save (5). Keys (D1): VS Code's
+  Linux Ctrl+Shift+M, F8, Shift+F8 and Shift+Alt+O. Needs the owner: a
+  real basedpyright and ruff (Ruff's diagnostics, fixes and imports, and
+  basedpyright seeing a module written to disk), inotify's watch limit on
+  a large tree with a .venv, and the list's look and its keys under GNOME
+  on Wayland.
 - [x] **2.3 Server and tool consent.** A folder's own `.venv`, `node_modules`,
   and project configuration are never run unasked. Mac: "Servers that run the
   folder's code" and "needs the user's yes" in `CLAUDE.md`. This goes in with
