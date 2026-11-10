@@ -10,8 +10,10 @@
 // its own pane and the editor, the browser and the terminal hidden in each
 // of the six orders staying hidden, the file tree then having the window,
 // each toggle bringing its pane back at its size; a file opened from the
-// tree while the editor is hidden showing it; Toggle Sidebar hiding only the
-// sidebar; and the find bar on the editor's side. The Mac has these in
+// tree, the preview key, and Focus Editor showing a hidden editor; the
+// sidebar's divider dragged to the right edge giving the tree the window,
+// and Toggle Editor opening the right side again; Toggle Sidebar hiding only
+// the sidebar; and the find bar on the editor's side. The Mac has these in
 // EditorController+Layout.mm and +Panels.mm, and the rules in
 // src/RightAreaLayout.h, whose `rightarea:*` core tests hold them.
 #include "Harness.h"
@@ -349,6 +351,32 @@ MC_GUI_SUITE(layout) {
     MCGuiWait("the editor shows again, the other way round", 10, [] {
         return showing(1 << kEditor) && !L()->rightCollapsed() &&
                MCGuiApp().editor->inPreview() == (gEditorHides == 0);
+    });
+
+    showOnly(1 << kTerminal);
+    MCGuiWait("the terminal alone, with the keyboard", 10, [] {
+        return MCGuiApp().terminal->owns(focusWidget());
+    });
+    MCGuiStep("Focus Editor, by its key", [] { MCGuiKey("ctrl+1"); });
+    MCGuiWait("the editor shows again, with the keyboard", 10, [] {
+        return showing((1 << kEditor) | (1 << kTerminal)) &&
+               gtk_widget_has_focus(MCGuiApp().editor->textView());
+    });
+
+    // ------------------------- the sidebar's divider dragged to the right
+    MCGuiStep("the sidebar's divider dragged to 20 px from the window's right edge", [] {
+        gSidebarW = gtk_widget_get_width(L()->sidebar());
+        const double y = gtk_widget_get_height(L()->widget()) / 2;
+        MCGuiDrag(L()->widget(), gSidebarW + 2, y, gtk_widget_get_width(L()->widget()) - 20, y);
+    });
+    MCGuiWait("it snaps to the edge: the tree has the window", 10, [] {
+        return L()->rightCollapsed() &&
+               gtk_widget_get_width(L()->sidebar()) >= gtk_widget_get_width(L()->widget()) - 12;
+    });
+    MCGuiStep("Toggle Editor, by its key", [] { MCGuiKey("ctrl+shift+e"); });
+    MCGuiWait("the right side opens at the sidebar's old width, the editor shown", 10, [] {
+        return !L()->rightCollapsed() && near(gtk_widget_get_width(L()->sidebar()), gSidebarW) &&
+               showing((1 << kEditor) | (1 << kTerminal));
     });
 
     // ---------------------------------- the sidebar and the find bar
