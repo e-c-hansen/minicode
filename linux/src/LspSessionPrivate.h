@@ -13,10 +13,12 @@
 #include "Lsp.h"
 #include "LspPicker.h"
 #include "LspProcess.h"
+#include "LspWatcher.h"
 #include "Utf8Offsets.h"
 
 #include <climits>
 #include <cstdlib>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -83,6 +85,16 @@ inline std::string bufferText(GtkTextBuffer* b) {
     return out;
 }
 
+// `fn` on the main loop after `ms` milliseconds (0: the next turn). The
+// caller's function checks that what it needs is still there.
+inline void afterMs(guint ms, std::function<void()> fn) {
+    auto* f = new std::function<void()>(std::move(fn));
+    g_timeout_add_full(G_PRIORITY_DEFAULT, ms, [](gpointer p) -> gboolean {
+        (*static_cast<std::function<void()>*>(p))();
+        return G_SOURCE_REMOVE;
+    }, f, [](gpointer p) { delete static_cast<std::function<void()>*>(p); });
+}
+
 // Whether UTF-8 text holds a character outside the Basic Multilingual Plane,
 // which takes two UTF-16 units and one GtkTextIter character.
 inline bool hasAstral(const char* text, size_t len) {
@@ -120,6 +132,9 @@ struct LspSession::SyncState {
         uint64_t docId;
     };
     std::map<GtkTextBuffer*, std::unique_ptr<Watch>> watched;
+    // Each document's edits counted, so what was placed in its text (the
+    // Problems list's rows) knows when the text moved on.
+    std::map<uint64_t, uint64_t> edits;
     guint changeTimer = 0;   // didChange, 0.3 s after typing pauses
     guint syncIdle = 0;      // syncOpenDocuments after the tabs changed
     bool syncing = false;
@@ -128,14 +143,12 @@ struct LspSession::SyncState {
 
 // ---- diagnostics (LspSessionDiagnostics.cpp)
 struct LspSession::DiagState {
-    // What the servers published, by document URI: the list, and the text
-    // the server had been sent when it computed them (Client::textFor), so
-    // they can be placed on the text as it is when the tab comes on show.
-    struct Published {
-        std::vector<Lsp::Diagnostic> list;
-        std::shared_ptr<const std::u16string> base;
-    };
-    std::map<std::string, Published> byUri;
+    // What the servers published, by document URI and server (its settings
+    // key: "python", "python.also"), so one server's list never replaces
+    // another's: each list with the text the server had been sent when it
+    // computed them (Client::textFor), so they can be placed on the text
+    // as it is when the tab comes on show.
+    Lsp::DiagnosticStore store;
     // The squiggles in the buffer on show, each with marks for the tooltip.
     struct Mark {
         GtkTextMark* start = nullptr;
@@ -144,6 +157,7 @@ struct LspSession::DiagState {
         std::string message;
     };
     std::vector<Mark> marks;
+    uint64_t marksGeneration = 0;   // bumped whenever the marks are made again
     GtkTextTag* tags[4] = {};   // error, warning, information, hint
 };
 
@@ -173,7 +187,9 @@ struct LspSession::ActionsState {
     std::string pickerKind;                  // "references", "fixes", "" for none
     std::vector<Lsp::Location> refRows;      // a references row's place; a heading's empty
     std::vector<Lsp::CodeAction> actions;    // the fixes list's
-    std::weak_ptr<lspgtk::Server> actionServer;
+    // The servers asked, in the order mergeCodeActions numbers them
+    // (CodeAction::origin).
+    std::vector<std::weak_ptr<lspgtk::Server>> actionServers;
     int renameGen = 0, referencesGen = 0, actionGen = 0;
     // The caret, the selection and the text (docGen_) when a request went
     // out: an answer is for that, or dropped.
@@ -192,6 +208,9 @@ struct LspSession::NavState {
     std::string hoverText;
     std::string lastHover;
     int hoverGen = 0, definitionGen = 0;
+    // The box shows a problem's message for F8 (not taking the keyboard),
+    // at this character; the caret moving away closes it.
+    long noteAt = -1;
 };
 
 // ---- the folder's own tools (LspSessionFolderTools.cpp)
@@ -200,4 +219,43 @@ struct LspSession::FolderToolsState {
     int listener = 0;          // FolderConsent::listen's
     // Lsp::checkProjectCode's verdict per server key, as last started.
     std::map<std::string, Lsp::ProjectCodeCheck> projectCode;
+};
+
+// ---- the second server (LspSessionAlso.cpp)
+struct LspSession::AlsoState {
+    // The command each second server key was wanted with ("ruff server"),
+    // for launchServer.
+    std::map<std::string, std::string> commands;
+    // Whether the project around a folder configures Ruff, until the next
+    // file comes on show (a ruff.toml may have been written since).
+    std::map<std::string, bool> ruffConfigured;
+};
+
+// ---- the Problems list and F8 (LspSessionProblems.cpp)
+struct LspSession::ProblemsState {
+    // One file's problems, kept until its diagnostics change (the store's
+    // generation) or the text they were placed in does (its tab's edits),
+    // so a publish for one file rebuilds that file's rows only.
+    struct File {
+        std::vector<Lsp::Problem> problems;
+        uint64_t generation = 0;
+        bool inTab = false;          // placed in a tab's text, not as published
+        uint64_t docId = 0, edits = 0;
+        std::string path;            // the tree's spelling, "" when none
+    };
+    std::map<std::string, File> files;
+    guint reportTimer = 0;           // onProblemsChanged, 50 ms after the last change
+    // F8: the marks the last step went through (their generation), and to
+    // which, so several problems at one place are each visited.
+    uint64_t stepMarks = 0;
+    long stepIndex = -1;
+};
+
+// ---- watched files (LspSessionWatch.cpp)
+struct LspSession::WatchState {
+    std::unique_ptr<lspgtk::FileWatcher> watcher;
+    bool stoppingAll = false;     // every server stops: the watcher goes once, after
+    guint updateIdle = 0;         // updateFileWatcher, once the registrations are in
+    size_t batches = 0, matchedHere = 0;
+    double lastBatchCpuMs = 0;
 };

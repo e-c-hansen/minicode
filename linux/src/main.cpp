@@ -69,6 +69,7 @@
 #include "BackupStore.h"
 #include "Persistence.h"
 #include "PalettePanel.h"
+#include "ProblemsPanel.h"
 #include "NavHistoryUi.h"
 #include "Zoom.h"
 #include "StartupLog.h"
@@ -120,6 +121,9 @@ struct App {
     Formatting* format = nullptr;
     ConsentBar* consentBar = nullptr;
     int consentListener = 0;
+    // The Problems list above the terminal and its counts in the status bar
+    // (ProblemsPanel.h, PARITY.md 2.2).
+    ProblemsPanel* problems = nullptr;
 
 #ifdef MINICODE_ENABLE_TERMINAL
     Terminal* terminal = nullptr;
@@ -625,9 +629,11 @@ static void act_open(GSimpleAction*, GVariant*, gpointer userp) {
 
 static void act_save(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    // format.on-save: Ctrl+S formats first and saves when that is done (Save
-    // All, auto-save and the close question's Save never format).
-    if (g.settings->settings().formatOnSave() && app->format && app->format->formatBeforeSaving())
+    // editor.organize-imports-on-save, then format.on-save: Ctrl+S organizes
+    // and formats first and saves when that is done (Save All, auto-save and
+    // the close question's Save do neither).
+    const Settings& st = g.settings->settings();
+    if (app->format && app->format->beforeSaving(st.organizeImportsOnSave(), st.formatOnSave()))
         return;
     saveCurrent(app);
 }
@@ -1053,6 +1059,12 @@ static void act_keep_tab(GSimpleAction*, GVariant*, gpointer userp) {
 // is the shell's (it deletes a word).
 static void act_close_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
+    // The Problems list with the keyboard closes, as the Mac's Cmd+W.
+    if (app->problems && app->problems->hasFocus()) {
+        app->problems->hide();
+        app->layout->focusAfterClosingPanel();
+        return;
+    }
 #ifdef MINICODE_ENABLE_BROWSER
     GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(app->window));
     if (app->browser && app->layout->browserShown() &&
@@ -1651,6 +1663,29 @@ static void act_quick_fix(GSimpleAction*, GVariant*, gpointer userp) {
     if (editorFocused(app)) app->lsp->showQuickFixes();
 }
 
+// Organize Imports, Shift+Alt+O (PARITY.md 2.2, LspSessionImports.cpp).
+static void act_organize_imports(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (editorFocused(app)) app->lsp->organizeImports();
+}
+
+// The Problems list, Ctrl+Shift+M, and F8 and Shift+F8 through the file's
+// problems (PARITY.md 2.2, ProblemsPanel.h, LspSessionProblems.cpp).
+static void act_toggle_problems(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->problems) app->problems->toggle(true);
+}
+
+static void act_next_problem(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (editorFocused(app)) app->lsp->nextProblem();
+}
+
+static void act_previous_problem(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (editorFocused(app)) app->lsp->previousProblem();
+}
+
 // The palette (PalettePanel.h): the commands (Ctrl+Shift+P, F1), the folder's
 // files (Ctrl+P), Go to Line (Ctrl+G) and the file's symbols (Ctrl+Shift+O)
 // are one box, chosen by its first character. A file from Quick Open opens
@@ -1855,6 +1890,12 @@ static std::string hintsText(App* app) {
     row("editor.action.rename", "Rename symbol");
     row("editor.action.goToReferences", "Find all references");
     row("editor.action.quickFix", "Quick fix");
+    row("editor.action.organizeImports", "Organize imports");
+    row("workbench.actions.view.problems",
+        std::string("Problems    (") + (app->problems && app->problems->shown() ? "shown" : "hidden") +
+            ")");
+    row("editor.action.marker.next", "Next problem");
+    row("editor.action.marker.prev", "Previous problem");
 
     heading("Panes");
     row("workbench.action.toggleSidebarVisibility", "Sidebar");
@@ -2300,6 +2341,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     FolderConsent::unlisten(app->consentListener);
     delete app->format;    // before the session and the editor it asks
     app->format = nullptr;
+    delete app->problems;  // before the session it lists
+    app->problems = nullptr;
     delete app->consentBar;
     app->consentBar = nullptr;
     delete app->lsp;
@@ -2560,6 +2603,26 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->lsp->onStatus = [app](const std::string& text) {
         gtk_label_set_text(GTK_LABEL(app->lspLabel), text.c_str());
         if (!app->dead && app->consentBar) app->consentBar->refresh();
+        if (!app->dead && app->problems) app->problems->update();
+    };
+    // The Problems list above the terminal, and its counts in the status bar
+    // left of the servers' line (PARITY.md 2.2).
+    app->problems = new ProblemsPanel(app->lsp, ProblemsPanel::Host{
+        [app] { return app->rootDir; },
+        [app](bool shown) {
+            if (!app->dead) app->layout->setProblemsShown(shown);
+        },
+        [app] {
+            if (!app->dead) app->editor->focusActiveDocument();
+        },
+        [app] {
+            if (!app->dead) app->layout->focusAfterClosingPanel();
+        }});
+    app->layout->setProblemsPane(app->problems->widget());
+    gtk_box_insert_child_after(GTK_BOX(statusBar), app->problems->statusLabel(),
+                               app->editor->largeFileNote());
+    app->lsp->onProblemsChanged = [app] {
+        if (!app->dead && app->problems) app->problems->update();
     };
     // The folder's own tools (PARITY.md 2.3): the bar under the tabs asks
     // about them for the servers, and Format Document asks for its own.
@@ -2599,6 +2662,10 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "renamesymbol",   G_CALLBACK(act_rename_symbol));
     addAction(app, "references",     G_CALLBACK(act_references));
     addAction(app, "quickfix",       G_CALLBACK(act_quick_fix));
+    addAction(app, "organizeimports", G_CALLBACK(act_organize_imports));
+    addAction(app, "problems",       G_CALLBACK(act_toggle_problems));
+    addAction(app, "nextproblem",    G_CALLBACK(act_next_problem));
+    addAction(app, "previousproblem", G_CALLBACK(act_previous_problem));
     addAction(app, "gotobracket",    G_CALLBACK(act_go_to_bracket));
     addAction(app, "open",           G_CALLBACK(act_open));
     addAction(app, "save",           G_CALLBACK(act_save));

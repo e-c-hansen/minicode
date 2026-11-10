@@ -926,6 +926,21 @@ std::vector<FileChange> coalesceFileChanges(const std::vector<FileChange>& chang
 // Paths never reported, as VS Code's files.watcherExclude: inside .git,
 // .hg/store, and node_modules' packages (node_modules/x/**).
 bool watchExcluded(const std::string& path);
+// A watcher that watches folder by folder (inotify, on Linux, where one
+// watch never reaches below its folder) looks into `dir` (absolute, no
+// trailing slash) only when a file there could be reported: never .git,
+// .hg/store, or a node_modules package's own folders, whose files
+// watchExcluded leaves out (node_modules itself is looked into, for the
+// packages coming and going).
+bool watchDescends(const std::string& dir);
+// The folders a window watches for its servers: its folder (unless it is
+// "" or "/") and the servers' RelativePattern bases (FileWatcher::base),
+// at most `limit` of them; of those, the ones `isDir` says are folders,
+// each once and none inside another (the outer one's watch reports it),
+// sorted. The Mac's wantedWatchFolders, for the GTK port.
+std::vector<std::string> watchRoots(const std::string& root, const std::vector<std::string>& bases,
+                                    const std::function<bool(const std::string&)>& isDir,
+                                    size_t limit = 64);
 
 // Matching a batch off the client's thread (the watcher's queue): a
 // branch switch or a pip install sends tens of thousands of changes, and

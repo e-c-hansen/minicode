@@ -18,18 +18,9 @@
 
 using lspgtk::Server;
 
-namespace {
+using lspui::afterMs;
 
-// `fn` on the main loop after `ms` milliseconds (0: the next turn).
-void afterMs(guint ms, std::function<void()> fn) {
-    auto* f = new std::function<void()>(std::move(fn));
-    g_timeout_add(ms, [](gpointer p) -> gboolean {
-        auto* f = static_cast<std::function<void()>*>(p);
-        (*f)();
-        delete f;
-        return G_SOURCE_REMOVE;
-    }, f);
-}
+namespace {
 
 std::string baseName(const std::string& p) {
     const size_t slash = p.find_last_of('/');
@@ -38,38 +29,34 @@ std::string baseName(const std::string& p) {
 
 }  // namespace
 
-Lsp::Client* LspSession::clientOnShow(std::string* name) const {
-    if (!server_ || uri_.empty() || server_->stopping()) return nullptr;
-    if (name) *name = server_->name();
-    return &server_->client();
-}
-
-Lsp::Client* LspSession::formattingClient(bool range, bool* useRange, std::string* name) const {
-    std::string n;
-    Lsp::Client* c = clientOnShow(&n);
-    if (!c) return nullptr;
-    // One server a file on this port (the second server is item 2.2).
-    Lsp::ServerView v;
-    v.main = true;
-    v.ready = c->state() == Lsp::Client::State::Ready;
-    v.capabilities = &c->capabilities();
+// The first of the file's servers (the main one first) that is running and
+// formats, a range where one is selected and a server offers that.
+std::shared_ptr<Server> LspSession::formattingServer(bool range, bool* useRange) const {
+    const std::vector<std::shared_ptr<Server>> servers = fileServers();
+    std::vector<Lsp::ServerView> views;
+    for (const std::shared_ptr<Server>& s : servers) {
+        Lsp::ServerView v;
+        v.main = !Lsp::isAlsoKey(s->key());
+        v.ready = s->client().state() == Lsp::Client::State::Ready;
+        v.capabilities = &s->client().capabilities();
+        views.push_back(v);
+    }
     bool ranged = false;
-    if (Lsp::routeFormatting({v}, range, &ranged) < 0) return nullptr;
+    const int i = Lsp::routeFormatting(views, range, &ranged);
+    if (i < 0) return nullptr;
     if (useRange) *useRange = ranged;
-    if (name) *name = n;
-    return c;
+    return servers[(size_t)i];
 }
 
-bool LspSession::canFormatDocument() const {
-    return formattingClient(false, nullptr, nullptr) != nullptr;
-}
+bool LspSession::canFormatDocument() const { return formattingServer(false, nullptr) != nullptr; }
 
 bool LspSession::formatDocument(long selStart, long selEnd,
                                 std::function<void(const std::string& note, bool error)> done) {
     bool useRange = false;
-    std::string name;
-    Lsp::Client* c = formattingClient(selEnd > selStart, &useRange, &name);
-    if (!c || !buffer_) return false;
+    const std::shared_ptr<Server> formatter = formattingServer(selEnd > selStart, &useRange);
+    if (!formatter || !buffer_) return false;
+    Lsp::Client* c = &formatter->client();
+    const std::string name = formatter->name();
     closeCompletion();
     flushChanges();
     const std::string uri = uri_;
@@ -90,7 +77,7 @@ bool LspSession::formatDocument(long selStart, long selEnd,
 
     // The server's documents' versions as asked: the applier refuses a file
     // that moved on since.
-    std::weak_ptr<Server> asker = server_;
+    std::weak_ptr<Server> asker = formatter;
     auto asked = std::make_shared<const Lsp::DocVersions>(c->versions());
     std::weak_ptr<int> alive = life_;
     auto handler = [alive, this, uri, gen, name, before, once, asker, asked](const Json& r,

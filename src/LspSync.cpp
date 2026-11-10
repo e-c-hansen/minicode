@@ -628,4 +628,32 @@ bool watchExcluded(const std::string& path) {
     return false;
 }
 
+bool watchDescends(const std::string& dir) {
+    return !dir.empty() && !watchExcluded(dir + "/x");
+}
+
+std::vector<std::string> watchRoots(const std::string& root, const std::vector<std::string>& bases,
+                                    const std::function<bool(const std::string&)>& isDir,
+                                    size_t limit) {
+    std::vector<std::string> want;
+    auto add = [&](std::string p) {
+        while (p.size() > 1 && p.back() == '/') p.pop_back();
+        if (p.empty() || p == "/" || p[0] != '/' || want.size() >= limit) return;
+        if (std::find(want.begin(), want.end(), p) == want.end()) want.push_back(p);
+    };
+    add(root);
+    for (const std::string& b : bases) add(b);
+    std::sort(want.begin(), want.end());
+    std::vector<std::string> kept;
+    for (const std::string& p : want) {
+        if (!isDir || !isDir(p)) continue;
+        bool inside = false;
+        for (const std::string& k : kept)
+            if (p == k || (p.size() > k.size() && p.compare(0, k.size(), k) == 0 && p[k.size()] == '/'))
+                inside = true;
+        if (!inside) kept.push_back(p);
+    }
+    return kept;
+}
+
 }  // namespace Lsp

@@ -45,9 +45,12 @@ std::vector<LspSession*>& lspAllSessions() {
 LspSession::LspSession(Editor* editor, const std::string& root, const Settings& settings)
     : editor_(editor), view_(editor->textView()),
       root_(root), settings_(settings),
+      also_(std::make_unique<AlsoState>()),
       sync_(std::make_unique<SyncState>()), diag_(std::make_unique<DiagState>()),
+      probs_(std::make_unique<ProblemsState>()),
       cmp_(std::make_unique<CompletionState>()), nav_(std::make_unique<NavState>()),
-      act_(std::make_unique<ActionsState>()), tools_(std::make_unique<FolderToolsState>()) {
+      act_(std::make_unique<ActionsState>()), tools_(std::make_unique<FolderToolsState>()),
+      watch_(std::make_unique<WatchState>()) {
     lspAllSessions().push_back(this);
     signature_ = settingsSignature(settings);
     useBuffer(editor->sourceBuffer());
@@ -118,6 +121,8 @@ LspSession::~LspSession() {
     if (sync_->syncIdle) g_source_remove(sync_->syncIdle);
     if (sync_->changeTimer) g_source_remove(sync_->changeTimer);
     if (flashId_) g_source_remove(flashId_);
+    if (probs_->reportTimer) g_source_remove(probs_->reportTimer);
+    stopWatchingFiles();
     dropPopovers();
 }
 
@@ -151,6 +156,7 @@ void LspSession::onMarkSet(GtkTextBuffer* buf, GtkTextIter*, GtkTextMark* mark, 
     if (mark != gtk_text_buffer_get_insert(buf)) return;
     self->completionFollowsCaret();
     self->actionsFollowCaret();
+    self->hoverFollowsCaret();
 }
 
 void LspSession::onUnrealize(GtkWidget*, gpointer selfp) {

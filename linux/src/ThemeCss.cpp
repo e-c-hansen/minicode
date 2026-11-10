@@ -194,6 +194,28 @@ std::string stylesheet(const Settings& s) {
            " background-color: rgba(0,122,204,0.50); }";
     css += ".minicode-git-list > row:focus-visible { outline: 1px solid #007ACC;"
            " outline-offset: -1px; }";
+    // The Problems list (PARITY.md 2.2): the terminal's surface, as the dock
+    // it shares, with the sidebar's for its heading, as on the Mac.
+    css += ".minicode-problems { background-color: " + bg(Surface::Terminal) + "; color: " +
+           fg(Surface::Terminal) + "; border-top: 1px solid #333333; }";
+    css += ".minicode-problems label { color: " + fg(Surface::Terminal) + "; font-size: 12px; }";
+    css += ".minicode-problems-header { background-color: " + bg(Surface::Sidebar) +
+           "; padding: 2px 6px 2px 12px; min-height: 22px; }";
+    css += ".minicode-problems-header label { color: " + fg(Surface::Sidebar) + "; }";
+    css += ".minicode-problems label.minicode-problems-title { font-size: 11px; font-weight: 600; }";
+    css += ".minicode-problems label.minicode-problems-counts { font-size: 11px; opacity: 0.7; }";
+    css += ".minicode-problems button.minicode-problems-close { min-height: 0; min-width: 0;"
+           " padding: 0 6px; background: none; box-shadow: none; color: " +
+           fg(Surface::Sidebar) + "; }";
+    css += ".minicode-problems label.minicode-problems-muted,"
+           " .minicode-problems label.minicode-problems-empty { opacity: 0.55; }";
+    css += ".minicode-problems label.minicode-problems-empty { margin: 8px 0 0 46px; }";
+    css += ".minicode-problems-list, .minicode-problems-list > row { background-color: transparent;"
+           " padding: 0; min-height: 22px; }";
+    css += ".minicode-problems-list > row:selected { background-color: " + tinted(0.20) + "; }";
+    css += ".minicode-problems-list:focus-within > row:selected {"
+           " background-color: rgba(0,122,204,0.50); }";
+    css += ".minicode-problem-row { padding-right: 12px; }";
     css += ".minicode-dir-icon  { color: #C09553; }";
     css += ".minicode-file-icon { color: #8A99A8; }";
 

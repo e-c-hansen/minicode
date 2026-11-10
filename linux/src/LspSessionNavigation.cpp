@@ -3,7 +3,11 @@
 // pointer (a diagnostic at once, the server's hover for the word once it
 // answers), Ctrl+Alt+I's popover at the caret, and F12 and Ctrl+click,
 // within the file or into another through onReveal. Moved here from Lsp.cpp
-// unchanged when the session was split (PARITY.md item 2.0).
+// unchanged when the session was split (PARITY.md item 2.0). Hover and
+// definition go to the file's server that answers them (serverFor: the
+// main one, else the second one when it offers them; PARITY.md 2.2), and the
+// box at the caret also shows F8's problem (LspSessionProblems.cpp), then
+// without the keyboard, closed by the caret moving.
 #include "LspSessionPrivate.h"
 
 #include <algorithm>
@@ -32,7 +36,30 @@ void LspSession::forgetHover() {
 }
 
 void LspSession::closeHover() {
+    nav_->noteAt = -1;
     if (nav_->hoverPopover) gtk_popover_popdown(GTK_POPOVER(nav_->hoverPopover));
+}
+
+bool LspSession::hoverVisible() const {
+    return nav_->hoverPopover && gtk_widget_get_visible(nav_->hoverPopover);
+}
+
+// F8's message: the box at the caret, as Ctrl+Alt+I's, but it never takes
+// the keyboard (so the next F8 still reaches the editor) and the caret
+// leaving the problem closes it, as the Mac's hover box closes.
+void LspSession::showProblemNote(const std::string& text) {
+    nav_->lastHover = text;
+    showHoverPopover(text, false);
+    GtkTextIter cur;
+    cursorIter(&cur);
+    nav_->noteAt = gtk_text_iter_get_offset(&cur);
+}
+
+void LspSession::hoverFollowsCaret() {
+    if (nav_->noteAt < 0 || !buffer_) return;
+    GtkTextIter cur;
+    cursorIter(&cur);
+    if (gtk_text_iter_get_offset(&cur) != nav_->noteAt) closeHover();
 }
 
 void LspSession::dropHoverPopover() {
@@ -45,7 +72,8 @@ void LspSession::dropHoverPopover() {
 std::string LspSession::tooltipAt(const GtkTextIter* itp, bool* requested) {
     if (requested) *requested = false;
     std::string text = diagnosticAt(itp);
-    if (server_ && !uri_.empty() && lspui::isIdent(gtk_text_iter_get_char(itp))) {
+    std::shared_ptr<Server> server = serverFor(Lsp::Feature::Hover);
+    if (server && lspui::isIdent(gtk_text_iter_get_char(itp))) {
         GtkTextIter ws = *itp;
         for (GtkTextIter p = ws;
              gtk_text_iter_backward_char(&p) && lspui::isIdent(gtk_text_iter_get_char(&p));)
@@ -61,7 +89,7 @@ std::string LspSession::tooltipAt(const GtkTextIter* itp, bool* requested) {
             std::weak_ptr<int> alive = life_;
             const int gen = docGen_;
             const std::string uri = uri_;
-            server_->client().hover(uri, positionOf(itp),
+            server->client().hover(uri, positionOf(itp),
                 [alive, this, gen, uri, key](const Json& r, const Json&) {
                     if (alive.expired() || gen != docGen_ || uri != uri_ ||
                         key != nav_->hoverAsked)
@@ -102,6 +130,12 @@ gboolean LspSession::onQueryTooltip(GtkWidget*, int x, int y, gboolean keyboard,
 
 void LspSession::showHoverInfo() {
     if (noServer()) return;
+    std::shared_ptr<Server> server = serverFor(Lsp::Feature::Hover);
+    if (!server) {
+        gtk_widget_error_bell(view_);
+        flash("No information here");
+        return;
+    }
     flushChanges();
     GtkTextIter cur;
     cursorIter(&cur);
@@ -109,7 +143,7 @@ void LspSession::showHoverInfo() {
     const std::string uri = uri_;
     const long key = gtk_text_iter_get_offset(&cur);
     std::weak_ptr<int> alive = life_;
-    server_->client().hover(uri, positionOf(&cur),
+    server->client().hover(uri, positionOf(&cur),
         [alive, this, gen, uri, key](const Json& r, const Json&) {
             if (!alive.expired()) hoverArrived(r, gen, uri, key, true);
         });
@@ -131,7 +165,7 @@ void LspSession::hoverArrived(const Json& result, int gen, const std::string& ur
     showHoverPopover(text);
 }
 
-void LspSession::showHoverPopover(const std::string& text) {
+void LspSession::showHoverPopover(const std::string& text, bool autohide) {
     if (!nav_->hoverPopover) {
         GtkWidget* popover = gtk_popover_new();
         nav_->hoverPopover = popover;
@@ -157,6 +191,11 @@ void LspSession::showHoverPopover(const std::string& text) {
     GdkRectangle r;
     caretRect(&cur, &r);
     gtk_popover_set_pointing_to(GTK_POPOVER(nav_->hoverPopover), &r);
+    // Ctrl+Alt+I's box takes the keyboard (Escape closes it); F8's does not.
+    if (gtk_widget_get_visible(nav_->hoverPopover) &&
+        gtk_popover_get_autohide(GTK_POPOVER(nav_->hoverPopover)) != autohide)
+        gtk_popover_popdown(GTK_POPOVER(nav_->hoverPopover));
+    gtk_popover_set_autohide(GTK_POPOVER(nav_->hoverPopover), autohide);
     gtk_popover_popup(GTK_POPOVER(nav_->hoverPopover));
 }
 
@@ -170,12 +209,13 @@ void LspSession::goToDefinition() {
 }
 
 void LspSession::definitionAt(const GtkTextIter* it) {
-    if (!server_ || uri_.empty()) return;
+    std::shared_ptr<Server> server = serverFor(Lsp::Feature::Definition);
+    if (!server) return;
     flushChanges();
     const int gen = ++nav_->definitionGen;
     const std::string uri = uri_;
     std::weak_ptr<int> alive = life_;
-    server_->client().definition(uri, positionOf(it),
+    server->client().definition(uri, positionOf(it),
         [alive, this, gen, uri](const Json& r, const Json&) {
             if (!alive.expired()) definitionArrived(r, gen, uri);
         });
@@ -235,7 +275,9 @@ void LspSession::onCtrlClick(GtkGestureClick* g, int n, double x, double y, gpoi
     LspSession* self = static_cast<LspSession*>(selfp);
     GdkModifierType state =
         gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(g));
-    if (n != 1 || !(state & GDK_CONTROL_MASK) || !self->server_ || self->uri_.empty()) return;
+    if (n != 1 || !(state & GDK_CONTROL_MASK) || self->uri_.empty() ||
+        !self->serverFor(Lsp::Feature::Definition))
+        return;
     int bx, by;
     gtk_text_view_window_to_buffer_coords(GTK_TEXT_VIEW(self->view_), GTK_TEXT_WINDOW_WIDGET,
                                           (int)x, (int)y, &bx, &by);

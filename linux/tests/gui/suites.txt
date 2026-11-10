@@ -55,3 +55,7 @@ AdjustSettingsSuite.cpp
 ThemesSuite.cpp
 SwatchesSuite.cpp
 ConfigWritesSuite.cpp
+ProblemsSuite.cpp
+SecondServerSuite.cpp
+LspWatchSuite.cpp
+OrganizeImportsSuite.cpp

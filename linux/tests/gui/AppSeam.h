@@ -25,6 +25,7 @@ class WindowLayout;
 class NavHistoryUi;
 class ConsentBar;
 class Formatting;
+class ProblemsPanel;
 
 // One editor window's parts. Pointers are the app's own and stay valid until
 // the window closes; terminal and browser are null in a build without them.
@@ -49,6 +50,7 @@ struct MCGuiAppWindow {
     NavHistoryUi* nav = nullptr;           // Go Back and Go Forward's history
     ConsentBar* consentBar = nullptr;      // the folder's own tools' question (2.3)
     Formatting* format = nullptr;          // Format Document (2.4)
+    ProblemsPanel* problems = nullptr;     // the Problems list and its counts (2.2)
     std::string rootDir;
 };
 

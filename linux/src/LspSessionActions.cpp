@@ -9,7 +9,11 @@
 // then its command run. A server's own workspace/applyEdit (often while
 // such a command runs) goes through the same applier
 // (LspSessionEdits.cpp). The picker keeps out of the keyboard's way: the
-// view's key controller hands it its keys (pickerKey).
+// view's key controller hands it its keys (pickerKey). With a second server
+// (PARITY.md 2.2) rename and references go to the main one (serverFor), and
+// Ctrl+. asks every server that offers code actions, each with its own
+// diagnostics there, and lists them merged, each saying whose it is
+// (askCodeActions, which Organize Imports shares).
 #include "LspSessionPrivate.h"
 
 #include "LspPicker.h"
@@ -53,7 +57,7 @@ void LspSession::closePicker() {
     act_->pickerKind.clear();
     act_->refRows.clear();
     act_->actions.clear();
-    act_->actionServer.reset();
+    act_->actionServers.clear();
 }
 
 void LspSession::closeRenameBox() {
@@ -160,7 +164,9 @@ void LspSession::acceptPickerRow(int row) {
         revealLocation(loc);
     } else if (act_->pickerKind == "fixes" && (size_t)row < act_->actions.size()) {
         const Lsp::CodeAction action = act_->actions[(size_t)row];
-        std::shared_ptr<Server> server = act_->actionServer.lock();
+        std::shared_ptr<Server> server;
+        if (action.origin >= 0 && (size_t)action.origin < act_->actionServers.size())
+            server = act_->actionServers[(size_t)action.origin].lock();
         closePicker();
         runCodeAction(action, server);
     }
@@ -185,21 +191,26 @@ void LspSession::rememberAsked() {
     act_->askedDocGen = docGen_;
 }
 
-// The file on show has a server that is ready and offers `what`; else the
-// bell and a note, `missing` saying what it cannot do.
-bool LspSession::serverOffers(Lsp::Feature what, const char* missing) {
-    if (noServer()) return false;
-    if (server_->client().state() != Lsp::Client::State::Ready) {
+// The file on show's server that answers `what` (the main one, else the
+// second one when it offers it), when it is ready; else the bell and a note,
+// `missing` saying what it cannot do.
+std::shared_ptr<Server> LspSession::serverOffers(Lsp::Feature what, const char* missing) {
+    if (noServer()) return nullptr;
+    std::shared_ptr<Server> server = serverFor(what);
+    // None answers: say so of the main one, or of the only one there is.
+    std::shared_ptr<Server> named = server ? server : server_ ? server_ : alsoServer_;
+    if (!named) return nullptr;
+    if (named->client().state() != Lsp::Client::State::Ready) {
         gtk_widget_error_bell(view_);
-        note(server_->name() + " is still starting");
-        return false;
+        note(named->name() + " is still starting");
+        return nullptr;
     }
-    if (!server_->client().offers(what)) {
+    if (!server || !server->client().offers(what)) {
         gtk_widget_error_bell(view_);
-        note(server_->name() + " can't " + missing);
-        return false;
+        note(named->name() + " can't " + missing);
+        return nullptr;
     }
-    return true;
+    return server;
 }
 
 // ---- rename
@@ -226,23 +237,24 @@ std::pair<int, int> LspSession::nameRangeAt(int offset) const {
 }
 
 void LspSession::renameSymbol() {
-    if (!serverOffers(Lsp::Feature::Rename, "rename")) return;
+    std::shared_ptr<Server> server = serverOffers(Lsp::Feature::Rename, "rename");
+    if (!server) return;
     closeTransients();
     flushChanges();
     const int gen = ++act_->renameGen;
     rememberAsked();
-    act_->renameServer = server_;
+    act_->renameServer = server;
     GtkTextIter cur;
     cursorIter(&cur);
     const int offset = gtk_text_iter_get_offset(&cur);
-    if (!server_->client().canPrepareRename()) {
+    if (!server->client().canPrepareRename()) {
         const std::pair<int, int> r = nameRangeAt(offset);
         openRename(r.first, r.second, gen, "");
         return;
     }
     const std::string uri = uri_;
     std::weak_ptr<int> alive = life_;
-    server_->client().prepareRename(uri, positionOf(&cur),
+    server->client().prepareRename(uri, positionOf(&cur),
         [alive, this, gen, uri, offset](const Json& r, const Json& e) {
             if (alive.expired() || !stillAsAsked(gen, act_->renameGen, uri)) return;
             const Lsp::PrepareRename p = Lsp::parsePrepareRename(r);
@@ -296,8 +308,8 @@ void LspSession::openRename(int a, int b, int gen, const std::string& placeholde
 
 void LspSession::commitRename(const std::string& name, int gen) {
     std::shared_ptr<Server> server = act_->renameServer.lock();
-    if (gen != act_->renameGen || !server || server != server_ || uri_.empty() ||
-        docGen_ != act_->askedDocGen)
+    if (gen != act_->renameGen || !server || (server != server_ && server != alsoServer_) ||
+        uri_.empty() || docGen_ != act_->askedDocGen)
         return;
     if (name == act_->renameOld) return;
     // Every tab's text as it is, so uses in unsaved tabs are renamed too.
@@ -350,7 +362,8 @@ void LspSession::commitRename(const std::string& name, int gen) {
 // ---- references
 
 void LspSession::findReferences() {
-    if (!serverOffers(Lsp::Feature::References, "find references")) return;
+    std::shared_ptr<Server> server = serverOffers(Lsp::Feature::References, "find references");
+    if (!server) return;
     closeTransients();
     flushChanges();
     syncOpenDocuments();
@@ -360,7 +373,7 @@ void LspSession::findReferences() {
     cursorIter(&cur);
     const std::string uri = uri_;
     std::weak_ptr<int> alive = life_;
-    server_->client().references(uri, positionOf(&cur), true,
+    server->client().references(uri, positionOf(&cur), true,
         [alive, this, gen, uri](const Json& r, const Json& e) {
             if (!alive.expired()) referencesArrived(r, e, gen, uri);
         });
@@ -462,6 +475,63 @@ void LspSession::referencesArrived(const Json& result, const Json& error, int ge
 
 // ---- quick fixes
 
+// Every one of the file's servers that offers code actions (or is still
+// starting) asked for those at `range`, each with its own diagnostics
+// there, which it matches its fixes on; the merged list handed on once all
+// have answered, or after 3 s with what has (a silent server holds the
+// others up no longer).
+void LspSession::askCodeActions(Lsp::Range range, const std::vector<std::string>& only,
+                                CodeActionsDone done) {
+    const std::vector<std::shared_ptr<Server>> servers = serversFor(Lsp::Feature::CodeActions);
+    const int gen = ++act_->actionGen;
+    rememberAsked();
+    const std::string uri = uri_;
+    struct Pending {
+        std::vector<std::vector<Lsp::CodeAction>> lists;
+        std::vector<std::shared_ptr<const Lsp::DocVersions>> versions;
+        size_t waiting = 0;
+        bool finished = false;
+        std::string error;
+    };
+    auto pending = std::make_shared<Pending>();
+    pending->lists.resize(servers.size());
+    pending->waiting = servers.size();
+    // Each server's open documents' versions as asked: the actions' edits
+    // are for those texts (the applier refuses newer ones).
+    for (const std::shared_ptr<Server>& server : servers)
+        pending->versions.push_back(
+            std::make_shared<const Lsp::DocVersions>(server->client().versions()));
+    std::weak_ptr<int> alive = life_;
+    auto finish = [alive, this, pending, gen, uri, servers, done] {
+        if (alive.expired() || pending->finished) return;
+        pending->finished = true;
+        // Another file, the caret moved, or the text changed: the actions
+        // are for what was there before.
+        if (!stillAsAsked(gen, act_->actionGen, uri)) return;
+        std::vector<Lsp::CodeAction> merged = Lsp::mergeCodeActions(pending->lists);
+        for (Lsp::CodeAction& a : merged)
+            if (a.origin >= 0 && (size_t)a.origin < pending->versions.size())
+                a.asked = pending->versions[(size_t)a.origin];
+        done(merged, servers, merged.empty() ? pending->error : std::string());
+    };
+    for (size_t i = 0; i < servers.size(); i++) {
+        const std::shared_ptr<Server>& server = servers[i];
+        const Json context = Lsp::diagnosticsInRange(diagnosticsOf(uri, server->key()), range);
+        const bool canResolve = server->client().canResolveCodeAction();
+        server->client().codeActions(uri, range, context,
+            [pending, i, canResolve, finish](const Json& r, const Json& e) {
+                if (pending->finished) return;
+                const std::string why = errorText(e);
+                if (!why.empty()) pending->error = why;
+                else pending->lists[i] = Lsp::parseCodeActions(r, canResolve);
+                // Once the answer has been read: what follows talks to servers.
+                if (--pending->waiting == 0) lspui::afterMs(0, finish);
+            }, only);
+    }
+    if (servers.empty()) lspui::afterMs(0, finish);
+    else lspui::afterMs(3000, finish);
+}
+
 void LspSession::showQuickFixes() {
     if (!serverOffers(Lsp::Feature::CodeActions, "offer quick fixes")) return;
     closeTransients();
@@ -470,58 +540,50 @@ void LspSession::showQuickFixes() {
     gtk_text_buffer_get_selection_bounds(buffer_, &a, &b);
     const std::vector<Lsp::Diagnostic> diags = diagnosticsOf(uri_);
     const Lsp::Range range = Lsp::quickFixRange(diags, Lsp::Range{positionOf(&a), positionOf(&b)});
-    const Json context = Lsp::diagnosticsInRange(diags, range);
-    const int gen = ++act_->actionGen;
-    rememberAsked();
-    // The versions of the server's open documents as asked: the actions'
-    // edits are for those texts (applyEdit refuses newer ones).
-    auto versions = std::make_shared<const Lsp::DocVersions>(server_->client().versions());
-    const bool canResolve = server_->client().canResolveCodeAction();
-    std::weak_ptr<Server> weak = server_;
-    const std::string uri = uri_;
-    std::weak_ptr<int> alive = life_;
-    server_->client().codeActions(uri, range, context,
-        [alive, this, gen, uri, weak, versions, canResolve](const Json& r, const Json& e) {
-            if (alive.expired() || !stillAsAsked(gen, act_->actionGen, uri)) return;
-            const std::string why = errorText(e);
-            if (!why.empty()) {
-                gtk_widget_error_bell(view_);
-                note(why);
-                return;
+    askCodeActions(range, {}, [this](std::vector<Lsp::CodeAction> actions,
+                                     std::vector<std::shared_ptr<Server>> servers,
+                                     const std::string& error) {
+        if (!error.empty()) {
+            gtk_widget_error_bell(view_);
+            note(error);
+            return;
+        }
+        if (actions.empty()) {
+            note("No quick fixes");
+            return;
+        }
+        std::vector<lspgtk::PickerRow> rows;
+        for (const Lsp::CodeAction& a : actions) {
+            std::string kind = actionKindName(a.kind);
+            if (a.preferred) kind = kind.empty() ? "preferred" : kind + ", preferred";
+            // Which server offers it, when the file has more than one.
+            if (servers.size() > 1 && a.origin >= 0 && (size_t)a.origin < servers.size()) {
+                const std::string& name = servers[(size_t)a.origin]->name();
+                kind = kind.empty() ? name : kind + ", " + name;
             }
-            std::vector<Lsp::CodeAction> actions =
-                Lsp::mergeCodeActions({Lsp::parseCodeActions(r, canResolve)});
-            for (Lsp::CodeAction& a : actions) a.asked = versions;
-            if (actions.empty()) {
-                note("No quick fixes");
-                return;
-            }
-            std::vector<lspgtk::PickerRow> rows;
-            for (const Lsp::CodeAction& a : actions) {
-                std::string kind = actionKindName(a.kind);
-                if (a.preferred) kind = kind.empty() ? "preferred" : kind + ", preferred";
-                lspgtk::PickerRow row;
-                row.markup = escape(a.title);
-                if (!kind.empty())
-                    row.markup += "   <span foreground=\"#9CA3AF\">" + escape(kind) + "</span>";
-                rows.push_back(row);
-            }
-            act_->actions = actions;
-            act_->actionServer = weak;
-            act_->pickerKind = "fixes";
-            showPicker(rows, 0, 440, 10);
-        });
+            lspgtk::PickerRow row;
+            row.markup = escape(a.title);
+            if (!kind.empty())
+                row.markup += "   <span foreground=\"#9CA3AF\">" + escape(kind) + "</span>";
+            rows.push_back(row);
+        }
+        act_->actions = actions;
+        act_->actionServers.assign(servers.begin(), servers.end());
+        act_->pickerKind = "fixes";
+        showPicker(rows, 0, 440, 10);
+    });
 }
 
 // A chosen action: resolved first when it came without its edit and the
 // server can fill it in, then its edit applied and its command run.
-void LspSession::runCodeAction(const Lsp::CodeAction& action, std::shared_ptr<Server> server) {
+void LspSession::runCodeAction(const Lsp::CodeAction& action, std::shared_ptr<Server> server,
+                               std::function<void()> then) {
     if (!server || server->stopping() || !server->running()) return;
     std::weak_ptr<Server> weak = server;
     if (!action.hasEdit() && server->client().canResolveCodeAction() && action.raw) {
         std::weak_ptr<int> alive = life_;
-        server->client().resolveCodeAction(action, [alive, this, action, weak](const Json& r,
-                                                                               const Json& e) {
+        server->client().resolveCodeAction(action, [alive, this, action, weak, then](
+                                                       const Json& r, const Json& e) {
             if (alive.expired()) return;
             Lsp::CodeAction done = action;
             if (e.isNull()) {
@@ -529,14 +591,15 @@ void LspSession::runCodeAction(const Lsp::CodeAction& action, std::shared_ptr<Se
                 if (resolved.hasEdit()) done.edit = resolved.edit;
                 if (!done.hasCommand() && resolved.hasCommand()) done.command = resolved.command;
             }
-            later([this, done, weak] { performCodeAction(done, weak.lock()); });
+            later([this, done, weak, then] { performCodeAction(done, weak.lock(), then); });
         });
         return;
     }
-    later([this, action, weak] { performCodeAction(action, weak.lock()); });
+    later([this, action, weak, then] { performCodeAction(action, weak.lock(), then); });
 }
 
-void LspSession::performCodeAction(const Lsp::CodeAction& action, std::shared_ptr<Server> server) {
+void LspSession::performCodeAction(const Lsp::CodeAction& action, std::shared_ptr<Server> server,
+                                   std::function<void()> then) {
     if (action.hasEdit()) {
         std::string failure;
         const int n = applyEdit(Lsp::parseWorkspaceEdit(action.edit, lspui::canonicalUri),
@@ -546,15 +609,18 @@ void LspSession::performCodeAction(const Lsp::CodeAction& action, std::shared_pt
             note(failure);
             return;
         }
+        if (then && !action.hasCommand()) then();
     }
     if (action.hasCommand() && server && server->running() && !server->stopping()) {
         // The server makes its own edits with workspace/applyEdit while it
         // runs the command (serverAppliesEdit).
         std::weak_ptr<int> alive = life_;
-        server->client().executeCommand(action.command, [alive, this](const Json&, const Json& e) {
+        server->client().executeCommand(action.command, [alive, this, then](const Json&,
+                                                                            const Json& e) {
             if (alive.expired()) return;
             const std::string why = errorText(e);
             if (!why.empty()) note(why);
+            else if (then) later(then);
         });
     } else if (!action.hasEdit()) {
         note("The language server gave nothing to apply");

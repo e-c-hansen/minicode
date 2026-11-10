@@ -261,6 +261,35 @@ static void testLspWatchedFiles() {
         CHECK(!Lsp::watchExcluded("/w/.venv/lib/python3.13/site-packages/x.py"));
     }
 
+    GROUP("lsp:watch-roots");
+    {
+        // Folder by folder (the GTK port's inotify watches): never into
+        // .git or a package's own folder, but into node_modules, .hg and
+        // the rest, a .venv included.
+        CHECK(!Lsp::watchDescends("/w/.git") && !Lsp::watchDescends("/w/sub/.git/refs"));
+        CHECK(!Lsp::watchDescends("/w/.hg/store") && Lsp::watchDescends("/w/.hg"));
+        CHECK(Lsp::watchDescends("/w/node_modules") &&
+              !Lsp::watchDescends("/w/node_modules/react") &&
+              !Lsp::watchDescends("/w/node_modules/react/lib"));
+        CHECK(Lsp::watchDescends("/w") && Lsp::watchDescends("/w/.github") &&
+              Lsp::watchDescends("/w/.venv/lib/python3.13/site-packages"));
+        CHECK(!Lsp::watchDescends(""));
+        // The folders a window watches: the root and the bases outside it,
+        // existing, once, none inside another; never "/".
+        std::set<std::string> dirs = {"/w", "/w/sub", "/lib", "/lib-x", "/lib/ext"};
+        auto isDir = [&](const std::string &p) { return dirs.count(p) > 0; };
+        std::vector<std::string> r =
+            Lsp::watchRoots("/w", {"/w/sub", "/lib/ext", "/lib", "/gone", "/lib-x/", "/", "rel"},
+                            isDir);
+        CHECK(r == (std::vector<std::string>{"/lib", "/lib-x", "/w"}));
+        CHECK(Lsp::watchRoots("/", {"/lib"}, isDir) == std::vector<std::string>{"/lib"});
+        CHECK(Lsp::watchRoots("", {}, isDir).empty());
+        CHECK(Lsp::watchRoots("/w", {}, isDir) == std::vector<std::string>{"/w"});
+        // At most `limit` asked about, the root first.
+        CHECK(Lsp::watchRoots("/w", {"/lib", "/lib-x"}, isDir, 2) ==
+              (std::vector<std::string>{"/lib", "/w"}));
+    }
+
     GROUP("lsp:watch-register");
     {
         FakeServer srv;

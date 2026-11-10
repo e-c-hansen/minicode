@@ -1,9 +1,13 @@
 // LspSessionDiagnostics.cpp — LspSession's diagnostics (the Mac's
-// Lsp+Diagnostics.mm): what each open file's server published, kept while
-// its tab is open with the text it was computed on, and drawn as squiggles
-// (four tags of their own, which the gutter's dots read too) on the file on
-// show, placed on its text as it is now (Lsp::diagnosticSpans); a diagnostic
-// about text typed over since is left out until the server publishes again.
+// Lsp+Diagnostics.mm): what each server published, kept per file and per
+// server (Lsp::DiagnosticStore, so Ruff's list and the Python server's both
+// stand) with the text it was computed on, and drawn as squiggles (four
+// tags of their own, which the gutter's dots read too) on the file on show,
+// placed on its text as it is now (Lsp::mergedDiagnosticSpans); a
+// diagnostic about text typed over since is left out until the server
+// publishes again. Each says which server it is from, as VS Code adds it
+// ("(Ruff F401)"). A file no tab has keeps what its server said, for the
+// Problems list (LspSessionProblems.cpp).
 #include "LspSessionPrivate.h"
 
 #include "EditSpans.h"
@@ -58,46 +62,77 @@ void LspSession::clearMarks() {
         gtk_text_buffer_delete_mark(buffer_, m.end);
     }
     diag_->marks.clear();
+    diag_->marksGeneration++;
 }
 
-// A publish, for a file on show or in the background: kept with the text the
-// server had been sent when it computed them (Client::textFor, which is that
-// text while this runs), and drawn when it is the file on show.
+// A publish, for a file on show, in the background or with no tab: kept
+// with the text the server had been sent when it computed them
+// (Client::textFor, which is that text while this runs, or null for a file
+// it does not have open), beside every other server's list, and drawn when
+// it is the file on show. Diagnostics that came without a source get the
+// server's name, so each says where it is from.
 void LspSession::diagnosticsArrived(Server* s, const std::string& uriIn,
                                     const std::vector<Lsp::Diagnostic>& list) {
     const std::string uri = lspui::canonicalUri(uriIn);
-    DiagState::Published& p = diag_->byUri[uri];
-    p.list = list;
-    p.base = s->client().textFor(uriIn);
+    if (!diag_->store.publish(uri, s->key(), list, s->client().textFor(uriIn), s->name())) return;
     if (sameFile(uri, uri_)) {
         paintDiagnostics();
         updateStatus();
     }
+    problemsChanged();
 }
 
-void LspSession::forgetDiagnostics(const std::string& uri) {
-    diag_->byUri.erase(uri);
-    if (!uri_.empty() && sameFile(uri, uri_)) clearMarks();
+void LspSession::forgetDiagnostics(const std::string& uri, const std::string& serverKey) {
+    if (!diag_->store.erase(lspui::canonicalUri(uri), serverKey)) return;
+    if (!uri_.empty() && sameFile(uri, uri_)) paintDiagnostics();
+    problemsChanged();
+}
+
+void LspSession::forgetServerDiagnostics(const std::string& serverKey) {
+    if (!diag_->store.eraseServer(serverKey)) return;
+    if (!uri_.empty()) paintDiagnostics();
+    problemsChanged();
 }
 
 void LspSession::forgetAllDiagnostics() {
-    diag_->byUri.clear();
+    const bool had = !diag_->store.empty();
+    diag_->store.clear();
     clearMarks();
+    if (had) problemsChanged();
 }
 
 std::vector<Lsp::Diagnostic> LspSession::diagnosticsOf(const std::string& uri) const {
-    auto it = diag_->byUri.find(lspui::canonicalUri(uri));
-    return it == diag_->byUri.end() ? std::vector<Lsp::Diagnostic>() : it->second.list;
+    return diag_->store.merged(lspui::canonicalUri(uri));
 }
 
-void LspSession::countProblems(int& errors, int& warnings) const {
+std::vector<Lsp::Diagnostic> LspSession::diagnosticsOf(const std::string& uri,
+                                                       const std::string& serverKey) const {
+    const Lsp::DiagnosticStore::Set* set = diag_->store.find(lspui::canonicalUri(uri), serverKey);
+    return set ? set->list : std::vector<Lsp::Diagnostic>();
+}
+
+const Lsp::DiagnosticStore& LspSession::diagnosticStore() const { return diag_->store; }
+
+void LspSession::countDrawn(int& errors, int& warnings) const {
     errors = warnings = 0;
-    auto it = diag_->byUri.find(lspui::canonicalUri(uri_));
-    if (it == diag_->byUri.end()) return;
-    for (const Lsp::Diagnostic& d : it->second.list) {
-        if (d.severity == Lsp::Severity::Error) ++errors;
-        else if (d.severity == Lsp::Severity::Warning) ++warnings;
+    for (const DiagState::Mark& m : diag_->marks) {
+        if (m.severity == (int)Lsp::Severity::Error) ++errors;
+        else if (m.severity == (int)Lsp::Severity::Warning) ++warnings;
     }
+}
+
+std::vector<std::pair<size_t, size_t>> LspSession::problemMarks(uint64_t* generation) const {
+    std::vector<std::pair<size_t, size_t>> out;
+    if (generation) *generation = diag_->marksGeneration;
+    if (!buffer_) return out;
+    for (const DiagState::Mark& m : diag_->marks) {
+        if (m.severity == 4) continue;   // hints, as the list leaves them out
+        GtkTextIter a, b;
+        gtk_text_buffer_get_iter_at_mark(buffer_, &a, m.start);
+        gtk_text_buffer_get_iter_at_mark(buffer_, &b, m.end);
+        out.push_back({(size_t)gtk_text_iter_get_offset(&a), (size_t)gtk_text_iter_get_offset(&b)});
+    }
+    return out;
 }
 
 // The file on show's squiggles, from what its server published, placed on
@@ -105,15 +140,14 @@ void LspSession::countProblems(int& errors, int& warnings) const {
 void LspSession::paintDiagnostics() {
     clearMarks();
     if (!buffer_ || uri_.empty()) return;
-    auto it = diag_->byUri.find(lspui::canonicalUri(uri_));
-    if (it == diag_->byUri.end() || it->second.list.empty()) return;
-    const std::vector<Lsp::Diagnostic>& list = it->second.list;
+    const std::vector<const Lsp::DiagnosticStore::Set*> sets =
+        diag_->store.forUri(lspui::canonicalUri(uri_));
+    if (sets.empty()) return;
     const std::u16string now = utf16::fromUtf8(lspui::bufferText(buffer_));
-    const std::vector<Lsp::DiagnosticSpan> spans =
-        Lsp::diagnosticSpans(it->second.base.get(), now, list);
+    const std::vector<Lsp::MergedSpan> spans = Lsp::mergedDiagnosticSpans(sets, now);
     // UTF-16 offsets to characters, in one pass over the text.
     std::vector<size_t> units;
-    for (const Lsp::DiagnosticSpan& sp : spans) {
+    for (const Lsp::MergedSpan& sp : spans) {
         units.push_back(std::min(sp.start, now.size()));
         units.push_back(std::min(sp.end, now.size()));
     }
@@ -125,8 +159,8 @@ void LspSession::paintDiagnostics() {
         const size_t k = (size_t)(std::lower_bound(units.begin(), units.end(), unit) - units.begin());
         return k < points.size() ? points[k] : 0;
     };
-    for (const Lsp::DiagnosticSpan& sp : spans) {
-        const Lsp::Diagnostic& d = list[sp.index];
+    for (const Lsp::MergedSpan& sp : spans) {
+        const Lsp::Diagnostic& d = *sp.diag;
         GtkTextIter a, b;
         gtk_text_buffer_get_iter_at_offset(buffer_, &a, (int)charAt(sp.start));
         gtk_text_buffer_get_iter_at_offset(buffer_, &b, (int)charAt(sp.end));
@@ -151,6 +185,11 @@ void LspSession::paintDiagnostics() {
         const char* kind = sev == 1 ? "Error" : sev == 2 ? "Warning"
                          : sev == 3 ? "Info" : "Hint";
         m.message = std::string(kind) + ": " + d.message;
+        // Which server says so, as VS Code adds it: "(Ruff F401)".
+        const std::string from = d.code.empty()     ? d.source
+                                 : d.source.empty() ? d.code
+                                                    : d.source + " " + d.code;
+        if (!from.empty()) m.message += " (" + from + ")";
         diag_->marks.push_back(m);
     }
 }

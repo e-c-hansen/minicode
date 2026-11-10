@@ -9,7 +9,8 @@
 //               the editor's side (its find bar, tab strip and slot) on the
 //               left of the top, the browser on its right with a bar between
 //               them, and the terminal below both, across the whole width,
-//               with a bar above it
+//               with a bar above it; the Problems list (PARITY.md 2.2)
+//               between the top and the terminal while it shows
 //
 // The right side is a plain container with a custom layout manager, not
 // nested GtkPaneds: a paned draws no handle once a child is hidden, so the
@@ -94,6 +95,14 @@ public:
     // `pane` was shown or focused: Maximize Pane ends if it holds another.
     bool leaveMaximizedFor(RightArea::Pane pane);
 
+    // The Problems list (ProblemsPanel.h), which the layout holds from now
+    // on: between the top and the terminal at a fixed share of the height,
+    // as the Mac's relayoutRightArea places it; alone at the bottom it takes
+    // it all. Hidden while a pane is maximized.
+    void setProblemsPane(GtkWidget* problems);
+    void setProblemsShown(bool shown);
+    bool problemsShown() const { return problemsShown_; }
+
     // For the checks (tests/gui/AppSeam.h).
     GtkWidget* area() const { return area_; }
     GtkWidget* sidebar() const { return sidebar_; }
@@ -122,6 +131,9 @@ private:
     RightArea::Limits limitsFor(const RightArea::Minimums& m) const;
     void allocateArea(int width, int height);
     bool focusInside(GtkWidget* pane) const;
+    // The Problems list's height in a right side `height` tall (0 when it
+    // does not show), the Mac's rule.
+    double problemsHeight(double height) const;
     // A bar's rectangle grown by its grab area, in the right side's
     // coordinates, or false when it does not show.
     bool grabRect(Dragging which, GdkRectangle* out) const;
@@ -146,6 +158,9 @@ private:
     GtkWidget* terminal_ = nullptr;
     GtkWidget* browserBar_ = nullptr;
     GtkWidget* terminalBar_ = nullptr;
+    GtkWidget* problems_ = nullptr;
+    bool problemsShown_ = false;
+    double problemsH_ = 0;   // as of the last layout
     GtkGesture* drag_ = nullptr;
 
     RightArea::State state_;
