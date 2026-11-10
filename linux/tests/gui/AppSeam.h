@@ -14,6 +14,8 @@
 
 class Editor;
 class FileTree;
+class FindBar;
+class SearchPanel;
 class GitPanel;
 class LspSession;
 class PalettePanel;
@@ -34,8 +36,8 @@ struct MCGuiAppWindow {
     WindowLayout* layout = nullptr;        // the panes and their bars (WindowLayout.h)
     GtkWidget*  statusLabel = nullptr;
     GtkWidget*  settingsLabel = nullptr;   // problems in settings.conf and keys.conf
-    GtkWidget*  searchBar = nullptr;
-    GtkWidget*  searchEntry = nullptr;
+    FindBar*    findBar = nullptr;         // the editor's find and replace bar
+    SearchPanel* search = nullptr;         // Find in Folder, null until first shown
     GtkWidget*  hintsPanel = nullptr;      // the shortcut hints, and their text
     GtkWidget*  hintsLabel = nullptr;
     GtkWidget*  hintsHint = nullptr;       // the status bar's note on them

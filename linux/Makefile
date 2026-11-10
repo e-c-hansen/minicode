@@ -25,7 +25,8 @@ BIN      := $(BUILD)/minicode
 CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEdit.cpp \
         ../src/MarkdownTasks.cpp ../src/Settings.cpp ../src/LineComments.cpp \
         ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
-        ../src/Regex.cpp ../src/LatexDoc.cpp ../src/SyncTex.cpp \
+        ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp ../src/MultiCaret.cpp \
+        ../src/LatexDoc.cpp ../src/SyncTex.cpp \
         ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp \
         ../src/LspProtocol.cpp ../src/LspText.cpp ../src/LspServers.cpp \
         ../src/LspDiagnostics.cpp ../src/LspCompletion.cpp ../src/LspSync.cpp \
@@ -43,7 +44,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
 GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Document.cpp src/Tabs.cpp \
        src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp \
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp \
-       src/Search.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
+       src/Search.cpp src/FindBar.cpp src/MultiEdit.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
        src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp src/TermLinkPath.cpp \
        src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp \

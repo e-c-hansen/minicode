@@ -1036,9 +1036,13 @@ GNOME always has. A click on a color swatch opens a color picker under it,
 and the color applies live while you drag, as on the Mac.
 
 Besides the table, Enter and Shift Enter in the find bar find the next and
-previous match, Ctrl Shift C and Ctrl Shift V copy and paste in the
-terminal, and a Ctrl click on a file:line or URL in the terminal's output
-opens it.
+previous match (Enter in its replacement replaces one), Tab moves between
+its two fields and Escape closes it, from the bar or the editor; Enter in
+Replace in Folder's replacement replaces all after asking, and Ctrl Shift 1
+on a result replaces that match alone; Ctrl Shift C and Ctrl Shift V copy
+and paste in the terminal, where Alt with a letter goes to the program as
+Meta; and a Ctrl click on a file:line or URL in the terminal's output opens
+it.
 
 F2 and Delete work only while the file tree has the keyboard, so Delete in the
 editor still deletes text.

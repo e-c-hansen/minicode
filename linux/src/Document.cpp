@@ -135,6 +135,15 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     g_signal_connect(buffer_, "begin-user-action", G_CALLBACK(onBeginUserAction), this);
     g_signal_connect(buffer_, "end-user-action", G_CALLBACK(onEndUserAction), this);
     g_signal_connect(buffer_, "changed", G_CALLBACK(onChanged), this);
+    // GTK replays an undo or redo step edit by edit with no user action
+    // around it, so the highlighter followed each of the 80,000 edits of a
+    // Replace All's undo (40,000 matches, 19 s; PARITY.md 1.6). Taken as one
+    // action here, as the edit itself was. Only this object's flags: a
+    // user action on the buffer itself would clear GTK's redo queue.
+    g_signal_connect(buffer_, "undo", G_CALLBACK(onBeginUserAction), this);
+    g_signal_connect_after(buffer_, "undo", G_CALLBACK(onEndUserAction), this);
+    g_signal_connect(buffer_, "redo", G_CALLBACK(onBeginUserAction), this);
+    g_signal_connect_after(buffer_, "redo", G_CALLBACK(onEndUserAction), this);
     // Where its lines start, for the gutter; the buffer keeps it.
     BufferLines::attach(buffer_);
 }

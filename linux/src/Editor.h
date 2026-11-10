@@ -57,6 +57,9 @@ public:
 
     // The widget to drop into the layout: the tabs over the slot.
     GtkWidget* widget() const { return box_; }
+    // A widget over the slot (under the tabs), placed by its own alignment
+    // and margins: the find bar (FindBar.h).
+    void addOverlay(GtkWidget* w) { gtk_overlay_add_overlay(GTK_OVERLAY(slotOverlay_), w); }
 
     // The GtkTextView, and the buffer it shows: the active document's source,
     // its Markdown page, a message, or the welcome text with no tab open.
@@ -408,6 +411,7 @@ private:
     GtkWidget*     box_      = nullptr;   // the strip over the slot
     TabStrip*      strip_    = nullptr;
     GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_, media, LaTeX previews, diff
+    GtkWidget*     slotOverlay_ = nullptr;   // the slot, with the find bar over it
     GitDiffView*   diff_     = nullptr;   // made on the first diff
     MediaView*     media_    = nullptr;
     GtkWidget*     scroller_ = nullptr;

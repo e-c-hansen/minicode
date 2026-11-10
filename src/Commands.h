@@ -209,12 +209,13 @@ Keymap resolve(const std::string& fileText, std::vector<Error>* errors, Platform
 std::string defaultFileText(Platform p);
 
 // ---- Linux keys and the terminal (PARITY.md D1)
-// While the terminal has the keyboard, plain Ctrl keys and keys with no
-// modifier (F9, F12) are the program's unless the command is Global, so a
-// terminal command takes Ctrl+Shift. Keys with Shift or Alt stay the app's,
-// except VTE's own copy and paste (Ctrl+Shift+C and Ctrl+Shift+V) and the
-// two a shell reads as their Ctrl key (Ctrl+Shift+G as Ctrl+G, and
-// Ctrl+Shift+Space as Ctrl+Space). Does `k`, one of `c`'s keys, go to the
+// While the terminal has the keyboard, plain Ctrl keys, keys with no
+// modifier (F9, F12) and Alt with a letter alone (Meta to the program) are
+// the program's unless the command is Global, so a terminal command takes
+// Ctrl+Shift. Other keys with Shift or Alt stay the app's, except VTE's own
+// copy and paste (Ctrl+Shift+C and Ctrl+Shift+V) and the two a shell reads
+// as their Ctrl key (Ctrl+Shift+G as Ctrl+G, and Ctrl+Shift+Space as
+// Ctrl+Space). Does `k`, one of `c`'s keys, go to the
 // terminal rather than run `c` there? Says nothing of whether `c` applies
 // in the terminal at all (appliesIn).
 bool linuxTerminalTakes(const Command& c, const Key& k);

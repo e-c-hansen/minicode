@@ -11,6 +11,8 @@ TabViewersSuite.cpp
 LayoutSuite.cpp
 PaletteSuite.cpp
 SymbolsSuite.cpp
+FindBarSuite.cpp
+ReplaceInFolderSuite.cpp
 SessionsSuite.cpp
 BackupsSuite.cpp
 AutoSaveSuite.cpp

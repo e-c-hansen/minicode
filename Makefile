@@ -41,6 +41,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/LspDiagnostics.cpp src/LspCompletion.cpp src/LspSync.cpp src/LspFeatures.cpp \
             src/LspEdits.cpp \
             src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/Regex.cpp \
+            src/EditSpans.cpp src/FindRules.cpp \
             src/MarkdownEdit.cpp src/MarkdownTasks.cpp \
             src/GitStatus.cpp src/GitGraph.cpp src/GitModel.cpp src/MathTex.cpp src/EditorTabs.cpp \
             src/Formatter.cpp src/InstallHints.cpp src/LineDiff.cpp src/QuickDiff.cpp \

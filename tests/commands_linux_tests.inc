@@ -119,10 +119,9 @@ static void testLinuxCommandDefaults() {
     CHECK(d.keysOf("minicode.toggleHiddenFiles").size() == 1 &&
           HasKey(d, "minicode.toggleHiddenFiles", "ctrl+shift+."));
     // The keys they leave are free until the commands that take them come
-    // (Select Line, Select All Occurrences, Replace, the inline agent, Go to
-    // Symbol in Workspace, the panel's Ctrl+J).
-    for (const char *k : {"ctrl+l", "ctrl+shift+l", "ctrl+h", "ctrl+i", "ctrl+t", "ctrl+j",
-                          "ctrl+alt+t"}) {
+    // (Select Line, Select All Occurrences, the inline agent, Go to Symbol
+    // in Workspace, the panel's Ctrl+J).
+    for (const char *k : {"ctrl+l", "ctrl+shift+l", "ctrl+i", "ctrl+t", "ctrl+j", "ctrl+alt+t"}) {
         const bool free = d.commandsFor(K(k)).empty();
         if (!free) std::printf("  Linux: %s is %s\n", k, d.commandsFor(K(k))[0]->id);
         CHECK(free);
@@ -139,6 +138,24 @@ static void testLinuxCommandDefaults() {
           HasKey(d, "workbench.action.gotoSymbol", "ctrl+shift+o"));
     CHECK(d.commandFor(K("ctrl+shift+p"), When::Editor) == find("workbench.action.showCommands"));
     CHECK(d.commandFor(K("ctrl+g"), When::Tree) == find("workbench.action.gotoLine"));
+    // The find bar and Replace in Folder (PARITY.md 1.6): VS Code's Linux
+    // keys, but Replace in Folder's Ctrl+Shift+H, which is the shortcut
+    // hints' (minicode's own Shift key).
+    CHECK(d.keysOf("editor.action.startFindReplaceAction").size() == 1 &&
+          HasKey(d, "editor.action.startFindReplaceAction", "ctrl+h"));
+    CHECK(d.keysOf("editor.action.replaceOne").size() == 1 &&
+          HasKey(d, "editor.action.replaceOne", "ctrl+shift+1"));
+    CHECK(d.keysOf("editor.action.replaceAll").size() == 1 &&
+          HasKey(d, "editor.action.replaceAll", "ctrl+alt+enter"));
+    CHECK(HasKey(d, "toggleFindCaseSensitive", "alt+c") && HasKey(d, "toggleFindWholeWord", "alt+w") &&
+          HasKey(d, "toggleFindRegex", "alt+r") && HasKey(d, "togglePreserveCase", "alt+p") &&
+          HasKey(d, "toggleFindInSelection", "alt+l"));
+    CHECK(d.keysOf("workbench.action.replaceInFiles").size() == 1 &&
+          HasKey(d, "workbench.action.replaceInFiles", "ctrl+alt+shift+f"));
+    CHECK(d.commandFor(K("ctrl+shift+h"), When::Editor) == find("minicode.toggleShortcutHints"));
+    // Alt+C is Match Case's, but the task's in a Markdown file's editor.
+    CHECK(d.commandFor(K("alt+c"), When::Editor) == find("toggleFindCaseSensitive"));
+    CHECK(d.commandFor(K("alt+c"), When::Any) == find("toggleFindCaseSensitive"));
     // The tabs (PARITY.md 1.1): VS Code's Linux keys, but Reopen Closed Tab,
     // whose Ctrl+Shift+T stays Toggle Terminal's (minicode's own Shift key),
     // and Save All, whose VS Code key is a chord.
@@ -175,7 +192,7 @@ static void testLinuxCommandDefaults() {
     CHECK(d.commandFor(K("delete"), When::Tree) == find("moveFileToTrash"));
     CHECK(d.commandFor(K("delete"), When::Editor) == nullptr);
     CHECK(d.commandFor(K("alt+c"), When::Editor, "markdown") == find("minicode.markdown.toggleTask"));
-    CHECK(d.commandFor(K("alt+c"), When::Editor, "python") == nullptr);
+    CHECK(d.commandFor(K("alt+c"), When::Editor, "python") == find("toggleFindCaseSensitive"));
     CHECK(d.commandFor(K("ctrl+alt+l"), When::Editor, "markdown") ==
           find("minicode.markdown.toggleTask"));
     // The keymap gives Ctrl+Shift+V to the preview in the terminal too; the
@@ -237,6 +254,18 @@ static void testLinuxTerminalKeys() {
     }
     CHECK((plain == std::set<std::string>{"ctrl+`", "ctrl+0", "ctrl+1", "ctrl+tab", "ctrl+pagedown",
                                            "ctrl+pageup"}));
+    // Alt with a letter alone is Meta to the program: the find bar's
+    // options leave it its word keys; Alt with a digit (the tabs) and with
+    // Ctrl stays the app's.
+    CHECK(takes("toggleFindCaseSensitive", "alt+c"));
+    CHECK(takes("toggleFindWholeWord", "alt+w"));
+    CHECK(takes("toggleFindRegex", "alt+r"));
+    CHECK(takes("togglePreserveCase", "alt+p"));
+    CHECK(takes("toggleFindInSelection", "alt+l"));
+    CHECK(!takes("editor.action.replaceAll", "ctrl+alt+enter"));
+    CHECK(!takes("workbench.action.replaceInFiles", "ctrl+alt+shift+f"));
+    CHECK(!takes("editor.action.replaceOne", "ctrl+shift+1"));
+    CHECK(takes("editor.action.startFindReplaceAction", "ctrl+h"));
     // Close Tab's keys are the shell's there (Ctrl+W deletes a word).
     CHECK(takes("workbench.action.closeActiveEditor", "ctrl+w"));
     CHECK(takes("workbench.action.closeActiveEditor", "ctrl+f4"));

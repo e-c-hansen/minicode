@@ -176,6 +176,23 @@ Choices item 1.5 made, by the same rules:
 - Ctrl+T, VS Code's Go to Symbol in Workspace, stays free until item 2.12
   brings the command.
 
+Choices item 1.6 made, by the same rules:
+- The find bar's keys are VS Code's on Linux: Ctrl+H the replace row, F3
+  and Shift+F3, Ctrl+Shift+1 Replace, Ctrl+Alt+Enter Replace All, and Alt+C,
+  Alt+W, Alt+R, Alt+P and Alt+L for the options, which work from the editor
+  as well as the bar, as in VS Code. Alt+L is Find in Selection's, as in VS
+  Code, since the task key it took on the Mac is Ctrl+Alt+L here. Alt+C
+  stays the task key in a Markdown file's editor.
+- While the terminal has the keyboard, Alt with a letter alone is the
+  program's (Meta: readline's word moves and case changes), unless Global;
+  before, every key with Alt stayed the app's. Alt with a digit (the tabs)
+  and Ctrl+Alt keys are unchanged.
+- Replace in Folder is Ctrl+Alt+Shift+F, the Mac's Option+Shift+Cmd+F with
+  Ctrl+Alt for Option+Cmd, as Reopen Closed Tab's: VS Code's Ctrl+Shift+H
+  is the shortcut hints' (minicode's own Shift key). Ctrl+Shift+1 on a row
+  replaces its match alone, VS Code's key in its search view.
+- Select all matches (VS Code's Alt+Enter) waits for several carets (1.9).
+
 **D2. One `GtkTextView`, one `GtkTextBuffer` per tab.** Split `Editor` into
 the view and slot, and a `Document` holding what is per file: the buffer, its
 path, undo, the highlighter and its mirror, dirty state, and disk stamp. All
@@ -197,7 +214,7 @@ numbers, folds, and change bars are a widget set with
 the Mac's `replaceRanges:withStrings:actionName:`: one user action, last range
 first, each range its own buffer edit, so the highlighter, folds, and
 language server follow each one. Carets, rename, formatting, and agent edits
-all use it.
+all use it. It is `MultiEdit::apply` (`src/MultiEdit.h`), made in item 1.6.
 
 **D6. Nothing is put in the buffer that is not in the file.** A child anchor
 adds a character, which breaks every offset, the mirror, undo, and what the
@@ -407,8 +424,28 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   thread). Needs the owner: the look, F1 and Ctrl+Shift+O under GNOME with
   IBus, and Quick Open on a large real folder. The server's symbols and Go
   to Symbol in Workspace are item 2.12.
-- [ ] **1.6 Find and replace.** The find bar with case, word, regex, preserve
+- [x] **1.6 Find and replace.** The find bar with case, word, regex, preserve
   case, and in selection; Replace in Folder. `TextFind`, `FolderSearch`.
+  D5's function is `MultiEdit::apply` (HANDOFF.md item 20).
+  *Verified in Xvfb, 2026-11-09:* `findrules:*` and `editspans:*` hold the
+  core's rules (the seed, the count, the search in UTF-16 and code points,
+  the changes, the colors against the Mac's table), and the `find_bar` and
+  `replace_in_folder` suites press real keys: Ctrl+F seeded from a
+  selection or the word at the caret, the options changing the count,
+  a regex's groups in the replacement, Preserve Case, Find in Selection,
+  Enter, F3 and their Shift forms wrapping, Replace and Replace All undone
+  in one step, Escape from the bar and the editor; Replace All of 20,000
+  matches in a 100,000-line file in about 170 ms of main-thread CPU and its
+  undo in 1.6 s; the options' Alt keys going to a program in the terminal;
+  Replace in Folder counting and asking, a clean tab changed in place, a
+  tab with unsaved text left alone and named, a symlinked file replaced
+  once, a stale row refused, and files to include and exclude. They fail
+  without the primary selection fixes, without the selection taken away
+  during MultiEdit's edits (a minute), without Document's undo hook, and
+  with unsaved tabs not held back. Needs the owner: the bar's look in both
+  themes, the keys under GNOME on Wayland with IBus (whether an input method
+  takes the Alt letters), the primary selection on Wayland, AT-SPI's cost on
+  a large Replace All, and Replace in Folder's window.
 - [ ] **1.7 Brackets.** `BracketMatch`, `BracketPairs`, and Go to Bracket.
 - [ ] **1.8 Auto-closing pairs.** `AutoClose`, with VS Code's overtype and
   surround.

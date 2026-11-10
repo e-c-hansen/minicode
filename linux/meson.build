@@ -23,6 +23,11 @@ core_sources = [
   core_dir / 'FolderSearch.cpp',
   core_dir / 'TextFind.cpp',
   core_dir / 'Regex.cpp',
+  # The find bar's rules, several replacements over one text, and the word
+  # at the caret that seeds the query (PARITY.md 1.6).
+  core_dir / 'FindRules.cpp',
+  core_dir / 'EditSpans.cpp',
+  core_dir / 'MultiCaret.cpp',
   core_dir / 'LatexDoc.cpp',
   core_dir / 'SyncTex.cpp',
   core_dir / 'Json.cpp',
@@ -88,6 +93,9 @@ gui_sources = [
   'src/AppSettings.cpp',
   'src/ThemeCss.cpp',
   'src/Search.cpp',
+  # The find and replace bar, and edits with several ranges (PARITY.md D5).
+  'src/FindBar.cpp',
+  'src/MultiEdit.cpp',
   'src/Lsp.cpp',
   'src/MediaView.cpp',
   # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp, and so

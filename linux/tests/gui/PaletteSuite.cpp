@@ -16,6 +16,7 @@
 #include "Document.h"
 #include "Editor.h"
 #include "FileTree.h"
+#include "FindBar.h"
 #include "Json.h"
 #include "PalettePanel.h"
 
@@ -125,19 +126,17 @@ bool hiddenShown() {
     return on;
 }
 
-bool searchBarOpen() {
-    return gtk_search_bar_get_search_mode(GTK_SEARCH_BAR(MCGuiApp().searchBar));
-}
-GtkWidget* findText() {   // the find bar's text, where its keyboard is
+graphene_point_t gRowAt;   // where a tree row was, in the window
+
+bool searchBarOpen() { return MCGuiApp().findBar->shown(); }
+GtkWidget* findText() {   // the find bar's query field, where its keyboard is
     GtkWidget* f = focusWidget();
-    return f && GTK_IS_TEXT(f) && gtk_widget_is_ancestor(f, MCGuiApp().searchEntry) ? f : nullptr;
+    GtkWidget* q = MCGuiApp().findBar->findField();
+    return f && GTK_IS_TEXT(f) && (f == q || gtk_widget_is_ancestor(f, q)) ? f : nullptr;
 }
-// The find bar all the way open: keys typed while it still slides in were
-// lost now and then.
+// The find bar open with the keyboard in its query.
 bool findBarRevealed() {
-    GtkWidget* r = gtk_widget_get_ancestor(MCGuiApp().searchEntry, GTK_TYPE_REVEALER);
-    return searchBarOpen() && findText() && gtk_widget_get_mapped(findText()) &&
-           (!r || gtk_revealer_get_child_revealed(GTK_REVEALER(r)));
+    return searchBarOpen() && findText() && gtk_widget_get_mapped(findText());
 }
 std::string findBarText() {
     return findText() ? gtk_editable_get_text(GTK_EDITABLE(findText())) : "(no keyboard)";
@@ -296,19 +295,24 @@ MC_GUI_SUITE(palette) {
                gtk_editable_get_selection_bounds(GTK_EDITABLE(findText()), &a, &b) && a == 2 &&
                b == 4;
     });
-    MCGuiStep("the find bar shut", [] { MCGuiKey("ctrl+f"); });
+    MCGuiStep("the find bar shut", [] { MCGuiKey("escape"); });
     MCGuiWait("shut", 10, [] { return !searchBarOpen(); });
     MCGuiStep("the keyboard in the editor", [] { MCGuiClick(ed()->textView()); });
     MCGuiWait("it is", 10, editorHasKeyboard);
 
     // ------------------------------------------------- a click outside
-    MCGuiStep("a click outside the box, on a file in the tree", [] { MCGuiKey("ctrl+shift+p"); });
-    MCGuiWait("open", 10, [] { return pal()->isOpen() && fieldHasKeyboard(); });
-    MCGuiStep("clicked", [] {
+    // The sheet under the box covers the tree while the palette is open, so
+    // the row is found before it opens and the click aimed at its place.
+    MCGuiStep("a click outside the box, on a file in the tree", [] {
         GtkWidget* row = MCGuiFindLabel(MCGuiApp().tree->widget(), "README.md");
         GCHECK(row != nullptr);
-        if (row) MCGuiClick(row);
+        graphene_point_t c = GRAPHENE_POINT_INIT(row ? gtk_widget_get_width(row) / 2.0f : 0,
+                                                 row ? gtk_widget_get_height(row) / 2.0f : 0);
+        GCHECK(row && gtk_widget_compute_point(row, GTK_WIDGET(MCGuiApp().window), &c, &gRowAt));
+        MCGuiKey("ctrl+shift+p");
     });
+    MCGuiWait("open", 10, [] { return pal()->isOpen() && fieldHasKeyboard(); });
+    MCGuiStep("clicked", [] { MCGuiClick(GTK_WIDGET(MCGuiApp().window), gRowAt.x, gRowAt.y); });
     MCGuiWait("it closes and the keyboard goes back", 10, [] {
         return !pal()->isOpen() && editorHasKeyboard();
     });

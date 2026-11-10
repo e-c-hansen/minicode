@@ -22,6 +22,7 @@
 
 #include "Editor.h"
 #include "FileTree.h"
+#include "FindBar.h"
 #include "Keys.h"
 #include "TabStrip.h"
 #include "WindowLayout.h"
@@ -433,14 +434,17 @@ MC_GUI_SUITE(layout) {
         return on(L()->sidebar()) && showing(7) && near(W(), gEditorW);
     });
     MCGuiStep("Find, by its key", [] { MCGuiKey("ctrl+f"); });
-    MCGuiWait("the find bar opens on the editor's side, above the tabs", 10, [] {
-        const graphene_rect_t f = box(MCGuiApp().searchBar), e = box(pane(kEditor));
-        const graphene_rect_t s = box(MCGuiApp().editor->strip()->widget());
-        return on(MCGuiApp().searchBar) && f.size.height > 0 && near(f.origin.x, e.origin.x) &&
-               f.origin.x + f.size.width <= e.origin.x + e.size.width + 0.5 &&
-               f.origin.y + f.size.height <= s.origin.y + 0.5;
+    MCGuiWait("the find bar opens on the editor's side, over its text", 10, [] {
+        GtkWidget* bar = MCGuiApp().findBar->widget();
+        const graphene_rect_t f = box(bar), e = box(pane(kEditor));
+        // Within the editor's side, give or take the bar's shadow.
+        return MCGuiApp().findBar->shown() && on(bar) && f.size.height > 0 &&
+               f.origin.x >= e.origin.x - 4 &&
+               f.origin.x + f.size.width <= e.origin.x + e.size.width + 4 &&
+               f.origin.y >= e.origin.y - 4;
     });
-    MCGuiStep("Find again closes it", [] { MCGuiKey("ctrl+f"); });
+    MCGuiStep("Escape closes it", [] { MCGuiKey("escape"); });
+    MCGuiWait("closed", 10, [] { return !MCGuiApp().findBar->shown(); });
 
     MCGuiStep("the window closed", [] {
         MCGuiKey("ctrl+1");

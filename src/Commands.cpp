@@ -1095,7 +1095,8 @@ std::string defaultFileText(Platform platform) {
              "# the status bar. The menus follow this file as it is saved.\n"
              "# While the terminal has the keyboard, plain ctrl keys and keys with no\n"
              "# modifier go to the program in it, unless the command works from there\n"
-             "# too (Toggle Terminal on ctrl+`, Focus File Tree on ctrl+0); keys with\n"
+             "# too (Toggle Terminal on ctrl+`, Focus File Tree on ctrl+0), and so does\n"
+             "# alt with a letter alone (the program's meta keys); other keys with\n"
              "# shift or alt still run their commands, but for ctrl+shift+c and\n"
              "# ctrl+shift+v (the terminal's copy and paste), ctrl+shift+g and\n"
              "# ctrl+shift+space.\n"
@@ -1104,13 +1105,28 @@ std::string defaultFileText(Platform platform) {
     s += "#\n"
          "# Every command, with its keys by default, follows. Uncomment a line and\n"
          "# change its key to add one.\n";
-    std::string menu;
+    // A language command's key that a command for every file has too (on
+    // Linux Alt+C, Match Case's and, in Markdown, the task key's) is listed
+    // after that command, at the end of its menu: given in that order the
+    // two keep it both, as by default, while the other order would take it
+    // from the language command. The Mac's defaults have no such key.
+    auto sharedWithOther = [&](const Command& c, const Key& k) {
+        if (!c.language) return false;
+        for (const Command& o : all())
+            if (!o.language && !(o.flags & Fixed) && &o != &c && available(o, platform) &&
+                overlaps(o.when, c.when) && hasKey(defaultKeys(o, platform), k))
+                return true;
+        return false;
+    };
+    std::string menu, deferred;
     for (const Command& c : all()) {
         if ((c.flags & Fixed) || !available(c, platform)) continue;
         std::string top = menuOf(c, platform);
         size_t gt = top.find(" >");
         if (gt != std::string::npos) top = top.substr(0, gt);
         if (top != menu) {
+            s += deferred;
+            deferred.clear();
             menu = top;
             s += "\n# ---- " + menu + "\n";
         }
@@ -1130,9 +1146,10 @@ std::string defaultFileText(Platform platform) {
         for (const Key& k : keys) {
             std::string l = "# " + format(k) + " = " + c.id;
             if (l.size() < 56) l.append(56 - l.size(), ' ');
-            s += l + "  # " + comment + "\n";
+            (sharedWithOther(c, k) ? deferred : s) += l + "  # " + comment + "\n";
         }
     }
+    s += deferred;
     std::string fixed;
     for (const Command& c : all()) {
         if (!(c.flags & Fixed) || !available(c, platform)) continue;

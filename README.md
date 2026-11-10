@@ -441,8 +441,8 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Find across the whole folder | Shift Command F | Ctrl Shift F |  |
 | Find every reference to the name at the cursor, with a language server | Shift F12 |  |  |
 | Find in the current file, every match highlighted, Return and Shift Return for the next and previous one | Command F | Ctrl F |  |
-| Find with match case, whole word, or a regular expression, in the find bar or Find in Folder | Option Command C, Option Command W, Option Command R |  |  |
-| Find only in the selected text, while the find bar has the keyboard | Option Command L |  |  |
+| Find with match case, whole word, or a regular expression, in the find bar or Find in Folder | Option Command C, Option Command W, Option Command R | Alt C, Alt W, Alt R |  |
+| Find only in the selected text, while the find bar has the keyboard | Option Command L | Alt L |  |
 | Find in the browser's page, while the browser has the keyboard (Return and Shift Return for the next and previous match, Escape to close) | Command F, then Command G, Shift Command G |  |  |
 | Find in the terminal, its scrollback included (Return and Shift Return for the next and previous match, Escape to close) | Command F, then Command G, Shift Command G |  |  |
 | Find next, find previous | Command G, Shift Command G | F3, Shift F3 |  |
@@ -468,7 +468,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Go to the start or end of the file, or select to it (with several cursors, one is left) | Command Up, Command Down, Shift Command Up, Shift Command Down; or Command Home, Command End, Shift Command Home, Shift Command End (fn Command Left, Right on a laptop) |  |  |
 | Indent or outdent the selected lines, or the cursor's line | Tab, Shift Tab (the selected lines); Command ], Command [ | Tab, Shift Tab | Tab, Shift Tab |
 | Insert a line below the cursor's line, wherever the cursor is in it | Command Return (Insert Line Above is in the Edit menu) |  |  |
-| Keep each match's case when replacing, in the find bar or Replace in Folder | Option Command P |  |  |
+| Keep each match's case when replacing, in the find bar or Replace in Folder | Option Command P | Alt P |  |
 | Keep a preview tab (its title in italics) as an ordinary tab | Double-click its title, edit or save it, or Keep Open in its right click menu or the File menu | Double-click its title, edit or save it, or Keep Open in its right click menu or the File menu |  |
 | List every problem the language servers report, grouped by file | Shift Command M, or click the problem counts in the status bar |  |  |
 | List the TODO comments and open Markdown tasks in the folder | Shift Command D | Ctrl Shift D | W, or Ctrl Shift L |
@@ -507,8 +507,8 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Rename the terminal, so its tab keeps the name over what the program running in it calls itself (an empty name gives that back) | Rename Terminal… in the Terminal menu or the tab's right click menu, or the command palette |  |  |
 | Reopen the tab closed last, where it was | Option Shift Command T | Ctrl Alt Shift T |  |
 | Reorder the terminal tabs | Drag a tab along the strip, or Move Terminal Left and Move Terminal Right in the Terminal menu or the tab's right click menu |  |  |
-| Replace across the whole folder, after a count of what will change | Option Shift Command F |  |  |
-| Replace in the current file: the selected match and on to the next, or every match | Option Command F, then Return (or Shift Command 1) for one, Option Command Return for all |  |  |
+| Replace across the whole folder, after a count of what will change | Option Shift Command F | Ctrl Alt Shift F |  |
+| Replace in the current file: the selected match and on to the next, or every match | Option Command F, then Return (or Shift Command 1) for one, Option Command Return for all | Ctrl H, then Enter (or Ctrl Shift 1) for one, Ctrl Alt Enter for all |  |
 | Request a change to minicode itself, made by Claude Code in a terminal | Shift Command K |  |  |
 | Resize the terminal the keyboard is in, against its neighbor (Up and Down resize the panel when nothing is above or below it), or drag the bar between two terminals | Control Command Left, Control Command Right, Control Command Up, Control Command Down |  |  |
 | Restart minicode, keeping its windows, tabs, unsaved changes and browser pages | The ↻ in the status bar, or Restart minicode in the minicode menu |  |  |

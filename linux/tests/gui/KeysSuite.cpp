@@ -11,6 +11,7 @@
 #include "Commands.h"
 #include "Editor.h"
 #include "FileTree.h"
+#include "FindBar.h"
 #include "Keys.h"
 #include "PalettePanel.h"
 
@@ -109,9 +110,7 @@ bool editorHasKeyboard() { return gtk_widget_has_focus(MCGuiApp().editor->textVi
 
 bool labelShown(const char* text) { return MCGuiFindLabel(appWindow(), text) != nullptr; }
 
-bool searchBarOpen() {
-    return gtk_search_bar_get_search_mode(GTK_SEARCH_BAR(MCGuiApp().searchBar));
-}
+bool searchBarOpen() { return MCGuiApp().findBar->shown(); }
 
 // The line of the buffer starting with `prefix`'s end, or "".
 std::string lineWith(const std::string& needle) {
@@ -398,16 +397,20 @@ MC_GUI_SUITE(keys) {
     MCGuiStep("Ctrl+Shift+W closes it", [] { MCGuiKey("ctrl+shift+w"); });
     MCGuiWait("one again", 10, [] { return MCGuiAppWindows().size() == gWindows; });
 
-    MCGuiStep("Ctrl+H, the dotfiles' old key, is free (Replace's)", [] {
+    MCGuiStep("Ctrl+H, the dotfiles' old key, is Replace's", [] {
         MCGuiClick(MCGuiApp().editor->textView());
         gHidden = hiddenShown();
         MCGuiKey("ctrl+h");
     });
-    MCGuiPause(0.3);   // a negative check
-    MCGuiStep("the dotfiles are as they were; Ctrl+Shift+. shows them", [] {
-        GCHECK(hiddenShown() == gHidden);
-        MCGuiKey("ctrl+shift+.");
+    MCGuiWait("the find bar's replace row comes up", 10, [] {
+        return searchBarOpen() && MCGuiApp().findBar->replaceShown();
     });
+    MCGuiStep("the dotfiles are as they were; Escape closes the bar", [] {
+        GCHECK(hiddenShown() == gHidden);
+        MCGuiKey("escape");
+    });
+    MCGuiWait("it is shut", 10, [] { return !searchBarOpen(); });
+    MCGuiStep("Ctrl+Shift+. shows the dotfiles", [] { MCGuiKey("ctrl+shift+."); });
     MCGuiWait("they flip", 10, [] { return hiddenShown() != gHidden; });
     MCGuiStep("and back", [] { MCGuiKey("ctrl+shift+."); });
     MCGuiWait("as they were", 10, [] { return hiddenShown() == gHidden; });
@@ -427,9 +430,10 @@ MC_GUI_SUITE(keys) {
     MCGuiWait("it goes", 10, [] { return !MCGuiApp().palette->isOpen() && editorHasKeyboard(); });
     MCGuiStep("F3, with nothing to find, opens the find bar", [] { MCGuiKey("f3"); });
     MCGuiWait("it is open", 10, searchBarOpen);
-    MCGuiStep("Ctrl+F shuts it", [] {
+    MCGuiStep("Escape, in its field, shuts it", [] {
         GCHECK(gRuns["win.findnext"] == 1);
-        MCGuiKey("ctrl+f");
+        GCHECK(MCGuiApp().findBar->editing());
+        MCGuiKey("escape");
     });
     MCGuiWait("shut", 10, [] { return !searchBarOpen(); });
 
