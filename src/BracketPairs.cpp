@@ -12,8 +12,12 @@ namespace {
 // block splits in two past twice this.
 const size_t kBlock = 512;
 
-inline bool isOpen(char16_t c) { return c == u'(' || c == u'[' || c == u'{'; }
-inline bool isClose(char16_t c) { return c == u')' || c == u']' || c == u'}'; }
+// Ch is char16_t (UTF-16) or char (UTF-8, where a bracket is one byte and
+// no byte of another character is one).
+template <class Ch>
+inline bool isOpen(Ch c) { return c == '(' || c == '[' || c == '{'; }
+template <class Ch>
+inline bool isClose(Ch c) { return c == ')' || c == ']' || c == '}'; }
 
 // The stretches of the line [0, n) that are not code, sorted.
 struct Skips {
@@ -31,9 +35,8 @@ struct Skips {
 };
 
 // Calls f(offset, isOpener) for each bracket in code on the line.
-template <class F>
-void eachBracket(const char16_t* s, size_t n, size_t base, const Token* t, size_t count,
-                 F&& f) {
+template <class Ch, class F>
+void eachBracket(const Ch* s, size_t n, size_t base, const Token* t, size_t count, F&& f) {
     // Most lines have no strings or comments: no skips to build.
     bool any = false;
     for (size_t i = 0; i < n && !any; ++i) any = isOpen(s[i]) || isClose(s[i]);
@@ -41,7 +44,7 @@ void eachBracket(const char16_t* s, size_t n, size_t base, const Token* t, size_
     Skips skips(n, base, t, count);
     size_t k = 0;
     for (size_t i = 0; i < n; ++i) {
-        const char16_t c = s[i];
+        const Ch c = s[i];
         if (!isOpen(c) && !isClose(c)) continue;
         while (k < skips.spans.size() && skips.spans[k].second <= i) ++k;
         if (k < skips.spans.size() && skips.spans[k].first <= i) continue;
@@ -49,16 +52,17 @@ void eachBracket(const char16_t* s, size_t n, size_t base, const Token* t, size_
     }
 }
 
-size_t lineEnd(const IncrementalHighlighter<char16_t>& hl, size_t line) {
+template <class Ch>
+size_t lineEnd(const IncrementalHighlighter<Ch>& hl, size_t line) {
     return line + 1 < hl.lineCount() ? hl.lineStart(line + 1) : hl.length();
 }
 
 // Calls f(line, text, length, start, tokens, count) for each lexed line of
 // [first, end), with its tokens; tokens come line by line.
-template <class F>
-void eachLine(const TextSource<char16_t>& src, const IncrementalHighlighter<char16_t>& hl,
-              size_t first, size_t end, const std::vector<Token>& tokens, F&& f) {
-    std::vector<char16_t> buf;
+template <class Ch, class F>
+void eachLine(const TextSource<Ch>& src, const IncrementalHighlighter<Ch>& hl, size_t first,
+              size_t end, const std::vector<Token>& tokens, F&& f) {
+    std::vector<Ch> buf;
     size_t k = 0;
     end = std::min(end, hl.lineCount());
     for (size_t line = first; line < end; ++line) {
@@ -71,23 +75,15 @@ void eachLine(const TextSource<char16_t>& src, const IncrementalHighlighter<char
             if (b > a) src.read(a, b - a, buf.data());
             f(line, buf.data(), b - a, a, tokens.data() + k, e - k);
         } else {
-            f(line, nullptr, 0, a, nullptr, 0);
+            f(line, static_cast<const Ch*>(nullptr), 0, a, static_cast<const Token*>(nullptr),
+              0);
         }
         k = e;
     }
 }
 
-}  // namespace
-
-LineSum LineSum::then(const LineSum& next) const {
-    LineSum r;
-    r.net = net + next.net;
-    r.floor = std::max(floor + next.net, next.floor);
-    return r;
-}
-
-LineSum summarize(const char16_t* s, size_t n, size_t base, const Token* tokens,
-                  size_t count) {
+template <class Ch>
+LineSum summarizeT(const Ch* s, size_t n, size_t base, const Token* tokens, size_t count) {
     int32_t d = 0, low = 0;
     eachBracket(s, n, base, tokens, count, [&](size_t, bool open) {
         if (open) {
@@ -103,8 +99,9 @@ LineSum summarize(const char16_t* s, size_t n, size_t base, const Token* tokens,
     return r;
 }
 
-int32_t color(const char16_t* s, size_t n, size_t base, const Token* tokens, size_t count,
-              int32_t depth, std::vector<Bracket>* out) {
+template <class Ch>
+int32_t colorT(const Ch* s, size_t n, size_t base, const Token* tokens, size_t count,
+               int32_t depth, std::vector<Bracket>* out) {
     eachBracket(s, n, base, tokens, count, [&](size_t i, bool open) {
         if (open) {
             if (out) out->push_back({base + i, depth});
@@ -119,26 +116,80 @@ int32_t color(const char16_t* s, size_t n, size_t base, const Token* tokens, siz
     return depth;
 }
 
-std::vector<LineSum> summarizeLines(const TextSource<char16_t>& src,
-                                    const IncrementalHighlighter<char16_t>& hl, size_t first,
-                                    size_t end, const std::vector<Token>& tokens) {
+template <class Ch>
+std::vector<LineSum> summarizeLinesT(const TextSource<Ch>& src,
+                                     const IncrementalHighlighter<Ch>& hl, size_t first,
+                                     size_t end, const std::vector<Token>& tokens) {
     std::vector<LineSum> sums;
     sums.reserve(end > first ? end - first : 0);
     eachLine(src, hl, first, end, tokens,
-             [&](size_t, const char16_t* s, size_t n, size_t a, const Token* t, size_t c) {
-                 sums.push_back(s ? summarize(s, n, a, t, c) : LineSum{});
+             [&](size_t, const Ch* s, size_t n, size_t a, const Token* t, size_t c) {
+                 sums.push_back(s ? summarizeT(s, n, a, t, c) : LineSum{});
              });
     return sums;
+}
+
+template <class Ch>
+int32_t colorLinesT(const TextSource<Ch>& src, const IncrementalHighlighter<Ch>& hl,
+                    size_t first, size_t end, const std::vector<Token>& tokens, int32_t depth,
+                    std::vector<Bracket>* out) {
+    eachLine(src, hl, first, end, tokens,
+             [&](size_t, const Ch* s, size_t n, size_t a, const Token* t, size_t c) {
+                 if (s) depth = colorT(s, n, a, t, c, depth, out);
+             });
+    return depth;
+}
+
+}  // namespace
+
+LineSum LineSum::then(const LineSum& next) const {
+    LineSum r;
+    r.net = net + next.net;
+    r.floor = std::max(floor + next.net, next.floor);
+    return r;
+}
+
+LineSum summarize(const char16_t* s, size_t n, size_t base, const Token* tokens,
+                  size_t count) {
+    return summarizeT(s, n, base, tokens, count);
+}
+
+int32_t color(const char16_t* s, size_t n, size_t base, const Token* tokens, size_t count,
+              int32_t depth, std::vector<Bracket>* out) {
+    return colorT(s, n, base, tokens, count, depth, out);
+}
+
+std::vector<LineSum> summarizeLines(const TextSource<char16_t>& src,
+                                    const IncrementalHighlighter<char16_t>& hl, size_t first,
+                                    size_t end, const std::vector<Token>& tokens) {
+    return summarizeLinesT(src, hl, first, end, tokens);
 }
 
 int32_t colorLines(const TextSource<char16_t>& src, const IncrementalHighlighter<char16_t>& hl,
                    size_t first, size_t end, const std::vector<Token>& tokens, int32_t depth,
                    std::vector<Bracket>* out) {
-    eachLine(src, hl, first, end, tokens,
-             [&](size_t, const char16_t* s, size_t n, size_t a, const Token* t, size_t c) {
-                 if (s) depth = color(s, n, a, t, c, depth, out);
-             });
-    return depth;
+    return colorLinesT(src, hl, first, end, tokens, depth, out);
+}
+
+LineSum summarize(const char* s, size_t n, size_t base, const Token* tokens, size_t count) {
+    return summarizeT(s, n, base, tokens, count);
+}
+
+int32_t color(const char* s, size_t n, size_t base, const Token* tokens, size_t count,
+              int32_t depth, std::vector<Bracket>* out) {
+    return colorT(s, n, base, tokens, count, depth, out);
+}
+
+std::vector<LineSum> summarizeLines(const TextSource<char>& src,
+                                    const IncrementalHighlighter<char>& hl, size_t first,
+                                    size_t end, const std::vector<Token>& tokens) {
+    return summarizeLinesT(src, hl, first, end, tokens);
+}
+
+int32_t colorLines(const TextSource<char>& src, const IncrementalHighlighter<char>& hl,
+                   size_t first, size_t end, const std::vector<Token>& tokens, int32_t depth,
+                   std::vector<Bracket>* out) {
+    return colorLinesT(src, hl, first, end, tokens, depth, out);
 }
 
 // ---------------------------------------------------------------- Depths

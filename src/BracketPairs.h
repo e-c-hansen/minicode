@@ -69,6 +69,20 @@ int32_t colorLines(const TextSource<char16_t>& src, const IncrementalHighlighter
                    size_t first, size_t end, const std::vector<Token>& tokens, int32_t depth,
                    std::vector<Bracket>* out);
 
+// The same four over UTF-8 text and a UTF-8 highlighter (the GTK port's
+// mirror of its buffer), with offsets in bytes. A bracket is one byte and
+// no byte of another character is ever one, so the depths are the same as
+// over the UTF-16 text; only the offsets differ.
+LineSum summarize(const char* s, size_t n, size_t base, const Token* tokens, size_t count);
+int32_t color(const char* s, size_t n, size_t base, const Token* tokens, size_t count,
+              int32_t depth, std::vector<Bracket>* out);
+std::vector<LineSum> summarizeLines(const TextSource<char>& src,
+                                    const IncrementalHighlighter<char>& hl, size_t first,
+                                    size_t end, const std::vector<Token>& tokens);
+int32_t colorLines(const TextSource<char>& src, const IncrementalHighlighter<char>& hl,
+                   size_t first, size_t end, const std::vector<Token>& tokens, int32_t depth,
+                   std::vector<Bracket>* out);
+
 // Every line's LineSum, in blocks.
 class Depths {
 public:

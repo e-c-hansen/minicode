@@ -1,5 +1,6 @@
 // AutoClose.cpp — see AutoClose.h.
 #include "AutoClose.h"
+#include "LineIndex.h"
 #include "SyntaxHighlighter.h"
 #include <algorithm>
 #include <cctype>
@@ -311,6 +312,110 @@ std::vector<Span> HighlighterContext::nonCode(size_t lo, size_t hi) const {
             spans.back().end = std::max(spans.back().end, b);
         else
             spans.push_back({a, b, s});
+    }
+    return spans;
+}
+
+// ---- the same over UTF-8, in code points
+
+namespace {
+
+// A byte that starts a code point, as LineIndex::resetUtf8 counts them
+// (invalid UTF-8: a unit per byte that does not continue a sequence).
+inline bool startsCodePoint(char b) { return ((unsigned char)b & 0xC0) != 0x80; }
+
+}  // namespace
+
+Utf8HighlighterContext::Utf8HighlighterContext(IncrementalHighlighter<char>& hl,
+                                               std::unique_ptr<TextSource<char>> source,
+                                               const LineIndex& lines)
+    : hl_(hl), src_(std::move(source)), lines_(lines) {}
+
+Utf8HighlighterContext::~Utf8HighlighterContext() = default;
+
+bool Utf8HighlighterContext::lineLexed(size_t line) const {
+    if (line >= hl_.lineCount()) return false;
+    const size_t end = line + 1 < hl_.lineCount() ? hl_.lineStart(line + 1) : hl_.length();
+    return lineIsLexed(*src_, hl_.lineStart(line), end);
+}
+
+void Utf8HighlighterContext::loadLine(size_t line) const {
+    if (line == line_) return;
+    line_ = line;
+    tokens_.clear();
+    scopes_.clear();
+    const size_t a = hl_.lineStart(line);
+    const size_t b = line + 1 < hl_.lineCount() ? hl_.lineStart(line + 1) : hl_.length();
+    bytes_.resize(b - a);
+    if (b > a) src_->read(a, b - a, &bytes_[0]);
+    std::vector<Token> out;
+    hl_.lineTokens(*src_, line, line + 1, out);
+    for (const Token& t : out) {
+        tokens_.push_back({t.start, t.start + t.length});
+        scopes_.push_back(scopeOf(t.style));
+    }
+}
+
+size_t Utf8HighlighterContext::byteOf(size_t line, size_t i) const {
+    loadLine(line);
+    size_t chars = i - lines_.lineStart(line), b = 0;
+    for (; b < bytes_.size(); ++b)
+        if (startsCodePoint(bytes_[b]) && chars-- == 0) break;
+    return hl_.lineStart(line) + b;
+}
+
+Scope Utf8HighlighterContext::at(size_t i) const {
+    if (i >= lines_.length()) return Scope::Code;
+    const size_t line = lines_.lineOf(i);
+    if (!lineLexed(line)) return Scope::Code;   // no tokens there
+    const size_t b = byteOf(line, i);
+    for (size_t k = 0; k < tokens_.size(); k++)
+        if (tokens_[k].first <= b && b < tokens_[k].second) return scopes_[k];
+    return Scope::Code;
+}
+
+Scope Utf8HighlighterContext::ifTyped(size_t i, char16_t c) const {
+    if (i > lines_.length()) return Scope::Code;
+    const size_t line = lines_.lineOf(i);
+    if (!lineLexed(line)) return Scope::Code;   // styleIfInserted's Plain
+    // The neutral characters asked about are ASCII.
+    const char ch = c < 0x80 ? (char)c : 'x';
+    return scopeOf(hl_.styleIfInserted(*src_, byteOf(line, i), ch));
+}
+
+bool Utf8HighlighterContext::lexed(size_t i) const {
+    if (i > lines_.length()) return false;
+    return lineLexed(lines_.lineOf(i));
+}
+
+std::vector<Span> Utf8HighlighterContext::nonCode(size_t lo, size_t hi) const {
+    std::vector<Span> spans;
+    hi = std::min(hi, lines_.length());
+    if (hi <= lo) return spans;
+    const size_t last = lines_.lineOf(hi - 1);
+    for (size_t line = lines_.lineOf(lo); line <= last && line < hl_.lineCount(); line++) {
+        if (!lineLexed(line)) continue;
+        loadLine(line);
+        // Bytes to code points through the line, token by token in order.
+        size_t at = 0, chars = lines_.lineStart(line);
+        const size_t base = hl_.lineStart(line);
+        auto charOf = [&](size_t byte) {
+            const size_t to = std::min(byte - std::min(byte, base), bytes_.size());
+            for (; at < to; at++)
+                if (startsCodePoint(bytes_[at])) chars++;
+            return chars;
+        };
+        for (size_t k = 0; k < tokens_.size(); k++) {
+            const Scope s = scopes_[k];
+            const size_t ta = charOf(tokens_[k].first), tb = charOf(tokens_[k].second);
+            if (s == Scope::Code) continue;
+            const size_t a = std::max(lo, ta), b = std::min(hi, tb);
+            if (b <= a) continue;
+            if (!spans.empty() && spans.back().scope == s && spans.back().end >= a)
+                spans.back().end = std::max(spans.back().end, b);
+            else
+                spans.push_back({a, b, s});
+        }
     }
     return spans;
 }

@@ -4,6 +4,7 @@
 #include "Document.h"
 
 #include "BackupStore.h"
+#include "BracketColors.h"
 #include "BufferLines.h"
 #include "MarkdownTasks.h"
 #include "Utf8Offsets.h"
@@ -137,6 +138,7 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     g_signal_connect(buffer_, "changed", G_CALLBACK(onChanged), this);
     // Where its lines start, for the gutter; the buffer keeps it.
     BufferLines::attach(buffer_);
+    brackets_ = std::make_unique<BracketColors>(buffer_);
 }
 
 Document::~Document() {
@@ -739,6 +741,7 @@ void Document::cancelDeferred() {
 }
 
 void Document::stopHighlighting() {
+    brackets_->reset(nullptr, mirror_, {});
     hl_.reset();
     std::string().swap(mirror_);
     pending_ = false;
@@ -763,6 +766,7 @@ void Document::startHighlighting() {
         applyingTags_ = true;
         removeHighlightTags(&a, &b);
         applyingTags_ = false;
+        brackets_->reset(nullptr, mirror_, {});
         return;
     }
     GtkTextIter a, b;
@@ -772,7 +776,11 @@ void Document::startHighlighting() {
     g_free(text);
 
     hl_ = std::make_unique<IncrementalHighlighter<char>>(ext_);
-    hl_->reset(StringSource<char>(mirror_), nullptr);
+    // Bracket-pair colors start from every line's tokens (BracketColors.h).
+    const bool brackets = wantsBracketColors();
+    std::vector<Token> tokens;
+    hl_->reset(StringSource<char>(mirror_), brackets ? &tokens : nullptr);
+    brackets_->reset(brackets ? hl_.get() : nullptr, mirror_, tokens);
     pendStart_ = 0;
     pendEnd_ = mirror_.size();
     pending_ = true;
@@ -783,8 +791,12 @@ void Document::startHighlighting() {
 // newLen bytes. The pending and deferred ranges are carried across it, then the
 // lines the highlighter re-lexed join the pending range.
 void Document::noteEdit(size_t pos, size_t oldLen, size_t newLen) {
-    std::vector<Token> unused;   // recomputed for the final text at flush time
-    auto r = hl_->edit(StringSource<char>(mirror_), pos, oldLen, newLen, unused);
+    // The tags are recomputed for the final text at flush time; the bracket
+    // depths take what each re-lexed line does to them now.
+    std::vector<Token> relexed;
+    const size_t linesBefore = hl_->lineCount();
+    auto r = hl_->edit(StringSource<char>(mirror_), pos, oldLen, newLen, relexed);
+    brackets_->edited(*hl_, mirror_, r, linesBefore, relexed);
     if (deferred_) carry(defStart_, defEnd_, pos, oldLen, newLen);
     if (pending_) {
         carry(pendStart_, pendEnd_, pos, oldLen, newLen);
@@ -826,6 +838,7 @@ void Document::flushHighlighting() {
     const size_t end = e > s ? hl_->lineOf(e - 1) + 1 : first + 1;
     if (end - first <= kSyncLines) {
         retagSpan(first, end);
+        paintBracketsOnScreen();
         return;
     }
     // Too many lines to retag in one go: the ones on screen now, all of them
@@ -851,6 +864,30 @@ void Document::flushHighlighting() {
     }
     // Below redraw and input, so typing and scrolling stay ahead of it.
     if (!idleId_) idleId_ = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, onIdleRetag, this, nullptr);
+    paintBracketsOnScreen();
+}
+
+// ------------------------------------------------ bracket-pair colors
+// (BracketColors.h; the depths follow noteEdit, the lines on screen are
+// painted after each flush and, through the editor's BracketView, on every
+// scroll.)
+
+bool Document::wantsBracketColors() const {
+    return host_->documentSettings().bracketPairColorization() && !isSettingsFile();
+}
+
+void Document::paintBracketsOnScreen() {
+    if (hl_ && !bulk_ && shownIn_ && brackets_->on())
+        brackets_->paintVisible(shownIn_, *hl_, mirror_);
+}
+
+void Document::bracketSettingChanged() {
+    const bool want = hl_ && !bulk_ && wantsBracketColors();
+    if (want == brackets_->on()) return;
+    std::vector<Token> tokens;
+    if (want) hl_->lineTokens(StringSource<char>(mirror_), 0, hl_->lineCount(), tokens);
+    brackets_->reset(want ? hl_.get() : nullptr, mirror_, tokens);
+    paintBracketsOnScreen();
 }
 
 gboolean Document::onIdleRetag(gpointer selfp) {

@@ -55,6 +55,13 @@ core_sources = [
   core_dir / 'LineIndex.cpp',
   core_dir / 'QuickDiff.cpp',
   core_dir / 'LineDiff.cpp',
+  # Bracket boxes and Go to Bracket, bracket-pair colors, and auto-closing
+  # pairs over the carets' rules (BracketView.cpp, BracketColors.cpp,
+  # AutoCloseInput.cpp).
+  core_dir / 'BracketMatch.cpp',
+  core_dir / 'BracketPairs.cpp',
+  core_dir / 'AutoClose.cpp',
+  core_dir / 'MultiCaret.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -74,6 +81,14 @@ gui_sources = [
   'src/CodeView.cpp',
   'src/Gutter.cpp',
   'src/BufferLines.cpp',
+  # Brackets: the boxes, Go to Bracket and the colors' painting
+  # (BracketView.cpp), each document's colors (BracketColors.cpp), and
+  # auto-closing pairs (AutoCloseInput.cpp), reading the buffer a unit a
+  # character (BufferText.cpp).
+  'src/BracketView.cpp',
+  'src/BracketColors.cpp',
+  'src/AutoCloseInput.cpp',
+  'src/BufferText.cpp',
   'src/Markdown.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.

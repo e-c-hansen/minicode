@@ -54,6 +54,7 @@
 #include <gtk/gtk.h>
 
 #include "AppSettings.h"
+#include "BracketView.h"
 #include "Document.h"
 #include "Editor.h"
 #include "FileTree.h"
@@ -1614,6 +1615,13 @@ static void act_hover(GSimpleAction*, GVariant*, gpointer userp) {
     if (editorFocused(app)) app->lsp->showHoverInfo();
 }
 
+// Go to Bracket (BracketView.h): the bell when there is none to go to.
+static void act_go_to_bracket(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (editorFocused(app) && !app->editor->brackets()->goToBracket())
+        gtk_widget_error_bell(app->editor->textView());
+}
+
 // Find in Folder: search the folder selected in the tree, or else the open
 // folder, which is what the Mac's Shift+Cmd+F does.
 static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
@@ -1783,6 +1791,7 @@ static std::string hintsText(App* app) {
     row("workbench.action.findInFiles", "Find in folder");
     row("minicode.showTodos", "TODOs in folder");
     row("editor.action.commentLine", "Toggle comment");
+    row("editor.action.jumpToBracket", "Go to bracket");
     plain("Tab, Shift Tab", "Indent, outdent lines");
     row("minicode.sortLines", "Sort lines");
     row("minicode.sortKeepSortedBlocks", "Sort keep-sorted blocks");
@@ -2420,6 +2429,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "complete",       G_CALLBACK(act_complete));
     addAction(app, "definition",     G_CALLBACK(act_definition));
     addAction(app, "hoverinfo",      G_CALLBACK(act_hover));
+    addAction(app, "gotobracket",    G_CALLBACK(act_go_to_bracket));
     addAction(app, "open",           G_CALLBACK(act_open));
     addAction(app, "save",           G_CALLBACK(act_save));
     addAction(app, "exportpdf",      G_CALLBACK(act_export_pdf));

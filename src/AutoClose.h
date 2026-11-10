@@ -28,7 +28,11 @@
 //
 // Everything works at every caret at once, all or nothing, as in VS Code: a
 // pair closes only if it closes at every caret. Offsets are UTF-16 units,
-// as MultiCaret's.
+// as MultiCaret's. The GTK port counts code points instead, its Text giving
+// one unit a character (U+FFFD for one outside the BMP, a word character as
+// its surrogates are), with Utf8HighlighterContext over its highlighter:
+// the rules look only at ASCII characters, line breaks and blanks, which
+// are one unit either way.
 #pragma once
 #include "MultiCaret.h"
 #include <cstddef>
@@ -39,6 +43,7 @@
 
 template <class Ch> class IncrementalHighlighter;
 template <class Ch> class TextSource;
+class LineIndex;
 
 namespace AutoClose {
 
@@ -91,6 +96,41 @@ private:
     // The last line's tokens (the carets of a column ask line after line).
     mutable size_t line_ = size_t(-1);
     mutable std::vector<std::pair<size_t, size_t>> tokens_;   // start, end
+    mutable std::vector<Scope> scopes_;
+};
+
+// The same over a UTF-8 highlighter, with offsets in code points: the GTK
+// port's, whose buffer counts characters and whose highlighter reads a
+// UTF-8 mirror of it. `lines` indexes the same text in code points
+// (LineIndex::resetUtf8 and editUtf8), and its lines are the
+// highlighter's, since both end a line at the same characters. Offsets
+// within a line are converted only on lines short enough to lex, which are
+// the only ones with tokens, so a caret in a 5 MB line costs no walk
+// through it. The highlighter, the source and the index must be up to date
+// with one another and outlive the context.
+class Utf8HighlighterContext : public Context {
+public:
+    Utf8HighlighterContext(IncrementalHighlighter<char>& hl,
+                           std::unique_ptr<TextSource<char>> source, const LineIndex& lines);
+    ~Utf8HighlighterContext() override;
+    Scope at(size_t i) const override;
+    Scope ifTyped(size_t i, char16_t c) const override;
+    bool lexed(size_t i) const override;
+    std::vector<Span> nonCode(size_t lo, size_t hi) const override;
+
+private:
+    bool lineLexed(size_t line) const;
+    // The byte offset of code point `i` on lexed line `line`.
+    size_t byteOf(size_t line, size_t i) const;
+    // The tokens of `line` (bytes) and their scopes, kept for the last line.
+    void loadLine(size_t line) const;
+
+    IncrementalHighlighter<char>& hl_;
+    std::unique_ptr<TextSource<char>> src_;
+    const LineIndex& lines_;
+    mutable size_t line_ = size_t(-1);
+    mutable std::string bytes_;   // that line's text
+    mutable std::vector<std::pair<size_t, size_t>> tokens_;   // start, end, in bytes
     mutable std::vector<Scope> scopes_;
 };
 

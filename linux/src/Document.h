@@ -43,6 +43,7 @@
 #include "PdfView.h"
 #endif
 
+class BracketColors;
 class Document;
 class LatexPreview;
 
@@ -218,6 +219,20 @@ public:
     void setShownIn(GtkTextView* view) { shownIn_ = view; }
     GtkTextView* shownIn() const { return shownIn_; }
 
+    // The highlighter and the UTF-8 text it reads, while they are in step
+    // with the buffer: null without a grammar, and during a user action too
+    // large to follow edit by edit. Bracket matching and auto-closing ask it
+    // about strings and comments (BufferText.h).
+    IncrementalHighlighter<char>* highlighter() const { return hl_ && !bulk_ ? hl_.get() : nullptr; }
+    const std::string& highlighterText() const { return mirror_; }
+    // Bracket-pair colors (BracketColors.h): on while the settings have them
+    // and the file has a grammar and is not the settings file.
+    BracketColors* bracketColors() const { return brackets_.get(); }
+    // The lines on screen get the colors they lack (a scroll, a new size).
+    void paintBracketsOnScreen();
+    // editor.bracket-pair-colorization changed: on or off from now on.
+    void bracketSettingChanged();
+
     // A Markdown file's tasks, done and in all, recounted 0.3 s after typing
     // stops; 0 and 0 for any other file.
     int tasksDone() const { return tasksDone_; }
@@ -281,6 +296,7 @@ private:
     bool isHighlightTag(GtkTextTag* tag) const;
     void noteEdit(size_t pos, size_t oldLen, size_t newLen);
     void decorateColors(int firstLine, int endLine);
+    bool wantsBracketColors() const;
 
     static void onInsertText(GtkTextBuffer* buf, GtkTextIter* loc, char* text, int len,
                              gpointer self);
@@ -351,6 +367,7 @@ private:
     int    actionEdits_ = 0;
     bool   bulk_ = false;
     bool   applyingTags_ = false;
+    std::unique_ptr<BracketColors> brackets_;
 
     int   tasksDone_ = 0, tasksTotal_ = 0;
     guint taskTimer_ = 0;

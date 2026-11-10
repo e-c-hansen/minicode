@@ -346,6 +346,91 @@ static void testBracketPairs() {
         (void)batches;
     }
 
+    GROUP("bracketpairs:utf8");
+    {
+        // Over UTF-8 and the UTF-8 highlighter (the GTK port's mirror): the
+        // same sums per line and the same brackets at the same depths as
+        // over UTF-16, only at byte offsets, through accents, emoji, CJK,
+        // strings, comments, CRLF, a lone CR and U+2029; and after random
+        // edits, kept by Depths from each edit's re-lexed tokens.
+        const char *pieces[] = {"(", ")", "[", "]", "{", "}", "x", " ", "\n", "\r\n", "\r",
+                                "\xE2\x80\xA9", "\xC3\xA9", "\xF0\x9F\x98\x80", "\xE4\xB8\xAD",
+                                "\"", "'", "#", "//", "/*", "*/", "\"(\"", "f(", ") #"};
+        std::mt19937 rng(23);
+        bool sums = true, brackets = true, edits = true;
+        for (int round = 0; round < 300; ++round) {
+            const std::string ext = round % 3 == 0 ? "py" : round % 3 == 1 ? "cpp" : "js";
+            std::string s;
+            for (int k = (int)(rng() % 60); k-- > 0;) s += pieces[rng() % (sizeof pieces / sizeof *pieces)];
+            const std::u16string w = toU16(s);
+            // Each byte offset's UTF-16 offset.
+            std::vector<size_t> u16Of(s.size() + 1, 0);
+            for (size_t b = 0, u = 0; b <= s.size(); ++b) {
+                u16Of[b] = u;
+                if (b == s.size()) break;
+                const unsigned char c = (unsigned char)s[b];
+                if ((c & 0xC0) != 0x80) u += c >= 0xF0 ? 2 : 1;
+            }
+            IncrementalHighlighter<char16_t> h16(ext);
+            std::vector<Token> t16;
+            StringSource<char16_t> s16(w);
+            h16.reset(s16, &t16);
+            IncrementalHighlighter<char> h8(ext);
+            std::vector<Token> t8;
+            StringSource<char> s8(s);
+            h8.reset(s8, &t8);
+            const std::vector<LineSum> a = summarizeLines(s8, h8, 0, h8.lineCount(), t8);
+            const std::vector<LineSum> b = summarizeLines(s16, h16, 0, h16.lineCount(), t16);
+            sums = sums && a == b;
+            std::vector<Bracket> c8, c16;
+            colorLines(s8, h8, 0, h8.lineCount(), t8, 0, &c8);
+            colorLines(s16, h16, 0, h16.lineCount(), t16, 0, &c16);
+            bool same = c8.size() == c16.size();
+            for (size_t i = 0; same && i < c8.size(); ++i)
+                same = u16Of[c8[i].at] == c16[i].at && c8[i].depth == c16[i].depth;
+            brackets = brackets && same;
+            // Edits at random, as the port's Document makes them: Depths
+            // told the re-lexed lines, then held to a fresh count.
+            Depths d;
+            d.assign(a);
+            std::string t = s;
+            for (int e = 0; e < 8; ++e) {
+                const size_t pos = t.empty() ? 0 : rng() % (t.size() + 1);
+                size_t end = std::min(t.size(), pos + rng() % 4);
+                // Whole characters only, as a buffer edits.
+                size_t p = pos;
+                while (p < t.size() && ((unsigned char)t[p] & 0xC0) == 0x80) ++p;
+                while (end < t.size() && ((unsigned char)t[end] & 0xC0) == 0x80) ++end;
+                end = std::max(end, p);
+                const std::string ins = pieces[rng() % (sizeof pieces / sizeof *pieces)];
+                const size_t before = h8.lineCount();
+                t.replace(p, end - p, ins);
+                StringSource<char> st(t);
+                std::vector<Token> relexed;
+                const auto r = h8.edit(st, p, end - p, ins.size(), relexed);
+                d.replace(r.firstLine, (r.endLine - r.firstLine) + before - h8.lineCount(),
+                          summarizeLines(st, h8, r.firstLine, r.endLine, relexed));
+                IncrementalHighlighter<char> fresh(ext);
+                std::vector<Token> ft;
+                fresh.reset(st, &ft);
+                const std::vector<LineSum> want = summarizeLines(st, fresh, 0, fresh.lineCount(), ft);
+                bool ok = d.lineCount() == want.size();
+                for (size_t i = 0; ok && i < want.size(); ++i) ok = d.line(i) == want[i];
+                if (ok) {
+                    int32_t depth = 0;
+                    for (size_t i = 0; ok && i < want.size(); ++i) {
+                        ok = d.depthAt(i) == depth;
+                        depth = want[i].after(depth);
+                    }
+                }
+                edits = edits && ok;
+            }
+        }
+        CHECK(sums);
+        CHECK(brackets);
+        CHECK(edits);
+    }
+
     GROUP("bracketpairs:speed");
     {
         // 100,000 lines: summing them all, then a thousand one-line edits

@@ -378,9 +378,44 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   `PalettePanel`.
 - [ ] **1.6 Find and replace.** The find bar with case, word, regex, preserve
   case, and in selection; Replace in Folder. `TextFind`, `FolderSearch`.
-- [ ] **1.7 Brackets.** `BracketMatch`, `BracketPairs`, and Go to Bracket.
-- [ ] **1.8 Auto-closing pairs.** `AutoClose`, with VS Code's overtype and
+- [x] **1.7 Brackets.** `BracketMatch`, `BracketPairs`, and Go to Bracket.
+  *Verified in Xvfb, 2026-11-09:* `bracketpairs:utf8` and
+  `autoclose:utf8-context` hold the port's UTF-8 highlighter, in bytes and
+  code points, to the Mac's UTF-16 results; the `brackets` suite moves the
+  caret by real keys and checks the pair boxed (the bracket before the caret
+  first), the boxes as drawn and as pixels of `editor.bracket-match`,
+  strings and comments skipped, nothing read away from a bracket, no
+  partner past 20,000 characters, plain text, no boxes in a Markdown page,
+  and Ctrl+Shift+\ out and back and from inside a pair, its key the
+  program's in the terminal; `bracket_pairs` checks the three depths and
+  the unexpected closer as tags and pixels, lines painted only as they come
+  on screen (wheel, Ctrl+End, a jump), a typed ( at the top repainting only
+  the lines on screen and the rest once seen, Ctrl+Z, off by its key, none
+  in plain text, an open of 30,000 lines (46 ms of CPU against 36 without
+  colors; 81 against 64 under load) and typing in 100,000 lines (7 to 9 ms
+  a key either way). They fail with the
+  strings not skipped and with an edit's change of depth not followed.
+  Needs the owner: the colors and boxes on a real screen and theme, HiDPI.
+  Large-file mode (1.12) should turn the boxes off as the Mac does; the
+  colors go with the highlighter.
+- [x] **1.8 Auto-closing pairs.** `AutoClose`, with VS Code's overtype and
   surround.
+  *Verified in Xvfb, 2026-11-09:* the `auto_close` suite types every key
+  through XTest: print( closing with the caret inside, the typed ( going
+  into the buffer last with the caret after it (what the language server
+  reads), one Ctrl+Z taking the pair and Ctrl+Shift+Z putting it back, )
+  typed over, Backspace taking the pair, a pair typed by hand or let go
+  staying, the closers let go when the caret leaves or the pair spans lines,
+  Python's quotes (a word's apostrophe, f', the docstring's third quote), a
+  selection wrapped and still selected, Markdown closing brackets and not
+  quotes and wrapping in * and _, nothing while a dead key composes, a quote
+  an input method commits typed as it is, the setting off typing plainly
+  and still wrapping, and a ( in 100,000 lines (2 to 7 ms a key, against 2
+  plainly). It fails with the hook taken out, with the composing guard
+  taken out, and with the caret placed over a selection (GTK then lost the
+  selection a moment later). Needs the owner: IBus and other input methods,
+  and keyboard layouts where brackets need AltGr. Several carets come with
+  1.9 (`AutoCloseInput`'s calls take carets).
 - [ ] **1.9 Line commands and several carets (D5, D7).** `MultiCaret`, Cmd+D's
   and Shift+Cmd+L's counterparts, column selection, move and copy lines, and
   VS Code's word separators.

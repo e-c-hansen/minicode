@@ -23,6 +23,8 @@
 #include "MarkdownEdit.h"
 #include "Settings.h"
 
+class AutoCloseInput;
+class BracketView;
 class CodeView;
 class MediaView;
 class LatexPreview;
@@ -65,6 +67,10 @@ public:
     // The view's own drawing passes, the ruler and the line-number gutter
     // (CodeView.h).
     CodeView*      codeView() const { return code_; }
+    // The bracket boxes, Go to Bracket and the bracket colors' painting
+    // (BracketView.h), and auto-closing pairs (AutoCloseInput.h).
+    BracketView*    brackets() const { return brackets_; }
+    AutoCloseInput* autoClose() const { return autoClose_; }
     // The active document's own buffer (its source, while its page shows
     // too), else what the view shows.
     GtkTextBuffer* sourceBuffer() const;
@@ -408,6 +414,8 @@ private:
     GtkWidget*     scroller_ = nullptr;
     GtkWidget*     view_     = nullptr;   // GtkTextView: code_'s
     CodeView*      code_     = nullptr;   // owned by the view
+    BracketView*    brackets_  = nullptr;
+    AutoCloseInput* autoClose_ = nullptr;
     GtkTextBuffer* buffer_   = nullptr;   // what the view shows
     GtkTextBuffer* welcome_  = nullptr;   // the view's buffer with no tab open
     char           typedKey_ = 0;         // ':' or a closer being typed (electric)

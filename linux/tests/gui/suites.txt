@@ -14,3 +14,6 @@ AutoSaveSuite.cpp
 GutterSuite.cpp
 RulerSuite.cpp
 GutterTypingSuite.cpp
+BracketsSuite.cpp
+BracketPairsSuite.cpp
+AutoCloseSuite.cpp

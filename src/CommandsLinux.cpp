@@ -115,6 +115,9 @@ const std::vector<LinuxRow>& linuxRows() {
         {"minicode.togglePlayback", "ctrl+shift+space", 0, nullptr, nullptr},
 
         // ---- Navigate
+        // VS Code's Linux key (PARITY.md 1.7). An editor command, so while
+        // the terminal has the keyboard the program in it gets the key.
+        {"editor.action.jumpToBracket", "ctrl+shift+\\", 0, nullptr, nullptr},
         // The keys out of the terminal without the mouse: Global, so the
         // shell never gets them.
         {"workbench.action.focusSideBar", "ctrl+0", Global, nullptr, nullptr},
