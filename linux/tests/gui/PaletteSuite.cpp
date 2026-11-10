@@ -64,6 +64,20 @@ std::string keysOf(const std::string& label) {
         if (l[i] == label) return k[i];
     return "(not listed)";
 }
+// A row's label is laid out just under the field, as the first row. Rows
+// the list has made but not yet laid out are all at the top with no height.
+bool firstRowShows(const std::string& text) {
+    GtkWidget* label = MCGuiFindLabel(pal()->box(), text);
+    if (!label || gtk_widget_get_height(label) <= 0) return false;
+    const graphene_point_t origin = GRAPHENE_POINT_INIT(0, 0);
+    const graphene_point_t below =
+        GRAPHENE_POINT_INIT(0, (float)gtk_widget_get_height(pal()->entry()));
+    graphene_point_t at, field;
+    if (!gtk_widget_compute_point(label, pal()->box(), &origin, &at) ||
+        !gtk_widget_compute_point(pal()->entry(), pal()->box(), &below, &field))
+        return false;
+    return at.y >= field.y && at.y < field.y + 36;
+}
 std::string firstFew() {
     std::string s;
     const std::vector<std::string> l = pal()->labels();
@@ -370,7 +384,12 @@ MC_GUI_SUITE(palette) {
         GCHECK_EQ_STR(keysOf("pal/deeper/quick-open-target.md"), "recently opened");
         MCGuiType("big");
     });
-    MCGuiWait("big.txt", 10, [] { return selectedLabel() == "big.txt"; });
+    // The list rebinds its rows at once but lays them out on the next frame:
+    // clicked before that (10,000 files of tree_stall's match "big" too),
+    // the click went to whatever row was drawn there.
+    MCGuiWait("big.txt, laid out as the first row", 10, [] {
+        return selectedLabel() == "big.txt" && firstRowShows("big.txt");
+    });
     MCGuiStep("a click on its row opens it", [] {
         GtkWidget* row = MCGuiFindLabel(pal()->box(), "big.txt");
         GCHECK(row != nullptr);
