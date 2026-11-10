@@ -3,6 +3,7 @@
 // same code, now per document.
 #include "Document.h"
 
+#include "BackupStore.h"
 #include "MarkdownTasks.h"
 #include "Utf8Offsets.h"
 #ifdef MINICODE_ENABLE_PDF
@@ -136,6 +137,9 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
 }
 
 Document::~Document() {
+    // Saved, or let go when asked: its unsaved text is not kept any more. A
+    // crash or a SIGKILL never gets here, and leaves the backup.
+    if (backup_.written) BackupStore::shared().remove(backup_.id);
     stopWatching();
     if (taskTimer_) g_source_remove(taskTimer_);
     taskTimer_ = 0;
@@ -170,6 +174,9 @@ void Document::clearSource() {
     savedChars_ = 0;
     dirty_ = false;
     dirtyCheckPending_ = false;
+    diskStamp_ = DiskStamp();
+    diskQuestion_ = false;
+    unread_ = false;
     markdown_ = latex_ = false;
     showsPreview_ = false;
     page_ = Markdown::Page();
@@ -178,6 +185,7 @@ void Document::clearSource() {
 // gtk_text_buffer_set_text is irreversible (never undone into), and while it
 // runs no handler counts it as an edit.
 void Document::fill(const std::string& text) {
+    ++edits_;
     filling_ = true;
     gtk_text_buffer_set_text(buffer_, text.c_str(), (int)text.size());
     filling_ = false;
@@ -238,6 +246,70 @@ void Document::setDiff(const std::string& title, const std::string& bytes, bool 
     diffCommit_ = commit;
 }
 
+void Document::setUnread(const std::string& path) {
+    clearSource();
+    kind_ = Kind::Message;
+    path_ = path;
+    ext_ = extensionOf(path);
+    gtk_text_buffer_set_enable_undo(buffer_, FALSE);
+    fill("");
+    unread_ = true;
+}
+
+// The Mac's takeBackup and showRestoredText in one: the backup's text is the
+// buffer, set whole, so there is nothing to undo, and the disk's text is
+// what it is compared with.
+void Document::restoreText(const std::string& path, const std::string& text,
+                           const std::string* disk, const DiskStamp& base, bool changed) {
+    clearSource();
+    kind_ = Kind::Text;
+    path_ = path;
+    ext_ = extensionOf(path);
+    markdown_ = ext_ == "md" || ext_ == "markdown";
+#ifdef MINICODE_ENABLE_PDF
+    latex_ = ext_ == "tex" || ext_ == "ltx" || ext_ == "latex";
+#endif
+    if (disk) rememberDisk(*disk);
+    // Gone, or changed since: what the backup was based on stays the stamp,
+    // so the next backup still says so.
+    if (!disk || changed) diskStamp_ = base;
+    gtk_text_buffer_set_enable_undo(buffer_, TRUE);
+    fill(text);
+    GtkTextIter start;
+    gtk_text_buffer_get_start_iter(buffer_, &start);
+    gtk_text_buffer_place_cursor(buffer_, &start);
+    startHighlighting();
+    watch();
+    refreshTaskCount();
+    checkDirty();
+}
+
+void Document::askAboutDiskChange() {
+    if (kind_ == Kind::Text && dirty()) diskQuestion_ = true;
+}
+
+bool Document::goneFromDisk() const {
+    struct stat st;
+    return diskStamp_.exists && !path_.empty() && stat(path_.c_str(), &st) != 0;
+}
+
+bool Document::changedOnDisk() const {
+    if (kind_ != Kind::Text || path_.empty()) return false;
+    struct stat st;
+    const bool exists = stat(path_.c_str(), &st) == 0;
+    // Never read here (gone when it came back from a backup): a file there
+    // now is someone else's.
+    if (!diskKnown_) return exists;
+    if (!exists) return false;   // gone: goneFromDisk says so
+    const double mtime = (double)st.st_mtim.tv_sec + st.st_mtim.tv_nsec / 1e9;
+    if (diskStamp_.exists && mtime == diskStamp_.mtime && (uint64_t)st.st_ino == diskStamp_.inode &&
+        (int64_t)st.st_size == diskStamp_.size)
+        return false;
+    std::string content;
+    if (readText(path_, content) != Read::Ok) return true;
+    return content != saved_;
+}
+
 std::string Document::text() const {
     if (hl_ && !bulk_) return mirror_;
     GtkTextIter a, b;
@@ -277,6 +349,15 @@ void Document::rememberDisk(const std::string& content) {
     diskKnown_ = true;
     saved_ = content;
     savedChars_ = g_utf8_strlen(content.data(), (gssize)content.size());
+    diskQuestion_ = false;
+    diskStamp_ = DiskStamp();
+    struct stat st;
+    if (!path_.empty() && stat(path_.c_str(), &st) == 0) {
+        diskStamp_.exists = true;
+        diskStamp_.mtime = (double)st.st_mtim.tv_sec + st.st_mtim.tv_nsec / 1e9;
+        diskStamp_.inode = (uint64_t)st.st_ino;
+        diskStamp_.size = (int64_t)st.st_size;
+    }
 }
 
 bool Document::matchesSaved() {
@@ -301,6 +382,7 @@ void Document::markDirty(bool d) {
 void Document::onChanged(GtkTextBuffer*, gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
     if (self->kind_ != Kind::Text || self->filling_) return;
+    ++self->edits_;
     if (self->inAction_) self->dirtyCheckPending_ = true;
     else self->checkDirty();
     if (self->markdown_) self->scheduleTaskCount();
@@ -466,7 +548,10 @@ void Document::checkExternalChange() {
     // or no longer text: what is in the editor stays, as on the Mac.
     std::string content;
     if (readText(path_, content) != Read::Ok) return;
-    if (content == saved_) return;
+    // Back from a backup made from an older version of the file: asked about
+    // once, as a change seen now would be (askAboutDiskChange).
+    if (diskQuestion_ && !dirty()) diskQuestion_ = false;
+    if (content == saved_ && !diskQuestion_) return;
     if (!dirty()) {
         applyDiskText(content);
         return;

@@ -553,7 +553,12 @@ gboolean startWhenWindowIsUp(gpointer) {
     // X focus is what makes the window active with no window manager.
     MCGuiWait("the window takes the keyboard", 10, [] {
         GtkWindow* w = MCGuiKeyWindow();
-        return w && gtk_window_is_active(w);
+        if (!w) return false;
+        if (gtk_window_is_active(w)) return true;
+        // Or a question it opened with (a tab back from a backup whose file
+        // changed since), which has the keyboard then.
+        GtkWindow* top = MCGuiTopWindow();
+        return top != w && gtk_window_get_transient_for(top) == w;
     });
     selectSuites();
 

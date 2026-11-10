@@ -220,6 +220,11 @@ state are JSON (`Json`) under `$XDG_STATE_HOME/minicode` (default
 `~/.local/state/minicode`); backups under `$XDG_DATA_HOME/minicode/Backups`.
 `MINICODE_BACKUP_DIR` overrides as on the Mac, and every one of these moves
 with the harness's scratch home.
+Items 1.2 and 1.3 made it `sessions.json` (the core's `TabSessions`, one
+object keyed by the folder's resolved path), and a backup's owner start is
+the process's start in seconds since boot from `/proc`, not wall-clock time
+as on the Mac, so a clock set forward or back never orphans a running
+window's backups.
 
 **D12. The registry builds the menu bar, and the palette reads the
 registry.** Today `main.cpp` writes its `GMenu` and accelerators by hand. A
@@ -323,9 +328,32 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   preview tab. A run by hand against clangd saw the squiggles follow the tab
   on show. Needs the owner: the strip's look, and Alt+digits and
   Ctrl+Alt+Shift+T under GNOME on Wayland.
-- [ ] **1.2 Sessions (D11).** A folder reopens its tabs. Mac: `MCTabSessions`.
-- [ ] **1.3 Backups, hot exit, and auto-save (D11).** `Backups` over its POSIX
+- [x] **1.2 Sessions (D11).** A folder reopens its tabs. Mac: `MCTabSessions`.
+  *Verified in Xvfb, 2026-11-09:* `tab-sessions:*` hold the file's format,
+  the 50 folders and the merging of windows on one folder; in the `sessions`
+  suite a second app opens a folder's files (a Markdown page, a named pipe,
+  a 17 MB file, one deleted afterwards, the preview tab), moves the caret by
+  keys and closes with Ctrl+Shift+W, and a third gets them back in order
+  without the deleted one, the preview tab as one, the caret and scroll as
+  they were, and only the tab on show read (never the pipe or the large
+  file at launch); two windows on one folder share it, and one that closes
+  drops out. It fails with the restore taken out of `newWindow`. Not done:
+  the browser's page, which the Mac's session keeps too (after 1.13).
+  Needs the owner: a logout under GNOME.
+- [x] **1.3 Backups, hot exit, and auto-save (D11).** `Backups` over its POSIX
   `Fs`. Mac: `BackupStore`, `+Persistence`. Check with a real SIGKILL.
+  *Verified in Xvfb, 2026-11-09:* in the `backups` suite a second app types
+  into three tabs and is killed with a real `kill -9`; a third, started on
+  another folder, opens a window on the first by itself and has every
+  buffer back unsaved over the disk's text, nothing to undo, the note in the
+  status bar, the question about the file changed meanwhile, and the
+  deleted file's text; Ctrl+Q with Don't Save leaves no backup. The
+  `auto_save` suite presses keys for after-delay, focus-change (Ctrl+0, a
+  tab switch), Close Tab writing instead of asking, a file changed on disk
+  left alone and named, a dead key composing, and off. They fail with
+  backups never written, auto-save off, or either guard taken out. Needs the
+  owner: a real power loss, a crash or logout under GNOME, and focus-change
+  with Wayland's focus and an IBus input method.
 - [ ] **1.4 Line numbers and the gutter (D4).** `LineIndex`, the
   current-line color, click and drag to select lines.
 - [ ] **1.5 The palette (D12).** Commands, Quick Open, Go to Line, and

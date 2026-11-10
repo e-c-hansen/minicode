@@ -1,0 +1,169 @@
+// TabSessions.cpp — see TabSessions.h.
+#include "TabSessions.h"
+
+#include <algorithm>
+#include <cmath>
+#include <set>
+
+#include "Json.h"
+
+namespace TabSessions {
+
+namespace {
+
+Json encodeTab(const Tab &t) {
+    Json j = Json::object();
+    j.set("path", t.path);
+    j.set("page", t.page);
+    Json sel = Json::array();
+    sel.push(Json((int64_t)t.selStart));
+    sel.push(Json((int64_t)t.selEnd));
+    j.set("sel", sel);
+    if (t.haveView) {
+        j.set("top", Json((int64_t)t.top));
+        j.set("into", Json((int64_t)t.into));
+    }
+    return j;
+}
+
+// A count that reads: a whole number, not negative, within reason.
+bool readCount(const Json &j, long *out) {
+    if (!j.isNumber()) return false;
+    const double d = j.asNumber();
+    if (!(d >= 0) || d > 1e12 || std::floor(d) != d) return false;
+    *out = (long)d;
+    return true;
+}
+
+bool decodeTab(const Json &j, Tab *out) {
+    if (!j.isObject() || !j["path"].isString()) return false;
+    Tab t;
+    t.path = j["path"].asString();
+    if (t.path.empty()) return false;
+    t.page = j["page"].asBool(false);
+    const Json &sel = j["sel"];
+    long a = 0, b = 0;
+    if (sel.isArray() && sel.size() == 2 && readCount(sel[0], &a) && readCount(sel[1], &b)) {
+        t.selStart = a;
+        t.selEnd = b;
+    }
+    long top = 0;
+    if (readCount(j["top"], &top)) {
+        t.haveView = true;
+        t.top = top;
+        // How far into the line may be above it, too (the view starting in
+        // the margin over the first line).
+        if (j["into"].isNumber()) t.into = (long)j["into"].asNumber();
+    }
+    *out = t;
+    return true;
+}
+
+// An index into `count` tabs, or -1.
+int readIndex(const Json &j, size_t count) {
+    if (!j.isNumber()) return -1;
+    const double d = j.asNumber();
+    if (!(d >= 0) || d >= (double)count || std::floor(d) != d) return -1;
+    return (int)d;
+}
+
+}  // namespace
+
+std::string encode(const Sessions &all) {
+    Json root = Json::object();
+    for (const auto &kv : all) {
+        const Session &s = kv.second;
+        Json e = Json::object();
+        e.set("used", s.used);
+        e.set("active", s.active);
+        e.set("preview", s.preview);
+        Json tabs = Json::array();
+        for (const Tab &t : s.tabs) tabs.push(encodeTab(t));
+        e.set("tabs", tabs);
+        root.set(kv.first, e);
+    }
+    return root.dump() + "\n";
+}
+
+Sessions decode(const std::string &text) {
+    Sessions out;
+    Json root;
+    if (!Json::parse(text, root) || !root.isObject()) return out;
+    for (const auto &kv : root.items()) {
+        const Json &e = kv.second;
+        if (kv.first.empty() || !e.isObject() || !e["tabs"].isArray()) continue;
+        Session s;
+        // Indices count the tabs as written, so a tab that does not read
+        // moves the ones after it: they are mapped to what is kept.
+        std::vector<int> keptAt;
+        for (const Json &j : e["tabs"].elements()) {
+            Tab t;
+            if (decodeTab(j, &t)) {
+                keptAt.push_back((int)s.tabs.size());
+                s.tabs.push_back(t);
+            } else {
+                keptAt.push_back(-1);
+            }
+        }
+        if (s.tabs.empty()) continue;
+        const int active = readIndex(e["active"], keptAt.size());
+        const int preview = readIndex(e["preview"], keptAt.size());
+        s.active = active >= 0 ? keptAt[(size_t)active] : -1;
+        s.preview = preview >= 0 ? keptAt[(size_t)preview] : -1;
+        s.used = e["used"].asNumber(0);
+        out[kv.first] = s;
+    }
+    return out;
+}
+
+Session merged(const Session &mine, const std::vector<Session> &others) {
+    Session out = mine;
+    std::set<std::string> have;
+    for (const Tab &t : mine.tabs) have.insert(t.path);
+    for (const Session &o : others)
+        for (const Tab &t : o.tabs)
+            if (have.insert(t.path).second) out.tabs.push_back(t);
+    return out;
+}
+
+void put(Sessions &all, const std::string &key, Session s, double now, size_t max) {
+    if (key.empty()) return;
+    if (s.tabs.empty()) {
+        all.erase(key);
+        return;
+    }
+    if (s.active >= (int)s.tabs.size()) s.active = -1;
+    if (s.preview >= (int)s.tabs.size()) s.preview = -1;
+    s.used = now;
+    all[key] = s;
+    while (all.size() > max) {
+        auto oldest = all.end();
+        for (auto it = all.begin(); it != all.end(); ++it)
+            if (it->first != key && (oldest == all.end() || it->second.used < oldest->second.used))
+                oldest = it;
+        if (oldest == all.end()) break;
+        all.erase(oldest);
+    }
+}
+
+EditorTabs::Session files(const Session &s) {
+    EditorTabs::Session out;
+    for (const Tab &t : s.tabs) out.files.push_back(t.path);
+    out.active = s.active;
+    out.preview = s.preview;
+    return out;
+}
+
+EditorTabs::ClosedTab place(const Tab &t) {
+    EditorTabs::ClosedTab c;
+    c.path = t.path;
+    c.preview = t.page;
+    c.selStart = t.selStart;
+    c.selEnd = t.selEnd;
+    c.haveView = t.haveView;
+    c.top = t.top;
+    c.topOffset = (double)t.into;
+    return c;
+}
+
+}  // namespace TabSessions

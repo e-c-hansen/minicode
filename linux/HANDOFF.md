@@ -1195,12 +1195,67 @@ What later items build on:
   without a current allocation" (a scroll bar mid-relayout); it was not
   reproduced outside the app and is harmless.
 
+### 16. Sessions, backups and auto-save (done, November 2026; `PARITY.md` items 1.2 and 1.3)
+
+What later items build on:
+- **`Persistence`** (`src/Persistence.{h,cpp}`, the Mac's
+  `EditorController+Persistence.mm`) is one per window, `App::persist`. It
+  hears everything through four hooks: `Editor::onDocumentsChanged` (an
+  edit, `d` set, or a change to the tabs, null, fired from `refreshStrip`),
+  `onActiveChanged` (`tabShown`: a restored tab's note, focus-change),
+  `notify::focus-widget` (`focusMoved`) and `notify::is-active`
+  (`windowActive`). main.cpp calls `restoreSession` when a window opens and
+  after Open Folder, `saveSessionClosing` from `onWindowRemoved`, and
+  `autoSaveNow` before every close question (`closeTabAsking`,
+  `confirmAllUnsaved`). The sessions file is the core's `TabSessions`;
+  backups are the core's `Backups` through `src/BackupStore.{h,cpp}`, one
+  per process, writing on a thread of its own.
+- **When the session is written**: a second after the tabs change, when a
+  window closes (or, if another window stays on the folder, by that one),
+  before Open Folder, and for every window at the start of a quit
+  (`g.quitting` then stops the closing windows from writing their own). A
+  new window on a folder already open gets the folder's tabs, as on the
+  Mac; a check that wants a new window with no tab closes them first
+  (`keys`, `tabs`).
+- **Tabs not read yet**: a session's tabs are `Document::setUnread`
+  documents (a Message with an empty buffer, never dirty or saved) made by
+  `Editor::addTab`; `Editor::showActive` reads one when it is first shown
+  and gives it the place it came back with (`Place::restore`,
+  `Editor::placeTab`). Code that walks the tabs must not take an unread
+  one's empty buffer for its text. `Editor::placeOf` is what a tab keeps
+  of its place (Reopen Closed Tab uses the same).
+- **Per file**: `Document::backup()` (id, what was written, the note),
+  `edits()`, `diskStamp()` (taken in `rememberDisk`), `restoreText`,
+  `askAboutDiskChange`, `goneFromDisk`, `changedOnDisk`. A document's
+  destructor removes its backup, so anything that destroys a dirty
+  document must have asked first (or be a window closing after its
+  question). The port still has no "(deleted)" state for a tab whose file
+  went; auto-save leaves such a tab alone.
+- **A restored file that changed since** asks Keep Mine or Reload when its
+  window becomes active, or when its tab is shown; the harness's first
+  wait now accepts a window that opens with such a question up.
+- **Input methods**: `Editor::composing()` follows GtkTextView's
+  `preedit-changed`. The checks now run with `GTK_IM_MODULE=
+  gtk-im-context-simple` (`Wrapper.cpp`): IBus is installed on the
+  ThinkPad and not on CI, and with no daemon on the private bus it showed
+  no preedit for a dead key, which GTK's own input method does.
+- **Not done**: the browser's page in the session (the Mac keeps its
+  address, history and whether it showed); it waits for item 1.13's
+  layout.
+- **Traps**: `Ctrl+End` in a file GtkTextView has not laid out yet scrolls
+  by guessed line heights and can leave the caret below the view; the
+  `sessions` suite waits for the view to settle and steps up and down
+  again. Three suites start second apps (`MCGuiRunChild`); a child that
+  fails leaves backups nobody holds, and every later child then opens a
+  window on that folder at launch (`reopenFoldersWithBackups`).
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).
   From `linux/`, `meson test -C build --suite gui` runs every suite (about
-  23 seconds in November 2026: 4 for the `keys` suite and 15 for the tab
-  suites, most of it waiting out GTK's double-click time between clicks); `./build/minicode-guitest save harness` runs
+  37 seconds in November 2026: 4 for the `keys` suite, 15 for the tab
+  suites, most of it waiting out GTK's double-click time between clicks,
+  and 15 for `sessions`, `backups` and `auto_save`, which start second apps); `./build/minicode-guitest save harness` runs
   some with their output as it comes, and `SUITES="save" meson test -C build
   --suite gui -v` does the same through Meson. Plain `meson test -C build`
   leaves them out. The program starts its own Xvfb on a display number the

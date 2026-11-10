@@ -7,3 +7,6 @@ KeysSuite.cpp
 TabsSuite.cpp
 PreviewTabsSuite.cpp
 TabViewersSuite.cpp
+SessionsSuite.cpp
+BackupsSuite.cpp
+AutoSaveSuite.cpp
