@@ -344,6 +344,12 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   Forward (`NavHistory`), Maximize Pane.
 - [ ] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
   *Done means:* a 25 MB file opens and types within the Mac's bounds.
+  Measured for R1 on main with tabs (2026-11-09, the main thread held by
+  one `Editor::openFile`): a 15 MB C file of 300,000 lines, 0.6 s of CPU
+  (0.2 s as .txt, so most of it `Document::startHighlighting`); a 5 MB
+  file on one line, 1.5 to 3.0 s of CPU, and once 5.2 s long at load
+  average 8, past GNOME's 5 s before "not responding". Before tabs these
+  were 3.0 s and about 5 s of CPU.
 - [x] **1.13 The Mac's layout.** The owner's report, 2026-11-09: the browser
   should sit right of the editor with a drag bar between them, and the
   terminal below both, full width, as on the Mac; today the browser takes
@@ -433,7 +439,12 @@ These may run in parallel.
 - [ ] **4.1 Viewers.** CSV, JSON outline, notebooks, and SQLite, with the
   same read-only rules. `FileSniff`, `Csv`, `JsonOutline`, `Notebook`.
 - [ ] **4.2 The preview to the side and scroll sync.** `MarkdownPage`,
-  `PreviewScroll`.
+  `PreviewScroll`. Measured for R1 (2026-11-09): opening README.md in the
+  preview holds the main thread for 0.3 to 0.6 s of CPU, the same without
+  its pictures, while CLAUDE.md (twice the size, few tables) never holds it
+  20 ms. The cost is GTK measuring the tables, each a `GtkGrid` of wrapping
+  labels (`buildTable` in `Markdown.cpp`, about 540 cells in README). Its
+  eight GIFs add about 130 ms of waiting on the image loader's process.
 - [ ] **4.3 Math, Mermaid, and Export as HTML.** `MathTex`, `MermaidDiagram`,
   `MarkdownHtml`.
 - [ ] **4.4 LaTeX problems, warnings, and forward search.** `LatexLog`,
@@ -450,9 +461,30 @@ These may run in parallel.
 Problems the owner hit in the port that no item above covers. Each is
 fixed on its own branch, with a GUI check that fails without the fix.
 
-- [ ] **R1. "minicode is not responding" while clicking around the file
+- [x] **R1. "minicode is not responding" while clicking around the file
   tree** (2026-11-09, the PPA's 1.4.14). The tree's code is the same on
   main. Find the stall, fix it, and bound it with a check.
+  *Found and verified on the ThinkPad, 2026-11-09:* the tree patched a
+  folder's rows once per `GFileMonitor` event, through a sort model costing
+  0.25 ms a change in a big folder, with GIO handing bursts over in one
+  dispatch. Deleting the 30,000 files of an open folder held the main loop
+  for 117 s, making them again for 36 s, and opening that folder cost 7.6 s
+  of main-thread CPU in pieces. Now an event only asks for a listing
+  (`TreeRefresh::Pacer`), made on a worker thread and put in as
+  `TreeRefresh::splices` 8 ms a turn. The `tree_stall` suite (real clicks,
+  a churning folder, 10,000 files deleted and made in an open folder) bounds
+  each phase's longest stall at 500 ms of CPU: it measures 30 to 60 ms, and
+  without the fix 18.2 s and 5.6 s. The owner's own folders hold nothing
+  that large (`~/minicode`'s biggest folder has 363 entries), so their
+  freeze was not reproduced as it happened. `~/minicode` opened read only
+  in the harness, with a build churning an open `build/test-obj`, stalled
+  at most 43 ms, except README.md's preview: 0.8 s of CPU, 2.1 s long at
+  load average 8, from its tables (item 4.2). Ask the owner which folder
+  was open, whether hidden files were shown, and what the click opened.
+  Measured on the way, not fixed here: on main a one-line 5 MB file holds
+  the main loop 1.5 to 3 s of CPU, 5.2 s long once on a loaded machine
+  (item 1.12). Needs the owner: the tree under GNOME on Wayland while a
+  build runs in an open folder.
 - Right-clicking a part of the window offers no Adjust Settings (the same
   day): that is item 2.11.
 
