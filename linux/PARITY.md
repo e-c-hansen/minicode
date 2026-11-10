@@ -298,6 +298,16 @@ lines, which breaks D2's one buffer and every offset, or a GTK patch
 upstream so the drawing skips lines of no height, which would take a release
 to reach Ubuntu). The throwaway suite is not committed.
 
+*Decided, 2026-11-10 (the owner left it to the coordinator):* the tag, with
+a budget. The folds closed in a tab hide at most 5,000 lines between them,
+where the try measured 26 ms a frame and 7.5 ms a key at worst; a fold that
+would go past it stays open, with a note in the status bar saying why, and
+Fold All, Fold Level N, and Fold Recursively close what fits (choosing
+which by a rule written here when it is built) and say how many stayed
+open. The copy handler, Return after a folded line, and the gutter's jump
+over folds are part of the item. If GTK ever skips lines of no height when
+it draws, the budget can grow.
+
 **D9. Inlay hints: try first.** The Mac leaves room with a kern. Try a
 `letter-spacing` tag on the character before the hint, with the label drawn in
 `snapshot_layer`. If Pango will not leave the room on one side, leave hints
@@ -556,11 +566,10 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
 - [ ] **1.9 Line commands and several carets (D5, D7).** `MultiCaret`, Cmd+D's
   and Shift+Cmd+L's counterparts, column selection, move and copy lines, and
   VS Code's word separators.
-- [ ] **1.10 Folding (D8).** `Folding`. *Waiting on the owner:* D8's try
-  (2026-11-09) found the `invisible` tag right for carets, scrolling, the
-  gutter, and undo with 50,000 folds, but every frame costs about 6 µs per
-  hidden line on screen inside GTK, 0.12 s a frame at 20,000 and about
-  0.6 s at 100,000 (D8 has the numbers). Nothing of the item is built.
+- [ ] **1.10 Folding (D8).** `Folding`. D8's try (2026-11-09) found the
+  `invisible` tag right for carets, scrolling, the gutter, and undo with
+  50,000 folds, but every frame costs about 6 µs per hidden line on screen
+  inside GTK; built on the tag with D8's budget of 5,000 hidden lines.
 - [ ] **1.11 Getting around.** Editor zoom, word wrap toggle, Go Back and
   Forward (`NavHistory`), Maximize Pane.
 - [x] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
