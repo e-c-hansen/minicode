@@ -767,11 +767,43 @@ fixed on its own branch, with a GUI check that fails without the fix.
   without either fix.
 - Right-clicking a part of the window offers no Adjust Settings (the same
   day): that is item 2.11.
-- [~] **R3. "It takes multiple seconds to open minicode on ubuntu and
+- [x] **R3. "It takes multiple seconds to open minicode on ubuntu and
   under 1 s to do the same on mac"** (2026-11-10, the PPA's 1.4.14 on
   `~/minicode`), on `worktree-agent-a4711ccfaf9d559fd`. Find where the time
   to a usable window goes, cut what need not happen before it as the Mac
   does, and bound it with a check.
+  *Measured and fixed on the ThinkPad's Xvfb, 2026-11-10* (`HANDOFF.md`
+  item 23): `MINICODE_STARTUP_LOG=1` prints each phase of the start with
+  the time since main and the main thread's CPU. Every window made its
+  hidden terminal and browser at once: VTE started the shell, and the
+  WebKitWebView started WebKit's network and web processes in bwrap
+  sandboxes the main thread waited for, with xdg-dbus-proxy, and loaded
+  DuckDuckGo. The Mac makes both when first shown, and now so does the
+  port; the language server for a session's tab starts after the first
+  frame. Medians of six warm runs on `~/minicode`, interleaved, load 3 to
+  6, milliseconds after main (wall / main-thread CPU), main then this
+  branch: GTK's own start 100/93 and 96/93 (a bare GtkApplication window
+  takes the same); the window built 164/142 and 115/110 (the browser was
+  39/23 of it); realized and presented 217/182 and 166/150; first frame
+  244/203 and 189/170. With a session of five tabs: first frame 299/248
+  and 220/197, clangd started before it and 90 ms after it. The process
+  ran 47 to 50 ms before main in both. The app and what it started used
+  1.87 s of CPU in its first three seconds, and 0.26 s now. The PPA's
+  1.4.14, timed from exec by an LD_PRELOAD probe, drew its first frame at
+  268 ms with 1.91 s of CPU in all. So on Xvfb, with GTK drawing in
+  software, no version takes seconds; the owner's seconds are on the
+  desktop, where GTK and WebKit draw on the Intel GPU and WebKit's
+  processes, the page and the shell's startup files compete with the
+  window for four cores. The `startup` suite bounds the first frame at
+  1500 ms of main-thread CPU (165 to 300 here) and 20 s, checks that no
+  shell, WebKit process, bwrap or xdg-dbus-proxy runs below the app at
+  its first frame and neither pane's part is made, that the server starts
+  after it, and that both panes work once shown; without the fix it fails
+  eight checks. Needs the owner: the same log on the desktop,
+  `linux/dev/startup-times.sh` with the build of main and this branch
+  (item 23 has the commands), for GTK's default renderer, `gl`, `vulkan`
+  and `cairo`, to see what the GPU renderer's first frame and the desktop
+  add; and whether the window now opens in well under a second there.
 
 ## After each stage
 

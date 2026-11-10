@@ -1686,6 +1686,87 @@ Traps:
   went nowhere until the field was clicked.
 - `g_format_size` puts a no-break space before the unit.
 
+### 23. The time to a usable window (done, November 2026; `PARITY.md` item R3)
+
+What later items build on:
+- **`MINICODE_STARTUP_LOG=1`** (`src/StartupLog.{h,cpp}`) prints a line to
+  stderr for each phase of the start, with the time since main and the
+  main thread's CPU time: how long the process ran before main, GTK's
+  startup, the command line, the settings, keys and menu bar, each pane of
+  the first window, the session's tabs, the first file read and
+  highlighted, the window realized and presented, the first three frames
+  (update and layout, paint), the first frame with the process's CPU and
+  what it had started, the tree's first listing, the first idle after it
+  ("settled"), and the first time each thing starting on its own does
+  (the shell, the web view, the browser's first page, each language
+  server, git). A new thing a window starts at launch, or a new pane,
+  gets a `StartupLog::mark` or `once`, so it shows. Without the variable
+  each call tests one flag; `StartupLog::firstFrame()` is kept either way
+  for the checks.
+- **Nothing hidden is made at launch.** `Terminal` and `Browser` make their
+  widget at once, and the terminal and its shell, or the WebKitWebView,
+  when the panel first maps, as the Mac makes its terminal dock and its
+  browser when first shown (`makeTerminalPanel`, `makeBrowserWithHome:`).
+  The terminal is also made by `focus()`, and keeps settings told to it
+  before; the browser's `load()` makes the view and loads that page
+  instead of the home page, which is why `openLink` loads before it shows
+  the pane. `made()` and `webView()` say whether they exist yet. A future
+  browser page in the session (the Mac's `restoreBrowserFromSession`) makes
+  the view at launch only when the session had it.
+- **Work after the first frame:** `whenDrawn(widget, fn)` (`src/WhenDrawn.h`)
+  calls `fn` from the idle after the widget's window has drawn its first
+  frame. `LspSession` holds a document that comes before that (the tab a
+  session brings back) and starts its server then.
+- **For the owner's desktop**, where the checks cannot go:
+  `linux/dev/startup-times.sh [-n runs] [-r renderers] BINARY [FOLDER]`
+  opens the app with the log on, three times for each of GTK's default
+  renderer, `gl`, `vulkan` and `cairo`, waits until it settles, ends it by
+  its PID and prints the phases. Every other minicode must be quit first,
+  or the run hands its folder to the running one and logs nothing. For
+  main before R3, build commit 3a5016d (the log without the fix) in a
+  worktree of its own.
+
+Measured on the ThinkPad's Xvfb (cairo drawing, `~/minicode` read only,
+medians of six warm runs with main and the fix interleaved, load 3 to 6;
+milliseconds after main, wall / main-thread CPU):
+
+| phase | main | R3 |
+|---|---|---|
+| GTK's own start (`gtk: started`) | 100 / 93 | 96 / 93 |
+| the browser's part of the window | 39 / 23 | 0 / 0 |
+| the window built, no session | 164 / 142 | 115 / 110 |
+| realized, then presented | 185 / 162, 217 / 182 | 139 / 132, 166 / 150 |
+| first frame, no session | 244 / 203 | 189 / 170 |
+| first frame, five session tabs | 299 / 248 | 220 / 197 |
+| clangd started (five tabs) | 185, before the frame | 307, after it |
+| CPU of the app and all it started, first 3 s | 1.87 s | 0.26 s |
+
+The process runs 47 to 50 ms before main (GTK alone is about 25 ms of it,
+WebKit about 17, VTE and poppler about 13: what they map and construct).
+A bare GtkApplication window reaches its first frame at about 170 ms of
+CPU here, so GTK is most of what is left. The PPA's 1.4.14, timed from exec
+by an LD_PRELOAD probe that wraps `gtk_window_present`, drew its first
+frame at 268 ms with 1.91 s of CPU in all: on Xvfb nothing takes seconds.
+The renderer is the likely difference on the desktop: on Xvfb `gl` runs
+on llvmpipe, and its first frame's paint took 410 to 560 ms with an empty
+Mesa shader cache and 58 ms with a warm one, against 17 to 30 ms for
+cairo; the desktop's GPU, Vulkan by default on Wayland, was not measured.
+
+Traps:
+- WebKit waits on the main thread for each sandboxed process it starts
+  (a poll on the bwrap's info pipe, 40 to 140 ms each on Xvfb), so a
+  WebKitWebView costs the window even hidden.
+- A widget made from a parent's `map` handler is realized as it is added,
+  since the parent is mapped by then: a `realize` handler connected after
+  `gtk_*_set_child` never runs. `Terminal::makeTerminal` puts the terminal
+  into its panel last; the `startup` suite checks that its key controller
+  on the window was added.
+- `LspSession::documentChanged(path_)` passes a reference to the member
+  it clears first; take a copy.
+- `perf` is closed to users here (`perf_event_paranoid` 4) and the owner
+  wants no debugger, so the log, `strace -f -tt -T` and a bare GTK program
+  timed the same way are what there is.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).
