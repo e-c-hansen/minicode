@@ -95,6 +95,8 @@ private:
     // key -> running server; notes_ holds why a key has none ("" = switched off).
     std::map<std::string, std::shared_ptr<lspgtk::Server>> servers_;
     std::map<std::string, std::string> notes_;
+    bool drawn_ = false;     // the window has drawn its first frame (WhenDrawn.h)
+    bool held_ = false;      // a document came before that, and waits for it
     std::string path_;       // the file in the editor, even with no server
     std::string uri_;        // its URI, when a server has it open
     std::shared_ptr<lspgtk::Server> server_;

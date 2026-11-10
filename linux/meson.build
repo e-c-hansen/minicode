@@ -151,6 +151,10 @@ gui_sources = [
   # plain C++ rules (LaunchOptions.cpp) and the fork (Detach.cpp).
   'src/LaunchOptions.cpp',
   'src/Detach.cpp',
+  # MINICODE_STARTUP_LOG=1: where the time to a usable window goes (R3).
+  'src/StartupLog.cpp',
+  # What a window puts off until it has drawn its first frame (R3).
+  'src/WhenDrawn.cpp',
 ]
 
 inc = include_directories('src', '../src')

@@ -17,6 +17,7 @@
 #include "FileTree.h"
 #include "Palette.h"
 #include "FileDetails.h"
+#include "StartupLog.h"
 
 #include <algorithm>
 #include <cmath>
@@ -153,6 +154,7 @@ struct DirWatch {
     std::size_t rowsOut = 0;
     std::size_t rowsIn = 0;
     guint applyIdle = 0;
+    bool root = false;                   // the tree's top folder (StartupLog.h)
 };
 
 DirWatch* watchOf(GListStore* store) {
@@ -227,6 +229,8 @@ void listSoon(DirWatch* w, double wait) {
 // The listing is in: rows now match the store, and changes reported
 // meanwhile ask for the next one.
 void listingDone(DirWatch* w) {
+    if (w->root)
+        StartupLog::once("tree", "tree: first listing in (%zu entries)", w->rows.size());
     listSoon(w, w->pacer.finished(nowMs()));
 }
 
@@ -336,13 +340,14 @@ void onDirChanged(GFileMonitor*, GFile*, GFile*, GFileMonitorEvent ev, gpointer 
 
 // The folder's entries, then a filter (dotfiles) shared by every folder in
 // the tree.
-GListModel* FileTree::makeDirModel(GFile* dir) {
+GListModel* FileTree::makeDirModel(GFile* dir, bool root) {
     GListStore* store = g_list_store_new(G_TYPE_FILE_INFO);
     auto* w = new DirWatch;
     w->dir = G_FILE(g_object_ref(dir));
     w->store = store;
     w->cancel = g_cancellable_new();
     w->activity = activity_;
+    w->root = root;
     // Watch before listing, so nothing created in between is missed: an
     // event during the first listing asks for a second.
     w->monitor = g_file_monitor_directory(dir, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
@@ -380,7 +385,7 @@ void FileTree::build() {
 
     // Each folder's store is kept in the tree's order itself ("one folder").
     GFile* rootFile = g_file_new_for_path(root_.c_str());
-    GListModel* rootModel = makeDirModel(rootFile);
+    GListModel* rootModel = makeDirModel(rootFile, true);
     g_object_unref(rootFile);
 
     treeModel_ = gtk_tree_list_model_new(

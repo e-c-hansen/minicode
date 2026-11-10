@@ -93,7 +93,7 @@ public:
     void askName(const std::string& prompt, const std::string& initial, NameCb cb);
 
 private:
-    GListModel* makeDirModel(GFile* dir);   // one folder, sorted, then filtered
+    GListModel* makeDirModel(GFile* dir, bool root = false);   // one folder, sorted, then filtered
     void build();
     void dropPopovers();                    // before the list view is replaced
     bool tryReveal();
