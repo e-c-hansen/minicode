@@ -315,6 +315,15 @@ GtkWidget* MCGuiFindButton(GtkWidget* root, const std::string& text) {
     return nullptr;
 }
 
+bool MCGuiTextLaidOut(GtkWidget* textView) {
+    if (!textView || !GTK_IS_TEXT_VIEW(textView)) return false;
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(gtk_text_view_get_buffer(GTK_TEXT_VIEW(textView)), &end);
+    int y = 0, h = 0;
+    gtk_text_view_get_line_yrange(GTK_TEXT_VIEW(textView), &end, &y, &h);
+    return h > 0;
+}
+
 GtkWindow* MCGuiTopWindow() {
     std::set<GtkWindow*> apps;
     for (const MCGuiAppWindow& w : MCGuiAppWindows()) apps.insert(w.window);

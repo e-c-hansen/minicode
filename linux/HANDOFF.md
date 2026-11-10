@@ -2016,6 +2016,18 @@ GUI checks (`tests/gui`):
   turns of the main loop, and the runner waits for it.
 - GtkTextView undoes typing a piece at a time: one Ctrl+Z after typing a
   line takes back its last word or so, not the line.
+- **A scroll to a mark in a big buffer waits for GTK's whole layout**
+  (2026-11-10). `gtk_text_view_scroll_to_mark` acts at once only over a
+  complete layout; while GTK is still laying a new buffer out in idle
+  slices (seconds for 100,000 lines, longer under load) it is only kept
+  pending, so asking again every poll changes nothing, and a wait of 10 or
+  20 s for the line to come on screen timed out in loaded runs
+  (`bracket_pairs`, `gutter_typing`). Wait for `MCGuiTextLaidOut` first,
+  with a limit about the machine. A scroll that GTK does carry out over
+  lines it has not laid out (Ctrl+End in a file just opened) lands short
+  and stays, since GTK keeps the top line still as heights come; the
+  `gutter` suite waits for every line to have its height before its second
+  Ctrl+End, where a quiet view for 0.3 s had let it go too early.
 - **Input that gives up the PRIMARY selection and takes it again, sent in
   one burst** (2026-11-10, `large_file` on CI one run in two): a click in a
   field whose text is selected, then Ctrl+A. GTK handles both within the

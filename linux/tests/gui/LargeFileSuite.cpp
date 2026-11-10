@@ -314,11 +314,16 @@ MC_GUI_SUITE(large_file) {
     });
     // GTK lays the lines out for 10 to 20 s after the file comes on show,
     // and until then the view cannot be put far down for good (see
-    // settleOnCaret): revealLine keeps at it while the height grows.
+    // settleOnCaret): revealLine keeps at it while the height grows. So the
+    // caret is looked for once the layout is over. Looked for before, it
+    // could be on screen for a moment while the height had stopped growing
+    // for a frame of a loaded run; the settling then went on, put the line
+    // typed into next at the very top, a pixel of it hidden, and the tab
+    // switch below kept that place: the caret was never on screen again.
     MCGuiWait("on screen, and staying there", 180, [] {
         GtkTextIter it;
         gtk_text_buffer_get_iter_at_mark(buf(), &it, gtk_text_buffer_get_insert(buf()));
-        return gtk_text_iter_get_line(&it) == 299999 && caretShown();
+        return MCGuiTextLaidOut(ed()->textView()) && gtk_text_iter_get_line(&it) == 299999 && caretShown();
     });
     MCGuiStep("typing in it stays cheap", [] {
         MCGuiNote("line 300,000 on screen to stay %.1f s after Go to Line", (MCGuiNowMs() - gWaitFrom) / 1000);

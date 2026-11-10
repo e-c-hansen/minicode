@@ -91,6 +91,11 @@ MC_GUI_SUITE(gutter_typing) {
         return ed()->currentPath() == F("gutter-big.py") && gut()->shown() && gut()->digits() == 6 &&
                !gut()->drawnRows().empty();
     });
+    // The scroll below waits, doing nothing, until GTK has laid out the
+    // whole file (MCGuiTextLaidOut), which took more than its 20 s with
+    // three runs and four busy loops at once. How long the layout takes is
+    // the machine's load, not what is checked here.
+    MCGuiWait("GTK has laid out the 100,000 lines", 120, [] { return MCGuiTextLaidOut(ed()->textView()); });
     MCGuiStep("the caret to line 50,000", [] {
         GtkTextIter it;
         gtk_text_buffer_get_iter_at_line(buf(), &it, 49999);
