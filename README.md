@@ -362,7 +362,7 @@ minicode looks at the process table every two seconds while the list is on show,
 
 ## Linux
 
-The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has the file tree, the editor with the same highlighting, indentation, and keep-sorted sorting, the terminal, the browser, the Markdown and LaTeX previews with editing from the page, task lists, language servers for completion, problems, hover, and go to definition, the source control panel and its graph, and the settings file, with Control where the Mac uses Command. What the sections above describe as being on the Mac is not there yet: tabs, so a window holds one file at a time, the command palette, line numbers, folding, several cursors, auto-closing brackets and quotes, replace and the find options, rename and the other language server commands, formatting, the agent features and the command line control, and the viewers for CSV, JSON, notebooks, and SQLite. Math in the Markdown preview shows as its TeX, and there is no blur behind the window, which GNOME gives applications no way to ask for.
+The Linux version, in the linux folder, is built on GTK4 with a VTE terminal, a WebKitGTK browser and poppler for PDFs. It has the file tree, the editor with the same highlighting, indentation, and keep-sorted sorting, the terminal, the browser, the Markdown and LaTeX previews with editing from the page, task lists, language servers for completion, problems, hover, and go to definition, the source control panel and its graph, the settings file, and brackets boxed, colored by depth, and closing as you type them, with Control where the Mac uses Command. What the sections above describe as being on the Mac is not there yet: tabs, so a window holds one file at a time, the command palette, line numbers, folding, several cursors, replace and the find options, rename and the other language server commands, formatting, the agent features and the command line control, and the viewers for CSV, JSON, notebooks, and SQLite. Math in the Markdown preview shows as its TeX, and there is no blur behind the window, which GNOME gives applications no way to ask for.
 
 Video and audio files play in the editor's pane through GTK's own GStreamer support. A stock Ubuntu plays WebM, Ogg, MP3 and FLAC out of the box; H.264 video and AAC audio, which most .mp4 and .m4a files hold, need `sudo apt install gstreamer1.0-libav`, and minicode says so when it meets one.
 
@@ -460,7 +460,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Go to a symbol of the open file (its functions, classes and headings, or @: grouped by kind), from its language server or minicode's own outline | Shift Command O | Ctrl Shift O (minicode's own outline for now) |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
 | Go to tab 1 to 8, or the last tab | Control 1 to 9, or Shift Command 1 to 9 (macOS keeps Shift Command 3, 4 and 5 for screenshots) | Alt 1 to 8, and Alt 9 or Alt 0 for the last |  |
-| Go to the matching bracket, or to the closing bracket of the pair around the cursor | Shift Command backslash |  |  |
+| Go to the matching bracket, or to the closing bracket of the pair around the cursor | Shift Command backslash | Ctrl Shift backslash |  |
 | Go to the next or previous change bar in the file (lines changed since git last staged it) | Option F5, Shift Option F5 (F5 may need fn on a laptop) |  |  |
 | Go to the next or previous change in a side-by-side diff | F7, Shift F7 (F7 may need fn on a laptop) |  |  |
 | Go to the next or previous problem in the file, with its message at the cursor | F8, Shift F8 (F8 may need fn on a laptop) |  |  |
@@ -551,7 +551,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Toggle word wrap in the editor, so long lines wrap at the pane's edge or run past it (editor.word-wrap sets it for good) | Option Z |  |  |
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z | U, R, or Ctrl Z, Ctrl Shift Z (Ctrl U, Ctrl R also work) |
 | Use the selected text as what to find | Command E |  |  |
-| Wrap the selected text in brackets or quotes, at every cursor | Type ( [ { " ' or a backtick with text selected (in Markdown also * _ ~ $ and <) |  |  |
+| Wrap the selected text in brackets or quotes, at every cursor | Type ( [ { " ' or a backtick with text selected (in Markdown also * _ ~ $ and <) | Type an opening bracket, a quote, or a backtick with text selected (in Markdown also an asterisk, an underscore, a tilde, a dollar sign, or an opening angle bracket) |  |
 | Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |
 | Zoom every terminal in or out, or back to terminal.font-size, while a terminal has the keyboard | Command equals (or Command plus), Command minus, Option Command 0 (or Command with keypad 0); or Zoom In, Zoom Out, Reset Zoom in the Terminal menu |  |  |
 | Zoom the browser's page, a PDF or the LaTeX preview in or out, or back to actual size, while it has the keyboard or you last scrolled or clicked in it | Command equals (or Command plus), Command minus, Command 0 |  |  |

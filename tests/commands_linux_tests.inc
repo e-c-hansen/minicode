@@ -271,6 +271,14 @@ static void testLinuxTerminalKeys() {
     CHECK(takes("workbench.action.closeActiveEditor", "ctrl+f4"));
     CHECK(!takes("workbench.action.nextEditor", "ctrl+pagedown"));
     CHECK(!takes("workbench.action.openEditorAtIndex1", "alt+1"));
+    // Go to Bracket (PARITY.md 1.7) is VS Code's Linux Ctrl+Shift+\, an
+    // editor command: never bound while the terminal has the keyboard, so
+    // the program there gets the key; its accelerator is the character
+    // Shift makes (HANDOFF.md, "Traps already known").
+    const Command &bracket = *find("editor.action.jumpToBracket");
+    CHECK(d.keysOf(bracket.id).size() == 1 && format(d.keysOf(bracket.id)[0]) == "ctrl+shift+\\");
+    CHECK(!appliesIn(bracket.when, When::Terminal));
+    CHECK(linuxAccelerators(K("ctrl+shift+\\")) == std::vector<std::string>{"<Ctrl>bar"});
 }
 
 static void testLinuxAccelerators() {

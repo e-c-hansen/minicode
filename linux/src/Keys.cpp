@@ -79,6 +79,7 @@ const std::vector<Action>& actions() {
         {"workbench.action.quickOpen", "win.quickopen", false},
         {"workbench.action.gotoLine", "win.gotoline", false},
         {"workbench.action.gotoSymbol", "win.gotosymbol", false},
+        {"editor.action.jumpToBracket", "win.gotobracket", false},
         {"workbench.action.focusSideBar", "win.focustree", true},
         {"workbench.action.focusFirstEditorGroup", "win.focuseditor", false},
         {"workbench.action.nextEditor", "win.nexttab", true},

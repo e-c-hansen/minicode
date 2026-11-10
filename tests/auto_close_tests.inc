@@ -94,6 +94,25 @@ std::u16string typed(const std::u16string &marked, const std::u16string &keys,
     return s.shown();
 }
 
+// The GTK port's view of a UTF-8 text: one unit a code point, U+FFFD for
+// one outside the BMP (AutoClose.h), and where each code point (and the
+// end) is in the UTF-16 text.
+struct CodePoints {
+    std::u16string units;
+    std::vector<size_t> u16At;
+    explicit CodePoints(const std::string &s) {
+        const std::u16string w = toU16(s);
+        for (size_t i = 0; i < w.size(); i++) {
+            const char16_t c = w[i];
+            if (c >= 0xDC00 && c <= 0xDFFF && i > 0 && w[i - 1] >= 0xD800 && w[i - 1] <= 0xDBFF)
+                continue;   // the second half of a pair
+            u16At.push_back(i);
+            units += (c >= 0xD800 && c <= 0xDBFF) ? char16_t(0xFFFD) : c;
+        }
+        u16At.push_back(w.size());
+    }
+};
+
 }  // namespace
 
 static void testAutoClose() {
@@ -424,5 +443,117 @@ static void testAutoClose() {
         h.reset(StringSource<char16_t>(py), &toks);
         CHECK(!toks.empty() && toks[0].style == TokenStyle::String);
         CHECK(lineIsLexed(StringSource<char16_t>(py), 0, h.lineStart(1)));
+    }
+
+    GROUP("autoclose:utf8-context");
+    {
+        // The GTK port's context: a UTF-8 highlighter with offsets in code
+        // points says of every character what the Mac's says of it in
+        // UTF-16, and typing anywhere closes, types over or surrounds the
+        // same way at the same places, through accents, an emoji, CRLF, a
+        // lone CR and U+2029.
+        struct Case {
+            const char *path, *text;
+        };
+        const Case cases[] = {
+            {"a.py", "x = \"caf\xC3\xA9 (\" + f(y)  # d\xC3\xA9j\xC3\xA0 [\n"
+                     "s = '''\xF0\x9F\x98\x80 doc\nmore ( '''\r\nz = g[0]\rw = {'k': \"\xE2\x82\xAC\"}"
+                     "\xE2\x80\xA9t = (1,\n  2)\n"},
+            {"a.cpp", "int f() { /* \xC3\xA9t\xC3\xA9 (\n still */ return g(\"\xF0\x9F\x98\x80\", 'c'); }\n"
+                      "// \xE2\x82\xAC [\nauto s = R\"(raw (x)\n)\";\n"},
+            {"a.js", "const a = `t ${b(\"\xC3\xA9\")} (`; // \xF0\x9F\x98\x80\nlet c = [1, '2'];\n"},
+            {"a.md", "Caf\xC3\xA9 (see) `code (x)` \xF0\x9F\x98\x80 \"q\"\n"},
+        };
+        bool scopes = true, typing = true, spansSame = true;
+        int closes = 0;
+        for (const Case &c : cases) {
+            const std::string s = c.text;
+            const std::u16string w = toU16(s);
+            const CodePoints cp(s);
+            const std::string ext = std::string(c.path).substr(std::string(c.path).find('.') + 1);
+            IncrementalHighlighter<char16_t> h16(ext);
+            h16.reset(StringSource<char16_t>(w), nullptr);
+            IncrementalHighlighter<char> h8(ext);
+            h8.reset(StringSource<char>(s), nullptr);
+            LineIndex lines;
+            lines.resetUtf8(s.data(), s.size());
+            CHECK(lines.lineCount() == h8.lineCount() && lines.length() == cp.units.size());
+            AutoClose::HighlighterContext ctx16(h16, std::make_unique<StringSource<char16_t>>(w));
+            AutoClose::Utf8HighlighterContext ctx8(h8, std::make_unique<StringSource<char>>(s),
+                                                   lines);
+            const size_t n = cp.units.size();
+            for (size_t k = 0; k <= n; k++) {
+                const size_t u = cp.u16At[k];
+                if (ctx8.at(k) != ctx16.at(u) || ctx8.lexed(k) != ctx16.lexed(u) ||
+                    ctx8.ifTyped(k, u'0') != ctx16.ifTyped(u, u'0') ||
+                    ctx8.ifTyped(k, u'a') != ctx16.ifTyped(u, u'a')) {
+                    if (scopes)
+                        std::printf("    %s: code point %zu differs\n", c.path, k);
+                    scopes = false;
+                }
+            }
+            // Strings and comments over windows, mapped to UTF-16.
+            for (size_t lo = 0; lo < n; lo += 7) {
+                const size_t hi = std::min(n, lo + 23);
+                const auto a = ctx8.nonCode(lo, hi);
+                const auto b = ctx16.nonCode(cp.u16At[lo], cp.u16At[hi]);
+                bool same = a.size() == b.size();
+                for (size_t i = 0; same && i < a.size(); i++)
+                    same = cp.u16At[a[i].start] == b[i].start && cp.u16At[a[i].end] == b[i].end &&
+                           a[i].scope == b[i].scope;
+                spansSame = spansSame && same;
+            }
+            // Typing each pair's character at every place, as the port does
+            // it (a Text of code points) and as the Mac does.
+            const std::string path = c.path;
+            const AutoClose::Language &lang = AutoClose::languageFor(path);
+            const AutoClose::Tracker none;
+            for (size_t k = 0; k <= n; k++) {
+                for (char16_t ch : std::u16string(u"([{\"'`*")) {
+                    const size_t u = cp.u16At[k];
+                    const AutoClose::Typed t8 = AutoClose::type(MultiCaret::Text(cp.units),
+                                                                {{k, k}}, ch, lang, ctx8, none);
+                    const AutoClose::Typed t16 =
+                        AutoClose::type(MultiCaret::Text(w), {{u, u}}, ch, lang, ctx16, none);
+                    bool same = t8.kind == t16.kind &&
+                                t8.edit.changes.size() == t16.edit.changes.size() &&
+                                t8.closed.size() == t16.closed.size();
+                    for (size_t i = 0; same && i < t8.edit.changes.size(); i++)
+                        same = cp.u16At[t8.edit.changes[i].start] == t16.edit.changes[i].start &&
+                               t8.edit.changes[i].text == t16.edit.changes[i].text;
+                    if (same && t8.kind == Typed::Kind::Close) closes++;
+                    if (!same && typing)
+                        std::printf("    %s: typing %c at code point %zu differs\n", c.path,
+                                    (char)ch, k);
+                    typing = typing && same;
+                }
+                // Over a selection of the next code point.
+                if (k < n && cp.units[k] != u'\n') {
+                    const AutoClose::Typed t8 = AutoClose::type(
+                        MultiCaret::Text(cp.units), {{k, k + 1}}, u'(', lang, ctx8, none);
+                    const AutoClose::Typed t16 = AutoClose::type(
+                        MultiCaret::Text(w), {{cp.u16At[k], cp.u16At[k + 1]}}, u'(', lang, ctx16,
+                        none);
+                    typing = typing && t8.kind == t16.kind;
+                }
+            }
+        }
+        CHECK(scopes);
+        CHECK(spansSame);
+        CHECK(typing);
+        CHECK(closes > 50);   // the comparison saw pairs close, not only refusals
+        // A caret on a line too long to lex: nothing is lexed, and nothing
+        // walks the line to find a byte.
+        std::string big(kMaxTokenizationLineLength + 100, 'a');
+        big += " (\"x\")\nnext";
+        IncrementalHighlighter<char> h8("py");
+        h8.reset(StringSource<char>(big), nullptr);
+        LineIndex lines;
+        lines.resetUtf8(big.data(), big.size());
+        AutoClose::Utf8HighlighterContext ctx8(h8, std::make_unique<StringSource<char>>(big),
+                                               lines);
+        CHECK(!ctx8.lexed(5) && ctx8.at(kMaxTokenizationLineLength + 103) == AutoClose::Scope::Code);
+        CHECK(ctx8.lexed(big.size() - 1));
+        CHECK(ctx8.nonCode(0, big.size()).empty());
     }
 }

@@ -22,3 +22,6 @@ GutterTypingSuite.cpp
 GutterSwitchSuite.cpp
 TreeClicksSuite.cpp
 TabCloseNowSuite.cpp
+BracketsSuite.cpp
+BracketPairsSuite.cpp
+AutoCloseSuite.cpp

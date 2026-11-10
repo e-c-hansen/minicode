@@ -55,6 +55,8 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
   panel and language servers; Focus Editor, Close Window and Quit (item 8);
 - tabs, with preview tabs, Reopen Closed Tab and Save All (item 15, which
   replaced Previous File);
+- brackets boxed beside the caret and colored by depth, Go to Bracket, and
+  brackets and quotes that close as they are typed (item 21);
 - a VTE terminal that gets its own Ctrl keys while it has the keyboard, with
   Ctrl+click on a file:line or URL in its output (item 9), and a WebKitGTK
   browser;
@@ -70,7 +72,8 @@ poppler) and has been run for real on Ubuntu 26.04 under GNOME on Wayland:
 It shares from `../src` `SyntaxHighlighter`, `MarkdownParser`, `MarkdownEdit`,
 `MarkdownTasks`, `Settings`, `LineComments`, `AutoIndent`, `KeepSorted`,
 `FolderSearch`, `TextFind`, `LatexDoc`, `SyncTex`, `Json`, `LspClient`,
-`TermLinks`, `GitStatus`, `GitGraph` and `GitModel`. `meson.build`'s `core_sources` and
+`TermLinks`, `GitStatus`, `GitGraph`, `GitModel`, `BracketMatch`, `BracketPairs`,
+`AutoClose` and `MultiCaret`. `meson.build`'s `core_sources` and
 the plain Makefile's `CORE` must name the same files: CI builds only with
 Meson, so the Makefile once fell three files behind and could not link, and
 `make test`'s `linux:build-lists` check now compares the two.
@@ -1505,6 +1508,73 @@ What later items build on:
   - The checks run with `GTK_A11Y=none`. Whether GTK's accessibility
     (AT-SPI on the owner's desktop) costs something per edit of a large
     Replace All has not been measured.
+
+### 21. Brackets and auto-closing pairs (done, November 2026; `PARITY.md` items 1.7 and 1.8)
+
+What later items build on:
+- **The buffer a unit a character** (`src/BufferText.{h,cpp}`): the core's
+  editing rules (`MultiCaret`, `AutoClose`, `BracketMatch`) count UTF-16
+  units on the Mac; here they get one unit a code point, GtkTextIter's
+  offsets, with U+FFFD for a character outside the BMP (the rules only ask
+  whether a character is a bracket, a quote, a blank, or a break).
+  `BufferText::text(buffer)` is a `MultiCaret::Text` reading the buffer in
+  blocks (`gtk_text_buffer_get_slice`, so an embedded object still counts);
+  `BufferText::context(doc, buffer)` is the document's strings and comments
+  in characters, `AutoClose::Utf8HighlighterContext` over its UTF-8
+  highlighter and `BufferLines`' index (the core, `autoclose:utf8-context`),
+  or the plain context when the highlighter is not in step.
+  `Document::highlighter()` and `highlighterText()` give the highlighter
+  and its mirror only while they are in step (not during a large user
+  action).
+- **Bracket boxes and Go to Bracket** (`src/BracketView.{h,cpp}`, one per
+  editor, `Editor::brackets()`): a `CodeView` pass at `BelowText` order 10,
+  worked out in an idle after the caret or the text moves, over a window of
+  20,001 characters either side of the caret; `boxed()`, `drawnBoxes()`,
+  `updates()` and `lookups()` are for checks. Go to Bracket is
+  `win.gotobracket`, VS Code's Ctrl+Shift+\ (`<Ctrl>bar`), an editor
+  command, so the program in the terminal gets the key there.
+- **Bracket-pair colors** (`src/BracketColors.{h,cpp}`, one per document,
+  `Document::bracketColors()`): `BracketPairs::Depths` set from every
+  line's tokens when the highlighter lexes the whole file and from each
+  edit's re-lexed tokens in `Document::noteEdit` (`BracketPairs`' UTF-8
+  overloads, `bracketpairs:utf8`); four tags made after the highlighter's
+  in the shared table, painted only for the lines on screen: after each
+  flush (`Document::paintBracketsOnScreen`), and from `BracketView` on the
+  vertical adjustment's `value-changed` and `changed` and when another
+  buffer comes on show. Painting is synchronous in the scroll handler, so
+  a line never shows a frame in the old colors. The current lines are a
+  set of line ranges that follows edits (an edit that changes the depth
+  below it empties the set from its line on). Off with no highlighter, so
+  item 1.12's large-file mode turns them off by dropping the highlighter;
+  it should also make `BracketView::applies` false, as the Mac's
+  `bracketMatchingApplies`.
+- **Auto-closing pairs** (`src/AutoCloseInput.{h,cpp}`, one per editor,
+  `Editor::autoClose()`): called first in `Editor::onViewKey`, the
+  capture-phase key handler, so it acts before the text view and its input
+  method see the key; never while `Editor::composing()`. Its public calls
+  (`typed`, `deletePair`, `remember`, `caretsAre`) take carets, for item 1.9
+  to call with every caret and apply through D5's `MultiEdit` (item 1.6);
+  until then `apply` puts each change in at a caret placed there, last
+  first, in one user action, so the typed character goes in last with the
+  caret after it (Lsp.cpp's trigger check reads the character before the
+  caret) and one Ctrl+Z takes a close. The Tracker follows `insert-text`
+  and `delete-range` of the buffer on show and is validated on `mark-set`
+  and `notify::cursor-position`; it starts empty for each buffer.
+- **Traps**: emptying a selection for a moment and setting it again in one
+  key press gave up the PRIMARY selection, and X's late word that it was
+  lost then took the new selection away, now and then: a surround's edit
+  must not place the caret while a selection exists (`auto_close` checks the
+  selection is still there half a second later). GTK's simple input method
+  keeps a dead key after a key it cannot compose with (dead acute then
+  `(`), and Pango then warns "pango_layout_get_cursor_pos: assertion
+  'index >= 0 ...' failed" with auto-closing or without; Escape ends the
+  composing. A tab closed before the view has drawn it (open a file, then
+  `Editor::closeAllTabs()` in the same step) aborts with "Gtk-ERROR:
+  gtk_text_btree_line_number couldn't find line" in GtkTextView's own
+  snapshot; that is on main, reported, and `bracket_pairs` lets the view
+  draw a frame before each close. A text with a `\n` typed inside an open
+  bracket in Python is indented by AutoIndent, so a check that selects a
+  line with Shift+Home must close the bracket first.
 
 ## How to work on it
 

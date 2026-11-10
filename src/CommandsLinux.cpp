@@ -145,6 +145,9 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.quickOpen", "ctrl+p", 0, nullptr, nullptr},
         {"workbench.action.gotoLine", "ctrl+g", 0, nullptr, nullptr},
         {"workbench.action.gotoSymbol", "ctrl+shift+o", 0, nullptr, nullptr},
+        // VS Code's Linux key (PARITY.md 1.7). An editor command, so while
+        // the terminal has the keyboard the program in it gets the key.
+        {"editor.action.jumpToBracket", "ctrl+shift+\\", 0, nullptr, nullptr},
         // The keys out of the terminal without the mouse: Global, so the
         // shell never gets them.
         {"workbench.action.focusSideBar", "ctrl+0", Global, nullptr, nullptr},

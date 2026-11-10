@@ -4,6 +4,9 @@
 // (the buffer, the highlighter, the disk) is Document.cpp, and the tabs are
 // Tabs.cpp.
 #include "Editor.h"
+#include "AutoCloseInput.h"
+#include "BracketColors.h"
+#include "BracketView.h"
 #include "CodeView.h"
 #include "Palette.h"
 #include "Markdown.h"
@@ -182,6 +185,8 @@ Editor::Editor() {
     gtk_overlay_set_child(GTK_OVERLAY(slotOverlay_), slot_);
     gtk_box_append(GTK_BOX(box_), slotOverlay_);
 
+    brackets_ = new BracketView(this);       // PARITY.md 1.7
+    autoClose_ = new AutoCloseInput(this);   // PARITY.md 1.8
     showActive();   // the welcome text
 }
 
@@ -189,6 +194,10 @@ Editor::Editor() {
 // (main.cpp deletes the editor from GtkApplication's window-removed), so
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
+    delete autoClose_;
+    autoClose_ = nullptr;
+    delete brackets_;
+    brackets_ = nullptr;
     stopSettle();
     stopPlace();
     if (previewEntryTimer_) g_source_remove(previewEntryTimer_);
@@ -226,7 +235,8 @@ Editor::~Editor() {
 }
 
 std::vector<void*> Editor::handlerOwners() const {
-    std::vector<void*> out = {(void*)this, (void*)media_, (void*)strip_};
+    std::vector<void*> out = {(void*)this, (void*)media_, (void*)strip_, (void*)brackets_,
+                              (void*)autoClose_};
     for (Document* d : tabs_)
         if (d->latexPreview()) out.push_back(d->latexPreview());
     return out;
@@ -882,6 +892,11 @@ void Editor::applySettings(const Settings& s) {
     const bool webBefore = settings_.webImages();
     settings_ = s;
     code_->applySettings(s);   // the ruler and the gutter
+    // Bracket boxes, and the bracket colors' tags (every tab's) and whether
+    // each tab has them.
+    brackets_->applySettings(s);
+    BracketColors::applySettings(tags_.table, s);
+    for (Document* d : tabs_) d->bracketSettingChanged();
     // The tags are every tab's: each recolors with them.
     GtkTextTagTable* t = tags_.table;
     for (int i = 0; i < kTokenStyleCount; ++i)
@@ -1926,6 +1941,10 @@ gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifier
     const bool plain = !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK));
     const bool completion = self->observer_ && self->observer_->takesReturn();
     self->typedKey_ = 0;
+    // Brackets and quotes closing, typed over, deleted in pairs, or
+    // surrounding a selection (AutoCloseInput.h), before the text view or
+    // its input method takes the key.
+    if (self->autoClose_ && self->autoClose_->keyPressed(key, mods)) return TRUE;
     if (plain && self->isSource() && !completion) {
         const bool shift = mods & GDK_SHIFT_MASK;
         if (key == GDK_KEY_Return || key == GDK_KEY_KP_Enter || key == GDK_KEY_ISO_Enter) {
