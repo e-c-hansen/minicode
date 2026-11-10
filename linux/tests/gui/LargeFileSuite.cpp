@@ -661,9 +661,26 @@ MC_GUI_SUITE(large_file) {
     // keys typed without a window manager went nowhere until it was clicked.
     // The query the window's bar still holds from an earlier suite ("needle"
     // after find_bar) selected, so that typing replaces it.
-    MCGuiStep("", [] {
-        MCGuiClick(MCGuiApp().findBar->findField());
-        MCGuiKey("ctrl+a");
+    //
+    // The click and Ctrl+A each wait for the one before to land. Sent as one
+    // burst, GTK handled them within a millisecond: the click gave up the
+    // PRIMARY selection Ctrl+F's select-all held, Ctrl+A took it again in the
+    // same millisecond of the X server's time, and X's notice that the first
+    // was given up, which comes after both, then carried the same time as the
+    // second claim. GDK takes such a notice as another program taking the
+    // selection, so the field dropped Ctrl+A's selection to its start and
+    // "NEEDLE" went in before "needle" (CI, one run in two).
+    MCGuiStep("a click in the find field", [] { MCGuiClick(MCGuiApp().findBar->findField()); });
+    MCGuiWait("it landed: the field has the keyboard, its text not selected", 10, [] {
+        GtkWidget* e = MCGuiApp().findBar->findField();
+        return gtk_widget_has_focus(e) && !gtk_editable_get_selection_bounds(GTK_EDITABLE(e), nullptr, nullptr);
+    });
+    MCGuiStep("Ctrl+A", [] { MCGuiKey("ctrl+a"); });
+    MCGuiWait("the query selected", 10, [] {
+        GtkWidget* e = MCGuiApp().findBar->findField();
+        const int n = (int)g_utf8_strlen(gtk_editable_get_text(GTK_EDITABLE(e)), -1);
+        int s = -1, t = -1;
+        return n == 0 || (gtk_editable_get_selection_bounds(GTK_EDITABLE(e), &s, &t) && s == 0 && t == n);
     });
     MCGuiStep("NEEDLE", [] {
         GtkTextIter start;
