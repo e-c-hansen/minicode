@@ -15,10 +15,10 @@
 //   - Nothing GNOME takes: Super, Ctrl+Alt+arrows, Ctrl+Alt+T,
 //     Ctrl+Alt+Delete.
 // A command the port does not have yet has no row, so its key is free until
-// the item that brings it (Ctrl+L for Select Line, Ctrl+Shift+L for Select
-// All Occurrences, Ctrl+I for the inline agent, Ctrl+T for Go to Symbol in
-// Workspace). The port's table of GActions (linux/src/Keys.cpp) has the same
-// commands.
+// the item that brings it (Ctrl+I for the inline agent, Ctrl+T for Go to
+// Symbol in Workspace). The port's table of GActions (linux/src/Keys.cpp)
+// has the same commands, but those the registry marks Fixed, which are a
+// view's own keys.
 #include "Commands.h"
 
 
@@ -77,6 +77,21 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.closeWindow", "ctrl+shift+w", 0, nullptr, nullptr},
 
         // ---- Edit
+        // Several carets and the line commands (PARITY.md 1.9), VS Code's
+        // Linux keys: Ctrl+D, Ctrl+Shift+L, Ctrl+L and Ctrl+Shift+K. Add
+        // Cursor is VS Code's Linux second key, Ctrl+Shift+Up and Down: its
+        // first, Shift+Alt+Up and Down, is Copy Line's here, as on Windows
+        // and the Mac, since VS Code's Linux Copy Line keys
+        // (Ctrl+Shift+Alt+Up and Down) are GNOME's, moving a window to the
+        // workspace above or below (and Ctrl+Alt+Up and Down switch to it).
+        // Editor commands: the program in the terminal keeps Ctrl+D and
+        // Ctrl+L.
+        {"editor.action.addSelectionToNextFindMatch", "ctrl+d", 0, nullptr, nullptr},
+        {"editor.action.selectHighlights", "ctrl+shift+l", 0, nullptr, nullptr},
+        {"editor.action.insertCursorAbove", "ctrl+shift+up", 0, nullptr, nullptr},
+        {"editor.action.insertCursorBelow", "ctrl+shift+down", 0, nullptr, nullptr},
+        {"expandLineSelection", "ctrl+l", 0, nullptr, nullptr},
+        {"editor.action.deleteLines", "ctrl+shift+k", 0, nullptr, nullptr},
         {"editor.action.commentLine", "ctrl+/", 0, nullptr, nullptr},
         // Ctrl+L is Select Line's (D1), so the task key is the Mac's Option+Cmd+L
         // with Alt and Ctrl; Alt+C is markdown-all-in-one's, in Markdown only.
@@ -122,22 +137,49 @@ const std::vector<LinuxRow>& linuxRows() {
         {"minicode.toggleShortcutHints", "ctrl+shift+h", 0, nullptr, nullptr},
         // The editor's zoom (PARITY.md 1.11), VS Code's Linux Ctrl+= and
         // Ctrl+- (its window's zoom; here the editor's and the Markdown
-        // preview's). The reset is the Mac's Option+Cmd+0 with Ctrl+Alt,
-        // since Ctrl+0 is Focus File Tree, and VS Code's Ctrl+keypad 0.
+        // preview's). The reset is VS Code's Ctrl+keypad 0 alone, since
+        // Ctrl+0 is Focus File Tree and Ctrl+Alt+0 is Fold All in the editor
+        // (the Mac's reset is Option+Cmd+0; PARITY.md D1).
         // NotPageOrTerminal: in a page the same keys zoom it, and in the
         // terminal the terminals (below).
         {"editor.action.fontZoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
         {"editor.action.fontZoomOut", "ctrl+-", 0, nullptr, nullptr},
-        {"editor.action.fontZoomReset", "ctrl+alt+0 ctrl+numpad0", 0, nullptr, nullptr},
+        {"editor.action.fontZoomReset", "ctrl+numpad0", 0, nullptr, nullptr},
         // A PDF or the LaTeX preview on show, or the browser with the
         // keyboard. Ctrl+0 is Focus File Tree, as Cmd+0 is outside a page on
-        // the Mac, so fit width is Ctrl+Alt+0, the editor's reset elsewhere.
+        // the Mac, so fit width is Ctrl+Alt+0, Fold All in the editor.
         {"minicode.page.zoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
         {"minicode.page.zoomOut", "ctrl+-", 0, nullptr, nullptr},
         {"minicode.page.fitWidth", "ctrl+alt+0", 0, nullptr, nullptr},
         // VS Code's Linux key. An editor command, so in the terminal Alt+Z
         // is the program's (Meta), as Option+Z is on the Mac.
         {"editor.action.toggleWordWrap", "alt+z", 0, nullptr, nullptr},
+        // Folding (PARITY.md 1.10). Fold and Unfold are VS Code's Linux
+        // Ctrl+Shift+[ and ], which GTK matches as the braces Shift makes
+        // (linuxAccelerators); the rest are Ctrl+K chords in VS Code, so
+        // Ctrl+Alt with the chord's second key, as the Mac's are
+        // Control+Command with it. Ctrl+Alt+0 is Fold All in the editor, the
+        // family's key (VS Code's Ctrl+K Ctrl+0), and outside it the
+        // terminals' zoom reset and a page's fit width, places that never
+        // meet the editor; the editor's zoom reset keeps VS Code's own
+        // Ctrl+keypad 0 (PARITY.md D1). Toggle Fold's would be Ctrl+Alt+L,
+        // the task key's, so it has none. Editor commands: in the terminal
+        // the program gets every one of these keys.
+        {"editor.fold", "ctrl+shift+[", 0, nullptr, nullptr},
+        {"editor.unfold", "ctrl+shift+]", 0, nullptr, nullptr},
+        {"editor.toggleFold", "", 0, nullptr, nullptr},
+        {"editor.foldRecursively", "ctrl+alt+[", 0, nullptr, nullptr},
+        {"editor.unfoldRecursively", "ctrl+alt+]", 0, nullptr, nullptr},
+        {"editor.foldAll", "ctrl+alt+0", 0, nullptr, nullptr},
+        {"editor.unfoldAll", "ctrl+alt+j", 0, nullptr, nullptr},
+        {"editor.foldAllBlockComments", "ctrl+alt+/", 0, nullptr, nullptr},
+        {"editor.foldLevel1", "ctrl+alt+1", 0, nullptr, nullptr},
+        {"editor.foldLevel2", "ctrl+alt+2", 0, nullptr, nullptr},
+        {"editor.foldLevel3", "ctrl+alt+3", 0, nullptr, nullptr},
+        {"editor.foldLevel4", "ctrl+alt+4", 0, nullptr, nullptr},
+        {"editor.foldLevel5", "ctrl+alt+5", 0, nullptr, nullptr},
+        {"editor.foldLevel6", "ctrl+alt+6", 0, nullptr, nullptr},
+        {"editor.foldLevel7", "ctrl+alt+7", 0, nullptr, nullptr},
         {"workbench.action.toggleSidebarVisibility", "ctrl+b", 0, nullptr, nullptr},
         {"workbench.view.scm", "ctrl+shift+g", 0, nullptr, nullptr},
         // View > Source Control (PARITY.md 2.9). VS Code has these without
@@ -218,6 +260,20 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.openEditorAtIndex8", "alt+8", 0, nullptr, nullptr},
         {"workbench.action.lastEditorInGroup", "alt+9 alt+0", 0, nullptr, nullptr},
         {"editor.action.revealDefinition", "f12", 0, nullptr, nullptr},
+
+        // ---- the editor's own keys (PARITY.md 1.9). Move and Copy Line
+        // are VS Code's (see Add Cursor above), in the Edit menu here, which
+        // the Mac's are not. Ctrl+Home and Ctrl+End are GtkTextView's own
+        // with one caret and Carets.cpp's with several; listed, not
+        // actions, so they never leave an entry or the terminal.
+        {"editor.action.moveLinesDownAction", "alt+down", 0, nullptr, "Edit"},
+        {"editor.action.moveLinesUpAction", "alt+up", 0, nullptr, "Edit"},
+        {"editor.action.copyLinesDownAction", "alt+shift+down", 0, nullptr, "Edit"},
+        {"editor.action.copyLinesUpAction", "alt+shift+up", 0, nullptr, "Edit"},
+        {"cursorTop", "ctrl+home", 0, nullptr, nullptr},
+        {"cursorTopSelect", "ctrl+shift+home", 0, nullptr, nullptr},
+        {"cursorBottom", "ctrl+end", 0, nullptr, nullptr},
+        {"cursorBottomSelect", "ctrl+shift+end", 0, nullptr, nullptr},
     };
     return rows;
 }

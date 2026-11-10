@@ -439,13 +439,16 @@ static void testGettingAround() {
         CHECK(is(d.commandFor(K("ctrl+-"), When::Editor), "editor.action.fontZoomOut"));
         CHECK(is(d.commandFor(K("ctrl+-"), When::Terminal), "workbench.action.terminal.fontZoomOut"));
         CHECK(is(d.commandFor(K("ctrl+-"), When::Page), "minicode.page.zoomOut"));
-        // Ctrl+Alt+0: fit width in a page, the reset elsewhere; Ctrl+0 stays
-        // Focus File Tree.
+        // Ctrl+Alt+0: fit width in a page, the terminals' reset in the
+        // terminal, and Fold All in the editor (PARITY.md D1: the family of
+        // VS Code's Ctrl+K chords), so the editor's reset is VS Code's own
+        // Ctrl+keypad 0 alone. Ctrl+0 stays Focus File Tree.
         CHECK(is(d.commandFor(K("ctrl+alt+0"), When::Page), "minicode.page.fitWidth"));
-        CHECK(is(d.commandFor(K("ctrl+alt+0"), When::Editor), "editor.action.fontZoomReset"));
+        CHECK(is(d.commandFor(K("ctrl+alt+0"), When::Editor), "editor.foldAll"));
         CHECK(is(d.commandFor(K("ctrl+alt+0"), When::Terminal),
                  "workbench.action.terminal.fontZoomReset"));
         CHECK(is(d.commandFor(K("ctrl+numpad0"), When::Editor), "editor.action.fontZoomReset"));
+        CHECK(d.keysOf("editor.action.fontZoomReset").size() == 1);
         CHECK(is(d.commandFor(K("ctrl+0"), When::Editor), "workbench.action.focusSideBar"));
         // The terminals' zoom keeps its plain Ctrl keys in the terminal; the
         // editor's would be the program's there, where it does not apply.

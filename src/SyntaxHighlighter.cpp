@@ -1833,6 +1833,155 @@ IncrementalHighlighter<Ch>::edit(const TextSource<Ch>& src, size_t pos,
     return r;
 }
 
+template <class Ch>
+std::vector<typename IncrementalHighlighter<Ch>::EditedRange>
+IncrementalHighlighter<Ch>::editMany(const TextSource<Ch>& src, const std::vector<Edit>& edits,
+                                     std::vector<Token>& out) {
+    std::vector<EditedRange> ranges;
+    if (edits.empty()) return ranges;
+    const size_t total = src.length();
+    long long delta = 0;
+    size_t end = 0;
+    bool fits = true;
+    for (const Edit& e : edits) {
+        if (e.pos < end || e.pos > length_ || e.oldLen > length_ - e.pos) fits = false;
+        end = e.pos + e.oldLen;
+        delta += (long long)e.newLen - (long long)e.oldLen;
+    }
+    if (!fits || (long long)total != (long long)length_ + delta) {
+        // The edits do not describe how we got here; start over, as edit().
+        const size_t before = starts_.size();
+        reset(src, &out);
+        EditedRange r;
+        r.range.firstLine = 0;
+        r.range.endLine = starts_.size();
+        r.range.start = 0;
+        r.range.end = length_;
+        r.oldLines = before;
+        r.tokensEnd = out.size();
+        ranges.push_back(r);
+        return ranges;
+    }
+
+    // Edits whose windows of line starts could meet (see edit(): the starts
+    // in [pos, pos + oldLen + reach - 1] before, and [pos, pos + newLen +
+    // reach - 1] after) or that touch the same old lines go together, as one
+    // edit over all of them, which edit() allows.
+    const size_t reach = breakReach<Ch>();
+    struct Group {
+        size_t pos, oldEnd;   // in the old text
+        long long shiftBefore, delta;   // what the edits before it, and its own, add
+        size_t firstGone, keep;   // the old starts it removes: [firstGone, keep)
+    };
+    std::vector<Group> groups;
+    long long shift = 0;
+    for (const Edit& e : edits) {
+        const size_t from = std::max<size_t>(e.pos, 1);
+        const size_t firstGone =
+            (size_t)(std::lower_bound(starts_.begin(), starts_.end(), from) - starts_.begin());
+        const size_t keep = (size_t)(std::upper_bound(starts_.begin() + (long)firstGone,
+                                                      starts_.end(), e.pos + e.oldLen + reach - 1) -
+                                     starts_.begin());
+        const long long d = (long long)e.newLen - (long long)e.oldLen;
+        if (!groups.empty()) {
+            Group& g = groups.back();
+            if (firstGone <= g.keep || e.pos < g.oldEnd + reach) {
+                g.oldEnd = e.pos + e.oldLen;
+                g.delta += d;
+                g.keep = std::max(g.keep, keep);
+                shift += d;
+                continue;
+            }
+        }
+        groups.push_back({e.pos, e.pos + e.oldLen, shift, d, firstGone, keep});
+        shift += d;
+    }
+
+    // The new line table in one pass: untouched lines copied (their starts
+    // moved by what the edits before them add), each group's lines found
+    // again in the new text, their states unknown but the last, which keeps
+    // the old tail's, as edit() leaves them.
+    struct Placed {
+        size_t first, mustReach;
+        long long lineDelta;   // new lines minus old ones
+    };
+    std::vector<Placed> placed;
+    placed.reserve(groups.size());
+    std::vector<size_t> starts;
+    std::vector<LexState> states;
+    starts.reserve(starts_.size() + 16);
+    states.reserve(states_.size() + 16);
+    size_t resume = 0;   // the old line where untouched lines go on
+    long long moved = 0;
+    std::vector<Ch> win;
+    for (const Group& g : groups) {
+        const size_t a = g.firstGone - 1;
+        const size_t removed = g.keep - g.firstGone;
+        for (size_t i = resume; i < g.firstGone; ++i)
+            starts.push_back((size_t)((long long)starts_[i] + moved));
+        for (size_t i = resume; i < a; ++i) states.push_back(states_[i]);
+        const size_t first = starts.size() - 1;   // line a, in the new table
+        const size_t pos = (size_t)((long long)g.pos + g.shiftBefore);
+        const size_t newLen = (size_t)((long long)(g.oldEnd - g.pos) + g.delta);
+        const size_t from = std::max<size_t>(pos, 1);
+        const size_t last = std::min(pos + newLen + reach - 1, total);
+        size_t added = 0;
+        if (from <= last) {
+            const size_t lo = from > reach ? from - reach : 0;
+            const size_t hi = std::min(total, last + 1);
+            win.resize(hi - lo);
+            if (hi > lo) src.read(lo, hi - lo, win.data());
+            for (size_t st = from; st <= last; ++st)
+                if (endsLineAfter(win.data(), win.size(), st - 1 - lo)) {
+                    starts.push_back(st);
+                    added++;
+                }
+        }
+        for (size_t k = 0; k < added; ++k) states.push_back(LexState{LexState::Unknown, 0});
+        states.push_back(states_[a + removed]);
+        placed.push_back({first, first + added, (long long)added - (long long)removed});
+        resume = g.keep;
+        moved += g.delta;
+    }
+    for (size_t i = resume; i < starts_.size(); ++i)
+        starts.push_back((size_t)((long long)starts_[i] + moved));
+    for (size_t i = resume; i < states_.size(); ++i) states.push_back(states_[i]);
+    starts_ = std::move(starts);
+    states_ = std::move(states);
+    length_ = total;
+    if (win.capacity() > 1 << 16) std::vector<Ch>().swap(win);
+
+    // Each group re-lexed from its first line until a line past it ends as
+    // it used to; one that runs into the next group carries on through it.
+    size_t relexedTo = 0;
+    std::vector<long long> lineDelta;   // per range
+    for (const Placed& p : placed) {
+        if (!ranges.empty() && relexedTo > p.first) {
+            EditedRange& r = ranges.back();
+            lineDelta.back() += p.lineDelta;
+            if (relexedTo <= p.mustReach) relexedTo = relex(src, relexedTo, p.mustReach, out);
+            r.range.endLine = relexedTo;
+            r.tokensEnd = out.size();
+            continue;
+        }
+        EditedRange r;
+        r.range.firstLine = p.first;
+        relexedTo = relex(src, p.first, p.mustReach, out);
+        r.range.endLine = relexedTo;
+        r.tokensEnd = out.size();
+        ranges.push_back(r);
+        lineDelta.push_back(p.lineDelta);
+    }
+    for (size_t i = 0; i < ranges.size(); ++i) {
+        Range& r = ranges[i].range;
+        r.start = starts_[r.firstLine];
+        r.end = lineEnd(r.endLine - 1);
+        ranges[i].oldLines =
+            (size_t)((long long)(r.endLine - r.firstLine) - lineDelta[i]);
+    }
+    return ranges;
+}
+
 template class IncrementalHighlighter<char>;
 template class IncrementalHighlighter<char16_t>;
 

@@ -44,10 +44,12 @@
 
 #include "AppSettings.h"
 #include "BracketView.h"
+#include "Carets.h"
 #include "Detach.h"
 #include "Document.h"
 #include "Editor.h"
 #include "FileTree.h"
+#include "Folds.h"
 #include "ThemeCss.h"
 #include "Palette.h"
 #include "Terminal.h"
@@ -1686,12 +1688,33 @@ static std::string hintsText(App* app) {
     row("minicode.showTodos", "TODOs in folder");
     row("editor.action.commentLine", "Toggle comment");
     row("editor.action.jumpToBracket", "Go to bracket");
+    row("editor.fold", "Fold the region at the cursor");
+    row("editor.unfold", "Unfold it");
+    row("editor.foldAll", "Fold all");
+    row("editor.unfoldAll", "Unfold all");
     plain("Tab, Shift Tab", "Indent, outdent lines");
     row("minicode.sortLines", "Sort lines");
     row("minicode.sortKeepSortedBlocks", "Sort keep-sorted blocks");
     row("workbench.action.openSettings", "Settings");
     row("workbench.action.focusSideBar", "Focus the file tree");
     row("workbench.action.focusFirstEditorGroup", "Focus the editor");
+
+    heading("Several carets and lines");
+    row("editor.action.addSelectionToNextFindMatch", "Add the next occurrence");
+    row("editor.action.selectHighlights", "Select all occurrences");
+    row("editor.action.insertCursorBelow", "Add a cursor below");
+    row("editor.action.insertCursorAbove", "Add a cursor above");
+    plain("Alt click", "Add or remove a cursor");
+    plain("Shift Alt drag", "A column (or a middle-button drag)");
+    plain("Escape", "Back to one cursor");
+    row("expandLineSelection", "Select line");
+    row("editor.action.deleteLines", "Delete line");
+    row("editor.action.moveLinesDownAction", "Move line down");
+    row("editor.action.moveLinesUpAction", "Move line up");
+    row("editor.action.copyLinesDownAction", "Copy line down");
+    row("editor.action.copyLinesUpAction", "Copy line up");
+    row("cursorTop", "Start of the file");
+    row("cursorBottom", "End of the file");
 
     heading("Navigation");
     row("workbench.action.showCommands", "Command palette");
@@ -2256,6 +2279,11 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->editor->onDocumentsChanged = [app](Document* d) {
         if (!app->dead && app->persist) app->persist->changed(d);
     };
+    // View > Folding's actions, and its notes (Folds.h).
+    app->editor->folds()->addActions(G_ACTION_MAP(app->window));
+    app->editor->folds()->onNote = [app](const std::string& note) {
+        if (!app->dead) flashStatus(app, note);
+    };
 
     // The editor's side: the editor (its tab strip and slot), with the find
     // and replace bar hanging over its text (FindBar.h); it stays with the
@@ -2263,6 +2291,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
     GtkWidget* editorPane = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     app->findBar = new FindBar(app->editor);
     app->findBar->onNote = [app](const std::string& note) {
+        if (!app->dead) flashStatus(app, note);
+    };
+    app->editor->carets()->onNote = [app](const std::string& note) {
         if (!app->dead) flashStatus(app, note);
     };
     gtk_box_append(GTK_BOX(editorPane), app->editor->widget());
@@ -2469,6 +2500,8 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "quickopen",      G_CALLBACK(act_quick_open));
     addAction(app, "gotoline",       G_CALLBACK(act_go_to_line));
     addAction(app, "gotosymbol",     G_CALLBACK(act_go_to_symbol));
+    // Several carets and the line commands (Carets.h).
+    Carets::addActions(G_ACTION_MAP(app->window), app->editor);
     makeGitPanel(app);   // and View > Source Control's actions
     for (const char* off : {"zoomin", "zoomout", "zoomfit", "playpause"})   // until shown
         g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(

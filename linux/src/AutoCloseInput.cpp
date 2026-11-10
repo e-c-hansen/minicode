@@ -2,6 +2,7 @@
 #include "AutoCloseInput.h"
 
 #include "BufferText.h"
+#include "Carets.h"
 #include "Document.h"
 #include "Editor.h"
 
@@ -80,14 +81,14 @@ void AutoCloseInput::onDelete(GtkTextBuffer*, GtkTextIter* a, GtkTextIter* b, gp
 // pairs it left.
 void AutoCloseInput::onMarkSet(GtkTextBuffer* b, GtkTextIter*, GtkTextMark* mark, gpointer selfp) {
     AutoCloseInput* self = static_cast<AutoCloseInput*>(selfp);
-    if (self->applying_ || self->tracker_.empty()) return;
+    if (self->applying_ || self->tracker_.empty() || self->caretsApplying()) return;
     if (mark == gtk_text_buffer_get_insert(b) || mark == gtk_text_buffer_get_selection_bound(b))
         self->caretsAre(self->carets());
 }
 
 void AutoCloseInput::onCursor(GObject*, GParamSpec*, gpointer selfp) {
     AutoCloseInput* self = static_cast<AutoCloseInput*>(selfp);
-    if (self->applying_ || self->tracker_.empty()) return;
+    if (self->applying_ || self->tracker_.empty() || self->caretsApplying()) return;
     self->caretsAre(self->carets());
 }
 
@@ -105,7 +106,16 @@ const AutoClose::Language& AutoCloseInput::language() const {
     return AutoClose::languageFor(d ? d->path() : std::string());
 }
 
+// Several carets edit and move through Carets.h, which says where they all
+// are afterwards (caretsAre); meanwhile the buffer's selection is only the
+// first of them.
+bool AutoCloseInput::caretsApplying() const {
+    Carets* c = editor_->carets();
+    return c && c->applying();
+}
+
 std::vector<Caret> AutoCloseInput::carets() const {
+    if (Carets* c = editor_->carets(); c && c->active()) return c->current();
     GtkTextIter ins, bound;
     gtk_text_buffer_get_iter_at_mark(buffer_, &ins, gtk_text_buffer_get_insert(buffer_));
     gtk_text_buffer_get_iter_at_mark(buffer_, &bound, gtk_text_buffer_get_selection_bound(buffer_));

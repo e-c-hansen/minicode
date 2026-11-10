@@ -2,14 +2,17 @@
 // zoom`, linux/PARITY.md item 1.11), the counterparts of the Mac's
 // terminal_zoom (tests/gui/LooseEndsSuite.mm) and zoomfit's zoom steps
 // (tests/gui/ZoomFitSuite.mm), with real keys through XTest: Ctrl+= and
-// Ctrl+Shift+= zoom the editor in a point at a time, Ctrl+- out, Ctrl+Alt+0
-// and Ctrl+keypad 0 back, the text and the gutter growing and shrinking
+// Ctrl+Shift+= zoom the editor in a point at a time, Ctrl+- out, Ctrl+keypad
+// 0 back (Ctrl+Alt+0 is Fold All in the editor, PARITY.md D1), the text and
+// the gutter growing and shrinking
 // with it and the Markdown preview's sizes scaled; the zoom lasts into a
 // second app through $XDG_STATE_HOME/minicode/zoom.json and never touches
 // the settings file; with a PDF on show the keys zoom it and Ctrl+0 still
-// focuses the tree, and with the browser's keyboard they zoom its page;
+// focuses the tree and Ctrl+Alt+0 fits its width, and with the browser's
+// keyboard they zoom its page and Ctrl+Alt+0 puts it back;
 // with the terminal's keyboard the same keys zoom only the terminals (the
-// shell sees the new width), while plain Ctrl keys, Alt+Z and Ctrl+Shift+-
+// shell sees the new width) and Ctrl+Alt+0 puts them back, while plain Ctrl
+// keys, Alt+Z and Ctrl+Shift+-
 // still reach the program there.
 #include "Harness.h"
 
@@ -156,7 +159,12 @@ MC_GUI_SUITE(zoom) {
         GCHECK(editorHasKeyboard());
     });
     MCGuiStep("a Markdown page", [] { MCGuiOpenFileKept(F("zoom.md")); });
-    MCGuiWait("rendered", 10, [] { return ed()->currentPath() == F("zoom.md") && ed()->inPreview(); });
+    // The page's font follows the view's style a frame after the page shows
+    // (failed once in four runs when read in the next step at once).
+    MCGuiWait("rendered, in the zoomed font", 10, [] {
+        return ed()->currentPath() == F("zoom.md") && ed()->inPreview() &&
+               near(fontPx(view()), px(Zoom::desktopPoints() * 15.0 / 13.0));
+    });
     MCGuiStep("its sizes scaled by (13 + 2) / 13", [] {
         const double scale = 15.0 / 13.0;
         GCHECK(near(Zoom::previewScale(), scale, 1e-9));
@@ -178,14 +186,14 @@ MC_GUI_SUITE(zoom) {
     MCGuiWait("a point smaller", 10, [] {
         return Zoom::editorZoom() == 1 && near(fontPx(view()), px(Zoom::desktopPoints() + 1));
     });
-    MCGuiStep("Ctrl+Alt+0", [] { MCGuiKey("ctrl+alt+0"); });
+    // The keypad's 0 as it comes with Num Lock off, as the checks' display
+    // has it: KP_Insert (with Num Lock on it is KP_0, the same command).
+    MCGuiStep("Ctrl+keypad 0", [] { MCGuiKey("ctrl+KP_Insert"); });
     MCGuiWait("back as it was: the text, the gutter, the page's sizes", 10, [] {
         return Zoom::editorZoom() == 0 && near(fontPx(view()), gPx0) && charWidth() == gChar0 &&
                gutterWidth() == gGutter0 && tagPoints("h1") == 26 && tagPoints("md_code") == 13;
     });
-    // The keypad's 0 as it comes with Num Lock off, as the checks' display
-    // has it: KP_Insert (with Num Lock on it is KP_0, the same command).
-    MCGuiStep("Ctrl+= then Ctrl+keypad 0", [] {
+    MCGuiStep("Ctrl+= then Ctrl+keypad 0 again", [] {
         MCGuiKey("ctrl+=");
         MCGuiKey("ctrl+KP_Insert");
     });
@@ -199,7 +207,7 @@ MC_GUI_SUITE(zoom) {
         return Zoom::editorZoom() == 6 - Zoom::desktopPoints() && near(fontPx(view()), px(6));
     });
     MCGuiStep("back, and zoomed in two for the next app", [] {
-        MCGuiKey("ctrl+alt+0");
+        MCGuiKey("ctrl+KP_Insert");
         MCGuiKey("ctrl+=");
         MCGuiKey("ctrl+=");
     });
@@ -212,7 +220,7 @@ MC_GUI_SUITE(zoom) {
             done();
         });
     });
-    MCGuiStep("the zoom back to none", [] { MCGuiKey("ctrl+alt+0"); });
+    MCGuiStep("the zoom back to none", [] { MCGuiKey("ctrl+KP_Insert"); });
     MCGuiWait("none", 10, [] { return Zoom::editorZoom() == 0 && near(fontPx(view()), gPx0); });
 
 #ifdef MINICODE_ENABLE_PDF
