@@ -12,7 +12,9 @@
 // each toggle bringing its pane back at its size; a file opened from the
 // tree, the preview key, and Focus Editor showing a hidden editor; the
 // sidebar's divider dragged to the right edge giving the tree the window,
-// and Toggle Editor opening the right side again; Toggle Sidebar hiding only
+// and Toggle Editor opening the right side again; a drag from 3 px inside
+// the editor's left edge reaching the editor, not that divider, which still
+// moves from its own line with no jump; Toggle Sidebar hiding only
 // the sidebar; and the find bar on the editor's side. The Mac has these in
 // EditorController+Layout.mm and +Panels.mm, and the rules in
 // src/RightAreaLayout.h, whose `rightarea:*` core tests hold them.
@@ -361,6 +363,40 @@ MC_GUI_SUITE(layout) {
     MCGuiWait("the editor shows again, with the keyboard", 10, [] {
         return showing((1 << kEditor) | (1 << kTerminal)) &&
                gtk_widget_has_focus(MCGuiApp().editor->textView());
+    });
+
+    // -------------- the sidebar's divider leaves the editor's edge alone
+    // It took presses 14 px into the editor (the theme's padding and GTK's
+    // own 6 px), over the gutter's lanes; now 5 px either side of its line.
+    MCGuiStep("the keyboard to the tree", [] { MCGuiKey("ctrl+0"); });
+    MCGuiWait("the tree has it", 10, [] { return focusIn(MCGuiApp().tree->widget()); });
+    MCGuiStep("a drag from 3 px inside the editor's left edge", [] {
+        gSidebarW = gtk_widget_get_width(L()->sidebar());
+        const graphene_rect_t tv = box(MCGuiApp().editor->textView());
+        GCHECK(near(tv.origin.x, 0));   // the editor's text starts at the right side's edge
+        const double y = tv.origin.y + 20;
+        MCGuiDrag(area(), 3, y, 63, y);
+    });
+    MCGuiWait("the drag is over", 10, [] { return !MCGuiInputPending(); });
+    MCGuiWait("the editor took it: the keyboard is there", 10, [] {
+        return focusIn(pane(kEditor));
+    });
+    MCGuiStep("and the divider did not move", [] {
+        GCHECK(near(gtk_widget_get_width(L()->sidebar()), gSidebarW, 0));
+    });
+    MCGuiStep("a drag from the divider's own line still moves it 30 px", [] {
+        const double y = gtk_widget_get_height(L()->widget()) / 2;
+        MCGuiDrag(L()->widget(), gSidebarW + 2, y, gSidebarW + 32, y);
+    });
+    MCGuiWait("it moved, with no jump at the press", 10, [] {
+        return near(gtk_widget_get_width(L()->sidebar()), gSidebarW + 30, 1);
+    });
+    MCGuiStep("and back", [] {
+        const double y = gtk_widget_get_height(L()->widget()) / 2;
+        MCGuiDrag(L()->widget(), gSidebarW + 32, y, gSidebarW + 2, y);
+    });
+    MCGuiWait("where it was", 10, [] {
+        return near(gtk_widget_get_width(L()->sidebar()), gSidebarW, 1);
     });
 
     // ------------------------- the sidebar's divider dragged to the right

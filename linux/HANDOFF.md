@@ -1237,6 +1237,14 @@ editor back. What later items build on:
   showed that `GtkPaned` gives proportional shares when both children
   resize, and allocates a child shrunk past its minimum at that minimum and
   clips it, with no warning.
+- **The sidebar's divider takes no presses over the editor.** GTK grows a
+  thin paned handle's press area by 6 px each way, and the theme pads the
+  handle 8 px into the end child, so it took presses 14 px into the editor,
+  over the gutter's lanes (found by item 1.4). The handle is now a wide one
+  (no 6 px) and its box is the stylesheet's own: 5 px painted as the
+  sidebar, then the 4 px line, nothing past it. A negative margin is no way
+  to widen it: GtkPaned measures a drag from the handle's box, and the
+  divider jumped by the margin at the press.
 - **Minimums:** the layout measures each pane and gives the core the larger
   of its own limits and what the pane needs, and the right side asks GTK
   for what the panes on show need, so no pane is allocated below its

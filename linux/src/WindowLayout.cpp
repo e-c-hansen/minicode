@@ -89,6 +89,10 @@ WindowLayout::WindowLayout(GtkWidget* sidebar, GtkWidget* editorPane, GtkWidget*
     // Sidebar | right side.
     hpaned_ = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_widget_add_css_class(hpaned_, "minicode-split");
+    // Its handle takes presses only on its own box (ThemeCss.cpp): its line
+    // and 5 px before it, none over the editor; a thin handle takes 6 px more
+    // each way.
+    gtk_paned_set_wide_handle(GTK_PANED(hpaned_), TRUE);
     gtk_paned_set_start_child(GTK_PANED(hpaned_), sidebar_);
     gtk_paned_set_end_child(GTK_PANED(hpaned_), area_);
     gtk_paned_set_position(GTK_PANED(hpaned_), sidebarWidth_);

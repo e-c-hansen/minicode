@@ -373,8 +373,10 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   browser, and the terminal hidden in all six orders staying hidden, the
   tree then having the window, and each coming back at its size; a click in
   the tree, the preview key, or Focus Editor showing a hidden editor; the
-  sidebar's divider dragged to the right edge giving the tree the window;
-  Ctrl+B hiding only the sidebar; the find bar on the editor's side. It fails with the old rule
+  sidebar's divider dragged to the right edge giving the tree the window,
+  and a drag from 3 px inside the editor's left edge leaving it alone (it
+  took presses 14 px into the editor); Ctrl+B hiding only the sidebar; the
+  find bar on the editor's side. It fails with the old rule
   that brought the editor back when the terminal closed, and with the old
   one that hid the editor while the browser showed. Needs the owner: how the
   bars feel with a real mouse and touchpad under GNOME (each grabs 4 px past
