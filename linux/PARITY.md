@@ -339,9 +339,9 @@ lines at most". A single fold (Ctrl+Shift+[, a chevron) that would pass the
 limit stays open with "Not folded: this tab's folds would hide 5,003 lines,
 and 5,000 is the most they may hide, since GTK draws hidden lines too". The
 rule is the core's `Fold::pickWithinBudget` (`fold:budget`). Measured in the
-checks at the limit, the ThinkPad at load 10 to 20: a frame of the text with
-5,000 hidden lines on screen 11 to 17 ms of CPU (0.3 with nothing folded),
-typing among them 12 to 16 ms a key, Fold All of 20,000 regions 16 ms and
+checks at the limit, the ThinkPad at load 10 to 30: a frame of the text with
+5,000 hidden lines on screen 11 to 20 ms of CPU (0.3 with nothing folded),
+typing among them 12 to 26 ms a key, Fold All of 20,000 regions 16 ms and
 Unfold All 6 ms, then 0.5 to 0.7 s of GTK measuring lines again in idle
 slices.
 
