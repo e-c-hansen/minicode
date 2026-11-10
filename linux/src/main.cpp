@@ -44,6 +44,7 @@
 
 #include "AppSettings.h"
 #include "BracketView.h"
+#include "Detach.h"
 #include "Document.h"
 #include "Editor.h"
 #include "FileTree.h"
@@ -2403,6 +2404,10 @@ static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
 }
 
 int main(int argc, char** argv) {
+#ifndef MINICODE_GUITEST
+    // The options, and a terminal given back at once (Detach.h, PARITY.md R2).
+    if (const int status = Detach::start(&argc, &argv); status >= 0) return status;
+#endif
     GtkApplication* gapp = gtk_application_new("org.minicode.Editor",
                                               G_APPLICATION_HANDLES_COMMAND_LINE);
     g.gapp = gapp;

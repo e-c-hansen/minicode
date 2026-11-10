@@ -1,9 +1,16 @@
-.TH MINICODE 1 "October 2026" "minicode" "User Commands"
+.TH MINICODE 1 "November 2026" "minicode" "User Commands"
 .SH NAME
 minicode \- small editor for text, code, and LaTeX, with a browser and terminal
 .SH SYNOPSIS
 .B minicode
+.RB [ \-\-foreground ]
 .RI [ path ]
+.br
+.B minicode
+.BR \-v " | " \-\-version
+.br
+.B minicode
+.BR \-h " | " \-\-help
 .SH DESCRIPTION
 .B minicode
 opens a window with a file tree on the left and an editor on the right.
@@ -17,9 +24,32 @@ argument the current directory is opened.
 minicode runs as a single instance. Running it again while it is open
 passes the path to the running instance, which opens a new window on that
 folder, or brings forward the window that already has it and shows the file
-there.
+there, and the command returns at once.
+.PP
+Started from a terminal, the command returns as soon as the window is up,
+and minicode runs apart from the terminal, as VS Code's
+.B code
+does: closing the terminal leaves minicode open, and the terminal gives no
+warning about a running process. What minicode prints after that goes
+nowhere, unless it was sent to a file. A problem before the window, such as
+no display to open it on, is printed in the terminal, and the command exits
+with minicode's status.
 .PP
 Ctrl+Shift+H shows every keyboard shortcut in the window.
+.SH OPTIONS
+.TP
+.B \-\-foreground
+Stay in the terminal until minicode quits, as any program run there does,
+with its output in the terminal. Closing the terminal then closes minicode.
+.TP
+.BR \-v ", " \-\-version
+Print the version and exit.
+.TP
+.BR \-h ", " \-\-help
+Print a summary of the usage and exit.
+.TP
+.B \-\-
+End the options; what follows is a path, even when it starts with a dash.
 .SH FILES
 .TP
 .I ~/.config/minicode/settings.conf
@@ -30,6 +60,11 @@ setting commented out and opens it. It follows
 .I ~/.local/share/minicode/bin/tectonic
 Where the LaTeX preview puts tectonic when it is asked to download it.
 .SH ENVIRONMENT
+.TP
+.B MINICODE_FOREGROUND
+Set to anything but an empty value or 0, the same as
+.BR \-\-foreground ,
+for scripts and debugging.
 .TP
 .B MINICODE_SETTINGS
 A settings file to read in place of the one above.
