@@ -13,6 +13,7 @@
 #include <gtk/gtk.h>
 #include <vte/vte.h>   // VteTerminal appears in the signal handler signatures
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -27,12 +28,17 @@ public:
     static constexpr int kMinHeight     = 80;
     static constexpr int kDefaultHeight = 220;
 
+    // The panel's widget at once; the terminal in it and its shell when the
+    // panel is first shown (or focused), as the Mac makes its terminal dock
+    // when first needed (PARITY.md R3).
     explicit Terminal(const std::string& cwd);
     // Called while the window's widgets still exist (main.cpp tears a window
     // down from GtkApplication's window-removed). VTE hangs the shell up when
     // its widget goes; this only makes sure it is not restarted.
     ~Terminal();
     GtkWidget* widget() const { return root_; }
+    // Whether the terminal and its shell were made yet (for the checks).
+    bool made() const { return vte_ != nullptr; }
     void focus();
     // Is `w` the terminal itself or inside it? The window asks this of its
     // focus widget to decide which shortcuts belong to the shell.
@@ -72,8 +78,10 @@ private:
     void setHover(bool ctrl);                      // re-evaluate at the pointer
     static void drawHover(GtkDrawingArea* area, cairo_t* cr, int w, int h, gpointer self);
 
+    void makeTerminal();   // the terminal and its shell, once
     void spawnShell();
     void applyTheme();
+    void applyColors(const Settings& s);
     void feedNotice(const std::string& text);
 
     // The shell is restarted in place when it exits, so Ctrl+D does not leave a
@@ -107,6 +115,7 @@ private:
     gint64      lastSpawn_ = 0;    // g_get_monotonic_time of the last spawn
     int         rapidExits_ = 0;   // consecutive exits inside a second
     GdkRGBA     palette_[16];
+    std::unique_ptr<Settings> settings_;   // the app's last, for a terminal made later
     GCancellable* spawnCancel_ = g_cancellable_new();
 };
 

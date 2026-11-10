@@ -969,9 +969,10 @@ static void openLink(App* app, bool isUrl, const std::string& target, bool isDir
 #ifdef MINICODE_ENABLE_BROWSER
         if (app->browser) {
             // Shown beside the editor, the keyboard kept where it was, as the
-            // Mac's openWebAddressFromTerminal: does.
-            app->layout->showBrowser();
+            // Mac's openWebAddressFromTerminal: does. Loaded first, so a
+            // browser not shown before loads this page, not its home page.
             app->browser->load(target);
+            app->layout->showBrowser();
             return;
         }
 #endif

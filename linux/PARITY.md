@@ -767,6 +767,11 @@ fixed on its own branch, with a GUI check that fails without the fix.
   without either fix.
 - Right-clicking a part of the window offers no Adjust Settings (the same
   day): that is item 2.11.
+- [~] **R3. "It takes multiple seconds to open minicode on ubuntu and
+  under 1 s to do the same on mac"** (2026-11-10, the PPA's 1.4.14 on
+  `~/minicode`), on `worktree-agent-a4711ccfaf9d559fd`. Find where the time
+  to a usable window goes, cut what need not happen before it as the Mac
+  does, and bound it with a check.
 
 ## After each stage
 

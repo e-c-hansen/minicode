@@ -71,19 +71,29 @@ PangoFontDescription* systemMonospaceFont() {
 
 } // namespace
 
+// The panel is an empty overlay until it is first shown: the terminal and its
+// shell are made then (makeTerminal), as the Mac makes its terminal dock when
+// it is first needed (EditorController+Panels.mm, makeTerminalPanel). A
+// window opening with the panel hidden starts no shell (PARITY.md R3).
 Terminal::Terminal(const std::string& cwd) : cwd_(cwd) {
-    GtkWidget* scroller = gtk_scrolled_window_new();
-    gtk_widget_add_css_class(scroller, "minicode-terminal");
-    gtk_widget_add_css_class(scroller, "minicode-scroller");
-
     // The scroller sits in an overlay so the hovered link's underline can be
     // drawn over the terminal: VTE underlines only its own regex matches, and
     // a regex cannot know which paths exist.
     root_ = gtk_overlay_new();
-    gtk_overlay_set_child(GTK_OVERLAY(root_), scroller);
     // Only the floor: the height is the paned divider's business now, so the
     // panel must not demand a fixed size (that was what made it unresizable).
     gtk_widget_set_size_request(root_, -1, kMinHeight);
+    g_signal_connect(root_, "map", G_CALLBACK(+[](GtkWidget*, gpointer p) {
+        static_cast<Terminal*>(p)->makeTerminal();
+    }), this);
+}
+
+void Terminal::makeTerminal() {
+    if (vte_) return;
+    StartupLog::mark("terminal: made, on first show");
+    GtkWidget* scroller = gtk_scrolled_window_new();
+    gtk_widget_add_css_class(scroller, "minicode-terminal");
+    gtk_widget_add_css_class(scroller, "minicode-scroller");
 
     vte_ = vte_terminal_new();
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller), vte_);
@@ -91,9 +101,9 @@ Terminal::Terminal(const std::string& cwd) : cwd_(cwd) {
     underline_ = gtk_drawing_area_new();
     gtk_widget_set_can_target(underline_, FALSE);   // clicks go through to VTE
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(underline_), drawHover, this, nullptr);
-    gtk_overlay_add_overlay(GTK_OVERLAY(root_), underline_);
 
     applyTheme();
+    if (settings_) applyColors(*settings_);   // the app's, told before the terminal existed
 
     VteTerminal* term = VTE_TERMINAL(vte_);
     vte_terminal_set_scrollback_lines(term, 10000);
@@ -216,20 +226,26 @@ Terminal::Terminal(const std::string& cwd) : cwd_(cwd) {
         g_object_add_weak_pointer(G_OBJECT(win), (gpointer*)&self->keysWindow_);
     }), this);
 
+    // Into the panel last: the panel is on show by now, so the terminal is
+    // realized as it goes in, and the handler above must be there for it.
+    gtk_overlay_set_child(GTK_OVERLAY(root_), scroller);
+    gtk_overlay_add_overlay(GTK_OVERLAY(root_), underline_);
     spawnShell();
 }
 
 Terminal::~Terminal() {
     g_cancellable_cancel(spawnCancel_);
     g_object_unref(spawnCancel_);
-    g_signal_handlers_disconnect_by_data(vte_, this);
+    g_signal_handlers_disconnect_by_data(root_, this);
+    if (vte_) g_signal_handlers_disconnect_by_data(vte_, this);
     for (GObject* o : handlers_) g_signal_handlers_disconnect_by_data(o, this);
     if (keysWindow_) {
         gtk_widget_remove_controller(keysWindow_, windowKeys_);
         g_object_remove_weak_pointer(G_OBJECT(keysWindow_), (gpointer*)&keysWindow_);
     }
     if (cursorIdle_) g_source_remove(cursorIdle_);
-    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(underline_), nullptr, nullptr, nullptr);
+    if (underline_)
+        gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(underline_), nullptr, nullptr, nullptr);
 }
 
 // ---------------------------------------------------------------- links
@@ -340,6 +356,7 @@ std::string Terminal::shellDirectory() const {
 }
 
 bool Terminal::findLink(double x, double y, Link* out, std::vector<Span>* spans) {
+    if (!vte_) return false;   // not shown yet
     VteTerminal* t = VTE_TERMINAL(vte_);
     const long cw = vte_terminal_get_char_width(t), ch = vte_terminal_get_char_height(t);
     const long cols = vte_terminal_get_column_count(t);
@@ -501,7 +518,7 @@ void Terminal::applyTheme() {
     gdk_rgba_parse(&highlight, pal::Selection);   // same blue as editor selection
     for (int i = 0; i < 16; ++i) gdk_rgba_parse(&palette_[i], kAnsiPalette[i]);
 
-    applySettings(Settings::parse(""));   // the defaults until the app applies its own
+    applyColors(Settings::parse(""));   // the defaults until the app applies its own
     vte_terminal_set_color_cursor(term, &cursor);
     vte_terminal_set_color_highlight(term, &highlight);
     // Bold text picks the bright slot instead of only thickening, which is what
@@ -514,6 +531,11 @@ void Terminal::applyTheme() {
 }
 
 void Terminal::applySettings(const Settings& s) {
+    settings_ = std::make_unique<Settings>(s);   // for a terminal not made yet
+    if (vte_) applyColors(s);
+}
+
+void Terminal::applyColors(const Settings& s) {
     auto gdk = [](const Rgba& c) {
         return GdkRGBA{c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, (float)c.a};
     };
@@ -598,7 +620,8 @@ void Terminal::spawnShell() {
 }
 
 void Terminal::focus() {
-    if (vte_) gtk_widget_grab_focus(vte_);
+    makeTerminal();
+    gtk_widget_grab_focus(vte_);
 }
 
 #endif // MINICODE_ENABLE_TERMINAL
