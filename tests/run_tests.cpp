@@ -10820,6 +10820,7 @@ static void testMultiCaretOccurrences() {
 #include "browser_tabs_tests.inc"
 #include "snippet_tests.inc"
 #include "terminal_vt_tests.inc"
+#include "getting_around_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -10882,6 +10883,7 @@ int main() {
     testBracketPairs();
     testTerminalLayout();
     testRightArea();
+    testGettingAround();
     testBrowserTabs();
     testSnippets();
     testSnippetCompletionItems();

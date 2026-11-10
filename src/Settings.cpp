@@ -950,7 +950,10 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                s.rulers_ = cols;
                return true;),
         MC_KEY("editor.ruler-color", Word, true, return colorValue(v, s.rulerColor_, e);),
-        MC_KEY("editor.font-size", Word, false, return fontSizeValue(v, s.editorFontSize_, e);),
+        MC_KEY("editor.font-size", Word, false,
+               if (!fontSizeValue(v, s.editorFontSize_, e)) return false;
+               s.editorFontSizeSet_ = true;
+               return true;),
         MC_KEY("editor.line-numbers", Word, false,
                const std::string w = lower(v);
                if (w == "on" || w == "true") s.lineNumbers_ = LineNumbers::On;
@@ -1092,7 +1095,9 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                s.terminalScrollback_ = (int)lines;
                return true;),
         MC_KEY("terminal.font-size", Word, false,
-               return fontSizeValue(v, s.terminalFontSize_, e);),
+               if (!fontSizeValue(v, s.terminalFontSize_, e)) return false;
+               s.terminalFontSizeSet_ = true;
+               return true;),
         MC_KEY("terminal.option-as-meta", Word, false,
                return boolValue(v, s.terminalOptionAsMeta_, e);),
         MC_KEY("terminal.activate-venv", Word, false,

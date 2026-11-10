@@ -72,19 +72,29 @@ const std::vector<Action>& actions() {
         {"workbench.action.showCommands", "win.showcommands", false},
         {"markdown.showPreview", "win.togglepreview", true},
         {"minicode.toggleShortcutHints", "win.togglehints", false},
+        {"editor.action.fontZoomIn", "win.editorzoomin", true},
+        {"editor.action.fontZoomOut", "win.editorzoomout", false},
+        {"editor.action.fontZoomReset", "win.editorzoomreset", false},
         {"minicode.page.zoomIn", "win.zoomin", true},
         {"minicode.page.zoomOut", "win.zoomout", false},
         {"minicode.page.fitWidth", "win.zoomfit", false},
+        {"editor.action.toggleWordWrap", "win.togglewordwrap", false},
         {"workbench.action.toggleSidebarVisibility", "win.togglesidebar", true},
         {"workbench.view.scm", "win.togglegit", false},
         {"minicode.toggleEditor", "win.toggleeditor", false},
+        {"minicode.toggleMaximizedPane", "win.togglemaximize", false},
         {"minicode.toggleHiddenFiles", "app.showhidden", false},
         {"workbench.action.terminal.toggleTerminal", "win.toggleterminal", false},
         {"minicode.toggleBrowser", "win.togglebrowser", false},
         {"minicode.togglePlayback", "win.playpause", true},
+        {"workbench.action.terminal.fontZoomIn", "win.terminalzoomin", false},
+        {"workbench.action.terminal.fontZoomOut", "win.terminalzoomout", false},
+        {"workbench.action.terminal.fontZoomReset", "win.terminalzoomreset", false},
         {"workbench.action.quickOpen", "win.quickopen", false},
         {"workbench.action.gotoLine", "win.gotoline", false},
         {"workbench.action.gotoSymbol", "win.gotosymbol", false},
+        {"workbench.action.navigateBack", "win.goback", true},
+        {"workbench.action.navigateForward", "win.goforward", false},
         {"editor.action.jumpToBracket", "win.gotobracket", false},
         {"workbench.action.focusSideBar", "win.focustree", true},
         {"workbench.action.focusFirstEditorGroup", "win.focuseditor", false},
@@ -265,6 +275,12 @@ bool bound(const Command& c, const Key& k) {
         return !Commands::linuxTerminalTakes(c, k);
     }
     if (c.when == When::Terminal) return false;
+    // A page's zoom only in a page, and the editor's zoom (anywhere but a
+    // page or the terminal) only outside one: they share their keys. Focus
+    // File Tree, the Mac's NotPage, keeps Ctrl+0 in a page, where Linux has
+    // no Actual Size to give it.
+    if (c.when == When::Page && !s.place.page) return false;
+    if (c.when == When::NotPageOrTerminal && s.place.page) return false;
     // While the tree has the keyboard its own keys are its controller's.
     if (s.place.tree) {
         const Command* own = s.map.commandFor(k, When::Tree);
@@ -284,7 +300,7 @@ int rank(const Command& c) {
     const State& s = S();
     if (c.language && s.place.editor && s.place.language == c.language) return 0;
     if ((s.place.editor && c.when == When::Editor) ||
-        (s.place.terminal && c.when == When::Terminal))
+        (s.place.terminal && c.when == When::Terminal) || (s.place.page && c.when == When::Page))
         return 1;
     return 2;
 }

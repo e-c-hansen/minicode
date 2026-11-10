@@ -22,6 +22,7 @@ class PalettePanel;
 class Terminal;
 class Browser;
 class WindowLayout;
+class NavHistoryUi;
 
 // One editor window's parts. Pointers are the app's own and stay valid until
 // the window closes; terminal and browser are null in a build without them.
@@ -42,6 +43,7 @@ struct MCGuiAppWindow {
     GtkWidget*  hintsLabel = nullptr;
     GtkWidget*  hintsHint = nullptr;       // the status bar's note on them
     PalettePanel* palette = nullptr;       // the palette over the panes
+    NavHistoryUi* nav = nullptr;           // Go Back and Go Forward's history
     std::string rootDir;
 };
 

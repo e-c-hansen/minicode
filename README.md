@@ -386,6 +386,8 @@ You can alias the local build, if you'd like:
 alias minicode="$PWD/build/minicode"
 ```
 
+As on the Mac, `minicode` typed in a terminal gives the terminal back as soon as the window is up, and closing the terminal leaves minicode open, with no warning about a running process. A minicode that is already running opens the path itself. `minicode --foreground` keeps it in the terminal, with its output there, until it quits, and `minicode -h` lists the options.
+
 
 [BUILD-LINUX.md](BUILD-LINUX.md) covers installing it as a desktop app and which shortcuts go to the terminal.
 
@@ -454,7 +456,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Fold every region, every one at a level, or every comment, or unfold them all | Control Command 0, Control Command 1 to 7, Control Command /, Control Command J |  |  |
 | Fold the region the cursor is in, or the next one out with each press; unfold the fold on the cursor's line | Control Command [, Control Command ] (Option Command [ and ] are the terminals); or click the arrow beside the line number, or the ⋯ after a folded line |  |  |
 | Format the file, or the selected lines where the formatter can | Shift Option F |  |  |
-| Go back to where you were before a jump (a definition, a symbol, a line, a problem, another tab), or forward again | Control minus, Control Shift minus |  |  |
+| Go back to where you were before a jump (a definition, a symbol, a line, a problem, another tab), or forward again | Control minus, Control Shift minus | Ctrl Alt minus, Ctrl Shift minus (in the terminal Ctrl Shift minus is the program's) |  |
 | Go to a line of the open file, by its number (42:7 for a column too) | Control G | Ctrl G (in the terminal the program has it) |  |
 | Go to a symbol anywhere in the folder, from the language servers running in the window (outside the browser, where it opens a tab) | Command T |  |  |
 | Go to a symbol of the open file (its functions, classes and headings, or @: grouped by kind), from its language server or minicode's own outline | Shift Command O | Ctrl Shift O (minicode's own outline for now) |  |
@@ -545,21 +547,21 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Toggle the browser | Shift Command B | Ctrl Shift B | B, or Ctrl Shift B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |
 | Toggle the file list or sidebar | Command B | Ctrl B | F, or Ctrl B or Ctrl F |
-| Toggle the pane with the keyboard (the editor, the browser or the terminal) filling the whole of the right side | Control Command M |  |  |
+| Toggle the pane with the keyboard (the editor, the browser or the terminal) filling the whole of the right side | Control Command M | Ctrl Alt M |  |
 | Toggle the preview of a Markdown or LaTeX file, the table of a CSV file, the outline of a JSON file, or a rendered notebook (the last three on the Mac) | Shift Command V | Ctrl Shift V (in the terminal it pastes) | P, or Ctrl P |
 | Toggle the shortcut hints | Shift Command H | Ctrl Shift H | H, or Ctrl H |
 | Toggle the source control panel in place of the file tree | Control Shift G | Ctrl Shift G | V, or Ctrl Shift G |
 | Toggle the terminal | Shift Command T, Command J, or Control backtick | Ctrl Shift T, or Ctrl backtick | T, or Ctrl T |
-| Toggle word wrap in the editor, so long lines wrap at the pane's edge or run past it (editor.word-wrap sets it for good) | Option Z |  |  |
+| Toggle word wrap in the editor, so long lines wrap at the pane's edge or run past it (editor.word-wrap sets it for good) | Option Z | Alt Z |  |
 | Undo, redo | Command Z, Shift Command Z | Ctrl Z, Ctrl Shift Z | U, R, or Ctrl Z, Ctrl Shift Z (Ctrl U, Ctrl R also work) |
 | Use the selected text as what to find | Command E |  |  |
 | Wrap the selected text in brackets or quotes, at every cursor | Type ( [ { " ' or a backtick with text selected (in Markdown also * _ ~ $ and <) | Type an opening bracket, a quote, or a backtick with text selected (in Markdown also an asterisk, an underscore, a tilde, a dollar sign, or an opening angle bracket) |  |
-| Zoom a PDF or the LaTeX preview in or out |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad |  |
-| Zoom every terminal in or out, or back to terminal.font-size, while a terminal has the keyboard | Command equals (or Command plus), Command minus, Option Command 0 (or Command with keypad 0); or Zoom In, Zoom Out, Reset Zoom in the Terminal menu |  |  |
+| Zoom a PDF or the LaTeX preview in or out while it shows, or the browser's page while the browser has the keyboard |  | Ctrl plus (or Ctrl equals), Ctrl minus, Ctrl with the scroll wheel, or a pinch on the touchpad (a PDF) |  |
+| Zoom every terminal in or out, or back to terminal.font-size, while a terminal has the keyboard | Command equals (or Command plus), Command minus, Option Command 0 (or Command with keypad 0); or Zoom In, Zoom Out, Reset Zoom in the Terminal menu | Ctrl equals (or Ctrl plus), Ctrl minus, Ctrl Alt 0 (or Ctrl with keypad 0); or Zoom In, Zoom Out, Reset Zoom in the Terminal menu |  |
 | Zoom the browser's page, a PDF or the LaTeX preview in or out, or back to actual size, while it has the keyboard or you last scrolled or clicked in it | Command equals (or Command plus), Command minus, Command 0 |  |  |
 | Zoom the browser's page or a PDF to the width of the pane, or a PDF's page to fit the pane | View > Page Zoom > Zoom to Fit Width, Zoom to Fit Page |  |  |
-| Zoom the editor's text and the Markdown preview in or out, or back to their sizes in the settings, while the keyboard is anywhere but a terminal, a web page, or a PDF | Command equals (or Command plus), Command minus, Option Command 0 (or Command with keypad 0) |  |  |
-| Zoom a PDF or the LaTeX preview back to the width of the pane |  | Ctrl Alt 0 |  |
+| Zoom the editor's text and the Markdown preview in or out, or back to their sizes in the settings, while the keyboard is anywhere but a terminal, a web page, or a PDF | Command equals (or Command plus), Command minus, Option Command 0 (or Command with keypad 0) | Ctrl equals (or Ctrl plus), Ctrl minus, Ctrl Alt 0 (or Ctrl with keypad 0), while no PDF or LaTeX preview shows |  |
+| Zoom a PDF or the LaTeX preview back to the width of the pane, or the browser's page back to 100% |  | Ctrl Alt 0 |  |
 
 ## Limitations
 

@@ -222,6 +222,26 @@ Choices item 1.9 made, by the same rules:
   Code's adds a selection). The Mac's Cmd+Shift click pairs are not
   ported: Ctrl+click is Go to Definition.
 
+Choices item 1.11 made, by the same rules:
+- The editor's zoom is VS Code's Linux Ctrl+= (Ctrl+Shift+=, Ctrl+plus,
+  too) and Ctrl+-, and its reset the Mac's Option+Cmd+0 with Ctrl+Alt,
+  since Ctrl+0 is Focus File Tree, and VS Code's Ctrl+keypad 0. A page (a
+  PDF or the LaTeX preview on show, or the browser with the keyboard) has
+  the same keys for its own zoom, and Ctrl+Alt+0 for fit width (a web page:
+  100%), as the Mac's Page context; Ctrl+0 stays Focus File Tree there.
+- The terminals' zoom has the same keys while the terminal has the
+  keyboard, as on the Mac (and GNOME Terminal's Ctrl+= and Ctrl+-); they
+  are in a new Terminal menu. A Terminal command keeps its plain Ctrl keys
+  in the terminal (`linuxTerminalTakes`), since it applies nowhere else.
+- Word wrap is VS Code's Alt+Z, an editor command, so Meta Z to the program
+  in the terminal, as Option+Z is on the Mac.
+- Go Back and Go Forward are VS Code's Ctrl+Alt+- and Ctrl+Shift+-. In the
+  terminal Ctrl+Shift+- is the program's (readline's undo, Ctrl+_), as the
+  Mac's grid keeps Ctrl+-; Ctrl+Alt+- still goes back from there.
+- Maximize Pane has no VS Code key (its Toggle Maximize Editor Group is a
+  chord), so the Mac's Ctrl+Cmd+M with Ctrl+Alt: Ctrl+Alt+M, which GNOME
+  leaves alone, and which works from the terminal.
+
 **D2. One `GtkTextView`, one `GtkTextBuffer` per tab.** Split `Editor` into
 the view and slot, and a `Document` holding what is per file: the buffer, its
 path, undo, the highlighter and its mirror, dirty state, and disk stamp. All
@@ -673,8 +693,54 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   `invisible` tag right for carets, scrolling, the gutter, and undo with
   50,000 folds, but every frame costs about 6 µs per hidden line on screen
   inside GTK; built on the tag with D8's budget of 5,000 hidden lines.
-- [ ] **1.11 Getting around.** Editor zoom, word wrap toggle, Go Back and
+- [x] **1.11 Getting around.** Editor zoom, word wrap toggle, Go Back and
   Forward (`NavHistory`), Maximize Pane.
+  *Verified in Xvfb, 2026-11-10:* `zoom:*`, `navrecorder:*` (the Mac's
+  MCNavigator as the core's `Nav::Recorder`), `rightarea:maximize`,
+  `settings:font-size-set` and `commands:linux-getting-around` hold the
+  rules, and four suites press real keys. `zoom`: Ctrl+=, Ctrl+Shift+=,
+  Ctrl+-, Ctrl+Alt+0 and Ctrl+keypad 0 change the editor's font a point at
+  a time (never under 6 points) and the gutter's width with it, scale the
+  Markdown page's sizes by (13 + zoom) / 13, keep the zoom in
+  `zoom.json` and not the settings file, and a second app opens at it; with
+  a PDF on show the keys zoom the PDF and Ctrl+0 still focuses the tree,
+  with the browser's keyboard they zoom its page on Safari's steps; with the
+  terminal's the same keys zoom only the terminals (VTE's font scale: fewer
+  columns, which `tput cols` reads), while Ctrl+W, Ctrl+B, Ctrl+E, Alt+Z
+  and Ctrl+Shift+- still reach the program as bytes. `word_wrap`: a long
+  line wraps by default with nothing to scroll sideways, Alt+Z turns that
+  over in every window for the session (nothing typed, the settings file
+  untouched), a Markdown page still wraps, editor.word-wrap = off keeps it
+  off and a setting changed since Alt+Z wins; a 30,000-character line is
+  still shown a part at a time, on one row while the view wraps, End going
+  on into its hidden rest and text typed at its start keeping it so; and a
+  file of 300,001 lines, in large-file mode, does not wrap (wrapping is one
+  of the features off there, as in VS Code: GTK took half as long again to
+  lay it out wrapped).
+  `go_back`: the ten-line rule (eight Downs no jump, Ctrl+End one), typing
+  no jump, Back and Forward stopping at the ends, a tab switch by
+  Ctrl+Page Up, Go to Line, a symbol from the palette (its previews and
+  Escape no jump), the server's definition in another file (the scripted
+  server), a Find in Folder hit, a new jump dropping what lay ahead, a file
+  renamed in the tree followed, and one deleted from the disk passed over.
+  `maximize`: Ctrl+Alt+M from the browser, the terminal, the editor and the
+  tree, each alone over the right side with no bars and everything back as
+  it was; Toggle Terminal showing the terminal rather than closing it, Focus
+  Editor, a file opened from the tree, and Toggle Editor hiding the
+  maximized editor each ending it. They fail without the editor's size
+  rule, the Terminal commands' keys in the terminal, source wrapping, the
+  long lines' no-wrap tag, the palette telling the history it is open, the
+  jump around a Find in Folder result, and revealEditor ending Maximize
+  Pane. Changed for the user: source now wraps
+  by default (editor.word-wrap, as on the Mac), editor.font-size and
+  terminal.font-size apply when the settings file sets them (unset, the
+  desktop's size as before), and the menu bar has a Terminal menu. Not
+  done: the browser's zoom kept per site (item 4.5), and the completion
+  list, hover and find bar following the zoom. Needs the owner: the keys
+  under GNOME on Wayland with IBus (Ctrl+Alt+M, Ctrl+Alt+-, Alt+Z), the
+  keypad with Num Lock on (only off is pressed in the checks), how the
+  zoomed text and gutter look and HiDPI, and Go Back with a real
+  language server and terminal links.
 - [x] **1.12 Large-file mode.** `LargeFile.h`, at VS Code's thresholds.
   *Done means:* a 25 MB file opens and types within the Mac's bounds.
   Measured for R1 on main with tabs (2026-11-09, the main thread held by
@@ -868,8 +934,77 @@ fixed on its own branch, with a GUI check that fails without the fix.
   button was down opened the file put in under the pointer, or nothing; it
   now keeps row objects. The `tree_clicks` suite checks both and fails
   without either fix.
+- [x] **R2. `minicode` from a terminal holds the terminal** (2026-11-10):
+  "if I launch a minicode application instance from the terminal on mac,
+  it doesn't block. If I close that terminal, the process is not bound and
+  I'm not warned that closing the terminal window will also kill the
+  minicode instance. On linux, it is bound and does block the terminal."
+  Started from a terminal, `minicode` gives the terminal back at once and
+  is not tied to it, as on the Mac and as VS Code's `code` on Linux;
+  `--foreground` keeps the old way.
+  *Done, 2026-11-10 (`HANDOFF.md` item 23):* `main` first calls
+  `Detach::start` (`src/Detach.{h,cpp}`, the rules in
+  `src/LaunchOptions.{h,cpp}`), which forks with a terminal on hand: the
+  child takes a session of its own and runs the app, the parent returns
+  once the child's first window is made, or with the child's status when
+  it ends first (a second `minicode` handing its path over, no display).
+  The child then puts `/dev/null` on its standard streams, keeping a file
+  the user sent them to, and asks systemd for
+  `app-minicode-org.minicode.Editor-<pid>.scope`. `-h`, `-v`,
+  `--foreground`, and `--` are the port's options; the Mac's `-n` and `-r`
+  are refused, since the port has neither behaviour. GNOME Terminal never
+  stops a shell's scope (libvte 0.84 has no StopUnit), so only the
+  hang-up's SIGHUP had closed minicode. The `detach` suite runs the real
+  `build/minicode` on pseudo-terminals, on the checks' Xvfb and a session
+  bus of its own (58 checks, about 5 s; 33 fail with the old `main`): it
+  returns 0 in under half a second with its window up, in its own session
+  with no controlling terminal and nothing of the terminal open, outlives
+  the terminal's hang-up, hands a second `minicode notes.txt` over, keeps
+  a log file it was sent to, returns 1 with GTK's message when there is no
+  display, does not fork when started as the desktop starts it, and with
+  `--foreground` holds the terminal and goes with it. Needs the owner:
+  closing a real GNOME Terminal window with minicode started from it, that
+  GNOME Terminal asks nothing first, and `systemctl --user list-units
+  'app-minicode-*'` while it runs (the checks answered for systemd).
 - Right-clicking a part of the window offers no Adjust Settings (the same
   day): that is item 2.11.
+- [x] **R3. "It takes multiple seconds to open minicode on ubuntu and
+  under 1 s to do the same on mac"** (2026-11-10, the PPA's 1.4.14 on
+  `~/minicode`), on `worktree-agent-a4711ccfaf9d559fd`. Find where the time
+  to a usable window goes, cut what need not happen before it as the Mac
+  does, and bound it with a check.
+  *Measured and fixed on the ThinkPad's Xvfb, 2026-11-10* (`HANDOFF.md`
+  item 24): `MINICODE_STARTUP_LOG=1` prints each phase of the start with
+  the time since main and the main thread's CPU. Every window made its
+  hidden terminal and browser at once: VTE started the shell, and the
+  WebKitWebView started WebKit's network and web processes in bwrap
+  sandboxes the main thread waited for, with xdg-dbus-proxy, and loaded
+  DuckDuckGo. The Mac makes both when first shown, and now so does the
+  port; the language server for a session's tab starts after the first
+  frame. Medians of six warm runs on `~/minicode`, interleaved, load 3 to
+  6, milliseconds after main (wall / main-thread CPU), main then this
+  branch: GTK's own start 100/93 and 96/93 (a bare GtkApplication window
+  takes the same); the window built 164/142 and 115/110 (the browser was
+  39/23 of it); realized and presented 217/182 and 166/150; first frame
+  244/203 and 189/170. With a session of five tabs: first frame 299/248
+  and 220/197, clangd started before it and 90 ms after it. The process
+  ran 47 to 50 ms before main in both. The app and what it started used
+  1.87 s of CPU in its first three seconds, and 0.26 s now. The PPA's
+  1.4.14, timed from exec by an LD_PRELOAD probe, drew its first frame at
+  268 ms with 1.91 s of CPU in all. So on Xvfb, with GTK drawing in
+  software, no version takes seconds; the owner's seconds are on the
+  desktop, where GTK and WebKit draw on the Intel GPU and WebKit's
+  processes, the page and the shell's startup files compete with the
+  window for four cores. The `startup` suite bounds the first frame at
+  1500 ms of main-thread CPU (165 to 300 here) and 20 s, checks that no
+  shell, WebKit process, bwrap or xdg-dbus-proxy runs below the app at
+  its first frame and neither pane's part is made, that the server starts
+  after it, and that both panes work once shown; without the fix it fails
+  eight checks. Needs the owner: the same log on the desktop,
+  `linux/dev/startup-times.sh` with the build of main and this branch
+  (item 24 has the commands), for GTK's default renderer, `gl`, `vulkan`
+  and `cairo`, to see what the GPU renderer's first frame and the desktop
+  add; and whether the window now opens in well under a second there.
 
 ## After each stage
 

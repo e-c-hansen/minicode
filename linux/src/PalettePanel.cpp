@@ -406,6 +406,7 @@ void PalettePanel::show(const std::string& text, const Context& context) {
     caretSymbol_ = preselect_ = -1;
     symbolSource_.clear();
     previewed_ = ran_ = false;
+    if (onOpenChanged) onOpenChanged(true);   // before anything is previewed
     open_ = true;
     gtk_widget_set_visible(sheet_, TRUE);
     gtk_widget_set_visible(box_, TRUE);
@@ -430,6 +431,12 @@ void PalettePanel::close(bool restoreFocus) {
     forgetRestore();
     open_ = false;
     closing_ = false;
+    if (onOpenChanged) onOpenChanged(false);
+}
+
+void PalettePanel::move(const std::function<void()>& body) {
+    if (aroundMove) aroundMove(body);
+    else body();
 }
 
 // New text in the field, the caret after it, and the list to match.
@@ -556,7 +563,9 @@ void PalettePanel::lineItem(const CommandPalette::Parsed& p) {
         const int line = p.line, column = p.column;
         it.run = [this, line, column] {
             close(true);
-            later([this, line, column] { editor_->revealLineColumn(line, column); });
+            later([this, line, column] {
+                move([this, line, column] { editor_->revealLineColumn(line, column); });
+            });
         };
     }
     it.markup = it.run ? escaped(it.label)
@@ -770,7 +779,7 @@ void PalettePanel::symbolItems(const std::u16string& query, bool byKind, std::st
             const Lsp::Symbol s = symbols_[index];
             ran_ = true;
             close(true);
-            later([this, s] { goToSymbol(s); });
+            later([this, s] { move([this, s] { goToSymbol(s); }); });
         };
         items_.push_back(std::move(it));
     }

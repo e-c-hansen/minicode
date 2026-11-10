@@ -19,6 +19,8 @@
 //     Ctrl keys and unmodified keys unless Global, VTE's copy and paste,
 //     Ctrl+Shift+G and Ctrl+Shift+Space). The Mac never needs this: its
 //     keys are on Command.
+//   - A page's commands (its zoom) only in a page (Place::page), where
+//     their keys outrank the editor's zoom, which has the same ones.
 //   - Elsewhere, every command but the terminal's. A Markdown-only key with
 //     Ctrl that no other command has is always bound (its action rings the
 //     bell where it cannot act, as on the Mac its menu item would be
@@ -71,10 +73,14 @@ struct Place {
     bool terminal = false;   // the terminal
     bool editor = false;     // the editor's text view
     bool tree = false;       // the file tree's list (not a popover over it)
+    // A page: the browser with the keyboard, or outside the terminal a PDF
+    // or the LaTeX preview on show (which takes no keyboard of its own), so
+    // Ctrl+= and Ctrl+- zoom it rather than the editor (PARITY.md 1.11).
+    bool page = false;
     std::string language;    // Commands::languageOfPath of the editor's file
     bool operator==(const Place& o) const {
         return terminal == o.terminal && editor == o.editor && tree == o.tree &&
-               language == o.language;
+               page == o.page && language == o.language;
     }
 };
 // Sets the accelerators for it, when it differs from the last.

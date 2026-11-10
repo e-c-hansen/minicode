@@ -14,6 +14,7 @@
 
 #include <gdk/x11/gdkx.h>
 #include <X11/XKBlib.h>
+#include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
@@ -102,6 +103,7 @@ void pressPlace(const KeyPlace& place, bool withShift) {
 
 // The registry's key names (src/Commands.h), and any GDK key name besides.
 KeySym keysymForName(std::string name) {
+    const std::string asGiven = name;
     if (g_utf8_strlen(name.c_str(), -1) == 1) {
         const gunichar c = g_utf8_get_char(name.c_str());
         return gdk_unicode_to_keyval(g_unichar_tolower(c));
@@ -120,7 +122,9 @@ KeySym keysymForName(std::string name) {
     if (name.size() > 1 && name[0] == 'f' && std::isdigit((unsigned char)name[1]))
         return XK_F1 + (KeySym)(atoi(name.c_str() + 1) - 1);
     if (name.rfind("numpad", 0) == 0) return XK_KP_0 + (KeySym)atoi(name.c_str() + 6);
-    return gdk_keyval_from_name(name.c_str());
+    const KeySym lower = gdk_keyval_from_name(name.c_str());
+    // A GDK name with capitals ("KP_Insert", the keypad's 0 with Num Lock off).
+    return lower != GDK_KEY_VoidSymbol ? lower : gdk_keyval_from_name(asGiven.c_str());
 }
 
 Window xidOf(GtkWindow* w) {
@@ -413,4 +417,47 @@ void MCGuiScroll(GtkWidget* widget, int clicks) {
         button(b, true);
         button(b, false);
     }
+}
+
+// Another process's top-level windows on this display, by the _NET_WM_PID
+// GDK puts on each (there is no window manager, so they are the root's
+// children). On GDK's own Display, with its error trap, since a window can
+// go between the listing and the reading.
+std::vector<MCGuiOtherWindow> MCGuiWindowsOfProcess(int pid) {
+    std::vector<MCGuiOtherWindow> out;
+    Display* d = Dpy();
+    gdk_x11_display_error_trap_push(Gdk());
+    const Atom pidAtom = XInternAtom(d, "_NET_WM_PID", False);
+    const Atom nameAtom = XInternAtom(d, "_NET_WM_NAME", False);
+    const Atom utf8 = XInternAtom(d, "UTF8_STRING", False);
+    Window rootOut = 0, parent = 0, *kids = nullptr;
+    unsigned n = 0;
+    if (XQueryTree(d, DefaultRootWindow(d), &rootOut, &parent, &kids, &n)) {
+        for (unsigned i = 0; i < n; i++) {
+            Atom type = 0;
+            int format = 0;
+            unsigned long items = 0, after = 0;
+            unsigned char* data = nullptr;
+            if (XGetWindowProperty(d, kids[i], pidAtom, 0, 1, False, XA_CARDINAL, &type, &format,
+                                   &items, &after, &data) != Success || !data)
+                continue;
+            const long got = items == 1 && format == 32 ? (long)*(unsigned long*)data : -1;
+            XFree(data);
+            if (got != pid) continue;
+            MCGuiOtherWindow w;
+            w.id = kids[i];
+            XWindowAttributes attrs;
+            w.viewable = XGetWindowAttributes(d, kids[i], &attrs) && attrs.map_state == IsViewable;
+            data = nullptr;
+            if (XGetWindowProperty(d, kids[i], nameAtom, 0, 1024, False, utf8, &type, &format,
+                                   &items, &after, &data) == Success && data) {
+                if (format == 8) w.title.assign((const char*)data, items);
+                XFree(data);
+            }
+            out.push_back(w);
+        }
+        if (kids) XFree(kids);
+    }
+    gdk_x11_display_error_trap_pop_ignored(Gdk());
+    return out;
 }

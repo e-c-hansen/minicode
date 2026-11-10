@@ -4,6 +4,8 @@
 #include "Lsp.h"
 #include "MultiEdit.h"
 #include "Palette.h"
+#include "StartupLog.h"
+#include "WhenDrawn.h"
 #include "Utf8Offsets.h"
 
 #include <glib-unix.h>
@@ -277,6 +279,7 @@ std::shared_ptr<Server> Server::start(const std::string& key,
     ignoreSigpipeHere();
     const char* id = g_subprocess_get_identifier(s->proc_);
     s->pid_ = id ? atoi(id) : 0;
+    StartupLog::once(("lsp " + s->name_).c_str(), "language server started: %s", s->name_.c_str());
     s->inFd_ = toServer[1];
     s->outFd_ = fromServer[0];
     g_unix_set_fd_nonblocking(s->inFd_, TRUE, nullptr);
@@ -520,6 +523,19 @@ LspSession::LspSession(Editor* editor, const std::string& root, const Settings& 
       root_(root), settings_(settings), signature_(settingsSignature(settings)) {
     useBuffer(editor->sourceBuffer());
     installCss();
+    // No server starts before the window is on screen (WhenDrawn.h): the
+    // tab a session brings back gets its server from the idle after the
+    // window's first frame.
+    std::weak_ptr<int> alive = life_;
+    whenDrawn(view_, [this, alive] {
+        if (alive.expired()) return;
+        drawn_ = true;
+        StartupLog::markf("language servers: may start now%s", held_ ? ", the tab on show's" : "");
+        if (!held_) return;
+        held_ = false;
+        const std::string path = path_;   // a copy: documentChanged clears path_ first
+        documentChanged(path);
+    });
 
     // Squiggles: tags of their own, never among the highlighter's (it removes
     // only its own tags on a retag), so re-highlighting leaves them alone.
@@ -825,6 +841,11 @@ void LspSession::documentChanged(const std::string& path) {
     closeDocument();   // its marks come off the buffer they are in
     useBuffer(editor_->sourceBuffer());
     path_ = path;
+    if (!drawn_) {   // the window is not on screen yet: its server waits
+        held_ = true;
+        updateStatus();
+        return;
+    }
     Lsp::Language lang;
     if (path.empty() || !settings_.lspEnabled() ||
         !Lsp::languageForExtension(lowerExt(path), lang)) {

@@ -54,6 +54,12 @@ core_sources = [
   core_dir / 'EditorTabs.cpp',
   # How the right side of a window is shared (WindowLayout.cpp shows it).
   core_dir / 'RightAreaLayout.cpp',
+  # Getting around (PARITY.md 1.11): Go Back and Forward's history and what
+  # a window records in it (NavHistoryUi.cpp drives it), and the zoom and
+  # word wrap rules (Zoom.cpp keeps their state).
+  core_dir / 'NavHistory.cpp',
+  core_dir / 'NavRecorder.cpp',
+  core_dir / 'ViewZoom.cpp',
   # Unsaved buffers kept on disk, and the tabs each folder had open
   # (BackupStore.cpp and Persistence.cpp keep them).
   core_dir / 'Backups.cpp',
@@ -147,6 +153,18 @@ gui_sources = [
   # Big files and long lines: large-file mode, the question past 50 MB,
   # reading in the background, and a long line shown a part at a time.
   'src/LargeFileView.cpp',
+  # The editor's and the terminals' zoom and the word wrap toggle, for
+  # every window (Zoom.cpp), and Go Back and Forward (NavHistoryUi.cpp).
+  'src/Zoom.cpp',
+  'src/NavHistoryUi.cpp',
+  # The command line's options, and a terminal given back at once: the
+  # plain C++ rules (LaunchOptions.cpp) and the fork (Detach.cpp).
+  'src/LaunchOptions.cpp',
+  'src/Detach.cpp',
+  # MINICODE_STARTUP_LOG=1: where the time to a usable window goes (R3).
+  'src/StartupLog.cpp',
+  # What a window puts off until it has drawn its first frame (R3).
+  'src/WhenDrawn.cpp',
 ]
 
 inc = include_directories('src', '../src')
@@ -256,7 +274,7 @@ port_tests = executable('minicode-linux-tests',
              core_dir / 'TermLinks.cpp',
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp', core_dir / 'GitModel.cpp',
-  'src/WebImageRules.cpp'],
+  'src/WebImageRules.cpp', 'src/LaunchOptions.cpp'],
   include_directories : inc,
   install : false)
 test('linux port core', port_tests)
@@ -327,8 +345,9 @@ if xtst_dep.found() and x11_dep.found() and gtk_x11_dep.found()
   # `meson test -C build` leaves these out (the setup below), so it stays
   # quick and needs no display; `meson test -C build --suite gui` runs them.
   # The harness has its own limits, well inside this one.
+  # The detach suite runs the real minicode as well.
   test('gui', guitest, suite : 'gui', is_parallel : false, timeout : 1800,
-       depends : [fakelsp])
+       depends : [fakelsp, minicode_exe])
   add_test_setup('default', exclude_suites : ['gui'], is_default : true)
 else
   message('GUI checks: not built (they need libxtst-dev)')
