@@ -1195,7 +1195,10 @@ What later items build on:
   so a second double-click within the double-click time counts as one
   click; the tabs suite pauses 0.5 s between them. A place comes back by
   setting the adjustment once the view is mapped and still
-  (`settleOnPlace`); `gtk_text_view_scroll_to_mark` lands short on a fresh
+  (`settleOnPlace`; its two seconds count from the first frame with the
+  view on screen: counted from the call, a session's tab in a window slow
+  to open, or a tab shown with the editor's pane hidden, came back at its
+  top); `gtk_text_view_scroll_to_mark` lands short on a fresh
   layout and its pending scroll can undo the user's next move, and a tab
   left while its place is still coming back keeps that place, not the
   half-done scroll. The strip's scroller has an external vertical policy:

@@ -1655,7 +1655,11 @@ void Editor::settleOnPlace(GtkTextMark* mark, int into) {
     stopPlace();
     placeMark_ = mark;
     placeInto_ = into;
-    placeUntil_ = g_get_monotonic_time() + 2 * G_USEC_PER_SEC;
+    // The two seconds start at the first frame with the view on screen
+    // (onPlaceTick): counted from here, a session's tab in a window that took
+    // longer than that to open on a busy machine came back at its top, and so
+    // did a tab shown while the editor's pane was hidden for longer.
+    placeUntil_ = 0;
     placeLastV_ = -1;
     placeStill_ = 0;
     placeTries_ = 0;
@@ -1685,9 +1689,13 @@ gboolean Editor::onPlaceTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
         self->stopPlace();
         return G_SOURCE_REMOVE;
     };
-    if (!self->placeMark_ || g_get_monotonic_time() > self->placeUntil_ ||
-        gtk_text_mark_get_buffer(self->placeMark_) != self->buffer_)
+    const gint64 nowUs = g_get_monotonic_time();
+    if (!self->placeMark_ || gtk_text_mark_get_buffer(self->placeMark_) != self->buffer_ ||
+        nowUs > self->placeCap_)
         return done();
+    if (!gtk_widget_get_mapped(self->view_)) return G_SOURCE_CONTINUE;   // waits for it
+    if (self->placeUntil_ == 0) self->placeUntil_ = std::min(self->placeCap_, nowUs + 2 * G_USEC_PER_SEC);
+    if (nowUs > self->placeUntil_) return done();
     GtkTextIter it;
     gtk_text_buffer_get_iter_at_mark(self->buffer_, &it, gtk_text_buffer_get_insert(self->buffer_));
     if (gtk_text_iter_get_offset(&it) != self->placeCaret_) {
@@ -1695,10 +1703,8 @@ gboolean Editor::onPlaceTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
         self->placeFollowCaret_ = true;
         self->placeStill_ = 0;
         self->placeTries_ = 0;
-        self->placeUntil_ = std::max(self->placeUntil_,
-                                     g_get_monotonic_time() + G_USEC_PER_SEC * 3 / 2);
+        self->placeUntil_ = std::max(self->placeUntil_, nowUs + G_USEC_PER_SEC * 3 / 2);
     }
-    if (!gtk_widget_get_mapped(self->view_)) return G_SOURCE_CONTINUE;
     GtkAdjustment* v = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tv));
     const double now = gtk_adjustment_get_value(v);
     const bool still = now == self->placeLastV_;
