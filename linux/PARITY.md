@@ -167,6 +167,15 @@ Choices item 1.1 made, by the same rules:
   gone; its Ctrl+Tab steps through the tabs.
 - Tabs are not reordered by dragging, as the Mac's editor strip is not.
 
+Choices item 1.5 made, by the same rules:
+- The palette is VS Code's Ctrl+Shift+P and F1, Quick Open its Ctrl+P, Go
+  to Line its Ctrl+G, and Go to Symbol in File its Ctrl+Shift+O. None is
+  Global: in the terminal Ctrl+P, Ctrl+G, and F1 are the program's
+  (readline's previous line, Emacs's quit), as the Mac's grid keeps Ctrl+G,
+  and Ctrl+Shift+P and Ctrl+Shift+O open the palette from there.
+- Ctrl+T, VS Code's Go to Symbol in Workspace, stays free until item 2.12
+  brings the command.
+
 **D2. One `GtkTextView`, one `GtkTextBuffer` per tab.** Split `Editor` into
 the view and slot, and a `Document` holding what is per file: the buffer, its
 path, undo, the highlighter and its mirror, dirty state, and disk stamp. All
@@ -374,9 +383,30 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   in the gutter's first 14 px; 1.13 narrowed it to none over the editor
   (`HANDOFF.md` item 18), and the `gutter` suite's change bar click is now
   13 px from the edge, inside the old reach.
-- [ ] **1.5 The palette (D12).** Commands, Quick Open, Go to Line, and
+- [x] **1.5 The palette (D12).** Commands, Quick Open, Go to Line, and
   file symbols without a server. `CommandPalette`, `SymbolOutline`. Mac:
   `PalettePanel`.
+  *Verified in Xvfb, 2026-11-09:* the `palette` and `symbols` suites press
+  real keys and clicks. Ctrl+Shift+P and F1 list each command with an
+  action once, "Menu > Title" with its key, leaving out disabled ones
+  (Export PDF until a LaTeX file shows, the zoom keys); "tog term" and
+  "hidden" rank first, Return runs them on the next turn (an app action
+  too), and the command comes first next time, from
+  `$XDG_STATE_HOME/minicode/palette.json`. Escape, a click outside (which
+  goes no further), and running a row give the keyboard back, the find
+  bar's selection included; Ctrl+0 closes it, leaving the keyboard in the
+  tree. Ctrl+P lists the folder off the main thread by Find in Folder's
+  rules and opens a file by Return or a click, tabs and earlier picks
+  first; Ctrl+G goes to "120:6" and "42,7"; in the terminal Ctrl+P, Ctrl+G,
+  and F1 reach the program and Ctrl+Shift+P opens the palette; a window
+  closes cleanly while its palette lists. Ctrl+Shift+O lists the outline
+  with the caret's symbol chosen, previews each while the field keeps the
+  keyboard, and Escape puts selection and scroll back; "@:" groups by
+  kind; a Markdown page scrolls to its headings. Each check failed without
+  its fix (the enabled filter, the selection, the putting back, the worker
+  thread). Needs the owner: the look, F1 and Ctrl+Shift+O under GNOME with
+  IBus, and Quick Open on a large real folder. The server's symbols and Go
+  to Symbol in Workspace are item 2.12.
 - [ ] **1.6 Find and replace.** The find bar with case, word, regex, preserve
   case, and in selection; Replace in Folder. `TextFind`, `FolderSearch`.
 - [ ] **1.7 Brackets.** `BracketMatch`, `BracketPairs`, and Go to Bracket.
@@ -459,6 +489,16 @@ its server comes first here.
 - [ ] **2.10 Change bars and the tree's git colors.** `QuickDiff`,
   `GitStatus`.
 - [ ] **2.11 Themes from a menu and Adjust Settings.**
+- [ ] **2.12 Symbols from the servers.** Added by item 1.5, which left them
+  out because the Linux checks have no scripted server yet. Go to Symbol
+  in File asks the server first (`textDocument/documentSymbol`, the outline
+  standing in when there is none or it refuses), and Go to Symbol in
+  Workspace is the palette's "#" with VS Code's Ctrl+T, asking every
+  running server (`workspace/symbol`). Mac: `Lsp+Navigation`'s
+  `documentSymbolsWithCompletion:` and `workspaceSymbols:`, and the
+  language server half of `tests/gui/SymbolsSuite.mm`. The palette asks in
+  `PalettePanel::askSymbols` and says "#" is not here yet. Its checks need
+  `tests/fakelsp` built for the Linux harness.
 
 ### Stage 3: agents, 8,000 to 10,000 lines
 

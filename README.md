@@ -455,9 +455,9 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Fold the region the cursor is in, or the next one out with each press; unfold the fold on the cursor's line | Control Command [, Control Command ] (Option Command [ and ] are the terminals); or click the arrow beside the line number, or the ⋯ after a folded line |  |  |
 | Format the file, or the selected lines where the formatter can | Shift Option F |  |  |
 | Go back to where you were before a jump (a definition, a symbol, a line, a problem, another tab), or forward again | Control minus, Control Shift minus |  |  |
-| Go to a line of the open file, by its number (42:7 for a column too) | Control G |  |  |
+| Go to a line of the open file, by its number (42:7 for a column too) | Control G | Ctrl G (in the terminal the program has it) |  |
 | Go to a symbol anywhere in the folder, from the language servers running in the window (outside the browser, where it opens a tab) | Command T |  |  |
-| Go to a symbol of the open file (its functions, classes and headings, or @: grouped by kind), from its language server or minicode's own outline | Shift Command O |  |  |
+| Go to a symbol of the open file (its functions, classes and headings, or @: grouped by kind), from its language server or minicode's own outline | Shift Command O | Ctrl Shift O (minicode's own outline for now) |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
 | Go to tab 1 to 8, or the last tab | Control 1 to 9, or Shift Command 1 to 9 (macOS keeps Shift Command 3, 4 and 5 for screenshots) | Alt 1 to 8, and Alt 9 or Alt 0 for the last |  |
 | Go to the matching bracket, or to the closing bracket of the pair around the cursor | Shift Command backslash |  |  |
@@ -487,13 +487,13 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | New tab in the browser, while it has the keyboard (View > New Browser Tab anywhere) | Command T, or the + at the end of its tabs |  |  |
 | New window | Option Command N | Ctrl Shift N |  |
 | Next tab, previous tab (the browser's, while it has the keyboard and more than one tab) | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [, or Option Command Right, Option Command Left | Ctrl Page Down, Ctrl Page Up, or Ctrl Tab, Ctrl Shift Tab |  |
-| Open a file of the folder by typing part of its name, recently opened files first | Command P |  |  |
+| Open a file of the folder by typing part of its name, recently opened files first | Command P | Ctrl P (in the terminal the program has it) |  |
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
 | Open a file from the file tree in a tab of its own, not the preview tab | Double-click it, or Command click it | Double-click it, Ctrl click it, or select it and press Enter |  |
 | Open a folder | Command O | Ctrl O | O, or Ctrl O |
 | Open a folder opened before, in this window | Control R (File > Open Recent lists them too) |  |  |
 | Open a new terminal in a new tab | Control Shift backtick |  |  |
-| Open the command palette, to find any menu command by name and run it | Shift Command P, or F1 |  |  |
+| Open the command palette, to find any menu command by name and run it | Shift Command P, or F1 | Ctrl Shift P, or F1 (in the terminal only Ctrl Shift P) |  |
 | Open the rendered Markdown page beside its source, or close it | Control Command V |  |  |
 | Open the right click menu of what has the keyboard, at the selected row or the cursor | Shift F10, or Control Return, or the Menu key of a PC keyboard |  |  |
 | Open the settings file | Command comma | Ctrl comma |  |

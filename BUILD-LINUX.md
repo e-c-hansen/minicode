@@ -699,6 +699,21 @@ Verified by running it:
   it and switching tabs, a task box clicked in it was undone from it, and
   Ctrl Z went back to the clean file. By hand against clangd, squiggles
   followed the tab on show and a fix typed in a tab cleared them.
+- The palette (November 2026, `linux/PARITY.md` item 1.5), by the `palette`
+  and `symbols` GUI suites on a private Xvfb with real key presses and
+  clicks. Ctrl Shift P and F1 list the commands with their keys, only those
+  whose action is enabled; a fuzzy query ranks Toggle Terminal and Show
+  Hidden Files first and Enter runs them, and the command run last comes
+  first next time, read from `$XDG_STATE_HOME/minicode/palette.json`.
+  Escape, a click outside, or running a row gives the keyboard back, to the
+  editor or to the find bar with its selection. Ctrl P lists the folder's
+  files off the main thread, dotfiles in and node_modules out, and opens
+  one by Enter or a click, tabs and earlier picks first. Ctrl G goes to a
+  line and column. Ctrl Shift O lists a Python file's classes and methods
+  and a Markdown page's headings, shows each as the list moves, and
+  Escape puts the selection and scroll back. In the terminal Ctrl P, Ctrl
+  G and F1 reached a raw `head` as their bytes, and Ctrl Shift P opened the
+  palette.
 
 Not verified:
 
@@ -1042,6 +1057,15 @@ in the message box commits. Enter or a click on a commit in the graph shows
 it. Find Next and Find Previous are F3 and Shift F3, VS Code's on Linux,
 rather than the Mac's Command G and Shift Command G: VS Code's Ctrl G on
 Linux is Go to Line, and Ctrl Shift G is the panel.
+
+The command palette is Ctrl Shift P or F1, VS Code's keys: type part of a
+command's name and press Enter. The same box opens empty for Ctrl P, which
+finds a file of the folder by part of its name, with ":" for Ctrl G, a line
+to go to (42, or 42:7 for a column too), and with "@" for Ctrl Shift O, a
+symbol of the open file (its classes, functions, or headings; "@:" groups
+them by kind). Up and Down choose, Escape closes it, and typing ">", ":"
+or "@" first switches between them. In the terminal Ctrl P, Ctrl G and F1
+are the program's; Ctrl Shift P and Ctrl Shift O still open the palette.
 
 Show Hidden Files is Ctrl Shift ., the Mac's Shift Command . with Ctrl for
 Command. It is bound as Ctrl and the `>` character, so it works on layouts

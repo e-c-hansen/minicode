@@ -57,6 +57,10 @@ core_sources = [
   core_dir / 'LineIndex.cpp',
   core_dir / 'QuickDiff.cpp',
   core_dir / 'LineDiff.cpp',
+  # The palette's matching, modes and Quick Open's walk, and the outline
+  # Go to Symbol lists without a server (PalettePanel.cpp shows them).
+  core_dir / 'CommandPalette.cpp',
+  core_dir / 'SymbolOutline.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -109,6 +113,8 @@ gui_sources = [
   # auto-save (the Mac's BackupStore and EditorController+Persistence).
   'src/BackupStore.cpp',
   'src/Persistence.cpp',
+  # The palette over the window: commands, Quick Open, Go to Line, symbols.
+  'src/PalettePanel.cpp',
 ]
 
 inc = include_directories('src', '../src')

@@ -738,6 +738,12 @@ gboolean Editor::onSettleTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
     return G_SOURCE_CONTINUE;
 }
 
+void Editor::stopSettling() {
+    stopPlace();
+    stopSettle();
+    stopHold();
+}
+
 bool Editor::revealLineColumn(int line, int column) {
     // revealLine first: it switches a preview back to the source, so the
     // buffer holds the lines the column counts in.

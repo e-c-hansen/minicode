@@ -16,6 +16,7 @@ class Editor;
 class FileTree;
 class GitPanel;
 class LspSession;
+class PalettePanel;
 class Terminal;
 class Browser;
 class WindowLayout;
@@ -38,6 +39,7 @@ struct MCGuiAppWindow {
     GtkWidget*  hintsPanel = nullptr;      // the shortcut hints, and their text
     GtkWidget*  hintsLabel = nullptr;
     GtkWidget*  hintsHint = nullptr;       // the status bar's note on them
+    PalettePanel* palette = nullptr;       // the palette over the panes
     std::string rootDir;
 };
 

@@ -67,9 +67,13 @@ static void testLinuxCommandTable() {
     CHECK(ordered);
     CHECK(linuxRows().size() >= 40);
     CHECK(linuxRow("nope") == nullptr);
-    CHECK(linuxRow("workbench.action.showCommands") == nullptr);   // no palette yet
-    CHECK(!available(*find("workbench.action.showCommands"), Platform::Linux));
-    CHECK(defaultKeys(*find("workbench.action.showCommands"), Platform::Linux).empty());
+    // The palette is there (PARITY.md 1.5); Go to Symbol in Workspace is not
+    // yet, so it has no key and keys.conf refuses it.
+    CHECK(linuxRow("workbench.action.showCommands") != nullptr);
+    CHECK(available(*find("workbench.action.showCommands"), Platform::Linux));
+    CHECK(linuxRow("workbench.action.showAllSymbols") == nullptr);
+    CHECK(!available(*find("workbench.action.showAllSymbols"), Platform::Linux));
+    CHECK(defaultKeys(*find("workbench.action.showAllSymbols"), Platform::Linux).empty());
     // Linux's words where the Mac's do not fit, the registry's elsewhere.
     CHECK(std::string(titleOf(*find("revealFileInOS"), Platform::Linux)) == "Open Containing Folder");
     CHECK(std::string(titleOf(*find("revealFileInOS"), Platform::Mac)) == "Reveal in Finder");
@@ -115,14 +119,26 @@ static void testLinuxCommandDefaults() {
     CHECK(d.keysOf("minicode.toggleHiddenFiles").size() == 1 &&
           HasKey(d, "minicode.toggleHiddenFiles", "ctrl+shift+."));
     // The keys they leave are free until the commands that take them come
-    // (the palette, Select Line, Select All Occurrences, Replace, the inline
-    // agent, Go to Line, the panel's Ctrl+J).
-    for (const char *k : {"ctrl+shift+p", "ctrl+l", "ctrl+shift+l", "ctrl+h", "ctrl+i", "ctrl+g",
-                          "ctrl+j", "ctrl+alt+t"}) {
+    // (Select Line, Select All Occurrences, Replace, the inline agent, Go to
+    // Symbol in Workspace, the panel's Ctrl+J).
+    for (const char *k : {"ctrl+l", "ctrl+shift+l", "ctrl+h", "ctrl+i", "ctrl+t", "ctrl+j",
+                          "ctrl+alt+t"}) {
         const bool free = d.commandsFor(K(k)).empty();
         if (!free) std::printf("  Linux: %s is %s\n", k, d.commandsFor(K(k))[0]->id);
         CHECK(free);
     }
+    // The palette (PARITY.md 1.5): VS Code's Linux keys.
+    CHECK(d.keysOf("workbench.action.showCommands").size() == 2 &&
+          d.keysOf("workbench.action.showCommands")[0] == K("ctrl+shift+p") &&
+          HasKey(d, "workbench.action.showCommands", "f1"));
+    CHECK(d.keysOf("workbench.action.quickOpen").size() == 1 &&
+          HasKey(d, "workbench.action.quickOpen", "ctrl+p"));
+    CHECK(d.keysOf("workbench.action.gotoLine").size() == 1 &&
+          HasKey(d, "workbench.action.gotoLine", "ctrl+g"));
+    CHECK(d.keysOf("workbench.action.gotoSymbol").size() == 1 &&
+          HasKey(d, "workbench.action.gotoSymbol", "ctrl+shift+o"));
+    CHECK(d.commandFor(K("ctrl+shift+p"), When::Editor) == find("workbench.action.showCommands"));
+    CHECK(d.commandFor(K("ctrl+g"), When::Tree) == find("workbench.action.gotoLine"));
     // The tabs (PARITY.md 1.1): VS Code's Linux keys, but Reopen Closed Tab,
     // whose Ctrl+Shift+T stays Toggle Terminal's (minicode's own Shift key),
     // and Save All, whose VS Code key is a chord.
@@ -181,6 +197,13 @@ static void testLinuxTerminalKeys() {
     CHECK(takes("editor.action.revealDefinition", "f12"));
     CHECK(takes("minicode.sortLines", "f9"));
     CHECK(takes("editor.action.nextMatchFindAction", "f3"));
+    // The palette's plain keys too (readline's Ctrl+P, Emacs's Ctrl+G); its
+    // Shift keys open it from the terminal.
+    CHECK(takes("workbench.action.quickOpen", "ctrl+p"));
+    CHECK(takes("workbench.action.gotoLine", "ctrl+g"));
+    CHECK(takes("workbench.action.showCommands", "f1"));
+    CHECK(!takes("workbench.action.showCommands", "ctrl+shift+p"));
+    CHECK(!takes("workbench.action.gotoSymbol", "ctrl+shift+o"));
     // ... unless Global: the ways out of the terminal.
     CHECK(!takes("workbench.action.terminal.toggleTerminal", "ctrl+`"));
     CHECK(!takes("workbench.action.focusSideBar", "ctrl+0"));
@@ -293,13 +316,17 @@ static void testLinuxKeymapFile() {
     CHECK(errs.size() == 1);
     // A command Linux does not have yet.
     errs.clear();
-    m = resolve("ctrl+alt+p = workbench.action.showCommands\n", &errs, Platform::Linux);
+    m = resolve("ctrl+alt+p = workbench.action.showAllSymbols\n", &errs, Platform::Linux);
     CHECK(errs.size() == 1 && errs[0].message.find("not in minicode for Linux yet") != std::string::npos);
     CHECK(m.commandsFor(K("ctrl+alt+p")).empty());
     // The same line on the Mac is fine, and its keys are the Mac's.
     errs.clear();
-    m = resolve("ctrl+alt+p = workbench.action.showCommands\n", &errs);
-    CHECK(errs.empty() && HasKey(m, "workbench.action.showCommands", "shift+cmd+p"));
+    m = resolve("ctrl+alt+p = workbench.action.showAllSymbols\n", &errs);
+    CHECK(errs.empty() && HasKey(m, "workbench.action.showAllSymbols", "cmd+t"));
+    // The palette's own keys move like any other.
+    errs.clear();
+    m = resolve("ctrl+alt+p = workbench.action.showCommands\n", &errs, Platform::Linux);
+    CHECK(errs.empty() && m.keysOf("workbench.action.showCommands")[0] == K("ctrl+alt+p"));
     // The tree takes no text, so its commands may have a typing key on
     // Linux; the Mac still refuses it.
     errs.clear();
@@ -356,7 +383,8 @@ static void testLinuxKeymapFile() {
     CHECK(sameKeys);
     for (const LinuxRow &r : linuxRows()) CHECK(text.find(std::string(" = ") + r.id) != std::string::npos);
     // Only Linux's commands, in Linux's words, with no Mac key.
-    CHECK(text.find("workbench.action.showCommands") == std::string::npos);
+    CHECK(text.find("workbench.action.showAllSymbols") == std::string::npos);
+    CHECK(text.find("# ctrl+shift+p = workbench.action.showCommands") != std::string::npos);
     CHECK(text.find("cmd+") == std::string::npos);
     CHECK(text.find("File > Open Containing Folder") != std::string::npos);
     CHECK(text.find("Finder") == std::string::npos);

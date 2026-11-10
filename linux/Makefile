@@ -34,7 +34,8 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/FileDetails.cpp ../src/Commands.cpp ../src/CommandsLinux.cpp \
         ../src/EditorTabs.cpp ../src/Backups.cpp ../src/TabSessions.cpp \
         ../src/LineIndex.cpp ../src/QuickDiff.cpp ../src/LineDiff.cpp \
-        ../src/RightAreaLayout.cpp
+        ../src/RightAreaLayout.cpp \
+        ../src/CommandPalette.cpp ../src/SymbolOutline.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
@@ -45,7 +46,8 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Document.cpp src/Tabs.cp
        src/Search.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
        src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp src/TermLinkPath.cpp \
        src/GitPanel.cpp src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
-       src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp
+       src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp \
+       src/PalettePanel.cpp
 
 SRCS := $(GUI) $(CORE)
 

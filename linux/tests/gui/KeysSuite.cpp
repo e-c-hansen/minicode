@@ -12,6 +12,7 @@
 #include "Editor.h"
 #include "FileTree.h"
 #include "Keys.h"
+#include "PalettePanel.h"
 
 #ifdef MINICODE_ENABLE_TERMINAL
 #include "Terminal.h"
@@ -216,11 +217,12 @@ MC_GUI_SUITE(keys) {
                 GCHECK_EQ_STR(byAction[a.action], Commands::titleOf(*c, Commands::Platform::Linux));
         }
         // Linux's words and places: Quit in File, Settings in Edit, and no
-        // command without an action (the palette) anywhere.
+        // command without an action (Go to Symbol in Workspace) anywhere.
         GCHECK_EQ_STR(byAction["win.reveal"], "Open Containing Folder");
         GCHECK_EQ_STR(byAction["app.quit"], "Quit");
         GCHECK_EQ_STR(byAction["win.togglepreview"], "Toggle Preview");
-        GCHECK(byAction.count("win.showcommands") == 0);
+        GCHECK_EQ_STR(byAction["win.showcommands"], "Command Palette…");
+        for (const auto& [label, action] : items) GCHECK(label != "Go to Symbol in Workspace…");
     });
     MCGuiStep("each action's accelerators are its Linux keys", [] {
         GCHECK_EQ_STR(bound("win.togglepreview"), canon("<Ctrl><Shift>v"));
@@ -260,7 +262,8 @@ MC_GUI_SUITE(keys) {
         const std::string text = MCGuiReadFile(Keys::path());
         GCHECK(text.find("# ctrl+shift+v = markdown.showPreview") != std::string::npos);
         GCHECK(text.find("cmd+") == std::string::npos);
-        GCHECK(text.find("workbench.action.showCommands") == std::string::npos);
+        GCHECK(text.find("workbench.action.showAllSymbols") == std::string::npos);
+        GCHECK(text.find("# ctrl+shift+p = workbench.action.showCommands") != std::string::npos);
         GCHECK(Keys::errors().empty());
         GCHECK_EQ_STR(bound("win.togglepreview"), canon("<Ctrl><Shift>v"));
     });
@@ -278,13 +281,19 @@ MC_GUI_SUITE(keys) {
     });
     MCGuiStep("a click in it gives it the keyboard", [] { MCGuiClick(MCGuiApp().editor->textView()); });
     MCGuiWait("the editor has the keyboard", 5, editorHasKeyboard);
-    MCGuiStep("Ctrl+Shift+P, the preview's old key, is free (the palette's)", [] {
+    MCGuiStep("Ctrl+Shift+P, the preview's old key, is the palette's", [] {
         MCGuiKey("ctrl+shift+p");
     });
-    MCGuiPause(0.3);   // a negative check: nothing may happen in this time
-    MCGuiStep("the preview stays", [] {
+    MCGuiWait("the palette opens with \">\"", 10, [] {
+        return MCGuiApp().palette->isOpen() && MCGuiApp().palette->text() == ">";
+    });
+    MCGuiStep("the preview stays; Escape puts the palette away", [] {
         GCHECK(MCGuiApp().editor->inPreview());
         GCHECK(gRuns["win.togglepreview"] == 0);
+        MCGuiKey("escape");
+    });
+    MCGuiWait("it goes, and the editor has the keyboard again", 10, [] {
+        return !MCGuiApp().palette->isOpen() && editorHasKeyboard();
     });
     MCGuiStep("Ctrl+Shift+V toggles it", [] { MCGuiKey("ctrl+shift+v"); });
     MCGuiWait("the source shows", 10, [] { return !MCGuiApp().editor->inPreview(); });
@@ -403,16 +412,20 @@ MC_GUI_SUITE(keys) {
     MCGuiStep("and back", [] { MCGuiKey("ctrl+shift+."); });
     MCGuiWait("as they were", 10, [] { return hiddenShown() == gHidden; });
 
-    MCGuiStep("Ctrl+G, Find Next's old key, is free (Go to Line's)", [] {
+    MCGuiStep("Ctrl+G, Find Next's old key, is Go to Line's", [] {
         GCHECK(!searchBarOpen());
         MCGuiKey("ctrl+g");
     });
-    MCGuiPause(0.3);   // a negative check
-    MCGuiStep("the find bar stays shut; F3, with nothing to find, opens it", [] {
+    MCGuiWait("the palette opens with \":\"", 10, [] {
+        return MCGuiApp().palette->isOpen() && MCGuiApp().palette->text() == ":";
+    });
+    MCGuiStep("the find bar stays shut; Escape puts the palette away", [] {
         GCHECK(!searchBarOpen());
         GCHECK(gRuns["win.findnext"] == 0);
-        MCGuiKey("f3");
+        MCGuiKey("escape");
     });
+    MCGuiWait("it goes", 10, [] { return !MCGuiApp().palette->isOpen() && editorHasKeyboard(); });
+    MCGuiStep("F3, with nothing to find, opens the find bar", [] { MCGuiKey("f3"); });
     MCGuiWait("it is open", 10, searchBarOpen);
     MCGuiStep("Ctrl+F shuts it", [] {
         GCHECK(gRuns["win.findnext"] == 1);
@@ -591,7 +604,9 @@ MC_GUI_SUITE(keys) {
         GCHECK_EQ_STR(keyOf("Hidden files ("), "Ctrl Shift .");
         GCHECK_EQ_STR(keyOf("Rename (in the tree)"), "Ctrl Alt R");
         GCHECK(hints.find("Ctrl Shift L") == std::string::npos);
-        GCHECK(hints.find("Ctrl Shift P") == std::string::npos);
+        // Ctrl Shift P only for the palette, no longer the preview.
+        GCHECK_EQ_STR(keyOf("Command palette"), "Ctrl Shift P");
+        GCHECK(hints.find("Ctrl Shift P") == hints.rfind("Ctrl Shift P"));
         MCGuiKey("ctrl+shift+h");
     });
     MCGuiWait("they go", 10, [] { return !gtk_widget_get_visible(MCGuiApp().hintsPanel); });
