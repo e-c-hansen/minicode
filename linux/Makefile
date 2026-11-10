@@ -32,13 +32,14 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/LspFeatures.cpp ../src/LspEdits.cpp \
         ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp \
         ../src/FileDetails.cpp ../src/Commands.cpp ../src/CommandsLinux.cpp \
-        ../src/EditorTabs.cpp ../src/Backups.cpp ../src/TabSessions.cpp
+        ../src/EditorTabs.cpp ../src/Backups.cpp ../src/TabSessions.cpp \
+        ../src/LineIndex.cpp ../src/QuickDiff.cpp ../src/LineDiff.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
 # their feature macro is defined.
 GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/Document.cpp src/Tabs.cpp \
-       src/TabStrip.cpp src/Markdown.cpp \
+       src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp \
        src/Terminal.cpp src/Browser.cpp src/AppSettings.cpp src/ThemeCss.cpp \
        src/Search.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
        src/LatexClick.cpp src/Latex.cpp src/Lsp.cpp src/TermLinkPath.cpp \

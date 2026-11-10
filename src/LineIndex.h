@@ -14,6 +14,11 @@
 // file's breaks), and after U+2029, so "\r\n" is one break: the lines
 // TextFind and FolderSearch number, and NSTextView draws. A text ending in
 // a break has an empty last line, which the gutter numbers too.
+//
+// The GTK port counts in characters (Unicode code points), as GtkTextIter
+// does: resetUtf8 and editUtf8 take UTF-8 and make one unit of each code
+// point, so its offsets are the buffer's. An index is fed one way or the
+// other, never both.
 #pragma once
 #include <cstddef>
 #include <vector>
@@ -31,6 +36,15 @@ public:
     // either end), which decide whether a '\r' there still ends a line.
     void edit(size_t pos, size_t oldLen, const char16_t* inserted, size_t newLen,
               char16_t before, char16_t after);
+
+    // The same in code points: index a whole UTF-8 text, and the characters
+    // [pos, pos + oldLen) replaced by the UTF-8 `inserted` (`bytes` long),
+    // with `before` and `after` the code points either side of it in the new
+    // text (0 at either end). Invalid UTF-8 counts a unit per byte that does
+    // not continue a sequence.
+    void resetUtf8(const char* text, size_t bytes);
+    void editUtf8(size_t pos, size_t oldLen, const char* inserted, size_t bytes,
+                  char32_t before, char32_t after);
 
     // Whether the unit at i ends a line, given the unit after it (0 at the end).
     static bool breaksAfter(char16_t c, char16_t next) {
@@ -59,6 +73,9 @@ private:
     size_t length_ = 0;
 
     void moveGap(size_t to);
+    // An edit whose new line starts, in order, are `fresh`: those of the
+    // inserted units, and pos itself when a break before it still ends a line.
+    void splice(size_t pos, size_t oldLen, size_t newLen, const std::vector<size_t>& fresh);
     size_t firstAfter(size_t pos) const;   // the first line starting after pos
     size_t firstAt(size_t pos) const;      // the first line starting at or after pos
 };

@@ -4,6 +4,7 @@
 // (the buffer, the highlighter, the disk) is Document.cpp, and the tabs are
 // Tabs.cpp.
 #include "Editor.h"
+#include "CodeView.h"
 #include "Palette.h"
 #include "Markdown.h"
 #include "MarkdownEdit.h"
@@ -50,7 +51,8 @@ Editor::Editor() {
     gtk_text_buffer_get_bounds(welcome_, &wa, &wb);
     gtk_text_buffer_apply_tag_by_name(welcome_, "plainmsg", &wa, &wb);
 
-    view_ = gtk_text_view_new_with_buffer(welcome_);
+    code_ = CodeView::create(welcome_);
+    view_ = code_->widget();
     buffer_ = welcome_;
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), TRUE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_), GTK_WRAP_NONE);
@@ -867,6 +869,7 @@ static void setTagColor(GtkTextTagTable* table, const char* name, const char* pr
 void Editor::applySettings(const Settings& s) {
     const bool webBefore = settings_.webImages();
     settings_ = s;
+    code_->applySettings(s);   // the ruler and the gutter
     // The tags are every tab's: each recolors with them.
     GtkTextTagTable* t = tags_.table;
     for (int i = 0; i < kTokenStyleCount; ++i)

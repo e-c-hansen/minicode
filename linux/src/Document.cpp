@@ -4,6 +4,7 @@
 #include "Document.h"
 
 #include "BackupStore.h"
+#include "BufferLines.h"
 #include "MarkdownTasks.h"
 #include "Utf8Offsets.h"
 #ifdef MINICODE_ENABLE_PDF
@@ -134,6 +135,8 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     g_signal_connect(buffer_, "begin-user-action", G_CALLBACK(onBeginUserAction), this);
     g_signal_connect(buffer_, "end-user-action", G_CALLBACK(onEndUserAction), this);
     g_signal_connect(buffer_, "changed", G_CALLBACK(onChanged), this);
+    // Where its lines start, for the gutter; the buffer keeps it.
+    BufferLines::attach(buffer_);
 }
 
 Document::~Document() {

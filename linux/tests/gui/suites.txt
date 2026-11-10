@@ -11,3 +11,6 @@ TabViewersSuite.cpp
 SessionsSuite.cpp
 BackupsSuite.cpp
 AutoSaveSuite.cpp
+GutterSuite.cpp
+RulerSuite.cpp
+GutterTypingSuite.cpp
