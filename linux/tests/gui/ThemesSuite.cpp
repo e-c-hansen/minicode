@@ -3,7 +3,7 @@
 // into the settings file, and the window follows at once, read back as
 // pixels: the editor's text, the gutter, the file tree, the terminal, the
 // status bar and the tab strip in the theme's colors, the syntax tags in
-// its colors, the keyboard back in the editor, and GTK's own widgets
+// its colors, the keyboard back where it was, and GTK's own widgets
 // (the menu bar) dark or light with it (gtk-interface-color-scheme). The row
 // of the theme in use is checked. A file with colors of its own asks first:
 // Keep My Colors keeps them, Use the Theme's Colors comments them out, Cancel
@@ -19,6 +19,9 @@
 #include "Document.h"
 #include "Editor.h"
 #include "FileTree.h"
+#include "FindBar.h"
+#include "FindRules.h"
+#include "GitPanel.h"
 #include "Gutter.h"
 #include "Palette.h"
 #include "TabStrip.h"
@@ -44,6 +47,7 @@ size_t gWindows = 0;
 std::string gWhy;
 std::string gDisk;   // the settings file before a refused or cancelled theme
 bool gPressed = false;
+GtkWidget* gFocusBefore = nullptr;   // where the keyboard was before a menu
 std::string gText;
 
 std::string settingsPath() { return g_getenv("MINICODE_SETTINGS"); }
@@ -177,7 +181,10 @@ bool rowChecked(GtkWidget* menu, const std::string& title) {
 // View > Theme opened by real clicks, up to its rows.
 void openThemeMenu() {
     MCGuiWait("no menu open", 10, [] { return !anyMenuOpen() && MCGuiOnScreen(menuBar()); });
-    MCGuiStep("View", [] { MCGuiClick(MCGuiFindLabel(menuBar(), "View")); });
+    MCGuiStep("View", [] {
+        gFocusBefore = gtk_root_get_focus(GTK_ROOT(MCGuiApp().window));
+        MCGuiClick(MCGuiFindLabel(menuBar(), "View"));
+    });
     MCGuiWait("the View menu", 10, [] { return popoverWith("Theme") != nullptr; });
     MCGuiStep("Theme", [] { MCGuiClick(MCGuiFindLabel(popoverWith("Theme"), "Theme")); });
     MCGuiWait("its rows", 10, [] {
@@ -191,8 +198,8 @@ void chooseTheme(const std::string& title) {
     MCGuiStep(title, [title] { MCGuiClick(MCGuiFindLabel(popoverWith(title), title)); });
     MCGuiWait("the menu closed", 10, [] { return !anyMenuOpen(); });
     // GTK's menu bar kept it on its item (MenuBarFocus.h).
-    MCGuiWait("the keyboard back in the editor", 10, [] {
-        return gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)) == ed()->textView();
+    MCGuiWait("the keyboard back where it was", 10, [] {
+        return gFocusBefore && gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)) == gFocusBefore;
     });
 }
 
@@ -497,6 +504,42 @@ MC_GUI_SUITE(themes) {
     });
     MCGuiStep("back to the source file", [] { MCGuiOpenFileKept(F("themes.py")); });
     waitInTheme("solarized-dark");
+
+    // ---- the find bar and the Source Control panel follow too
+    MCGuiStep("the find bar by its key", [] { MCGuiKey("ctrl+f"); });
+    MCGuiWait("open", 10, [] { return MCGuiApp().findBar->shown(); });
+    MCGuiStep("and the Source Control panel by its", [] { MCGuiKey("ctrl+shift+g"); });
+    MCGuiWait("both on screen", 10, [] {
+        return MCGuiApp().git && MCGuiOnScreen(MCGuiApp().git->widget()) &&
+               MCGuiOnScreen(MCGuiApp().findBar->widget());
+    });
+    chooseTheme("Light Modern");
+    MCGuiWait("both in Light Modern", 10, [] {
+        gWhy.clear();
+        const Settings s = fileSettings();
+        if (std::string(s.theme().id) != "light-modern") {
+            gWhy = "not written";
+            return false;
+        }
+        GtkWidget* bar = MCGuiApp().findBar->widget();
+        const FindRules::Palette p = FindRules::palette("light-modern", s.isDark());
+        return pixelIs("the find bar", bar, gtk_widget_get_width(bar) / 2.0, 2,
+                       Rgba::hex(p.widgetBg >> 8)) &&   // RRGGBBAA
+               pixelIs("the Source Control panel", MCGuiApp().git->widget(), -6, 4,
+                       s.background(Surface::Sidebar));
+    });
+    MCGuiStep("so", [] {
+        if (!gWhy.empty()) MCGuiNote("not: %s", gWhy.c_str());
+        MCGuiSnapshot(GTK_WIDGET(MCGuiApp().window), "theme-light-modern");
+    });
+    MCGuiStep("the tree again, the find bar closed", [] {
+        MCGuiKey("ctrl+shift+g");
+        MCGuiKey("ctrl+1");
+        MCGuiKey("escape");
+    });
+    MCGuiWait("so", 10, [] {
+        return !MCGuiApp().findBar->shown() && MCGuiOnScreen(MCGuiApp().tree->widget());
+    });
 
     // ---- done
     MCGuiStep("the plain settings, and the window closed", [] {

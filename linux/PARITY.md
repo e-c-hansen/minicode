@@ -935,9 +935,10 @@ its server comes first here.
   when it was not (View > Adjust Settings > Terminal through the menu
   bar). `themes`: View > Theme by real clicks writes the line, its row is
   checked, and the editor's text, the gutter, the tree, the terminal, the
-  status bar and the tab strip read back as the theme's pixels, the
-  keyword tag in its color, GTK's color scheme and the menu bar dark or
-  light with it, and the keyboard back in the editor; a color of the
+  status bar, the tab strip, the find bar and the Source Control panel
+  read back as the theme's pixels, the keyword tag in its color, GTK's
+  color scheme and the menu bar dark or light with it, and the keyboard
+  back where it was; a color of the
   file's own asks (Keep My Colors, Use the Theme's Colors, Cancel each
   doing what it says), CRLF stays, a symlinked file stays a link with
   nothing left beside it, and a tab holding the file unsaved refuses with
@@ -952,7 +953,10 @@ its server comes first here.
   action's state following the file, without the menu bar giving the
   keyboard back (GTK left it on the bar's item: `MenuBarFocus`), without
   the character-under-the-point fix for swatches and opacities, and with
-  `g_file_set_contents` for the first writes. Not done: the palette does
+  `g_file_set_contents` for the first writes. In two of three full runs
+  at load 40 `large_file`'s "its place as it was" timed out (180 s); it
+  passed alone twice and after every suite before it, at load 3, so it
+  is noted as a flake under load, not chased. Not done: the palette does
   not list the themes or the parts (the Mac's reads its menu bar), and
   the title bar has no menu (the port draws none). Needs the owner: how
   each theme looks on the desktop, and whether GTK's menus and dialogs
