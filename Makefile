@@ -54,7 +54,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/SymbolOutline.cpp src/NavHistory.cpp src/NavRecorder.cpp src/ViewZoom.cpp \
             src/Folding.cpp \
             src/FileSniff.cpp src/Csv.cpp src/JsonOutline.cpp src/Notebook.cpp \
-            src/Commands.cpp src/CommandsLinux.cpp src/ProcessTable.cpp src/ClaudeHooks.cpp src/AttentionBoard.cpp \
+            src/Commands.cpp src/CommandsLinux.cpp src/ProcessTable.cpp src/ProcFs.cpp src/ClaudeHooks.cpp src/AttentionBoard.cpp \
             src/PageCheck.cpp src/IdeLink.cpp src/MermaidDiagram.cpp src/LatexScratch.cpp \
             src/LatexLog.cpp \
             src/MarkdownHtml.cpp src/MarkdownPage.cpp src/TerminalLayout.cpp src/RightAreaLayout.cpp \

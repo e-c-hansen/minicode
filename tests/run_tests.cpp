@@ -10898,6 +10898,7 @@ static void testMultiCaretOccurrences() {
 #include "commands_tests.inc"
 #include "commands_linux_tests.inc"
 #include "procs_tests.inc"
+#include "procfs_tests.inc"
 #include "attention_tests.inc"
 #include "ignore_tests.inc"
 #include "page_check_tests.inc"
@@ -11046,6 +11047,7 @@ int main() {
     testBrackets();
     testControlProtocol();
     testProcs();
+    testProcFs();
     testPageCheck();
     testSideBySide();
     testSideBySideReview();

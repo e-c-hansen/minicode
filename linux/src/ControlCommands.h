@@ -22,6 +22,7 @@ struct ControlWindow {
     std::string folder;       // the tree's root, as the window spells it
     Editor* editor = nullptr;
     GtkWindow* window = nullptr;
+    int shellPid = 0;         // the terminal's shell (VTE's child), 0 while it has none
 };
 
 struct ControlHost {

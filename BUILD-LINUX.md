@@ -61,6 +61,20 @@ Verified by running it:
   pid with no listener) are removed while one with a listener is kept. The
   check fails with the server taken out. Not tested: another user's peer
   refused (one `SO_PEERCRED` comparison; it needs a second user).
+- Processes and ports, part one (item 3.8): the `procfs:*` core groups feed
+  canned `/proc` text (a stat line with parentheses in the name, `btime`,
+  `cmdline`, `smaps_rollup`, `net/tcp` and `tcp6` in LISTEN state) and a
+  folder shaped like `/proc` to `ProcFs::Source`, and read the real `/proc`
+  where there is one, so every CI job runs them. The `processes` GUI suite
+  types `python3 -m http.server 0` into the app's terminal and has
+  `build/minicode procs --json --folder` report it under the terminal with
+  its port, cwd, command line and Pss; a sleep whose parent is gone and whose
+  cwd is in the folder is "not started here"; Stop ends one by SIGTERM, the
+  shell's child too, and a sleep ignoring SIGTERM by the SIGKILL 3 s later,
+  and refuses minicode; a look's CPU time is bounded on the sampling thread's
+  clock; a folder no window shows is answered for. It failed with the client's
+  "procs is not on Linux yet" and passes. Not tested: the panel (not made),
+  other users' processes.
 - Install hints (item 2.8): the `install_hints` GUI suite, with `MINICODE_INSTALL_HAVE=uv`,
   shows the bar for a missing Python server with `uv tool install basedpyright`,
   Copy, Run in Terminal typing it without Return, the bar going when the

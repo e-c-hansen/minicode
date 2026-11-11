@@ -47,6 +47,9 @@ core_sources = [
   # The control channel's table and parsing (ControlServer.cpp, the client).
   core_dir / 'ControlProtocol.cpp',
   core_dir / 'PageCheck.cpp',
+  # Processes and ports: the table's rules and the /proc source (ProcessMonitor.cpp).
+  core_dir / 'ProcessTable.cpp',
+  core_dir / 'ProcFs.cpp',
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp',
   core_dir / 'GitModel.cpp',
@@ -253,6 +256,7 @@ gui_sources = [
   # client `minicode open|window|state|selection` runs (the Mac's CLI, shared).
   'src/ControlServer.cpp',
   'src/ControlCommands.cpp',
+  'src/ProcessMonitor.cpp',
   '..' / 'tools' / 'minicode-cli.cpp',
   'src/NavHistoryUi.cpp',
   # The command line's options, and a terminal given back at once: the

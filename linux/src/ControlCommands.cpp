@@ -10,6 +10,7 @@
 
 #include "Document.h"
 #include "Editor.h"
+#include "ProcessMonitor.h"
 
 using ControlChannel::Dispatcher;
 using ControlChannel::Request;
@@ -449,6 +450,42 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
         if (!r.has("text")) r.set("text", "");
         r.set("window", w.id);
         respond(Result::success(r));
+    });
+
+    // procs (PARITY.md 3.8): the window's terminals' processes and what runs
+    // in its folder, from a look taken now. No window is opened for a read.
+    d.on("procs", [host](const Request& req, Dispatcher::Respond respond) {
+        const Json& a = req.args;
+        std::vector<ControlWindow> ws = host.windows();
+        const ControlWindow* w = nullptr;
+        std::string folder;
+        if (a.has("window")) {
+            w = findById(ws, (int)a["window"].asInt());
+            if (!w) {
+                respond(Result::failure("there is no window " + std::to_string(a["window"].asInt())));
+                return;
+            }
+        } else if (a.has("folder")) {
+            folder = resolved(a["folder"].asString());
+            if (!isDirectory(folder)) {
+                respond(Result::failure("not a folder: " + a["folder"].asString()));
+                return;
+            }
+            w = findRootedAt(ws, folder);
+        } else {
+            w = findById(ws, host.frontId());
+            if (!w && !ws.empty()) w = &ws.back();
+            if (!w) {
+                respond(Result::failure("no window is open; give --folder"));
+                return;
+            }
+        }
+        if (w) folder = resolved(w->folder);
+        const int window = w ? w->id : 0;
+        ProcessMonitor::shared().sampleNow([respond, window, folder] {
+            Procs::View v = ProcessMonitor::shared().view(window, folder);
+            respond(Result::success(Procs::toJson(v, folder, window)));
+        });
     });
 
     // The rest of the table is later items of PARITY.md 3: a clear answer
