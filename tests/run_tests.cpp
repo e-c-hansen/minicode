@@ -39,6 +39,7 @@
 #include "NavHistory.h"
 #include "LineIndex.h"
 #include "BracketMatch.h"
+#include "ControlPaths.h"
 #include "ControlProtocol.h"
 #include "PageCheck.h"
 #include "SideBySide.h"

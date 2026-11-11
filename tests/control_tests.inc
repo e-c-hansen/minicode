@@ -233,6 +233,17 @@ static void testControlProtocol() {
         CHECK(usageText("nope").empty());
     }
 
+    GROUP("control:linux-socket-folder");
+    {
+        // Linux's folder: the test's folder, else the runtime folder's, else
+        // one of the user's own in the temporary folder.
+        CHECK(socketFolder("/x/y/", "/run/user/1000", "/tmp", 1000) == "/x/y");
+        CHECK(socketFolder("", "/run/user/1000/", "/tmp", 1000) == "/run/user/1000/minicode");
+        CHECK(socketFolder(nullptr, "/run/user/7", nullptr, 7) == "/run/user/7/minicode");
+        CHECK(socketFolder(nullptr, nullptr, "/var/tmp/", 42) == "/var/tmp/minicode-42");
+        CHECK(socketFolder(nullptr, "relative", "", 5) == "/tmp/minicode-5");
+    }
+
     GROUP("control:launcher-words");
     {
         // The launcher (bash, so it cannot ask the core) hands the words of

@@ -74,6 +74,8 @@
 #include "ProblemsPanel.h"
 #include "NavHistoryUi.h"
 #include "Zoom.h"
+#include "ControlCommands.h"
+#include "ControlServer.h"
 #include "StartupLog.h"
 
 #include <algorithm>
@@ -91,6 +93,7 @@
 #endif
 
 struct App {
+    int             controlId = 0;             // what the control channel calls this window
     GtkWidget*      window = nullptr;
     GtkWidget*      statusLabel = nullptr;
     GtkWidget*      settingsLabel = nullptr;   // first problem in the settings file
@@ -2426,6 +2429,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
 static App* newWindow(const std::string& root, const std::string& file) {
     initShared();
     App* app = new App;
+    static int nextControlId = 1;
+    app->controlId = nextControlId++;
     app->rootDir = root;
     g.windows.push_back(app);
 
@@ -2964,6 +2969,60 @@ static Startup resolveStartupPath(const char* arg, const char* cwdIn) {
     return out;
 }
 
+// ------------------------------------------------------ the control channel
+// PARITY.md 3.1: the socket (ControlServer.cpp) and the handlers
+// (ControlCommands.cpp), which see the windows through this.
+static ControlServer* gControl = nullptr;
+
+static ControlWindow controlWindowOf(App* a) {
+    ControlWindow w;
+    w.id = a->controlId;
+    w.folder = a->rootDir;
+    w.editor = a->editor;
+    w.window = GTK_WINDOW(a->window);
+    return w;
+}
+
+static App* controlApp(int id) {
+    for (App* a : g.windows)
+        if (!a->dead && a->controlId == id) return a;
+    return nullptr;
+}
+
+// Starts the channel once, with the first window.
+static void startControlChannel() {
+    if (gControl) return;
+    gControl = new ControlServer;
+    ControlHost host;
+    host.windows = [] {
+        std::vector<ControlWindow> out;
+        for (App* a : g.windows)
+            if (!a->dead && a->editor) out.push_back(controlWindowOf(a));
+        return out;
+    };
+    host.frontId = [] {
+        App* a = appForWindow(gtk_application_get_active_window(g.gapp));
+        if ((!a || a->dead) && !g.windows.empty()) a = g.windows.back();
+        return a && !a->dead ? a->controlId : 0;
+    };
+    host.openWindow = [](const std::string& folder, ControlWindow* out) {
+        App* a = newWindow(folder, "");
+        if (!a) return false;
+        *out = controlWindowOf(a);
+        return true;
+    };
+    host.present = [](const ControlWindow& w) {
+        if (App* a = controlApp(w.id)) gtk_window_present(GTK_WINDOW(a->window));
+    };
+    host.showFile = [](const ControlWindow& w, const std::string& path) {
+        if (App* a = controlApp(w.id))
+            openFileThen(a, path, EditorTabs::OpenFrom::Other, nullptr);
+    };
+    registerControlCommands(gControl->dispatcher(), host);
+    std::string error;
+    if (!gControl->start(&error)) g_printerr("minicode: %s\n", error.c_str());
+}
+
 // Handles both the first launch and every later `minicode <path>` run while
 // MiniCode is already open. GApplication is single-instance: the second
 // process hands its arguments to this one over D-Bus and exits, so this is
@@ -3000,10 +3059,17 @@ static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
     }
     newWindow(st.root, st.file);
     reopenFoldersWithBackups();   // once, at the first launch
+    startControlChannel();        // once, with the first window
     return 0;
 }
 
+// The client half of the control channel (tools/minicode-cli.cpp): `minicode
+// open|window|state|selection ...` talks to the running minicode over its
+// socket and exits, with no GTK started (PARITY.md 3.1).
+int minicodeCliMain(int argc, char** argv);
+
 int main(int argc, char** argv) {
+    if (argc > 1 && ControlChannel::isSubcommand(argv[1])) return minicodeCliMain(argc, argv);
 #ifndef MINICODE_GUITEST
     // A run with the startup log stays in the terminal it was asked from: a
     // detached app gives that terminal up, and the log with it (Detach.h).
@@ -3034,6 +3100,7 @@ int main(int argc, char** argv) {
     g_signal_connect(gapp, "shutdown", G_CALLBACK(+[](GApplication*, gpointer) {
         LspTerminateAllServers();
         BackupStore::shared().flush();   // what the last windows let go is gone from disk
+        if (gControl) gControl->stop();   // the socket goes with the app
     }), nullptr);
     int status = g_application_run(G_APPLICATION(gapp), argc, argv);
     g_object_unref(gapp);

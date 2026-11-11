@@ -44,6 +44,9 @@ core_sources = [
   core_dir / 'LspFeatures.cpp',
   core_dir / 'LspEdits.cpp',
   core_dir / 'TermLinks.cpp',
+  # The control channel's table and parsing (ControlServer.cpp, the client).
+  core_dir / 'ControlProtocol.cpp',
+  core_dir / 'PageCheck.cpp',
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp',
   core_dir / 'GitModel.cpp',
@@ -246,6 +249,11 @@ gui_sources = [
   # The editor's and the terminals' zoom and the word wrap toggle, for
   # every window (Zoom.cpp), and Go Back and Forward (NavHistoryUi.cpp).
   'src/Zoom.cpp',
+  # The control channel (PARITY.md 3.1): its socket, its handlers and the
+  # client `minicode open|window|state|selection` runs (the Mac's CLI, shared).
+  'src/ControlServer.cpp',
+  'src/ControlCommands.cpp',
+  '..' / 'tools' / 'minicode-cli.cpp',
   'src/NavHistoryUi.cpp',
   # The command line's options, and a terminal given back at once: the
   # plain C++ rules (LaunchOptions.cpp) and the fork (Detach.cpp).

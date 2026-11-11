@@ -27,7 +27,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
         ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp \
         ../src/LatexDoc.cpp ../src/SyncTex.cpp \
-        ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp \
+        ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp ../src/ControlProtocol.cpp ../src/PageCheck.cpp \
         ../src/LspProtocol.cpp ../src/LspText.cpp ../src/LspServers.cpp \
         ../src/LspDiagnostics.cpp ../src/LspCompletion.cpp ../src/LspSync.cpp \
         ../src/LspFeatures.cpp ../src/LspEdits.cpp \
@@ -71,7 +71,8 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Do
        src/PalettePanel.cpp \
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \
        src/StartupLog.cpp src/WhenDrawn.cpp \
-       src/Zoom.cpp src/NavHistoryUi.cpp
+       src/Zoom.cpp src/NavHistoryUi.cpp \
+       src/ControlServer.cpp src/ControlCommands.cpp ../tools/minicode-cli.cpp
 
 SRCS := $(GUI) $(CORE)
 
