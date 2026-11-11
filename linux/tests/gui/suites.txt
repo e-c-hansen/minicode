@@ -66,3 +66,5 @@ SnippetsSuite.cpp
 CompletionEditsSuite.cpp
 SignatureHelpSuite.cpp
 SemanticTokensSuite.cpp
+ServerSymbolsSuite.cpp
+ServerFoldingSuite.cpp

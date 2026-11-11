@@ -27,7 +27,9 @@
 // Per document (DocumentFolds, which Document owns): the regions, computed
 // by Fold::compute on a worker thread 0.3 s after the text last changed
 // (generation counted, the latest result kept), and computed on the spot
-// for a command when they are not for the text as it is; the closed folds
+// for a command when they are not for the text as it is, or the language
+// server's (textDocument/foldingRange, asked 0.6 s after typing by
+// LspSessionFolding.cpp) while they are for the text; the closed folds
 // and the tag; the fold lane's source for the gutter (BufferLines.h);
 // the caret or a selection landing in hidden text (Find, Go to Line, a
 // definition, an undo) opening what hides it; and none of it for anything
@@ -83,10 +85,22 @@ public:
     // with a name, and not in large-file mode.
     bool applies() const;
     // The regions as last computed (maybe for the text a moment ago), and
-    // for the text as it is now (computed on the spot if need be).
-    const std::vector<Fold::Range>& regions() const { return core_; }
+    // for the text as it is now (computed on the spot if need be). The
+    // language server's, while they are for the text as it is, win over
+    // Fold::compute's (PARITY.md 2.13).
+    const std::vector<Fold::Range>& regions() const {
+        return serverRegionsCurrent() ? server_ : core_;
+    }
     const std::vector<Fold::Range>& freshRegions();
-    bool regionsCurrent() const { return haveCore_ && coreGen_ == generation_; }
+    bool regionsCurrent() const { return serverRegionsCurrent() || coreCurrent(); }
+    // textDocument/foldingRange's answer (LspSessionFolding.cpp), asked
+    // when generation() was `generation`: Fold::sanitize'd and taken over
+    // the computed regions until the text changes, as the Mac's MCFolds
+    // setServerRanges. False (nothing taken) when the text moved on since,
+    // or the document does not fold. An empty answer leaves the computed
+    // regions.
+    bool setServerRanges(std::vector<Fold::Range> ranges, uint64_t generation);
+    bool serverRegionsCurrent() const { return haveServer_ && serverGen_ == generation_; }
     const Fold::Collapsed& collapsed() const { return folds_; }
     const std::vector<Fold::Span>& outermost() const { return outer_; }
     // The lines the closed folds hide between them.
@@ -178,6 +192,11 @@ private:
     std::vector<Fold::Range> core_;
     uint64_t coreGen_ = 0, generation_ = 1;
     bool     haveCore_ = false;
+    bool coreCurrent() const { return haveCore_ && coreGen_ == generation_; }
+    // The language server's, for the text at serverGen_.
+    std::vector<Fold::Range> server_;
+    uint64_t serverGen_ = 0;
+    bool     haveServer_ = false;
     guint    timer_ = 0;
     gint64   lastEdit_ = 0;       // monotonic µs
     bool     computing_ = false, again_ = false;

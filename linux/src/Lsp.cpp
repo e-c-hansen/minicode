@@ -57,7 +57,8 @@ LspSession::LspSession(Editor* editor, const std::string& root, const Settings& 
       cmp_(std::make_unique<CompletionState>()), sig_(std::make_unique<SignatureState>()),
       nav_(std::make_unique<NavState>()),
       act_(std::make_unique<ActionsState>()), tools_(std::make_unique<FolderToolsState>()),
-      watch_(std::make_unique<WatchState>()), sem_(std::make_unique<SemanticState>()) {
+      watch_(std::make_unique<WatchState>()), sem_(std::make_unique<SemanticState>()),
+      sym_(std::make_unique<SymbolsState>()), fold_(std::make_unique<FoldingState>()) {
     lspAllSessions().push_back(this);
     signature_ = settingsSignature(settings);
     useBuffer(editor->sourceBuffer());
@@ -141,6 +142,7 @@ LspSession::~LspSession() {
     if (probs_->reportTimer) g_source_remove(probs_->reportTimer);
     if (sem_->timer) g_source_remove(sem_->timer);
     sem_->timer = 0;
+    forgetFoldingRanges();
     stopWatchingFiles();
     dropPopovers();
 }

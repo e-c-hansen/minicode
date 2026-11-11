@@ -36,6 +36,7 @@ void LspSession::detachDocument() {
     forgetHover();
     forgetActionRequests();
     forgetSemanticTokens();
+    forgetFoldingRanges();
     clearMarks();
     ++docGen_;
 }
@@ -89,6 +90,7 @@ void LspSession::documentChanged(const std::string& pathIn) {
     paintDiagnostics();
     updateStatus();
     scheduleSemanticTokens(0);   // LspSessionSemantic.cpp
+    if (!uri_.empty()) scheduleFoldingRanges(100);
 }
 
 void LspSession::textEdited(const char* inserted, int len) {
@@ -96,6 +98,7 @@ void LspSession::textEdited(const char* inserted, int len) {
     forgetHover();
     actionsFollowCaret();
     scheduleSemanticTokens(300);   // the new text's tokens once typing pauses
+    if (!uri_.empty()) scheduleFoldingRanges(600);
     // The session's own edits going in (an accept, the applier) are not typing.
     if (uri_.empty() || applyingEdit_) return;
     signatureAfterEdit(inserted, len);

@@ -159,7 +159,7 @@ const Fold::Span* DocumentFolds::foldStartingOnLine(size_t line) const {
     return it != all.end() && it->start == at ? &*it : nullptr;
 }
 
-bool DocumentFolds::startsRegion(size_t line) const { return Fold::startingAt(core_, line) >= 0; }
+bool DocumentFolds::startsRegion(size_t line) const { return Fold::startingAt(regions(), line) >= 0; }
 
 bool DocumentFolds::startsClosedFold(size_t line) const { return foldStartingOnLine(line) != nullptr; }
 
@@ -236,7 +236,8 @@ gboolean DocumentFolds::onComputeTimer(gpointer p) {
 // time: an edit meanwhile asks for another once this one is back.
 void DocumentFolds::computeNow() {
     if (!applies()) {
-        haveCore_ = false;
+        haveCore_ = haveServer_ = false;
+        server_.clear();
         if (!core_.empty()) {
             core_.clear();
             if (BufferLines* l = lines()) l->changed();
@@ -275,7 +276,8 @@ void DocumentFolds::computed(uint64_t gen, std::vector<Fold::Range> ranges, cons
         // The gutter draws again only for regions that differ: a draw of it
         // outside an edit, with a 5 MB line on screen, left GTK drawing the
         // view every frame for seconds (large_file).
-        const bool differ = ranges != core_;
+        // Nor while the server's regions are the ones on show.
+        const bool differ = ranges != core_ && !serverRegionsCurrent();
         core_ = std::move(ranges);
         coreGen_ = gen;
         haveCore_ = true;
@@ -294,7 +296,8 @@ const std::vector<Fold::Range>& DocumentFolds::freshRegions() {
         haveCore_ = false;
         return core_;
     }
-    if (!regionsCurrent()) {
+    if (serverRegionsCurrent()) return server_;
+    if (!coreCurrent()) {
         core_ = Fold::compute(utf16::fromUtf8(doc_->text()), doc_->path());
         coreGen_ = generation_;
         haveCore_ = true;
@@ -303,10 +306,27 @@ const std::vector<Fold::Range>& DocumentFolds::freshRegions() {
     return core_;
 }
 
+// The server's answer, as the Mac's: whole lines, nested properly, and only
+// for the text it was asked about; the gutter draws again when they differ
+// from the regions it shows.
+bool DocumentFolds::setServerRanges(std::vector<Fold::Range> ranges, uint64_t generation) {
+    if (generation != generation_ || !applies()) return false;
+    std::vector<Fold::Range> rs =
+        Fold::sanitize(std::move(ranges), (size_t)gtk_text_buffer_get_line_count(buffer_));
+    const std::vector<Fold::Range> before = regions();
+    server_ = std::move(rs);
+    serverGen_ = generation;
+    haveServer_ = !server_.empty();
+    if (regions() != before)
+        if (BufferLines* l = lines()) l->changed();
+    return true;
+}
+
 void DocumentFolds::sourceChanged() {
     generation_++;
-    haveCore_ = false;
+    haveCore_ = haveServer_ = false;
     core_.clear();
+    server_.clear();
     if (!applies() && !folds_.empty()) unfoldAll();
     scheduleCompute();
     if (BufferLines* l = lines()) l->changed();

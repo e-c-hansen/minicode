@@ -225,12 +225,12 @@ MC_GUI_SUITE(keys) {
                 GCHECK_EQ_STR(byAction[a.action], Commands::titleOf(*c, Commands::Platform::Linux));
         }
         // Linux's words and places: Quit in File, Settings in Edit, and no
-        // command without an action (Go to Symbol in Workspace) anywhere.
+        // command without an action anywhere.
         GCHECK_EQ_STR(byAction["win.reveal"], "Open Containing Folder");
         GCHECK_EQ_STR(byAction["app.quit"], "Quit");
         GCHECK_EQ_STR(byAction["win.togglepreview"], "Toggle Preview");
         GCHECK_EQ_STR(byAction["win.showcommands"], "Command Palette…");
-        for (const auto& [label, action] : items) GCHECK(label != "Go to Symbol in Workspace…");
+        GCHECK_EQ_STR(byAction["win.workspacesymbol"], "Go to Symbol in Workspace…");
     });
     MCGuiStep("each action's accelerators are its Linux keys", [] {
         GCHECK_EQ_STR(bound("win.togglepreview"), canon("<Ctrl><Shift>v"));
@@ -284,7 +284,7 @@ MC_GUI_SUITE(keys) {
         const std::string text = MCGuiReadFile(Keys::path());
         GCHECK(text.find("# ctrl+shift+v = markdown.showPreview") != std::string::npos);
         GCHECK(text.find("cmd+") == std::string::npos);
-        GCHECK(text.find("workbench.action.showAllSymbols") == std::string::npos);
+        GCHECK(text.find("# ctrl+t = workbench.action.showAllSymbols") != std::string::npos);
         GCHECK(text.find("# ctrl+shift+p = workbench.action.showCommands") != std::string::npos);
         GCHECK(Keys::errors().empty());
         GCHECK_EQ_STR(bound("win.togglepreview"), canon("<Ctrl><Shift>v"));

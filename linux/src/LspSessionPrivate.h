@@ -319,3 +319,29 @@ struct LspSession::WatchState {
     size_t batches = 0, matchedHere = 0;
     double lastBatchCpuMs = 0;
 };
+
+// ---- symbols (LspSessionSymbols.cpp)
+struct LspSession::SymbolsState {
+    // Go to Symbol in File's question out, and to which server.
+    int documentGen = 0;
+    lspgtk::Server* documentServer = nullptr;
+    DocumentSymbolsDone documentDone;
+    // Go to Symbol in Workspace's: one request a server, each answered once
+    // (its reply, or nothing when it exits first).
+    struct Asked {
+        std::weak_ptr<lspgtk::Server> server;
+        int id = 0;
+        size_t index = 0;   // its place in the answers
+    };
+    int workspaceGen = 0;
+    std::vector<Asked> workspaceAsked;
+    std::vector<std::vector<Lsp::Symbol>> answers;
+    std::vector<bool> answered;
+    WorkspaceSymbolsDone workspaceDone;
+};
+
+// ---- the server's folding ranges (LspSessionFolding.cpp)
+struct LspSession::FoldingState {
+    guint timer = 0;
+    int gen = 0;   // bumped by every question and every switch
+};

@@ -1208,6 +1208,13 @@ Displays.
 - [ ] With real basedpyright, clangd and rust-analyzer: the colors of
   classes, functions, parameters and properties, strings and comments keeping
   theirs, and scrolling a long file painting lines as they come in.
+### Symbols and folding ranges from the servers (items 2.12 and 2.13)
+
+- [ ] With real clangd and basedpyright: Ctrl Shift O listing the file's
+  symbols from the server, Ctrl T finding symbols across the folder and
+  opening one (Go Back returns), and the gutter's folds following the
+  server's ranges after a pause in typing. Ctrl T in the terminal stays the
+  program's.
 
 ### Source Control (item 2.9)
 

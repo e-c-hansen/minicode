@@ -132,6 +132,7 @@ const std::vector<Action>& actions() {
         {"workbench.action.quickOpen", "win.quickopen", false},
         {"workbench.action.gotoLine", "win.gotoline", false},
         {"workbench.action.gotoSymbol", "win.gotosymbol", false},
+        {"workbench.action.showAllSymbols", "win.workspacesymbol", false},
         {"workbench.action.navigateBack", "win.goback", true},
         {"workbench.action.navigateForward", "win.goforward", false},
         {"editor.action.jumpToBracket", "win.gotobracket", false},

@@ -445,12 +445,12 @@ MC_GUI_SUITE(palette) {
         return !pal()->isOpen() && caretLine() == 42 && caretColumn() == 6 && caretOnScreen() &&
                editorHasKeyboard();
     });
-    MCGuiStep("\"#\": not on Linux yet, said so", [] { MCGuiKey("ctrl+p"); });
+    MCGuiStep("\"#\": asks for a name", [] { MCGuiKey("ctrl+p"); });
     MCGuiWait("open", 10, [] { return pal()->isOpen(); });
     MCGuiStep("typed", [] { MCGuiType("#"); });
     MCGuiWait("nothing listed", 10, [] {
         return pal()->text() == "#" && pal()->labels().empty() &&
-               pal()->emptyText().rfind("Go to Symbol in Workspace is not on Linux yet", 0) == 0;
+               pal()->emptyText().rfind("Type the name of a symbol", 0) == 0;
     });
     MCGuiStep("Escape", [] { MCGuiKey("escape"); });
     MCGuiWait("closed", 10, [] { return !pal()->isOpen() && editorHasKeyboard(); });
