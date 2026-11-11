@@ -261,6 +261,7 @@ gui_sources = [
   'src/ControlServer.cpp',
   'src/ControlCommands.cpp',
   'src/ProcessMonitor.cpp',
+  'src/ProcessesPanel.cpp',
   '..' / 'tools' / 'minicode-cli.cpp',
   'src/NavHistoryUi.cpp',
   # The command line's options, and a terminal given back at once: the

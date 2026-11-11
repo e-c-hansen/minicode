@@ -73,7 +73,7 @@ Verified by running it:
   repository, the beside-the-user note, a bad `--base`, a missing file, a
   folder); both fail with the feature taken out. Not tested: a 16 MB file
   (the limit is a `stat` comparison), a window closed during the read.
-- Processes and ports, part one (item 3.8): the `procfs:*` core groups feed
+- Processes and ports (item 3.8): the `procfs:*` core groups feed
   canned `/proc` text (a stat line with parentheses in the name, `btime`,
   `cmdline`, `smaps_rollup`, `net/tcp` and `tcp6` in LISTEN state) and a
   folder shaped like `/proc` to `ProcFs::Source`, and read the real `/proc`
@@ -85,7 +85,16 @@ Verified by running it:
   shell's child too, and a sleep ignoring SIGTERM by the SIGKILL 3 s later,
   and refuses minicode; a look's CPU time is bounded on the sampling thread's
   clock; a folder no window shows is answered for. It failed with the client's
-  "procs is not on Linux yet" and passes. Not tested: the panel (not made),
+  "procs is not on Linux yet" and passes. Part two, the panel: the same suite
+  toggles View > Toggle Processes (the `toggleprocesses` window action, no
+  key: the Mac has none), finds the server by its port under its terminal's
+  group and the sleeps under "Not started here", reads a row's name, command,
+  folder, footprint and tooltip, bounds the panel's rebuild by thread CPU
+  time, opens a second window on the folder, runs a sleep that ignores SIGHUP
+  in its terminal, closes the window and sees the sleep as an orphan, which
+  its menu's Stop (no question) ends; a non-orphan's item reads "Stop…". It
+  fails (checked once) with the toggle made a no-op. Not tested: the question
+  dialog's buttons, Delete on a row, a real right click, the look on screen,
   other users' processes.
 - Install hints (item 2.8): the `install_hints` GUI suite, with `MINICODE_INSTALL_HAVE=uv`,
   shows the bar for a missing Python server with `uv tool install basedpyright`,

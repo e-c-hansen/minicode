@@ -36,6 +36,9 @@ public:
     void stop(const Procs::Key& key, std::function<void(const std::string&)> done);
     // A panel on show makes looks come every 2 s.
     void setPanelShown(bool shown) { panelShown_ = shown; }
+    bool panelShown() const { return panelShown_; }
+    // The terminals of the last look (for the checks).
+    const std::vector<Procs::Terminal>& terminals() const { return terms_; }
 
     // For the checks: the CPU time the sampling thread spent on its last
     // look (CLOCK_THREAD_CPUTIME_ID), and how many looks arrived.

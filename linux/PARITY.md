@@ -1341,8 +1341,11 @@ its server comes first here (2.0).
   the seam. Part one (November 2026, HANDOFF item 40): `ProcFs::Source`, a
   sampler thread (`ProcessMonitor`), Stop's SIGTERM then SIGKILL, and the
   control channel's `procs`, with `procfs:*` and the `processes` suite.
-  Remains: the panel itself (a sidebar view, rows, Stop in its menu, 2 s
-  sampling while it shows) and the session labels (item 3.6).
+  Part two (HANDOFF item 40): the panel in the sidebar (View > Toggle
+  Processes), rows by group, Stop in the menu and on Delete, 2 s sampling
+  only while it shows. Remains: the session labels (item 3.6), "Open
+  localhost:port" and "Reveal Origin" in the row's menu, and the owner's
+  eyes on the look.
 - [ ] **3.9 The Claude Code IDE link.** `IdeLink`.
 
 ### Stage 4: documents and layout, 5,000 to 7,000 lines
