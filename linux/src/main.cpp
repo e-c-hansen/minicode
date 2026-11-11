@@ -56,6 +56,7 @@
 #include "Palette.h"
 #include "Terminal.h"
 #include "ProcessMonitor.h"
+#include "ProcessesPanel.h"
 #include "Browser.h"
 #include "Search.h"
 #include "FindBar.h"
@@ -112,6 +113,9 @@ struct App {
     GtkWidget* sidebar = nullptr;
     GitPanel*  git = nullptr;
     bool       gitShown = false;
+    // The Processes panel takes the same place (View > Toggle Processes).
+    ProcessesPanel* procs = nullptr;
+    bool       procsShown = false;
     // The editor's change bars and the tree's git colors (PARITY.md 2.10).
     GitGutter*     gitGutter = nullptr;
     TreeGitColors* treeColors = nullptr;
@@ -916,6 +920,7 @@ static void act_find_in_selection(GSimpleAction*, GVariant*, gpointer p) {
 }
 
 static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp);
+static void act_toggle_processes(GSimpleAction*, GVariant*, gpointer userp);
 
 // New Window: one on this window's folder, as the Mac's opens one on the
 // front window's root.
@@ -987,6 +992,7 @@ static void revealInTree(App* app, const std::string& path) {
         return;
     }
     if (app->gitShown) act_toggle_git(nullptr, nullptr, app);
+    if (app->procsShown) act_toggle_processes(nullptr, nullptr, app);
     if (!app->layout->sidebarShown()) act_toggle_sidebar(nullptr, nullptr, app);
     app->tree->revealPath(path);
     app->tree->focus();
@@ -1168,6 +1174,7 @@ static void openLink(App* app, bool isUrl, const std::string& target, bool isDir
         if (!insideRoot) { gtk_widget_error_bell(app->window); return; }
         if (!app->layout->sidebarShown()) act_toggle_sidebar(nullptr, nullptr, app);
         if (app->gitShown) act_toggle_git(nullptr, nullptr, app);   // the tree back
+        if (app->procsShown) act_toggle_processes(nullptr, nullptr, app);
         app->tree->revealPath(path);
         return;
     }
@@ -1539,6 +1546,11 @@ static void act_focus_tree(GSimpleAction*, GVariant*, gpointer userp) {
         app->git->focus();
         return;
     }
+    if (app->procsShown) {
+        if (!app->layout->sidebarShown()) act_toggle_sidebar(nullptr, nullptr, app);
+        app->procs->focus();
+        return;
+    }
     app->tree->focus();
 }
 
@@ -1609,6 +1621,7 @@ static void makeGitPanel(App* app) {
 // toggleSourceControl:. The sidebar keeps its width, and a hidden one opens.
 static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
+    if (app->procsShown) act_toggle_processes(nullptr, nullptr, app);
     if (!gtk_widget_get_parent(app->git->widget()))
         gtk_stack_add_named(GTK_STACK(app->sidebar), app->git->widget(), "git");
     app->gitShown = !app->gitShown;
@@ -1620,6 +1633,40 @@ static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp) {
     } else {
         gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->tree->widget());
         app->git->setActive(false);
+        app->tree->focus();
+    }
+    refreshHints(app);
+}
+
+// View > Toggle Processes: the Processes panel in the tree's place, as the
+// Source Control panel's is (the Mac's toggleProcesses:). Sampling comes
+// every 2 s only while it shows.
+static void act_toggle_processes(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->procs) {
+        app->procs = new ProcessesPanel();
+        app->procs->hostWindow = GTK_WINDOW(app->window);
+        app->procs->windowId = [app] { return app->controlId; };
+        app->procs->folder = [app] {
+            char buf[PATH_MAX];
+            return realpath(app->rootDir.c_str(), buf) ? std::string(buf) : app->rootDir;
+        };
+        app->procs->onNote = [app](const std::string& text) {
+            if (!app->dead) flashStatus(app, text);
+        };
+    }
+    if (app->gitShown) act_toggle_git(nullptr, nullptr, app);
+    if (!gtk_widget_get_parent(app->procs->widget()))
+        gtk_stack_add_named(GTK_STACK(app->sidebar), app->procs->widget(), "processes");
+    app->procsShown = !app->procsShown;
+    if (app->procsShown) {
+        if (!app->layout->sidebarShown()) act_toggle_sidebar(nullptr, nullptr, app);
+        gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->procs->widget());
+        app->procs->setActive(true);
+        app->procs->focus();
+    } else {
+        gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->tree->widget());
+        app->procs->setActive(false);
         app->tree->focus();
     }
     refreshHints(app);
@@ -2411,6 +2458,9 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     delete app->browser;
     app->browser = nullptr;
 #endif
+    if (app->procsShown) ProcessMonitor::shared().setPanelShown(false);
+    delete app->procs;
+    app->procs = nullptr;
     delete app->git;
     app->git = nullptr;
     delete app->layout;
@@ -2794,6 +2844,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "toggleterminal", G_CALLBACK(act_toggle_terminal));
     addAction(app, "togglebrowser",  G_CALLBACK(act_toggle_browser));
     addAction(app, "togglegit",      G_CALLBACK(act_toggle_git));
+    addAction(app, "toggleprocesses", G_CALLBACK(act_toggle_processes));
     addAction(app, "focustree",      G_CALLBACK(act_focus_tree));
     addAction(app, "focuseditor",    G_CALLBACK(act_focus_editor));
     addAction(app, "saveall",        G_CALLBACK(act_save_all));

@@ -72,7 +72,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Do
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \
        src/StartupLog.cpp src/WhenDrawn.cpp \
        src/Zoom.cpp src/NavHistoryUi.cpp \
-       src/ControlServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp ../tools/minicode-cli.cpp
+       src/ControlServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp src/ProcessesPanel.cpp ../tools/minicode-cli.cpp
 
 SRCS := $(GUI) $(CORE)
 

@@ -28,6 +28,7 @@ class Formatting;
 class GitGutter;
 class TreeGitColors;
 class ProblemsPanel;
+class ProcessesPanel;
 
 // One editor window's parts. Pointers are the app's own and stay valid until
 // the window closes; terminal and browser are null in a build without them.
@@ -36,6 +37,8 @@ struct MCGuiAppWindow {
     Editor*     editor = nullptr;
     FileTree*   tree = nullptr;
     GitPanel*   git = nullptr;   // null until the Source Control panel was first shown
+    ProcessesPanel* procs = nullptr;   // null until View > Toggle Processes was first used
+    bool        procsShown = false;
     LspSession* lsp = nullptr;
     Terminal*   terminal = nullptr;
     Browser*    browser = nullptr;

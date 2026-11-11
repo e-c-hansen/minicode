@@ -104,6 +104,7 @@ const std::vector<Action>& actions() {
         {"editor.foldLevel7", "win.foldlevel7", false},
         {"workbench.action.toggleSidebarVisibility", "win.togglesidebar", true},
         {"workbench.view.scm", "win.togglegit", false},
+        {"minicode.toggleProcesses", "win.toggleprocesses", false},
         {"git.fetch", "win.gitfetch", false},
         {"git.pull", "win.gitpull", false},
         {"git.push", "win.gitpush", false},

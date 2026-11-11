@@ -1,7 +1,8 @@
 // ProcessesSuite.cpp — processes and ports on Linux, part one (`./build/
 // minicode-guitest processes`, PARITY.md item 3.8; the Mac's
-// tests/gui/ProcessesSuite.mm). No panel yet: what is checked is the sampler
-// over /proc and the control channel's `procs`.
+// tests/gui/ProcessesSuite.mm). The sampler over /proc, the control channel's
+// `procs` and the Processes panel (part two: View > Toggle Processes, its rows
+// by group, an orphan from a closed window, Stop from the row's menu).
 //   - a server started in the app's terminal (python3 -m http.server) is
 //     reported by `minicode procs --json --folder` under that terminal, with
 //     its listening port, its folder as cwd and a command line;
@@ -18,12 +19,14 @@
 #include "AppSeam.h"
 #include "Json.h"
 #include "ProcessMonitor.h"
+#include "ProcessesPanel.h"
 #include "Terminal.h"
 
 #include <gio/gio.h>
 #include <vte/vte.h>
 
 #include <csignal>
+#include <ctime>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -128,6 +131,49 @@ std::string groupOf(int pid) {
     return "";
 }
 
+// The panel's row for a pid, and the kind of group it sits under.
+bool panelRow(ProcessesPanel* p, int pid, ProcessesPanel::RowInfo* row, std::string* group) {
+    if (!p) return false;
+    std::string kind = "terminal";
+    for (const ProcessesPanel::RowInfo& r : p->rows()) {
+        if (r.header) kind = r.orphan ? "orphans" : r.outside ? "outside" : "terminal";
+        else if (r.pid == pid) {
+            if (row) *row = r;
+            if (group) *group = kind;
+            return true;
+        }
+    }
+    return false;
+}
+
+double threadCpuMs() {
+    timespec t;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+    return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
+}
+
+MCGuiAppWindow gFirst;       // the window with the panel
+int gOrphanPid = 0;
+GtkWindow* gSecond = nullptr;
+
+int pidWithCommand(int window, const std::string& what) {
+    const std::string folder = [] {
+        char buf[4096];
+        return std::string(realpath(MCGuiApp().rootDir.c_str(), buf) ? buf : "");
+    }();
+    Procs::View v = ProcessMonitor::shared().view(window, folder);
+    std::vector<const Procs::Node*> todo;
+    for (const Procs::Group& g : v.groups)
+        for (const Procs::Node& n : g.roots) todo.push_back(&n);
+    while (!todo.empty()) {
+        const Procs::Node* n = todo.back();
+        todo.pop_back();
+        if (n->proc.command.find(what) != std::string::npos) return n->proc.key.pid;
+        for (const Procs::Node& c : n->children) todo.push_back(&c);
+    }
+    return 0;
+}
+
 }  // namespace
 
 MC_GUI_SUITE(processes) {
@@ -225,6 +271,104 @@ MC_GUI_SUITE(processes) {
         GCHECK(m.samples() > 0 && m.lastListed() > 0);
         GCHECK_TIME(m.lastSampleCpuMilliseconds(), 100, "a /proc sample");
     });
+    // ------------------------------------------------------------ the panel
+    MCGuiStep("View > Toggle Processes puts the panel in the sidebar", [] {
+        gFirst = MCGuiApp();
+        GCHECK(gFirst.procs == nullptr && !gFirst.procsShown);
+        g_action_group_activate_action(G_ACTION_GROUP(gFirst.window), "toggleprocesses", nullptr);
+        gFirst = MCGuiApp();
+        GCHECK(gFirst.procs != nullptr && gFirst.procsShown);
+        GCHECK(ProcessMonitor::shared().panelShown());
+    });
+    MCGuiWait("the panel lists the server with its port under the terminal's group", 30, [] {
+        ProcessesPanel::RowInfo r;
+        std::string group;
+        return panelRow(gFirst.procs, gServerPid, &r, &group) && group == "terminal" &&
+               r.ports.find(std::to_string(gServerPort)) != std::string::npos;
+    });
+    MCGuiStep("the row says name, command, folder, footprint; the tooltip the whole line", [] {
+        ProcessesPanel::RowInfo r;
+        GCHECK(panelRow(gFirst.procs, gServerPid, &r, nullptr));
+        GCHECK(r.text.find("python") != std::string::npos);
+        GCHECK(r.detail.find("http.server") != std::string::npos);
+        char buf[4096];
+        GCHECK(r.detail.find(realpath(MCGuiApp().rootDir.c_str(), buf)) != std::string::npos);
+        GCHECK(!r.memory.empty() && r.memory != "exited" && !r.cpu.empty());
+        GCHECK(r.tooltip.find("python3 -m http.server 0 --bind 127.0.0.1") != std::string::npos);
+        std::string g1, g2;
+        GCHECK(panelRow(gFirst.procs, gSleepPid, nullptr, &g1) && g1 == "outside");
+        GCHECK(panelRow(gFirst.procs, gStubbornPid, nullptr, &g2) && g2 == "outside");
+    });
+    MCGuiStep("a picture of the panel, for looking at", [] {
+        MCGuiSnapshot(GTK_WIDGET(gFirst.window), "processes");
+    });
+    MCGuiStep("the panel's own work is bounded by thread CPU time", [] {
+        const double c0 = threadCpuMs();
+        for (int i = 0; i < 20; i++) gFirst.procs->refresh();
+        GCHECK_TIME((threadCpuMs() - c0) / 20, 20, "rebuilding the panel's rows");
+        GCHECK_TIME(ProcessMonitor::shared().lastSampleCpuMilliseconds(), 100, "a /proc sample");
+    });
+    MCGuiStep("a second window on the folder, its terminal started", [] {
+        MCGuiOpenWindow(MCGuiApp().rootDir);
+        MCGuiSetKeyWindow(nullptr);
+        gSecond = MCGuiApp().window;
+        GCHECK(gSecond != gFirst.window && MCGuiApp().terminal != nullptr);
+        if (MCGuiApp().terminal) MCGuiApp().terminal->typeText("true");
+    });
+    MCGuiWait("its shell is up", 30, [] {
+        Terminal* t = MCGuiApp().terminal;
+        VteTerminal* vte = t ? findVte(t->widget()) : nullptr;
+        if (!vte || t->shellPid() <= 0) return false;
+        char* text = vte_terminal_get_text_format(vte, VTE_FORMAT_TEXT);
+        const bool there = text && std::string(text).find("true") != std::string::npos;
+        g_free(text);
+        return there;
+    });
+    MCGuiStep("it runs a sleep that ignores the hang-up", [] {
+        vte_terminal_feed_child(findVte(MCGuiApp().terminal->widget()), "\x15", 1);
+        MCGuiApp().terminal->typeText("(trap '' HUP; exec sleep 612)");
+    });
+    MCGuiWait("the command is at the prompt", 30, [] {
+        char* text = vte_terminal_get_text_format(findVte(MCGuiApp().terminal->widget()),
+                                                  VTE_FORMAT_TEXT);
+        const bool there = text && std::string(text).find("sleep 612") != std::string::npos;
+        g_free(text);
+        return there;
+    });
+    MCGuiStep("Return", [] {
+        vte_terminal_feed_child(findVte(MCGuiApp().terminal->widget()), "\n", 1);
+    });
+    MCGuiWait("the monitor has the sleep under the second window", 30, [] {
+        // The terminal id is the window's control id; read it from the table.
+        for (const Procs::Terminal& t : ProcessMonitor::shared().terminals())
+            if (t.shellPid == MCGuiApp().terminal->shellPid()) {
+                gOrphanPid = pidWithCommand(t.window, "sleep 612");
+                return gOrphanPid > 0;
+            }
+        return false;
+    });
+    MCGuiStep("the second window closes", [] {
+        gtk_window_close(gSecond);
+    });
+    MCGuiWait("gone", 10, [] { return MCGuiAppWindows().size() == 1; });
+    MCGuiStep("the first window has the keyboard again", [] {
+        MCGuiSetKeyWindow(nullptr);
+        gFirst = MCGuiApp();
+    });
+    MCGuiWait("the sleep is an orphan in the panel", 30, [] {
+        std::string group;
+        return panelRow(gFirst.procs, gOrphanPid, nullptr, &group) && group == "orphans";
+    });
+    MCGuiStep("an orphan's menu says Stop (no question), Stop ends it", [] {
+        gFirst.procs->openMenuFor(gOrphanPid);
+        GCHECK_EQ_STR(gFirst.procs->menuLabels(), "Stop");
+        g_action_group_activate_action(gFirst.procs->actionGroup(), "stop", nullptr);
+    });
+    MCGuiWait("the orphan is gone", 10, [] { return !alive(gOrphanPid); });
+    MCGuiStep("a row that is not an orphan's says Stop… (it asks)", [] {
+        gFirst.procs->openMenuFor(gSleepPid);
+        GCHECK_EQ_STR(gFirst.procs->menuLabels(), "Stop\u2026");
+    });
     MCGuiAsync("Stop ends the sleep by SIGTERM", 20, [](MCGuiDone done) {
         Procs::Key k;
         k.pid = gSleepPid;
@@ -272,6 +416,10 @@ MC_GUI_SUITE(processes) {
             GCHECK(!refusal.empty());
             done();
         });
+    });
+    MCGuiStep("Toggle Processes again gives the tree back and sampling slows", [] {
+        g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "toggleprocesses", nullptr);
+        GCHECK(!MCGuiApp().procsShown && !ProcessMonitor::shared().panelShown());
     });
     MCGuiStep("a folder no window shows is answered for, and no window opens", [] {
         gRun = runClient({"procs", "--json", "--folder", "/tmp"});

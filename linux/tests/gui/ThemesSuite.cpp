@@ -201,7 +201,19 @@ void openThemeMenu() {
         gPaneBefore = paneOf(gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)));
         MCGuiClick(MCGuiFindLabel(menuBar(), "View"));
     });
-    MCGuiWait("the View menu", 10, [] { return popoverWith("Theme") != nullptr; });
+    // The View menu holds more rows than the window is tall, so Theme, near
+    // its end, is scrolled into view first (a row added to View moved it out).
+    MCGuiWait("the View menu", 10, [] {
+        GtkWidget* l = findLabelAnywhere(GTK_WIDGET(MCGuiApp().window), "Theme");
+        if (!l || !gtk_widget_get_mapped(l)) return false;
+        for (GtkWidget* w = l; w; w = gtk_widget_get_parent(w))
+            if (GTK_IS_SCROLLED_WINDOW(w)) {
+                GtkAdjustment* a = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(w));
+                gtk_adjustment_set_value(a, gtk_adjustment_get_upper(a));
+                break;
+            }
+        return popoverWith("Theme") != nullptr;
+    });
     MCGuiStep("Theme", [] { MCGuiClick(MCGuiFindLabel(popoverWith("Theme"), "Theme")); });
     MCGuiWait("its rows", 10, [] {
         return popoverWith("Dark Modern") != nullptr && popoverWith("Solarized Light") != nullptr;

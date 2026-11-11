@@ -161,6 +161,17 @@ std::string stylesheet(const Settings& s) {
     // painted once by the panel. Its accents are the Mac's inline hex.
     css += ".minicode-git { background-color: " + bg(Surface::Sidebar) + "; color: " +
            fg(Surface::Sidebar) + "; }";
+    // The Processes panel, in the same place with the same colors.
+    css += ".minicode-procs, .minicode-procs list, .minicode-procs row { background-color: " +
+           bg(Surface::Sidebar) + "; color: " + fg(Surface::Sidebar) + "; }";
+    css += ".minicode-procs row:selected { background-color: " + selection + "; }";
+    css += ".minicode-procs label { color: " + fg(Surface::Sidebar) + "; font-size: 12px; }";
+    css += ".minicode-procs label.minicode-procs-info { color: #9CA3AF; font-size: 11px; }";
+    css += ".minicode-procs label.minicode-procs-port { color: #4EA1F7; font-size: 11px; }";
+    css += ".minicode-procs label.minicode-procs-gone { color: #6B7280; }";
+    css += ".minicode-procs label.minicode-procs-group { font-weight: 600; }";
+    css += ".minicode-procs label.minicode-procs-heading { color: #9CA3AF; font-size: 10px;"
+           " font-weight: 600; letter-spacing: 0.6px; }";
     css += ".minicode-git label { color: " + fg(Surface::Sidebar) + "; }";
     css += ".minicode-git label.minicode-git-branch { font-weight: 600; font-size: 12px; }";
     css += ".minicode-git label.minicode-git-error { color: #F48771; font-size: 11px; }";

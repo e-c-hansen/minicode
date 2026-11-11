@@ -2931,7 +2931,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
 - **Needs the owner:** the look (tints, hatching, colors in a light theme),
   the wheel and a touchpad in the panes, F7 under GNOME.
 
-### 40. Processes and ports, part one (done, November 2026; `PARITY.md` item 3.8)
+### 40. Processes and ports (done, November 2026; `PARITY.md` item 3.8)
 
 - **The source** is `src/ProcFs.{h,cpp}` (core, POSIX only, in both build
   lists; it compiles on the Mac and nothing there uses it): `ProcFs::Source`
@@ -2967,9 +2967,28 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   with a shell that leaves its sleeps to the harness's subreaper (an ancestor
   of the app, so outside its tree). It failed while `procs` answered "not on
   Linux yet".
-- **Remains (the panel):** `MCProcessesPanel` swapped into the sidebar, its
-  rows from `ProcessMonitor::view`, Stop in its menu, the session labels
-  (needs item 3.6), and a terminal's title and id from the Terminal object.
+- **The panel** is `src/ProcessesPanel.{h,cpp}` (GTK): a GtkListBox in the
+  sidebar stack beside the tree and the Source Control panel
+  (`act_toggle_processes` in main.cpp; opening one closes the other; Focus
+  File Tree, reveal and Go to Folder bring the tree back). View > Toggle
+  Processes is `win.toggleprocesses` (`Keys.cpp`); the Mac gives the command
+  no key, so neither does Linux. Rows are `ProcessMonitor::view(window,
+  folder)` flattened (a header per group with its summary, then each
+  process indented by depth: name, `:ports`, footprint, CPU, and a line of
+  command and folder; the tooltip has the pid and whole command). A 0.5 s
+  poll of `samples()` rebuilds only when a look arrived, keeping the
+  selected pid. Stop is the row's menu (`procs.stop`, "Stop…" or, for an
+  orphan, "Stop") and Delete; `planStop` is the monitor's, and the panel
+  asks first (GtkAlertDialog) for all but orphans, as the Mac does. Adjust
+  Settings… ends the menu (surface `tree`, as the Mac's). Colors are
+  `.minicode-procs` in `ThemeCss.cpp`, the sidebar's. `setActive` calls
+  `ProcessMonitor::setPanelShown`, so looks come every 2 s only while it
+  shows. Trap met: none yet; an orphan needs its window closed, so the suite
+  opens a second window on the folder and runs `(trap '' HUP; exec sleep
+  612)` in its terminal (VTE hangs the shell up on close).
+- **Remains:** the session labels (needs item 3.6), "Open localhost:port"
+  and "Reveal Origin" in the row's menu, a terminal's title and id from the
+  Terminal object (rows say "terminal"), and the owner's eyes on the look.
 - **Needs the owner:** the sampling on a busy desktop (smaps_rollup's cost
   with a browser running), and other users' processes, which are left out.
 
