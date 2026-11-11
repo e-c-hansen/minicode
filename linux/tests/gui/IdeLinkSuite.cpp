@@ -282,7 +282,9 @@ MC_GUI_SUITE(idelink) {
         GCHECK(folder);
         GCHECK(!MCGuiFileExists(lockDir() + "/40001.lock"));   // minicode's own, pid gone
         GCHECK(MCGuiFileExists(lockDir() + "/40002.lock"));    // another IDE's stays
-        GCHECK(getenv("HOME") && std::string(getenv("HOME")).find("/home/") != std::string::npos);
+        // HOME is the scratch world's (guitest-XXXXXX, beside the binary or
+        // under MC_GUI_ROOT), so nothing reached the real ~/.claude.
+        GCHECK(getenv("HOME") && std::string(getenv("HOME")).find("/guitest-") != std::string::npos);
     });
     MCGuiStep("a wrong token, no token and a Host off the loopback are refused, nothing said first", [] {
         auto refused = [](const char* token, const std::string& host) {
