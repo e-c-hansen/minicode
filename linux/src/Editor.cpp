@@ -24,6 +24,7 @@
 #include "Utf8Offsets.h"
 #include "MediaView.h"
 #include "StartupLog.h"
+#include "CompareView.h"
 #include "GitDiffView.h"
 #include "Latex.h"
 #include "PdfView.h"
@@ -251,7 +252,9 @@ Editor::~Editor() {
     g_object_unref(tabActions_);
     delete strip_;
     delete media_;
+    *compareAlive_ = false;
     delete diff_;
+    delete compare_;
     g_object_unref(welcome_);
     g_object_unref(tags_.table);
 }
@@ -562,6 +565,16 @@ void Editor::showActive() {
         break;
     case Document::Kind::Diff:
         setViewBuffer(d->buffer(), true, false);
+        if (d->compare()) {
+            if (!compare_) {
+                compare_ = new CompareView();
+                compare_->applySettings(settings_);
+                gtk_stack_add_named(GTK_STACK(slot_), compare_->widget(), "compare");
+            }
+            compare_->show(d->compare());
+            gtk_stack_set_visible_child(GTK_STACK(slot_), compare_->widget());
+            break;
+        }
         if (!diff_) {
             diff_ = new GitDiffView();
             gtk_stack_add_named(GTK_STACK(slot_), diff_->widget(), "diff");
@@ -997,6 +1010,7 @@ static void setTagColor(GtkTextTagTable* table, const char* name, const char* pr
 }
 
 void Editor::applySettings(const Settings& s) {
+    if (compare_) compare_->applySettings(s);
     const bool webBefore = settings_.webImages();
     settings_ = s;
     code_->applySettings(s);   // the ruler and the gutter

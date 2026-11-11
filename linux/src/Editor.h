@@ -33,6 +33,7 @@ class MediaView;
 class SnippetSession;
 class LatexPreview;
 class GitDiffView;
+class CompareView;
 class LargeFileUi;
 class TabStrip;
 
@@ -260,6 +261,13 @@ public:
     bool isDiff() const { return active_ && active_->kind() == Document::Kind::Diff; }
     const std::string& diffTitle() const;
     GitDiffView* diffView() const { return diff_; }
+    // A comparison of two texts in a tab of its own (CompareView.h): lined up
+    // and colored on a thread, the tab opening when that is done (`done`, if
+    // given, is called then with the tab's document). `minicode diff`, Compare
+    // with Main and the IDE link's openDiff come in later items.
+    void showComparison(const CompareSpec& spec, std::function<void(Document*)> done = nullptr);
+    CompareView* compareView() const { return compare_; }
+    bool isComparison() const { return active_ && active_->compare(); }
     // The diff view was made (on the first diff): the window's Source
     // Control panel gives it the hunk actions (GitPanel::attachDiffView).
     std::function<void(GitDiffView*)> onDiffViewMade;
@@ -487,6 +495,8 @@ private:
     GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_, media, LaTeX previews, diff
     GtkWidget*     slotOverlay_ = nullptr;   // the slot, with the find bar over it
     GitDiffView*   diff_     = nullptr;   // made on the first diff
+    CompareView*   compare_  = nullptr;   // made on the first comparison
+    std::shared_ptr<bool> compareAlive_ = std::make_shared<bool>(true);   // for the prepare thread
     MediaView*     media_    = nullptr;
     GtkWidget*     scroller_ = nullptr;
     GtkWidget*     view_     = nullptr;   // GtkTextView: code_'s

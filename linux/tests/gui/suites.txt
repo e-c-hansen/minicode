@@ -70,3 +70,4 @@ ServerSymbolsSuite.cpp
 ServerFoldingSuite.cpp
 InstallHintsSuite.cpp
 ControlSuite.cpp
+CompareSuite.cpp

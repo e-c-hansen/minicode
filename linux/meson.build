@@ -73,6 +73,7 @@ core_sources = [
   # The gutter's line index, and the change bars it moves with the lines.
   core_dir / 'LineIndex.cpp',
   core_dir / 'QuickDiff.cpp',
+  core_dir / 'SideBySide.cpp',
   core_dir / 'LineDiff.cpp',
   # The palette's matching, modes and Quick Open's walk, and the outline
   # Go to Symbol lists without a server (PalettePanel.cpp shows them).
@@ -222,6 +223,8 @@ gui_sources = [
   'src/GitRun.cpp',
   'src/GitTrash.cpp',
   'src/GitDiffView.cpp',
+  'src/CompareView.cpp',
+  'src/ComparePanes.cpp',
   # The editor's change bars (GitGutter.cpp) and the tree's colors
   # (TreeGitColors.cpp), both watching the repository's folder
   # (GitDirWatch.cpp).

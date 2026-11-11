@@ -34,7 +34,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp \
         ../src/FileDetails.cpp ../src/Commands.cpp ../src/CommandsLinux.cpp \
         ../src/EditorTabs.cpp ../src/Backups.cpp ../src/TabSessions.cpp \
-        ../src/LineIndex.cpp ../src/QuickDiff.cpp ../src/LineDiff.cpp \
+        ../src/LineIndex.cpp ../src/QuickDiff.cpp ../src/SideBySide.cpp ../src/LineDiff.cpp \
         ../src/RightAreaLayout.cpp \
         ../src/NavHistory.cpp ../src/NavRecorder.cpp ../src/ViewZoom.cpp \
         ../src/CommandPalette.cpp ../src/SymbolOutline.cpp \
@@ -65,7 +65,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Do
        src/LspSessionSemantic.cpp src/SemanticColors.cpp \
        src/LspSessionSymbols.cpp src/LspSessionFolding.cpp \
        src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp \
-       src/GitDiffView.cpp src/GitGutter.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
+       src/GitDiffView.cpp src/CompareView.cpp src/ComparePanes.cpp src/GitGutter.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
        src/WebImageRules.cpp src/WebImages.cpp src/Keys.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \
