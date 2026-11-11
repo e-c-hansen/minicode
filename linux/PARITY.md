@@ -499,6 +499,45 @@ slices.
 `snapshot_layer`. If Pango will not leave the room on one side, leave hints
 out and say so here.
 
+*Tried on the ThinkPad, 2026-11-11 (a standalone GTK 4 probe, GTK 4.22.4, Pango
+1.57.0, on a private Xvfb, a monospace 14 px font; positions are
+`gtk_text_view_get_iter_location` and ink columns read from a rendered
+picture).* **Not workable: Pango splits the room, so hints stay out of the
+Linux port.** A `letter-spacing` of L on one character puts L/2 before the
+glyph and L/2 after it, never all after: with L = 20 on the `x` of
+`foo(x, y)` the `x` is inked 10 px right of where it was (45 to 50, not 35
+to 40) and the next character 20 px right. The room is also not where the
+buffer says: `get_iter_location` for the tagged character still answers the
+old left edge (34), which is now the start of the left half, so the glyph's
+own box begins 10 px inside it. A color tag on the next character changes
+nothing. Before a line break only the right half is trimmed (the last
+character of `abc` moved 10 px and the line end 10 px). The property takes
+0 and up (-20 and -10 are refused with a GLib critical), so the one thing
+that could cancel the left half, a negative value on the character before
+or the one after, does not exist; a positive value on a neighbour only adds
+another hole beside it, and tagging the character before and the one after
+makes the gap between them L with a hole of L/2 on each outer side, twice
+the width for the room wanted. Nothing in `GtkTextTag` shapes a run or
+makes room on one side (an anchor or paintable would put U+FFFC in the
+buffer, against D6). The caret follows the logical box and not the
+hint: at the offset after the tagged character it draws at 62 (right of the
+room), at the offset of the character itself at 33 (left of the hole), and
+a click scan put 34 to 47 on offset 4 leading, 48 to 62 on 4 trailing and
+64 on 5, so a click on the left half of the room lands before the
+character, which the Mac's rule forbids, and the hole before the character
+stays visible. A hint at a paragraph's start is the one case that works: a
+tag with `indent` of 20 on the paragraph's first character moved only the
+first display line (x 20, wrapped lines 0, the next paragraph 0), where
+`left-margin` moved every line; a hint at a wrapped line's start has no such
+tag. Cost, 300 tags over 2,000 lines (main thread CPU): 2.2 ms to apply, 1.3
+to remove, but the relayout that follows was 137 ms after applying and 192
+after removing. Drawing the label in `snapshot_layer` itself is simple (a
+rounded rectangle and a scaled `PangoLayout` at the iterator's rectangle in
+the ABOVE_TEXT layer, saved as a PNG through `GtkWidgetPaintable`) and was
+not the problem. Paragraph-start hints alone would be a patchy half of the
+feature, so item 2.7 leaves inlay hints out until GTK or Pango can leave
+room on one side.
+
 **D10. The terminal stays VTE**, and `TerminalScreen` stays out of the build.
 What the Mac learns from its own parser comes from VTE's termprops
 (`VTE_TERMPROP_SHELL_PRECMD`, `_PREEXEC`, `_POSTEXEC`, and `CURRENT_DIRECTORY_URI`
