@@ -21,6 +21,7 @@
 #include "ProcessMonitor.h"
 #include "ProcessesPanel.h"
 #include "Terminal.h"
+#include "TerminalAttention.h"
 
 #include <gio/gio.h>
 #include <vte/vte.h>
@@ -266,6 +267,18 @@ MC_GUI_SUITE(processes) {
         GCHECK(s != nullptr && (*s)["command"].asString().find("sleep 600") != std::string::npos);
         if (s) gSleepStart = (int64_t)(*s)["start"].asNumber();
     });
+    MCGuiStep("a notify names a session in the terminal", [] {
+        Json args;
+        GCHECK(Json::parse("{\"state\":\"clear\",\"session_id\":\"r74-session\","
+                           "\"transcript_path\":\"/tmp/r74.jsonl\"}", args));
+        std::string error;
+        GCHECK(TerminalAttention::apply(MCGuiApp().terminal->controlId(), args, &error));
+    });
+    MCGuiWait("the program the terminal runs has the session, in `procs --json`", 30, [] {
+        look();
+        const Json* s = find(gServerPid);
+        return s && (*s)["session"].asString() == "r74-session";
+    });
     MCGuiStep("a look costs little CPU on the sampling thread", [] {
         ProcessMonitor& m = ProcessMonitor::shared();
         GCHECK(m.samples() > 0 && m.lastListed() > 0);
@@ -295,6 +308,7 @@ MC_GUI_SUITE(processes) {
         GCHECK(r.detail.find(realpath(MCGuiApp().rootDir.c_str(), buf)) != std::string::npos);
         GCHECK(!r.memory.empty() && r.memory != "exited" && !r.cpu.empty());
         GCHECK(r.tooltip.find("python3 -m http.server 0 --bind 127.0.0.1") != std::string::npos);
+        GCHECK(r.tooltip.find("Started by Claude Code session r74-session") != std::string::npos);
         std::string g1, g2;
         GCHECK(panelRow(gFirst.procs, gSleepPid, nullptr, &g1) && g1 == "outside");
         GCHECK(panelRow(gFirst.procs, gStubbornPid, nullptr, &g2) && g2 == "outside");

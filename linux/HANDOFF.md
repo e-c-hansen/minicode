@@ -2951,8 +2951,14 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `"background"`, which the client already says). Each call makes a tab of
   its own: the Mac's one diff preview tab that each call replaces and `--keep`
   are not built. Titles and labels are the Mac's.
-- **Still open:** Compare with Main (the Worktrees node, 3.5), the IDE link's
-  openDiff (3.9), a tab's scroll place when another tab shows.
+- **The corner** (November 2026): the cell of the pane's grid under the
+  shared vertical bar, beside the right pane's horizontal bar, had no
+  widget, so the window behind it showed (white under a light desktop
+  theme). The grids carry `minicode-compare` CSS now, `background` from the
+  editor's color in `applySettings`. The check reads the pixel through
+  `MCGuiPixel` (Harness.h: red, green, blue and alpha of a widget's
+  rendering) and wants it painted and dark; it fails without the CSS.
+- **Still open:** a tab's scroll place when another tab shows.
 - **Needs the owner:** the look (tints, hatching, colors in a light theme),
   the wheel and a touchpad in the panes, F7 under GNOME.
 
@@ -3011,7 +3017,13 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   shows. Trap met: none yet; an orphan needs its window closed, so the suite
   opens a second window on the folder and runs `(trap '' HUP; exec sleep
   612)` in its terminal (VTE hangs the shell up on close).
-- **Remains:** the session labels (needs item 3.6), "Open localhost:port"
+- **Session labels** (November 2026): the gatherer in main.cpp gives each
+  terminal's session and notify time from the board (`TerminalAttention::
+  sessionOf`) to the core's `Tracker`, so a process under the program that
+  ran when a notify named a session has it, in `procs --json` ("session")
+  and the row's tooltip ("Started by Claude Code session ..."); the
+  `processes` suite notifies and reads both.
+- **Remains:** "Open localhost:port"
   and "Reveal Origin" in the row's menu, a terminal's title and id from the
   Terminal object (rows say "terminal"), and the owner's eyes on the look.
 - **Needs the owner:** the sampling on a busy desktop (smaps_rollup's cost
@@ -3110,9 +3122,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   and `hooks --install` twice into the scratch HOME (and onto a symlink); the
   key-clearing checks fail with the controller switched off. Nothing writes
   the real `~/.claude`.
-- **Not done**: the session labels in the Processes panel (the board keeps
-  each terminal's session; `ProcessTable` takes it, wiring is item 3.5/3.8's),
-  the Agents panel's "Show Terminal", a `term --run`-style way to type into
+- **Not done**: a `term --run`-style way to type into
   the terminal from the client, and a per-tab mark (there are no terminal
   tabs). **Needs the owner**: the dot's look on a real theme, and the title
   count in GNOME's overview.
@@ -3261,10 +3271,23 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   Settings (last) was not on screen for `adjust_settings` and `themes`; the
   harness's screen is 1280x1024 now (`Wrapper.cpp`). A real 720 px screen
   would scroll that menu too.
-- **Remains (part two):** the Evidence page and a click on a session
-  showing it, the tree's Worktrees node and Compare with Main (the git
-  thread of the Mac's model), Show Terminal, Open Worktree in New Window,
-  Reveal Scratchpad; the owner's eyes on the look and on a real
+- **Show Terminal** (November 2026): a session row's menu has Show Terminal
+  when `TerminalAttention::terminalFor` (the board of item 42, by session id
+  else transcript) names a terminal; it presents that window, shows the
+  terminal and gives it the keyboard (`showTerminalOf`, also Next Waiting
+  Terminal's). A link clicked in a terminal that has a session looks, when
+  the path is relative and not in the shell's folder, in that session's
+  scratchpad and worktree first (`Terminal::setSessionRoots`, read from the
+  window's Agents model by session id; the core's resolution is plain
+  `TermLinkPath`, not the Mac's `AgentIndex::resolveTarget`). Not checked by
+  a suite: the link part (needs text in VTE and a session in the model).
+- **The Worktrees node appears at once**: the top folder's watch also
+  watches `.claude` and `.claude/worktrees` once they exist
+  (`watchWorktreeFolders`, FileTree.cpp, made again when one appears), and
+  any event there relists the top folder. `agents` no longer asks the tree
+  to look again; it fails without the monitors.
+- **Remains (part two):** Open Worktree in New Window and Reveal Scratchpad
+  in a session's menu; the owner's eyes on the look and on a real
   `~/.claude`.
 
 ## How to work on it

@@ -141,6 +141,7 @@ std::string MCGuiEditorText();
 // A picture of a widget as drawn, written as <name>.png into
 // $MC_GUI_SNAPSHOTS when that is set, for looking at.
 void MCGuiSnapshot(GtkWidget* widget, const std::string& name);
+bool MCGuiPixel(GtkWidget* widget, int x, int y, int rgba[4]);
 
 // ---- finding widgets
 // Whether a widget is on screen where a click would reach it: mapped, laid

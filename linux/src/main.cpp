@@ -813,6 +813,37 @@ static void act_toggle_terminal(GSimpleAction*, GVariant*, gpointer userp) {
     static_cast<App*>(userp)->layout->toggleTerminal();
 }
 
+// Shows a window's terminal and gives it the keyboard (Next Waiting Terminal,
+// the Agents panel's Show Terminal).
+static void showTerminalOf(App* target) {
+    gtk_window_present(GTK_WINDOW(target->window));
+    if (!target->layout->terminalShown()) target->layout->toggleTerminal();
+    target->terminal->focus();
+}
+
+// The scratchpad and worktree of the Claude Code session this window's
+// terminal last named to `minicode notify` (the Mac's sessionLinkRoots),
+// read from the Agents model; none when no session is known.
+static void ensureAgents(App* app);
+static std::vector<std::string> sessionRootsOf(App* app) {
+    std::vector<std::string> roots;
+    std::string id, transcript;
+    double when = 0;
+    if (app->dead || !TerminalAttention::sessionOf(app->controlId, &id, &transcript, &when)) return roots;
+    ensureAgents(app);
+    if (!app->agents) return roots;
+    std::function<void(const AgentModelData::Work&)> walk = [&](const AgentModelData::Work& w) {
+        if ((!id.empty() && w.sessionId == id) || (!transcript.empty() && w.transcript == transcript)) {
+            if (!w.scratchpad.empty()) roots.push_back(w.scratchpad);
+            if (!w.worktreePath.empty()) roots.push_back(w.worktreePath);
+        }
+        for (const auto& sub : w.subagents) walk(sub);
+    };
+    if (auto snap = app->agents->model().snapshot())
+        for (const auto& w : snap->sessions) walk(w);
+    return roots;
+}
+
 // Next Waiting Terminal (the Mac's Ctrl+Cmd+W, PARITY.md 3.6): the window
 // whose terminal has a Claude Code session waiting, after this one's in the
 // windows' order, wrapping; its terminal is shown and takes the keyboard.
@@ -829,9 +860,7 @@ static void act_next_waiting(GSimpleAction*, GVariant*, gpointer userp) {
         gtk_widget_error_bell(here->window);
         return;
     }
-    gtk_window_present(GTK_WINDOW(target->window));
-    if (!target->layout->terminalShown()) target->layout->toggleTerminal();
-    target->terminal->focus();
+    showTerminalOf(target);
 }
 
 static void act_toggle_editor(GSimpleAction*, GVariant*, gpointer userp) {
@@ -1739,6 +1768,17 @@ static void ensureAgents(App* app) {
         };
         app->agents->onShowEvidence = [app](const std::string& transcript, const std::string& name) {
             showEvidence(app, transcript, name);
+        };
+        app->agents->terminalFor = [](const std::string& id, const std::string& transcript) {
+            return TerminalAttention::terminalFor(id, transcript);
+        };
+        app->agents->onShowTerminal = [app](int terminalId) {
+            for (App* a : g.windows)
+                if (!a->dead && a->terminal && a->controlId == terminalId) {
+                    showTerminalOf(a);
+                    return;
+                }
+            if (!app->dead) flashStatus(app, "That terminal has closed");
         };
         app->agents->onNote = [app](const std::string& text) {
             if (!app->dead) flashStatus(app, text);
@@ -2842,6 +2882,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->terminal->onCommandFinished = [app] {
         if (!app->dead && app->lsp) app->lsp->lookAgainForMissingServer();
     };
+    app->terminal->setSessionRoots([app] { return sessionRootsOf(app); });
     app->terminal->setLinkHandler([app](const Terminal::Link& link) {
         if (!app->dead) openTerminalLink(app, link);
     });
@@ -3336,6 +3377,14 @@ static void startControlChannel() {
             t.title = "terminal";
             t.shellPid = a->terminal ? a->terminal->shellPid() : 0;
             t.window = a->controlId;
+            // R7.4: the session `minicode notify` last named here, and when
+            // (as process start times count: microseconds since 1970).
+            std::string sid, transcript;
+            double when = 0;
+            if (TerminalAttention::sessionOf(a->controlId, &sid, &transcript, &when) && !sid.empty()) {
+                t.session = sid;
+                t.sessionNamedAt = (int64_t)(when * 1e6);
+            }
             terms.push_back(t);
         }
     });

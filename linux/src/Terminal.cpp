@@ -465,7 +465,22 @@ bool Terminal::findLink(double x, double y, Link* out, std::vector<Span>* spans)
         link.target = l->target;
     } else {
         TermLinkPath::Target found;
-        if (!TermLinkPath::resolve(l->target, shellDirectory(), root_dir_,
+        std::string written = l->target;
+        // Not in the shell's folder: the copy under the session's own
+        // scratchpad or worktree is the one its agent printed.
+        if (sessionRoots_ && !written.empty() && written[0] != '/' && written[0] != '~') {
+            TermLinkPath::Target here;
+            if (!TermLinkPath::resolve(written, shellDirectory(), std::string(), g_get_home_dir(), &here)) {
+                for (const std::string& r : sessionRoots_()) {
+                    TermLinkPath::Target own;
+                    if (TermLinkPath::resolve(written, r, std::string(), g_get_home_dir(), &own)) {
+                        written = own.path;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!TermLinkPath::resolve(written, shellDirectory(), root_dir_,
                                    g_get_home_dir(), &found))
             return false;
         link.target = found.path;

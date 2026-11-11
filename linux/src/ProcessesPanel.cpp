@@ -28,6 +28,7 @@ void flatten(const Procs::Node& n, int depth, const Procs::Group& g,
     r.detail = cmd + (p.cwd.empty() ? "" : "  " + p.cwd);
     r.tooltip = "process " + std::to_string(p.key.pid) + "\n" + cmd +
                 (p.cwd.empty() ? "" : "\n" + p.cwd);
+    if (!p.session.empty()) r.tooltip += "\nStarted by Claude Code session " + p.session;
     rows.push_back(r);
     keys.push_back(p.key);
     for (const Procs::Node& c : n.children) flatten(c, depth + 1, g, rows, keys);

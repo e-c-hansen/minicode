@@ -1340,15 +1340,17 @@ its server comes first here (2.0).
   with GFileMonitor, and the panel in the sidebar (Ctrl+Shift+A), with the
   `agents` suite. Part two (HANDOFF item 44): the Evidence page in a tab
   (a click on a session), the Worktrees node first in the file tree with
-  Compare with Main and Open in New Window. Remains: Show Terminal (a
-  session waiting in a terminal), and the node appearing without a relisting
-  of the top folder when `.claude/worktrees` is first created.
+  Compare with Main and Open in New Window. Loose ends done (HANDOFF item
+  44): Show Terminal for a session waiting in a terminal, session roots
+  first for a clicked path, the node appearing when `.claude/worktrees` is
+  created. Remains: Open Worktree in New Window and Reveal Scratchpad in a
+  session's menu.
 - [x] **3.6 Waiting for you.** `ClaudeHooks`, `AttentionBoard`. Done
   (November 2026, HANDOFF item 42): the terminal's id and the two
   variables, `notify --from-hook`, `hooks --print|--install`, a dot and
   tooltip over the terminal, the waiting count in the window titles, Next
   Waiting Terminal on Ctrl+Alt+W, typing and closing clearing the mark; the
-  `attention` GUI suite. Remains: the session labels in the Processes panel.
+  `attention` GUI suite.
 - [x] **3.7 Agents checking pages.** `PageCheck`, on WebKitGTK. Done,
   November 2026 (HANDOFF item 45): the agent page beside the user's in the
   pane with its Yours | Agent switcher and x, `browse`, `page --url/--text/
@@ -1360,7 +1362,7 @@ its server comes first here (2.0).
   control channel's `procs`, with `procfs:*` and the `processes` suite.
   Part two (HANDOFF item 40): the panel in the sidebar (View > Toggle
   Processes), rows by group, Stop in the menu and on Delete, 2 s sampling
-  only while it shows. Remains: the session labels (the board of item 3.6 is built; the wiring), "Open
+  only while it shows. Session labels done (HANDOFF item 40). Remains: "Open
   localhost:port" and "Reveal Origin" in the row's menu, and the owner's
   eyes on the look.
 - [x] **3.9 The Claude Code IDE link.** `IdeLink`. Done, November 2026

@@ -92,6 +92,10 @@ AgentsPanel::AgentsPanel(const std::string& folder) : model_(folder) {
         auto* s = static_cast<AgentsPanel*>(p);
         if (s->menuRow_ >= 0 && s->menuRow_ < (int)s->rows_.size()) s->showEvidence(s->rows_[s->menuRow_]);
     });
+    add("terminal", +[](GSimpleAction*, GVariant*, gpointer p) {
+        auto* s = static_cast<AgentsPanel*>(p);
+        if (s->menuTerminal_ && s->onShowTerminal) s->onShowTerminal(s->menuTerminal_);
+    });
     add("copy", +[](GSimpleAction*, GVariant*, gpointer p) {
         auto* s = static_cast<AgentsPanel*>(p);
         if (s->menuPath_.empty()) return;
@@ -170,6 +174,7 @@ void AgentsPanel::rebuild() {
             r.kind = RowInfo::Session;
             r.depth = depth;
             r.key = s.transcript;
+            r.sessionId = s.sessionId;
             r.text = s.name;
             r.running = s.runningAt(now);
             r.detail = AgentView::detailLine(r.running,
@@ -336,6 +341,7 @@ void AgentsPanel::openMenuFor(int row) {
     menuRow_ = row;
     menuPath_.clear();
     menuLabels_.clear();
+    menuTerminal_ = 0;
     if (row >= 0 && row < (int)rows_.size()) {
         const RowInfo& r = rows_[row];
         GMenu* sec = g_menu_new();
@@ -346,9 +352,16 @@ void AgentsPanel::openMenuFor(int row) {
             menuLabels_ = "Open|Copy Path";
         } else if (r.kind == RowInfo::Session) {
             g_menu_append(sec, "Show Evidence", "agents.evidence");
+            menuLabels_ = "Show Evidence";
+            // The terminal its session runs in, as its hooks told us.
+            menuTerminal_ = terminalFor ? terminalFor(r.sessionId, r.key) : 0;
+            if (menuTerminal_ && onShowTerminal) {
+                g_menu_append(sec, "Show Terminal", "agents.terminal");
+                menuLabels_ += "|Show Terminal";
+            }
             g_menu_append(sec, "Copy Transcript Path", "agents.copy");
             menuPath_ = r.key;
-            menuLabels_ = "Show Evidence|Copy Transcript Path";
+            menuLabels_ += "|Copy Transcript Path";
         }
         if (g_menu_model_get_n_items(G_MENU_MODEL(sec)))
             g_menu_append_section(menu, nullptr, G_MENU_MODEL(sec));

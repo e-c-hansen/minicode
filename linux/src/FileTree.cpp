@@ -159,6 +159,11 @@ struct DirWatch {
     // .claude/worktrees first as "Worktrees" when it holds a folder, and
     // .claude lists no "worktrees" of its own.
     bool worktreesNode = false, hideWorktrees = false;
+    // The top folder also watches .claude and .claude/worktrees once they
+    // exist, so the node appears when the first worktree is made, not at
+    // the next listing for another reason (HANDOFF 44).
+    std::vector<GFileMonitor*> extra;
+    bool watchesClaude = false, watchesWorktrees = false;
 };
 
 struct ListJob {
@@ -360,6 +365,44 @@ void startListing(DirWatch* w) {
     g_object_unref(task);
 }
 
+void onDirChanged(GFileMonitor*, GFile* file, GFile*, GFileMonitorEvent ev, gpointer wp);
+
+void dropExtraMonitors(DirWatch* w) {
+    for (GFileMonitor* m : w->extra) {
+        g_signal_handlers_disconnect_by_data(m, w);
+        g_file_monitor_cancel(m);
+        g_object_unref(m);
+    }
+    w->extra.clear();
+    w->watchesClaude = w->watchesWorktrees = false;
+}
+
+// Watches whichever of .claude and .claude/worktrees exist now. Only when
+// that set changed are the monitors made again (a monitor is never dropped
+// from inside its own callback for nothing).
+void watchWorktreeFolders(DirWatch* w) {
+    if (!w->worktreesNode) return;
+    GFile* claude = g_file_resolve_relative_path(w->dir, ".claude");
+    GFile* wt = g_file_resolve_relative_path(w->dir, ".claude/worktrees");
+    const bool hasClaude = g_file_query_exists(claude, nullptr);
+    const bool hasWt = g_file_query_exists(wt, nullptr);
+    if (hasClaude != w->watchesClaude || hasWt != w->watchesWorktrees) {
+        dropExtraMonitors(w);
+        for (int i = 0; i < 2; i++) {
+            if (!(i == 0 ? hasClaude : hasWt)) continue;
+            GFileMonitor* m = g_file_monitor_directory(i == 0 ? claude : wt, G_FILE_MONITOR_WATCH_MOVES,
+                                                       nullptr, nullptr);
+            if (!m) continue;
+            g_signal_connect(m, "changed", G_CALLBACK(onDirChanged), w);
+            w->extra.push_back(m);
+        }
+        w->watchesClaude = hasClaude;
+        w->watchesWorktrees = hasWt;
+    }
+    g_object_unref(claude);
+    g_object_unref(wt);
+}
+
 void onDirChanged(GFileMonitor*, GFile* file, GFile*, GFileMonitorEvent ev, gpointer wp) {
     auto* w = static_cast<DirWatch*>(wp);
     if (w->activity && *w->activity) {
@@ -375,6 +418,7 @@ void onDirChanged(GFileMonitor*, GFile* file, GFile*, GFileMonitorEvent ev, gpoi
     case G_FILE_MONITOR_EVENT_RENAMED:
     case G_FILE_MONITOR_EVENT_MOVED:
     case G_FILE_MONITOR_EVENT_UNMOUNTED:
+        if (w->worktreesNode) watchWorktreeFolders(w);
         listSoon(w, w->pacer.changed(nowMs()));
         break;
     default:   // a file written to, or its attributes: no row changes
@@ -405,8 +449,10 @@ GListModel* FileTree::makeDirModel(GFile* dir, bool root) {
     // event during the first listing asks for a second.
     w->monitor = g_file_monitor_directory(dir, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
     if (w->monitor) g_signal_connect(w->monitor, "changed", G_CALLBACK(onDirChanged), w);
+    watchWorktreeFolders(w);
     g_object_set_data_full(G_OBJECT(store), "minicode-watch", w, [](gpointer p) {
         auto* dw = static_cast<DirWatch*>(p);
+        dropExtraMonitors(dw);
         g_cancellable_cancel(dw->cancel);
         if (dw->timer) g_source_remove(dw->timer);
         if (dw->applyIdle) g_source_remove(dw->applyIdle);

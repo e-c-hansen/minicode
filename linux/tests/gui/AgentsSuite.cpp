@@ -20,6 +20,9 @@
 #include "EvidencePage.h"
 #include "FileTree.h"
 #include "Terminal.h"
+#include "TerminalAttention.h"
+#include "WindowLayout.h"
+#include "Json.h"
 #include "WorktreeChangesPage.h"
 #include <vte/vte.h>
 #include "AppSeam.h"
@@ -168,6 +171,8 @@ VteTerminal* findVte(GtkWidget* root) {
     return nullptr;
 }
 
+int newRow() { return rowWhere("Add the new file", AgentsPanel::RowInfo::Session); }
+
 std::string terminalText() {
     VteTerminal* v = findVte(MCGuiApp().terminal ? MCGuiApp().terminal->widget() : nullptr);
     if (!v) return "";
@@ -298,6 +303,27 @@ MC_GUI_SUITE(agents) {
         int r = rowWhere("third.txt", AgentsPanel::RowInfo::File);
         return r >= 0 && !panel()->rows()[r].exists;
     });
+    // ---- Show Terminal (item 3.6's board): only for a session a terminal named
+    MCGuiStep("a session no terminal named has no Show Terminal in its menu", [] {
+        GCHECK(panel() != nullptr && newRow() >= 0);
+        panel()->openMenuFor(newRow());
+        GCHECK(panel()->menuLabels().find("Show Terminal") == std::string::npos);
+    });
+    MCGuiStep("a notify names the first session in the terminal; the terminal is hidden", [] {
+        Json args;
+        GCHECK(Json::parse("{\"state\":\"waiting\",\"session_id\":\"" + panel()->rows()[newRow()].sessionId + "\"}",
+                           args));
+        std::string error;
+        GCHECK(TerminalAttention::apply(MCGuiApp().terminal->controlId(), args, &error));
+        if (MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
+        panel()->openMenuFor(newRow());
+        GCHECK(panel()->menuLabels().find("Show Terminal") != std::string::npos);
+    });
+    MCGuiStep("Show Terminal shows the terminal", [] {
+        GCHECK(!MCGuiApp().layout->terminalShown());
+        g_action_group_activate_action(panel()->actionGroup(), "terminal", nullptr);
+    });
+    MCGuiWait("the terminal is shown", 5, [] { return MCGuiApp().layout->terminalShown(); });
     // ---- Part two: the Evidence page
     MCGuiStep("a test run and a final message are appended to the new session", [] {
         std::string out;
@@ -372,6 +398,12 @@ MC_GUI_SUITE(agents) {
     });
     MCGuiWait("the same key closes the panel", 5, [] { return !MCGuiApp().agentsShown; });
     // ---- Part two: the Worktrees node
+    // .claude exists, listed in the tree, before any worktree does: the node
+    // must come from watching .claude/worktrees, not from the one relisting.
+    MCGuiStep("an empty .claude appears in the project", [] {
+        g_mkdir_with_parents((MCGuiProject() + "/.claude").c_str(), 0755);
+    });
+    MCGuiPause(2.5);   // time is the condition: the tree's relisting for .claude comes and goes
     MCGuiStep("a git repository with an agent's worktree, one ahead, and main moved on", [] {
         gWt = gProj + "/.claude/worktrees/agent-wt";
         GCHECK(system(("cd '" + gProj + "' && git init -q -b main >/dev/null 2>&1").c_str()) == 0);
@@ -397,12 +429,9 @@ MC_GUI_SUITE(agents) {
         const WorktreeInfo* w = MCGuiApp().worktrees->find(gWt);
         return w && w->ahead == 1 && w->dirty && MCGuiApp().worktrees->mainBranch() == "main";
     });
-    MCGuiStep("the tree is shown its new .claude and asked to look again", [] {
-        MCGuiApp().tree->setRoot(gProj);
-    });
-    MCGuiWait("the Worktrees node is first in the tree", 15, [] { return treeLabel("Worktrees") != nullptr; });
+    MCGuiWait("the Worktrees node is first in the tree", 15, [] { GtkWidget* l = treeLabel("Worktrees"); return l && MCGuiOnScreen(l); });
     MCGuiStep("it opens to the worktree", [] { MCGuiClick(treeLabel("Worktrees")); });
-    MCGuiWait("the worktree row says how it stands", 15, [] { return treeLabel("agent-wt") != nullptr; });
+    MCGuiWait("the worktree row says how it stands", 15, [] { GtkWidget* l = treeLabel("agent-wt"); return l && MCGuiOnScreen(l); });
     MCGuiStep("named for its folder with the badge; select it", [] {
         GtkWidget* l = treeLabel("agent-wt");
         GCHECK(has(gtk_label_get_text(GTK_LABEL(l)), "1 ahead · modified"));
