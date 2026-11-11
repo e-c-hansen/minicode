@@ -4,6 +4,7 @@
 // (the buffer, the highlighter, the disk) is Document.cpp, and the tabs are
 // Tabs.cpp.
 #include "Editor.h"
+#include "AgentNotes.h"
 #include "AutoCloseInput.h"
 #include "BracketColors.h"
 #include "SemanticColors.h"
@@ -214,6 +215,7 @@ Editor::Editor() {
     snippets_ = new SnippetSession(this);    // PARITY.md 2.5
     large_ = new LargeFileUi(this);   // big files and long lines (LargeFileView.h)
     folds_ = new FoldUi(this);        // PARITY.md 1.10
+    notes_ = new AgentNotes(this);    // PARITY.md 3.4
     showActive();   // the welcome text
 }
 
@@ -221,6 +223,8 @@ Editor::Editor() {
 // (main.cpp deletes the editor from GtkApplication's window-removed), so
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
+    delete notes_;
+    notes_ = nullptr;
     delete folds_;
     folds_ = nullptr;
     delete snippets_;
@@ -626,7 +630,7 @@ void Editor::restorePlace(Document* d) {
 
 void Editor::documentStateChanged(Document* d) {
     // An edit makes the preview tab an ordinary one, as on the Mac.
-    if (d->dirty() && d->isPreviewTab()) d->setPreviewTab(false);
+    if (d->dirty() && (d->isPreviewTab() || d->isAgentPreview())) keepPreviewTab(d);
     refreshStrip();
     if (d == active_) titleChanged();
 }
@@ -706,7 +710,7 @@ bool Editor::save(std::string* error) { return saveDocument(active_, error); }
 bool Editor::saveDocument(Document* d, std::string* error) {
     if (!d || !d->canSave()) return true;
     if (!d->save(error)) return false;
-    if (d->isPreviewTab()) keepPreviewTab(d);   // saved: kept, as in VS Code
+    if (d->isPreviewTab() || d->isAgentPreview()) keepPreviewTab(d);   // saved: kept, as in VS Code
     if (observer_) observer_->documentSaved(d);
     refreshStrip();
     if (d == active_) titleChanged();
@@ -2120,6 +2124,8 @@ gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifier
     if (self->snippets_ && self->snippets_->keyPressed(key, mods)) return TRUE;
     // Typing, Return, Tab, Backspace and Escape at several carets (Carets.h).
     if (self->carets_ && self->carets_->keyPressed(key, mods)) return TRUE;
+    // Escape closes an agent's note over the text (AgentNotes.h).
+    if (key == GDK_KEY_Escape && plain && self->notes_ && self->notes_->closeFromKey()) return TRUE;
     // Beside a fold (Folds.h): Backspace or Delete opens it, and Return at
     // the end of a folded line takes the caret below it for what follows.
     if (!completion && self->folds_ && self->folds_->keyPressed(key, mods)) return TRUE;

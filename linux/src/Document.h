@@ -183,6 +183,11 @@ public:
     // the next file opened in preview replaces it.
     bool isPreviewTab() const { return previewTab_; }
     void setPreviewTab(bool on) { previewTab_ = on; }
+    // The agent's own preview tab (`minicode open --note`, AgentNotes.h):
+    // italic like the preview tab, replaced by the next such open, kept by
+    // an edit, a save or a double-click on its title.
+    bool isAgentPreview() const { return agentPreview_; }
+    void setAgentPreview(bool on) { agentPreview_ = on; }
 
     // The source (Text) or the message (Message). Media and Diff have an
     // empty one, which is what the view holds while they are shown.
@@ -409,6 +414,7 @@ private:
     bool          markdown_ = false, latex_ = false;
     bool          showsPreview_ = false;
     bool          previewTab_ = false;
+    bool          agentPreview_ = false;
     bool          unread_ = false;
 
     GtkTextBuffer* buffer_ = nullptr;

@@ -1313,7 +1313,7 @@ its server comes first here (2.0).
   client (the Mac's CLI, shared) and `open`, `window`, `state`, `selection`
   and `ping`, with the user's typing protected (`"background"`); the `control`
   GUI suite. Remains: `term` and `term-output` (with the terminal),
-  `split`, `open --note`/`--from` and `tour` (3.4), `browse`,
+  `split`, `browse`,
   `page` and `open-url`/BROWSER (3.7), `notify` and `hooks` (3.6), `procs`
   (3.8), `install-skill` and the skill; every one answers "not on Linux yet"
   now. `diff` is done with 3.2.
@@ -1331,7 +1331,10 @@ its server comes first here (2.0).
   tab's place.
 - [ ] **3.3 The inline agent.** `InlineAgent`, with pending edits. Never run
   the real Claude Code in a check: use `tests/fixtures/claude`.
-- [ ] **3.4 Notes and tours.** Mac: `AgentNotes`.
+- [x] **3.4 Notes and tours.** Mac: `AgentNotes`. Done, November 2026
+  (HANDOFF item 41): `AgentNotes` over a text tag and an overlay box,
+  `open --note`/`--from`, `tour` and its Alt+] and Alt+[ keys, the agent's
+  preview tab, the `notes` GUI suite.
 - [ ] **3.5 The Agents panel and Evidence.** `AgentTranscript`, `AgentIndex`,
   `AgentEvidence`, `AgentView`, with Linux's scratchpad path. Claude Code's
   data is read, never written.

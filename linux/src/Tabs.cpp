@@ -4,6 +4,7 @@
 // which are the core's (../src/EditorTabs.h). Questions about unsaved
 // changes are the shell's (main.cpp): nothing here asks, and nothing here
 // drops unsaved changes without being told to.
+#include "AgentNotes.h"
 #include "Appearance.h"
 #include "Editor.h"
 
@@ -206,6 +207,35 @@ bool Editor::openFile(const std::string& path, EditorTabs::OpenFrom from) {
     return ok;
 }
 
+Document* Editor::agentPreviewTab() const {
+    for (Document* d : tabs_)
+        if (d->isAgentPreview()) return d;
+    return nullptr;
+}
+
+Document* Editor::openForAgent(const std::string& path, bool preview, bool quiet) {
+    if (Document* have = documentFor(path)) {
+        if (!quiet) openFile(path, EditorTabs::OpenFrom::Other);   // shown, as it is
+        return have;
+    }
+    if (!quiet && !large_->mayOpen(path, EditorTabs::OpenFrom::Other)) return nullptr;
+    Document* old = preview ? agentPreviewTab() : nullptr;
+    // Never one with unsaved changes, nor the tab the user is typing in.
+    if (old && (old->dirty() || (quiet && old == active_))) {
+        keepPreviewTab(old);
+        old = nullptr;
+    }
+    Document* d = new Document(this, &tags_);
+    if (quiet) d->setUnread(path);
+    else loadInto(d, path);   // a message says why; a note waits for text
+    d->setAgentPreview(preview);
+    tabs_.insert(tabs_.begin() + EditorTabs::insertionIndex(activeIndex(), tabCount()), d);
+    if (quiet) refreshStrip();
+    else activate(d);
+    if (old && !old->dirty()) dropTab(old, false);   // replaced, no question, not remembered
+    return d;
+}
+
 Document* Editor::addTab(const std::string& path) {
     Document* d = new Document(this, &tags_);
     d->setUnread(path);
@@ -276,12 +306,12 @@ void Editor::activate(Document* d) {
         refreshStrip();
         return;
     }
-    if (onActiveWillChange) onActiveWillChange();
+    { if (notes_) notes_->activeWillChange(); if (onActiveWillChange) onActiveWillChange(); }
     stash();
     active_ = d;
     showActive();
     d->checkExternalChange();
-    if (onActiveChanged) onActiveChanged();
+    { if (onActiveChanged) onActiveChanged(); if (notes_) notes_->activeChanged(); }
 }
 
 void Editor::selectTab(int index) {
@@ -341,7 +371,7 @@ void Editor::dropTab(Document* d, bool remember) {
     const int index = indexOf(d);
     if (index < 0) return;
     const bool wasActive = d == active_;
-    if (wasActive && onActiveWillChange) onActiveWillChange();
+    if (wasActive) { if (notes_) notes_->activeWillChange(); if (onActiveWillChange) onActiveWillChange(); }
     if (wasActive) stash();
     if (remember && d->kind() != Document::Kind::Diff && !d->path().empty()) {
         EditorTabs::ClosedTab c = closedTabOf(d);
@@ -363,7 +393,7 @@ void Editor::dropTab(Document* d, bool remember) {
         }
         showActive();
         if (active_) active_->checkExternalChange();
-        if (onActiveChanged) onActiveChanged();
+        { if (onActiveChanged) onActiveChanged(); if (notes_) notes_->activeChanged(); }
     }
     destroy(d);
     refreshStrip();
@@ -371,6 +401,7 @@ void Editor::dropTab(Document* d, bool remember) {
 
 // Gone for good: what the slot held for it comes off first.
 void Editor::destroy(Document* d) {
+    if (notes_) notes_->forget(d);
     if (d->decision()) d->decision()->tabClosed();   // closing answers it
     if (d == colorDoc_) {
         if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
@@ -387,7 +418,7 @@ void Editor::destroy(Document* d) {
 }
 
 void Editor::closeAllTabs() {
-    if (onActiveWillChange) onActiveWillChange();
+    { if (notes_) notes_->activeWillChange(); if (onActiveWillChange) onActiveWillChange(); }
     stash();
     active_ = nullptr;
     diffDoc_ = nullptr;
@@ -395,12 +426,13 @@ void Editor::closeAllTabs() {
     tabs_.clear();
     showActive();   // the welcome text, with no buffer of theirs on show
     for (Document* d : all) destroy(d);
-    if (onActiveChanged) onActiveChanged();
+    { if (onActiveChanged) onActiveChanged(); if (notes_) notes_->activeChanged(); }
 }
 
 void Editor::keepPreviewTab(Document* d) {
-    if (!d || !d->isPreviewTab()) return;
+    if (!d || !(d->isPreviewTab() || d->isAgentPreview())) return;
     d->setPreviewTab(false);
+    d->setAgentPreview(false);
     refreshStrip();
 }
 
@@ -544,7 +576,7 @@ void Editor::refreshStrip() {
         if (it.title.empty()) it.title = baseName(d->path());
         it.tooltip = d->path().empty() ? it.title : d->path();
         it.dirty = d->dirty();
-        it.preview = d->isPreviewTab();
+        it.preview = d->isPreviewTab() || d->isAgentPreview();
         items.push_back(it);
     }
     strip_->setItems(items, activeIndex());

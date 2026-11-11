@@ -156,6 +156,8 @@ const std::vector<Action>& actions() {
         {"editor.action.marker.prev", "win.previousproblem", false},
         {"workbench.action.editor.nextChange", "win.nextchange", true},
         {"workbench.action.editor.previousChange", "win.previouschange", false},
+        {"minicode.tour.next", "win.tournext", false},
+        {"minicode.tour.previous", "win.tourprevious", false},
         {"editor.action.moveLinesDownAction", "win.movelinesdown", true},
         {"editor.action.moveLinesUpAction", "win.movelinesup", false},
         {"editor.action.copyLinesDownAction", "win.copylinesdown", false},

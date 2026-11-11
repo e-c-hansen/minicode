@@ -233,6 +233,7 @@ gui_sources = [
   # (TreeGitColors.cpp), both watching the repository's folder
   # (GitDirWatch.cpp).
   'src/GitGutter.cpp',
+  'src/AgentNotes.cpp',
   'src/TreeGitColors.cpp',
   'src/GitDirWatch.cpp',
   # Web pictures in the Markdown preview: the libsoup half (#ifdef-guarded,

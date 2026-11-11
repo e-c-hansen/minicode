@@ -72,3 +72,4 @@ InstallHintsSuite.cpp
 ControlSuite.cpp
 CompareSuite.cpp
 ProcessesSuite.cpp
+NotesSuite.cpp

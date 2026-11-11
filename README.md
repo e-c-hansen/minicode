@@ -471,7 +471,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Go to the next or previous change bar in the file (lines changed since git last staged it) | Option F5, Shift Option F5 (F5 may need fn on a laptop) | Alt F5, Shift Alt F5 (GNOME's own keys give Alt F5 to Restore Window unless it is turned off in GNOME's keyboard settings; the Navigate menu has both) |  |
 | Go to the next or previous change in a side-by-side diff | F7, Shift F7 (F7 may need fn on a laptop) |  |  |
 | Go to the next or previous problem in the file, with its message at the cursor | F8, Shift F8 (F8 may need fn on a laptop) | F8, Shift F8 (in the terminal the program has them) |  |
-| Go to the next or previous stop of an agent's tour (`minicode tour`) | Option ], Option [ |  |  |
+| Go to the next or previous stop of an agent's tour (`minicode tour`) | Option ], Option [ | Alt ], Alt [ |  |
 | Go to the start or end of the file, or select to it (with several cursors, one is left) | Command Up, Command Down, Shift Command Up, Shift Command Down; or Command Home, Command End, Shift Command Home, Shift Command End (fn Command Left, Right on a laptop) | Ctrl Home, Ctrl End, Ctrl Shift Home, Ctrl Shift End |  |
 | Indent or outdent the selected lines, or the cursor's line | Tab, Shift Tab (the selected lines); Command ], Command [ | Tab, Shift Tab | Tab, Shift Tab |
 | Insert a line below the cursor's line, wherever the cursor is in it | Command Return (Insert Line Above is in the Edit menu) |  |  |

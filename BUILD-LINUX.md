@@ -96,6 +96,20 @@ Verified by running it:
   fails (checked once) with the toggle made a no-op. Not tested: the question
   dialog's buttons, Delete on a row, a real right click, the look on screen,
   other users' processes.
+- Notes and tours (item 3.4): the `notes` GUI suite runs the real client.
+  `open --note` puts the file in the agent's preview tab and shows the box
+  (text cleaned, label, x) over lines 10 to 12 with the text tag on exactly
+  those lines and the caret there, the file's text and undo untouched;
+  Escape (a real key) and a click on the x close it; a line break above
+  moves it along, a letter typed on its lines closes it and undo does not
+  bring it back; the next note replaces the preview tab and an edited one is
+  kept; a note sent while the keyboard is in the editor waits with its tab
+  (their caret unmoved, the client says so) and is placed when the tab is
+  shown; `minicode tour` steps with Alt+] and Alt+[ to "2 of 3" and "3 of 3",
+  stops at the ends, goes back, and the keys do nothing before a tour and
+  after its note is closed; `state` names the note. 30 of its checks fail
+  with placing switched off. Not tested: the box's look beyond one
+  snapshot, a note in a Markdown preview or a large file.
 - Install hints (item 2.8): the `install_hints` GUI suite, with `MINICODE_INSTALL_HAVE=uv`,
   shows the bar for a missing Python server with `uv tool install basedpyright`,
   Copy, Run in Terminal typing it without Return, the bar going when the

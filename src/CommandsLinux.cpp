@@ -299,6 +299,9 @@ const std::vector<LinuxRow>& linuxRows() {
         // program has both.
         {"workbench.action.editor.nextChange", "alt+f5", 0, nullptr, nullptr},
         {"workbench.action.editor.previousChange", "alt+shift+f5", 0, nullptr, nullptr},
+        // Only while a tour is on (AgentNotes.h, PARITY.md 3.4).
+        {"minicode.tour.next", "alt+]", 0, nullptr, nullptr},
+        {"minicode.tour.previous", "alt+[", 0, nullptr, nullptr},
 
         // ---- the editor's own keys (PARITY.md 1.9). Move and Copy Line
         // are VS Code's (see Add Cursor above), in the Edit menu here, which
