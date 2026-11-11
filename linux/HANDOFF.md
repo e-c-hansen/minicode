@@ -2797,8 +2797,12 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   (uv), Copy to the clipboard, Run in Terminal typed and not run, the server
   appearing taking the bar away, x for this launch, Don't Show Again kept.
   It fails without the wiring in main.cpp.
-- **Remains**: Format Document's note does not offer the install command when
-  its formatter is missing (`InstallView::forFormatters` is written, not used).
+- **Format Document's note** (`Formatting::showNote`): a Failed decision with
+  `installPrograms` (pyink and yapf, prettier...) puts an
+  `InstallView::forFormatters` under the message in the note's popover (Copy,
+  Run in Terminal through `Formatting::Host::runInTerminal`, the same typing
+  as the bar's); `Formatting::installView()` is for checks, and the
+  `install_hints` suite's last case clears PATH and presses Format Document.
 - **Needs the owner**: the commands on a real Ubuntu (apt, snap), and a real
   install finishing in the terminal bringing the server up.
 

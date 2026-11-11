@@ -2701,6 +2701,15 @@ static App* newWindow(const std::string& root, const std::string& file) {
         [app] { return app->rootDir; },
         [app](Document* d) {
             if (!app->dead) saveDocument(app, d);
+        },
+        [app](const std::string& command) {
+#ifdef MINICODE_ENABLE_TERMINAL
+            if (app->dead || !app->terminal) return;
+            if (!app->layout->terminalShown()) app->layout->toggleTerminal();
+            app->terminal->typeText(command);   // never Return: the user reads it first
+#else
+            (void)app; (void)command;
+#endif
         }});
     app->consentListener = FolderConsent::listen([app](const std::string&) {
         updateFolderToolsAction(app);

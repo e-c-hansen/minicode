@@ -51,7 +51,9 @@ Verified by running it:
 - Install hints (item 2.8): the `install_hints` GUI suite, with `MINICODE_INSTALL_HAVE=uv`,
   shows the bar for a missing Python server with `uv tool install basedpyright`,
   Copy, Run in Terminal typing it without Return, the bar going when the
-  server appears, x and Don't Show Again. No real install was run.
+  server appears, x and Don't Show Again; and Format Document's note for a
+  missing formatter with `uv tool install pyink`, Copy and Run in Terminal.
+  No real install was run.
 
 - The portable C++ core in `src/` compiles cleanly under `g++` 15 and passes
   the top-level `make test`, the same suite the macOS build runs. This code

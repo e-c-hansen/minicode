@@ -1,6 +1,7 @@
 // Formatting.cpp — see Formatting.h. The Mac's EditorController+Format.mm,
 // step for step.
 #include "Formatting.h"
+#include "InstallView.h"
 
 #include "Document.h"
 #include "Editor.h"
@@ -111,7 +112,7 @@ void Formatting::run(bool quiet, std::function<void()> then) {
                 return;
             if (!r.ok) {
                 if (!(quiet && r.decision.kind == FormatRun::Kind::Unavailable))
-                    showNote(r.message, true);
+                    showNote(r.message, true, r.decision.installPrograms);
             } else if (!canFormat() || editor_->text() != original) {
                 // Typed into meanwhile, or a preview took over: the output
                 // is for text that is no longer there.
@@ -279,7 +280,8 @@ void Formatting::closeNote() {
 // that there was nothing to change (which closes itself). It never takes
 // the keyboard; it closes when the text or the caret moves, another tab is
 // shown, or the next format starts.
-void Formatting::showNote(const std::string& message, bool error) {
+void Formatting::showNote(const std::string& message, bool error,
+                          const std::vector<std::string>& installPrograms) {
     lastNote_ = message;
     notes_++;
     closeNote();
@@ -299,10 +301,26 @@ void Formatting::showNote(const std::string& message, bool error) {
         gtk_label_set_max_width_chars(GTK_LABEL(noteLabel_), 80);
         gtk_label_set_xalign(GTK_LABEL(noteLabel_), 0.0);
         gtk_label_set_selectable(GTK_LABEL(noteLabel_), FALSE);
-        gtk_popover_set_child(GTK_POPOVER(note_), noteLabel_);
+        noteBox_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+        gtk_box_append(GTK_BOX(noteBox_), noteLabel_);
+        gtk_popover_set_child(GTK_POPOVER(note_), noteBox_);
         gtk_widget_set_parent(note_, view);
     }
     gtk_label_set_text(GTK_LABEL(noteLabel_), message.c_str());
+    // The previous offer goes; a missing formatter gets its install ways.
+    if (installView_) gtk_box_remove(GTK_BOX(noteBox_), installView_->widget());
+    installView_ = nullptr;
+    if (!installPrograms.empty()) {
+        InstallView* v = InstallView::forFormatters(installPrograms, "", host_.runInTerminal);
+        if (v->command().empty()) {
+            g_object_unref(g_object_ref_sink(v->widget()));   // nothing known to show; it goes
+        } else {
+            GtkWidget* pop = note_;
+            v->onDone = [pop] { gtk_popover_popdown(GTK_POPOVER(pop)); };
+            gtk_box_append(GTK_BOX(noteBox_), v->widget());
+            installView_ = v;
+        }
+    }
     // Under the caret's line when it is on screen, else at the top of the pane.
     GtkTextView* tv = GTK_TEXT_VIEW(view);
     GtkTextBuffer* b = gtk_text_view_get_buffer(tv);

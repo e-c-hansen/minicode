@@ -14,6 +14,7 @@
 
 #include "ConsentBar.h"
 #include "Editor.h"
+#include "Formatting.h"
 #include "InstallView.h"
 #include "Lsp.h"
 #include "Terminal.h"
@@ -40,7 +41,7 @@ bool offers() {
 }
 bool hidden() { return bar()->installing().empty() && !gtk_widget_get_visible(bar()->widget()); }
 
-std::string gClip;
+std::string gClip, gPathKept;
 bool readClipboard() {
     GdkContentProvider* p = gdk_clipboard_get_content(gtk_widget_get_clipboard(ed()->textView()));
     if (!p) return false;
@@ -174,6 +175,46 @@ MC_GUI_SUITE(install_hints) {
         openPython();
     });
     MCGuiPause(0.8);   // negative check
+    // Format Document's note offers the formatter's install command.
+    MCGuiStep("a Python file, no formatter anywhere on PATH, Format Document", [] {
+        g_setenv("MINICODE_INSTALL_HAVE", "uv", TRUE);
+        MCGuiSetSettings("lsp.enabled = false\n");
+        gPathKept = g_getenv("PATH") ? g_getenv("PATH") : "";
+        g_setenv("PATH", "/mc-no-such-bin", TRUE);
+        openPython();
+        MCGuiApp().format->formatDocument();
+    });
+    MCGuiWait("the note shows an install offer", 15, [] {
+        Formatting* f = MCGuiApp().format;
+        return f->noteShown() && f->installView() && MCGuiOnScreen(f->installView()->copyButton());
+    });
+    MCGuiStep("it is the formatter's command; Copy copies it", [] {
+        InstallView* v = MCGuiApp().format->installView();
+        MCGuiNote("note: %s | command: %s", MCGuiApp().format->lastNote().c_str(),
+                  v->command().c_str());
+        GCHECK(v->command().find("pyink") != std::string::npos);
+        GCHECK(v->shownText().find("pyink") != std::string::npos);
+        gClip.clear();
+        MCGuiClick(v->copyButton());
+    });
+    MCGuiWait("the formatter's command is on the clipboard", 5, readClipboard);
+    MCGuiStep("Copy copied it", [] { GCHECK(gClip.find("pyink") != std::string::npos); });
+#ifdef MINICODE_ENABLE_TERMINAL
+    MCGuiStep("Run in Terminal, a real click", [] {
+        MCGuiClick(MCGuiApp().format->installView()->runButton());
+    });
+    MCGuiWait("the formatter's command is typed at the prompt", 30, [] {
+        return terminalText().find("pyink") != std::string::npos;
+    });
+    MCGuiStep("typed, not run", [] {
+        const std::string t = terminalText();
+        GCHECK(t.find("command not found") == std::string::npos);
+    });
+#endif
+    MCGuiStep("tidy up the formatter case", [] {
+        g_setenv("PATH", gPathKept.c_str(), TRUE);
+        if (Document* d = ed()->documentFor(F("a.py"))) ed()->closeTab(d);
+    });
     MCGuiStep("tidy up", [] {
         GCHECK(hidden());
         ConsentBar::setInstallMuted("python", false);

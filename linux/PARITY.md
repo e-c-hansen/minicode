@@ -1064,7 +1064,7 @@ its server comes first here (2.0).
   the Mac, which the fallback needs. The server's edits go in through
   item 2.1's workspace edit applier, as the Mac's go through its own.
   editor.organize-imports-on-save waits for the port's code actions (item
-  2.2), and the note offers no install commands yet (item 2.8, the formatter part). Needs the
+  2.2). Needs the
   owner: the owner's real formatters (ruff, clang-format, prettier), Ctrl+Shift+I under
   GNOME on Wayland with IBus, and how the note by the caret looks.
 - [x] **2.5 Completion's additional edits and snippets.** `Snippet`,
@@ -1087,7 +1087,7 @@ its server comes first here (2.0).
   lines unpainted until seen, edits ending the tokens). Needs the owner: the
   colors with a real server.
 - [ ] **2.7 Inlay hints (D6, D9).** `InlayHints`.
-- [~] **2.8 Install hints.** `InstallHints`. Done: the core's Linux ways, `LspSession::missingServer` and `lookAgainForMissingServer`, `Terminal::typeText` and `onCommandFinished`, `InstallView`, the offer in `ConsentBar` (Install..., Copy, Run in Terminal, x, Don't Show Again), wired in main.cpp, and the `install_hints` GUI suite (HANDOFF item 37). Remains: Format Document's note offering the install command for a missing formatter.
+- [x] **2.8 Install hints.** `InstallHints`. Done: the core's Linux ways, `LspSession::missingServer` and `lookAgainForMissingServer`, `Terminal::typeText` and `onCommandFinished`, `InstallView`, the offer in `ConsentBar` (Install..., Copy, Run in Terminal, x, Don't Show Again), wired in main.cpp, and the `install_hints` GUI suite (HANDOFF item 37). Format Document's note offers the missing formatter's install command too.
 - [x] **2.9 Git verbs.** Push, pull, autofetch, Stage All, Discard with its
   Trash copy and undo, hunks and lines, the branch picker, commit verbs.
   `GitModel` already has the plans.
