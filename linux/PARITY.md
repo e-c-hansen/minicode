@@ -1323,7 +1323,7 @@ its server comes first here (2.0).
   and Shift+F7. Part two done (HANDOFF item 39): a comparison with a
   decision (`CompareDecision`: a check and a cross per hunk in a gutter, the
   bar, `lastChoiceGrace` with Send Now, `acceptedText`) and `minicode diff`.
-  Left, owned by other items: Compare with Main (3.5, the Worktrees node);
+  Compare with Main is done (3.5, HANDOFF item 44);
   the IDE link's openDiff is done (3.9). Also the Mac's diff preview tab that each `diff` replaces (every
   call opens a tab of its own here), choice tints on the rows, and keeping a
   tab's place.
@@ -1338,8 +1338,11 @@ its server comes first here (2.0).
   data is read, never written. Part one (November 2026, HANDOFF item 44):
   the model on a worker thread following the transcripts and scratchpads
   with GFileMonitor, and the panel in the sidebar (Ctrl+Shift+A), with the
-  `agents` suite. Remains: the Evidence page, the Worktrees node and
-  Compare with Main, Show Terminal.
+  `agents` suite. Part two (HANDOFF item 44): the Evidence page in a tab
+  (a click on a session), the Worktrees node first in the file tree with
+  Compare with Main and Open in New Window. Remains: Show Terminal (a
+  session waiting in a terminal), and the node appearing without a relisting
+  of the top folder when `.claude/worktrees` is first created.
 - [x] **3.6 Waiting for you.** `ClaudeHooks`, `AttentionBoard`. Done
   (November 2026, HANDOFF item 42): the terminal's id and the two
   variables, `notify --from-hook`, `hooks --print|--install`, a dot and

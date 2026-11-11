@@ -278,6 +278,12 @@ void Document::setDiff(const std::string& title, const std::string& bytes, bool 
     diffBytes_ = bytes;
     diffCommit_ = commit;
     compare_.reset();
+    editorPage_.reset();
+}
+
+void Document::setEditorPage(const std::string& title, std::shared_ptr<EditorPage> page) {
+    setDiff(title, "", false);
+    editorPage_ = std::move(page);
 }
 
 void Document::setCompare(const std::string& title, std::shared_ptr<const CompareData> data) {

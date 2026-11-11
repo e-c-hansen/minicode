@@ -72,7 +72,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Do
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \
        src/StartupLog.cpp src/WhenDrawn.cpp \
        src/Zoom.cpp src/NavHistoryUi.cpp \
-       src/ControlServer.cpp src/IdeLinkServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp src/ProcessesPanel.cpp ../tools/minicode-cli.cpp src/AgentModel.cpp src/AgentsPanel.cpp
+       src/ControlServer.cpp src/IdeLinkServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp src/ProcessesPanel.cpp ../tools/minicode-cli.cpp src/AgentModel.cpp src/AgentsPanel.cpp src/EvidencePage.cpp src/AgentWorktrees.cpp src/WorktreeChangesPage.cpp
 
 SRCS := $(GUI) $(CORE)
 

@@ -3222,7 +3222,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `snapshotPlan`'s unit tests, not on a real tall page; Vite's `--open` and
   Claude Code's links through BROWSER were not run.
 
-### 44. The Agents panel, part one (done, November 2026; `PARITY.md` item 3.5)
+### 44. The Agents panel and Evidence (done, November 2026; `PARITY.md` item 3.5)
 
 - **The model** is `src/AgentModel.{h,cpp}` (GTK, glib only): the core's
   `AgentIndex` lives on a worker thread of its own (it is not thread-safe);
@@ -3657,3 +3657,39 @@ GUI checks (`tests/gui`):
   Where it cannot start (a Docker container, which needs
   `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1`), the `harness` suite fails
   its two sandbox checks rather than passing with a blank browser pane.
+- **Part two: pages.** `EditorPage.h` is a read-only page in a tab: a
+  diff-kind `Document` with `setEditorPage` (so sessions, backups, saving and
+  the servers leave it alone), its widget added to the editor's slot stack on
+  first show and removed in `Editor::destroy`; `Editor::showPage` finds the
+  tab by `key()` (reuse) and `currentPage()` is for the checks.
+- **Evidence** (`EvidencePage.{h,cpp}`, the Mac's `MCEvidencePage`): the core's
+  `AgentEvidence::Reader` on a worker thread (one at a time, joined in the
+  destructor), published twice (the list, then the outputs' ends, read lazily
+  with `readOutput`; Show all up to 1 MB), a 2 s poll for a growing
+  transcript. The final message and the last test run sit side by side above a
+  GtkTextView of the commands; its links are text tags named `ev:<verb>:<n>`
+  found by a click gesture. Open in Terminal types `cd <dir> && <command>` when
+  the command's folder is not the window's (the Linux window has one terminal,
+  not a new one per folder) and never presses Return. A click on a session now
+  opens its Evidence and also opens or closes its files; the row menu has
+  Show Evidence.
+- **Worktrees** (`AgentWorktrees.{h,cpp}`): `git worktree list --porcelain`,
+  `rev-list --count main..head` and `status --porcelain` on a thread, named
+  from the AgentModel's sessions by worktree path (else the folder name);
+  made by `ensureAgents` in main.cpp (with the Agents panel, or at startup when
+  `.claude/worktrees` exists), refreshed 2 s after the model changes. The tree's
+  node is a synthetic row named "Worktrees" in the top folder's listing whose
+  `standard::file` is the real `.claude/worktrees` folder, sorted first (an
+  empty key), present only when that folder holds a non-hidden folder, hidden
+  files or not; `.claude`'s own listing leaves `worktrees` out
+  (`FileTree.cpp` `ListJob`). Worktree rows are named and badged in
+  `FileTree::decorate`, which returns before the git colors. A right click on
+  one pops its own two-item menu (`win.compareworktree`,
+  `win.worktreewindow`). Compare with Main is `WorktreeChangesPage`: the
+  changed files against the merge base (`AgentView::compareBase`), a click
+  opening the file in the compare view through `Editor::showComparison`.
+- **Left**: Show Terminal for a session waiting in a terminal (the attention
+  board knows the session; the Agents panel does not read it yet); the node
+  does not appear until the top folder is listed again after
+  `.claude/worktrees` is first made. The `agents` suite checks all of the
+  above against a real git repository (fails without the feature, checked).

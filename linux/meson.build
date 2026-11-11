@@ -277,6 +277,9 @@ gui_sources = [
   'src/ProcessesPanel.cpp',
   'src/AgentModel.cpp',
   'src/AgentsPanel.cpp',
+  'src/EvidencePage.cpp',
+  'src/AgentWorktrees.cpp',
+  'src/WorktreeChangesPage.cpp',
   '..' / 'tools' / 'minicode-cli.cpp',
   'src/NavHistoryUi.cpp',
   # The command line's options, and a terminal given back at once: the

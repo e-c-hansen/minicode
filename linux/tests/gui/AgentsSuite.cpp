@@ -14,6 +14,14 @@
 #include "Harness.h"
 
 #include "AgentsPanel.h"
+#include "AgentWorktrees.h"
+#include "CompareDecision.h"
+#include "Document.h"
+#include "EvidencePage.h"
+#include "FileTree.h"
+#include "Terminal.h"
+#include "WorktreeChangesPage.h"
+#include <vte/vte.h>
 #include "AppSeam.h"
 #include "Editor.h"
 
@@ -126,6 +134,55 @@ void clickRow(int i) {
 }
 
 
+std::string gFixturesBefore, gWt;
+EvidencePage* evidence() { return dynamic_cast<EvidencePage*>(MCGuiApp().editor->currentPage()); }
+WorktreeChangesPage* changesPage() {
+    return dynamic_cast<WorktreeChangesPage*>(MCGuiApp().editor->currentPage());
+}
+
+std::string fixturesDir() { return MCGuiBuildDir() + "/../../tests/fixtures/claude"; }
+
+bool has(const std::string& s, const std::string& w) { return s.find(w) != std::string::npos; }
+
+// The tree's labels, to find a row by what it says.
+void labelsIn(GtkWidget* w, std::vector<GtkWidget*>* out) {
+    if (GTK_IS_LABEL(w)) out->push_back(w);
+    for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+        labelsIn(c, out);
+}
+
+GtkWidget* treeLabel(const std::string& startsWith) {
+    std::vector<GtkWidget*> ls;
+    labelsIn(MCGuiApp().tree->widget(), &ls);
+    for (GtkWidget* l : ls)
+        if (std::string(gtk_label_get_text(GTK_LABEL(l))).compare(0, startsWith.size(), startsWith) == 0)
+            return l;
+    return nullptr;
+}
+
+VteTerminal* findVte(GtkWidget* root) {
+    if (!root) return nullptr;
+    if (VTE_IS_TERMINAL(root)) return VTE_TERMINAL(root);
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (VteTerminal* hit = findVte(c)) return hit;
+    return nullptr;
+}
+
+std::string terminalText() {
+    VteTerminal* v = findVte(MCGuiApp().terminal ? MCGuiApp().terminal->widget() : nullptr);
+    if (!v) return "";
+    char* t = vte_terminal_get_text_format(v, VTE_FORMAT_TEXT);
+    std::string s = t ? t : "";
+    g_free(t);
+    return s;
+}
+
+void git(const std::string& dir, const std::string& args) {
+    const std::string cmd = "git -C '" + dir + "' -c user.name=t -c user.email=t@t -c commit.gpgsign=false " +
+                            args + " >/dev/null 2>&1";
+    GCHECK(system(cmd.c_str()) == 0);
+}
+
 }  // namespace
 
 MC_GUI_SUITE(agents) {
@@ -160,6 +217,8 @@ MC_GUI_SUITE(agents) {
         g_setenv("MINICODE_CLAUDE_PROJECTS", gProjects.c_str(), TRUE);
         g_setenv("MINICODE_CLAUDE_TMP", gTmp.c_str(), TRUE);
         gBefore = listingOf(gClaude);
+        gFixturesBefore = listingOf(fixturesDir());
+        GCHECK(!gFixturesBefore.empty());
         GCHECK(!gBefore.empty());
     });
     MCGuiStep("Ctrl+Shift+A puts the Agents panel in the sidebar", [] {
@@ -239,6 +298,67 @@ MC_GUI_SUITE(agents) {
         int r = rowWhere("third.txt", AgentsPanel::RowInfo::File);
         return r >= 0 && !panel()->rows()[r].exists;
     });
+    // ---- Part two: the Evidence page
+    MCGuiStep("a test run and a final message are appended to the new session", [] {
+        std::string out;
+        for (int i = 1; i <= 60; i++) out += "line " + std::to_string(i) + " of the output\\n";
+        out += "=== 3 failed, 41 passed in 1.20s ===";
+        const std::string id = "t1";
+        append(gSessDir + "/" + kNew + ".jsonl",
+               head("assistant", 4) + "\"message\":{\"id\":\"msg_t1\",\"role\":\"assistant\",\"content\":["
+               "{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Bash\",\"input\":{\"command\":\"pytest -q\","
+               "\"description\":\"Run the suite\"}}]}}\n" +
+                   head("user", 3) + "\"message\":{\"role\":\"user\",\"content\":[{\"tool_use_id\":\"t1\","
+                   "\"type\":\"tool_result\",\"content\":\"" + out + "\",\"is_error\":false}]}}\n" +
+                   head("assistant", 2) + "\"message\":{\"id\":\"msg_t2\",\"role\":\"assistant\",\"content\":["
+                   "{\"type\":\"text\",\"text\":\"Everything is green, I promise.\"}]}}\n");
+        (void)id;
+    });
+    MCGuiWait("the panel lists the session again (row 0 is the new one)", 15, [] {
+        return panel()->rows().size() > 0 && panel()->rows()[0].text == "Add the new file" && rowShown(0);
+    });
+    MCGuiStep("a click on the session shows its Evidence in a tab", [] { clickRow(0); });
+    MCGuiWait("the page has read the transcript and its outputs", 15, [] {
+        return evidence() && evidence()->loaded() && evidence()->outputsLoaded() &&
+               evidence()->commandCount() == 1 && has(evidence()->finalMessageText(), "green");
+    });
+    MCGuiStep("the final message beside the last test's own summary; the ends of the output", [] {
+        GCHECK_EQ_STR(MCGuiApp().editor->active()->diffTitle(), "Evidence: Add the new file");
+        GCHECK(has(evidence()->finalMessageText(), "Everything is green, I promise."));
+        const std::string t = evidence()->lastTestText();
+        GCHECK(has(t, "3 failed, 41 passed"));
+        GCHECK(has(t, "$ pytest -q"));
+        const std::string c = evidence()->commandsText();
+        GCHECK(has(c, "Run the suite") && has(c, "TEST pytest") && has(c, "Open in Terminal"));
+        GCHECK(has(c, "line 1 of the output") && has(c, "line 20 of the output"));
+        GCHECK(!has(c, "line 30 of the output") && has(c, "line 60 of the output"));
+        GCHECK(has(c, "Show all"));
+        MCGuiSnapshot(MCGuiApp().window ? GTK_WIDGET(MCGuiApp().window) : nullptr, "evidence");
+        evidence()->expand(0);
+    });
+    MCGuiWait("Show all reads the whole output", 15, [] { return evidence() && evidence()->isExpanded(0); });
+    MCGuiStep("all of it shows, and Show less puts the ends back", [] {
+        GCHECK(has(evidence()->commandsText(), "line 30 of the output"));
+        GCHECK(!has(evidence()->commandsText(), "Show all"));
+        evidence()->collapse(0);
+        GCHECK(!has(evidence()->commandsText(), "line 30 of the output"));
+    });
+    MCGuiStep("a second click on the session shows the same tab", [] {
+        const int tabs = MCGuiApp().editor->tabCount();
+        MCGuiApp().agents->showEvidenceFor(0);
+        GCHECK((MCGuiApp().editor->tabCount()) == (tabs));
+    });
+    MCGuiStep("Open in Terminal types the command and does not run it", [] {
+        GCHECK(!MCGuiApp().terminal->busy());
+        evidence()->openInTerminal(0);
+    });
+    MCGuiWait("the command is at the prompt", 20, [] { return has(terminalText(), "pytest -q"); });
+    MCGuiPause(1.5);   // time is the condition: a command that ran would have printed by now
+    MCGuiStep("it waits for Return: no output of its own appeared", [] {
+        GCHECK(!has(terminalText(), "command not found") && !has(terminalText(), "no tests ran") &&
+               !has(terminalText(), "not found"));
+        GCHECK_EQ_STR(listingOf(fixturesDir()), gFixturesBefore);
+    });
     MCGuiStep("the transcripts folder removed", [] {
         GCHECK(system(("rm -rf '" + gProjects + "'").c_str()) == 0);
     });
@@ -251,4 +371,73 @@ MC_GUI_SUITE(agents) {
         MCGuiKey("ctrl+shift+a");
     });
     MCGuiWait("the same key closes the panel", 5, [] { return !MCGuiApp().agentsShown; });
+    // ---- Part two: the Worktrees node
+    MCGuiStep("a git repository with an agent's worktree, one ahead, and main moved on", [] {
+        gWt = gProj + "/.claude/worktrees/agent-wt";
+        GCHECK(system(("cd '" + gProj + "' && git init -q -b main >/dev/null 2>&1").c_str()) == 0);
+        MCGuiWriteFile(gProj + "/base.txt", "one\ntwo\nthree\n");
+        MCGuiWriteFile(gProj + "/.gitignore", ".claude/\n");
+        git(gProj, "add base.txt .gitignore");
+        git(gProj, "commit -q -m base");
+        git(gProj, "worktree add -q .claude/worktrees/agent-wt -b agent-branch");
+        MCGuiWriteFile(gWt + "/base.txt", "one\ntwo changed\nthree\n");
+        MCGuiWriteFile(gWt + "/agent.txt", "agent\n");
+        git(gWt, "add agent.txt base.txt");
+        git(gWt, "commit -q -m agent");
+        MCGuiWriteFile(gWt + "/untracked.txt", "u\n");
+        // main's later work, which is not the agent's
+        MCGuiWriteFile(gProj + "/base.txt", "one\ntwo\nthree\nmain later\n");
+        MCGuiWriteFile(gProj + "/later.txt", "later\n");
+        git(gProj, "add base.txt later.txt");
+        git(gProj, "commit -q -m later");
+        GCHECK(MCGuiApp().worktrees != nullptr);
+        MCGuiApp().worktrees->refresh();
+    });
+    MCGuiWait("git has listed the worktree with its ahead count and changes", 20, [] {
+        const WorktreeInfo* w = MCGuiApp().worktrees->find(gWt);
+        return w && w->ahead == 1 && w->dirty && MCGuiApp().worktrees->mainBranch() == "main";
+    });
+    MCGuiStep("the tree is shown its new .claude and asked to look again", [] {
+        MCGuiApp().tree->setRoot(gProj);
+    });
+    MCGuiWait("the Worktrees node is first in the tree", 15, [] { return treeLabel("Worktrees") != nullptr; });
+    MCGuiStep("it opens to the worktree", [] { MCGuiClick(treeLabel("Worktrees")); });
+    MCGuiWait("the worktree row says how it stands", 15, [] { return treeLabel("agent-wt") != nullptr; });
+    MCGuiStep("named for its folder with the badge; select it", [] {
+        GtkWidget* l = treeLabel("agent-wt");
+        GCHECK(has(gtk_label_get_text(GTK_LABEL(l)), "1 ahead · modified"));
+        GCHECK(!gtk_widget_has_css_class(l, "minicode-git-modified") &&
+               !gtk_widget_has_css_class(l, "minicode-git-untracked"));
+        MCGuiClick(l);
+    });
+    MCGuiWait("the worktree is the selection", 10, [] {
+        return MCGuiApp().tree->selectedPath() == gWt || has(MCGuiApp().tree->selectedPath(), "agent-wt");
+    });
+    MCGuiStep("Compare with Main", [] {
+        g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "compareworktree", nullptr);
+    });
+    MCGuiWait("a page lists the changes", 20, [] { return changesPage() && changesPage()->loaded(); });
+    MCGuiStep("the agent's files, none of main's later work", [] {
+        auto rows = changesPage()->rowDescriptions();
+        GCHECK(((int)rows.size()) == (3));
+        bool agent = false, base = false, untracked = false, later = false;
+        for (const std::string& r : rows) {
+            agent |= r == "A agent.txt";
+            base |= r == "M base.txt";
+            untracked |= r == "? untracked.txt";
+            later |= has(r, "later.txt");
+        }
+        GCHECK(agent && base && untracked && !later);
+        for (size_t i = 0; i < rows.size(); i++)
+            if (rows[i] == "M base.txt") changesPage()->openChangeAtRow((int)i);
+    });
+    MCGuiWait("the compare view opens that file", 20, [] { return MCGuiApp().editor->isComparison(); });
+    MCGuiStep("main at the branch point on the left: its later line is not taken out", [] {
+        const CompareSpec& sp = MCGuiApp().editor->active()->compare()->spec;
+        GCHECK_EQ_STR(sp.leftText, "one\ntwo\nthree\n");
+        GCHECK_EQ_STR(sp.rightText, "one\ntwo changed\nthree\n");
+        GCHECK(has(sp.leftLabel, "main at the branch point"));
+        GCHECK(has(sp.title, "base.txt"));
+        GCHECK_EQ_STR(listingOf(fixturesDir()), gFixturesBefore);
+    });
 }

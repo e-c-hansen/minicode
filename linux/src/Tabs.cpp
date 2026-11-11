@@ -294,6 +294,23 @@ void Editor::showComparison(const CompareSpec& spec, std::function<void(Document
     }).detach();
 }
 
+// A page in a tab of its own (EditorPage.h), reused by its key: a second
+// open shows the tab that has it and drops the new page.
+Document* Editor::showPage(std::shared_ptr<EditorPage> page) {
+    for (Document* t : tabs_)
+        if (t->editorPage() && t->editorPage()->key() == page->key()) {
+            activate(t);
+            return t;
+        }
+    Document* d = new Document(this, &tags_);
+    tabs_.insert(tabs_.begin() + EditorTabs::insertionIndex(activeIndex(), tabCount()), d);
+    d->setEditorPage(page->title(), page);
+    activate(d);
+    return d;
+}
+
+EditorPage* Editor::currentPage() const { return active_ ? active_->editorPage().get() : nullptr; }
+
 // ---------------------------------------------------------------- switching
 
 // Put a tab on show. The tab that was on show keeps its text, unsaved
@@ -351,6 +368,8 @@ void Editor::focusActiveDocument() {
 #endif
     if (d && d->kind() == Document::Kind::Media)
         target = media_->widget();
+    else if (d && d->editorPage())
+        target = d->editorPage()->focusWidget();
     else if (d && d->kind() == Document::Kind::Diff && d->compare() && compare_)
         target = compare_->focusWidget();
     else if (d && d->kind() == Document::Kind::Diff && diff_)
@@ -414,6 +433,8 @@ void Editor::destroy(Document* d) {
         if (gtk_widget_get_parent(l->widget()) == slot_)
             gtk_stack_remove(GTK_STACK(slot_), l->widget());
 #endif
+    if (d->editorPage() && gtk_widget_get_parent(d->editorPage()->widget()) == slot_)
+        gtk_stack_remove(GTK_STACK(slot_), d->editorPage()->widget());
     delete d;
 }
 

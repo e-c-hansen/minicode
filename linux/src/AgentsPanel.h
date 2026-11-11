@@ -25,6 +25,9 @@ public:
 
     GtkWidget* widget() const { return root_; }
     std::function<void(const std::string&)> onOpenFile;       // an existing file
+    // transcript path, session name: a click on a session.
+    std::function<void(const std::string&, const std::string&)> onShowEvidence;
+    std::function<void()> onModelChange;                      // the sessions changed
     std::function<void(const std::string&)> onNote;           // the status bar
 
     void setActive(bool active);
@@ -44,6 +47,8 @@ public:
     std::string summary() const;
     std::string notice() const;
     void activateRow(int row);
+    // For the checks: the Evidence of the session at `row`, as a click shows it.
+    void showEvidenceFor(int row) { if (row >= 0 && row < (int)rows_.size()) showEvidence(rows_[row]); }
     // Pops the row's menu; the labels it shows are menuLabels().
     void openMenuFor(int row);
     std::string menuLabels() const { return menuLabels_; }
@@ -65,6 +70,7 @@ private:
     bool active_ = false;
     unsigned timer_ = 0;
 
+    void showEvidence(const RowInfo& r);
     void rebuild();
     void popup(GMenu* menu, double x, double y);
     void dropMenu();

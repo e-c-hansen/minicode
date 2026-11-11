@@ -15,6 +15,7 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.ide = a->ide;
     w.agents = a->agents;
     w.agentsShown = a->agentsShown;
+    w.worktrees = a->worktrees;
     w.lsp = a->lsp;
     w.layout = a->layout;
     w.statusLabel = a->statusLabel;

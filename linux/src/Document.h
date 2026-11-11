@@ -41,6 +41,7 @@
 #include "Settings.h"
 #include "CompareDecision.h"
 #include "ComparePanes.h"
+#include "EditorPage.h"
 #include "SyntaxHighlighter.h"
 
 #ifdef MINICODE_ENABLE_PDF
@@ -212,6 +213,9 @@ public:
     // set: titled by `diffTitle`, no file, read-only. Null for a git diff.
     void setCompare(const std::string& title, std::shared_ptr<const CompareData> data);
     const std::shared_ptr<const CompareData>& compare() const { return compare_; }
+    // A page (EditorPage.h) is a diff tab too, with this set.
+    void setEditorPage(const std::string& title, std::shared_ptr<EditorPage> page);
+    const std::shared_ptr<EditorPage>& editorPage() const { return editorPage_; }
     // The comparison's decision (CompareDecision.h), or null.
     const std::shared_ptr<CompareDecision>& decision() const { return decision_; }
     void setDecision(std::shared_ptr<CompareDecision> d) { decision_ = std::move(d); }
@@ -425,6 +429,7 @@ private:
 
     std::string diffTitle_, diffBytes_;
     std::shared_ptr<const CompareData> compare_;
+    std::shared_ptr<EditorPage> editorPage_;
     std::shared_ptr<CompareDecision> decision_;
     bool        diffCommit_ = false;
 

@@ -155,6 +155,15 @@ struct DirWatch {
     std::size_t rowsIn = 0;
     guint applyIdle = 0;
     bool root = false;                   // the tree's top folder (StartupLog.h)
+    // The Worktrees node (PARITY.md 3.5): the top folder lists
+    // .claude/worktrees first as "Worktrees" when it holds a folder, and
+    // .claude lists no "worktrees" of its own.
+    bool worktreesNode = false, hideWorktrees = false;
+};
+
+struct ListJob {
+    GFile* dir;
+    bool worktreesNode, hideWorktrees;
 };
 
 DirWatch* watchOf(GListStore* store) {
@@ -163,7 +172,8 @@ DirWatch* watchOf(GListStore* store) {
 
 // On the worker: the folder's entries with their keys, sorted.
 void listInThread(GTask* task, gpointer, gpointer data, GCancellable* cancel) {
-    GFile* dir = G_FILE(data);
+    ListJob* job = static_cast<ListJob*>(data);
+    GFile* dir = job->dir;
     GError* err = nullptr;
     GFileEnumerator* en =
         g_file_enumerate_children(dir, kAttrs, G_FILE_QUERY_INFO_NONE, cancel, &err);
@@ -180,6 +190,7 @@ void listInThread(GTask* task, gpointer, gpointer data, GCancellable* cancel) {
         if (!info) break;
         const char* name = g_file_info_get_name(info);
         if (!name || !child) continue;
+        if (job->hideWorktrees && std::strcmp(name, "worktrees") == 0) continue;
         g_file_info_set_attribute_object(info, "standard::file", G_OBJECT(child));
         // Names compare as they always did, case folded and collated; a name
         // that is not UTF-8 is made so first (GLib's collation refuses it).
@@ -193,6 +204,31 @@ void listInThread(GTask* task, gpointer, gpointer data, GCancellable* cancel) {
         infos.push_back(G_FILE_INFO(g_object_ref(info)));
     }
     g_object_unref(en);
+    if (!err && job->worktreesNode) {
+        GFile* wt = g_file_resolve_relative_path(dir, ".claude/worktrees");
+        bool any = false;
+        if (GFileEnumerator* e = g_file_enumerate_children(
+                wt, "standard::name,standard::type", G_FILE_QUERY_INFO_NONE, cancel, nullptr)) {
+            while (GFileInfo* i = g_file_enumerator_next_file(e, nullptr, nullptr)) {
+                const char* n = g_file_info_get_name(i);
+                if (n && n[0] != '.' && g_file_info_get_file_type(i) == G_FILE_TYPE_DIRECTORY) any = true;
+                g_object_unref(i);
+                if (any) break;
+            }
+            g_object_unref(e);
+        }
+        if (any) {
+            // A folder row that is the real .claude/worktrees under another
+            // name, sorted before every other (an empty key).
+            GFileInfo* info = g_file_info_new();
+            g_file_info_set_name(info, "Worktrees");
+            g_file_info_set_file_type(info, G_FILE_TYPE_DIRECTORY);
+            g_file_info_set_attribute_object(info, "standard::file", G_OBJECT(wt));
+            rows.push_back({true, std::string(), "Worktrees"});
+            infos.push_back(info);
+        }
+        g_object_unref(wt);
+    }
     if (err) {
         for (GFileInfo* info : infos) g_object_unref(info);
         g_task_return_error(task, err);
@@ -314,7 +350,12 @@ void startListing(DirWatch* w) {
             delete listing;
             g_object_unref(store);
         }, g_object_ref(w->store));
-    g_task_set_task_data(task, g_object_ref(w->dir), g_object_unref);
+    g_task_set_task_data(task, new ListJob{G_FILE(g_object_ref(w->dir)), w->worktreesNode, w->hideWorktrees},
+                         [](gpointer p) {
+                             auto* j = static_cast<ListJob*>(p);
+                             g_object_unref(j->dir);
+                             delete j;
+                         });
     g_task_run_in_thread(task, listInThread);
     g_object_unref(task);
 }
@@ -352,6 +393,14 @@ GListModel* FileTree::makeDirModel(GFile* dir, bool root) {
     w->cancel = g_cancellable_new();
     w->activity = activity_;
     w->root = root;
+    {
+        char* p = g_file_get_path(dir);
+        if (p) {
+            w->worktreesNode = root;
+            w->hideWorktrees = std::string(p) == root_ + "/.claude";
+        }
+        g_free(p);
+    }
     // Watch before listing, so nothing created in between is missed: an
     // event during the first listing asks for a second.
     w->monitor = g_file_monitor_directory(dir, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
@@ -489,6 +538,10 @@ void FileTree::build() {
 // Popovers are children of the list view, and a widget must not be finalized
 // with children still attached, so they come off before the view is replaced.
 void FileTree::dropPopovers() {
+    if (worktreeMenu_) {
+        gtk_widget_unparent(worktreeMenu_);
+        worktreeMenu_ = nullptr;
+    }
     if (contextMenu_) {
         gtk_widget_unparent(contextMenu_);
         contextMenu_ = nullptr;
@@ -601,11 +654,47 @@ void FileTree::decorate(GtkWidget* label) const {
     const char* path = static_cast<const char*>(g_object_get_data(G_OBJECT(label), "minicode-path"));
     const bool isDir = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(label), "minicode-dir")) != 0;
     std::string tip;
+    if (path && isDir) {
+        std::string text;
+        if (worktreeText(path, &text, &tip)) {
+            gtk_label_set_text(GTK_LABEL(label), text.c_str());
+            for (const char* c : kClasses) gtk_widget_remove_css_class(label, c);
+            gtk_widget_set_tooltip_text(label, tip.c_str());
+            return;   // never colored by the tree's git colors
+        }
+    }
     const char* want = decorator_ && path ? decorator_(path, isDir, &tip) : nullptr;
     for (const char* c : kClasses)
         if (!want || std::strcmp(c, want) != 0) gtk_widget_remove_css_class(label, c);
     if (want) gtk_widget_add_css_class(label, want);
     gtk_widget_set_tooltip_text(label, tip.empty() ? nullptr : tip.c_str());
+}
+
+// The Worktrees node (the real .claude/worktrees folder, shown as
+// "Worktrees") and the worktrees below it: their text and tooltip.
+bool FileTree::worktreeText(const std::string& path, std::string* text, std::string* tip) const {
+    const std::string dir = root_ + "/.claude/worktrees";
+    if (path == dir) {
+        *text = "Worktrees";
+        *tip = "The agents' worktrees, in " + dir + "\nRight click one: Compare with Main, Open in New Window";
+        return true;
+    }
+    if (!isWorktreeRow(path)) return false;
+    std::string title = path.substr(dir.size() + 1), t;
+    if (worktreeTextCb_ && worktreeTextCb_(path, &title, &t)) {
+        *text = title;
+        *tip = t + (t.empty() ? "" : "\n") + "Right click: Compare with Main, Open in New Window";
+        return true;
+    }
+    *text = title;
+    *tip = path + "\nRight click: Compare with Main, Open in New Window";
+    return true;
+}
+
+bool FileTree::isWorktreeRow(const std::string& path) const {
+    const std::string dir = root_ + "/.claude/worktrees/";
+    return path.size() > dir.size() && path.compare(0, dir.size(), dir) == 0 &&
+           path.find('/', dir.size()) == std::string::npos;
 }
 
 // The rows on show: the list view's row widgets hold the labels.
@@ -991,10 +1080,20 @@ void FileTree::onRightClick(GtkGestureClick* g, int, double x, double y,
     else
         gtk_selection_model_unselect_all(model);
 
-    if (!self->contextMenu_) return;
+    GtkWidget* menu = self->contextMenu_;
+    if (self->worktreeModel_ && self->isWorktreeRow(self->selectedPath())) {
+        if (!self->worktreeMenu_) {
+            self->worktreeMenu_ = gtk_popover_menu_new_from_model(self->worktreeModel_);
+            gtk_popover_set_has_arrow(GTK_POPOVER(self->worktreeMenu_), FALSE);
+            gtk_widget_set_halign(self->worktreeMenu_, GTK_ALIGN_START);
+            gtk_widget_set_parent(self->worktreeMenu_, self->listView_);
+        }
+        menu = self->worktreeMenu_;
+    }
+    if (!menu) return;
     GdkRectangle at = {(int)x, (int)y, 1, 1};
-    gtk_popover_set_pointing_to(GTK_POPOVER(self->contextMenu_), &at);
-    gtk_popover_popup(GTK_POPOVER(self->contextMenu_));
+    gtk_popover_set_pointing_to(GTK_POPOVER(menu), &at);
+    gtk_popover_popup(GTK_POPOVER(menu));
 }
 
 // ---------------------------------------------------------------- name entry

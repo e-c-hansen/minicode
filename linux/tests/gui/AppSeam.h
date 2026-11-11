@@ -13,6 +13,7 @@
 #include <vector>
 
 class Editor;
+class AgentWorktrees;
 class FileTree;
 class FindBar;
 class SearchPanel;
@@ -43,6 +44,7 @@ struct MCGuiAppWindow {
     bool        procsShown = false;
     IdeLinkServer* ide = nullptr;      // Claude Code's /ide for the window (3.9)
     AgentsPanel* agents = nullptr;     // null until View > Toggle Agents was first used
+    AgentWorktrees* worktrees = nullptr;   // the tree's Worktrees node (3.5)
     bool        agentsShown = false;
     LspSession* lsp = nullptr;
     Terminal*   terminal = nullptr;

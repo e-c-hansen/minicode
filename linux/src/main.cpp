@@ -58,6 +58,10 @@
 #include "TerminalAttention.h"
 #include "ProcessMonitor.h"
 #include "AgentsPanel.h"
+#include "EvidencePage.h"
+#include "AgentWorktrees.h"
+#include "WorktreeChangesPage.h"
+#include "RunFile.h"
 #include "ProcessesPanel.h"
 #include "IdeLinkServer.h"
 #include "Browser.h"
@@ -122,6 +126,8 @@ struct App {
     IdeLinkServer*  ide = nullptr;   // Claude Code's /ide (agent.ide-link), PARITY.md 3.9
     // The Agents panel takes the same place (View > Toggle Agents).
     AgentsPanel* agents = nullptr;
+    AgentWorktrees* worktrees = nullptr;   // the file tree's Worktrees node, Compare with Main
+    GMenu*       worktreeMenu = nullptr;
     bool       agentsShown = false;
     bool       procsShown = false;
     // The editor's change bars and the tree's git colors (PARITY.md 2.10).
@@ -956,6 +962,9 @@ static void act_find_in_selection(GSimpleAction*, GVariant*, gpointer p) {
 static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp);
 static void act_toggle_processes(GSimpleAction*, GVariant*, gpointer userp);
 static void act_toggle_agents(GSimpleAction*, GVariant*, gpointer userp);
+static void showEvidence(App* app, const std::string& transcript, const std::string& name);
+static void setupWorktrees(App* app);
+static void addAction(App* app, const char* name, GCallback cb);
 
 // New Window: one on this window's folder, as the Mac's opens one on the
 // front window's root.
@@ -1719,18 +1728,109 @@ static void act_toggle_processes(GSimpleAction*, GVariant*, gpointer userp) {
 
 // View > Toggle Agents (Ctrl+Shift+A): the Agents panel in the tree's place
 // (the Mac's toggleAgents:). Opening it closes Source Control and Processes.
-static void act_toggle_agents(GSimpleAction*, GVariant*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    if (!app->agents) {
+// The Agents panel and the worktrees the file tree shows, made when first
+// wanted (the panel's toggle, or the tree finding .claude/worktrees).
+static void ensureAgents(App* app) {
+    if (app->agents) return;
         app->agents = new AgentsPanel(app->rootDir);
         app->agents->onOpenFile = [app](const std::string& path) {
             openFileThen(app, path, EditorTabs::OpenFrom::Other, [app] { refreshHints(app); });
             gtk_window_present(GTK_WINDOW(app->window));
         };
+        app->agents->onShowEvidence = [app](const std::string& transcript, const std::string& name) {
+            showEvidence(app, transcript, name);
+        };
         app->agents->onNote = [app](const std::string& text) {
             if (!app->dead) flashStatus(app, text);
         };
+    app->worktrees = new AgentWorktrees(app->rootDir, app->agents->model());
+    app->worktrees->onChange = [app] {
+        if (!app->dead && app->tree) app->tree->redecorate();
+    };
+    app->agents->onModelChange = [app] {
+        if (!app->dead && app->worktrees) app->worktrees->refreshSoon();
+    };
+    app->worktrees->refresh();
+}
+
+// The tree's Worktrees node (PARITY.md 3.5): each worktree named for its
+// agent with its ahead count and changes; a right click offers Compare with
+// Main (a page of the changed files, each opening side by side with main at
+// the branch point) and Open in New Window.
+static void compareWorktree(App* app) {
+    if (app->dead || !app->worktrees) return;
+    const WorktreeInfo* w = app->worktrees->find(app->tree->selectedPath());
+    if (!w) {
+        flashStatus(app, "git has not listed that folder as a worktree yet");
+        app->worktrees->refresh();
+        return;
     }
+    auto page = std::make_shared<WorktreeChangesPage>(app->worktrees, *w);
+    page->onShowComparison = [app](const CompareSpec& spec) {
+        if (!app->dead) app->editor->showComparison(spec);
+    };
+    app->editor->showPage(page);
+}
+
+static void setupWorktrees(App* app) {
+    app->tree->setWorktreeText([app](const std::string& path, std::string* title, std::string* tip) {
+        if (app->dead || !app->worktrees) return false;
+        const WorktreeInfo* w = app->worktrees->find(path);
+        if (!w) return false;
+        *title = w->label;
+        if (!w->badge().empty()) *title += "  " + w->badge();
+        *tip = w->label + "\n" + path;
+        if (!w->branch.empty()) *tip += "\nBranch " + w->branch;
+        if (w->running) *tip += "\nIts agent is running";
+        return true;
+    });
+    app->worktreeMenu = g_menu_new();
+    g_menu_append(app->worktreeMenu, "Compare with Main", "win.compareworktree");
+    g_menu_append(app->worktreeMenu, "Open in New Window", "win.worktreewindow");
+    app->tree->setWorktreeMenu(G_MENU_MODEL(app->worktreeMenu));
+    addAction(app, "compareworktree", G_CALLBACK(+[](GSimpleAction*, GVariant*, gpointer p) {
+        compareWorktree(static_cast<App*>(p));
+    }));
+    addAction(app, "worktreewindow", G_CALLBACK(+[](GSimpleAction*, GVariant*, gpointer p) {
+        App* a = static_cast<App*>(p);
+        const std::string path = a->tree->selectedPath();
+        if (!a->dead && a->tree->isWorktreeRow(path)) newWindow(path, "");
+    }));
+    struct stat st;
+    if (stat((app->rootDir + "/.claude/worktrees").c_str(), &st) == 0) ensureAgents(app);
+}
+
+// The Evidence page of a session in a tab (PARITY.md 3.5); Open in Terminal
+// types the command at the session's folder and never presses Return.
+static std::string shQuote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) out += c == '\'' ? std::string("'\\''") : std::string(1, c);
+    return out + "'";
+}
+
+static void showEvidence(App* app, const std::string& transcript, const std::string& name) {
+    auto page = std::make_shared<EvidencePage>(transcript, name);
+    page->onOpenInTerminal = [app](const std::string& command, const std::string& cwd) {
+#ifdef MINICODE_ENABLE_TERMINAL
+        if (app->dead || !app->terminal) return;
+        std::string line = command;
+        struct stat st;
+        if (!cwd.empty() && cwd != app->rootDir && stat(cwd.c_str(), &st) == 0 && S_ISDIR(st.st_mode))
+            line = "cd " + shQuote(cwd) + " && " + command;
+        else if (!cwd.empty() && cwd != app->rootDir)
+            flashStatus(app, cwd + " is gone; the command is typed in the folder");
+        if (!app->layout->terminalShown()) app->layout->toggleTerminal();
+        app->terminal->typeText(line);   // never Return: the user reads it first
+#else
+        (void)app; (void)command; (void)cwd;
+#endif
+    };
+    app->editor->showPage(page);
+}
+
+static void act_toggle_agents(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    ensureAgents(app);
     if (app->gitShown) act_toggle_git(nullptr, nullptr, app);
     if (app->procsShown) act_toggle_processes(nullptr, nullptr, app);
     if (!gtk_widget_get_parent(app->agents->widget()))
@@ -2574,6 +2674,10 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     if (app->procsShown) ProcessMonitor::shared().setPanelShown(false);
     delete app->procs;
     app->procs = nullptr;
+    delete app->worktrees;   // before the model it reads
+    app->worktrees = nullptr;
+    if (app->worktreeMenu) g_object_unref(app->worktreeMenu);
+    app->worktreeMenu = nullptr;
     delete app->agents;
     app->agents = nullptr;
     delete app->git;
@@ -2636,6 +2740,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
         if (!app->dead && app->tree) app->tree->redecorate();
     };
     app->treeColors->setRoot(app->rootDir);
+    setupWorktrees(app);
     app->editor = new Editor();
     StartupLog::mark("window: editor");
     app->editor->setTitleCallback(updateTitle, app);

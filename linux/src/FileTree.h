@@ -98,6 +98,14 @@ public:
     // The right-click menu. Its items name window actions ("win.rename"),
     // which resolve because the menu is parented inside the window.
     void setContextMenu(GMenuModel* model);
+    // The Worktrees node (PARITY.md 3.5): the title and tooltip of the
+    // worktree at `path` (a folder of .claude/worktrees), false for none;
+    // a right click on one pops `model`. redecorate() makes the rows say it.
+    using WorktreeTextCb = std::function<bool(const std::string& path, std::string* title,
+                                              std::string* tip)>;
+    void setWorktreeText(WorktreeTextCb cb) { worktreeTextCb_ = std::move(cb); }
+    void setWorktreeMenu(GMenuModel* model) { worktreeModel_ = model; }
+    bool isWorktreeRow(const std::string& path) const;
 
     // A small popover under the selected row (or the top of the tree) with an
     // entry holding `initial`. Enter calls `cb` with the trimmed text; Escape,
@@ -217,5 +225,9 @@ private:
     std::shared_ptr<ActivityCb> activity_ = std::make_shared<ActivityCb>();
     Decorator decorator_;
     void decorate(GtkWidget* label) const;
+    bool worktreeText(const std::string& path, std::string* text, std::string* tip) const;
+    WorktreeTextCb worktreeTextCb_;
+    GMenuModel* worktreeModel_ = nullptr;
+    GtkWidget*  worktreeMenu_ = nullptr;
     gint64      expandDeadline_ = 0;
 };

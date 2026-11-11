@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "Document.h"
+#include "EditorPage.h"
 #include "EditorTabs.h"
 #include "Markdown.h"
 #include "MarkdownEdit.h"
@@ -278,6 +279,9 @@ public:
     // given, is called then with the tab's document). `minicode diff`, Compare
     // with Main and the IDE link's openDiff come in later items.
     void showComparison(const CompareSpec& spec, std::function<void(Document*)> done = nullptr);
+    // A page (EditorPage.h) in a tab of its own, reused by its key.
+    Document* showPage(std::shared_ptr<EditorPage> page);
+    EditorPage* currentPage() const;   // the active tab's page, or null
     CompareView* compareView() const { return compare_; }
     bool isComparison() const { return active_ && active_->compare(); }
     // The diff view was made (on the first diff): the window's Source

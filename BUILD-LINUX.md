@@ -101,7 +101,13 @@ Verified by running it:
   `MINICODE_TERMINAL_ID` and `MINICODE_PID`, the dot and title count, a real
   key clearing the mark, Ctrl+Alt+W, `hooks --install` twice and onto a
   symlink in the scratch HOME). Not seen on a real desktop.
-- The Agents panel, part one (item 3.5): the `agents` GUI suite copies
+- The Agents panel and Evidence (item 3.5; the same suite also checks part
+  two: a click on a session opens its Evidence page with the final message,
+  the last test's summary, Show all and Open in Terminal typing without
+  running; a real git repository with a worktree shows in the tree's
+  Worktrees node with its ahead count, and Compare with Main lists its files
+  and opens the compare view with main at the branch point; the fixtures are
+  listed before and after). Part one: the `agents` GUI suite copies
   `tests/fixtures/claude` into a scratch transcripts folder
   (`MINICODE_CLAUDE_PROJECTS`, `MINICODE_CLAUDE_TMP`), presses Ctrl+Shift+A for
   real, and checks the sessions newest first with the running one marked,

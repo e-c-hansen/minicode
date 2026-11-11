@@ -581,6 +581,12 @@ void Editor::showActive() {
         break;
     case Document::Kind::Diff:
         setViewBuffer(d->buffer(), true, false);
+        if (d->editorPage()) {
+            GtkWidget* w = d->editorPage()->widget();
+            if (gtk_widget_get_parent(w) != slot_) gtk_stack_add_child(GTK_STACK(slot_), w);
+            gtk_stack_set_visible_child(GTK_STACK(slot_), w);
+            break;
+        }
         if (d->compare()) {
             if (!compare_) {
                 compare_ = new CompareView();

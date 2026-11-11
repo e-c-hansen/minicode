@@ -88,6 +88,10 @@ AgentsPanel::AgentsPanel(const std::string& folder) : model_(folder) {
         auto* s = static_cast<AgentsPanel*>(p);
         s->activateRow(s->menuRow_);
     });
+    add("evidence", +[](GSimpleAction*, GVariant*, gpointer p) {
+        auto* s = static_cast<AgentsPanel*>(p);
+        if (s->menuRow_ >= 0 && s->menuRow_ < (int)s->rows_.size()) s->showEvidence(s->rows_[s->menuRow_]);
+    });
     add("copy", +[](GSimpleAction*, GVariant*, gpointer p) {
         auto* s = static_cast<AgentsPanel*>(p);
         if (s->menuPath_.empty()) return;
@@ -101,7 +105,10 @@ AgentsPanel::AgentsPanel(const std::string& folder) : model_(folder) {
     g_signal_connect(click, "pressed", G_CALLBACK(onPressed), this);
     gtk_widget_add_controller(root_, GTK_EVENT_CONTROLLER(click));
 
-    model_.onChange = [this] { rebuild(); };
+    model_.onChange = [this] {
+        rebuild();
+        if (onModelChange) onModelChange();
+    };
     rebuild();
 }
 
@@ -287,8 +294,14 @@ void AgentsPanel::activateRow(int i) {
         if (onOpenFile) onOpenFile(r.path);
         return;
     }
+    if (r.kind == RowInfo::Session) showEvidence(r);
     if (!expanded_.erase(r.key)) expanded_.insert(r.key);
     rebuild();
+}
+
+// A click on a session shows what it did (the Mac's Show Evidence).
+void AgentsPanel::showEvidence(const RowInfo& r) {
+    if (r.kind == RowInfo::Session && !r.key.empty() && onShowEvidence) onShowEvidence(r.key, r.text);
 }
 
 void AgentsPanel::onActivated(GtkListBox*, GtkListBoxRow* row, gpointer p) {
@@ -332,9 +345,10 @@ void AgentsPanel::openMenuFor(int row) {
             menuPath_ = r.path;
             menuLabels_ = "Open|Copy Path";
         } else if (r.kind == RowInfo::Session) {
+            g_menu_append(sec, "Show Evidence", "agents.evidence");
             g_menu_append(sec, "Copy Transcript Path", "agents.copy");
             menuPath_ = r.key;
-            menuLabels_ = "Copy Transcript Path";
+            menuLabels_ = "Show Evidence|Copy Transcript Path";
         }
         if (g_menu_model_get_n_items(G_MENU_MODEL(sec)))
             g_menu_append_section(menu, nullptr, G_MENU_MODEL(sec));
