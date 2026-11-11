@@ -101,6 +101,13 @@ Verified by running it:
   `MINICODE_TERMINAL_ID` and `MINICODE_PID`, the dot and title count, a real
   key clearing the mark, Ctrl+Alt+W, `hooks --install` twice and onto a
   symlink in the scratch HOME). Not seen on a real desktop.
+- The inline agent's edits (item 3.3, part one): the `agent_panel` GUI suite
+  presses the real Ctrl+I, runs a stand-in script that streams
+  `tests/fixtures/claude/stream` (the real Claude Code never runs), and checks
+  the preview, the pending diff with the buffer untouched, Esc, Keep as one
+  undo step, Keep after an edit elsewhere, a second request, a missing
+  command and the bar closed by another tab. Terminal commands, tasks and
+  the Markdown preview are part two.
 - Notes and tours (item 3.4): the `notes` GUI suite runs the real client.
   `open --note` puts the file in the agent's preview tab and shows the box
   (text cleaned, label, x) over lines 10 to 12 with the text tag on exactly

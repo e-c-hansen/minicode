@@ -3222,6 +3222,49 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `snapshotPlan`'s unit tests, not on a real tall page; Vite's `--open` and
   Claude Code's links through BROWSER were not run.
 
+### 46. The inline agent, part one (done, November 2026; `PARITY.md` item 3.3)
+
+- **What it does**: Ctrl+I (the registry's `inlineChat.start`, `win.inlineagent`,
+  a row in `CommandsLinux.cpp`, Edit menu, the hints panel) opens the Mac's
+  bar over the editor, below the caret's line (only that line is asked for,
+  so the file is not laid out; it follows the scroll). A request goes to
+  `agent.command` as the Mac runs it: `$SHELL -l -c 'exec <command>
+  <InlineAgent::kPrintFlags>'` (`/bin/sh` without `$SHELL`; this machine has
+  no zsh) in the folder, `PATH` widened with `LspSearchDirs`, `NO_COLOR=1`,
+  the prompt from `InlineAgent::editPrompt` on stdin. Exit 127 or "command
+  not found" says Claude Code was not found; five minutes at most.
+  Core `InlineAgent.{h,cpp}` joined the Linux build lists; nothing copied.
+- **The pieces**: `linux/src/InlineAgentBar.{h,cpp}`, one a window
+  (`Editor::inlineAgent()`, made and deleted with the editor like the notes;
+  `Editor` has it as a friend for `sourceText`). A worker thread (detached,
+  checked against a generation and a live-set when it posts back) spawns
+  with `g_spawn_async_with_pipes_and_fds`, polls the three pipes (stdin
+  written as it takes bytes), feeds `InlineAgent::Stream`, and keeps a
+  preview (`InlineAgent::preview`) for the main thread, which a 80 ms timer
+  shows; the result comes back with `g_idle_add`. Esc while it works kills it
+  ("Stopped."); a second Esc closes.
+- **Pending, not made**: the blocks are applied to a copy
+  (`InlineAgent::applyEdits`), the bar shows `pendingDiff` (removed and added
+  lines in markup, 18 lines at most) and a text tag tints the replaced lines
+  in the buffer (never text, never undo). Return with an empty field keeps:
+  the rounds are made again on the buffer as it is (`moveOffset` for the
+  selection), and when `sameChange` says that is not what was shown the new
+  diff is shown and Keep waits for another Return; else the text goes in as
+  the line runs that changed (`FormatRun::Replacement`, `MultiEdit::apply`,
+  as Format Document), one Ctrl+Z. Esc drops it. A request typed while an
+  edit waits is asked about the pending text and builds on it, its earlier
+  requests in the prompt. If the buffer changed while Claude thought, the
+  blocks are made again on it before the diff shows. A tab switch
+  (`onActiveWillChange`) or the window closing closes the bar, and an edit
+  waiting says in the status bar that it was not made.
+- **Checked by** the `agent_panel` GUI suite (`BUILD-LINUX.md`): the real key,
+  a stand-in script over `tests/fixtures/claude/stream`, no real `claude`.
+- **Not done (part two)**: commands for an idle terminal, tasks handed to
+  Claude Code in a terminal tab, the Markdown preview's context, Ctrl+Enter,
+  and the Mac's "closed from elsewhere" for the file tree or terminal taking
+  the keyboard (only a tab switch and the window close it here). The tint is
+  not redrawn when the user edits inside a tinted line.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

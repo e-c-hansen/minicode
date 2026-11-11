@@ -94,6 +94,8 @@ const std::vector<LinuxRow>& linuxRows() {
         {"editor.action.insertCursorBelow", "ctrl+shift+down", 0, nullptr, nullptr},
         {"expandLineSelection", "ctrl+l", 0, nullptr, nullptr},
         {"editor.action.deleteLines", "ctrl+shift+k", 0, nullptr, nullptr},
+        // The inline agent (PARITY.md 3.3): the Mac's Cmd+I as Ctrl+I.
+        {"inlineChat.start", "ctrl+i", 0, nullptr, nullptr},
         {"editor.action.commentLine", "ctrl+/", 0, nullptr, nullptr},
         // Ctrl+L is Select Line's (D1), so the task key is the Mac's Option+Cmd+L
         // with Alt and Ctrl; Alt+C is markdown-all-in-one's, in Markdown only.

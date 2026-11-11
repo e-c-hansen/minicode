@@ -5,6 +5,7 @@
 // Tabs.cpp.
 #include "Editor.h"
 #include "AgentNotes.h"
+#include "InlineAgentBar.h"
 #include "AutoCloseInput.h"
 #include "BracketColors.h"
 #include "SemanticColors.h"
@@ -216,6 +217,7 @@ Editor::Editor() {
     large_ = new LargeFileUi(this);   // big files and long lines (LargeFileView.h)
     folds_ = new FoldUi(this);        // PARITY.md 1.10
     notes_ = new AgentNotes(this);    // PARITY.md 3.4
+    inline_ = new InlineAgentBar(this);   // PARITY.md 3.3
     showActive();   // the welcome text
 }
 
@@ -223,6 +225,8 @@ Editor::Editor() {
 // (main.cpp deletes the editor from GtkApplication's window-removed), so
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
+    delete inline_;
+    inline_ = nullptr;
     delete notes_;
     notes_ = nullptr;
     delete folds_;

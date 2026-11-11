@@ -424,7 +424,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Add a cursor on the line below or above each cursor, at the same column | Option Command Down, Option Command Up | Ctrl Shift Down, Ctrl Shift Up |  |
 | Add a cursor, or take one away, to type in several places at once | Option click | Alt click |  |
 | Add the next place the selected text occurs to the selection, or select the word at the cursor | Command D | Ctrl D |  |
-| Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | Command I |  |  |
+| Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | Command I | Ctrl I (edits in the editor so far) |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
 | Clear the terminal, its scrollback included | Command K |  |  |
 | Close an agent's note (`minicode open --note`) in the editor | Escape, or its × |  |  |

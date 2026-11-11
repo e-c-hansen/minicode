@@ -69,6 +69,7 @@
 #include "AgentNotes.h"
 #include "GitGutter.h"
 #include "GitPanel.h"
+#include "InlineAgentBar.h"
 #include "Keys.h"
 #include "MenuBarFocus.h"
 #include "TabStrip.h"
@@ -1642,6 +1643,12 @@ static void makeGitPanel(App* app) {
     };
     app->gitGutter->installActions(G_ACTION_MAP(app->window));
     app->editor->notes()->installActions(G_ACTION_MAP(app->window));   // the tour's keys
+    // The inline agent's bar (PARITY.md 3.3).
+    app->editor->inlineAgent()->command = [] { return g.settings->settings().agentCommand(); };
+    app->editor->inlineAgent()->folder = [app] { return app->rootDir; };
+    app->editor->inlineAgent()->note = [app](const std::string& text) {
+        if (!app->dead) flashStatus(app, text);
+    };
     app->git->onRefreshed = [app] {
         if (!app->dead && app->gitGutter) app->gitGutter->refreshSoon();
     };
@@ -1744,6 +1751,12 @@ static void act_complete(GSimpleAction*, GVariant*, gpointer userp) {
 static void act_definition(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     if (editorFocused(app)) app->lsp->goToDefinition();
+}
+
+// The inline agent's bar at the caret (InlineAgentBar.h, PARITY.md 3.3).
+static void act_inline_agent(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->editor->inlineAgent()->open()) gtk_widget_error_bell(app->window);
 }
 
 static void act_hover(GSimpleAction*, GVariant*, gpointer userp) {
@@ -1934,6 +1947,7 @@ static std::string hintsText(App* app) {
     row("workbench.action.findInFiles", "Find in folder");
     row("workbench.action.replaceInFiles", "Replace in folder");
     row("minicode.showTodos", "TODOs in folder");
+    row("inlineChat.start", "Ask the inline agent");
     row("editor.action.commentLine", "Toggle comment");
     row("editor.action.jumpToBracket", "Go to bracket");
     row("editor.fold", "Fold the region at the cursor");
@@ -2617,6 +2631,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
         if (app->nav) app->nav->tabWillSwitch();
         // A Ctrl+S waiting for its formatter saves the tab as it leaves.
         if (app->format) app->format->tabLeaving();
+        app->editor->inlineAgent()->closeFromElsewhere();
     };
     app->editor->onActiveChanged = [app] {
         if (app->dead) return;
@@ -2875,6 +2890,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "complete",       G_CALLBACK(act_complete));
     addAction(app, "definition",     G_CALLBACK(act_definition));
     addAction(app, "hoverinfo",      G_CALLBACK(act_hover));
+    addAction(app, "inlineagent",    G_CALLBACK(act_inline_agent));
     addAction(app, "renamesymbol",   G_CALLBACK(act_rename_symbol));
     addAction(app, "references",     G_CALLBACK(act_references));
     addAction(app, "quickfix",       G_CALLBACK(act_quick_fix));
