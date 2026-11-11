@@ -1125,7 +1125,11 @@ its server comes first here (2.0).
   function, parameter and variable colors, the string keeping its own, far
   lines unpainted until seen, edits ending the tokens). Needs the owner: the
   colors with a real server.
-- [ ] **2.7 Inlay hints (D6, D9).** `InlayHints`.
+- [x] **2.7 Inlay hints (D6, D9).** `InlayHints`. Left out of the Linux
+  port (the owner's call, 2026-11-11): Pango splits a `letter-spacing`
+  tag's room on both sides of the character and GtkTextTag takes no
+  negative value, so nothing leaves room on one side (D9 has the
+  measurements). Look again when GTK or Pango can.
 - [ ] **2.8 Install hints.** `InstallHints`.
 - [x] **2.9 Git verbs.** Push, pull, autofetch, Stage All, Discard with its
   Trash copy and undo, hunks and lines, the branch picker, commit verbs.
