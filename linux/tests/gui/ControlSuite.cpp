@@ -12,7 +12,7 @@
 //     answers the selected text;
 //   - an unknown command, a misspelled field and a value of the wrong type
 //     are error answers over the raw socket, with the request's id kept;
-//   - a missing file, `--note` and the commands of later items answer a
+//   - a missing file and the commands of later items answer a
 //     clear error and exit 1, never a crash; a request line cut short and
 //     a peer that goes away leave the app answering;
 //   - with no minicode running `state` exits 3 at once;
@@ -481,14 +481,6 @@ MC_GUI_SUITE(control) {
     MCGuiStep("exit 1 and the reason", [] {
         GCHECK(gRun->exitCode == 1);
         GCHECK(gRun->err.find("no such file") != std::string::npos);
-    });
-    MCGuiStep("minicode open --note", [] {
-        gRun = runClient({"open", F("a.txt"), "--note", "look here"});
-    });
-    MCGuiWait("the note request returns", 20, [] { return gRun->done; });
-    MCGuiStep("exit 1, notes are for item 3.4", [] {
-        GCHECK(gRun->exitCode == 1);
-        GCHECK(gRun->err.find("notes are not on Linux yet") != std::string::npos);
     });
     MCGuiStep("minicode term", [] { gRun = runClient({"term"}); });
     MCGuiWait("term returns", 20, [] { return gRun->done; });

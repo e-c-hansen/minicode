@@ -63,6 +63,7 @@
 #include "Formatting.h"
 #include "TreeGitColors.h"
 #include "Lsp.h"
+#include "AgentNotes.h"
 #include "GitGutter.h"
 #include "GitPanel.h"
 #include "Keys.h"
@@ -1599,6 +1600,7 @@ static void makeGitPanel(App* app) {
         if (!app->dead && app->git) app->git->refresh();
     };
     app->gitGutter->installActions(G_ACTION_MAP(app->window));
+    app->editor->notes()->installActions(G_ACTION_MAP(app->window));   // the tour's keys
     app->git->onRefreshed = [app] {
         if (!app->dead && app->gitGutter) app->gitGutter->refreshSoon();
     };

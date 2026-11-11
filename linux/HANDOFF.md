@@ -2998,6 +2998,54 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
 - **Needs the owner:** the sampling on a busy desktop (smaps_rollup's cost
   with a browser running), and other users' processes, which are left out.
 
+### 41. Notes and tours (done, November 2026; `PARITY.md` item 3.4)
+
+- **What it does**: the Mac's `AgentNotes`. `minicode open file:10 --to 12
+  --note TEXT [--from NAME] [--keep]` highlights the lines (a text tag with
+  a paragraph background, so no buffer text and no undo step), scrolls the
+  first line to the upper third and shows a box over the editor's slot above
+  it: the writer's name (Claude when none), the text (cleaned by the core's
+  `cleanNoteText`, 500 characters) and an x. `minicode tour FILE` (the Mac's
+  file format, parsed by the shared client) shows the first stop; Alt+] and
+  Alt+[ (`win.tournext` and `win.tourprevious`, rows of `CommandsLinux.cpp`
+  and `Keys.cpp`) step, enabled only while a tour is on, so the keys type
+  their character otherwise; the label reads "Claude · 2 of 3".
+- **The pieces**: `linux/src/AgentNotes.{h,cpp}`, one a window, made by the
+  `Editor` (`Editor::notes()`), which tells it before and after the tab on
+  show changes (`activeWillChange`, `activeChanged`) and when a tab goes
+  (`forget`). A note is a `Note` kept per `Document*` until its tab shows;
+  `place` puts it on the buffer (the tag, two marks on the first line's start
+  and the last line's end, "insert-text" and "delete-range" handlers that
+  close it when an edit reaches `[start, end]`, so edits above only move the
+  marks). Leaving the tab takes the note off the screen and keeps it with
+  its lines as the marks have them; closing (Escape through `onViewKey`, the
+  x, an edit, the tab closing) forgets it, and closing a tour's note ends the
+  tour. The box is an overlay child (`Editor::addOverlay`), positioned from
+  the first line's window coordinates above it (below it with no room),
+  again on scrolling and 60 ms after placing.
+- **The agent's preview tab**: `Document::isAgentPreview`, its title italic
+  like the preview tab, replaced by the next `Editor::openForAgent(path,
+  preview, quiet)` (never a dirty one, nor the tab the user types in), kept
+  by an edit, a save or a double-click on its title (`keepPreviewTab`). A
+  file already in a tab uses it. `--keep` opens a kept tab. Without `--note`
+  `open` is as before.
+- **The keyboard**: `open --note` and `tour` open beside the user's tab,
+  unshown, while the keyboard is in the editor (`userIsInDocument`; the
+  client says so, `"background": true`), the file added unread; the note
+  waits (`pending_`) and is placed when the tab is shown, after the disk
+  check, so a reload cannot close it. A note moves the caret only in the
+  agent preview tab. `state` has `note` (text, label, lines) and `tour`
+  (`stop`, `of`) per window, as the Mac's.
+- **Checked by** the `notes` GUI suite (`BUILD-LINUX.md`); 30 of its checks
+  fail with `place` switched off.
+- **Not done**: a note over a Markdown preview or LaTeX page (it waits until
+  the source shows), over a tab in the split editor (there is none here),
+  columns of a range are highlighted but the box is placed by the first
+  line, the hints panel's rows for the tour keys, and a note over a tab
+  still reading in the background when the keyboard leaves it (it waits for
+  the load, then places). **Needs the owner**: the box's look on a real
+  theme and its place with word wrap and a long first line.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

@@ -510,7 +510,7 @@ int minicodeCliMain(int argc, char **argv) {
     // rest of the table the same way, for a client that is not this one.
     if (!c.hooksAction.empty() || (c.cmd != "open" && c.cmd != "window" && c.cmd != "state" &&
                                    c.cmd != "selection" && c.cmd != "ping" && c.cmd != "procs" &&
-                                   c.cmd != "diff")) {
+                                   c.cmd != "diff" && c.cmd != "tour")) {
         const std::string what = c.hooksAction.empty() ? c.cmd : "hooks";
         // A hook never fails noisily.
         if (c.fromHook) return kExitOK;

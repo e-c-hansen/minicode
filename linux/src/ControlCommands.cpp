@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "Document.h"
+#include "AgentNotes.h"
 #include "Editor.h"
 #include "GitRun.h"
 #include "ProcessMonitor.h"
@@ -312,9 +313,49 @@ Json windowState(const ControlWindow& w, bool front) {
         }
     o.set("tabs", tabs);
     o.set("selection", selectionOf(w));
+    if (AgentNotes* n = w.editor ? w.editor->notes() : nullptr) {
+        if (n->shown()) {
+            Json note = Json::object();
+            note.set("text", n->text());
+            note.set("label", n->label());
+            note.set("line", n->firstLine());
+            note.set("to_line", n->lastLine());
+            o.set("note", note);
+        } else {
+            o.set("note", Json());
+        }
+        if (n->tourActive()) {
+            Json t = Json::object();
+            t.set("stop", n->tourIndex() + 1);
+            t.set("of", n->tourCount());
+            o.set("tour", t);
+        } else {
+            o.set("tour", Json());
+        }
+    }
     o.set("terminals", Json::array());   // the terminal's commands are later bites of 3.1
     o.set("browser", Json());
     return o;
+}
+
+// The last file of `open --note`: in the agent's preview tab (a kept tab with
+// --keep), beside the user's tab, unshown, while they type; the note is placed
+// when it shows (AgentNotes.h).
+bool openNoted(const ControlWindow& w, const std::string& path, const Json& a, int line,
+               int column, bool* background, std::string* error) {
+    Editor* ed = w.editor;
+    const bool beside = userIsInDocument(w) &&
+                        !(ed->active() && resolved(ed->active()->path()) == resolved(path));
+    Document* d = ed->openForAgent(path, !a["keep"].asBool(), beside);
+    if (!d) {
+        *error = "could not open " + path;
+        return false;
+    }
+    ed->notes()->show(d, ControlChannel::cleanNoteText(a["note"].asString()),
+                      a["from"].asString(), line > 0 ? line : 1, column,
+                      (int)a["to_line"].asInt(0), (int)a["to_column"].asInt(0));
+    if (beside) *background = true;
+    return true;
 }
 
 // One file of `open`: the tab, and the caret or selection asked for. The
@@ -421,11 +462,6 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
 
     d.on("open", [host](const Request& req, Dispatcher::Respond respond) {
         const Json& a = req.args;
-        if (a.has("note") || a.has("from")) {
-            respond(Result::failure("notes are not on Linux yet: open without --note and --from "
-                                    "(PARITY.md 3.4)"));
-            return;
-        }
         if (a.has("split")) {
             respond(Result::failure("the editor has one pane: open the file without split"));
             return;
@@ -507,10 +543,13 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
             const std::string spelled = spelledFrom(w, path);
             const bool lastFile = i + 1 == files.size();
             bool beside = false;
-            if (!openOne(host, w, spelled, (int)files[i]["line"].asInt(0),
-                         (int)files[i]["column"].asInt(0),
-                         lastFile ? (int)a["to_line"].asInt(0) : 0,
-                         lastFile ? (int)a["to_column"].asInt(0) : 0, &beside, &error)) {
+            const bool noted = lastFile && a.has("note");
+            if (noted ? !openNoted(w, spelled, a, (int)files[i]["line"].asInt(0),
+                                   (int)files[i]["column"].asInt(0), &beside, &error)
+                      : !openOne(host, w, spelled, (int)files[i]["line"].asInt(0),
+                                 (int)files[i]["column"].asInt(0),
+                                 lastFile ? (int)a["to_line"].asInt(0) : 0,
+                                 lastFile ? (int)a["to_column"].asInt(0) : 0, &beside, &error)) {
                 respond(Result::failure(error));
                 return;
             }
@@ -522,6 +561,71 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
         Json r = haveLast ? windowResult(last) : Json::object();
         r.set("opened", opened);
         if (besideUser) r.set("background", true);
+        respond(Result::success(r));
+    });
+
+    d.on("tour", [host](const Request& req, Dispatcher::Respond respond) {
+        const Json& a = req.args;
+        const Json& list = a["stops"];
+        if (list.size() == 0) {
+            respond(Result::failure("a tour needs stops"));
+            return;
+        }
+        std::vector<AgentNotes::Stop> stops;
+        for (size_t i = 0; i < list.size(); i++) {
+            const std::string p = resolved(list[i]["path"].asString());
+            if (!isRegularFile(p)) {
+                respond(Result::failure("stop " + std::to_string(i + 1) + ": no such file: " + p));
+                return;
+            }
+            AgentNotes::Stop s;
+            s.path = p;
+            s.line = (int)list[i]["line"].asInt(1);
+            s.column = (int)list[i]["column"].asInt(0);
+            s.toLine = (int)list[i]["to"].asInt(0);
+            s.note = ControlChannel::cleanNoteText(list[i]["note"].asString());
+            stops.push_back(s);
+        }
+        std::string error;
+        ControlWindow w;
+        if (a.has("window") || a.has("folder")) {
+            if (!target(host, a, &w, &error)) {
+                respond(Result::failure(error));
+                return;
+            }
+        } else {
+            std::vector<ControlWindow> ws = host.windows();
+            bool found = false;
+            for (size_t k = ws.size(); k-- > 0 && !found;)
+                if (inside(ws[k], stops[0].path)) {
+                    w = ws[k];
+                    found = true;
+                }
+            if (!found)
+                if (const ControlWindow* f = findById(ws, host.frontId())) {
+                    w = *f;
+                    found = true;
+                }
+            if (!found) {
+                const size_t slash = stops[0].path.rfind('/');
+                const std::string dir = slash == 0 ? "/" : stops[0].path.substr(0, slash);
+                if (!host.openWindow(dir, &w)) {
+                    respond(Result::failure("could not open a window on " + dir));
+                    return;
+                }
+            }
+        }
+        for (AgentNotes::Stop& s : stops) s.path = spelledFrom(w, s.path);
+        const bool beside = userIsInDocument(w) &&
+                            !(w.editor->active() && resolved(w.editor->active()->path()) ==
+                                                        resolved(stops[0].path));
+        if (!w.editor->notes()->startTour(stops, a["from"].asString(), beside, &error)) {
+            respond(Result::failure(error));
+            return;
+        }
+        Json r = windowResult(w);
+        r.set("stops", (int)stops.size());
+        if (beside) r.set("background", true);
         respond(Result::success(r));
     });
 

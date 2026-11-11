@@ -24,6 +24,7 @@
 #include "MarkdownEdit.h"
 #include "Settings.h"
 
+class AgentNotes;
 class AutoCloseInput;
 class BracketView;
 class Carets;
@@ -149,6 +150,17 @@ public:
     // A tab for `path` at the end of the row, not put on show, its file not
     // read until it first is (a session coming back, Persistence.h).
     Document* addTab(const std::string& path);
+    // A file for the agent (`minicode open --note`, AgentNotes.h): in the
+    // agent's preview tab when `preview` (each such open replaces the last
+    // one; an edit keeps it), else a kept tab, just right of the active
+    // one. With `quiet` it is only added beside the user's tab, to be read
+    // when shown; else shown. A file already in a tab uses that tab. Null
+    // when it could not be opened.
+    Document* openForAgent(const std::string& path, bool preview, bool quiet);
+    Document* agentPreviewTab() const;
+    // The window's notes, hanging over the text (AgentNotes.h).
+    AgentNotes* notes() const { return notes_; }
+    void removeOverlay(GtkWidget* w) { gtk_overlay_remove_overlay(GTK_OVERLAY(slotOverlay_), w); }
     // Where a tab's view was, to keep (a session, Reopen Closed Tab): its
     // selection, its first character on show and whether it showed its
     // page, the tab on show's taken from the view as it is now. A tab not
@@ -493,6 +505,7 @@ private:
     GtkWidget*     box_      = nullptr;   // the strip over the slot
     TabStrip*      strip_    = nullptr;
     GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_, media, LaTeX previews, diff
+    AgentNotes*    notes_ = nullptr;
     GtkWidget*     slotOverlay_ = nullptr;   // the slot, with the find bar over it
     GitDiffView*   diff_     = nullptr;   // made on the first diff
     CompareView*   compare_  = nullptr;   // made on the first comparison
