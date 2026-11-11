@@ -48,6 +48,19 @@ person", after this section, is that list.
 
 Verified by running it:
 
+- The control channel, part one (item 3.1): the `control` GUI suite runs the
+  real `build/minicode open|window|state|selection` against the app. The
+  socket is `<pid>.sock` (0600) in a 0700 folder; `open a.txt:3:6` shows the
+  file with the caret there and `--to` selects a range; `state` and
+  `selection` answer what is on show; with the keyboard in the editor an
+  open lands in a tab beside the user's and the client says so; an unknown
+  command, a misspelled field, a wrong type and a line that is not JSON are
+  error answers over the raw socket, a cut-short request leaves the app
+  answering, `--note`, a missing file and `term` exit 1 with the reason,
+  `state` with no minicode exits 3, and stale sockets (a dead pid, a live
+  pid with no listener) are removed while one with a listener is kept. The
+  check fails with the server taken out. Not tested: another user's peer
+  refused (one `SO_PEERCRED` comparison; it needs a second user).
 - Install hints (item 2.8): the `install_hints` GUI suite, with `MINICODE_INSTALL_HAVE=uv`,
   shows the bar for a missing Python server with `uv tool install basedpyright`,
   Copy, Run in Terminal typing it without Return, the bar going when the
@@ -1215,6 +1228,15 @@ Displays.
 - [ ] With real basedpyright, clangd and rust-analyzer: the colors of
   classes, functions, parameters and properties, strings and comments keeping
   theirs, and scrolling a long file painting lines as they come in.
+### The control channel (item 3.1, part one)
+
+- [ ] From a real terminal under GNOME: `minicode open file:12:3` while the
+  app runs raises nothing it should not and puts the caret there; typing in
+  the editor meanwhile keeps the keyboard. `minicode state --pretty` and
+  `minicode selection` with a real selection. `minicode open file` with no
+  minicode running starts the app, waits for its socket and opens the file.
+  The socket is under `/run/user/<uid>/minicode`.
+
 ### Symbols and folding ranges from the servers (items 2.12 and 2.13)
 
 - [ ] With real clangd and basedpyright: Ctrl Shift O listing the file's

@@ -2829,6 +2829,65 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
 - **Needs the owner**: the commands on a real Ubuntu (apt, snap), and a real
   install finishing in the terminal bringing the server up.
 
+### 38. The control channel, part one (done, November 2026; `PARITY.md` item 3.1)
+
+- **What it does**: the Mac's control channel for the commands that need
+  only windows, tabs and a selection: `ping`, `window`, `open`
+  (`path[:line[:col]]`, `--to`, `--keep`, `--window`, `--folder`), `state`
+  (`--pretty`) and `selection`. One JSON object a line, validated by the
+  core's `ControlProtocol` table (`src/ControlProtocol.cpp` and
+  `PageCheck.cpp` joined the Linux build lists; nothing copied). Every other
+  command in the table is registered and answers "<cmd> is not on Linux
+  yet"; `open --note` and `--from` answer that notes are item 3.4's.
+- **The pieces**: `linux/src/ControlServer.{h,cpp}` is the socket on the
+  GLib main loop (`g_unix_fd_add`, no thread): `<pid>.sock`, 0600, in a 0700
+  folder; `SO_PEERCRED` refuses another uid; one request at a time per
+  connection (the reader is taken off the loop while a request is out, so a
+  client cannot queue work); non-blocking `send` with a write source, and a
+  peer that takes nothing for 10 s dropped; lines over 1 MB close the
+  connection; stale sockets (dead pid, or a live pid where `connect` is
+  refused) removed at start (`removeStale`); the socket unlinked at exit.
+  `linux/src/ControlCommands.{h,cpp}` are the handlers; they see the app
+  only through `ControlHost` (windows, front id, open window, present, show
+  file), which `main.cpp` fills in (`startControlChannel`, called once from
+  the first command line; each `App` has a `controlId`). The client is the
+  Mac's `tools/minicode-cli.cpp`, with `#ifdef __APPLE__` around what is the
+  Mac's (libproc, bundle paths, `open -a`, hooks, `Procs`) and
+  `minicodeCliMain` in place of `main`; it is a source of the `minicode`
+  target, and `main()` hands argv to it when argv[1] is a protocol
+  subcommand (`ControlChannel::isSubcommand`), before Detach or GTK start.
+  So `minicode open|window|state|selection|term|...` is the client, and a
+  file named like a subcommand needs `./open`, as on the Mac's launcher.
+- **Where the socket is**: `src/ControlPaths.h` (header only, tested as
+  `control:linux-socket-folder`): `$MINICODE_CONTROL_DIR` when set (tests),
+  else `$XDG_RUNTIME_DIR/minicode` (`/run/user/<uid>/minicode`, which
+  systemd makes 0700), else `<$TMPDIR or /tmp>/minicode-<uid>`, made 0700 by
+  the server and used by either side only when it is a real folder of the
+  user's own with no group or other access. The harness's scratch
+  `XDG_RUNTIME_DIR` keeps a run's sockets apart from the user's.
+- **The keyboard**: `userIsInDocument` is the window active and the focus
+  in the editor's text view. Then a file that is not the one on show gets a
+  tab (`Editor::addTab`, or its own) with the caret or range given as the
+  tab's place (`placeTab`, offsets worked out from the file by
+  `ControlCommands::offsetOfLineColumn`), `"background": true` in the answer
+  and a line on the client's stderr, and the tab on show stays. Otherwise
+  the file shows as a double-click in the tree shows it, and
+  `revealLineColumn` places the caret (`--to` selects up to the range's end
+  instead).
+- **What differs from the Mac**: `state` has `terminals: []` and `browser:
+  null`; columns count characters (the Mac's, UTF-16 units); the agent
+  preview tab does not exist (it comes with notes, 3.4), so `--keep` changes
+  nothing: every open is a kept tab; a launch with no minicode running
+  spawns this binary on the folder (it detaches from the terminal) and waits
+  10 s for the socket.
+- **Checked by** the `control` GUI suite (the real client as a subprocess
+  of the harness, since the server is the harness's own process), which
+  fails with the server taken out, and `control:linux-socket-folder`.
+- **Left for later bites of 3.1**: `term`, `term-output`, `split`, `diff`,
+  `browse`, `page`, `open-url` and BROWSER, `notify` and `hooks`, `procs`,
+  `tour` and `install-skill`, and the skill file. Another uid's refusal is
+  untested (needs a second user).
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

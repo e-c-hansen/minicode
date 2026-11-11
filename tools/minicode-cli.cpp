@@ -9,12 +9,22 @@
 // seconds for its socket; reads (state, selection, term-output, procs) exit 3 at
 // once instead.
 //
+// On Linux (PARITY.md 3.1) the same file is the client half of the app's
+// own binary: `minicode open|window|state|selection ...` runs minicodeCliMain
+// (linux/src/main.cpp calls it before anything of GTK starts) over the socket
+// folder of ControlPaths.h; the commands of later items (terminals, diffs,
+// notifications, processes) answer "not on Linux yet" from the app, and the
+// ones that need the Mac's frameworks are left out of this build.
+//
 // For tests: MINICODE_LAUNCHER_DRYRUN prints the launch command instead of
 // running it, MINICODE_CLI_WAIT sets the wait in seconds, and
 // MINICODE_CONTROL_DIR names the one folder to look for sockets in.
-#include "ClaudeHooks.h"
+#include "ControlPaths.h"
 #include "ControlProtocol.h"
+#ifdef __APPLE__
+#include "ClaudeHooks.h"
 #include "ProcessTable.h"
+#endif
 #include <algorithm>
 #include <cerrno>
 #include <climits>
@@ -23,8 +33,10 @@
 #include <cstring>
 #include <dirent.h>
 #include <fstream>
+#ifdef __APPLE__
 #include <libproc.h>
 #include <mach-o/dyld.h>
+#endif
 #include <signal.h>
 #include <spawn.h>
 #include <sstream>
@@ -45,7 +57,7 @@ namespace {
 
 const int kExitOK = 0, kExitFailed = 1, kExitUsage = 2, kExitNoApp = 3;
 
-std::string trimmed(std::string dir) {
+[[maybe_unused]] std::string trimmed(std::string dir) {
     while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
     return dir;
 }
@@ -57,6 +69,12 @@ std::string trimmed(std::string dir) {
 // So that folder is always looked in, after the shell's TMPDIR when that
 // is another one. MINICODE_CONTROL_DIR names the one folder to use
 // instead (tests).
+#ifndef __APPLE__
+std::vector<std::string> socketDirs() {
+    return {socketFolder(getenv("MINICODE_CONTROL_DIR"), getenv("XDG_RUNTIME_DIR"),
+                         getenv("TMPDIR"), (unsigned)getuid())};
+}
+#else
 std::vector<std::string> socketDirs() {
     const char *forced = getenv("MINICODE_CONTROL_DIR");
     if (forced && *forced) return {trimmed(forced)};
@@ -77,6 +95,7 @@ std::vector<std::string> socketDirs() {
     if (out.empty()) out.push_back("/tmp/MiniCode");
     return out;
 }
+#endif
 
 // A folder the app made: a real folder (not a link) of this user's that
 // nobody else can enter. Another user's socket in a shared folder could
@@ -112,8 +131,12 @@ std::vector<Candidate> findSockets(int wantPid) {
             std::string path = dir + "/" + e->d_name;
             if (lstat(path.c_str(), &st) != 0 || !S_ISSOCK(st.st_mode) || st.st_uid != getuid())
                 continue;
+            #ifdef __APPLE__
             found.push_back({pid, (int64_t)st.st_mtimespec.tv_sec * 1000000000LL +
                                       st.st_mtimespec.tv_nsec});
+#else
+            found.push_back({pid, (int64_t)st.st_mtim.tv_sec * 1000000000LL + st.st_mtim.tv_nsec});
+#endif
             paths.push_back(path);
         }
         closedir(d);
@@ -127,6 +150,9 @@ std::vector<Candidate> findSockets(int wantPid) {
 
 // A minicode process of this user's that has no socket: one from before the
 // control channel, which a launch would only bring forward.
+#ifndef __APPLE__
+bool appRunningWithoutSocket() { return false; }   // every Linux minicode has the channel
+#else
 bool appRunningWithoutSocket() {
     std::vector<pid_t> pids(4096);
     int bytes = proc_listallpids(pids.data(), (int)(pids.size() * sizeof(pid_t)));
@@ -146,6 +172,7 @@ bool appRunningWithoutSocket() {
 
 // The app bundle this client was installed in (Contents/MacOS/minicode-cli),
 // or "" when it runs from elsewhere (the build folder).
+#ifdef __APPLE__
 std::string bundlePath() {
     char buf[PATH_MAX];
     uint32_t size = sizeof buf;
@@ -160,6 +187,9 @@ std::string bundlePath() {
     }
     return p.size() > 4 && p.compare(p.size() - 4, 4, ".app") == 0 ? p : "";
 }
+#endif
+
+#endif  // __APPLE__
 
 std::string shellQuote(const std::string &s) {
     std::string out = "'";
@@ -167,6 +197,32 @@ std::string shellQuote(const std::string &s) {
     return out + "'";
 }
 
+#ifndef __APPLE__
+// Starts minicode on `folder` as `minicode <folder>` does: the app detaches
+// from the terminal and returns at once (Detach.h), so this waits for that,
+// and the caller waits for the socket. False when it could not be started.
+bool launchApp(const std::string &folder) {
+    char exe[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (n <= 0) return false;
+    exe[n] = 0;
+    const char *dry = getenv("MINICODE_LAUNCHER_DRYRUN");
+    if (dry && *dry) {
+        std::printf("%s %s\n", shellQuote(exe).c_str(), shellQuote(folder).c_str());
+        std::fflush(stdout);
+        return true;
+    }
+    std::vector<const char *> argv = {exe};
+    if (!folder.empty()) argv.push_back(folder.c_str());
+    argv.push_back(nullptr);
+    pid_t pid;
+    if (posix_spawn(&pid, exe, nullptr, nullptr, (char *const *)argv.data(), environ) != 0)
+        return false;
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+#else
 // Starts minicode the way the launcher does with a folder: Launch Services
 // opens the bundle, which opens a window on the folder. False when it could
 // not be started.
@@ -188,6 +244,7 @@ bool launchApp(const std::string &folder) {
     waitpid(pid, &status, 0);
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
+#endif
 
 double waitSeconds() {
     const char *w = getenv("MINICODE_CLI_WAIT");
@@ -225,8 +282,12 @@ bool exchange(const Candidate &to, const std::string &request, std::string &answ
         error = std::string("socket: ") + std::strerror(errno);
         return false;
     }
+#ifdef SO_NOSIGPIPE
     int on = 1;
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
+#else
+    signal(SIGPIPE, SIG_IGN);   // a minicode that went away is an error, not a signal
+#endif
     // A diff waits for git and browse --wait for a page (15 s at most);
     // nothing else takes more than a moment.
     struct timeval tv = {timeoutSeconds, 0};
@@ -284,6 +345,7 @@ std::string readStdin(size_t limit) {
     return out;
 }
 
+#ifdef __APPLE__
 // Claude Code's settings file: $CLAUDE_CONFIG_DIR/settings.json when that is
 // set (Claude Code reads its settings from there then), else
 // ~/.claude/settings.json.
@@ -396,6 +458,14 @@ int openInDefaultBrowser(const std::string &url) {
     std::fprintf(stderr, "minicode: could not run %s: %s\n", program.c_str(), std::strerror(errno));
     return kExitFailed;
 }
+#endif  // __APPLE__
+
+#ifndef __APPLE__
+int openInDefaultBrowser(const std::string &) {
+    std::fprintf(stderr, "minicode: open-url is not on Linux yet\n");
+    return kExitFailed;
+}
+#endif
 
 int usageError(const std::string &message) {
     std::fprintf(stderr, "minicode: %s\nTry 'minicode help'.\n", message.c_str());
@@ -404,7 +474,11 @@ int usageError(const std::string &message) {
 
 }  // namespace
 
+#ifdef __APPLE__
 int main(int argc, char **argv) {
+#else
+int minicodeCliMain(int argc, char **argv) {
+#endif
     std::vector<std::string> args(argv + 1, argv + argc);
     char cwdBuf[PATH_MAX];
     std::string cwd = getcwd(cwdBuf, sizeof cwdBuf) ? cwdBuf : "/";
@@ -429,8 +503,22 @@ int main(int argc, char **argv) {
         }
         return usageError(c.error);
     }
+#ifdef __APPLE__
     if (!c.hooksAction.empty()) return runHooks(c.hooksAction);
+#else
+    // What the Linux app has so far (PARITY.md 3.1); the app answers the
+    // rest of the table the same way, for a client that is not this one.
+    if (!c.hooksAction.empty() || (c.cmd != "open" && c.cmd != "window" && c.cmd != "state" &&
+                                   c.cmd != "selection" && c.cmd != "ping")) {
+        const std::string what = c.hooksAction.empty() ? c.cmd : "hooks";
+        // A hook never fails noisily.
+        if (c.fromHook) return kExitOK;
+        std::fprintf(stderr, "minicode: %s is not on Linux yet\n", what.c_str());
+        return kExitFailed;
+    }
+#endif
 
+#ifdef __APPLE__
     // notify: never launches minicode and never complains that there is
     // none; with --from-hook nothing at all is ever reported (R7.2).
     const bool notify = c.cmd == "notify";
@@ -459,6 +547,10 @@ int main(int argc, char **argv) {
         const int terminal = ClaudeHooks::parsePositive(getenv("MINICODE_TERMINAL_ID"));
         if (!c.args.has("terminal") && terminal > 0) c.args.set("terminal", terminal);
     }
+#else
+    const bool notify = false, quiet = false, openUrl = false;
+    const std::string url;
+#endif
 
     if (!c.tourFile.empty()) {
         std::ifstream in(c.tourFile);
@@ -567,8 +659,10 @@ int main(int argc, char **argv) {
         std::printf("%s\n", c.pretty ? prettyJson(result).c_str() : result.dump().c_str());
         break;
     case Output::Procs: {
+#ifdef __APPLE__
         const std::string text = Procs::formatTable(result);
         std::fwrite(text.data(), 1, text.size(), stdout);
+#endif
         break;
     }
     case Output::Text: {

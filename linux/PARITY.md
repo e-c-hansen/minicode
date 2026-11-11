@@ -1253,9 +1253,17 @@ its server comes first here (2.0).
 
 3.1 and D10's test come first. The rest may run in parallel.
 
-- [ ] **3.1 The control channel and `minicode` commands.** `ControlProtocol`,
+- [~] **3.1 The control channel and `minicode` commands.** `ControlProtocol`,
   a socket under `$XDG_RUNTIME_DIR`, 0600 in a 0700 folder. Mac:
   `ControlServer`, `ControlCommands`, `tools/minicode-cli.cpp`.
+  Part one (done, November 2026; `HANDOFF.md` item 38): the server, the
+  client (the Mac's CLI, shared) and `open`, `window`, `state`, `selection`
+  and `ping`, with the user's typing protected (`"background"`); the `control`
+  GUI suite. Remains: `term` and `term-output` (with the terminal),
+  `split`, `diff` (3.2), `open --note`/`--from` and `tour` (3.4), `browse`,
+  `page` and `open-url`/BROWSER (3.7), `notify` and `hooks` (3.6), `procs`
+  (3.8), `install-skill` and the skill; every one answers "not on Linux yet"
+  now.
 - [ ] **3.2 The compare view.** `SideBySide`, word changes, Accept and Reject
   per hunk.
 - [ ] **3.3 The inline agent.** `InlineAgent`, with pending edits. Never run
