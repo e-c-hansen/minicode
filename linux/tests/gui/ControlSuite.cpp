@@ -264,7 +264,7 @@ MC_GUI_SUITE(control) {
         GCHECK(w["selection"]["start"]["line"].asInt() == 3);
         GCHECK(w["selection"]["start"]["column"].asInt() == 6);
         GCHECK(w["selection"]["text"].asString().empty());
-        GCHECK(w["terminals"].size() == 0);
+        GCHECK(w["terminals"].size() == 1);
     });
     MCGuiStep("minicode state --pretty is indented", [] { gRun = runClient({"state", "--pretty"}); });
     MCGuiWait("pretty state returns", 20, [] { return gRun->done; });

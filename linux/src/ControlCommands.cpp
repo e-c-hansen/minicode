@@ -1,5 +1,6 @@
 // ControlCommands.cpp — see ControlCommands.h.
 #include "ControlCommands.h"
+#include "TerminalAttention.h"
 
 #include <gtk/gtk.h>
 
@@ -333,7 +334,17 @@ Json windowState(const ControlWindow& w, bool front) {
             o.set("tour", Json());
         }
     }
-    o.set("terminals", Json::array());   // the terminal's commands are later bites of 3.1
+    // The terminal's own commands are later bites of 3.1; what it reports is
+    // its id (the window's) and its Claude Code mark (PARITY.md 3.6).
+    Json terminals = Json::array();
+    {
+        Json t = Json::object();
+        t.set("id", w.id);
+        const char* mark = TerminalAttention::markName(w.id);
+        t.set("attention", *mark ? Json(std::string(mark)) : Json());
+        terminals.push(t);
+    }
+    o.set("terminals", terminals);
     o.set("browser", Json());
     return o;
 }
@@ -791,6 +802,32 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
                 },
                 job);
         }).detach();
+    });
+
+    // `minicode notify`: a Claude Code hook (or another tool) marks a
+    // terminal as waiting or done, or clears it (PARITY.md 3.6). A window has
+    // one terminal here, so its id is the window's.
+    d.on("notify", [host](const Request& req, Dispatcher::Respond respond) {
+        const Json& a = req.args;
+        const int want = (int)a["terminal"].asInt();
+        bool found = false;
+        for (const ControlWindow& w : host.windows())
+            if (w.id == want) found = true;
+        if (!found) {
+            respond(Result::failure("there is no terminal " + std::to_string(want)));
+            return;
+        }
+        std::string error;
+        if (!TerminalAttention::apply(want, a, &error)) {
+            respond(Result::failure(error));
+            return;
+        }
+        Json r = Json::object();
+        r.set("terminal", want);
+        const char* mark = TerminalAttention::markName(want);
+        r.set("attention", *mark ? Json(std::string(mark)) : Json());
+        r.set("waiting", TerminalAttention::waitingCount());
+        respond(Result::success(r));
     });
 
     // The rest of the table is later items of PARITY.md 3: a clear answer

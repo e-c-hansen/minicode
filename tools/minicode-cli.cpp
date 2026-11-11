@@ -21,8 +21,8 @@
 // MINICODE_CONTROL_DIR names the one folder to look for sockets in.
 #include "ControlPaths.h"
 #include "ControlProtocol.h"
-#ifdef __APPLE__
 #include "ClaudeHooks.h"
+#ifdef __APPLE__
 #include "ProcessTable.h"
 #endif
 #include <algorithm>
@@ -345,7 +345,6 @@ std::string readStdin(size_t limit) {
     return out;
 }
 
-#ifdef __APPLE__
 // Claude Code's settings file: $CLAUDE_CONFIG_DIR/settings.json when that is
 // set (Claude Code reads its settings from there then), else
 // ~/.claude/settings.json.
@@ -442,6 +441,7 @@ int runHooks(const std::string &action) {
     return kExitOK;
 }
 
+#ifdef __APPLE__
 // open-url's way out: the address goes to the default browser through
 // /usr/bin/open ($MINICODE_OPEN_FALLBACK in the GUI checks, which record
 // instead of opening anything).
@@ -503,23 +503,20 @@ int minicodeCliMain(int argc, char **argv) {
         }
         return usageError(c.error);
     }
-#ifdef __APPLE__
     if (!c.hooksAction.empty()) return runHooks(c.hooksAction);
-#else
-    // What the Linux app has so far (PARITY.md 3.1, 3.8); the app answers the
-    // rest of the table the same way, for a client that is not this one.
-    if (!c.hooksAction.empty() || (c.cmd != "open" && c.cmd != "window" && c.cmd != "state" &&
-                                   c.cmd != "selection" && c.cmd != "ping" && c.cmd != "procs" &&
-                                   c.cmd != "diff" && c.cmd != "tour")) {
-        const std::string what = c.hooksAction.empty() ? c.cmd : "hooks";
+#ifndef __APPLE__
+    // What the Linux app has so far (PARITY.md 3.1, 3.6, 3.8); the app answers
+    // the rest of the table the same way, for a client that is not this one.
+    if (c.cmd != "open" && c.cmd != "window" && c.cmd != "state" &&
+        c.cmd != "selection" && c.cmd != "ping" && c.cmd != "procs" && c.cmd != "diff" &&
+        c.cmd != "tour" && c.cmd != "notify") {
         // A hook never fails noisily.
         if (c.fromHook) return kExitOK;
-        std::fprintf(stderr, "minicode: %s is not on Linux yet\n", what.c_str());
+        std::fprintf(stderr, "minicode: %s is not on Linux yet\n", c.cmd.c_str());
         return kExitFailed;
     }
 #endif
 
-#ifdef __APPLE__
     // notify: never launches minicode and never complains that there is
     // none; with --from-hook nothing at all is ever reported (R7.2).
     const bool notify = c.cmd == "notify";
@@ -536,6 +533,7 @@ int minicodeCliMain(int argc, char **argv) {
         c.pid = ClaudeHooks::parsePositive(getenv("MINICODE_PID"));
     }
 
+#ifdef __APPLE__
     // open-url, which BROWSER runs in minicode's terminals: a page that is
     // not local goes to the default browser, and so does any page when the
     // minicode the terminal belongs to does not take it. It never starts
@@ -549,7 +547,7 @@ int minicodeCliMain(int argc, char **argv) {
         if (!c.args.has("terminal") && terminal > 0) c.args.set("terminal", terminal);
     }
 #else
-    const bool notify = false, quiet = false, openUrl = false;
+    const bool openUrl = false;
     const std::string url;
 #endif
 

@@ -1314,8 +1314,7 @@ its server comes first here (2.0).
   and `ping`, with the user's typing protected (`"background"`); the `control`
   GUI suite. Remains: `term` and `term-output` (with the terminal),
   `split`, `browse`,
-  `page` and `open-url`/BROWSER (3.7), `notify` and `hooks` (3.6), `procs`
-  (3.8), `install-skill` and the skill; every one answers "not on Linux yet"
+  `page` and `open-url`/BROWSER (3.7), `install-skill` and the skill; every one answers "not on Linux yet"
   now. `diff` is done with 3.2.
 - [~] **3.2 The compare view.** `SideBySide`, word changes, Accept and Reject
   per hunk. Part one done (HANDOFF item 39): `CompareView` and
@@ -1338,7 +1337,12 @@ its server comes first here (2.0).
 - [ ] **3.5 The Agents panel and Evidence.** `AgentTranscript`, `AgentIndex`,
   `AgentEvidence`, `AgentView`, with Linux's scratchpad path. Claude Code's
   data is read, never written.
-- [ ] **3.6 Waiting for you.** `ClaudeHooks`, `AttentionBoard`.
+- [x] **3.6 Waiting for you.** `ClaudeHooks`, `AttentionBoard`. Done
+  (November 2026, HANDOFF item 42): the terminal's id and the two
+  variables, `notify --from-hook`, `hooks --print|--install`, a dot and
+  tooltip over the terminal, the waiting count in the window titles, Next
+  Waiting Terminal on Ctrl+Alt+W, typing and closing clearing the mark; the
+  `attention` GUI suite. Remains: the session labels in the Processes panel.
 - [ ] **3.7 Agents checking pages.** `PageCheck`, on WebKitGTK.
 - [~] **3.8 The Processes panel.** `ProcessTable` over `/proc`; its `Source` is
   the seam. Part one (November 2026, HANDOFF item 40): `ProcFs::Source`, a
@@ -1346,7 +1350,7 @@ its server comes first here (2.0).
   control channel's `procs`, with `procfs:*` and the `processes` suite.
   Part two (HANDOFF item 40): the panel in the sidebar (View > Toggle
   Processes), rows by group, Stop in the menu and on Delete, 2 s sampling
-  only while it shows. Remains: the session labels (item 3.6), "Open
+  only while it shows. Remains: the session labels (the board of item 3.6 is built; the wiring), "Open
   localhost:port" and "Reveal Origin" in the row's menu, and the owner's
   eyes on the look.
 - [ ] **3.9 The Claude Code IDE link.** `IdeLink`.

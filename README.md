@@ -487,7 +487,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Move the tab on show to the other editor group, making one on the right if the editor is not split | Control Command Right, Control Command Left, in the editor |  |  |
 | Move to the next or previous placeholder of a snippet completion, or leave the snippet | Tab, Shift Tab, or Escape | Tab, Shift Tab, or Escape |  |
 | Move to the next or previous terminal, across split panes and tabs | Option Command ], Option Command [ |  |  |
-| Move to the next terminal waiting for you, in any window (a Claude Code session asking for permission, with `minicode hooks --install` run) | Control Command W |  |  |
+| Move to the next terminal waiting for you, in any window (a Claude Code session asking for permission, with `minicode hooks --install` run) | Control Command W | Ctrl Alt W |  |
 | Move to the previous or next command in the terminal, its prompt at the top | Command Up, Command Down, in the terminal |  |  |
 | Move to the start or end of the line at the terminal's prompt, or delete back to its start | Command Left, Command Right, Command Delete |  |  |
 | New file | Command N | Ctrl N | New file in the ⋮ menu |
