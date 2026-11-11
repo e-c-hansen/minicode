@@ -545,6 +545,59 @@ are in the installed headers). Try first: whether the zsh integration can set
 them with the nonce's protection. Features that need the marks (Run File's
 busy check, the control channel's `term`) wait on that result.
 
+*Tried on the ThinkPad, 2026-11-11 (a standalone GTK 4 and VTE probe, VTE
+0.84.0, on a private Xvfb, bash printing the sequences a zsh hook would;
+zsh is not installed on the ThinkPad, so the hooks themselves were not
+run).* **Partly workable: a nonce-checked state mark works; per-event
+reporting and marks at their rows do not.** VTE does
+not parse OSC 133 or 633 at all: `133;A`, `B`, `C` and `D;n` changed no
+termprop and fired no signal, so `vte.shell.precmd`, `.preexec` and
+`.postexec` (`VTE_TERMPROP_SHELL_*`) can come only from the termprop OSC,
+`OSC 666 ; <name>=<value> ST`. It needs ST (ESC `\`); with BEL nothing
+happened. An app installs its own with `vte_install_termprop("vte.ext.<app>.<name>",
+VTE_PROPERTY_STRING, flags)` before the first `VteTerminal` exists (a name
+without the `vte.ext.` prefix is refused with a VTE-CRITICAL and -1; at
+least four components), and a string value arrives whole, so `mc=<nonce>`
+can ride in it and the app ignores any value without it with a string
+compare. The signal is `termprops-changed` (property ids; read the value by
+id). **It is not an event stream.** A plain termprop set to the value it
+already has fires nothing (P then P: one signal); an ephemeral one fires
+each time; but only the last value of a read's parse can be read: A, B, C
+in one write gave C, three equal marks gave one, 200 in one write gave the
+200th. Thirty precmd/preexec/postexec triples printed back to back as
+separate small writes gave one signal; with 1 ms between writes 66 of 90
+arrived. The signal comes after the chunk is parsed, so the cursor row read
+in the handler is the row at the chunk's end (a mark printed at row 16
+read 18, and an earlier mark in the same write was lost): marks cannot be
+placed on screen by row this way. **Forgery:** the termprop OSC is open to
+any program: `printf '\e]666;vte.shell.postexec=7\e\\'` set
+`vte.shell.postexec` to 7 and fired the signal (a forged valueless `precmd`
+and `vte.cwd=...` did nothing), so the built-in shell termprops can never be
+trusted, and only a `vte.ext.<app>` string carrying the nonce is
+checkable. A forged plain OSC 133 changes nothing, since VTE ignores it.
+**The nonce is readable by the user's own programs, as on the Mac:**
+after `unset MINICODE_NONCE` it is still in `/proc/<pid>/environ` for any
+same-user process, as the Mac's shell's exec-time environment is through
+`KERN_PROCARGS2` (`ps -E`). That is within the nonce's purpose, which is
+to refuse marks that are only printed (a file shown with `cat`, a remote
+shell, a program echoing what it read), not code already running as the
+user; a 0600 file the .zshenv reads and the app deletes, or an inherited
+descriptor closed before user code runs, would hide it better (not
+tried). `CURRENT_DIRECTORY_URI`
+(`vte.cwd`) works as is from OSC 7: `file://host/tmp/a%20b` came back as
+that URI at once, and the termprop OSC cannot set it.
+
+**Recipe, if it goes ahead:** the zsh hooks print `ESC ] 666 ;
+vte.ext.minicode.mark=p=<n>;x=<n>;d=<n>;s=<status>;c=<command>;mc=<nonce>
+ESC \`, where p, x and d count precmd, preexec and finished commands (a
+lost mark shows as a jump, and the value is never equal twice); the app
+installs the string termprop at startup, drops any value without its
+`mc=`, and takes busy (x greater than d), the last status and the command
+text from the newest value only. Kept: busy state, the cwd. Lost: each
+command's own status when several finish inside one read, and marks at
+rows. Run File's busy check and `term` can live with that; command marks
+cannot.
+
 **D11. Where state lives.** Sessions and the window's other remembered
 state are JSON (`Json`) under `$XDG_STATE_HOME/minicode` (default
 `~/.local/state/minicode`); backups under `$XDG_DATA_HOME/minicode/Backups`.
