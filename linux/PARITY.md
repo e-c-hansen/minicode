@@ -1324,9 +1324,8 @@ its server comes first here (2.0).
   and Shift+F7. Part two done (HANDOFF item 39): a comparison with a
   decision (`CompareDecision`: a check and a cross per hunk in a gutter, the
   bar, `lastChoiceGrace` with Send Now, `acceptedText`) and `minicode diff`.
-  Left, owned by other items: Compare with Main (3.5, the Worktrees node), the
-  IDE link's openDiff (3.9, which passes `CompareSpec::decisionPrompt`);
-  also the Mac's diff preview tab that each `diff` replaces (every
+  Left, owned by other items: Compare with Main (3.5, the Worktrees node);
+  the IDE link's openDiff is done (3.9). Also the Mac's diff preview tab that each `diff` replaces (every
   call opens a tab of its own here), choice tints on the rows, and keeping a
   tab's place.
 - [ ] **3.3 The inline agent.** `InlineAgent`, with pending edits. Never run
@@ -1349,7 +1348,12 @@ its server comes first here (2.0).
   only while it shows. Remains: the session labels (item 3.6), "Open
   localhost:port" and "Reveal Origin" in the row's menu, and the owner's
   eyes on the look.
-- [ ] **3.9 The Claude Code IDE link.** `IdeLink`.
+- [x] **3.9 The Claude Code IDE link.** `IdeLink`. Done, November 2026
+  (HANDOFF item 43): `IdeLinkServer` on the GLib main loop, the lock file,
+  `agent.ide-link` and View > Claude Code IDE Link, `CLAUDE_CODE_SSE_PORT`
+  for the terminal, selection_changed, openFile, openDiff, close_tab,
+  closeAllDiffTabs, getDiagnostics, the `idelink` GUI suite. Remains: a run
+  against a real Claude Code (the owner's).
 
 ### Stage 4: documents and layout, 5,000 to 7,000 lines
 

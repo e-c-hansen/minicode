@@ -105,6 +105,7 @@ const std::vector<Action>& actions() {
         {"workbench.action.toggleSidebarVisibility", "win.togglesidebar", true},
         {"workbench.view.scm", "win.togglegit", false},
         {"minicode.toggleProcesses", "win.toggleprocesses", false},
+        {"minicode.toggleIdeLink", "app.idelink", false},
         {"git.fetch", "win.gitfetch", false},
         {"git.pull", "win.gitpull", false},
         {"git.push", "win.gitpush", false},

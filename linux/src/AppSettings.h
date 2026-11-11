@@ -39,6 +39,9 @@ public:
     // False with *why set when nothing was written: an unknown theme, a tab
     // holding the file with unsaved changes, or a failed write.
     bool writeTheme(const std::string& id, bool commentColors, std::string* why);
+    // Writes `key = value` (Settings::withValue) and applies it at once, with
+    // the same refusals as writeTheme (the IDE link's menu item).
+    bool writeValue(const std::string& key, const std::string& value, std::string* why);
 
     // minicode's own rewrites of the file (a theme) are refused while a tab
     // holds it with unsaved changes, since the tab and the disk would then

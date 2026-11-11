@@ -46,6 +46,8 @@ core_sources = [
   core_dir / 'TermLinks.cpp',
   # The control channel's table and parsing (ControlServer.cpp, the client).
   core_dir / 'ControlProtocol.cpp',
+  # The Claude Code IDE link's protocol (IdeLinkServer.cpp).
+  core_dir / 'IdeLink.cpp',
   core_dir / 'PageCheck.cpp',
   # Processes and ports: the table's rules and the /proc source (ProcessMonitor.cpp).
   core_dir / 'ProcessTable.cpp',
@@ -260,6 +262,7 @@ gui_sources = [
   # The control channel (PARITY.md 3.1): its socket, its handlers and the
   # client `minicode open|window|state|selection` runs (the Mac's CLI, shared).
   'src/ControlServer.cpp',
+  'src/IdeLinkServer.cpp',
   'src/ControlCommands.cpp',
   'src/ProcessMonitor.cpp',
   'src/ProcessesPanel.cpp',

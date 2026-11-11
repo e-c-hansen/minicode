@@ -199,7 +199,7 @@ pid_t startXvfb(const std::string& log, std::string* display) {
         int in = open("/dev/null", O_RDONLY);
         if (in >= 0) dup2(in, 0);
         const std::string fd = std::to_string(fds[1]);
-        execlp("Xvfb", "Xvfb", "-displayfd", fd.c_str(), "-screen", "0", "1280x800x24",
+        execlp("Xvfb", "Xvfb", "-displayfd", fd.c_str(), "-screen", "0", "1280x1024x24",
                "-nolisten", "tcp", "-noreset", (char*)nullptr);
         _exit(127);
     }
@@ -252,13 +252,16 @@ void clearEnvironment() {
           "XDG_SESSION_ID", "XDG_SESSION_CLASS", "XDG_SESSION_DESKTOP", "XDG_CURRENT_DESKTOP",
           "DESKTOP_SESSION", "GDK_DISPLAY", "GTK_MODULES", "GTK_THEME", "GDK_SCALE", "GDK_DPI_SCALE",
           "GTK_IM_MODULE", "XMODIFIERS", "LANGUAGE", "VIRTUAL_ENV", "CONDA_PREFIX",
-          "CLAUDE_CODE_SSE_PORT"})
+          "CLAUDE_CODE_SSE_PORT", "CLAUDE_CONFIG_DIR"})
         unsetenv(n);
 }
 
 void setWorld(const std::string& root, const std::string& shortRoot) {
     const auto at = [&](const char* d) { return root + "/" + d; };
     setenv("HOME", at("home").c_str(), 1);
+    // Claude Code's folder for the IDE link's lock files (3.9): the scratch one,
+    // never the real ~/.claude.
+    setenv("CLAUDE_CONFIG_DIR", at("claude").c_str(), 1);
     setenv("XDG_CONFIG_HOME", at("config").c_str(), 1);
     setenv("XDG_CACHE_HOME", at("cache").c_str(), 1);
     setenv("XDG_DATA_HOME", at("data").c_str(), 1);

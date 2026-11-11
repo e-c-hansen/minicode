@@ -12,6 +12,7 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.git = a->git;
     w.procs = a->procs;
     w.procsShown = a->procsShown;
+    w.ide = a->ide;
     w.lsp = a->lsp;
     w.layout = a->layout;
     w.statusLabel = a->statusLabel;

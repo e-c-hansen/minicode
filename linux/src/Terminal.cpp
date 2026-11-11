@@ -636,6 +636,17 @@ void Terminal::spawnShell() {
 
     lastSpawn_ = g_get_monotonic_time();
 
+    // The environment is inherited, plus what the window adds.
+    std::vector<std::string> extra = extraEnvironment ? extraEnvironment() : std::vector<std::string>();
+    char** envv = nullptr;
+    if (!extra.empty()) {
+        envv = g_get_environ();
+        for (const std::string& kv : extra) {
+            const size_t eq = kv.find('=');
+            if (eq != std::string::npos) envv = g_environ_setenv(envv, kv.substr(0, eq).c_str(), kv.c_str() + eq + 1, TRUE);
+        }
+    }
+
     // vte_terminal_spawn_async is the current API (the sync variant is
     // deprecated in recent VTE).
     vte_terminal_spawn_async(
@@ -643,12 +654,13 @@ void Terminal::spawnShell() {
         VTE_PTY_DEFAULT,
         cwd_.empty() ? nullptr : cwd_.c_str(),  // working directory
         argv,
-        nullptr,                                 // envv (inherit)
+        envv,                                    // envv (inherit unless the window adds)
         G_SPAWN_DEFAULT,
         nullptr, nullptr, nullptr,               // child setup
         -1,                                      // timeout
         spawnCancel_,                            // cancelled if the window closes first
         onSpawned, this);                        // callback / user data
+    g_strfreev(envv);
 }
 
 void Terminal::focus() {

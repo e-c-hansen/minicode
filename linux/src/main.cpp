@@ -57,6 +57,7 @@
 #include "Terminal.h"
 #include "ProcessMonitor.h"
 #include "ProcessesPanel.h"
+#include "IdeLinkServer.h"
 #include "Browser.h"
 #include "Search.h"
 #include "FindBar.h"
@@ -116,6 +117,7 @@ struct App {
     bool       gitShown = false;
     // The Processes panel takes the same place (View > Toggle Processes).
     ProcessesPanel* procs = nullptr;
+    IdeLinkServer*  ide = nullptr;   // Claude Code's /ide (agent.ide-link), PARITY.md 3.9
     bool       procsShown = false;
     // The editor's change bars and the tree's git colors (PARITY.md 2.10).
     GitGutter*     gitGutter = nullptr;
@@ -2197,6 +2199,7 @@ static void applyWindowSettings(App* app) {
     app->editor->applySettings(st);
     app->findBar->applySettings(st);
     if (app->lsp) app->lsp->applySettings(st);   // restarts servers if lsp.* changed
+    if (app->ide) app->ide->setEnabled(st.ideLink());
     if (app->persist) app->persist->scheduleAutoSave();   // editor.auto-save may have changed
     if (app->git) app->git->applySettings(st);
     if (app->gitGutter) app->gitGutter->applySettings(st);
@@ -2222,7 +2225,12 @@ static void applyStylesheet() {
 }
 
 // The settings file changed on disk: every window follows.
+static GSimpleAction* gIdeLinkAction = nullptr;
+
 static void onSettingsChanged(void*) {
+    if (gIdeLinkAction)
+        g_simple_action_set_state(gIdeLinkAction,
+                                  g_variant_new_boolean(g.settings->settings().ideLink()));
     applyStylesheet();
     for (App* a : g.windows) applyWindowSettings(a);
 }
@@ -2323,6 +2331,22 @@ static void initShared() {
     g_signal_connect(hidden, "change-state", G_CALLBACK(onShowHiddenChanged), nullptr);
     g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(hidden));
     g_object_unref(hidden);
+
+    // View > Claude Code IDE Link: writes agent.ide-link, which every window
+    // follows (the Mac's MCIdeLinkMenuItem). The check mark follows the file.
+    gIdeLinkAction = g_simple_action_new_stateful(
+        "idelink", nullptr, g_variant_new_boolean(g.settings->settings().ideLink()));
+    g_signal_connect(gIdeLinkAction, "change-state",
+                     G_CALLBACK(+[](GSimpleAction*, GVariant* value, gpointer) {
+                         std::string why;
+                         if (!g.settings->writeValue("agent.ide-link",
+                                                     g_variant_get_boolean(value) ? "on" : "off", &why) &&
+                             !g.windows.empty())
+                             flashStatus(g.windows.back(), why);
+                     }),
+                     nullptr);
+    g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(gIdeLinkAction));
+    g_object_unref(gIdeLinkAction);
 
     Zoom::applySettings(g.settings->settings());   // the zoom from last time, before any view
     Keys::init(g.gapp, onKeysChanged);
@@ -2444,6 +2468,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     delete app->treeColors;  // before the tree it colors
     app->treeColors = nullptr;
     if (app->tree) app->tree->setDecorator(nullptr);
+    delete app->ide;       // before the editor whose tabs and selection it serves
+    app->ide = nullptr;
     delete app->format;    // before the session and the editor it asks
     app->format = nullptr;
     delete app->problems;  // before the session it lists
@@ -2923,6 +2949,21 @@ static App* newWindow(const std::string& root, const std::string& file) {
     g_signal_connect(app->window, "close-request", G_CALLBACK(onCloseRequest), app);
     g_signal_connect(app->window, "notify::focus-widget", G_CALLBACK(onFocusWidget), app);
     g_signal_connect(app->window, "notify::is-active", G_CALLBACK(onIsActive), app);
+    {
+        IdeLinkHost ih;
+        ih.editor = app->editor;
+        ih.window = GTK_WINDOW(app->window);
+        ih.root = app->rootDir;
+        ih.problems = [app] { return app->lsp ? app->lsp->problemRows() : std::vector<LspProblem>(); };
+        ih.note = [app](const std::string& text) { if (!app->dead) flashStatus(app, text); };
+        app->ide = new IdeLinkServer(ih);
+#ifdef MINICODE_ENABLE_TERMINAL
+        if (app->terminal)
+            app->terminal->extraEnvironment = [app] {
+                return app->ide ? app->ide->terminalEnvironment() : std::vector<std::string>();
+            };
+#endif
+    }
     applyWindowSettings(app);   // now that the editor, terminal and status bar exist
     StartupLog::mark("window: actions and settings applied");
     app->persist->restoreSession();   // the files open here last time
