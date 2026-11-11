@@ -9,7 +9,10 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
+#include <cstdio>
+#include <ctime>
 #include <cstring>
 #include <mutex>
 #include <set>
@@ -21,6 +24,9 @@
 #include "Lsp.h"
 #include "LspClient.h"
 #include "MultiEdit.h"
+#include "Utf8Offsets.h"
+
+#include <sys/stat.h>
 
 namespace {
 
@@ -133,31 +139,46 @@ static gboolean keyEscape(guint key, GdkModifierType mods) {
     return key == GDK_KEY_Escape && !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK));
 }
 
-void InlineAgentBar::onKeyPressed(GtkEventControllerKey*, guint key, guint, GdkModifierType mods,
+gboolean InlineAgentBar::onKeyPressed(GtkEventControllerKey*, guint key, guint, GdkModifierType mods,
                                   gpointer self) {
     InlineAgentBar* s = static_cast<InlineAgentBar*>(self);
-    if (!keyEscape(key, mods)) return;
+    // Ctrl+Enter: whatever the request, a task for Claude Code in the terminal
+    // (the Mac's Cmd+Return).
+    if ((key == GDK_KEY_Return || key == GDK_KEY_KP_Enter) && (mods & GDK_CONTROL_MASK) &&
+        !(mods & (GDK_ALT_MASK | GDK_SHIFT_MASK))) {
+        s->submit(true);
+        return TRUE;
+    }
+    if (!keyEscape(key, mods)) return FALSE;
     if (s->mode_ == Mode::Working) {
         // Stops the run; a second Esc closes.
         s->generation_++;
         s->cancelRun();
         s->setMode(Mode::Message);
         s->say("Stopped.", false);
-        return;
+        return TRUE;
     }
     if (s->mode_ == Mode::Pending) s->drop();
     s->close();
+    return TRUE;
 }
 
 void InlineAgentBar::focusText() {
     if (GtkWidget* v = ed_->textView()) gtk_widget_grab_focus(v);
 }
 
-bool InlineAgentBar::open() {
-    if (!ed_->active() || !ed_->isSource()) return false;
-    if (mode_ != Mode::Closed && doc_ != ed_->active()) close();
+bool InlineAgentBar::open(Kind kind, const std::string& where) {
+    if (kind == Kind::Edit && (!ed_->active() || !(ed_->isSource() || ed_->inMarkdownPage())))
+        return false;
+    if (mode_ != Mode::Closed && (kind != kind_ || doc_ != ed_->active())) close();
     build();
+    gtk_entry_set_placeholder_text(
+        GTK_ENTRY(entry_), kind == Kind::Edit      ? "Ask Claude to change this file"
+                           : kind == Kind::Command ? "Describe a command; it is typed, not run"
+                                                   : "Describe a task for Claude Code");
     if (mode_ == Mode::Closed) {
+        kind_ = kind;
+        where_ = where;
         doc_ = ed_->active();
         setMode(Mode::Input);
         gtk_editable_set_text(GTK_EDITABLE(entry_), "");
@@ -165,7 +186,9 @@ bool InlineAgentBar::open() {
         message_.clear();
         gtk_widget_set_visible(box_, TRUE);
         GtkTextView* view = GTK_TEXT_VIEW(ed_->textView());
-        adjustment_ = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(view));
+        adjustment_ = kind == Kind::Edit && !ed_->inMarkdownPage()
+                          ? gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(view))
+                          : nullptr;
         if (adjustment_) {
             g_object_ref(adjustment_);
             scrollHandler_ = g_signal_connect_swapped(
@@ -182,6 +205,10 @@ bool InlineAgentBar::open() {
 // rest of the file is not laid out.
 void InlineAgentBar::reposition() {
     if (!box_ || mode_ == Mode::Closed) return;
+    if (kind_ != Kind::Edit || ed_->inMarkdownPage()) {   // no caret line: the top
+        gtk_widget_set_margin_top(box_, 8);
+        return;
+    }
     GtkTextView* view = GTK_TEXT_VIEW(ed_->textView());
     GtkTextBuffer* b = gtk_text_view_get_buffer(view);
     GtkTextIter caret;
@@ -237,6 +264,10 @@ int InlineAgentBar::tintedLines() const {
 }
 
 void InlineAgentBar::clearTint() {
+    if (retintTimer_) g_source_remove(retintTimer_);
+    retintTimer_ = 0;
+    if (tintBuffer_ && tintChanged_) g_signal_handler_disconnect(tintBuffer_, tintChanged_);
+    tintChanged_ = 0;
     if (tintBuffer_) {
         if (tintTag_) {
             GtkTextIter a, b;
@@ -262,6 +293,26 @@ void InlineAgentBar::tint(const std::u16string&, const std::vector<InlineAgent::
                                          "paragraph-background", "rgba(241,76,76,0.28)", nullptr);
     tintBuffer_ = GTK_TEXT_BUFFER(g_object_ref(b));
     tintTag_ = tag;
+    tintChanged_ = g_signal_connect_swapped(
+        b, "changed", G_CALLBACK(+[](InlineAgentBar* s) {
+            // The user edited the buffer while the edit waits: tint again, once
+            // the typing pauses.
+            if (s->retintTimer_) g_source_remove(s->retintTimer_);
+            s->retintTimer_ = g_timeout_add(120, +[](gpointer p) -> gboolean {
+                InlineAgentBar* t = static_cast<InlineAgentBar*>(p);
+                t->retintTimer_ = 0;
+                t->retint();
+                return G_SOURCE_REMOVE;
+            }, s);
+        }), this);
+    applyTintLines(diff);
+}
+
+// The tag over the lines `diff` removes (numbered in the buffer it was made on).
+void InlineAgentBar::applyTintLines(const std::vector<InlineAgent::DiffLine>& diff) {
+    GtkTextBuffer* b = tintBuffer_;
+    if (!b || !tintTag_) return;
+    GtkTextTag* tag = tintTag_;
     for (const InlineAgent::DiffLine& d : diff) {
         if (d.kind != InlineAgent::DiffLine::Removed || d.oldLine < 1) continue;
         GtkTextIter a, e;
@@ -292,7 +343,15 @@ void InlineAgentBar::close() {
     if (box_) gtk_widget_set_visible(box_, FALSE);
     doc_ = nullptr;
     if (waiting && note) note("The agent's edit was not made: its bar closed before Keep");
-    if (hadFocus) focusText();
+    if (hadFocus && kind_ == Kind::Edit) focusText();
+}
+
+// Focus left the editor (the tree, a panel, the terminal, the browser): the
+// bar closes, and an edit waiting says it was not made.
+void InlineAgentBar::focusMoved(GtkWidget* focus) {
+    if (mode_ == Mode::Closed || !focus || !box_) return;
+    if (focus == ed_->widget() || gtk_widget_is_ancestor(focus, ed_->widget())) return;
+    close();
 }
 
 void InlineAgentBar::drop() {
@@ -311,7 +370,7 @@ void InlineAgentBar::cancelRun() {
 
 // ---------------------------------------------------------------- asking
 
-void InlineAgentBar::submit() {
+void InlineAgentBar::submit(bool asTask) {
     if (mode_ == Mode::Working || mode_ == Mode::Closed) return;
     const std::string request = trimmed(gtk_editable_get_text(GTK_EDITABLE(entry_)));
     if (request.empty()) {
@@ -319,6 +378,21 @@ void InlineAgentBar::submit() {
         return;
     }
     if (doc_ != ed_->active()) return;
+    if (asTask || kind_ == Kind::Task) {
+        runTask(request);
+        return;
+    }
+    if (kind_ == Kind::Command) {
+        InlineAgent::CommandRequest cr;
+        cr.request = request;
+        cr.directory = folder ? folder() : std::string();
+        asking_ = request;
+        gtk_editable_set_text(GTK_EDITABLE(entry_), "");
+        setMode(Mode::Working);
+        say("Working…", false);
+        start(InlineAgent::commandPrompt(cr));
+        return;
+    }
     InlineAgent::EditRequest r;
     r.request = request;
     r.earlier = requests_;
@@ -329,7 +403,7 @@ void InlineAgentBar::submit() {
                  : (path.empty() ? "untitled" : g_path_get_basename(path.c_str()));
     std::u16string now;
     size_t a = 0, b = 0;
-    if (!ed_->sourceText(now, a, b)) return;
+    if (!readSource(now, a, b)) return;
     askedBase_ = now;
     askedBaseA_ = a;
     askedBaseB_ = b;
@@ -541,6 +615,26 @@ void InlineAgentBar::ended(const std::string& reply, const std::string& error, b
         if (!had) gtk_widget_grab_focus(entry_);
         return;
     }
+    if (kind_ == Kind::Command) {
+        std::string why;
+        const std::string line = InlineAgent::commandFrom(reply, &why);
+        if (line.empty()) {
+            setMode(Mode::Message);
+            say(why.empty() ? "Claude Code gave no command." : why, false);
+            return;
+        }
+        lastTypedLine_ = line;
+        const bool typed = typeLine && typeLine(line);
+        if (!typed) {
+            setMode(Mode::Message);
+            say("The terminal is busy; the command was not typed: " + line, true);
+            return;
+        }
+        // Typed at the prompt for the user to read; the bar has done its work.
+        close();
+        if (note) note("Typed at the prompt, not run: " + line);
+        return;
+    }
     const InlineAgent::Reply parsed = InlineAgent::parseReply(reply);
     if (parsed.edits.empty()) {
         setMode(had ? Mode::Pending : Mode::Message);
@@ -568,7 +662,7 @@ void InlineAgentBar::ended(const std::string& reply, const std::string& error, b
     // on it, as Keep would, and show that.
     std::u16string now;
     size_t a = 0, b = 0;
-    if (ed_->sourceText(now, a, b) && now != base_) {
+    if (readSource(now, a, b) && now != base_) {
         std::string text, error2;
         size_t sa = 0, sb = 0;
         const size_t movedA = InlineAgent::moveOffset(base_, now, baseA_);
@@ -670,7 +764,7 @@ void InlineAgentBar::keep() {
     if (mode_ != Mode::Pending || rounds_.empty() || doc_ != ed_->active()) return;
     std::u16string now;
     size_t a = 0, b = 0;
-    if (!ed_->sourceText(now, a, b)) return;
+    if (!readSource(now, a, b)) return;
     const size_t movedA = InlineAgent::moveOffset(base_, now, baseA_);
     const size_t movedB = InlineAgent::moveOffset(base_, now, baseB_);
     std::string text, error;
@@ -729,4 +823,124 @@ bool InlineAgentBar::applyToBuffer(const std::string& after) {
     gtk_text_buffer_get_iter_at_offset(b, &bound, (int)newBound);
     gtk_text_buffer_select_range(b, &ins, &bound);
     return true;
+}
+
+// The buffer changed under a waiting edit: the lines the blocks replace in it
+// as it is now (what Keep would make), tinted again.
+void InlineAgentBar::retint() {
+    if (mode_ != Mode::Pending || !tintBuffer_ || rounds_.empty()) return;
+    std::u16string now;
+    size_t a = 0, b = 0;
+    if (!readSource(now, a, b)) return;
+    GtkTextIter s, e;
+    gtk_text_buffer_get_bounds(tintBuffer_, &s, &e);
+    gtk_text_buffer_remove_tag(tintBuffer_, tintTag_, &s, &e);
+    std::string text, error;
+    size_t sa = 0, sb = 0;
+    const size_t movedA = InlineAgent::moveOffset(base_, now, baseA_);
+    const size_t movedB = InlineAgent::moveOffset(base_, now, baseB_);
+    if (!makeRounds(Lsp::toUtf8(now), bytesBefore(now, movedA), bytesBefore(now, movedB), &text, &sa,
+                    &sb, &error))
+        return;   // Keep will say it no longer fits
+    applyTintLines(InlineAgent::pendingDiff(now, Lsp::toUtf16(text)));
+}
+
+// The editable source, also behind a Markdown preview (the edit is made on
+// the source, which the page is rendered from).
+bool InlineAgentBar::readSource(std::u16string& text, size_t& a, size_t& b) const {
+    if (!ed_->inMarkdownPage()) return ed_->sourceText(text, a, b);
+    GtkTextBuffer* sb = ed_->sourceBuffer();
+    if (!sb) return false;
+    GtkTextIter s, e, selA, selB;
+    gtk_text_buffer_get_bounds(sb, &s, &e);
+    char* raw = gtk_text_buffer_get_text(sb, &s, &e, TRUE);
+    text = Lsp::toUtf16(raw ? raw : "");
+    g_free(raw);
+    gtk_text_buffer_get_selection_bounds(sb, &selA, &selB);
+    a = utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selA));
+    b = utf16::fromCharOffset(text, gtk_text_iter_get_offset(&selB));
+    return true;
+}
+
+namespace {
+
+std::string shQuote(const std::string& s) {
+    std::string out = "'";
+    for (char ch : s) out += ch == '\'' ? std::string("'\\''") : std::string(1, ch);
+    return out + "'";
+}
+
+// Prompt files of a process that quit, or a day old, go as the next is written.
+void removeStalePromptFiles(const std::string& dir) {
+    GDir* d = g_dir_open(dir.c_str(), 0, nullptr);
+    if (!d) return;
+    const time_t now = time(nullptr);
+    while (const char* name = g_dir_read_name(d)) {
+        int pid = 0;
+        if (sscanf(name, "task-%d-", &pid) != 1) continue;
+        const std::string path = dir + "/" + name;
+        struct stat st;
+        if (stat(path.c_str(), &st) != 0) continue;
+        const bool gone = pid != (int)getpid() && kill(pid, 0) != 0 && errno == ESRCH;
+        if (gone || now - st.st_mtime > 24 * 3600) unlink(path.c_str());
+    }
+    g_dir_close(d);
+}
+
+}  // namespace
+
+// A task for Claude Code: the prompt in a file, one line typed in the terminal.
+void InlineAgentBar::runTask(const std::string& request) {
+    InlineAgent::TaskRequest t;
+    t.request = request;
+    t.where = !where_.empty() ? where_ : "the editor";
+    const std::string root = folder ? folder() : std::string();
+    const std::string& path = ed_->currentPath();
+    if (!path.empty())
+        t.path = !root.empty() && path.compare(0, root.size() + 1, root + "/") == 0
+                     ? path.substr(root.size() + 1)
+                     : path;
+    std::u16string now;
+    size_t a = 0, b = 0;
+    if (readSource(now, a, b) && a != b) {
+        t.selection = Lsp::toUtf8(now.substr(std::min(a, b), (a > b ? a - b : b - a)));
+        const std::string all = Lsp::toUtf8(now);
+        t.firstLine = InlineAgent::lineOf(all, bytesBefore(now, std::min(a, b)));
+        t.lastLine = InlineAgent::lineOf(all, bytesBefore(now, std::max(a, b)));
+    }
+    const std::string prompt = InlineAgent::taskPrompt(t);
+    if (prompt.empty()) return;
+    const std::string dir = std::string(g_get_tmp_dir()) + "/MiniCode-agent";
+    g_mkdir_with_parents(dir.c_str(), 0700);
+    removeStalePromptFiles(dir);
+    static int counter = 0;
+    const std::string file = dir + "/task-" + std::to_string((int)getpid()) + "-" +
+                             std::to_string(++counter) + ".txt";
+    const int fd = ::open(file.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+    bool ok = fd >= 0;
+    if (ok) {
+        size_t done = 0;
+        while (done < prompt.size()) {
+            const ssize_t w = ::write(fd, prompt.data() + done, prompt.size() - done);
+            if (w <= 0) { ok = false; break; }
+            done += (size_t)w;
+        }
+        ::close(fd);
+    }
+    if (!ok) {
+        setMode(Mode::Message);
+        say("The prompt could not be written to " + file, true);
+        return;
+    }
+    lastTaskFile_ = file;
+    const std::string cmd = command ? command() : std::string("claude");
+    std::string cwd = root;
+    if (cwd.empty()) cwd = g_get_home_dir();
+    const std::string line = "cd " + shQuote(cwd) + " && " + cmd + " \"$(cat " + shQuote(file) + ")\"";
+    lastTypedLine_ = line;
+    close();   // before typing: the terminal takes the keyboard
+    const bool typed = typeLine && typeLine(line);
+    if (note)
+        note(typed ? "Task typed in the terminal, not run: press Return to start Claude Code"
+                   : "The terminal could not take the task; its prompt is in " + file);
 }

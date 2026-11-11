@@ -1670,6 +1670,18 @@ static void makeGitPanel(App* app) {
     app->editor->inlineAgent()->note = [app](const std::string& text) {
         if (!app->dead) flashStatus(app, text);
     };
+    app->editor->inlineAgent()->typeLine = [app](const std::string& line) {
+#ifdef MINICODE_ENABLE_TERMINAL
+        if (app->dead || !app->terminal) return false;
+        if (!app->layout->terminalShown()) app->layout->toggleTerminal();
+        if (!app->terminal->typeText(line)) return false;   // never Return: the user reads it first
+        app->terminal->focus();
+        return true;
+#else
+        (void)app; (void)line;
+        return false;
+#endif
+    };
     app->git->onRefreshed = [app] {
         if (!app->dead && app->gitGutter) app->gitGutter->refreshSoon();
     };
@@ -1899,10 +1911,45 @@ static void act_definition(GSimpleAction*, GVariant*, gpointer userp) {
     if (editorFocused(app)) app->lsp->goToDefinition();
 }
 
-// The inline agent's bar at the caret (InlineAgentBar.h, PARITY.md 3.3).
+// The inline agent's bar (InlineAgentBar.h, PARITY.md 3.3): what has the
+// keyboard decides the request, as the Mac's. A text file in the editor or a
+// Markdown preview is an edit; an idle terminal a command, typed and never
+// run; anything else (the tree, a panel, the browser, a picture, the LaTeX
+// preview, a busy terminal) a task for Claude Code.
 static void act_inline_agent(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    if (!app->editor->inlineAgent()->open()) gtk_widget_error_bell(app->window);
+    using Kind = InlineAgentBar::Kind;
+    InlineAgentBar* bar = app->editor->inlineAgent();
+    GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(app->window));
+    // In the bar already: take the keyboard again, whatever its kind.
+    if (bar->mode() != InlineAgentBar::Mode::Closed && focus &&
+        (focus == bar->entry() || gtk_widget_is_ancestor(focus, bar->widget()))) {
+        bar->open(bar->kind());
+        return;
+    }
+    std::string where = "a panel";
+    bool inTerminal = false;
+#ifdef MINICODE_ENABLE_TERMINAL
+    inTerminal = focus && app->terminal && app->terminal->owns(focus);
+    if (inTerminal && !app->terminal->busy()) {
+        if (!bar->open(Kind::Command)) gtk_widget_error_bell(app->window);
+        return;
+    }
+#endif
+    if (inTerminal) {
+        where = "a terminal with a program running";
+    } else if (focus && gtk_widget_is_ancestor(focus, app->editor->widget())) {
+        if (bar->open(Kind::Edit)) return;
+        const std::string& p = app->editor->currentPath();
+        where = "the editor, showing " + (p.empty() ? std::string("no text file") : p);
+    } else if (focus && app->tree && Keys::within(focus, app->tree->widget())) {
+        where = "the file tree";
+    }
+#ifdef MINICODE_ENABLE_BROWSER
+    if (where == "a panel" && focus && app->browser && Keys::within(focus, app->browser->widget()))
+        where = "the browser";
+#endif
+    if (!bar->open(Kind::Task, where)) gtk_widget_error_bell(app->window);
 }
 
 static void act_hover(GSimpleAction*, GVariant*, gpointer userp) {
@@ -2459,6 +2506,8 @@ static void onFocusWidget(GObject*, GParamSpec*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     updateKeyPlace();
     updateMediaKey(app);
+    if (!app->dead && app->editor)   // focus outside the editor closes the inline agent's bar
+        app->editor->inlineAgent()->focusMoved(gtk_root_get_focus(GTK_ROOT(app->window)));
     updatePageZoom(app);   // the browser's page took or left the keyboard
     if (!app->dead && app->persist)   // focus-change auto-save
         app->persist->focusMoved(gtk_root_get_focus(GTK_ROOT(app->window)));

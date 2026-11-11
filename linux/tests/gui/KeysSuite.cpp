@@ -505,21 +505,21 @@ MC_GUI_SUITE(keys) {
         GCHECK(accels("win.closetab").empty());
     });
     MCGuiStep("a program that writes the bytes it reads", [] {
-        MCGuiType("stty raw -echo; head -c 17 > keys.bin; stty sane\n");
+        MCGuiType("stty raw -echo; head -c 16 > keys.bin; stty sane\n");
     });
     MCGuiWait("it is reading", 20, [] { return MCGuiFileExists(MCGuiProjectFile("keys.bin")); });
-    MCGuiStep("the plain Ctrl keys, old and new, and the editor's keys", [] {
+    MCGuiStep("the plain Ctrl keys, old and new, and the editor's keys (not Ctrl+I, the inline agent's, Global)", [] {
         gBefore = gRuns;
-        for (const char* k : {"ctrl+n", "ctrl+l", "ctrl+h", "ctrl+g", "ctrl+w", "ctrl+i", "ctrl+b",
+        for (const char* k : {"ctrl+n", "ctrl+l", "ctrl+h", "ctrl+g", "ctrl+w", "ctrl+b",
                               "ctrl+o", "ctrl+q", "ctrl+f", "ctrl+alt+l", "ctrl+alt+i", "f3"})
             MCGuiKey(k);
     });
     MCGuiWait("the program got them all", 20, [] {
-        return MCGuiReadFile(MCGuiProjectFile("keys.bin")).size() == 17;
+        return MCGuiReadFile(MCGuiProjectFile("keys.bin")).size() == 16;
     });
     MCGuiStep("as bytes, in order, and no command ran", [] {
         GCHECK(MCGuiReadFile(MCGuiProjectFile("keys.bin")) ==
-               std::string("\x0e\x0c\x08\x07\x17\x09\x02\x0f\x11\x06\x1b\x0c\x1b\x09\x1bOR"));
+               std::string("\x0e\x0c\x08\x07\x17\x02\x0f\x11\x06\x1b\x0c\x1b\x09\x1bOR"));
         for (const auto& [name, n] : gRuns)
             if (n != gBefore[name]) MCGuiNote("%s ran in the terminal", name.c_str());
         GCHECK(gRuns == gBefore);
