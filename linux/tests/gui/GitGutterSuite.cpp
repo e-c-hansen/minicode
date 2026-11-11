@@ -244,6 +244,20 @@ MC_GUI_SUITE(git_gutter) {
         GCHECK(Text().rfind("top\nl0\nl1\nL2\n", 0) == 0);
     });
 
+    // ---- a slow click on a bar: the popover opened on the press was closed
+    // again by GTK before a release 0.3 s later (the first time it showed)
+    MCGuiStep("a press on the changed bar", [] {
+        const graphene_rect_t r = Gut()->rectOfChangeBar(1);
+        MCGuiPress(Gut()->widget(), Gutter::kDotLane + 1, r.origin.y + r.size.height / 2);
+    });
+    MCGuiPause(0.3);   // time is the condition: a hand holds the button
+    MCGuiStep("the release", [] { MCGuiRelease(); });
+    MCGuiWait("the popover stays after a slow click", 10, [] {
+        return Bars()->popoverShown() && MCGuiOnScreen(Bars()->revertButton());
+    });
+    MCGuiStep("closed by Escape", [] { MCGuiKey("escape"); });
+    MCGuiWait("and gone", 10, [] { return !Bars()->popoverShown(); });
+
     // ---- a click on a bar
     ClickBar("a click on the changed bar", 1);
     MCGuiStep("its old line, with the buttons", [] {
@@ -262,9 +276,12 @@ MC_GUI_SUITE(git_gutter) {
     MCGuiWait("closed", 10, [] { return !Bars()->popoverShown(); });
 
     // ---- colors
-    MCGuiStep("the bars draw in VS Code's colors", [] {
-        GCHECK(BarColored(1, 0x1B, 0x81, 0xA8));   // modified
-        GCHECK(BarColored(0, 0x48, 0x7E, 0x02));   // added
+    // A picture of the gutter taken at once can predate the popover's close.
+    MCGuiWait("the bars draw in VS Code's colors", 10, [] {
+        return BarColored(1, 0x1B, 0x81, 0xA8) &&    // modified
+               BarColored(0, 0x48, 0x7E, 0x02);      // added
+    });
+    MCGuiStep("the bars' color setting", [] {
         MCGuiSetSettings(std::string(kSettings) + "editor.git-modified = #FF00FF\n");
     });
     MCGuiWait("and in editor.git-modified's", 10, [] { return BarColored(1, 0xFF, 0x00, 0xFF); });
