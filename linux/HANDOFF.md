@@ -2743,6 +2743,30 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   (`large_file` crashed in `BufferLines::of`). `GitGutter` reads
   `gtk_text_view_get_buffer` instead.
 
+### 35. Symbols and folding ranges from the servers (done, November 2026; `PARITY.md` items 2.12 and 2.13)
+
+- **Symbols** are `LspSessionSymbols.cpp`, the symbol half of the Mac's
+  `Lsp+Navigation`. Go to Symbol in File ("@") asks the file's server
+  (`Feature::DocumentSymbols`, the core's tree flattened parent first); the
+  palette's own outline stands in when no server lists symbols, the one
+  asked refuses, or it exits, so the palette never waits on a dead server.
+  Go to Symbol in Workspace ("#", Ctrl+T, a registry row in
+  `CommandsLinux.cpp` and a GAction in `Keys.cpp`) asks every running
+  server offering `workspace/symbol`, cancels the question before and
+  merges answers as they come (`Lsp::mergeSymbols`). A pick in another
+  file opens through `onReveal`, as a jump for Go Back.
+- **Folding ranges** are `LspSessionFolding.cpp`: `textDocument/foldingRange`
+  0.1 s after a file comes on show and 0.6 s after typing, parsed and
+  sanitized by the core, handed to `DocumentFolds::setServerRanges` with
+  the generation asked about; `regions()` and `freshRegions()` prefer them
+  only while the text is that one, else `Fold::compute`'s.
+- **Checked by** the `server_symbols` and `server_folding` GUI suites
+  (scripted `fakelsp`); each fails with its fix taken out. The command
+  registry checks in `tests/commands_linux_tests.inc` now use the inline
+  agent (`inlineChat.start`) as the command Linux still lacks.
+- **Needs the owner:** real clangd and basedpyright, Ctrl+T under GNOME and
+  in the terminal, and the folds' look from a real server.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

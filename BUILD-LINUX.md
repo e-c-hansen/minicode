@@ -1201,6 +1201,14 @@ Displays.
 - [ ] How the stops' boxes, the list and the hint look, and Tab, Shift Tab
   and Escape under GNOME on Wayland with IBus running.
 
+### Symbols and folding ranges from the servers (items 2.12 and 2.13)
+
+- [ ] With real clangd and basedpyright: Ctrl Shift O listing the file's
+  symbols from the server, Ctrl T finding symbols across the folder and
+  opening one (Go Back returns), and the gutter's folds following the
+  server's ranges after a pause in typing. Ctrl T in the terminal stays the
+  program's.
+
 ### Source Control (item 2.9)
 
 - [ ] Push, pull and autofetch

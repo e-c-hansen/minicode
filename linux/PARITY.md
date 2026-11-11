@@ -173,8 +173,8 @@ Choices item 1.5 made, by the same rules:
   Global: in the terminal Ctrl+P, Ctrl+G, and F1 are the program's
   (readline's previous line, Emacs's quit), as the Mac's grid keeps Ctrl+G,
   and Ctrl+Shift+P and Ctrl+Shift+O open the palette from there.
-- Ctrl+T, VS Code's Go to Symbol in Workspace, stays free until item 2.12
-  brings the command.
+- Ctrl+T is VS Code's Go to Symbol in Workspace (item 2.12), a plain Ctrl
+  key, so the program in the terminal keeps it (fzf's file widget).
 
 Choices item 1.6 made, by the same rules:
 - The find bar's keys are VS Code's on Linux: Ctrl+H the replace row, F3
@@ -688,7 +688,7 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   its fix (the enabled filter, the selection, the putting back, the worker
   thread). Needs the owner: the look, F1 and Ctrl+Shift+O under GNOME with
   IBus, and Quick Open on a large real folder. The server's symbols and Go
-  to Symbol in Workspace are item 2.12.
+  to Symbol in Workspace came with item 2.12.
 - [x] **1.6 Find and replace.** The find bar with case, word, regex, preserve
   case, and in selection; Replace in Folder. `TextFind`, `FolderSearch`.
   D5's function is `MultiEdit::apply` (HANDOFF.md item 20).
@@ -809,8 +809,8 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   limit, and Fold All and Unfold All of 20,000 regions (50,000 with
   `MC_GUI_FULL_PERF=1`), each within a CPU bound (D8 has the timings). They
   fail without the gutter's jump, without Return's move below the fold, and
-  without the limit. Not done: the language server's foldingRange (item
-  2.13). Needs the owner: how the placeholder and chevrons look in both
+  without the limit. The language server's foldingRange came with item
+  2.13. Needs the owner: how the placeholder and chevrons look in both
   themes, the keys on a real keyboard (Ctrl+Shift+[ on layouts where Shift+[
   is no brace), a touchpad's scrolling past folds, and how GTK's measuring
   of thousands of lines after Fold All feels on a slower machine.
@@ -1184,34 +1184,22 @@ its server comes first here (2.0).
   built-in theme was tried), right clicks with a real mouse and touchpad
   under GNOME, the WebKit page's menu there, and the color chooser and
   slider popovers' look and keyboard.
-- [~] **2.12 Symbols from the servers.** Built (`LspSessionSymbols.cpp`, the
-  palette's "@" and "#", Ctrl+T; suite `server_symbols` passes three times
-  and fails without the fix). Remains: `tests/commands_linux_tests.inc`
-  lines 78-80, 390-391 and 464 still use showAllSymbols as the command
-  Linux lacks (pick another), then `make test`, `meson test`, the full GUI
-  run, and HANDOFF's notes. Added by item 1.5, which left them
-  out because the Linux checks have no scripted server yet. Go to Symbol
-  in File asks the server first (`textDocument/documentSymbol`, the outline
-  standing in when there is none or it refuses), and Go to Symbol in
-  Workspace is the palette's "#" with VS Code's Ctrl+T, asking every
-  running server (`workspace/symbol`). Mac: `Lsp+Navigation`'s
-  `documentSymbolsWithCompletion:` and `workspaceSymbols:`, and the
-  language server half of `tests/gui/SymbolsSuite.mm`. The palette asks in
-  `PalettePanel::askSymbols` and says "#" is not here yet. Its checks need
-  `tests/fakelsp` built for the Linux harness.
-- [~] **2.13 Folding ranges from the servers.** Built
-  (`LspSessionFolding.cpp`, `DocumentFolds::setServerRanges`; suite
-  `server_folding` passes three times and fails without the fix). Remains:
-  `meson test`, the full GUI run, and HANDOFF's notes. Added by item 1.10, which
-  left them out: the Linux session (`Lsp.cpp`) has only the tab on show
-  open on its server and asks it nothing about folding. The Mac asks
-  `textDocument/foldingRange` 0.6 s after typing (`Client::foldingRanges`,
-  `Lsp::parseFoldingRanges`, the core's already) and hands the answer to
-  `MCFolds setServerRanges:kinds:generation:`, which takes it over the
-  computed regions only while the text is the one it was asked for.
-  `DocumentFolds` (`Folds.h`) needs the same: a `setServerRanges` taking
-  `Fold::sanitize`d ranges with its `generation()`, `regions()` and
-  `freshRegions()` preferring them. Check with `tests/gui/FakeLsp.h`.
+- [x] **2.12 Symbols from the servers.** Done (November 2026,
+  `HANDOFF.md` item 35). Go to Symbol in File ("@", Ctrl+Shift+O) asks the
+  file's server first (`textDocument/documentSymbol`, the outline standing
+  in when none lists symbols, one refuses, or it exits), and Go to Symbol in
+  Workspace is the palette's "#" with VS Code's Ctrl+T, asking every running
+  server offering `workspace/symbol`, cancelling the question before and
+  merging the answers (`LspSessionSymbols.cpp`). Suite `server_symbols`
+  fails without the fix. Needs the owner: real clangd and basedpyright, and
+  Ctrl+T in the terminal (the program keeps it there).
+- [x] **2.13 Folding ranges from the servers.** Done (November 2026,
+  `HANDOFF.md` item 35). `textDocument/foldingRange` is asked 0.1 s after a
+  file comes on show and 0.6 s after typing (`LspSessionFolding.cpp`), and
+  `DocumentFolds::setServerRanges` takes the sanitized answer over
+  `Fold::compute`'s regions while the text is the one asked about. Suite
+  `server_folding` fails without the fix. Needs the owner: real servers'
+  folds in the gutter.
 
 ### Stage 3: agents, 8,000 to 10,000 lines
 

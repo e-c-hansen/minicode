@@ -71,13 +71,15 @@ static void testLinuxCommandTable() {
     CHECK(ordered);
     CHECK(linuxRows().size() >= 40);
     CHECK(linuxRow("nope") == nullptr);
-    // The palette is there (PARITY.md 1.5); Go to Symbol in Workspace is not
+    // The palette is there (PARITY.md 1.5); the inline agent is not
     // yet, so it has no key and keys.conf refuses it.
     CHECK(linuxRow("workbench.action.showCommands") != nullptr);
     CHECK(available(*find("workbench.action.showCommands"), Platform::Linux));
-    CHECK(linuxRow("workbench.action.showAllSymbols") == nullptr);
-    CHECK(!available(*find("workbench.action.showAllSymbols"), Platform::Linux));
-    CHECK(defaultKeys(*find("workbench.action.showAllSymbols"), Platform::Linux).empty());
+    CHECK(linuxRow("inlineChat.start") == nullptr);
+    CHECK(!available(*find("inlineChat.start"), Platform::Linux));
+    CHECK(defaultKeys(*find("inlineChat.start"), Platform::Linux).empty());
+    CHECK(linuxRow("workbench.action.showAllSymbols") != nullptr);
+    CHECK(available(*find("workbench.action.showAllSymbols"), Platform::Linux));
     // Linux's words where the Mac's do not fit, the registry's elsewhere.
     CHECK(std::string(titleOf(*find("revealFileInOS"), Platform::Linux)) == "Open Containing Folder");
     CHECK(std::string(titleOf(*find("revealFileInOS"), Platform::Mac)) == "Reveal in Finder");
@@ -386,13 +388,13 @@ static void testLinuxKeymapFile() {
     CHECK(errs.size() == 1);
     // A command Linux does not have yet.
     errs.clear();
-    m = resolve("ctrl+alt+p = workbench.action.showAllSymbols\n", &errs, Platform::Linux);
+    m = resolve("ctrl+alt+p = inlineChat.start\n", &errs, Platform::Linux);
     CHECK(errs.size() == 1 && errs[0].message.find("not in minicode for Linux yet") != std::string::npos);
     CHECK(m.commandsFor(K("ctrl+alt+p")).empty());
     // The same line on the Mac is fine, and its keys are the Mac's.
     errs.clear();
-    m = resolve("ctrl+alt+p = workbench.action.showAllSymbols\n", &errs);
-    CHECK(errs.empty() && HasKey(m, "workbench.action.showAllSymbols", "cmd+t"));
+    m = resolve("ctrl+alt+p = inlineChat.start\n", &errs);
+    CHECK(errs.empty() && HasKey(m, "inlineChat.start", "cmd+i"));
     // The palette's own keys move like any other.
     errs.clear();
     m = resolve("ctrl+alt+p = workbench.action.showCommands\n", &errs, Platform::Linux);
@@ -461,7 +463,7 @@ static void testLinuxKeymapFile() {
         CHECK(text.find(std::string(" = ") + r.id) != std::string::npos);
     }
     // Only Linux's commands, in Linux's words, with no Mac key.
-    CHECK(text.find("workbench.action.showAllSymbols") == std::string::npos);
+    CHECK(text.find("inlineChat.start") == std::string::npos);
     CHECK(text.find("# ctrl+shift+p = workbench.action.showCommands") != std::string::npos);
     CHECK(text.find("cmd+") == std::string::npos);
     CHECK(text.find("File > Open Containing Folder") != std::string::npos);
