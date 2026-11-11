@@ -74,3 +74,4 @@ CompareSuite.cpp
 ProcessesSuite.cpp
 NotesSuite.cpp
 AttentionSuite.cpp
+AgentsSuite.cpp

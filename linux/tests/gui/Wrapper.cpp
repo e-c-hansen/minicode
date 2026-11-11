@@ -199,7 +199,7 @@ pid_t startXvfb(const std::string& log, std::string* display) {
         int in = open("/dev/null", O_RDONLY);
         if (in >= 0) dup2(in, 0);
         const std::string fd = std::to_string(fds[1]);
-        execlp("Xvfb", "Xvfb", "-displayfd", fd.c_str(), "-screen", "0", "1280x800x24",
+        execlp("Xvfb", "Xvfb", "-displayfd", fd.c_str(), "-screen", "0", "1280x1024x24",
                "-nolisten", "tcp", "-noreset", (char*)nullptr);
         _exit(127);
     }

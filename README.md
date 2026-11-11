@@ -547,7 +547,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Sort the selected lines, or the keep-sorted block around the cursor | F9 (F9 may need fn on a laptop) | F9 | J, or Ctrl J |
 | Take the selected completion | Tab or Return (Shift Return for a new line instead) | Tab or Enter (Shift Enter for a new line instead) |  |
 | Tick or clear a Markdown task, or make the selected lines tasks | Option Command L, or Option C, or click its box in the preview | Ctrl Alt L, or Alt C, or click its box in the preview | L, or Ctrl L, or tap its box in the preview |
-| Toggle the agents panel in place of the file tree | Shift Command A |  |  |
+| Toggle the agents panel in place of the file tree | Shift Command A | Ctrl Shift A |  |
 | Toggle the fold on the cursor's line | Control Command L | Toggle Fold in the View menu's Folding submenu or the palette (no key) |  |
 | Toggle the browser | Shift Command B | Ctrl Shift B | B, or Ctrl Shift B |
 | Toggle the editor, giving its space to the terminal and browser | Shift Command E | Ctrl Shift E |  |

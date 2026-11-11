@@ -218,6 +218,9 @@ const std::vector<LinuxRow>& linuxRows() {
         {"git.stageChange", "", 0, nullptr, nullptr},
         // VS Code's Linux key (PARITY.md 2.2); with Shift, so it works from
         // the terminal too.
+        // The Mac's Shift+Cmd+A (PARITY.md 3.5); with Shift, so it works from
+        // the terminal too.
+        {"minicode.toggleAgents", "ctrl+shift+a", 0, nullptr, nullptr},
         // The Mac gives View > Toggle Processes no key either.
         {"minicode.toggleProcesses", "", 0, nullptr, nullptr},
         {"workbench.actions.view.problems", "ctrl+shift+m", 0, nullptr, nullptr},
