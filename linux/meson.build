@@ -54,6 +54,8 @@ core_sources = [
   core_dir / 'AttentionBoard.cpp',
   core_dir / 'AgentIndex.cpp',
   core_dir / 'AgentTranscript.cpp',
+  core_dir / 'AgentEvidence.cpp',
+  core_dir / 'AgentView.cpp',
   # Processes and ports: the table's rules and the /proc source (ProcessMonitor.cpp).
   core_dir / 'ProcessTable.cpp',
   core_dir / 'ProcFs.cpp',
@@ -273,6 +275,8 @@ gui_sources = [
   'src/ControlCommands.cpp',
   'src/ProcessMonitor.cpp',
   'src/ProcessesPanel.cpp',
+  'src/AgentModel.cpp',
+  'src/AgentsPanel.cpp',
   '..' / 'tools' / 'minicode-cli.cpp',
   'src/NavHistoryUi.cpp',
   # The command line's options, and a terminal given back at once: the

@@ -3222,6 +3222,51 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `snapshotPlan`'s unit tests, not on a real tall page; Vite's `--open` and
   Claude Code's links through BROWSER were not run.
 
+### 44. The Agents panel, part one (done, November 2026; `PARITY.md` item 3.5)
+
+- **The model** is `src/AgentModel.{h,cpp}` (GTK, glib only): the core's
+  `AgentIndex` lives on a worker thread of its own (it is not thread-safe);
+  each refresh copies the rows into an immutable `AgentModelData::Snapshot`
+  (sessions newest first, subagents nested by `Row::depth`, each session's
+  `AgentView::groupFiles` groups with `folderText` and a stat for "exists",
+  the scratchpads, `loaded` and `projectsMissing`) and hands it to the main
+  loop with `g_idle_add` only when a signature of what is shown changed.
+  A window on `/` or the home folder indexes nothing
+  (`AgentView::indexesFolder` on the realpath). The files are
+  `$MINICODE_CLAUDE_PROJECTS` or `~/.claude/projects` and
+  `$MINICODE_CLAUDE_TMP` or `/tmp/claude-<uid>`.
+- **Following changes**: GFileMonitor on the transcripts folder, the
+  scratchpads' folder and each project folder below the first (a missing one
+  through the nearest folder above it that exists), events coalesced 0.3 s,
+  the set re-made at each refresh. Monitors are not recursive and a
+  subagent's transcript is two folders down, so while the panel shows a 2 s
+  poll asks for a refresh too (`Index::refresh` only stats and reads what
+  changed). The transcripts folder going gives `projectsMissing`, and the
+  panel's message is the core's `AgentView::emptyText`.
+- **The panel** is `src/AgentsPanel.{h,cpp}` (GTK): a GtkListBox in the
+  sidebar stack as the Processes panel is (`act_toggle_agents`,
+  `win.toggleagents`, Ctrl+Shift+A, the Mac's Shift+Cmd+A; opening it closes
+  Source Control and Processes, and Focus File Tree, reveal and Go to Folder
+  close it). A click on a session or group opens or closes it (the Mac's
+  click on a session shows its Evidence, which is part two); a file opens
+  in the editor, a missing one (struck through, `<s>`) only bells. The row
+  menu has Open and Copy Path for a file, Copy Transcript Path for a
+  session, Adjust Settings… (surface `tree`) last. Colors are the Processes
+  panel's `.minicode-procs` classes. Nothing here writes, moves or deletes
+  Claude Code's files. The checks reach it as `MCGuiApp().agents`
+  (`AppSeam`).
+- **Build lists**: `AgentEvidence.cpp` and `AgentView.cpp` joined both lists.
+- **Trap met**: the new View item made the View menu taller than the
+  harness's 800 px Xvfb screen, so GTK scrolled the popover and Adjust
+  Settings (last) was not on screen for `adjust_settings` and `themes`; the
+  harness's screen is 1280x1024 now (`Wrapper.cpp`). A real 720 px screen
+  would scroll that menu too.
+- **Remains (part two):** the Evidence page and a click on a session
+  showing it, the tree's Worktrees node and Compare with Main (the git
+  thread of the Mac's model), Show Terminal, Open Worktree in New Window,
+  Reveal Scratchpad; the owner's eyes on the look and on a real
+  `~/.claude`.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

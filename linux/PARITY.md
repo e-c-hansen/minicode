@@ -1333,9 +1333,13 @@ its server comes first here (2.0).
   (HANDOFF item 41): `AgentNotes` over a text tag and an overlay box,
   `open --note`/`--from`, `tour` and its Alt+] and Alt+[ keys, the agent's
   preview tab, the `notes` GUI suite.
-- [ ] **3.5 The Agents panel and Evidence.** `AgentTranscript`, `AgentIndex`,
+- [~] **3.5 The Agents panel and Evidence.** `AgentTranscript`, `AgentIndex`,
   `AgentEvidence`, `AgentView`, with Linux's scratchpad path. Claude Code's
-  data is read, never written.
+  data is read, never written. Part one (November 2026, HANDOFF item 44):
+  the model on a worker thread following the transcripts and scratchpads
+  with GFileMonitor, and the panel in the sidebar (Ctrl+Shift+A), with the
+  `agents` suite. Remains: the Evidence page, the Worktrees node and
+  Compare with Main, Show Terminal.
 - [x] **3.6 Waiting for you.** `ClaudeHooks`, `AttentionBoard`. Done
   (November 2026, HANDOFF item 42): the terminal's id and the two
   variables, `notify --from-hook`, `hooks --print|--install`, a dot and

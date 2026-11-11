@@ -76,3 +76,4 @@ NotesSuite.cpp
 AttentionSuite.cpp
 IdeLinkSuite.cpp
 BrowserPagesSuite.cpp
+AgentsSuite.cpp

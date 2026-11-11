@@ -30,6 +30,7 @@ class TreeGitColors;
 class ProblemsPanel;
 class ProcessesPanel;
 class IdeLinkServer;
+class AgentsPanel;
 
 // One editor window's parts. Pointers are the app's own and stay valid until
 // the window closes; terminal and browser are null in a build without them.
@@ -41,6 +42,8 @@ struct MCGuiAppWindow {
     ProcessesPanel* procs = nullptr;   // null until View > Toggle Processes was first used
     bool        procsShown = false;
     IdeLinkServer* ide = nullptr;      // Claude Code's /ide for the window (3.9)
+    AgentsPanel* agents = nullptr;     // null until View > Toggle Agents was first used
+    bool        agentsShown = false;
     LspSession* lsp = nullptr;
     Terminal*   terminal = nullptr;
     Browser*    browser = nullptr;

@@ -106,6 +106,7 @@ const std::vector<Action>& actions() {
         {"workbench.view.scm", "win.togglegit", false},
         {"minicode.toggleProcesses", "win.toggleprocesses", false},
         {"minicode.toggleIdeLink", "app.idelink", false},
+        {"minicode.toggleAgents", "win.toggleagents", false},
         {"git.fetch", "win.gitfetch", false},
         {"git.pull", "win.gitpull", false},
         {"git.push", "win.gitpush", false},

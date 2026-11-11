@@ -101,6 +101,17 @@ Verified by running it:
   `MINICODE_TERMINAL_ID` and `MINICODE_PID`, the dot and title count, a real
   key clearing the mark, Ctrl+Alt+W, `hooks --install` twice and onto a
   symlink in the scratch HOME). Not seen on a real desktop.
+- The Agents panel, part one (item 3.5): the `agents` GUI suite copies
+  `tests/fixtures/claude` into a scratch transcripts folder
+  (`MINICODE_CLAUDE_PROJECTS`, `MINICODE_CLAUDE_TMP`), presses Ctrl+Shift+A for
+  real, and checks the sessions newest first with the running one marked,
+  the subagent nested, the file groups, a click opening a file in the editor,
+  a transcript appended to while shown adding a file, a file deleted
+  struck through, the transcripts folder removed emptying the panel with its
+  message, and a listing with sizes and dates of the whole scratch Claude
+  folder unchanged by the panel's reading. It fails (checked once) with the
+  toggle a no-op. Not tested: the look on a real desktop, a real
+  `~/.claude/projects`, a right click.
 - Notes and tours (item 3.4): the `notes` GUI suite runs the real client.
   `open --note` puts the file in the agent's preview tab and shows the box
   (text cleaned, label, x) over lines 10 to 12 with the text tag on exactly
