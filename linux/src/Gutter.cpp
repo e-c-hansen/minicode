@@ -83,6 +83,13 @@ Gutter::Gutter(GtkTextView* view) : view_(view) {
     g_signal_connect(drag, "drag-update", G_CALLBACK(onDragUpdate), this);
     g_signal_connect_swapped(drag, "drag-end", G_CALLBACK(+[](Gutter* self) {
         self->dragging_ = false;
+        // A change bar's popover opens on the release: opened on the press,
+        // the first one was closed again by GTK before the button came up.
+        if (self->pendingBar_ >= 0 && self->onChangeBar) {
+            const int at = self->pendingBar_;
+            self->pendingBar_ = -1;
+            self->onChangeBar(at, self->rectOfChangeBar(at));
+        }
     }), this);
     gtk_widget_add_controller(widget_, GTK_EVENT_CONTROLLER(drag));
     // The pointer over the gutter shows the fold lane's open regions.
@@ -688,7 +695,7 @@ void Gutter::onDragBegin(GtkGestureDrag* g, double x, double y, gpointer p) {
         x >= kDotLane - 1 && x < kDotLane + kChangeLane + 1) {
         const int at = QuickDiff::barAt(l->changeBars(), line);
         if (at >= 0) {
-            self->onChangeBar(at, self->rectOfChangeBar(at));
+            self->pendingBar_ = at;
             return;
         }
     }

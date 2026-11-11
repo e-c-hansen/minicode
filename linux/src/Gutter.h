@@ -175,6 +175,7 @@ private:
     mutable GtkTextTagTable* diagTagTable_ = nullptr;
     // The drag: the line it began on (none on a chevron or a bar), and where.
     bool   dragging_ = false;
+    int    pendingBar_ = -1;   // a change bar pressed, shown on the release
     size_t dragAnchor_ = 0;
     double dragX_ = 0, dragY_ = 0;
 

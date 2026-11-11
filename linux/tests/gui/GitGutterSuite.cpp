@@ -262,9 +262,12 @@ MC_GUI_SUITE(git_gutter) {
     MCGuiWait("closed", 10, [] { return !Bars()->popoverShown(); });
 
     // ---- colors
-    MCGuiStep("the bars draw in VS Code's colors", [] {
-        GCHECK(BarColored(1, 0x1B, 0x81, 0xA8));   // modified
-        GCHECK(BarColored(0, 0x48, 0x7E, 0x02));   // added
+    // A picture of the gutter taken at once can predate the popover's close.
+    MCGuiWait("the bars draw in VS Code's colors", 10, [] {
+        return BarColored(1, 0x1B, 0x81, 0xA8) &&    // modified
+               BarColored(0, 0x48, 0x7E, 0x02);      // added
+    });
+    MCGuiStep("the bars' color setting", [] {
         MCGuiSetSettings(std::string(kSettings) + "editor.git-modified = #FF00FF\n");
     });
     MCGuiWait("and in editor.git-modified's", 10, [] { return BarColored(1, 0xFF, 0x00, 0xFF); });

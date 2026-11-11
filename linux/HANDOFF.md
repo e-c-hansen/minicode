@@ -2696,7 +2696,8 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `editor.git-*`; while it is off nothing looks and nothing touches the
   bars, which is why the `gutter` suite, which sets bars by hand, runs
   with it off. The bar's popover (a child of the text view, unparented on
-  unrealize) has Revert Change, a `MultiEdit::apply` of
+  unrealize; shown on the button's release, since one popped up on the press
+  was closed again by GTK before a slower release, the first time) has Revert Change, a `MultiEdit::apply` of
   `QuickDiff::revertEdit` (UTF-16 offsets through `utf16::toCharOffset`),
   and Stage Change, refused when the entry no longer names the bars'
   object. The window's actions are `nextchange`, `previouschange`,
