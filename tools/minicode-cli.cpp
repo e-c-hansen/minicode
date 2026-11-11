@@ -441,31 +441,26 @@ int runHooks(const std::string &action) {
     return kExitOK;
 }
 
-#ifdef __APPLE__
 // open-url's way out: the address goes to the default browser through
-// /usr/bin/open ($MINICODE_OPEN_FALLBACK in the GUI checks, which record
-// instead of opening anything).
+// /usr/bin/open, or xdg-open on Linux ($MINICODE_OPEN_FALLBACK in the GUI
+// checks, which record instead of opening anything).
 int openInDefaultBrowser(const std::string &url) {
     if (url.empty() || url[0] == '-') {
         std::fprintf(stderr, "minicode: not an address: %s\n", url.c_str());
         return kExitUsage;
     }
     const char *fallback = getenv("MINICODE_OPEN_FALLBACK");
+#ifdef __APPLE__
     const std::string program = fallback && *fallback ? fallback : "/usr/bin/open";
+#else
+    const std::string program = fallback && *fallback ? fallback : "xdg-open";
+#endif
     std::vector<char *> argv = {const_cast<char *>(program.c_str()), const_cast<char *>(url.c_str()),
                                 nullptr};
-    execv(program.c_str(), argv.data());
+    execvp(program.c_str(), argv.data());
     std::fprintf(stderr, "minicode: could not run %s: %s\n", program.c_str(), std::strerror(errno));
     return kExitFailed;
 }
-#endif  // __APPLE__
-
-#ifndef __APPLE__
-int openInDefaultBrowser(const std::string &) {
-    std::fprintf(stderr, "minicode: open-url is not on Linux yet\n");
-    return kExitFailed;
-}
-#endif
 
 int usageError(const std::string &message) {
     std::fprintf(stderr, "minicode: %s\nTry 'minicode help'.\n", message.c_str());
@@ -509,7 +504,8 @@ int minicodeCliMain(int argc, char **argv) {
     // the rest of the table the same way, for a client that is not this one.
     if (c.cmd != "open" && c.cmd != "window" && c.cmd != "state" &&
         c.cmd != "selection" && c.cmd != "ping" && c.cmd != "procs" && c.cmd != "diff" &&
-        c.cmd != "tour" && c.cmd != "notify") {
+        c.cmd != "tour" && c.cmd != "notify" && c.cmd != "browse" && c.cmd != "page" &&
+        c.cmd != "open-url") {
         // A hook never fails noisily.
         if (c.fromHook) return kExitOK;
         std::fprintf(stderr, "minicode: %s is not on Linux yet\n", c.cmd.c_str());
@@ -533,7 +529,6 @@ int minicodeCliMain(int argc, char **argv) {
         c.pid = ClaudeHooks::parsePositive(getenv("MINICODE_PID"));
     }
 
-#ifdef __APPLE__
     // open-url, which BROWSER runs in minicode's terminals: a page that is
     // not local goes to the default browser, and so does any page when the
     // minicode the terminal belongs to does not take it. It never starts
@@ -546,10 +541,6 @@ int minicodeCliMain(int argc, char **argv) {
         const int terminal = ClaudeHooks::parsePositive(getenv("MINICODE_TERMINAL_ID"));
         if (!c.args.has("terminal") && terminal > 0) c.args.set("terminal", terminal);
     }
-#else
-    const bool openUrl = false;
-    const std::string url;
-#endif
 
     if (!c.tourFile.empty()) {
         std::ifstream in(c.tourFile);

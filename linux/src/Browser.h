@@ -12,6 +12,8 @@
 #include <webkit/webkit.h>   // WebKitWebView / WebKitLoadEvent in the signatures
 #include <string>
 
+class PageProbe;
+
 class Browser {
 public:
     // The panel's widget at once; the web view, and with it WebKit's
@@ -31,6 +33,25 @@ public:
     // back to 100% (0). Not kept per site yet (PARITY.md 4.5).
     void zoom(int step);
     double zoomLevel() const;
+
+    // The agent page (PARITY.md 3.7): a second web view beside the user's,
+    // made by `minicode browse`, with a Yours | Agent switcher and an x that
+    // closes it. An address typed in the bar, or a link from elsewhere, goes
+    // to the user's page, never the agent's.
+    PageProbe* userProbe() const { return userProbe_; }
+    PageProbe* agentProbe() const { return agentProbe_; }
+    bool hasAgentPage() const { return agentProbe_ != nullptr; }
+    bool agentPageShown() const;
+    // The agent page, made when there is none (the switcher appears).
+    PageProbe* openAgentPage();
+    // Shows it (or the user's page), keeping the keyboard where it is.
+    void showAgentPage(bool agent);
+    void closeAgentPage();
+    // For the checks.
+    GtkWidget* yoursButton() const { return yours_; }
+    GtkWidget* agentButton() const { return agentBtn_; }
+    GtkWidget* closeButton() const { return close_; }
+    GtkWidget* switcher() const { return switcher_; }
 
 private:
     static void onGo(GtkWidget* w, gpointer self);
@@ -55,6 +76,16 @@ private:
     GtkWidget* web_   = nullptr;   // WebKitWebView
     GtkWidget* back_  = nullptr;
     GtkWidget* fwd_   = nullptr;
+    GtkWidget* switcher_ = nullptr;   // Yours | Agent | x, shown with an agent page
+    GtkWidget* yours_ = nullptr;
+    GtkWidget* agentBtn_ = nullptr;
+    GtkWidget* close_ = nullptr;
+    GtkWidget* stack_ = nullptr;      // "yours" (userSlot_) and "agent"
+    GtkWidget* userSlot_ = nullptr;   // holds web_ once it is made
+    GtkWidget* agent_ = nullptr;
+    PageProbe* userProbe_ = nullptr;
+    PageProbe* agentProbe_ = nullptr;
+    bool syncingSwitcher_ = false;
 };
 
 #endif // MINICODE_ENABLE_BROWSER

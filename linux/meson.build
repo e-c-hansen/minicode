@@ -153,6 +153,7 @@ gui_sources = [
   # #ifdef-guarded, so without the feature macros they are empty and harmless.
   'src/Terminal.cpp',
   'src/Browser.cpp',
+  'src/BrowserPages.cpp',
   'src/AppSettings.cpp',
   # Adjust Settings… in every right click menu, View > Theme, and what
   # they write (PARITY.md 2.11).
@@ -371,6 +372,16 @@ configure_file(
   configuration : desktop_conf,
   install       : true,
   install_dir   : get_option('datadir') / 'applications')
+
+# BROWSER in the app's terminals (PARITY.md 3.7): beside the binary in a build
+# folder, and in share/minicode when installed.
+configure_file(
+  input  : 'resources' / 'minicode-browser.js',
+  output : 'minicode-browser.js',
+  copy   : true)
+install_data('resources' / 'minicode-browser.js',
+  install_dir  : get_option('datadir') / 'minicode',
+  install_mode : 'rwxr-xr-x')
 
 # PNGs extracted from the macOS resources/AppIcon.icns, which stays the single
 # source of truth for the artwork.

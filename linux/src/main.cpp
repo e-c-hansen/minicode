@@ -3118,6 +3118,9 @@ static ControlWindow controlWindowOf(App* a) {
     w.folder = a->rootDir;
     w.editor = a->editor;
     w.window = GTK_WINDOW(a->window);
+#ifdef MINICODE_ENABLE_BROWSER
+    w.browser = a->browser;
+#endif
     w.shellPid = a->terminal ? a->terminal->shellPid() : 0;
     return w;
 }
@@ -3156,6 +3159,13 @@ static void startControlChannel() {
     host.showFile = [](const ControlWindow& w, const std::string& path) {
         if (App* a = controlApp(w.id))
             openFileThen(a, path, EditorTabs::OpenFrom::Other, nullptr);
+    };
+    host.showBrowser = [](const ControlWindow& w) {
+        if (App* a = controlApp(w.id)) a->layout->showBrowser();
+    };
+    host.pageAnyOrigin = [] { return g.settings->settings().pageAnyOrigin(); };
+    host.openUrl = [](const ControlWindow& w, const std::string& url) {
+        if (App* a = controlApp(w.id)) openLink(a, true, url, false, false, 0, 0);
     };
     registerControlCommands(gControl->dispatcher(), host);
     // The process sampler (PARITY.md 3.8): each window's folder as realpath

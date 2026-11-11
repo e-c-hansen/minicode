@@ -1313,9 +1313,9 @@ its server comes first here (2.0).
   client (the Mac's CLI, shared) and `open`, `window`, `state`, `selection`
   and `ping`, with the user's typing protected (`"background"`); the `control`
   GUI suite. Remains: `term` and `term-output` (with the terminal),
-  `split`, `browse`,
-  `page` and `open-url`/BROWSER (3.7), `install-skill` and the skill; every one answers "not on Linux yet"
-  now. `diff` is done with 3.2.
+  `split`, `install-skill` and the skill; every one answers "not on Linux yet"
+  now. `diff` is done with 3.2; `browse`, `page` and `open-url`/BROWSER with
+  3.7.
 - [~] **3.2 The compare view.** `SideBySide`, word changes, Accept and Reject
   per hunk. Part one done (HANDOFF item 39): `CompareView` and
   `ComparePanes`, a comparison tab through `Editor::showComparison` with
@@ -1342,7 +1342,11 @@ its server comes first here (2.0).
   tooltip over the terminal, the waiting count in the window titles, Next
   Waiting Terminal on Ctrl+Alt+W, typing and closing clearing the mark; the
   `attention` GUI suite. Remains: the session labels in the Processes panel.
-- [ ] **3.7 Agents checking pages.** `PageCheck`, on WebKitGTK.
+- [x] **3.7 Agents checking pages.** `PageCheck`, on WebKitGTK. Done,
+  November 2026 (HANDOFF item 45): the agent page beside the user's in the
+  pane with its Yours | Agent switcher and x, `browse`, `page --url/--text/
+  --console/--screenshot/--reload`, `open-url` and BROWSER; the
+  `browser_pages` suite.
 - [~] **3.8 The Processes panel.** `ProcessTable` over `/proc`; its `Source` is
   the seam. Part one (November 2026, HANDOFF item 40): `ProcFs::Source`, a
   sampler thread (`ProcessMonitor`), Stop's SIGTERM then SIGKILL, and the

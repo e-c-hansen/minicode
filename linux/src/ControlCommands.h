@@ -15,6 +15,7 @@
 #include "ControlProtocol.h"
 
 class Editor;
+class Browser;
 typedef struct _GtkWindow GtkWindow;
 
 struct ControlWindow {
@@ -22,6 +23,7 @@ struct ControlWindow {
     std::string folder;       // the tree's root, as the window spells it
     Editor* editor = nullptr;
     GtkWindow* window = nullptr;
+    Browser* browser = nullptr;   // the window's browser pane (null without WebKit)
     int shellPid = 0;         // the terminal's shell (VTE's child), 0 while it has none
 };
 
@@ -37,6 +39,12 @@ struct ControlHost {
     // Shows a file in a tab of its own, as a double-click in the tree does,
     // with the editor's area revealed.
     std::function<void(const ControlWindow&, const std::string& path)> showFile;
+    // Shows the browser pane beside the editor, the keyboard where it was.
+    std::function<void(const ControlWindow&)> showBrowser;
+    // control.page-any-origin (PageCheck.h).
+    std::function<bool()> pageAnyOrigin;
+    // A web address in the user's page, as a link from the terminal opens it.
+    std::function<void(const ControlWindow&, const std::string& url)> openUrl;
 };
 
 void registerControlCommands(ControlChannel::Dispatcher& dispatcher, ControlHost host);

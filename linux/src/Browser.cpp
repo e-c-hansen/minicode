@@ -7,6 +7,7 @@
 #include <string>
 
 #include "Appearance.h"
+#include "BrowserPages.h"
 #include "StartupLog.h"
 #include "ViewZoom.h"
 
@@ -40,6 +41,40 @@ Browser::Browser(const std::string& homeUrl) : home_(homeUrl) {
     gtk_box_append(GTK_BOX(bar), entry_);
 
     gtk_box_append(GTK_BOX(root_), bar);
+
+    // Yours | Agent | x, only while there is an agent page.
+    switcher_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(switcher_, "minicode-browser-bar");
+    yours_ = gtk_toggle_button_new_with_label("Yours");
+    agentBtn_ = gtk_toggle_button_new_with_label("Agent");
+    gtk_toggle_button_set_group(GTK_TOGGLE_BUTTON(agentBtn_), GTK_TOGGLE_BUTTON(yours_));
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(yours_), TRUE);
+    close_ = gtk_button_new_with_label("\xC3\x97");
+    gtk_widget_set_tooltip_text(close_, "Close the agent page");
+    gtk_widget_set_hexpand(close_, TRUE);
+    gtk_widget_set_halign(close_, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(switcher_), yours_);
+    gtk_box_append(GTK_BOX(switcher_), agentBtn_);
+    gtk_box_append(GTK_BOX(switcher_), close_);
+    gtk_widget_set_visible(switcher_, FALSE);
+    gtk_box_append(GTK_BOX(root_), switcher_);
+    g_signal_connect(yours_, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer p) {
+        Browser* self = static_cast<Browser*>(p);
+        if (!self->syncingSwitcher_ && gtk_toggle_button_get_active(b)) self->showAgentPage(false);
+    }), this);
+    g_signal_connect(agentBtn_, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer p) {
+        Browser* self = static_cast<Browser*>(p);
+        if (!self->syncingSwitcher_ && gtk_toggle_button_get_active(b)) self->showAgentPage(true);
+    }), this);
+    g_signal_connect(close_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
+        static_cast<Browser*>(p)->closeAgentPage();
+    }), this);
+
+    stack_ = gtk_stack_new();
+    gtk_widget_set_vexpand(stack_, TRUE);
+    userSlot_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_stack_add_named(GTK_STACK(stack_), userSlot_, "yours");
+    gtk_box_append(GTK_BOX(root_), stack_);
     // Nothing to go back or forward to until there is a page.
     gtk_widget_set_sensitive(back_, FALSE);
     gtk_widget_set_sensitive(fwd_, FALSE);
@@ -59,6 +94,8 @@ Browser::Browser(const std::string& homeUrl) : home_(homeUrl) {
 Browser::~Browser() {
     g_signal_handlers_disconnect_by_data(root_, this);
     if (web_) g_signal_handlers_disconnect_by_data(web_, this);
+    delete userProbe_;
+    delete agentProbe_;
 }
 
 void Browser::makeView(const std::string& firstUrl) {
@@ -66,7 +103,8 @@ void Browser::makeView(const std::string& firstUrl) {
     StartupLog::mark("browser: web view made, on first show");
     web_ = GTK_WIDGET(webkit_web_view_new());
     gtk_widget_set_vexpand(web_, TRUE);
-    gtk_box_append(GTK_BOX(root_), web_);
+    gtk_box_append(GTK_BOX(userSlot_), web_);
+    userProbe_ = new PageProbe(web_, false);
     g_signal_connect(web_, "notify::uri", G_CALLBACK(onUriChanged), this);
     g_signal_connect(web_, "load-changed", G_CALLBACK(onLoadChanged), this);
     // The page's right click: WebKit's items, then Adjust Settings….
@@ -110,11 +148,43 @@ void Browser::load(const std::string& raw) {
             g_free(q);
         }
     }
+    showAgentPage(false);   // an address typed or linked is the user's page
     if (!web_) {
         makeView(url);   // the first page is this one, not the home page
         return;
     }
     webkit_web_view_load_uri(WEBKIT_WEB_VIEW(web_), url.c_str());
+}
+
+bool Browser::agentPageShown() const {
+    return agentProbe_ && std::string(gtk_stack_get_visible_child_name(GTK_STACK(stack_)) ?: "") == "agent";
+}
+
+PageProbe* Browser::openAgentPage() {
+    if (agentProbe_) return agentProbe_;
+    agent_ = PageProbe::makeAgentView(&agentProbe_);
+    gtk_widget_set_vexpand(agent_, TRUE);
+    gtk_stack_add_named(GTK_STACK(stack_), agent_, "agent");
+    gtk_widget_set_visible(switcher_, TRUE);
+    return agentProbe_;
+}
+
+void Browser::showAgentPage(bool agent) {
+    if (agent && !agentProbe_) return;
+    gtk_stack_set_visible_child_name(GTK_STACK(stack_), agent ? "agent" : "yours");
+    syncingSwitcher_ = true;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(agent ? agentBtn_ : yours_), TRUE);
+    syncingSwitcher_ = false;
+}
+
+void Browser::closeAgentPage() {
+    if (!agentProbe_) return;
+    showAgentPage(false);
+    gtk_widget_set_visible(switcher_, FALSE);
+    delete agentProbe_;   // stops watching the view before it goes
+    agentProbe_ = nullptr;
+    gtk_stack_remove(GTK_STACK(stack_), agent_);
+    agent_ = nullptr;
 }
 
 // Keep the URL bar showing where we actually are.

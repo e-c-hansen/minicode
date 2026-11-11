@@ -3164,6 +3164,64 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   selection tick (no window re-rooting exists here); the lock file is not
   removed on SIGKILL (the next start removes it, once its pid is gone).
 
+### 45. Agents checking pages (done, November 2026; `PARITY.md` item 3.7)
+
+- **What it does**: the Mac's `browse` and `page`, on WebKitGTK. `browse`
+  loads an address in a second web view in the browser pane, the agent page;
+  `page --url`, `--text`, `--console`, `--screenshot` (`--full`,
+  `--overwrite`) and `--reload` read or reload it, `--yours` the user's page.
+  The rules are the core's `PageCheck` (addresses, the origin limit, the
+  console record, the screenshot path), unchanged and already in the build
+  lists; nothing copied. Text, console and screenshots only for local pages
+  unless `control.page-any-origin`, checked again when the read comes back
+  (a page that moved on, or was closed, while it was read gives an error and
+  a finished screenshot is deleted).
+- **The pieces**: `linux/src/BrowserPages.{h,cpp}`, `PageProbe`: one a web
+  view, tracking the address, title, HTTP status (the main resource's
+  response at COMMITTED), whether it loads, and waiters for `--wait` (15 s;
+  a load error from `load-failed`, a cancelled load is no error). The agent
+  view has a `WebKitUserContentManager` of its own: a script message handler
+  and a listener in the script world `minicode-agent` (uncaught errors,
+  rejections, relayed console calls) and, in the page's world, the Mac's
+  wrapper of `console.*` that relays each call as a DOM event with a name
+  made per view, so a page can only forge console calls (`fromPage`).
+  `readText` evaluates in our world (`innerText`, 1 MB); `snapshotTo` uses
+  `webkit_web_view_get_snapshot` (visible region, or the full document cut
+  to `snapshotPlan`'s height), written with `O_EXCL | O_NOFOLLOW`, or with
+  `--overwrite` a `mkstemp` file in the same folder renamed over a plain file.
+  `Browser` holds a `GtkStack` ("yours" slot, "agent") under a Yours | Agent |
+  x bar shown only while an agent page exists; `Browser::load` (an address
+  typed in the bar, a link from the terminal) shows the user's page first.
+  The user's web view is still made when the pane is first shown; `browse`
+  with the pane never shown does not make it.
+- **The keyboard**: `browse` shows the agent page and the pane
+  (`ControlHost::showBrowser`, which keeps the keyboard where it was) unless
+  the keyboard is in the pane (`pane_busy`, the CLI says so on stderr); the
+  page still loads, and shows when the user picks Agent.
+- **`open-url` and BROWSER**: the command takes an http, https or file
+  address and puts it in the user's page of the window of the terminal
+  (the window's id, as `notify`). `minicode open-url` in the client is no
+  longer Mac-only: a page that is not local, or no minicode answering, goes
+  to `xdg-open` (`$MINICODE_OPEN_FALLBACK` replaces it in the checks).
+  Terminals get `BROWSER=<script>` and `MINICODE_EXE=<the app's binary>`
+  (`Terminal::spawnShell`): `linux/resources/minicode-browser.js` is sh and
+  JavaScript at once like the Mac's, and is copied beside the binary in the
+  build folder and installed in `share/minicode`; `spawnShell` looks beside
+  the binary, then in `../share/minicode`. In the guitest the binary beside
+  `minicode-guitest` is `minicode`.
+- **Traps**: WebKit opens a connection to a server with no request on it
+  (preconnect), so a test server that reads on the main thread hangs the
+  app: use `GThreadedSocketService`. An uncaught error from a `file://`
+  script reaches `window.onerror` as "Script error." with no place (an
+  opaque origin); a served page gives the message. The agent view must be
+  added to the stack before it is shown, and loading works while it is
+  hidden.
+- **Checked by** the `browser_pages` GUI suite (`BUILD-LINUX.md`).
+- **Not done**: the Mac's per-site page zoom is not kept for the agent page;
+  a screenshot of a page taller than the cut is only checked through
+  `snapshotPlan`'s unit tests, not on a real tall page; Vite's `--open` and
+  Claude Code's links through BROWSER were not run.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

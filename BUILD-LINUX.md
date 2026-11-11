@@ -115,6 +115,24 @@ Verified by running it:
   after its note is closed; `state` names the note. 30 of its checks fail
   with placing switched off. Not tested: the box's look beyond one
   snapshot, a note in a Markdown preview or a large file.
+- Agents checking pages (item 3.7): the `browser_pages` GUI suite, the real
+  client against the running app, pages from a small HTTP server inside the
+  test process (127.0.0.1) and from files, nothing off the machine. `browse
+  --wait` of a file and of served pages (status 200 and 404 from the
+  response); `page --url`, `--text`, `--console` (a log with its object, an
+  uncaught error masked as "Script error." on a file page and with its
+  message on a served one, the record cleared by the next page); screenshots
+  (a PNG at a new path; refused onto an existing file, onto a symlink even
+  with `--overwrite`, which replaces a plain file; `--full`); the text of
+  about:blank refused; other schemes refused; `pane_busy` with the keyboard
+  in the address bar; the Yours | Agent buttons and the x with real clicks; a
+  typed or linked address going to the user's page; `open-url` of a local
+  page landing in the user's page and a remote one going to a recording
+  stand-in for xdg-open; `$BROWSER` in the app's terminal naming the script,
+  which run as a program opens a page. The suite fails (42 checks) with the
+  commands switched off. Not tested: a very tall `--full` page being cut,
+  `control.page-any-origin`, Vite's `--open` or Claude Code's links, the
+  look of the switcher.
 - The Claude Code IDE link (item 3.9): the `idelink` GUI suite, with a
   WebSocket client built on the core's frame code and a scratch
   `CLAUDE_CONFIG_DIR` (never `~/.claude`; the wrapper sets it). The lock

@@ -75,3 +75,4 @@ ProcessesSuite.cpp
 NotesSuite.cpp
 AttentionSuite.cpp
 IdeLinkSuite.cpp
+BrowserPagesSuite.cpp

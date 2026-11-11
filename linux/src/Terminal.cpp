@@ -1,5 +1,7 @@
 // Terminal.cpp — see Terminal.h. Entirely compiled out unless
 // MINICODE_ENABLE_TERMINAL is set.
+#include <climits>
+#include <unistd.h>
 #include "Terminal.h"
 
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -693,6 +695,29 @@ void Terminal::spawnShell() {
     if (controlId_ > 0)
         envv = g_environ_setenv(envv, "MINICODE_TERMINAL_ID", std::to_string(controlId_).c_str(), TRUE);
     envv = g_environ_setenv(envv, "MINICODE_PID", std::to_string((int)getpid()).c_str(), TRUE);
+    // BROWSER: programs opening a web page open it here (PARITY.md 3.7). The
+    // script beside the binary (a build folder) or in the installed share
+    // folder, and the app's own binary for it to run.
+    {
+        char exe[PATH_MAX];
+        const ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+        if (n > 0) {
+            exe[n] = 0;
+            char* dir = g_path_get_dirname(exe);
+            char* beside = g_build_filename(dir, "minicode-browser.js", nullptr);
+            char* shared = g_build_filename(dir, "..", "share", "minicode", "minicode-browser.js", nullptr);
+            char* app = g_build_filename(dir, "minicode", nullptr);
+            const char* script = g_file_test(beside, G_FILE_TEST_IS_REGULAR) ? beside
+                                 : g_file_test(shared, G_FILE_TEST_IS_REGULAR) ? shared : nullptr;
+            if (script) envv = g_environ_setenv(envv, "BROWSER", script, TRUE);
+            envv = g_environ_setenv(envv, "MINICODE_EXE",
+                                    g_file_test(app, G_FILE_TEST_IS_EXECUTABLE) ? app : exe, TRUE);
+            g_free(beside);
+            g_free(shared);
+            g_free(app);
+            g_free(dir);
+        }
+    }
     for (const std::string& kv : extraEnvironment ? extraEnvironment() : std::vector<std::string>()) {
         const size_t eq = kv.find('=');
         if (eq != std::string::npos) envv = g_environ_setenv(envv, kv.substr(0, eq).c_str(), kv.c_str() + eq + 1, TRUE);

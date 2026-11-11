@@ -14,6 +14,11 @@
 #include <unistd.h>
 
 #include "Document.h"
+#include "Browser.h"
+#include "BrowserPages.h"
+#include "Keys.h"
+#include "PageCheck.h"
+#include "TermLinks.h"
 #include "AgentNotes.h"
 #include "Editor.h"
 #include "GitRun.h"
@@ -424,6 +429,253 @@ bool openOne(const ControlHost& host, const ControlWindow& w, const std::string&
     return true;
 }
 
+
+#ifdef MINICODE_ENABLE_BROWSER
+// ---- browse and page (PARITY.md 3.7)
+
+// Whether an agent may read the page at `url`.
+bool mayRead(const ControlHost& host, const std::string& url, std::string* error) {
+    if ((host.pageAnyOrigin && host.pageAnyOrigin()) || PageCheck::isLocalAddress(url)) return true;
+    *error = PageCheck::originError(url);
+    return false;
+}
+
+Json pageResult(PageProbe* probe, bool agent) {
+    Json r = probe->stateJson();
+    r.set("page", agent ? "agent" : "yours");
+    if (agent) r.set("console_seq", probe->console().lastSeq());
+    return r;
+}
+
+bool keyboardInPane(const ControlWindow& w) {
+    if (!w.window || !w.browser) return false;
+    GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(w.window));
+    return focus && Keys::within(focus, w.browser->widget());
+}
+
+// Answers once the load is done (with --wait), or at once.
+void answerLoad(PageProbe* probe, bool wait, bool agent, Json extra, Dispatcher::Respond respond) {
+    if (!wait) {
+        respond(Result::success(extra));
+        return;
+    }
+    probe->waitForLoad([probe, agent, extra, respond](const std::string& error, bool timedOut) {
+        if (!error.empty()) {
+            const std::string u = probe->url();
+            respond(Result::failure(error + (u.empty() ? "" : " (" + u + ")")));
+            return;
+        }
+        Json r = pageResult(probe, agent);
+        if (timedOut) r.set("timed_out", true);
+        if (extra["pane_busy"].asBool()) r.set("pane_busy", true);
+        respond(Result::success(r));
+    });
+}
+
+void registerPageCommands(Dispatcher& d, const ControlHost& host) {
+    d.on("browse", [host](const Request& req, Dispatcher::Respond respond) {
+        const Json& a = req.args;
+        if (a["split"].asString() == "below") {
+            respond(Result::failure("the browser opens beside the editor: use --right"));
+            return;
+        }
+        std::string url, error;
+        auto exists = [](const std::string& p) {
+            struct stat st;
+            return stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+        };
+        if (!PageCheck::agentAddress(a["url"].asString(), exists, url, error)) {
+            respond(Result::failure(error));
+            return;
+        }
+        ControlWindow w;
+        if (!target(host, a, &w, &error)) {
+            respond(Result::failure(error));
+            return;
+        }
+        if (!w.browser) {
+            respond(Result::failure("this window has no browser pane"));
+            return;
+        }
+        PageProbe* probe = w.browser->openAgentPage();
+        if (!probe->load(url)) {
+            respond(Result::failure("could not load " + url));
+            return;
+        }
+        Json extra = windowResult(w);
+        extra.set("page", "agent");
+        // The pane shows the agent page unless the user is typing in it.
+        if (keyboardInPane(w)) {
+            extra.set("pane_busy", true);
+        } else {
+            w.browser->showAgentPage(true);
+            if (host.showBrowser) host.showBrowser(w);
+        }
+        answerLoad(probe, a["wait"].asBool(), true, extra, respond);
+    });
+
+    d.on("page", [host](const Request& req, Dispatcher::Respond respond) {
+        const Json& a = req.args;
+        const std::string action = a["action"].asString();
+        if (action != "url" && action != "text" && action != "console" &&
+            action != "screenshot" && action != "reload") {
+            respond(Result::failure("page does url, text, console, screenshot or reload, not \"" +
+                                    action + "\""));
+            return;
+        }
+        std::string error;
+        ControlWindow w;
+        if (!target(host, a, &w, &error)) {
+            respond(Result::failure(error));
+            return;
+        }
+        const bool yours = a["yours"].asBool();
+        Browser* b = w.browser;
+        PageProbe* probe = !b ? nullptr : yours ? b->userProbe() : b->agentProbe();
+        if (!probe) {
+            respond(Result::failure(yours ? "the browser pane is not open"
+                                          : "there is no agent page: minicode browse opens one"));
+            return;
+        }
+        if (action == "url") {
+            respond(Result::success(pageResult(probe, !yours)));
+            return;
+        }
+        if (action == "reload") {
+            if (yours && !mayRead(host, probe->url(), &error)) {
+                respond(Result::failure(error));
+                return;
+            }
+            if (!probe->reload()) {
+                respond(Result::failure("there is no page to reload"));
+                return;
+            }
+            Json extra = windowResult(w);
+            if (!yours && keyboardInPane(w)) extra.set("pane_busy", true);
+            else if (!yours) b->showAgentPage(true);
+            answerLoad(probe, a["wait"].asBool(), !yours, extra, respond);
+            return;
+        }
+        if (!mayRead(host, probe->url(), &error)) {
+            respond(Result::failure(error));
+            return;
+        }
+        const std::string readFrom = probe->url();
+        // The page may have moved on, or gone, while it was read: what was
+        // read must still be from a page the agent may read. The pane is
+        // found again by window id, since the page may have been closed.
+        const int windowId = w.id;
+        const bool wantAgent = !yours;
+        auto stillAllowed = [host, windowId, wantAgent, readFrom](std::string* why) {
+            for (const ControlWindow& cw : host.windows()) {
+                if (cw.id != windowId || !cw.browser) continue;
+                PageProbe* p = wantAgent ? cw.browser->agentProbe() : cw.browser->userProbe();
+                if (!p) break;
+                return p->url() == readFrom || mayRead(host, p->url(), why);
+            }
+            *why = "the page was closed";
+            return false;
+        };
+
+        if (action == "console") {
+            if (yours) {
+                respond(Result::failure("the console is recorded for the agent page only"));
+                return;
+            }
+            Json entries = Json::array();
+            for (const PageCheck::ConsoleEntry& e : probe->console().since(a["since"].asInt(0)))
+                entries.push(PageCheck::entryJson(e));
+            Json r = Json::object();
+            r.set("entries", entries);
+            r.set("last", probe->console().lastSeq());
+            if (probe->console().dropped()) r.set("dropped", (int64_t)probe->console().dropped());
+            respond(Result::success(r));
+            return;
+        }
+        if (action == "text") {
+            probe->readText([respond, stillAllowed](const std::string& text, bool cut, const std::string& readError) {
+                std::string why;
+                if (!readError.empty()) {
+                    respond(Result::failure("could not read the page: " + readError));
+                    return;
+                }
+                if (!stillAllowed(&why)) {
+                    respond(Result::failure(why));
+                    return;
+                }
+                Json r = Json::object();
+                r.set("text", text);
+                if (cut) r.set("truncated", true);
+                respond(Result::success(r));
+            });
+            return;
+        }
+        // screenshot
+        const std::string path = a["path"].asString();
+        const bool overwrite = a["overwrite"].asBool();
+        struct stat st;
+        PageCheck::PathAt at = PageCheck::PathAt::Nothing;
+        if (!path.empty() && lstat(path.c_str(), &st) == 0)
+            at = S_ISDIR(st.st_mode)   ? PageCheck::PathAt::Folder
+                 : S_ISREG(st.st_mode) ? PageCheck::PathAt::File
+                                       : PageCheck::PathAt::Other;
+        if (!PageCheck::screenshotPath(path, at, overwrite, error)) {
+            respond(Result::failure(error));
+            return;
+        }
+        probe->snapshotTo(path, a["full"].asBool(), overwrite,
+                          [respond, stillAllowed, path](int width, int height, bool cut, const std::string& snapError) {
+            std::string why;
+            if (!snapError.empty()) {
+                respond(Result::failure("no screenshot: " + snapError));
+                return;
+            }
+            if (!stillAllowed(&why)) {
+                unlink(path.c_str());
+                respond(Result::failure(why));
+                return;
+            }
+            Json r = Json::object();
+            r.set("path", path);
+            r.set("width", width);
+            r.set("height", height);
+            if (cut) r.set("cut", true);
+            respond(Result::success(r));
+        });
+    });
+
+    // `minicode open-url`, which BROWSER runs in minicode's terminals: a web
+    // address in the user's page, in the window of the terminal the program
+    // runs in (a window has one terminal, so its id), else the front one.
+    d.on("open-url", [host](const Request& req, Dispatcher::Respond respond) {
+        const Json& a = req.args;
+        const std::string url = TermLinks::browserAddress(a["url"].asString());
+        TermLinks::Link link;
+        if (!TermLinks::hyperlink(url, "", link)) {
+            respond(Result::failure("open-url takes an http, https or file address, not " + url));
+            return;
+        }
+        std::string error;
+        ControlWindow w;
+        Json t = a;
+        if (a.has("terminal") && !a.has("window")) t.set("window", a["terminal"].asInt());
+        if (!target(host, t, &w, &error)) {
+            respond(Result::failure(error));
+            return;
+        }
+        if (!w.browser || !host.openUrl) {
+            respond(Result::failure("this window has no browser pane"));
+            return;
+        }
+        host.openUrl(w, url);
+        Json r = windowResult(w);
+        r.set("page", "yours");
+        r.set("url", url);
+        respond(Result::success(r));
+    });
+}
+#endif  // MINICODE_ENABLE_BROWSER
+
 }  // namespace
 
 void registerControlCommands(Dispatcher& d, ControlHost host) {
@@ -829,6 +1081,10 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
         r.set("waiting", TerminalAttention::waitingCount());
         respond(Result::success(r));
     });
+
+#ifdef MINICODE_ENABLE_BROWSER
+    registerPageCommands(d, host);
+#endif
 
     // The rest of the table is later items of PARITY.md 3: a clear answer
     // until each arrives.
