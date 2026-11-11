@@ -3229,6 +3229,12 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   (`watchWorktreeFolders`, FileTree.cpp, made again when one appears), and
   any event there relists the top folder. `agents` no longer asks the tree
   to look again; it fails without the monitors.
+- **Trap (Evidence):** the page updates itself every 2 s and each change
+  publishes the list without outputs, then with them. `outputsLoaded()` was
+  set by the first and never cleared, so a tick in between left it true over
+  a list with no output ends (the `agents` suite failed one run in three,
+  and the steps after a failed check then failed too). It now follows each
+  publish.
 - **Remains (part two):** Open Worktree in New Window and Reveal Scratchpad
   in a session's menu; the owner's eyes on the look and on a real
   `~/.claude`.

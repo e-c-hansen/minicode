@@ -252,7 +252,7 @@ void EvidencePage::show(Shown s) {
         info2_ = std::move(s.info);
         lastTest_ = s.lastTest;
         loaded_ = true;
-        if (s.outputs) outputsLoaded_ = true;
+        outputsLoaded_ = s.outputs;   // the first of a pair shows the list without outputs again
         render();
     }
     if (s.outputs) {
