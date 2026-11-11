@@ -103,6 +103,9 @@ public:
     // the shell is in the foreground (the Mac's
     // MCTerminalCommandDidFinishNotification).
     std::function<void()> onCommandFinished;
+    // "NAME=value" lines added to the shell's environment each time it is
+    // started (CLAUDE_CODE_SSE_PORT while the IDE link is on).
+    std::function<std::vector<std::string>()> extraEnvironment;
 
 private:
     // One row's share of the hovered link: cells [col0, col1) of `row`, a

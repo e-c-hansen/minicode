@@ -3116,6 +3116,53 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   the terminal from the client, and a per-tab mark (there are no terminal
   tabs). **Needs the owner**: the dot's look on a real theme, and the title
   count in GNOME's overview.
+### 43. The Claude Code IDE link (done, November 2026; `PARITY.md` item 3.9)
+
+- **What it does**: the Mac's `/ide` answer, per window, off by default
+  (`agent.ide-link`; View > Claude Code IDE Link, the registry's
+  `minicode.toggleIdeLink`, `app.idelink` here, a check-box action whose state
+  follows the settings file and which writes it through
+  `AppSettings::writeValue`, refused like a theme while a tab holds the file
+  with unsaved changes). Core `IdeLink.{h,cpp}` joined the Linux build lists;
+  nothing copied.
+- **The pieces**: `linux/src/IdeLinkServer.{h,cpp}`, one a window, made by
+  `newWindow` (`App::ide`) and followed by `applyWindowSettings`
+  (`setEnabled(st.ideLink())`), deleted before the editor in
+  `onWindowRemoved`. Raw non-blocking sockets on 127.0.0.1 with
+  `g_unix_fd_add` (no thread), a write source only while a peer is slow (30 s
+  without progress drops it), 8 connections, 10 s to finish the handshake;
+  a 48-hex-digit secret from /dev/urandom; the lock file
+  (`$CLAUDE_CONFIG_DIR/ide`, else `~/.claude/ide`; mode 0600 by temp file and
+  rename; the folder must be the user's own and the config folder must exist)
+  with stale own locks removed once per process and an `atexit` removal; the
+  selection is polled every 300 ms while a client is initialized and sent
+  when its JSON changed (0-based lines, UTF-16 columns). The tools are the
+  Mac's: openFile (`Editor::openForAgent`, beside the user's tab while the
+  keyboard is in the editor, `AgentNotes::show` with an empty note and the
+  label "Claude Code"), openDiff (`Editor::showComparison` with
+  `decisionPrompt` and `onDecision`, `quiet` while the user types),
+  close_tab and closeAllDiffTabs (only diffs this link offered; closing a
+  tab answers DIFF_REJECTED through `CompareDecision::tabClosed`),
+  getDiagnostics (the Problems rows, the uri spelling kept), the selection
+  tools, getOpenEditors, getWorkspaceFolders, checkDocumentDirty. Not offered:
+  saveDocument, executeCode. A connection that closes, or the link going
+  off, ends the decisions of its diffs (`endDecision`).
+- **Terminals**: `Terminal::extraEnvironment` is asked each time a shell is
+  spawned; the window gives `CLAUDE_CODE_SSE_PORT=<port>` while its link
+  runs, so a terminal started before the link was turned on needs its shell
+  restarted.
+- **The harness**: `Wrapper.cpp` sets `CLAUDE_CONFIG_DIR` to the scratch
+  `claude` folder (and clears the user's), so no suite can reach the real
+  `~/.claude`; `MCGuiAppWindow::ide`.
+- **Checked by** the `idelink` GUI suite (`BUILD-LINUX.md`).
+- **The View menu is taller now**: with the item it no longer fits an
+  800-pixel screen (the popover is cut to the screen and Adjust Settings,
+  its last item, was off it for `adjust_settings`), so the harness's Xvfb is
+  1280x1024. The menu scrolls on a real small screen.
+- **Not done**: a run against a real Claude Code; a lock file's workspace
+  folders when the window's folder changes are rechecked on each tool call and
+  selection tick (no window re-rooting exists here); the lock file is not
+  removed on SIGKILL (the next start removes it, once its pid is gone).
 
 ## How to work on it
 

@@ -220,6 +220,8 @@ const std::vector<LinuxRow>& linuxRows() {
         // the terminal too.
         // The Mac gives View > Toggle Processes no key either.
         {"minicode.toggleProcesses", "", 0, nullptr, nullptr},
+        // The Claude Code IDE link (PARITY.md 3.9); no key, as on the Mac.
+        {"minicode.toggleIdeLink", "", 0, nullptr, nullptr},
         {"workbench.actions.view.problems", "ctrl+shift+m", 0, nullptr, nullptr},
         {"minicode.toggleEditor", "ctrl+shift+e", 0, nullptr, nullptr},
         // The Mac's Ctrl+Cmd+M; VS Code has no key (its Toggle Maximize

@@ -167,3 +167,15 @@ bool AppSettings::writeTheme(const std::string& id, bool commentColors, std::str
     }
     return rewriteFileWith(Settings::withTheme(fileText(), id, commentColors), why);
 }
+
+bool AppSettings::writeValue(const std::string& key, const std::string& value, std::string* why) {
+    if (unsavedTextCheck && unsavedTextCheck(path_)) {
+        if (why) *why = unsavedTabWhy(path_);
+        return false;
+    }
+    if (!ensureFileExists()) {
+        if (why) *why = "Could not create " + path_ + ".";
+        return false;
+    }
+    return rewriteFileWith(Settings::withValue(fileText(), key, value), why);
+}

@@ -685,17 +685,18 @@ void Terminal::spawnShell() {
     // The environment the app has, less any MINICODE_TERMINAL_ID and
     // MINICODE_PID it inherited (from a minicode this one was started in),
     // plus this terminal's (PARITY.md 3.6): `minicode notify --from-hook`
-    // finds its terminal by them.
-    gchar** inherited = g_get_environ();
-    std::vector<gchar*> envv;
-    for (gchar** e = inherited; e && *e; e++)
-        if (!g_str_has_prefix(*e, "MINICODE_TERMINAL_ID=") && !g_str_has_prefix(*e, "MINICODE_PID="))
-            envv.push_back(*e);
-    std::string idVar = "MINICODE_TERMINAL_ID=" + std::to_string(controlId_);
-    std::string pidVar = "MINICODE_PID=" + std::to_string((int)getpid());
-    if (controlId_ > 0) envv.push_back(const_cast<gchar*>(idVar.c_str()));
-    envv.push_back(const_cast<gchar*>(pidVar.c_str()));
-    envv.push_back(nullptr);
+    // finds its terminal by them. Then what the window adds, such as the IDE
+    // link's CLAUDE_CODE_SSE_PORT (PARITY.md 3.9).
+    gchar** envv = g_get_environ();
+    envv = g_environ_unsetenv(envv, "MINICODE_TERMINAL_ID");
+    envv = g_environ_unsetenv(envv, "MINICODE_PID");
+    if (controlId_ > 0)
+        envv = g_environ_setenv(envv, "MINICODE_TERMINAL_ID", std::to_string(controlId_).c_str(), TRUE);
+    envv = g_environ_setenv(envv, "MINICODE_PID", std::to_string((int)getpid()).c_str(), TRUE);
+    for (const std::string& kv : extraEnvironment ? extraEnvironment() : std::vector<std::string>()) {
+        const size_t eq = kv.find('=');
+        if (eq != std::string::npos) envv = g_environ_setenv(envv, kv.substr(0, eq).c_str(), kv.c_str() + eq + 1, TRUE);
+    }
 
     // vte_terminal_spawn_async is the current API (the sync variant is
     // deprecated in recent VTE).
@@ -704,13 +705,13 @@ void Terminal::spawnShell() {
         VTE_PTY_DEFAULT,
         cwd_.empty() ? nullptr : cwd_.c_str(),  // working directory
         argv,
-        envv.data(),                             // ours: the inherited, with the two ids
+        envv,                                    // the inherited, with the ids and the window's
         G_SPAWN_DEFAULT,
         nullptr, nullptr, nullptr,               // child setup
         -1,                                      // timeout
         spawnCancel_,                            // cancelled if the window closes first
         onSpawned, this);                        // callback / user data
-    g_strfreev(inherited);   // spawn_async has copied the environment
+    g_strfreev(envv);   // spawn_async has copied the environment
 }
 
 void Terminal::focus() {

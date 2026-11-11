@@ -115,6 +115,27 @@ Verified by running it:
   after its note is closed; `state` names the note. 30 of its checks fail
   with placing switched off. Not tested: the box's look beyond one
   snapshot, a note in a Markdown preview or a large file.
+- The Claude Code IDE link (item 3.9): the `idelink` GUI suite, with a
+  WebSocket client built on the core's frame code and a scratch
+  `CLAUDE_CONFIG_DIR` (never `~/.claude`; the wrapper sets it). The lock
+  file is mode 0600 with the token, the folder and our pid, a stale one of
+  minicode's own (a dead pid) is removed at start and another IDE's stays; a
+  wrong token, no token and a Host off the loopback are refused with
+  nothing said first; initialize, ide_connected and tools/list (no
+  saveDocument or executeCode); selection_changed on a real selection
+  (0-based lines, UTF-16 columns after an astral character); openFile
+  with startText and endText (added beside the user's tab while the
+  keyboard is in the editor, the note waiting; shown in the agent's preview
+  tab with the highlight and an empty note once it is not); getDiagnostics
+  from the scripted server, under the uri it was asked with, and for a file
+  with none; openDiff accepted by the bar's real Accept click (FILE_SAVED
+  and the text, the file untouched) and rejected by closing the tab;
+  close_tab and closeAllDiffTabs touching only the diffs the link offered;
+  the View menu's action writing `agent.ide-link` and the link, its lock
+  file and its client following it; `CLAUDE_CODE_SSE_PORT` for terminals.
+  Fails (checked once) with the link never started. Not tested: a real
+  Claude Code, the per-hunk clicks of a diff (item 3.2's suite has them),
+  the lock file removed at exit.
 - Install hints (item 2.8): the `install_hints` GUI suite, with `MINICODE_INSTALL_HAVE=uv`,
   shows the bar for a missing Python server with `uv tool install basedpyright`,
   Copy, Run in Terminal typing it without Return, the bar going when the
@@ -1309,6 +1330,12 @@ Displays.
 
 ### Sessions and losing work
 
+- [ ] The Claude Code IDE link (item 3.9): turn on View > Claude Code IDE
+  Link, start the real Claude Code in the window's folder, run /ide and
+  pick minicode; select some lines and see them in Claude's footer; ask it
+  to open a file and to change one (with Diff tool set to auto in /config)
+  and accept and reject a diff in the tab. Needs the owner's Claude Code
+  login; no agent runs it.
 - [ ] Logout: with tabs open on a folder, one with unsaved typing, log out
   of GNOME and back in, and start minicode on that folder. The tabs come
   back at their places, and the unsaved text comes back unsaved, with the
