@@ -173,6 +173,7 @@ gui_sources = [
   'src/LspSessionFolderTools.cpp',
   'src/FolderConsent.cpp',
   'src/ConsentBar.cpp',
+  'src/InstallView.cpp',
   # Format Document (PARITY.md 2.4): the window's side (Formatting.cpp),
   # the formatter's process (FormatRunner.cpp), and a server's formatting
   # for files nothing else formats (LspSessionFormatting.cpp).

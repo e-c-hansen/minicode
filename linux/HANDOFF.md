@@ -2796,6 +2796,39 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
 - **Needs the owner**: how the colors look with real basedpyright, clangd
   or rust-analyzer, and scrolling a long file.
 
+### 37. Install hints (done, November 2026; `PARITY.md` item 2.8)
+
+- **What it does**: a language server that is not installed is offered
+  as an install, as the Mac's install bar does. `ConsentBar` (the one bar
+  under the tabs) shows "No Python language server is installed...", Install...
+  (a menu button whose popover holds an `InstallView`), Don't Show Again and
+  x. The commands are the core's (`src/InstallHints.{h,cpp}`, Linux's ways:
+  uv, pipx, npm, apt, go, cargo, rustup, snap, the first whose installer is
+  here, else how to get the installer). minicode never runs one: Copy puts it
+  on the clipboard, Run in Terminal types it with `Terminal::typeText` (a paste
+  in brackets, never Return) and shows the terminal.
+- **When**: `LspSession::missingServer` (a key none of whose programs was
+  found, `notInstalled_`), once per language per launch across windows, until
+  x, Don't Show Again (`$XDG_STATE_HOME/minicode/install-hints.json`) or the
+  server appearing. `LspSession::lookAgainForMissingServer` runs when the
+  window becomes active (`onIsActive`) and when a terminal command finishes
+  (`Terminal::onCommandFinished`, a look four times a second after each Return
+  until the shell has the terminal), so no restart is needed.
+- **Fake installers**: `MINICODE_INSTALL_HAVE=uv,npm` replaces the search for
+  installers, as on the Mac.
+- **Checked by** the `install_hints` suite: the bar with the right command
+  (uv), Copy to the clipboard, Run in Terminal typed and not run, the server
+  appearing taking the bar away, x for this launch, Don't Show Again kept.
+  It fails without the wiring in main.cpp.
+- **Format Document's note** (`Formatting::showNote`): a Failed decision with
+  `installPrograms` (pyink and yapf, prettier...) puts an
+  `InstallView::forFormatters` under the message in the note's popover (Copy,
+  Run in Terminal through `Formatting::Host::runInTerminal`, the same typing
+  as the bar's); `Formatting::installView()` is for checks, and the
+  `install_hints` suite's last case clears PATH and presses Format Document.
+- **Needs the owner**: the commands on a real Ubuntu (apt, snap), and a real
+  install finishing in the terminal bringing the server up.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

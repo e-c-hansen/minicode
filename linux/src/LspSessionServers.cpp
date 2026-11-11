@@ -8,6 +8,8 @@
 // started here like any other.
 #include "LspSessionPrivate.h"
 
+#include "InstallHints.h"
+
 using lspgtk::Server;
 
 // ---- status
@@ -95,9 +97,11 @@ std::shared_ptr<Server> LspSession::launchServer(const std::string& key, std::st
     // looked for beside the interpreter it gets, and one that would run the
     // folder's code starts without it, or waits for the folder's answer.
     const std::vector<std::string> first = firstDirsForKey(key);
+    bool found = false;
     for (const std::string& cmd : commands) {
         std::vector<std::string> argv = lspgtk::resolveCommand(cmd, first);
         if (argv.empty()) continue;
+        found = true;
         const Lsp::ProjectCodeCheck pc = projectCodeForKey(key, argv[0]);
         if (pc.verdict == Lsp::ProjectCode::Waits) {
             *note = "The " + Lsp::serverDisplayName(key) +
@@ -106,11 +110,59 @@ std::shared_ptr<Server> LspSession::launchServer(const std::string& key, std::st
         }
         if (std::shared_ptr<Server> server = Server::start(key, argv, root_)) {
             configureServer(server->client(), key, argv, pc);
+            notInstalled_.erase(key);
             return server;
         }
     }
+    // Not installed (the install offer's case, PARITY.md 2.8), or found and
+    // failed to start.
+    if (!found) notInstalled_.insert(key);
     *note = "No " + Lsp::serverDisplayName(key) + " language server found";
     return nullptr;
+}
+
+// ---- a missing server (PARITY.md 2.8)
+
+std::string LspSession::missingServer() const {
+    if (currentKey_.empty() || server_ || !settings_.lspEnabled() ||
+        !notInstalled_.count(currentKey_))
+        return "";
+    // A server of the user's own has no install commands: the status bar
+    // says it was not found, and nothing offers to install it.
+    return Install::server(currentKey_) ? currentKey_ : "";
+}
+
+void LspSession::lookAgainForMissingServer() {
+    if (path_.empty() || held_ || !settings_.lspEnabled() || currentKey_.empty()) return;
+    // A key whose programs were all missing, with one there now. Only a
+    // search of the folders: a server that still is not there is not
+    // started again, and a running one is left alone.
+    auto foundNow = [this](const std::string& key) {
+        if (key.empty() || !notInstalled_.count(key)) return false;
+        const std::vector<std::string> first = firstDirsForKey(key);
+        for (const std::string& cmd : commandsForKey(key))
+            if (!lspgtk::resolveCommand(cmd, first).empty()) return true;
+        return false;
+    };
+    std::vector<std::string> again;
+    for (const std::string& key : {currentKey_, alsoKey_})
+        if (foundNow(key)) again.push_back(key);
+    // Ruff installed since, in a project that configures it: the second
+    // server the file now wants (alsoCommandFor finds ruff on PATH).
+    if (alsoKey_.empty() && currentKey_ == "python") {
+        forgetRuffConfiguration();
+        if (!alsoCommandFor(currentKey_, path_).empty()) again.push_back(Lsp::alsoKey(currentKey_));
+    }
+    if (again.empty()) return;
+    const bool mainWasMissing = !server_ && notInstalled_.count(currentKey_);
+    for (const std::string& key : again) {
+        notes_.erase(key);
+        notInstalled_.erase(key);
+    }
+    const std::string path = path_;   // a copy: documentChanged clears path_ first
+    documentChanged(path);
+    if (mainWasMissing && server_)
+        note("Found the " + Lsp::serverDisplayName(currentKey_) + " language server");
 }
 
 std::shared_ptr<Server> LspSession::serverForKey(const std::string& key) {
@@ -263,6 +315,7 @@ void LspSession::stopServers(const std::vector<std::string>& keys) {
             servers_.erase(it);
         }
         notes_.erase(k);
+        notInstalled_.erase(k);
         forgetProjectCode(k);
     }
     scheduleWatcherUpdate();
@@ -276,6 +329,7 @@ void LspSession::stopAllServers() {
     }
     servers_.clear();
     notes_.clear();
+    notInstalled_.clear();
     watch_->stoppingAll = false;
     stopWatchingFiles();
     forgetAllProjectCode();

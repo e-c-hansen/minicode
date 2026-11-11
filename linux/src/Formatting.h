@@ -44,6 +44,7 @@
 
 class Document;
 class Editor;
+class InstallView;
 class LspSession;
 
 class Formatting {
@@ -52,6 +53,9 @@ public:
         std::function<std::string()> root;   // the window's folder
         // Ctrl+S's own save of `d`, unformatted, with its error shown.
         std::function<void(Document* d)> save;
+        // Types a command in the terminal, never pressing Return (the
+        // install offer's Run in Terminal); null leaves that button out.
+        std::function<void(const std::string& command)> runInTerminal;
     };
 
     Formatting(GtkWindow* window, Editor* editor, LspSession* lsp, Host host);
@@ -84,6 +88,8 @@ public:
     bool noteShown() const;
     int notesShown() const { return notes_; }
     int questionsAsked() const { return questions_; }
+    // The install offer in the note shown now (null when it has none).
+    InstallView* installView() const { return installView_; }
 
 private:
     // `then` runs once the result is in (applied or not) while the same tab
@@ -95,7 +101,8 @@ private:
     // The formatter's output in place of the source, as one undo step; false
     // when it is the same text.
     bool apply(const std::string& text);
-    void showNote(const std::string& message, bool error);
+    void showNote(const std::string& message, bool error,
+                  const std::vector<std::string>& installPrograms = {});
     void closeNote();
     static void onViewUnrealize(GtkWidget* view, gpointer self);
 
@@ -110,6 +117,8 @@ private:
     int questions_ = 0;
     GtkWidget* note_ = nullptr;        // a popover on the text view
     GtkWidget* noteLabel_ = nullptr;
+    GtkWidget* noteBox_ = nullptr;     // the label, then the install offer
+    InstallView* installView_ = nullptr;   // owned by its widget
     guint noteTimer_ = 0;
     gulong noteBufferHandler_ = 0;     // the note closes on the next edit
     GtkTextBuffer* noteBuffer_ = nullptr;

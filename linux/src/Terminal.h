@@ -72,6 +72,23 @@ public:
     // What a Ctrl+click at that point does: true when there was a link to open.
     bool openLinkAt(double x, double y);
 
+    // Run in Terminal (PARITY.md 2.8, the Mac's typeCommand:): `text` at
+    // the shell's prompt as a paste (in brackets when the shell asked for
+    // them), never with Return, for the user to read and run. The terminal
+    // and its shell are made first if need be, and the text waits for the
+    // shell's first output (its prompt). False, with nothing typed, while
+    // a program other than the shell has the terminal.
+    bool typeText(const std::string& text);
+    // A program other than the shell has the terminal (its foreground
+    // process group is not the shell's).
+    bool busy() const;
+    // A command run with Return has finished: the shell has the terminal
+    // again. The port's shell has no integration marks, so each Return
+    // typed into the terminal starts a look, four times a second, until
+    // the shell is in the foreground (the Mac's
+    // MCTerminalCommandDidFinishNotification).
+    std::function<void()> onCommandFinished;
+
 private:
     // One row's share of the hovered link: cells [col0, col1) of `row`, a
     // row of the whole buffer (scrollback included), not of the screen.
@@ -125,6 +142,16 @@ private:
     double fontBase_ = 0, fontScale_ = 1;
     bool   fontSet_ = false;
     GCancellable* spawnCancel_ = g_cancellable_new();
+    // Run in Terminal's text, waiting for the shell's first output; and
+    // the look for a command's end after Return (typeText, onCommandFinished).
+    std::string pendingType_;
+    guint  typeTimer_ = 0;
+    int    typeTries_ = 0;
+    bool   shellSpoke_ = false;   // the shell printed something since it started
+    guint  finishTimer_ = 0;
+    void typePending();
+    static void onCommit(VteTerminal* term, char* text, guint size, gpointer self);
+    static void onContentsChanged(VteTerminal* term, gpointer self);
 };
 
 #endif // MINICODE_ENABLE_TERMINAL

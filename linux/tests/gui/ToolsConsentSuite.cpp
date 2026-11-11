@@ -91,6 +91,9 @@ bool fileHas(const std::string& path, const std::string& part) {
 MC_GUI_SUITE(tools_consent) {
     MCGuiStep("a .venv whose bin holds the only Python server, and no answer yet", [] {
         FolderConsent::forget(MCGuiProject());
+        // The server is missing while the .venv is refused: the install
+        // offer (item 2.8) is not what this suite looks at.
+        ConsentBar::setInstallMuted("python", true);
         g_remove(marker().c_str());
         script(F(".venv/bin/python"), "#!/bin/sh\nexit 0\n");
         // Records that it ran, and reads what it is sent until minicode
@@ -202,6 +205,7 @@ MC_GUI_SUITE(tools_consent) {
     MCGuiStep("tidy up: servers off, no .venv, no answer, the tabs closed", [] {
         GCHECK(answer().empty() && !FolderConsent::isPutOff(MCGuiProject()));
         MCGuiSetSettings("lsp.enabled = false\n");
+        ConsentBar::setInstallMuted("python", false);
         for (const char* name : {"a.py", "notes.txt"})
             if (Document* d = ed()->documentFor(F(name))) ed()->closeTab(d);
         g_remove(marker().c_str());

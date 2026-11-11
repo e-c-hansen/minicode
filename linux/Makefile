@@ -58,7 +58,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Do
        src/LspSessionDiagnostics.cpp src/LspSessionCompletion.cpp src/LspSessionSignature.cpp \
        src/LspSessionNavigation.cpp \
        src/LspSessionActions.cpp src/LspSessionEdits.cpp src/LspPicker.cpp \
-       src/LspSessionFolderTools.cpp src/FolderConsent.cpp src/ConsentBar.cpp \
+       src/LspSessionFolderTools.cpp src/FolderConsent.cpp src/ConsentBar.cpp src/InstallView.cpp \
        src/Formatting.cpp src/FormatRunner.cpp src/LspSessionFormatting.cpp \
        src/LspSessionProblems.cpp src/ProblemsPanel.cpp src/LspSessionAlso.cpp \
        src/LspSessionWatch.cpp src/LspWatcher.cpp src/LspSessionImports.cpp \

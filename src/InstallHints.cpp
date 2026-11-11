@@ -1,6 +1,8 @@
 // InstallHints.cpp — pure C++. See InstallHints.h.
 #include "InstallHints.h"
 
+#include "Json.h"
+
 namespace Install {
 
 namespace {
@@ -13,7 +15,10 @@ const char* kServerGives =
 // where pyright from npm needs a working one (Homebrew's node has broken
 // under it before). uv and pipx put their tools in ~/.local/bin, npm -g in
 // Homebrew's bin or the user's prefix, go install in ~/go/bin and rustup in
-// ~/.cargo/bin; MiniCode's search (MCSearchDirs) covers every one.
+// ~/.cargo/bin; MiniCode's search (MCSearchDirs) covers every one. On
+// Linux (kOnLinux) the distribution's packages come where Homebrew's do on
+// the Mac, through apt (Ubuntu and Debian), and the Linux port's search
+// (LspSearchDirs) covers the same folders.
 const std::vector<std::pair<std::string, Tool>>& servers() {
     static const std::vector<std::pair<std::string, Tool>> t = {
         {"python",
@@ -27,46 +32,55 @@ const std::vector<std::pair<std::string, Tool>>& servers() {
          {"clangd", std::string("clangd") + kServerGives, "https://clangd.llvm.org",
           // The command line tools bring clangd (and clang-format); Homebrew's
           // llvm is keg-only, and its bin folder is searched too.
-          {{"xcode-select --install", ""}, {"brew install llvm", "brew"}}}},
+          {{"xcode-select --install", "", kOnMac},
+           {"brew install llvm", "brew", kOnMac},
+           {"sudo apt install clangd", "apt", kOnLinux}}}},
         {"go",
          {"gopls", std::string("gopls") + kServerGives, "https://go.dev/gopls",
           {{"go install golang.org/x/tools/gopls@latest", "go"},
-           {"brew install gopls", "brew"}}}},
+           {"brew install gopls", "brew", kOnMac},
+           {"sudo apt install gopls", "apt", kOnLinux}}}},
         {"rust",
          {"rust-analyzer", std::string("rust-analyzer") + kServerGives,
           "https://rust-analyzer.github.io",
           {{"rustup component add rust-analyzer", "rustup"},
-           {"brew install rust-analyzer", "brew"}}}},
+           {"brew install rust-analyzer", "brew", kOnMac}}}},
         {"typescript",
          {"typescript-language-server",
           std::string("typescript-language-server") + kServerGives,
           "https://github.com/typescript-language-server/typescript-language-server",
           {{"npm install -g typescript-language-server typescript", "npm"},
-           {"brew install typescript-language-server", "brew"}}}},
+           {"brew install typescript-language-server", "brew", kOnMac}}}},
         // The optional ones (Lsp::optionalServers): run when installed, and
         // offered only from the Language Servers popover.
         {"latex",
          {"texlab",
           "texlab completes LaTeX commands, labels and citations, and goes to a "
           "\\ref's label or a \\cite's BibTeX entry.",
-          "https://github.com/latex-lsp/texlab", {{"brew install texlab", "brew"}}}},
+          "https://github.com/latex-lsp/texlab",
+          {{"brew install texlab", "brew", kOnMac}, {"sudo apt install texlab", "apt", kOnLinux}}}},
         {"markdown",
          {"marksman",
           "marksman completes and checks links between Markdown files and to their "
           "headings, and renames a heading everywhere it is linked.",
-          "https://github.com/artempyanykh/marksman", {{"brew install marksman", "brew"}}}},
+          "https://github.com/artempyanykh/marksman",
+          {{"brew install marksman", "brew", kOnMac},
+           {"sudo snap install marksman", "snap", kOnLinux}}}},
         {"toml",
          {"taplo",
           "taplo checks TOML files and completes pyproject.toml and Cargo.toml from "
           "their schemas.",
-          "https://taplo.tamasfe.dev", {{"brew install taplo", "brew"}}}},
+          "https://taplo.tamasfe.dev",
+          {{"brew install taplo", "brew", kOnMac},
+           {"cargo install taplo-cli --locked", "cargo", kOnLinux},
+           {"npm install -g @taplo/cli", "npm", kOnLinux}}}},
         {"shell",
          {"bash-language-server",
           "bash-language-server completes shell scripts, documents commands on hover, "
           "and shows shellcheck's warnings when shellcheck is installed.",
           "https://github.com/bash-lsp/bash-language-server",
           {{"npm install -g bash-language-server", "npm"},
-           {"brew install bash-language-server", "brew"}}}},
+           {"brew install bash-language-server", "brew", kOnMac}}}},
     };
     return t;
 }
@@ -82,7 +96,7 @@ const std::vector<std::pair<std::string, Tool>>& alsoServers() {
           "https://docs.astral.sh/ruff/editors/",
           {{"uv tool install ruff", "uv"},
            {"pipx install ruff", "pipx"},
-           {"brew install ruff", "brew"}}}},
+           {"brew install ruff", "brew", kOnMac}}}},
     };
     return t;
 }
@@ -101,43 +115,48 @@ const std::vector<Tool>& formatters() {
          "https://black.readthedocs.io",
          {{"uv tool install black", "uv"},
           {"pipx install black", "pipx"},
-          {"brew install black", "brew"}}},
+          {"brew install black", "brew", kOnMac}}},
         {"ruff", "Ruff formats Python with Format Document (Shift+Option+F).",
          "https://docs.astral.sh/ruff",
          {{"uv tool install ruff", "uv"},
           {"pipx install ruff", "pipx"},
-          {"brew install ruff", "brew"}}},
+          {"brew install ruff", "brew", kOnMac}}},
         {"clang-format",
          "clang-format formats C, C++, Objective-C, Java, JavaScript, TypeScript, "
          "Protocol Buffers, and C# with Format Document (Shift+Option+F).",
          "https://clang.llvm.org/docs/ClangFormat.html",
-         {{"xcode-select --install", ""}, {"brew install clang-format", "brew"}}},
+         {{"xcode-select --install", "", kOnMac},
+          {"brew install clang-format", "brew", kOnMac},
+          {"sudo apt install clang-format", "apt", kOnLinux}}},
         // A project's own copy in node_modules/.bin is used first, so these
         // matter only where the project's packages are not installed.
         {"prettier",
          "Prettier formats JavaScript, TypeScript, Markdown, JSON, YAML, and CSS in "
          "projects set up for it with Format Document (Shift+Option+F).",
          "https://prettier.io",
-         {{"npm install -g prettier", "npm"}, {"brew install prettier", "brew"}}},
+         {{"npm install -g prettier", "npm"}, {"brew install prettier", "brew", kOnMac}}},
         {"biome",
          "Biome formats JavaScript, TypeScript, JSON, and CSS in projects set up for it "
          "with Format Document (Shift+Option+F).",
          "https://biomejs.dev",
-         {{"npm install -g @biomejs/biome", "npm"}, {"brew install biome", "brew"}}},
+         {{"npm install -g @biomejs/biome", "npm"}, {"brew install biome", "brew", kOnMac}}},
         {"gofmt", "gofmt, which comes with Go, formats Go with Format Document "
                   "(Shift+Option+F).",
-         "https://go.dev/doc/install", {{"brew install go", "brew"}}},
+         "https://go.dev/doc/install",
+         {{"brew install go", "brew", kOnMac}, {"sudo apt install golang-go", "apt", kOnLinux}}},
         {"rustfmt", "rustfmt formats Rust with Format Document (Shift+Option+F).",
          "https://github.com/rust-lang/rustfmt",
          {{"rustup component add rustfmt", "rustup"}}},
         {"shfmt", "shfmt formats shell scripts with Format Document (Shift+Option+F).",
          "https://github.com/mvdan/sh",
-         {{"brew install shfmt", "brew"},
-          {"go install mvdan.cc/sh/v3/cmd/shfmt@latest", "go"}}},
+         {{"brew install shfmt", "brew", kOnMac},
+          {"go install mvdan.cc/sh/v3/cmd/shfmt@latest", "go"},
+          {"sudo apt install shfmt", "apt", kOnLinux}}},
         {"latexindent",
          "latexindent formats LaTeX with Format Document (Shift+Option+F).",
          "https://latexindentpl.readthedocs.io",
-         {{"brew install latexindent", "brew"}}},
+         {{"brew install latexindent", "brew", kOnMac},
+          {"sudo apt install texlive-extra-utils", "apt", kOnLinux}}},
     };
     return t;
 }
@@ -181,7 +200,32 @@ const std::vector<std::string>& serverKeys() {
     return keys;
 }
 
-Prerequisite prerequisite(const std::string& program) {
+std::vector<Way> waysOn(const Tool& tool, Os os) {
+    const unsigned bit = os == Os::Mac ? kOnMac : kOnLinux;
+    std::vector<Way> out;
+    for (const Way& w : tool.ways)
+        if (w.on & bit) out.push_back(w);
+    return out;
+}
+
+const char* thisComputer(Os os) { return os == Os::Mac ? "this Mac" : "this computer"; }
+
+Prerequisite prerequisite(const std::string& program, Os os) {
+    if (os == Os::Linux) {
+        // uv's own installer is a script piped to sh, read on its page; the
+        // others come with the distribution, through apt where there is apt.
+        if (program == "uv")
+            return {"uv", "", "", "https://docs.astral.sh/uv/getting-started/installation/"};
+        if (program == "pipx") return {"pipx", "sudo apt install pipx", "apt", "https://pipx.pypa.io"};
+        if (program == "npm") return {"npm", "sudo apt install npm", "apt", "https://nodejs.org"};
+        if (program == "go")
+            return {"go", "sudo apt install golang-go", "apt", "https://go.dev/doc/install"};
+        if (program == "rustup" || program == "cargo") return {program, "", "", "https://rustup.rs"};
+        if (program == "apt") return {"apt", "", "", "https://wiki.debian.org/Apt"};
+        if (program == "snap")
+            return {"snap", "", "", "https://snapcraft.io/docs/installing-snapd"};
+        return {program, "", "", ""};
+    }
     if (program == "uv")
         return {"uv", "brew install uv", "brew",
                 "https://docs.astral.sh/uv/getting-started/installation/"};
@@ -197,31 +241,51 @@ Prerequisite prerequisite(const std::string& program) {
 }
 
 Suggestion suggest(const Tool& tool, const std::function<bool(const std::string&)>& have,
-                   const std::vector<const Tool*>& extra) {
+                   const std::vector<const Tool*>& extra, Os os) {
     Suggestion s;
-    if (tool.ways.empty()) return s;
+    const std::vector<Way> ways = waysOn(tool, os);
+    if (ways.empty()) return s;
     auto canRun = [&](const Way& w) { return w.needs.empty() || (have && have(w.needs)); };
-    size_t chosen = tool.ways.size();
-    for (size_t i = 0; i < tool.ways.size(); i++)
-        if (canRun(tool.ways[i])) { chosen = i; break; }
-    if (chosen == tool.ways.size()) {
+    size_t chosen = ways.size();
+    for (size_t i = 0; i < ways.size(); i++)
+        if (canRun(ways[i])) { chosen = i; break; }
+    if (chosen == ways.size()) {
         chosen = 0;
-        Prerequisite p = prerequisite(tool.ways[0].needs);
+        Prerequisite p = prerequisite(ways[0].needs, os);
         s.missing = p.program;
         if (!p.command.empty() && (p.needs.empty() || (have && have(p.needs))))
             s.before = p.command;
         else   // Homebrew is missing too, or there is no one-liner: its page
             s.beforeUrl = p.url;
     }
-    s.command = tool.ways[chosen].command;
-    for (size_t i = 0; i < tool.ways.size(); i++)
-        if (i != chosen) s.alternatives.push_back(tool.ways[i].command);
+    s.command = ways[chosen].command;
+    for (size_t i = 0; i < ways.size(); i++)
+        if (i != chosen) s.alternatives.push_back(ways[i].command);
     for (const Tool* t : extra) {
         if (!t || t == &tool) continue;
-        Suggestion other = suggest(*t, have);
+        Suggestion other = suggest(*t, have, {}, os);
         if (!other.command.empty()) s.alternatives.push_back(other.command);
     }
     return s;
+}
+
+std::string encodeMuted(const std::set<std::string>& keys) {
+    Json list = Json::array();
+    for (const std::string& k : keys) list.push(Json(k));
+    Json o = Json::object();
+    o.set("muted", list);
+    return o.dump() + "\n";
+}
+
+std::set<std::string> decodeMuted(const std::string& text) {
+    std::set<std::string> out;
+    Json o;
+    if (!Json::parse(text, o) || !o.isObject()) return out;
+    const Json& list = o["muted"];
+    if (!list.isArray()) return out;
+    for (size_t i = 0; i < list.size(); i++)
+        if (list[i].isString() && !list[i].asString().empty()) out.insert(list[i].asString());
+    return out;
 }
 
 }  // namespace Install

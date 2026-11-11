@@ -54,6 +54,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -146,6 +147,22 @@ public:
     // environment waits for your answer").
     std::string serverPythonInterpreter(std::string* source = nullptr) const;
     const std::string& root() const { return root_; }
+
+    // ---- a missing server (LspSessionServers.cpp, PARITY.md 2.8), for the
+    // install offer in the bar under the tabs (ConsentBar.h)
+    // The file on show's server key ("python") when no program of its
+    // commands was found and InstallHints knows how to install one, else
+    // "" (the Mac's missingServer).
+    std::string missingServer() const;
+    // The file on show's server key, "" for none.
+    const std::string& currentServerKey() const { return currentKey_; }
+    // The file on show's missing servers, its main and second one (and
+    // Ruff's own, installed since in a project that configures Ruff),
+    // looked for again and started when found, with a note ("Found the
+    // Python language server"): when the window becomes active and when a
+    // terminal command finishes, so installing one needs no restart.
+    // Nothing changes when nothing new is found.
+    void lookAgainForMissingServer();
 
     // ---- Format Document through the file's server
     // (LspSessionFormatting.cpp, PARITY.md 2.4), for a file no formatter is
@@ -339,6 +356,9 @@ private:
     // key -> running server; notes_ holds why a key has none ("" = switched off).
     std::map<std::string, std::shared_ptr<lspgtk::Server>> servers_;
     std::map<std::string, std::string> notes_;
+    // Keys none of whose programs was found (launchServer), until one is,
+    // or the folder or settings change.
+    std::set<std::string> notInstalled_;
     std::string signature_;   // the lsp.* settings the servers were started with
     bool drawn_ = false;      // the window has drawn its first frame (WhenDrawn.h)
     bool held_ = false;       // a document came before that, and waits for it
