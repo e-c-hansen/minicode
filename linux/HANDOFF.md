@@ -2894,7 +2894,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `browse`, `page`, `open-url` and BROWSER, `notify` and `hooks`, `procs`,
   `tour` and `install-skill`, and the skill file. Another uid's refusal is
   untested (needs a second user).
-### 39. The compare view, part one (done, November 2026; `PARITY.md` item 3.2)
+### 39. The compare view (done, November 2026; `PARITY.md` item 3.2)
 
 - **`CompareView.{h,cpp}`** is the Mac's `MCCompareView`: two panes, each a
   `GtkDrawingArea` in a `GtkScrolledWindow`, drawn by hand with cairo and
@@ -2924,10 +2924,35 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   styles, scrolling either pane, real F7 and Shift+F7 with wrapping, and
   50,000 lines a side under a CPU bound. It fails with `showComparison`
   taken out.
-- **Part two** (still `[~]` in `PARITY.md`): Accept and Reject per hunk, the
-  decision bar and `lastChoiceGrace`, the gutter between the panes for the
-  buttons, `minicode diff`, Compare with Main and the IDE link's openDiff;
-  a tab's scroll place is not kept when another tab shows.
+- **Decisions** (part two). `CompareSpec::decisionPrompt` (with `onDecision`,
+  `lastChoiceGrace`, `quiet`) makes `Editor::showComparison` give the tab a
+  `CompareDecision` (`Document::decision()`; the Mac's `MCComparison`
+  decision, GTK-free but for a GLib timeout): choices per hunk, `decide`,
+  `decideRest`, `decideHunk`, `sendNow`, `tabClosed`, `endDecision`, and
+  `finish` telling `onDecision(accepted, text)` once, the text the right one
+  when all are accepted, else `SideBySide::assemble`. `CompareView` shows a
+  bar (prompt, Accept and Reject, which turn into Accept the Rest and Reject
+  the Rest once a hunk is decided, and Send Now in the grace) and a gutter
+  between the panes with a check and a cross at each hunk's first row, drawn
+  from the shared adjustment so it scrolls with them. A press on an
+  undecided hunk's button decides it, a press on a decided hunk's own button
+  undecides it. The last choice sends after the grace (3 s); the bar's
+  buttons send at once, and `Editor::destroy` calls `tabClosed`, so closing
+  the tab in the grace sends what was decided and before it rejects. Left
+  out: tinting a decided hunk's rows. Trap: two clicks in one check step are
+  one gesture to GTK's click recognizer; click once per step and wait.
+- **`minicode diff`** (`ControlCommands.cpp`, the client allows it): `path`,
+  `--base` (`isSafeRef`: never starting with "-"), `other`, `--window` and
+  `--folder`; files are plain, UTF-8, up to 16 MB, opened `O_NONBLOCK` and
+  checked again once open; git (`rev-parse`, `show ref:./name`, through
+  `runGit`) and the reads run on a thread, the lining up on
+  `showComparison`'s own, and the answer waits for the tab. While the user
+  types in the editor the tab opens quietly beside theirs (`quiet`, and
+  `"background"`, which the client already says). Each call makes a tab of
+  its own: the Mac's one diff preview tab that each call replaces and `--keep`
+  are not built. Titles and labels are the Mac's.
+- **Still open:** Compare with Main (the Worktrees node, 3.5), the IDE link's
+  openDiff (3.9), a tab's scroll place when another tab shows.
 - **Needs the owner:** the look (tints, hatching, colors in a light theme),
   the wheel and a touchpad in the panes, F7 under GNOME.
 

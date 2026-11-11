@@ -228,6 +228,7 @@ gui_sources = [
   'src/GitDiffView.cpp',
   'src/CompareView.cpp',
   'src/ComparePanes.cpp',
+  'src/CompareDecision.cpp',
   # The editor's change bars (GitGutter.cpp) and the tree's colors
   # (TreeGitColors.cpp), both watching the repository's folder
   # (GitDirWatch.cpp).

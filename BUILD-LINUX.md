@@ -61,11 +61,18 @@ Verified by running it:
   pid with no listener) are removed while one with a listener is kept. The
   check fails with the server taken out. Not tested: another user's peer
   refused (one `SO_PEERCRED` comparison; it needs a second user).
-- The compare view, part one (item 3.2): the `compare` GUI suite, which opens a
+- The compare view (item 3.2): the `compare` GUI suite, which opens a
   comparison through `Editor::showComparison`, checks the rows and fillers, the
   marked words, the syntax styles, the panes scrolling together, real F7 and
-  Shift+F7 and 50,000 lines a side under a main-thread CPU bound. Accept and
-  Reject per hunk (part two) are not built.
+  Shift+F7 and 50,000 lines a side under a main-thread CPU bound. With a
+  decision it clicks the gutter's check and cross for real, takes a choice
+  back, watches the 3 s grace (shortened in the check) end and send, and
+  checks Send Now, the bar's Accept and Reject and closing the tab, in the
+  grace and before it, and the accepted text. The `control` suite runs
+  `minicode diff` as a real client (two files, a file against HEAD in a real
+  repository, the beside-the-user note, a bad `--base`, a missing file, a
+  folder); both fail with the feature taken out. Not tested: a 16 MB file
+  (the limit is a `stat` comparison), a window closed during the read.
 - Processes and ports, part one (item 3.8): the `procfs:*` core groups feed
   canned `/proc` text (a stat line with parentheses in the name, `btime`,
   `cmdline`, `smaps_rollup`, `net/tcp` and `tcp6` in LISTEN state) and a

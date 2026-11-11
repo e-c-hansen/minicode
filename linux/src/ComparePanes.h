@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,14 @@ struct CompareSpec {
     std::string leftText, rightText;
     std::string path;         // the file on the right, when it is one
     std::string fileName;     // whose extension picks the syntax colors; path's when empty
+    // A change offered for the user's decision (CompareDecision.h): the bar's
+    // words, and what is told once it is made (accepted, and the text of the
+    // accepted hunks). No prompt, no decision.
+    std::string decisionPrompt;
+    std::function<void(bool accepted, const std::string& text)> onDecision;
+    double lastChoiceGrace = 3;
+    // The tab is added without being shown (the user is typing elsewhere).
+    bool quiet = false;
 };
 
 struct ComparePane {

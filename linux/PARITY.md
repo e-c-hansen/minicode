@@ -1313,17 +1313,22 @@ its server comes first here (2.0).
   client (the Mac's CLI, shared) and `open`, `window`, `state`, `selection`
   and `ping`, with the user's typing protected (`"background"`); the `control`
   GUI suite. Remains: `term` and `term-output` (with the terminal),
-  `split`, `diff` (3.2), `open --note`/`--from` and `tour` (3.4), `browse`,
+  `split`, `open --note`/`--from` and `tour` (3.4), `browse`,
   `page` and `open-url`/BROWSER (3.7), `notify` and `hooks` (3.6), `procs`
   (3.8), `install-skill` and the skill; every one answers "not on Linux yet"
-  now.
+  now. `diff` is done with 3.2.
 - [~] **3.2 The compare view.** `SideBySide`, word changes, Accept and Reject
   per hunk. Part one done (HANDOFF item 39): `CompareView` and
   `ComparePanes`, a comparison tab through `Editor::showComparison` with
   syntax colors, changed rows and words marked, panes scrolling together, F7
-  and Shift+F7. Left: Accept and Reject per hunk, the decision bar and
-  `lastChoiceGrace`, the entry points (`minicode diff`, Compare with Main, the
-  IDE link's openDiff), keeping a tab's place.
+  and Shift+F7. Part two done (HANDOFF item 39): a comparison with a
+  decision (`CompareDecision`: a check and a cross per hunk in a gutter, the
+  bar, `lastChoiceGrace` with Send Now, `acceptedText`) and `minicode diff`.
+  Left, owned by other items: Compare with Main (3.5, the Worktrees node), the
+  IDE link's openDiff (3.9, which passes `CompareSpec::decisionPrompt`);
+  also the Mac's diff preview tab that each `diff` replaces (every
+  call opens a tab of its own here), choice tints on the rows, and keeping a
+  tab's place.
 - [ ] **3.3 The inline agent.** `InlineAgent`, with pending edits. Never run
   the real Claude Code in a check: use `tests/fixtures/claude`.
 - [ ] **3.4 Notes and tours.** Mac: `AgentNotes`.

@@ -5,7 +5,10 @@
 // syntax colors, the words that changed inside a changed row marked, the
 // panes scrolling together, F7 and Shift+F7 by real key presses stepping
 // through the runs of changes (wrapping), and a 50,000-line-a-side comparison
-// opening within a CPU bound on the main thread. Accept and Reject are part two.
+// opening within a CPU bound on the main thread. A comparison with a decision
+// (part two): a check and a cross per hunk in the gutter pressed with real
+// clicks, a choice taken back, the last choice sent after a grace (Send Now,
+// the bar's buttons, closing the tab), the accepted text.
 #include "Harness.h"
 
 #include "CompareView.h"
@@ -13,6 +16,7 @@
 #include "Editor.h"
 #include "TabStrip.h"
 
+#include <algorithm>
 #include <string>
 
 namespace {
@@ -47,6 +51,44 @@ double gCpu0 = 0, gCpu = 0;
 size_t gRows = 0;
 Document* gDoc = nullptr;
 size_t gTabsBefore = 0;
+
+// The decision made: what the callback was told.
+int gTold = 0;            // calls
+bool gAccepted = false;
+std::string gText;
+CompareDecision* dec() { return gDoc ? gDoc->decision().get() : nullptr; }
+
+CompareSpec decisionSpec(double grace) {
+    CompareSpec s = smallSpec();
+    s.title = "a.py (decide)";
+    s.decisionPrompt = "Apply this change to a.py?";
+    s.lastChoiceGrace = grace;
+    gTold = 0;
+    gAccepted = false;
+    gText.clear();
+    s.onDecision = [](bool accepted, const std::string& text) {
+        gTold++;
+        gAccepted = accepted;
+        gText = text;
+    };
+    return s;
+}
+
+// A real click on a hunk's check or cross.
+void clickHunk(size_t hunk, bool accept) {
+    double x, y, w, h;
+    cv()->scrollToRow(std::max(0L, (long)cv()->data()->hunks[hunk].first - 3));
+    if (!cv()->hunkButtonRect(hunk, accept, &x, &y, &w, &h)) {
+        GCHECK(false && "the hunk's button is on screen");
+        return;
+    }
+    MCGuiClick(cv()->gutter(), x + w / 2, y + h / 2);
+}
+
+void openDecision(double grace) {
+    gDoc = nullptr;
+    ed()->showComparison(decisionSpec(grace), [](Document* d) { gDoc = d; });
+}
 
 std::vector<size_t> firsts() {
     std::vector<size_t> v;
@@ -180,4 +222,131 @@ MC_GUI_SUITE(compare) {
         GCHECK(MCGuiTimingSkipped() || ms < 300);
     });
     MCGuiStep("closing the tabs", [] { ed()->closeAllTabs(); });
+
+    // ---- a comparison with a decision
+    MCGuiStep("a comparison with a prompt opens with a bar and a gutter", [] {
+        ed()->closeAllTabs();
+        openDecision(0.8);
+    });
+    MCGuiWait("it shows", 10, [] { return gDoc && ed()->isComparison() && cv() && dec(); });
+    MCGuiWaitQuiet("it is laid out", 0.3, 5, [] { return (long)gtk_widget_get_height(cv()->widget()); });
+    MCGuiStep("the bar says its prompt and the gutter shows", [] {
+        GCHECK(MCGuiOnScreen(cv()->bar()) && MCGuiOnScreen(cv()->gutter()));
+        GCHECK_EQ_STR(cv()->barText(), "Apply this change to a.py?");
+        GCHECK(MCGuiFindButton(cv()->bar(), "Accept") && MCGuiFindButton(cv()->bar(), "Reject"));
+        double x, y, w, h;
+        cv()->scrollToRow(10);
+        GCHECK(cv()->hunkButtonRect(0, true, &x, &y, &w, &h));
+        GCHECK(cv()->hunkButtonRect(0, false, &x, &y, &w, &h));
+    });
+    MCGuiStep("the first change is shown", [] { cv()->step(true); });
+    MCGuiWaitQuiet("it is drawn", 0.3, 5, [] { return (long)cv()->topRow(true); });
+    MCGuiStep("a picture of the bar and the gutter", [] {
+        MCGuiSnapshot(cv()->widget(), "compare-decide");
+    });
+    MCGuiStep("a click on the first hunk's check accepts it", [] { clickHunk(0, true); });
+    MCGuiWait("accepted", 5, [] { return dec()->choiceOfHunk(0) == 1; });
+    MCGuiStep("the bar counts, and the choice is taken back by a click on it", [] {
+        GCHECK(cv()->barText().find("1 accepted, 0 rejected, 2 to decide") != std::string::npos);
+        GCHECK(MCGuiFindButton(cv()->bar(), "Accept the Rest"));
+        clickHunk(0, true);
+    });
+    MCGuiWait("undecided again", 5, [] { return dec()->choiceOfHunk(0) == 0; });
+    MCGuiStep("a click on the other button of a decided hunk changes nothing; the cross rejects", [] {
+        clickHunk(0, false);
+    });
+    MCGuiWait("rejected", 5, [] { return dec()->choiceOfHunk(0) == -1; });
+    MCGuiStep("the second is accepted", [] { clickHunk(1, true); });
+    MCGuiWait("accepted", 5, [] { return dec()->choiceOfHunk(1) == 1; });
+    MCGuiStep("and the third, the last choice starting the grace", [] { clickHunk(2, true); });
+    MCGuiWait("the answer is about to go", 5, [] { return dec()->sending(); });
+    MCGuiStep("the bar says so and offers Send Now; nothing is sent yet", [] {
+        GCHECK(cv()->barText().find("sending in a moment") != std::string::npos);
+        GCHECK(MCGuiFindButton(cv()->bar(), "Send Now"));
+        GCHECK(gTold == 0);
+        clickHunk(2, true);   // a misclick taken back
+    });
+    MCGuiWait("not sending any more", 5, [] { return !dec()->sending() && dec()->choiceOfHunk(2) == 0; });
+    MCGuiPause(1.2);   // time is the condition: the grace has passed and nothing was sent
+    MCGuiStep("nothing was sent", [] {
+        GCHECK(gTold == 0 && dec()->decision() == 0);
+        clickHunk(2, false);   // decided again, rejected
+    });
+    MCGuiWait("sending again", 5, [] { return dec()->sending(); });
+    MCGuiWait("sent after the grace", 10, [] { return gTold == 1; });
+    MCGuiStep("one accepted: the text has the second hunk only", [] {
+        GCHECK(gAccepted && dec()->decision() == 1);
+        GCHECK(gText.find("value_20 = compute(20)") != std::string::npos);   // hunk 0 rejected
+        GCHECK(gText.find("value_20 = compute(21)") == std::string::npos);
+        GCHECK(gText.find("value_100 = ") == std::string::npos);             // hunk 1: removed
+        GCHECK(gText.find("added = True") == std::string::npos);             // hunk 2 rejected
+        GCHECK(!gtk_widget_get_visible(cv()->gutter()));
+        GCHECK(cv()->barText().find("Accepted 1 of 3") != std::string::npos);
+    });
+
+    MCGuiStep("Send Now ends the grace at once, all accepted gives the right text", [] {
+        ed()->closeAllTabs();
+        openDecision(30);
+    });
+    MCGuiWait("it shows", 10, [] { return gDoc && ed()->isComparison() && cv() && dec(); });
+    MCGuiWaitQuiet("laid out", 0.3, 5, [] { return (long)gtk_widget_get_height(cv()->widget()); });
+    MCGuiStep("the first check", [] { clickHunk(0, true); });
+    MCGuiWait("accepted", 5, [] { return dec()->choiceOfHunk(0) == 1; });
+    MCGuiStep("the second", [] { clickHunk(1, true); });
+    MCGuiWait("accepted", 5, [] { return dec()->choiceOfHunk(1) == 1; });
+    MCGuiStep("the third", [] { clickHunk(2, true); });
+    MCGuiWait("sending", 5, [] { return dec()->sending(); });
+    MCGuiStep("the bar's Send Now button", [] {
+        GCHECK(gTold == 0);
+        MCGuiClick(MCGuiFindButton(cv()->bar(), "Send Now"));
+    });
+    MCGuiWait("sent at once", 5, [] { return gTold == 1; });
+    MCGuiStep("with all accepted the text is the right text", [] {
+        GCHECK(gAccepted);
+        GCHECK(gText == gDoc->compare()->spec.rightText);
+    });
+
+    MCGuiStep("the bar's Reject rejects the whole change", [] {
+        ed()->closeAllTabs();
+        openDecision(30);
+    });
+    MCGuiWait("it shows", 10, [] { return gDoc && ed()->isComparison() && cv() && dec(); });
+    MCGuiWaitQuiet("laid out", 0.3, 5, [] { return (long)gtk_widget_get_height(cv()->widget()); });
+    MCGuiStep("Reject", [] { MCGuiClick(MCGuiFindButton(cv()->bar(), "Reject")); });
+    MCGuiWait("rejected", 5, [] { return gTold == 1; });
+    MCGuiStep("told no", [] {
+        GCHECK(!gAccepted && dec()->decision() == -1);
+        GCHECK_EQ_STR(cv()->barText(), "Rejected.");
+    });
+
+    MCGuiStep("closing the tab before the last choice is a rejection", [] {
+        ed()->closeAllTabs();
+        openDecision(30);
+    });
+    MCGuiWait("it shows", 10, [] { return gDoc && ed()->isComparison() && cv() && dec(); });
+    MCGuiWaitQuiet("laid out", 0.3, 5, [] { return (long)gtk_widget_get_height(cv()->widget()); });
+    MCGuiStep("one hunk accepted, then the tab closes", [] {
+        clickHunk(0, true);
+        ed()->closeTab(gDoc);
+    });
+    MCGuiWait("told no", 5, [] { return gTold == 1; });
+    MCGuiStep("rejected", [] { GCHECK(!gAccepted); });
+
+    MCGuiStep("closing the tab with the answer about to go sends it as decided", [] {
+        openDecision(30);
+    });
+    MCGuiWait("it shows", 10, [] { return gDoc && ed()->isComparison() && cv() && dec(); });
+    MCGuiWaitQuiet("laid out", 0.3, 5, [] { return (long)gtk_widget_get_height(cv()->widget()); });
+    MCGuiStep("the first check", [] { clickHunk(0, true); });
+    MCGuiWait("accepted", 5, [] { return dec()->choiceOfHunk(0) == 1; });
+    MCGuiStep("the second", [] { clickHunk(1, true); });
+    MCGuiWait("accepted", 5, [] { return dec()->choiceOfHunk(1) == 1; });
+    MCGuiStep("the third", [] { clickHunk(2, true); });
+    MCGuiWait("sending", 5, [] { return dec()->sending(); });
+    MCGuiStep("every hunk accepted, then the tab closes in the grace", [] {
+        ed()->closeTab(gDoc);
+    });
+    MCGuiWait("sent as decided", 5, [] { return gTold == 1; });
+    MCGuiStep("accepted", [] { GCHECK(gAccepted); });
+    MCGuiStep("done", [] { ed()->closeAllTabs(); });
 }

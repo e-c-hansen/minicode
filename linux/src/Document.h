@@ -39,6 +39,7 @@
 #include "EditorTabs.h"
 #include "Markdown.h"
 #include "Settings.h"
+#include "CompareDecision.h"
 #include "ComparePanes.h"
 #include "SyntaxHighlighter.h"
 
@@ -206,6 +207,9 @@ public:
     // set: titled by `diffTitle`, no file, read-only. Null for a git diff.
     void setCompare(const std::string& title, std::shared_ptr<const CompareData> data);
     const std::shared_ptr<const CompareData>& compare() const { return compare_; }
+    // The comparison's decision (CompareDecision.h), or null.
+    const std::shared_ptr<CompareDecision>& decision() const { return decision_; }
+    void setDecision(std::shared_ptr<CompareDecision> d) { decision_ = std::move(d); }
 
     // Text only; a message, a picture or a diff is never written, nor a file
     // still being read.
@@ -415,6 +419,7 @@ private:
 
     std::string diffTitle_, diffBytes_;
     std::shared_ptr<const CompareData> compare_;
+    std::shared_ptr<CompareDecision> decision_;
     bool        diffCommit_ = false;
 
     // The file as last read or saved, and whether the buffer differs.

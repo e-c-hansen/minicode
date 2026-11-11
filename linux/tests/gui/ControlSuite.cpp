@@ -24,7 +24,10 @@
 
 #include "ControlPaths.h"
 #include "ControlServer.h"
+#include "CompareView.h"
+#include "Document.h"
 #include "Editor.h"
+#include "GitRun.h"
 #include "FileTree.h"
 #include "Json.h"
 
@@ -44,6 +47,7 @@ namespace {
 
 std::string F(const std::string& name) { return MCGuiProjectFile("control/" + name); }
 Editor* ed() { return MCGuiApp().editor; }
+size_t gTabs = 0;
 
 std::string folder() {
     return ControlChannel::socketFolder(getenv("MINICODE_CONTROL_DIR"), getenv("XDG_RUNTIME_DIR"),
@@ -303,6 +307,76 @@ MC_GUI_SUITE(control) {
         GCHECK(ed()->documentFor(F("a.txt")) != nullptr);
         GCHECK(ed()->currentPath() == F("a.txt"));
         GCHECK(ed()->documentFor(F("a.txt")) == ed()->active());
+    });
+
+
+    // ---- minicode diff, as a real client
+    MCGuiStep("minicode diff a b while the keyboard is in the editor", [] {
+        MCGuiWriteFile(F("d1.txt"), "one\ntwo\nthree\n");
+        MCGuiWriteFile(F("d2.txt"), "one\n2\nthree\nfour\n");
+        gTabs = (size_t)ed()->tabCount();
+        gtk_widget_grab_focus(ed()->textView());
+        gRun = runClient({"diff", F("d1.txt"), F("d2.txt")});
+    });
+    MCGuiWait("the client returns", 30, [] { return gRun->done; });
+    MCGuiStep("a comparison tab beside theirs, not shown, and the client says so", [] {
+        GCHECK(gRun->exitCode == 0);
+        GCHECK(gRun->err.find("the user is typing in the editor") != std::string::npos);
+        GCHECK((size_t)ed()->tabCount() == gTabs + 1);
+        GCHECK(ed()->currentPath() == F("a.txt"));
+        Document* d = nullptr;
+        for (int i = 0; i < ed()->tabCount(); i++)
+            if (ed()->document(i)->compare()) d = ed()->document(i);
+        GCHECK(d && d->compare());
+        if (d && d->compare()) {
+            GCHECK_EQ_STR(d->compare()->spec.title, "d1.txt \xE2\x86\x94 d2.txt");
+            GCHECK(d->compare()->changedRows == 2);   // one changed, one added
+            GCHECK(d->compare()->hunks.size() == 2);
+        }
+    });
+    MCGuiStep("minicode diff of a committed file against HEAD, with the keyboard in the tree", [] {
+        gtk_widget_grab_focus(MCGuiApp().tree->widget());
+        const std::string repo = F("repo");
+        MCGuiWriteFile(repo + "/f.txt", "alpha\nbeta\n");
+        runGit(repo, {"init", "-q"});
+        runGit(repo, {"add", "f.txt"});
+        runGit(repo, {"-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"});
+        MCGuiWriteFile(repo + "/f.txt", "alpha\nBETA\n");
+        gRun = runClient({"diff", repo + "/f.txt"});
+    });
+    MCGuiWait("the client returns", 30, [] { return gRun->done; });
+    MCGuiWait("it is shown", 10, [] { return ed()->isComparison(); });
+    MCGuiStep("left is HEAD's text, right the working copy", [] {
+        GCHECK(gRun->exitCode == 0);
+        GCHECK_EQ_STR(ed()->diffTitle(), "f.txt (HEAD \xE2\x86\x94 working copy)");
+        const CompareData* d = ed()->active() ? ed()->active()->compare().get() : nullptr;
+        GCHECK(d && d->spec.leftText == "alpha\nbeta\n" && d->spec.rightText == "alpha\nBETA\n");
+        GCHECK(d && d->changedRows == 1);
+    });
+    MCGuiStep("--base names another commit; a bad one, a missing file and a folder are errors", [] {
+        gRun = runClient({"diff", F("repo") + "/f.txt", "--base", "nosuchrev"});
+    });
+    MCGuiWait("returns", 30, [] { return gRun->done; });
+    MCGuiStep("no commit named", [] {
+        GCHECK(gRun->exitCode == 1);
+        GCHECK(gRun->err.find("no commit named nosuchrev") != std::string::npos);
+        gRun = runClient({"diff", F("repo") + "/f.txt", "--base", "--evil"});
+    });
+    MCGuiWait("returns", 30, [] { return gRun->done; });
+    MCGuiStep("a base starting with a dash is refused", [] {
+        GCHECK(gRun->exitCode != 0);
+        gRun = runClient({"diff", F("nosuchfile.txt")});
+    });
+    MCGuiWait("returns", 30, [] { return gRun->done; });
+    MCGuiStep("a missing file", [] {
+        GCHECK(gRun->exitCode == 1);
+        GCHECK(gRun->err.find("no such file") != std::string::npos);
+        gRun = runClient({"diff", F("repo"), F("d1.txt")});
+    });
+    MCGuiWait("returns", 30, [] { return gRun->done; });
+    MCGuiStep("a folder is not a plain file", [] {
+        GCHECK(gRun->exitCode == 1);
+        GCHECK(gRun->err.find("not a plain file") != std::string::npos);
     });
 
     // ---- open --to, with the keyboard elsewhere

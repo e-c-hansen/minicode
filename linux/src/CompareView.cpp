@@ -26,7 +26,56 @@ void fill(cairo_t* cr, const double rgb[3], double alpha, double x, double y, do
 
 CompareView::CompareView() {
     for (Color& c : syntax_) c = fg_;
+    outer_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_hexpand(outer_, TRUE);
+    gtk_widget_set_vexpand(outer_, TRUE);
+    bar_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_margin_start(bar_, 8);
+    gtk_widget_set_margin_end(bar_, 8);
+    gtk_widget_set_margin_top(bar_, 4);
+    gtk_widget_set_margin_bottom(bar_, 4);
+    barLabel_ = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(barLabel_), 0);
+    gtk_label_set_ellipsize(GTK_LABEL(barLabel_), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_hexpand(barLabel_, TRUE);
+    accept_ = gtk_button_new_with_label("Accept");
+    reject_ = gtk_button_new_with_label("Reject");
+    g_signal_connect(accept_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
+        CompareView* self = static_cast<CompareView*>(p);
+        if (!self->decision_) return;
+        if (self->decision_->sending()) self->decision_->sendNow();   // Send Now
+        else self->decision_->decideRest(true);
+    }), this);
+    g_signal_connect(reject_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
+        CompareView* self = static_cast<CompareView*>(p);
+        if (!self->decision_) return;
+        if (self->decision_->hunksDecided()) self->decision_->decideRest(false);
+        else self->decision_->decide(false);
+    }), this);
+    gtk_box_append(GTK_BOX(bar_), barLabel_);
+    gtk_box_append(GTK_BOX(bar_), accept_);
+    gtk_box_append(GTK_BOX(bar_), reject_);
+    gtk_widget_add_css_class(bar_, "minicode-decision");
+    gtk_widget_set_visible(bar_, FALSE);
+    gtk_box_append(GTK_BOX(outer_), bar_);
+    gutter_ = gtk_drawing_area_new();
+    gtk_widget_set_size_request(gutter_, 46, -1);
+    gtk_widget_set_hexpand(gutter_, FALSE);
+    gtk_widget_set_vexpand(gutter_, TRUE);
+    gtk_widget_set_valign(gutter_, GTK_ALIGN_FILL);
+    gtk_widget_set_overflow(gutter_, GTK_OVERFLOW_HIDDEN);
+    gtk_widget_set_visible(gutter_, FALSE);
+    gtk_drawing_area_set_draw_func(
+        GTK_DRAWING_AREA(gutter_),
+        +[](GtkDrawingArea*, cairo_t* cr, int w, int h, gpointer p) {
+            static_cast<CompareView*>(p)->drawGutter(cr, w, h);
+        },
+        this, nullptr);
+    GtkGesture* gclick = gtk_gesture_click_new();
+    g_signal_connect(gclick, "pressed", G_CALLBACK(onGutterPressed), this);
+    gtk_widget_add_controller(gutter_, GTK_EVENT_CONTROLLER(gclick));
     box_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_box_append(GTK_BOX(outer_), box_);
     gtk_widget_set_hexpand(box_, TRUE);
     gtk_widget_set_vexpand(box_, TRUE);
     gtk_widget_add_css_class(box_, "minicode-compare");
@@ -70,14 +119,23 @@ CompareView::CompareView() {
         }
         GtkWidget* hbar = gtk_scrollbar_new(GTK_ORIENTATION_HORIZONTAL, hadj_[side]);
         gtk_grid_attach(GTK_GRID(grid), hbar, 0, 1, 1, 1);
-        if (side == 1) gtk_box_append(GTK_BOX(box_), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
+        if (side == 1) {
+            gtk_box_append(GTK_BOX(box_), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
+            gtk_box_append(GTK_BOX(box_), gutter_);
+        }
         gtk_box_append(GTK_BOX(box_), grid);
     }
     measure();
 }
 
 CompareView::~CompareView() {
+    if (decision_) decision_->onChanged = nullptr;
     g_signal_handlers_disconnect_by_data(vadj_, this);
+    if (barCss_) {
+        gtk_style_context_remove_provider_for_display(gdk_display_get_default(),
+                                                      GTK_STYLE_PROVIDER(barCss_));
+        g_object_unref(barCss_);
+    }
     g_object_unref(vadj_);
     for (GtkAdjustment* a : hadj_) {
         g_signal_handlers_disconnect_by_data(a, this);
@@ -105,6 +163,18 @@ void CompareView::applySettings(const Settings& s) {
     muted_ = fg_;
     muted_.a = 0.5;
     for (int i = 0; i < kTokenStyleCount; i++) syntax_[i] = fromRgba(s.syntax((TokenStyle)i));
+    // The bar takes the editor's colors, or its words are light on light.
+    if (!barCss_) {
+        barCss_ = gtk_css_provider_new();
+        gtk_style_context_add_provider_for_display(gdk_display_get_default(),
+                                                   GTK_STYLE_PROVIDER(barCss_),
+                                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
+    char css[160];
+    g_snprintf(css, sizeof css, ".minicode-decision { background: rgb(%d,%d,%d); } .minicode-decision label { color: rgb(%d,%d,%d); }",
+               (int)(bg_.r * 255), (int)(bg_.g * 255), (int)(bg_.b * 255), (int)(fg_.r * 255),
+               (int)(fg_.g * 255), (int)(fg_.b * 255));
+    gtk_css_provider_load_from_string(barCss_, css);
     for (int side = 0; side < 2; side++) gtk_widget_queue_draw(area_[side]);
 }
 
@@ -124,8 +194,13 @@ void CompareView::fitContent() {
     for (int side = 0; side < 2; side++) gtk_widget_queue_draw(area_[side]);
 }
 
-void CompareView::show(std::shared_ptr<const CompareData> data) {
+void CompareView::show(std::shared_ptr<const CompareData> data,
+                       std::shared_ptr<CompareDecision> decision) {
     data_ = std::move(data);
+    if (decision_) decision_->onChanged = nullptr;
+    decision_ = std::move(decision);
+    if (decision_) decision_->onChanged = [this] { updateDecision(); };
+    updateDecision();
     current_ = -1;
     fitContent();
     gtk_adjustment_set_value(vadj_, 0);
@@ -135,6 +210,10 @@ void CompareView::show(std::shared_ptr<const CompareData> data) {
 void CompareView::resized(int side, int w, int h) {
     gtk_adjustment_set_page_size(vadj_, h);
     gtk_adjustment_set_page_increment(vadj_, h * 0.9);
+    // The gutter lines up with the panes, not with the bar under them.
+    if (side == 0)
+        gtk_widget_set_margin_bottom(
+            gutter_, std::max(0, gtk_widget_get_height(gtk_widget_get_parent(area_[0])) - h));
     gtk_adjustment_set_page_size(hadj_[side], w);
     gtk_adjustment_set_page_increment(hadj_[side], w * 0.9);
 }
@@ -146,6 +225,7 @@ void CompareView::onResize(GtkDrawingArea* area, int w, int h, gpointer p) {
 
 void CompareView::onAdjusted(GtkAdjustment*, gpointer p) {
     CompareView* self = static_cast<CompareView*>(p);
+    gtk_widget_queue_draw(self->gutter_);
     for (int side = 0; side < 2; side++) gtk_widget_queue_draw(self->area_[side]);
 }
 
@@ -339,4 +419,125 @@ int CompareView::styleAt(bool left, size_t row, size_t col) const {
     for (const ComparePane::Piece& s : p.syntax)
         if (at >= s.start && at < s.start + s.length) return s.style;
     return -1;
+}
+
+// ---------------------------------------------------------------- decisions
+
+namespace {
+constexpr double kGutterW = 46, kButton = 17;
+}
+
+std::string CompareView::barText() const {
+    return barLabel_ ? gtk_label_get_text(GTK_LABEL(barLabel_)) : "";
+}
+
+// The bar's words and buttons, and whether the gutter shows, for the
+// decision (the Mac's showDecision).
+void CompareView::updateDecision() {
+    const CompareDecision* c = decision_.get();
+    const bool wanted = c && !c->prompt().empty();
+    const bool buttons = wanted && c->decision() == 0 && c->hunkCount() > 0;
+    gtk_widget_set_visible(bar_, wanted);
+    gtk_widget_set_visible(gutter_, buttons);
+    if (wanted) {
+        const size_t n = c->hunkCount();
+        size_t yes = 0, no = 0;
+        for (size_t i = 0; i < n; i++) {
+            yes += c->choiceOfHunk(i) > 0;
+            no += c->choiceOfHunk(i) < 0;
+        }
+        std::string text = c->prompt();
+        if (c->decision() == 1)
+            text = yes < n ? "Accepted " + std::to_string(yes) + " of " + std::to_string(n) +
+                                 " changes."
+                           : "Accepted.";
+        else if (c->decision() == -1) text = "Rejected.";
+        else if (c->decision() == 2) text = c->note().empty() ? "No longer waiting for an answer." : c->note();
+        else if (c->sending())
+            text = std::to_string(yes) + " accepted, " + std::to_string(no) +
+                   " rejected: sending in a moment. Press a change's button again to take its "
+                   "choice back.";
+        else if (yes || no)
+            text += " " + std::to_string(yes) + " accepted, " + std::to_string(no) +
+                    " rejected, " + std::to_string(n - yes - no) + " to decide.";
+        gtk_label_set_text(GTK_LABEL(barLabel_), text.c_str());
+        gtk_widget_set_tooltip_text(barLabel_, text.c_str());
+        const bool rest = c->hunksDecided();
+        gtk_widget_set_visible(accept_, c->decision() == 0);
+        gtk_widget_set_visible(reject_, c->decision() == 0 && !c->sending());
+        gtk_button_set_label(GTK_BUTTON(accept_), c->sending() ? "Send Now" : rest ? "Accept the Rest" : "Accept");
+        gtk_button_set_label(GTK_BUTTON(reject_), rest ? "Reject the Rest" : "Reject");
+    }
+    gtk_widget_queue_draw(gutter_);
+    for (int side = 0; side < 2; side++) gtk_widget_queue_draw(area_[side]);
+}
+
+bool CompareView::hunkButtonRect(size_t hunk, bool accept, double* x, double* y, double* w,
+                                 double* h) const {
+    if (!data_ || !decision_ || !gtk_widget_get_visible(gutter_) || hunk >= data_->hunks.size())
+        return false;
+    const double top = gtk_adjustment_get_value(vadj_);
+    const double mid = (double)data_->hunks[hunk].first * rowH_ - top + rowH_ / 2.0;
+    if (mid < 0 || mid > gtk_adjustment_get_page_size(vadj_)) return false;
+    *x = std::floor((kGutterW - 2 * kButton - 4) / 2) + (accept ? 0 : kButton + 4);
+    *y = std::floor(mid - kButton / 2);
+    *w = *h = kButton;
+    return true;
+}
+
+bool CompareView::pressHunkButtonAt(double px, double py) {
+    if (!data_ || !decision_ || !gtk_widget_get_visible(gutter_)) return false;
+    for (size_t i = 0; i < data_->hunks.size(); i++) {
+        const int d = decision_->choiceOfHunk(i);
+        for (int accept = 1; accept >= 0; accept--) {
+            double x, y, w, h;
+            if (!hunkButtonRect(i, accept, &x, &y, &w, &h)) continue;
+            if (px < x || px >= x + w || py < y || py >= y + h) continue;
+            // An undecided hunk takes the choice; a decided one shows only
+            // its choice, and a press on it makes the hunk undecided again.
+            if (d == 0) decision_->decideHunk(i, accept ? 1 : -1);
+            else if ((d > 0) == (accept == 1)) decision_->decideHunk(i, 0);
+            else continue;
+            return true;
+        }
+    }
+    return false;
+}
+
+void CompareView::onGutterPressed(GtkGestureClick*, int, double x, double y, gpointer p) {
+    static_cast<CompareView*>(p)->pressHunkButtonAt(x, y);
+}
+
+void CompareView::drawGutter(cairo_t* cr, int width, int height) {
+    cairo_set_source_rgba(cr, bg_.r * 0.94 + 0.03, bg_.g * 0.94 + 0.03, bg_.b * 0.94 + 0.03, 1);
+    cairo_paint(cr);
+    cairo_set_source_rgba(cr, fg_.r, fg_.g, fg_.b, 0.15);
+    cairo_rectangle(cr, 0, 0, 1, height);
+    cairo_rectangle(cr, width - 1, 0, 1, height);
+    cairo_fill(cr);
+    if (!data_ || !decision_) return;
+    PangoLayout* layout = pango_cairo_create_layout(cr);
+    PangoFontDescription* f = pango_font_description_from_string("sans bold 9");
+    pango_layout_set_font_description(layout, f);
+    pango_font_description_free(f);
+    for (size_t i = 0; i < data_->hunks.size(); i++) {
+        const int d = decision_->choiceOfHunk(i);
+        for (int accept = 1; accept >= 0; accept--) {
+            double x, y, w, h;
+            if (!hunkButtonRect(i, accept, &x, &y, &w, &h)) continue;
+            const double a = d ? 1.0 : 0.55;
+            if (accept) cairo_set_source_rgba(cr, 0x2E / 255.0, 0x7D / 255.0, 0x4F / 255.0, a);
+            else cairo_set_source_rgba(cr, 0xB3 / 255.0, 0x36 / 255.0, 0x3A / 255.0, a);
+            cairo_rectangle(cr, x, y, w, h);
+            cairo_fill(cr);
+            const char* mark = accept ? "\u2713" : "\u2715";
+            pango_layout_set_text(layout, mark, -1);
+            PangoRectangle ext;
+            pango_layout_get_pixel_extents(layout, nullptr, &ext);
+            cairo_set_source_rgba(cr, 1, 1, 1, 1);
+            cairo_move_to(cr, x + (w - ext.width) / 2, y + (h - ext.height) / 2);
+            pango_cairo_show_layout(cr, layout);
+        }
+    }
+    g_object_unref(layout);
 }

@@ -17,9 +17,12 @@
 // its own beside it; the two panes share one vertical adjustment, so they
 // scroll together, and each has a horizontal one.
 //
-// Accept and Reject per hunk, the decision bar and its grace (the Mac's
-// MCComparison decision) are part two: `data()` has the hunks and rows they
-// need, and a gutter between the panes is where the buttons go.
+// A comparison with a decision (CompareDecision.h, the Claude Code IDE link's
+// openDiff) shows a bar over the panes with its prompt and Accept and Reject,
+// and a check and a cross for each hunk in a gutter between the panes. A press
+// on an undecided hunk's button decides it; a press on a decided hunk's own
+// button makes it undecided again. Once every hunk has its choice the bar says
+// the answer is about to go and offers Send Now (CompareDecision's grace).
 #pragma once
 
 #include <gtk/gtk.h>
@@ -30,6 +33,7 @@
 
 #include "Settings.h"
 #include "SyntaxHighlighter.h"
+#include "CompareDecision.h"
 #include "ComparePanes.h"
 
 class CompareView {
@@ -40,9 +44,11 @@ public:
     CompareView(const CompareView&) = delete;
     CompareView& operator=(const CompareView&) = delete;
 
-    GtkWidget* widget() const { return box_; }
+    GtkWidget* widget() const { return outer_; }
     // What is on show, shared with its tab; at the top, no hunk current.
-    void show(std::shared_ptr<const CompareData> data);
+    // `decision` is the tab's, or null for a plain comparison.
+    void show(std::shared_ptr<const CompareData> data,
+              std::shared_ptr<CompareDecision> decision = nullptr);
     const CompareData* data() const { return data_.get(); }
     // The editor's colors (Editor::applySettings).
     void applySettings(const Settings& s);
@@ -57,6 +63,16 @@ public:
     GtkWidget* focusWidget() const { return area_[1]; }
 
     // ---- for the checks
+    GtkWidget* gutter() const { return gutter_; }
+    GtkWidget* bar() const { return bar_; }
+    GtkWidget* acceptButton() const { return accept_; }
+    GtkWidget* rejectButton() const { return reject_; }
+    std::string barText() const;
+    // A hunk's button in the gutter's own coordinates; false while the
+    // gutter is hidden or the hunk is not on screen.
+    bool hunkButtonRect(size_t hunk, bool accept, double* x, double* y, double* w, double* h) const;
+    // What a press at the gutter's point does; false when it hit no button.
+    bool pressHunkButtonAt(double x, double y);
     GtkWidget* pane(bool left) const { return area_[left ? 0 : 1]; }
     GtkAdjustment* vadjustment(bool) const { return vadj_; }   // one for both panes
     int rowHeight() const { return rowH_; }
@@ -70,6 +86,9 @@ private:
     void draw(int side, cairo_t* cr, int width, int height);
     void resized(int side, int w, int h);
     void fitContent();
+    void updateDecision();
+    void drawGutter(cairo_t* cr, int w, int h);
+    static void onGutterPressed(GtkGestureClick*, int n, double x, double y, gpointer self);
     static void onDraw(GtkDrawingArea*, cairo_t* cr, int w, int h, gpointer self);
     static void onResize(GtkDrawingArea*, int w, int h, gpointer self);
     static gboolean onScroll(GtkEventControllerScroll*, double dx, double dy, gpointer self);
@@ -78,7 +97,15 @@ private:
                           gpointer self);
     static void onPressed(GtkGestureClick*, int n, double x, double y, gpointer self);
 
-    GtkWidget* box_ = nullptr;
+    GtkWidget* outer_ = nullptr;   // the bar over box_
+    GtkWidget* box_ = nullptr;     // the two panes with the gutter between
+    GtkWidget* bar_ = nullptr;
+    GtkCssProvider* barCss_ = nullptr;
+    GtkWidget* barLabel_ = nullptr;
+    GtkWidget* accept_ = nullptr;
+    GtkWidget* reject_ = nullptr;
+    GtkWidget* gutter_ = nullptr;
+    std::shared_ptr<CompareDecision> decision_;
     GtkAdjustment* vadj_ = nullptr;
     GtkAdjustment* hadj_[2] = {nullptr, nullptr};
     GtkWidget* area_[2] = {nullptr, nullptr};

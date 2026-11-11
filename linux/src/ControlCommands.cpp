@@ -4,12 +4,17 @@
 #include <gtk/gtk.h>
 
 #include <climits>
+#include <fcntl.h>
+#include <cstring>
+#include <memory>
+#include <thread>
 #include <cstdlib>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include "Document.h"
 #include "Editor.h"
+#include "GitRun.h"
 #include "ProcessMonitor.h"
 
 using ControlChannel::Dispatcher;
@@ -142,6 +147,99 @@ bool userIsInDocument(const ControlWindow& w) {
     if (!w.window || !w.editor || !gtk_window_is_active(w.window)) return false;
     GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(w.window));
     return focus && focus == w.editor->textView();
+}
+
+// ---- diff
+
+constexpr off_t kMaxDiffBytes = 16 * 1024 * 1024;
+
+// A file's text for `diff`, off the main thread: a plain file of up to 16 MB
+// of UTF-8. Opened without blocking and checked again once open, so a FIFO
+// put in its place meanwhile cannot hang the read.
+bool readDiffText(const std::string& path, std::string* text, std::string* error) {
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) {
+        *error = "no such file: " + path;
+        return false;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        *error = "not a plain file: " + path;
+        return false;
+    }
+    const int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        if (fd >= 0) close(fd);
+        *error = "could not read " + path;
+        return false;
+    }
+    if (st.st_size > kMaxDiffBytes) {
+        close(fd);
+        *error = path + " is over 16 MB";
+        return false;
+    }
+    text->clear();
+    char buf[65536];
+    ssize_t n;
+    while ((n = read(fd, buf, sizeof buf)) > 0) {
+        text->append(buf, (size_t)n);
+        if ((off_t)text->size() > kMaxDiffBytes) break;
+    }
+    close(fd);
+    if (n < 0 || (off_t)text->size() > kMaxDiffBytes) {
+        *error = n < 0 ? "could not read " + path : path + " is over 16 MB";
+        return false;
+    }
+    if (!g_utf8_validate(text->data(), (gssize)text->size(), nullptr)) {
+        *error = path + " is not UTF-8 text";
+        return false;
+    }
+    return true;
+}
+
+// The file as git has it at `ref`: false with `error` set when git cannot
+// say; `missing` when the commit exists and the file is not in it.
+bool textAtRef(const std::string& path, const std::string& ref, std::string* text, bool* missing,
+               std::string* error) {
+    const size_t slash = path.rfind('/');
+    const std::string dir = slash == std::string::npos ? "." : slash == 0 ? "/" : path.substr(0, slash);
+    const std::string name = path.substr(slash == std::string::npos ? 0 : slash + 1);
+    GitResult top = runGit(dir, {"rev-parse", "--show-toplevel"});
+    if (!top.ok()) {
+        *error = gitExecutable().empty() ? "git is not installed"
+                                         : name + " is not in a git repository";
+        return false;
+    }
+    if (!runGit(dir, {"rev-parse", "--verify", "--quiet", ref + "^{commit}"}).ok()) {
+        *error = "no commit named " + ref;
+        return false;
+    }
+    GitResult show = runGit(dir, {"show", ref + ":./" + name});
+    if (!show.ok()) {
+        *missing = true;   // the commit exists; the file is not in it
+        return true;
+    }
+    if (!g_utf8_validate(show.out.data(), (gssize)show.out.size(), nullptr)) {
+        *error = name + " at " + ref + " is not text";
+        return false;
+    }
+    *text = show.out;
+    return true;
+}
+
+std::string leaf(const std::string& path) {
+    const size_t slash = path.rfind('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+std::string shortPath(const ControlWindow& w, const std::string& path) {
+    const std::string root = resolved(w.folder), real = resolved(path);
+    const std::string prefix = root == "/" ? root : root + "/";
+    if (root.size() > 1 && real.compare(0, prefix.size(), prefix) == 0)
+        return real.substr(prefix.size());
+    const char* home = getenv("HOME");
+    if (home && *home && path.compare(0, strlen(home) + 1, std::string(home) + "/") == 0)
+        return "~" + path.substr(strlen(home));
+    return path;
 }
 
 const char* kindName(const Document* d) {
@@ -486,6 +584,109 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
             Procs::View v = ProcessMonitor::shared().view(window, folder);
             respond(Result::success(Procs::toJson(v, folder, window)));
         });
+    });
+
+    d.on("diff", [host](const Request& req, Dispatcher::Respond respond) {
+        const Json& a = req.args;
+        const std::string path = resolved(a["path"].asString());
+        if (a.has("base") && !ControlChannel::isSafeRef(a["base"].asString())) {
+            respond(Result::failure("--base needs a revision, not " + a["base"].asString()));
+            return;
+        }
+        std::string error;
+        ControlWindow w;
+        bool found = false;
+        if (!a.has("window") && !a.has("folder")) {
+            std::vector<ControlWindow> ws = host.windows();
+            for (size_t k = ws.size(); k-- > 0 && !found;)
+                if (inside(ws[k], path)) {
+                    w = ws[k];
+                    found = true;
+                }
+        }
+        if (!found && !target(host, a, &w, &error)) {
+            respond(Result::failure(error));
+            return;
+        }
+        const std::string other = a.has("other") ? resolved(a["other"].asString()) : "";
+        const std::string ref = a.has("base") ? a["base"].asString() : "HEAD";
+        const std::string shortA = shortPath(w, path), shortB = other.empty() ? "" : shortPath(w, other);
+        const int windowId = w.id;
+        // The files are read and git asked off the main thread (a big file,
+        // or a git slow to answer, would hold it up); the answer waits for
+        // that, and the lining up is Editor::showComparison's own thread.
+        struct Job {
+            ControlHost host;
+            Dispatcher::Respond respond;
+            int window;
+            std::string failure;
+            CompareSpec spec;
+        };
+        Job* job = new Job{host, respond, windowId, "", CompareSpec()};
+        std::thread([job, path, other, ref, shortA, shortB] {
+            CompareSpec& spec = job->spec;
+            std::string right, err;
+            if (!readDiffText(path, &right, &err)) {
+                job->failure = err;
+            } else if (!other.empty()) {
+                std::string otherText;
+                if (!readDiffText(other, &otherText, &err)) {
+                    job->failure = err;
+                } else {
+                    spec.leftText = right;
+                    spec.rightText = otherText;
+                    spec.leftLabel = shortA;
+                    spec.rightLabel = shortB;
+                    spec.path = other;
+                    spec.title = leaf(path) + " \xE2\x86\x94 " + leaf(other);
+                }
+            } else {
+                bool missing = false;
+                std::string left;
+                if (!textAtRef(path, ref, &left, &missing, &err)) {
+                    job->failure = err.empty() ? "git failed" : err;
+                } else {
+                    spec.leftText = left;
+                    spec.rightText = right;
+                    spec.leftLabel = missing ? ref + ": (not in " + ref + ")" : ref + ": " + shortA;
+                    spec.rightLabel = shortA + " (working copy)";
+                    spec.path = path;
+                    spec.title = leaf(path) + " (" + ref + " \xE2\x86\x94 working copy)";
+                }
+            }
+            g_idle_add(
+                [](gpointer p) -> gboolean {
+                    std::unique_ptr<Job> j(static_cast<Job*>(p));
+                    if (!j->failure.empty()) {
+                        j->respond(Result::failure(j->failure));
+                        return G_SOURCE_REMOVE;
+                    }
+                    ControlWindow win;
+                    bool have = false;
+                    for (const ControlWindow& c : j->host.windows())
+                        if (c.id == j->window) {
+                            win = c;
+                            have = true;
+                        }
+                    if (!have) {
+                        j->respond(Result::failure("the window closed"));
+                        return G_SOURCE_REMOVE;
+                    }
+                    // The user typing in the editor keeps the place: the tab
+                    // opens beside theirs.
+                    const bool beside = userIsInDocument(win);
+                    j->spec.quiet = beside;
+                    Dispatcher::Respond respond = j->respond;
+                    win.editor->showComparison(j->spec, [respond, win, beside](Document* d) {
+                        Json r = windowResult(win);
+                        r.set("changed", (int)(d->compare() ? d->compare()->changedRows : 0));
+                        if (beside) r.set("background", true);
+                        respond(Result::success(r));
+                    });
+                    return G_SOURCE_REMOVE;
+                },
+                job);
+        }).detach();
     });
 
     // The rest of the table is later items of PARITY.md 3: a clear answer

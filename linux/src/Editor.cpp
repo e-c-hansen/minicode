@@ -583,7 +583,7 @@ void Editor::showActive() {
                 compare_->applySettings(settings_);
                 gtk_stack_add_named(GTK_STACK(slot_), compare_->widget(), "compare");
             }
-            compare_->show(d->compare());
+            compare_->show(d->compare(), d->decision());
             gtk_stack_set_visible_child(GTK_STACK(slot_), compare_->widget());
             break;
         }

@@ -251,7 +251,12 @@ void Editor::showComparison(const CompareSpec& spec, std::function<void(Document
                                     EditorTabs::insertionIndex(e->activeIndex(), e->tabCount()),
                                 d);
                 d->setCompare(j->data->spec.title, j->data);
-                e->activate(d);
+                const CompareSpec& sp = j->data->spec;
+                if (!sp.decisionPrompt.empty())
+                    d->setDecision(std::make_shared<CompareDecision>(
+                        j->data, sp.decisionPrompt, sp.onDecision, sp.lastChoiceGrace));
+                if (sp.quiet) e->refreshStrip();
+                else e->activate(d);
                 if (j->done) j->done(d);
                 return G_SOURCE_REMOVE;
             },
@@ -366,6 +371,7 @@ void Editor::dropTab(Document* d, bool remember) {
 
 // Gone for good: what the slot held for it comes off first.
 void Editor::destroy(Document* d) {
+    if (d->decision()) d->decision()->tabClosed();   // closing answers it
     if (d == colorDoc_) {
         if (colorSaveTimer_) g_source_remove(colorSaveTimer_);
         colorSaveTimer_ = 0;
