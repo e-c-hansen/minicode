@@ -374,7 +374,12 @@ int MCGuiWrapperMain(int argc, char** argv) {
     const std::string wanted = suitesFromCommandLine(argc, argv);
     prctl(PR_SET_CHILD_SUBREAPER, 1);
 
-    std::string rootTemplate = dirOf(self) + "/guitest-XXXXXX";
+    // The scratch world goes beside the binary, or under $MC_GUI_ROOT: a
+    // checkout under .claude/worktrees puts that segment in every scratch
+    // path, which the agent workspace reads as a worktree, so MC_GUI_ROOT=/tmp
+    // runs the checks with CI's layout.
+    const char* rootEnv = getenv("MC_GUI_ROOT");
+    std::string rootTemplate = (rootEnv && *rootEnv ? std::string(rootEnv) : dirOf(self)) + "/guitest-XXXXXX";
     char shortTemplate[] = "/tmp/mcgui-XXXXXX";
     std::vector<char> rootBuf(rootTemplate.begin(), rootTemplate.end());
     rootBuf.push_back(0);
