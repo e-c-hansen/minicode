@@ -2793,6 +2793,13 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   bounded by the lines on screen and the CPU time of painting.
 - **Trap**: the suite's span count is the tokens kept (8), not the ones
   painted; the string token is kept and painted around.
+- **Trap**: Ctrl+End (and Page Down) left the view short of the caret under
+  load: GTK scrolls by estimated heights and stopped where the estimate was,
+  so the lines painted were right for what was on screen, which was the
+  wrong place (`semantic_tokens` timed out only with the machine busy).
+  Painting was never at fault. The view's `move-cursor` for buffer ends,
+  pages and paragraph ends now starts `Editor::settleOnCaret`, as a go to
+  line does; any jump by the view's own keys must be watched this way.
 - **Needs the owner**: how the colors look with real basedpyright, clangd
   or rust-analyzer, and scrolling a long file.
 

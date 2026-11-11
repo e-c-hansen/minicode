@@ -116,6 +116,18 @@ Editor::Editor() {
     // gtk_widget_set_parent, so it must go before the view is disposed (the
     // same trap as the LSP popovers, see Lsp.cpp).
     g_signal_connect(view_, "unrealize", G_CALLBACK(onViewUnrealize), this);
+    // A jump by the view's own keys (Ctrl+End, Page Down) scrolls toward a
+    // point worked out from estimated heights, like a go to line does, and
+    // under load stopped where the estimate was (the caret off screen, the
+    // view still): watch it as a go to line is watched (settleOnCaret).
+    g_signal_connect_after(view_, "move-cursor",
+                           G_CALLBACK(+[](GtkTextView*, GtkMovementStep step, int, gboolean,
+                                          gpointer self) {
+                               if (step == GTK_MOVEMENT_BUFFER_ENDS || step == GTK_MOVEMENT_PAGES ||
+                                   step == GTK_MOVEMENT_PARAGRAPH_ENDS)
+                                   static_cast<Editor*>(self)->settleOnCaret();
+                           }),
+                           this);
 
     scroller_ = gtk_scrolled_window_new();
     gtk_widget_add_css_class(scroller_, "minicode-scroller");
