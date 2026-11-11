@@ -96,6 +96,11 @@ Verified by running it:
   fails (checked once) with the toggle made a no-op. Not tested: the question
   dialog's buttons, Delete on a row, a real right click, the look on screen,
   other users' processes.
+- Waiting for you (item 3.6): the `attention` GUI suite runs the real client
+  with canned hook JSON against the app's terminal (the shell's
+  `MINICODE_TERMINAL_ID` and `MINICODE_PID`, the dot and title count, a real
+  key clearing the mark, Ctrl+Alt+W, `hooks --install` twice and onto a
+  symlink in the scratch HOME). Not seen on a real desktop.
 - Notes and tours (item 3.4): the `notes` GUI suite runs the real client.
   `open --note` puts the file in the agent's preview tab and shows the box
   (text cleaned, label, x) over lines 10 to 12 with the text tag on exactly

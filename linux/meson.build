@@ -47,6 +47,11 @@ core_sources = [
   # The control channel's table and parsing (ControlServer.cpp, the client).
   core_dir / 'ControlProtocol.cpp',
   core_dir / 'PageCheck.cpp',
+  # Waiting for you: the hooks' JSON and the settings merge, and the board.
+  core_dir / 'ClaudeHooks.cpp',
+  core_dir / 'AttentionBoard.cpp',
+  core_dir / 'AgentIndex.cpp',
+  core_dir / 'AgentTranscript.cpp',
   # Processes and ports: the table's rules and the /proc source (ProcessMonitor.cpp).
   core_dir / 'ProcessTable.cpp',
   core_dir / 'ProcFs.cpp',
@@ -234,6 +239,7 @@ gui_sources = [
   # (GitDirWatch.cpp).
   'src/GitGutter.cpp',
   'src/AgentNotes.cpp',
+  'src/TerminalAttention.cpp',
   'src/TreeGitColors.cpp',
   'src/GitDirWatch.cpp',
   # Web pictures in the Markdown preview: the libsoup half (#ifdef-guarded,

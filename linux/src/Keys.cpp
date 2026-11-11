@@ -127,6 +127,7 @@ const std::vector<Action>& actions() {
         {"workbench.action.terminal.toggleTerminal", "win.toggleterminal", false},
         {"minicode.toggleBrowser", "win.togglebrowser", false},
         {"minicode.togglePlayback", "win.playpause", true},
+        {"minicode.terminal.nextWaiting", "win.nextwaiting", false},
         {"workbench.action.terminal.fontZoomIn", "win.terminalzoomin", false},
         {"workbench.action.terminal.fontZoomOut", "win.terminalzoomout", false},
         {"workbench.action.terminal.fontZoomReset", "win.terminalzoomreset", false},

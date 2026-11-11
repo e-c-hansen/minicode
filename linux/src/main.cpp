@@ -55,6 +55,7 @@
 #include "ThemeCss.h"
 #include "Palette.h"
 #include "Terminal.h"
+#include "TerminalAttention.h"
 #include "ProcessMonitor.h"
 #include "ProcessesPanel.h"
 #include "Browser.h"
@@ -270,6 +271,11 @@ static void updateTitle(void* userp) {
                      std::to_string(app->editor->tasksTotal()) + " done";
         title += app->editor->titleSuffix();   // pixel size or page count
     }
+    // Claude Code sessions waiting for the user, in any window (PARITY.md 3.6):
+    // the count leads the title, which the task switcher shows (GTK4 has no
+    // Dock badge or urgency hint to set).
+    if (int waiting = TerminalAttention::waitingCount())
+        title = "(" + std::to_string(waiting) + " waiting) " + title;
     gtk_window_set_title(GTK_WINDOW(app->window), title.c_str());
     // Nothing to save while an image, a PDF or a binary file is shown.
     if (GAction* save = g_action_map_lookup_action(G_ACTION_MAP(app->window), "save"))
@@ -793,6 +799,27 @@ static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer
 // closed). WindowLayout.cpp has the rules and where the keyboard goes.
 static void act_toggle_terminal(GSimpleAction*, GVariant*, gpointer userp) {
     static_cast<App*>(userp)->layout->toggleTerminal();
+}
+
+// Next Waiting Terminal (the Mac's Ctrl+Cmd+W, PARITY.md 3.6): the window
+// whose terminal has a Claude Code session waiting, after this one's in the
+// windows' order, wrapping; its terminal is shown and takes the keyboard.
+static void act_next_waiting(GSimpleAction*, GVariant*, gpointer userp) {
+    App* here = static_cast<App*>(userp);
+    std::vector<int> order;
+    for (App* a : g.windows)
+        if (!a->dead && a->terminal) order.push_back(a->controlId);
+    const int want = TerminalAttention::nextWaiting(order, here->controlId);
+    App* target = nullptr;
+    for (App* a : g.windows)
+        if (!a->dead && a->terminal && a->controlId == want) target = a;
+    if (!target) {
+        gtk_widget_error_bell(here->window);
+        return;
+    }
+    gtk_window_present(GTK_WINDOW(target->window));
+    if (!target->layout->terminalShown()) target->layout->toggleTerminal();
+    target->terminal->focus();
 }
 
 static void act_toggle_editor(GSimpleAction*, GVariant*, gpointer userp) {
@@ -2311,6 +2338,18 @@ static void initShared() {
     g.settings = new AppSettings();
     g.settings->setChangeCallback(onSettingsChanged, nullptr);
     StartupLog::mark("settings read");
+    // The dots and the titles' count follow the board (PARITY.md 3.6).
+    TerminalAttention::setChangedHandler([] {
+        for (App* a : g.windows) {
+            if (a->dead) continue;
+#ifdef MINICODE_ENABLE_TERMINAL
+            if (a->terminal)
+                a->terminal->setAttention(TerminalAttention::markName(a->controlId),
+                                          TerminalAttention::tooltip(a->controlId));
+#endif
+            if (a->editor) updateTitle(a);
+        }
+    });
     applyStylesheet();   // before any widget is drawn
     StartupLog::mark("stylesheet");
 
@@ -2620,6 +2659,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->terminal = new Terminal(app->rootDir);
     terminalPane = app->terminal->widget();
     app->terminal->setProjectRoot(app->rootDir);
+    app->terminal->setControlId(app->controlId);   // MINICODE_TERMINAL_ID, before the shell
     app->terminal->onCommandFinished = [app] {
         if (!app->dead && app->lsp) app->lsp->lookAgainForMissingServer();
     };
@@ -2888,6 +2928,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "terminalzoomreset", G_CALLBACK(act_terminal_zoom_reset));
     addAction(app, "togglewordwrap", G_CALLBACK(act_toggle_word_wrap));
     addAction(app, "togglemaximize", G_CALLBACK(act_toggle_maximize));
+#ifdef MINICODE_ENABLE_TERMINAL
+    addAction(app, "nextwaiting",    G_CALLBACK(act_next_waiting));
+#endif
     addAction(app, "goback",         G_CALLBACK(act_go_back));
     addAction(app, "goforward",      G_CALLBACK(act_go_forward));
     addAction(app, "playpause",      G_CALLBACK(act_play_pause));

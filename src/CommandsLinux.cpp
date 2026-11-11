@@ -239,6 +239,9 @@ const std::vector<LinuxRow>& linuxRows() {
         // has the keyboard, as on the Mac (and GNOME Terminal's own Ctrl+=
         // and Ctrl+-). A Terminal command keeps its plain Ctrl keys there
         // (linuxTerminalTakes), and applies nowhere else.
+        // The Mac's Ctrl+Cmd+W; Ctrl+Alt+W on Linux, Global so it also works
+        // from the terminal, where the waiting sessions are (PARITY.md 3.6).
+        {"minicode.terminal.nextWaiting", "ctrl+alt+w", Global, nullptr, nullptr},
         {"workbench.action.terminal.fontZoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
         {"workbench.action.terminal.fontZoomOut", "ctrl+-", 0, nullptr, nullptr},
         {"workbench.action.terminal.fontZoomReset", "ctrl+alt+0 ctrl+numpad0", 0, nullptr, nullptr},

@@ -3065,6 +3065,58 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   the load, then places). **Needs the owner**: the box's look on a real
   theme and its place with word wrap and a long first line.
 
+### 42. Waiting for you (done, November 2026; `PARITY.md` item 3.6)
+
+- **What it does**: the Mac's feature 7 for a Claude Code session in the
+  app's terminal. Every terminal has an id when made (a window has one
+  terminal, so it is the window's control id, what `minicode state` reports
+  under `terminals`), and its shell gets `MINICODE_TERMINAL_ID` and
+  `MINICODE_PID` (`Terminal::spawnShell` builds the environment from the
+  app's, less any copies it inherited from another minicode). `minicode
+  notify --from-hook` (stdin: the hook's JSON) marks that terminal on the
+  core's `AttentionBoard`: Notification is waiting, Stop is done,
+  UserPromptSubmit and PostToolUse clear. It never starts the app, and with
+  `--from-hook` prints nothing and exits 0 whatever happens, outside minicode
+  too. `minicode hooks --print` and `--install` are the Mac's code, no longer
+  `#ifdef __APPLE__` in `tools/minicode-cli.cpp`: `~/.claude/settings.json`
+  (or `$CLAUDE_CONFIG_DIR`), a timestamped backup first, a merge that only
+  adds, a second run changing nothing, a symlinked file staying a link
+  (`ClaudeHooks::writeSettingsFile`).
+- **Where it shows**: there are no terminal tabs, so the mark is a dot in the
+  terminal panel's top right corner (a `GtkLabel` in the terminal's overlay;
+  orange for waiting, green for done), with Claude's message as its tooltip;
+  the count of waiting terminals in every window leads each window's title
+  ("(2 waiting) MiniCode - ..."), in place of the Mac's Dock badge (GTK4 has no
+  urgency hint to set on a window). Next Waiting Terminal
+  (`minicode.terminal.nextWaiting`, **Ctrl+Alt+W**, Global so it works from
+  the terminal; the Mac's Ctrl+Cmd+W) presents the next window whose terminal
+  waits, in the windows' order, wraps, shows a hidden terminal and gives it
+  the keyboard; with none waiting it beeps.
+- **Clearing**: a key press in the terminal (a controller on the VTE widget,
+  capture phase, modifiers alone ignored) or the terminal going away
+  (`~Terminal`). Output arriving, pastes from Run in Terminal and the
+  terminal's own replies do not clear it.
+- **The pieces**: `linux/src/TerminalAttention.{h,cpp}` is the one board for
+  every window (no GTK in it; `main.cpp` sets its changed handler in
+  `initShared`, which redraws the dots and titles), `notify` is in
+  `ControlCommands.cpp` (it answers "there is no terminal N" for an id no
+  window has), and `ClaudeHooks.cpp`, `AttentionBoard.cpp`, `AgentIndex.cpp`
+  and `AgentTranscript.cpp` joined the build lists (the board's session
+  helper uses `AgentIndex`; nothing of the Agents panel, item 3.5, is built).
+- **Checked by** the `attention` GUI suite (`BUILD-LINUX.md`): the shell's two
+  variables read back from a file, canned hook JSON through the real client,
+  silence and exit 0 with no app or no variables, the dot, tooltip and title,
+  a real key (XTest) clearing the mark, Ctrl+Alt+W showing a hidden terminal,
+  and `hooks --install` twice into the scratch HOME (and onto a symlink); the
+  key-clearing checks fail with the controller switched off. Nothing writes
+  the real `~/.claude`.
+- **Not done**: the session labels in the Processes panel (the board keeps
+  each terminal's session; `ProcessTable` takes it, wiring is item 3.5/3.8's),
+  the Agents panel's "Show Terminal", a `term --run`-style way to type into
+  the terminal from the client, and a per-tab mark (there are no terminal
+  tabs). **Needs the owner**: the dot's look on a real theme, and the title
+  count in GNOME's overview.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

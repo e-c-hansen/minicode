@@ -84,6 +84,19 @@ public:
     bool busy() const;
     // The shell's pid (the VTE child), 0 while there is none (PARITY.md 3.8).
     int shellPid() const { return shellPid_ > 0 ? (int)shellPid_ : 0; }
+
+    // Waiting for you (PARITY.md 3.6). The terminal's id is the control
+    // channel's (`minicode state`); the shell gets it as MINICODE_TERMINAL_ID
+    // beside MINICODE_PID, set before the shell starts (an id given after the
+    // shell is running reaches only the next one). The mark is a dot over the
+    // terminal's top right corner with Claude's message as its tooltip:
+    // "waiting" (orange), "done" (green), "" (none). Typing in the terminal
+    // clears the board's mark, and so does the terminal going away.
+    void setControlId(int id) { controlId_ = id; }
+    int controlId() const { return controlId_; }
+    void setAttention(const std::string& markName, const std::string& tooltip);
+    // The mark shown now, for the checks: "waiting", "done" or "".
+    const std::string& attentionShown() const { return attentionShown_; }
     // A command run with Return has finished: the shell has the terminal
     // again. The port's shell has no integration marks, so each Return
     // typed into the terminal starts a look, four times a second, until
@@ -113,6 +126,9 @@ private:
     static void onChildExited(VteTerminal* term, gint status, gpointer self);
     static void onSpawned(VteTerminal* term, GPid pid, GError* error, gpointer self);
 
+    int         controlId_ = 0;
+    GtkWidget*  attentionDot_ = nullptr;   // the mark, in the overlay
+    std::string attentionShown_;
     std::string cwd_;
     std::string root_dir_;          // the window's folder, for links
     GtkWidget*  root_ = nullptr;   // container: the scroller, the underline over it

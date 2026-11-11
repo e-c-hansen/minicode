@@ -7,6 +7,7 @@
 #include "Appearance.h"
 #include "Palette.h"
 #include "StartupLog.h"
+#include "TerminalAttention.h"
 #include "TermLinkPath.h"
 #include "TermLinks.h"
 
@@ -83,12 +84,36 @@ Terminal::Terminal(const std::string& cwd) : cwd_(cwd) {
     // drawn over the terminal: VTE underlines only its own regex matches, and
     // a regex cannot know which paths exist.
     root_ = gtk_overlay_new();
+    // The waiting mark (setAttention): hidden until a notify marks the terminal.
+    attentionDot_ = gtk_label_new(nullptr);
+    gtk_widget_set_halign(attentionDot_, GTK_ALIGN_END);
+    gtk_widget_set_valign(attentionDot_, GTK_ALIGN_START);
+    gtk_widget_set_margin_end(attentionDot_, 14);
+    gtk_widget_set_margin_top(attentionDot_, 2);
+    gtk_widget_set_visible(attentionDot_, FALSE);
+    gtk_overlay_add_overlay(GTK_OVERLAY(root_), attentionDot_);
     // Only the floor: the height is the paned divider's business now, so the
     // panel must not demand a fixed size (that was what made it unresizable).
     gtk_widget_set_size_request(root_, -1, kMinHeight);
     g_signal_connect(root_, "map", G_CALLBACK(+[](GtkWidget*, gpointer p) {
         static_cast<Terminal*>(p)->makeTerminal();
     }), this);
+}
+
+void Terminal::setAttention(const std::string& markName, const std::string& tooltip) {
+    attentionShown_ = markName;
+    if (!attentionDot_) return;
+    if (markName.empty()) {
+        gtk_widget_set_visible(attentionDot_, FALSE);
+        return;
+    }
+    // The Mac's dots: orange for waiting, green for done.
+    const char* color = markName == "waiting" ? "#E8A33D" : "#4EC9B0";
+    char* markup = g_markup_printf_escaped("<span foreground=\"%s\" size=\"x-large\">\u25CF</span>", color);
+    gtk_label_set_markup(GTK_LABEL(attentionDot_), markup);
+    g_free(markup);
+    gtk_widget_set_tooltip_text(attentionDot_, tooltip.c_str());
+    gtk_widget_set_visible(attentionDot_, TRUE);
 }
 
 void Terminal::makeTerminal() {
@@ -125,6 +150,26 @@ void Terminal::makeTerminal() {
     // starts the look for the command's end (typeText, onCommandFinished).
     g_signal_connect(vte_, "contents-changed", G_CALLBACK(onContentsChanged), this);
     g_signal_connect(vte_, "commit", G_CALLBACK(onCommit), this);
+    // A key typed in the terminal ends its mark (a modifier alone is no
+    // typing). The controller only watches: the key goes on to the shell.
+    {
+        GtkEventController* typed = gtk_event_controller_key_new();
+        gtk_event_controller_set_propagation_phase(typed, GTK_PHASE_CAPTURE);
+        g_signal_connect(typed, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey*, guint keyval,
+                                                              guint, GdkModifierType, gpointer p) -> gboolean {
+            switch (keyval) {
+            case GDK_KEY_Shift_L: case GDK_KEY_Shift_R: case GDK_KEY_Control_L:
+            case GDK_KEY_Control_R: case GDK_KEY_Alt_L: case GDK_KEY_Alt_R:
+            case GDK_KEY_Meta_L: case GDK_KEY_Meta_R: case GDK_KEY_Super_L:
+            case GDK_KEY_Super_R: case GDK_KEY_ISO_Level3_Shift: case GDK_KEY_Caps_Lock:
+                return FALSE;
+            }
+            Terminal* t = static_cast<Terminal*>(p);
+            if (t->controlId_ > 0) TerminalAttention::typed(t->controlId_);
+            return FALSE;
+        }), this);
+        gtk_widget_add_controller(vte_, typed);
+    }
     // The right click: Copy, Paste, Select All, Adjust Settings… (PARITY.md 2.11).
     Appearance::attachTerminalMenu(vte_);
 
@@ -244,6 +289,7 @@ void Terminal::makeTerminal() {
 }
 
 Terminal::~Terminal() {
+    if (controlId_ > 0) TerminalAttention::forget(controlId_);   // the mark goes with it
     g_cancellable_cancel(spawnCancel_);
     g_object_unref(spawnCancel_);
     g_signal_handlers_disconnect_by_data(root_, this);
@@ -636,6 +682,21 @@ void Terminal::spawnShell() {
 
     lastSpawn_ = g_get_monotonic_time();
 
+    // The environment the app has, less any MINICODE_TERMINAL_ID and
+    // MINICODE_PID it inherited (from a minicode this one was started in),
+    // plus this terminal's (PARITY.md 3.6): `minicode notify --from-hook`
+    // finds its terminal by them.
+    gchar** inherited = g_get_environ();
+    std::vector<gchar*> envv;
+    for (gchar** e = inherited; e && *e; e++)
+        if (!g_str_has_prefix(*e, "MINICODE_TERMINAL_ID=") && !g_str_has_prefix(*e, "MINICODE_PID="))
+            envv.push_back(*e);
+    std::string idVar = "MINICODE_TERMINAL_ID=" + std::to_string(controlId_);
+    std::string pidVar = "MINICODE_PID=" + std::to_string((int)getpid());
+    if (controlId_ > 0) envv.push_back(const_cast<gchar*>(idVar.c_str()));
+    envv.push_back(const_cast<gchar*>(pidVar.c_str()));
+    envv.push_back(nullptr);
+
     // vte_terminal_spawn_async is the current API (the sync variant is
     // deprecated in recent VTE).
     vte_terminal_spawn_async(
@@ -643,12 +704,13 @@ void Terminal::spawnShell() {
         VTE_PTY_DEFAULT,
         cwd_.empty() ? nullptr : cwd_.c_str(),  // working directory
         argv,
-        nullptr,                                 // envv (inherit)
+        envv.data(),                             // ours: the inherited, with the two ids
         G_SPAWN_DEFAULT,
         nullptr, nullptr, nullptr,               // child setup
         -1,                                      // timeout
         spawnCancel_,                            // cancelled if the window closes first
         onSpawned, this);                        // callback / user data
+    g_strfreev(inherited);   // spawn_async has copied the environment
 }
 
 void Terminal::focus() {
