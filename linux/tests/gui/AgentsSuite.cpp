@@ -248,7 +248,12 @@ MC_GUI_SUITE(agents) {
         int sub = rowWhere("LSP rename", AgentsPanel::RowInfo::Session);
         auto rows = panel()->rows();
         GCHECK(sub >= 0 && rows[sub].depth == 1);
-        GCHECK(rowWhere("In its worktree", AgentsPanel::RowInfo::Group) >= 0);
+        // The main session's own files are "In the folder", as on the Mac;
+        // under a checkout in .claude/worktrees the core calls the whole
+        // project a worktree (MC_GUI_ROOT=/tmp gives CI's layout).
+        const bool checkoutIsWorktree = gProj.find("/.claude/worktrees/") != std::string::npos;
+        GCHECK(rowWhere(checkoutIsWorktree ? "In its worktree" : "In the folder",
+                        AgentsPanel::RowInfo::Group) >= 0);
         GCHECK(rows[2].kind == AgentsPanel::RowInfo::Group && rows[2].depth == 1);
         gClickAt = 0;
     });
