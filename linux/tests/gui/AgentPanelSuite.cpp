@@ -14,13 +14,27 @@
 // step; a user's edit elsewhere meanwhile still lets Keep place it; a second
 // request builds on the edit waiting; a missing command says so; a bar
 // closed by another tab says the edit was not made.
+//
+// Part two (the request kinds by what has the keyboard): Ctrl+I in an idle
+// terminal asks for a command and types it, running nothing (a marker file
+// the command would make stays absent); in the file tree it makes a task, a
+// 0600 prompt file in $TMPDIR/MiniCode-agent and a `cd ... && claude "$(cat
+// file)"` line typed in the terminal, not run; Ctrl+Enter makes an edit a
+// task; in the Markdown preview Ctrl+I is an edit of its source; the tree
+// taking the keyboard closes a bar with an edit waiting and says so; an edit
+// of a tinted line redraws the tint.
 #include "Harness.h"
 
 #include "Document.h"
+#include "AppSeam.h"
 #include "Editor.h"
+#include "FileTree.h"
 #include "InlineAgentBar.h"
+#include "Terminal.h"
+#include "WindowLayout.h"
 
 #include <glib/gstdio.h>
+#include <vte/vte.h>
 #include <sys/stat.h>
 
 #include <string>
@@ -41,6 +55,23 @@ std::string bufferText() {
     std::string out = t;
     g_free(t);
     return out;
+}
+
+VteTerminal* findVte(GtkWidget* root) {
+    if (!root) return nullptr;
+    if (VTE_IS_TERMINAL(root)) return VTE_TERMINAL(root);
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (VteTerminal* hit = findVte(c)) return hit;
+    return nullptr;
+}
+
+std::string screenText() {
+    VteTerminal* vte = findVte(MCGuiApp().terminal->widget());
+    if (!vte) return "";
+    char* t = vte_terminal_get_text_format(vte, VTE_FORMAT_TEXT);
+    std::string s = t ? t : "";
+    g_free(t);
+    return s;
 }
 
 bool barHasKeyboard() {
@@ -86,6 +117,7 @@ struct State {
     std::vector<std::string> seen;   // messages shown while working
     std::vector<std::string> notes;  // the status bar lines
     std::function<void(const std::string&)> realNote;
+    std::string prevTask;
 };
 State* gS = nullptr;
 
@@ -103,6 +135,20 @@ void waitForReply(const std::string& what) {
         return bar()->mode() != InlineAgentBar::Mode::Working &&
                bar()->mode() != InlineAgentBar::Mode::Input;
     });
+}
+
+bool noteSaid(const std::string& part) {
+    for (const std::string& n : gS->notes)
+        if (n.find(part) != std::string::npos) return true;
+    return false;
+}
+
+std::string readFile(const std::string& p) {
+    gchar* t = nullptr;
+    std::string s;
+    if (g_file_get_contents(p.c_str(), &t, nullptr, nullptr)) s = t;
+    g_free(t);
+    return s;
 }
 
 }  // namespace
@@ -334,6 +380,161 @@ MC_GUI_SUITE(agent_panel) {
         GCHECK(said);
         GCHECK(bar()->tintedLines() == 0);
         GCHECK(ed()->openFile(F("util.py")));
+        bar()->note = gS->realNote;
+    });
+
+    // ---- Part two: the kinds of request.
+    MCGuiStep("a terminal, an agent that answers with a command", [] {
+        useAgent();
+        writeAgent(plainReply("```\ntouch " + Dir() + "/ran.txt\n```"));
+        g_unlink((Dir() + "/ran.txt").c_str());
+        bar()->note = [](const std::string& t) { gS->notes.push_back(t); };
+        gS->notes.clear();
+        GCHECK(MCGuiApp().terminal != nullptr);
+        if (!MCGuiApp().terminal) return;
+        if (!MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
+        MCGuiApp().terminal->typeText("true");
+    });
+    MCGuiWait("the shell is up", 30, [] {
+        return MCGuiApp().terminal->shellPid() > 0 && screenText().find("true") != std::string::npos;
+    });
+    MCGuiStep("clear the line, give the terminal the keyboard", [] {
+        MCGuiApp().terminal->focus();
+        MCGuiKey("ctrl+u");
+    });
+    MCGuiStep("Ctrl+I there asks for a command", [] {
+        MCGuiKey("ctrl+i");
+    });
+    MCGuiWait("a command bar", 5, [] {
+        return bar()->mode() == InlineAgentBar::Mode::Input &&
+               bar()->kind() == InlineAgentBar::Kind::Command && barHasKeyboard();
+    });
+    MCGuiStep("ask", [] { ask("make the marker file"); });
+    MCGuiWait("typed at the prompt", 25, [] {
+        return bar()->mode() == InlineAgentBar::Mode::Closed &&
+               screenText().find("ran.txt") != std::string::npos;
+    });
+    MCGuiPause(1.5);   // negative check: time is the condition, a run would make the marker
+    MCGuiStep("typed, not run", [] {
+        GCHECK(bar()->lastTypedLine().find("touch ") == 0);
+        GCHECK(!g_file_test((Dir() + "/ran.txt").c_str(), G_FILE_TEST_EXISTS));
+        GCHECK(noteSaid("not run"));
+        MCGuiKey("ctrl+u");
+    });
+
+    MCGuiStep("the file tree has the keyboard", [] {
+        gS->notes.clear();
+        GCHECK(MCGuiApp().tree != nullptr);
+        MCGuiApp().tree->focus();
+        MCGuiKey("ctrl+i");
+    });
+    MCGuiWait("a task bar", 5, [] {
+        return bar()->mode() == InlineAgentBar::Mode::Input &&
+               bar()->kind() == InlineAgentBar::Kind::Task && barHasKeyboard();
+    });
+    MCGuiStep("ask", [] { ask("tidy the tests"); });
+    MCGuiWait("the task is typed", 15, [] {
+        return bar()->mode() == InlineAgentBar::Mode::Closed && screenText().find("$(cat") != std::string::npos;
+    });
+    MCGuiStep("a 0600 prompt file and a typed line", [] {
+        const std::string f = bar()->lastTaskFile();
+        GCHECK(!f.empty());
+        struct stat st;
+        GCHECK(stat(f.c_str(), &st) == 0);
+        GCHECK((int)(st.st_mode & 0777) == 0600);
+        const std::string body = readFile(f);
+        GCHECK(body.find("tidy the tests") != std::string::npos);
+        GCHECK(body.find("file tree") != std::string::npos);
+        const std::string line = bar()->lastTypedLine();
+        GCHECK(line.find("cd ") == 0);
+        GCHECK(line.find("fake-claude.sh \"$(cat '" + f + "')\"") != std::string::npos);
+        GCHECK(noteSaid("not run"));
+        MCGuiKey("ctrl+u");
+    });
+
+    MCGuiStep("Ctrl+Enter makes an edit request a task", [] {
+        gS->notes.clear();
+        GCHECK(ed()->openFile(F("util.py")));
+        focusText();
+        MCGuiKey("ctrl+i");
+    });
+    MCGuiWait("an edit bar", 5, [] {
+        return bar()->mode() == InlineAgentBar::Mode::Input &&
+               bar()->kind() == InlineAgentBar::Kind::Edit && barHasKeyboard();
+    });
+    MCGuiStep("type a request and press Ctrl+Enter", [] {
+        gS->prevTask = bar()->lastTaskFile();
+        MCGuiType("rename double");
+        MCGuiKey("ctrl+enter");
+    });
+    MCGuiWait("a new task", 10, [] {
+        return bar()->mode() == InlineAgentBar::Mode::Closed && bar()->lastTaskFile() != gS->prevTask;
+    });
+    MCGuiStep("the prompt names the file; the buffer is untouched", [] {
+        const std::string body = readFile(bar()->lastTaskFile());
+        GCHECK(body.find("rename double") != std::string::npos);
+        GCHECK(body.find("util.py") != std::string::npos);
+        GCHECK_EQ_STR(bufferText(), kOriginal);
+        MCGuiKey("ctrl+u");
+    });
+
+    MCGuiStep("the Markdown preview: Ctrl+I is an edit of its source", [] {
+        MCGuiWriteFile(F("notes.md"), "# Notes\n\nhello world\n");
+        writeAgent(plainReply("<<<<<<< SEARCH\nhello world\n=======\nhello there\n>>>>>>> REPLACE\n"));
+        GCHECK(ed()->openFile(F("notes.md")));
+    });
+    MCGuiWait("the page shows", 10, [] { return ed()->inPreview(); });
+    MCGuiStep("Ctrl+I", [] {
+        focusText();
+        MCGuiKey("ctrl+i");
+    });
+    MCGuiWait("an edit bar", 5, [] {
+        return bar()->mode() == InlineAgentBar::Mode::Input &&
+               bar()->kind() == InlineAgentBar::Kind::Edit && barHasKeyboard();
+    });
+    MCGuiStep("ask", [] { ask("friendlier"); });
+    waitForReply("the edit");
+    MCGuiStep("it waits; Return keeps it in the source", [] {
+        GCHECK(bar()->mode() == InlineAgentBar::Mode::Pending);
+        GCHECK_EQ_STR(bufferText(), "# Notes\n\nhello world\n");
+        MCGuiKey("enter");
+    });
+    MCGuiWait("closed", 5, [] { return bar()->mode() == InlineAgentBar::Mode::Closed; });
+    MCGuiStep("the source has it", [] {
+        GCHECK_EQ_STR(bufferText(), "# Notes\n\nhello there\n");
+        GCHECK(ed()->openFile(F("util.py")));
+        gtk_text_buffer_set_text(ed()->sourceBuffer(), kOriginal, -1);
+        writeAgent(plainReply("<<<<<<< SEARCH\n    return x * 2\n=======\n    return x * 5\n>>>>>>> REPLACE\n"));
+        focusText();
+        MCGuiKey("ctrl+i");
+    });
+    MCGuiWait("bar", 5, [] { return bar()->mode() == InlineAgentBar::Mode::Input && barHasKeyboard(); });
+    MCGuiStep("ask", [] { ask("five"); });
+    waitForReply("the edit");
+
+    // An edit of a tinted line redraws the tint.
+    MCGuiStep("the user retypes the tinted line as it was", [] {
+        GCHECK(bar()->mode() == InlineAgentBar::Mode::Pending);
+        GCHECK(bar()->tintedLines() == 1);
+        GtkTextBuffer* b = ed()->sourceBuffer();
+        GtkTextIter s, e;
+        gtk_text_buffer_get_iter_at_line(b, &s, 1);
+        e = s;
+        gtk_text_iter_forward_to_line_end(&e);
+        gtk_text_buffer_delete(b, &s, &e);
+        gtk_text_buffer_insert(b, &s, "    return x * 2", -1);
+    });
+    MCGuiWait("the tint is back", 5, [] { return bar()->tintedLines() == 1; });
+
+    // The tree taking the keyboard closes the bar and says so.
+    MCGuiStep("the tree takes the keyboard", [] {
+        gS->notes.clear();
+        MCGuiApp().tree->focus();
+    });
+    MCGuiWait("closed", 5, [] { return bar()->mode() == InlineAgentBar::Mode::Closed; });
+    MCGuiStep("the status bar said it was not made", [] {
+        GCHECK(noteSaid("edit was not made"));
+        GCHECK_EQ_STR(bufferText(), kOriginal);
         bar()->note = gS->realNote;
     });
 }

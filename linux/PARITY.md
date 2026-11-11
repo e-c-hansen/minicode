@@ -1327,13 +1327,16 @@ its server comes first here (2.0).
   the IDE link's openDiff is done (3.9). Also the Mac's diff preview tab that each `diff` replaces (every
   call opens a tab of its own here), choice tints on the rows, and keeping a
   tab's place.
-- [~] **3.3 The inline agent.** `InlineAgent`, with pending edits. Never run
-  the real Claude Code in a check: use `tests/fixtures/claude`. Part one done,
+- [x] **3.3 The inline agent.** `InlineAgent`, with pending edits. Never run
+  the real Claude Code in a check: use `tests/fixtures/claude`. Done,
   November 2026 (HANDOFF item 46): Ctrl+I, the bar at the caret, the streamed
-  preview, the pending diff and tint, Keep and Esc, the `agent_panel` GUI
-  suite. Remains (part two): commands typed for an idle terminal, tasks
-  handed to Claude Code in a terminal tab, the Markdown preview's context,
-  Ctrl+Enter.
+  preview, the pending diff and tint (redrawn when a tinted line is edited),
+  Keep and Esc; the request kind by what has the keyboard (an edit in the
+  editor or on a Markdown preview's source, a command typed in an idle
+  terminal, a task otherwise or on Ctrl+Enter, the prompt in a 0600 file and
+  its line typed in the terminal; one terminal, no tabs yet); a bar closed
+  by focus leaving the editor says its edit was not made; the `agent_panel`
+  GUI suite.
 - [x] **3.4 Notes and tours.** Mac: `AgentNotes`. Done, November 2026
   (HANDOFF item 41): `AgentNotes` over a text tag and an overlay box,
   `open --note`/`--from`, `tour` and its Alt+] and Alt+[ keys, the agent's

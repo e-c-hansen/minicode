@@ -15,7 +15,7 @@
 //   - Nothing GNOME takes: Super, Ctrl+Alt+arrows, Ctrl+Alt+T,
 //     Ctrl+Alt+Delete.
 // A command the port does not have yet has no row, so its key is free until
-// the item that brings it (Ctrl+I for the inline agent). The port's table of GActions (linux/src/Keys.cpp)
+// the item that brings it (Ctrl+I for the inline agent, now Global). The port's table of GActions (linux/src/Keys.cpp)
 // has the same commands, but those the registry marks Fixed, which are a
 // view's own keys.
 #include "Commands.h"
@@ -95,7 +95,9 @@ const std::vector<LinuxRow>& linuxRows() {
         {"expandLineSelection", "ctrl+l", 0, nullptr, nullptr},
         {"editor.action.deleteLines", "ctrl+shift+k", 0, nullptr, nullptr},
         // The inline agent (PARITY.md 3.3): the Mac's Cmd+I as Ctrl+I.
-        {"inlineChat.start", "ctrl+i", 0, nullptr, nullptr},
+        // Global: the terminal asks too (an idle one for a command, a busy one a
+        // task), so Ctrl+I there is not the program's Tab; Tab itself still is.
+        {"inlineChat.start", "ctrl+i", Global, nullptr, nullptr},
         {"editor.action.commentLine", "ctrl+/", 0, nullptr, nullptr},
         // Ctrl+L is Select Line's (D1), so the task key is the Mac's Option+Cmd+L
         // with Alt and Ctrl; Alt+C is markdown-all-in-one's, in Markdown only.

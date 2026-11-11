@@ -3266,7 +3266,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `snapshotPlan`'s unit tests, not on a real tall page; Vite's `--open` and
   Claude Code's links through BROWSER were not run.
 
-### 46. The inline agent, part one (done, November 2026; `PARITY.md` item 3.3)
+### 46. The inline agent (done, November 2026; `PARITY.md` item 3.3)
 
 - **What it does**: Ctrl+I (the registry's `inlineChat.start`, `win.inlineagent`,
   a row in `CommandsLinux.cpp`, Edit menu, the hints panel) opens the Mac's
@@ -3303,11 +3303,35 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   waiting says in the status bar that it was not made.
 - **Checked by** the `agent_panel` GUI suite (`BUILD-LINUX.md`): the real key,
   a stand-in script over `tests/fixtures/claude/stream`, no real `claude`.
-- **Not done (part two)**: commands for an idle terminal, tasks handed to
-  Claude Code in a terminal tab, the Markdown preview's context, Ctrl+Enter,
-  and the Mac's "closed from elsewhere" for the file tree or terminal taking
-  the keyboard (only a tab switch and the window close it here). The tint is
-  not redrawn when the user edits inside a tinted line.
+- **Part two, the kinds** (`main.cpp` `act_inline_agent` decides by what has
+  the keyboard, as the Mac): a text file or a Markdown preview in the editor is
+  an `Edit` (on the preview the bar sits at the top and reads and changes the
+  document's source buffer, `readSource`); an idle terminal a `Command`
+  (`commandPrompt`, `commandFrom`, the line typed with `Terminal::typeText`,
+  never run, the status bar says so); anything else (tree, panels, browser,
+  picture, LaTeX preview, a busy terminal) a `Task`. Ctrl+Enter in the bar
+  (its key controller, no registry row) makes any request a task. A task
+  writes `InlineAgent::taskPrompt` to `$TMPDIR/MiniCode-agent/task-<pid>-<n>.txt`
+  (0600; files of a process that quit or a day old removed as the next is
+  written) and types `cd <root> && <agent.command> "$(cat <file>)"` into the
+  window's terminal (shown and focused), for the user to read and run. The
+  Linux port has one terminal, not tabs, so a busy terminal cannot take it:
+  the status bar names the prompt file then.
+- **Ctrl+I is Global** in `CommandsLinux.cpp`: plain Ctrl keys are the
+  terminal program's, and Ctrl+I there is a Tab to vim's jump list; the
+  inline agent in an idle terminal needs the key, so it takes it (Tab itself
+  still goes to the shell). Say so if it is missed; a Ctrl+Shift key would
+  be the alternative.
+- **Closed from elsewhere**: `InlineAgentBar::focusMoved`, from the window's
+  `notify::focus-widget`, closes the bar when the keyboard leaves the editor
+  widget (tree, terminal, browser); an edit waiting says in the status bar
+  that it was not made. A bar of a Command or Task kind does not give the
+  keyboard back to the editor.
+- **The tint follows edits**: while an edit waits the buffer's `changed`
+  signal re-runs the blocks on the buffer as it is (120 ms after typing
+  stops) and tints the lines they now replace (`retint`).
+- Not done: a command's request does not send the terminal's screen
+  (`CommandRequest::screen` is empty; only the folder).
 
 ## How to work on it
 

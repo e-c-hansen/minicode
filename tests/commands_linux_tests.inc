@@ -285,9 +285,12 @@ static void testLinuxTerminalKeys() {
         for (const Key &k : d.keysOf(r.id))
             if (!linuxTerminalTakes(c, k) && !(k.mods & (Shift | Alt))) plain.insert(format(k));
     }
-    // The terminals' own zoom keeps its keys there (PARITY.md 1.11).
+    // The terminals' own zoom keeps its keys there (PARITY.md 1.11), and the
+    // inline agent's Ctrl+I is Global (an idle terminal asks for a command,
+    // PARITY.md 3.3).
     CHECK((plain == std::set<std::string>{"ctrl+`", "ctrl+0", "ctrl+1", "ctrl+tab", "ctrl+pagedown",
-                                           "ctrl+pageup", "ctrl+=", "ctrl+-", "ctrl+numpad0"}));
+                                           "ctrl+pageup", "ctrl+=", "ctrl+-", "ctrl+numpad0",
+                                           "ctrl+i"}));
     // Alt with a letter alone is Meta to the program: the find bar's
     // options leave it its word keys; Alt with a digit (the tabs) and with
     // Ctrl stays the app's.

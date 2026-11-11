@@ -118,13 +118,18 @@ Verified by running it:
   folder unchanged by the panel's reading. It fails (checked once) with the
   toggle a no-op. Not tested: the look on a real desktop, a real
   `~/.claude/projects`, a right click.
-- The inline agent's edits (item 3.3, part one): the `agent_panel` GUI suite
+- The inline agent (item 3.3): the `agent_panel` GUI suite
   presses the real Ctrl+I, runs a stand-in script that streams
   `tests/fixtures/claude/stream` (the real Claude Code never runs), and checks
   the preview, the pending diff with the buffer untouched, Esc, Keep as one
   undo step, Keep after an edit elsewhere, a second request, a missing
-  command and the bar closed by another tab. Terminal commands, tasks and
-  the Markdown preview are part two.
+  command and the bar closed by another tab or by the tree taking the
+  keyboard. Also: Ctrl+I in an idle terminal types a command and runs nothing
+  (a marker file stays absent), in the tree makes a task (a 0600 prompt file,
+  its `cd ... && claude "$(cat file)"` line typed, not run), Ctrl+Enter makes
+  an edit a task, the Markdown preview's Ctrl+I edits its source, an edit of
+  a tinted line redraws the tint. Not tested: the real `claude`, and the
+  terminal's screen is not sent with a command request.
 - Notes and tours (item 3.4): the `notes` GUI suite runs the real client.
   `open --note` puts the file in the agent's preview tab and shows the box
   (text cleaned, label, x) over lines 10 to 12 with the text tag on exactly
