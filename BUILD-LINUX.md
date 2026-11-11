@@ -1201,6 +1201,14 @@ Displays.
 - [ ] How the stops' boxes, the list and the hint look, and Tab, Shift Tab
   and Escape under GNOME on Wayland with IBus running.
 
+### Semantic tokens (item 2.6)
+
+- [x] The `semantic_tokens` suite (scripted server, real painting over a
+  400-line file) and the core's `lsp:semantic-*` groups.
+- [ ] With real basedpyright, clangd and rust-analyzer: the colors of
+  classes, functions, parameters and properties, strings and comments keeping
+  theirs, and scrolling a long file painting lines as they come in.
+
 ### Source Control (item 2.9)
 
 - [ ] Push, pull and autofetch

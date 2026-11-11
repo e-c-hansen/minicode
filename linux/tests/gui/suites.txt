@@ -65,3 +65,4 @@ CompletionKeysSuite.cpp
 SnippetsSuite.cpp
 CompletionEditsSuite.cpp
 SignatureHelpSuite.cpp
+SemanticTokensSuite.cpp

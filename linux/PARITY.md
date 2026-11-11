@@ -1080,11 +1080,12 @@ its server comes first here (2.0).
   hint on "(" and ","; they fail without the accept's own undo step and
   without the late import's replay. Needs the owner: real clangd and
   basedpyright, and the keys and look under GNOME on Wayland with IBus.
-- [~] **2.6 Semantic tokens.** Tags, painted for the lines on screen only.
-  Built and compiling (`SemanticColors`, `LspSessionSemantic.cpp`, core
-  `lsp:semantic-utf8`/`-over-code` passing); remains: add
-  `tests/gui/SemanticTokensSuite.cpp` (written, never run) to `suites.txt`,
-  run it, show a check failing without its fix, the full runs, HANDOFF item 35.
+- [x] **2.6 Semantic tokens.** Tags, painted for the lines on screen only.
+  Done (`HANDOFF.md` item 36): `SemanticColors`, `LspSessionSemantic.cpp`,
+  the core's `lsp:semantic-*` groups and the `semantic_tokens` suite (class,
+  function, parameter and variable colors, the string keeping its own, far
+  lines unpainted until seen, edits ending the tokens). Needs the owner: the
+  colors with a real server.
 - [ ] **2.7 Inlay hints (D6, D9).** `InlayHints`.
 - [ ] **2.8 Install hints.** `InstallHints`.
 - [x] **2.9 Git verbs.** Push, pull, autofetch, Stage All, Discard with its

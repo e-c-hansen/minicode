@@ -2743,6 +2743,36 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   (`large_file` crashed in `BufferLines::of`). `GitGutter` reads
   `gtk_text_view_get_buffer` instead.
 
+### 36. Semantic tokens (done, November 2026; `PARITY.md` item 2.6)
+
+- **What it does**: the servers' `textDocument/semanticTokens/full` (then
+  `/full/delta`), painted for the lines on screen only, as the Mac's
+  `editor.semantic-highlighting` does. `LspSessionSemantic.cpp` asks on
+  show, 0.3 s after typing and on the server's refresh, one request at a
+  time, and hands `Lsp::SemanticSpan`s (decoded in the core by
+  `Lsp::decodeSemanticTokens`, then `semanticSpansInUtf8` for GTK's bytes) to
+  `SemanticColors` (`src/SemanticColors.{h,cpp}`, one per `Document`) only
+  while the text is the one the server answered for.
+- **Painting**: six tags in the shared table (class, function, variable,
+  parameter, property, constant), placed above the lexer's tags and below
+  the bracket colors. `paintVisible` runs when tokens arrive and as lines
+  scroll in (`BracketView`'s scroll hook), each line once; spans are cut
+  where the lexer has a string, escape or comment
+  (`Lsp::semanticSpansOverCode`), so those keep their color. A character
+  edit ends the tokens (`edited`), their tags move with the text, and the
+  lines the lexer retags (`Document::retagLines`) lose theirs at once.
+  None in large-file mode or with the setting off.
+- **Core**: `lsp:semantic-utf8` and `-over-code` (`tests/lsp_semantic_tests.inc`).
+- **Checked by** the `semantic_tokens` suite (scripted `fakelsp` with a
+  legend, a 400-line file): styles and colors of class, function,
+  parameter and variable, the string keeping its color, nothing painted far
+  below until scrolled to, an edit ending the tokens, the lines painted
+  bounded by the lines on screen and the CPU time of painting.
+- **Trap**: the suite's span count is the tokens kept (8), not the ones
+  painted; the string token is kept and painted around.
+- **Needs the owner**: how the colors look with real basedpyright, clangd
+  or rust-analyzer, and scrolling a long file.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

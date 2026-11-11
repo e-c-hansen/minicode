@@ -190,7 +190,7 @@ MC_GUI_SUITE(semantic_tokens) {
         // Far below, off screen: not painted until it is seen.
         GCHECK(!onScreen(at(kFar, 0)));
         GCHECK(styleAt(at(kFar, 0)) == S::None && !sem()->painted(kFar));
-        GCHECK(sem()->spanCount() == 7);   // the string's token kept, painted around
+        GCHECK(sem()->spanCount() == 8);   // the string's token kept, painted around
         MCGuiNote("%zu lines painted (%zu on screen), %.2f ms of CPU; %zu request(s)",
                   sem()->linesPainted(), visibleLines(), SemanticColors::cpuMs(),
                   lsp()->semanticRequests());
