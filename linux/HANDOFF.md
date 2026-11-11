@@ -2829,6 +2829,43 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
 - **Needs the owner**: the commands on a real Ubuntu (apt, snap), and a real
   install finishing in the terminal bringing the server up.
 
+### 39. The compare view, part one (done, November 2026; `PARITY.md` item 3.2)
+
+- **`CompareView.{h,cpp}`** is the Mac's `MCCompareView`: two panes, each a
+  `GtkDrawingArea` in a `GtkScrolledWindow`, drawn by hand with cairo and
+  Pango, never laid out as text. Every row is one fixed height
+  (`rowHeight()`), so a row's place is arithmetic and only the rows on screen
+  are shaped (the Mac's trap was 1.5 s laying out 50,000 lines a side; here
+  50,000 a side costs the main thread well under half a second of CPU). The
+  two vertical adjustments follow each other (`sync`, guarded against the
+  echo); sideways each pane scrolls on its own, and the line numbers stay put.
+  Tints are the git panel's red and green, changed words stronger, a filler
+  row hatched.
+- **`ComparePanes.{h,cpp}`** (no GTK) is `MCComparison prepare`: `align`,
+  `hunks`, each pane's text from `paneText`, the syntax colors from
+  `IncrementalHighlighter<char16_t>` moved onto the pane by `spansOnPane`
+  (none past 2 MB a side), and `wordChanges` under the Mac's 4 MB budget and
+  2,000-character lines, all as UTF-8 byte offsets. `SideBySide.cpp` joined the
+  Linux core lists for it. `Editor::showComparison(spec, done)` runs it on a
+  thread and opens the tab from an idle (a flag in `compareAlive_` covers a
+  window closed meanwhile).
+- **The tab** is a diff tab with `Document::compare()` set (`setCompare`), so
+  it has no path, is read-only, is skipped by sessions and Quick Open, closes
+  like any tab and is titled by `spec.title`; each call makes a tab of its
+  own (the Mac's preview replacement comes with `minicode diff`). F7 and
+  Shift+F7 are handled by the panes while one has the keyboard
+  (`SideBySide::stepHunk`, wrapping), with three rows of context above.
+- **Checked by** the `compare` GUI suite: rows and fillers, the words, syntax
+  styles, scrolling either pane, real F7 and Shift+F7 with wrapping, and
+  50,000 lines a side under a CPU bound. It fails with `showComparison`
+  taken out.
+- **Part two** (still `[~]` in `PARITY.md`): Accept and Reject per hunk, the
+  decision bar and `lastChoiceGrace`, the gutter between the panes for the
+  buttons, `minicode diff`, Compare with Main and the IDE link's openDiff;
+  a tab's scroll place is not kept when another tab shows.
+- **Needs the owner:** the look (tints, hatching, colors in a light theme),
+  the wheel and a touchpad in the panes, F7 under GNOME.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

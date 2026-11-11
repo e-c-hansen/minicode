@@ -39,6 +39,7 @@
 #include "EditorTabs.h"
 #include "Markdown.h"
 #include "Settings.h"
+#include "ComparePanes.h"
 #include "SyntaxHighlighter.h"
 
 #ifdef MINICODE_ENABLE_PDF
@@ -201,6 +202,10 @@ public:
     const std::string& diffTitle() const { return diffTitle_; }
     const std::string& diffBytes() const { return diffBytes_; }
     bool diffIsCommit() const { return diffCommit_; }
+    // A tab that compares two texts (CompareView.h) is a diff tab with this
+    // set: titled by `diffTitle`, no file, read-only. Null for a git diff.
+    void setCompare(const std::string& title, std::shared_ptr<const CompareData> data);
+    const std::shared_ptr<const CompareData>& compare() const { return compare_; }
 
     // Text only; a message, a picture or a diff is never written, nor a file
     // still being read.
@@ -409,6 +414,7 @@ private:
     GtkTextView*   shownIn_ = nullptr;
 
     std::string diffTitle_, diffBytes_;
+    std::shared_ptr<const CompareData> compare_;
     bool        diffCommit_ = false;
 
     // The file as last read or saved, and whether the buffer differs.

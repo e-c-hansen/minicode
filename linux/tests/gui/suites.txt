@@ -69,3 +69,4 @@ SemanticTokensSuite.cpp
 ServerSymbolsSuite.cpp
 ServerFoldingSuite.cpp
 InstallHintsSuite.cpp
+CompareSuite.cpp

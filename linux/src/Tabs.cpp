@@ -17,6 +17,11 @@
 #include <cctype>
 #include <sys/stat.h>
 
+#include <memory>
+#include <thread>
+
+#include "CompareView.h"
+
 namespace {
 
 std::string baseName(const std::string& p) {
@@ -224,6 +229,36 @@ void Editor::showDiff(const std::string& title, const std::string& bytes, bool c
     activate(d);
 }
 
+// The texts are lined up, colored and diffed on a thread (the Mac's
+// MCComparison prepare); the tab opens on the main loop when that is done.
+void Editor::showComparison(const CompareSpec& spec, std::function<void(Document*)> done) {
+    struct Job {
+        Editor* editor;
+        std::shared_ptr<bool> alive;
+        std::shared_ptr<const CompareData> data;
+        std::function<void(Document*)> done;
+    };
+    Job* job = new Job{this, compareAlive_, nullptr, std::move(done)};
+    std::thread([job, spec] {
+        job->data.reset(prepareComparison(spec));
+        g_idle_add(
+            [](gpointer p) -> gboolean {
+                std::unique_ptr<Job> j(static_cast<Job*>(p));
+                if (!*j->alive) return G_SOURCE_REMOVE;
+                Editor* e = j->editor;
+                Document* d = new Document(e, &e->tags_);
+                e->tabs_.insert(e->tabs_.begin() +
+                                    EditorTabs::insertionIndex(e->activeIndex(), e->tabCount()),
+                                d);
+                d->setCompare(j->data->spec.title, j->data);
+                e->activate(d);
+                if (j->done) j->done(d);
+                return G_SOURCE_REMOVE;
+            },
+            job);
+    }).detach();
+}
+
 // ---------------------------------------------------------------- switching
 
 // Put a tab on show. The tab that was on show keeps its text, unsaved
@@ -281,6 +316,8 @@ void Editor::focusActiveDocument() {
 #endif
     if (d && d->kind() == Document::Kind::Media)
         target = media_->widget();
+    else if (d && d->kind() == Document::Kind::Diff && d->compare() && compare_)
+        target = compare_->focusWidget();
     else if (d && d->kind() == Document::Kind::Diff && diff_)
         target = diff_->textView();
     if (!gtk_widget_grab_focus(target)) gtk_widget_grab_focus(view_);

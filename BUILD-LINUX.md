@@ -48,6 +48,11 @@ person", after this section, is that list.
 
 Verified by running it:
 
+- The compare view, part one (item 3.2): the `compare` GUI suite, which opens a
+  comparison through `Editor::showComparison`, checks the rows and fillers, the
+  marked words, the syntax styles, the panes scrolling together, real F7 and
+  Shift+F7 and 50,000 lines a side under a main-thread CPU bound. Accept and
+  Reject per hunk (part two) are not built.
 - Install hints (item 2.8): the `install_hints` GUI suite, with `MINICODE_INSTALL_HAVE=uv`,
   shows the bar for a missing Python server with `uv tool install basedpyright`,
   Copy, Run in Terminal typing it without Return, the bar going when the

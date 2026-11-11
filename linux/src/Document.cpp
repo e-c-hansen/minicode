@@ -277,6 +277,12 @@ void Document::setDiff(const std::string& title, const std::string& bytes, bool 
     diffTitle_ = title;
     diffBytes_ = bytes;
     diffCommit_ = commit;
+    compare_.reset();
+}
+
+void Document::setCompare(const std::string& title, std::shared_ptr<const CompareData> data) {
+    setDiff(title, "", false);
+    compare_ = std::move(data);
 }
 
 void Document::setUnread(const std::string& path) {

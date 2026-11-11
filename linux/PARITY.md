@@ -1256,8 +1256,13 @@ its server comes first here (2.0).
 - [ ] **3.1 The control channel and `minicode` commands.** `ControlProtocol`,
   a socket under `$XDG_RUNTIME_DIR`, 0600 in a 0700 folder. Mac:
   `ControlServer`, `ControlCommands`, `tools/minicode-cli.cpp`.
-- [ ] **3.2 The compare view.** `SideBySide`, word changes, Accept and Reject
-  per hunk.
+- [~] **3.2 The compare view.** `SideBySide`, word changes, Accept and Reject
+  per hunk. Part one done (HANDOFF item 39): `CompareView` and
+  `ComparePanes`, a comparison tab through `Editor::showComparison` with
+  syntax colors, changed rows and words marked, panes scrolling together, F7
+  and Shift+F7. Left: Accept and Reject per hunk, the decision bar and
+  `lastChoiceGrace`, the entry points (`minicode diff`, Compare with Main, the
+  IDE link's openDiff), keeping a tab's place.
 - [ ] **3.3 The inline agent.** `InlineAgent`, with pending edits. Never run
   the real Claude Code in a check: use `tests/fixtures/claude`.
 - [ ] **3.4 Notes and tours.** Mac: `AgentNotes`.
