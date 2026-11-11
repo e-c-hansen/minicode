@@ -2206,6 +2206,7 @@ static void onIsActive(GObject* w, GParamSpec*, gpointer userp) {
     updateKeyPlace();
     if (!app->dead && gtk_window_is_active(GTK_WINDOW(w))) {
         app->editor->checkExternalChange();
+        if (app->lsp) app->lsp->lookAgainForMissingServer();   // installed elsewhere
         if (app->git && app->gitShown) app->git->refresh();   // commits made elsewhere
         if (app->gitGutter) app->gitGutter->refreshSoon();     // the index, staged elsewhere
         if (app->treeColors) app->treeColors->lookSoon();      // files the tree has not listed
@@ -2543,6 +2544,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->terminal = new Terminal(app->rootDir);
     terminalPane = app->terminal->widget();
     app->terminal->setProjectRoot(app->rootDir);
+    app->terminal->onCommandFinished = [app] {
+        if (!app->dead && app->lsp) app->lsp->lookAgainForMissingServer();
+    };
     app->terminal->setLinkHandler([app](const Terminal::Link& link) {
         if (!app->dead) openTerminalLink(app, link);
     });
@@ -2677,7 +2681,21 @@ static App* newWindow(const std::string& root, const std::string& file) {
         [app] { return app->rootDir; },
         [app] { return app->dead ? std::string() : app->lsp->folderEnvironmentAwaitingConsent(); },
         [app] { return app->dead ? std::string() : app->lsp->folderCodeAwaitingConsent(); },
-        [app] { return app->dead ? std::string() : app->lsp->folderCodeQuestion(); }});
+        [app] { return app->dead ? std::string() : app->lsp->folderCodeQuestion(); },
+        [app] { return app->dead ? std::string() : app->lsp->missingServer(); },
+        [app] { return app->dead ? std::string() : app->lsp->currentServerKey(); },
+        [](const std::string& key) {
+            return g.settings ? g.settings->settings().lspCommand(key) : std::string();
+        },
+        [app](const std::string& command) {
+#ifdef MINICODE_ENABLE_TERMINAL
+            if (app->dead || !app->terminal) return;
+            if (!app->layout->terminalShown()) app->layout->toggleTerminal();
+            app->terminal->typeText(command);   // never Return: the user reads it first
+#else
+            (void)app; (void)command;
+#endif
+        }});
     app->editor->addBar(app->consentBar->widget());
     app->format = new Formatting(GTK_WINDOW(app->window), app->editor, app->lsp, Formatting::Host{
         [app] { return app->rootDir; },

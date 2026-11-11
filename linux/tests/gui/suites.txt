@@ -66,3 +66,4 @@ SnippetsSuite.cpp
 CompletionEditsSuite.cpp
 SignatureHelpSuite.cpp
 SemanticTokensSuite.cpp
+InstallHintsSuite.cpp
