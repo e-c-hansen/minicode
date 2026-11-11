@@ -506,10 +506,10 @@ int minicodeCliMain(int argc, char **argv) {
 #ifdef __APPLE__
     if (!c.hooksAction.empty()) return runHooks(c.hooksAction);
 #else
-    // What the Linux app has so far (PARITY.md 3.1); the app answers the
+    // What the Linux app has so far (PARITY.md 3.1, 3.8); the app answers the
     // rest of the table the same way, for a client that is not this one.
     if (!c.hooksAction.empty() || (c.cmd != "open" && c.cmd != "window" && c.cmd != "state" &&
-                                   c.cmd != "selection" && c.cmd != "ping")) {
+                                   c.cmd != "selection" && c.cmd != "ping" && c.cmd != "procs")) {
         const std::string what = c.hooksAction.empty() ? c.cmd : "hooks";
         // A hook never fails noisily.
         if (c.fromHook) return kExitOK;

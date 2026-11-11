@@ -55,6 +55,7 @@
 #include "ThemeCss.h"
 #include "Palette.h"
 #include "Terminal.h"
+#include "ProcessMonitor.h"
 #include "Browser.h"
 #include "Search.h"
 #include "FindBar.h"
@@ -2980,6 +2981,7 @@ static ControlWindow controlWindowOf(App* a) {
     w.folder = a->rootDir;
     w.editor = a->editor;
     w.window = GTK_WINDOW(a->window);
+    w.shellPid = a->terminal ? a->terminal->shellPid() : 0;
     return w;
 }
 
@@ -3019,6 +3021,23 @@ static void startControlChannel() {
             openFileThen(a, path, EditorTabs::OpenFrom::Other, nullptr);
     };
     registerControlCommands(gControl->dispatcher(), host);
+    // The process sampler (PARITY.md 3.8): each window's folder as realpath
+    // spells it, and its terminal by the shell's pid. Window ids stand for
+    // terminal ids (a window has one terminal).
+    ProcessMonitor::shared().start([](std::vector<Procs::Terminal>& terms,
+                                      std::vector<std::string>& folders) {
+        for (App* a : g.windows) {
+            if (a->dead || !a->editor) continue;
+            char buf[PATH_MAX];
+            folders.push_back(realpath(a->rootDir.c_str(), buf) ? std::string(buf) : a->rootDir);
+            Procs::Terminal t;
+            t.id = a->controlId;
+            t.title = "terminal";
+            t.shellPid = a->terminal ? a->terminal->shellPid() : 0;
+            t.window = a->controlId;
+            terms.push_back(t);
+        }
+    });
     std::string error;
     if (!gControl->start(&error)) g_printerr("minicode: %s\n", error.c_str());
 }

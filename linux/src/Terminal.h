@@ -82,6 +82,8 @@ public:
     // A program other than the shell has the terminal (its foreground
     // process group is not the shell's).
     bool busy() const;
+    // The shell's pid (the VTE child), 0 while there is none (PARITY.md 3.8).
+    int shellPid() const { return shellPid_ > 0 ? (int)shellPid_ : 0; }
     // A command run with Return has finished: the shell has the terminal
     // again. The port's shell has no integration marks, so each Return
     // typed into the terminal starts a look, four times a second, until

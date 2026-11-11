@@ -71,3 +71,4 @@ ServerFoldingSuite.cpp
 InstallHintsSuite.cpp
 ControlSuite.cpp
 CompareSuite.cpp
+ProcessesSuite.cpp

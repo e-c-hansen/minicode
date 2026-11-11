@@ -1332,8 +1332,12 @@ its server comes first here (2.0).
   data is read, never written.
 - [ ] **3.6 Waiting for you.** `ClaudeHooks`, `AttentionBoard`.
 - [ ] **3.7 Agents checking pages.** `PageCheck`, on WebKitGTK.
-- [ ] **3.8 The Processes panel.** `ProcessTable` over `/proc`; its `Source` is
-  the seam.
+- [~] **3.8 The Processes panel.** `ProcessTable` over `/proc`; its `Source` is
+  the seam. Part one (November 2026, HANDOFF item 40): `ProcFs::Source`, a
+  sampler thread (`ProcessMonitor`), Stop's SIGTERM then SIGKILL, and the
+  control channel's `procs`, with `procfs:*` and the `processes` suite.
+  Remains: the panel itself (a sidebar view, rows, Stop in its menu, 2 s
+  sampling while it shows) and the session labels (item 3.6).
 - [ ] **3.9 The Claude Code IDE link.** `IdeLink`.
 
 ### Stage 4: documents and layout, 5,000 to 7,000 lines

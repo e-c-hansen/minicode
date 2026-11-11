@@ -2931,6 +2931,48 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
 - **Needs the owner:** the look (tints, hatching, colors in a light theme),
   the wheel and a touchpad in the panes, F7 under GNOME.
 
+### 40. Processes and ports, part one (done, November 2026; `PARITY.md` item 3.8)
+
+- **The source** is `src/ProcFs.{h,cpp}` (core, POSIX only, in both build
+  lists; it compiles on the Mac and nothing there uses it): `ProcFs::Source`
+  is `Procs::Source` over a `/proc`-shaped folder, `/proc` by default, the
+  tests' own otherwise. The parsers (`parseStat`, `parseBootTime`,
+  `joinCommandLine`, `parsePss`, `parseListening`, `socketInode`) take text
+  already read. Start time is field 22 of `stat` in clock ticks, made
+  microseconds since 1970 with `btime` read once when the source is made
+  (`btime` moves when the clock is stepped, and a key (pid, start) must not
+  change under a process). Footprint is Pss from `smaps_rollup`, else RSS from
+  `statm`: the Mac's physical footprint charges a process its own dirty pages
+  and shared ones to nobody in particular, and Pss shares them out, where RSS
+  counts a shared library in full in every process. Only the caller's own
+  processes are listed (the owner of `/proc/<pid>`). Listening ports are
+  `net/tcp` and `tcp6` rows in state 0A matched to the `socket:[inode]` links
+  under `fd`, read once per look.
+- **The sampler** is `src/ProcessMonitor.{h,cpp}` (GTK): a thread of its own
+  owns the source and the core's `Tracker`; a 2 s main-loop timer starts a
+  look when 10 s (2 s once `setPanelShown(true)`) have passed. The main thread
+  gathers the windows' folders (`realpath`) and terminals first (a window has
+  one terminal, so its id stands for both; `Terminal::shellPid()` is VTE's
+  child), the thread samples and the copied rows come back through
+  `g_idle_add`. `stop` is `planStop` plus SIGTERM, then SIGKILL 3 s later on
+  the thread's own queue, each only while the pid still has its planned start
+  time; minicode, its group, the terminals' shells and pid 1 are refused by
+  the core.
+- **`procs`** (`--json`, `--folder`, `--window`) is registered in
+  `ControlCommands.cpp` and answers from a look taken at once, as the Mac's;
+  `tools/minicode-cli.cpp` let it through its "not on Linux yet" gate.
+  `minicode procs` prints the core's table.
+- **Checked by** the `procfs:*` core groups and the `processes` GUI suite; the
+  suite starts its servers in the app's terminal and, for "not started here",
+  with a shell that leaves its sleeps to the harness's subreaper (an ancestor
+  of the app, so outside its tree). It failed while `procs` answered "not on
+  Linux yet".
+- **Remains (the panel):** `MCProcessesPanel` swapped into the sidebar, its
+  rows from `ProcessMonitor::view`, Stop in its menu, the session labels
+  (needs item 3.6), and a terminal's title and id from the Terminal object.
+- **Needs the owner:** the sampling on a busy desktop (smaps_rollup's cost
+  with a browser running), and other users' processes, which are left out.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).
