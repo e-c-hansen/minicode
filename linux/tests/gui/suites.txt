@@ -77,3 +77,4 @@ AttentionSuite.cpp
 IdeLinkSuite.cpp
 BrowserPagesSuite.cpp
 AgentsSuite.cpp
+AgentPanelSuite.cpp

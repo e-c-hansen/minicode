@@ -26,6 +26,7 @@
 #include "Settings.h"
 
 class AgentNotes;
+class InlineAgentBar;
 class AutoCloseInput;
 class BracketView;
 class Carets;
@@ -161,6 +162,8 @@ public:
     Document* agentPreviewTab() const;
     // The window's notes, hanging over the text (AgentNotes.h).
     AgentNotes* notes() const { return notes_; }
+    // The inline agent's bar over the text (InlineAgentBar.h).
+    InlineAgentBar* inlineAgent() const { return inline_; }
     void removeOverlay(GtkWidget* w) { gtk_overlay_remove_overlay(GTK_OVERLAY(slotOverlay_), w); }
     // Where a tab's view was, to keep (a session, Reopen Closed Tab): its
     // selection, its first character on show and whether it showed its
@@ -510,6 +513,8 @@ private:
     TabStrip*      strip_    = nullptr;
     GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_, media, LaTeX previews, diff
     AgentNotes*    notes_ = nullptr;
+    InlineAgentBar* inline_ = nullptr;
+    friend class InlineAgentBar;
     GtkWidget*     slotOverlay_ = nullptr;   // the slot, with the find bar over it
     GitDiffView*   diff_     = nullptr;   // made on the first diff
     CompareView*   compare_  = nullptr;   // made on the first comparison

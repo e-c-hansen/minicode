@@ -56,6 +56,7 @@ core_sources = [
   core_dir / 'AgentTranscript.cpp',
   core_dir / 'AgentEvidence.cpp',
   core_dir / 'AgentView.cpp',
+  core_dir / 'InlineAgent.cpp',
   # Processes and ports: the table's rules and the /proc source (ProcessMonitor.cpp).
   core_dir / 'ProcessTable.cpp',
   core_dir / 'ProcFs.cpp',
@@ -244,6 +245,7 @@ gui_sources = [
   # (GitDirWatch.cpp).
   'src/GitGutter.cpp',
   'src/AgentNotes.cpp',
+  'src/InlineAgentBar.cpp',
   'src/TerminalAttention.cpp',
   'src/TreeGitColors.cpp',
   'src/GitDirWatch.cpp',

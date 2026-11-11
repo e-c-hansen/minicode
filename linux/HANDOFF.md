@@ -3164,6 +3164,50 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   selection tick (no window re-rooting exists here); the lock file is not
   removed on SIGKILL (the next start removes it, once its pid is gone).
 
+### 44. The Agents panel and Evidence (done, November 2026; `PARITY.md` item 3.5)
+
+- **The model** is `src/AgentModel.{h,cpp}` (GTK, glib only): the core's
+  `AgentIndex` lives on a worker thread of its own (it is not thread-safe);
+  each refresh copies the rows into an immutable `AgentModelData::Snapshot`
+  (sessions newest first, subagents nested by `Row::depth`, each session's
+  `AgentView::groupFiles` groups with `folderText` and a stat for "exists",
+  the scratchpads, `loaded` and `projectsMissing`) and hands it to the main
+  loop with `g_idle_add` only when a signature of what is shown changed.
+  A window on `/` or the home folder indexes nothing
+  (`AgentView::indexesFolder` on the realpath). The files are
+  `$MINICODE_CLAUDE_PROJECTS` or `~/.claude/projects` and
+  `$MINICODE_CLAUDE_TMP` or `/tmp/claude-<uid>`.
+- **Following changes**: GFileMonitor on the transcripts folder, the
+  scratchpads' folder and each project folder below the first (a missing one
+  through the nearest folder above it that exists), events coalesced 0.3 s,
+  the set re-made at each refresh. Monitors are not recursive and a
+  subagent's transcript is two folders down, so while the panel shows a 2 s
+  poll asks for a refresh too (`Index::refresh` only stats and reads what
+  changed). The transcripts folder going gives `projectsMissing`, and the
+  panel's message is the core's `AgentView::emptyText`.
+- **The panel** is `src/AgentsPanel.{h,cpp}` (GTK): a GtkListBox in the
+  sidebar stack as the Processes panel is (`act_toggle_agents`,
+  `win.toggleagents`, Ctrl+Shift+A, the Mac's Shift+Cmd+A; opening it closes
+  Source Control and Processes, and Focus File Tree, reveal and Go to Folder
+  close it). A click on a session or group opens or closes it (the Mac's
+  click on a session shows its Evidence, which is part two); a file opens
+  in the editor, a missing one (struck through, `<s>`) only bells. The row
+  menu has Open and Copy Path for a file, Copy Transcript Path for a
+  session, Adjust Settings… (surface `tree`) last. Colors are the Processes
+  panel's `.minicode-procs` classes. Nothing here writes, moves or deletes
+  Claude Code's files. The checks reach it as `MCGuiApp().agents`
+  (`AppSeam`).
+- **Build lists**: `AgentEvidence.cpp` and `AgentView.cpp` joined both lists.
+- **Trap met**: the new View item made the View menu taller than the
+  harness's 800 px Xvfb screen, so GTK scrolled the popover and Adjust
+  Settings (last) was not on screen for `adjust_settings` and `themes`; the
+  harness's screen is 1280x1024 now (`Wrapper.cpp`). A real 720 px screen
+  would scroll that menu too.
+- **Remains (part two):** the Evidence page and a click on a session
+  showing it, the tree's Worktrees node and Compare with Main (the git
+  thread of the Mac's model), Show Terminal, Open Worktree in New Window,
+  Reveal Scratchpad; the owner's eyes on the look and on a real
+  `~/.claude`.
 ### 45. Agents checking pages (done, November 2026; `PARITY.md` item 3.7)
 
 - **What it does**: the Mac's `browse` and `page`, on WebKitGTK. `browse`
@@ -3222,50 +3266,48 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `snapshotPlan`'s unit tests, not on a real tall page; Vite's `--open` and
   Claude Code's links through BROWSER were not run.
 
-### 44. The Agents panel and Evidence (done, November 2026; `PARITY.md` item 3.5)
+### 46. The inline agent, part one (done, November 2026; `PARITY.md` item 3.3)
 
-- **The model** is `src/AgentModel.{h,cpp}` (GTK, glib only): the core's
-  `AgentIndex` lives on a worker thread of its own (it is not thread-safe);
-  each refresh copies the rows into an immutable `AgentModelData::Snapshot`
-  (sessions newest first, subagents nested by `Row::depth`, each session's
-  `AgentView::groupFiles` groups with `folderText` and a stat for "exists",
-  the scratchpads, `loaded` and `projectsMissing`) and hands it to the main
-  loop with `g_idle_add` only when a signature of what is shown changed.
-  A window on `/` or the home folder indexes nothing
-  (`AgentView::indexesFolder` on the realpath). The files are
-  `$MINICODE_CLAUDE_PROJECTS` or `~/.claude/projects` and
-  `$MINICODE_CLAUDE_TMP` or `/tmp/claude-<uid>`.
-- **Following changes**: GFileMonitor on the transcripts folder, the
-  scratchpads' folder and each project folder below the first (a missing one
-  through the nearest folder above it that exists), events coalesced 0.3 s,
-  the set re-made at each refresh. Monitors are not recursive and a
-  subagent's transcript is two folders down, so while the panel shows a 2 s
-  poll asks for a refresh too (`Index::refresh` only stats and reads what
-  changed). The transcripts folder going gives `projectsMissing`, and the
-  panel's message is the core's `AgentView::emptyText`.
-- **The panel** is `src/AgentsPanel.{h,cpp}` (GTK): a GtkListBox in the
-  sidebar stack as the Processes panel is (`act_toggle_agents`,
-  `win.toggleagents`, Ctrl+Shift+A, the Mac's Shift+Cmd+A; opening it closes
-  Source Control and Processes, and Focus File Tree, reveal and Go to Folder
-  close it). A click on a session or group opens or closes it (the Mac's
-  click on a session shows its Evidence, which is part two); a file opens
-  in the editor, a missing one (struck through, `<s>`) only bells. The row
-  menu has Open and Copy Path for a file, Copy Transcript Path for a
-  session, Adjust Settings… (surface `tree`) last. Colors are the Processes
-  panel's `.minicode-procs` classes. Nothing here writes, moves or deletes
-  Claude Code's files. The checks reach it as `MCGuiApp().agents`
-  (`AppSeam`).
-- **Build lists**: `AgentEvidence.cpp` and `AgentView.cpp` joined both lists.
-- **Trap met**: the new View item made the View menu taller than the
-  harness's 800 px Xvfb screen, so GTK scrolled the popover and Adjust
-  Settings (last) was not on screen for `adjust_settings` and `themes`; the
-  harness's screen is 1280x1024 now (`Wrapper.cpp`). A real 720 px screen
-  would scroll that menu too.
-- **Remains (part two):** the Evidence page and a click on a session
-  showing it, the tree's Worktrees node and Compare with Main (the git
-  thread of the Mac's model), Show Terminal, Open Worktree in New Window,
-  Reveal Scratchpad; the owner's eyes on the look and on a real
-  `~/.claude`.
+- **What it does**: Ctrl+I (the registry's `inlineChat.start`, `win.inlineagent`,
+  a row in `CommandsLinux.cpp`, Edit menu, the hints panel) opens the Mac's
+  bar over the editor, below the caret's line (only that line is asked for,
+  so the file is not laid out; it follows the scroll). A request goes to
+  `agent.command` as the Mac runs it: `$SHELL -l -c 'exec <command>
+  <InlineAgent::kPrintFlags>'` (`/bin/sh` without `$SHELL`; this machine has
+  no zsh) in the folder, `PATH` widened with `LspSearchDirs`, `NO_COLOR=1`,
+  the prompt from `InlineAgent::editPrompt` on stdin. Exit 127 or "command
+  not found" says Claude Code was not found; five minutes at most.
+  Core `InlineAgent.{h,cpp}` joined the Linux build lists; nothing copied.
+- **The pieces**: `linux/src/InlineAgentBar.{h,cpp}`, one a window
+  (`Editor::inlineAgent()`, made and deleted with the editor like the notes;
+  `Editor` has it as a friend for `sourceText`). A worker thread (detached,
+  checked against a generation and a live-set when it posts back) spawns
+  with `g_spawn_async_with_pipes_and_fds`, polls the three pipes (stdin
+  written as it takes bytes), feeds `InlineAgent::Stream`, and keeps a
+  preview (`InlineAgent::preview`) for the main thread, which a 80 ms timer
+  shows; the result comes back with `g_idle_add`. Esc while it works kills it
+  ("Stopped."); a second Esc closes.
+- **Pending, not made**: the blocks are applied to a copy
+  (`InlineAgent::applyEdits`), the bar shows `pendingDiff` (removed and added
+  lines in markup, 18 lines at most) and a text tag tints the replaced lines
+  in the buffer (never text, never undo). Return with an empty field keeps:
+  the rounds are made again on the buffer as it is (`moveOffset` for the
+  selection), and when `sameChange` says that is not what was shown the new
+  diff is shown and Keep waits for another Return; else the text goes in as
+  the line runs that changed (`FormatRun::Replacement`, `MultiEdit::apply`,
+  as Format Document), one Ctrl+Z. Esc drops it. A request typed while an
+  edit waits is asked about the pending text and builds on it, its earlier
+  requests in the prompt. If the buffer changed while Claude thought, the
+  blocks are made again on it before the diff shows. A tab switch
+  (`onActiveWillChange`) or the window closing closes the bar, and an edit
+  waiting says in the status bar that it was not made.
+- **Checked by** the `agent_panel` GUI suite (`BUILD-LINUX.md`): the real key,
+  a stand-in script over `tests/fixtures/claude/stream`, no real `claude`.
+- **Not done (part two)**: commands for an idle terminal, tasks handed to
+  Claude Code in a terminal tab, the Markdown preview's context, Ctrl+Enter,
+  and the Mac's "closed from elsewhere" for the file tree or terminal taking
+  the keyboard (only a tab switch and the window close it here). The tint is
+  not redrawn when the user edits inside a tinted line.
 
 ## How to work on it
 

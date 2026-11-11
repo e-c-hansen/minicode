@@ -52,6 +52,7 @@ const std::vector<Action>& actions() {
         {"editor.action.insertCursorBelow", "win.addcursorbelow", false},
         {"expandLineSelection", "win.selectline", false},
         {"editor.action.deleteLines", "win.deleteline", false},
+        {"inlineChat.start", "win.inlineagent", false},
         {"editor.action.commentLine", "win.togglecomment", true},
         {"minicode.markdown.toggleTask", "win.toggletask", false},
         {"editor.action.formatDocument", "win.formatdocument", false},
