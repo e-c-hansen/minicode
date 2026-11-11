@@ -64,6 +64,10 @@ public:
         int line = 0;              // 1-based, 0 when the reference named none
         int column = 0;            // 1-based characters, 0 when none
     };
+    // The session's own folders (its scratchpad, its worktree) for the
+    // session running here, asked at each click: a relative path that is not
+    // in the shell's folder is looked for there before the project's.
+    void setSessionRoots(std::function<std::vector<std::string>()> f) { sessionRoots_ = std::move(f); }
     void setLinkHandler(std::function<void(const Link&)> handler) { onLink_ = std::move(handler); }
     // The folder relative references fall back to after the shell's own.
     void setProjectRoot(const std::string& dir) { root_dir_ = dir; }
@@ -140,6 +144,7 @@ private:
     GPid        shellPid_ = -1;
 
     std::function<void(const Link&)> onLink_;
+    std::function<std::vector<std::string>()> sessionRoots_;
     // The pointer over the terminal, in its coordinates, and the link under
     // it while Ctrl is held (empty spans: none).
     bool   pointerIn_ = false;

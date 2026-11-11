@@ -45,6 +45,19 @@ void forget(int terminal) {
 
 Attention::Mark mark(int terminal) { return gBoard.mark(terminal); }
 
+bool sessionOf(int terminal, std::string* sessionId, std::string* transcript, double* time) {
+    const Attention::Session* s = gBoard.session(terminal);
+    if (!s || s->empty()) return false;
+    if (sessionId) *sessionId = s->sessionId;
+    if (transcript) *transcript = s->transcriptPath;
+    if (time) *time = gBoard.sessionTime(terminal);
+    return true;
+}
+
+int terminalFor(const std::string& sessionId, const std::string& transcript) {
+    return gBoard.terminalFor(sessionId, transcript);
+}
+
 const char* markName(int terminal) {
     switch (gBoard.mark(terminal)) {
     case Attention::Mark::Waiting: return "waiting";

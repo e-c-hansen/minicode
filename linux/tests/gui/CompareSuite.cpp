@@ -244,6 +244,22 @@ MC_GUI_SUITE(compare) {
     MCGuiStep("a picture of the bar and the gutter", [] {
         MCGuiSnapshot(cv()->widget(), "compare-decide");
     });
+    MCGuiStep("the scroll bars' corner and the gutter's foot are the editor's background, not white", [] {
+        GtkWidget* w = cv()->widget();
+        const int h = gtk_widget_get_height(w);
+        graphene_point_t in = GRAPHENE_POINT_INIT(gtk_widget_get_width(cv()->gutter()) / 2.0f,
+                                                  gtk_widget_get_height(cv()->gutter()) - 3.0f), at;
+        GCHECK(gtk_widget_compute_point(cv()->gutter(), w, &in, &at));
+        const int spots[2][2] = {{gtk_widget_get_width(w) - 3, h - 3}, {(int)at.x, (int)at.y}};
+        for (const auto& spot : spots) {
+            int rgb[4] = {255, 255, 255, 0};
+            const bool ok = MCGuiPixel(w, spot[0], spot[1], rgb);
+            MCGuiNote("pixel at %d,%d: %d,%d,%d", spot[0], spot[1], rgb[0], rgb[1], rgb[2]);
+            GCHECK(ok);
+            // Painted (not left to the window behind it) and dark, as the editor's
+            GCHECK(rgb[3] == 255 && rgb[0] < 80 && rgb[1] < 80 && rgb[2] < 80);
+        }
+    });
     MCGuiStep("a click on the first hunk's check accepts it", [] { clickHunk(0, true); });
     MCGuiWait("accepted", 5, [] { return dec()->choiceOfHunk(0) == 1; });
     MCGuiStep("the bar counts, and the choice is taken back by a click on it", [] {

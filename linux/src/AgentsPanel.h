@@ -27,6 +27,9 @@ public:
     std::function<void(const std::string&)> onOpenFile;       // an existing file
     // transcript path, session name: a click on a session.
     std::function<void(const std::string&, const std::string&)> onShowEvidence;
+    // The terminal (an id) a session runs in, 0 for none; and showing it.
+    std::function<int(const std::string& sessionId, const std::string& transcript)> terminalFor;
+    std::function<void(int)> onShowTerminal;
     std::function<void()> onModelChange;                      // the sessions changed
     std::function<void(const std::string&)> onNote;           // the status bar
 
@@ -38,7 +41,7 @@ public:
     struct RowInfo {
         enum Kind { Session, Group, File } kind = Session;
         int depth = 0;
-        std::string text, detail, tooltip, key, path;
+        std::string text, detail, tooltip, key, path, sessionId;
         bool running = false, exists = true, expanded = false;
     };
     std::vector<RowInfo> rows() const { return rows_; }
@@ -66,6 +69,7 @@ private:
     std::vector<RowInfo> rows_;
     std::set<std::string> expanded_;
     std::string menuLabels_, menuPath_;
+    int menuTerminal_ = 0;
     int menuRow_ = -1;
     bool active_ = false;
     unsigned timer_ = 0;

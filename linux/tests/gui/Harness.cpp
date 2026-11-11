@@ -270,6 +270,39 @@ void MCGuiSnapshot(GtkWidget* widget, const std::string& name) {
     g_object_unref(paintable);
 }
 
+// The color drawn at a point of a widget (red, green, blue, alpha; 0..255), rendered as the
+// snapshot is; false when the widget has no size or renderer yet.
+bool MCGuiPixel(GtkWidget* widget, int x, int y, int rgb[4]) {
+    if (!widget) return false;
+    const int w = gtk_widget_get_width(widget), h = gtk_widget_get_height(widget);
+    if (w <= 0 || h <= 0 || x < 0 || y < 0 || x >= w || y >= h) return false;
+    GskRenderer* renderer = gtk_native_get_renderer(gtk_widget_get_native(widget));
+    if (!renderer) return false;
+    GdkPaintable* paintable = gtk_widget_paintable_new(widget);
+    GtkSnapshot* snap = gtk_snapshot_new();
+    gdk_paintable_snapshot(paintable, snap, w, h);
+    GskRenderNode* node = gtk_snapshot_free_to_node(snap);
+    bool ok = false;
+    if (node) {
+        GdkTexture* texture = gsk_renderer_render_texture(renderer, node, nullptr);
+        if (texture) {
+            const int tw = gdk_texture_get_width(texture), th = gdk_texture_get_height(texture);
+            std::vector<guchar> data((size_t)tw * th * 4);
+            gdk_texture_download(texture, data.data(), (size_t)tw * 4);  // B8G8R8A8 premultiplied
+            const guchar* p = &data[((size_t)y * th / h * tw + (size_t)x * tw / w) * 4];
+            rgb[0] = p[2];
+            rgb[1] = p[1];
+            rgb[2] = p[0];
+            rgb[3] = p[3];
+            ok = true;
+            g_object_unref(texture);
+        }
+        gsk_render_node_unref(node);
+    }
+    g_object_unref(paintable);
+    return ok;
+}
+
 // --------------------------------------------------------- finding widgets
 bool MCGuiOnScreen(GtkWidget* widget) {
     if (!widget || !gtk_widget_get_mapped(widget) || gtk_widget_get_width(widget) <= 0 ||

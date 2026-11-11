@@ -24,6 +24,10 @@ void typed(int terminal);
 void forget(int terminal);
 
 Attention::Mark mark(int terminal);
+// The session the terminal's last notify named, and when; false when none.
+bool sessionOf(int terminal, std::string* sessionId, std::string* transcript, double* time);
+// The terminal a session runs in (by id, else transcript); 0 for none.
+int terminalFor(const std::string& sessionId, const std::string& transcript);
 // "waiting", "done" or "" (no mark).
 const char* markName(int terminal);
 // The dot's tooltip: Claude's message for a waiting terminal.

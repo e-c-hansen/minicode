@@ -61,6 +61,10 @@ Verified by running it:
   pid with no listener) are removed while one with a listener is kept. The
   check fails with the server taken out. Not tested: another user's peer
   refused (one `SO_PEERCRED` comparison; it needs a second user).
+- Loose ends of 3.2, 3.5 and 3.8 (November 2026): `compare` reads the pixel
+  at the scroll bars' corner (`MCGuiPixel`), `agents` checks Show Terminal
+  and the Worktrees node appearing with no relisting, `processes` notifies a
+  session and reads it in `procs --json` and the row's tooltip.
 - The compare view (item 3.2): the `compare` GUI suite, which opens a
   comparison through `Editor::showComparison`, checks the rows and fillers, the
   marked words, the syntax styles, the panes scrolling together, real F7 and

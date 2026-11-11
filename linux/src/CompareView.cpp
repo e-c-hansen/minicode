@@ -170,10 +170,12 @@ void CompareView::applySettings(const Settings& s) {
                                                    GTK_STYLE_PROVIDER(barCss_),
                                                    GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     }
-    char css[160];
-    g_snprintf(css, sizeof css, ".minicode-decision { background: rgb(%d,%d,%d); } .minicode-decision label { color: rgb(%d,%d,%d); }",
+    char css[400];
+    g_snprintf(css, sizeof css, ".minicode-decision { background: rgb(%d,%d,%d); } .minicode-decision label { color: rgb(%d,%d,%d); }"
+               " .minicode-compare, .minicode-compare grid { background: rgb(%d,%d,%d); }",
                (int)(bg_.r * 255), (int)(bg_.g * 255), (int)(bg_.b * 255), (int)(fg_.r * 255),
-               (int)(fg_.g * 255), (int)(fg_.b * 255));
+               (int)(fg_.g * 255), (int)(fg_.b * 255), (int)(bg_.r * 255), (int)(bg_.g * 255),
+               (int)(bg_.b * 255));
     gtk_css_provider_load_from_string(barCss_, css);
     for (int side = 0; side < 2; side++) gtk_widget_queue_draw(area_[side]);
 }
