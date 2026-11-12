@@ -346,24 +346,18 @@ MC_GUI_SUITE(browser_pages) {
         GCHECK_EQ_STR(MCGuiReadFile(gRecorded), "https://example.com/x\n");
         GCHECK(has(browser()->userProbe()->url(), "agent-page.html"));
     });
+    // runLine and its answer, never typed text read off the screen: an
+    // earlier suite may leave the terminal with a wrapped prompt (CI's is 93
+    // columns of 104), which bash redraws over its own output (HANDOFF 48).
+    static auto ran = std::make_shared<std::string>("(not yet)");
     MCGuiStep("the app's terminal shell writes $BROWSER to a file", [] {
         if (!MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
-        MCGuiApp().terminal->typeText("true");
+        *ran = "(not yet)";
+        const std::string cmd = "echo \"$BROWSER\" > '" + MCGuiProjectFile("browser-var.txt") + "'";
+        MCGuiApp().terminal->runLine(cmd, [](const std::string& why) { *ran = why; });
     });
-    MCGuiWait("the terminal has its shell", 30, [] {
-        VteTerminal* vte = findVte(MCGuiApp().terminal->widget());
-        if (!vte || MCGuiApp().terminal->shellPid() <= 0) return false;
-        char* text = vte_terminal_get_text_format(vte, VTE_FORMAT_TEXT);
-        const bool there = text && std::string(text).find("true") != std::string::npos;
-        g_free(text);
-        return there;
-    });
-    MCGuiStep("it echoes BROWSER", [] {
-        VteTerminal* vte = findVte(MCGuiApp().terminal->widget());
-        vte_terminal_feed_child(vte, "\x15", 1);
-        const std::string cmd = "echo \"$BROWSER\" > '" + MCGuiProjectFile("browser-var.txt") + "'\n";
-        vte_terminal_feed_child(vte, cmd.c_str(), cmd.size());
-    });
+    MCGuiWait("it is typed and entered", 30, [] { return *ran != "(not yet)"; });
+    MCGuiStep("with no refusal", [] { GCHECK_EQ_STR(*ran, ""); });
     MCGuiWait("the file is written", 15, [] {
         return !MCGuiReadFile(MCGuiProjectFile("browser-var.txt")).empty();
     });
