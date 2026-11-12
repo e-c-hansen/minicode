@@ -1054,10 +1054,33 @@ static FindBar* revealFindBar(gpointer p) {
     showEditorArea(static_cast<App*>(p));
     return findBarOf(p);
 }
-static void act_find(GSimpleAction*, GVariant*, gpointer p) { revealFindBar(p)->showFind(); }
+static void act_find(GSimpleAction*, GVariant*, gpointer p) {
+#ifdef MINICODE_ENABLE_BROWSER
+    // With the keyboard in the browser pane (page or address bar) Find is the page's.
+    if (browserHasKeyboard(static_cast<App*>(p)) && static_cast<App*>(p)->browser->webView()) {
+        static_cast<App*>(p)->browser->showFind();
+        return;
+    }
+#endif
+    revealFindBar(p)->showFind();
+}
 static void act_replace(GSimpleAction*, GVariant*, gpointer p) { revealFindBar(p)->showReplace(); }
-static void act_find_next(GSimpleAction*, GVariant*, gpointer p) { revealFindBar(p)->findNext(true); }
+static void act_find_next(GSimpleAction*, GVariant*, gpointer p) {
+#ifdef MINICODE_ENABLE_BROWSER
+    if (browserHasKeyboard(static_cast<App*>(p)) && static_cast<App*>(p)->browser->webView()) {
+        static_cast<App*>(p)->browser->findNext(true);
+        return;
+    }
+#endif
+    revealFindBar(p)->findNext(true);
+}
 static void act_find_previous(GSimpleAction*, GVariant*, gpointer p) {
+#ifdef MINICODE_ENABLE_BROWSER
+    if (browserHasKeyboard(static_cast<App*>(p)) && static_cast<App*>(p)->browser->webView()) {
+        static_cast<App*>(p)->browser->findNext(false);
+        return;
+    }
+#endif
     revealFindBar(p)->findNext(false);
 }
 static void act_replace_one(GSimpleAction*, GVariant*, gpointer p) { findBarOf(p)->replaceOne(); }

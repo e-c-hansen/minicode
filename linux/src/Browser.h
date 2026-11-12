@@ -35,9 +35,26 @@ public:
     // Go to a URL, or to what the URL bar would make of text typed into it.
     void load(const std::string& url);
     // Page Zoom on Safari's steps (ViewZoom::pageStep): in (+1), out (-1),
-    // back to 100% (0). Not kept per site yet (PARITY.md 4.5).
+    // back to 100% (0). Kept per site (the address's host; "file" for local
+    // files) in $XDG_STATE_HOME/minicode/browser-zoom.txt, so a page of that
+    // site opens at it in any tab and any launch, as the Mac's MCBrowserZoom.
     void zoom(int step);
     double zoomLevel() const;
+    // The remembered zoom of a site, 1.0 when none.
+    static double siteZoom(const std::string& host);
+    static std::string siteOf(const std::string& url);
+
+    // Find in the page (the Mac's browser_find): a bar at the page's top
+    // right over WebKitFindController. showFind opens it with the keyboard
+    // in the query; findNext steps (wrapping); Esc or x closes it and gives
+    // the page the keyboard back.
+    void showFind();
+    void hideFind();
+    void findNext(bool forward);
+    bool findShown() const;
+    GtkWidget* findEntry() const { return findEntry_; }
+    GtkWidget* findBox() const { return findBox_; }
+    std::string findCountText() const;
 
     // ---- Tabs (PARITY.md 4.5; the Mac's BrowserView, src/BrowserTabs.h and
     // EditorTabs.h hold the rules). Only the tab on show and the one used
@@ -119,6 +136,10 @@ private:
     void syncUrlBar();   // URL bar text only
     void syncChrome();   // URL bar text + back/forward sensitivity
 
+    void runFind();
+    GtkWidget* findBox_ = nullptr;
+    GtkWidget* findEntry_ = nullptr;
+    GtkWidget* findCount_ = nullptr;
     std::string home_;
     GtkWidget* root_  = nullptr;
     GtkWidget* entry_ = nullptr;

@@ -1425,12 +1425,13 @@ These may run in parallel.
   stay until an edit, a good typeset lists its warnings behind a bar button,
   and the output folders and records follow `LatexScratch`
   (`HANDOFF.md` item 51, `make` `latex_problems`). Forward search remains.
-- [ ] **4.5 Browser tabs, find in the page, and page zoom.** `BrowserTabs`.
+- [x] **4.5 Browser tabs, find in the page, and page zoom.** `BrowserTabs`.
   *Tabs done:* a strip with +, drag and middle-click close, two live web
   views with the rest suspended, Ctrl+T/Ctrl+W/Ctrl+PageDown/Alt+N while the
   pane has the keyboard, background and target=_blank tabs, and the tabs in
-  the session (HANDOFF.md item 50, `browser_tabs`). Find in the page and
-  page zoom per site remain.
+  the session (HANDOFF.md item 50, `browser_tabs`). *Done:* find in the page
+  (Ctrl+F, F3 in the page or the address bar; HANDOFF.md item 53,
+  `browser_find`) and page zoom kept per site. Zoom to Fit Width is left.
 - [ ] **4.6 The split editor.** `EditorTabs::restoreGroups`. With D2 the second
   group can be a second view on the same buffer, which is simpler than the
   Mac's mirror.

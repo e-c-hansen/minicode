@@ -82,5 +82,6 @@ ShellIntegrationSuite.cpp
 OwnerReportsSuite.cpp
 CsvTableSuite.cpp
 BrowserTabsSuite.cpp
+BrowserFindSuite.cpp
 LatexProblemsSuite.cpp
 JsonOutlineSuite.cpp
