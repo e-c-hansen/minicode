@@ -327,6 +327,10 @@ MC_GUI_SUITE(agents) {
     MCGuiStep("Show Terminal shows the terminal", [] {
         GCHECK(!MCGuiApp().layout->terminalShown());
         g_action_group_activate_action(panel()->actionGroup(), "terminal", nullptr);
+        // Choosing the item closes its menu; running the action by name does not,
+        // and the open popover sat over row 0 and took the click below (it
+        // reached "Show Evidence" in the menu by luck here, nothing on CI).
+        panel()->closeMenu();
     });
     MCGuiWait("the terminal is shown", 5, [] { return MCGuiApp().layout->terminalShown(); });
     // ---- Part two: the Evidence page

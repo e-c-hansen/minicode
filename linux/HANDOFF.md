@@ -3243,6 +3243,11 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   a list with no output ends (the `agents` suite failed one run in three,
   and the steps after a failed check then failed too). It now follows each
   publish.
+- **Trap (menus in checks):** running a row menu's action by name
+  (`activate_action`) leaves its popover open over the rows, and a later
+  `clickRow` lands on the popover (a menu item, or a dismissing click), not
+  the row; `agents` calls `closeMenu()` after Show Terminal. Choosing an item
+  with the pointer closes it.
 - **Remains (part two):** Open Worktree in New Window and Reveal Scratchpad
   in a session's menu; the owner's eyes on the look and on a real
   `~/.claude`.
