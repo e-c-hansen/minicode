@@ -888,8 +888,13 @@ std::string Terminal::findStatus() const {
     return findMiss_ ? "No results" : "";
 }
 
+// Ctrl+L, which bash's and zsh's line editors take as clear-screen, whenever
+// no program holds the terminal's foreground (busy(), from tcgetpgrp). Not
+// the integration's marks: a mark that comes in one read with output is lost
+// (HANDOFF 48), and on CI that left Clear refusing at an idle prompt; and a
+// shell without the integration has a prompt to clear too.
 bool Terminal::clearScreen() {
-    if (!vte_ || busy() || nonce_.empty() || !shell_.known || !shell_.atPrompt) return false;
+    if (!vte_ || busy()) return false;
     vte_terminal_feed_child(VTE_TERMINAL(vte_), "\x0c", 1);
     return true;
 }

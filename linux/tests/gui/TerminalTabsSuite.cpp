@@ -277,7 +277,7 @@ MC_GUI_SUITE(terminal_tabs) {
         action("runfile");
     });
     MCGuiWait("it ran there", 15, [] {
-        return MCGuiFileExists(gHome + "/rf.out") && ready(gA) && gA->shellState().started > gStarted;
+        return MCGuiReadFile(gHome + "/rf.out").find('\n') != std::string::npos && ready(gA) && gA->shellState().started > gStarted;
     });
     MCGuiStep("a new tab was not made; then a program runs and Run File finds the terminal busy", [] {
         GCHECK(dock()->count() == 1);
@@ -287,8 +287,10 @@ MC_GUI_SUITE(terminal_tabs) {
     });
     MCGuiWait("busy", 15, [] { return busyNow(gA); });
     MCGuiStep("Run File while busy", [] { action("runfile"); });
+    // The line, not the file: the shell makes rf.out (the redirection) before
+    // the command writes to it, and CI once read it empty in between.
     MCGuiWait("a new tab ran the file", 30, [] {
-        return dock()->count() == 2 && MCGuiFileExists(gHome + "/rf.out");
+        return dock()->count() == 2 && MCGuiReadFile(gHome + "/rf.out").find('\n') != std::string::npos;
     });
     MCGuiStep("the busy terminal was left alone, the new one is active", [] {
         GCHECK(busyNow(gA));
