@@ -124,6 +124,12 @@ MC_GUI_SUITE(terminal_tabs) {
         gOldConfirm = dock()->confirmClose;
         // Other suites in the same run leave tabs behind: start from one.
         while (dock()->count() > 1) dock()->close(dock()->count() - 1, false);
+        // ... and a terminal whose shell (shell_integration leaves zsh, or an
+        // exec'd sh with no marks) is not this suite's bash is replaced.
+        if (dock()->at(0)->made()) {
+            dock()->newTerminal();
+            dock()->close(0, false);
+        }
         GCHECK(dock()->count() == 1);
         GCHECK(dock()->strip()->count() == 1);
         if (!MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();

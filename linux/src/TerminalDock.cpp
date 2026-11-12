@@ -121,8 +121,14 @@ void TerminalDock::remove(int i) {
     const int was = active_;
     terms_.erase(terms_.begin() + i);
     t->onTitleChanged = nullptr;
-    gtk_stack_remove(GTK_STACK(stack_), t->widget());   // before the shell is hung up
+    // The stack held the widget's last reference; the terminal's destructor
+    // still disconnects from its widgets and the draw function, so keep them
+    // alive until it has run (they were freed first: heap corruption that
+    // surfaced as a crash suites later).
+    GtkWidget* w = GTK_WIDGET(g_object_ref(t->widget()));
+    gtk_stack_remove(GTK_STACK(stack_), w);   // before the shell is hung up
     delete t;
+    g_object_unref(w);
     if (last) {
         // A fresh terminal whose shell starts when the dock is shown again.
         // Hidden first, so the new one is never mapped (and starts no shell).

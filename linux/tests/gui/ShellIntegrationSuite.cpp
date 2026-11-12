@@ -27,13 +27,16 @@
 #include "Json.h"
 #include "ShellIntegration.h"
 #include "Terminal.h"
+#include "TerminalDock.h"
 #include "WindowLayout.h"
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
 #include <vte/vte.h>
 
+#include <functional>
 #include <memory>
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -162,6 +165,18 @@ void startShell(const std::string& shell) {
     } else {
         typeLine("exit");
     }
+}
+
+Terminal* gOrig = nullptr;   // the terminal part two began in
+std::function<void(Terminal*)> gOldActive;
+
+// The first terminal on show again, the tabs the commands made closed.
+void backToOriginal() {
+    TerminalDock* d = MCGuiApp().termDock;
+    const int at = d->indexOf(gOrig);
+    if (at >= 0) d->select(at, false);
+    for (int i = d->count() - 1; i >= 0; i--)
+        if (d->at(i) != gOrig) d->close(i, false);
 }
 
 bool shellAtPrompt() {
@@ -330,23 +345,34 @@ MC_GUI_SUITE(shell_integration) {
         GCHECK(sh().status == 0 && !sh().busy);
     });
 
-    // ---- part two: term, term-output, Run File, onCommandFinished
-    MCGuiStep("term --run 'echo hi' at the prompt", [] {
+    // ---- part two: term, term-output, Run File, onCommandFinished. Since the
+    // terminal tabs (item 56) `minicode term` and Run File into a busy shell
+    // open a tab of their own: each check about such a command follows the
+    // tab that ran it (its own shell's marks), and the original terminal's
+    // checks are that it was left alone.
+    MCGuiStep("term --run 'echo hi' makes a tab", [] {
+        gOrig = term();
         gBefore = sh();
         gFinished = 0;
-        term()->onCommandFinished = [] { gFinished++; };
+        TerminalDock* dock = MCGuiApp().termDock;
+        gOldActive = dock->onActiveChanged;
+        dock->onActiveChanged = [](Terminal* t) {   // set before the new shell starts
+            if (gOldActive) gOldActive(t);
+            if (t != gOrig) t->onCommandFinished = [] { gFinished++; };
+        };
         runCli({"term", "--run", "echo hi"});
     });
     MCGuiWait("term answered", 20, [] { return gCli->done; });
-    MCGuiStep("it typed and entered the line", [] {
+    MCGuiStep("it typed and entered the line in the new tab", [] {
         GCHECK(gCli->exitCode == 0);
         if (gCli->exitCode != 0) MCGuiNote("term said: %s", gCli->err.c_str());
-        GCHECK(std::stoi(gCli->out) == term()->controlId());   // the terminal's id
+        GCHECK(std::stoi(gCli->out) == term()->controlId());   // the window's id
+        GCHECK(MCGuiApp().termDock->count() == 2 && MCGuiApp().termDock->active() == term() && term() != gOrig);
     });
-    MCGuiWait("the line ran", 15, [] { return sh().atPrompt && sh().prompts > gBefore.prompts; });
-    MCGuiStep("term-output shows the command and its output", [] {
-        GCHECK(sh().started == gBefore.started + 1 && sh().status == 0);
-        GCHECK(gFinished >= 1);   // from the finishing mark
+    MCGuiWait("the line ran in the new tab", 25, [] { return sh().known && sh().atPrompt && sh().done >= 1; });
+    MCGuiStep("its own marks: one command, status 0, finished once; term-output shows it", [] {
+        GCHECK(sh().started == 1 && sh().done == 1 && sh().status == 0);
+        GCHECK(gFinished >= 1);   // from the finishing mark of that tab
         runCli({"term-output", std::to_string(term()->controlId()), "--lines", "20"});
     });
     MCGuiWait("term-output answered", 15, [] { return gCli->done; });
@@ -359,6 +385,8 @@ MC_GUI_SUITE(shell_integration) {
         const size_t at = gCli->out.find("echo hi\nhi");
         const std::string after = at == std::string::npos ? "" : gCli->out.substr(at + 10);
         GCHECK(after.find_first_not_of(" \n") != std::string::npos);
+        backToOriginal();
+        GCHECK(term() == gOrig && sameState(sh(), gBefore));   // the first terminal was not touched
     });
     // ---- the half-typed line (HANDOFF item 48): set aside, then given back
     MCGuiStep("the user's own bind still works", [] {
@@ -372,22 +400,22 @@ MC_GUI_SUITE(shell_integration) {
         vte_terminal_feed_child(vte, bytes.c_str(), (gssize)bytes.size());
     });
     MCGuiWait("it shows on the line", 10, [] { return endsWith(lastLine(vteText()), "echo LEFT"); });
-    MCGuiStep("term --run 'echo RIGHT' over it", [] {
+    MCGuiStep("term --run 'echo RIGHT' beside it", [] {
         gBefore = sh();
         runCli({"term", "--run", "echo RIGHT"});
     });
     MCGuiWait("term answered (half line)", 20, [] { return gCli->done; });
-    MCGuiWait("RIGHT ran and LEFT came back", 15, [] {
-        return sh().atPrompt && sh().prompts > gBefore.prompts && hasLine(vteText(), "RIGHT") &&
-               endsWith(lastLine(vteText()), "echo LEFT");
+    MCGuiWait("RIGHT ran in its own tab", 25, [] {
+        return term() != gOrig && sh().known && sh().atPrompt && sh().done >= 1 && hasLine(vteText(), "RIGHT");
     });
-    MCGuiStep("RIGHT alone, LEFT never joined it", [] {
+    MCGuiStep("the half line stayed where it was", [] {
         GCHECK(gCli->exitCode == 0);
+        GCHECK(sh().started == 1);   // the new tab ran only ours
+        backToOriginal();
         const std::string t = vteText();
-        GCHECK(hasLine(t, "RIGHT"));
-        GCHECK(alwaysEndsLine(t, "LEFT"));
-        GCHECK(t.find("LEFTecho") == std::string::npos && t.find("LEFT echo") == std::string::npos);
-        GCHECK(sh().started == gBefore.started + 1);   // only ours ran
+        GCHECK(endsWith(lastLine(t), "echo LEFT"));
+        GCHECK(!hasLine(t, "RIGHT"));   // nothing of ours reached it
+        GCHECK(sh().started == gBefore.started && sh().prompts == gBefore.prompts);
         VteTerminal* vte = findVte(term()->widget());
         vte_terminal_feed_child(vte, "\x15", 1);
     });
@@ -410,6 +438,7 @@ MC_GUI_SUITE(shell_integration) {
     });
     MCGuiStep("Run File's output alone, LEFTTWO apart", [] {
         const std::string t = vteText();
+        GCHECK(term() == gOrig);   // an idle terminal is used, no tab
         GCHECK(alwaysEndsLine(t, "LEFTTWO"));
         GCHECK(t.find("LEFTTWOecho") == std::string::npos && t.find("LEFTTWObash") == std::string::npos);
         GCHECK(sh().started == gBefore.started + 1);
@@ -421,10 +450,12 @@ MC_GUI_SUITE(shell_integration) {
     MCGuiWait("sleep 3 runs", 10, [] { return sh().busy && sh().command == "sleep 3"; });
     MCGuiStep("term --run while it runs", [] { runCli({"term", "--run", "echo nope > \"$HOME/nope.out\""}); });
     MCGuiWait("term answered (busy)", 20, [] { return gCli->done; });
-    MCGuiStep("refused with the reason", [] {
-        GCHECK(gCli->exitCode == 1);
-        GCHECK(gCli->err.find("busy running: sleep 3") != std::string::npos);
-        GCHECK(sh().busy && sh().started == gBefore.started + 1);   // nothing else started
+    MCGuiWait("the new tab ran it", 25, [] { return MCGuiFileExists(gHome + "/nope.out"); });
+    MCGuiStep("not refused, and the busy shell is left alone", [] {
+        GCHECK(gCli->exitCode == 0);
+        GCHECK(term() != gOrig && MCGuiApp().termDock->count() == 2);
+        backToOriginal();
+        GCHECK(sh().busy && sh().command == "sleep 3" && sh().started == gBefore.started + 1);   // nothing else started in it
     });
     MCGuiStep("Run File while it runs", [] {
         MCGuiWriteFile(gHome + "/rf.sh", "echo runfile-ran > \"$HOME/rf.out\"\n");
@@ -432,12 +463,19 @@ MC_GUI_SUITE(shell_integration) {
         GAction* a = g_action_map_lookup_action(G_ACTION_MAP(MCGuiApp().window), "runfile");
         GCHECK(a != nullptr);
         if (a) g_action_activate(a, nullptr);
-        GCHECK(statusText().find("Not run:") != std::string::npos && statusText().find("busy") != std::string::npos);
+    });
+    MCGuiWait("Run File ran in a tab of its own", 25, [] { return MCGuiFileExists(gHome + "/rf.out"); });
+    MCGuiStep("the busy shell was not typed into", [] {
+        GCHECK(term() != gOrig);
+        GCHECK(statusText().find("Not run:") == std::string::npos);
+        GCHECK_EQ_STR(MCGuiReadFile(gHome + "/rf.out"), "runfile-ran\n");
+        backToOriginal();
+        GCHECK(sh().started == gBefore.started + 1);
     });
     MCGuiWait("sleep 3 done", 15, [] { return sh().atPrompt; });
-    MCGuiStep("nothing was typed by either", [] {
-        GCHECK(!MCGuiFileExists(gHome + "/nope.out") && !MCGuiFileExists(gHome + "/rf.out"));
+    MCGuiStep("sleep 3 was the only command the first shell ran", [] {
         GCHECK(sh().started == gBefore.started + 1);
+        unlink((gHome + "/rf.out").c_str());
         GAction* a = g_action_map_lookup_action(G_ACTION_MAP(MCGuiApp().window), "runfile");
         if (a) g_action_activate(a, nullptr);   // at the prompt now
     });
@@ -448,21 +486,27 @@ MC_GUI_SUITE(shell_integration) {
         return MCGuiFileExists(gHome + "/rf.out") && sh().atPrompt && sh().started > gBefore.started + 1;
     });
     MCGuiStep("it ran through the shell as a command", [] {
+        GCHECK(term() == gOrig);   // idle again: no tab
         GCHECK_EQ_STR(MCGuiReadFile(gHome + "/rf.out"), "runfile-ran\n");
         GCHECK(sh().started == gBefore.started + 2);
         typeLine("exec sh");
     });
     MCGuiWait("exec sh is the last mark", 10, [] { return sh().busy && sh().command == "exec sh"; });
     MCGuiPause(0.7);   // the shell has been replaced; no further mark can come
-    MCGuiStep("term --run after exec sh", [] { runCli({"term", "--run", "echo nope > \"$HOME/nope2.out\""}); });
+    MCGuiStep("term --run after exec sh", [] {
+        gBefore = sh();
+        runCli({"term", "--run", "echo nope > \"$HOME/nope2.out\""});
+    });
     MCGuiWait("term answered (exec'd)", 20, [] { return gCli->done; });
-    MCGuiStep("refused, nothing typed", [] {
-        GCHECK(gCli->exitCode == 1);
-        GCHECK(gCli->err.find("busy running: exec sh") != std::string::npos);
+    MCGuiWait("the new tab ran it", 25, [] { return MCGuiFileExists(gHome + "/nope2.out"); });
+    MCGuiStep("not refused; nothing typed into the exec'd shell", [] {
+        GCHECK(gCli->exitCode == 0);
+        GCHECK(term() != gOrig);
+        MCGuiApp().termDock->onActiveChanged = gOldActive;
+        backToOriginal();
+        GCHECK(sh().busy && sh().command == "exec sh" && sh().started == gBefore.started);
         term()->onCommandFinished = nullptr;
     });
-    MCGuiPause(0.5);   // negative check: nothing may run
-    MCGuiStep("no file written", [] { GCHECK(!MCGuiFileExists(gHome + "/nope2.out")); });
 
     MCGuiStep("zsh, where it is installed", [] {
         gchar* zsh = g_find_program_in_path("zsh");

@@ -3783,7 +3783,21 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
     clicks, bash): the cases above, each shell known by the integration's
     marks and pids, a command in a hidden tab, rename/move/drag, the close
     question, Run File, `term` and `term-output`, the last tab.
-  - **Owed**: `shell_integration` part two (from "term --run 'echo hi'") still expects `term` to type into the one terminal and to refuse a busy one; it now gets a new tab. Rewrite those steps for the tab (the refusal cases move to Run File's new tab, covered by `terminal_tabs`).
+  - **shell_integration part two follows the tabs**: `term --run` is checked in
+    the tab it made (that shell's own marks: one command, status 0, the
+    finished hook once, `term-output` reads it) and, beside a half-typed line,
+    a busy `sleep 3` and an exec'd `sh`, the first terminal is checked to be
+    left alone (same line, same started count, still busy); `term` is never
+    refused now and Run File into the busy shell runs in a new tab. The suite
+    closes its extra tabs (`backToOriginal`). `terminal_tabs` replaces a
+    terminal an earlier suite left with a shell of another kind.
+  - **Trap (found by `G_DEBUG=fatal-criticals`)**: `gtk_stack_remove` held the
+    terminal widget's last reference, so `~Terminal` disconnected handlers on
+    freed widgets (heap corruption that showed as a crash suites later, e.g.
+    `lsp_actions` once). `TerminalDock::remove` now holds a reference across
+    the delete. In a long combined run `terminal_tabs` can still fail on a
+    loaded machine (see the coordinator's notes); alone and after
+    `shell_integration` it passes with no GLib criticals.
 
 ## How to work on it
 
