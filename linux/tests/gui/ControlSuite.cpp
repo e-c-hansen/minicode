@@ -522,4 +522,25 @@ MC_GUI_SUITE(control) {
         if (gListener >= 0) close(gListener);
         unlink((folder() + "/" + std::to_string((int)getppid()) + ".sock").c_str());
     });
+    // ---- minicode install-skill (PARITY.md 3.1): the skill, copied, never into the real ~/.claude
+    MCGuiStep("minicode install-skill --dir copies the skill that ships", [] {
+        gRun = runClient({"install-skill", "--dir", F("skill-home/skills/minicode")});
+    });
+    MCGuiWait("install-skill returns", 20, [] { return gRun->done; });
+    MCGuiStep("it exited 0, said so, and the file is the shipped one", [] {
+        GCHECK(gRun->exitCode == 0);
+        GCHECK(gRun->out.find("Installed the minicode skill in") != std::string::npos);
+        const std::string shipped = MCGuiReadFile(MCGuiBuildDir() + "/../../skills/minicode/SKILL.md");
+        GCHECK(!shipped.empty());
+        GCHECK(MCGuiReadFile(F("skill-home/skills/minicode/SKILL.md")) == shipped);
+        gRun = runClient({"install-skill", "--dir", F("skill-home/skills/minicode")});
+    });
+    MCGuiWait("the second run returns", 20, [] { return gRun->done; });
+    MCGuiStep("a second run finds it up to date; a stray word is a usage error", [] {
+        GCHECK(gRun->exitCode == 0);
+        GCHECK(gRun->out.find("is up to date") != std::string::npos);
+        gRun = runClient({"install-skill", "--bogus"});
+    });
+    MCGuiWait("the third run returns", 20, [] { return gRun->done; });
+    MCGuiStep("it exited 2", [] { GCHECK(gRun->exitCode == 2); });
 }

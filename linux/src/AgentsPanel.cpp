@@ -1,6 +1,8 @@
 // AgentsPanel.cpp — see AgentsPanel.h.
 #include "AgentsPanel.h"
 
+#include <sys/stat.h>
+
 #include <ctime>
 
 #include "Appearance.h"
@@ -96,6 +98,15 @@ AgentsPanel::AgentsPanel(const std::string& folder) : model_(folder) {
         auto* s = static_cast<AgentsPanel*>(p);
         if (s->menuTerminal_ && s->onShowTerminal) s->onShowTerminal(s->menuTerminal_);
     });
+    add("worktree", +[](GSimpleAction*, GVariant*, gpointer p) {
+        auto* s = static_cast<AgentsPanel*>(p);
+        if (!s->menuWorktree_.empty() && s->onOpenFolderInNewWindow)
+            s->onOpenFolderInNewWindow(s->menuWorktree_);
+    });
+    add("scratchpad", +[](GSimpleAction*, GVariant*, gpointer p) {
+        auto* s = static_cast<AgentsPanel*>(p);
+        if (!s->menuScratchpad_.empty() && s->onRevealFolder) s->onRevealFolder(s->menuScratchpad_);
+    });
     add("copy", +[](GSimpleAction*, GVariant*, gpointer p) {
         auto* s = static_cast<AgentsPanel*>(p);
         if (s->menuPath_.empty()) return;
@@ -175,6 +186,8 @@ void AgentsPanel::rebuild() {
             r.depth = depth;
             r.key = s.transcript;
             r.sessionId = s.sessionId;
+            r.worktree = s.worktreePath;
+            r.scratchpad = s.scratchpad;
             r.text = s.name;
             r.running = s.runningAt(now);
             r.detail = AgentView::detailLine(r.running,
@@ -342,6 +355,8 @@ void AgentsPanel::openMenuFor(int row) {
     menuPath_.clear();
     menuLabels_.clear();
     menuTerminal_ = 0;
+    menuWorktree_.clear();
+    menuScratchpad_.clear();
     if (row >= 0 && row < (int)rows_.size()) {
         const RowInfo& r = rows_[row];
         GMenu* sec = g_menu_new();
@@ -358,6 +373,21 @@ void AgentsPanel::openMenuFor(int row) {
             if (menuTerminal_ && onShowTerminal) {
                 g_menu_append(sec, "Show Terminal", "agents.terminal");
                 menuLabels_ += "|Show Terminal";
+            }
+            // Only folders that are still there, as the Mac's menu.
+            auto isDir = [](const std::string& d) {
+                struct stat st;
+                return !d.empty() && stat(d.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+            };
+            if (isDir(r.worktree) && onOpenFolderInNewWindow) {
+                menuWorktree_ = r.worktree;
+                g_menu_append(sec, "Open Worktree in New Window", "agents.worktree");
+                menuLabels_ += "|Open Worktree in New Window";
+            }
+            if (isDir(r.scratchpad) && onRevealFolder) {
+                menuScratchpad_ = r.scratchpad;
+                g_menu_append(sec, "Reveal Scratchpad in File Manager", "agents.scratchpad");
+                menuLabels_ += "|Reveal Scratchpad in File Manager";
             }
             g_menu_append(sec, "Copy Transcript Path", "agents.copy");
             menuPath_ = r.key;

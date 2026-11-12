@@ -2,6 +2,8 @@
 #include "ProcessesPanel.h"
 
 #include "Appearance.h"
+
+#include <algorithm>
 #include "ProcessMonitor.h"
 
 namespace {
@@ -22,6 +24,10 @@ void flatten(const Procs::Node& n, int depth, const Procs::Group& g,
     r.outside = g.kind == Procs::GroupKind::Outside;
     r.terminal = p.terminal;
     r.ports = p.alive ? Procs::formatPorts(p.ports) : std::string();
+    if (p.alive)
+        for (const Procs::Listen& l : p.ports)
+            if (std::find(r.portNumbers.begin(), r.portNumbers.end(), l.port) == r.portNumbers.end())
+                r.portNumbers.push_back(l.port);
     r.memory = p.alive ? Procs::formatBytes(p.memory) : std::string("exited");
     r.cpu = p.alive ? Procs::formatCpu(p.cpu) : std::string();
     std::string cmd = p.command.empty() ? p.name : p.command;
@@ -75,6 +81,20 @@ ProcessesPanel::ProcessesPanel() {
     }), this);
     g_action_map_add_action(G_ACTION_MAP(actions_), G_ACTION(stop));
     g_object_unref(stop);
+    GSimpleAction* port = g_simple_action_new("openport", G_VARIANT_TYPE_INT32);
+    g_signal_connect(port, "activate", G_CALLBACK(+[](GSimpleAction*, GVariant* v, gpointer p) {
+        auto* self = static_cast<ProcessesPanel*>(p);
+        if (self->onOpenUrl && v)
+            self->onOpenUrl("http://localhost:" + std::to_string(g_variant_get_int32(v)));
+    }), this);
+    g_action_map_add_action(G_ACTION_MAP(actions_), G_ACTION(port));
+    g_object_unref(port);
+    GSimpleAction* origin = g_simple_action_new("origin", nullptr);
+    g_signal_connect(origin, "activate", G_CALLBACK(+[](GSimpleAction*, GVariant*, gpointer p) {
+        static_cast<ProcessesPanel*>(p)->revealOrigin(static_cast<ProcessesPanel*>(p)->menuPid_);
+    }), this);
+    g_action_map_add_action(G_ACTION_MAP(actions_), G_ACTION(origin));
+    g_object_unref(origin);
     gtk_widget_insert_action_group(root_, "procs", G_ACTION_GROUP(actions_));
 
     GtkGesture* click = gtk_gesture_click_new();
@@ -217,9 +237,21 @@ void ProcessesPanel::openMenuFor(int pid) {
         GMenu* sec = g_menu_new();
         std::string label = row->orphan ? "Stop" : "Stop…";
         g_menu_append(sec, label.c_str(), row->alive ? "procs.stop" : "procs.none");
+        menuLabels_ = label;
+        if (row->alive)
+            for (int port : row->portNumbers) {
+                const std::string t = "Open localhost:" + std::to_string(port);
+                GMenuItem* it = g_menu_item_new(t.c_str(), nullptr);
+                g_menu_item_set_action_and_target_value(it, "procs.openport",
+                                                        g_variant_new_int32(port));
+                g_menu_append_item(sec, it);
+                g_object_unref(it);
+                menuLabels_ += "|" + t;
+            }
+        g_menu_append(sec, "Reveal Origin", row->outside || row->orphan ? "procs.none" : "procs.origin");
+        menuLabels_ += "|Reveal Origin";
         g_menu_append_section(menu, nullptr, G_MENU_MODEL(sec));
         g_object_unref(sec);
-        menuLabels_ = label;
     }
     popup(menu, 12, 40);
     g_object_unref(menu);
@@ -254,6 +286,26 @@ gboolean ProcessesPanel::onKey(GtkEventControllerKey*, guint keyval, guint, GdkM
     }
     self->stopPid(self->rows_[i].pid);
     return TRUE;
+}
+
+// The terminal that started the process, as the Mac's Reveal Origin.
+void ProcessesPanel::revealOrigin(int pid) {
+    const RowInfo* row = nullptr;
+    for (const RowInfo& r : rows_)
+        if (!r.header && r.pid == pid) row = &r;
+    if (!row) {
+        gtk_widget_error_bell(root_);
+        return;
+    }
+    const std::string name = trimmedName(row->text);
+    if (row->outside) {
+        if (onNote) onNote(name + " was not started in minicode");
+        return;
+    }
+    if (!(onRevealTerminal && onRevealTerminal(row->terminal))) {
+        gtk_widget_error_bell(root_);
+        if (onNote) onNote("The terminal that started " + name + " was closed");
+    }
 }
 
 // Stop, asking first unless the process is an orphan (the Mac's rule).

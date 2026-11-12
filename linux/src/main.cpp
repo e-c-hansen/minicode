@@ -1130,6 +1130,35 @@ static void openContainingFolder(App* app, const std::string& path) {
     g_object_unref(launcher);
 }
 
+// A folder in the file manager (the Mac's Reveal in Finder for a scratchpad).
+// $MINICODE_FILE_MANAGER names a program that gets the folder as its one
+// argument instead, which is how the checks record it.
+static void revealFolder(App* app, const std::string& folder) {
+    if (const char* fm = g_getenv("MINICODE_FILE_MANAGER"); fm && *fm) {
+        const char* argv[] = {fm, folder.c_str(), nullptr};
+        GError* err = nullptr;
+        if (!g_spawn_async(nullptr, const_cast<char**>(argv), nullptr, G_SPAWN_SEARCH_PATH,
+                           nullptr, nullptr, nullptr, &err))
+            showError(app, "Could not open the folder", err ? err->message : "");
+        g_clear_error(&err);
+        return;
+    }
+    GFile* f = g_file_new_for_path(folder.c_str());
+    GtkFileLauncher* launcher = gtk_file_launcher_new(f);
+    g_object_unref(f);
+    gtk_file_launcher_launch(launcher, GTK_WINDOW(app->window), nullptr,
+        [](GObject* src, GAsyncResult* res, gpointer up) {
+            GError* err = nullptr;
+            if (!gtk_file_launcher_launch_finish(GTK_FILE_LAUNCHER(src), res, &err) &&
+                !g_error_matches(err, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
+                !static_cast<App*>(up)->dead)
+                showError(static_cast<App*>(up), "Could not open the folder",
+                          err ? err->message : "");
+            g_clear_error(&err);
+        }, app);
+    g_object_unref(launcher);
+}
+
 // A tab's file selected in the tree, the tree brought back first when the
 // sidebar is hidden or shows Source Control (the Mac's revealTabInTree:).
 static void revealInTree(App* app, const std::string& path) {
@@ -1827,6 +1856,17 @@ static void act_toggle_processes(GSimpleAction*, GVariant*, gpointer userp) {
         app->procs->onNote = [app](const std::string& text) {
             if (!app->dead) flashStatus(app, text);
         };
+        app->procs->onOpenUrl = [app](const std::string& url) {
+            if (!app->dead) openLink(app, true, url, false, false, 0, 0);
+        };
+        app->procs->onRevealTerminal = [](int terminalId) {
+            for (App* a : g.windows)
+                if (!a->dead && a->terminal && a->controlId == terminalId) {
+                    showTerminalOf(a);
+                    return true;
+                }
+            return false;
+        };
     }
     if (app->gitShown) act_toggle_git(nullptr, nullptr, app);
     if (app->agentsShown) act_toggle_agents(nullptr, nullptr, app);
@@ -1870,6 +1910,12 @@ static void ensureAgents(App* app) {
                     return;
                 }
             if (!app->dead) flashStatus(app, "That terminal has closed");
+        };
+        app->agents->onOpenFolderInNewWindow = [app](const std::string& folder) {
+            if (!app->dead) newWindow(folder, "");
+        };
+        app->agents->onRevealFolder = [app](const std::string& folder) {
+            if (!app->dead) revealFolder(app, folder);
         };
         app->agents->onNote = [app](const std::string& text) {
             if (!app->dead) flashStatus(app, text);
@@ -3598,8 +3644,10 @@ static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
 // open|window|state|selection ...` talks to the running minicode over its
 // socket and exits, with no GTK started (PARITY.md 3.1).
 int minicodeCliMain(int argc, char** argv);
+int minicodeInstallSkill(int argc, char** argv);
 
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "install-skill") return minicodeInstallSkill(argc, argv);
     if (argc > 1 && ControlChannel::isSubcommand(argv[1])) return minicodeCliMain(argc, argv);
 #ifndef MINICODE_GUITEST
     // A run with the startup log stays in the terminal it was asked from: a

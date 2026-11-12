@@ -3034,9 +3034,18 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   ran when a notify named a session has it, in `procs --json` ("session")
   and the row's tooltip ("Started by Claude Code session ..."); the
   `processes` suite notifies and reads both.
-- **Remains:** "Open localhost:port"
-  and "Reveal Origin" in the row's menu, a terminal's title and id from the
-  Terminal object (rows say "terminal"), and the owner's eyes on the look.
+- **The menu's other items** (November 2026): one "Open localhost:<port>"
+  per listening port (`procs.openport`, the port as the action's int32
+  target; `onOpenUrl` is `openLink`, so the page loads in the user's page of
+  the browser pane as a link clicked in a terminal does) and "Reveal Origin"
+  (`procs.origin`, disabled for a process outside minicode's tree or an
+  orphan, as the Mac's): `onRevealTerminal` shows the terminal whose id the
+  row carries (`showTerminalOf`), else the status bar says the terminal was
+  closed; a process started outside minicode says so. The row's `RowInfo`
+  keeps `portNumbers`; the `processes` suite checks the labels, the URL and
+  the three answers, and the Stop labels now end in `|Reveal Origin`.
+- **Remains:** a terminal's title and id from the Terminal object (rows say
+  "terminal"), and the owner's eyes on the look.
 - **Needs the owner:** the sampling on a busy desktop (smaps_rollup's cost
   with a browser running), and other users' processes, which are left out.
 
@@ -3254,9 +3263,16 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `clickRow` lands on the popover (a menu item, or a dismissing click), not
   the row; `agents` calls `closeMenu()` after Show Terminal. Choosing an item
   with the pointer closes it.
-- **Remains (part two):** Open Worktree in New Window and Reveal Scratchpad
-  in a session's menu; the owner's eyes on the look and on a real
-  `~/.claude`.
+- **Part three** (November 2026): a session's menu has Open Worktree in New
+  Window (`agents.worktree`, `onOpenFolderInNewWindow` is `newWindow`) and
+  Reveal Scratchpad in File Manager (`agents.scratchpad`, `onRevealFolder` is
+  `revealFolder` in main.cpp), each only when the session's `worktreePath` or
+  `scratchpad` is a folder that still exists, as the Mac's. Reveal opens the
+  folder itself (`GtkFileLauncher` launch, not the containing folder, which
+  would show the scratchpad's parent); `$MINICODE_FILE_MANAGER` names a
+  program that gets the folder as its argument instead, which the `agents`
+  suite records. The worktree node's Open in New Window already existed.
+- **Remains:** the owner's eyes on the look and on a real `~/.claude`.
 ### 45. Agents checking pages (done, November 2026; `PARITY.md` item 3.7)
 
 - **What it does**: the Mac's `browse` and `page`, on WebKitGTK. `browse`
@@ -3960,6 +3976,15 @@ File's busy check and the finishing mark.
   went up; counters, not the busy flag, since a short command's start and
   finish can arrive in one VTE read). The 0.25 s polling after Return
   stays only for a shell with no nonce (fish, sh), where there are no marks.
-- **Left of 3.1**: `split` and `install-skill` (the Mac's is in
-  `scripts/minicode-launcher`; Linux needs the skill in the package's data
-  folder and a subcommand of the CLI or launcher).
+- **install-skill** (November 2026): `minicode install-skill [--dir DIR]`
+  is `minicodeInstallSkill` in `tools/minicode-cli.cpp` (Linux only; the
+  Mac's is the launcher script), called by `main` before the control
+  channel's words since it is not one. It copies `skills/minicode/SKILL.md`
+  to `$CLAUDE_CONFIG_DIR/skills/minicode` or `~/.claude/skills/minicode`,
+  says "up to date" when the bytes agree, exits 3 with no skill found and 2
+  on a stray argument. The skill is found at `$MINICODE_SKILL_FILE`, else
+  `SKILL.md` beside the binary (a build folder: `configure_file` copy), else
+  `../share/minicode/skills/minicode/SKILL.md` (`install_data` in
+  `meson.build`, so the package has it), else the checkout's own. The
+  `control` suite installs with `--dir` into its scratch folder.
+- **Left of 3.1**: `split`, which waits for terminal tabs (item 4.7).

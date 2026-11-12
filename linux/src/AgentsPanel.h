@@ -30,6 +30,8 @@ public:
     // The terminal (an id) a session runs in, 0 for none; and showing it.
     std::function<int(const std::string& sessionId, const std::string& transcript)> terminalFor;
     std::function<void(int)> onShowTerminal;
+    std::function<void(const std::string&)> onOpenFolderInNewWindow;  // a session's worktree
+    std::function<void(const std::string&)> onRevealFolder;           // a scratchpad, in the file manager
     std::function<void()> onModelChange;                      // the sessions changed
     std::function<void(const std::string&)> onNote;           // the status bar
 
@@ -41,7 +43,7 @@ public:
     struct RowInfo {
         enum Kind { Session, Group, File } kind = Session;
         int depth = 0;
-        std::string text, detail, tooltip, key, path, sessionId;
+        std::string text, detail, tooltip, key, path, sessionId, worktree, scratchpad;
         bool running = false, exists = true, expanded = false;
     };
     std::vector<RowInfo> rows() const { return rows_; }
@@ -73,6 +75,7 @@ private:
     std::set<std::string> expanded_;
     std::string menuLabels_, menuPath_;
     int menuTerminal_ = 0;
+    std::string menuWorktree_, menuScratchpad_;
     int menuRow_ = -1;
     bool active_ = false;
     unsigned timer_ = 0;

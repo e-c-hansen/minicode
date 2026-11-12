@@ -135,6 +135,14 @@ Verified by running it:
   the busy test taken out of `Terminal::runBlocker`. Not run: ssh, or a
   program other than the shell holding the foreground while the marks say
   "at the prompt" (the half second's wait), and zsh's `term` half.
+- Reveal and install-skill (items 3.1, 3.5, 3.8; November 2026): the `processes`
+  suite checks the row menu's Open localhost:port (the URL handed to the
+  browser hook) and Reveal Origin (the terminal asked for, the two notes);
+  `agents` runs Reveal Scratchpad with `$MINICODE_FILE_MANAGER` pointing at a
+  recording script and Open Worktree in New Window against a recording hook;
+  `control` runs `minicode install-skill --dir <scratch>` and compares the
+  file with `skills/minicode/SKILL.md` (never the real `~/.claude`). Not
+  checked: the real file manager (`GtkFileLauncher` through the portal).
 - The Agents panel and Evidence (item 3.5; the same suite also checks part
   two: a click on a session opens its Evidence page with the final message,
   the last test's summary, Show all and Open in Terminal typing without

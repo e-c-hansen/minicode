@@ -409,6 +409,15 @@ install_data('resources' / 'minicode-bash-integration.bash',
              '..' / 'resources' / 'minicode-zsh-integration.zsh',
   install_dir : get_option('datadir') / 'minicode')
 
+# The Claude Code skill, for `minicode install-skill`: beside the binary in a
+# build folder, in share/minicode when installed.
+configure_file(
+  input  : '..' / 'skills' / 'minicode' / 'SKILL.md',
+  output : 'SKILL.md',
+  copy   : true)
+install_data('..' / 'skills' / 'minicode' / 'SKILL.md',
+  install_dir : get_option('datadir') / 'minicode' / 'skills' / 'minicode')
+
 # PNGs extracted from the macOS resources/AppIcon.icns, which stays the single
 # source of truth for the artwork.
 foreach size : ['32x32', '64x64', '128x128', '256x256', '512x512']

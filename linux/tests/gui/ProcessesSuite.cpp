@@ -313,6 +313,44 @@ MC_GUI_SUITE(processes) {
         GCHECK(panelRow(gFirst.procs, gSleepPid, nullptr, &g1) && g1 == "outside");
         GCHECK(panelRow(gFirst.procs, gStubbornPid, nullptr, &g2) && g2 == "outside");
     });
+    MCGuiStep("the server's menu has Open localhost:port and Reveal Origin; Open loads the page", [] {
+        ProcessesPanel* pp = gFirst.procs;
+        const std::string port = std::to_string(gServerPort);
+        pp->openMenuFor(gServerPid);
+        GCHECK(pp->menuLabels().find("Open localhost:" + port) != std::string::npos);
+        GCHECK(pp->menuLabels().find("Reveal Origin") != std::string::npos);
+        auto keep = pp->onOpenUrl;
+        std::string url;
+        pp->onOpenUrl = [&url](const std::string& u) { url = u; };
+        g_action_group_activate_action(pp->actionGroup(), "openport",
+                                       g_variant_new_int32(gServerPort));
+        pp->onOpenUrl = keep;
+        GCHECK_EQ_STR(url, "http://localhost:" + port);
+    });
+    MCGuiStep("Reveal Origin shows the terminal that started it; a closed one is said", [] {
+        ProcessesPanel* pp = gFirst.procs;
+        ProcessesPanel::RowInfo r;
+        GCHECK(panelRow(pp, gServerPid, &r, nullptr));
+        auto keepT = pp->onRevealTerminal;
+        auto keepN = pp->onNote;
+        int asked = -1;
+        std::string note;
+        pp->onRevealTerminal = [&asked](int id) { asked = id; return true; };
+        pp->onNote = [&note](const std::string& t) { note = t; };
+        pp->openMenuFor(gServerPid);
+        g_action_group_activate_action(pp->actionGroup(), "origin", nullptr);
+        GCHECK(asked == r.terminal && r.terminal != 0);
+        GCHECK(note.empty());
+        pp->onRevealTerminal = [](int) { return false; };
+        g_action_group_activate_action(pp->actionGroup(), "origin", nullptr);
+        GCHECK(note.find("was closed") != std::string::npos);
+        pp->openMenuFor(gSleepPid);   // started outside minicode
+        note.clear();
+        g_action_group_activate_action(pp->actionGroup(), "origin", nullptr);
+        GCHECK(note.find("was not started in minicode") != std::string::npos);
+        pp->onRevealTerminal = keepT;
+        pp->onNote = keepN;
+    });
     MCGuiStep("a picture of the panel, for looking at", [] {
         MCGuiSnapshot(GTK_WIDGET(gFirst.window), "processes");
     });
@@ -375,13 +413,13 @@ MC_GUI_SUITE(processes) {
     });
     MCGuiStep("an orphan's menu says Stop (no question), Stop ends it", [] {
         gFirst.procs->openMenuFor(gOrphanPid);
-        GCHECK_EQ_STR(gFirst.procs->menuLabels(), "Stop");
+        GCHECK_EQ_STR(gFirst.procs->menuLabels(), "Stop|Reveal Origin");
         g_action_group_activate_action(gFirst.procs->actionGroup(), "stop", nullptr);
     });
     MCGuiWait("the orphan is gone", 10, [] { return !alive(gOrphanPid); });
     MCGuiStep("a row that is not an orphan's says Stop… (it asks)", [] {
         gFirst.procs->openMenuFor(gSleepPid);
-        GCHECK_EQ_STR(gFirst.procs->menuLabels(), "Stop\u2026");
+        GCHECK_EQ_STR(gFirst.procs->menuLabels(), "Stop\u2026|Reveal Origin");
     });
     MCGuiAsync("Stop ends the sleep by SIGTERM", 20, [](MCGuiDone done) {
         Procs::Key k;

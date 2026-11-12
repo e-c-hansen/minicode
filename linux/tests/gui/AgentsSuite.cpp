@@ -43,7 +43,7 @@
 
 namespace {
 
-std::string gClaude, gProjects, gTmp, gProj, gSessDir, gBefore;
+std::string gScratch, gRevealLog, gClaude, gProjects, gTmp, gProj, gSessDir, gBefore;
 const char* kSid = "1e1f578c-45c6-4cb5-92e5-84e11a306454";
 const char* kNew = "sess-new";
 
@@ -486,4 +486,51 @@ MC_GUI_SUITE(agents) {
         GCHECK(has(sp.title, "base.txt"));
         GCHECK_EQ_STR(listingOf(fixturesDir()), gFixturesBefore);
     });
+    // ---- Part three: Open Worktree in New Window and Reveal Scratchpad
+    MCGuiStep("a session working in the agent's worktree, with a scratchpad", [] {
+        gScratch = gTmp + "/-Users-user-Code-public-minicode/sess-wt/scratchpad";
+        g_mkdir_with_parents(gScratch.c_str(), 0755);
+        MCGuiWriteFile(gSessDir + "/sess-wt.jsonl",
+                       replaceAll(replaceAll(prompt("Work in the worktree", 3), gProj + "\"", gWt + "\""),
+                                  std::string("\"") + kNew + "\"", "\"sess-wt\""));
+    });
+    MCGuiWait("its row is in the panel", 20, [] {
+        return rowWhere("Work in the worktree", AgentsPanel::RowInfo::Session) >= 0;
+    });
+    MCGuiStep("its menu offers both, a session without them neither", [] {
+        const int wt = rowWhere("Work in the worktree", AgentsPanel::RowInfo::Session);
+        panel()->openMenuFor(wt);
+        GCHECK(has(panel()->menuLabels(), "Open Worktree in New Window"));
+        GCHECK(has(panel()->menuLabels(), "Reveal Scratchpad in File Manager"));
+        panel()->closeMenu();
+        panel()->openMenuFor(newRow());
+        GCHECK(!has(panel()->menuLabels(), "Open Worktree in New Window") ||
+               gProj.find("/.claude/worktrees/") != std::string::npos);
+        GCHECK(!has(panel()->menuLabels(), "Reveal Scratchpad"));
+        panel()->closeMenu();
+    });
+    MCGuiStep("Open Worktree in New Window hands the worktree's folder over", [] {
+        auto keep = panel()->onOpenFolderInNewWindow;
+        std::string got;
+        panel()->onOpenFolderInNewWindow = [&got](const std::string& d) { got = d; };
+        panel()->openMenuFor(rowWhere("Work in the worktree", AgentsPanel::RowInfo::Session));
+        g_action_group_activate_action(panel()->actionGroup(), "worktree", nullptr);
+        panel()->closeMenu();
+        panel()->onOpenFolderInNewWindow = keep;
+        GCHECK_EQ_STR(got, gWt);
+    });
+    MCGuiStep("Reveal Scratchpad runs the file manager on the scratchpad", [] {
+        gRevealLog = MCGuiProjectFile("revealed.txt");
+        const std::string fm = MCGuiProjectFile("filemanager.sh");
+        MCGuiWriteFile(fm, "#!/bin/sh\necho \"$1\" >> '" + gRevealLog + "'\n");
+        chmod(fm.c_str(), 0755);
+        g_setenv("MINICODE_FILE_MANAGER", fm.c_str(), TRUE);
+        panel()->openMenuFor(rowWhere("Work in the worktree", AgentsPanel::RowInfo::Session));
+        g_action_group_activate_action(panel()->actionGroup(), "scratchpad", nullptr);
+        panel()->closeMenu();
+    });
+    MCGuiWait("the file manager was given the folder", 10, [] {
+        return has(MCGuiReadFile(gRevealLog), gScratch);
+    });
+    MCGuiStep("(cleanup)", [] { g_unsetenv("MINICODE_FILE_MANAGER"); });
 }

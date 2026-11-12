@@ -469,6 +469,90 @@ int usageError(const std::string &message) {
 
 }  // namespace
 
+#ifndef __APPLE__
+// `minicode install-skill [--dir DIR]` on Linux, what scripts/minicode-launcher
+// does on the Mac (PARITY.md 3.1): the skill that ships with the package, or
+// the build tree's copy, goes to $CLAUDE_CONFIG_DIR/skills/minicode (else
+// ~/.claude/skills/minicode). $MINICODE_SKILL_FILE names the source in checks.
+static bool readWholeFile(const std::string &path, std::string &out) {
+    FILE *f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    char buf[8192];
+    size_t n;
+    out.clear();
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) out.append(buf, n);
+    const bool ok = !std::ferror(f);
+    std::fclose(f);
+    return ok;
+}
+
+static bool makeFolders(const std::string &dir) {
+    for (size_t i = 1; i <= dir.size(); i++)
+        if (i == dir.size() || dir[i] == '/') {
+            const std::string part = dir.substr(0, i);
+            if (mkdir(part.c_str(), 0755) != 0 && errno != EEXIST) return false;
+        }
+    return true;
+}
+
+int minicodeInstallSkill(int argc, char **argv) {
+    std::string to;
+    const char *config = getenv("CLAUDE_CONFIG_DIR");
+    const char *home = getenv("HOME");
+    if (config && *config) to = std::string(config) + "/skills/minicode";
+    else to = std::string(home && *home ? home : "/") + "/.claude/skills/minicode";
+    for (int i = 2; i < argc; i++) {
+        const std::string a = argv[i];
+        if (a == "--dir") {
+            if (i + 1 >= argc || !*argv[i + 1]) return usageError("--dir needs a folder");
+            to = argv[++i];
+        } else if (a == "-h" || a == "--help") {
+            std::printf("Usage: minicode install-skill [--dir DIR]\n");
+            return kExitOK;
+        } else {
+            return usageError("install-skill: unexpected " + a);
+        }
+    }
+    std::vector<std::string> candidates;
+    if (const char *own = getenv("MINICODE_SKILL_FILE")) candidates.push_back(own);
+    char exe[PATH_MAX];
+    const ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (n > 0) {
+        std::string dir(exe, (size_t)n);
+        dir.erase(dir.rfind('/'));
+        candidates.push_back(dir + "/SKILL.md");                                  // build tree
+        candidates.push_back(dir + "/../share/minicode/skills/minicode/SKILL.md");  // installed
+        candidates.push_back(dir + "/../../../skills/minicode/SKILL.md");       // linux/build in a checkout
+    }
+    std::string skill;
+    bool found = false;
+    for (const std::string &c : candidates)
+        if (!c.empty() && readWholeFile(c, skill)) {
+            found = true;
+            break;
+        }
+    if (!found) {
+        std::fprintf(stderr, "minicode: this copy has no skill to install\n");
+        return 3;
+    }
+    std::string have;
+    if (readWholeFile(to + "/SKILL.md", have) && have == skill) {
+        std::printf("The minicode skill in %s is up to date\n", to.c_str());
+        return kExitOK;
+    }
+    FILE *out = makeFolders(to) ? std::fopen((to + "/SKILL.md").c_str(), "wb") : nullptr;
+    if (!out || std::fwrite(skill.data(), 1, skill.size(), out) != skill.size()) {
+        std::fprintf(stderr, "minicode: could not write %s/SKILL.md: %s\n", to.c_str(),
+                     std::strerror(errno));
+        if (out) std::fclose(out);
+        return kExitFailed;
+    }
+    std::fclose(out);
+    std::printf("Installed the minicode skill in %s\n", to.c_str());
+    return kExitOK;
+}
+#endif
+
 #ifdef __APPLE__
 int main(int argc, char **argv) {
 #else

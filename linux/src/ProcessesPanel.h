@@ -31,6 +31,8 @@ public:
     std::function<int()> windowId;
     std::function<std::string()> folder;
     std::function<void(const std::string&)> onNote;   // the status bar
+    std::function<void(const std::string&)> onOpenUrl;      // the user's page in the browser pane
+    std::function<bool(int)> onRevealTerminal;              // by terminal id; false when it is gone
 
     // Shown in the sidebar or not: only then do looks come every 2 s.
     void setActive(bool active);
@@ -42,6 +44,7 @@ public:
         bool header = false;
         std::string text;      // a group's title, or the row's name
         std::string detail;    // command and folder line
+        std::vector<int> portNumbers;
         std::string ports, memory, cpu, tooltip;
         int pid = 0;
         bool orphan = false, outside = false, alive = true;
@@ -70,6 +73,7 @@ private:
 
     void rebuild();
     void stopPid(int pid);
+    void revealOrigin(int pid);
     void popup(GMenu* menu, double x, double y);
     void dropMenu();
     static void onPressed(GtkGestureClick*, int, double, double, gpointer);

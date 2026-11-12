@@ -1315,7 +1315,7 @@ its server comes first here (2.0).
 
 3.1 and D10's test come first. The rest may run in parallel.
 
-- [~] **3.1 The control channel and `minicode` commands.** `ControlProtocol`,
+- [x] **3.1 The control channel and `minicode` commands.** `ControlProtocol`,
   a socket under `$XDG_RUNTIME_DIR`, 0600 in a 0700 folder. Mac:
   `ControlServer`, `ControlCommands`, `tools/minicode-cli.cpp`.
   Part one (done, November 2026; `HANDOFF.md` item 38): the server, the
@@ -1329,8 +1329,8 @@ its server comes first here (2.0).
   window's one terminal, when its shell is at a prompt; never into a busy
   or silent one), `term-output`, Run File with its busy check (it had no
   Linux version before), `onCommandFinished` from the finishing mark.
-  Remains: `split` (needs terminal tabs, item 4.7), `install-skill` and the
-  skill; both answer "not on Linux yet". `diff` is done with 3.2; `browse`, `page` and `open-url`/BROWSER with
+  `install-skill` done (HANDOFF item 48). Remains: `split` (needs terminal
+  tabs, item 4.7), which answers "not on Linux yet". `diff` is done with 3.2; `browse`, `page` and `open-url`/BROWSER with
   3.7.
 - [~] **3.2 The compare view.** `SideBySide`, word changes, Accept and Reject
   per hunk. Part one done (HANDOFF item 39): `CompareView` and
@@ -1357,7 +1357,7 @@ its server comes first here (2.0).
   (HANDOFF item 41): `AgentNotes` over a text tag and an overlay box,
   `open --note`/`--from`, `tour` and its Alt+] and Alt+[ keys, the agent's
   preview tab, the `notes` GUI suite.
-- [~] **3.5 The Agents panel and Evidence.** `AgentTranscript`, `AgentIndex`,
+- [x] **3.5 The Agents panel and Evidence.** `AgentTranscript`, `AgentIndex`,
   `AgentEvidence`, `AgentView`, with Linux's scratchpad path. Claude Code's
   data is read, never written. Part one (November 2026, HANDOFF item 44):
   the model on a worker thread following the transcripts and scratchpads
@@ -1367,8 +1367,8 @@ its server comes first here (2.0).
   Compare with Main and Open in New Window. Loose ends done (HANDOFF item
   44): Show Terminal for a session waiting in a terminal, session roots
   first for a clicked path, the node appearing when `.claude/worktrees` is
-  created. Remains: Open Worktree in New Window and Reveal Scratchpad in a
-  session's menu.
+  created. Open Worktree in New Window and Reveal Scratchpad in a
+  session's menu done (HANDOFF item 44).
 - [x] **3.6 Waiting for you.** `ClaudeHooks`, `AttentionBoard`. Done
   (November 2026, HANDOFF item 42): the terminal's id and the two
   variables, `notify --from-hook`, `hooks --print|--install`, a dot and
@@ -1380,15 +1380,15 @@ its server comes first here (2.0).
   pane with its Yours | Agent switcher and x, `browse`, `page --url/--text/
   --console/--screenshot/--reload`, `open-url` and BROWSER; the
   `browser_pages` suite.
-- [~] **3.8 The Processes panel.** `ProcessTable` over `/proc`; its `Source` is
+- [x] **3.8 The Processes panel.** `ProcessTable` over `/proc`; its `Source` is
   the seam. Part one (November 2026, HANDOFF item 40): `ProcFs::Source`, a
   sampler thread (`ProcessMonitor`), Stop's SIGTERM then SIGKILL, and the
   control channel's `procs`, with `procfs:*` and the `processes` suite.
   Part two (HANDOFF item 40): the panel in the sidebar (View > Toggle
   Processes), rows by group, Stop in the menu and on Delete, 2 s sampling
-  only while it shows. Session labels done (HANDOFF item 40). Remains: "Open
-  localhost:port" and "Reveal Origin" in the row's menu, and the owner's
-  eyes on the look.
+  only while it shows. Session labels done (HANDOFF item 40). "Open
+  localhost:port" and "Reveal Origin" in the row's menu done (HANDOFF item
+  40). The owner's eyes on the look remain.
 - [x] **3.9 The Claude Code IDE link.** `IdeLink`. Done, November 2026
   (HANDOFF item 43): `IdeLinkServer` on the GLib main loop, the lock file,
   `agent.ide-link` and View > Claude Code IDE Link, `CLAUDE_CODE_SSE_PORT`
