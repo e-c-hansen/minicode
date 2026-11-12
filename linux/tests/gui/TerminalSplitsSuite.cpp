@@ -122,12 +122,21 @@ MC_GUI_SUITE(terminal_splits) {
 
     // ---- side by side
     MCGuiStep("Split Terminal by its key: two panes, halves, the new one active", [] {
+        // Global keys must be bound while a terminal has the keyboard, whatever
+        // the steps before it did (a terminal made or replaced while the focus
+        // moved first left the key place stale, so no accelerator was bound).
+        for (const char* act : {"win.splitterminal", "win.newterminal"}) {
+            char** ac = gtk_application_get_accels_for_action(GTK_APPLICATION(g_application_get_default()), act);
+            GCHECK(ac && *ac);
+            g_strfreev(ac);
+        }
         MCGuiKey("ctrl+shift+5");
     });
     MCGuiWait("both shells ready", 30, [] { return grp()->count() == 2 && allReady(); });
     MCGuiStep("each pane has a shell of its own and half the width", [] {
         const auto p = grp()->panes();
         GCHECK(p.size() == 2);
+        if (p.size() != 2) return;
         gB = p[1];
         GCHECK(p[0] == gA);
         GCHECK(gA->shellPid() != gB->shellPid());
@@ -158,6 +167,7 @@ MC_GUI_SUITE(terminal_splits) {
     MCGuiStep("a column of two, each its own shell, halves of the height", [] {
         const auto p = grp()->panes();   // column by column
         GCHECK(p.size() == 3 && p[0] == gA && p[1] == gB);
+        if (p.size() != 3) return;
         gC = p[2];
         GCHECK(gC != gB && gC->shellPid() != gB->shellPid() && gC->shellPid() != gA->shellPid());
         GCHECK(MCGuiApp().terminal == gC);

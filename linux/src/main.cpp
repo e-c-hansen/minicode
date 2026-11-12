@@ -3304,7 +3304,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
 #ifdef MINICODE_ENABLE_TERMINAL
     app->termDock = new TerminalDock([app] { return makeTerminal(app); });
     app->terminal = app->termDock->active();
-    app->termDock->onActiveChanged = [app](Terminal* t) { app->terminal = t; };
+    app->termDock->onActiveChanged = [app](Terminal* t) { app->terminal = t; updateKeyPlace(); };
     app->termDock->onEmpty = [app] {
         if (!app->dead && app->layout) app->layout->hideTerminal();
     };
