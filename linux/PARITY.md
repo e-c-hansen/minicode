@@ -1491,6 +1491,43 @@ These may run in parallel.
   strip's mark and the process monitor all use it (HANDOFF item 63,
   `terminal_ids`). Left out by the owner's decision: command marks (D10).
   Left: the window close question counting busy terminals.
+- [ ] **4.8 Web bookmarks and the browser window.** `WebBookmark` (core,
+  `bookmarks:*`; not yet in `meson.build` or the Makefile). Added to the
+  Mac in 1.5.20 and 1.5.22, after this file was written. Mac: "Bookmarks
+  and the browser window" in `../CLAUDE.md`, `src/Bookmarks.{h,mm}`,
+  `src/EditorController+Bookmarks.mm`, the toolbar in `src/Browser.mm`,
+  the Bookmarks menu in `src/main.mm`, and the `bookmarks` GUI suite.
+  What it needs:
+  - A bookmark is a `.url` file (the Internet Shortcut); `.webloc` files
+    are read too. The core reads XML ones; a binary `.webloc` (bplist) is
+    left to the platform, and Linux may simply open it as text. Only http
+    and https addresses ever open (`WebBookmark::isWebAddress`); a file
+    with any other opens as text.
+  - The bookmark folder is `browser.bookmarks` (~/Bookmarks), the browser
+    window is the window rooted there, and `minicode https://...` opens
+    the page in a tab of it (several addresses, several tabs; later ones
+    join the same window).
+  - A `.url` clicked in the tree loads in that window's browser (a tab at
+    the same address is shown again); the tree's right click menu has
+    Open as Text for a bookmark and Open All in Browser Tabs for a folder.
+  - Save Page as Bookmark (the Mac's Command D while the page has the
+    keyboard, File > Save Page as Bookmark anywhere) saves once: a page
+    already bookmarked anywhere in the folder (`WebBookmark::sameAddress`)
+    only says where. Save All Tabs as Bookmarks writes a folder of them
+    (`tabsFolderName`, `tabAddresses`).
+  - The toolbar's star saves the page and is filled while it is
+    bookmarked; a click on the filled star moves the bookmark to the
+    Trash. The book beside it and a Bookmarks menu in the menu bar list
+    the folder (folders first as submenus with Open All in Tabs,
+    `WebBookmark::menuTitle`), a bookmark loading in the tab on show, or
+    a new tab with the modifier held; the command palette finds them.
+  - The desktop file could offer minicode for `application/x-mswinurl`
+    (a `.url` file's type), as the Mac's Info.plist offers it to Finder
+    without becoming the default.
+  Decide the Linux key for Save Page as Bookmark (Ctrl+D is Add Next
+  Occurrence in the editor; on the Mac it is a page key, so only the
+  browser takes it) and record it in Decisions and the README's Linux
+  column.
 
 ## Reported by the owner
 
