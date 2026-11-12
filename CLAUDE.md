@@ -2986,7 +2986,17 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   answers (`saveBookmarkFromPage:`; so Cmd+D after a scroll in a page is
   still the editor's Add Next Occurrence), File > Save Page as Bookmark
   from anywhere; in the browser window it saves to the tree's selected
-  folder. Finder keeps sending .url files to the default browser unless the
+  folder. A page is saved once: Save finds a bookmark of the page first
+  (`MCBookmarkFileFor`, a walk of the folder with each file's address
+  cached by size and date; `WebBookmark::sameAddress`) and only says where
+  it is. The toolbar's star (`bookmarkButton`, filled while
+  `bookmarkPath`, looked up off the main thread on every toolbar update)
+  saves, or moves the bookmark to the Trash (`toggleBrowserBookmark:`);
+  the book beside it and the menu bar's Bookmarks menu are the folder as a
+  menu (`MCAttachBookmarksMenu`, filled in `menuNeedsUpdate:`, which the
+  palette now calls before reading a menu), a bookmark loading in the tab
+  on show (`BrowserView showAddress:inNewTab:`, Command for a new tab).
+  Finder keeps sending .url files to the default browser unless the
   user picks minicode in Get Info (Info.plist only offers it, Alternate).
 - **Find in the page** (2026-11-09, `make guitest SUITES=browser_find`):
   the terminal's `MCTerminalFindBar` at the page's top right, Edit > Find's

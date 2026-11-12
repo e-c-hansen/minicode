@@ -4,6 +4,7 @@
 #import "TerminalGridView.h"
 #import "AppSettings.h"
 #import "Appearance.h"
+#import "Bookmarks.h"
 #import "BrowserPages.h"
 #import "Keymap.h"
 #import "PageZoom.h"
@@ -12,6 +13,7 @@
 #import <WebKit/WebKit.h>
 #include "BrowserTabs.h"
 #include "EditorTabs.h"
+#include "WebBookmark.h"
 
 // The page's own context menu (Back, Reload, Inspect...) ends with Adjust
 // Settings for the browser.
@@ -167,6 +169,10 @@ static const NSUInteger kMaxBrowserStates = 4 * 1024 * 1024;
 @property(nonatomic, strong) NSButton    *back;
 @property(nonatomic, strong) NSButton    *forward;
 @property(nonatomic, strong) NSButton    *reload;
+@property(nonatomic, strong, readwrite) NSButton *bookmarkButton;        // the star
+@property(nonatomic, strong, readwrite) NSButton *bookmarksMenuButton;   // the folder as a menu
+@property(nonatomic, copy, readwrite) NSString *bookmarkPath;
+@property(nonatomic) NSUInteger bookmarkLookups;
 @property(nonatomic, strong) NSSegmentedControl *switcher;   // Yours | Agent
 @property(nonatomic, strong) NSButton    *closeAgent;
 @property(nonatomic, strong) NSTextField *zoomLabel;
@@ -426,6 +432,22 @@ static id MCRecordFromData(NSData *data, BOOL archived) {
     [self addSubview:self.forward];
     [self addSubview:self.reload];
 
+    // Bookmarks: the star saves the page on show (Cmd+D) and, once saved,
+    // shows filled and takes the bookmark away; the book lists the
+    // bookmark folder to open one.
+    self.bookmarkButton = [self navButton:@"" action:@selector(toggleBookmark:)];
+    self.bookmarkButton.imagePosition = NSImageOnly;
+    self.bookmarkButton.image = [NSImage imageWithSystemSymbolName:@"star"
+                                          accessibilityDescription:@"Bookmark"];
+    self.bookmarkButton.toolTip = @"Bookmark this page (Command D)";
+    [self addSubview:self.bookmarkButton];
+    self.bookmarksMenuButton = [self navButton:@"" action:@selector(showBookmarksMenu:)];
+    self.bookmarksMenuButton.imagePosition = NSImageOnly;
+    self.bookmarksMenuButton.image = [NSImage imageWithSystemSymbolName:@"book"
+                                               accessibilityDescription:@"Bookmarks"];
+    self.bookmarksMenuButton.toolTip = @"Bookmarks";
+    [self addSubview:self.bookmarksMenuButton];
+
     // The switcher and the agent page's close button show once an agent
     // has a page.
     self.switcher = [NSSegmentedControl segmentedControlWithLabels:@[@"Yours", @"Agent"]
@@ -478,7 +500,9 @@ static id MCRecordFromData(NSData *data, BOOL archived) {
     self.shownWeb.nextKeyView = self.back;
     self.back.nextKeyView = self.forward;
     self.forward.nextKeyView = self.reload;
-    self.reload.nextKeyView = self.urlBar;
+    self.reload.nextKeyView = self.bookmarkButton;
+    self.bookmarkButton.nextKeyView = self.bookmarksMenuButton;
+    self.bookmarksMenuButton.nextKeyView = self.urlBar;
 }
 
 - (void)setFrameSize:(NSSize)newSize {
@@ -510,7 +534,11 @@ static const CGFloat kBrowserBarHeight = 36;
         self.switcher.frame = NSMakeRect(x, by + 1, sw, 24); x += sw + 2;
         self.closeAgent.frame = NSMakeRect(x, by, 28, 26); x += 28 + pad;
     }
-    self.urlBar.frame  = NSMakeRect(x, by, MAX(0, W - x - pad), 24);
+    // The star and the book at the right end, past the address bar.
+    const CGFloat right = W - pad - 2 * bw - 2;
+    self.bookmarkButton.frame = NSMakeRect(right, by, bw, 26);
+    self.bookmarksMenuButton.frame = NSMakeRect(right + bw + 2, by, bw, 26);
+    self.urlBar.frame  = NSMakeRect(x, by, MAX(0, right - pad - x), 24);
     self.zoomLabel.frame = NSMakeRect(MAX(x, NSMaxX(self.urlBar.frame) - 50), by + 4, 46, 16);
     const NSRect page = [self pageRect];
     for (MCBrowserTab *t in _tabs) t.web.frame = page;   // hidden pages keep their size
@@ -1041,6 +1069,135 @@ enum { kFindInPageShow = 1, kFindInPageNext = 2, kFindInPagePrevious = 3 };
     if (!self.urlBar.currentEditor) self.urlBar.stringValue = wv.URL.absoluteString ?: @"";
     self.back.enabled = wv.canGoBack;
     self.forward.enabled = wv.canGoForward;
+    [self bookmarksChanged];
+}
+
+// --------------------------------------------------------------- bookmarks
+// Whether the page on show is in the bookmark folder, looked up off the
+// main thread (a walk of the folder; Bookmarks.h). An answer for a page no
+// longer on show is dropped.
+- (void)bookmarksChanged {
+    NSString *url = self.pageURL;
+    const NSUInteger generation = ++self.bookmarkLookups;
+    self.bookmarkButton.enabled = MCIsWebAddress(url ?: @"");
+    if (!self.bookmarkButton.enabled) {
+        [self setBookmarkPath:nil];
+        return;
+    }
+    NSString *folder = MCBookmarksFolder();
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        queue = dispatch_queue_create("minicode.bookmarks.lookup", DISPATCH_QUEUE_SERIAL);
+    });
+    __weak BrowserView *weakSelf = self;
+    dispatch_async(queue, ^{
+        NSString *path = MCBookmarkFileFor(folder, url);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            BrowserView *me = weakSelf;
+            if (!me || generation != me.bookmarkLookups) return;
+            [me setBookmarkPath:path];
+        });
+    });
+}
+
+- (void)setBookmarkPath:(NSString *)path {
+    _bookmarkPath = [path copy];
+    const BOOL saved = path != nil;
+    self.bookmarkButton.image = [NSImage imageWithSystemSymbolName:saved ? @"star.fill" : @"star"
+                                          accessibilityDescription:saved ? @"Bookmarked"
+                                                                         : @"Bookmark"];
+    self.bookmarkButton.contentTintColor = saved ? [NSColor controlAccentColor] : nil;
+    self.bookmarkButton.toolTip =
+        saved ? [NSString stringWithFormat:@"Bookmarked as %@. Click to remove the bookmark.",
+                                           path.stringByAbbreviatingWithTildeInPath]
+              : @"Bookmark this page (Command D)";
+}
+
+// The star: the window's controller saves the page, or moves its bookmark
+// to the Trash (toggleBrowserBookmark:, which looks the file up again).
+- (void)toggleBookmark:(id)sender {
+    [self passOn:@selector(toggleBrowserBookmark:) from:sender];
+}
+
+- (NSMenu *)bookmarksMenu {
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Bookmarks"];
+    __weak BrowserView *weakSelf = self;
+    MCAttachBookmarksMenu(menu, nil, self, ^(NSMenu *m) {
+        BrowserView *me = weakSelf;
+        if (!me) return;
+        [m addItem:[NSMenuItem separatorItem]];
+        NSMenuItem *save = [m addItemWithTitle:me.bookmarkPath ? @"Remove Bookmark"
+                                                               : @"Bookmark This Page"
+                                        action:@selector(toggleBookmark:) keyEquivalent:@""];
+        save.target = me;
+        [m addItemWithTitle:@"Show Bookmarks Folder" action:@selector(showBookmarksFolder:)
+              keyEquivalent:@""];
+    });
+    return menu;
+}
+
+- (void)showBookmarksMenu:(id)sender {
+    (void)sender;
+    NSMenu *menu = [self bookmarksMenu];
+    NSButton *b = self.bookmarksMenuButton;
+    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, -4) inView:b];
+}
+
+// A tab already on that page shows; else the tab on show loads it, or a
+// new tab does (Command held, as a Command-clicked link).
+- (void)showAddress:(NSString *)url inNewTab:(BOOL)newTab {
+    if (!url.length) return;
+    if (self.agentPageShown) [self showPage:NO];
+    for (NSUInteger i = 0; i < _tabs.count; i++) {
+        if (WebBookmark::sameAddress([self addressOf:_tabs[i]].UTF8String ?: "",
+                                     url.UTF8String ?: "")) {
+            [self selectTab:i];
+            return;
+        }
+    }
+    if (newTab || !self.activeTab) {
+        [self openAddresses:@[url]];
+        return;
+    }
+    MCBrowserTab *t = self.activeTab;
+    NSURL *u = [NSURL URLWithString:url];
+    if (!u) return;
+    t.url = url;
+    t.title = nil;
+    t.record = nil;
+    [self makeLive:t configuration:nil load:NO];
+    t.web.toolbarNavigation = NO;
+    [t.web loadRequest:[NSURLRequest requestWithURL:u]];
+    [self showPage:NO];
+}
+
+static BOOL MCCommandHeld(void) {
+    return (NSApp.currentEvent.modifierFlags & NSEventModifierFlagCommand) != 0;
+}
+
+- (void)openBookmarkFromMenu:(id)sender {
+    NSString *path = [sender respondsToSelector:@selector(representedObject)]
+                         ? [sender representedObject] : nil;
+    NSString *url = [path isKindOfClass:NSString.class] ? MCBookmarkAddress(path) : nil;
+    if (!url) {
+        NSBeep();
+        return;
+    }
+    [self showAddress:url inNewTab:MCCommandHeld()];
+    [self focusPage];
+}
+
+- (void)openBookmarkFolderFromMenu:(id)sender {
+    NSString *dir = [sender respondsToSelector:@selector(representedObject)]
+                        ? [sender representedObject] : nil;
+    NSArray<NSString *> *urls = [dir isKindOfClass:NSString.class] ? MCBookmarkAddressesIn(dir) : @[];
+    if (!urls.count) {
+        NSBeep();
+        return;
+    }
+    [self openAddresses:urls];
+    [self focusPage];
 }
 
 - (MCPageProbe *)openAgentPage {

@@ -38,6 +38,13 @@ static BOOL gOpenBookmarkAsText = NO;
     for (const std::string &u : WebBookmark::tabAddresses(in))
         [addresses addObject:[NSString stringWithUTF8String:u.c_str()]];
     if (!addresses.count) return;
+    [self showBrowserFor:^{ [self.browser openAddresses:addresses]; } focusPage:focus];
+}
+
+// The browser pane made and shown, `load` run in it with the keyboard
+// kept where it was, then the page given the keyboard when asked (or when
+// what had it is now hidden).
+- (void)showBrowserFor:(void (^)(void))load focusPage:(BOOL)focus {
     [self keepKeyboardDuring:^{
         [self makeBrowserWithHome:@""];
         [self leaveMaximizedPaneFor:MCPaneBrowser];
@@ -47,7 +54,7 @@ static BOOL gOpenBookmarkAsText = NO;
         if (self.isBrowserWindow && !self.currentPath) self.editorHidden = YES;
         [self showRightArea];
         [self relayoutRightArea];
-        [self.browser openAddresses:addresses];
+        load();
     }];
     if (self.hintsVisible) [self updateHints];
     NSResponder *fr = self.window.firstResponder;
@@ -97,6 +104,15 @@ static NSString *MCShortFolder(NSString *path) {
         NSBeep();
         return;
     }
+    // A page saved once is not saved again under another number.
+    NSString *have = MCBookmarkFileFor(MCBookmarksFolder(), self.browser.pageURL);
+    if (have) {
+        [self flashStatus:[NSString stringWithFormat:@"Already bookmarked as %@",
+                                                     MCShortFolder(have)]];
+        [self.browser bookmarksChanged];
+        [self revealSavedBookmark:have];
+        return;
+    }
     NSString *folder = [self bookmarkFolderForSaving];
     if (!folder) return;
     NSString *err = nil;
@@ -108,7 +124,63 @@ static NSString *MCShortFolder(NSString *path) {
     }
     [self flashStatus:[NSString stringWithFormat:@"Saved “%@” in %@",
                                                  path.lastPathComponent, MCShortFolder(folder)]];
+    [self.browser bookmarksChanged];
     [self revealSavedBookmark:path];
+}
+
+// The toolbar's star: the page saved, or, when it is bookmarked already,
+// its bookmark moved to the Trash (so a slip is undone from the Trash).
+- (void)toggleBrowserBookmark:(id)sender {
+    if (!self.canSaveBrowserBookmark) {
+        NSBeep();
+        return;
+    }
+    NSString *have = MCBookmarkFileFor(MCBookmarksFolder(), self.browser.pageURL);
+    if (!have) {
+        [self saveBrowserBookmark:sender];
+        return;
+    }
+    NSError *error = nil;
+    if (![[NSFileManager defaultManager] trashItemAtURL:[NSURL fileURLWithPath:have]
+                                       resultingItemURL:nil
+                                                  error:&error]) {
+        [self flashStatus:[NSString stringWithFormat:@"The bookmark was not removed: %@",
+                                                     error.localizedDescription]];
+        NSBeep();
+        return;
+    }
+    [self flashStatus:[NSString stringWithFormat:@"Moved the bookmark “%@” to the Trash",
+                                                 have.lastPathComponent]];
+    [self.browser bookmarksChanged];
+    NSString *root = self.rootPath.stringByResolvingSymlinksInPath;
+    if ([have.stringByResolvingSymlinksInPath hasPrefix:[root stringByAppendingString:@"/"]])
+        [self refreshTree:nil];
+}
+
+// The menu bar's Bookmarks menu, while the browser pane does not have the
+// keyboard (it answers these itself when it does): the bookmark loads in
+// this window's browser, in the tab on show (a new tab with Command held).
+- (void)openBookmarkFromMenu:(id)sender {
+    NSString *path = [sender respondsToSelector:@selector(representedObject)]
+                         ? [sender representedObject] : nil;
+    NSString *url = [path isKindOfClass:NSString.class] ? MCBookmarkAddress(path) : nil;
+    if (!url) {
+        NSBeep();
+        return;
+    }
+    const BOOL newTab = (NSApp.currentEvent.modifierFlags & NSEventModifierFlagCommand) != 0;
+    [self showBrowserFor:^{ [self.browser showAddress:url inNewTab:newTab]; } focusPage:YES];
+}
+
+- (void)openBookmarkFolderFromMenu:(id)sender {
+    NSString *dir = [sender respondsToSelector:@selector(representedObject)]
+                        ? [sender representedObject] : nil;
+    NSArray<NSString *> *urls = [dir isKindOfClass:NSString.class] ? MCBookmarkAddressesIn(dir) : @[];
+    if (!urls.count) {
+        NSBeep();
+        return;
+    }
+    [self showWebAddresses:urls focusPage:YES];
 }
 
 - (BOOL)canSaveBrowserTabs {
@@ -185,20 +257,6 @@ static NSString *MCShortFolder(NSString *path) {
     return NO;
 }
 - (BOOL)canOpenBookmarkAsText { return [self bookmarkFileInTree] != nil; }
-
-// The addresses of the bookmarks directly in `dir`, in Finder's name order.
-static NSArray<NSString *> *MCBookmarkAddressesIn(NSString *dir) {
-    NSArray<NSString *> *names =
-        [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil]
-            sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
-    NSMutableArray<NSString *> *out = [NSMutableArray array];
-    for (NSString *n in names) {
-        if ([n hasPrefix:@"."]) continue;
-        NSString *u = MCBookmarkAddress([dir stringByAppendingPathComponent:n]);
-        if (u) [out addObject:u];
-    }
-    return out;
-}
 
 - (void)openBookmarksInTabs:(id)sender {
     (void)sender;

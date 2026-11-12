@@ -593,6 +593,42 @@ static BOOL MCWindowTabAction(SEL a) {
     [[self current] saveBrowserTabsAsBookmarks:sender];
 }
 - (void)openBookmarksInTabs:(id)sender { [[self current] openBookmarksInTabs:sender]; }
+// The Bookmarks menu with no editor window in front: the browser window.
+- (void)openBookmarkFromMenu:(id)sender {
+    if ([self current]) {
+        [[self current] openBookmarkFromMenu:sender];
+        return;
+    }
+    NSString *path = [sender representedObject];
+    NSString *url = [path isKindOfClass:NSString.class] ? MCBookmarkAddress(path) : nil;
+    if (url) [self openWebAddressesInBrowserWindow:@[url]];
+    else NSBeep();
+}
+- (void)openBookmarkFolderFromMenu:(id)sender {
+    if ([self current]) {
+        [[self current] openBookmarkFolderFromMenu:sender];
+        return;
+    }
+    NSString *dir = [sender representedObject];
+    NSArray *urls = [dir isKindOfClass:NSString.class] ? MCBookmarkAddressesIn(dir) : @[];
+    if (urls.count) [self openWebAddressesInBrowserWindow:urls];
+    else NSBeep();
+}
+// The window on the bookmark folder, brought to the front (made, with the
+// folder, when there is none).
+- (void)showBookmarksFolder:(id)sender {
+    (void)sender;
+    NSString *folder = MCBookmarksFolder();
+    NSString *err = nil;
+    if (!MCEnsureBookmarksFolder(folder, &err)) {
+        NSBeep();
+        NSLog(@"minicode: no bookmark folder (%@): %@", folder, err);
+        return;
+    }
+    NSString *dir = MCComparablePath(folder);
+    EditorController *c = [self controllerRootedAt:dir] ?: [self openWindowAtPath:dir];
+    [c.window makeKeyAndOrderFront:nil];
+}
 - (void)showLineInPDF:(id)sender   { [[self current] showLineInPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
@@ -1876,6 +1912,22 @@ static void BuildMenu(void) {
     prevStop.keyEquivalentModifierMask = NSEventModifierFlagOption;
     [navMenu addItem:prevStop];
     navItem.submenu = navMenu;
+
+    // Bookmarks: the bookmark folder (browser.bookmarks, ~/Bookmarks) as a
+    // menu, filled as it opens (Bookmarks.h), so the palette finds each
+    // bookmark too. A bookmark loads in the window's browser; with the
+    // browser's keyboard the pane answers itself.
+    NSMenuItem *bookmarksItem = [[NSMenuItem alloc] init];
+    [menubar addItem:bookmarksItem];
+    NSMenu *bookmarksMenu = [[NSMenu alloc] initWithTitle:@"Bookmarks"];
+    MCAttachBookmarksMenu(bookmarksMenu, nil, nil, ^(NSMenu *m) {
+        [m addItem:[NSMenuItem separatorItem]];
+        [m addItemWithTitle:@"Bookmark This Page" action:@selector(saveBrowserBookmark:)
+              keyEquivalent:@""];
+        [m addItemWithTitle:@"Show Bookmarks Folder" action:@selector(showBookmarksFolder:)
+              keyEquivalent:@""];
+    });
+    bookmarksItem.submenu = bookmarksMenu;
 }
 
 int main(int argc, const char *argv[]) {

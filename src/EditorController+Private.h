@@ -917,6 +917,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // a file that is no bookmark (or holds no address it may open), which then
 // opens as any file does. `focus` gives the page the keyboard.
 - (BOOL)openBookmarkAtPath:(NSString *)path focusPage:(BOOL)focus;
+// The browser pane made and shown, `load` run in it with the keyboard kept;
+// `focus` gives the page the keyboard after.
+- (void)showBrowserFor:(void (^)(void))load focusPage:(BOOL)focus;
 @end
 
 #pragma clang diagnostic pop

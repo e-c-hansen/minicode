@@ -294,6 +294,13 @@
 // selected folder), selected in the tree when it lists it.
 - (void)saveBrowserBookmark:(id)sender;
 @property(nonatomic, readonly) BOOL canSaveBrowserBookmark;
+// The browser toolbar's star: saves the page on show, or moves its
+// bookmark (already in the bookmark folder) to the Trash.
+- (void)toggleBrowserBookmark:(id)sender;
+// The menu bar's Bookmarks menu (Bookmarks.h): a bookmark loads in this
+// window's browser, a folder's Open All in Tabs opens each in a tab.
+- (void)openBookmarkFromMenu:(id)sender;
+- (void)openBookmarkFolderFromMenu:(id)sender;
 // File > Save All Tabs as Bookmarks: a .url file per tab in a new folder,
 // "Tabs 2026-11-12 14.03".
 - (void)saveBrowserTabsAsBookmarks:(id)sender;

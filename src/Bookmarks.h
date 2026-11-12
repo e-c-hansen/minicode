@@ -34,4 +34,31 @@ BOOL MCIsWebAddress(NSString *url);
 NSString *_Nullable MCWriteBookmark(NSString *folder, NSString *_Nullable title, NSString *url,
                                     NSString *_Nullable *_Nullable error);
 
+// A bookmark file in `folder` or below it whose address is `url`'s page
+// (WebBookmark::sameAddress), or nil. Hidden files and folders are passed
+// by, symlinked folders are not followed, and the walk stops after 10,000
+// entries. A file's address is read again only when its size or date has
+// changed, so asking again is mostly stat calls. Any thread.
+NSString *_Nullable MCBookmarkFileFor(NSString *folder, NSString *url);
+
+// The bookmark folder as a menu (the browser's toolbar and the menu bar's
+// Bookmarks menu): each folder a submenu, folders first, then the bookmarks
+// by name, filled as each opens, so it follows the folder. A bookmark's
+// item sends openBookmarkFromMenu: and a folder's last item, Open All in
+// Tabs, openBookmarkFolderFromMenu:, each with the path as its
+// representedObject, to `target` (nil: the responder chain). `footer`, if
+// given, adds items after the top level's own. `folder` nil is
+// MCBookmarksFolder() each time the menu opens.
+@class NSMenu;
+void MCAttachBookmarksMenu(NSMenu *menu, NSString *_Nullable folder, id _Nullable target,
+                           void (^_Nullable footer)(NSMenu *menu));
+
+@interface NSObject (MCBookmarkMenuActions)
+- (void)openBookmarkFromMenu:(id)sender;
+- (void)openBookmarkFolderFromMenu:(id)sender;
+@end
+
+// The addresses of the bookmarks directly in `dir`, in Finder's name order.
+NSArray<NSString *> *MCBookmarkAddressesIn(NSString *dir);
+
 NS_ASSUME_NONNULL_END

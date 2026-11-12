@@ -61,4 +61,14 @@ std::string tabsFolderName(const std::string &when);
 // accepts, each once.
 std::vector<std::string> tabAddresses(const std::vector<std::string> &urls);
 
+// Whether two addresses name the same page, for "is this page bookmarked?":
+// equal once the scheme and host are lower case and an empty path is "/"
+// (WebKit reports https://example.com as https://example.com/, a bookmark
+// written elsewhere may not). Nothing else is normalized.
+bool sameAddress(const std::string &a, const std::string &b);
+
+// A bookmark's name in a menu: its file name without the .url or .webloc
+// extension (the name itself when nothing else is left).
+std::string menuTitle(const std::string &fileName);
+
 }  // namespace WebBookmark

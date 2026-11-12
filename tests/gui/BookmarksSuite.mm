@@ -5,10 +5,14 @@
 // (javascript:) opens as text, and Open as Text shows any of them so. A
 // folder's Open All in Browser Tabs opens its bookmarks in name order.
 // Save Page as Bookmark writes a .url file named for the page into the
-// bookmark folder (browser.bookmarks), made on first use, a number added
-// when the name is taken; Cmd+D does it while the page has the keyboard
-// and stays Add Next Occurrence in the editor. Save All Tabs writes a
-// folder of them. Bookmarks and web addresses opened as Finder and the
+// bookmark folder (browser.bookmarks), made on first use, and only once
+// a page (saving again says where it is); Cmd+D does it while the page has
+// the keyboard and stays Add Next Occurrence in the editor. The toolbar's
+// star fills once the page on show is bookmarked, and a click on it then
+// moves the bookmark to the Trash. Save All Tabs writes a folder of them.
+// The toolbar's book and the menu bar's Bookmarks menu list the folder,
+// its folders as submenus; a bookmark loads in the tab on show, a folder's
+// Open All in Tabs opens each. Bookmarks and web addresses opened as Finder and the
 // launcher open them (application:openURLs:, a "web" request file) go to
 // the browser window, the window on the bookmark folder, made when
 // missing, the page over the editor's side. The launcher sorts addresses
@@ -24,6 +28,7 @@
 #import "ControlServer.h"
 #import <Carbon/Carbon.h>
 #import <WebKit/WebKit.h>
+#import <objc/runtime.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -164,6 +169,47 @@ void OpenURLs(NSArray<NSURL *> *urls) {
     [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp openURLs:urls];
 }
 
+// The Trash is a folder in the scratch world (the real one is the user's).
+NSString *ScratchTrash() { return [MCGuiScratch() stringByAppendingPathComponent:@"BmTrash"]; }
+IMP gRealTrash;
+void UseScratchTrash(BOOL on) {
+    Method m = class_getInstanceMethod(NSFileManager.class,
+                                       @selector(trashItemAtURL:resultingItemURL:error:));
+    if (!on) {
+        if (gRealTrash) method_setImplementation(m, gRealTrash);
+        gRealTrash = nil;
+        return;
+    }
+    gRealTrash = method_setImplementation(m, imp_implementationWithBlock(
+        ^BOOL(NSFileManager *fm, NSURL *url, NSURL *__autoreleasing *out,
+              NSError *__autoreleasing *err) {
+            [fm createDirectoryAtPath:ScratchTrash() withIntermediateDirectories:YES
+                           attributes:nil error:nil];
+            NSString *to = [ScratchTrash() stringByAppendingPathComponent:url.lastPathComponent];
+            BOOL ok = [fm moveItemAtPath:url.path toPath:to error:err];
+            if (ok && out) *out = [NSURL fileURLWithPath:to];
+            return ok;
+        }));
+}
+
+// The menu filled as it would be on opening, and its item titled `title`.
+NSMenuItem *MenuItem(NSMenu *menu, NSString *title) {
+    [menu.delegate menuNeedsUpdate:menu];
+    for (NSMenuItem *it in menu.itemArray)
+        if ([it.title isEqualToString:title]) return it;
+    return nil;
+}
+
+NSMenu *MenuBarBookmarks() {
+    for (NSMenuItem *it in NSApp.mainMenu.itemArray)
+        if ([it.submenu.title isEqualToString:@"Bookmarks"]) return it.submenu;
+    return nil;
+}
+
+NSString *ShownAddress(BrowserView *b) {
+    return b.selectedTab >= 0 ? b.tabAddresses[(NSUInteger)b.selectedTab] : nil;
+}
+
 }  // namespace
 
 MC_GUI_SUITE(bookmarks) {
@@ -258,16 +304,32 @@ MC_GUI_SUITE(bookmarks) {
         GCHECK([Read(saved) isEqualToString:
                     @(WebBookmark::shortcutText(Page(@"one").UTF8String).c_str())]);
         GCHECK([MCBookmarkAddress(saved) isEqualToString:Page(@"one")]);
-        // Again: a second file, never over the first.
+        GCHECK([MCBookmarkFileFor(bm, Page(@"one")) isEqualToString:saved]);
+        // Again: the page is bookmarked already, so nothing is written.
         [NSApp sendAction:@selector(saveBrowserBookmark:) to:nil from:nil];
-        GCHECK([fm fileExistsAtPath:[bm stringByAppendingPathComponent:@"One 2.url"]]);
+        GCHECK([Names(bm) isEqualToArray:@[@"One.url"]]);
+    });
+    MCGuiWait(@"the star fills for the bookmarked page", 10, ^BOOL {
+        return [c.browser.bookmarkPath.lastPathComponent isEqualToString:@"One.url"];
     });
 
+    MCGuiStep(@"a click on the filled star moves the bookmark to the Trash", ^{
+        GCHECK(c.browser.bookmarkButton.enabled);
+        GCHECK([c.browser.bookmarkButton.toolTip containsString:@"remove"]);
+        UseScratchTrash(YES);
+        [c.browser.bookmarkButton performClick:nil];
+        UseScratchTrash(NO);
+        GCHECK(Names(bm).count == 0);
+        GCHECK([fm fileExistsAtPath:[ScratchTrash() stringByAppendingPathComponent:@"One.url"]]);
+    });
+    MCGuiWait(@"the star empties", 10, ^BOOL { return c.browser.bookmarkPath == nil; });
+
     MCGuiStep(@"Cmd+D in the page saves it; in the editor it is Add Next Occurrence", ^{
+        GCHECK([c.browser.bookmarkButton.toolTip containsString:@"Bookmark this page"]);
         [c.browser focusPage];
         GCHECK(InPage(c));
         Key(c.window, kVK_ANSI_D, NSEventModifierFlagCommand);
-        GCHECK([fm fileExistsAtPath:[bm stringByAppendingPathComponent:@"One 3.url"]]);
+        GCHECK([fm fileExistsAtPath:[bm stringByAppendingPathComponent:@"One.url"]]);
         GCHECK([c showFile:notes]);
         [c.window makeFirstResponder:c.textView];
         c.textView.selectedRange = NSMakeRange(0, 5);   // "alpha"
@@ -293,6 +355,71 @@ MC_GUI_SUITE(bookmarks) {
         GCHECK(Names(folder).count == 3);
         GCHECK([addresses isEqual:([NSSet setWithArray:@[Page(@"one"), Page(@"two"),
                                                          Page(@"three")]])]);
+    });
+
+    MCGuiStep(@"the toolbar's book lists the folder; a bookmark loads in the tab on show", ^{
+        MCGuiWriteFile([bm stringByAppendingPathComponent:@"Five.url"],
+                       [NSString stringWithFormat:@"[InternetShortcut]\nURL=%@\n", Page(@"five")]);
+        NSMenu *menu = [c.browser bookmarksMenu];
+        NSMenuItem *folder = nil;
+        [menu.delegate menuNeedsUpdate:menu];
+        for (NSMenuItem *it in menu.itemArray)
+            if ([it.title hasPrefix:@"Tabs "]) folder = it;
+        GCHECK(folder.submenu != nil);
+        // Folders first, then the bookmarks, named without the extension.
+        GCHECK([menu.itemArray indexOfObject:folder] == 0);
+        NSMenuItem *five = MenuItem(menu, @"Five");
+        GCHECK(five && five.action == @selector(openBookmarkFromMenu:) && five.target == c.browser);
+        GCHECK(MenuItem(menu, @"One") != nil);
+        GCHECK(MenuItem(menu, @"Show Bookmarks Folder") != nil);
+        GCHECK([MenuItem(menu, @"Remove Bookmark").target isEqual:c.browser]);  // One is on show
+        NSMenuItem *all = MenuItem(folder.submenu, @"Open All in Tabs");
+        GCHECK(all && all.action == @selector(openBookmarkFolderFromMenu:));
+        // A tab not loaded since the session was saved has no title, so
+        // its bookmark is named for its address.
+        BOOL hasThree = NO;
+        for (NSMenuItem *it in folder.submenu.itemArray)
+            if (it.action == @selector(openBookmarkFromMenu:) &&
+                [MCBookmarkAddress(it.representedObject) isEqualToString:Page(@"three")])
+                hasThree = YES;
+        GCHECK(hasThree);
+        // The tab showing two loads five in its place.
+        [c.browser selectTab:[c.browser.tabAddresses indexOfObject:Page(@"two")]];
+        const NSUInteger tabs = c.browser.tabCount;
+        [NSApp sendAction:five.action to:five.target from:five];
+        GCHECK(c.browser.tabCount == tabs);
+        GCHECK([ShownAddress(c.browser) isEqualToString:Page(@"five")]);
+        GCHECK(![c.browser.tabAddresses containsObject:Page(@"two")]);
+        // A bookmark already in a tab shows that tab.
+        [NSApp sendAction:@selector(openBookmarkFromMenu:) to:c.browser
+                     from:MenuItem(menu, @"One")];
+        GCHECK(c.browser.tabCount == tabs);
+        GCHECK([ShownAddress(c.browser) isEqualToString:Page(@"one")]);
+        // Open All in Tabs adds the folder's pages not open yet.
+        [NSApp sendAction:all.action to:all.target from:all];
+        GCHECK([c.browser.tabAddresses containsObject:Page(@"two")]);
+        GCHECK(c.browser.tabCount == tabs + 1);
+    });
+
+    MCGuiStep(@"the menu bar's Bookmarks menu loads a bookmark with the editor in front", ^{
+        MCGuiWriteFile([bm stringByAppendingPathComponent:@"Six.url"],
+                       [NSString stringWithFormat:@"[InternetShortcut]\nURL=%@\n", Page(@"six")]);
+        NSMenu *menu = MenuBarBookmarks();
+        GCHECK(menu != nil);
+        NSMenuItem *six = MenuItem(menu, @"Six");
+        GCHECK(six && six.target == nil);
+        GCHECK(MenuItem(menu, @"Bookmark This Page") != nil);
+        [c.window makeFirstResponder:c.textView];
+        GCHECK(!InPage(c));
+        const NSUInteger tabs = c.browser.tabCount;
+        GCHECK([NSApp sendAction:six.action to:nil from:six]);
+        GCHECK(c.browser.tabCount == tabs);
+        GCHECK([ShownAddress(c.browser) isEqualToString:Page(@"six")]);
+        GCHECK(InPage(c));
+    });
+    MCGuiWait(@"the page loads and its star fills", 20, ^BOOL {
+        return Loaded(c.browser, @"Six") &&
+               [c.browser.bookmarkPath.lastPathComponent isEqualToString:@"Six.url"];
     });
 
     MCGuiStep(@"bookmarks opened from Finder go to the browser window, as tabs", ^{

@@ -70,6 +70,9 @@ static unsigned PMods(NSEventModifierFlags m) {
 // menu bar does before it opens). Separators, hidden items (the second keys
 // of Next Tab and the like), alternates and the palette itself are left out.
 static void PCollect(NSMenu *menu, NSString *path, NSMutableArray<MCPaletteCommand *> *out) {
+    // A menu filled as it opens (the Bookmarks menu) fills now.
+    if ([menu.delegate respondsToSelector:@selector(menuNeedsUpdate:)])
+        [menu.delegate menuNeedsUpdate:menu];
     [menu update];
     for (NSMenuItem *it in menu.itemArray) {
         if (it.isSeparatorItem || it.isHidden || it.isAlternate) continue;

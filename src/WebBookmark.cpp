@@ -225,4 +225,32 @@ std::vector<std::string> tabAddresses(const std::vector<std::string> &urls) {
     return out;
 }
 
+namespace {
+// scheme://host lower-cased, then the rest with "/" for an empty path.
+std::string comparable(const std::string &u) {
+    const size_t sep = u.find("://");
+    if (sep == std::string::npos) return u;
+    const size_t hostEnd = u.find_first_of("/?#", sep + 3);
+    const std::string head = lower(u.substr(0, hostEnd == std::string::npos ? u.size() : hostEnd));
+    std::string rest = hostEnd == std::string::npos ? "" : u.substr(hostEnd);
+    if (rest.empty() || rest[0] != '/') rest = "/" + rest;
+    return head + rest;
+}
+}  // namespace
+
+bool sameAddress(const std::string &a, const std::string &b) {
+    if (a == b) return true;
+    if (a.empty() || b.empty()) return false;
+    return comparable(a) == comparable(b);
+}
+
+std::string menuTitle(const std::string &fileName) {
+    const std::string l = lower(fileName);
+    for (const char *ext : {".url", ".webloc"}) {
+        const std::string e = ext;
+        if (l.size() > e.size() && endsWith(l, e)) return fileName.substr(0, fileName.size() - e.size());
+    }
+    return fileName;
+}
+
 }  // namespace WebBookmark

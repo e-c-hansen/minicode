@@ -152,4 +152,31 @@ void testWebBookmarks() {
         CHECK(tabAddresses(in) == want);
         CHECK(tabAddresses({}).empty());
     }
+
+    GROUP("bookmarks:same-address");
+    {
+        CHECK(sameAddress("https://example.com/", "https://example.com/"));
+        CHECK(sameAddress("https://example.com", "https://example.com/"));
+        CHECK(sameAddress("HTTPS://Example.COM/a", "https://example.com/a"));
+        CHECK(sameAddress("https://example.com?q=1", "https://example.com/?q=1"));
+        CHECK(sameAddress("https://example.com#top", "https://example.com/#top"));
+        CHECK(sameAddress("http://localhost:5173", "http://LOCALHOST:5173/"));
+        // The path, query and fragment keep their case and everything else.
+        CHECK(!sameAddress("https://example.com/A", "https://example.com/a"));
+        CHECK(!sameAddress("https://example.com/a/", "https://example.com/a"));
+        CHECK(!sameAddress("http://example.com/", "https://example.com/"));
+        CHECK(!sameAddress("https://example.com/", "https://example.org/"));
+        CHECK(!sameAddress("", "https://example.com/"));
+        CHECK(!sameAddress("https://example.com/", ""));
+    }
+
+    GROUP("bookmarks:menu-title");
+    {
+        CHECK(menuTitle("Google.url") == "Google");
+        CHECK(menuTitle("Apple.WebLoc") == "Apple");
+        CHECK(menuTitle("a.b.url") == "a.b");
+        CHECK(menuTitle("readme.md") == "readme.md");
+        CHECK(menuTitle(".url") == ".url");
+        CHECK(menuTitle("Tabs 2026-11-12 14.03") == "Tabs 2026-11-12 14.03");
+    }
 }

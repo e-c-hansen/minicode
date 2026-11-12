@@ -63,6 +63,19 @@
 // The keyboard to the user's page on show (a page that has loaded or is
 // loading), as a click in it would.
 - (void)focusPage;
+// Shows `url` (a bookmark from a menu): a tab already on that page, else
+// the user's tab on show loads it, or a new tab right of it with newTab.
+- (void)showAddress:(NSString *)url inNewTab:(BOOL)newTab;
+// The toolbar's star (Bookmark This Page, filled once the page on show is
+// in the bookmark folder, then a click removes it) and book (the folder as
+// a menu, `bookmarksMenu`; a bookmark loads in the tab on show, or a new
+// tab with Command held). bookmarkPath is the page's bookmark file as last
+// looked up; bookmarksChanged looks again (after a save or a removal).
+@property(nonatomic, readonly) NSButton *bookmarkButton;
+@property(nonatomic, readonly) NSButton *bookmarksMenuButton;
+@property(nonatomic, readonly, copy) NSString *bookmarkPath;
+- (void)bookmarksChanged;
+- (NSMenu *)bookmarksMenu;
 // How many tabs may keep a live page (BrowserTabs::kLivePages; at least
 // 1), how many do, and a tab's web view (nil while it is suspended).
 @property(nonatomic) NSInteger liveLimit;
