@@ -50,6 +50,8 @@ public:
     int indexOf(const Terminal* t) const;
     // Every pane of every tab, tab by tab.
     std::vector<Terminal*> all() const;
+    // Draws the tabs again (the board's marks changed).
+    void refreshTabs() { refresh(); }
 
     // Splits (the Mac's Cmd+\ and Split Terminal Down): a new pane beside
     // (or below) the active one by the core's rule, with the keyboard.
@@ -60,6 +62,8 @@ public:
     void closePane(Terminal* t, bool ask = true);
     // The active pane's boundary moves 4 cells; false when nothing moved.
     bool resizeActive(TerminalGroup::Dir d);
+    // The active pane is alone in its column: Up and Down resize the dock.
+    bool activeAloneInColumn() const;
     // The keyboard to `t`, in its tab (shown first).
     void focusPane(Terminal* t);
 

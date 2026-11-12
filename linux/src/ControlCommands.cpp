@@ -341,20 +341,20 @@ Json windowState(const ControlWindow& w, bool front) {
             o.set("tour", Json());
         }
     }
-    // The terminal's own commands are later bites of 3.1; what it reports is
-    // its id (the window's), its Claude Code mark (PARITY.md 3.6) and what
-    // the shell integration knows.
+    // Every terminal of the window with its own id (PARITY.md 4.7), its title,
+    // its Claude Code mark (3.6) and what the shell integration knows (D10):
+    // whether a command runs and its text, and the last command's status;
+    // all null while the shell has not marked (another shell, ssh, or before
+    // its first prompt), since unknown is not idle.
     Json terminals = Json::array();
-    {
+    for (const ControlTerminal& ct : w.terminals) {
         Json t = Json::object();
-        t.set("id", w.id);
-        const char* mark = TerminalAttention::markName(w.id);
+        t.set("id", ct.id);
+        t.set("title", ct.title);
+        t.set("active", ct.active);
+        const char* mark = TerminalAttention::markName(ct.id);
         t.set("attention", *mark ? Json(std::string(mark)) : Json());
-        // The shell integration's (D10): whether a command runs and its
-        // text, and the last command's status; all null while the shell
-        // has not marked (another shell, ssh, or before its first prompt),
-        // since unknown is not idle.
-        const ShellIntegration::ShellState& sh = w.shell;
+        const ShellIntegration::ShellState& sh = ct.shell;
         t.set("busy", sh.known ? Json(sh.busy) : Json());
         t.set("command", sh.known && sh.busy && !sh.command.empty() ? Json(sh.command) : Json());
         t.set("status", sh.known && sh.status >= 0 ? Json(sh.status) : Json());
@@ -669,7 +669,21 @@ void registerPageCommands(Dispatcher& d, const ControlHost& host) {
         std::string error;
         ControlWindow w;
         Json t = a;
-        if (a.has("terminal") && !a.has("window")) t.set("window", a["terminal"].asInt());
+        if (a.has("terminal") && !a.has("window")) {
+            // The terminal's window; an id that is no terminal's is an error
+            // (a window's id used to stand for one).
+            const int want = (int)a["terminal"].asInt();
+            int win = 0;
+            for (const ControlWindow& cw : host.windows())
+                for (const ControlTerminal& ct : cw.terminals)
+                    if (ct.id == want) win = cw.id;
+            if (!win) {
+                respond(Result::failure("there is no terminal " + std::to_string(want) +
+                                        " (terminal ids are in `minicode state`)"));
+                return;
+            }
+            t.set("window", win);
+        }
         if (!target(host, t, &w, &error)) {
             respond(Result::failure(error));
             return;
@@ -1075,9 +1089,11 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
         const int want = (int)a["terminal"].asInt();
         bool found = false;
         for (const ControlWindow& w : host.windows())
-            if (w.id == want) found = true;
+            for (const ControlTerminal& ct : w.terminals)
+                if (ct.id == want) found = true;
         if (!found) {
-            respond(Result::failure("there is no terminal " + std::to_string(want)));
+            respond(Result::failure("there is no terminal " + std::to_string(want) +
+                                    " (terminal ids are in `minicode state`)"));
             return;
         }
         std::string error;
@@ -1131,18 +1147,23 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
             return;
         }
         const bool titled = a.has("title") && !a["title"].asString().empty();
-        const int id = w.id;
+        int id = 0;   // the terminal the answer names
+        for (const ControlTerminal& ct : w.terminals)
+            if (ct.active) id = ct.id;
         // A tab of its own, as the Mac's: nothing is typed into a terminal
         // the user may be working in, so a busy one is no obstacle.
         if (right) {
-            if (!host.splitTerminal ||
-                !host.splitTerminal(w, titled ? a["title"].asString() : std::string())) {
+            id = host.splitTerminal ? host.splitTerminal(w, titled ? a["title"].asString() : std::string()) : 0;
+            if (!id) {
                 respond(Result::failure("no room to split the terminal"));
                 return;
             }
         }
-        if (right || (host.newTerminal &&
-                      host.newTerminal(w, titled ? a["title"].asString() : std::string()))) {
+        const int made = !right && host.newTerminal
+                             ? host.newTerminal(w, titled ? a["title"].asString() : std::string())
+                             : 0;
+        if (made) id = made;
+        if (right || made) {
             if (line.empty()) {
                 Json r = Json::object();
                 r.set("terminal", id);

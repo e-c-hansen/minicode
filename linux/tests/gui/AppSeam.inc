@@ -37,6 +37,7 @@ static MCGuiAppWindow appWindowParts(App* a) {
 #ifdef MINICODE_ENABLE_TERMINAL
     w.terminal = a->terminal;
     w.termDock = a->termDock;
+    w.controlId = a->controlId;
 #endif
 #ifdef MINICODE_ENABLE_BROWSER
     w.browser = a->browser;

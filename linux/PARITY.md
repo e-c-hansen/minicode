@@ -1466,8 +1466,9 @@ These may run in parallel.
   caret and scroll (`Groups.cpp`); Ctrl+Backslash, Ctrl+1 and Ctrl+2,
   Ctrl+Alt+Shift+Page Down and Up (GNOME has Ctrl+Alt+arrows); the bar
   drags; sessions keep the split. Viewers show in the focused group only.
-  HANDOFF.md item 61, `split_editor`.
-- [ ] **4.7 Terminal tabs and splits**, their own zoom, find, command marks
+  HANDOFF.md item 61, `split_editor`; its commands are in View > Editor
+  Layout on Linux.
+- [x] **4.7 Terminal tabs and splits**, their own zoom, find, command marks
   (D10: left out, the owner's call), and Run File. `TerminalLayout`, `RunFile`.
   *Tabs done:* `TerminalDock` over a `TabStrip` and a +: New, Next,
   Previous and Close Terminal, Rename, Move Left and Right, a drag, a close
@@ -1476,8 +1477,15 @@ These may run in parallel.
   `terminal_tabs`). *Splits done:* `TerminalGroup` panes over `TerminalLayout`
   (Split Terminal Ctrl+Shift+5, Split Terminal Down, keyboard resize and
   bar drags, closing a pane, `minicode split`; HANDOFF item 60,
-  `terminal_splits`). Left: find, command marks, per-terminal ids, the
-  window close question counting busy terminals.
+  `terminal_splits`). *Find done:* find in the terminal (VTE's search, a bar
+  at the pane's top right, no match count), Clear Terminal (Ctrl+L at the
+  prompt, no key) and Up and Down on a lone pane resizing the dock (HANDOFF
+  item 62, `terminal_find`). *Ids done:* every terminal has an id of its
+  own, made with it (`MINICODE_TERMINAL_ID`), found through `Terminal::byId`;
+  `state`, `notify`, `term-output`, `open-url`, the board's marks, the tab
+  strip's mark and the process monitor all use it (HANDOFF item 63,
+  `terminal_ids`). Left out by the owner's decision: command marks (D10).
+  Left: the window close question counting busy terminals.
 
 ## Reported by the owner
 

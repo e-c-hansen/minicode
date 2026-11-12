@@ -428,7 +428,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Add the next place the selected text occurs to the selection, or select the word at the cursor | Command D | Ctrl D |  |
 | Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | Command I | Ctrl I (edits in the editor so far) |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
-| Clear the terminal, its scrollback included | Command K |  |  |
+| Clear the terminal, its scrollback included | Command K | Clear Terminal in the Terminal menu or the command palette, which clears the screen and keeps the scrollback; it has no key, since Ctrl K is the shell's |  |
 | Close an agent's note (`minicode open --note`) in the editor | Escape, or its × |  |  |
 | Close every tab but the one on show | Option Command T | Close Other Tabs in the File menu or the tab's right click menu |  |
 | Close the active terminal | Control Shift W | Ctrl Alt Shift W |  |
@@ -452,7 +452,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Find with match case, whole word, or a regular expression, in the find bar or Find in Folder | Option Command C, Option Command W, Option Command R | Alt C, Alt W, Alt R |  |
 | Find only in the selected text, while the find bar has the keyboard | Option Command L | Alt L |  |
 | Find in the browser's page, while the browser has the keyboard (Return and Shift Return for the next and previous match, Escape to close) | Command F, then Command G, Shift Command G |  |  |
-| Find in the terminal, its scrollback included (Return and Shift Return for the next and previous match, Escape to close) | Command F, then Command G, Shift Command G |  |  |
+| Find in the terminal, its scrollback included (Return and Shift Return for the next and previous match, Escape to close) | Command F, then Command G, Shift Command G | Find… in the Edit menu or the command palette while the terminal has the keyboard, since Ctrl F is the shell's, then Return and Shift Return, and Escape to close; no count of matches |  |
 | Find next, find previous | Command G, Shift Command G | F3, Shift F3 |  |
 | Focus the browser's address bar, opening the browser if it is hidden | Command 3 |  |  |
 | Focus the editor (its left group when split), or the player when a video or audio file is open | Command 1 | Ctrl 1 |  |

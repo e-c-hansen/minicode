@@ -144,6 +144,7 @@ const std::vector<Action>& actions() {
         {"workbench.action.terminal.focusNext", "win.nextterminal", false},
         {"workbench.action.terminal.focusPrevious", "win.previousterminal", false},
         {"workbench.action.terminal.kill", "win.closeterminal", false},
+        {"workbench.action.terminal.clear", "win.clearterminal", false},
         {"workbench.action.terminal.rename", "win.renameterminal", false},
         {"minicode.terminal.moveLeft", "win.moveterminalleft", false},
         {"minicode.terminal.moveRight", "win.moveterminalright", false},
