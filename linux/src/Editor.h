@@ -284,6 +284,11 @@ public:
     // Ctrl+Shift+S: save the typeset PDF somewhere of the user's choosing.
     // False when the open file is not LaTeX.
     bool exportPdf(GtkWindow* parent);
+    // Ctrl+Alt+Shift+J: show the caret's line in the PDF (forward search). From
+    // an \\input file the main document is the `% !TEX root` comment's, else
+    // the open tab whose typeset read this file; its tab is shown. False when
+    // there is nothing to search from.
+    bool showLineInPdf();
 
     // A file's diff or a commit from the Source Control panel, read-only in
     // the editor's slot. Diffs and commits share one tab, as on the Mac.

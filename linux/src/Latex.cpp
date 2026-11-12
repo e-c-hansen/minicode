@@ -311,6 +311,7 @@ LatexPreview::~LatexPreview() {
     waiters_.clear();
     stopRun();
     if (debounce_) g_source_remove(debounce_);
+    if (forwardTimer_) g_source_remove(forwardTimer_);
     if (changedId_) g_signal_handler_disconnect(buffer_, changedId_);
     if (shutdownId_)
         if (GApplication* app = g_application_get_default())
@@ -951,6 +952,60 @@ void LatexPreview::answerWaiters(const std::string& error) {
     std::vector<PdfCb> waiters;
     waiters.swap(waiters_);
     for (PdfCb& w : waiters) w(error.empty() ? pdfBytes_ : nullptr, error);
+}
+
+static std::string realPathOf(const std::string& p) {
+    char* r = realpath(p.c_str(), nullptr);
+    std::string out = r ? r : p;
+    free(r);
+    return out;
+}
+
+bool LatexPreview::readsFile(const std::string& file) const {
+    if (!sync_.valid() || path_.empty()) return false;
+    if (realPathOf(file) == realPathOf(path_)) return true;
+    return sync_.tagForFile(file, dirName(path_), realPathOf) != 0;
+}
+
+void LatexPreview::forwardSearch(const std::string& file, int line) {
+    if (path_.empty() || line < 1) return;
+    std::shared_ptr<LatexPreview*> alive = alive_;
+    pdfForBuffer([alive, file, line](GBytes* pdf, const std::string& error) {
+        LatexPreview* self = *alive;
+        if (!self) return;
+        if (!pdf) { self->setStatus(error, false); return; }
+        self->doForward(file, line);
+    });
+}
+
+void LatexPreview::doForward(const std::string& file, int line) {
+    forwardFound_ = 0;
+    int tag = 0;
+    if (file.empty() || realPathOf(file) == realPathOf(path_)) tag = sync_.tagForPath(syncScratch_);
+    else tag = sync_.tagForFile(file, dirName(path_), realPathOf);
+    if (!tag) { setStatus("This file is not part of the typeset document", false); return; }
+    int found = 0;
+    const std::vector<SyncTexBox> boxes = sync_.boxesForLine(tag, line, &found);
+    if (boxes.empty() || found == 0) {
+        setStatus("Line " + std::to_string(line) + " put nothing on the page", false);
+        return;
+    }
+    forwardFound_ = found;
+    std::vector<PdfView::Highlight> hl;
+    for (const SyncTexBox& b : boxes) hl.push_back({b.page - 1, b.x, b.y, b.width, b.height});
+    pdf_->setHighlights(hl);
+    gtk_stack_set_visible_child_name(GTK_STACK(stack_), "pdf");
+    PdfView::Anchor a;
+    a.page = hl[0].page;
+    a.y = std::max(0.0, hl[0].y - 80);
+    pdf_->scrollTo(a);
+    if (forwardTimer_) g_source_remove(forwardTimer_);
+    forwardTimer_ = g_timeout_add(1500, [](gpointer p) -> gboolean {
+        LatexPreview* self = static_cast<LatexPreview*>(p);
+        self->forwardTimer_ = 0;
+        self->pdf_->setHighlights({});
+        return G_SOURCE_REMOVE;
+    }, this);
 }
 
 void LatexPreview::exportPdf(GtkWindow* parent) {

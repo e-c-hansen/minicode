@@ -118,6 +118,18 @@ public:
     std::string siblingPathForTest() const { return scratchPath(); }
     std::string outDirForTest() const { return outDir(); }
 
+    // Forward search (CLAUDE.md, "Forward search"): light the lines of text
+    // that `line` of `file` (the buffer's own file, or one it \\input) set,
+    // on the first page they reached (else the nearest line below or above
+    // within 40), scroll the page there and clear the light after 1.5 s.
+    // Typesets first when the PDF is not of the buffer, and does it when the
+    // PDF arrives. `file` empty means the buffer's file.
+    void forwardSearch(const std::string& file, int line);
+    // Whether the PDF on screen was typeset from reading `file` (an \\input).
+    bool readsFile(const std::string& file) const;
+    // The line the last forward search lit (0 none), for tests.
+    int forwardFoundLine() const { return forwardFound_; }
+
     // State, for tests and the status line.
     PdfView* pdfView() const { return pdf_; }
     bool busy() const { return proc_ != nullptr || debounce_ != 0; }
@@ -182,6 +194,10 @@ private:
     GtkWidget* warnBox_ = nullptr;
     GtkWidget* logScroll_ = nullptr;
     PdfView*   pdf_     = nullptr;
+
+    void doForward(const std::string& file, int line);
+    guint       forwardTimer_ = 0;
+    int         forwardFound_ = 0;
 
     GtkWidget* popover_  = nullptr;
     GtkWidget* popLabel_ = nullptr;

@@ -3790,6 +3790,26 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   not resolve); the pane's width is the paned's default and is not kept;
   the page is not kept across a switch to another tab.
 
+### 55. LaTeX forward search (done, November 2026; `PARITY.md` item 4.4, second part)
+
+Ctrl+Alt+Shift+J (`latex-workshop.synctex`, "Show Line in PDF"; LaTeX
+Workshop's Ctrl+Alt+J is Unfold All's here, an Editor command, so Shift joins
+it) lights the caret's line in the PDF. `Editor::showLineInPdf` finds the
+document to search: the caret file's `% !TEX root` comment
+(`LatexLog::rootComment`, realpath), else, for a file without
+`\documentclass`, the open tab whose preview's typeset read it
+(`LatexPreview::readsFile`, `SyncTexIndex::tagForFile` with realpath on both
+sides); that tab is shown. `LatexPreview::forwardSearch(file, line)` goes
+through `pdfForBuffer`, so a stale PDF is typeset first and the light comes
+when it arrives; `boxesForLine` gives the boxes (the nearest line below, then
+above, within 40, when the line put nothing), `PdfView::setHighlights` draws
+them as translucent rectangles over the page (in `snapshotPage`), the page is
+scrolled to the first box with 80 points above it, and the light goes after
+1.5 s. Check: `latex_forward`, a stand-in tectonic copying the committed
+`tests/latex/fixtures/main.*` typeset (Input paths rewritten by `sed`).
+Not done: the Mac's menu item (the port has no View entry for it; the hints
+panel has a row).
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

@@ -1422,13 +1422,16 @@ These may run in parallel.
   Scroll sync, editing from the pane and the tables' first-render cost remain.
 - [ ] **4.3 Math, Mermaid, and Export as HTML.** `MathTex`, `MermaidDiagram`,
   `MarkdownHtml`.
-- [ ] **4.4 LaTeX problems, warnings, and forward search.** `LatexLog`,
+- [x] **4.4 LaTeX problems, warnings, and forward search.** `LatexLog`,
   `LatexScratch`.
   *Problems and warnings done:* a failed typeset's problems are rows that
   open their file at the line, gutter marks (`latex-error`, `latex-warning`)
   stay until an edit, a good typeset lists its warnings behind a bar button,
   and the output folders and records follow `LatexScratch`
-  (`HANDOFF.md` item 51, `make` `latex_problems`). Forward search remains.
+  (`HANDOFF.md` item 51, `make` `latex_problems`). *Done:* forward search
+  (Ctrl+Alt+Shift+J, since Ctrl+Alt+J is Unfold All's; lights the caret's
+  line, also from an `\input` file via its root comment or the tab that read
+  it; HANDOFF.md item 55, `latex_forward`).
 - [x] **4.5 Browser tabs, find in the page, and page zoom.** `BrowserTabs`.
   *Tabs done:* a strip with +, drag and middle-click close, two live web
   views with the rest suspended, Ctrl+T/Ctrl+W/Ctrl+PageDown/Alt+N while the

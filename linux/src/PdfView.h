@@ -130,11 +130,19 @@ public:
     // it is public for tests and for anything that needs a page as a bitmap.
     static cairo_surface_t* renderPage(PopplerPage* page, int pixelWidth);
 
+    // Boxes drawn over the pages (forward search): 0-based page, then the
+    // rectangle in PDF points from the page's top-left. Replaces the last set.
+    struct Highlight { int page = 0; double x = 0, y = 0, w = 0, h = 0; };
+    void setHighlights(const std::vector<Highlight>& boxes);
+    const std::vector<Highlight>& highlights() const { return highlights_; }
+
     // Draws page i into its widget, w by h logical pixels. Called by the page
     // widgets' snapshot, and by nothing else.
     void snapshotPage(int i, GtkSnapshot* s, int w, int h);
 
 private:
+    void snapshotPageContent(int i, GtkSnapshot* s, int w, int h);
+    std::vector<Highlight> highlights_;
     // Part of a page rendered at full resolution, for a page whose whole
     // bitmap had to be rendered at less (see renderOne). Its rectangle is in
     // the page's logical pixels at the wPx it was made for.

@@ -1188,6 +1188,55 @@ bool Editor::exportPdf(GtkWindow* parent) {
 #endif
 }
 
+bool Editor::showLineInPdf() {
+#ifdef MINICODE_ENABLE_PDF
+    Document* d = active_;
+    if (!d || !d->isLatex() || d->path().empty()) return false;
+    GtkTextIter a, b, ins;
+    gtk_text_buffer_get_bounds(d->buffer(), &a, &b);
+    char* raw = gtk_text_buffer_get_text(d->buffer(), &a, &b, FALSE);
+    const std::string text = raw;
+    g_free(raw);
+    gtk_text_buffer_get_iter_at_mark(d->buffer(), &ins, gtk_text_buffer_get_insert(d->buffer()));
+    const int line = gtk_text_iter_get_line(&ins) + 1;
+    const std::string file = d->path();
+
+    auto real = [](const std::string& p) {
+        char* r = realpath(p.c_str(), nullptr);
+        std::string out = r ? r : p;
+        free(r);
+        return out;
+    };
+    std::string mainPath;
+    const std::string root = LatexLog::rootComment(text);
+    if (!root.empty()) {
+        mainPath = root[0] == '/' ? root : std::string(g_path_get_dirname(file.c_str())) + "/" + root;
+        mainPath = real(mainPath);
+    } else if (text.find("\\documentclass") == std::string::npos) {
+        for (Document* o : tabs_)
+            if (o != d && o->latexPreview() && o->latexPreview()->readsFile(file)) {
+                mainPath = o->path();
+                break;
+            }
+    }
+    if (mainPath.empty() || mainPath == real(file)) mainPath = file;
+    if (mainPath != file) {
+        Document* m = documentFor(mainPath);
+        if (m) activate(m);
+        else if (!openFile(mainPath, EditorTabs::OpenFrom::Other)) return false;
+    }
+    Document* m = active_;
+    if (!m || !m->isLatex()) return false;
+    LatexPreview* l = makeLatex(m);
+    l->setPath(m->path());
+    showLatex(true, false);
+    l->forwardSearch(file, line);
+    return true;
+#else
+    return false;
+#endif
+}
+
 void Editor::onMediaChanged(void* selfp) {
     static_cast<Editor*>(selfp)->titleChanged();   // page count may differ
 }
