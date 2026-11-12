@@ -354,6 +354,11 @@ MC_GUI_SUITE(shell_integration) {
         GCHECK(gCli->exitCode == 0);
         GCHECK(gCli->out.find("echo hi") != std::string::npos);
         GCHECK(gCli->out.find("echo hi\nhi") != std::string::npos);
+        // and the newest row after them, the prompt the line came back to
+        // (it was left out: VTE's end column is exclusive on the last row)
+        const size_t at = gCli->out.find("echo hi\nhi");
+        const std::string after = at == std::string::npos ? "" : gCli->out.substr(at + 10);
+        GCHECK(after.find_first_not_of(" \n") != std::string::npos);
     });
     // ---- the half-typed line (HANDOFF item 48): set aside, then given back
     MCGuiStep("the user's own bind still works", [] {
@@ -436,7 +441,12 @@ MC_GUI_SUITE(shell_integration) {
         GAction* a = g_action_map_lookup_action(G_ACTION_MAP(MCGuiApp().window), "runfile");
         if (a) g_action_activate(a, nullptr);   // at the prompt now
     });
-    MCGuiWait("Run File ran the file", 15, [] { return MCGuiFileExists(gHome + "/rf.out") && sh().atPrompt; });
+    // The counter too: the file can be on disk before VTE has read the line's
+    // start mark, while the prompt before it still says atPrompt (a full run
+    // on two cores, November 2026).
+    MCGuiWait("Run File ran the file", 15, [] {
+        return MCGuiFileExists(gHome + "/rf.out") && sh().atPrompt && sh().started > gBefore.started + 1;
+    });
     MCGuiStep("it ran through the shell as a command", [] {
         GCHECK_EQ_STR(MCGuiReadFile(gHome + "/rf.out"), "runfile-ran\n");
         GCHECK(sh().started == gBefore.started + 2);

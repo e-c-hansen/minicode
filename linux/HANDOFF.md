@@ -3512,6 +3512,20 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
 - **Checked by** the `shell_integration` GUI suite and `make test`'s
   `shell:vte-mark`, `shell:vte-state`, `shell:zshenv-vte`,
   `bash:integration` and `zsh:vte` groups (`BUILD-LINUX.md`).
+- **Trap: bash's screen after a width change.** VTE rewraps lines when the
+  terminal's columns change (the terminal's zoom), and bash redraws its
+  line for the old wrapping: with a prompt or line that wraps, the prompt
+  lands over earlier output (`echo cols=eric@...`) or everything below the
+  old prompt is erased. CI's 93-column prompt on 104 columns, after `zoom`,
+  left `processes` waiting 30 s for typed text that never showed on the
+  screen (an `MC_GUI_ROOT` 44 characters long gives CI's prompt width here
+  and shows the garbled screen, though not that failure), with
+  the lines typed there since `folding` gone; f2efeaf passed only because
+  "true" was elsewhere on the screen. A
+  check after another suite has used the terminal runs its line with
+  `runLine` and reads the marks, not the screen. The same look found
+  `recentText` (`term-output`) leaving out the newest row: VTE's end
+  column is exclusive on the last row, so -1 read nothing of it.
 - **Not done (part two)**: `term` and `term-output`, Run File's busy check
   and `onCommandFinished` from the marks instead of the foreground group's
   poll, an exec into another shell (the Mac's `_integrated` NO), and the

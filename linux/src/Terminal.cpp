@@ -1073,7 +1073,11 @@ std::string Terminal::recentText(int lines) {
     // cutting to the last `lines` lines keeps a wrapped one whole.
     const long start = std::max(lower, upper - (long)lines - 200);
     gsize len = 0;
-    char* raw = vte_terminal_get_text_range_format(t, VTE_FORMAT_TEXT, start, 0, upper - 1, -1, &len);
+    // The end column is exclusive on the last row (VTE's get_text): -1 there
+    // left out the newest row, the cursor's, so `term-output` lost the line
+    // a command printed without a newline and the prompt after the output.
+    char* raw = vte_terminal_get_text_range_format(t, VTE_FORMAT_TEXT, start, 0, upper - 1,
+                                                   vte_terminal_get_column_count(t), &len);
     std::string text = raw ? std::string(raw, len) : std::string();
     g_free(raw);
     trimEnd(text);

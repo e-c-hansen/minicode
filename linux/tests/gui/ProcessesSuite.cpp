@@ -178,37 +178,23 @@ int pidWithCommand(int window, const std::string& what) {
 }  // namespace
 
 MC_GUI_SUITE(processes) {
-    MCGuiStep("a server typed into the app's terminal and run", [] {
+    // Run as `minicode term --run` and Run File run a line (runLine): it
+    // waits for the shell's prompt, sets aside a line another suite left
+    // typed there (install_hints' "uv tool install ..."), and types this one
+    // with Return. Nothing here reads the screen, which earlier suites leave
+    // as bash redrew it: after the terminal's width changed under a wrapped
+    // line (zoom), bash drew later lines over or under the old ones, and on
+    // CI a line typed here never showed (November 2026).
+    auto ran = std::make_shared<std::string>("(not yet)");
+    MCGuiStep("a server run in the app's terminal", [ran] {
         Terminal* t = MCGuiApp().terminal;
         GCHECK(t != nullptr);
         if (!t) return;
-        // Other suites leave a typed, unrun line at the prompt (install
-        // hints' "uv tool install ..."): make the terminal, then clear the line.
-        t->typeText("true");
+        t->runLine("python3 -m http.server 0 --bind 127.0.0.1",
+                   [ran](const std::string& why) { *ran = why; });
     });
-    MCGuiWait("the terminal has its shell", 30, [] {
-        VteTerminal* vte = findVte(MCGuiApp().terminal->widget());
-        if (!vte || MCGuiApp().terminal->shellPid() <= 0) return false;
-        char* text = vte_terminal_get_text_format(vte, VTE_FORMAT_TEXT);
-        const bool there = text && std::string(text).find("true") != std::string::npos;
-        g_free(text);
-        return there;
-    });
-    MCGuiStep("the line is cleared and the server typed", [] {
-        vte_terminal_feed_child(findVte(MCGuiApp().terminal->widget()), "\x15", 1);   // Ctrl+U
-        MCGuiApp().terminal->typeText("python3 -m http.server 0 --bind 127.0.0.1");
-    });
-    MCGuiWait("the command is at the prompt", 30, [] {
-        VteTerminal* vte = findVte(MCGuiApp().terminal->widget());
-        if (!vte) return false;
-        char* text = vte_terminal_get_text_format(vte, VTE_FORMAT_TEXT);
-        const bool there = text && std::string(text).find("http.server 0") != std::string::npos;
-        g_free(text);
-        return there;
-    });
-    MCGuiStep("Return", [] {
-        vte_terminal_feed_child(findVte(MCGuiApp().terminal->widget()), "\n", 1);
-    });
+    MCGuiWait("it is typed and entered", 30, [ran] { return *ran != "(not yet)"; });
+    MCGuiStep("with no refusal", [ran] { GCHECK_EQ_STR(*ran, ""); });
     MCGuiStep("processes started elsewhere: one that ends on SIGTERM, one that ignores it", [] {
         // The shell exits at once, so the sleeps' parent is gone and the
         // harness's subreaper holds them: outside minicode's own tree.
