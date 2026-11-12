@@ -5,6 +5,8 @@
 
 #include <webkit/webkit.h>
 #include <algorithm>
+#include <cmath>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -99,7 +101,74 @@ Browser::Browser(const std::string& homeUrl) : home_(homeUrl) {
     gtk_widget_set_vexpand(stack_, TRUE);
     userSlot_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_stack_add_named(GTK_STACK(stack_), userSlot_, "yours");
-    gtk_box_append(GTK_BOX(root_), stack_);
+    // The find bar, over the page's top right (an overlay: the page keeps its
+    // size and the bar covers some of its corner, as on the Mac).
+    findBox_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(findBox_, "minicode-browser-bar");
+    gtk_widget_set_halign(findBox_, GTK_ALIGN_END);
+    gtk_widget_set_valign(findBox_, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(findBox_, 4);
+    gtk_widget_set_margin_end(findBox_, 12);
+    findEntry_ = gtk_search_entry_new();
+    gtk_widget_set_size_request(findEntry_, 200, -1);
+    findCount_ = gtk_label_new("");
+    gtk_widget_set_size_request(findCount_, 80, -1);
+    GtkWidget* fprev = gtk_button_new_from_icon_name("go-up-symbolic");
+    GtkWidget* fnext = gtk_button_new_from_icon_name("go-down-symbolic");
+    GtkWidget* fclose = gtk_button_new_from_icon_name("window-close-symbolic");
+    gtk_widget_set_tooltip_text(fprev, "Previous match (Shift+Enter)");
+    gtk_widget_set_tooltip_text(fnext, "Next match (Enter)");
+    gtk_widget_set_tooltip_text(fclose, "Close (Esc)");
+    for (GtkWidget* b : {fprev, fnext, fclose}) {
+        gtk_widget_add_css_class(b, "flat");
+        gtk_widget_set_focus_on_click(b, FALSE);
+    }
+    gtk_box_append(GTK_BOX(findBox_), findEntry_);
+    gtk_box_append(GTK_BOX(findBox_), findCount_);
+    gtk_box_append(GTK_BOX(findBox_), fprev);
+    gtk_box_append(GTK_BOX(findBox_), fnext);
+    gtk_box_append(GTK_BOX(findBox_), fclose);
+    gtk_widget_set_visible(findBox_, FALSE);
+    GtkWidget* overlay = gtk_overlay_new();
+    gtk_widget_set_vexpand(overlay, TRUE);
+    gtk_overlay_set_child(GTK_OVERLAY(overlay), stack_);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), findBox_);
+    gtk_box_append(GTK_BOX(root_), overlay);
+    g_signal_connect(findEntry_, "search-changed", G_CALLBACK(+[](GtkSearchEntry*, gpointer p) {
+        static_cast<Browser*>(p)->runFind();
+    }), this);
+    g_signal_connect(findEntry_, "activate", G_CALLBACK(+[](GtkSearchEntry*, gpointer p) {
+        static_cast<Browser*>(p)->findNext(true);
+    }), this);
+    g_signal_connect(findEntry_, "next-match", G_CALLBACK(+[](GtkSearchEntry*, gpointer p) {
+        static_cast<Browser*>(p)->findNext(true);
+    }), this);
+    g_signal_connect(findEntry_, "previous-match", G_CALLBACK(+[](GtkSearchEntry*, gpointer p) {
+        static_cast<Browser*>(p)->findNext(false);
+    }), this);
+    g_signal_connect(findEntry_, "stop-search", G_CALLBACK(+[](GtkSearchEntry*, gpointer p) {
+        static_cast<Browser*>(p)->hideFind();
+    }), this);
+    GtkEventController* fkeys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(fkeys, GTK_PHASE_CAPTURE);
+    g_signal_connect(fkeys, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey*, guint key, guint,
+                                                           GdkModifierType mods, gpointer p) -> gboolean {
+        if ((key == GDK_KEY_Return || key == GDK_KEY_KP_Enter) && (mods & GDK_SHIFT_MASK)) {
+            static_cast<Browser*>(p)->findNext(false);
+            return TRUE;
+        }
+        return FALSE;
+    }), this);
+    gtk_widget_add_controller(findEntry_, fkeys);
+    g_signal_connect(fprev, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
+        static_cast<Browser*>(p)->findNext(false);
+    }), this);
+    g_signal_connect(fnext, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
+        static_cast<Browser*>(p)->findNext(true);
+    }), this);
+    g_signal_connect(fclose, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
+        static_cast<Browser*>(p)->hideFind();
+    }), this);
     // Nothing to go back or forward to until there is a page.
     gtk_widget_set_sensitive(back_, FALSE);
     gtk_widget_set_sensitive(fwd_, FALSE);
@@ -218,6 +287,7 @@ int Browser::newTab(const std::string& url, bool show) {
 void Browser::selectTab(int i) {
     if (i < 0 || i >= (int)tabs_.size()) return;
     showAgentPage(false);
+    if (i != active_) hideFind();
     active_ = i;
     tabs_[(size_t)i]->used = ++clock_;
     applyLive();
@@ -311,6 +381,7 @@ void Browser::suspend(Tab* t) {
     delete t->probe;   // stops watching the view before it goes
     t->probe = nullptr;
     g_signal_handlers_disconnect_by_data(t->web, t);
+    g_signal_handlers_disconnect_by_data(webkit_web_view_get_find_controller(WEBKIT_WEB_VIEW(t->web)), t);
     gtk_box_remove(GTK_BOX(userSlot_), t->web);   // the last reference: WebKit's processes end
     t->web = nullptr;
 }
@@ -320,6 +391,7 @@ void Browser::destroyTab(Tab* t) {
         delete t->probe;
         t->probe = nullptr;
         g_signal_handlers_disconnect_by_data(t->web, t);
+        g_signal_handlers_disconnect_by_data(webkit_web_view_get_find_controller(WEBKIT_WEB_VIEW(t->web)), t);
         gtk_box_remove(GTK_BOX(userSlot_), t->web);
         t->web = nullptr;
     }
@@ -345,6 +417,11 @@ void Browser::onTabTitle(GObject* obj, GParamSpec*, gpointer tp) {
 void Browser::onTabLoad(WebKitWebView* wv, WebKitLoadEvent ev, gpointer tp) {
     Tab* t = static_cast<Tab*>(tp);
     Browser* self = t->owner;
+    if (ev == WEBKIT_LOAD_COMMITTED) {
+        const char* u = webkit_web_view_get_uri(wv);
+        const double z = siteZoom(siteOf(u ? u : ""));
+        if (std::abs(webkit_web_view_get_zoom_level(wv) - z) > 0.001) webkit_web_view_set_zoom_level(wv, z);
+    }
     if (ev == WEBKIT_LOAD_COMMITTED)
         StartupLog::once("browser-page", "browser: first page committed (%s)",
                          webkit_web_view_get_uri(wv) ? webkit_web_view_get_uri(wv) : "?");
@@ -394,6 +471,18 @@ void Browser::adoptView(Tab* t, GtkWidget* web) {
     g_signal_connect(web, "notify::uri", G_CALLBACK(onTabUri), t);
     g_signal_connect(web, "notify::title", G_CALLBACK(onTabTitle), t);
     g_signal_connect(web, "load-changed", G_CALLBACK(onTabLoad), t);
+    WebKitFindController* fc = webkit_web_view_get_find_controller(WEBKIT_WEB_VIEW(web));
+    g_signal_connect(fc, "counted-matches", G_CALLBACK(+[](WebKitFindController*, guint n, gpointer tp) {
+        Tab* tab = static_cast<Tab*>(tp);
+        Browser* b = tab->owner;
+        if (tab != b->current() || !b->findShown()) return;
+        gtk_label_set_text(GTK_LABEL(b->findCount_), n == 0 ? "No results" : n == 1 ? "1 match" : (std::to_string(n) + " matches").c_str());
+    }), t);
+    g_signal_connect(fc, "failed-to-find-text", G_CALLBACK(+[](WebKitFindController*, gpointer tp) {
+        Tab* tab = static_cast<Tab*>(tp);
+        Browser* b = tab->owner;
+        if (tab == b->current() && b->findShown()) gtk_label_set_text(GTK_LABEL(b->findCount_), "No results");
+    }), t);
     // The page's right click: WebKit's items, then Adjust Settings….
     g_signal_connect(web, "context-menu", G_CALLBACK(+[](WebKitWebView* wv, WebKitContextMenu* m,
                                                          WebKitHitTestResult*, gpointer) -> gboolean {
@@ -566,11 +655,132 @@ void Browser::focusUrlBar() {
     if (entry_) gtk_widget_grab_focus(entry_);
 }
 
+// ---------------------------------------------------------------- zoom per site
+
+namespace {
+std::map<std::string, double>& siteZooms() {
+    static std::map<std::string, double> m;
+    static bool loaded = false;
+    if (!loaded) {
+        loaded = true;
+        gchar* text = nullptr;
+        std::string path = std::string(g_get_user_state_dir()) + "/minicode/browser-zoom.txt";
+        if (g_file_get_contents(path.c_str(), &text, nullptr, nullptr)) {
+            std::string s = text;
+            g_free(text);
+            size_t pos = 0;
+            while (pos < s.size()) {
+                size_t nl = s.find('\n', pos);
+                if (nl == std::string::npos) nl = s.size();
+                std::string line = s.substr(pos, nl - pos);
+                pos = nl + 1;
+                size_t tab = line.find('\t');
+                if (tab == std::string::npos) continue;
+                double z = g_ascii_strtod(line.c_str() + tab + 1, nullptr);
+                if (z >= 0.25 && z <= 5.0) m[line.substr(0, tab)] = z;
+            }
+        }
+    }
+    return m;
+}
+void saveSiteZooms() {
+    std::string out;
+    for (const auto& kv : siteZooms()) {
+        char num[32];
+        g_ascii_formatd(num, sizeof num, "%.4g", kv.second);
+        out += kv.first + "\t" + num + "\n";
+    }
+    std::string dir = std::string(g_get_user_state_dir()) + "/minicode";
+    g_mkdir_with_parents(dir.c_str(), 0700);
+    g_file_set_contents((dir + "/browser-zoom.txt").c_str(), out.data(), (gssize)out.size(), nullptr);
+}
+}  // namespace
+
+std::string Browser::siteOf(const std::string& url) {
+    GUri* u = g_uri_parse(url.c_str(), G_URI_FLAGS_PARSE_RELAXED, nullptr);
+    if (!u) return "";
+    std::string scheme = g_uri_get_scheme(u) ? g_uri_get_scheme(u) : "";
+    const char* h = g_uri_get_host(u);
+    std::string site = h && *h ? h : (scheme == "file" ? "file" : "");
+    g_uri_unref(u);
+    return site;
+}
+
+double Browser::siteZoom(const std::string& host) {
+    auto& m = siteZooms();
+    auto it = m.find(host);
+    return it == m.end() ? 1.0 : it->second;
+}
+
 void Browser::zoom(int step) {
     GtkWidget* w = webView();
     if (!w) return;   // no page yet
     WebKitWebView* wv = WEBKIT_WEB_VIEW(w);
-    webkit_web_view_set_zoom_level(wv, ViewZoom::pageStep(webkit_web_view_get_zoom_level(wv), step));
+    const double level = ViewZoom::pageStep(webkit_web_view_get_zoom_level(wv), step);
+    webkit_web_view_set_zoom_level(wv, level);
+    const char* uri = webkit_web_view_get_uri(wv);
+    const std::string site = siteOf(uri ? uri : "");
+    if (site.empty()) return;
+    if (level > 0.995 && level < 1.005) siteZooms().erase(site);
+    else siteZooms()[site] = level;
+    saveSiteZooms();
+    for (Tab* t : tabs_) {   // the site's other pages follow
+        if (!t->web || t->web == w) continue;
+        const char* u = webkit_web_view_get_uri(WEBKIT_WEB_VIEW(t->web));
+        if (siteOf(u ? u : "") == site) webkit_web_view_set_zoom_level(WEBKIT_WEB_VIEW(t->web), level);
+    }
+}
+
+// ---------------------------------------------------------------- find in the page
+
+bool Browser::findShown() const { return findBox_ && gtk_widget_get_visible(findBox_); }
+
+std::string Browser::findCountText() const {
+    return findCount_ ? gtk_label_get_text(GTK_LABEL(findCount_)) : "";
+}
+
+void Browser::showFind() {
+    if (!webView()) return;
+    gtk_widget_set_visible(findBox_, TRUE);
+    gtk_widget_grab_focus(findEntry_);
+    gtk_editable_select_region(GTK_EDITABLE(findEntry_), 0, -1);
+    runFind();
+}
+
+void Browser::hideFind() {
+    if (!findShown()) return;
+    for (Tab* t : tabs_)
+        if (t->web) webkit_find_controller_search_finish(webkit_web_view_get_find_controller(WEBKIT_WEB_VIEW(t->web)));
+    gtk_widget_set_visible(findBox_, FALSE);
+    gtk_label_set_text(GTK_LABEL(findCount_), "");
+    if (GtkWidget* w = webView()) gtk_widget_grab_focus(w);
+}
+
+void Browser::runFind() {
+    GtkWidget* w = webView();
+    if (!w) return;
+    WebKitFindController* fc = webkit_web_view_get_find_controller(WEBKIT_WEB_VIEW(w));
+    const char* q = gtk_editable_get_text(GTK_EDITABLE(findEntry_));
+    if (!q || !*q) {
+        webkit_find_controller_search_finish(fc);
+        gtk_label_set_text(GTK_LABEL(findCount_), "");
+        return;
+    }
+    const guint32 opts = (guint32)(WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE | WEBKIT_FIND_OPTIONS_WRAP_AROUND);
+    webkit_find_controller_search(fc, q, opts, 10000);
+    webkit_find_controller_count_matches(fc, q, opts, 10000);   // counted-matches: the label
+}
+
+void Browser::findNext(bool forward) {
+    GtkWidget* w = webView();
+    if (!w) return;
+    if (!findShown()) {
+        showFind();
+        return;
+    }
+    WebKitFindController* fc = webkit_web_view_get_find_controller(WEBKIT_WEB_VIEW(w));
+    if (forward) webkit_find_controller_search_next(fc);
+    else webkit_find_controller_search_previous(fc);
 }
 
 double Browser::zoomLevel() const {

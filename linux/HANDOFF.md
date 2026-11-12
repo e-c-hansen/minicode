@@ -3667,6 +3667,35 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   the part's buffer when it is open, and a folder left by a rename of the
   document (`setPath` keeping the pages) waits for the next launch's sweep.
 
+### 53. Find in the page and page zoom per site (done, November 2026; `PARITY.md` item 4.5, second part)
+
+- **Find**: `Browser::showFind` opens a small bar over the page's top right
+  (an overlay in the pane: a `GtkSearchEntry`, the count, previous, next, x)
+  on `WebKitFindController`: typing searches (case-insensitive, wrapping)
+  and also asks `count_matches`, because `counted-matches` fires only for
+  that, never for `search`; the label is "N matches" or "No results".
+  Enter and Shift+Enter (the Mac's) step, Esc or x closes it and the page
+  gets the keyboard back. It closes on a tab switch.
+- **Keys** (D1, no new command): Ctrl+F, F3 and Shift+F3 are the editor's
+  Find actions; `act_find`, `act_find_next` and `act_find_previous` in
+  `main.cpp` hand them to the browser when `browserHasKeyboard` (page or
+  address bar) and it has a page, else the editor's bar as before.
+- **Zoom per site**: the page zoom keys already worked; now the level is kept
+  by site (`Browser::siteOf`: the host, "file" for local files, nothing for
+  about:blank) in `$XDG_STATE_HOME/minicode/browser-zoom.txt` (host, a tab character,
+  level; 100% forgets the site), applied when a page commits, so any tab and
+  any launch opens a site at its zoom, and the site's other live tabs follow.
+  Zoom to Fit Width is not ported (the registry has the Mac's command; the
+  GTK port has no row for it yet).
+- **Checked by** `browser_find` (`BrowserFindSuite.cpp`, real keys): Ctrl+F
+  in the page and from the address bar opens the page's bar and not the
+  editor's, the count, stepping, Esc returning the keyboard, the editor's
+  Ctrl+F unchanged, zoom following a new tab and a tab switch, and the state
+  file. A relaunch is not run.
+- **Traps**: `counted-matches` never fires without `count_matches`;
+  zoom set by the user must be written before the commit handler reapplies
+  the site's.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**
