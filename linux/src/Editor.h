@@ -90,7 +90,7 @@ public:
     void addBar(GtkWidget* w);
 
     // The GtkTextView, and the buffer it shows: the active document's source,
-    // its Markdown page, a message, or the welcome text with no tab open.
+    // its Markdown page, a message, or the empty editor with no tab open.
     GtkWidget*     textView() const { return view_; }
     GtkTextBuffer* buffer() const { return buffer_; }
     // The view's own drawing passes, the ruler and the line-number gutter
@@ -413,7 +413,7 @@ private:
     void stash();                 // the active tab leaves the screen: its place kept
     void capturePlace(Document* d);   // where the view is, into the tab on show's place
     EditorTabs::ClosedTab closedTabOf(Document* d) const;   // from its place as kept
-    void showActive();            // the active tab (or the welcome text) on screen
+    void showActive();            // the active tab (or the empty editor) on screen
     void setViewBuffer(GtkTextBuffer* b, bool prose, bool editable);
     void showSource(Document* d);
     void restorePlace(Document* d);

@@ -1531,6 +1531,33 @@ fixed on its own branch, with a GUI check that fails without the fix.
   (item 24 has the commands), for GTK's default renderer, `gl`, `vulkan`
   and `cairo`, to see what the GPU renderer's first frame and the desktop
   add; and whether the window now opens in well under a second there.
+- [x] **R4. A useless welcome page instead of an empty editor**
+  (2026-11-11). With no file to show, the window showed hard-coded text
+  ("MiniCode — a native C++ editor, now on GTK4 ..."). The Mac shows an
+  empty read-only editor there. *Done* (`HANDOFF.md` item 47): the editor's
+  buffer for no tab is empty, with no text anywhere (a new window, the last
+  tab closed, Open Folder), read-only, with no gutter, as before. The
+  `owner_reports` suite checks a new window and the state after Ctrl+W on
+  the last tab; the `tabs` suite's welcome-text check now expects an empty
+  buffer.
+- [x] **R5. Hiding the editor must never bring out a panel the owner hid**
+  (2026-11-11, the PPA's 1.5.15): "I expect it to expand whatever the
+  remaining unhidden panels are to fill the space, not to bring one out
+  that was previously hidden ... If that panel was closed, I would have
+  expected a 'bare' panel showing nothing ... at no point would I want
+  something I had hidden to assume the window." *Checked on main, every way,
+  with the tree shown and the terminal, browser and Problems hidden:* Toggle
+  Editor, Toggle Editor then each of the terminal, browser and Problems shown
+  and hidden, Ctrl+W on the last tab (the editor stays, empty), Maximize
+  Pane and back, and the terminal's bar dragged to the top then the terminal
+  hidden were already right: the tree fills the window and nothing hidden
+  comes back (`collapseRightAreaIfEmpty`, 2026-11-09). *Fixed:* with the
+  tree hidden too, `collapseRightAreaIfEmpty` showed the sidebar again;
+  now the area is bare and stays so until something is toggled. Toggle
+  Sidebar showing the tree into an empty right side now gives it the window
+  (it had left a grey, empty area beside a 240 px tree). Without the fixes
+  the suite fails 8 checks.
+  The `owner_reports` suite presses the real keys and drags the real bar.
 
 ## After each stage
 

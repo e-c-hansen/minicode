@@ -294,6 +294,8 @@ void WindowLayout::toggleSidebar() {
     } else {
         sidebarVisible_ = true;
         gtk_widget_set_visible(sidebar_, TRUE);
+        // Nothing on the right: the tree has the window.
+        collapseRightAreaIfEmpty();
     }
     if (onChanged) onChanged();
 }
@@ -347,12 +349,10 @@ void WindowLayout::showRightArea() {
 
 void WindowLayout::collapseRightAreaIfEmpty() {
     if (!RightArea::empty(state_, parts_) || rightCollapsed() || problemsShown_) return;
-    if (sidebarVisible_) sidebarWidth_ = gtk_paned_get_position(GTK_PANED(hpaned_));
-    // Never a window with nothing in it: a hidden sidebar comes back.
-    if (!sidebarVisible_) {
-        sidebarVisible_ = true;
-        gtk_widget_set_visible(sidebar_, TRUE);
-    }
+    // The sidebar hidden too: a bare, empty area. A pane the user hid never
+    // comes back to fill the window (PARITY.md R5), the sidebar included.
+    if (!sidebarVisible_) return;
+    sidebarWidth_ = gtk_paned_get_position(GTK_PANED(hpaned_));
     int maxPos = 0;
     g_object_get(hpaned_, "max-position", &maxPos, NULL);
     adjustingPaned_ = true;

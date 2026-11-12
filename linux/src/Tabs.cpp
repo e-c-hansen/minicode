@@ -445,7 +445,7 @@ void Editor::closeAllTabs() {
     diffDoc_ = nullptr;
     const std::vector<Document*> all = tabs_;
     tabs_.clear();
-    showActive();   // the welcome text, with no buffer of theirs on show
+    showActive();   // the empty editor, with no buffer of theirs on show
     for (Document* d : all) destroy(d);
     { if (onActiveChanged) onActiveChanged(); if (notes_) notes_->activeChanged(); }
 }
