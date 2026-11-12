@@ -91,6 +91,7 @@ void DragBar(double dx) {
 
 std::string kA;
 int gMirrorTop = -1;
+int gClickLine = -1;
 double gLeft = 0;
 size_t gWindows = 0;
 
@@ -181,14 +182,23 @@ MC_GUI_SUITE(split_editor) {
     // ---- a click in the other group focuses it, the caret where it landed
     MCGuiStep("a click on the left group's text", [] {
         gMirrorTop = TopLine(ed()->mirrorView());
+        // The line under the click, asked of the view: the font (an earlier
+        // suite's zoom) decides how many lines 40 px is.
+        GtkTextView* mv = GTK_TEXT_VIEW(ed()->mirrorView());
+        int bx = 0, by = 0;
+        gtk_text_view_window_to_buffer_coords(mv, GTK_TEXT_WINDOW_WIDGET, 80, 40, &bx, &by);
+        GtkTextIter at;
+        gtk_text_view_get_line_at_y(mv, &at, by, nullptr);
+        gClickLine = gtk_text_iter_get_line(&at);
         MCGuiClick(ed()->mirrorView(), 80, 40);
     });
     MCGuiWait("the left group has the keyboard", 5, [] { return ed()->focusedGroup() == 0 && Keyboard(); });
     MCGuiStep("the caret on the line clicked", [] {
         GtkTextIter it;
         gtk_text_buffer_get_iter_at_mark(Buf(), &it, gtk_text_buffer_get_insert(Buf()));
-        MCGuiNote("caret line %d, the left view's top line was %d", gtk_text_iter_get_line(&it), gMirrorTop);
-        GCHECK(std::abs(gtk_text_iter_get_line(&it) - gMirrorTop) <= 2);
+        MCGuiNote("caret line %d, the line under the click %d, the left view's top line was %d",
+                  gtk_text_iter_get_line(&it), gClickLine, gMirrorTop);
+        GCHECK(gtk_text_iter_get_line(&it) == gClickLine);
     });
 
     // ---- moving a tab, and the tab keys in a group
