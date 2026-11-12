@@ -55,6 +55,9 @@ public:
     // Pops the row's menu; the labels it shows are menuLabels().
     void openMenuFor(int row);
     std::string menuLabels() const { return menuLabels_; }
+    // Closes the row's menu, as choosing an item does (a check that runs an
+    // action by name leaves the popover open over the rows).
+    void closeMenu() { dropMenu(); }
     GActionGroup* actionGroup() const { return G_ACTION_GROUP(actions_); }
 
 private:
