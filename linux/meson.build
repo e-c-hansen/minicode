@@ -34,6 +34,8 @@ core_sources = [
   core_dir / 'LatexDoc.cpp',
   core_dir / 'SyncTex.cpp',
   core_dir / 'Json.cpp',
+  core_dir / 'Csv.cpp',
+  core_dir / 'FileSniff.cpp',
   core_dir / 'LspClient.cpp',
   core_dir / 'LspProtocol.cpp',
   core_dir / 'LspText.cpp',
@@ -153,6 +155,7 @@ gui_sources = [
   # editor's placeholders, keys and commands (PARITY.md 1.10).
   'src/Folds.cpp',
   'src/Markdown.cpp',
+  'src/CsvTable.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.
   'src/Terminal.cpp',

@@ -179,6 +179,12 @@ public:
     // The tab shows the Markdown page or the LaTeX pages rather than the
     // source. Only the flag: the editor shows it.
     bool showsPreview() const { return showsPreview_; }
+    // A .csv, .tsv or .tab file small enough for the table (CsvTable.h): it
+    // opens as a table, and the preview key flips it to the text.
+    bool isCsv() const { return kind_ == Kind::Text && csv_ != 0; }
+    char csvDelimiter(const std::string& text) const;
+    bool showsTable() const { return isCsv() && showsTable_; }
+    void setShowsTable(bool on) { showsTable_ = on; }
     void setShowsPreview(bool on) { showsPreview_ = on; }
     // The window's preview tab (EditorTabs.h): its title in italics, and
     // the next file opened in preview replaces it.
@@ -417,6 +423,9 @@ private:
     std::string   path_, ext_;
     bool          markdown_ = false, latex_ = false;
     bool          showsPreview_ = false;
+    int           csv_ = 0;               // 1 comma-like, 2 tab separated (FileSniff)
+    bool          showsTable_ = false;
+    void          sniffCsv(const std::string& text);
     bool          previewTab_ = false;
     bool          agentPreview_ = false;
     bool          unread_ = false;

@@ -33,6 +33,7 @@ class Carets;
 class CodeView;
 class FoldUi;
 class MediaView;
+class CsvTable;
 class SnippetSession;
 class LatexPreview;
 class GitDiffView;
@@ -258,6 +259,10 @@ public:
     // the document's own, D3), or for LaTeX between the source and the
     // typeset pages. No-op for other files.
     void togglePreview();
+    // A CSV or TSV tab shown as its table (CsvTable.h) rather than the text.
+    // The table finishes a cell being typed before the tab goes.
+    bool showsTable() const { return csvDoc_ != nullptr; }
+    CsvTable* csvTable() const { return csv_; }
     bool isMarkdown() const { return active_ && active_->isMarkdown(); }
     bool inPreview() const { return active_ && active_->showsPreview(); }
     // A .tex/.ltx/.latex file, in a build with poppler: it opens in the LaTeX
@@ -520,6 +525,12 @@ private:
     CompareView*   compare_  = nullptr;   // made on the first comparison
     std::shared_ptr<bool> compareAlive_ = std::make_shared<bool>(true);   // for the prepare thread
     MediaView*     media_    = nullptr;
+    CsvTable*      csv_      = nullptr;   // made on the first table
+    Document*      csvDoc_   = nullptr;   // the tab it shows
+    gulong         csvChanged_ = 0;       // csvDoc_'s buffer "changed"
+    bool           csvApplying_ = false;  // the table's own edit is going in
+    void showTable(Document* d);
+    void dropTable();
     GtkWidget*     scroller_ = nullptr;
     GtkWidget*     view_     = nullptr;   // GtkTextView: code_'s
     CodeView*      code_     = nullptr;   // owned by the view

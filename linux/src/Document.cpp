@@ -2,6 +2,8 @@
 // were the single-buffer Editor's until tabs (PARITY.md 1.1); they are the
 // same code, now per document.
 #include "Document.h"
+#include "CsvTable.h"
+#include "FileSniff.h"
 
 #include "BackupStore.h"
 #include "BracketColors.h"
@@ -194,6 +196,8 @@ GtkTextBuffer* Document::page() {
 void Document::clearSource() {
     cancelLoading();
     largeFile_ = largeOff_ = largeOn_ = false;
+    csv_ = 0;
+    showsTable_ = false;
     stopWatching();
     stopHighlighting();
     if (taskTimer_) g_source_remove(taskTimer_);
@@ -230,6 +234,7 @@ void Document::loadText(const std::string& path, const std::string& content) {
 #ifdef MINICODE_ENABLE_PDF
     latex_ = ext_ == "tex" || ext_ == "ltx" || ext_ == "latex";
 #endif
+    sniffCsv(content);
     rememberDisk(content);
     noteLargeFile(content);
     gtk_text_buffer_set_enable_undo(buffer_, TRUE);
@@ -242,6 +247,20 @@ void Document::loadText(const std::string& path, const std::string& content) {
     refreshTaskCount();
     StartupLog::once("first-text", "editor: first file in its buffer and highlighted (%s, %zu bytes)",
                      ext_.empty() ? "no extension" : ext_.c_str(), content.size());
+}
+
+// A CSV or TSV by FileSniff's rules shows as a table, unless it is past the
+// table's limit.
+void Document::sniffCsv(const std::string& text) {
+    const FileSniff::Kind k = FileSniff::classify(path_, text.data(),
+                                                  std::min(text.size(), FileSniff::kHeadBytes));
+    csv_ = k == FileSniff::Kind::Csv ? 1 : k == FileSniff::Kind::Tsv ? 2 : 0;
+    showsTable_ = csv_ != 0 && !text.empty() && text.size() <= CsvTable::kMaxTableBytes;
+    if (!showsTable_) csv_ = 0;
+}
+
+char Document::csvDelimiter(const std::string& text) const {
+    return csv_ == 2 ? '\t' : Csv::detectDelimiter(text);
 }
 
 void Document::setMessage(const std::string& path, const std::string& message) {
@@ -314,6 +333,7 @@ void Document::restoreText(const std::string& path, const std::string& text,
 #ifdef MINICODE_ENABLE_PDF
     latex_ = ext_ == "tex" || ext_ == "ltx" || ext_ == "latex";
 #endif
+    sniffCsv(text);
     if (disk) rememberDisk(*disk);
     // Gone, or changed since: what the backup was based on stays the stamp,
     // so the next backup still says so.

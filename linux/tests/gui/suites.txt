@@ -80,3 +80,4 @@ AgentsSuite.cpp
 AgentPanelSuite.cpp
 ShellIntegrationSuite.cpp
 OwnerReportsSuite.cpp
+CsvTableSuite.cpp

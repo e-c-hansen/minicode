@@ -25,6 +25,7 @@
 #include "LargeFileView.h"
 #include "Utf8Offsets.h"
 #include "MediaView.h"
+#include "CsvTable.h"
 #include "StartupLog.h"
 #include "CompareView.h"
 #include "GitDiffView.h"
@@ -454,6 +455,7 @@ void Editor::stash() {
     arrivedTimer_ = 0;
     arrived_.clear();
 
+    dropTable();
     capturePlace(d);
     stopPlace();
     if (d->isMarkdown()) clearPage(d);
@@ -540,6 +542,8 @@ void Editor::showActive() {
             // ms more at 470,000 lines.
             setViewBuffer(d->loadingBuffer(), false, false);
             gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+        } else if (d->showsTable()) {
+            showTable(d);
         } else if (d->isMarkdown() && d->showsPreview()) {
             gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
             renderPreview();
@@ -605,6 +609,73 @@ void Editor::showActive() {
     notifyDocument();
     refreshStrip();
     titleChanged();
+}
+
+// A CSV or TSV tab as its table. The buffer stays the view's, so everything
+// that reads the source (saving, the servers, search) sees the text; a cell
+// edited is one replacement of it, and text changed any other way (undo, a
+// reload) shows in the table again.
+void Editor::showTable(Document* d) {
+    dropTable();
+    showSource(d);
+    if (!csv_) {
+        csv_ = new CsvTable();
+        gtk_stack_add_named(GTK_STACK(slot_), csv_->widget(), "csv");
+        csv_->onReplace = [this](int start, int removed, const std::string& inserted) {
+            Document* t = csvDoc_;
+            if (!t) return;
+            GtkTextBuffer* b = t->buffer();
+            csvApplying_ = true;
+            gtk_text_buffer_begin_user_action(b);
+            GtkTextIter a, e;
+            gtk_text_buffer_get_iter_at_offset(b, &a, start);
+            gtk_text_buffer_get_iter_at_offset(b, &e, start + removed);
+            gtk_text_buffer_delete(b, &a, &e);
+            gtk_text_buffer_get_iter_at_offset(b, &a, start);
+            gtk_text_buffer_insert(b, &a, inserted.c_str(), (int)inserted.size());
+            gtk_text_buffer_end_user_action(b);
+            csvApplying_ = false;
+        };
+        csv_->onUndo = [this](bool redo) {
+            Document* t = csvDoc_;
+            if (!t) return;
+            GtkTextBuffer* b = t->buffer();
+            if (redo ? gtk_text_buffer_get_can_redo(b) : gtk_text_buffer_get_can_undo(b)) {
+                if (redo) gtk_text_buffer_redo(b);
+                else gtk_text_buffer_undo(b);
+            }
+        };
+    }
+    GtkTextBuffer* b = d->buffer();
+    GtkTextIter s, e;
+    gtk_text_buffer_get_bounds(b, &s, &e);
+    char* raw = gtk_text_buffer_get_text(b, &s, &e, TRUE);
+    const std::string text = raw ? raw : "";
+    g_free(raw);
+    csv_->show(text, d->csvDelimiter(text));
+    csvDoc_ = d;
+    auto changed = +[](GtkTextBuffer* buf, gpointer p) {
+        Editor* self = static_cast<Editor*>(p);
+        if (self->csvApplying_ || !self->csvDoc_) return;
+        GtkTextIter s2, e2;
+        gtk_text_buffer_get_bounds(buf, &s2, &e2);
+        char* r = gtk_text_buffer_get_text(buf, &s2, &e2, TRUE);
+        self->csv_->reload(r ? r : "");
+        g_free(r);
+    };
+    csvChanged_ = g_signal_connect_after(b, "changed", G_CALLBACK(changed), this);
+    gtk_stack_set_visible_child(GTK_STACK(slot_), csv_->widget());
+}
+
+// The table lets go of its tab: a cell being typed is committed into that tab
+// first, never into the next one.
+void Editor::dropTable() {
+    if (!csvDoc_) return;
+    csv_->commit();
+    g_signal_handler_disconnect(csvDoc_->buffer(), csvChanged_);
+    csvChanged_ = 0;
+    csvDoc_ = nullptr;
+    csv_->clear();
 }
 
 void Editor::showSource(Document* d) {
@@ -1395,6 +1466,12 @@ bool Editor::toggleComment() {
 void Editor::togglePreview() {
     Document* d = active_;
     if (!d) return;
+    if (d->isCsv()) {   // the table and the text
+        dropTable();
+        d->setShowsTable(!d->showsTable());
+        showActive();
+        return;
+    }
     if (d->isLatex()) {
         d->setShowsPreview(!d->showsPreview());
         showLatex(d->showsPreview(), true);

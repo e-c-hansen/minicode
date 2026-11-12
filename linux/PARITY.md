@@ -1402,6 +1402,11 @@ These may run in parallel.
 
 - [ ] **4.1 Viewers.** CSV, JSON outline, notebooks, and SQLite, with the
   same read-only rules. `FileSniff`, `Csv`, `JsonOutline`, `Notebook`.
+  *Part one done:* files route by `FileSniff::classify` (a database or a
+  binary file gets a message, not text), and a CSV, TSV or .tab file opens
+  as a table (`CsvTable.cpp`, HANDOFF.md item 49), flipped to the text by
+  the preview key; `csv_table` checks it. The JSON outline, notebooks and
+  SQLite remain.
 - [ ] **4.2 The preview to the side and scroll sync.** `MarkdownPage`,
   `PreviewScroll`. Measured for R1 (2026-11-09): opening README.md in the
   preview holds the main thread for 0.3 to 0.6 s of CPU, the same without

@@ -4024,3 +4024,36 @@ File's busy check and the finishing mark.
   `meson.build`, so the package has it), else the checkout's own. The
   `control` suite installs with `--dir` into its scratch folder.
 - **Left of 3.1**: `split`, which waits for terminal tabs (item 4.7).
+
+### 49. Files by kind and the CSV table (part one of `PARITY.md` item 4.1)
+
+- **Routing**: `Editor::loadInto` (Tabs.cpp) reads the first 8 KB and asks
+  `FileSniff::classify` after the media check. A SQLite database and a
+  binary file or Office-type document (the Mac's Quick Look kinds, which
+  have no counterpart here) become a `Document::Kind::Message` saying so,
+  never text. UTF-16 with a BOM is still refused by `readText` (not valid
+  UTF-8), as before. JSON and notebooks are text until their viewers come.
+- **The table** (`CsvTable.{h,cpp}`): a `GtkColumnView` over a
+  `GtkStringList` of row numbers, one `GtkEditableLabel` per cell, the
+  cells read from a `Csv::Document` parsed from the tab's text. A cell
+  edit serializes the table, takes the bytes between the old and new text's
+  common start and end (whole characters), and `Editor::showTable`'s
+  `onReplace` makes that one user action on the tab's own buffer, so undo,
+  dirty, backups, saving and the servers work unchanged; one cell changes
+  one line, an unedited file is never rewritten, and BOM, CRLF, quoting and
+  a missing last newline come from Csv. Text changed any other way (undo,
+  Ctrl+Z on the table calls `gtk_text_buffer_undo`, a reload) reaches the
+  table by the buffer's `changed` signal (`csvApplying_` skips its own).
+- **Choosing**: `Document::sniffCsv` (from `loadText` and `restoreText`)
+  asks `FileSniff::classify` on the text; `isCsv()`, `showsTable()`. A file
+  over 50 MB (`CsvTable::kMaxTableBytes`) or empty opens as text; the Mac's
+  read-only 100,000-row table for those is not done. Files over the
+  large-file background threshold are read in pieces and so open as text
+  too. The preview key (`Editor::togglePreview`) flips table and text.
+- **Trap**: `Editor::dropTable` (called on leaving a tab and before every
+  show) commits a cell being typed into the tab it was typed in, then
+  disconnects; the table is one widget for every tab, as the Mac's.
+- **Not done**: inserting and deleting rows and columns (Csv has them), the
+  first row as a header, multi-line cells typed in a cell, column widths
+  kept.
+

@@ -11,6 +11,7 @@
 #include "GitPanel.h"
 #include "LargeFileView.h"
 #include "Latex.h"
+#include "FileSniff.h"
 #include "MediaView.h"
 #include "TabStrip.h"
 
@@ -149,6 +150,31 @@ bool Editor::loadInto(Document* d, const std::string& path) {
     if (MediaView::handles(path)) {
         d->setMedia(path);
         return true;
+    }
+    // What the file is, from its first bytes and name (FileSniff, as the
+    // Mac routes): a database and a binary document have no viewer here yet,
+    // and are not read as text. CSV, JSON and the rest are text, and the
+    // document itself decides on the table.
+    {
+        std::string head;
+        if (FILE* f = fopen(path.c_str(), "rb")) {
+            head.resize(FileSniff::kHeadBytes);
+            head.resize(fread(&head[0], 1, head.size(), f));
+            fclose(f);
+        }
+        const std::string name = baseName(path);
+        switch (FileSniff::classify(path, head)) {
+        case FileSniff::Kind::Sqlite:
+            d->setMessage(path, "\n  Cannot display “" + name + "”.\n\n  (A SQLite database; "
+                                "there is no database viewer in this version.)");
+            return false;
+        case FileSniff::Kind::QuickLook:
+            d->setMessage(path, "\n  Cannot display “" + name + "”.\n\n  (A binary file or a "
+                                "document another program opens; nothing here shows it.)");
+            return false;
+        default:
+            break;
+        }
     }
     return loadText(d, path);
 }
