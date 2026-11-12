@@ -37,6 +37,9 @@
 #include "ScrollSettle.h"
 #include "TabStrip.h"
 #include "WebImages.h"
+#include "Mermaid.h"
+#include "MarkdownHtml.h"
+#include "FolderSearch.h"
 #include "Zoom.h"
 
 #include <algorithm>
@@ -63,6 +66,15 @@ Editor::Editor() {
     code_ = CodeView::create(welcome_);
     view_ = code_->widget();
     buffer_ = welcome_;
+    Markdown::installTooltips(GTK_TEXT_VIEW(view_));
+    // A Mermaid diagram arrived (or failed): a page waiting for one is built
+    // again where it stands.
+    {
+        std::weak_ptr<int> alive = alive_;
+        mermaidListener_ = Mermaid::subscribe([this, alive] {
+            if (!alive.expired() && inMarkdownPage() && active_->pageInfo().waiting) rerenderPreview();
+        });
+    }
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), TRUE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_), GTK_WRAP_NONE);
     gtk_text_view_set_left_margin(GTK_TEXT_VIEW(view_), 8);
@@ -230,6 +242,7 @@ Editor::Editor() {
 // (main.cpp deletes the editor from GtkApplication's window-removed), so
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
+    Mermaid::unsubscribe(mermaidListener_);
     delete inline_;
     inline_ = nullptr;
     delete notes_;
@@ -721,7 +734,8 @@ void Editor::syncSide() {
     gtk_widget_set_visible(side_->widget(), TRUE);
     side_->getText = [d] { return d->text(); };
     char* dir = g_path_get_dirname(d->path().c_str());
-    const bool moved = side_->setContext(dir ? dir : ".", settings_.webImages() && WebImages::available());
+    const bool moved = side_->setContext(dir ? dir : ".", settings_.webImages() && WebImages::available(),
+                                         settings_.mermaid() && Mermaid::available(), settings_.isDark());
     g_free(dir);
     if (render || moved) side_->schedule(0);
 }
@@ -1184,6 +1198,76 @@ void Editor::showLatex(bool on, bool focus) {
 #endif
 }
 
+bool Editor::exportHtmlTo(const std::string& path, std::string* error) {
+    Document* d = active_;
+    if (!d || !d->isMarkdown() || d->isNotebook()) {
+        if (error) *error = "Export as HTML needs a Markdown file";
+        return false;
+    }
+    char* base = g_path_get_basename(d->path().c_str());
+    std::string name = base ? base : "";
+    g_free(base);
+    if (name.empty()) name = "Untitled";
+    const std::string html = MarkdownHtml::page(d->text(), name);
+    std::string err;
+    if (!FolderSearch::writeFileAtomically(path, html, &err)) {
+        if (error) *error = err;
+        return false;
+    }
+    return true;
+}
+
+bool Editor::exportHtml(GtkWindow* parent) {
+    Document* d = active_;
+    if (!d || !d->isMarkdown() || d->isNotebook()) return false;
+    auto fail = [parent](const std::string& why) {
+        GtkAlertDialog* alert = gtk_alert_dialog_new("The page was not exported");
+        gtk_alert_dialog_set_detail(alert, why.c_str());
+        const char* ok[] = {"OK", nullptr};
+        gtk_alert_dialog_set_buttons(alert, ok);
+        gtk_alert_dialog_set_modal(alert, TRUE);
+        gtk_alert_dialog_choose(alert, parent, nullptr, nullptr, nullptr);
+        g_object_unref(alert);
+    };
+    if (const char* fixed = g_getenv("MINICODE_HTML_EXPORT_PATH"); fixed && *fixed) {
+        std::string why;
+        if (!exportHtmlTo(fixed, &why)) fail(why);
+        return true;
+    }
+    GtkFileDialog* dlg = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dlg, "Export as HTML");
+    if (!d->path().empty()) {
+        char* dir = g_path_get_dirname(d->path().c_str());
+        GFile* folder = g_file_new_for_path(dir);
+        gtk_file_dialog_set_initial_folder(dlg, folder);
+        g_object_unref(folder);
+        g_free(dir);
+        char* base = g_path_get_basename(d->path().c_str());
+        std::string stem = base ? base : "page";
+        g_free(base);
+        const size_t dot = stem.rfind('.');
+        if (dot != std::string::npos && dot > 0) stem.resize(dot);
+        gtk_file_dialog_set_initial_name(dlg, (stem + ".html").c_str());
+    }
+    struct Ask { std::weak_ptr<int> alive; Editor* self; std::function<void(const std::string&)> fail; };
+    auto* ask = new Ask{alive_, this, fail};
+    gtk_file_dialog_save(dlg, parent, nullptr,
+        [](GObject* src, GAsyncResult* res, gpointer data) {
+            std::unique_ptr<Ask> ask(static_cast<Ask*>(data));
+            GFile* dest = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(src), res, nullptr);
+            if (!dest) return;   // cancelled
+            char* path = g_file_get_path(dest);
+            g_object_unref(dest);
+            if (path && !ask->alive.expired()) {
+                std::string why;
+                if (!ask->self->exportHtmlTo(path, &why)) ask->fail(why);
+            }
+            g_free(path);
+        }, ask);
+    g_object_unref(dlg);
+    return true;
+}
+
 bool Editor::exportPdf(GtkWindow* parent) {
 #ifdef MINICODE_ENABLE_PDF
     Document* d = active_;
@@ -1296,6 +1380,7 @@ static void setTagColor(GtkTextTagTable* table, const char* name, const char* pr
 void Editor::applySettings(const Settings& s) {
     if (compare_) compare_->applySettings(s);
     const bool webBefore = settings_.webImages();
+    const bool mermaidBefore = settings_.mermaid(), darkBefore = settings_.isDark();
     settings_ = s;
     code_->applySettings(s);   // the ruler and the gutter
     // Bracket boxes, and the bracket colors' tags (every tab's) and whether
@@ -1333,7 +1418,9 @@ void Editor::applySettings(const Settings& s) {
         rerenderPreview();
         if (!scrolled) notePreviewRest();   // still where Ctrl+Shift+V left it
     }
-    if (s.webImages() != webBefore) syncSide();   // another context: the side page is built whole
+    if ((s.mermaid() != mermaidBefore || s.isDark() != darkBefore) && inMarkdownPage()) rerenderPreview();
+    if (s.webImages() != webBefore || s.mermaid() != mermaidBefore || s.isDark() != darkBefore)
+        syncSide();   // another context: the side page is built whole
 }
 
 bool Editor::isSettingsFile() const { return active_ && active_->isSettingsFile(); }
@@ -1782,6 +1869,8 @@ void Editor::renderPreview() {
     hooks.folder = dir ? dir : ".";
     g_free(dir);
     hooks.webImages = settings_.webImages() && WebImages::available();
+    hooks.mermaid = settings_.mermaid() && Mermaid::available();
+    hooks.mermaidDark = settings_.isDark();
     std::weak_ptr<int> alive = alive_;
     hooks.link = [this, alive](const std::string& url) {
         if (!alive.expired()) openMarkdownLink(url);

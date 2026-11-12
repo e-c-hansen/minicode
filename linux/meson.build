@@ -18,6 +18,8 @@ core_sources = [
   core_dir / 'MarkdownTasks.cpp',
   core_dir / 'MarkdownPage.cpp',
   core_dir / 'PreviewScroll.cpp',
+  core_dir / 'MarkdownHtml.cpp',
+  core_dir / 'MermaidDiagram.cpp',
   core_dir / 'Settings.cpp',
   core_dir / 'LineComments.cpp',
   core_dir / 'AutoIndent.cpp',
@@ -266,6 +268,8 @@ gui_sources = [
   # like Terminal.cpp) over its plain C++ half.
   'src/WebImageRules.cpp',
   'src/WebImages.cpp',
+  # Mermaid diagrams in the Markdown preview: mmdc, run and kept.
+  'src/Mermaid.cpp',
   # The menu bar, the accelerators and the tree's keys, from the registry.
   'src/Keys.cpp',
   # The window's panes: the sidebar, and the editor, browser and terminal

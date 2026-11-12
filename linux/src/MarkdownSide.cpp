@@ -1,5 +1,6 @@
 // MarkdownSide.cpp — see MarkdownSide.h.
 #include "MarkdownSide.h"
+#include "Mermaid.h"
 
 #include <time.h>
 #include <algorithm>
@@ -47,6 +48,14 @@ MarkdownSide::MarkdownSide(GtkTextTagTable* tags) {
     gtk_text_view_set_top_margin(GTK_TEXT_VIEW(view_), 6);
     gtk_widget_add_css_class(view_, "minicode-editor");
     gtk_widget_add_css_class(view_, "minicode-prose");
+    Markdown::installTooltips(GTK_TEXT_VIEW(view_));
+    // A diagram arrived (or failed): the pieces waiting for one are built again.
+    std::weak_ptr<int> alive = alive_;
+    mermaidListener_ = Mermaid::subscribe([this, alive] {
+        if (alive.expired()) return;
+        for (const Info& i : infos_)
+            if (i.page.waiting) { schedule(0); return; }
+    });
     scroller_ = gtk_scrolled_window_new();
     gtk_widget_add_css_class(scroller_, "minicode-scroller");
     gtk_widget_add_css_class(scroller_, "minicode-editor-scroller");
@@ -74,6 +83,7 @@ MarkdownSide::MarkdownSide(GtkTextTagTable* tags) {
 }
 
 MarkdownSide::~MarkdownSide() {
+    Mermaid::unsubscribe(mermaidListener_);
     alive_.reset();   // a running job finds nobody
     stopSettle();
     if (srcAdj_) g_signal_handlers_disconnect_by_data(srcAdj_, this);
@@ -85,10 +95,13 @@ MarkdownSide::~MarkdownSide() {
     g_object_unref(buffer_);
 }
 
-bool MarkdownSide::setContext(const std::string& folder, bool webImages) {
-    if (folder == folder_ && webImages == webImages_ && hooks_) return false;
+bool MarkdownSide::setContext(const std::string& folder, bool webImages, bool mermaid, bool dark) {
+    if (folder == folder_ && webImages == webImages_ && mermaid == mermaid_ && dark == dark_ && hooks_)
+        return false;
     folder_ = folder;
     webImages_ = webImages;
+    mermaid_ = mermaid;
+    dark_ = dark;
     stale_ = true;
     return true;
 }
@@ -166,7 +179,7 @@ void MarkdownSide::start() {
     if (!job->whole) {
         for (const Info& i : infos_) {
             job->old.push_back(i.piece);
-            job->keep.push_back(i.page.pending.empty());
+            job->keep.push_back(i.page.pending.empty() && i.page.waiting == 0);
         }
     }
     job->prepMs = threadCpuMs() - t0;
@@ -209,6 +222,8 @@ void MarkdownSide::apply(Job* job) {
         hooks_ = std::make_shared<Markdown::Hooks>();
         hooks_->folder = folder_;
         hooks_->webImages = webImages_ && WebImages::available();
+        hooks_->mermaid = mermaid_ && Mermaid::available();
+        hooks_->mermaidDark = dark_;
         std::weak_ptr<int> alive = alive_;
         hooks_->link = [this, alive](const std::string& url) {
             if (!alive.expired() && onLink) onLink(url);

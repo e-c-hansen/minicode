@@ -88,3 +88,4 @@ LatexForwardSuite.cpp
 JsonOutlineSuite.cpp
 MarkdownSideSuite.cpp
 MarkdownSideSyncSuite.cpp
+MermaidSuite.cpp

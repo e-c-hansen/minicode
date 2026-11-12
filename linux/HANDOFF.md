@@ -3830,6 +3830,45 @@ scrolled to the first box with 80 points above it, and the light goes after
 Not done: the Mac's menu item (the port has no View entry for it; the hints
 panel has a row).
 
+### 56. Export as HTML and Mermaid diagrams (done, November 2026; `PARITY.md` item 4.3, first part)
+
+- **Export as HTML…** is the action `win.exporthtml` (registry id
+  `minicode.markdown.exportHtml`, no key; the palette lists it), enabled for a
+  Markdown tab (a notebook excepted). `Editor::exportHtml` asks a GtkFileDialog
+  (the file's folder, `<name>.html`) and `exportHtmlTo` writes the core's
+  `MarkdownHtml::page` of the buffer (unsaved changes included) through
+  `FolderSearch::writeFileAtomically`. The harness sets
+  `MINICODE_HTML_EXPORT_PATH` to skip the dialog (the Mac's
+  `MCHtmlExportPathChooser`). The link and picture rules are the core's.
+- **Mermaid**: `src/Mermaid.{h,cpp}` runs mmdc (`$MINICODE_MMDC`, else
+  `lspgtk::findProgram("mmdc")`) from one worker thread, a job at a time,
+  each in a session of its own (`setsid`, killed by group) with 90 s, with
+  `MermaidDiagram::arguments` (transparent PNG, scale 2, `dark` or `default`
+  by `Settings::isDark`). Pictures are kept as GdkTextures in memory and in
+  `$MINICODE_MERMAID_CACHE` or `$XDG_CACHE_HOME/minicode/mermaid` (50 MB,
+  trimmed to 40); a failure is remembered 30 s and its complaint
+  (`errorSummary`) is the code's tooltip. `want()` is the one entry: kept,
+  waiting (queued on first ask) or failed; nothing runs for a page with no
+  mermaid block, with `markdown.mermaid = false` or without mmdc.
+- **In the page**: `Hooks::mermaid`/`mermaidDark`; `renderRuns` finds the
+  blocks of its run range (`MermaidDiagram::blocks`), and a kept diagram is a
+  picture widget (half its pixels, scale 2) anchored for the block's runs. A
+  waiting one stays code and counts in `Page::waiting`; a failed one stays
+  code under an anonymous-by-text tag `md_tip:<complaint>` that
+  `Markdown::installTooltips` (connected to the editor's view and the side
+  view) shows. On an arrival (`Mermaid::subscribe`) the full preview is
+  rendered again keeping its scroll (`rerenderPreview`), and the side pane
+  treats a piece with `waiting` as unmatchable like one waiting for a web
+  picture, so only those pieces are built again. A change of theme or of
+  `markdown.mermaid` re-renders both.
+- **Checked by** `mermaid` and `export_html` (`MermaidSuite.cpp`; a stand-in
+  mmdc script, no real one): code before the picture, the picture after, the
+  dark and default themes reaching mmdc, a reopen answered by the disk cache
+  with no run, a failure's tooltip without the stack trace, the setting off
+  and a page without a diagram running nothing, the side pane, and the
+  exported page's key lines.
+- **Not done**: math (4.3's second part); Mermaid on Android (no pane there).
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

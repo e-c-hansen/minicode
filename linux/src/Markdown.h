@@ -61,6 +61,7 @@ struct Page {
     std::vector<PendingPicture> pending; // web pictures to fetch, in buffer order
     std::shared_ptr<Hooks> hooks;        // what the page's widgets call back
     int length = 0;                      // renderRuns: the characters it put in
+    int waiting = 0;                     // Mermaid diagrams still being drawn (code for now)
     // The span at character `offset`, or null.
     const Span* spanAt(int offset) const;
     // The first character from source line `line` or later (the end when none).
@@ -71,6 +72,10 @@ struct Hooks {
     std::string folder;   // the Markdown file's folder, for relative pictures
     // Pictures from https:// addresses are shown (markdown.web-images).
     bool webImages = false;
+    // ```mermaid blocks are drawn by mmdc (Mermaid.h): the pictures kept are
+    // shown, the others ask for a run and show as code meanwhile (Page::waiting).
+    bool mermaid = false;
+    bool mermaidDark = false;   // the preview's theme
     // A click on a link inside a table cell or on a linked picture (links
     // in the text are the editor's to handle, from the spans).
     std::function<void(const std::string& url)> link;
@@ -92,6 +97,12 @@ Page render(GtkTextView* view, GtkTextBuffer* buffer, const std::string& source,
 // runs' own.
 Page renderRuns(GtkTextView* view, GtkTextBuffer* buffer, const std::vector<MdRun>& runs,
                 size_t first, size_t last, int at, const std::shared_ptr<Hooks>& hooks);
+
+// Tooltips for the text a page marks with one (a failed diagram's complaint):
+// connect once to each view that shows pages. tooltipAt reads the buffer's
+// tooltip at a character offset ("" when none), for the checks.
+void installTooltips(GtkTextView* view);
+std::string tooltipAt(GtkTextBuffer* buffer, int offset);
 
 // Size the page's tables and pictures to a pane `width` pixels wide.
 void fit(Page& page, int width);
