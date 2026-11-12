@@ -3735,70 +3735,6 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
 - **Traps**: `counted-matches` never fires without `count_matches`;
   zoom set by the user must be written before the commit handler reapplies
   the site's.
-56. **Terminal tabs (PARITY.md 4.7, first part).** `TerminalDock`
-    (`src/TerminalDock.{h,cpp}`) is the terminal pane: a `TabStrip` (with its
-    opt-in drag reorder) and a + above a `GtkStack` of `Terminal`s, each with
-    a shell of its own. `app->terminal` is **always the active one** (the
-    dock's `onActiveChanged` sets it, as the Mac's `terminal` getter), so Run
-    File, `term-output`, the inline agent, Run in Terminal, the focus and key
-    places all kept working untouched; `app->termDock` is for what means
-    every terminal.
-  - **Every terminal**: settings, the font and the terminals' zoom
-    (`applyWindowSettings`, `applyTerminalZoom`), the project root on Open
-    Folder, the waiting dot (the board's mark is the window's, so all its tabs
-    show it), the IDE link's variables (`makeTerminal`, the dock's factory,
-    sets them and the current settings and zoom on a new one).
-  - **Keys** (D1; the Mac's, with Ctrl for Cmd): New Terminal Ctrl+Shift+`
-    (VS Code's Linux key, Global), Next and Previous Terminal Ctrl+Alt+PageDown and
-    PageUp (the Mac's Option+Cmd+] and [, whose Ctrl+Alt keys are the folds; Global), Close Terminal
-    Ctrl+Alt+Shift+W (the Mac's Ctrl+Shift+W is Close Window here, VS Code's),
-    Rename Terminal… and Move Terminal Left and Right without keys, as on the
-    Mac. Next and Previous wrap. The Terminal menu has them.
-  - **Titles**: a user title (Rename… is a popover on the tab; an empty name
-    gives the program's back) wins over the title a program sets (OSC 0/2,
-    VTE's `window-title-changed`), over the shell's name.
-  - **Closing**: a terminal with a program in the foreground
-    (`Terminal::busy`) asks (`TerminalDock::confirmClose`; main.cpp's is a
-    `GtkAlertDialog`, the checks replace it with a recorder). The port asked
-    nothing before, for its one terminal or for the window closing: closing
-    the **window** still does not count busy terminals (the Mac's quit asks
-    once for all; not done). Closing the last tab deletes it and leaves a
-    fresh `Terminal` that has made no shell yet (they start when first
-    mapped), then `onEmpty` hides the dock, so `app->terminal` is never null
-    and showing the dock starts a shell.
-  - **Run File** never types into a busy terminal: it opens a tab and runs
-    there (`runInTerminal(..., newTabIfBusy)`, using `runBlocker`). **`minicode
-    term`** now always makes a tab (`ControlHost::newTerminal`; `--title` is
-    its user title, `reused` is false, the old "busy, left alone" refusal is
-    gone because the new tab is idle); a host without the hook keeps the old
-    path (the core's tests).
-  - **Ids**: every tab of a window shares the window's control id
-    (`MINICODE_TERMINAL_ID`, the board's mark, `minicode state`); the Mac gives
-    each terminal its own. The process monitor lists each tab's shell
-    (extra tabs under `window id + 100000 * n`, no session), and a closing
-    tab lets go of the id first (`setControlId(0)`) so its destructor does not
-    forget the window's mark. Not done: per-terminal ids, splits (next), the
-    terminals in the session, hide-and-restore of tabs across launches.
-  - **Checked by** `terminal_tabs` (`TerminalTabsSuite.cpp`, real keys and
-    clicks, bash): the cases above, each shell known by the integration's
-    marks and pids, a command in a hidden tab, rename/move/drag, the close
-    question, Run File, `term` and `term-output`, the last tab.
-  - **shell_integration part two follows the tabs**: `term --run` is checked in
-    the tab it made (that shell's own marks: one command, status 0, the
-    finished hook once, `term-output` reads it) and, beside a half-typed line,
-    a busy `sleep 3` and an exec'd `sh`, the first terminal is checked to be
-    left alone (same line, same started count, still busy); `term` is never
-    refused now and Run File into the busy shell runs in a new tab. The suite
-    closes its extra tabs (`backToOriginal`). `terminal_tabs` replaces a
-    terminal an earlier suite left with a shell of another kind.
-  - **Trap (found by `G_DEBUG=fatal-criticals`)**: `gtk_stack_remove` held the
-    terminal widget's last reference, so `~Terminal` disconnected handlers on
-    freed widgets (heap corruption that showed as a crash suites later, e.g.
-    `lsp_actions` once). `TerminalDock::remove` now holds a reference across
-    the delete. In a long combined run `terminal_tabs` can still fail on a
-    loaded machine (see the coordinator's notes); alone and after
-    `shell_integration` it passes with no GLib criticals.
-
 ### 54. The Markdown page to the side, in pieces (done, November 2026; `PARITY.md` item 4.2, first part)
 
 - **Files**: `src/MarkdownSide.{h,cpp}` (the pane), `Markdown::renderRuns` in
@@ -4030,6 +3966,72 @@ panel has a row).
 - **Not done**: the line in the side pane; copying a formula copies an
   anchor character (as on the Mac); the picture size does not follow the
   preview's font size.
+
+### 59. Terminal tabs (done, November 2026; `PARITY.md` item 4.7, first part)
+
+- **The dock**: `TerminalDock`
+  (`src/TerminalDock.{h,cpp}`) is the terminal pane: a `TabStrip` (with its
+  opt-in drag reorder) and a + above a `GtkStack` of `Terminal`s, each with
+  a shell of its own. `app->terminal` is **always the active one** (the
+  dock's `onActiveChanged` sets it, as the Mac's `terminal` getter), so Run
+  File, `term-output`, the inline agent, Run in Terminal, the focus and key
+  places all kept working untouched; `app->termDock` is for what means
+  every terminal.
+- **Every terminal**: settings, the font and the terminals' zoom
+  (`applyWindowSettings`, `applyTerminalZoom`), the project root on Open
+  Folder, the waiting dot (the board's mark is the window's, so all its tabs
+  show it), the IDE link's variables (`makeTerminal`, the dock's factory,
+  sets them and the current settings and zoom on a new one).
+- **Keys** (D1; the Mac's, with Ctrl for Cmd): New Terminal Ctrl+Shift+`
+  (VS Code's Linux key, Global), Next and Previous Terminal Ctrl+Alt+PageDown and
+  PageUp (the Mac's Option+Cmd+] and [, whose Ctrl+Alt keys are the folds; Global), Close Terminal
+  Ctrl+Alt+Shift+W (the Mac's Ctrl+Shift+W is Close Window here, VS Code's),
+  Rename Terminal… and Move Terminal Left and Right without keys, as on the
+  Mac. Next and Previous wrap. The Terminal menu has them.
+- **Titles**: a user title (Rename… is a popover on the tab; an empty name
+  gives the program's back) wins over the title a program sets (OSC 0/2,
+  VTE's `window-title-changed`), over the shell's name.
+- **Closing**: a terminal with a program in the foreground
+  (`Terminal::busy`) asks (`TerminalDock::confirmClose`; main.cpp's is a
+  `GtkAlertDialog`, the checks replace it with a recorder). The port asked
+  nothing before, for its one terminal or for the window closing: closing
+  the **window** still does not count busy terminals (the Mac's quit asks
+  once for all; not done). Closing the last tab deletes it and leaves a
+  fresh `Terminal` that has made no shell yet (they start when first
+  mapped), then `onEmpty` hides the dock, so `app->terminal` is never null
+  and showing the dock starts a shell.
+- **Run File** never types into a busy terminal: it opens a tab and runs
+  there (`runInTerminal(..., newTabIfBusy)`, using `runBlocker`). **`minicode
+  term`** now always makes a tab (`ControlHost::newTerminal`; `--title` is
+  its user title, `reused` is false, the old "busy, left alone" refusal is
+  gone because the new tab is idle); a host without the hook keeps the old
+  path (the core's tests).
+- **Ids**: every tab of a window shares the window's control id
+  (`MINICODE_TERMINAL_ID`, the board's mark, `minicode state`); the Mac gives
+  each terminal its own. The process monitor lists each tab's shell
+  (extra tabs under `window id + 100000 * n`, no session), and a closing
+  tab lets go of the id first (`setControlId(0)`) so its destructor does not
+  forget the window's mark. Not done: per-terminal ids, splits (next), the
+  terminals in the session, hide-and-restore of tabs across launches.
+- **Checked by** `terminal_tabs` (`TerminalTabsSuite.cpp`, real keys and
+  clicks, bash): the cases above, each shell known by the integration's
+  marks and pids, a command in a hidden tab, rename/move/drag, the close
+  question, Run File, `term` and `term-output`, the last tab.
+- **shell_integration part two follows the tabs**: `term --run` is checked in
+  the tab it made (that shell's own marks: one command, status 0, the
+  finished hook once, `term-output` reads it) and, beside a half-typed line,
+  a busy `sleep 3` and an exec'd `sh`, the first terminal is checked to be
+  left alone (same line, same started count, still busy); `term` is never
+  refused now and Run File into the busy shell runs in a new tab. The suite
+  closes its extra tabs (`backToOriginal`). `terminal_tabs` replaces a
+  terminal an earlier suite left with a shell of another kind.
+- **Trap (found by `G_DEBUG=fatal-criticals`)**: `gtk_stack_remove` held the
+  terminal widget's last reference, so `~Terminal` disconnected handlers on
+  freed widgets (heap corruption that showed as a crash suites later, e.g.
+  `lsp_actions` once). `TerminalDock::remove` now holds a reference across
+  the delete. In a long combined run `terminal_tabs` can still fail on a
+  loaded machine (see the coordinator's notes); alone and after
+  `shell_integration` it passes with no GLib criticals.
 
 ## How to work on it
 

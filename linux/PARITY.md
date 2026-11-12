@@ -1461,7 +1461,7 @@ These may run in parallel.
   *Tabs done:* `TerminalDock` over a `TabStrip` and a +: New, Next,
   Previous and Close Terminal, Rename, Move Left and Right, a drag, a close
   question for a busy terminal, the last tab hiding the dock, Run File into a
-  new tab when busy, `minicode term` making a tab (HANDOFF item 56,
+  new tab when busy, `minicode term` making a tab (HANDOFF item 59,
   `terminal_tabs`). Left: splits, find, command marks, per-terminal ids, the
   window close question counting busy terminals.
 
