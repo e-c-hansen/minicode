@@ -156,4 +156,48 @@ static void testTabSessions() {
         const Session empty = merged(Session(), {w2});
         CHECK(empty.tabs.size() == 2 && empty.active == -1 && empty.preview == -1);
     }
+
+    // The split editor's groups (PARITY.md 4.6): written only when split,
+    // read back as written, and an old or damaged record is one group.
+    GROUP("tab-sessions:groups");
+    {
+        Sessions all;
+        Session s;
+        s.tabs = {tab("/p/a.txt", 0, 0, false, 0, 0), tab("/p/b.txt", 0, 0, false, 0, 0)};
+        s.active = 0;
+        s.split = true;
+        s.groups.groups[0] = {"/p/a.txt", "/p/b.txt"};
+        s.groups.groups[1] = {"/p/b.txt"};
+        s.groups.active[0] = "/p/a.txt";
+        s.groups.active[1] = "/p/b.txt";
+        s.groups.focused = 1;
+        s.groups.fraction = 0.3;
+        put(all, "/p", s, 1762700000);
+        const std::string text = encode(all);
+        CHECK(text.find("\"groups\"") != std::string::npos);
+        const Session q = decode(text)["/p"];
+        CHECK(q.split);
+        CHECK(q.groups.groups[0] == s.groups.groups[0] && q.groups.groups[1] == s.groups.groups[1]);
+        CHECK(q.groups.active[0] == "/p/a.txt" && q.groups.active[1] == "/p/b.txt");
+        CHECK(q.groups.focused == 1 && std::fabs(q.groups.fraction - 0.3) < 1e-9);
+
+        // Not split: nothing written, and none read.
+        Sessions one;
+        Session plain = s;
+        plain.split = false;
+        put(one, "/p", plain, 1762700000);
+        CHECK(encode(one).find("\"groups\"") == std::string::npos);
+        CHECK(!decode(encode(one))["/p"].split);
+
+        // A group left empty, a bad share or a wrong type: one group.
+        const Sessions bad = decode(
+            "{\"/p\":{\"tabs\":[{\"path\":\"/p/a.txt\"}],\"groups\":{\"left\":[\"/p/a.txt\"],"
+            "\"right\":[]}},\"/q\":{\"tabs\":[{\"path\":\"/q/a.txt\"}],\"groups\":{"
+            "\"left\":[\"/q/a.txt\"],\"right\":[\"/q/a.txt\",7],\"focused\":3,\"fraction\":9}},"
+            "\"/r\":{\"tabs\":[{\"path\":\"/r/a.txt\"}],\"groups\":\"x\"}}");
+        CHECK(!bad.at("/p").split && bad.at("/p").groups.groups[0].empty());
+        CHECK(bad.at("/q").split && bad.at("/q").groups.groups[1].size() == 1);
+        CHECK(bad.at("/q").groups.focused == 0 && bad.at("/q").groups.fraction == 0.5);
+        CHECK(!bad.at("/r").split);
+    }
 }

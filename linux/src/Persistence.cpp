@@ -171,6 +171,11 @@ TabSessions::Session Persistence::session() {
         t.into = (long)c.topOffset;
         s.tabs.push_back(t);
     }
+    // The split editor's groups (PARITY.md 4.6).
+    if (editor_->isSplit()) {
+        s.split = true;
+        s.groups = editor_->groupsSession();
+    }
     return s;
 }
 
@@ -257,7 +262,16 @@ void Persistence::restoreSession() {
         for (int i : {r.active - dist, r.active + dist})
             if (!shown && i >= 0 && i < n && made[(size_t)i] && quickToShow(made[(size_t)i]->path()))
                 shown = made[(size_t)i];
-    if (shown) editor_->activate(shown);
+    // A split comes back over the tabs that did (EditorTabs::restoreGroups),
+    // each group's tab on show read now; else the one tab on show.
+    EditorTabs::GroupLayout groups;
+    if (saved.split && !editor_->isSplit()) {
+        std::vector<std::string> open;
+        for (Document* d : editor_->documents()) open.push_back(d->path());
+        groups = EditorTabs::restoreGroups(saved.groups, open);
+    }
+    if (groups.split) editor_->restoreGroups(groups);
+    else if (shown) editor_->activate(shown);
     // Asked about once the window is up and the tab on show (the question
     // is the window's), not while it opens.
     for (Document* d : changedSince) d->askAboutDiskChange();

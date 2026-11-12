@@ -444,11 +444,12 @@ static const char* kLostDetail = "Your changes will be lost if you don't save th
 // failed save keeps it, with the reason shown.
 static void closeTabAsking(App* app, Document* d, std::function<void(bool)> done = nullptr) {
     auto finish = [done](bool closed) { if (done) done(closed); };
-    if (app->dead || !d || app->editor->indexOf(d) < 0) { finish(false); return; }
+    if (app->dead || !d || !app->editor->isOpen(d)) { finish(false); return; }
     // With auto-save on, what it would write once the tab goes is written
     // first, so it is not asked about.
     if (d->dirty()) app->persist->autoSaveNow();
-    if (!d->dirty()) {
+    // Still open in the other editor group, nothing is lost: no question.
+    if (!d->dirty() || app->editor->inBothGroups(d)) {
         app->editor->closeTab(d);
         refreshHints(app);
         finish(true);
@@ -458,7 +459,7 @@ static void closeTabAsking(App* app, Document* d, std::function<void(bool)> done
     askUnsaved(app, "Save changes to “" + (name.empty() ? std::string("this file") : name) + "”?",
                kLostDetail, false, [app, d, finish](int choice) {
         // Closed meanwhile, or not to be closed.
-        if (app->editor->indexOf(d) < 0 || choice == 2) { finish(false); return; }
+        if (!app->editor->isOpen(d) || choice == 2) { finish(false); return; }
         if (choice == 0 && !saveDocument(app, d)) { finish(false); return; }
         app->editor->closeTab(d);
         refreshHints(app);
@@ -507,7 +508,7 @@ static void confirmAllUnsaved(App* app, std::function<void()> proceed,
         askUnsaved(app, "Save changes to “" + name + "”?", kLostDetail, false,
                    [app, d, proceed, cancel](int choice) {
             if (choice == 2) { cancel(); return; }
-            if (choice == 0 && app->editor->indexOf(d) >= 0 && !saveDocument(app, d)) {
+            if (choice == 0 && app->editor->isOpen(d) && !saveDocument(app, d)) {
                 cancel();
                 return;
             }
@@ -1302,7 +1303,35 @@ static void act_quit(GSimpleAction*, GVariant*, gpointer) {
 static void act_focus_editor(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     showEditorArea(app);
-    app->editor->focusActiveDocument();
+    app->editor->focusGroup(0);   // the left group when split (PARITY.md 4.6)
+    refreshHints(app);
+}
+
+// The split editor (PARITY.md 4.6, Groups.cpp): Focus Second Editor Group
+// (which splits the editor when it is not split), Split Editor, and Move
+// Editor into Next and Previous Group.
+static void act_focus_group2(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    showEditorArea(app);
+    app->editor->focusGroup(1);
+    refreshHints(app);
+}
+static void act_split_editor(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    showEditorArea(app);
+    app->editor->splitEditor();
+    refreshHints(app);
+}
+static void act_move_editor_next(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    showEditorArea(app);
+    app->editor->moveToGroup(1);
+    refreshHints(app);
+}
+static void act_move_editor_previous(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    showEditorArea(app);
+    app->editor->moveToGroup(-1);
     refreshHints(app);
 }
 
@@ -1380,7 +1409,8 @@ static void revealInTree(App* app, const std::string& path) {
 static void tabCommand(App* app, const std::string& name, Document* d) {
     if (app->dead || !d) return;
     Editor* e = app->editor;
-    const std::vector<Document*> all = e->documents();
+    // The tab's group's tabs (the strip with the menu is the focused one's).
+    const std::vector<Document*> all = e->groupDocuments(e->focusedGroup());
     if (name == "keep") {
         e->keepPreviewTab(d);
     } else if (name == "close") {
@@ -1425,7 +1455,7 @@ static void act_close_tabs_right(GSimpleAction*, GVariant*, gpointer userp) {
 }
 static void act_close_all_tabs(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    closeTabsAsking(app, idsOf(app->editor->documents()));
+    closeTabsAsking(app, idsOf(app->editor->groupDocuments(app->editor->focusedGroup())));
 }
 static void act_copy_active_path(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
@@ -2532,7 +2562,11 @@ static std::string hintsText(App* app) {
     row("minicode.sortKeepSortedBlocks", "Sort keep-sorted blocks");
     row("workbench.action.openSettings", "Settings");
     row("workbench.action.focusSideBar", "Focus the file tree");
-    row("workbench.action.focusFirstEditorGroup", "Focus the editor");
+    row("workbench.action.focusFirstEditorGroup", "Focus the editor (its left group)");
+    row("workbench.action.focusSecondEditorGroup", "Focus the editor's right group");
+    row("workbench.action.splitEditor", "Split the editor");
+    row("workbench.action.moveEditorToNextGroup", "Move the tab to the next group");
+    row("workbench.action.moveEditorToPreviousGroup", "Move the tab to the previous group");
 
     heading("Several carets and lines");
     row("editor.action.addSelectionToNextFindMatch", "Add the next occurrence");
@@ -3542,6 +3576,10 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "toggleagents", G_CALLBACK(act_toggle_agents));
     addAction(app, "focustree",      G_CALLBACK(act_focus_tree));
     addAction(app, "focuseditor",    G_CALLBACK(act_focus_editor));
+    addAction(app, "focusgroup2",    G_CALLBACK(act_focus_group2));
+    addAction(app, "spliteditor",    G_CALLBACK(act_split_editor));
+    addAction(app, "moveeditornext", G_CALLBACK(act_move_editor_next));
+    addAction(app, "moveeditorprevious", G_CALLBACK(act_move_editor_previous));
     addAction(app, "saveall",        G_CALLBACK(act_save_all));
     addAction(app, "copyactivepath", G_CALLBACK(act_copy_active_path));
     addAction(app, "revealactive",   G_CALLBACK(act_reveal_active));

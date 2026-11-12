@@ -1459,9 +1459,14 @@ These may run in parallel.
   the session (HANDOFF.md item 50, `browser_tabs`). *Done:* find in the page
   (Ctrl+F, F3 in the page or the address bar; HANDOFF.md item 53,
   `browser_find`) and page zoom kept per site. Zoom to Fit Width is left.
-- [ ] **4.6 The split editor.** `EditorTabs::restoreGroups`. With D2 the second
+- [x] **4.6 The split editor.** `EditorTabs::restoreGroups`. With D2 the second
   group can be a second view on the same buffer, which is simpler than the
-  Mac's mirror.
+  Mac's mirror. *Done:* two groups, the focused one holding the view and
+  all on it, the other a read-only view on the same buffer with its own
+  caret and scroll (`Groups.cpp`); Ctrl+Backslash, Ctrl+1 and Ctrl+2,
+  Ctrl+Alt+Shift+Page Down and Up (GNOME has Ctrl+Alt+arrows); the bar
+  drags; sessions keep the split. Viewers show in the focused group only.
+  HANDOFF.md item 61, `split_editor`.
 - [ ] **4.7 Terminal tabs and splits**, their own zoom, find, command marks
   (D10: left out, the owner's call), and Run File. `TerminalLayout`, `RunFile`.
   *Tabs done:* `TerminalDock` over a `TabStrip` and a +: New, Next,

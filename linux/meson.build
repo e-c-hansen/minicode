@@ -143,6 +143,7 @@ gui_sources = [
   'src/OpacityPicker.cpp',
   'src/Document.cpp',
   'src/Tabs.cpp',
+  'src/Groups.cpp',
   'src/TabStrip.cpp',
   # The view itself (CodeView.cpp: its drawing passes and the ruler), its
   # line-number gutter (Gutter.cpp) and each buffer's lines (BufferLines.cpp).
