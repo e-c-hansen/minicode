@@ -69,6 +69,11 @@ fi
 if [ -n "$(git status --porcelain)" ]; then
     echo "error: the working tree has uncommitted changes" >&2; exit 1
 fi
+# The notes are read only after main is pushed, so a bad path must stop the
+# release here (1.5.22 was given the text itself and stopped half released).
+if [ -n "${MINICODE_RELEASE_NOTES:-}" ] && [ ! -f "$MINICODE_RELEASE_NOTES" ]; then
+    echo "error: MINICODE_RELEASE_NOTES must name a Markdown file, not hold the notes" >&2; exit 1
+fi
 if gh release view "v$VERSION" --repo "$APP_REPO" >/dev/null 2>&1; then
     echo "error: v$VERSION is already released on $APP_REPO" >&2; exit 1
 fi
