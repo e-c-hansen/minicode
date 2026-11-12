@@ -19,6 +19,7 @@
 
 #include "Markdown.h"
 #include "MarkdownPage.h"
+#include "PreviewScroll.h"
 
 class MarkdownSide {
 public:
@@ -43,6 +44,25 @@ public:
     void schedule(int delayMs = 300);
     // Empty and forget the page; pending work is dropped.
     void clear();
+
+    // ---- scroll sync. `source` is the editor's text view (one for every tab);
+    // its scrolling leads the page, the page's scrolling leads the source,
+    // and a caret moved in the source brings its place in the page into
+    // view. Only the user's moves lead: our own (a render, a layout, following)
+    // are held, and a change that leaves a side's value as last seen is no move.
+    void setSource(GtkTextView* source);
+    // Typing in the source: the source leads again after the render.
+    void edited() { pageLeads_ = false; }
+    // The caret is on source line `line` (0-based).
+    void sourceCaret(int line);
+    // The source's top line and the page's, with fractions (checks read these).
+    double sourceTopLine();
+    double paneTopLine();
+    // The y in the page's buffer of source line `line` (a fraction of a line
+    // included), from the two marks around it.
+    double paneYForLine(double line);
+    bool pageLeads() const { return pageLeads_; }
+    bool syncing() const { return settleTimer_ != 0; }   // a target still being held
 
     // No timer, no job: the page shows the text last asked for.
     bool idle() const { return !timer_ && !job_ && !again_; }
@@ -79,6 +99,36 @@ private:
     void fetchPictures(const Info& info);
     void placeArrived();
     void clicked(double x, double y);
+
+    // scroll sync
+    struct Target {
+        bool toPane = true;      // the page is moved (else the source)
+        double line = 0;         // the source line to show
+        double into = 0;         // as a fraction of the pane's height down
+    };
+    bool syncActive();
+    void rebuildMarks();
+    PreviewScroll::Page pageAround(int markIndex);
+    double topOfAt(long at);
+    double sourceYForLine(double line);
+    void sourceMoved();
+    void paneMoved();
+    void apply(const Target& t);
+    void follow(const Target& t);
+    void startSettle();
+    void stopSettle();
+    void afterRender();
+    GtkTextView* source_ = nullptr;
+    GtkAdjustment *srcAdj_ = nullptr, *paneAdj_ = nullptr;
+    double lastSrcV_ = -1, lastPaneV_ = -1, lastSrcUp_ = -1, lastPaneUp_ = -1;
+    bool holding_ = false;
+    bool pageLeads_ = false;
+    std::vector<PreviewScroll::Mark> marks_;
+    bool marksDirty_ = true;
+    Target target_;
+    guint settleTimer_ = 0;
+    int settleStable_ = 0, settleTicks_ = 0;
+    double settleUpper_ = -1;
 
     GtkWidget* scroller_ = nullptr;
     GtkWidget* view_ = nullptr;

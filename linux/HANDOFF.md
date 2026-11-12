@@ -3784,7 +3784,27 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   pane and bringing it back, a second tab with no pane, a text file where the
   key does nothing, and the CPU bounds (15 ms and 40 ms, with headroom for a
   loaded machine) at 1,200 and 20,000 lines.
-- **Not done**: scroll sync (4.2b); double-click editing in the pane (the
+- **Scroll sync** (`MarkdownSide::setSource`, `markdown_side_sync`): the
+  Mac's rules over the core's `PreviewScroll`. Marks are (source line,
+  character) from the pieces' spans, rebuilt lazily after a render; a mark's
+  top is asked of the pane's layout (`gtk_text_view_get_iter_location`) only
+  for the two marks around the place (`PreviewScroll::around`), and the page
+  to source direction finds its mark by the character at the pane's top
+  (`get_iter_at_location`), so no question walks the page. GTK lays a view
+  out lazily and revises line heights, so a target is held: re-applied every
+  80 ms while the target adjustment's upper bound still moves, until it has
+  been still for four ticks, and dropped on any user move. Our own scrolls
+  set `holding_`, and a value-changed that leaves a side as last seen, or
+  came with its upper bound moving (GTK keeping a line still), is no move of
+  the user's. The pane leading sets `pageLeads_` (a render then leaves the
+  page alone); scrolling the source or typing in it clears it. The caret
+  (`notify::cursor-position` on the tab's buffer) brings its block into the
+  pane, a third down, only when it is not in view. Trap for checks:
+  `gtk_text_buffer_get_text` leaves out child anchors, so offsets from the
+  page's text are off by the tables before them; search the buffer with
+  iters. Measured: 0.3 to 0.7 ms of main-thread CPU for a sync at 20,000
+  lines.
+- **Not done**: double-click editing in the pane (the
   editor's popover is tied to its own view); a task box in the pane does
   nothing; heading anchors are per piece (`#section` links in the pane do
   not resolve); the pane's width is the paned's default and is not kept;

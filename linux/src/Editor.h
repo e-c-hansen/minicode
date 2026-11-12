@@ -553,7 +553,7 @@ private:
     bool           outlineSelecting_ = false;   // the outline's own choice is going in
     MarkdownSide*  side_ = nullptr;
     Document*      sideDoc_ = nullptr;      // the tab it shows
-    gulong         sideChanged_ = 0;
+    gulong         sideChanged_ = 0, sideCaret_ = 0;
     void syncSide();
     void dropSide();
     void syncOutline();
