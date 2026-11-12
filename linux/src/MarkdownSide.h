@@ -122,6 +122,8 @@ private:
     void afterRender();
     GtkTextView* source_ = nullptr;
     GtkAdjustment *srcAdj_ = nullptr, *paneAdj_ = nullptr;
+    gint64 srcUpperAt_ = 0, paneUpperAt_ = 0;
+    static bool upperMovedRecently(gint64 at);
     double lastSrcV_ = -1, lastPaneV_ = -1, lastSrcUp_ = -1, lastPaneUp_ = -1;
     bool holding_ = false;
     bool pageLeads_ = false;
