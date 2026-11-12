@@ -1172,6 +1172,9 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                s.gitAutoFetchPeriod_ = (int)seconds;
                return true;),
         MC_KEY("control.page-any-origin", Word, false, return boolValue(v, s.pageAnyOrigin_, e);),
+        MC_KEY("browser.bookmarks", Path, false,
+               s.browserBookmarks_ = lower(v) == "auto" ? "" : v;
+               return true;),
         MC_KEY("agent.ide-link", Word, false, return boolValue(v, s.ideLink_, e);),
     };
     return table;
@@ -1709,6 +1712,12 @@ const char* Settings::defaultFileText() {
 # browser.background = #2A2A2A
 # browser.opacity = 1
 # browser.text = #D4D4D4
+# The folder of web bookmarks: pages saved with Save Page as Bookmark (Cmd+D
+# in the browser, macOS only for now) as .url files, the Internet Shortcuts
+# every browser opens. `minicode https://...` opens a window on it with the
+# page in a browser tab; a .url or .webloc file opened from Finder or this
+# folder's tree loads in the browser. auto is ~/Bookmarks.
+# browser.bookmarks = auto
 
 # The status bar along the bottom.
 # statusbar.background = #007ACC

@@ -545,7 +545,8 @@ static const CGFloat kHintsPad = 16;
                         key2:[self hk:@"workbench.action.nextEditor"]
                       label2:@"Next browser tab" state:nil];
         [self appendHintsRow:s key:[self hk:@"actions.find"] label:@"Find in the page"
-                        key2:nil label2:nil state:nil];
+                        key2:[self hk:@"minicode.browser.saveBookmark"]
+                      label2:@"Save as bookmark" state:nil];
         // A page's own keys, kept off the menus (Keymap.mm).
         [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"minicode.page.zoomIn"],
                                     [self hk:@"minicode.page.zoomOut"]]

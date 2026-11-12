@@ -303,6 +303,16 @@ const std::vector<Command>& all() {
         // A Markdown file as a standalone page (VS Code has no export).
         {"minicode.markdown.exportHtml", "Export as HTML…", "File", "", A, "exportMarkdownHtml:",
          0, 0, nullptr},
+        // Safari's Add Bookmark key while the browser's page or its toolbar
+        // has the keyboard: a page key, which only the pane answers, so in
+        // the editor Cmd+D stays Add Next Occurrence.
+        {"minicode.browser.saveBookmark", "Save Page as Bookmark", "File", "cmd+d", P,
+         "saveBookmarkFromPage:", 0, 0,
+         "the browser pane (File > Save Page as Bookmark, saveBrowserBookmark:, from anywhere)"},
+        {"minicode.browser.saveAllTabs", "Save All Tabs as Bookmarks", "File", "", A,
+         "saveBrowserTabsAsBookmarks:", 0, 0, nullptr},
+        {"minicode.browser.openBookmarks", "Open All in Browser Tabs", "File", "", A,
+         "openBookmarksInTabs:", 0, 0, nullptr},
         {"explorer.newFolder", "New Folder…", "File", "shift+cmd+n", A, "newFolder:", 0, 0,
          nullptr},
         // Keys only while the tree has the keyboard, as in Finder and VS Code:

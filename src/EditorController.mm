@@ -187,6 +187,10 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
         return self.tourActive;
     if (item.action == @selector(exportPDF:)) return self.canExportPDF;
     if (item.action == @selector(exportMarkdownHtml:)) return self.canExportMarkdownHtml;
+    if (item.action == @selector(saveBrowserBookmark:)) return self.canSaveBrowserBookmark;
+    if (item.action == @selector(saveBrowserTabsAsBookmarks:)) return self.canSaveBrowserTabs;
+    if (item.action == @selector(openBookmarksInTabs:)) return self.canOpenBookmarksInTabs;
+    if (item.action == @selector(openBookmarkAsText:)) return self.canOpenBookmarkAsText;
     if (item.action == @selector(showLineInPDF:)) return self.canShowLineInPDF;
     if (item.action == @selector(toggleSidePreview:)) {
         item.state = [self sidePreviewShowing] ? NSControlStateValueOn : NSControlStateValueOff;

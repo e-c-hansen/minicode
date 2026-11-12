@@ -163,6 +163,10 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
 
 // The tree menu's items for a worktree (shown only on one).
 static const NSInteger kWorktreeMenuTag = 7701;
+// And for a folder holding web bookmarks, and for a bookmark file
+// (EditorController+Bookmarks.mm).
+static const NSInteger kBookmarkFolderMenuTag = 7702;
+static const NSInteger kBookmarkFileMenuTag = 7703;
 
 // ---------------------------------------------------------------------------
 // The instance variables more than one category uses. A variable only one
@@ -905,6 +909,14 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
                        from:(size_t)first
                          to:(size_t)end
                        into:(NSMutableAttributedString *)out;
+@end
+
+// EditorController+Bookmarks.mm: web bookmarks open in the browser pane.
+@interface EditorController (Bookmarks)
+// Loads the bookmark file's address in the browser and answers YES; NO for
+// a file that is no bookmark (or holds no address it may open), which then
+// opens as any file does. `focus` gives the page the keyboard.
+- (BOOL)openBookmarkAtPath:(NSString *)path focusPage:(BOOL)focus;
 @end
 
 #pragma clang diagnostic pop

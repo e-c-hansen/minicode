@@ -212,6 +212,11 @@ static void *kTitleContext = &kTitleContext;
     for (MCBrowserTab *t in _tabs) [out addObject:[self addressOf:t]];
     return out;
 }
+- (NSArray<NSString *> *)tabPageTitles {
+    NSMutableArray *out = [NSMutableArray array];
+    for (MCBrowserTab *t in _tabs) [out addObject:[self titleOf:t]];
+    return out;
+}
 - (NSArray<NSString *> *)tabTitles {
     NSMutableArray *out = [NSMutableArray array];
     for (MCBrowserTab *t in _tabs) {
@@ -642,6 +647,11 @@ static const CGFloat kBrowserBarHeight = 36;
     if (pageHadKeyboard) [self giveKeyboardToPage];
 }
 
+- (void)focusPage {
+    if (self.agentPageShown) [self showPage:NO];
+    [self giveKeyboardToPage];
+}
+
 - (void)giveKeyboardToPage {
     MCWebView *web = self.web;
     if (!web || web.isHiddenOrHasHiddenAncestor) return;
@@ -674,6 +684,46 @@ static const CGFloat kBrowserBarHeight = 36;
     t.url = url.absoluteString;
     const int at = EditorTabs::insertionIndex((int)_selected, (int)_tabs.count);
     [_tabs insertObject:t atIndex:(NSUInteger)at];
+    [self reloadStrip];
+}
+
+- (void)openAddresses:(NSArray<NSString *> *)urls {
+    MCBrowserTab *show = nil;
+    NSInteger at = -1;   // where the next new tab goes
+    for (NSString *u in urls) {
+        if (!u.length) continue;
+        MCBrowserTab *have = nil;
+        for (MCBrowserTab *t in _tabs)
+            if ([[self addressOf:t] isEqualToString:u]) { have = t; break; }
+        if (have) {
+            if (!show) show = have;
+            continue;
+        }
+        MCBrowserTab *shown = self.activeTab;
+        if (!show && shown && ![self addressOf:shown].length && !shown.web.isLoading) {
+            // The empty tab on show takes the first address.
+            shown.url = u;
+            shown.title = nil;
+            shown.record = nil;
+            if (shown.web) {
+                shown.web.toolbarNavigation = NO;
+                NSURL *url = [NSURL URLWithString:u];
+                if (url) [shown.web loadRequest:[NSURLRequest requestWithURL:url]];
+            }
+            show = shown;
+            at = _selected + 1;
+            continue;
+        }
+        MCBrowserTab *t = [self makeTab];
+        t.url = u;
+        if (at < 0) at = EditorTabs::insertionIndex((int)_selected, (int)_tabs.count);
+        [_tabs insertObject:t atIndex:(NSUInteger)at];
+        if (!show) show = t;
+        at++;
+    }
+    if (!show) return;
+    // New tabs went right of the one on show, so _selected still names it.
+    [self selectTab:[_tabs indexOfObject:show]];
     [self reloadStrip];
 }
 
@@ -776,6 +826,12 @@ static const CGFloat kBrowserBarHeight = 36;
     (void)sender;
     [self newTab];
     [self focusURLBar];
+}
+
+// Cmd+D (minicode.browser.saveBookmark, a page key): the window's
+// controller writes the bookmark (File > Save Page as Bookmark).
+- (void)saveBookmarkFromPage:(id)sender {
+    [self passOn:@selector(saveBrowserBookmark:) from:sender];
 }
 
 - (BOOL)isRepeatKey {
@@ -931,6 +987,14 @@ enum { kFindInPageShow = 1, kFindInPageNext = 2, kFindInPagePrevious = 3 };
     if (a == @selector(performTextFinderAction:))
         return item.tag == kFindInPageShow || item.tag == kFindInPageNext ||
                item.tag == kFindInPagePrevious;
+    if (a == @selector(saveBookmarkFromPage:)) {
+        id next = self.window.delegate;
+        NSMenuItem *probe = [[NSMenuItem alloc] initWithTitle:@""
+                                                       action:@selector(saveBrowserBookmark:)
+                                                keyEquivalent:@""];
+        return [next respondsToSelector:@selector(validateMenuItem:)] &&
+               [(id<NSMenuItemValidation>)next validateMenuItem:probe];
+    }
     if (a == @selector(closeFocused:)) {
         item.title = self.agentPageShown ? @"Close Agent Page"
                      : _tabs.count > 1   ? @"Close Browser Tab"

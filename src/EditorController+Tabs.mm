@@ -365,6 +365,9 @@
 // show. The file in the tab that was on show stays as it was, unsaved
 // changes and all.
 - (void)openFileAtPath:(NSString *)path from:(EditorTabs::OpenFrom)from {
+    // A web bookmark loads in the browser instead (+Bookmarks); an open that
+    // keeps a tab gives the page the keyboard.
+    if (path && [self openBookmarkAtPath:path focusPage:![self opensInPreview:from]]) return;
     [self revealEditor];
     if (!path) return;
     const BOOL inPreview = [self opensInPreview:from];

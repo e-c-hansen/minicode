@@ -471,6 +471,11 @@ public:
     // and pictures of any page in the browser pane (`minicode page`), not
     // only local ones (off by default; PageCheck.h).
     bool pageAnyOrigin() const { return pageAnyOrigin_; }
+    // browser.bookmarks: the folder of web bookmarks (.url files) that
+    // `minicode https://...` opens its browser window on and Save Page as
+    // Bookmark writes to, as written in the file ("~" not expanded); empty
+    // for the default, ~/Bookmarks (WebBookmark.h).
+    const std::string& browserBookmarks() const { return browserBookmarks_; }
     static const std::vector<std::string>& formatLanguages();
     // git.autofetch: fetch the folder's repository in the background, as
     // VS Code's git.autofetch (off by default); git.autofetch-period, the
@@ -551,6 +556,7 @@ private:
     std::string developSource_;
     std::string agentCommand_;
     bool pageAnyOrigin_ = false;
+    std::string browserBookmarks_;
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);
