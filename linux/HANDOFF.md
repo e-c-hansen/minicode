@@ -4087,6 +4087,13 @@ panel has a row).
   rule, bar drags, keyboard resize, closing, focus by click, and the four
   `split` forms. `control` expected "not on Linux yet" for `split`; it now
   expects the open refusal.
+- **Trap: the key place follows `app->terminal`.** `updateKeyPlace` reads
+  `a->terminal->owns(focus)`, and the dock sets `app->terminal` in
+  `onActiveChanged`, which can come after the focus move that already ran it,
+  so a new or replaced terminal left `place.terminal` false with the keyboard
+  in it and every Global terminal key (Ctrl+Shift+5, Ctrl+Shift+`) unbound.
+  `onActiveChanged` now runs `updateKeyPlace`; `terminal_splits` checks the
+  accelerators are bound before its first key.
 
 ## How to work on it
 
