@@ -22,6 +22,7 @@
 
 #ifdef MINICODE_ENABLE_TERMINAL
 #include "Terminal.h"
+#include "WindowLayout.h"
 #include <vte/vte.h>
 #endif
 
@@ -143,7 +144,8 @@ std::string findBarText() {
 }
 
 #ifdef MINICODE_ENABLE_TERMINAL
-bool terminalShown() { return gtk_widget_get_visible(MCGuiApp().terminal->widget()); }
+// The dock holds the terminal now (4.7), so its own widget is always visible.
+bool terminalShown() { return MCGuiApp().layout->terminalShown(); }
 bool terminalHasKeyboard() { return MCGuiApp().terminal->owns(focusWidget()); }
 VteTerminal* findVte(GtkWidget* root) {
     if (!root) return nullptr;

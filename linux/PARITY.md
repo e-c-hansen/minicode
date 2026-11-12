@@ -1437,6 +1437,12 @@ These may run in parallel.
   Mac's mirror.
 - [ ] **4.7 Terminal tabs and splits**, their own zoom, find, command marks
   (D10), and Run File. `TerminalLayout`, `RunFile`.
+  *Tabs done:* `TerminalDock` over a `TabStrip` and a +: New, Next,
+  Previous and Close Terminal, Rename, Move Left and Right, a drag, a close
+  question for a busy terminal, the last tab hiding the dock, Run File into a
+  new tab when busy, `minicode term` making a tab (HANDOFF item 56,
+  `terminal_tabs`). Left: splits, find, command marks, per-terminal ids, the
+  window close question counting busy terminals.
 
 ## Reported by the owner
 

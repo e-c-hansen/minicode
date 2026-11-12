@@ -36,6 +36,7 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.rootDir = a->rootDir;
 #ifdef MINICODE_ENABLE_TERMINAL
     w.terminal = a->terminal;
+    w.termDock = a->termDock;
 #endif
 #ifdef MINICODE_ENABLE_BROWSER
     w.browser = a->browser;

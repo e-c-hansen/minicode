@@ -77,6 +77,8 @@ public:
     // The browser hidden, for Close Tab with the browser's keyboard; the
     // keyboard goes to what is left.
     void hideBrowser();
+    // The terminal hidden, for the last terminal tab closing.
+    void hideTerminal();
     // The right side opened again if it was dragged or collapsed shut.
     void showRightArea();
     // The keyboard to what is left after a pane closed (the Mac's

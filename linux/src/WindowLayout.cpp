@@ -325,6 +325,14 @@ void WindowLayout::hideBrowser() {
     focusAfterClosingPanel();
 }
 
+void WindowLayout::hideTerminal() {
+    if (!terminal_ || !state_.terminalVisible) return;
+    state_.terminalVisible = false;
+    apply();
+    collapseRightAreaIfEmpty();
+    focusAfterClosingPanel();
+}
+
 // ------------------------------------------------------- the sidebar split
 
 bool WindowLayout::sidebarShown() const { return sidebarVisible_; }

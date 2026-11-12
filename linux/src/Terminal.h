@@ -105,6 +105,14 @@ public:
     // The last `lines` lines the terminal shows, scrollback included,
     // trailing blank lines left out (`minicode term-output`).
     std::string recentText(int lines);
+    // The tab's name (PARITY.md 4.7): the user's own title if one was given
+    // (Rename Terminal…), else the title the running program set (OSC 0/2),
+    // else the shell's name.
+    std::string title() const;
+    const std::string& userTitle() const { return userTitle_; }
+    void setUserTitle(const std::string& t);
+    // The title changed (a program set one, or the user did).
+    std::function<void()> onTitleChanged;
     // The shell's pid (the VTE child), 0 while there is none (PARITY.md 3.8).
     int shellPid() const { return shellPid_ > 0 ? (int)shellPid_ : 0; }
 
@@ -175,6 +183,7 @@ private:
     static void onSpawned(VteTerminal* term, GPid pid, GError* error, gpointer self);
 
     int         controlId_ = 0;
+    std::string userTitle_;
     GtkWidget*  attentionDot_ = nullptr;   // the mark, in the overlay
     std::string attentionShown_;
     std::string cwd_;

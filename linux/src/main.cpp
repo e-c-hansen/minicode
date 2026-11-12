@@ -55,6 +55,7 @@
 #include "ThemeCss.h"
 #include "Palette.h"
 #include "Terminal.h"
+#include "TerminalDock.h"
 #include "TerminalAttention.h"
 #include "ProcessMonitor.h"
 #include "AgentsPanel.h"
@@ -154,6 +155,10 @@ struct App {
     ProblemsPanel* problems = nullptr;
 
 #ifdef MINICODE_ENABLE_TERMINAL
+    // The terminals' tabs (PARITY.md 4.7); `terminal` is always the active
+    // one, as the Mac's `terminal` getter, so everything that means "the
+    // terminal" keeps working.
+    TerminalDock* termDock = nullptr;
     Terminal* terminal = nullptr;
 #endif
 #ifdef MINICODE_ENABLE_BROWSER
@@ -345,6 +350,10 @@ static void showError(App* app, const std::string& message, const std::string& d
 // Save, and tell the user if that failed. The editor leaves the buffer marked
 // unsaved on failure, so the title keeps its "*".
 static void flashStatus(App* app, const std::string& message);
+#ifdef MINICODE_ENABLE_TERMINAL
+static std::vector<std::string> sessionRootsOf(App* app);
+static void openTerminalLink(App* app, const Terminal::Link& link);
+#endif
 
 // One tab written to its file. editor.keep-sorted-on-save sorts the blocks of
 // the tab on show first, as one undo step; a tab saved in the background is
@@ -606,7 +615,8 @@ static void openFolder(App* app, const std::string& dir) {
     // After the tabs close, so no old file is reopened under the new root.
     if (app->lsp) app->lsp->setRoot(dir);   // servers belong to a folder
 #ifdef MINICODE_ENABLE_TERMINAL
-    if (app->terminal) app->terminal->setProjectRoot(dir);   // for its links
+    if (app->termDock)
+        for (Terminal* t : app->termDock->all()) t->setProjectRoot(dir);   // for their links
 #endif
     app->persist->setRoot(dir);
     app->persist->restoreSession();   // the new folder's tabs from last time
@@ -810,6 +820,71 @@ static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer
 // window, and none of them comes back until asked (the owner's report of
 // 2026-11-09: the port used to reopen the editor when the last of them
 // closed). WindowLayout.cpp has the rules and where the keyboard goes.
+#ifdef MINICODE_ENABLE_TERMINAL
+// One terminal of the window's dock, with the window's hooks on it (the
+// dock's factory): its folder and control id (MINICODE_TERMINAL_ID, before
+// the shell starts), links, the IDE link's variables, and the settings and
+// zoom as they are now.
+static Terminal* makeTerminal(App* app) {
+    Terminal* t = new Terminal(app->rootDir);
+    t->setProjectRoot(app->rootDir);
+    t->setControlId(app->controlId);
+    t->onCommandFinished = [app] {
+        if (!app->dead && app->lsp) app->lsp->lookAgainForMissingServer();
+    };
+    t->setSessionRoots([app] { return sessionRootsOf(app); });
+    t->setLinkHandler([app](const Terminal::Link& link) {
+        if (!app->dead) openTerminalLink(app, link);
+    });
+    t->extraEnvironment = [app] {
+        return app->ide ? app->ide->terminalEnvironment() : std::vector<std::string>();
+    };
+    if (g.settings) {
+        t->applySettings(g.settings->settings());
+        const double base = Zoom::terminalBasePoints();
+        t->setFontSize(base, Zoom::terminalPoints() / base);
+    }
+    return t;
+}
+
+// The question before a terminal with a program running closes.
+static void askCloseBusyTerminal(App* app, Terminal* t, std::function<void()> proceed) {
+    GtkAlertDialog* dlg = gtk_alert_dialog_new("Close this terminal?");
+    gtk_alert_dialog_set_detail(dlg, "A program is still running in it, and closing the terminal ends it.");
+    const char* buttons[] = {"Close Terminal", "Cancel", nullptr};
+    gtk_alert_dialog_set_buttons(dlg, buttons);
+    gtk_alert_dialog_set_cancel_button(dlg, 1);
+    gtk_alert_dialog_set_default_button(dlg, 1);
+    struct Ask { App* app; std::function<void()> proceed; };
+    gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr,
+        [](GObject* src, GAsyncResult* res, gpointer up) {
+            Ask* a = static_cast<Ask*>(up);
+            GError* err = nullptr;
+            const int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, &err);
+            if (err) g_error_free(err);
+            else if (choice == 0 && !a->app->dead) a->proceed();
+            delete a;
+        }, new Ask{app, std::move(proceed)});
+    g_object_unref(dlg);
+    (void)t;
+}
+
+// New Terminal: a tab right of the active one, shown, with the keyboard.
+static Terminal* newTerminalTab(App* app, const std::string& title, bool focus) {
+    if (app->dead || !app->termDock) return nullptr;
+    Terminal* t = app->termDock->newTerminal(title);
+    if (!app->layout->terminalShown()) {
+        GtkWidget* keep = gtk_window_get_focus(GTK_WINDOW(app->window));
+        app->layout->toggleTerminal();
+        if (!focus && keep && gtk_widget_get_root(keep) && gtk_window_get_focus(GTK_WINDOW(app->window)) != keep)
+            gtk_widget_grab_focus(keep);
+    } else if (focus) {
+        t->focus();
+    }
+    return t;
+}
+#endif
+
 // Run File and `minicode term --run` (PARITY.md 3.1): the window's one
 // terminal shown with the keyboard left where it was, then a line typed and
 // entered at its prompt, or `done` told why not (a running command, a shell
@@ -826,11 +901,16 @@ static void showTerminalQuietly(App* app) {
 #endif
 }
 
-static void runInTerminal(App* app, const std::string& line, std::function<void(const std::string&)> done) {
+static void runInTerminal(App* app, const std::string& line, std::function<void(const std::string&)> done,
+                          bool newTabIfBusy = false) {
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->dead || !app->terminal) {
         done("this window has no terminal");
         return;
+    }
+    if (newTabIfBusy) {   // Run File never types into a busy terminal: a new tab, as the Mac's
+        bool wait = false;
+        if (!app->terminal->runBlocker(&wait).empty() && !wait) newTerminalTab(app, "", false);
     }
     showTerminalQuietly(app);
     app->terminal->runLine(line, std::move(done));
@@ -843,7 +923,7 @@ static void runInTerminal(App* app, const std::string& line, std::function<void(
 // Run File (Shift+Cmd+Return on the Mac, Ctrl+Shift+Return here): the open
 // file saved, then run.<language>'s command typed into the terminal as if
 // the user had, so it is in the shell's history. A busy terminal is never
-// typed into: the status bar says so (one terminal per window until item 4.7).
+// typed into: it goes to a new terminal tab instead.
 static void act_run_file(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     const std::string path = app->editor->currentPath();
@@ -879,8 +959,41 @@ static void act_run_file(GSimpleAction*, GVariant*, gpointer userp) {
     runInTerminal(app, line, [a, name = baseName(path)](const std::string& why) {
         if (why.empty() || a->dead) return;
         flashStatus(a, "Not run: " + why + " (" + name + ")");
-    });
+    }, true);
 }
+
+#ifdef MINICODE_ENABLE_TERMINAL
+// The Terminal menu (PARITY.md 4.7).
+static void act_new_terminal(GSimpleAction*, GVariant*, gpointer userp) {
+    newTerminalTab(static_cast<App*>(userp), "", true);
+}
+static void act_next_terminal(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->termDock) app->termDock->next();
+}
+static void act_previous_terminal(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->termDock) app->termDock->previous();
+}
+static void act_close_terminal(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->termDock) app->termDock->close(app->termDock->activeIndex());
+}
+static void act_rename_terminal(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->termDock) return;
+    if (!app->layout->terminalShown()) app->layout->toggleTerminal();
+    app->termDock->askRename(app->termDock->activeIndex());
+}
+static void act_move_terminal_left(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->termDock) app->termDock->moveActive(-1);
+}
+static void act_move_terminal_right(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->termDock) app->termDock->moveActive(1);
+}
+#endif
 
 static void act_toggle_terminal(GSimpleAction*, GVariant*, gpointer userp) {
     static_cast<App*>(userp)->layout->toggleTerminal();
@@ -2631,9 +2744,9 @@ static void showConfigErrors(App* app) {
 // the terminals' zoom (Zoom.h).
 static void applyTerminalZoom(App* app) {
 #ifdef MINICODE_ENABLE_TERMINAL
-    if (app->dead || !app->terminal) return;
+    if (app->dead || !app->termDock) return;
     const double base = Zoom::terminalBasePoints();
-    app->terminal->setFontSize(base, Zoom::terminalPoints() / base);
+    for (Terminal* t : app->termDock->all()) t->setFontSize(base, Zoom::terminalPoints() / base);
 #else
     (void)app;
 #endif
@@ -2652,7 +2765,8 @@ static void applyWindowSettings(App* app) {
     if (app->git) app->git->applySettings(st);
     if (app->gitGutter) app->gitGutter->applySettings(st);
 #ifdef MINICODE_ENABLE_TERMINAL
-    if (app->terminal) app->terminal->applySettings(st);
+    if (app->termDock)
+        for (Terminal* t : app->termDock->all()) t->applySettings(st);
 #endif
     applyTerminalZoom(app);
     showConfigErrors(app);
@@ -2774,9 +2888,10 @@ static void initShared() {
         for (App* a : g.windows) {
             if (a->dead) continue;
 #ifdef MINICODE_ENABLE_TERMINAL
-            if (a->terminal)
-                a->terminal->setAttention(TerminalAttention::markName(a->controlId),
-                                          TerminalAttention::tooltip(a->controlId));
+            if (a->termDock)
+                for (Terminal* t : a->termDock->all())
+                    t->setAttention(TerminalAttention::markName(a->controlId),
+                                    TerminalAttention::tooltip(a->controlId));
 #endif
             if (a->editor) updateTitle(a);
         }
@@ -2893,7 +3008,9 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
                                     app->layout, app->palette, app->findBar};
     for (void* o : app->editor->handlerOwners()) owners.push_back(o);
 #ifdef MINICODE_ENABLE_TERMINAL
-    owners.push_back(app->terminal);
+    owners.push_back(app->termDock);
+    if (app->termDock)
+        for (Terminal* t : app->termDock->all()) owners.push_back(t);
 #endif
 #ifdef MINICODE_ENABLE_BROWSER
     owners.push_back(app->browser);
@@ -2941,7 +3058,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     delete app->lsp;
     app->lsp = nullptr;
 #ifdef MINICODE_ENABLE_TERMINAL
-    delete app->terminal;
+    delete app->termDock;
+    app->termDock = nullptr;
     app->terminal = nullptr;
 #endif
 #ifdef MINICODE_ENABLE_BROWSER
@@ -3131,17 +3249,16 @@ static App* newWindow(const std::string& root, const std::string& file) {
 #endif
     GtkWidget* terminalPane = nullptr;
 #ifdef MINICODE_ENABLE_TERMINAL
-    app->terminal = new Terminal(app->rootDir);
-    terminalPane = app->terminal->widget();
-    app->terminal->setProjectRoot(app->rootDir);
-    app->terminal->setControlId(app->controlId);   // MINICODE_TERMINAL_ID, before the shell
-    app->terminal->onCommandFinished = [app] {
-        if (!app->dead && app->lsp) app->lsp->lookAgainForMissingServer();
+    app->termDock = new TerminalDock([app] { return makeTerminal(app); });
+    app->terminal = app->termDock->active();
+    app->termDock->onActiveChanged = [app](Terminal* t) { app->terminal = t; };
+    app->termDock->onEmpty = [app] {
+        if (!app->dead && app->layout) app->layout->hideTerminal();
     };
-    app->terminal->setSessionRoots([app] { return sessionRootsOf(app); });
-    app->terminal->setLinkHandler([app](const Terminal::Link& link) {
-        if (!app->dead) openTerminalLink(app, link);
-    });
+    app->termDock->confirmClose = [app](Terminal* t, std::function<void()> proceed) {
+        askCloseBusyTerminal(app, t, std::move(proceed));
+    };
+    terminalPane = app->termDock->widget();
     StartupLog::mark("window: terminal");
 #endif
 
@@ -3410,6 +3527,13 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "togglemaximize", G_CALLBACK(act_toggle_maximize));
 #ifdef MINICODE_ENABLE_TERMINAL
     addAction(app, "nextwaiting",    G_CALLBACK(act_next_waiting));
+    addAction(app, "newterminal",    G_CALLBACK(act_new_terminal));
+    addAction(app, "nextterminal",   G_CALLBACK(act_next_terminal));
+    addAction(app, "previousterminal", G_CALLBACK(act_previous_terminal));
+    addAction(app, "closeterminal",  G_CALLBACK(act_close_terminal));
+    addAction(app, "renameterminal", G_CALLBACK(act_rename_terminal));
+    addAction(app, "moveterminalleft", G_CALLBACK(act_move_terminal_left));
+    addAction(app, "moveterminalright", G_CALLBACK(act_move_terminal_right));
 #endif
     addAction(app, "goback",         G_CALLBACK(act_go_back));
     addAction(app, "goforward",      G_CALLBACK(act_go_forward));
@@ -3454,12 +3578,6 @@ static App* newWindow(const std::string& root, const std::string& file) {
         ih.problems = [app] { return app->lsp ? app->lsp->problemRows() : std::vector<LspProblem>(); };
         ih.note = [app](const std::string& text) { if (!app->dead) flashStatus(app, text); };
         app->ide = new IdeLinkServer(ih);
-#ifdef MINICODE_ENABLE_TERMINAL
-        if (app->terminal)
-            app->terminal->extraEnvironment = [app] {
-                return app->ide ? app->ide->terminalEnvironment() : std::vector<std::string>();
-            };
-#endif
     }
     applyWindowSettings(app);   // now that the editor, terminal and status bar exist
     StartupLog::mark("window: actions and settings applied");
@@ -3631,6 +3749,15 @@ static void startControlChannel() {
     host.showTerminal = [](const ControlWindow& w) {
         if (App* a = controlApp(w.id)) showTerminalQuietly(a);
     };
+    host.newTerminal = [](const ControlWindow& w, const std::string& title) {
+#ifdef MINICODE_ENABLE_TERMINAL
+        App* a = controlApp(w.id);
+        return a && newTerminalTab(a, title, false) != nullptr;
+#else
+        (void)w; (void)title;
+        return false;
+#endif
+    };
     host.terminalRun = [](const ControlWindow& w, const std::string& line,
                           std::function<void(const std::string&)> done) {
         App* a = controlApp(w.id);
@@ -3674,6 +3801,23 @@ static void startControlChannel() {
                 t.session = sid;
                 t.sessionNamedAt = (int64_t)(when * 1e6);
             }
+#ifdef MINICODE_ENABLE_TERMINAL
+            if (a->termDock && a->termDock->count() > 1) {
+                // Every tab's shell is tracked (PARITY.md 4.7). Ids stand for
+                // terminals only on the window's first; the others are offset
+                // from it and reveal nothing by themselves.
+                t.shellPid = 0;
+                for (int i = 0; i < a->termDock->count(); i++) {
+                    Procs::Terminal u = t;
+                    u.id = a->controlId + i * 100000;
+                    u.title = a->termDock->at(i)->title();
+                    u.shellPid = a->termDock->at(i)->shellPid();
+                    if (i > 0) { u.session.clear(); u.sessionNamedAt = 0; }
+                    terms.push_back(u);
+                }
+                continue;
+            }
+#endif
             terms.push_back(t);
         }
     });

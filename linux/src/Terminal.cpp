@@ -262,6 +262,10 @@ void Terminal::makeTerminal() {
     vte_terminal_set_cursor_blink_mode(term, VTE_CURSOR_BLINK_OFF);
 
     g_signal_connect(vte_, "child-exited", G_CALLBACK(onChildExited), this);
+    g_signal_connect(vte_, "window-title-changed", G_CALLBACK(+[](VteTerminal*, gpointer p) {
+        Terminal* t = static_cast<Terminal*>(p);
+        if (t->onTitleChanged) t->onTitleChanged();
+    }), this);
     {
         const std::string detailed = std::string("termprop-changed::") + ShellIntegration::kVteMarkTermprop;
         g_signal_connect(vte_, detailed.c_str(), G_CALLBACK(onTermpropChanged), this);
@@ -406,6 +410,25 @@ void Terminal::makeTerminal() {
     gtk_overlay_set_child(GTK_OVERLAY(root_), scroller);
     gtk_overlay_add_overlay(GTK_OVERLAY(root_), underline_);
     spawnShell();
+}
+
+std::string Terminal::title() const {
+    if (!userTitle_.empty()) return userTitle_;
+    if (vte_) {
+        const char* t = vte_terminal_get_window_title(VTE_TERMINAL(vte_));
+        if (t && *t) return t;
+    }
+    const char* shell = g_getenv("SHELL");
+    if (shell && *shell) {
+        const char* slash = strrchr(shell, '/');
+        return slash ? slash + 1 : shell;
+    }
+    return "terminal";
+}
+
+void Terminal::setUserTitle(const std::string& t) {
+    userTitle_ = t;
+    if (onTitleChanged) onTitleChanged();
 }
 
 Terminal::~Terminal() {

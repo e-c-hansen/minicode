@@ -1131,6 +1131,29 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
         }
         const bool titled = a.has("title") && !a["title"].asString().empty();
         const int id = w.id;
+        // A tab of its own, as the Mac's: nothing is typed into a terminal
+        // the user may be working in, so a busy one is no obstacle.
+        if (host.newTerminal && host.newTerminal(w, titled ? a["title"].asString() : std::string())) {
+            if (line.empty()) {
+                Json r = Json::object();
+                r.set("terminal", id);
+                r.set("reused", false);
+                respond(Result::success(r));
+                return;
+            }
+            host.terminalRun(w, line, [respond, id, line](const std::string& why) {
+                if (!why.empty()) {
+                    respond(Result::failure("the new terminal was left alone: " + why));
+                    return;
+                }
+                Json r = Json::object();
+                r.set("terminal", id);
+                r.set("reused", false);
+                r.set("typed", line);
+                respond(Result::success(r));
+            });
+            return;
+        }
         if (line.empty()) {   // no command: show the terminal, if it can be used
             host.showTerminal(w);
             Json r = Json::object();

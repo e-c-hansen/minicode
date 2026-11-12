@@ -21,6 +21,7 @@ class GitPanel;
 class LspSession;
 class PalettePanel;
 class Terminal;
+class TerminalDock;
 class Browser;
 class WindowLayout;
 class NavHistoryUi;
@@ -47,7 +48,8 @@ struct MCGuiAppWindow {
     AgentWorktrees* worktrees = nullptr;   // the tree's Worktrees node (3.5)
     bool        agentsShown = false;
     LspSession* lsp = nullptr;
-    Terminal*   terminal = nullptr;
+    Terminal*   terminal = nullptr;     // the active one of termDock
+    TerminalDock* termDock = nullptr;   // the terminal tabs (4.7)
     Browser*    browser = nullptr;
     WindowLayout* layout = nullptr;        // the panes and their bars (WindowLayout.h)
     GtkWidget*  statusLabel = nullptr;

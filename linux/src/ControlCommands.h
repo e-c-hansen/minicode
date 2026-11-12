@@ -53,6 +53,9 @@ struct ControlHost {
     // entered at its prompt; `done` gets "" or why nothing was typed.
     std::function<void(const ControlWindow&, const std::string& line,
                        std::function<void(const std::string&)> done)> terminalRun;
+    // A new terminal tab in the window (PARITY.md 4.7), shown and active,
+    // with `title` as its name when not empty; false for none.
+    std::function<bool(const ControlWindow&, const std::string& title)> newTerminal;
     // Shows the window's terminal, the keyboard where it was.
     std::function<void(const ControlWindow&)> showTerminal;
     // The window's terminal's last `lines` lines; false when it has none.
