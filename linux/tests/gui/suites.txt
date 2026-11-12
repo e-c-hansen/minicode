@@ -96,3 +96,4 @@ SqliteViewSuite.cpp
 MathSuite.cpp
 SplitEditorSuite.cpp
 TerminalFindSuite.cpp
+MarkdownSideEditSuite.cpp

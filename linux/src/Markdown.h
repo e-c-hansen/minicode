@@ -95,6 +95,10 @@ struct Hooks {
     std::function<void(int line)> taskToggle;
 };
 
+// The page's pieces moved `delta` lines in the source: the lines the tables'
+// cells and task boxes report follow.
+void shiftLines(Page& page, int delta);
+
 // Replace the buffer's contents with the rendered Markdown.
 Page render(GtkTextView* view, GtkTextBuffer* buffer, const std::string& source,
             const Hooks& hooks);

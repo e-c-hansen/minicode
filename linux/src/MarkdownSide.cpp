@@ -87,6 +87,12 @@ MarkdownSide::MarkdownSide(GtkTextTagTable* tags) {
                                                      gpointer self) {
         static_cast<MarkdownSide*>(self)->clicked(x, y);
     }), this);
+    g_signal_connect(click, "pressed", G_CALLBACK(+[](GtkGestureClick* g, int n, double x, double y,
+                                                    gpointer self) {
+        if (n != 2) return;
+        static_cast<MarkdownSide*>(self)->doubleClicked(x, y);
+        (void)g;
+    }), this);
     gtk_widget_add_controller(view_, GTK_EVENT_CONTROLLER(click));
     stale_ = true;
 }
@@ -244,6 +250,19 @@ void MarkdownSide::apply(Job* job) {
         hooks_->link = [this, alive](const std::string& url) {
             if (!alive.expired() && onLink) onLink(url);
         };
+        hooks_->cellDoubleClick = [this, alive](int line, int row, int column, GtkWidget* cell) {
+            if (alive.expired() || !onEdit || !currentOrCatchUp()) return;
+            graphene_rect_t r;
+            GdkRectangle at{0, 0, 1, 1};
+            if (gtk_widget_compute_bounds(cell, view_, &r))
+                at = GdkRectangle{(int)r.origin.x, (int)r.origin.y, std::max(1, (int)r.size.width),
+                                  std::max(1, (int)r.size.height)};
+            // The separator row sits between the header and the first body row.
+            onEdit(line + row + (row > 0 ? 1 : 0), column, at);
+        };
+        hooks_->taskToggle = [this, alive](int line) {
+            if (!alive.expired() && onTask && currentOrCatchUp()) onTask(line);
+        };
     }
     GtkTextView* tv = GTK_TEXT_VIEW(view_);
     std::vector<Info> next;
@@ -272,6 +291,7 @@ void MarkdownSide::apply(Job* job) {
             if (delta)
                 for (Markdown::Span& s : in.page.spans)
                     if (s.line >= 0) s.line += delta;
+            if (delta) Markdown::shiftLines(in.page, delta);
             in.piece = np;
             pos += in.page.length;
             oc = (size_t)m + 1;
@@ -369,6 +389,39 @@ void MarkdownSide::placeArrived() {
 }
 
 // ------------------------------------------------------------ links
+
+// A click on a page older than the buffer (typing since the last render)
+// renders first and acts on nothing, as the Mac's catchUpSidePage.
+bool MarkdownSide::currentOrCatchUp() {
+    if (idle()) return true;
+    schedule(0);
+    return false;
+}
+
+void MarkdownSide::doubleClicked(double x, double y) {
+    if (!onEdit || !currentOrCatchUp()) return;
+    GtkTextView* tv = GTK_TEXT_VIEW(view_);
+    int bx = 0, by = 0;
+    gtk_text_view_window_to_buffer_coords(tv, GTK_TEXT_WINDOW_WIDGET, (int)x, (int)y, &bx, &by);
+    GtkTextIter it;
+    if (!gtk_text_view_get_iter_at_location(tv, &it, bx, by)) return;
+    GdkRectangle box;
+    gtk_text_view_get_iter_location(tv, &it, &box);
+    if (gtk_text_iter_ends_line(&it) && bx > box.x + std::max(box.width, 1)) return;
+    const int at = gtk_text_iter_get_offset(&it);
+    int start = 0;
+    for (const Info& in : infos_) {
+        if (at < start + in.page.length) {
+            const Markdown::Span* s = in.page.spanAt(at - start);
+            if (!s || s->line < 0) return;
+            int wx, wy;
+            gtk_text_view_buffer_to_window_coords(tv, GTK_TEXT_WINDOW_WIDGET, box.x, box.y, &wx, &wy);
+            onEdit(s->line, -1, GdkRectangle{wx, wy, std::max(box.width, 1), std::max(box.height, 1)});
+            return;
+        }
+        start += in.page.length;
+    }
+}
 
 void MarkdownSide::clicked(double x, double y) {
     if (!onLink) return;

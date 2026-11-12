@@ -802,6 +802,10 @@ void Editor::syncSide() {
         side_ = new MarkdownSide(tags_.table);
         side_->onLink = [this](const std::string& url) { openMarkdownLink(url); };
         side_->setSource(GTK_TEXT_VIEW(view_));
+        side_->onEdit = [this](int line, int column, const GdkRectangle& at) {
+            editMarkdownBlock(line, column, at, true);
+        };
+        side_->onTask = [this](int line) { toggleSideTask(line); };
     }
     bool render = false;
     if (sideDoc_ != d) {
@@ -2423,8 +2427,14 @@ bool Editor::scrollToAnchor(const std::string& anchorIn) {
 // splices just those bytes into the source buffer, as one undoable edit
 // (D3), which is then unsaved until Ctrl+S, as typing leaves it.
 
-void Editor::editMarkdownBlock(int line, int column, const GdkRectangle& at) {
-    if (!inMarkdownPage()) return;
+void Editor::editMarkdownBlock(int line, int column, const GdkRectangle& at, bool inPane) {
+    if (inPane ? !(side_ && sideDoc_ && sideDoc_ == active_ && !active_->showsPreview())
+               : !inMarkdownPage())
+        return;
+    // The popover is a child of the view it is over.
+    GtkWidget* parent = inPane ? side_->textView() : view_;
+    if (mdPop_ && gtk_widget_get_parent(mdPop_) != parent) dropMdPopover();
+    mdInPane_ = inPane;
     const std::string source = active_->text();
     MarkdownEdit::Block block = MarkdownEdit::blockAt(source, line, column);
     if (block.kind == MarkdownEdit::Block::None) return;
@@ -2447,7 +2457,7 @@ void Editor::showMdPopover(const std::string& title, const std::string& text, bo
     if (!mdPop_) {
         mdPop_ = gtk_popover_new();
         gtk_popover_set_position(GTK_POPOVER(mdPop_), GTK_POS_BOTTOM);
-        gtk_widget_set_parent(mdPop_, view_);
+        gtk_widget_set_parent(mdPop_, mdInPane_ && side_ ? side_->textView() : view_);
         GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
         gtk_widget_set_size_request(box, 440, -1);
         mdPopLabel_ = gtk_label_new("");
@@ -2536,7 +2546,16 @@ void Editor::commitMdEdit() {
     gtk_popover_popdown(GTK_POPOVER(mdPop_));
     // The block's bytes index the source it was found in; if that changed
     // while the popover was open, they may no longer be the same text.
-    if (!inMarkdownPage() || active_ != mdEditDoc_ || active_->text() != mdEditSrc_) return;
+    if (active_ != mdEditDoc_) return;
+    if (mdInPane_ ? !(side_ && sideDoc_ == active_) : !inMarkdownPage()) return;
+    if (active_->text() != mdEditSrc_) {
+        // The buffer changed underneath: keep what was typed.
+        if (!text.empty()) {
+            gdk_clipboard_set_text(gtk_widget_get_clipboard(view_), text.c_str());
+            gtk_widget_error_bell(view_);   // no status line here: the text is on the clipboard
+        }
+        return;
+    }
     std::string edited;
     if (adding) {
         if (text.empty()) return;
@@ -2544,7 +2563,53 @@ void Editor::commitMdEdit() {
     } else {
         edited = MarkdownEdit::replace(mdEditSrc_, mdBlock_, text);
     }
-    if (edited != mdEditSrc_) applyMarkdownSource(edited);
+    if (edited == mdEditSrc_) return;
+    if (mdInPane_) applySourceFromPane(edited); else applyMarkdownSource(edited);
+}
+
+// The side pane's edits go straight into the source buffer, one undo step at
+// the block's place; the pane follows by its own 0.3 s render, and the
+// source's caret and scroll stay where they were.
+void Editor::applySourceFromPane(const std::string& source) {
+    Document* d = active_;
+    if (!d || source == d->text()) return;
+    GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    const double keep = gtk_adjustment_get_value(v);
+    GtkTextIter c;
+    gtk_text_buffer_get_iter_at_mark(buffer_, &c, gtk_text_buffer_get_insert(buffer_));
+    const int line = gtk_text_iter_get_line(&c), col = gtk_text_iter_get_line_offset(&c);
+    d->spliceText(source);
+    d->refreshTaskCount();
+    // A caret on a line the edit did not touch keeps its place.
+    GtkTextIter n;
+    gtk_text_buffer_get_iter_at_line_offset(buffer_, &n, line, col);
+    if (gtk_text_iter_get_line(&n) == line) gtk_text_buffer_place_cursor(buffer_, &n);
+    gtk_adjustment_set_value(v, keep);
+}
+
+void Editor::toggleSideTask(int line) {
+    if (!(side_ && sideDoc_ == active_ && active_)) return;
+    const std::string source = active_->text();
+    const std::string edited = MarkdownTasks::toggleBox(source, line);
+    if (edited == source) { gtk_widget_error_bell(view_); return; }
+    applySourceFromPane(edited);
+}
+
+std::string Editor::blockEditorText() const {
+    if (!mdPopText_) return "";
+    GtkTextBuffer* b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(mdPopText_));
+    GtkTextIter s, e;
+    gtk_text_buffer_get_bounds(b, &s, &e);
+    char* raw = gtk_text_buffer_get_text(b, &s, &e, FALSE);
+    std::string t = raw ? raw : "";
+    g_free(raw);
+    return t;
+}
+
+void Editor::setBlockEditorText(const std::string& text) {
+    if (!mdPopText_) return;
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(mdPopText_)), text.c_str(),
+                             (int)text.size());
 }
 
 void Editor::dropMdPopover() {
