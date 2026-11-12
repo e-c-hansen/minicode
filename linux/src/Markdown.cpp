@@ -4,6 +4,7 @@
 // line, links blue+underlined), and like it draws tables as real tables and
 // shows local pictures, GIFs playing.
 #include "Markdown.h"
+#include "Math.h"
 #include "Mermaid.h"
 #include "MermaidDiagram.h"
 #include "MarkdownParser.h"
@@ -99,6 +100,7 @@ struct _MdPicture {
     GtkWidget parent_instance;
     GdkTexture* texture;
     int width, height;
+    int depth;   // a formula's: pixels below the text's baseline (-1: none)
     GdkPixbufAnimation* anim;
     GdkPixbufAnimationIter* iter;
     guint timer;
@@ -149,6 +151,7 @@ G_GNUC_END_IGNORE_DEPRECATIONS
 void md_picture_init(MdPicture* p) {
     p->texture = nullptr;
     p->width = p->height = 1;
+    p->depth = -1;
     p->anim = nullptr;
     p->iter = nullptr;
     p->timer = 0;
@@ -163,9 +166,13 @@ void mdPictureDispose(GObject* o) {
     G_OBJECT_CLASS(md_picture_parent_class)->dispose(o);
 }
 
-void mdPictureMeasure(GtkWidget* w, GtkOrientation o, int, int* min, int* nat, int*, int*) {
+void mdPictureMeasure(GtkWidget* w, GtkOrientation o, int, int* min, int* nat, int* minBase,
+                      int* natBase) {
     MdPicture* p = MD_PICTURE(w);
     *min = *nat = o == GTK_ORIENTATION_HORIZONTAL ? p->width : p->height;
+    // A formula sits on the text's baseline with its depth below it.
+    if (o == GTK_ORIENTATION_VERTICAL && p->depth >= 0)
+        *minBase = *natBase = std::max(0, p->height - p->depth);
 }
 
 void mdPictureSnapshot(GtkWidget* w, GtkSnapshot* s) {
@@ -314,11 +321,12 @@ void linkPicture(GtkWidget* pic, const std::shared_ptr<Markdown::Hooks>& hooks,
     gtk_widget_set_tooltip_text(pic, url.c_str());
 }
 
-void mdPictureSetSize(GtkWidget* w, int width, int height) {
+void mdPictureSetSize(GtkWidget* w, int width, int height, int depth = -1) {
     MdPicture* p = MD_PICTURE(w);
-    if (p->width == width && p->height == height) return;
+    if (p->width == width && p->height == height && p->depth == depth) return;
     p->width = std::max(1, width);
     p->height = std::max(1, height);
+    p->depth = depth;
     gtk_widget_queue_resize(w);
 }
 
@@ -630,6 +638,45 @@ Markdown::Page Markdown::renderRuns(GtkTextView* view, GtkTextBuffer* buffer,
                 tipText = st.why;
             }
         }
+        // Math (r.math): a typeset formula is a picture on the baseline, a
+        // display one centered on its own line; until it arrives, and when it
+        // failed, its TeX in the code style (a failure's complaint is the
+        // tooltip). Without tectonic the page says so (Page::mathMissing).
+        if (r.math && hooks->math) {
+            const Math::State st = Math::want(r.text, r.math == 2, hooks->mathColor);
+            if (st.kind == Math::State::Ready) {
+                int w = 0, h = 0;
+                GtkWidget* pic = newPicture(st.texture, nullptr, &w, &h);
+                mdPictureSetSize(pic, st.width, st.height, st.depth);
+                Embed embed;
+                embed.widget = pic;
+                embed.width = st.width;
+                embed.height = st.height;
+                embed.depth = st.depth;
+                anchorWidget(pic, r);
+                page.embeds.push_back(embed);
+                if (r.math == 2) {
+                    GtkTextTagTable* table = gtk_text_buffer_get_tag_table(buffer);
+                    if (!gtk_text_tag_table_lookup(table, "md_mathcenter"))
+                        gtk_text_buffer_create_tag(buffer, "md_mathcenter", "justification",
+                                                   GTK_JUSTIFY_CENTER, "pixels-above-lines", 4,
+                                                   "pixels-below-lines", 4, nullptr);
+                    applyTag(buffer, "md_mathcenter", pos - 1, pos);
+                }
+                continue;
+            }
+            if (st.kind == Math::State::Waiting) {
+                page.waiting++;
+                page.mathWaiting++;
+            } else {
+                tipOpen = true;
+                tipEnd = i + 1;
+                tipStart = pos;
+                tipText = st.why;
+            }
+        } else if (r.math && hooks->mathMissing) {
+            page.mathMissing++;
+        }
         if (r.heading > 0 && r.line != headingLine) {
             endHeading();
             headingLine = r.line;
@@ -789,7 +836,8 @@ void Markdown::fit(Page& page, int width) {
         }
         if (e.width <= 0 || e.height <= 0) continue;
         const int w = std::min(e.width, width);
-        mdPictureSetSize(e.widget, w, (int)((double)e.height * w / e.width + 0.5));
+        mdPictureSetSize(e.widget, w, (int)((double)e.height * w / e.width + 0.5),
+                         e.depth >= 0 ? (int)((double)e.depth * w / e.width + 0.5) : -1);
     }
 }
 

@@ -276,6 +276,10 @@ public:
     CsvTable* csvTable() const { return csv_; }
     bool isMarkdown() const { return active_ && active_->isMarkdown(); }
     bool inPreview() const { return active_ && active_->showsPreview(); }
+    // The math line over the preview ("Typesetting 2 formulas…"), "" when hidden, and
+    // the text color formulas are drawn in ("#rrggbb").
+    std::string mathNote() const;
+    std::string mathColor() const;
     // A .tex/.ltx/.latex file, in a build with poppler: it opens in the LaTeX
     // preview (Latex.h), which takes the slot while the buffer keeps the
     // source. latex() is the active tab's, null until it first shows.
@@ -447,6 +451,8 @@ private:
     void notifyDocument();        // tell the observer what the view shows now
     void titleChanged();
     bool inMarkdownPage() const;  // the view shows the active Markdown page
+    void updateMathNote();
+    void downloadTectonicForMath();
 
     void renderPreview();        // build the active Markdown page into its buffer
     void rerenderPreview();      // the same again, at the same scroll
@@ -645,6 +651,9 @@ private:
     std::vector<std::pair<std::string, WebImages::PicturePtr>> arrived_;
     guint arrivedTimer_ = 0;
     int mermaidListener_ = 0;   // Mermaid.h: a diagram arrived
+    int mathListener_ = 0;      // Math.h: a formula typeset or failed
+    GtkWidget* mathNote_ = nullptr;   // the math line over the preview
+    bool mathDownloading_ = false;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
     GtkTextMark* holdMark_ = nullptr;   // the line that was at the top
     int    holdInto_ = 0;               // how far into it the view started

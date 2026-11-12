@@ -1,5 +1,6 @@
 // MarkdownSide.cpp — see MarkdownSide.h.
 #include "MarkdownSide.h"
+#include "Math.h"
 #include "Mermaid.h"
 
 #include <time.h>
@@ -56,6 +57,11 @@ MarkdownSide::MarkdownSide(GtkTextTagTable* tags) {
         for (const Info& i : infos_)
             if (i.page.waiting) { schedule(0); return; }
     });
+    mathListener_ = Math::subscribe([this, alive] {
+        if (alive.expired()) return;
+        for (const Info& i : infos_)
+            if (i.page.mathWaiting) { schedule(0); return; }
+    });
     scroller_ = gtk_scrolled_window_new();
     gtk_widget_add_css_class(scroller_, "minicode-scroller");
     gtk_widget_add_css_class(scroller_, "minicode-editor-scroller");
@@ -80,6 +86,7 @@ MarkdownSide::MarkdownSide(GtkTextTagTable* tags) {
 
 MarkdownSide::~MarkdownSide() {
     Mermaid::unsubscribe(mermaidListener_);
+    Math::unsubscribe(mathListener_);
     alive_.reset();   // a running job finds nobody
     if (timer_) g_source_remove(timer_);
     if (arrivedTimer_) g_source_remove(arrivedTimer_);
@@ -89,12 +96,16 @@ MarkdownSide::~MarkdownSide() {
     g_object_unref(buffer_);
 }
 
-bool MarkdownSide::setContext(const std::string& folder, bool webImages, bool mermaid, bool dark) {
-    if (folder == folder_ && webImages == webImages_ && mermaid == mermaid_ && dark == dark_ && hooks_)
+bool MarkdownSide::setContext(const std::string& folder, bool webImages, bool mermaid, bool dark,
+                              bool math, const std::string& mathColor) {
+    if (folder == folder_ && webImages == webImages_ && mermaid == mermaid_ && dark == dark_ &&
+        math == math_ && mathColor == mathColor_ && hooks_)
         return false;
     folder_ = folder;
     webImages_ = webImages;
     mermaid_ = mermaid;
+    math_ = math;
+    mathColor_ = mathColor;
     dark_ = dark;
     stale_ = true;
     return true;
@@ -214,6 +225,8 @@ void MarkdownSide::apply(Job* job) {
         hooks_->webImages = webImages_ && WebImages::available();
         hooks_->mermaid = mermaid_ && Mermaid::available();
         hooks_->mermaidDark = dark_;
+        hooks_->math = math_;
+        hooks_->mathColor = mathColor_.empty() ? "#d4d4d4" : mathColor_;
         std::weak_ptr<int> alive = alive_;
         hooks_->link = [this, alive](const std::string& url) {
             if (!alive.expired() && onLink) onLink(url);

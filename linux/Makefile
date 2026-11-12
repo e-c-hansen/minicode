@@ -23,7 +23,7 @@ BIN      := $(BUILD)/minicode
 # the same list as core_sources in meson.build: CI builds only with Meson, so
 # a file missing here is noticed by nobody until someone runs this.
 CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEdit.cpp \
-        ../src/MarkdownTasks.cpp ../src/MarkdownPage.cpp ../src/MarkdownHtml.cpp ../src/MermaidDiagram.cpp ../src/Settings.cpp ../src/LineComments.cpp \
+        ../src/MarkdownTasks.cpp ../src/MarkdownPage.cpp ../src/MarkdownHtml.cpp ../src/MermaidDiagram.cpp ../src/MathTex.cpp ../src/Settings.cpp ../src/LineComments.cpp \
         ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
         ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp \
         ../src/LatexDoc.cpp ../src/LatexLog.cpp ../src/LatexScratch.cpp ../src/SyncTex.cpp \
@@ -66,7 +66,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Do
        src/LspSessionSymbols.cpp src/LspSessionFolding.cpp \
        src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp \
        src/GitDiffView.cpp src/CompareView.cpp src/ComparePanes.cpp src/CompareDecision.cpp src/GitGutter.cpp src/AgentNotes.cpp src/InlineAgentBar.cpp src/TerminalAttention.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
-       src/WebImageRules.cpp src/WebImages.cpp src/Mermaid.cpp src/Keys.cpp \
+       src/WebImageRules.cpp src/WebImages.cpp src/Mermaid.cpp src/Math.cpp src/Keys.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \

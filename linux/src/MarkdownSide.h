@@ -37,7 +37,8 @@ public:
 
     // What the pieces are built from. A change makes the next render whole.
     bool setContext(const std::string& folder, bool webImages, bool mermaid = false,
-                    bool dark = false);   // true when it changed
+                    bool dark = false, bool math = false,
+                    const std::string& mathColor = "");   // true when it changed
     void invalidate() { stale_ = true; }
 
     // The source is shown (or changed): render after `delayMs`.
@@ -89,7 +90,9 @@ private:
     std::string folder_;
     bool webImages_ = false;
     bool mermaid_ = false, dark_ = false;   // diagrams drawn, in which theme
-    int mermaidListener_ = 0;
+    int mermaidListener_ = 0, mathListener_ = 0;
+    bool math_ = false;            // formulas typeset, in this color
+    std::string mathColor_;
     bool stale_ = false;      // the context moved: build everything
     guint timer_ = 0, arrivedTimer_ = 0;
     Job* job_ = nullptr;      // running on the worker

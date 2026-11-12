@@ -1420,12 +1420,14 @@ These may run in parallel.
   page right of the source in pieces (`MarkdownSide`, HANDOFF item 54): 0.7 ms
   of main-thread CPU after a one-letter edit at 1,200 lines, 4.5 ms at 20,000.
   Scroll sync, editing from the pane and the tables' first-render cost remain.
-- [ ] **4.3 Math, Mermaid, and Export as HTML.** `MathTex`, `MermaidDiagram`,
+- [x] **4.3 Math, Mermaid, and Export as HTML.** `MathTex`, `MermaidDiagram`,
   `MarkdownHtml`.
   *Export and Mermaid done:* File > Export as HTML… (the command palette;
   `exporthtml`) and ```mermaid blocks drawn by the user's mmdc in the full
   preview and the side pane (HANDOFF.md item 56, `mermaid`, `export_html`).
-  Math remains.
+  *Done:* math in both previews, typeset by tectonic and cut with poppler
+  into pictures in the text's color (HANDOFF.md item 57, `markdown_math`,
+  against a stand-in tectonic; a real one is unchecked).
 - [x] **4.4 LaTeX problems, warnings, and forward search.** `LatexLog`,
   `LatexScratch`.
   *Problems and warnings done:* a failed typeset's problems are rows that
