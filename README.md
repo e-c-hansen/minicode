@@ -492,7 +492,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Move to the start or end of the line at the terminal's prompt, or delete back to its start | Command Left, Command Right, Command Delete |  |  |
 | New file | Command N | Ctrl N | New file in the ⋮ menu |
 | New folder | Shift Command N | Ctrl Alt N |  |
-| New tab in the browser, while it has the keyboard (View > New Browser Tab anywhere) | Command T, or the + at the end of its tabs |  |  |
+| New tab in the browser, while it has the keyboard (View > New Browser Tab anywhere) | Command T, or the + at the end of its tabs | Ctrl T, or the button at the end of its tabs |  |
 | New window | Option Command N | Ctrl Shift N |  |
 | Next tab, previous tab (the browser's, while it has the keyboard and more than one tab) | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [, or Option Command Right, Option Command Left | Ctrl Page Down, Ctrl Page Up, or Ctrl Tab, Ctrl Shift Tab |  |
 | Open a file of the folder by typing part of its name, recently opened files first | Command P | Ctrl P (in the terminal the program has it) |  |
@@ -502,7 +502,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Open a folder opened before, in this window | Control R (File > Open Recent lists them too) |  |  |
 | Open a new terminal in a new tab | Control Shift backtick |  |  |
 | Open the command palette, to find any menu command by name and run it | Shift Command P, or F1 | Ctrl Shift P, or F1 (in the terminal only Ctrl Shift P) |  |
-| Open the rendered Markdown page beside its source, or close it | Control Command V |  |  |
+| Open the rendered Markdown page beside its source, or close it | Control Command V | Ctrl Alt V |  |
 | Open the right click menu of what has the keyboard, at the selected row or the cursor | Shift F10, or Control Return, or the Menu key of a PC keyboard |  |  |
 | Open the settings file | Command comma | Ctrl comma |  |
 | Organize the file's imports, with a language server (Ruff's, when it runs) | Shift Option O | Shift Alt O (in the terminal the program has it) |  |
@@ -537,7 +537,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Show or hide the sizes of files and folders in the file tree | Shift Command I |  |  |
 | Show or hide when each file in the file tree was created | Control Shift Command I |  |  |
 | Show or hide when each file in the file tree was last saved, and when the open file was saved | Option Shift Command I |  |  |
-| Show the cursor's line of a LaTeX file on the typeset page | Option Command J |  |  |
+| Show the cursor's line of a LaTeX file on the typeset page | Option Command J | Ctrl Alt Shift J |  |
 | Show the language server's quick fixes for the cursor or the selection | Command period | Ctrl period |  |
 | Show the type and documentation under the cursor | Option Command I | Ctrl Alt I | K, or Ctrl K |
 | Split the editor: the file on show in a second group beside it, with its own tabs | Command backslash, in the editor |  |  |

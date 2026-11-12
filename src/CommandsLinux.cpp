@@ -50,10 +50,6 @@ const std::vector<LinuxRow>& linuxRows() {
         // Option+Cmd+S with Alt and Ctrl, as Show Hover's.
         {"workbench.action.files.saveAll", "ctrl+alt+s", 0, nullptr, nullptr},
         {"minicode.latex.exportPDF", "ctrl+shift+s", 0, nullptr, nullptr},
-        // LaTeX Workshop's Linux key, Ctrl+Alt+J, is Unfold All's here (the
-        // family's key, above), so Shift joins it; an Editor command like
-        // Unfold All, so the two cannot share the key.
-        {"latex-workshop.synctex", "ctrl+alt+shift+j", 0, nullptr, nullptr},
         {"explorer.newFolder", "ctrl+alt+n", 0, nullptr, nullptr},
         // The tree's own keys, as in VS Code's explorer on Linux. The port
         // gives them to the tree's shortcut controller, never to the menu
@@ -161,6 +157,10 @@ const std::vector<LinuxRow>& linuxRows() {
         // chords. The Mac's Ctrl+Cmd+V with Ctrl+Alt for Cmd (as the task
         // key's Ctrl+Alt+L); GNOME takes no Ctrl+Alt+V.
         {"markdown.showPreviewToSide", "ctrl+alt+v", 0, nullptr, nullptr},
+        // LaTeX Workshop's Linux key, Ctrl+Alt+J, is Unfold All's here (the
+        // folding family's key, below), so Shift joins it; an Editor command like
+        // Unfold All, so the two cannot share the key.
+        {"latex-workshop.synctex", "ctrl+alt+shift+j", 0, nullptr, nullptr},
         {"minicode.toggleShortcutHints", "ctrl+shift+h", 0, nullptr, nullptr},
         // The editor's zoom (PARITY.md 1.11), VS Code's Linux Ctrl+= and
         // Ctrl+- (its window's zoom; here the editor's and the Markdown
