@@ -71,6 +71,9 @@ MarkdownSide::MarkdownSide(GtkTextTagTable* tags) {
     gtk_widget_set_vexpand(scroller_, TRUE);
     g_object_ref_sink(scroller_);
     paneAdj_ = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    g_signal_connect_swapped(paneAdj_, "notify::upper", G_CALLBACK(+[](gpointer self) {
+        static_cast<MarkdownSide*>(self)->paneUpperAt_ = g_get_monotonic_time();
+    }), this);
     g_signal_connect_swapped(paneAdj_, "value-changed", G_CALLBACK(+[](gpointer self) {
         static_cast<MarkdownSide*>(self)->paneMoved();
     }), this);
@@ -402,11 +405,23 @@ void MarkdownSide::clicked(double x, double y) {
 // or came with its upper bound moving (GTK keeping a line still while the
 // layout above it changes), is no move of the user's.
 
+// An upper bound that differs from the one seen at the last value-changed
+// only counts as the layout's doing when it moved just now: lazy layout can
+// change it long before the user's next scroll (a full GUI run left it so,
+// and that scroll was taken for ours and never followed).
+bool MarkdownSide::upperMovedRecently(gint64 at) {
+    return g_get_monotonic_time() - at < 50 * 1000;
+}
+
 void MarkdownSide::setSource(GtkTextView* source) {
     if (source_ == source) return;
     if (srcAdj_) g_signal_handlers_disconnect_by_data(srcAdj_, this);
     source_ = source;
     srcAdj_ = source ? gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(source)) : nullptr;
+    if (srcAdj_)
+        g_signal_connect_swapped(srcAdj_, "notify::upper", G_CALLBACK(+[](gpointer self) {
+            static_cast<MarkdownSide*>(self)->srcUpperAt_ = g_get_monotonic_time();
+        }), this);
     if (srcAdj_)
         g_signal_connect_swapped(srcAdj_, "value-changed", G_CALLBACK(+[](gpointer self) {
             static_cast<MarkdownSide*>(self)->sourceMoved();
@@ -565,7 +580,7 @@ void MarkdownSide::stopSettle() {
 void MarkdownSide::sourceMoved() {
     if (!srcAdj_) return;
     const double v = gtk_adjustment_get_value(srcAdj_), up = gtk_adjustment_get_upper(srcAdj_);
-    const bool ours = holding_ || std::fabs(v - lastSrcV_) < 0.5 || up != lastSrcUp_;
+    const bool ours = holding_ || std::fabs(v - lastSrcV_) < 0.5 || (up != lastSrcUp_ && upperMovedRecently(srcUpperAt_));
     lastSrcV_ = v;
     lastSrcUp_ = up;
     if (ours || !syncActive()) return;
@@ -575,7 +590,7 @@ void MarkdownSide::sourceMoved() {
 
 void MarkdownSide::paneMoved() {
     const double v = gtk_adjustment_get_value(paneAdj_), up = gtk_adjustment_get_upper(paneAdj_);
-    const bool ours = holding_ || std::fabs(v - lastPaneV_) < 0.5 || up != lastPaneUp_;
+    const bool ours = holding_ || std::fabs(v - lastPaneV_) < 0.5 || (up != lastPaneUp_ && upperMovedRecently(paneUpperAt_));
     lastPaneV_ = v;
     lastPaneUp_ = up;
     if (ours || !syncActive()) return;

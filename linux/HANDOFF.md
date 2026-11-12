@@ -3808,6 +3808,10 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   nothing; heading anchors are per piece (`#section` links in the pane do
   not resolve); the pane's width is the paned's default and is not kept;
   the page is not kept across a switch to another tab.
+  Trap: "upper changed since the last value-changed" alone made a later user
+  scroll look like layout (the last seen upper went stale under lazy layout, so a
+  full run never followed a 20,000-line jump); it counts only within 50 ms of
+  a `notify::upper`.
 
 ### 55. LaTeX forward search (done, November 2026; `PARITY.md` item 4.4, second part)
 
