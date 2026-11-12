@@ -3229,6 +3229,10 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   (`watchWorktreeFolders`, FileTree.cpp, made again when one appears), and
   any event there relists the top folder. `agents` no longer asks the tree
   to look again; it fails without the monitors.
+- **Trap (suite order):** the Worktrees node is a row added above a tree an
+  earlier suite left scrolled down, so it exists but is not mapped; the
+  `agents` suite scrolls the tree up on each look (a full run only; alone
+  the tree sits at the top). Not the watches: they fire and relist.
 - **Trap (Evidence):** the page updates itself every 2 s and each change
   publishes the list without outputs, then with them. `outputsLoaded()` was
   set by the first and never cleared, so a tick in between left it true over

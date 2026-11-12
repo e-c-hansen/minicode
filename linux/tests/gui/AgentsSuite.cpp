@@ -434,11 +434,19 @@ MC_GUI_SUITE(agents) {
         const WorktreeInfo* w = MCGuiApp().worktrees->find(gWt);
         return w && w->ahead == 1 && w->dirty && MCGuiApp().worktrees->mainBranch() == "main";
     });
-    MCGuiWait("the Worktrees node is first in the tree", 15, [] { GtkWidget* l = treeLabel("Worktrees"); return l && MCGuiOnScreen(l); });
+    // Earlier suites leave the tree scrolled down, and a row added at the top of
+    // a scrolled list leaves it above the pane: a person scrolls up to find it
+    // (the old setRoot did it by rebuilding), so each look scrolls up first.
+    MCGuiWait("the Worktrees node is first in the tree", 15, [] {
+        gtk_adjustment_set_value(gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(MCGuiApp().tree->widget())), 0);
+        GtkWidget* l = treeLabel("Worktrees");
+        return l && MCGuiOnScreen(l);
+    });
     MCGuiStep("it opens to the worktree", [] { MCGuiClick(treeLabel("Worktrees")); });
     MCGuiWait("the worktree row says how it stands", 15, [] { GtkWidget* l = treeLabel("agent-wt"); return l && MCGuiOnScreen(l); });
     MCGuiStep("named for its folder with the badge; select it", [] {
         GtkWidget* l = treeLabel("agent-wt");
+        GCHECK(l != nullptr);
         GCHECK(has(gtk_label_get_text(GTK_LABEL(l)), "1 ahead · modified"));
         GCHECK(!gtk_widget_has_css_class(l, "minicode-git-modified") &&
                !gtk_widget_has_css_class(l, "minicode-git-untracked"));
