@@ -285,6 +285,9 @@ std::string stylesheet(const Settings& s) {
     css += ".minicode-split > separator:dir(rtl) { padding: 0 5px 0 0;"
            " box-shadow: inset 4px 0 #333333; }";
     css += ".minicode-split > separator:dir(rtl):hover { box-shadow: inset 4px 0 #007ACC; }";
+    // The bars between a terminal tab's panes (TerminalGroup.cpp).
+    css += ".minicode-terminal-bar { background-color: #333333; }";
+    css += ".minicode-terminal-bar:hover { background-color: #007ACC; }";
     // The right side's bars (WindowLayout.cpp), the same 4px line in the
     // middle of a grab area 4px wider on each side that lies over the panes'
     // edges; lit while hovered or dragged.

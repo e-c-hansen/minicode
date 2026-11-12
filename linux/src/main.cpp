@@ -998,10 +998,39 @@ static void act_previous_terminal(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     if (app->termDock) app->termDock->previous();
 }
+// Close Terminal closes the active pane; the tab goes with its last.
 static void act_close_terminal(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    if (app->termDock) app->termDock->close(app->termDock->activeIndex());
+    if (app->termDock) app->termDock->closePane(app->termDock->active());
 }
+// Split Terminal and Split Terminal Down (PARITY.md 4.7): the dock is shown
+// first, and a refusal (a pane would be under 20 columns or 5 rows) beeps.
+static Terminal* splitTerminalPane(App* app, bool down, bool focus) {
+    if (app->dead || !app->termDock) return nullptr;
+    if (!app->layout->terminalShown()) {
+        GtkWidget* keep = gtk_window_get_focus(GTK_WINDOW(app->window));
+        app->layout->toggleTerminal();
+        if (!focus && keep && gtk_widget_get_root(keep) && gtk_window_get_focus(GTK_WINDOW(app->window)) != keep)
+            gtk_widget_grab_focus(keep);
+    }
+    return app->termDock->split(down, focus);
+}
+static void act_split_terminal(GSimpleAction*, GVariant*, gpointer userp) {
+    splitTerminalPane(static_cast<App*>(userp), false, true);
+}
+static void act_split_terminal_down(GSimpleAction*, GVariant*, gpointer userp) {
+    splitTerminalPane(static_cast<App*>(userp), true, true);
+}
+static void resizeTerminalPane(gpointer userp, TerminalGroup::Dir d) {
+    App* app = static_cast<App*>(userp);
+    if (app->termDock && !app->termDock->resizeActive(d)) {
+        if (GdkDisplay* disp = gdk_display_get_default()) gdk_display_beep(disp);
+    }
+}
+static void act_resize_terminal_left(GSimpleAction*, GVariant*, gpointer p) { resizeTerminalPane(p, TerminalGroup::Dir::Left); }
+static void act_resize_terminal_right(GSimpleAction*, GVariant*, gpointer p) { resizeTerminalPane(p, TerminalGroup::Dir::Right); }
+static void act_resize_terminal_up(GSimpleAction*, GVariant*, gpointer p) { resizeTerminalPane(p, TerminalGroup::Dir::Up); }
+static void act_resize_terminal_down(GSimpleAction*, GVariant*, gpointer p) { resizeTerminalPane(p, TerminalGroup::Dir::Down); }
 static void act_rename_terminal(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     if (!app->termDock) return;
@@ -3558,6 +3587,12 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "nextterminal",   G_CALLBACK(act_next_terminal));
     addAction(app, "previousterminal", G_CALLBACK(act_previous_terminal));
     addAction(app, "closeterminal",  G_CALLBACK(act_close_terminal));
+    addAction(app, "splitterminal",  G_CALLBACK(act_split_terminal));
+    addAction(app, "splitterminaldown", G_CALLBACK(act_split_terminal_down));
+    addAction(app, "resizeterminalleft", G_CALLBACK(act_resize_terminal_left));
+    addAction(app, "resizeterminalright", G_CALLBACK(act_resize_terminal_right));
+    addAction(app, "resizeterminalup", G_CALLBACK(act_resize_terminal_up));
+    addAction(app, "resizeterminaldown", G_CALLBACK(act_resize_terminal_down));
     addAction(app, "renameterminal", G_CALLBACK(act_rename_terminal));
     addAction(app, "moveterminalleft", G_CALLBACK(act_move_terminal_left));
     addAction(app, "moveterminalright", G_CALLBACK(act_move_terminal_right));
@@ -3785,6 +3820,17 @@ static void startControlChannel() {
         return false;
 #endif
     };
+    host.splitTerminal = [](const ControlWindow& w, const std::string& title) {
+#ifdef MINICODE_ENABLE_TERMINAL
+        App* a = controlApp(w.id);
+        Terminal* t = a ? splitTerminalPane(a, false, false) : nullptr;
+        if (t && !title.empty()) t->setUserTitle(title);
+        return t != nullptr;
+#else
+        (void)w; (void)title;
+        return false;
+#endif
+    };
     host.terminalRun = [](const ControlWindow& w, const std::string& line,
                           std::function<void(const std::string&)> done) {
         App* a = controlApp(w.id);
@@ -3829,16 +3875,17 @@ static void startControlChannel() {
                 t.sessionNamedAt = (int64_t)(when * 1e6);
             }
 #ifdef MINICODE_ENABLE_TERMINAL
-            if (a->termDock && a->termDock->count() > 1) {
+            if (a->termDock && a->termDock->all().size() > 1) {
                 // Every tab's shell is tracked (PARITY.md 4.7). Ids stand for
                 // terminals only on the window's first; the others are offset
                 // from it and reveal nothing by themselves.
                 t.shellPid = 0;
-                for (int i = 0; i < a->termDock->count(); i++) {
+                const std::vector<Terminal*> panes = a->termDock->all();
+                for (size_t i = 0; i < panes.size(); i++) {
                     Procs::Terminal u = t;
-                    u.id = a->controlId + i * 100000;
-                    u.title = a->termDock->at(i)->title();
-                    u.shellPid = a->termDock->at(i)->shellPid();
+                    u.id = a->controlId + (int)i * 100000;
+                    u.title = panes[i]->title();
+                    u.shellPid = panes[i]->shellPid();
                     if (i > 0) { u.session.clear(); u.sessionNamedAt = 0; }
                     terms.push_back(u);
                 }

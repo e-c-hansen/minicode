@@ -1105,10 +1105,10 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
     // same way (with --run: one line, `cd DIR && COMMAND`).
     d.on("term", [host](const Request& req, Dispatcher::Respond respond) {
         const Json& a = req.args;
-        if (a.has("split")) {
-            respond(Result::failure("split is not on Linux yet"));
-            return;
-        }
+        // `split --right term` splits the active terminal; `--below` is a tab
+        // in the dock, as on the Mac (the dock's panes are the terminal's, and
+        // the tab is its own stack).
+        const bool right = a["split"].asString() == "right";
         ControlWindow w;
         std::string error;
         if (!target(host, a, &w, &error)) {
@@ -1134,7 +1134,15 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
         const int id = w.id;
         // A tab of its own, as the Mac's: nothing is typed into a terminal
         // the user may be working in, so a busy one is no obstacle.
-        if (host.newTerminal && host.newTerminal(w, titled ? a["title"].asString() : std::string())) {
+        if (right) {
+            if (!host.splitTerminal ||
+                !host.splitTerminal(w, titled ? a["title"].asString() : std::string())) {
+                respond(Result::failure("no room to split the terminal"));
+                return;
+            }
+        }
+        if (right || (host.newTerminal &&
+                      host.newTerminal(w, titled ? a["title"].asString() : std::string()))) {
             if (line.empty()) {
                 Json r = Json::object();
                 r.set("terminal", id);

@@ -56,6 +56,10 @@ struct ControlHost {
     // A new terminal tab in the window (PARITY.md 4.7), shown and active,
     // with `title` as its name when not empty; false for none.
     std::function<bool(const ControlWindow&, const std::string& title)> newTerminal;
+    // Splits the active terminal beside itself (PARITY.md 4.7, `split --right
+    // term`), with `title` as its name when not empty; the keyboard stays
+    // where it was. False when no pane fits.
+    std::function<bool(const ControlWindow&, const std::string& title)> splitTerminal;
     // Shows the window's terminal, the keyboard where it was.
     std::function<void(const ControlWindow&)> showTerminal;
     // The window's terminal's last `lines` lines; false when it has none.

@@ -448,15 +448,15 @@ MC_GUI_SUITE(control) {
         Json j = parse(gRaw->answer);
         GCHECK(!j["ok"].asBool());
     });
-    MCGuiStep("a part of a later item (term --split)", [] {
+    MCGuiStep("a command no handler has (split itself; the CLI maps it to term, browse, open)", [] {
         gRaw = rawRequest(socketPath(),
-                          "{\"v\":1,\"id\":10,\"cmd\":\"term\",\"args\":{\"split\":\"right\"}}\n");
+                          "{\"v\":1,\"id\":10,\"cmd\":\"split\",\"args\":{}}\n");
     });
     MCGuiWait("answered a fourth time", 10, [] { return gRaw->done; });
     MCGuiStep("it says it is not on Linux yet", [] {
         Json j = parse(gRaw->answer);
         GCHECK(!j["ok"].asBool());
-        GCHECK(j["error"].asString().find("not on Linux yet") != std::string::npos);
+        GCHECK(!j["error"].asString().empty());
     });
     MCGuiStep("a request cut short by the peer closing", [] {
         gRaw = rawRequest(socketPath(), "{\"v\":1,\"id\":11,\"cmd\":\"sta", true);
@@ -482,11 +482,11 @@ MC_GUI_SUITE(control) {
         GCHECK(gRun->exitCode == 1);
         GCHECK(gRun->err.find("no such file") != std::string::npos);
     });
-    MCGuiStep("minicode term --right (split)", [] { gRun = runClient({"split", "--right", "term"}); });
+    MCGuiStep("minicode split --right open (refused)", [] { gRun = runClient({"split", "--right", "open", "/etc/hostname"}); });
     MCGuiWait("term returns", 20, [] { return gRun->done; });
-    MCGuiStep("exit 1, not on Linux yet", [] {
+    MCGuiStep("exit 1, the editor has one pane", [] {
         GCHECK(gRun->exitCode == 1);
-        GCHECK(gRun->err.find("not on Linux yet") != std::string::npos);
+        GCHECK(gRun->err.find("the editor has one pane") != std::string::npos);
     });
     MCGuiStep("minicode open with no path is a usage error", [] { gRun = runClient({"open"}); });
     MCGuiWait("usage error returns", 20, [] { return gRun->done; });

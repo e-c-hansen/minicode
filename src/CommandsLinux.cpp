@@ -267,6 +267,15 @@ const std::vector<LinuxRow>& linuxRows() {
         // takes Ctrl+Alt+Shift+W; next and previous are the Mac's
         // Option+Cmd+] and [ (those Ctrl+Alt keys are the fold commands) as Ctrl+Alt+PageDown and PageUp, Global so they leave the shell.
         {"workbench.action.terminal.new", "ctrl+shift+`", Global, nullptr, nullptr},
+        // Split Terminal is VS Code's Linux key, Global so the shell never
+        // gets it (the Mac's Cmd+\ is also Split Editor's). Split
+        // Terminal Down has none, as on the Mac. The four resize commands
+        // are the Mac's Ctrl+Cmd+arrows, whose Linux candidates are all
+        // GNOME's (Ctrl+Alt+arrows switch workspaces, and Ctrl+Alt+Shift+
+        // arrows move the window between them): they have no key and
+        // are in the Terminal menu and the palette.
+        {"workbench.action.terminal.split", "ctrl+shift+5", Global, nullptr, nullptr},
+        {"minicode.terminal.splitDown", "", 0, nullptr, nullptr},
         {"workbench.action.terminal.focusNext", "ctrl+alt+pagedown", Global, nullptr, nullptr},
         {"workbench.action.terminal.focusPrevious", "ctrl+alt+pageup", Global, nullptr, nullptr},
         {"workbench.action.terminal.kill", "ctrl+alt+shift+w", Global, nullptr, nullptr},
@@ -279,6 +288,10 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.terminal.rename", "", 0, nullptr, nullptr},
         {"minicode.terminal.moveLeft", "", 0, nullptr, nullptr},
         {"minicode.terminal.moveRight", "", 0, nullptr, nullptr},
+        {"workbench.action.terminal.resizePaneLeft", "", 0, nullptr, nullptr},
+        {"workbench.action.terminal.resizePaneRight", "", 0, nullptr, nullptr},
+        {"workbench.action.terminal.resizePaneUp", "", 0, nullptr, nullptr},
+        {"workbench.action.terminal.resizePaneDown", "", 0, nullptr, nullptr},
         // Run File: the Mac's Shift+Cmd+Return. Global, so it also works
         // with the keyboard in the terminal.
         {"minicode.runFile", "ctrl+shift+enter", Global, nullptr, nullptr},
