@@ -940,6 +940,21 @@ static void act_toggle_editor(GSimpleAction*, GVariant*, gpointer userp) {
     static_cast<App*>(userp)->layout->toggleEditor();
 }
 
+// New Browser Tab: Ctrl+T in the browser's page (Safari's Cmd+T on the Mac),
+// View > New Browser Tab from anywhere. The pane is shown, the keyboard in
+// the new tab's address bar.
+static void act_new_browser_tab(GSimpleAction*, GVariant*, gpointer userp) {
+#ifdef MINICODE_ENABLE_BROWSER
+    App* app = static_cast<App*>(userp);
+    if (!app->browser) return;
+    app->layout->showBrowser();
+    app->browser->newTab(MINICODE_BROWSER_HOME);
+    app->browser->focusUrlBar();
+#else
+    (void)userp;
+#endif
+}
+
 static void act_toggle_browser(GSimpleAction*, GVariant*, gpointer userp) {
     static_cast<App*>(userp)->layout->toggleBrowser();
 }
@@ -1260,10 +1275,10 @@ static void act_close_tab(GSimpleAction*, GVariant*, gpointer userp) {
         return;
     }
 #ifdef MINICODE_ENABLE_BROWSER
-    GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(app->window));
-    if (app->browser && app->layout->browserShown() &&
-        Keys::within(focus, app->browser->widget())) {
-        app->layout->hideBrowser();   // the keyboard to what is left
+    // The agent page when it shows, else the browser's tab; the last tab
+    // hides the pane (Browser::onEmpty), the keyboard to what is left.
+    if (browserHasKeyboard(app)) {
+        app->browser->closeActive();
         return;
     }
 #endif
@@ -1302,12 +1317,24 @@ static void act_save_all(GSimpleAction*, GVariant*, gpointer userp) {
 // comes on show with the keyboard, the editor brought back first.
 static void act_next_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
+#ifdef MINICODE_ENABLE_BROWSER
+    if (browserHasKeyboard(app) && app->browser->tabCount() > 1) {   // with one tab the editor's
+        app->browser->stepTab(1);
+        return;
+    }
+#endif
     showEditorArea(app);
     app->editor->stepTab(1);
     refreshHints(app);
 }
 static void act_previous_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
+#ifdef MINICODE_ENABLE_BROWSER
+    if (browserHasKeyboard(app) && app->browser->tabCount() > 1) {
+        app->browser->stepTab(-1);
+        return;
+    }
+#endif
     showEditorArea(app);
     app->editor->stepTab(-1);
     refreshHints(app);
@@ -1315,6 +1342,12 @@ static void act_previous_tab(GSimpleAction*, GVariant*, gpointer userp) {
 template <int N>
 static void act_go_to_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
+#ifdef MINICODE_ENABLE_BROWSER
+    if (browserHasKeyboard(app) && app->browser->tabCount() > 1) {
+        app->browser->selectTabNumber(N);
+        return;
+    }
+#endif
     showEditorArea(app);
     app->editor->selectTabNumber(N);
     refreshHints(app);
@@ -3025,7 +3058,17 @@ static App* newWindow(const std::string& root, const std::string& file) {
                     out.push_back(a->persist);
             return out;
         },
-        [app](const Document* d) { return !app->dead && app->format && app->format->saveWaits(d); }});
+        [app](const Document* d) { return !app->dead && app->format && app->format->saveWaits(d); },
+        [app](int* active) {
+            std::vector<TabSessions::BrowserTab> tabs;
+#ifdef MINICODE_ENABLE_BROWSER
+            if (!app->dead && app->browser) tabs = app->browser->records(active);
+#else
+            (void)app;
+            (void)active;
+#endif
+            return tabs;
+        }});
     app->editor->onDocumentsChanged = [app](Document* d) {
         if (!app->dead && app->persist) app->persist->changed(d);
     };
@@ -3052,6 +3095,14 @@ static App* newWindow(const std::string& root, const std::string& file) {
     GtkWidget* browserPane = nullptr;
 #ifdef MINICODE_ENABLE_BROWSER
     app->browser = new Browser(MINICODE_BROWSER_HOME);
+    // The last tab closed hides the pane; any change to the tabs is for the
+    // session (a second later, once it has settled).
+    app->browser->onEmpty = [app] {
+        if (!app->dead && app->layout) app->layout->hideBrowser();
+    };
+    app->browser->onChanged = [app] {
+        if (!app->dead && app->persist) app->persist->changed(nullptr);
+    };
     browserPane = app->browser->widget();
     StartupLog::mark("window: browser");
 #endif
@@ -3289,6 +3340,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "toggleterminal", G_CALLBACK(act_toggle_terminal));
     addAction(app, "runfile",        G_CALLBACK(act_run_file));
     addAction(app, "togglebrowser",  G_CALLBACK(act_toggle_browser));
+    addAction(app, "newbrowsertab",  G_CALLBACK(act_new_browser_tab));
     addAction(app, "togglegit",      G_CALLBACK(act_toggle_git));
     addAction(app, "toggleprocesses", G_CALLBACK(act_toggle_processes));
     addAction(app, "toggleagents", G_CALLBACK(act_toggle_agents));
@@ -3389,6 +3441,12 @@ static App* newWindow(const std::string& root, const std::string& file) {
     applyWindowSettings(app);   // now that the editor, terminal and status bar exist
     StartupLog::mark("window: actions and settings applied");
     app->persist->restoreSession();   // the files open here last time
+#ifdef MINICODE_ENABLE_BROWSER
+    if (app->browser) {   // the browser's tabs, suspended; the one on show loads when the pane is
+        const TabSessions::Session saved = app->persist->savedSession();
+        app->browser->restore(saved.browser, saved.browserActive);
+    }
+#endif
     StartupLog::markf("window: session restored (%d tabs)", app->editor->tabCount());
 
     // A file named on the command line opens before the window is shown, so it

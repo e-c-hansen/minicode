@@ -63,6 +63,8 @@ public:
         // A tab whose Ctrl+S waits for its formatter (Formatting.h): auto-save
         // leaves it, as the Mac's does.
         std::function<bool(const Document*)> saveWaits;
+        // The browser pane's tabs and the one on show, for the session.
+        std::function<std::vector<TabSessions::BrowserTab>(int* active)> browserTabs;
     };
 
     Persistence(Editor* editor, const std::string& root, Host host);
@@ -78,6 +80,9 @@ public:
     // Open Folder: the old folder's session saved first, then this, then
     // restoreSession for the new one.
     void setRoot(const std::string& root);
+    // What the folder's session holds now on disk (the browser's tabs are
+    // taken from it at launch).
+    TabSessions::Session savedSession() const;
 
     // ---- hooks
     // Editor::onDocumentsChanged: an edit (`d`) or a change to the tabs.

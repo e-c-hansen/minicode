@@ -3531,6 +3531,54 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   poll, an exec into another shell (the Mac's `_integrated` NO), and the
   owner's own shell setup on a real desktop.
 
+### 50. Browser tabs (tabs done, November 2026; `PARITY.md` item 4.5, first part)
+
+- **What it does**: the browser pane has the Mac's tabs. A `TabStrip` (the
+  editor's, now with an opt-in `onMove` for dragging, `EditorTabs::dropIndex`)
+  and a + sit above the toolbar. `Browser` keeps a `Tab` per page (address,
+  title, WebKit's serialized session state, and a web view and `PageProbe`
+  only while live). `BrowserTabs::livePages` (kLivePages 2) decides which
+  keep a web view: the tab on show and the one used before it; the others
+  are suspended in `applyLive` (`webkit_web_view_get_session_state`, then
+  the view is removed from its box, which ends its WebKit processes) and
+  made again on show (`restore_session_state`, then
+  `go_to_back_forward_list_item` on the current item; no record loads the
+  address). Placing, stepping, numbering, closing and dragging are
+  `EditorTabs`' rules.
+- **Probes follow the tab**: `userProbe()` and `webView()` are the tab on
+  show's, null while it has no view (before the pane was first shown, or a
+  restored tab). The control channel's `page --yours` reads the same.
+- **Links**: `decide-policy` ignores a Ctrl-clicked or middle-clicked link
+  and opens its address in a suspended tab behind (`newTab(url, false)`);
+  `create` (target=_blank, window.open) makes the tab right of its opener
+  with a view whose `related-view` is the opener's (WebKitGTK 6 has no
+  `new_with_related_view`) and shows it.
+- **Keys** (D1; the Mac's Cmd is Ctrl, no new letter): New Browser Tab is
+  `minicode.browser.newTab`, Ctrl+T, a `Page` command (Go to Symbol in
+  Workspace is `NotPage`, so the key is Safari's in a page only); View > New
+  Browser Tab from anywhere. Close Tab (Ctrl+W) closes the agent page when it
+  shows, else the browser's tab, and the last one calls `Browser::onEmpty`
+  (the window hides the pane; showing it again makes a home tab). Next,
+  previous and numbered tab (Ctrl+PageDown, Ctrl+PageUp, Alt+1 to 9) act on
+  the browser's tabs while the pane has the keyboard and has more than one;
+  with one they go to the editor's, as on the Mac.
+- **Session**: `TabSessions::Session` gained `browser` (url, title, state in
+  base64) and `browserActive`; old files read as before and a folder with a
+  browser but no file tab is kept. `Persistence::Host::browserTabs` fills it
+  (`Browser::records`, `BrowserTabs::keptRecords` limits 2 MB a tab and 4 MB
+  in all), `Browser::onChanged` schedules the save, and `main.cpp` restores
+  it after the files with `Browser::restore`: every tab suspended, the one on
+  show loads when the pane is shown. Not kept yet: the pane's visibility and
+  width, and page zoom per site.
+- **Checked by** `browser_tabs` (`BrowserTabsSuite.cpp`, real clicks, a real
+  drag and real keys; pages are files in the project folder): the points in
+  its opening comment. The session check goes through the JSON and into a
+  second, unmapped `Browser`; a quit and relaunch is not run.
+- **Traps**: the `create` handler must make the view (with its related view)
+  before `selectTab`, whose `applyLive` would otherwise make a plain one for
+  the active tab. A signal's user data is the `Tab`, disconnected before the
+  view is removed.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

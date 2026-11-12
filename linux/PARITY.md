@@ -1419,6 +1419,11 @@ These may run in parallel.
 - [ ] **4.4 LaTeX problems, warnings, and forward search.** `LatexLog`,
   `LatexScratch`.
 - [ ] **4.5 Browser tabs, find in the page, and page zoom.** `BrowserTabs`.
+  *Tabs done:* a strip with +, drag and middle-click close, two live web
+  views with the rest suspended, Ctrl+T/Ctrl+W/Ctrl+PageDown/Alt+N while the
+  pane has the keyboard, background and target=_blank tabs, and the tabs in
+  the session (HANDOFF.md item 50, `browser_tabs`). Find in the page and
+  page zoom per site remain.
 - [ ] **4.6 The split editor.** `EditorTabs::restoreGroups`. With D2 the second
   group can be a second view on the same buffer, which is simpler than the
   Mac's mirror.

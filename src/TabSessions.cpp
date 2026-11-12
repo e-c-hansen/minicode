@@ -80,6 +80,18 @@ std::string encode(const Sessions &all) {
         Json tabs = Json::array();
         for (const Tab &t : s.tabs) tabs.push(encodeTab(t));
         e.set("tabs", tabs);
+        if (!s.browser.empty()) {
+            Json bt = Json::array();
+            for (const BrowserTab &b : s.browser) {
+                Json o = Json::object();
+                o.set("url", b.url);
+                o.set("title", b.title);
+                if (!b.state.empty()) o.set("state", b.state);
+                bt.push(o);
+            }
+            e.set("browser", bt);
+            e.set("browserActive", s.browserActive);
+        }
         root.set(kv.first, e);
     }
     return root.dump() + "\n";
@@ -93,6 +105,23 @@ Sessions decode(const std::string &text) {
         const Json &e = kv.second;
         if (kv.first.empty() || !e.isObject() || !e["tabs"].isArray()) continue;
         Session s;
+        if (e["browser"].isArray()) {
+            std::vector<int> keptBrowser;
+            for (const Json &j : e["browser"].elements()) {
+                if (!j.isObject() || !j["url"].isString()) {
+                    keptBrowser.push_back(-1);
+                    continue;
+                }
+                BrowserTab b;
+                b.url = j["url"].asString();
+                b.title = j["title"].isString() ? j["title"].asString() : "";
+                b.state = j["state"].isString() ? j["state"].asString() : "";
+                keptBrowser.push_back((int)s.browser.size());
+                s.browser.push_back(b);
+            }
+            const int ba = readIndex(e["browserActive"], keptBrowser.size());
+            s.browserActive = ba >= 0 ? keptBrowser[(size_t)ba] : (s.browser.empty() ? -1 : 0);
+        }
         // Indices count the tabs as written, so a tab that does not read
         // moves the ones after it: they are mapped to what is kept.
         std::vector<int> keptAt;
@@ -105,7 +134,7 @@ Sessions decode(const std::string &text) {
                 keptAt.push_back(-1);
             }
         }
-        if (s.tabs.empty()) continue;
+        if (s.tabs.empty() && s.browser.empty()) continue;
         const int active = readIndex(e["active"], keptAt.size());
         const int preview = readIndex(e["preview"], keptAt.size());
         s.active = active >= 0 ? keptAt[(size_t)active] : -1;
@@ -128,7 +157,7 @@ Session merged(const Session &mine, const std::vector<Session> &others) {
 
 void put(Sessions &all, const std::string &key, Session s, double now, size_t max) {
     if (key.empty()) return;
-    if (s.tabs.empty()) {
+    if (s.tabs.empty() && s.browser.empty()) {
         all.erase(key);
         return;
     }

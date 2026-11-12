@@ -4,10 +4,15 @@
 #ifdef MINICODE_ENABLE_BROWSER
 
 #include <webkit/webkit.h>
+#include <algorithm>
 #include <string>
+#include <vector>
 
 #include "Appearance.h"
 #include "BrowserPages.h"
+#include "BrowserTabs.h"
+#include "EditorTabs.h"
+#include "TabStrip.h"
 #include "StartupLog.h"
 #include "ViewZoom.h"
 
@@ -39,6 +44,26 @@ Browser::Browser(const std::string& homeUrl) : home_(homeUrl) {
     gtk_box_append(GTK_BOX(bar), fwd);
     gtk_box_append(GTK_BOX(bar), rel);
     gtk_box_append(GTK_BOX(bar), entry_);
+
+    // The tabs, above the toolbar: the editor's strip, dragged to reorder,
+    // and a + for a new one.
+    GtkWidget* tabsRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    strip_ = new TabStrip();
+    plus_ = gtk_button_new_with_label("+");
+    gtk_widget_set_tooltip_text(plus_, "New Browser Tab");
+    gtk_widget_add_css_class(plus_, "flat");
+    gtk_widget_set_focus_on_click(plus_, FALSE);
+    gtk_box_append(GTK_BOX(tabsRow), strip_->widget());
+    gtk_box_append(GTK_BOX(tabsRow), plus_);
+    gtk_box_append(GTK_BOX(root_), tabsRow);
+    g_signal_connect(plus_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
+        Browser* self = static_cast<Browser*>(p);
+        self->newTab();
+        self->focusUrlBar();
+    }), this);
+    strip_->onSelect = [this](int i) { selectTab(i); };
+    strip_->onClose = [this](int i) { closeTab(i); };
+    strip_->onMove = [this](int from, int to) { moveTab(from, to); };
 
     gtk_box_append(GTK_BOX(root_), bar);
 
@@ -84,42 +109,336 @@ Browser::Browser(const std::string& homeUrl) : home_(homeUrl) {
     g_signal_connect(fwd,  "clicked", G_CALLBACK(onForward), this);
     g_signal_connect(rel,  "clicked", G_CALLBACK(onReload), this);
     g_signal_connect(root_, "map", G_CALLBACK(+[](GtkWidget*, gpointer p) {
-        static_cast<Browser*>(p)->makeView("");
+        Browser* self = static_cast<Browser*>(p);
+        self->shown_ = true;
+        if (self->tabs_.empty()) self->newTab(self->home_);   // a pane shown after its last tab closed
+        else self->applyLive();
     }), this);
     // Adjust Settings… in the toolbar's right click and the address bar's
     // editing menu, as on the Mac (PARITY.md 2.11); the page's is below.
     Appearance::attachMenu(bar, "browser");
 }
 
+
 Browser::~Browser() {
     g_signal_handlers_disconnect_by_data(root_, this);
-    if (web_) g_signal_handlers_disconnect_by_data(web_, this);
-    delete userProbe_;
+    while (!tabs_.empty()) {
+        Tab* t = tabs_.back();
+        tabs_.pop_back();
+        destroyTab(t);
+    }
+    delete strip_;
     delete agentProbe_;
 }
 
-void Browser::makeView(const std::string& firstUrl) {
-    if (web_) return;
-    StartupLog::mark("browser: web view made, on first show");
-    web_ = GTK_WIDGET(webkit_web_view_new());
-    gtk_widget_set_vexpand(web_, TRUE);
-    gtk_box_append(GTK_BOX(userSlot_), web_);
-    userProbe_ = new PageProbe(web_, false);
-    g_signal_connect(web_, "notify::uri", G_CALLBACK(onUriChanged), this);
-    g_signal_connect(web_, "load-changed", G_CALLBACK(onLoadChanged), this);
-    // The page's right click: WebKit's items, then Adjust Settings….
-    g_signal_connect(web_, "context-menu", G_CALLBACK(+[](WebKitWebView* wv, WebKitContextMenu* m,
-                                                          WebKitHitTestResult*, gpointer) -> gboolean {
-        Appearance::addToWebMenu(m, GTK_WIDGET(wv));
-        return FALSE;   // shown as WebKit shows it
-    }), this);
+// One tab. `web` and `probe` exist only while the tab is live; a suspended
+// tab keeps `url`, `title` and `state` (WebKit's serialized history and
+// scroll, empty when it has none).
+struct Browser::Tab {
+    Browser* owner = nullptr;
+    std::string url, title, state;
+    GtkWidget* web = nullptr;
+    PageProbe* probe = nullptr;
+    uint64_t used = 0;
+    double zoom = 1.0;
+};
 
+Browser::Tab* Browser::current() const {
+    return active_ >= 0 && active_ < (int)tabs_.size() ? tabs_[(size_t)active_] : nullptr;
+}
+
+int Browser::indexOfTab(const Tab* t) const {
+    for (size_t i = 0; i < tabs_.size(); i++)
+        if (tabs_[i] == t) return (int)i;
+    return -1;
+}
+
+GtkWidget* Browser::webView() const {
+    Tab* t = current();
+    return t ? t->web : nullptr;
+}
+
+PageProbe* Browser::userProbe() const {
+    Tab* t = current();
+    return t ? t->probe : nullptr;
+}
+
+bool Browser::tabIsLive(int i) const {
+    return i >= 0 && i < (int)tabs_.size() && tabs_[(size_t)i]->web != nullptr;
+}
+
+int Browser::liveCount() const {
+    int n = 0;
+    for (const Tab* t : tabs_) n += t->web != nullptr;
+    return n;
+}
+
+std::string Browser::tabUrl(int i) const {
+    return i >= 0 && i < (int)tabs_.size() ? tabs_[(size_t)i]->url : "";
+}
+
+std::string Browser::tabTitle(int i) const {
+    return i >= 0 && i < (int)tabs_.size() ? tabs_[(size_t)i]->title : "";
+}
+
+void Browser::noteChanged() {
+    if (onChanged) onChanged();
+}
+
+void Browser::updateStrip() {
+    std::vector<TabStrip::Item> items;
+    for (const Tab* t : tabs_) {
+        TabStrip::Item it;
+        it.title = BrowserTabs::tabTitle(t->title, t->url);
+        it.tooltip = t->url;
+        items.push_back(it);
+    }
+    strip_->setItems(items, active_);
+}
+
+// ---------------------------------------------------------------- tabs
+
+int Browser::newTab(const std::string& url, bool show) {
+    Tab* t = new Tab();
+    t->owner = this;
+    t->url = url;
+    const int at = EditorTabs::insertionIndex(active_, (int)tabs_.size());
+    tabs_.insert(tabs_.begin() + at, t);
+    if (active_ >= at) active_++;   // the active tab did not move: it is still the same tab
+    if (active_ < 0) show = true;
+    if (show) {
+        selectTab(at);
+    } else {
+        updateStrip();
+        noteChanged();
+    }
+    return at;
+}
+
+void Browser::selectTab(int i) {
+    if (i < 0 || i >= (int)tabs_.size()) return;
+    showAgentPage(false);
+    active_ = i;
+    tabs_[(size_t)i]->used = ++clock_;
+    applyLive();
+    for (Tab* t : tabs_)
+        if (t->web) gtk_widget_set_visible(t->web, t == tabs_[(size_t)i]);
+    updateStrip();
+    syncChrome();
+    noteChanged();
+}
+
+void Browser::stepTab(int delta) {
+    const int to = EditorTabs::step(active_, (int)tabs_.size(), delta);
+    if (to >= 0) selectTab(to);
+}
+
+void Browser::selectTabNumber(int n) {
+    const int to = EditorTabs::indexForNumber(n, (int)tabs_.size());
+    if (to >= 0) selectTab(to);
+}
+
+void Browser::closeActive() {
+    if (agentPageShown()) {
+        closeAgentPage();
+        return;
+    }
+    closeTab(active_);
+}
+
+void Browser::closeTab(int i) {
+    if (i < 0 || i >= (int)tabs_.size()) return;
+    std::vector<uint64_t> used;
+    for (const Tab* t : tabs_) used.push_back(t->used);
+    const int next = EditorTabs::activeAfterClose(used, active_, i);
+    Tab* gone = tabs_[(size_t)i];
+    tabs_.erase(tabs_.begin() + i);
+    destroyTab(gone);
+    active_ = tabs_.empty() ? -1 : next;
+    if (active_ >= (int)tabs_.size()) active_ = (int)tabs_.size() - 1;
+    if (active_ >= 0) tabs_[(size_t)active_]->used = ++clock_;
+    applyLive();
+    for (Tab* t : tabs_)
+        if (t->web) gtk_widget_set_visible(t->web, t == current());
+    updateStrip();
+    syncChrome();
+    noteChanged();
+    if (tabs_.empty() && onEmpty) onEmpty();
+}
+
+void Browser::moveTab(int from, int to) {
+    const int n = (int)tabs_.size();
+    if (from < 0 || from >= n || to < 0 || to >= n || from == to) return;
+    Tab* active = current();
+    Tab* t = tabs_[(size_t)from];
+    tabs_.erase(tabs_.begin() + from);
+    tabs_.insert(tabs_.begin() + to, t);
+    active_ = indexOfTab(active);
+    updateStrip();
+    noteChanged();
+}
+
+// Only the tab on show and the one used before it keep a web view
+// (BrowserTabs::livePages); the others are suspended, which ends their
+// WebKit processes, and a tab on show without a view gets one.
+void Browser::applyLive() {
+    if (tabs_.empty()) return;
+    std::vector<uint64_t> used;
+    for (const Tab* t : tabs_) used.push_back(t->used);
+    const std::vector<bool> live = BrowserTabs::livePages(used, active_, BrowserTabs::kLivePages);
+    for (size_t i = 0; i < tabs_.size(); i++)
+        if (!live[i] && tabs_[i]->web) suspend(tabs_[i]);
+    Tab* t = current();
+    if (t && !t->web && shown_) makeView(t);
+}
+
+void Browser::suspend(Tab* t) {
+    if (!t->web) return;
+    WebKitWebView* wv = WEBKIT_WEB_VIEW(t->web);
+    t->state.clear();
+    if (WebKitWebViewSessionState* st = webkit_web_view_get_session_state(wv)) {
+        if (GBytes* b = webkit_web_view_session_state_serialize(st)) {
+            gsize n = 0;
+            const char* d = static_cast<const char*>(g_bytes_get_data(b, &n));
+            if (d) t->state.assign(d, n);
+            g_bytes_unref(b);
+        }
+        webkit_web_view_session_state_unref(st);
+    }
+    t->zoom = webkit_web_view_get_zoom_level(wv);
+    const char* uri = webkit_web_view_get_uri(wv);
+    if (uri && *uri) t->url = uri;
+    delete t->probe;   // stops watching the view before it goes
+    t->probe = nullptr;
+    g_signal_handlers_disconnect_by_data(t->web, t);
+    gtk_box_remove(GTK_BOX(userSlot_), t->web);   // the last reference: WebKit's processes end
+    t->web = nullptr;
+}
+
+void Browser::destroyTab(Tab* t) {
+    if (t->web) {
+        delete t->probe;
+        t->probe = nullptr;
+        g_signal_handlers_disconnect_by_data(t->web, t);
+        gtk_box_remove(GTK_BOX(userSlot_), t->web);
+        t->web = nullptr;
+    }
+    delete t;
+}
+
+void Browser::onTabUri(GObject* obj, GParamSpec*, gpointer tp) {
+    Tab* t = static_cast<Tab*>(tp);
+    const char* uri = webkit_web_view_get_uri(WEBKIT_WEB_VIEW(obj));
+    if (uri && *uri) t->url = uri;
+    Browser* self = t->owner;
+    if (t == self->current()) self->syncUrlBar();
+    self->updateStrip();
+}
+
+void Browser::onTabTitle(GObject* obj, GParamSpec*, gpointer tp) {
+    Tab* t = static_cast<Tab*>(tp);
+    const char* title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(obj));
+    t->title = title ? title : "";
+    t->owner->updateStrip();
+}
+
+void Browser::onTabLoad(WebKitWebView* wv, WebKitLoadEvent ev, gpointer tp) {
+    Tab* t = static_cast<Tab*>(tp);
+    Browser* self = t->owner;
+    if (ev == WEBKIT_LOAD_COMMITTED)
+        StartupLog::once("browser-page", "browser: first page committed (%s)",
+                         webkit_web_view_get_uri(wv) ? webkit_web_view_get_uri(wv) : "?");
+    if (t == self->current() && (ev == WEBKIT_LOAD_COMMITTED || ev == WEBKIT_LOAD_FINISHED))
+        self->syncChrome();
+    if (ev == WEBKIT_LOAD_FINISHED) self->noteChanged();
+}
+
+// A view for the tab: a new one that loads its address (restoring its
+// history when it was suspended with a record), or `related`'s sibling made
+// for a page that page opened.
+void Browser::makeView(Tab* t, GtkWidget* related) {
+    if (t->web) return;
+    StartupLog::mark("browser: web view made, on first show");
+    GtkWidget* web = related ? GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "related-view", WEBKIT_WEB_VIEW(related), nullptr))
+                             : GTK_WIDGET(webkit_web_view_new());
+    adoptView(t, web);
+    if (related) return;   // WebKit loads what the page opened
+    WebKitWebView* wv = WEBKIT_WEB_VIEW(web);
+    if (t->zoom != 1.0) webkit_web_view_set_zoom_level(wv, t->zoom);
+    bool restored = false;
+    if (!t->state.empty()) {
+        GBytes* b = g_bytes_new(t->state.data(), t->state.size());
+        if (WebKitWebViewSessionState* st = webkit_web_view_session_state_new(b)) {
+            webkit_web_view_restore_session_state(wv, st);
+            webkit_web_view_session_state_unref(st);
+            WebKitBackForwardList* list = webkit_web_view_get_back_forward_list(wv);
+            if (WebKitBackForwardListItem* item = webkit_back_forward_list_get_current_item(list)) {
+                webkit_web_view_go_to_back_forward_list_item(wv, item);
+                restored = true;
+            }
+        }
+        g_bytes_unref(b);
+    }
     // The home page is an address, not something typed into the bar, so it
     // is loaded as it is: through load(), the GUI checks' about:blank was a
-    // web search for "about:blank", and every check's window went online. A
-    // link that made the view (openLink in main.cpp) is loaded instead.
-    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(web_),
-                             (firstUrl.empty() ? home_ : firstUrl).c_str());
+    // web search for "about:blank", and every check's window went online.
+    if (!restored) webkit_web_view_load_uri(wv, (t->url.empty() ? home_ : t->url).c_str());
+}
+
+void Browser::adoptView(Tab* t, GtkWidget* web) {
+    t->web = web;
+    gtk_widget_set_vexpand(web, TRUE);
+    gtk_box_append(GTK_BOX(userSlot_), web);
+    gtk_widget_set_visible(web, t == current());
+    t->probe = new PageProbe(web, false);
+    g_signal_connect(web, "notify::uri", G_CALLBACK(onTabUri), t);
+    g_signal_connect(web, "notify::title", G_CALLBACK(onTabTitle), t);
+    g_signal_connect(web, "load-changed", G_CALLBACK(onTabLoad), t);
+    // The page's right click: WebKit's items, then Adjust Settings….
+    g_signal_connect(web, "context-menu", G_CALLBACK(+[](WebKitWebView* wv, WebKitContextMenu* m,
+                                                         WebKitHitTestResult*, gpointer) -> gboolean {
+        Appearance::addToWebMenu(m, GTK_WIDGET(wv));
+        return FALSE;   // shown as WebKit shows it
+    }), t);
+    // A Ctrl-clicked or middle-clicked link opens a tab behind (suspended:
+    // it loads when shown), as the Mac's decidePolicyForNavigationAction:.
+    g_signal_connect(web, "decide-policy", G_CALLBACK(+[](WebKitWebView*, WebKitPolicyDecision* d,
+                                                          WebKitPolicyDecisionType type, gpointer tp) -> gboolean {
+        if (type != WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION &&
+            type != WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION)
+            return FALSE;
+        WebKitNavigationAction* a =
+            webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(d));
+        if (!a || webkit_navigation_action_get_navigation_type(a) != WEBKIT_NAVIGATION_TYPE_LINK_CLICKED)
+            return FALSE;
+        const bool middle = webkit_navigation_action_get_mouse_button(a) == 2;
+        const bool ctrl = (webkit_navigation_action_get_modifiers(a) & GDK_CONTROL_MASK) != 0;
+        if (!middle && !ctrl) return FALSE;
+        WebKitURIRequest* req = webkit_navigation_action_get_request(a);
+        const char* uri = req ? webkit_uri_request_get_uri(req) : nullptr;
+        if (!uri || !*uri) return FALSE;
+        webkit_policy_decision_ignore(d);
+        static_cast<Tab*>(tp)->owner->newTab(uri, false);
+        return TRUE;
+    }), t);
+    // A target=_blank link or window.open: the page comes up beside its
+    // opener, in the view WebKit asks for, related to the opener's.
+    g_signal_connect(web, "create", G_CALLBACK(+[](WebKitWebView* opener, WebKitNavigationAction*,
+                                                   gpointer tp) -> GtkWidget* {
+        Tab* from = static_cast<Tab*>(tp);
+        Browser* self = from->owner;
+        Tab* t = new Tab();
+        t->owner = self;
+        const int openerAt = self->indexOfTab(from);
+        const int at = openerAt < 0 ? (int)self->tabs_.size() : openerAt + 1;
+        const Tab* shownBefore = self->current();
+        self->tabs_.insert(self->tabs_.begin() + at, t);
+        self->active_ = self->indexOfTab(shownBefore);
+        self->shown_ = true;
+        self->makeView(t, GTK_WIDGET(opener));
+        self->selectTab(at);   // suspends the oldest of three, never this one
+        return t->web;
+    }), t);
     syncChrome();
 }
 
@@ -149,11 +468,19 @@ void Browser::load(const std::string& raw) {
         }
     }
     showAgentPage(false);   // an address typed or linked is the user's page
-    if (!web_) {
-        makeView(url);   // the first page is this one, not the home page
+    shown_ = true;          // the first page is this one, not the home page
+    Tab* t = current();
+    if (!t) {
+        newTab(url);
         return;
     }
-    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(web_), url.c_str());
+    t->url = url;
+    t->state.clear();
+    if (t->web) webkit_web_view_load_uri(WEBKIT_WEB_VIEW(t->web), url.c_str());
+    else applyLive();
+    updateStrip();
+    syncChrome();
+    noteChanged();
 }
 
 bool Browser::agentPageShown() const {
@@ -189,31 +516,24 @@ void Browser::closeAgentPage() {
 
 // Keep the URL bar showing where we actually are.
 void Browser::syncUrlBar() {
-    if (!web_) return;
-    const char* uri = webkit_web_view_get_uri(WEBKIT_WEB_VIEW(web_));
-    if (uri && *uri) gtk_editable_set_text(GTK_EDITABLE(entry_), uri);
+    Tab* t = current();
+    if (!t) {
+        gtk_editable_set_text(GTK_EDITABLE(entry_), "");
+        return;
+    }
+    const char* uri = t->web ? webkit_web_view_get_uri(WEBKIT_WEB_VIEW(t->web)) : nullptr;
+    const std::string shown = uri && *uri ? uri : t->url;
+    gtk_editable_set_text(GTK_EDITABLE(entry_), shown.c_str());
 }
 
 // URL bar plus back/forward sensitivity. Only call this where the back/forward
 // list is up to date (see the note in Browser.h).
 void Browser::syncChrome() {
-    if (!web_) return;
-    WebKitWebView* wv = WEBKIT_WEB_VIEW(web_);
     syncUrlBar();
-    gtk_widget_set_sensitive(back_, webkit_web_view_can_go_back(wv));
-    gtk_widget_set_sensitive(fwd_,  webkit_web_view_can_go_forward(wv));
-}
-
-void Browser::onUriChanged(GObject*, GParamSpec*, gpointer selfp) {
-    static_cast<Browser*>(selfp)->syncUrlBar();
-}
-
-void Browser::onLoadChanged(WebKitWebView* wv, WebKitLoadEvent ev, gpointer selfp) {
-    if (ev == WEBKIT_LOAD_COMMITTED)
-        StartupLog::once("browser-page", "browser: first page committed (%s)",
-                         webkit_web_view_get_uri(wv) ? webkit_web_view_get_uri(wv) : "?");
-    if (ev == WEBKIT_LOAD_COMMITTED || ev == WEBKIT_LOAD_FINISHED)
-        static_cast<Browser*>(selfp)->syncChrome();
+    Tab* t = current();
+    WebKitWebView* wv = t && t->web ? WEBKIT_WEB_VIEW(t->web) : nullptr;
+    gtk_widget_set_sensitive(back_, wv && webkit_web_view_can_go_back(wv));
+    gtk_widget_set_sensitive(fwd_, wv && webkit_web_view_can_go_forward(wv));
 }
 
 void Browser::onGo(GtkWidget* /*w*/, gpointer selfp) {
@@ -224,18 +544,22 @@ void Browser::onGo(GtkWidget* /*w*/, gpointer selfp) {
 
 void Browser::onBack(GtkWidget* /*w*/, gpointer selfp) {
     Browser* self = static_cast<Browser*>(selfp);
-    if (self->web_) webkit_web_view_go_back(WEBKIT_WEB_VIEW(self->web_));
+    if (GtkWidget* w = self->webView()) webkit_web_view_go_back(WEBKIT_WEB_VIEW(w));
 }
 
 void Browser::onForward(GtkWidget* /*w*/, gpointer selfp) {
     Browser* self = static_cast<Browser*>(selfp);
-    if (self->web_) webkit_web_view_go_forward(WEBKIT_WEB_VIEW(self->web_));
+    if (GtkWidget* w = self->webView()) webkit_web_view_go_forward(WEBKIT_WEB_VIEW(w));
 }
 
 void Browser::onReload(GtkWidget* /*w*/, gpointer selfp) {
     Browser* self = static_cast<Browser*>(selfp);
-    if (self->web_) webkit_web_view_reload(WEBKIT_WEB_VIEW(self->web_));
-    else self->makeView("");
+    if (GtkWidget* w = self->webView()) webkit_web_view_reload(WEBKIT_WEB_VIEW(w));
+    else if (self->tabs_.empty()) self->newTab(self->home_);
+    else {
+        self->shown_ = true;
+        self->applyLive();
+    }
 }
 
 void Browser::focusUrlBar() {
@@ -243,13 +567,79 @@ void Browser::focusUrlBar() {
 }
 
 void Browser::zoom(int step) {
-    if (!web_) return;   // no page yet (makeView)
-    WebKitWebView* wv = WEBKIT_WEB_VIEW(web_);
+    GtkWidget* w = webView();
+    if (!w) return;   // no page yet
+    WebKitWebView* wv = WEBKIT_WEB_VIEW(w);
     webkit_web_view_set_zoom_level(wv, ViewZoom::pageStep(webkit_web_view_get_zoom_level(wv), step));
 }
 
 double Browser::zoomLevel() const {
-    return web_ ? webkit_web_view_get_zoom_level(WEBKIT_WEB_VIEW(web_)) : 1.0;
+    GtkWidget* w = webView();
+    return w ? webkit_web_view_get_zoom_level(WEBKIT_WEB_VIEW(w)) : 1.0;
+}
+
+// ---------------------------------------------------------------- session
+
+std::vector<TabSessions::BrowserTab> Browser::records(int* active) {
+    std::vector<TabSessions::BrowserTab> out;
+    std::vector<size_t> sizes;
+    std::vector<uint64_t> used;
+    for (Tab* t : tabs_) {
+        std::string state = t->state;
+        std::string url = t->url;
+        if (t->web) {   // a live tab's record is as it is now
+            WebKitWebView* wv = WEBKIT_WEB_VIEW(t->web);
+            const char* uri = webkit_web_view_get_uri(wv);
+            if (uri && *uri) url = uri;
+            state.clear();
+            if (WebKitWebViewSessionState* st = webkit_web_view_get_session_state(wv)) {
+                if (GBytes* b = webkit_web_view_session_state_serialize(st)) {
+                    gsize n = 0;
+                    const char* d = static_cast<const char*>(g_bytes_get_data(b, &n));
+                    if (d) state.assign(d, n);
+                    g_bytes_unref(b);
+                }
+                webkit_web_view_session_state_unref(st);
+            }
+        }
+        TabSessions::BrowserTab r;
+        r.url = url;
+        r.title = t->title;
+        r.state = state;   // raw for now: sizes, then base64 for the kept
+        out.push_back(r);
+        sizes.push_back(state.size());
+        used.push_back(t->used);
+    }
+    const std::vector<bool> keep = BrowserTabs::keptRecords(sizes, used, active_, 2u << 20, 4u << 20);
+    for (size_t i = 0; i < out.size(); i++) {
+        if (keep[i] && !out[i].state.empty()) {
+            gchar* b64 = g_base64_encode(reinterpret_cast<const guchar*>(out[i].state.data()), out[i].state.size());
+            out[i].state = b64;
+            g_free(b64);
+        } else {
+            out[i].state.clear();
+        }
+    }
+    if (active) *active = active_;
+    return out;
+}
+
+void Browser::restore(const std::vector<TabSessions::BrowserTab>& saved, int active) {
+    if (saved.empty() || !tabs_.empty()) return;
+    for (const TabSessions::BrowserTab& r : saved) {
+        Tab* t = new Tab();
+        t->owner = this;
+        t->url = r.url;
+        t->title = r.title;
+        if (!r.state.empty()) {
+            gsize n = 0;
+            guchar* d = g_base64_decode(r.state.c_str(), &n);
+            if (d) t->state.assign(reinterpret_cast<const char*>(d), n);
+            g_free(d);
+        }
+        tabs_.push_back(t);
+    }
+    selectTab(BrowserTabs::restoredActive(active, (int)tabs_.size()));
 }
 
 #endif // MINICODE_ENABLE_BROWSER
