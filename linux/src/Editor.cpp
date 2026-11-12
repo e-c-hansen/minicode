@@ -27,6 +27,7 @@
 #include "MediaView.h"
 #include "CsvTable.h"
 #include "JsonOutlineView.h"
+#include "MarkdownSide.h"
 #include "Notebook.h"
 #include "StartupLog.h"
 #include "CompareView.h"
@@ -542,6 +543,7 @@ void Editor::showActive() {
         setViewBuffer(welcome_, true, false);
         gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
         dropOutline();
+        dropSide();
         notifyDocument();
         refreshStrip();
         titleChanged();
@@ -620,6 +622,7 @@ void Editor::showActive() {
         break;
     }
     syncOutline();
+    syncSide();
     notifyDocument();
     refreshStrip();
     titleChanged();
@@ -637,7 +640,10 @@ void Editor::syncOutline() {
         if (outline_) gtk_widget_set_visible(outline_->widget(), FALSE);
         return;
     }
-    if (!outline_) outline_ = new JsonOutlineView();
+    if (!outline_) {
+        outline_ = new JsonOutlineView();
+        g_object_ref(outline_->widget());   // the side pane may take its place in the paned
+    }
     if (gtk_paned_get_end_child(GTK_PANED(outlinePaned_)) != outline_->widget())
         gtk_paned_set_end_child(GTK_PANED(outlinePaned_), outline_->widget());
     gtk_widget_set_visible(outline_->widget(), TRUE);
@@ -673,6 +679,58 @@ void Editor::syncOutline() {
         if (outlineDoc_) caret(outlineDoc_->buffer(), nullptr, this);
     };
     caret(d->buffer(), nullptr, this);
+}
+
+// The Markdown page right of the source of a Markdown tab that wants it and
+// is showing its source: never beside the full preview. The text is parsed
+// and the changed pieces built 0.3 s after typing stops (MarkdownSide.h).
+void Editor::syncSide() {
+    Document* d = active_;
+    const bool on = d && d->kind() == Document::Kind::Text && d->isMarkdown() && !d->isNotebook() &&
+                    d->sideWanted() && !d->showsPreview() && !d->loading() &&
+                    buffer_ == d->buffer();
+    if (!on) {
+        dropSide();
+        if (side_) gtk_widget_set_visible(side_->widget(), FALSE);
+        return;
+    }
+    if (!side_) {
+        side_ = new MarkdownSide(tags_.table);
+        side_->onLink = [this](const std::string& url) { openMarkdownLink(url); };
+    }
+    bool render = false;
+    if (sideDoc_ != d) {
+        dropSide();
+        sideDoc_ = d;
+        sideChanged_ = g_signal_connect(d->buffer(), "changed", G_CALLBACK(+[](GtkTextBuffer*, gpointer p) {
+            Editor* self = static_cast<Editor*>(p);
+            if (self->side_) self->side_->schedule();
+        }), this);
+        render = true;
+    }
+    if (gtk_paned_get_end_child(GTK_PANED(outlinePaned_)) != side_->widget())
+        gtk_paned_set_end_child(GTK_PANED(outlinePaned_), side_->widget());
+    gtk_widget_set_visible(side_->widget(), TRUE);
+    side_->getText = [d] { return d->text(); };
+    char* dir = g_path_get_dirname(d->path().c_str());
+    const bool moved = side_->setContext(dir ? dir : ".", settings_.webImages() && WebImages::available());
+    g_free(dir);
+    if (render || moved) side_->schedule(0);
+}
+
+void Editor::dropSide() {
+    if (!sideDoc_) return;
+    g_signal_handler_disconnect(sideDoc_->buffer(), sideChanged_);
+    sideChanged_ = 0;
+    sideDoc_ = nullptr;
+    if (side_) side_->clear();
+}
+
+void Editor::toggleSidePreview() {
+    Document* d = active_;
+    if (!d || !d->isMarkdown() || d->isNotebook() || d->kind() != Document::Kind::Text) return;
+    d->setSideWanted(!d->sideWanted());
+    syncSide();
 }
 
 void Editor::dropOutline() {
@@ -1216,6 +1274,7 @@ void Editor::applySettings(const Settings& s) {
         rerenderPreview();
         if (!scrolled) notePreviewRest();   // still where Ctrl+Shift+V left it
     }
+    if (s.webImages() != webBefore) syncSide();   // another context: the side page is built whole
 }
 
 bool Editor::isSettingsFile() const { return active_ && active_->isSettingsFile(); }
@@ -1643,6 +1702,7 @@ void Editor::togglePreview() {
         settleOnCaret();
         notifyDocument();
     }
+    syncSide();   // the side page steps aside for the full preview, and comes back
 }
 
 // The active Markdown file's page, rendered into a buffer of its own (D3)

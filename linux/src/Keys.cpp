@@ -79,6 +79,7 @@ const std::vector<Action>& actions() {
         {"minicode.showTodos", "win.todos", false},
         {"workbench.action.showCommands", "win.showcommands", false},
         {"markdown.showPreview", "win.togglepreview", true},
+        {"markdown.showPreviewToSide", "win.togglesidepreview", false},
         {"minicode.toggleShortcutHints", "win.togglehints", false},
         {"editor.action.fontZoomIn", "win.editorzoomin", true},
         {"editor.action.fontZoomOut", "win.editorzoomout", false},

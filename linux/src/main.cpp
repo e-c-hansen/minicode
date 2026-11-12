@@ -785,6 +785,13 @@ static void act_toggle_preview(GSimpleAction*, GVariant*, gpointer userp) {
     refreshHints(app);
 }
 
+static void act_toggle_side_preview(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    showEditorArea(app);
+    app->editor->toggleSidePreview();
+    refreshHints(app);
+}
+
 // Toggle Sidebar: the tree, or the panel in its place, hides or shows at the
 // width it had (WindowLayout::toggleSidebar).
 static void act_toggle_sidebar(GSimpleAction*, GVariant*, gpointer userp) {
@@ -3357,6 +3364,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "findinfolder",   G_CALLBACK(act_find_in_folder));
     addAction(app, "replaceinfolder", G_CALLBACK(act_replace_in_folder));
     addAction(app, "togglepreview",  G_CALLBACK(act_toggle_preview));
+    addAction(app, "togglesidepreview", G_CALLBACK(act_toggle_side_preview));
     addAction(app, "togglehints",    G_CALLBACK(act_toggle_hints));
     addAction(app, "togglesidebar",  G_CALLBACK(act_toggle_sidebar));
     addAction(app, "toggleeditor",   G_CALLBACK(act_toggle_editor));

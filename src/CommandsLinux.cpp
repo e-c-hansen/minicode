@@ -153,6 +153,10 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.showCommands", "ctrl+shift+p f1", 0, nullptr, nullptr},
         // In the terminal Ctrl+Shift+V pastes (linuxTerminalOwnKey).
         {"markdown.showPreview", "ctrl+shift+v", 0, nullptr, nullptr},
+        // VS Code's Linux key is the chord Ctrl+K V, and minicode has no
+        // chords. The Mac's Ctrl+Cmd+V with Ctrl+Alt for Cmd (as the task
+        // key's Ctrl+Alt+L); GNOME takes no Ctrl+Alt+V.
+        {"markdown.showPreviewToSide", "ctrl+alt+v", 0, nullptr, nullptr},
         {"minicode.toggleShortcutHints", "ctrl+shift+h", 0, nullptr, nullptr},
         // The editor's zoom (PARITY.md 1.11), VS Code's Linux Ctrl+= and
         // Ctrl+- (its window's zoom; here the editor's and the Markdown

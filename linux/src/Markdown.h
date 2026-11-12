@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "MarkdownParser.h"
 #include "WebImages.h"
 
 namespace Markdown {
@@ -59,6 +60,7 @@ struct Page {
     std::vector<Embed> embeds;
     std::vector<PendingPicture> pending; // web pictures to fetch, in buffer order
     std::shared_ptr<Hooks> hooks;        // what the page's widgets call back
+    int length = 0;                      // renderRuns: the characters it put in
     // The span at character `offset`, or null.
     const Span* spanAt(int offset) const;
     // The first character from source line `line` or later (the end when none).
@@ -83,6 +85,13 @@ struct Hooks {
 // Replace the buffer's contents with the rendered Markdown.
 Page render(GtkTextView* view, GtkTextBuffer* buffer, const std::string& source,
             const Hooks& hooks);
+
+// Runs [first, last) of `runs` rendered into `buffer` at character offset
+// `at` (the pieces of MarkdownPage; the rest of the buffer is untouched).
+// The returned page's offsets count from `at`; its span lines are the
+// runs' own.
+Page renderRuns(GtkTextView* view, GtkTextBuffer* buffer, const std::vector<MdRun>& runs,
+                size_t first, size_t last, int at, const std::shared_ptr<Hooks>& hooks);
 
 // Size the page's tables and pictures to a pane `width` pixels wide.
 void fit(Page& page, int width);
