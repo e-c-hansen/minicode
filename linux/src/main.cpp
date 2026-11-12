@@ -810,6 +810,78 @@ static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer
 // window, and none of them comes back until asked (the owner's report of
 // 2026-11-09: the port used to reopen the editor when the last of them
 // closed). WindowLayout.cpp has the rules and where the keyboard goes.
+// Run File and `minicode term --run` (PARITY.md 3.1): the window's one
+// terminal shown with the keyboard left where it was, then a line typed and
+// entered at its prompt, or `done` told why not (a running command, a shell
+// that does not report). Nothing is ever typed into a busy terminal.
+static void showTerminalQuietly(App* app) {
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (app->dead || !app->terminal || app->layout->terminalShown()) return;
+    GtkWidget* keep = gtk_window_get_focus(GTK_WINDOW(app->window));
+    app->layout->toggleTerminal();
+    if (keep && gtk_widget_get_root(keep) && gtk_window_get_focus(GTK_WINDOW(app->window)) != keep)
+        gtk_widget_grab_focus(keep);
+#else
+    (void)app;
+#endif
+}
+
+static void runInTerminal(App* app, const std::string& line, std::function<void(const std::string&)> done) {
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (app->dead || !app->terminal) {
+        done("this window has no terminal");
+        return;
+    }
+    showTerminalQuietly(app);
+    app->terminal->runLine(line, std::move(done));
+#else
+    (void)app; (void)line;
+    done("this build has no terminal");
+#endif
+}
+
+// Run File (Shift+Cmd+Return on the Mac, Ctrl+Shift+Return here): the open
+// file saved, then run.<language>'s command typed into the terminal as if
+// the user had, so it is in the shell's history. A busy terminal is never
+// typed into: the status bar says so (one terminal per window until item 4.7).
+static void act_run_file(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    const std::string path = app->editor->currentPath();
+    if (path.empty() || !app->editor->canSave()) {
+        flashStatus(app, "Open a file to run it");
+        return;
+    }
+    std::string ext;
+    const size_t dot = baseName(path).rfind('.');
+    if (dot != std::string::npos) ext = baseName(path).substr(dot + 1);
+    for (char& c : ext) c = (char)tolower((unsigned char)c);
+    const std::string tmpl = g.settings->settings().runTemplate(ext);
+    if (tmpl.empty()) {
+        flashStatus(app, ext.empty() ? "No run command for files without an extension"
+                                     : "No run command for ." + ext + " files (add run." + ext + " to the settings)");
+        return;
+    }
+    const std::string dir = path.substr(0, path.rfind('/'));
+    std::map<std::string, std::string> vars = {
+        {"file", path}, {"dir", dir}, {"root", app->rootDir.empty() ? dir : app->rootDir},
+        {"name", baseName(path)}};
+    if (tmpl.find("{python}") != std::string::npos) {
+        std::string python = app->lsp ? app->lsp->serverPythonInterpreter() : std::string();
+        if (python.empty()) python = RunFile::findVirtualenvPython(path, app->rootDir);
+        vars["python"] = python.empty() ? "python3" : python;
+    }
+    const std::string line = RunFile::expand(tmpl, vars);
+    if (app->editor->dirty()) {
+        saveCurrent(app);
+        if (app->editor->dirty()) return;   // the save failed and said why
+    }
+    App* a = app;
+    runInTerminal(app, line, [a, name = baseName(path)](const std::string& why) {
+        if (why.empty() || a->dead) return;
+        flashStatus(a, "Not run: " + why + " (" + name + ")");
+    });
+}
+
 static void act_toggle_terminal(GSimpleAction*, GVariant*, gpointer userp) {
     static_cast<App*>(userp)->layout->toggleTerminal();
 }
@@ -3169,6 +3241,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "togglesidebar",  G_CALLBACK(act_toggle_sidebar));
     addAction(app, "toggleeditor",   G_CALLBACK(act_toggle_editor));
     addAction(app, "toggleterminal", G_CALLBACK(act_toggle_terminal));
+    addAction(app, "runfile",        G_CALLBACK(act_run_file));
     addAction(app, "togglebrowser",  G_CALLBACK(act_toggle_browser));
     addAction(app, "togglegit",      G_CALLBACK(act_toggle_git));
     addAction(app, "toggleprocesses", G_CALLBACK(act_toggle_processes));
@@ -3427,6 +3500,29 @@ static void startControlChannel() {
     host.pageAnyOrigin = [] { return g.settings->settings().pageAnyOrigin(); };
     host.openUrl = [](const ControlWindow& w, const std::string& url) {
         if (App* a = controlApp(w.id)) openLink(a, true, url, false, false, 0, 0);
+    };
+    host.showTerminal = [](const ControlWindow& w) {
+        if (App* a = controlApp(w.id)) showTerminalQuietly(a);
+    };
+    host.terminalRun = [](const ControlWindow& w, const std::string& line,
+                          std::function<void(const std::string&)> done) {
+        App* a = controlApp(w.id);
+        if (!a) {
+            done("the window was closed");
+            return;
+        }
+        runInTerminal(a, line, std::move(done));
+    };
+    host.terminalOutput = [](int id, int lines, std::string* text) {
+#ifdef MINICODE_ENABLE_TERMINAL
+        App* a = controlApp(id);
+        if (!a || !a->terminal) return false;
+        *text = a->terminal->made() ? a->terminal->recentText(lines) : std::string();
+        return true;
+#else
+        (void)id; (void)lines; (void)text;
+        return false;
+#endif
     };
     registerControlCommands(gControl->dispatcher(), host);
     // The process sampler (PARITY.md 3.8): each window's folder as realpath

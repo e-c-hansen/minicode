@@ -49,6 +49,14 @@ struct ControlHost {
     std::function<bool()> pageAnyOrigin;
     // A web address in the user's page, as a link from the terminal opens it.
     std::function<void(const ControlWindow&, const std::string& url)> openUrl;
+    // The window's terminal (PARITY.md 3.1): shown, then `line` typed and
+    // entered at its prompt; `done` gets "" or why nothing was typed.
+    std::function<void(const ControlWindow&, const std::string& line,
+                       std::function<void(const std::string&)> done)> terminalRun;
+    // Shows the window's terminal, the keyboard where it was.
+    std::function<void(const ControlWindow&)> showTerminal;
+    // The window's terminal's last `lines` lines; false when it has none.
+    std::function<bool(int id, int lines, std::string* text)> terminalOutput;
 };
 
 void registerControlCommands(ControlChannel::Dispatcher& dispatcher, ControlHost host);

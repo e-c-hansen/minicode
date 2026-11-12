@@ -435,7 +435,10 @@ const Help kHelp[] = {
     {"term",
      "minicode term [--cwd DIR] [--title TITLE] [--run COMMAND]\n"
      "    Opens a new terminal tab and prints its id. --run types COMMAND at\n"
-     "    the prompt and presses Return, in plain sight, as if typed there.\n"},
+     "    the prompt and presses Return, in plain sight, as if typed there.\n"
+     "    On Linux a window has one terminal: it is used when its shell is at\n"
+     "    a prompt, and an error says why when it is busy or its shell does not\n"
+     "    report (nothing is typed then). --cwd types a cd; --title is ignored.\n"},
     {"diff",
      "minicode diff <path> [--base REF]\n"
      "minicode diff <a> <b>\n"

@@ -87,6 +87,24 @@ public:
     // A program other than the shell has the terminal (its foreground
     // process group is not the shell's).
     bool busy() const;
+    // `minicode term --run` and Run File (PARITY.md 3.1): `line` (one line)
+    // typed at the shell's prompt as a paste and entered with Return, so it
+    // runs visibly and goes through the shell's history. Nothing is typed
+    // unless the integration says the shell is at a prompt and the shell
+    // has the terminal's foreground: a running command, a shell that does
+    // not report (another shell, ssh, an exec'd program) or an unknown state
+    // is refused with the reason. A shell still starting, a command just
+    // typed, and a foreground other than the shell's for under half a second
+    // are waited for (15 s, 2 s and 0.5 s at most). `done` gets "" once the
+    // line is typed, else the reason, possibly before this returns. The
+    // terminal is made first if need be.
+    void runLine(const std::string& line, std::function<void(const std::string&)> done);
+    // Why runLine would not type now, "" when it would (for the status bar
+    // and the checks); `*wait` says the reason is one runLine waits out.
+    std::string runBlocker(bool* wait = nullptr) const;
+    // The last `lines` lines the terminal shows, scrollback included,
+    // trailing blank lines left out (`minicode term-output`).
+    std::string recentText(int lines);
     // The shell's pid (the VTE child), 0 while there is none (PARITY.md 3.8).
     int shellPid() const { return shellPid_ > 0 ? (int)shellPid_ : 0; }
 
@@ -103,10 +121,10 @@ public:
     // The mark shown now, for the checks: "waiting", "done" or "".
     const std::string& attentionShown() const { return attentionShown_; }
     // A command run with Return has finished: the shell has the terminal
-    // again. The port's shell has no integration marks, so each Return
-    // typed into the terminal starts a look, four times a second, until
-    // the shell is in the foreground (the Mac's
-    // MCTerminalCommandDidFinishNotification).
+    // again (the Mac's MCTerminalCommandDidFinishNotification). With the
+    // shell integration it is the finishing mark; for a shell without it
+    // each Return typed into the terminal starts a look, four times a
+    // second, until the shell is in the foreground.
     std::function<void()> onCommandFinished;
     // "NAME=value" lines added to the shell's environment each time it is
     // started (CLAUDE_CODE_SSE_PORT while the IDE link is on).
@@ -198,6 +216,13 @@ private:
     int    typeTries_ = 0;
     bool   shellSpoke_ = false;   // the shell printed something since it started
     guint  finishTimer_ = 0;
+    // runLine's wait, and the count of lines started when it last typed (-1
+    // for none), so a second line waits for the first one's mark.
+    guint  runTimer_ = 0;
+    long long runStarted_ = -1;
+    gint64 runTypedAt_ = 0, runBegan_ = 0;
+    std::function<int(gint64, std::string*)> runAttempt_;
+    std::function<void(const std::string&)> runDone_;
     void typePending();
     static void onCommit(VteTerminal* term, char* text, guint size, gpointer self);
     static void onContentsChanged(VteTerminal* term, gpointer self);

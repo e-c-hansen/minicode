@@ -221,8 +221,13 @@ void Terminal::onTermpropChanged(VteTerminal* term, const char* name, gpointer s
     if (!value) return;   // unset: a value VTE refused
     ShellIntegration::VteMark m;
     if (!ShellIntegration::parseVteMark(std::string(value, len), self->nonce_, &m)) return;
+    // Counters, not the busy flag: a short command's start and finish can
+    // arrive in one read, of which VTE keeps only the last value.
+    const bool ended = self->shell_.known && m.done > self->shell_.done;
     self->shell_.apply(m);
     if (self->onShellStateChanged) self->onShellStateChanged();
+    // The finishing mark ends the command: no polling for an integrated shell.
+    if (ended && !self->shell_.busy && self->onCommandFinished) self->onCommandFinished();
 }
 
 void Terminal::makeTerminal() {
@@ -416,6 +421,10 @@ Terminal::~Terminal() {
     if (cursorIdle_) g_source_remove(cursorIdle_);
     if (typeTimer_) g_source_remove(typeTimer_);
     if (finishTimer_) g_source_remove(finishTimer_);
+    if (runTimer_) {
+        g_source_remove(runTimer_);
+        if (runDone_) runDone_("the window was closed");
+    }
     if (underline_)
         gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(underline_), nullptr, nullptr, nullptr);
 }
@@ -955,6 +964,106 @@ void Terminal::typePending() {
     pendingType_.clear();
 }
 
+std::string Terminal::runBlocker(bool* wait) const {
+    if (wait) *wait = false;
+    auto soft = [&](const char* why) {
+        if (wait) *wait = true;
+        return std::string(why);
+    };
+    if (!vte_ || shellPid_ <= 0) return soft("the terminal's shell is starting");
+    if (nonce_.empty())
+        return "the terminal's shell has no integration (another shell than bash or zsh, or one started without it), so nobody can tell whether it is at a prompt";
+    if (!shell_.known) {
+        if (g_get_monotonic_time() - lastSpawn_ < 15 * G_USEC_PER_SEC)
+            return soft("the shell has not shown its first prompt yet");
+        return "the terminal's shell has not reported a prompt (its integration did not load, or an exec'd program or ssh has the terminal)";
+    }
+    if (shell_.busy)
+        return shell_.command.empty() ? std::string("the terminal is busy running a command")
+                                      : "the terminal is busy running: " + shell_.command;
+    if (runStarted_ >= 0 && shell_.started == runStarted_ &&
+        g_get_monotonic_time() - runTypedAt_ < 2 * G_USEC_PER_SEC)
+        return soft("a command was just typed and has not started");
+    if (busy()) return soft("a program other than the shell has the terminal");
+    if (!shell_.atPrompt) return "the shell is not at a prompt";
+    return "";
+}
+
+void Terminal::runLine(const std::string& line, std::function<void(const std::string&)> done) {
+    makeTerminal();
+    if (line.empty() || line.find_first_of("\r\n") != std::string::npos) {
+        done("the command must be one line");
+        return;
+    }
+    if (runTimer_) {
+        done("another command is already waiting to be typed into the terminal");
+        return;
+    }
+    auto attempt = [this, line](gint64 started, std::string* why) -> int {   // 0 typed, 1 wait, 2 refused
+        bool wait = false;
+        *why = runBlocker(&wait);
+        if (!why->empty()) {
+            // A foreground other than the shell's is waited for half a second only.
+            const bool foreign = why->find("other than the shell") != std::string::npos;
+            const gint64 limit = foreign ? 500000 : (why->find("just typed") != std::string::npos ? 2000000 : 15000000);
+            if (wait && g_get_monotonic_time() - started < limit) return 1;
+            return 2;
+        }
+        VteTerminal* t = VTE_TERMINAL(vte_);
+        vte_terminal_paste_text(t, line.c_str());
+        vte_terminal_feed_child(t, "\r", 1);
+        runStarted_ = shell_.started;
+        runTypedAt_ = g_get_monotonic_time();
+        return 0;
+    };
+    std::string why;
+    const gint64 started = g_get_monotonic_time();
+    const int first = attempt(started, &why);
+    if (first == 0) { done(""); return; }
+    if (first == 2) { done(why); return; }
+    runAttempt_ = attempt;
+    runDone_ = std::move(done);
+    runBegan_ = started;
+    runTimer_ = g_timeout_add(50, [](gpointer p) -> gboolean {
+        Terminal* self = static_cast<Terminal*>(p);
+        std::string why;
+        const int r = self->runAttempt_(self->runBegan_, &why);
+        if (r == 1) return G_SOURCE_CONTINUE;
+        self->runTimer_ = 0;
+        auto finish = std::move(self->runDone_);
+        self->runDone_ = nullptr;
+        finish(r == 0 ? std::string() : why);
+        return G_SOURCE_REMOVE;
+    }, this);
+}
+
+std::string Terminal::recentText(int lines) {
+    if (!vte_ || lines < 1) return "";
+    VteTerminal* t = VTE_TERMINAL(vte_);
+    GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(vte_));
+    if (!adj) return "";
+    const long lower = std::lround(gtk_adjustment_get_lower(adj));
+    const long upper = std::lround(gtk_adjustment_get_upper(adj));
+    // Wrapped rows are one line of text; reading a margin of rows first and
+    // cutting to the last `lines` lines keeps a wrapped one whole.
+    const long start = std::max(lower, upper - (long)lines - 200);
+    gsize len = 0;
+    char* raw = vte_terminal_get_text_range_format(t, VTE_FORMAT_TEXT, start, 0, upper - 1, -1, &len);
+    std::string text = raw ? std::string(raw, len) : std::string();
+    g_free(raw);
+    trimEnd(text);
+    size_t pos = text.size();
+    int n = 0;
+    while (pos > 0 && n < lines) {
+        const size_t nl = text.rfind('\n', pos - 1);
+        if (nl == std::string::npos) { pos = 0; break; }
+        pos = nl;
+        n++;
+    }
+    if (n == lines && pos < text.size() && text[pos] == '\n') pos++;
+    return text.substr(pos);
+}
+
 void Terminal::onContentsChanged(VteTerminal*, gpointer selfp) {
     static_cast<Terminal*>(selfp)->shellSpoke_ = true;
 }
@@ -963,6 +1072,7 @@ void Terminal::onCommit(VteTerminal*, char* text, guint size, gpointer selfp) {
     Terminal* self = static_cast<Terminal*>(selfp);
     if (!text || (!memchr(text, '\r', size) && !memchr(text, '\n', size))) return;
     if (self->finishTimer_) return;   // already looking
+    if (!self->nonce_.empty()) return;   // the integration's marks tell (onTermpropChanged)
     self->finishTimer_ = g_timeout_add(250, [](gpointer p) -> gboolean {
         Terminal* t = static_cast<Terminal*>(p);
         if (t->busy()) return G_SOURCE_CONTINUE;

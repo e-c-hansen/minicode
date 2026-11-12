@@ -3887,3 +3887,50 @@ GUI checks (`tests/gui`):
   does not appear until the top folder is listed again after
   `.claude/worktrees` is first made. The `agents` suite checks all of the
   above against a real git repository (fails without the feature, checked).
+
+**Part two (November 2026, `linux-31-term`)**: `term`, `term-output`, Run
+File's busy check and the finishing mark.
+
+- **`Terminal::runLine`** (and `runBlocker`) types one line as a paste
+  (bracketed when the shell asked) and Return, so it is visible and in the
+  shell's history (never `exec`'d). It types only when the integration says
+  the shell is at a prompt and `tcgetpgrp` agrees; the refusals name why: a
+  running command ("busy running: <text>"), a shell with no nonce (fish,
+  sh, anything but bash and zsh: "no integration"), no mark after 15 s, a
+  shell not at a prompt. Waited for, not refused: the shell starting (15
+  s), a line typed whose start mark has not come (2 s: a second `--run` in
+  quick succession), and a foreground other than the shell's while the
+  marks say prompt (0.5 s, "longer than a moment", the Mac's `tcgetpgrp`
+  rule). One wait at a time (a second asker is refused). A half-typed line
+  at the prompt is not set aside as the Mac's push-input does: it runs with
+  ours (bash has no such widget bound here).
+- **`exec` into another shell or ssh** needs no extra code: the last mark
+  said busy with that command and no further mark comes, so it stays busy
+  and nothing is typed. `exec zsh` from bash is not re-integrated: bash has
+  no hook that runs in the shell before a line other than PS0's
+  arithmetic, and a function named `exec` would scope the redirections of
+  `exec >log` to its own call, which breaks them. The terminal is busy
+  with `exec zsh` until the user restarts it. Run `zsh` itself in the
+  terminal and its marks (nonce-less, so unknown) are ignored.
+- **`term`** (`ControlCommands.cpp`, `ControlHost::terminalRun`): the
+  window's one terminal (no tabs, item 4.7), shown with the keyboard left
+  where it was; the answer is `{terminal, reused: true, typed}`, with
+  `title_ignored` for `--title`. `--cwd` types `cd DIR` (with `--run`, `cd
+  DIR && COMMAND`, one line). `--split` still says it is not on Linux yet.
+  An error answer begins "the terminal was left alone:" and the reason.
+  `term-output <id> [--lines N]` is `Terminal::recentText` (VTE's
+  `get_text_range_format` over the scrollback, trailing blank rows cut).
+- **Run File** did not exist on Linux (the note said to find it in
+  `linux/src`): `act_run_file` in `main.cpp`, `win.runfile` and Ctrl+Shift+
+  Return (Global, the Mac's Shift+Cmd+Return), with the Mac's rules:
+  `Settings::runTemplate`, `RunFile::expand`, the nearest virtualenv's
+  python, saved first, never into a busy terminal (the status bar says "Not
+  run: <why>"). `run.terminal = new` and the busy case's new terminal wait
+  for tabs. `RunFile.cpp` joined both core lists.
+- **`onCommandFinished`** is called from the finishing mark (the done count
+  went up; counters, not the busy flag, since a short command's start and
+  finish can arrive in one VTE read). The 0.25 s polling after Return
+  stays only for a shell with no nonce (fish, sh), where there are no marks.
+- **Left of 3.1**: `split` and `install-skill` (the Mac's is in
+  `scripts/minicode-launcher`; Linux needs the skill in the package's data
+  folder and a subcommand of the CLI or launcher).

@@ -119,6 +119,17 @@ Verified by running it:
   runs the script in a bash reading a pipe, and `zsh:vte` the zsh half
   where /bin/zsh exists. zsh's half has not run here (no zsh on this
   machine or the ThinkPad); the suite runs it where zsh is installed.
+  Part two (same suite, `linux-31-term`): `minicode term --run 'echo hi'`
+  at the prompt types and enters it visibly and `term-output` shows `hi`
+  after `echo hi`; with `sleep 3` running it is refused with "busy running:
+  sleep 3" and nothing is typed; Run File while busy says "Not run:" with
+  the reason in the status bar and types nothing, and at the prompt runs the
+  file (`bash {file}`, through the shell); after `exec sh` (the last mark
+  said busy with `exec sh`) `term --run` is refused; the finishing mark
+  calls `onCommandFinished`. The three refusals fail (checked once) with
+  the busy test taken out of `Terminal::runBlocker`. Not run: ssh, or a
+  program other than the shell holding the foreground while the marks say
+  "at the prompt" (the half second's wait), and zsh's `term` half.
 - The Agents panel and Evidence (item 3.5; the same suite also checks part
   two: a click on a session opens its Evidence page with the final message,
   the last test's summary, Show all and Open in Terminal typing without

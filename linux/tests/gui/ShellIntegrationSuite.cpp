@@ -12,11 +12,18 @@
 //   - three commands on one line, and three lines in one write, leave the
 //     counters consistent;
 //   - zsh's half, where zsh is installed (a note otherwise).
+//   - part two (term, term-output, Run File): `term --run 'echo hi'` at the
+//     prompt runs visibly and `term-output` shows hi; while `sleep 3` runs
+//     it is refused with the reason and nothing is typed; Run File while
+//     busy says so in the status bar and types nothing, and at the prompt
+//     runs the file; after `exec sh` (no more marks) it is refused;
+//   - the finishing mark calls onCommandFinished (no polling).
 // The shell the app starts is $SHELL, set here before the shell is
 // (re)started; the old value is put back at the end.
 
 #include "Harness.h"
 #include "AppSeam.h"
+#include "Editor.h"
 #include "Json.h"
 #include "ShellIntegration.h"
 #include "Terminal.h"
@@ -28,6 +35,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -91,6 +99,50 @@ Json stateEntry() {
         if (t["id"].asInt() == term()->controlId()) return t;
     return Json();
 }
+
+// A client run with its output and exit status.
+struct CliRun {
+    bool done = false;
+    int exitCode = -1;
+    std::string out, err;
+};
+std::shared_ptr<CliRun> gCli;
+
+void runCli(const std::vector<std::string>& args) {
+    gCli = std::make_shared<CliRun>();
+    const std::string exe = MCGuiBuildDir() + "/minicode";
+    std::vector<const char*> argv = {exe.c_str()};
+    for (const std::string& a : args) argv.push_back(a.c_str());
+    argv.push_back(nullptr);
+    GError* error = nullptr;
+    GSubprocess* p = g_subprocess_newv(
+        argv.data(), (GSubprocessFlags)(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE), &error);
+    if (!p) {
+        gCli->done = true;
+        g_clear_error(&error);
+        return;
+    }
+    g_subprocess_communicate_utf8_async(
+        p, nullptr, nullptr,
+        +[](GObject* src, GAsyncResult* res, gpointer data) {
+            auto* holder = static_cast<std::shared_ptr<CliRun>*>(data);
+            char *out = nullptr, *err = nullptr;
+            g_subprocess_communicate_utf8_finish(G_SUBPROCESS(src), res, &out, &err, nullptr);
+            (*holder)->out = out ? out : "";
+            (*holder)->err = err ? err : "";
+            (*holder)->exitCode = g_subprocess_get_if_exited(G_SUBPROCESS(src))
+                                      ? g_subprocess_get_exit_status(G_SUBPROCESS(src)) : -1;
+            g_free(out);
+            g_free(err);
+            (*holder)->done = true;
+            delete holder;
+            g_object_unref(src);
+        },
+        new std::shared_ptr<CliRun>(gCli));
+}
+
+std::string statusText() { return gtk_label_get_text(GTK_LABEL(MCGuiApp().statusLabel)); }
+int gFinished = 0;   // onCommandFinished calls
 
 std::string gOldShell;
 bool gHadShell = false;
@@ -239,6 +291,74 @@ MC_GUI_SUITE(shell_integration) {
         GCHECK(sh().started == gBefore.started + 3 && sh().done == sh().started);
         GCHECK(sh().status == 0 && !sh().busy);
     });
+
+    // ---- part two: term, term-output, Run File, onCommandFinished
+    MCGuiStep("term --run 'echo hi' at the prompt", [] {
+        gBefore = sh();
+        gFinished = 0;
+        term()->onCommandFinished = [] { gFinished++; };
+        runCli({"term", "--run", "echo hi"});
+    });
+    MCGuiWait("term answered", 20, [] { return gCli->done; });
+    MCGuiStep("it typed and entered the line", [] {
+        GCHECK(gCli->exitCode == 0);
+        if (gCli->exitCode != 0) MCGuiNote("term said: %s", gCli->err.c_str());
+        GCHECK(std::stoi(gCli->out) == term()->controlId());   // the terminal's id
+    });
+    MCGuiWait("the line ran", 15, [] { return sh().atPrompt && sh().prompts > gBefore.prompts; });
+    MCGuiStep("term-output shows the command and its output", [] {
+        GCHECK(sh().started == gBefore.started + 1 && sh().status == 0);
+        GCHECK(gFinished >= 1);   // from the finishing mark
+        runCli({"term-output", std::to_string(term()->controlId()), "--lines", "20"});
+    });
+    MCGuiWait("term-output answered", 15, [] { return gCli->done; });
+    MCGuiStep("echo hi, then hi", [] {
+        GCHECK(gCli->exitCode == 0);
+        GCHECK(gCli->out.find("echo hi") != std::string::npos);
+        GCHECK(gCli->out.find("echo hi\nhi") != std::string::npos);
+        gBefore = sh();
+        typeLine("sleep 3");
+    });
+    MCGuiWait("sleep 3 runs", 10, [] { return sh().busy && sh().command == "sleep 3"; });
+    MCGuiStep("term --run while it runs", [] { runCli({"term", "--run", "echo nope > \"$HOME/nope.out\""}); });
+    MCGuiWait("term answered (busy)", 20, [] { return gCli->done; });
+    MCGuiStep("refused with the reason", [] {
+        GCHECK(gCli->exitCode == 1);
+        GCHECK(gCli->err.find("busy running: sleep 3") != std::string::npos);
+        GCHECK(sh().busy && sh().started == gBefore.started + 1);   // nothing else started
+    });
+    MCGuiStep("Run File while it runs", [] {
+        MCGuiWriteFile(gHome + "/rf.sh", "echo runfile-ran > \"$HOME/rf.out\"\n");
+        GCHECK(MCGuiApp().editor->openFile(gHome + "/rf.sh"));
+        GAction* a = g_action_map_lookup_action(G_ACTION_MAP(MCGuiApp().window), "runfile");
+        GCHECK(a != nullptr);
+        if (a) g_action_activate(a, nullptr);
+        GCHECK(statusText().find("Not run:") != std::string::npos && statusText().find("busy") != std::string::npos);
+    });
+    MCGuiWait("sleep 3 done", 15, [] { return sh().atPrompt; });
+    MCGuiStep("nothing was typed by either", [] {
+        GCHECK(!MCGuiFileExists(gHome + "/nope.out") && !MCGuiFileExists(gHome + "/rf.out"));
+        GCHECK(sh().started == gBefore.started + 1);
+        GAction* a = g_action_map_lookup_action(G_ACTION_MAP(MCGuiApp().window), "runfile");
+        if (a) g_action_activate(a, nullptr);   // at the prompt now
+    });
+    MCGuiWait("Run File ran the file", 15, [] { return MCGuiFileExists(gHome + "/rf.out") && sh().atPrompt; });
+    MCGuiStep("it ran through the shell as a command", [] {
+        GCHECK_EQ_STR(MCGuiReadFile(gHome + "/rf.out"), "runfile-ran\n");
+        GCHECK(sh().started == gBefore.started + 2);
+        typeLine("exec sh");
+    });
+    MCGuiWait("exec sh is the last mark", 10, [] { return sh().busy && sh().command == "exec sh"; });
+    MCGuiPause(0.7);   // the shell has been replaced; no further mark can come
+    MCGuiStep("term --run after exec sh", [] { runCli({"term", "--run", "echo nope > \"$HOME/nope2.out\""}); });
+    MCGuiWait("term answered (exec'd)", 20, [] { return gCli->done; });
+    MCGuiStep("refused, nothing typed", [] {
+        GCHECK(gCli->exitCode == 1);
+        GCHECK(gCli->err.find("busy running: exec sh") != std::string::npos);
+        term()->onCommandFinished = nullptr;
+    });
+    MCGuiPause(0.5);   // negative check: nothing may run
+    MCGuiStep("no file written", [] { GCHECK(!MCGuiFileExists(gHome + "/nope2.out")); });
 
     MCGuiStep("zsh, where it is installed", [] {
         gchar* zsh = g_find_program_in_path("zsh");

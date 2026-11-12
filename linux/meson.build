@@ -59,6 +59,7 @@ core_sources = [
   core_dir / 'InlineAgent.cpp',
   # Processes and ports: the table's rules and the /proc source (ProcessMonitor.cpp).
   core_dir / 'ProcessTable.cpp',
+  core_dir / 'RunFile.cpp',
   core_dir / 'ProcFs.cpp',
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp',

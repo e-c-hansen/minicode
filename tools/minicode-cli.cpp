@@ -505,7 +505,7 @@ int minicodeCliMain(int argc, char **argv) {
     if (c.cmd != "open" && c.cmd != "window" && c.cmd != "state" &&
         c.cmd != "selection" && c.cmd != "ping" && c.cmd != "procs" && c.cmd != "diff" &&
         c.cmd != "tour" && c.cmd != "notify" && c.cmd != "browse" && c.cmd != "page" &&
-        c.cmd != "open-url") {
+        c.cmd != "open-url" && c.cmd != "term" && c.cmd != "term-output") {
         // A hook never fails noisily.
         if (c.fromHook) return kExitOK;
         std::fprintf(stderr, "minicode: %s is not on Linux yet\n", c.cmd.c_str());

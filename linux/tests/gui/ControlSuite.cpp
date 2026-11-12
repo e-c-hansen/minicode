@@ -448,9 +448,9 @@ MC_GUI_SUITE(control) {
         Json j = parse(gRaw->answer);
         GCHECK(!j["ok"].asBool());
     });
-    MCGuiStep("a command of a later item", [] {
+    MCGuiStep("a part of a later item (term --split)", [] {
         gRaw = rawRequest(socketPath(),
-                          "{\"v\":1,\"id\":10,\"cmd\":\"term-output\",\"args\":{\"terminal\":1}}\n");
+                          "{\"v\":1,\"id\":10,\"cmd\":\"term\",\"args\":{\"split\":\"right\"}}\n");
     });
     MCGuiWait("answered a fourth time", 10, [] { return gRaw->done; });
     MCGuiStep("it says it is not on Linux yet", [] {
@@ -482,7 +482,7 @@ MC_GUI_SUITE(control) {
         GCHECK(gRun->exitCode == 1);
         GCHECK(gRun->err.find("no such file") != std::string::npos);
     });
-    MCGuiStep("minicode term", [] { gRun = runClient({"term"}); });
+    MCGuiStep("minicode term --right (split)", [] { gRun = runClient({"split", "--right", "term"}); });
     MCGuiWait("term returns", 20, [] { return gRun->done; });
     MCGuiStep("exit 1, not on Linux yet", [] {
         GCHECK(gRun->exitCode == 1);

@@ -1325,9 +1325,12 @@ its server comes first here (2.0).
   `HANDOFF.md` item 48, D10): bash through `--rcfile` and zsh through the
   Mac's script set a nonce-checked termprop; `Terminal::shellState()` and
   `state`'s `busy`, `command` and `status`; the `shell_integration` suite.
-  Remains: `term` and `term-output` over that state, Run File's busy check
-  from it, `split`, `install-skill` and the skill; every one answers "not on
-  Linux yet" now. `diff` is done with 3.2; `browse`, `page` and `open-url`/BROWSER with
+  Part two (done, November 2026; `HANDOFF.md` item 48): `term` (the
+  window's one terminal, when its shell is at a prompt; never into a busy
+  or silent one), `term-output`, Run File with its busy check (it had no
+  Linux version before), `onCommandFinished` from the finishing mark.
+  Remains: `split` (needs terminal tabs, item 4.7), `install-skill` and the
+  skill; both answer "not on Linux yet". `diff` is done with 3.2; `browse`, `page` and `open-url`/BROWSER with
   3.7.
 - [~] **3.2 The compare view.** `SideBySide`, word changes, Accept and Reject
   per hunk. Part one done (HANDOFF item 39): `CompareView` and

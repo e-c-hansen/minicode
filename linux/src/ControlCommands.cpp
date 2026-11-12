@@ -19,6 +19,7 @@
 #include "Keys.h"
 #include "PageCheck.h"
 #include "TermLinks.h"
+#include "RunFile.h"
 #include "AgentNotes.h"
 #include "Editor.h"
 #include "GitRun.h"
@@ -1094,6 +1095,82 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
 #ifdef MINICODE_ENABLE_BROWSER
     registerPageCommands(d, host);
 #endif
+
+    // `minicode term` (PARITY.md 3.1): a window has one terminal (no tabs
+    // yet, item 4.7), so it is the terminal used, when its shell is at a
+    // prompt; busy, or not reporting (another shell, ssh), is an error that
+    // says why, and nothing is typed. --run goes through the shell's history,
+    // typed and entered where the user can see it; --cwd is a `cd` typed the
+    // same way (with --run: one line, `cd DIR && COMMAND`).
+    d.on("term", [host](const Request& req, Dispatcher::Respond respond) {
+        const Json& a = req.args;
+        if (a.has("split")) {
+            respond(Result::failure("split is not on Linux yet"));
+            return;
+        }
+        ControlWindow w;
+        std::string error;
+        if (!target(host, a, &w, &error)) {
+            respond(Result::failure(error));
+            return;
+        }
+        std::string line = a["run"].asString();
+        const std::string cwd = a.has("cwd") ? a["cwd"].asString() : std::string();
+        if (!cwd.empty()) {
+            const std::string dir = resolved(cwd);
+            if (!isDirectory(dir)) {
+                respond(Result::failure("not a folder: " + dir));
+                return;
+            }
+            const std::string cd = "cd " + RunFile::shellQuote(dir);
+            line = line.empty() ? cd : cd + " && " + line;
+        }
+        if (!host.terminalRun) {
+            respond(Result::failure("this window has no terminal"));
+            return;
+        }
+        const bool titled = a.has("title") && !a["title"].asString().empty();
+        const int id = w.id;
+        if (line.empty()) {   // no command: show the terminal, if it can be used
+            host.showTerminal(w);
+            Json r = Json::object();
+            r.set("terminal", id);
+            r.set("reused", true);
+            respond(Result::success(r));
+            return;
+        }
+        host.showTerminal(w);
+        host.terminalRun(w, line, [respond, id, titled, line](const std::string& why) {
+            if (!why.empty()) {
+                respond(Result::failure("the terminal was left alone: " + why));
+                return;
+            }
+            Json r = Json::object();
+            r.set("terminal", id);
+            r.set("reused", true);   // the window's one terminal, as there are no tabs yet
+            r.set("typed", line);
+            if (titled) r.set("title_ignored", true);
+            respond(Result::success(r));
+        });
+    });
+
+    d.on("term-output", [host](const Request& req, Dispatcher::Respond respond) {
+        const int want = (int)req.args["terminal"].asInt();
+        const int64_t lines = req.args["lines"].asInt(200);
+        if (lines < 1 || lines > 100000) {
+            respond(Result::failure("lines is from 1 to 100000"));
+            return;
+        }
+        std::string text;
+        if (!host.terminalOutput || !host.terminalOutput(want, (int)lines, &text)) {
+            respond(Result::failure("there is no terminal " + std::to_string(want)));
+            return;
+        }
+        Json r = Json::object();
+        r.set("terminal", want);
+        r.set("text", text);
+        respond(Result::success(r));
+    });
 
     // The rest of the table is later items of PARITY.md 3: a clear answer
     // until each arrives.

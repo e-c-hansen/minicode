@@ -254,6 +254,9 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.terminal.fontZoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
         {"workbench.action.terminal.fontZoomOut", "ctrl+-", 0, nullptr, nullptr},
         {"workbench.action.terminal.fontZoomReset", "ctrl+alt+0 ctrl+numpad0", 0, nullptr, nullptr},
+        // Run File: the Mac's Shift+Cmd+Return. Global, so it also works
+        // with the keyboard in the terminal.
+        {"minicode.runFile", "ctrl+shift+enter", Global, nullptr, nullptr},
 
         // ---- Navigate
         // The palette's other ways in, VS Code's Linux keys. Ctrl+P, Ctrl+G
