@@ -144,7 +144,6 @@ SqliteView::SqliteView() {
     g_signal_connect(picked_, "notify::selected", G_CALLBACK(onPicked), this);
     GtkWidget* listScroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(listScroll), tableList_);
-    gtk_widget_set_size_request(listScroll, 160, -1);
 
     entry_ = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(entry_), "SELECT * FROM table   (Enter runs it)");
@@ -172,7 +171,10 @@ SqliteView::SqliteView() {
     root_ = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_paned_set_start_child(GTK_PANED(root_), listScroll);
     gtk_paned_set_end_child(GTK_PANED(root_), right);
-    gtk_paned_set_shrink_start_child(GTK_PANED(root_), FALSE);
+    // The list may shrink: the editor's slot is a GtkStack, which measures
+    // every page, so a minimum here was the editor's smallest width (161 px
+    // against the 150 the layout allows; the layout suite).
+    gtk_paned_set_shrink_start_child(GTK_PANED(root_), TRUE);
     gtk_paned_set_position(GTK_PANED(root_), 180);
     gtk_widget_set_hexpand(root_, TRUE);
     gtk_widget_set_vexpand(root_, TRUE);
