@@ -218,6 +218,32 @@ if [[ -o interactive ]]; then
   # A mark, with the nonce the terminal checks: marks without it, which
   # any program can print, are not believed.
   __minicode_mark() { builtin print -rn -- $'\e]'"$1;mc=$__minicode_nonce"$'\a' }
+  # The Linux port (__minicode_term=vte in the .zshenv): VTE reads no OSC
+  # 133 or 633, so the same calls keep counts and print one string termprop
+  # instead (linux/PARITY.md D10, ShellIntegration.h's parseVteMark):
+  #   ESC ] 666 ; vte.ext.minicode.mark=p=<prompts>\sx=<started>\sd=<done>\ss=<status>\sc=<command>\smc=<nonce> ESC \
+  # at A (a prompt) and C (a command starts); D and E only update the
+  # counts and the text; B prints nothing; OSC 7 goes out plain, since VTE
+  # takes everything after "7;" as the address.
+  if [[ ${__minicode_term-} == vte ]]; then
+    typeset -gi __minicode_p=0 __minicode_x=0 __minicode_d=0
+    typeset -g __minicode_s= __minicode_c=
+    __minicode_mark() {
+      case $1 in
+        ('133;A') (( ++__minicode_p )) ;;
+        ('133;C') (( ++__minicode_x )) ;;
+        ('133;D;'*) __minicode_d=$__minicode_x __minicode_s=${1#'133;D;'}; return 0 ;;
+        ('633;E;'*) __minicode_c=${1#'633;E;'}; return 0 ;;
+        ('7;'*) builtin print -rn -- $'\e]'"$1"$'\a'; return 0 ;;
+        (*) return 0 ;;
+      esac
+      local c=${__minicode_c[1,500]}
+      c=${c//\\/\\\\}
+      c=${c//;/\\s}
+      builtin print -rn -- $'\e]666;vte.ext.minicode.mark=p='"$__minicode_p"'\sx='"$__minicode_x"'\sd='"$__minicode_d"'\ss='"$__minicode_s"'\sc='"$c"'\smc='"$__minicode_nonce"$'\e\\'
+      return 0
+    }
+  fi
   # OSC 7 for $PWD: %, control characters and ; percent-encoded, so a
   # folder whose name holds BEL or ESC cannot end the mark early.
   __minicode_cwd() {

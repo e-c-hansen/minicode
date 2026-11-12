@@ -340,13 +340,22 @@ Json windowState(const ControlWindow& w, bool front) {
         }
     }
     // The terminal's own commands are later bites of 3.1; what it reports is
-    // its id (the window's) and its Claude Code mark (PARITY.md 3.6).
+    // its id (the window's), its Claude Code mark (PARITY.md 3.6) and what
+    // the shell integration knows.
     Json terminals = Json::array();
     {
         Json t = Json::object();
         t.set("id", w.id);
         const char* mark = TerminalAttention::markName(w.id);
         t.set("attention", *mark ? Json(std::string(mark)) : Json());
+        // The shell integration's (D10): whether a command runs and its
+        // text, and the last command's status; all null while the shell
+        // has not marked (another shell, ssh, or before its first prompt),
+        // since unknown is not idle.
+        const ShellIntegration::ShellState& sh = w.shell;
+        t.set("busy", sh.known ? Json(sh.busy) : Json());
+        t.set("command", sh.known && sh.busy && !sh.command.empty() ? Json(sh.command) : Json());
+        t.set("status", sh.known && sh.status >= 0 ? Json(sh.status) : Json());
         terminals.push(t);
     }
     o.set("terminals", terminals);

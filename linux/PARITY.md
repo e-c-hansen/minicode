@@ -598,6 +598,15 @@ command's own status when several finish inside one read, and marks at
 rows. Run File's busy check and `term` can live with that; command marks
 cannot.
 
+*Done, November 2026 (part one, `HANDOFF.md` item 48).* As the recipe says,
+with one correction: VTE splits OSC 666 at `;`, so the value's fields are
+written apart with `\s`, which VTE unescapes to `;` (`\\` for a backslash);
+a value over 1,024 characters or with a bad escape leaves the termprop
+unset. bash is started with `--rcfile` (PROMPT_COMMAND and PS0, no DEBUG
+trap), zsh with the Mac's script and `__minicode_term=vte` in its .zshenv.
+Seen in the suite: a command's output in the same read as its start mark
+hides the start, as the probe found for marks.
+
 **D11. Where state lives.** Sessions and the window's other remembered
 state are JSON (`Json`) under `$XDG_STATE_HOME/minicode` (default
 `~/.local/state/minicode`); backups under `$XDG_DATA_HOME/minicode/Backups`.
@@ -1312,9 +1321,13 @@ its server comes first here (2.0).
   Part one (done, November 2026; `HANDOFF.md` item 38): the server, the
   client (the Mac's CLI, shared) and `open`, `window`, `state`, `selection`
   and `ping`, with the user's typing protected (`"background"`); the `control`
-  GUI suite. Remains: `term` and `term-output` (with the terminal),
-  `split`, `install-skill` and the skill; every one answers "not on Linux yet"
-  now. `diff` is done with 3.2; `browse`, `page` and `open-url`/BROWSER with
+  GUI suite. The terminal's shell integration (done, November 2026;
+  `HANDOFF.md` item 48, D10): bash through `--rcfile` and zsh through the
+  Mac's script set a nonce-checked termprop; `Terminal::shellState()` and
+  `state`'s `busy`, `command` and `status`; the `shell_integration` suite.
+  Remains: `term` and `term-output` over that state, Run File's busy check
+  from it, `split`, `install-skill` and the skill; every one answers "not on
+  Linux yet" now. `diff` is done with 3.2; `browse`, `page` and `open-url`/BROWSER with
   3.7.
 - [~] **3.2 The compare view.** `SideBySide`, word changes, Accept and Reject
   per hunk. Part one done (HANDOFF item 39): `CompareView` and

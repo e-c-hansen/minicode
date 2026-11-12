@@ -7,6 +7,7 @@
 #ifdef MINICODE_ENABLE_TERMINAL
 
 #include "Appearance.h"
+#include "BackupStore.h"
 #include "Palette.h"
 #include "StartupLog.h"
 #include "TerminalAttention.h"
@@ -17,6 +18,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <glib/gstdio.h>
+#include <sys/random.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
@@ -118,9 +122,113 @@ void Terminal::setAttention(const std::string& markName, const std::string& tool
     gtk_widget_set_visible(attentionDot_, TRUE);
 }
 
+// ------------------------------------------------------ shell integration
+
+void Terminal::installTermprops() {
+    static bool installed = false;
+    if (installed) return;
+    installed = true;
+    vte_install_termprop(ShellIntegration::kVteMarkTermprop, VTE_PROPERTY_STRING, VTE_PROPERTY_FLAG_NONE);
+}
+
+namespace {
+
+// A file the app ships: beside the binary (a build folder), else in the
+// installed share/minicode; "" when neither has it.
+std::string shippedFile(const char* name) {
+    char exe[PATH_MAX];
+    const ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (n <= 0) return "";
+    exe[n] = 0;
+    char* dir = g_path_get_dirname(exe);
+    char* beside = g_build_filename(dir, name, nullptr);
+    char* shared = g_build_filename(dir, "..", "share", "minicode", name, nullptr);
+    std::string found = g_file_test(beside, G_FILE_TEST_IS_REGULAR) ? beside
+                        : g_file_test(shared, G_FILE_TEST_IS_REGULAR) ? shared : "";
+    g_free(beside);
+    g_free(shared);
+    g_free(dir);
+    return found;
+}
+
+const char* const kIntegrationFiles[] = {ShellIntegration::kZshScriptName, ".zshenv",
+                                         ShellIntegration::kBashScriptName};
+
+void removeIntegrationFolder(const std::string& dir) {
+    for (const char* f : kIntegrationFiles) g_remove((dir + "/" + f).c_str());
+    g_rmdir(dir.c_str());
+}
+
+std::string gIntegrationFolder;
+
+}  // namespace
+
+// The scripts are copied once a process, so a shell started later in this
+// process never reads a newer install's script (ShellIntegration.h: the
+// protocol is the running app's). In the user's runtime folder (0700, the
+// user's own), never the shared /tmp, where another user could have made
+// the folder first. The first look removes the folders of processes gone;
+// leaving removes this one's.
+const std::string& Terminal::integrationFolder() {
+    static bool tried = false;
+    if (tried) return gIntegrationFolder;
+    tried = true;
+    const std::string base = g_get_user_runtime_dir();
+    if (GDir* d = g_dir_open(base.c_str(), 0, nullptr)) {
+        while (const char* name = g_dir_read_name(d)) {
+            long long pid = 0, start = 0;
+            if (!ShellIntegration::parseFolderName(name, &pid, &start)) continue;
+            if (ShellIntegration::ownerGone(start, BackupStore::processStart((pid_t)pid)))
+                removeIntegrationFolder(base + "/" + name);
+        }
+        g_dir_close(d);
+    }
+    const long long start = (long long)BackupStore::processStart(getpid());
+    const std::string dir = base + "/" + ShellIntegration::folderName(true, getpid(), start);
+    g_mkdir_with_parents(base.c_str(), 0700);
+    g_mkdir(dir.c_str(), 0700);
+    struct stat st;
+    if (lstat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != getuid() ||
+        (st.st_mode & 077) != 0)
+        return gIntegrationFolder;
+    bool any = false;
+    for (const char* name : {ShellIntegration::kZshScriptName, ShellIntegration::kBashScriptName}) {
+        const std::string from = shippedFile(name);
+        gchar* text = nullptr;
+        gsize len = 0;
+        if (from.empty() || !g_file_get_contents(from.c_str(), &text, &len, nullptr)) continue;
+        if (g_file_set_contents((dir + "/" + name).c_str(), text, (gssize)len, nullptr)) any = true;
+        g_free(text);
+    }
+    const std::string stub = ShellIntegration::zshenvStub(true, true);
+    g_file_set_contents((dir + "/.zshenv").c_str(), stub.c_str(), (gssize)stub.size(), nullptr);
+    if (!any) {
+        removeIntegrationFolder(dir);
+        return gIntegrationFolder;
+    }
+    gIntegrationFolder = dir;
+    atexit([] { removeIntegrationFolder(gIntegrationFolder); });
+    return gIntegrationFolder;
+}
+
+// The hooks' mark: believed only with this shell's nonce, read from the
+// newest value alone (VTE keeps only the last of a read; ShellIntegration.h).
+void Terminal::onTermpropChanged(VteTerminal* term, const char* name, gpointer selfp) {
+    Terminal* self = static_cast<Terminal*>(selfp);
+    if (!name || strcmp(name, ShellIntegration::kVteMarkTermprop) != 0 || self->nonce_.empty()) return;
+    size_t len = 0;
+    const char* value = vte_terminal_get_termprop_string(term, ShellIntegration::kVteMarkTermprop, &len);
+    if (!value) return;   // unset: a value VTE refused
+    ShellIntegration::VteMark m;
+    if (!ShellIntegration::parseVteMark(std::string(value, len), self->nonce_, &m)) return;
+    self->shell_.apply(m);
+    if (self->onShellStateChanged) self->onShellStateChanged();
+}
+
 void Terminal::makeTerminal() {
     if (vte_) return;
     StartupLog::mark("terminal: made, on first show");
+    installTermprops();   // before the first VteTerminal exists
     GtkWidget* scroller = gtk_scrolled_window_new();
     gtk_widget_add_css_class(scroller, "minicode-terminal");
     gtk_widget_add_css_class(scroller, "minicode-scroller");
@@ -148,6 +256,10 @@ void Terminal::makeTerminal() {
     vte_terminal_set_cursor_blink_mode(term, VTE_CURSOR_BLINK_OFF);
 
     g_signal_connect(vte_, "child-exited", G_CALLBACK(onChildExited), this);
+    {
+        const std::string detailed = std::string("termprop-changed::") + ShellIntegration::kVteMarkTermprop;
+        g_signal_connect(vte_, detailed.c_str(), G_CALLBACK(onTermpropChanged), this);
+    }
     // Run in Terminal waits for the shell's prompt, and a Return typed here
     // starts the look for the command's end (typeText, onCommandFinished).
     g_signal_connect(vte_, "contents-changed", G_CALLBACK(onContentsChanged), this);
@@ -695,8 +807,6 @@ void Terminal::spawnShell() {
     const char* shell = g_getenv("SHELL");
     if (!shell || !*shell) shell = "/bin/bash";
 
-    char* argv[] = { (char*)shell, nullptr };
-
     lastSpawn_ = g_get_monotonic_time();
 
     // The environment the app has, less any MINICODE_TERMINAL_ID and
@@ -707,6 +817,8 @@ void Terminal::spawnShell() {
     gchar** envv = g_get_environ();
     envv = g_environ_unsetenv(envv, "MINICODE_TERMINAL_ID");
     envv = g_environ_unsetenv(envv, "MINICODE_PID");
+    for (const char* inherited : {"MINICODE_NONCE", "MINICODE_USER_ZDOTDIR", "MINICODE_EXEC"})
+        envv = g_environ_unsetenv(envv, inherited);
     if (controlId_ > 0)
         envv = g_environ_setenv(envv, "MINICODE_TERMINAL_ID", std::to_string(controlId_).c_str(), TRUE);
     envv = g_environ_setenv(envv, "MINICODE_PID", std::to_string((int)getpid()).c_str(), TRUE);
@@ -738,13 +850,51 @@ void Terminal::spawnShell() {
         if (eq != std::string::npos) envv = g_environ_setenv(envv, kv.substr(0, eq).c_str(), kv.c_str() + eq + 1, TRUE);
     }
 
+    // The shell integration (PARITY.md 3.1, D10): bash and zsh get the
+    // script and a nonce of their own; any other shell runs as it is and
+    // stays unknown. bash: `bash --rcfile <script>`, a non-login shell as
+    // before, the script reading ~/.bashrc after bash's own
+    // /etc/bash.bashrc. zsh: ZDOTDIR at the folder, whose .zshenv hands the
+    // user's ZDOTDIR back (MINICODE_USER_ZDOTDIR when they had one).
+    shell_ = ShellIntegration::ShellState();
+    nonce_.clear();
+    std::vector<std::string> args = {shell};
+    {
+        char* baseName = g_path_get_basename(shell);
+        const std::string name = baseName;
+        g_free(baseName);
+        const std::string& dir = integrationFolder();
+        const bool bash = name == "bash" && !dir.empty() &&
+                          g_file_test((dir + "/" + ShellIntegration::kBashScriptName).c_str(), G_FILE_TEST_IS_REGULAR);
+        const bool zsh = name == "zsh" && !dir.empty() &&
+                         g_file_test((dir + "/" + ShellIntegration::kZshScriptName).c_str(), G_FILE_TEST_IS_REGULAR);
+        unsigned char raw[16];
+        if ((bash || zsh) && getrandom(raw, sizeof raw, 0) == (ssize_t)sizeof raw) {
+            nonce_ = ShellIntegration::nonceHex(raw, sizeof raw);
+            envv = g_environ_setenv(envv, "MINICODE_NONCE", nonce_.c_str(), TRUE);
+            if (bash) {
+                args.push_back("--rcfile");
+                args.push_back(dir + "/" + ShellIntegration::kBashScriptName);
+            } else {
+                if (const char* user = g_environ_getenv(envv, "ZDOTDIR")) {
+                    const std::string theirs = user;   // envv changes below
+                    envv = g_environ_setenv(envv, "MINICODE_USER_ZDOTDIR", theirs.c_str(), TRUE);
+                }
+                envv = g_environ_setenv(envv, "ZDOTDIR", dir.c_str(), TRUE);
+            }
+        }
+    }
+    std::vector<char*> argv;
+    for (std::string& a : args) argv.push_back(&a[0]);
+    argv.push_back(nullptr);
+
     // vte_terminal_spawn_async is the current API (the sync variant is
     // deprecated in recent VTE).
     vte_terminal_spawn_async(
         VTE_TERMINAL(vte_),
         VTE_PTY_DEFAULT,
         cwd_.empty() ? nullptr : cwd_.c_str(),  // working directory
-        argv,
+        argv.data(),
         envv,                                    // the inherited, with the ids and the window's
         G_SPAWN_DEFAULT,
         nullptr, nullptr, nullptr,               // child setup

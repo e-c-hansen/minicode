@@ -9,7 +9,14 @@
 //
 // tests/zsh_integration_tests.inc runs the script in a real zsh through this
 // stub, so the test and the app start it the same way.
+//
+// The Linux port's terminal is VTE, which reads no OSC 133 or 633
+// (linux/PARITY.md D10): there the zsh script (with __minicode_term=vte in
+// the stub) and the bash one (linux/resources/minicode-bash-integration.bash)
+// print one string termprop the app installs, vte.ext.minicode.mark, whose
+// value parseVteMark reads and ShellState keeps (linux/src/Terminal.cpp).
 #pragma once
+#include <cstddef>
 #include <cstdlib>
 #include <string>
 
@@ -60,6 +67,8 @@ inline bool ownerGone(long long start, double startNow) {
 
 // The script's file name, in Resources (or build/) and in the ZDOTDIR folder.
 inline const char *const kZshScriptName = "minicode-zsh-integration.zsh";
+// The Linux port's bash script (bash --rcfile), beside the zsh one.
+inline const char *const kBashScriptName = "minicode-bash-integration.bash";
 
 // Grid mode's private keys, sent only while ZLE reads input; the script
 // binds each in emacs, viins and vicmd (zsh_integration checks it).
@@ -76,15 +85,120 @@ inline const char *const kZleKillToStartKey = "\x1b[9996~";
 inline const char *const kZleClearKey = "\x1b[9995~";
 
 // The .zshenv zsh reads first from ZDOTDIR. It is read with ZDOTDIR at its
-// own folder, which is where the script's copy is.
-inline std::string zshenvStub(bool grid) {
+// own folder, which is where the script's copy is. `vte`: the Linux port's
+// terminal, where the marks are the termprop below, not OSC 133.
+inline std::string zshenvStub(bool grid, bool vte = false) {
     std::string s = "# Written by minicode for its terminal panel. Safe to delete.\n";
     s += "typeset -g __minicode_mode=";
     s += grid ? "grid" : "line";
+    if (vte) s += "\ntypeset -g __minicode_term=vte";
     s += "\nbuiltin source \"$ZDOTDIR/";
     s += kZshScriptName;
     s += "\"\n";
     return s;
 }
+
+// A shell's nonce as the scripts get it in MINICODE_NONCE: the bytes (16,
+// so 128 random bits) as lower-case hex.
+inline std::string nonceHex(const unsigned char* raw, size_t n) {
+    static const char hex[] = "0123456789abcdef";
+    std::string s;
+    for (size_t i = 0; i < n; i++) {
+        s += hex[raw[i] >> 4];
+        s += hex[raw[i] & 15];
+    }
+    return s;
+}
+
+// ---------------------------------------------------------------- VTE marks
+// The termprop the Linux port installs (vte_install_termprop, before any
+// terminal exists) and the scripts set with
+//   ESC ] 666 ; vte.ext.minicode.mark=p=<n>\sx=<n>\sd=<n>\ss=<status>\sc=<command>\smc=<nonce> ESC \ (ST)
+// VTE splits OSC 666 at ';' and unescapes \s (;), \\ and \n in a string
+// value, so the value the app reads is "p=..;x=..;d=..;s=..;c=..;mc=..": p
+// counts prompts, x commands started, d commands finished (d is set to x
+// when a command ends, so a line of three commands counts once), s is the
+// last finished command's status (empty before the first), c the command's
+// text (control characters blanked, at most 500 characters; empty when the
+// shell does not know it). VTE keeps only the newest value of a read's
+// parse, and a value equal to the one before fires nothing, so the state is
+// read from the newest value alone and the counters make each one new.
+// VTE refuses a value over 1,024 characters (the termprop goes unset) and
+// a bad escape the same way.
+inline const char *const kVteMarkTermprop = "vte.ext.minicode.mark";
+
+struct VteMark {
+    long long prompts = 0, started = 0, done = 0;
+    int status = -1;   // -1: no command has finished yet
+    std::string command;
+};
+
+namespace detail {
+inline bool readCount(const std::string& v, size_t* at, const char* key, long long* out, bool allowEmpty) {
+    const std::string k = key;
+    if (v.compare(*at, k.size(), k) != 0) return false;
+    size_t i = *at + k.size(), start = i;
+    long long n = 0;
+    while (i < v.size() && v[i] >= '0' && v[i] <= '9') {
+        if (i - start >= 15) return false;
+        n = n * 10 + (v[i] - '0');
+        i++;
+    }
+    if (i == start && !allowEmpty) return false;
+    if (i >= v.size() || v[i] != ';') return false;
+    *out = i == start ? -1 : n;
+    *at = i + 1;
+    return true;
+}
+}  // namespace detail
+
+// The mark in a termprop's value, only when it ends in ";mc=<nonce>" with
+// this shell's nonce: anything a program prints without it (a file shown
+// with cat, a remote shell, a forged printf) is false and changes nothing.
+inline bool parseVteMark(const std::string& value, const std::string& nonce, VteMark* out) {
+    if (nonce.empty()) return false;
+    const std::string tail = ";mc=" + nonce;
+    if (value.size() < tail.size() ||
+        value.compare(value.size() - tail.size(), tail.size(), tail) != 0)
+        return false;
+    VteMark m;
+    size_t at = 0;
+    long long status = -1;
+    if (!detail::readCount(value, &at, "p=", &m.prompts, false) ||
+        !detail::readCount(value, &at, "x=", &m.started, false) ||
+        !detail::readCount(value, &at, "d=", &m.done, false) ||
+        !detail::readCount(value, &at, "s=", &status, true))
+        return false;
+    if (status > 255) return false;
+    m.status = (int)status;
+    const size_t end = value.size() - tail.size();
+    if (at > end || value.compare(at, 2, "c=") != 0 || at + 2 > end) return false;
+    m.command = value.substr(at + 2, end - at - 2);
+    *out = m;
+    return true;
+}
+
+// What a terminal knows of its shell from the newest mark. `known` is false
+// until a mark with the nonce arrives (another shell, or one whose
+// integration did not load, never marks: unknown, never idle).
+struct ShellState {
+    bool known = false;
+    bool busy = false;        // a command started and has not finished
+    bool atPrompt = false;    // the shell has drawn a prompt and runs nothing
+    std::string command;      // the running command's text, "" when idle or not known
+    int status = -1;          // the last finished command's status, -1 for none
+    long long prompts = 0, started = 0, done = 0;
+
+    void apply(const VteMark& m) {
+        known = true;
+        prompts = m.prompts;
+        started = m.started;
+        done = m.done;
+        busy = m.started > m.done;
+        atPrompt = !busy && m.prompts > 0;
+        command = busy ? m.command : std::string();
+        status = m.status;
+    }
+};
 
 }  // namespace ShellIntegration

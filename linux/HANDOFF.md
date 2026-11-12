@@ -3367,6 +3367,85 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
 - Not done: a command's request does not send the terminal's screen
   (`CommandRequest::screen` is empty; only the folder).
 
+### 48. The shell integration (done, November 2026; D10, `PARITY.md` item 3.1)
+
+- **What it does**: the app's terminal knows when its shell is at a prompt,
+  when a command runs and its text, and the last command's status, so part
+  two (`term`, `term-output`, Run File's busy check) can stop guessing from
+  the foreground process group. VTE 0.84 reads no OSC 133 or 633, so the
+  hooks set a string termprop of the app's own, `vte.ext.minicode.mark`,
+  installed once with `vte_install_termprop` before the first terminal is
+  made (`Terminal::installTermprops`), and read on its
+  `termprop-changed::vte.ext.minicode.mark` signal.
+- **The value**: `ESC ] 666 ; vte.ext.minicode.mark=p=<n>\sx=<n>\sd=<n>\ss=<status>\sc=<command>\smc=<nonce> ESC \`.
+  D10's recipe wrote the fields apart with `;`, but VTE splits OSC 666 at
+  `;` (the value stopped at `p=1`), so the hooks escape them as `\s` (and
+  `\` as `\\`), which VTE unescapes. A value over 1,024 characters, or a
+  bad escape, leaves the termprop unset, so the command's text is cut to
+  500 characters. `ShellIntegration::parseVteMark` (core, header only)
+  reads the value only when it ends in `;mc=<this shell's nonce>`, and
+  `ShellState` keeps the newest: busy when x (lines started) is past d
+  (finished; set to x at the next prompt, so a line of three commands
+  counts once), at a prompt otherwise, the text while busy, the status.
+  VTE keeps only the last value of a read, so a command's output in the
+  same read as its start mark hides the start (seen in the suite: a
+  `printf` at once after it); the counters show the jump, and the state is
+  right again at the next mark.
+- **bash** (`linux/resources/minicode-bash-integration.bash`): the shell
+  is started `bash --rcfile <copy>`, interactive and non-login, as the port
+  and GNOME Terminal started it before, so the desktop session's login ran
+  `~/.profile` already. bash reads `/etc/bash.bashrc` itself (Debian's
+  SYS_BASHRC, which `--rcfile` does not replace); the script then takes
+  `MINICODE_NONCE` out of the environment and reads `~/.bashrc`, which is
+  all a non-login bash reads, so no profile branch is needed. The hooks,
+  installed after `~/.bashrc` and only with a nonce and bash 4.4 or later:
+  PROMPT_COMMAND gets a first entry that keeps `$?` for the user's entries
+  and ours last (an array from bash 5.1, else joined by newlines); PS0
+  (bash 4.4) gets `${BASH_VERSION:0:$((__minicode_x+=1,0))}` (an
+  arithmetic expansion that moves the counter in the shell itself and
+  expands to nothing) and a command substitution that prints the mark. The
+  text is the history's newest line when `HISTCMD` moved past the prompt's
+  (a line the history did not keep, under ignorespace or ignoredups or
+  with history off, has none). No DEBUG trap. The user's prompt, history,
+  options, PROMPT_COMMAND and PS0 are kept (the suite checks a .bashrc's
+  PROMPT_COMMAND and alias).
+- **zsh**: the Mac's script (`resources/minicode-zsh-integration.zsh`,
+  copied by Meson beside the binary and installed, never forked) with
+  `__minicode_term=vte` in the .zshenv stub (`zshenvStub(grid, vte)`):
+  `__minicode_mark` keeps counts at D and E and prints the termprop at A
+  and C; B prints nothing; OSC 7 goes out without the nonce, since VTE
+  takes everything after `7;` as the address. ZDOTDIR is the folder,
+  `MINICODE_USER_ZDOTDIR` the user's, and the exec rules are the Mac's
+  (an `exec zsh` gets the nonce and starts its counts again; the app reads
+  only the newest value, so counts going back are harmless). zsh is not
+  installed on this machine or the ThinkPad: this half has not run here.
+- **Other shells** (fish, sh, dash, anything else in `$SHELL`) start as
+  before, with no nonce, and stay unknown. `exec` into another shell, or
+  ssh, leaves the state as the last mark said: busy with that command.
+- **The files**: `Terminal::integrationFolder` copies both scripts and the
+  stub once a process into `$XDG_RUNTIME_DIR/MiniCode-zsh-grid-<pid>-<start>`
+  (`ShellIntegration::folderName`, the start in seconds since boot as
+  `BackupStore::processStart` gives it), never the shared `/tmp`; a folder
+  that is not a 0700 directory of the user's is refused. The first look
+  removes the folders of processes gone; `atexit` removes this one's.
+- **The nonce**: 16 bytes from `getrandom` as hex, a new one for each start
+  of the shell (the state goes back to unknown with it). `MINICODE_NONCE`,
+  `MINICODE_USER_ZDOTDIR` and `MINICODE_EXEC` inherited from a minicode
+  terminal are dropped first. As D10 says, the user's own programs can read
+  it from `/proc/<pid>/environ`; it refuses marks that are only printed.
+  `/etc/bash.bashrc` runs before the script takes it out of the environment.
+- **`state`**: each terminal's entry has `busy` (null while unknown),
+  `command` (the running line's text, else null) and `status` (the last
+  finished line's, null before one). `Terminal::shellState()` and
+  `onShellStateChanged` are part two's.
+- **Checked by** the `shell_integration` GUI suite and `make test`'s
+  `shell:vte-mark`, `shell:vte-state`, `shell:zshenv-vte`,
+  `bash:integration` and `zsh:vte` groups (`BUILD-LINUX.md`).
+- **Not done (part two)**: `term` and `term-output`, Run File's busy check
+  and `onCommandFinished` from the marks instead of the foreground group's
+  poll, an exec into another shell (the Mac's `_integrated` NO), and the
+  owner's own shell setup on a real desktop.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

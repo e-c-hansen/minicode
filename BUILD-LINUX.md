@@ -105,6 +105,20 @@ Verified by running it:
   `MINICODE_TERMINAL_ID` and `MINICODE_PID`, the dot and title count, a real
   key clearing the mark, Ctrl+Alt+W, `hooks --install` twice and onto a
   symlink in the scratch HOME). Not seen on a real desktop.
+- The shell integration (item 3.1, part one of the terminal's half; D10):
+  the `shell_integration` GUI suite runs a real bash in the app's terminal
+  as the app starts it (`bash --rcfile` with the script and a nonce), with
+  a scratch home's `.bashrc` setting its own PROMPT_COMMAND and an alias:
+  the state at the prompt, `sleep 2` busy with its text and then done with
+  status 0, `false` with status 1, `state` reporting `busy` and `command`,
+  the user's PROMPT_COMMAND still seeing each status and the alias working,
+  marks without the nonce or with another (fed to the terminal, and printed
+  by a command) changing nothing, and three commands on a line or three
+  lines in one write keeping the counters consistent. It fails (checked
+  once) with the bash script missing. `make test`'s `bash:integration`
+  runs the script in a bash reading a pipe, and `zsh:vte` the zsh half
+  where /bin/zsh exists. zsh's half has not run here (no zsh on this
+  machine or the ThinkPad); the suite runs it where zsh is installed.
 - The Agents panel and Evidence (item 3.5; the same suite also checks part
   two: a click on a session opens its Evidence page with the final message,
   the last test's summary, Show all and Open in Terminal typing without
@@ -1362,6 +1376,14 @@ Displays.
   `minicode selection` with a real selection. `minicode open file` with no
   minicode running starts the app, waits for its socket and opens the file.
   The socket is under `/run/user/<uid>/minicode`.
+
+### The shell integration (item 3.1; D10)
+
+- [ ] The owner's own shell setup: their `~/.bashrc` (prompt, PROMPT_COMMAND
+  from tools such as direnv, starship or atuin, history settings) and, if
+  they use zsh, their `.zshrc` and plugins, in the app's terminal: the
+  prompt, history and keys as in GNOME Terminal, and `minicode state`
+  saying `busy` while a command runs and `false` at the prompt.
 
 ### Symbols and folding ranges from the servers (items 2.12 and 2.13)
 

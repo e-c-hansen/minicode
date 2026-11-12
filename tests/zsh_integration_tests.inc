@@ -26,10 +26,12 @@ struct ZshRun {
     std::string out, err;  // stdout (the marks and what commands print), stderr
 };
 
-// Runs /bin/zsh with `args`, `env` as its whole environment and `input` on
-// stdin, in `dir`; killed after 20 s.
+// Runs /bin/zsh (or `program`: shell_vte_tests.inc runs bash) with `args`,
+// `env` as its whole environment and `input` on stdin, in `dir`; killed
+// after 20 s.
 ZshRun runZsh(const zfs::path &dir, const std::vector<std::string> &args,
-              const std::vector<std::string> &env, const std::string &input) {
+              const std::vector<std::string> &env, const std::string &input,
+              const char *program = "/bin/zsh") {
     ZshRun r;
     const zfs::path in = dir / "stdin.txt", out = dir / "stdout.txt", err = dir / "stderr.txt";
     { std::ofstream(in, std::ios::binary) << input; }
@@ -38,7 +40,7 @@ ZshRun runZsh(const zfs::path &dir, const std::vector<std::string> &args,
     posix_spawn_file_actions_addopen(&fa, 0, in.c_str(), O_RDONLY, 0);
     posix_spawn_file_actions_addopen(&fa, 1, out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
     posix_spawn_file_actions_addopen(&fa, 2, err.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    std::vector<std::string> argStore = {"zsh"};
+    std::vector<std::string> argStore = {zfs::path(program).filename().string()};
     argStore.insert(argStore.end(), args.begin(), args.end());
     std::vector<char *> argv, envp;
     for (auto &a : argStore) argv.push_back(&a[0]);
@@ -53,7 +55,7 @@ ZshRun runZsh(const zfs::path &dir, const std::vector<std::string> &args,
     posix_spawnattr_init(&sa);
     posix_spawnattr_setflags(&sa, POSIX_SPAWN_SETSID);
     pid_t pid = -1;
-    const int rc = posix_spawn(&pid, "/bin/zsh", &fa, &sa, argv.data(), envp.data());
+    const int rc = posix_spawn(&pid, program, &fa, &sa, argv.data(), envp.data());
     posix_spawnattr_destroy(&sa);
     posix_spawn_file_actions_destroy(&fa);
     if (rc != 0) return r;
@@ -69,7 +71,7 @@ ZshRun runZsh(const zfs::path &dir, const std::vector<std::string> &args,
     if (!done) {
         kill(pid, SIGKILL);
         waitpid(pid, &status, 0);
-        std::printf("    zsh did not finish in 20 s; killed\n");
+        std::printf("    %s did not finish in 20 s; killed\n", program);
     } else if (WIFEXITED(status)) {
         r.status = WEXITSTATUS(status);
     }

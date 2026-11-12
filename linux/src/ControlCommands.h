@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "ControlProtocol.h"
+#include "ShellIntegration.h"
 
 class Editor;
 class Browser;
@@ -25,6 +26,9 @@ struct ControlWindow {
     GtkWindow* window = nullptr;
     Browser* browser = nullptr;   // the window's browser pane (null without WebKit)
     int shellPid = 0;         // the terminal's shell (VTE's child), 0 while it has none
+    // What the shell integration's newest mark said (PARITY.md 3.1, D10);
+    // not `known` for a shell that never marks.
+    ShellIntegration::ShellState shell;
 };
 
 struct ControlHost {

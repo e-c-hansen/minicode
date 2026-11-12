@@ -3382,6 +3382,7 @@ static ControlWindow controlWindowOf(App* a) {
     w.browser = a->browser;
 #endif
     w.shellPid = a->terminal ? a->terminal->shellPid() : 0;
+    if (a->terminal) w.shell = a->terminal->shellState();
     return w;
 }
 

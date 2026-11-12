@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "Settings.h"
+#include "ShellIntegration.h"
 
 class Terminal {
 public:
@@ -111,6 +112,23 @@ public:
     // started (CLAUDE_CODE_SSE_PORT while the IDE link is on).
     std::function<std::vector<std::string>()> extraEnvironment;
 
+    // The shell integration (PARITY.md 3.1, D10). A bash or zsh shell is
+    // started with minicode's script (bash --rcfile, zsh through ZDOTDIR's
+    // .zshenv, both copied once a process into a folder of its own in the
+    // user's runtime folder) and a nonce of 128 random bits in
+    // MINICODE_NONCE; its hooks set the termprop vte.ext.minicode.mark,
+    // and only a value carrying that nonce is believed. What the newest
+    // one said: `known` stays false for another shell (fish, sh), one whose
+    // integration did not load, or before the first prompt; unknown is
+    // never idle. Every restart of the shell starts unknown with a new
+    // nonce.
+    const ShellIntegration::ShellState& shellState() const { return shell_; }
+    // After each believed mark.
+    std::function<void()> onShellStateChanged;
+    // The folder holding this process's copies of the scripts ("" when it
+    // could not be made), for the checks.
+    static const std::string& integrationFolder();
+
 private:
     // One row's share of the hovered link: cells [col0, col1) of `row`, a
     // row of the whole buffer (scrollback included), not of the screen.
@@ -122,6 +140,11 @@ private:
     static void drawHover(GtkDrawingArea* area, cairo_t* cr, int w, int h, gpointer self);
 
     void makeTerminal();   // the terminal and its shell, once
+    // The termprop the hooks set, installed once, before the first VteTerminal.
+    static void installTermprops();
+    static void onTermpropChanged(VteTerminal* term, const char* name, gpointer self);
+    ShellIntegration::ShellState shell_;
+    std::string nonce_;   // this shell's, "" when it runs without the integration
     void spawnShell();
     void applyTheme();
     void applyColors(const Settings& s);

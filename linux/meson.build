@@ -392,6 +392,22 @@ install_data('resources' / 'minicode-browser.js',
   install_dir  : get_option('datadir') / 'minicode',
   install_mode : 'rwxr-xr-x')
 
+# The shell integration (PARITY.md 3.1, D10), found the same two ways and
+# copied by Terminal.cpp into a folder of the process's own: bash's script
+# (Linux only) and zsh's, which is the Mac's own file, never a copy that
+# could drift.
+configure_file(
+  input  : 'resources' / 'minicode-bash-integration.bash',
+  output : 'minicode-bash-integration.bash',
+  copy   : true)
+configure_file(
+  input  : '..' / 'resources' / 'minicode-zsh-integration.zsh',
+  output : 'minicode-zsh-integration.zsh',
+  copy   : true)
+install_data('resources' / 'minicode-bash-integration.bash',
+             '..' / 'resources' / 'minicode-zsh-integration.zsh',
+  install_dir : get_option('datadir') / 'minicode')
+
 # PNGs extracted from the macOS resources/AppIcon.icns, which stays the single
 # source of truth for the artwork.
 foreach size : ['32x32', '64x64', '128x128', '256x256', '512x512']

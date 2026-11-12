@@ -78,3 +78,4 @@ IdeLinkSuite.cpp
 BrowserPagesSuite.cpp
 AgentsSuite.cpp
 AgentPanelSuite.cpp
+ShellIntegrationSuite.cpp
