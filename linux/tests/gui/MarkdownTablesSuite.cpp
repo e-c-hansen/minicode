@@ -42,8 +42,11 @@ struct Meter {
     }
 } gMeter;
 
-// Generous for CI: the work was 300 to 800 ms of CPU before.
-constexpr double kStallBoundMs = 150;
+// The work was 439 to 617 ms of CPU before (300 to 800 ms in R1's runs),
+// 82 to 99 ms after on a quiet machine, and 180 to 208 ms in a full run
+// with a build beside it: a bound well under the old cost with room for a
+// loaded machine or CI's.
+constexpr double kStallBoundMs = 300;
 
 bool settled() {
     return ed()->showsSide() && ed()->sidePane() && ed()->sidePane()->idle() &&
@@ -55,6 +58,9 @@ bool settled() {
 MC_GUI_SUITE(markdown_tables) {
     MCGuiStep("README.md copied in", [] {
         ed()->closeAllTabs();
+        // The tables are what is measured: README's $x^2$ would start a typeset
+        // (and count against markdown_math's runs).
+        MCGuiSetSettings("lsp.enabled = false\ntheme = dark-plus\nmarkdown.math = false\n");
         const char* root = g_getenv("MC_REPO_ROOT");
         std::string src = std::string(root ? root : "..") + "/README.md";
         std::string text = MCGuiReadFile(src);
@@ -88,5 +94,8 @@ MC_GUI_SUITE(markdown_tables) {
                   gMeter.total());
         GCHECK_TIME(gMeter.worst, kStallBoundMs, "the longest stall opening README in the side pane");
     });
-    MCGuiStep("close", [] { ed()->closeAllTabs(); });
+    MCGuiStep("close", [] {
+        ed()->closeAllTabs();
+        MCGuiSetSettings("lsp.enabled = false\ntheme = dark-plus\n");
+    });
 }

@@ -34,6 +34,11 @@ Editor* ed() { return MCGuiApp().editor; }
 std::string P(const std::string& n) { return MCGuiProjectFile(n); }
 std::string Log() { return MCGuiReadFile(P("tectonic.log")); }
 
+// Runs since this suite began: an earlier suite may have typeset (README's
+// $x^2$ in markdown_tables), and Math::runs() counts from the process's start.
+int gRunsBase = 0;
+int runs() { return Math::runs() - gRunsBase; }
+
 int lines(const std::string& s) {
     int n = 0;
     for (char c : s) n += c == '\n';
@@ -81,6 +86,7 @@ const char* kObject = "\xEF\xBF\xBC";   // where a widget is anchored
 
 MC_GUI_SUITE(markdown_math) {
     MCGuiStep("a stand-in tectonic, PDFs of its own, a cache of its own", [] {
+        gRunsBase = Math::runs();
         MCGuiSetSettings("lsp.enabled = false\ntheme = dark-plus\n");
         const double w = 32 * 72.0 / 72.27, h = 15 * 72.0 / 72.27;
         for (int n = 1; n <= 4; n++) {
@@ -131,7 +137,7 @@ MC_GUI_SUITE(markdown_math) {
 
     openPage("plain.md");
     MCGuiStep("a page with no math runs nothing", [] {
-        GCHECK_EQ_STR(std::to_string(Math::runs()), "0");
+        GCHECK_EQ_STR(std::to_string(runs()), "0");
         GCHECK_EQ_STR(ed()->mathNote(), "");
         GCHECK_EQ_STR(std::to_string(lines(Log())), "0");
     });
@@ -164,7 +170,7 @@ MC_GUI_SUITE(markdown_math) {
         GCHECK_EQ_STR(std::to_string(e.height), "21");
         GCHECK_EQ_STR(std::to_string(e.depth), "6");
         MCGuiSnapshot(GTK_WIDGET(MCGuiTopWindow()), "math-page");
-        GCHECK_EQ_STR(std::to_string(Math::runs()), "1");
+        GCHECK_EQ_STR(std::to_string(runs()), "1");
         const std::string log = Log();
         GCHECK_EQ_STR(std::to_string(lines(log)), "1");
         GCHECK(log.find("-Z continue-on-errors") != std::string::npos);
@@ -199,13 +205,13 @@ MC_GUI_SUITE(markdown_math) {
         // page shows, so on a loaded machine its run (0.8 s in the stand-in)
         // may have started before this step; the batch sizes below are what
         // tell the cache's answer from a run that typeset everything again.
-        GCHECK(Math::runs() <= 2);
-        if (Math::runs() == 1) {
+        GCHECK(runs() <= 2);
+        if (runs() == 1) {
             GCHECK_EQ_STR(ed()->mathNote(), "Typesetting 1 formula…");
             GCHECK_EQ_STR(std::to_string(ed()->active()->pageInfo().mathWaiting), "1");
         }
     });
-    MCGuiWait("the failure asked again and settled", 30, [] { return Math::runs() == 2 && ed()->active()->pageInfo().waiting == 0; });
+    MCGuiWait("the failure asked again and settled", 30, [] { return runs() == 2 && ed()->active()->pageInfo().waiting == 0; });
     MCGuiStep("the second run was given the failed formula alone", [] {
         const std::string b = MCGuiReadFile(P("batches.log"));
         MCGuiNote("formulas per run: %s", b.c_str());
@@ -220,7 +226,7 @@ MC_GUI_SUITE(markdown_math) {
     openPage("off.md");
     MCGuiStep("runs nothing and shows the TeX", [] {
         MCGuiPause(1.2);   // time is the condition: a run would have started by now
-        GCHECK_EQ_STR(std::to_string(Math::runs()), "2");
+        GCHECK_EQ_STR(std::to_string(runs()), "2");
         GCHECK(pageText().find("c+d") != std::string::npos);
         GCHECK_EQ_STR(std::to_string(embeds()), "0");
         GCHECK_EQ_STR(ed()->mathNote(), "");
@@ -248,7 +254,7 @@ MC_GUI_SUITE(markdown_math) {
                ed()->sidePane()->pageText().find("q^2") == std::string::npos;
     });
     MCGuiStep("one run for it", [] {
-        GCHECK_EQ_STR(std::to_string(Math::runs()), "3");
+        GCHECK_EQ_STR(std::to_string(runs()), "3");
         GCHECK(ed()->sidePane()->pageText().find("stands.") != std::string::npos);
         MCGuiKey("ctrl+alt+v");
         ed()->closeAllTabs();
@@ -258,7 +264,7 @@ MC_GUI_SUITE(markdown_math) {
     openPage("none.md");
     MCGuiStep("without tectonic: the TeX and the offer to download", [] {
         GCHECK(pageText().find("e+f") != std::string::npos);
-        GCHECK_EQ_STR(std::to_string(Math::runs()), "3");
+        GCHECK_EQ_STR(std::to_string(runs()), "3");
         const std::string note = ed()->mathNote();
         GCHECK(note.find("tectonic is not installed") != std::string::npos);
         GCHECK(note.find("Download tectonic") != std::string::npos);
