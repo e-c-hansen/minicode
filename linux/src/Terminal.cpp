@@ -3,6 +3,7 @@
 #include <climits>
 #include <unistd.h>
 #include "Terminal.h"
+#include <map>
 
 #ifdef MINICODE_ENABLE_TERMINAL
 
@@ -85,7 +86,19 @@ PangoFontDescription* systemMonospaceFont() {
 // shell are made then (makeTerminal), as the Mac makes its terminal dock when
 // it is first needed (EditorController+Panels.mm, makeTerminalPanel). A
 // window opening with the panel hidden starts no shell (PARITY.md R3).
+static std::map<int, Terminal*>& terminalRegistry() {
+    static std::map<int, Terminal*> m;
+    return m;
+}
+Terminal* Terminal::byId(int id) {
+    auto it = terminalRegistry().find(id);
+    return it == terminalRegistry().end() ? nullptr : it->second;
+}
+
 Terminal::Terminal(const std::string& cwd) : cwd_(cwd) {
+    static int nextId = kFirstId;
+    controlId_ = nextId++;
+    terminalRegistry()[controlId_] = this;
     // The scroller sits in an overlay so the hovered link's underline can be
     // drawn over the terminal: VTE underlines only its own regex matches, and
     // a regex cannot know which paths exist.
@@ -451,7 +464,8 @@ void Terminal::setUserTitle(const std::string& t) {
 }
 
 Terminal::~Terminal() {
-    if (controlId_ > 0) TerminalAttention::forget(controlId_);   // the mark goes with it
+    terminalRegistry().erase(controlId_);
+    TerminalAttention::forget(controlId_);   // the mark goes with it
     g_cancellable_cancel(spawnCancel_);
     g_object_unref(spawnCancel_);
     g_signal_handlers_disconnect_by_data(root_, this);

@@ -355,7 +355,7 @@ static void showError(App* app, const std::string& message, const std::string& d
 // unsaved on failure, so the title keeps its "*".
 static void flashStatus(App* app, const std::string& message);
 #ifdef MINICODE_ENABLE_TERMINAL
-static std::vector<std::string> sessionRootsOf(App* app);
+static std::vector<std::string> sessionRootsOf(App* app, int terminalId);
 static void openTerminalLink(App* app, const Terminal::Link& link);
 #endif
 
@@ -851,11 +851,10 @@ static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer
 static Terminal* makeTerminal(App* app) {
     Terminal* t = new Terminal(app->rootDir);
     t->setProjectRoot(app->rootDir);
-    t->setControlId(app->controlId);
     t->onCommandFinished = [app] {
         if (!app->dead && app->lsp) app->lsp->lookAgainForMissingServer();
     };
-    t->setSessionRoots([app] { return sessionRootsOf(app); });
+    t->setSessionRoots([app, t] { return sessionRootsOf(app, t->controlId()); });
     t->setLinkHandler([app](const Terminal::Link& link) {
         if (!app->dead) openTerminalLink(app, link);
     });
@@ -907,6 +906,17 @@ static Terminal* newTerminalTab(App* app, const std::string& title, bool focus) 
     return t;
 }
 #endif
+
+// The window whose dock holds `t`; null for none (a terminal closed, or one
+// not in a window).
+static App* appOfTerminal(Terminal* t) {
+    for (App* a : g.windows) {
+        if (a->dead || !a->termDock) continue;
+        for (Terminal* u : a->termDock->all())
+            if (u == t) return a;
+    }
+    return nullptr;
+}
 
 // Run File and `minicode term --run` (PARITY.md 3.1): the window's one
 // terminal shown with the keyboard left where it was, then a line typed and
@@ -1071,21 +1081,22 @@ static void act_toggle_terminal(GSimpleAction*, GVariant*, gpointer userp) {
 
 // Shows a window's terminal and gives it the keyboard (Next Waiting Terminal,
 // the Agents panel's Show Terminal).
-static void showTerminalOf(App* target) {
+static void showTerminalOf(App* target, Terminal* which = nullptr) {
     gtk_window_present(GTK_WINDOW(target->window));
     if (!target->layout->terminalShown()) target->layout->toggleTerminal();
-    target->terminal->focus();
+    if (which && target->termDock) target->termDock->focusPane(which);
+    else target->terminal->focus();
 }
 
 // The scratchpad and worktree of the Claude Code session this window's
 // terminal last named to `minicode notify` (the Mac's sessionLinkRoots),
 // read from the Agents model; none when no session is known.
 static void ensureAgents(App* app);
-static std::vector<std::string> sessionRootsOf(App* app) {
+static std::vector<std::string> sessionRootsOf(App* app, int terminalId) {
     std::vector<std::string> roots;
     std::string id, transcript;
     double when = 0;
-    if (app->dead || !TerminalAttention::sessionOf(app->controlId, &id, &transcript, &when)) return roots;
+    if (app->dead || !TerminalAttention::sessionOf(terminalId, &id, &transcript, &when)) return roots;
     ensureAgents(app);
     if (!app->agents) return roots;
     std::function<void(const AgentModelData::Work&)> walk = [&](const AgentModelData::Work& w) {
@@ -1107,16 +1118,17 @@ static void act_next_waiting(GSimpleAction*, GVariant*, gpointer userp) {
     App* here = static_cast<App*>(userp);
     std::vector<int> order;
     for (App* a : g.windows)
-        if (!a->dead && a->terminal) order.push_back(a->controlId);
-    const int want = TerminalAttention::nextWaiting(order, here->controlId);
+        if (!a->dead && a->termDock)
+            for (Terminal* t : a->termDock->all()) order.push_back(t->controlId());
+    const int want = TerminalAttention::nextWaiting(order, here->terminal ? here->terminal->controlId() : 0);
     App* target = nullptr;
-    for (App* a : g.windows)
-        if (!a->dead && a->terminal && a->controlId == want) target = a;
+    Terminal* wanted = want ? Terminal::byId(want) : nullptr;
+    if (wanted) target = appOfTerminal(wanted);
     if (!target) {
         gtk_widget_error_bell(here->window);
         return;
     }
-    showTerminalOf(target);
+    showTerminalOf(target, wanted);
 }
 
 static void act_toggle_editor(GSimpleAction*, GVariant*, gpointer userp) {
@@ -2131,12 +2143,11 @@ static void act_toggle_processes(GSimpleAction*, GVariant*, gpointer userp) {
             if (!app->dead) openLink(app, true, url, false, false, 0, 0);
         };
         app->procs->onRevealTerminal = [](int terminalId) {
-            for (App* a : g.windows)
-                if (!a->dead && a->terminal && a->controlId == terminalId) {
-                    showTerminalOf(a);
-                    return true;
-                }
-            return false;
+            Terminal* t = Terminal::byId(terminalId);
+            App* a = t ? appOfTerminal(t) : nullptr;
+            if (!a) return false;
+            showTerminalOf(a, t);
+            return true;
         };
     }
     if (app->gitShown) act_toggle_git(nullptr, nullptr, app);
@@ -2175,11 +2186,11 @@ static void ensureAgents(App* app) {
             return TerminalAttention::terminalFor(id, transcript);
         };
         app->agents->onShowTerminal = [app](int terminalId) {
-            for (App* a : g.windows)
-                if (!a->dead && a->terminal && a->controlId == terminalId) {
-                    showTerminalOf(a);
-                    return;
-                }
+            Terminal* t = Terminal::byId(terminalId);
+            if (App* a = t ? appOfTerminal(t) : nullptr) {
+                showTerminalOf(a, t);
+                return;
+            }
             if (!app->dead) flashStatus(app, "That terminal has closed");
         };
         app->agents->onOpenFolderInNewWindow = [app](const std::string& folder) {
@@ -2991,10 +3002,12 @@ static void initShared() {
         for (App* a : g.windows) {
             if (a->dead) continue;
 #ifdef MINICODE_ENABLE_TERMINAL
-            if (a->termDock)
+            if (a->termDock) {
+                a->termDock->refreshTabs();
                 for (Terminal* t : a->termDock->all())
-                    t->setAttention(TerminalAttention::markName(a->controlId),
-                                    TerminalAttention::tooltip(a->controlId));
+                    t->setAttention(TerminalAttention::markName(t->controlId()),
+                                    TerminalAttention::tooltip(t->controlId()));
+            }
 #endif
             if (a->editor) updateTitle(a);
         }
@@ -3820,6 +3833,18 @@ static ControlWindow controlWindowOf(App* a) {
 #endif
     w.shellPid = a->terminal ? a->terminal->shellPid() : 0;
     if (a->terminal) w.shell = a->terminal->shellState();
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (a->termDock)
+        for (Terminal* t : a->termDock->all()) {
+            ControlTerminal ct;
+            ct.id = t->controlId();
+            ct.title = t->title();
+            ct.active = t == a->terminal;
+            ct.shellPid = t->shellPid();
+            ct.shell = t->shellState();
+            w.terminals.push_back(ct);
+        }
+#endif
     return w;
 }
 
@@ -3871,10 +3896,11 @@ static void startControlChannel() {
     host.newTerminal = [](const ControlWindow& w, const std::string& title) {
 #ifdef MINICODE_ENABLE_TERMINAL
         App* a = controlApp(w.id);
-        return a && newTerminalTab(a, title, false) != nullptr;
+        Terminal* t = a ? newTerminalTab(a, title, false) : nullptr;
+        return t ? t->controlId() : 0;
 #else
         (void)w; (void)title;
-        return false;
+        return 0;
 #endif
     };
     host.splitTerminal = [](const ControlWindow& w, const std::string& title) {
@@ -3882,10 +3908,10 @@ static void startControlChannel() {
         App* a = controlApp(w.id);
         Terminal* t = a ? splitTerminalPane(a, false, false) : nullptr;
         if (t && !title.empty()) t->setUserTitle(title);
-        return t != nullptr;
+        return t ? t->controlId() : 0;
 #else
         (void)w; (void)title;
-        return false;
+        return 0;
 #endif
     };
     host.terminalRun = [](const ControlWindow& w, const std::string& line,
@@ -3899,9 +3925,9 @@ static void startControlChannel() {
     };
     host.terminalOutput = [](int id, int lines, std::string* text) {
 #ifdef MINICODE_ENABLE_TERMINAL
-        App* a = controlApp(id);
-        if (!a || !a->terminal) return false;
-        *text = a->terminal->made() ? a->terminal->recentText(lines) : std::string();
+        Terminal* t = Terminal::byId(id);   // a window's id is no terminal's
+        if (!t) return false;
+        *text = t->made() ? t->recentText(lines) : std::string();
         return true;
 #else
         (void)id; (void)lines; (void)text;
@@ -3910,46 +3936,34 @@ static void startControlChannel() {
     };
     registerControlCommands(gControl->dispatcher(), host);
     // The process sampler (PARITY.md 3.8): each window's folder as realpath
-    // spells it, and its terminal by the shell's pid. Window ids stand for
-    // terminal ids (a window has one terminal).
+    // spells it, and each terminal by its shell's pid under its own id.
     ProcessMonitor::shared().start([](std::vector<Procs::Terminal>& terms,
                                       std::vector<std::string>& folders) {
         for (App* a : g.windows) {
             if (a->dead || !a->editor) continue;
             char buf[PATH_MAX];
             folders.push_back(realpath(a->rootDir.c_str(), buf) ? std::string(buf) : a->rootDir);
-            Procs::Terminal t;
-            t.id = a->controlId;
-            t.title = "terminal";
-            t.shellPid = a->terminal ? a->terminal->shellPid() : 0;
-            t.window = a->controlId;
-            // R7.4: the session `minicode notify` last named here, and when
-            // (as process start times count: microseconds since 1970).
-            std::string sid, transcript;
-            double when = 0;
-            if (TerminalAttention::sessionOf(a->controlId, &sid, &transcript, &when) && !sid.empty()) {
-                t.session = sid;
-                t.sessionNamedAt = (int64_t)(when * 1e6);
-            }
 #ifdef MINICODE_ENABLE_TERMINAL
-            if (a->termDock && a->termDock->all().size() > 1) {
-                // Every tab's shell is tracked (PARITY.md 4.7). Ids stand for
-                // terminals only on the window's first; the others are offset
-                // from it and reveal nothing by themselves.
-                t.shellPid = 0;
-                const std::vector<Terminal*> panes = a->termDock->all();
-                for (size_t i = 0; i < panes.size(); i++) {
-                    Procs::Terminal u = t;
-                    u.id = a->controlId + (int)i * 100000;
-                    u.title = panes[i]->title();
-                    u.shellPid = panes[i]->shellPid();
-                    if (i > 0) { u.session.clear(); u.sessionNamedAt = 0; }
+            // Every terminal's shell under the terminal's own id, with the
+            // session `minicode notify` last named in it (R7.4; the time in
+            // microseconds since 1970, as process start times count).
+            if (a->termDock) {
+                for (Terminal* pane : a->termDock->all()) {
+                    Procs::Terminal u;
+                    u.id = pane->controlId();
+                    u.title = pane->title();
+                    u.shellPid = pane->shellPid();
+                    u.window = a->controlId;
+                    std::string sid, transcript;
+                    double when = 0;
+                    if (TerminalAttention::sessionOf(u.id, &sid, &transcript, &when) && !sid.empty()) {
+                        u.session = sid;
+                        u.sessionNamedAt = (int64_t)(when * 1e6);
+                    }
                     terms.push_back(u);
                 }
-                continue;
             }
 #endif
-            terms.push_back(t);
         }
     });
     std::string error;

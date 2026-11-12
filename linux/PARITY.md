@@ -1462,7 +1462,7 @@ These may run in parallel.
 - [ ] **4.6 The split editor.** `EditorTabs::restoreGroups`. With D2 the second
   group can be a second view on the same buffer, which is simpler than the
   Mac's mirror.
-- [ ] **4.7 Terminal tabs and splits**, their own zoom, find, command marks
+- [x] **4.7 Terminal tabs and splits**, their own zoom, find, command marks
   (D10: left out, the owner's call), and Run File. `TerminalLayout`, `RunFile`.
   *Tabs done:* `TerminalDock` over a `TabStrip` and a +: New, Next,
   Previous and Close Terminal, Rename, Move Left and Right, a drag, a close
@@ -1474,8 +1474,12 @@ These may run in parallel.
   `terminal_splits`). *Find done:* find in the terminal (VTE's search, a bar
   at the pane's top right, no match count), Clear Terminal (Ctrl+L at the
   prompt, no key) and Up and Down on a lone pane resizing the dock (HANDOFF
-  item 61, `terminal_find`). Left: per-terminal ids, the window close
-  question counting busy terminals.
+  item 61, `terminal_find`). *Ids done:* every terminal has an id of its
+  own, made with it (`MINICODE_TERMINAL_ID`), found through `Terminal::byId`;
+  `state`, `notify`, `term-output`, `open-url`, the board's marks, the tab
+  strip's mark and the process monitor all use it (HANDOFF item 62,
+  `terminal_ids`). Left out by the owner's decision: command marks (D10).
+  Left: the window close question counting busy terminals.
 
 ## Reported by the owner
 

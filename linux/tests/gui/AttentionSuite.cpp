@@ -18,13 +18,18 @@
 #include "AppSeam.h"
 #include "Json.h"
 #include "Editor.h"
+#include "ProcessMonitor.h"
+#include "ShellIntegration.h"
 #include "Terminal.h"
+#include "TerminalAttention.h"
+#include "TerminalDock.h"
 #include "WindowLayout.h"
 
 #include <gio/gio.h>
 #include <vte/vte.h>
 
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <sys/stat.h>
@@ -334,5 +339,189 @@ MC_GUI_SUITE(attention) {
         GCHECK(gRun->out.find("nothing changed") != std::string::npos);
         struct stat st;
         GCHECK(lstat(gSettings.c_str(), &st) == 0 && S_ISLNK(st.st_mode));
+    });
+}
+
+// ------------------------------------------------------------ terminal_ids
+// PARITY.md 4.7: every terminal has an id of its own. Two tabs and a split
+// (three shells), each shell's $MINICODE_TERMINAL_ID written to a file by the
+// shell itself, `state` listing all three, a notify marking one terminal only,
+// term-output by id, the process monitor under each id, and a closing tab
+// taking its mark and its id away.
+namespace {
+Terminal *gT1 = nullptr, *gT2 = nullptr, *gT3 = nullptr;   // tab 1; tab 2; tab 2's split
+int gId2 = 0, gId3 = 0;
+std::string gOldShellEnv;
+bool gHadShellEnv = false;
+bool gIdsReady(Terminal* t) { return t && t->shellPid() > 0 && t->shellState().known && t->shellState().atPrompt; }
+std::string idFile(int n) { return MCGuiProjectFile("tid" + std::to_string(n) + ".txt"); }
+std::string trimmed(std::string v) {
+    while (!v.empty() && (v.back() == '\n' || v.back() == '\r')) v.pop_back();
+    return v;
+}
+// The `state` terminal entry for `id`, from gRun's answer; null Json when none.
+Json stateTerminal(int id, int* count = nullptr) {
+    Json j;
+    std::string err;
+    if (!Json::parse(gRun->out, j, &err)) return Json();
+    Json found;
+    int n = 0;
+    for (const Json& w : j["windows"].elements())
+        for (const Json& t : w["terminals"].elements()) {
+            n++;
+            if (t["id"].asInt() == id) found = t;
+        }
+    if (count) *count = n;
+    return found;
+}
+}  // namespace
+
+MC_GUI_SUITE(terminal_ids) {
+    MCGuiStep("a bash; tab one, tab two and a split of it", [] {
+        TerminalDock* d = MCGuiApp().termDock;
+        GCHECK(d != nullptr);
+        if (!d) return;
+        const char* old = g_getenv("SHELL");
+        gHadShellEnv = old != nullptr;
+        gOldShellEnv = old ? old : "";
+        GCHECK(std::string(g_get_home_dir()).find(MCGuiScratch()) == 0);   // never the user's own
+        g_setenv("SHELL", "/bin/bash", TRUE);
+        MCGuiWriteFile(std::string(g_get_home_dir()) + "/.bashrc", "\n");
+        d->confirmClose = nullptr;
+        d->newTerminal();
+        while (d->count() > 1) d->close(0, false);
+        if (!MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
+        gT1 = d->at(0);
+        gT2 = d->newTerminal();
+        gT3 = d->split(false, true);
+        GCHECK(d->count() == 2 && gT1 && gT2 && gT3);
+        gRun = nullptr;
+    });
+    MCGuiWait("three shells at their prompts", 40, [] { return gIdsReady(gT1) && gIdsReady(gT2) && gIdsReady(gT3); });
+    MCGuiStep("each shell writes its $MINICODE_TERMINAL_ID to a file", [] {
+        int n = 1;
+        for (Terminal* t : {gT1, gT2, gT3}) {
+            unlink(idFile(n).c_str());
+            t->runLine("echo \"$MINICODE_TERMINAL_ID:$MINICODE_PID\" > '" + idFile(n) + "'", [](const std::string&) {});
+            n++;
+        }
+    });
+    MCGuiWait("three files", 20, [] {
+        for (int n = 1; n <= 3; n++)
+            if (trimmed(MCGuiReadFile(idFile(n))).empty()) return false;
+        return true;
+    });
+    MCGuiStep("the ids are distinct, each the terminal's own, none a window's", [] {
+        const std::string pid = std::to_string((int)getpid());
+        int n = 1;
+        std::set<std::string> seen;
+        for (Terminal* t : {gT1, gT2, gT3}) {
+            const std::string got = trimmed(MCGuiReadFile(idFile(n++)));
+            GCHECK_EQ_STR(got, std::to_string(t->controlId()) + ":" + pid);
+            seen.insert(got);
+            GCHECK(t->controlId() >= Terminal::kFirstId);
+            GCHECK(t->controlId() != MCGuiApp().controlId);
+            GCHECK(Terminal::byId(t->controlId()) == t);
+        }
+        GCHECK(seen.size() == 3);
+        gRun = client({"state"});
+    });
+    MCGuiWait("state answered", 15, [] { return gRun->done; });
+    MCGuiStep("state lists all three, with titles, and the split pane active", [] {
+        int count = 0;
+        Json t1 = stateTerminal(gT1->controlId(), &count);
+        Json t2 = stateTerminal(gT2->controlId());
+        Json t3 = stateTerminal(gT3->controlId());
+        GCHECK(count == 3);
+        GCHECK(t1["id"].asInt() == gT1->controlId());
+        GCHECK(t2["id"].asInt() == gT2->controlId());
+        GCHECK(t3["id"].asInt() == gT3->controlId());
+        GCHECK(t3["active"].asBool());
+        GCHECK(!t1["active"].asBool() && !t2["active"].asBool());
+        GCHECK(t1.has("title") && t1.has("busy"));
+    });
+    MCGuiStep("a notify for the second tab's terminal", [] {
+        gRun = client({"notify", "--terminal", std::to_string(gT2->controlId()), "--state", "waiting",
+                       "--message", "second"});
+    });
+    MCGuiWait("notify answered", 15, [] { return gRun->done; });
+    MCGuiStep("only that terminal is waiting; state and the board say so", [] {
+        GCHECK(gRun->exitCode == 0);
+        GCHECK_EQ_STR(gT2->attentionShown(), "waiting");
+        GCHECK_EQ_STR(gT1->attentionShown(), "");
+        GCHECK_EQ_STR(gT3->attentionShown(), "");
+        GCHECK_EQ_STR(TerminalAttention::markName(gT1->controlId()), "");
+        GCHECK_EQ_STR(TerminalAttention::markName(gT2->controlId()), "waiting");
+        gRun = client({"state"});
+    });
+    MCGuiWait("state answered (2)", 15, [] { return gRun->done; });
+    MCGuiStep("state has the mark on the second terminal alone", [] {
+        GCHECK_EQ_STR(stateTerminal(gT2->controlId())["attention"].asString(), "waiting");
+        GCHECK(stateTerminal(gT1->controlId())["attention"].isNull());
+        GCHECK(stateTerminal(gT3->controlId())["attention"].isNull());
+        // A window's id is no terminal's: a clear error, no terminal marked.
+        gRun = client({"notify", "--terminal", std::to_string(MCGuiApp().controlId), "--state", "done"});
+    });
+    MCGuiWait("notify by window id answered", 15, [] { return gRun->done; });
+    MCGuiStep("which fails, saying so", [] {
+        GCHECK(gRun->exitCode != 0);
+        GCHECK(gRun->err.find("there is no terminal") != std::string::npos);
+        GCHECK_EQ_STR(gT1->attentionShown() + gT3->attentionShown(), "");
+        gT3->runLine("echo ZZC$((20+3))", [](const std::string&) {});
+    });
+    MCGuiWait("pane three shows its output", 15, [] { return gT3->recentText(20).find("ZZC23") != std::string::npos; });
+    MCGuiStep("term-output by id reads the right pane", [] {
+        gRun = client({"term-output", std::to_string(gT3->controlId()), "--lines", "20"});
+    });
+    MCGuiWait("term-output answered", 15, [] { return gRun->done; });
+    MCGuiStep("the split's text, and not the first tab's", [] {
+        GCHECK(gRun->exitCode == 0);
+        GCHECK(gRun->out.find("ZZC23") != std::string::npos);
+        gRun = client({"term-output", std::to_string(gT1->controlId()), "--lines", "20"});
+    });
+    MCGuiWait("term-output (2) answered", 15, [] { return gRun->done; });
+    MCGuiStep("tab one has none of it; the window's id reads nothing", [] {
+        GCHECK(gRun->exitCode == 0);
+        GCHECK(gRun->out.find("ZZC23") == std::string::npos);
+        gRun = client({"term-output", std::to_string(MCGuiApp().controlId)});
+    });
+    MCGuiWait("term-output (3) answered", 15, [] { return gRun->done; });
+    MCGuiStep("an error for it", [] {
+        GCHECK(gRun->exitCode != 0);
+        GCHECK(gRun->err.find("there is no terminal") != std::string::npos);
+    });
+    MCGuiStep("the process monitor looks", [] { ProcessMonitor::shared().sampleNow([] {}); });
+    MCGuiWait("it lists each shell under its terminal's id", 30, [] {
+        int ok = 0;
+        for (const Procs::Terminal& t : ProcessMonitor::shared().terminals()) {
+            if (t.id == gT1->controlId() && t.shellPid == gT1->shellPid()) ok++;
+            if (t.id == gT2->controlId() && t.shellPid == gT2->shellPid()) ok++;
+            if (t.id == gT3->controlId() && t.shellPid == gT3->shellPid()) ok++;
+        }
+        return ok == 3;
+    });
+    MCGuiStep("tab two closes, with its waiting mark and its split", [] {
+        TerminalDock* d = MCGuiApp().termDock;
+        gId2 = gT2->controlId();
+        gId3 = gT3->controlId();
+        d->close(d->indexOf(gT2), false);
+        GCHECK(d->count() == 1);
+        GCHECK(Terminal::byId(gId2) == nullptr && Terminal::byId(gId3) == nullptr);
+        GCHECK_EQ_STR(TerminalAttention::markName(gId2), "");
+        GCHECK(TerminalAttention::waitingCount() == 0);
+        gRun = client({"state"});
+    });
+    MCGuiWait("state answered (3)", 15, [] { return gRun->done; });
+    MCGuiStep("state lists the first tab's terminal only", [] {
+        int count = 0;
+        GCHECK(!stateTerminal(gT1->controlId(), &count).isNull());
+        GCHECK(count == 1);
+        gRun = client({"notify", "--terminal", std::to_string(gId2), "--state", "waiting"});
+    });
+    MCGuiWait("notify for the closed one answered", 15, [] { return gRun->done; });
+    MCGuiStep("a closed terminal's id is refused; the settings are put back", [] {
+        GCHECK(gRun->exitCode != 0);
+        if (gHadShellEnv) g_setenv("SHELL", gOldShellEnv.c_str(), TRUE);
+        else g_unsetenv("SHELL");
     });
 }

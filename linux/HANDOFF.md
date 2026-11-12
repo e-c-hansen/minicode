@@ -4006,13 +4006,10 @@ panel has a row).
   its user title, `reused` is false, the old "busy, left alone" refusal is
   gone because the new tab is idle); a host without the hook keeps the old
   path (the core's tests).
-- **Ids**: every tab of a window shares the window's control id
-  (`MINICODE_TERMINAL_ID`, the board's mark, `minicode state`); the Mac gives
-  each terminal its own. The process monitor lists each tab's shell
-  (extra tabs under `window id + 100000 * n`, no session), and a closing
-  tab lets go of the id first (`setControlId(0)`) so its destructor does not
-  forget the window's mark. Not done: per-terminal ids, splits (next), the
-  terminals in the session, hide-and-restore of tabs across launches.
+- **Ids**: each terminal has its own id (item 62; this bullet once said
+  they shared the window's, with extra tabs under `window id + 100000 * n`).
+  Not done: the terminals in the session, hide-and-restore of tabs across
+  launches.
 - **Checked by** `terminal_tabs` (`TerminalTabsSuite.cpp`, real keys and
   clicks, bash): the cases above, each shell known by the integration's
   marks and pids, a command in a hidden tab, rename/move/drag, the close
@@ -4120,6 +4117,46 @@ panel has a row).
   match in the scrollback selected, miss, case, stepping, Escape and the
   keyboard, the bar closing on a split, Clear, refusal while `sleep` runs,
   and the dock height by exactly four rows.
+
+### 62. A terminal's own id (done, November 2026; `PARITY.md` item 4.7, last part)
+
+- **The id** is the terminal's, made with it: `Terminal`'s constructor takes
+  the next number from `kFirstId` (1001, so a window's small control id is
+  never taken for one) and enters it in a registry; `Terminal::byId(id)`
+  finds a live terminal, and the destructor leaves the registry and
+  `TerminalAttention::forget`s the id, so a closed tab or pane takes its mark
+  with it and nothing else's (the old `setControlId(0)` dance in
+  `TerminalDock` is gone, as is `setControlId`). The shell gets it as
+  `MINICODE_TERMINAL_ID` beside `MINICODE_PID` (unchanged: `spawnShell`).
+  The last tab closing leaves a fresh terminal, with a new id.
+- **The window keeps its own id** for what is the window's (`window`, `open`,
+  `browse`, `--window`). `main.cpp` maps a terminal to its window with
+  `appOfTerminal` (a walk of the docks).
+- **Control channel**: `state` lists every terminal of every window
+  (`ControlWindow::terminals`, filled in `controlWindowOf`) with `id`,
+  `title`, `active`, `attention`, `busy`, `command`, `status`; `notify
+  --terminal`, `term-output ID` and `open-url`'s terminal (BROWSER) resolve
+  through the terminals; `term` answers with the id of the terminal it used or
+  made (`ControlHost::newTerminal` and `splitTerminal` return it). **A
+  window's id is no terminal's**: `notify` and `term-output` with one say
+  "there is no terminal N (terminal ids are in `minicode state`)", where they
+  used to act on the window's active terminal. A terminal's `open-url` for
+  an unknown id is the same error.
+- **The board and the strip**: the changed handler sets each terminal's dot
+  from its own id and asks the dock to redraw its tabs; a tab holding a
+  waiting pane has " ●" after its title, a done one " ✓"
+  (`TerminalDock::refresh`). Next Waiting Terminal walks every terminal and
+  shows (and focuses) the tab and pane it lands on (`showTerminalOf`).
+  The Agents panel's Show Terminal and the Processes panel's reveal do the
+  same by id.
+- **The process monitor** lists every terminal's shell under its id and the
+  window's id as `window`, the session the board has for that terminal
+  (`sessionRootsOf(app, terminalId)` for the pane's link roots).
+- **Checked by** `terminal_ids` (in `AttentionSuite.cpp`): two tabs and a
+  split with each shell writing its `$MINICODE_TERMINAL_ID` to a file, `state`,
+  a notify marking the second tab only and a closed tab clearing it,
+  term-output by id and the window's id refused, the monitor's rows.
+- Left out: the Mac's `cwd`, `message` and `session` fields in `state`.
 
 ## How to work on it
 

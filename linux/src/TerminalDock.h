@@ -50,6 +50,8 @@ public:
     int indexOf(const Terminal* t) const;
     // Every pane of every tab, tab by tab.
     std::vector<Terminal*> all() const;
+    // Draws the tabs again (the board's marks changed).
+    void refreshTabs() { refresh(); }
 
     // Splits (the Mac's Cmd+\ and Split Terminal Down): a new pane beside
     // (or below) the active one by the core's rule, with the keyboard.

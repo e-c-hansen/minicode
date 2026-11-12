@@ -149,7 +149,12 @@ public:
     // terminal's top right corner with Claude's message as its tooltip:
     // "waiting" (orange), "done" (green), "" (none). Typing in the terminal
     // clears the board's mark, and so does the terminal going away.
-    void setControlId(int id) { controlId_ = id; }
+    // Every terminal has an id of its own from the moment it is made, unique
+    // in the process and never a window's (window ids stay small; these start
+    // at kFirstId), as the Mac's terminalID. `byId` finds a live terminal
+    // (0 and ids of closed ones give null); the destructor takes it out.
+    static constexpr int kFirstId = 1001;
+    static Terminal* byId(int id);
     int controlId() const { return controlId_; }
     void setAttention(const std::string& markName, const std::string& tooltip);
     // The mark shown now, for the checks: "waiting", "done" or "".

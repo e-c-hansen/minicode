@@ -1,5 +1,6 @@
 // TerminalDock.cpp — see TerminalDock.h.
 #include "TerminalDock.h"
+#include "TerminalAttention.h"
 
 #ifdef MINICODE_ENABLE_TERMINAL
 
@@ -88,6 +89,15 @@ void TerminalDock::refresh() {
         TabStrip::Item it;
         it.title = g->active()->title();
         it.tooltip = it.title;
+        // A pane of the tab waiting for the user, or done, marks the tab.
+        std::string mark;
+        for (Terminal* t : g->panes()) {
+            const char* m = TerminalAttention::markName(t->controlId());
+            if (std::string(m) == "waiting") mark = "waiting";
+            else if (*m && mark.empty()) mark = m;
+        }
+        if (mark == "waiting") it.title += " \xE2\x97\x8F";
+        else if (!mark.empty()) it.title += " \xE2\x9C\x93";
         items.push_back(it);
     }
     strip_->setItems(items, active_);
@@ -186,7 +196,6 @@ void TerminalDock::removePane(Terminal* t) {
     if (i < 0) return;
     TerminalGroup* g = groups_[(size_t)i].get();
     const bool hadKeyboard = i == active_ && g->active() == t;
-    t->setControlId(0);
     t->onTitleChanged = nullptr;
     t->onFocusIn = nullptr;
     Terminal* next = nullptr;
@@ -203,10 +212,7 @@ void TerminalDock::removePane(Terminal* t) {
 void TerminalDock::remove(int i) {
     TerminalGroup* g = groups_[(size_t)i].get();
     const bool last = count() == 1;
-    // The board's mark and id belong to the window's terminals together:
-    // a closing tab only lets go of its own.
     for (Terminal* t : g->panes()) {
-        if (!last) t->setControlId(0);
         t->onTitleChanged = nullptr;
         t->onFocusIn = nullptr;
     }

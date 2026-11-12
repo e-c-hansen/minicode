@@ -38,6 +38,7 @@ class AgentsPanel;
 // the window closes; terminal and browser are null in a build without them.
 struct MCGuiAppWindow {
     GtkWindow*  window = nullptr;
+    int         controlId = 0;     // what the control channel calls the window
     Editor*     editor = nullptr;
     FileTree*   tree = nullptr;
     GitPanel*   git = nullptr;   // null until the Source Control panel was first shown

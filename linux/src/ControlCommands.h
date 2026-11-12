@@ -19,6 +19,16 @@ class Editor;
 class Browser;
 typedef struct _GtkWindow GtkWindow;
 
+// One terminal of a window (PARITY.md 4.7): its own id, which its shell has as
+// MINICODE_TERMINAL_ID and the board and `term-output` know it by.
+struct ControlTerminal {
+    int id = 0;
+    std::string title;
+    bool active = false;      // the window's active terminal
+    int shellPid = 0;
+    ShellIntegration::ShellState shell;
+};
+
 struct ControlWindow {
     int id = 0;               // what `state` calls the window, and --window names
     std::string folder;       // the tree's root, as the window spells it
@@ -29,6 +39,8 @@ struct ControlWindow {
     // What the shell integration's newest mark said (PARITY.md 3.1, D10);
     // not `known` for a shell that never marks.
     ShellIntegration::ShellState shell;
+    // Every terminal of the window, tab by tab, panes in order.
+    std::vector<ControlTerminal> terminals;
 };
 
 struct ControlHost {
@@ -55,14 +67,14 @@ struct ControlHost {
                        std::function<void(const std::string&)> done)> terminalRun;
     // A new terminal tab in the window (PARITY.md 4.7), shown and active,
     // with `title` as its name when not empty; false for none.
-    std::function<bool(const ControlWindow&, const std::string& title)> newTerminal;
+    std::function<int(const ControlWindow&, const std::string& title)> newTerminal;   // the new terminal's id, 0 for none
     // Splits the active terminal beside itself (PARITY.md 4.7, `split --right
     // term`), with `title` as its name when not empty; the keyboard stays
     // where it was. False when no pane fits.
-    std::function<bool(const ControlWindow&, const std::string& title)> splitTerminal;
+    std::function<int(const ControlWindow&, const std::string& title)> splitTerminal;   // the new terminal's id, 0 for none
     // Shows the window's terminal, the keyboard where it was.
     std::function<void(const ControlWindow&)> showTerminal;
-    // The window's terminal's last `lines` lines; false when it has none.
+    // The terminal's (by its own id) last `lines` lines; false when none has it.
     std::function<bool(int id, int lines, std::string* text)> terminalOutput;
 };
 
