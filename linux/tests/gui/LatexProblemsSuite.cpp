@@ -26,6 +26,8 @@
 
 #ifdef MINICODE_ENABLE_PDF
 namespace {
+std::string gOldXdg;
+bool gHadXdg = false;
 
 Editor* ed() { return MCGuiApp().editor; }
 std::string F(const std::string& name) { return MCGuiProjectFile(name); }
@@ -123,6 +125,10 @@ MC_GUI_SUITE(latex_problems) {
         // What a crashed process left: a folder of a dead pid with its
         // record and sibling, one still the bytes recorded and one changed.
         const std::string base = F("lp-xdg");
+        // Put back at the end: minicode's own CLI, which later suites run,
+        // finds the control socket through XDG_RUNTIME_DIR.
+        if (const char* x = getenv("XDG_RUNTIME_DIR")) gOldXdg = x;
+        gHadXdg = getenv("XDG_RUNTIME_DIR") != nullptr;
         g_setenv("XDG_RUNTIME_DIR", base.c_str(), TRUE);
         g_mkdir_with_parents(base.c_str(), 0755);
         for (int k = 0; k < 2; ++k) {
@@ -236,6 +242,10 @@ MC_GUI_SUITE(latex_problems) {
     MCGuiWait("parts/chapter.tex on show at line 3", 10, [] {
         return ed()->currentPath() == F("parts/chapter.tex") && caretLine() == 3;
     });
-    MCGuiStep("closing the tabs", [] { ed()->closeAllTabs(); });
+    MCGuiStep("closing the tabs", [] {
+        ed()->closeAllTabs();
+        if (gHadXdg) g_setenv("XDG_RUNTIME_DIR", gOldXdg.c_str(), TRUE);
+        else g_unsetenv("XDG_RUNTIME_DIR");
+    });
 }
 #endif

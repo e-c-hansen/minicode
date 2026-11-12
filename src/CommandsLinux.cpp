@@ -261,9 +261,6 @@ const std::vector<LinuxRow>& linuxRows() {
         // has the keyboard, as on the Mac (and GNOME Terminal's own Ctrl+=
         // and Ctrl+-). A Terminal command keeps its plain Ctrl keys there
         // (linuxTerminalTakes), and applies nowhere else.
-        // The Mac's Ctrl+Cmd+W; Ctrl+Alt+W on Linux, Global so it also works
-        // from the terminal, where the waiting sessions are (PARITY.md 3.6).
-        {"minicode.terminal.nextWaiting", "ctrl+alt+w", Global, nullptr, nullptr},
         // Terminal tabs (PARITY.md 4.7). New Terminal is VS Code's Linux key,
         // Global so the shell never gets it. The Mac's Ctrl+Shift+W closes a
         // terminal but is Close Window here (VS Code's), so Close Terminal
@@ -273,12 +270,15 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.terminal.focusNext", "ctrl+alt+pagedown", Global, nullptr, nullptr},
         {"workbench.action.terminal.focusPrevious", "ctrl+alt+pageup", Global, nullptr, nullptr},
         {"workbench.action.terminal.kill", "ctrl+alt+shift+w", Global, nullptr, nullptr},
-        {"workbench.action.terminal.rename", "", 0, nullptr, nullptr},
-        {"minicode.terminal.moveLeft", "", 0, nullptr, nullptr},
-        {"minicode.terminal.moveRight", "", 0, nullptr, nullptr},
+        // The Mac's Ctrl+Cmd+W; Ctrl+Alt+W on Linux, Global so it also works
+        // from the terminal, where the waiting sessions are (PARITY.md 3.6).
+        {"minicode.terminal.nextWaiting", "ctrl+alt+w", Global, nullptr, nullptr},
         {"workbench.action.terminal.fontZoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
         {"workbench.action.terminal.fontZoomOut", "ctrl+-", 0, nullptr, nullptr},
         {"workbench.action.terminal.fontZoomReset", "ctrl+alt+0 ctrl+numpad0", 0, nullptr, nullptr},
+        {"workbench.action.terminal.rename", "", 0, nullptr, nullptr},
+        {"minicode.terminal.moveLeft", "", 0, nullptr, nullptr},
+        {"minicode.terminal.moveRight", "", 0, nullptr, nullptr},
         // Run File: the Mac's Shift+Cmd+Return. Global, so it also works
         // with the keyboard in the terminal.
         {"minicode.runFile", "ctrl+shift+enter", Global, nullptr, nullptr},

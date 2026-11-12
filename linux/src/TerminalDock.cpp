@@ -119,8 +119,21 @@ void TerminalDock::remove(int i) {
     // a closing tab only lets go of its own.
     if (!last) t->setControlId(0);
     const int was = active_;
+    // The last tab leaves a fresh terminal whose shell starts when the dock
+    // is shown again; it joins the stack before the old one goes.
+    Terminal* fresh = last ? make_() : nullptr;
+    if (fresh) add(fresh, 1);
     terms_.erase(terms_.begin() + i);
     t->onTitleChanged = nullptr;
+    // app->terminal must never name the terminal being deleted: removing the
+    // widget moves the focus, and the focus handlers ask app->terminal (an
+    // ASan use-after-free in Terminal::owns, TerminalTabsSuite).
+    if (i == was && onActiveChanged) {
+        const int near = fresh ? 0 : std::max(0, std::min(i, count() - 1));
+        onActiveChanged(terms_[(size_t)near]);
+    }
+    // Hidden before the old widget leaves, so the new one is never mapped.
+    if (last && onEmpty) onEmpty();
     // The stack held the widget's last reference; the terminal's destructor
     // still disconnects from its widgets and the draw function, so keep them
     // alive until it has run (they were freed first: heap corruption that
@@ -130,10 +143,6 @@ void TerminalDock::remove(int i) {
     delete t;
     g_object_unref(w);
     if (last) {
-        // A fresh terminal whose shell starts when the dock is shown again.
-        // Hidden first, so the new one is never mapped (and starts no shell).
-        if (onEmpty) onEmpty();
-        add(make_(), 0);
         activate(0);
         if (onChanged) onChanged();
         return;

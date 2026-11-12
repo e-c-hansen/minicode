@@ -429,7 +429,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Clear the terminal, its scrollback included | Command K |  |  |
 | Close an agent's note (`minicode open --note`) in the editor | Escape, or its × |  |  |
 | Close every tab but the one on show | Option Command T | Close Other Tabs in the File menu or the tab's right click menu |  |
-| Close the active terminal | Control Shift W |  |  |
+| Close the active terminal | Control Shift W | Ctrl Alt Shift W |  |
 | Close the application | Command Q | Ctrl Q |  |
 | Close the tab, the terminal the keyboard is in, or the browser's tab when it has the keyboard (the browser panel with its last tab) | Command W | Ctrl W or Ctrl F4 (the browser panel when it has the keyboard, the window when no tab is open; in the terminal the shell has them) |  |
 | Close the window | Shift Command W | Ctrl Shift W |  |
@@ -486,7 +486,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Move the selected file to the Trash | Command Delete or Command Forward Delete, in the file tree | Delete, in the file tree |  |
 | Move the tab on show to the other editor group, making one on the right if the editor is not split | Control Command Right, Control Command Left, in the editor |  |  |
 | Move to the next or previous placeholder of a snippet completion, or leave the snippet | Tab, Shift Tab, or Escape | Tab, Shift Tab, or Escape |  |
-| Move to the next or previous terminal, across split panes and tabs | Option Command ], Option Command [ |  |  |
+| Move to the next or previous terminal, across split panes and tabs | Option Command ], Option Command [ | Ctrl Alt Page Down, Ctrl Alt Page Up |  |
 | Move to the next terminal waiting for you, in any window (a Claude Code session asking for permission, with `minicode hooks --install` run) | Control Command W | Ctrl Alt W |  |
 | Move to the previous or next command in the terminal, its prompt at the top | Command Up, Command Down, in the terminal |  |  |
 | Move to the start or end of the line at the terminal's prompt, or delete back to its start | Command Left, Command Right, Command Delete |  |  |
@@ -500,7 +500,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Open a file from the file tree in a tab of its own, not the preview tab | Double-click it, or Command click it | Double-click it, Ctrl click it, or select it and press Enter |  |
 | Open a folder | Command O | Ctrl O | O, or Ctrl O |
 | Open a folder opened before, in this window | Control R (File > Open Recent lists them too) |  |  |
-| Open a new terminal in a new tab | Control Shift backtick |  |  |
+| Open a new terminal in a new tab | Control Shift backtick | Ctrl Shift backtick |  |
 | Open the command palette, to find any menu command by name and run it | Shift Command P, or F1 | Ctrl Shift P, or F1 (in the terminal only Ctrl Shift P) |  |
 | Open the rendered Markdown page beside its source, or close it | Control Command V | Ctrl Alt V |  |
 | Open the right click menu of what has the keyboard, at the selected row or the cursor | Shift F10, or Control Return, or the Menu key of a PC keyboard |  |  |
