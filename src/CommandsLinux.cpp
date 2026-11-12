@@ -241,6 +241,9 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.terminal.toggleTerminal", "ctrl+shift+t ctrl+`", Global, nullptr,
          nullptr},
         {"minicode.toggleBrowser", "ctrl+shift+b", 0, nullptr, nullptr},
+        // Safari's Cmd+T on the Mac, the same letter with Ctrl here; a Page
+        // command, so Go to Symbol in Workspace keeps Ctrl+T everywhere else.
+        {"minicode.browser.newTab", "ctrl+t", 0, nullptr, nullptr},
         {"minicode.togglePlayback", "ctrl+shift+space", 0, nullptr, nullptr},
 
         // ---- Terminal

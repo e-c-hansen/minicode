@@ -129,6 +129,7 @@ const std::vector<Action>& actions() {
         {"minicode.toggleHiddenFiles", "app.showhidden", false},
         {"workbench.action.terminal.toggleTerminal", "win.toggleterminal", false},
         {"minicode.toggleBrowser", "win.togglebrowser", false},
+        {"minicode.browser.newTab", "win.newbrowsertab", false},
         {"minicode.togglePlayback", "win.playpause", true},
         {"minicode.terminal.nextWaiting", "win.nextwaiting", false},
         {"workbench.action.terminal.fontZoomIn", "win.terminalzoomin", false},

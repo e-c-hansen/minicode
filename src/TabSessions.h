@@ -36,6 +36,15 @@ struct Tab {
     long into = 0;
 };
 
+// One browser tab of a window: its address, its title and WebKit's record
+// of its history and scroll (base64; empty when there is none). A tab whose
+// record is left out still comes back at its address (BrowserTabs.h).
+struct BrowserTab {
+    std::string url;
+    std::string title;
+    std::string state;
+};
+
 // One folder's tabs, in tab order, with the one on show and the preview tab
 // (EditorTabs.h), -1 for none, and when it was last written (Unix seconds).
 struct Session {
@@ -43,6 +52,10 @@ struct Session {
     int active = -1;
     int preview = -1;
     double used = 0;
+    // The browser pane's tabs and the one on show (-1 for none). A session
+    // written before the pane had tabs has none.
+    std::vector<BrowserTab> browser;
+    int browserActive = -1;
 };
 
 // Every folder's, by its resolved path.

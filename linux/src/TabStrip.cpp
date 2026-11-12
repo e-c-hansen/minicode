@@ -1,10 +1,21 @@
 // TabStrip.cpp — see TabStrip.h.
 #include "TabStrip.h"
 
+#include <cmath>
+
+#include "EditorTabs.h"
+
 namespace {
 // The close button's two faces.
 const char* kCloseMark = "×";   // ×
 const char* kDirtyMark = "●";   // ●
+
+// A point of `from` in `to`'s coordinates (the point as it was when not mapped).
+double rowX(GtkWidget* from, GtkWidget* to, double x, double y) {
+    graphene_point_t in = GRAPHENE_POINT_INIT((float)x, (float)y), out;
+    if (!gtk_widget_compute_point(from, to, &in, &out)) return x;
+    return out.x;
+}
 
 bool within(GtkWidget* w, GtkWidget* area) {
     for (; w; w = gtk_widget_get_parent(w))
@@ -167,6 +178,10 @@ void TabStrip::onPressed(GtkGestureClick* g, int n, double x, double y, gpointer
         self->pressClose_ = i;   // closes on release, over the button
         return;
     }
+    if (self->onMove) {
+        self->dragFrom_ = i;
+        self->dragX_ = rowX(box, self->row_, x, y);
+    }
     if (n == 2) self->later(self->onDoubleClick, i);
     else if (n == 1) self->later(self->onSelect, i);
 }
@@ -176,14 +191,31 @@ void TabStrip::onReleased(GtkGestureClick* g, int, double x, double y, gpointer 
     GtkWidget* box = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(g));
     const int i = self->indexOf(box);
     const int close = self->pressClose_, middle = self->pressMiddle_;
+    const int from = self->dragFrom_;
     self->pressClose_ = self->pressMiddle_ = -1;
+    self->dragFrom_ = -1;
     if (i < 0) return;
+    if (from == i && self->onMove) {
+        const double rx = rowX(box, self->row_, x, y);
+        if (std::abs(rx - self->dragX_) > 8) {   // a drag, not a click
+            self->dropAt(i, rx);
+            return;
+        }
+    }
     if (middle == i) {
         self->later(self->onClose, i);
         return;
     }
     if (close == i && within(gtk_widget_pick(box, x, y, GTK_PICK_DEFAULT), self->tabs_[(size_t)i].close))
         self->later(self->onClose, i);
+}
+
+void TabStrip::dropAt(int from, double rowX) {
+    if (!onMove || from < 0 || from >= (int)tabs_.size()) return;
+    std::vector<double> widths;
+    for (const Tab& t : tabs_) widths.push_back((double)gtk_widget_get_width(t.box));
+    const int to = EditorTabs::dropIndex(widths, from, rowX);
+    if (to != from) later([this, to](int a) { if (onMove) onMove(a, to); }, from);
 }
 
 // The tab's menu, under the pointer: a popover parented to the tab, so its

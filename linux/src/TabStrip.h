@@ -59,6 +59,14 @@ public:
     // A right click on tab `index`: its menu, a new reference whose items
     // name actions widget() resolves; null for none.
     std::function<GMenuModel*(int index)> menuFor;
+    // Dragging a tab along the row (EditorTabs::dropIndex): called once the
+    // pointer is let go, with the tab's place now and the place it goes to
+    // in the row after the move. Off unless set; the editor's strip leaves
+    // it unset, as the Mac's does, and the browser's sets it.
+    std::function<void(int from, int to)> onMove;
+    // What a drop at `rowX` (in the row's coordinates) does to tab `from`,
+    // as if the pointer had been let go there; for the checks.
+    void dropAt(int from, double rowX);
 
 private:
     struct Tab {
@@ -84,6 +92,8 @@ private:
     int active_ = -1;
     int pressClose_ = -1;           // the close button a press went down on
     int pressMiddle_ = -1;          // the tab a middle press went down on
+    int dragFrom_ = -1;             // the tab a primary press went down on
+    double dragX_ = 0;              // where, in the row's coordinates
     guint sightIdle_ = 0;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };

@@ -140,8 +140,15 @@ void Persistence::windowActive(bool active) {
 
 // The file on show, or with a diff on show the file shown last; a diff is
 // not reopened.
+TabSessions::Session Persistence::savedSession() const {
+    const TabSessions::Sessions all = readSessions();
+    const auto found = all.find(key_);
+    return found != all.end() ? found->second : TabSessions::Session();
+}
+
 TabSessions::Session Persistence::session() {
     TabSessions::Session s;
+    if (host_.browserTabs) s.browser = host_.browserTabs(&s.browserActive);
     auto isFile = [](Document* d) {
         return d->kind() != Document::Kind::Diff && !d->path().empty();
     };
