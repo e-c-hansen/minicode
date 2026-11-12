@@ -3799,6 +3799,238 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
     loaded machine (see the coordinator's notes); alone and after
     `shell_integration` it passes with no GLib criticals.
 
+### 54. The Markdown page to the side, in pieces (done, November 2026; `PARITY.md` item 4.2, first part)
+
+- **Files**: `src/MarkdownSide.{h,cpp}` (the pane), `Markdown::renderRuns` in
+  `Markdown.cpp` (the page builder over a run range, inserting at a character
+  offset; `render` is it over every run), `MarkdownPage.cpp` joined the core
+  lists (`meson.build`, `Makefile`; Android's CMake has not got it, since it
+  has no side pane). `Editor::syncSide`/`dropSide`/`toggleSidePreview`, and
+  `Document::sideWanted`.
+- **The key** is Ctrl+Alt+V (`markdown.showPreviewToSide`, a `markdown`
+  language command in the registry): VS Code's Linux key is the chord Ctrl+K V
+  and the port has no chords, so it is the Mac's Ctrl+Cmd+V with Ctrl+Alt for
+  Cmd, as the task key's Ctrl+Alt+L is; GNOME takes no Ctrl+Alt+V.
+- **Where it sits**: the end child of `outlinePaned_`, the JSON outline's
+  place (a Markdown tab has no outline, a JSON tab no side page; both
+  widgets are ref'd so the paned can swap them). A GtkTextView of its own,
+  read-only, with a buffer of its own on the editor's tag table. It shows only
+  while the tab shows its source: the full preview (a Markdown file opens as
+  the page here, so the pane comes with Ctrl+Shift+V to the source) and
+  another tab drop it and clear its page; it is built again when it returns.
+  The wish is per tab (`Document::sideWanted`) and not kept in the session:
+  the port keeps no per-tab modes there.
+- **Pieces**: a buffer "changed" schedules a render 0.3 s later. The text is
+  copied on the main thread; `MarkdownParser::parse`, `MarkdownPage::split`
+  and `match` run on a GTask worker (generation counted; one job at a time,
+  another asked for while it runs follows it). On the main thread
+  `MarkdownSide::apply` walks the new pieces: a kept one keeps its text, its
+  widgets and its `Markdown::Page` (offsets are the piece's own, so only the
+  source lines move, by the change of the piece's base line); the old pieces
+  between kept ones are taken off the view (widgets first, or GTK 4.22
+  crashes in the buffer's deletion, as `clearPage` says) and deleted from the
+  buffer in one range; an unmatched piece is built at its place by
+  `renderRuns`. A piece holding a web picture still being fetched is not
+  matchable (`keep` false), and `placeArrived` puts a picture in, as the full
+  preview does, per piece. A new context (the file's folder, web pictures
+  on or off) is built whole (`setContext`, `invalidate`).
+- **Measured** (the main thread's CPU for a one-letter edit, from the
+  worker's answer to the splice done, `Stats::mainCpuMs`): 0.7 ms at 1,200
+  lines (607 pieces, 1 built), 4.5 ms at 20,000 lines (10,101 pieces, 1
+  built); the worker's 5 and 93 ms are off the main thread. The Mac bounds
+  10 and 30 ms. The first page is the full cost of every piece built, and a
+  README's tables (4.2's R1 figures) are in it: not measured here.
+- **Checked by** `markdown_side` (`MarkdownSideSuite.cpp`): the key opens and
+  closes the pane, the page against the source, an edit building one piece
+  and leaving every table widget the same pointer, a line added above, an
+  edit inside the table building a new widget, the full preview hiding the
+  pane and bringing it back, a second tab with no pane, a text file where the
+  key does nothing, and the CPU bounds (15 ms and 40 ms, with headroom for a
+  loaded machine) at 1,200 and 20,000 lines.
+- **Scroll sync** (`MarkdownSide::setSource`, `markdown_side_sync`): the
+  Mac's rules over the core's `PreviewScroll`. Marks are (source line,
+  character) from the pieces' spans, rebuilt lazily after a render; a mark's
+  top is asked of the pane's layout (`gtk_text_view_get_iter_location`) only
+  for the two marks around the place (`PreviewScroll::around`), and the page
+  to source direction finds its mark by the character at the pane's top
+  (`get_iter_at_location`), so no question walks the page. GTK lays a view
+  out lazily and revises line heights, so a target is held: re-applied every
+  80 ms while the target adjustment's upper bound still moves, until it has
+  been still for four ticks, and dropped on any user move. Our own scrolls
+  set `holding_`, and a value-changed that leaves a side as last seen, or
+  came with its upper bound moving (GTK keeping a line still), is no move of
+  the user's. The pane leading sets `pageLeads_` (a render then leaves the
+  page alone); scrolling the source or typing in it clears it. The caret
+  (`notify::cursor-position` on the tab's buffer) brings its block into the
+  pane, a third down, only when it is not in view. Trap for checks:
+  `gtk_text_buffer_get_text` leaves out child anchors, so offsets from the
+  page's text are off by the tables before them; search the buffer with
+  iters. Measured: 0.3 to 0.7 ms of main-thread CPU for a sync at 20,000
+  lines.
+- **Not done**: double-click editing in the pane (the
+  editor's popover is tied to its own view); a task box in the pane does
+  nothing; heading anchors are per piece (`#section` links in the pane do
+  not resolve); the pane's width is the paned's default and is not kept;
+  the page is not kept across a switch to another tab.
+
+### 55. LaTeX forward search (done, November 2026; `PARITY.md` item 4.4, second part)
+
+Ctrl+Alt+Shift+J (`latex-workshop.synctex`, "Show Line in PDF"; LaTeX
+Workshop's Ctrl+Alt+J is Unfold All's here, an Editor command, so Shift joins
+it) lights the caret's line in the PDF. `Editor::showLineInPdf` finds the
+document to search: the caret file's `% !TEX root` comment
+(`LatexLog::rootComment`, realpath), else, for a file without
+`\documentclass`, the open tab whose preview's typeset read it
+(`LatexPreview::readsFile`, `SyncTexIndex::tagForFile` with realpath on both
+sides); that tab is shown. `LatexPreview::forwardSearch(file, line)` goes
+through `pdfForBuffer`, so a stale PDF is typeset first and the light comes
+when it arrives; `boxesForLine` gives the boxes (the nearest line below, then
+above, within 40, when the line put nothing), `PdfView::setHighlights` draws
+them as translucent rectangles over the page (in `snapshotPage`), the page is
+scrolled to the first box with 80 points above it, and the light goes after
+1.5 s. Check: `latex_forward`, a stand-in tectonic copying the committed
+`tests/latex/fixtures/main.*` typeset (Input paths rewritten by `sed`).
+Not done: the Mac's menu item (the port has no View entry for it; the hints
+panel has a row).
+
+### 56. Export as HTML and Mermaid diagrams (done, November 2026; `PARITY.md` item 4.3, first part)
+
+- **Export as HTML…** is the action `win.exporthtml` (registry id
+  `minicode.markdown.exportHtml`, no key; the palette lists it), enabled for a
+  Markdown tab (a notebook excepted). `Editor::exportHtml` asks a GtkFileDialog
+  (the file's folder, `<name>.html`) and `exportHtmlTo` writes the core's
+  `MarkdownHtml::page` of the buffer (unsaved changes included) through
+  `FolderSearch::writeFileAtomically`. The harness sets
+  `MINICODE_HTML_EXPORT_PATH` to skip the dialog (the Mac's
+  `MCHtmlExportPathChooser`). The link and picture rules are the core's.
+- **Mermaid**: `src/Mermaid.{h,cpp}` runs mmdc (`$MINICODE_MMDC`, else
+  `lspgtk::findProgram("mmdc")`) from one worker thread, a job at a time,
+  each in a session of its own (`setsid`, killed by group) with 90 s, with
+  `MermaidDiagram::arguments` (transparent PNG, scale 2, `dark` or `default`
+  by `Settings::isDark`). Pictures are kept as GdkTextures in memory and in
+  `$MINICODE_MERMAID_CACHE` or `$XDG_CACHE_HOME/minicode/mermaid` (50 MB,
+  trimmed to 40); a failure is remembered 30 s and its complaint
+  (`errorSummary`) is the code's tooltip. `want()` is the one entry: kept,
+  waiting (queued on first ask) or failed; nothing runs for a page with no
+  mermaid block, with `markdown.mermaid = false` or without mmdc.
+- **In the page**: `Hooks::mermaid`/`mermaidDark`; `renderRuns` finds the
+  blocks of its run range (`MermaidDiagram::blocks`), and a kept diagram is a
+  picture widget (half its pixels, scale 2) anchored for the block's runs. A
+  waiting one stays code and counts in `Page::waiting`; a failed one stays
+  code under an anonymous-by-text tag `md_tip:<complaint>` that
+  `Markdown::installTooltips` (connected to the editor's view and the side
+  view) shows. On an arrival (`Mermaid::subscribe`) the full preview is
+  rendered again keeping its scroll (`rerenderPreview`), and the side pane
+  treats a piece with `waiting` as unmatchable like one waiting for a web
+  picture, so only those pieces are built again. A change of theme or of
+  `markdown.mermaid` re-renders both.
+- **Checked by** `mermaid` and `export_html` (`MermaidSuite.cpp`; a stand-in
+  mmdc script, no real one): code before the picture, the picture after, the
+  dark and default themes reaching mmdc, a reopen answered by the disk cache
+  with no run, a failure's tooltip without the stack trace, the setting off
+  and a page without a diagram running nothing, the side pane, and the
+  exported page's key lines.
+- **Not done**: math (4.3's second part); Mermaid on Android (no pane there).
+
+### 57. The SQLite viewer (done, November 2026; `PARITY.md` item 4.1, last part)
+
+- **Routing**: `FileSniff::Kind::Sqlite` makes a `Document::Kind::Database`
+  (`Document::setDatabase`, no text in the buffer), shown by `SqliteView` in
+  the slot's `sqlite` page; `stash` clears it, a rename calls `setPath`.
+  `csv_table` used to check the old "no database viewer" message and now
+  checks the kind.
+- **The view** (`SqliteView.{h,cpp}`, libsqlite3, `dependency('sqlite3')`,
+  `libsqlite3-dev` in debian/control, the GTK CI job and BUILD-LINUX.md): a
+  `GtkPaned` with the tables and views (tables first) in a `GtkListView`, and
+  a query entry, a status line and a `GtkColumnView` of the answer. Picking a
+  table runs `SELECT * FROM "name"` (quotes doubled); Enter in the entry runs
+  the query. NULL is a dimmed italic "NULL", a BLOB "(BLOB, N bytes)", a cell
+  is cut at 4,000 bytes. A fresh file shows its first table.
+- **Read only, as the Mac's**: `SQLITE_OPEN_READONLY | SQLITE_OPEN_URI` on
+  `file:<percent-encoded path>?mode=ro`, plus `&immutable=1` for a WAL
+  database (bytes 18 and 19 are 2) with no `-wal` beside it; the defensive
+  flag; `PRAGMA query_only=ON`; an authorizer denying BEGIN/COMMIT/ROLLBACK,
+  SAVEPOINT, ATTACH, DETACH and a pragma given an argument unless it is a
+  reading one (`table_info` and friends); a statement with
+  `sqlite3_stmt_readonly` false is refused after it is prepared and never
+  stepped; only the first statement runs (the tail is ignored); a progress
+  handler (every 1,000 VM steps) ends a query at 5 s ("Stopped: ...") or when
+  a newer request arrives; 1,000 rows at most, with a note.
+- **Threads**: one `std::thread` owns the connection and does everything,
+  opening included. `submit` sets `cancel_` under the queue's mutex (the
+  worker clears it as it takes a job, so it ends only a query already
+  running); results go back by `g_idle_add` holding a `shared_ptr<Link>`
+  that the destructor empties, and carry a generation: an answer for a
+  request a newer one replaced is dropped, and `busy()` counts requests not
+  yet delivered. The destructor joins (a running query ends at the next
+  progress step).
+- **A reopen**: the file is watched (`GFileMonitor`, a change settled for
+  400 ms); `show` of the same path opens again and runs the query that was on
+  show, and the table list keeps its pick. The editor calls `show` whenever
+  the tab is shown.
+- **Checked by** `sqlite_view` (`SqliteViewSuite.cpp`, databases made with the
+  C API): tables, rows and NULLs, a query, the 1,000-row cap, the first
+  statement only, INSERT, UPDATE, DELETE, CREATE, BEGIN, SAVEPOINT, ATTACH and
+  `PRAGMA user_version = 5` refused with the file's bytes unchanged and no
+  journal or second file made, a reading pragma answered, a WAL file without
+  -wal opened, a file that is not a database, a reopen keeping the query, and
+  an endless recursive CTE stopped at about 5 s with the main thread's CPU
+  bounded.
+- **Not done**: sorting by a column, a cell's full text (a tooltip or copy),
+  column widths kept, the table list's width kept, and a query history.
+
+### 58. Math in the Markdown preview (done, November 2026; `PARITY.md` item 4.3, second part)
+
+- **`src/Math.{h,cpp}`** is the Mac's `MarkdownMath.mm` over the core's
+  `MathTex` (the checks, the batch document, the nonce, `readLog`,
+  `firstError`; nothing of that is re-done). `Math::want(tex, display,
+  color)` is the one entry, like `Mermaid::want`: kept, waiting (queued on
+  first ask) or failed. Requests gather for 50 ms into one batch; one run at
+  a time on a worker thread: tectonic (`LatexPreview::tectonicPath()`, so
+  `MINICODE_TECTONIC`, the downloaded copy, PATH) with `-Z continue-on-errors
+  --untrusted --print --keep-logs --reruns 0` in a `g_dir_make_tmp` folder
+  of its own, in a session of its own (killed by group), 15 s without output
+  once the log shows `BEGIN:` and 60 s before (the formula TeX was in fails,
+  the rest go round again); a run with no PDF fails the formula TeX began and
+  never finished and reruns the rest; a page must be the size the log gave
+  its box. Compiled only with poppler (`MINICODE_ENABLE_PDF`); without it
+  `Math::built()` is false and a formula stays its TeX.
+- **Cache**: `$MINICODE_MATH_CACHE` or `$XDG_CACHE_HOME/minicode/math`, one
+  `<batch>.pdf` as tectonic wrote it and a `<batch>.idx` (`key page descent`,
+  header `minicode-math-index 1`) per run, 50 MB trimmed to 40. The key is
+  SHA-256 of `MathTex::kVersion`, display or inline, and the TeX; only
+  typeset formulas are indexed, so a failed one asks again after a reopen.
+- **Drawing**: the page is rendered by poppler at 2x onto white, its
+  luminance becomes alpha, and the mask is filled with the text color asked
+  for (`Editor::mathColor()`, the editor's), so a formula takes the color
+  around it (cairo's ARGB32, premultiplied, as a `GdkMemoryTexture`). 1 bp is
+  1.4 logical pixels (`kPxPerBp`, 10 pt TeX next to 13 px text). The picture is
+  an `MdPicture` anchored in the text; `MdPicture` now reports a baseline
+  (`height - depth`), so a formula's depth hangs below the line's baseline.
+  A display formula's anchor carries `md_mathcenter` (centered, 4 px above
+  and below); `Markdown::fit` scales a wider-than-the-pane formula with its
+  depth. `Page::waiting` counts formulas with Mermaid's diagrams (so the
+  re-render on an arrival and the side pane's rebuilding of such pieces are
+  the same code), `mathWaiting` the formulas, `mathMissing` those left as TeX
+  for want of tectonic. A failed formula stays code with `md_tip:` (TeX's
+  complaint) as its tooltip.
+- **The line**: `Editor::mathNote()`, a label over the preview's top right
+  (`updateMathNote`, from `notifyDocument`): "Typesetting N formulas…" while
+  any is out, else, with `markdown.math` on and no tectonic, "Math is shown
+  as TeX: tectonic is not installed." with a Download tectonic link, which
+  runs the LaTeX preview's download (`LatexPreview::downloadTectonicThen`, the
+  same function body as its button, the same checksum) and renders again.
+  The side pane has no such line (its pieces just rebuild as formulas
+  arrive).
+- **Checked by** `markdown_math` (`MathSuite.cpp`): a stand-in tectonic and
+  PDFs made with cairo; see the file's opening comment. A real tectonic
+  would confirm the batch document compiles under XeTeX, the log's
+  `MC:` lines in tectonic 0.17's `--print` output, the PDF page sizes against
+  the boxes, and the look and size of a real formula next to the text.
+- **Not done**: the line in the side pane; copying a formula copies an
+  anchor character (as on the Mac); the picture size does not follow the
+  preview's font size.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

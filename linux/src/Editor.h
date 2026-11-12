@@ -34,7 +34,9 @@ class CodeView;
 class FoldUi;
 class MediaView;
 class CsvTable;
+class SqliteView;
 class JsonOutlineView;
+class MarkdownSide;
 class SnippetSession;
 class LatexPreview;
 class GitDiffView;
@@ -260,6 +262,11 @@ public:
     // the document's own, D3), or for LaTeX between the source and the
     // typeset pages. No-op for other files.
     void togglePreview();
+    // The Markdown file's page right of its source (MarkdownSide.h), per
+    // tab; null until the first one is shown.
+    void toggleSidePreview();
+    MarkdownSide* sidePane() const { return side_; }
+    bool showsSide() const { return sideDoc_ != nullptr; }
     // A CSV or TSV tab shown as its table (CsvTable.h) rather than the text.
     // The table finishes a cell being typed before the tab goes.
     bool showsTable() const { return csvDoc_ != nullptr; }
@@ -268,8 +275,13 @@ public:
     JsonOutlineView* jsonOutline() const { return outline_; }
     bool showsOutline() const { return outlineDoc_ != nullptr; }
     CsvTable* csvTable() const { return csv_; }
+    SqliteView* sqliteView() const { return sqlite_; }
     bool isMarkdown() const { return active_ && active_->isMarkdown(); }
     bool inPreview() const { return active_ && active_->showsPreview(); }
+    // The math line over the preview ("Typesetting 2 formulas…"), "" when hidden, and
+    // the text color formulas are drawn in ("#rrggbb").
+    std::string mathNote() const;
+    std::string mathColor() const;
     // A .tex/.ltx/.latex file, in a build with poppler: it opens in the LaTeX
     // preview (Latex.h), which takes the slot while the buffer keeps the
     // source. latex() is the active tab's, null until it first shows.
@@ -278,6 +290,17 @@ public:
     // Ctrl+Shift+S: save the typeset PDF somewhere of the user's choosing.
     // False when the open file is not LaTeX.
     bool exportPdf(GtkWindow* parent);
+    // File > Export as HTML…: the active Markdown file (unsaved changes
+    // included) as a standalone page, chosen in a save dialog, or at
+    // $MINICODE_HTML_EXPORT_PATH when that is set (the checks).
+    bool exportHtml(GtkWindow* parent);
+    // The page written to `path` through the atomic writer; false with `error`.
+    bool exportHtmlTo(const std::string& path, std::string* error);
+    // Ctrl+Alt+Shift+J: show the caret's line in the PDF (forward search). From
+    // an \\input file the main document is the `% !TEX root` comment's, else
+    // the open tab whose typeset read this file; its tab is shown. False when
+    // there is nothing to search from.
+    bool showLineInPdf();
 
     // A file's diff or a commit from the Source Control panel, read-only in
     // the editor's slot. Diffs and commits share one tab, as on the Mac.
@@ -430,6 +453,8 @@ private:
     void notifyDocument();        // tell the observer what the view shows now
     void titleChanged();
     bool inMarkdownPage() const;  // the view shows the active Markdown page
+    void updateMathNote();
+    void downloadTectonicForMath();
 
     void renderPreview();        // build the active Markdown page into its buffer
     void rerenderPreview();      // the same again, at the same scroll
@@ -531,6 +556,7 @@ private:
     std::shared_ptr<bool> compareAlive_ = std::make_shared<bool>(true);   // for the prepare thread
     MediaView*     media_    = nullptr;
     CsvTable*      csv_      = nullptr;   // made on the first table
+    SqliteView*    sqlite_   = nullptr;   // a SQLite tab's tables and rows
     Document*      csvDoc_   = nullptr;   // the tab it shows
     gulong         csvChanged_ = 0;       // csvDoc_'s buffer "changed"
     bool           csvApplying_ = false;  // the table's own edit is going in
@@ -540,6 +566,11 @@ private:
     Document*      outlineDoc_ = nullptr;   // the tab it shows
     gulong         outlineChanged_ = 0, outlineCursor_ = 0;
     bool           outlineSelecting_ = false;   // the outline's own choice is going in
+    MarkdownSide*  side_ = nullptr;
+    Document*      sideDoc_ = nullptr;      // the tab it shows
+    gulong         sideChanged_ = 0, sideCaret_ = 0;
+    void syncSide();
+    void dropSide();
     void syncOutline();
     void dropOutline();
     void dropTable();
@@ -622,6 +653,10 @@ private:
     // hold a weak reference to alive_ and do nothing once it is gone.
     std::vector<std::pair<std::string, WebImages::PicturePtr>> arrived_;
     guint arrivedTimer_ = 0;
+    int mermaidListener_ = 0;   // Mermaid.h: a diagram arrived
+    int mathListener_ = 0;      // Math.h: a formula typeset or failed
+    GtkWidget* mathNote_ = nullptr;   // the math line over the preview
+    bool mathDownloading_ = false;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
     GtkTextMark* holdMark_ = nullptr;   // the line that was at the top
     int    holdInto_ = 0;               // how far into it the view started

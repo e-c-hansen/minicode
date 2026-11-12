@@ -1003,7 +1003,30 @@ void PdfView::evictFar(int from, int to) {
     }
 }
 
+void PdfView::setHighlights(const std::vector<Highlight>& boxes) {
+    std::vector<Highlight> old;
+    old.swap(highlights_);
+    highlights_ = boxes;
+    for (const std::vector<Highlight>* set : {&old, &highlights_})
+        for (const Highlight& b : *set)
+            if (b.page >= 0 && b.page < (int)pages_.size()) gtk_widget_queue_draw(pages_[b.page].area);
+}
+
 void PdfView::snapshotPage(int i, GtkSnapshot* s, int w, int h) {
+    snapshotPageContent(i, s, w, h);
+    if (i < 0 || i >= (int)pages_.size()) return;
+    const Page& pg = pages_[i];
+    if (pg.wPts <= 0 || pg.hPts <= 0) return;
+    static const GdkRGBA fill = {1.0f, 0.85f, 0.1f, 0.4f};
+    for (const Highlight& b : highlights_) {
+        if (b.page != i) continue;
+        graphene_rect_t r = GRAPHENE_RECT_INIT((float)(b.x * w / pg.wPts), (float)(b.y * h / pg.hPts),
+                                               (float)(b.w * w / pg.wPts), (float)(b.h * h / pg.hPts));
+        gtk_snapshot_append_color(s, &fill, &r);
+    }
+}
+
+void PdfView::snapshotPageContent(int i, GtkSnapshot* s, int w, int h) {
     static const GdkRGBA white = {1, 1, 1, 1};
     graphene_rect_t all = GRAPHENE_RECT_INIT(0, 0, (float)w, (float)h);
     gtk_snapshot_append_color(s, &white, &all);   // PDFs assume paper underneath

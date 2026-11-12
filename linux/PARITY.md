@@ -1400,7 +1400,7 @@ its server comes first here (2.0).
 
 These may run in parallel.
 
-- [ ] **4.1 Viewers.** CSV, JSON outline, notebooks, and SQLite, with the
+- [x] **4.1 Viewers.** CSV, JSON outline, notebooks, and SQLite, with the
   same read-only rules. `FileSniff`, `Csv`, `JsonOutline`, `Notebook`.
   *Part one done:* files route by `FileSniff::classify` (a database or a
   binary file gets a message, not text), and a CSV, TSV or .tab file opens
@@ -1409,6 +1409,10 @@ These may run in parallel.
   *Part two done:* a .json file (and .jsonc, tsconfig*.json, .vscode/*.json)
   has the outline beside its text, and a .ipynb opens rendered read-only
   (`JsonOutlineView.cpp`, HANDOFF.md item 52); `json_outline` checks both.
+  *Last part done:* a SQLite database opens in a read-only viewer, its tables
+  and views listed, a query field and a column view of 1,000 rows at most,
+  writing statements refused, a 5 s limit, one worker thread
+  (`SqliteView.cpp`, HANDOFF.md item 57); `sqlite_view` checks it.
 - [ ] **4.2 The preview to the side and scroll sync.** `MarkdownPage`,
   `PreviewScroll`. Measured for R1 (2026-11-09): opening README.md in the
   preview holds the main thread for 0.3 to 0.6 s of CPU, the same without
@@ -1416,15 +1420,32 @@ These may run in parallel.
   20 ms. The cost is GTK measuring the tables, each a `GtkGrid` of wrapping
   labels (`buildTable` in `Markdown.cpp`, about 540 cells in README). Its
   eight GIFs add about 130 ms of waiting on the image loader's process.
-- [ ] **4.3 Math, Mermaid, and Export as HTML.** `MathTex`, `MermaidDiagram`,
+  *Side pane done:* Ctrl+Alt+V (VS Code's chord Ctrl+K V; D1) shows the
+  page right of the source in pieces (`MarkdownSide`, HANDOFF item 54): 0.7 ms
+  of main-thread CPU after a one-letter edit at 1,200 lines, 4.5 ms at 20,000.
+  *Scroll sync done:* `PreviewScroll` joined the Linux build; the source
+  leads the page, the page leads the source, and a caret moved out of the
+  page's view brings its block in (HANDOFF item 54; 0.3 ms of main-thread CPU
+  per sync at 20,000 lines). Editing from the pane and the tables'
+  first-render cost remain, so the box stays open.
+- [x] **4.3 Math, Mermaid, and Export as HTML.** `MathTex`, `MermaidDiagram`,
   `MarkdownHtml`.
-- [ ] **4.4 LaTeX problems, warnings, and forward search.** `LatexLog`,
+  *Export and Mermaid done:* File > Export as HTML… (the command palette;
+  `exporthtml`) and ```mermaid blocks drawn by the user's mmdc in the full
+  preview and the side pane (HANDOFF.md item 56, `mermaid`, `export_html`).
+  *Done:* math in both previews, typeset by tectonic and cut with poppler
+  into pictures in the text's color (HANDOFF.md item 58, `markdown_math`,
+  against a stand-in tectonic; a real one is unchecked).
+- [x] **4.4 LaTeX problems, warnings, and forward search.** `LatexLog`,
   `LatexScratch`.
   *Problems and warnings done:* a failed typeset's problems are rows that
   open their file at the line, gutter marks (`latex-error`, `latex-warning`)
   stay until an edit, a good typeset lists its warnings behind a bar button,
   and the output folders and records follow `LatexScratch`
-  (`HANDOFF.md` item 51, `make` `latex_problems`). Forward search remains.
+  (`HANDOFF.md` item 51, `make` `latex_problems`). *Done:* forward search
+  (Ctrl+Alt+Shift+J, since Ctrl+Alt+J is Unfold All's; lights the caret's
+  line, also from an `\input` file via its root comment or the tab that read
+  it; HANDOFF.md item 55, `latex_forward`).
 - [x] **4.5 Browser tabs, find in the page, and page zoom.** `BrowserTabs`.
   *Tabs done:* a strip with +, drag and middle-click close, two live web
   views with the rest suspended, Ctrl+T/Ctrl+W/Ctrl+PageDown/Alt+N while the

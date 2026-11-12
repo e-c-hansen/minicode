@@ -26,7 +26,9 @@
 #include "Utf8Offsets.h"
 #include "MediaView.h"
 #include "CsvTable.h"
+#include "SqliteView.h"
 #include "JsonOutlineView.h"
+#include "MarkdownSide.h"
 #include "Notebook.h"
 #include "StartupLog.h"
 #include "CompareView.h"
@@ -36,6 +38,10 @@
 #include "ScrollSettle.h"
 #include "TabStrip.h"
 #include "WebImages.h"
+#include "Math.h"
+#include "Mermaid.h"
+#include "MarkdownHtml.h"
+#include "FolderSearch.h"
 #include "Zoom.h"
 
 #include <algorithm>
@@ -62,6 +68,19 @@ Editor::Editor() {
     code_ = CodeView::create(welcome_);
     view_ = code_->widget();
     buffer_ = welcome_;
+    Markdown::installTooltips(GTK_TEXT_VIEW(view_));
+    // A Mermaid diagram arrived (or failed): a page waiting for one is built
+    // again where it stands.
+    {
+        std::weak_ptr<int> alive = alive_;
+        mermaidListener_ = Mermaid::subscribe([this, alive] {
+            if (!alive.expired() && inMarkdownPage() && active_->pageInfo().waiting) rerenderPreview();
+        });
+        // The same for a formula typeset (or failed).
+        mathListener_ = Math::subscribe([this, alive] {
+            if (!alive.expired() && inMarkdownPage() && active_->pageInfo().mathWaiting) rerenderPreview();
+        });
+    }
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), TRUE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_), GTK_WRAP_NONE);
     gtk_text_view_set_left_margin(GTK_TEXT_VIEW(view_), 8);
@@ -161,6 +180,8 @@ Editor::Editor() {
     gtk_widget_set_vexpand(slot_, TRUE);
     gtk_stack_add_named(GTK_STACK(slot_), scroller_, "text");
     gtk_stack_add_named(GTK_STACK(slot_), media_->widget(), "media");
+    sqlite_ = new SqliteView();
+    gtk_stack_add_named(GTK_STACK(slot_), sqlite_->widget(), "sqlite");
     gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
 
     // The tabs (Tabs.cpp): a click selects, the close button or a middle
@@ -203,6 +224,22 @@ Editor::Editor() {
     gtk_widget_set_hexpand(slotOverlay_, TRUE);
     gtk_widget_set_vexpand(slotOverlay_, TRUE);
     gtk_overlay_set_child(GTK_OVERLAY(slotOverlay_), slot_);
+    // The Markdown math's line ("Typesetting 3 formulas…", or the offer to
+    // download tectonic), over the preview's top right while it applies.
+    mathNote_ = gtk_label_new("");
+    gtk_label_set_use_markup(GTK_LABEL(mathNote_), TRUE);
+    gtk_widget_set_halign(mathNote_, GTK_ALIGN_END);
+    gtk_widget_set_valign(mathNote_, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(mathNote_, 4);
+    gtk_widget_set_margin_end(mathNote_, 16);
+    gtk_widget_add_css_class(mathNote_, "dim-label");
+    gtk_widget_add_css_class(mathNote_, "minicode-math-note");
+    gtk_widget_set_visible(mathNote_, FALSE);
+    g_signal_connect(mathNote_, "activate-link", G_CALLBACK(+[](GtkLabel*, const char*, gpointer p) -> gboolean {
+        static_cast<Editor*>(p)->downloadTectonicForMath();
+        return TRUE;
+    }), this);
+    gtk_overlay_add_overlay(GTK_OVERLAY(slotOverlay_), mathNote_);
     // The JSON outline sits right of the text, behind a divider (syncOutline).
     outlinePaned_ = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_widget_set_hexpand(outlinePaned_, TRUE);
@@ -229,6 +266,8 @@ Editor::Editor() {
 // (main.cpp deletes the editor from GtkApplication's window-removed), so
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
+    Mermaid::unsubscribe(mermaidListener_);
+    Math::unsubscribe(mathListener_);
     delete inline_;
     inline_ = nullptr;
     delete notes_;
@@ -276,6 +315,7 @@ Editor::~Editor() {
     g_object_unref(tabActions_);
     delete strip_;
     delete media_;
+    delete sqlite_;
     *compareAlive_ = false;
     delete diff_;
     delete compare_;
@@ -435,7 +475,52 @@ const std::string& Editor::diffTitle() const {
 
 // A large file with its features off, or one past the sync limit, is no
 // document to a language server (LargeFileView.h), like a message.
+std::string Editor::mathColor() const {
+    const Rgba c = settings_.text(Surface::Editor);
+    char buf[16];
+    g_snprintf(buf, sizeof buf, "#%02x%02x%02x", c.r, c.g, c.b);
+    return buf;
+}
+
+std::string Editor::mathNote() const {
+    return gtk_widget_get_visible(mathNote_) ? gtk_label_get_text(GTK_LABEL(mathNote_)) : "";
+}
+
+// The line over the page: formulas out, or tectonic missing for them.
+void Editor::updateMathNote() {
+    std::string markup;
+    if (inMarkdownPage()) {
+        const Markdown::Page& p = active_->pageInfo();
+        if (mathDownloading_) {
+            markup = "Downloading tectonic…";
+        } else if (p.mathWaiting > 0) {
+            const int n = std::max(1, Math::outstanding());
+            markup = "Typesetting " + std::to_string(n) + (n == 1 ? " formula…" : " formulas…");
+        } else if (p.mathMissing > 0) {
+            markup = "Math is shown as TeX: tectonic is not installed. "
+                     "<a href=\"download\">Download tectonic</a>";
+        }
+    }
+    gtk_widget_set_visible(mathNote_, !markup.empty());
+    if (!markup.empty()) gtk_label_set_markup(GTK_LABEL(mathNote_), markup.c_str());
+}
+
+void Editor::downloadTectonicForMath() {
+    if (mathDownloading_) return;
+    mathDownloading_ = true;
+    updateMathNote();
+    std::weak_ptr<int> alive = alive_;
+    LatexPreview::downloadTectonicThen([this, alive](const std::string& problem) {
+        if (alive.expired()) return;
+        mathDownloading_ = false;
+        if (!problem.empty()) g_message("minicode: could not install tectonic: %s", problem.c_str());
+        if (inMarkdownPage()) rerenderPreview(); else updateMathNote();
+        syncSide();
+    });
+}
+
 void Editor::notifyDocument() {
+    updateMathNote();
     if (observer_)
         observer_->documentChanged(isSource() && active_->languageServerMayRead() ? active_->path()
                                                                                  : std::string());
@@ -479,6 +564,7 @@ void Editor::stash() {
     }
 #endif
     if (d->kind() == Document::Kind::Media) media_->clear();
+    if (d->kind() == Document::Kind::Database) sqlite_->clear();
     d->setShownIn(nullptr);
 }
 
@@ -542,6 +628,7 @@ void Editor::showActive() {
         setViewBuffer(welcome_, true, false);
         gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
         dropOutline();
+        dropSide();
         notifyDocument();
         refreshStrip();
         titleChanged();
@@ -592,6 +679,11 @@ void Editor::showActive() {
             media_->pdfView()->scrollTo(d->place().pdf);
 #endif
         break;
+    case Document::Kind::Database:
+        setViewBuffer(d->buffer(), true, false);
+        sqlite_->show(d->path());
+        gtk_stack_set_visible_child(GTK_STACK(slot_), sqlite_->widget());
+        break;
     case Document::Kind::Diff:
         setViewBuffer(d->buffer(), true, false);
         if (d->editorPage()) {
@@ -620,6 +712,7 @@ void Editor::showActive() {
         break;
     }
     syncOutline();
+    syncSide();
     notifyDocument();
     refreshStrip();
     titleChanged();
@@ -637,7 +730,10 @@ void Editor::syncOutline() {
         if (outline_) gtk_widget_set_visible(outline_->widget(), FALSE);
         return;
     }
-    if (!outline_) outline_ = new JsonOutlineView();
+    if (!outline_) {
+        outline_ = new JsonOutlineView();
+        g_object_ref(outline_->widget());   // the side pane may take its place in the paned
+    }
     if (gtk_paned_get_end_child(GTK_PANED(outlinePaned_)) != outline_->widget())
         gtk_paned_set_end_child(GTK_PANED(outlinePaned_), outline_->widget());
     gtk_widget_set_visible(outline_->widget(), TRUE);
@@ -673,6 +769,70 @@ void Editor::syncOutline() {
         if (outlineDoc_) caret(outlineDoc_->buffer(), nullptr, this);
     };
     caret(d->buffer(), nullptr, this);
+}
+
+// The Markdown page right of the source of a Markdown tab that wants it and
+// is showing its source: never beside the full preview. The text is parsed
+// and the changed pieces built 0.3 s after typing stops (MarkdownSide.h).
+void Editor::syncSide() {
+    Document* d = active_;
+    const bool on = d && d->kind() == Document::Kind::Text && d->isMarkdown() && !d->isNotebook() &&
+                    d->sideWanted() && !d->showsPreview() && !d->loading() &&
+                    buffer_ == d->buffer();
+    if (!on) {
+        dropSide();
+        if (side_) gtk_widget_set_visible(side_->widget(), FALSE);
+        return;
+    }
+    if (!side_) {
+        side_ = new MarkdownSide(tags_.table);
+        side_->onLink = [this](const std::string& url) { openMarkdownLink(url); };
+        side_->setSource(GTK_TEXT_VIEW(view_));
+    }
+    bool render = false;
+    if (sideDoc_ != d) {
+        dropSide();
+        sideDoc_ = d;
+        sideChanged_ = g_signal_connect(d->buffer(), "changed", G_CALLBACK(+[](GtkTextBuffer*, gpointer p) {
+            Editor* self = static_cast<Editor*>(p);
+            if (self->side_) { self->side_->edited(); self->side_->schedule(); }
+        }), this);
+        sideCaret_ = g_signal_connect(d->buffer(), "notify::cursor-position", G_CALLBACK(+[](GObject* b, GParamSpec*, gpointer p) {
+            Editor* self = static_cast<Editor*>(p);
+            if (!self->side_ || self->buffer_ != GTK_TEXT_BUFFER(b)) return;
+            GtkTextIter it;
+            gtk_text_buffer_get_iter_at_mark(GTK_TEXT_BUFFER(b), &it, gtk_text_buffer_get_insert(GTK_TEXT_BUFFER(b)));
+            self->side_->sourceCaret(gtk_text_iter_get_line(&it));
+        }), this);
+        render = true;
+    }
+    if (gtk_paned_get_end_child(GTK_PANED(outlinePaned_)) != side_->widget())
+        gtk_paned_set_end_child(GTK_PANED(outlinePaned_), side_->widget());
+    gtk_widget_set_visible(side_->widget(), TRUE);
+    side_->getText = [d] { return d->text(); };
+    char* dir = g_path_get_dirname(d->path().c_str());
+    const bool moved = side_->setContext(dir ? dir : ".", settings_.webImages() && WebImages::available(),
+                                         settings_.mermaid() && Mermaid::available(), settings_.isDark(),
+                                         settings_.math() && Math::available(), mathColor());
+    g_free(dir);
+    if (render || moved) side_->schedule(0);
+}
+
+void Editor::dropSide() {
+    if (!sideDoc_) return;
+    g_signal_handler_disconnect(sideDoc_->buffer(), sideChanged_);
+    g_signal_handler_disconnect(sideDoc_->buffer(), sideCaret_);
+    sideChanged_ = 0;
+    sideCaret_ = 0;
+    sideDoc_ = nullptr;
+    if (side_) side_->clear();
+}
+
+void Editor::toggleSidePreview() {
+    Document* d = active_;
+    if (!d || !d->isMarkdown() || d->isNotebook() || d->kind() != Document::Kind::Text) return;
+    d->setSideWanted(!d->sideWanted());
+    syncSide();
 }
 
 void Editor::dropOutline() {
@@ -1116,6 +1276,76 @@ void Editor::showLatex(bool on, bool focus) {
 #endif
 }
 
+bool Editor::exportHtmlTo(const std::string& path, std::string* error) {
+    Document* d = active_;
+    if (!d || !d->isMarkdown() || d->isNotebook()) {
+        if (error) *error = "Export as HTML needs a Markdown file";
+        return false;
+    }
+    char* base = g_path_get_basename(d->path().c_str());
+    std::string name = base ? base : "";
+    g_free(base);
+    if (name.empty()) name = "Untitled";
+    const std::string html = MarkdownHtml::page(d->text(), name);
+    std::string err;
+    if (!FolderSearch::writeFileAtomically(path, html, &err)) {
+        if (error) *error = err;
+        return false;
+    }
+    return true;
+}
+
+bool Editor::exportHtml(GtkWindow* parent) {
+    Document* d = active_;
+    if (!d || !d->isMarkdown() || d->isNotebook()) return false;
+    auto fail = [parent](const std::string& why) {
+        GtkAlertDialog* alert = gtk_alert_dialog_new("The page was not exported");
+        gtk_alert_dialog_set_detail(alert, why.c_str());
+        const char* ok[] = {"OK", nullptr};
+        gtk_alert_dialog_set_buttons(alert, ok);
+        gtk_alert_dialog_set_modal(alert, TRUE);
+        gtk_alert_dialog_choose(alert, parent, nullptr, nullptr, nullptr);
+        g_object_unref(alert);
+    };
+    if (const char* fixed = g_getenv("MINICODE_HTML_EXPORT_PATH"); fixed && *fixed) {
+        std::string why;
+        if (!exportHtmlTo(fixed, &why)) fail(why);
+        return true;
+    }
+    GtkFileDialog* dlg = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dlg, "Export as HTML");
+    if (!d->path().empty()) {
+        char* dir = g_path_get_dirname(d->path().c_str());
+        GFile* folder = g_file_new_for_path(dir);
+        gtk_file_dialog_set_initial_folder(dlg, folder);
+        g_object_unref(folder);
+        g_free(dir);
+        char* base = g_path_get_basename(d->path().c_str());
+        std::string stem = base ? base : "page";
+        g_free(base);
+        const size_t dot = stem.rfind('.');
+        if (dot != std::string::npos && dot > 0) stem.resize(dot);
+        gtk_file_dialog_set_initial_name(dlg, (stem + ".html").c_str());
+    }
+    struct Ask { std::weak_ptr<int> alive; Editor* self; std::function<void(const std::string&)> fail; };
+    auto* ask = new Ask{alive_, this, fail};
+    gtk_file_dialog_save(dlg, parent, nullptr,
+        [](GObject* src, GAsyncResult* res, gpointer data) {
+            std::unique_ptr<Ask> ask(static_cast<Ask*>(data));
+            GFile* dest = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(src), res, nullptr);
+            if (!dest) return;   // cancelled
+            char* path = g_file_get_path(dest);
+            g_object_unref(dest);
+            if (path && !ask->alive.expired()) {
+                std::string why;
+                if (!ask->self->exportHtmlTo(path, &why)) ask->fail(why);
+            }
+            g_free(path);
+        }, ask);
+    g_object_unref(dlg);
+    return true;
+}
+
 bool Editor::exportPdf(GtkWindow* parent) {
 #ifdef MINICODE_ENABLE_PDF
     Document* d = active_;
@@ -1126,6 +1356,55 @@ bool Editor::exportPdf(GtkWindow* parent) {
     return true;
 #else
     (void)parent;
+    return false;
+#endif
+}
+
+bool Editor::showLineInPdf() {
+#ifdef MINICODE_ENABLE_PDF
+    Document* d = active_;
+    if (!d || !d->isLatex() || d->path().empty()) return false;
+    GtkTextIter a, b, ins;
+    gtk_text_buffer_get_bounds(d->buffer(), &a, &b);
+    char* raw = gtk_text_buffer_get_text(d->buffer(), &a, &b, FALSE);
+    const std::string text = raw;
+    g_free(raw);
+    gtk_text_buffer_get_iter_at_mark(d->buffer(), &ins, gtk_text_buffer_get_insert(d->buffer()));
+    const int line = gtk_text_iter_get_line(&ins) + 1;
+    const std::string file = d->path();
+
+    auto real = [](const std::string& p) {
+        char* r = realpath(p.c_str(), nullptr);
+        std::string out = r ? r : p;
+        free(r);
+        return out;
+    };
+    std::string mainPath;
+    const std::string root = LatexLog::rootComment(text);
+    if (!root.empty()) {
+        mainPath = root[0] == '/' ? root : std::string(g_path_get_dirname(file.c_str())) + "/" + root;
+        mainPath = real(mainPath);
+    } else if (text.find("\\documentclass") == std::string::npos) {
+        for (Document* o : tabs_)
+            if (o != d && o->latexPreview() && o->latexPreview()->readsFile(file)) {
+                mainPath = o->path();
+                break;
+            }
+    }
+    if (mainPath.empty() || mainPath == real(file)) mainPath = file;
+    if (mainPath != file) {
+        Document* m = documentFor(mainPath);
+        if (m) activate(m);
+        else if (!openFile(mainPath, EditorTabs::OpenFrom::Other)) return false;
+    }
+    Document* m = active_;
+    if (!m || !m->isLatex()) return false;
+    LatexPreview* l = makeLatex(m);
+    l->setPath(m->path());
+    showLatex(true, false);
+    l->forwardSearch(file, line);
+    return true;
+#else
     return false;
 #endif
 }
@@ -1179,6 +1458,9 @@ static void setTagColor(GtkTextTagTable* table, const char* name, const char* pr
 void Editor::applySettings(const Settings& s) {
     if (compare_) compare_->applySettings(s);
     const bool webBefore = settings_.webImages();
+    const bool mermaidBefore = settings_.mermaid(), darkBefore = settings_.isDark();
+    const bool mathBefore = settings_.math();
+    const std::string mathColorBefore = mathColor();
     settings_ = s;
     code_->applySettings(s);   // the ruler and the gutter
     // Bracket boxes, and the bracket colors' tags (every tab's) and whether
@@ -1216,6 +1498,11 @@ void Editor::applySettings(const Settings& s) {
         rerenderPreview();
         if (!scrolled) notePreviewRest();   // still where Ctrl+Shift+V left it
     }
+    const bool mathChanged = s.math() != mathBefore || mathColor() != mathColorBefore;
+    if ((s.mermaid() != mermaidBefore || s.isDark() != darkBefore || mathChanged) && inMarkdownPage())
+        rerenderPreview();
+    if (s.webImages() != webBefore || s.mermaid() != mermaidBefore || s.isDark() != darkBefore || mathChanged)
+        syncSide();   // another context: the side page is built whole
 }
 
 bool Editor::isSettingsFile() const { return active_ && active_->isSettingsFile(); }
@@ -1643,6 +1930,7 @@ void Editor::togglePreview() {
         settleOnCaret();
         notifyDocument();
     }
+    syncSide();   // the side page steps aside for the full preview, and comes back
 }
 
 // The active Markdown file's page, rendered into a buffer of its own (D3)
@@ -1663,6 +1951,11 @@ void Editor::renderPreview() {
     hooks.folder = dir ? dir : ".";
     g_free(dir);
     hooks.webImages = settings_.webImages() && WebImages::available();
+    hooks.mermaid = settings_.mermaid() && Mermaid::available();
+    hooks.mermaidDark = settings_.isDark();
+    hooks.math = settings_.math() && Math::available();
+    hooks.mathMissing = settings_.math() && Math::built() && !Math::available();
+    hooks.mathColor = mathColor();
     std::weak_ptr<int> alive = alive_;
     hooks.link = [this, alive](const std::string& url) {
         if (!alive.expired()) openMarkdownLink(url);
@@ -1690,7 +1983,7 @@ void Editor::renderPreview() {
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(page, &start);
     gtk_text_buffer_place_cursor(page, &start);
-    notifyDocument();
+    notifyDocument();   // also the math line
     fetchWebPictures();
 }
 

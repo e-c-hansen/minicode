@@ -84,5 +84,11 @@ CsvTableSuite.cpp
 BrowserTabsSuite.cpp
 BrowserFindSuite.cpp
 LatexProblemsSuite.cpp
+LatexForwardSuite.cpp
 JsonOutlineSuite.cpp
 TerminalTabsSuite.cpp
+MarkdownSideSuite.cpp
+MarkdownSideSyncSuite.cpp
+MermaidSuite.cpp
+SqliteViewSuite.cpp
+MathSuite.cpp

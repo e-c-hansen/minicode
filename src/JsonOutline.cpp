@@ -258,7 +258,11 @@ struct Parser {
         } else if (c == '-' || (c >= '0' && c <= '9')) {
             out.nodes[me].kind = Kind::Number;
             ok = number();
-            out.nodes[me].preview = s.substr(out.nodes[me].start, pos - out.nodes[me].start);
+            // Cut as a string's is: a 300,000-digit number made a label
+            // GTK took half a second to lay out.
+            const size_t n = pos - out.nodes[me].start;
+            out.nodes[me].preview = s.substr(out.nodes[me].start, std::min(n, kPreviewChars * 4));
+            if (n > kPreviewChars * 4) out.nodes[me].preview += "\xE2\x80\xA6";   // …
         } else if (c == 't' || c == 'f') {
             out.nodes[me].kind = Kind::Bool;
             ok = literal(c == 't' ? "true" : "false");

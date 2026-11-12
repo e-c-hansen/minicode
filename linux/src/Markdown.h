@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "MarkdownParser.h"
 #include "WebImages.h"
 
 namespace Markdown {
@@ -41,6 +42,7 @@ struct Embed {
     int columns = 0;                    // a table's
     std::vector<GtkWidget*> labels;     // a table's cell labels
     int width = 0, height = 0;          // a picture's own size
+    int depth = -1;                     // a formula's: pixels below the baseline
 };
 
 // A web picture not here yet: the alt text standing in for it.
@@ -59,6 +61,10 @@ struct Page {
     std::vector<Embed> embeds;
     std::vector<PendingPicture> pending; // web pictures to fetch, in buffer order
     std::shared_ptr<Hooks> hooks;        // what the page's widgets call back
+    int length = 0;                      // renderRuns: the characters it put in
+    int waiting = 0;                     // Mermaid diagrams and formulas still being drawn (code for now)
+    int mathWaiting = 0;                 // of those, the formulas
+    int mathMissing = 0;                 // formulas left as TeX for want of tectonic
     // The span at character `offset`, or null.
     const Span* spanAt(int offset) const;
     // The first character from source line `line` or later (the end when none).
@@ -69,6 +75,15 @@ struct Hooks {
     std::string folder;   // the Markdown file's folder, for relative pictures
     // Pictures from https:// addresses are shown (markdown.web-images).
     bool webImages = false;
+    // ```mermaid blocks are drawn by mmdc (Mermaid.h): the pictures kept are
+    // shown, the others ask for a run and show as code meanwhile (Page::waiting).
+    bool mermaid = false;
+    bool mermaidDark = false;   // the preview's theme
+    // Math is typeset by tectonic (Math.h): pictures in `mathColor`, "#rrggbb",
+    // the text's. Wanted but tectonic missing: mathMissing counts them.
+    bool math = false;
+    bool mathMissing = false;
+    std::string mathColor = "#d4d4d4";
     // A click on a link inside a table cell or on a linked picture (links
     // in the text are the editor's to handle, from the spans).
     std::function<void(const std::string& url)> link;
@@ -83,6 +98,19 @@ struct Hooks {
 // Replace the buffer's contents with the rendered Markdown.
 Page render(GtkTextView* view, GtkTextBuffer* buffer, const std::string& source,
             const Hooks& hooks);
+
+// Runs [first, last) of `runs` rendered into `buffer` at character offset
+// `at` (the pieces of MarkdownPage; the rest of the buffer is untouched).
+// The returned page's offsets count from `at`; its span lines are the
+// runs' own.
+Page renderRuns(GtkTextView* view, GtkTextBuffer* buffer, const std::vector<MdRun>& runs,
+                size_t first, size_t last, int at, const std::shared_ptr<Hooks>& hooks);
+
+// Tooltips for the text a page marks with one (a failed diagram's complaint):
+// connect once to each view that shows pages. tooltipAt reads the buffer's
+// tooltip at a character offset ("" when none), for the checks.
+void installTooltips(GtkTextView* view);
+std::string tooltipAt(GtkTextBuffer* buffer, int offset);
 
 // Size the page's tables and pictures to a pane `width` pixels wide.
 void fit(Page& page, int width);

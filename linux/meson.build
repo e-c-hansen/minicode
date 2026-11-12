@@ -16,6 +16,11 @@ core_sources = [
   core_dir / 'MarkdownParser.cpp',
   core_dir / 'MarkdownEdit.cpp',
   core_dir / 'MarkdownTasks.cpp',
+  core_dir / 'MarkdownPage.cpp',
+  core_dir / 'PreviewScroll.cpp',
+  core_dir / 'MarkdownHtml.cpp',
+  core_dir / 'MermaidDiagram.cpp',
+  core_dir / 'MathTex.cpp',
   core_dir / 'Settings.cpp',
   core_dir / 'LineComments.cpp',
   core_dir / 'AutoIndent.cpp',
@@ -161,7 +166,9 @@ gui_sources = [
   'src/Folds.cpp',
   'src/Markdown.cpp',
   'src/CsvTable.cpp',
+  'src/SqliteView.cpp',
   'src/JsonOutlineView.cpp',
+  'src/MarkdownSide.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.
   'src/Terminal.cpp',
@@ -264,6 +271,10 @@ gui_sources = [
   # like Terminal.cpp) over its plain C++ half.
   'src/WebImageRules.cpp',
   'src/WebImages.cpp',
+  # Mermaid diagrams in the Markdown preview: mmdc, run and kept.
+  'src/Mermaid.cpp',
+  # Math in the Markdown preview: tectonic, run and cut with poppler.
+  'src/Math.cpp',
   # The menu bar, the accelerators and the tree's keys, from the registry.
   'src/Keys.cpp',
   # The window's panes: the sidebar, and the editor, browser and terminal
@@ -307,7 +318,7 @@ gui_sources = [
 
 inc = include_directories('src', '../src')
 
-deps = [gtk_dep]
+deps = [gtk_dep, dependency('sqlite3')]
 cpp_args = []
 
 # --- optional: terminal panel via VTE (vte-2.91-gtk4) ----------------------

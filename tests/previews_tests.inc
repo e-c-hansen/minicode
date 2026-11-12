@@ -431,6 +431,13 @@ static void testJsonOutline() {
         CHECK(p.size() < 600);
         CHECK(p.size() >= 3 && p.substr(p.size() - 3) == "\xE2\x80\xA6");
         CHECK((p.size() - 3) % 2 == 0);
+        // So are long numbers.
+        JsonOutline::Outline d = parse("[" + std::string(300000, '1') + "]");
+        CHECK(d.ok);
+        CHECK(d.nodes[1].kind == JsonOutline::Kind::Number);
+        CHECK(d.nodes[1].preview.size() == JsonOutline::kPreviewChars * 4 + 3);
+        CHECK(d.nodes[1].preview.substr(d.nodes[1].preview.size() - 3) == "\xE2\x80\xA6");
+        CHECK(parse("[-1.5e3]").nodes[1].preview == "-1.5e3");
     }
     GROUP("jsonoutline:errors");
     {

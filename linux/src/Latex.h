@@ -82,6 +82,9 @@ public:
     // downloads into ~/.local/share/minicode/bin, then PATH.
     static std::string tectonicPath();
     static std::string managedTectonicPath();
+    // Download the pinned tectonic without a preview (the Markdown math's
+    // line); `done` runs on the main loop, with "" or the problem.
+    static void downloadTectonicThen(std::function<void(const std::string& problem)> done);
 
     // What the click path and the popover do, reachable for tests: the
     // double-click PdfView reports (0-based page, points from the page's
@@ -117,6 +120,18 @@ public:
     // Where the hidden sibling and the output folder are (tests).
     std::string siblingPathForTest() const { return scratchPath(); }
     std::string outDirForTest() const { return outDir(); }
+
+    // Forward search (CLAUDE.md, "Forward search"): light the lines of text
+    // that `line` of `file` (the buffer's own file, or one it \\input) set,
+    // on the first page they reached (else the nearest line below or above
+    // within 40), scroll the page there and clear the light after 1.5 s.
+    // Typesets first when the PDF is not of the buffer, and does it when the
+    // PDF arrives. `file` empty means the buffer's file.
+    void forwardSearch(const std::string& file, int line);
+    // Whether the PDF on screen was typeset from reading `file` (an \\input).
+    bool readsFile(const std::string& file) const;
+    // The line the last forward search lit (0 none), for tests.
+    int forwardFoundLine() const { return forwardFound_; }
 
     // State, for tests and the status line.
     PdfView* pdfView() const { return pdf_; }
@@ -182,6 +197,10 @@ private:
     GtkWidget* warnBox_ = nullptr;
     GtkWidget* logScroll_ = nullptr;
     PdfView*   pdf_     = nullptr;
+
+    void doForward(const std::string& file, int line);
+    guint       forwardTimer_ = 0;
+    int         forwardFound_ = 0;
 
     GtkWidget* popover_  = nullptr;
     GtkWidget* popLabel_ = nullptr;
