@@ -152,9 +152,11 @@ MC_GUI_SUITE(problems) {
     MCGuiWait("the status bar counts every file's", 5, [] {
         return panel()->statusText() == "2 errors, 2 warnings";
     });
-    MCGuiStep("the counts are on screen; Ctrl+Shift+M", [] {
+    // The label is laid out at the frame after its text changes, which a
+    // loaded machine draws late: wait for it rather than check at once.
+    MCGuiWait("the counts are on screen", 5, [] { return MCGuiOnScreen(panel()->statusLabel()); });
+    MCGuiStep("Ctrl+Shift+M", [] {
         MCGuiNote("status bar: %s", panel()->statusText().c_str());
-        GCHECK(MCGuiOnScreen(panel()->statusLabel()));
         GCHECK(editorHasKeyboard());
         MCGuiKey("ctrl+shift+m");
     });

@@ -111,12 +111,16 @@ MC_GUI_SUITE(markdown_math) {
 )AWK"
             "n=$(cat \"$out/math.log.good\"); rm -f \"$out/math.log.good\"\n"
             "[ \"$n\" -gt 0 ] && cp '" + P("pdf-") + "'\"$n\".pdf \"$out/math.pdf\"\n"
-            "cat \"$out/math.log\"\n";
+            "cat \"$out/math.log\"\n"
+            // How many formulas each run was given, so a check can tell a
+            // cache hit from a batch that typeset everything again.
+            "grep -o '\\\\mcship{[0-9]*}' \"$tex\" | wc -l | tr -d ' ' >> '" + P("batches.log") + "'\n";
         MCGuiWriteFile(P("fake-tectonic"), script);
         g_chmod(P("fake-tectonic").c_str(), 0755);
         g_setenv("MINICODE_TECTONIC", P("fake-tectonic").c_str(), TRUE);
         g_setenv("MINICODE_MATH_CACHE", P("math-cache").c_str(), TRUE);
         MCGuiWriteFile(P("tectonic.log"), "");
+        MCGuiWriteFile(P("batches.log"), "");
         MCGuiWriteFile(P("plain.md"), "# Plain\n\nNo formula here, only a price of 5 and 10 dollars.\n");
         MCGuiWriteFile(P("math.md"),
                        "# Math\n\nInline $a+b$ and then\n\n$$\nx^2\n$$\n\nAnd $\\failme FAILME$ bad.\n");
@@ -189,15 +193,26 @@ MC_GUI_SUITE(markdown_math) {
     });
 
     openPage("math.md");
-    MCGuiStep("a reopen is answered by the cache with no run", [] {
+    MCGuiStep("a reopen is answered by the cache", [] {
         GCHECK_EQ_STR(std::to_string(embeds()), "2");
-        GCHECK_EQ_STR(std::to_string(Math::runs()), "1");
-        GCHECK_EQ_STR(std::to_string(lines(Log())), "1");
-        // The failed formula was not cached: it asks again.
-        GCHECK_EQ_STR(ed()->mathNote(), "Typesetting 1 formula…");
-        GCHECK_EQ_STR(std::to_string(ed()->active()->pageInfo().mathWaiting), "1");
+        // The failed formula was not cached: it asks again 50 ms after the
+        // page shows, so on a loaded machine its run (0.8 s in the stand-in)
+        // may have started before this step; the batch sizes below are what
+        // tell the cache's answer from a run that typeset everything again.
+        GCHECK(Math::runs() <= 2);
+        if (Math::runs() == 1) {
+            GCHECK_EQ_STR(ed()->mathNote(), "Typesetting 1 formula…");
+            GCHECK_EQ_STR(std::to_string(ed()->active()->pageInfo().mathWaiting), "1");
+        }
     });
     MCGuiWait("the failure asked again and settled", 30, [] { return Math::runs() == 2 && ed()->active()->pageInfo().waiting == 0; });
+    MCGuiStep("the second run was given the failed formula alone", [] {
+        const std::string b = MCGuiReadFile(P("batches.log"));
+        MCGuiNote("formulas per run: %s", b.c_str());
+        GCHECK_EQ_STR(std::to_string(lines(b)), "2");
+        GCHECK(b.size() >= 2 && b.substr(b.size() - 2) == "1\n");
+        GCHECK_EQ_STR(std::to_string(lines(Log())), "2");
+    });
     MCGuiStep("markdown.math = false", [] {
         ed()->closeAllTabs();
         MCGuiSetSettings("lsp.enabled = false\ntheme = dark-plus\nmarkdown.math = false\n");
