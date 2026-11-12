@@ -428,7 +428,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Add the next place the selected text occurs to the selection, or select the word at the cursor | Command D | Ctrl D |  |
 | Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | Command I | Ctrl I (edits in the editor so far) |  |
 | Browse the file tree and open the selected file | Up, Down, Return | Up, Down, Enter; Left and Right close and open folders |  |
-| Clear the terminal, its scrollback included | Command K | Clear Terminal in the Terminal menu or the command palette, which clears the screen and keeps the scrollback; it has no key, since Ctrl K is the shell's |  |
+| Clear the terminal, its scrollback included | Command K | Clear Terminal in the Terminal menu or the command palette, which clears the screen and keeps the scrollback; it has no key, since the shell keeps the Linux counterpart of Command K |  |
 | Close an agent's note (`minicode open --note`) in the editor | Escape, or its × |  |  |
 | Close every tab but the one on show | Option Command T | Close Other Tabs in the File menu or the tab's right click menu |  |
 | Close the active terminal | Control Shift W | Ctrl Alt Shift W |  |
