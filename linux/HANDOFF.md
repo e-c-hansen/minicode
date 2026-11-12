@@ -3479,6 +3479,17 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   `shell_integration` (`echo LEFT` half-typed, `term --run 'echo RIGHT'`
   and Run File, a user's own `bind` in the .bashrc); the suite fails
   without the key. zsh's half has not run here (no zsh).
+- **Trap: PS0 printed as text (CI, 2026-11-12)**: PS0 was
+  `${BASH_VERSION:0:$((x+=1,0))}$(...)`; on CI's bash its leftover
+  (`BASH_VERSION:0:0}`) showed before every prompt and command output,
+  breaking `term-output` and the half-typed-line checks (the ThinkPad never
+  showed it; the exact CI cause was not reproduced: `shopt -u promptvars`
+  prints the whole string, a long path and `set -o posix` do nothing).
+  The text now holds no `${...}`: an OSC 7777 (ignored by VTE, ended by BEL,
+  since `\` + `$` in a prompt is an escape) wraps the counter's `$((...))`,
+  and `shopt -s promptvars` is put back after `~/.bashrc`. The suite reads
+  `vte_terminal_get_text_format` (soft wraps joined) and
+  `MC_SHELL_TEST_BASHRC='shopt -u promptvars'` adds lines to its .bashrc.
 - **Other shells** (fish, sh, dash, anything else in `$SHELL`) start as
   before, with no nonce, and stay unknown. `exec` into another shell, or
   ssh, leaves the state as the last mark said: busy with that command.

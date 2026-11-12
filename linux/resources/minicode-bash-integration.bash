@@ -114,5 +114,12 @@ if [[ -n $__minicode_nonce ]] &&
   else
     PROMPT_COMMAND=$'__minicode_status\n'"${PROMPT_COMMAND-}"$'\n__minicode_precmd'
   fi
-  PS0=${PS0-}'${BASH_VERSION:0:$((__minicode_x+=1,0))}$(__minicode_preexec)'
+  # PS0 and the prompts are expanded only with promptvars; a .bashrc that
+  # turned it off would see our text printed, so it is put back.
+  shopt -s promptvars 2>/dev/null
+  # The counter moves in an arithmetic expansion inside an OSC the terminal
+  # ignores (7777), so even a bash that printed it would show nothing; no
+  # parameter expansion (`${...}`) is left in the text, since ESC before
+  # `$` `{` is a charset escape that eats them (CI's picture, November 2026).
+  PS0=${PS0-}$'\e]7777;''$((__minicode_x+=1))'$'\a''$(__minicode_preexec)'
 fi

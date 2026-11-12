@@ -175,7 +175,7 @@ bool sameState(const ShellIntegration::ShellState& a, const ShellIntegration::Sh
 
 std::string vteText() {
     VteTerminal* vte = findVte(term()->widget());
-    char* t = vte ? vte_terminal_get_text(vte, nullptr, nullptr, nullptr) : nullptr;
+    char* t = vte ? vte_terminal_get_text_format(vte, VTE_FORMAT_TEXT) : nullptr;
     std::string r = t ? t : "";
     g_free(t);
     return r;
@@ -225,7 +225,10 @@ MC_GUI_SUITE(shell_integration) {
         MCGuiWriteFile(gHome + "/.bashrc",
                        "PROMPT_COMMAND='echo \"$?\" >> \"$HOME/pc.log\"'\n"
                        "bind '\"\\C-x\\C-t\": \"USERBIND-OK\"'\n"
-                       "alias mcalias='echo alias-works > \"$HOME/alias.out\"'\n");
+                       "alias mcalias='echo alias-works > \"$HOME/alias.out\"'\n" +
+                           // MC_SHELL_TEST_BASHRC adds lines (shopt -u promptvars, set -o posix) to
+                           // try the integration under a user's odd options.
+                           std::string(g_getenv("MC_SHELL_TEST_BASHRC") ? g_getenv("MC_SHELL_TEST_BASHRC") : "") + "\n");
         term()->onShellStateChanged = [] { gAccepted++; };
         GCHECK(g_file_test("/bin/bash", G_FILE_TEST_IS_EXECUTABLE));
         startShell("/bin/bash");
