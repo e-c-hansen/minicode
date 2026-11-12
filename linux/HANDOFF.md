@@ -3735,6 +3735,7 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
 - **Traps**: `counted-matches` never fires without `count_matches`;
   zoom set by the user must be written before the commit handler reapplies
   the site's.
+
 ### 54. The Markdown page to the side, in pieces (done, November 2026; `PARITY.md` item 4.2, first part)
 
 - **Files**: `src/MarkdownSide.{h,cpp}` (the pane), `Markdown::renderRuns` in
