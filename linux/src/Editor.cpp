@@ -26,6 +26,7 @@
 #include "Utf8Offsets.h"
 #include "MediaView.h"
 #include "CsvTable.h"
+#include "SqliteView.h"
 #include "JsonOutlineView.h"
 #include "MarkdownSide.h"
 #include "Notebook.h"
@@ -162,6 +163,8 @@ Editor::Editor() {
     gtk_widget_set_vexpand(slot_, TRUE);
     gtk_stack_add_named(GTK_STACK(slot_), scroller_, "text");
     gtk_stack_add_named(GTK_STACK(slot_), media_->widget(), "media");
+    sqlite_ = new SqliteView();
+    gtk_stack_add_named(GTK_STACK(slot_), sqlite_->widget(), "sqlite");
     gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
 
     // The tabs (Tabs.cpp): a click selects, the close button or a middle
@@ -277,6 +280,7 @@ Editor::~Editor() {
     g_object_unref(tabActions_);
     delete strip_;
     delete media_;
+    delete sqlite_;
     *compareAlive_ = false;
     delete diff_;
     delete compare_;
@@ -480,6 +484,7 @@ void Editor::stash() {
     }
 #endif
     if (d->kind() == Document::Kind::Media) media_->clear();
+    if (d->kind() == Document::Kind::Database) sqlite_->clear();
     d->setShownIn(nullptr);
 }
 
@@ -593,6 +598,11 @@ void Editor::showActive() {
         if (d->place().havePdf && media_->kind() == MediaView::Kind::Pdf)
             media_->pdfView()->scrollTo(d->place().pdf);
 #endif
+        break;
+    case Document::Kind::Database:
+        setViewBuffer(d->buffer(), true, false);
+        sqlite_->show(d->path());
+        gtk_stack_set_visible_child(GTK_STACK(slot_), sqlite_->widget());
         break;
     case Document::Kind::Diff:
         setViewBuffer(d->buffer(), true, false);

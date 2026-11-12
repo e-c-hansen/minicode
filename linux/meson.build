@@ -162,6 +162,7 @@ gui_sources = [
   'src/Folds.cpp',
   'src/Markdown.cpp',
   'src/CsvTable.cpp',
+  'src/SqliteView.cpp',
   'src/JsonOutlineView.cpp',
   'src/MarkdownSide.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
@@ -308,7 +309,7 @@ gui_sources = [
 
 inc = include_directories('src', '../src')
 
-deps = [gtk_dep]
+deps = [gtk_dep, dependency('sqlite3')]
 cpp_args = []
 
 # --- optional: terminal panel via VTE (vte-2.91-gtk4) ----------------------

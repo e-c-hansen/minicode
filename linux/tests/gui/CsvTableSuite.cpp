@@ -3,7 +3,7 @@
 // the cells as the core's Csv reads them, one cell edit changing one line of
 // the text and the file, undo, the toggle to the text and back, an unedited
 // file saved byte for byte, a cell being typed committed before the tab goes,
-// and a binary file and a database not read as text.
+// and a binary file not read as text and a database in its viewer.
 #include "Harness.h"
 
 #include "CsvTable.h"
@@ -167,10 +167,10 @@ MC_GUI_SUITE(csv_table) {
     MCGuiStep("a database and a binary file are not opened as text", [] {
         MCGuiOpenFileKept(F("d.sqlite"));
     });
-    MCGuiWait("the database's message", 10, [] { return ed()->active() && ed()->active()->path() == F("d.sqlite"); });
-    MCGuiStep("saying what it is", [] {
-        GCHECK(ed()->active()->kind() == Document::Kind::Message);
-        GCHECK(bufferText().find("SQLite database") != std::string::npos);
+    MCGuiWait("the database's viewer", 10, [] { return ed()->active() && ed()->active()->path() == F("d.sqlite"); });
+    MCGuiStep("shown by the database viewer (sqlite_view checks it), not as text", [] {
+        GCHECK(ed()->active()->kind() == Document::Kind::Database);
+        GCHECK(bufferText().empty());
         MCGuiOpenFileKept(F("b.bin"));
     });
     MCGuiWait("the binary file's message", 10, [] { return ed()->active() && ed()->active()->path() == F("b.bin"); });

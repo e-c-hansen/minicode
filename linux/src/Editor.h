@@ -34,6 +34,7 @@ class CodeView;
 class FoldUi;
 class MediaView;
 class CsvTable;
+class SqliteView;
 class JsonOutlineView;
 class MarkdownSide;
 class SnippetSession;
@@ -274,6 +275,7 @@ public:
     JsonOutlineView* jsonOutline() const { return outline_; }
     bool showsOutline() const { return outlineDoc_ != nullptr; }
     CsvTable* csvTable() const { return csv_; }
+    SqliteView* sqliteView() const { return sqlite_; }
     bool isMarkdown() const { return active_ && active_->isMarkdown(); }
     bool inPreview() const { return active_ && active_->showsPreview(); }
     // A .tex/.ltx/.latex file, in a build with poppler: it opens in the LaTeX
@@ -542,6 +544,7 @@ private:
     std::shared_ptr<bool> compareAlive_ = std::make_shared<bool>(true);   // for the prepare thread
     MediaView*     media_    = nullptr;
     CsvTable*      csv_      = nullptr;   // made on the first table
+    SqliteView*    sqlite_   = nullptr;   // a SQLite tab's tables and rows
     Document*      csvDoc_   = nullptr;   // the tab it shows
     gulong         csvChanged_ = 0;       // csvDoc_'s buffer "changed"
     bool           csvApplying_ = false;  // the table's own edit is going in

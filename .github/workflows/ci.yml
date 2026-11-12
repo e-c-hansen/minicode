@@ -84,7 +84,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build build-essential pkg-config \
             libgtk-4-dev libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev \
-            libpoppler-glib-dev \
+            libpoppler-glib-dev libsqlite3-dev \
             xvfb libxtst-dev dbus-daemon
 
       # apt will happily install a runtime library and leave the -dev package

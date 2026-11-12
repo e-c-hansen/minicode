@@ -255,6 +255,7 @@ const char* kindName(const Document* d) {
     case Document::Kind::Text: return "text";
     case Document::Kind::Message: return "message";
     case Document::Kind::Media: return "media";
+    case Document::Kind::Database: return "database";
     case Document::Kind::Diff: return "diff";
     }
     return "text";

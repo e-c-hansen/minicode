@@ -13,6 +13,7 @@
 #include "Latex.h"
 #include "FileSniff.h"
 #include "MediaView.h"
+#include "SqliteView.h"
 #include "TabStrip.h"
 
 #include <algorithm>
@@ -152,8 +153,8 @@ bool Editor::loadInto(Document* d, const std::string& path) {
         return true;
     }
     // What the file is, from its first bytes and name (FileSniff, as the
-    // Mac routes): a database and a binary document have no viewer here yet,
-    // and are not read as text. CSV, JSON and the rest are text, and the
+    // Mac routes): a database has its own viewer, and a binary document has
+    // none here, so neither is read as text. CSV, JSON and the rest are text, and the
     // document itself decides on the table.
     {
         std::string head;
@@ -165,9 +166,8 @@ bool Editor::loadInto(Document* d, const std::string& path) {
         const std::string name = baseName(path);
         switch (FileSniff::classify(path, head)) {
         case FileSniff::Kind::Sqlite:
-            d->setMessage(path, "\n  Cannot display “" + name + "”.\n\n  (A SQLite database; "
-                                "there is no database viewer in this version.)");
-            return false;
+            d->setDatabase(path);   // SqliteView shows it, read only
+            return true;
         case FileSniff::Kind::QuickLook:
             d->setMessage(path, "\n  Cannot display “" + name + "”.\n\n  (A binary file or a "
                                 "document another program opens; nothing here shows it.)");
@@ -394,6 +394,8 @@ void Editor::focusActiveDocument() {
 #endif
     if (d && d->kind() == Document::Kind::Media)
         target = media_->widget();
+    else if (d && d->kind() == Document::Kind::Database)
+        target = sqlite_->widget();
     else if (d && d->editorPage())
         target = d->editorPage()->focusWidget();
     else if (d && d->kind() == Document::Kind::Diff && d->compare() && compare_)
@@ -584,6 +586,7 @@ void Editor::pathMoved(const std::string& from, const std::string& to) {
 #endif
         if (d != active_) continue;
         if (d->kind() == Document::Kind::Media) media_->setPath(now);   // watched under its new name
+        if (d->kind() == Document::Kind::Database) sqlite_->setPath(now);
         if (wasPreview && !d->showsPreview()) {
             // No longer Markdown or LaTeX: the source back in the slot.
             if (buffer_ != d->buffer()) {
