@@ -2588,6 +2588,10 @@ What later items build on:
   context; a folder that appears is read and its files reported as
   created. Batches are classified, coalesced and matched there
   (`Lsp::prepareWatched`); the main thread only writes the message.
+  Trap: the registration is known before the thread has walked the
+  tree (39 monitors quiet, 5 loaded); a file written meanwhile is found
+  by the walk, never reported as created, so a check waits for
+  `watchedFolderCount` to stop growing before it writes.
 - **Organize on save**: `Formatting::beforeSaving(organize, format)` from
   `act_save`, the same `saveTab_` marker as the formatter's wait.
 - **For checks**: `MCGuiApp().problems` (`rowTexts`, `selectedRow`,

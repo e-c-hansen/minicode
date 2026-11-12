@@ -142,6 +142,11 @@ MC_GUI_SUITE(lsp_watch) {
         showTab(F("a.py"));
     });
     MCGuiWait("the folders are watched", 20, [] { return lsp()->watchedFolders().size() == 2; });
+    // The registration is known before the watcher's thread has walked the
+    // tree (39 monitors on a quiet run, 5 on a loaded one at this point); a
+    // file written meanwhile is a file the walk finds, not a new one.
+    MCGuiWaitQuiet("the first walk of the folders is done", 1.0, 30,
+                   [] { return static_cast<long>(lsp()->watchedFolderCount()); });
     MCGuiStep("the project and the outside folder, resolved; the reply was null", [] {
         GCHECK(hasFolder(gRoot) && hasFolder(gLib));
         bool answered = false;
