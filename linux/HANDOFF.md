@@ -3869,6 +3869,53 @@ panel has a row).
   exported page's key lines.
 - **Not done**: math (4.3's second part); Mermaid on Android (no pane there).
 
+### 57. The SQLite viewer (done, November 2026; `PARITY.md` item 4.1, last part)
+
+- **Routing**: `FileSniff::Kind::Sqlite` makes a `Document::Kind::Database`
+  (`Document::setDatabase`, no text in the buffer), shown by `SqliteView` in
+  the slot's `sqlite` page; `stash` clears it, a rename calls `setPath`.
+  `csv_table` used to check the old "no database viewer" message and now
+  checks the kind.
+- **The view** (`SqliteView.{h,cpp}`, libsqlite3, `dependency('sqlite3')`,
+  `libsqlite3-dev` in debian/control, the GTK CI job and BUILD-LINUX.md): a
+  `GtkPaned` with the tables and views (tables first) in a `GtkListView`, and
+  a query entry, a status line and a `GtkColumnView` of the answer. Picking a
+  table runs `SELECT * FROM "name"` (quotes doubled); Enter in the entry runs
+  the query. NULL is a dimmed italic "NULL", a BLOB "(BLOB, N bytes)", a cell
+  is cut at 4,000 bytes. A fresh file shows its first table.
+- **Read only, as the Mac's**: `SQLITE_OPEN_READONLY | SQLITE_OPEN_URI` on
+  `file:<percent-encoded path>?mode=ro`, plus `&immutable=1` for a WAL
+  database (bytes 18 and 19 are 2) with no `-wal` beside it; the defensive
+  flag; `PRAGMA query_only=ON`; an authorizer denying BEGIN/COMMIT/ROLLBACK,
+  SAVEPOINT, ATTACH, DETACH and a pragma given an argument unless it is a
+  reading one (`table_info` and friends); a statement with
+  `sqlite3_stmt_readonly` false is refused after it is prepared and never
+  stepped; only the first statement runs (the tail is ignored); a progress
+  handler (every 1,000 VM steps) ends a query at 5 s ("Stopped: ...") or when
+  a newer request arrives; 1,000 rows at most, with a note.
+- **Threads**: one `std::thread` owns the connection and does everything,
+  opening included. `submit` sets `cancel_` under the queue's mutex (the
+  worker clears it as it takes a job, so it ends only a query already
+  running); results go back by `g_idle_add` holding a `shared_ptr<Link>`
+  that the destructor empties, and carry a generation: an answer for a
+  request a newer one replaced is dropped, and `busy()` counts requests not
+  yet delivered. The destructor joins (a running query ends at the next
+  progress step).
+- **A reopen**: the file is watched (`GFileMonitor`, a change settled for
+  400 ms); `show` of the same path opens again and runs the query that was on
+  show, and the table list keeps its pick. The editor calls `show` whenever
+  the tab is shown.
+- **Checked by** `sqlite_view` (`SqliteViewSuite.cpp`, databases made with the
+  C API): tables, rows and NULLs, a query, the 1,000-row cap, the first
+  statement only, INSERT, UPDATE, DELETE, CREATE, BEGIN, SAVEPOINT, ATTACH and
+  `PRAGMA user_version = 5` refused with the file's bytes unchanged and no
+  journal or second file made, a reading pragma answered, a WAL file without
+  -wal opened, a file that is not a database, a reopen keeping the query, and
+  an endless recursive CTE stopped at about 5 s with the main thread's CPU
+  bounded.
+- **Not done**: sorting by a column, a cell's full text (a tooltip or copy),
+  column widths kept, the table list's width kept, and a query history.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

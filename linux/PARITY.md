@@ -1400,7 +1400,7 @@ its server comes first here (2.0).
 
 These may run in parallel.
 
-- [ ] **4.1 Viewers.** CSV, JSON outline, notebooks, and SQLite, with the
+- [x] **4.1 Viewers.** CSV, JSON outline, notebooks, and SQLite, with the
   same read-only rules. `FileSniff`, `Csv`, `JsonOutline`, `Notebook`.
   *Part one done:* files route by `FileSniff::classify` (a database or a
   binary file gets a message, not text), and a CSV, TSV or .tab file opens
@@ -1409,6 +1409,10 @@ These may run in parallel.
   *Part two done:* a .json file (and .jsonc, tsconfig*.json, .vscode/*.json)
   has the outline beside its text, and a .ipynb opens rendered read-only
   (`JsonOutlineView.cpp`, HANDOFF.md item 52); `json_outline` checks both.
+  *Last part done:* a SQLite database opens in a read-only viewer, its tables
+  and views listed, a query field and a column view of 1,000 rows at most,
+  writing statements refused, a 5 s limit, one worker thread
+  (`SqliteView.cpp`, HANDOFF.md item 57); `sqlite_view` checks it.
 - [ ] **4.2 The preview to the side and scroll sync.** `MarkdownPage`,
   `PreviewScroll`. Measured for R1 (2026-11-09): opening README.md in the
   preview holds the main thread for 0.3 to 0.6 s of CPU, the same without

@@ -291,6 +291,15 @@ void Document::setMedia(const std::string& path) {
     fill("");
 }
 
+void Document::setDatabase(const std::string& path) {
+    clearSource();
+    kind_ = Kind::Database;
+    path_ = path;
+    ext_ = extensionOf(path);
+    gtk_text_buffer_set_enable_undo(buffer_, FALSE);
+    fill("");
+}
+
 void Document::setDiff(const std::string& title, const std::string& bytes, bool commit) {
     if (kind_ != Kind::Diff) {
         clearSource();

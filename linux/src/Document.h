@@ -100,6 +100,7 @@ public:
         Text,      // a file's text, editable
         Message,   // a file that cannot be shown as text: why, in the buffer
         Media,     // an image, a PDF, video or audio (the editor's MediaView)
+        Database,  // a SQLite database (the editor's SqliteView)
         Diff,      // a diff or a commit from Source Control (GitDiffView)
     };
     // Reading a file as text (readText).
@@ -124,6 +125,7 @@ public:
     void loadText(const std::string& path, const std::string& content);
     void setMessage(const std::string& path, const std::string& message);
     void setMedia(const std::string& path);
+    void setDatabase(const std::string& path);
     void setDiff(const std::string& title, const std::string& bytes, bool commit);
     // A tab come back from a session whose file is not read until it is
     // first shown (Editor::showActive reads it): a Message with nothing in

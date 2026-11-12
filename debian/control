@@ -6,6 +6,7 @@ Build-Depends:
  libgtk-4-dev,
  libpoppler-glib-dev,
  libsoup-3.0-dev,
+ libsqlite3-dev,
  libvte-2.91-gtk4-dev,
  libwebkitgtk-6.0-dev,
  meson,

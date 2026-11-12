@@ -1449,7 +1449,7 @@ Displays.
 On Ubuntu 24.04 and 26.04:
 
     sudo apt install build-essential meson libgtk-4-dev \
-        libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev libpoppler-glib-dev pkg-config
+        libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev libpoppler-glib-dev libsqlite3-dev pkg-config
 
 Check afterwards that all four actually landed, since apt will happily install
 the runtime library while leaving the `-dev` package out:

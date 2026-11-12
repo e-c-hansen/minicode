@@ -47,7 +47,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
 # their feature macro is defined.
 GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Document.cpp src/Tabs.cpp \
-       src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp src/CsvTable.cpp src/JsonOutlineView.cpp src/MarkdownSide.cpp \
+       src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp src/CsvTable.cpp src/SqliteView.cpp src/JsonOutlineView.cpp src/MarkdownSide.cpp \
        src/BracketView.cpp src/BracketColors.cpp src/AutoCloseInput.cpp src/BufferText.cpp \
        src/Carets.cpp src/CaretEdits.cpp src/SnippetSession.cpp src/Folds.cpp \
        src/Terminal.cpp src/Browser.cpp src/BrowserPages.cpp src/AppSettings.cpp src/Appearance.cpp src/MenuBarFocus.cpp \
@@ -76,7 +76,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Do
 
 SRCS := $(GUI) $(CORE)
 
-PKGS   := gtk4
+PKGS   := gtk4 sqlite3
 # The version the User-Agent of web picture fetches carries, from the Mac's
 # Info.plist, which the release script stamps.
 VERSION := $(shell sed -n '/CFBundleShortVersionString/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' ../Info.plist)
