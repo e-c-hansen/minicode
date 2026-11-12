@@ -41,6 +41,7 @@ public:
     // Whether the terminal and its shell were made yet (for the checks).
     bool made() const { return vte_ != nullptr; }
     void focus();
+    GtkWidget* vteWidget() const { return vte_; }   // for the checks
     // The keyboard came into the terminal (a click, Tab, focus()): the dock
     // makes it the active one (PARITY.md 4.7, splits).
     std::function<void()> onFocusIn;
@@ -113,6 +114,23 @@ public:
     // The last `lines` lines the terminal shows, scrollback included,
     // trailing blank lines left out (`minicode term-output`).
     std::string recentText(int lines);
+    // Find in the terminal (PARITY.md 4.7, third part): a small bar over the
+    // pane's top right, searching the scrollback and the screen with VTE's
+    // own search as you type (case-insensitive, the query taken literally),
+    // wrapping. Enter and F3 step on, Shift+Enter and Shift+F3 back, Escape
+    // closes it and gives the terminal the keyboard. VTE cannot count
+    // matches, so the bar shows only "No results" for a miss.
+    void showFind();
+    void closeFind(bool keyboardBack);
+    bool findOpen() const { return findBox_ && gtk_widget_get_visible(findBox_); }
+    bool findHasKeyboard() const;
+    void findStep(bool forward);
+    GtkWidget* findEntry() const { return findEntry_; }
+    std::string findStatus() const;   // "" or "No results"
+    // Clear Terminal (the Mac's Cmd+K): Ctrl+L to the shell when it is at its
+    // prompt, so the prompt comes back whole; false (nothing sent) while a
+    // program runs or the shell is not known to be at a prompt.
+    bool clearScreen();
     // The tab's name (PARITY.md 4.7): the user's own title if one was given
     // (Rename Terminal…), else the title the running program set (OSC 0/2),
     // else the shell's name.
@@ -194,6 +212,12 @@ private:
     std::string userTitle_;
     GtkEventController* focusCtl_ = nullptr;   // onFocusIn's
     GtkWidget*  attentionDot_ = nullptr;   // the mark, in the overlay
+    GtkWidget*  findBox_ = nullptr;        // the find bar, in the overlay
+    GtkWidget*  findEntry_ = nullptr;
+    GtkWidget*  findLabel_ = nullptr;
+    bool        findMiss_ = false;
+    void buildFind();
+    void runFind(bool forward, bool fresh);
     std::string attentionShown_;
     std::string cwd_;
     std::string root_dir_;          // the window's folder, for links

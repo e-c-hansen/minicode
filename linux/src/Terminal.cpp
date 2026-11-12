@@ -748,6 +748,138 @@ bool Terminal::owns(GtkWidget* w) const {
     return w && (w == root_ || gtk_widget_is_ancestor(w, root_));
 }
 
+// ---- find (PARITY.md 4.7, third part)
+
+void Terminal::buildFind() {
+    if (findBox_) return;
+    findBox_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(findBox_, "minicode-terminal-find");
+    gtk_widget_add_css_class(findBox_, "osd");
+    gtk_widget_set_halign(findBox_, GTK_ALIGN_END);
+    gtk_widget_set_valign(findBox_, GTK_ALIGN_START);
+    gtk_widget_set_margin_end(findBox_, 28);
+    gtk_widget_set_margin_top(findBox_, 4);
+    findEntry_ = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(findEntry_), "Find");
+    gtk_widget_set_size_request(findEntry_, 200, -1);
+    findLabel_ = gtk_label_new("");
+    gtk_widget_set_margin_end(findLabel_, 6);
+    gtk_box_append(GTK_BOX(findBox_), findEntry_);
+    gtk_box_append(GTK_BOX(findBox_), findLabel_);
+    gtk_widget_set_visible(findBox_, FALSE);
+    gtk_overlay_add_overlay(GTK_OVERLAY(root_), findBox_);
+    g_signal_connect(findEntry_, "changed", G_CALLBACK(+[](GtkEditable*, gpointer q) {
+        static_cast<Terminal*>(q)->runFind(true, true);
+    }), this);
+    GtkEventController* keys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+    g_signal_connect(keys, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey*, guint keyval, guint,
+                                                         GdkModifierType mods, gpointer q) -> gboolean {
+        Terminal* t = static_cast<Terminal*>(q);
+        const bool shift = (mods & GDK_SHIFT_MASK) != 0;
+        switch (keyval) {
+        case GDK_KEY_Escape:
+            t->closeFind(true);
+            return TRUE;
+        case GDK_KEY_Return:
+        case GDK_KEY_KP_Enter:
+        case GDK_KEY_F3:
+            t->findStep(!shift);
+            return TRUE;
+        default:
+            return FALSE;
+        }
+    }), this);
+    gtk_widget_add_controller(findEntry_, keys);
+}
+
+static std::string escapeForRegex(const std::string& q) {
+    std::string out;
+    for (char c : q) {
+        if (std::strchr("\\^$.[]|()?*+{}-", c)) out += '\\';
+        out += c;
+    }
+    return out;
+}
+
+void Terminal::runFind(bool forward, bool fresh) {
+    if (!vte_ || !findEntry_) return;
+    VteTerminal* t = VTE_TERMINAL(vte_);
+    const std::string q = gtk_editable_get_text(GTK_EDITABLE(findEntry_));
+    findMiss_ = false;
+    if (q.empty()) {
+        vte_terminal_search_set_regex(t, nullptr, 0);
+        vte_terminal_unselect_all(t);
+    } else {
+        if (fresh) {
+            // PCRE2_CASELESS | PCRE2_MULTILINE; VTE adds UTF itself.
+            GError* err = nullptr;
+            VteRegex* re = vte_regex_new_for_search(escapeForRegex(q).c_str(), -1, 0x8u | 0x400u, &err);
+            if (err) g_error_free(err);
+            vte_terminal_search_set_regex(t, re, 0);
+            if (re) vte_regex_unref(re);
+            vte_terminal_search_set_wrap_around(t, TRUE);
+            vte_terminal_unselect_all(t);
+        }
+        const gboolean found = forward ? vte_terminal_search_find_next(t)
+                                       : vte_terminal_search_find_previous(t);
+        if (!found) {
+            findMiss_ = true;
+            vte_terminal_unselect_all(t);
+        }
+    }
+    gtk_label_set_text(GTK_LABEL(findLabel_), findMiss_ ? "No results" : "");
+    if (findMiss_) gtk_widget_add_css_class(findEntry_, "error");
+    else gtk_widget_remove_css_class(findEntry_, "error");
+}
+
+void Terminal::showFind() {
+    if (!vte_) return;
+    buildFind();
+    gtk_widget_set_visible(findBox_, TRUE);
+    // Seeded from a selection in the terminal, as the Mac's bar is.
+    if (vte_terminal_get_has_selection(VTE_TERMINAL(vte_))) {
+        char* sel = vte_terminal_get_text_selected(VTE_TERMINAL(vte_), VTE_FORMAT_TEXT);
+        if (sel && *sel && !strchr(sel, '\n')) gtk_editable_set_text(GTK_EDITABLE(findEntry_), sel);
+        g_free(sel);
+    }
+    gtk_widget_grab_focus(findEntry_);
+    gtk_editable_select_region(GTK_EDITABLE(findEntry_), 0, -1);
+    if (*gtk_editable_get_text(GTK_EDITABLE(findEntry_))) runFind(true, true);
+}
+
+void Terminal::closeFind(bool keyboardBack) {
+    if (!findOpen()) return;
+    gtk_widget_set_visible(findBox_, FALSE);
+    if (vte_) {
+        vte_terminal_search_set_regex(VTE_TERMINAL(vte_), nullptr, 0);
+        vte_terminal_unselect_all(VTE_TERMINAL(vte_));
+        if (keyboardBack) gtk_widget_grab_focus(vte_);
+    }
+}
+
+bool Terminal::findHasKeyboard() const {
+    if (!findBox_ || !root_) return false;
+    GtkRoot* r = gtk_widget_get_root(root_);
+    GtkWidget* f = r ? gtk_window_get_focus(GTK_WINDOW(r)) : nullptr;
+    return f && (f == findBox_ || gtk_widget_is_ancestor(f, findBox_));
+}
+
+void Terminal::findStep(bool forward) {
+    if (!findOpen()) return;
+    runFind(forward, false);
+}
+
+std::string Terminal::findStatus() const {
+    return findMiss_ ? "No results" : "";
+}
+
+bool Terminal::clearScreen() {
+    if (!vte_ || busy() || nonce_.empty() || !shell_.known || !shell_.atPrompt) return false;
+    vte_terminal_feed_child(VTE_TERMINAL(vte_), "\x0c", 1);
+    return true;
+}
+
 // Colors and font. Everything here mirrors the macOS terminal panel or the
 // editor next to it; nothing is left at a VTE default.
 void Terminal::applyTheme() {

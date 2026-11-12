@@ -272,6 +272,12 @@ bool TerminalDock::resizeActive(TerminalGroup::Dir d) {
     return g->resize(g->active(), d, 4);
 }
 
+bool TerminalDock::activeAloneInColumn() const {
+    if (groups_.empty()) return false;
+    const TerminalGroup* g = groups_[(size_t)active_].get();
+    return g->aloneInColumn(g->active());
+}
+
 void TerminalDock::rename(int i, const std::string& title) {
     if (i < 0 || i >= count()) return;
     groups_[(size_t)i]->active()->setUserTitle(title);   // refreshes through onTitleChanged

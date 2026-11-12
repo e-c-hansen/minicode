@@ -93,3 +93,4 @@ MarkdownSideSyncSuite.cpp
 MermaidSuite.cpp
 SqliteViewSuite.cpp
 MathSuite.cpp
+TerminalFindSuite.cpp

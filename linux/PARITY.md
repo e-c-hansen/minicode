@@ -1471,8 +1471,11 @@ These may run in parallel.
   `terminal_tabs`). *Splits done:* `TerminalGroup` panes over `TerminalLayout`
   (Split Terminal Ctrl+Shift+5, Split Terminal Down, keyboard resize and
   bar drags, closing a pane, `minicode split`; HANDOFF item 60,
-  `terminal_splits`). Left: find, command marks, per-terminal ids, the
-  window close question counting busy terminals.
+  `terminal_splits`). *Find done:* find in the terminal (VTE's search, a bar
+  at the pane's top right, no match count), Clear Terminal (Ctrl+L at the
+  prompt, no key) and Up and Down on a lone pane resizing the dock (HANDOFF
+  item 61, `terminal_find`). Left: per-terminal ids, the window close
+  question counting busy terminals.
 
 ## Reported by the owner
 

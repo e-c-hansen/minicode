@@ -558,6 +558,17 @@ void WindowLayout::onDragEnd(GtkGestureDrag*, double, double, gpointer data) {
     self->dragging_ = Dragging::None;
 }
 
+bool WindowLayout::nudgeTerminalBar(double delta) {
+    if (!frames_.terminalBar) return false;
+    const RightArea::Rect& b = frames_.terminalBarRect;
+    const double before = state_.terminalHeight;
+    // dragTo takes the bar's middle, which the clamps then bound.
+    dragging_ = Dragging::Terminal;
+    dragTo(b.y + b.h / 2 - delta);
+    dragging_ = Dragging::None;
+    return state_.terminalHeight != before;
+}
+
 void WindowLayout::dragTo(double pos) {
     const RightArea::State before = state_;
     const double W = gtk_widget_get_width(area_), H = gtk_widget_get_height(area_);

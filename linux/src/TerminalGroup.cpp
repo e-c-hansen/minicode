@@ -272,6 +272,11 @@ bool TerminalGroup::resize(const Terminal* of, Dir d, int cells) {
     return moved;
 }
 
+bool TerminalGroup::aloneInColumn(const Terminal* of) const {
+    int c, r;
+    return find(of, &c, &r) && layout_.rows[(size_t)c].size() == 1;
+}
+
 bool TerminalGroup::frameOf(const Terminal* t, TerminalLayout::Rect* out) const {
     int c, r;
     if (!find(t, &c, &r)) return false;

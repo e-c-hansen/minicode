@@ -60,6 +60,8 @@ public:
     void closePane(Terminal* t, bool ask = true);
     // The active pane's boundary moves 4 cells; false when nothing moved.
     bool resizeActive(TerminalGroup::Dir d);
+    // The active pane is alone in its column: Up and Down resize the dock.
+    bool activeAloneInColumn() const;
     // The keyboard to `t`, in its tab (shown first).
     void focusPane(Terminal* t);
 

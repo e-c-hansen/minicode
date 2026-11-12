@@ -105,6 +105,10 @@ public:
     void setProblemsShown(bool shown);
     bool problemsShown() const { return problemsShown_; }
 
+    // The terminal's bar moved `delta` points up (negative: down), within the
+    // limits, as a drag of it (the Mac's onResizeDock); false with no bar.
+    bool nudgeTerminalBar(double delta);
+
     // For the checks (tests/gui/AppSeam.h).
     GtkWidget* area() const { return area_; }
     GtkWidget* sidebar() const { return sidebar_; }

@@ -4090,6 +4090,37 @@ panel has a row).
   `onActiveChanged` now runs `updateKeyPlace`; `terminal_splits` checks the
   accelerators are bound before its first key.
 
+### 61. Find in the terminal, Clear, dock resize (done, November 2026; `PARITY.md` item 4.7, third part)
+
+- **Find** is `actions.find` routed by the keyboard: with a terminal (or its
+  bar) holding it, Find… opens that terminal's bar (`Terminal::showFind`, an
+  overlay at the pane's top right: an entry and a label), else the editor's
+  or the browser's. **No new key, by D1**: Ctrl+F is readline's
+  forward-char and a plain Ctrl key is the program's in a terminal, and
+  Ctrl+Shift+F is Find in Folder, so it is the Edit menu or the palette
+  (a new registry row would have changed the Mac). Inside the bar Enter and
+  F3 step on, Shift+Enter and Shift+F3 back, Escape closes and gives the
+  terminal the keyboard (a capture-phase key controller on the entry, so it
+  does not depend on the key place). It searches as you type with
+  `vte_terminal_search_set_regex` over `vte_regex_new_for_search` (the query
+  escaped by hand, PCRE2 CASELESS|MULTILINE), wrapping; case-insensitive
+  only, no toggles. **No count**: VTE cannot give one, and scanning text was
+  ruled out; a miss says "No results" and outlines the entry. The dock's
+  `onActiveChanged` (main.cpp) closes every other terminal's bar.
+- **Clear Terminal** (`workbench.action.terminal.clear`, keyless; Ctrl+K is
+  kill-line): `Terminal::clearScreen` sends Ctrl+L when the integration says
+  the shell is at a prompt and nothing else has the terminal; refused (bell)
+  otherwise. The screen is cleared and the scrollback is kept (the Mac drops
+  both).
+- **Dock resize**: Up and Down on a pane alone in its column
+  (`TerminalGroup::aloneInColumn`) call `WindowLayout::nudgeTerminalBar`, a
+  drag of the terminal's bar by four rows (Up grows), so the right-area
+  limits apply.
+- **Checked by** `terminal_find`: bar opens on a focused terminal only,
+  match in the scrollback selected, miss, case, stepping, Escape and the
+  keyboard, the bar closing on a split, Clear, refusal while `sleep` runs,
+  and the dock height by exactly four rows.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

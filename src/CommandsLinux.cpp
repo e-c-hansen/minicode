@@ -285,6 +285,9 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.terminal.fontZoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
         {"workbench.action.terminal.fontZoomOut", "ctrl+-", 0, nullptr, nullptr},
         {"workbench.action.terminal.fontZoomReset", "ctrl+alt+0 ctrl+numpad0", 0, nullptr, nullptr},
+        // Clear Terminal has no key: the Mac's Cmd+K would be Ctrl+K, the
+        // shell's kill-line, and VS Code has none (PARITY.md 4.7).
+        {"workbench.action.terminal.clear", "", 0, nullptr, nullptr},
         {"workbench.action.terminal.rename", "", 0, nullptr, nullptr},
         {"minicode.terminal.moveLeft", "", 0, nullptr, nullptr},
         {"minicode.terminal.moveRight", "", 0, nullptr, nullptr},

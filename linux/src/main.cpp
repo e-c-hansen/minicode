@@ -1023,6 +1023,18 @@ static void act_split_terminal_down(GSimpleAction*, GVariant*, gpointer userp) {
 }
 static void resizeTerminalPane(gpointer userp, TerminalGroup::Dir d) {
     App* app = static_cast<App*>(userp);
+    if (app->termDock && app->layout &&
+        (d == TerminalGroup::Dir::Up || d == TerminalGroup::Dir::Down) &&
+        app->termDock->activeAloneInColumn()) {
+        // A pane alone in its column has nothing to move a boundary against:
+        // the keys resize the dock, four rows a press (the Mac's onResizeDock).
+        double cw = 8, ch = 16;
+        if (app->terminal) app->terminal->cellSize(&cw, &ch);
+        const double step = 4 * ch;
+        if (!app->layout->nudgeTerminalBar(d == TerminalGroup::Dir::Up ? step : -step))
+            if (GdkDisplay* disp = gdk_display_get_default()) gdk_display_beep(disp);
+        return;
+    }
     if (app->termDock && !app->termDock->resizeActive(d)) {
         if (GdkDisplay* disp = gdk_display_get_default()) gdk_display_beep(disp);
     }
@@ -1031,6 +1043,12 @@ static void act_resize_terminal_left(GSimpleAction*, GVariant*, gpointer p) { re
 static void act_resize_terminal_right(GSimpleAction*, GVariant*, gpointer p) { resizeTerminalPane(p, TerminalGroup::Dir::Right); }
 static void act_resize_terminal_up(GSimpleAction*, GVariant*, gpointer p) { resizeTerminalPane(p, TerminalGroup::Dir::Up); }
 static void act_resize_terminal_down(GSimpleAction*, GVariant*, gpointer p) { resizeTerminalPane(p, TerminalGroup::Dir::Down); }
+static void act_clear_terminal(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    // While a program runs nothing is sent (the Mac clears the lines above
+    // the cursor there; VTE has no such reset that keeps the program's screen).
+    if (!app->terminal || !app->terminal->clearScreen()) gtk_widget_error_bell(app->window);
+}
 static void act_rename_terminal(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     if (!app->termDock) return;
@@ -1219,7 +1237,25 @@ static FindBar* revealFindBar(gpointer p) {
     showEditorArea(static_cast<App*>(p));
     return findBarOf(p);
 }
+// With the keyboard in a terminal (or its find bar) Find is the terminal's.
+static Terminal* terminalWithKeyboard(App* app) {
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (app->dead || !app->termDock || !app->layout || !app->layout->terminalShown()) return nullptr;
+    GtkWidget* f = gtk_root_get_focus(GTK_ROOT(app->window));
+    for (Terminal* t : app->termDock->all())
+        if (t->owns(f)) return t;
+#else
+    (void)app;
+#endif
+    return nullptr;
+}
 static void act_find(GSimpleAction*, GVariant*, gpointer p) {
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (Terminal* t = terminalWithKeyboard(static_cast<App*>(p))) {
+        t->showFind();
+        return;
+    }
+#endif
 #ifdef MINICODE_ENABLE_BROWSER
     // With the keyboard in the browser pane (page or address bar) Find is the page's.
     if (browserHasKeyboard(static_cast<App*>(p)) && static_cast<App*>(p)->browser->webView()) {
@@ -1231,6 +1267,13 @@ static void act_find(GSimpleAction*, GVariant*, gpointer p) {
 }
 static void act_replace(GSimpleAction*, GVariant*, gpointer p) { revealFindBar(p)->showReplace(); }
 static void act_find_next(GSimpleAction*, GVariant*, gpointer p) {
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (Terminal* t = terminalWithKeyboard(static_cast<App*>(p)))
+        if (t->findOpen()) {
+            t->findStep(true);
+            return;
+        }
+#endif
 #ifdef MINICODE_ENABLE_BROWSER
     if (browserHasKeyboard(static_cast<App*>(p)) && static_cast<App*>(p)->browser->webView()) {
         static_cast<App*>(p)->browser->findNext(true);
@@ -1240,6 +1283,13 @@ static void act_find_next(GSimpleAction*, GVariant*, gpointer p) {
     revealFindBar(p)->findNext(true);
 }
 static void act_find_previous(GSimpleAction*, GVariant*, gpointer p) {
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (Terminal* t = terminalWithKeyboard(static_cast<App*>(p)))
+        if (t->findOpen()) {
+            t->findStep(false);
+            return;
+        }
+#endif
 #ifdef MINICODE_ENABLE_BROWSER
     if (browserHasKeyboard(static_cast<App*>(p)) && static_cast<App*>(p)->browser->webView()) {
         static_cast<App*>(p)->browser->findNext(false);
@@ -3304,7 +3354,13 @@ static App* newWindow(const std::string& root, const std::string& file) {
 #ifdef MINICODE_ENABLE_TERMINAL
     app->termDock = new TerminalDock([app] { return makeTerminal(app); });
     app->terminal = app->termDock->active();
-    app->termDock->onActiveChanged = [app](Terminal* t) { app->terminal = t; updateKeyPlace(); };
+    app->termDock->onActiveChanged = [app](Terminal* t) {
+        app->terminal = t;
+        // The find bar follows the active pane: the others' close.
+        for (Terminal* o : app->termDock->all())
+            if (o != t) o->closeFind(false);
+        updateKeyPlace();
+    };
     app->termDock->onEmpty = [app] {
         if (!app->dead && app->layout) app->layout->hideTerminal();
     };
@@ -3593,6 +3649,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "resizeterminalright", G_CALLBACK(act_resize_terminal_right));
     addAction(app, "resizeterminalup", G_CALLBACK(act_resize_terminal_up));
     addAction(app, "resizeterminaldown", G_CALLBACK(act_resize_terminal_down));
+    addAction(app, "clearterminal", G_CALLBACK(act_clear_terminal));
     addAction(app, "renameterminal", G_CALLBACK(act_rename_terminal));
     addAction(app, "moveterminalleft", G_CALLBACK(act_move_terminal_left));
     addAction(app, "moveterminalright", G_CALLBACK(act_move_terminal_right));

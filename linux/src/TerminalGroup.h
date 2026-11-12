@@ -55,6 +55,9 @@ public:
     // The boundary beside `of` moves `cells` toward Dir (VS Code's
     // resizePane); false when nothing could move.
     bool resize(const Terminal* of, Dir d, int cells);
+    // `of` is the only pane of its column (Up and Down then have no pane to
+    // move a boundary against: the Mac resizes the dock instead).
+    bool aloneInColumn(const Terminal* of) const;
 
     // The pane's size in points as laid out, and the bar boxes (for the checks).
     bool frameOf(const Terminal* t, TerminalLayout::Rect* out) const;
