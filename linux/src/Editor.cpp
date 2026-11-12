@@ -26,6 +26,8 @@
 #include "Utf8Offsets.h"
 #include "MediaView.h"
 #include "CsvTable.h"
+#include "JsonOutlineView.h"
+#include "Notebook.h"
 #include "StartupLog.h"
 #include "CompareView.h"
 #include "GitDiffView.h"
@@ -201,7 +203,16 @@ Editor::Editor() {
     gtk_widget_set_hexpand(slotOverlay_, TRUE);
     gtk_widget_set_vexpand(slotOverlay_, TRUE);
     gtk_overlay_set_child(GTK_OVERLAY(slotOverlay_), slot_);
-    gtk_box_append(GTK_BOX(box_), slotOverlay_);
+    // The JSON outline sits right of the text, behind a divider (syncOutline).
+    outlinePaned_ = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_hexpand(outlinePaned_, TRUE);
+    gtk_widget_set_vexpand(outlinePaned_, TRUE);
+    gtk_paned_set_start_child(GTK_PANED(outlinePaned_), slotOverlay_);
+    gtk_paned_set_resize_start_child(GTK_PANED(outlinePaned_), TRUE);
+    gtk_paned_set_shrink_start_child(GTK_PANED(outlinePaned_), FALSE);
+    gtk_paned_set_resize_end_child(GTK_PANED(outlinePaned_), FALSE);
+    gtk_paned_set_shrink_end_child(GTK_PANED(outlinePaned_), FALSE);
+    gtk_box_append(GTK_BOX(box_), outlinePaned_);
 
     brackets_ = new BracketView(this);       // PARITY.md 1.7
     autoClose_ = new AutoCloseInput(this);   // PARITY.md 1.8
@@ -456,9 +467,10 @@ void Editor::stash() {
     arrived_.clear();
 
     dropTable();
+    dropOutline();
     capturePlace(d);
     stopPlace();
-    if (d->isMarkdown()) clearPage(d);
+    if (d->isMarkdown() || d->isNotebook()) clearPage(d);
 #ifdef MINICODE_ENABLE_PDF
     if (d->latexPreview()) d->latexPreview()->setActive(false);
     if (d->kind() == Document::Kind::Media && media_->kind() == MediaView::Kind::Pdf) {
@@ -506,7 +518,7 @@ void Editor::capturePlace(Document* d) {
         p.hscroll = gtk_adjustment_get_value(
             gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)));
         p.haveView = true;
-    } else if (known && d->isMarkdown() && buffer_ == d->page()) {
+    } else if (known && (d->isMarkdown() || d->isNotebook()) && buffer_ == d->page()) {
         p.pageTop = gtk_text_iter_get_offset(&top);
         p.pageInto = into;
         p.havePage = true;
@@ -529,6 +541,7 @@ void Editor::showActive() {
     if (!d) {
         setViewBuffer(welcome_, true, false);
         gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+        dropOutline();
         notifyDocument();
         refreshStrip();
         titleChanged();
@@ -544,7 +557,7 @@ void Editor::showActive() {
             gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
         } else if (d->showsTable()) {
             showTable(d);
-        } else if (d->isMarkdown() && d->showsPreview()) {
+        } else if ((d->isMarkdown() || d->isNotebook()) && d->showsPreview()) {
             gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
             renderPreview();
             const Document::Place& p = d->place();
@@ -606,9 +619,69 @@ void Editor::showActive() {
         gtk_stack_set_visible_child(GTK_STACK(slot_), diff_->widget());
         break;
     }
+    syncOutline();
     notifyDocument();
     refreshStrip();
     titleChanged();
+}
+
+// The JSON outline beside the source of a JSON tab (or a notebook shown as
+// its JSON): the tree follows the caret, a row selects its text, and the
+// text parsed again 0.3 s after typing stops. The outline never takes the
+// keyboard: a row chosen selects the text in the buffer and the focus stays.
+void Editor::syncOutline() {
+    dropOutline();
+    Document* d = active_;
+    if (!d || d->kind() != Document::Kind::Text || d->loading() || !d->showsOutline() ||
+        buffer_ != d->buffer()) {
+        if (outline_) gtk_widget_set_visible(outline_->widget(), FALSE);
+        return;
+    }
+    if (!outline_) outline_ = new JsonOutlineView();
+    if (gtk_paned_get_end_child(GTK_PANED(outlinePaned_)) != outline_->widget())
+        gtk_paned_set_end_child(GTK_PANED(outlinePaned_), outline_->widget());
+    gtk_widget_set_visible(outline_->widget(), TRUE);
+    outlineDoc_ = d;
+    outline_->getText = [d] { return d->text(); };
+    outline_->onSelect = [this](long start, long end) {
+        if (!outlineDoc_) return;
+        GtkTextBuffer* b = outlineDoc_->buffer();
+        GtkTextIter s, e;
+        gtk_text_buffer_get_iter_at_offset(b, &s, (int)start);
+        gtk_text_buffer_get_iter_at_offset(b, &e, (int)end);
+        outlineSelecting_ = true;
+        gtk_text_buffer_select_range(b, &s, &e);
+        outlineSelecting_ = false;
+        if (buffer_ == b)
+            gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(b),
+                                         0.1, FALSE, 0, 0);
+    };
+    outline_->show(d->text(), d->jsonc());
+    auto caret = +[](GtkTextBuffer* b, GParamSpec*, gpointer p) {
+        Editor* self = static_cast<Editor*>(p);
+        if (self->outlineSelecting_ || !self->outline_) return;
+        GtkTextIter it;
+        gtk_text_buffer_get_iter_at_mark(b, &it, gtk_text_buffer_get_insert(b));
+        self->outline_->selectAtChar(gtk_text_iter_get_offset(&it));
+    };
+    outlineChanged_ = g_signal_connect(d->buffer(), "changed", G_CALLBACK(+[](GtkTextBuffer*, gpointer p) {
+        Editor* self = static_cast<Editor*>(p);
+        if (self->outline_) self->outline_->schedule();
+    }), this);
+    outlineCursor_ = g_signal_connect(d->buffer(), "notify::cursor-position", G_CALLBACK(caret), this);
+    outline_->onParsed = [this, caret] {
+        if (outlineDoc_) caret(outlineDoc_->buffer(), nullptr, this);
+    };
+    caret(d->buffer(), nullptr, this);
+}
+
+void Editor::dropOutline() {
+    if (!outlineDoc_) return;
+    g_signal_handler_disconnect(outlineDoc_->buffer(), outlineChanged_);
+    g_signal_handler_disconnect(outlineDoc_->buffer(), outlineCursor_);
+    outlineChanged_ = outlineCursor_ = 0;
+    outlineDoc_ = nullptr;
+    outline_->clear();
 }
 
 // A CSV or TSV tab as its table. The buffer stays the view's, so everything
@@ -1477,6 +1550,18 @@ void Editor::togglePreview() {
         showActive();
         return;
     }
+    if (d->isJson() && !d->isNotebook()) {   // the outline, shown or hidden
+        d->setShowsOutline(!d->showsOutline());
+        syncOutline();
+        return;
+    }
+    if (d->isNotebook()) {   // the rendered notebook and its JSON with the outline
+        d->setShowsPreview(!d->showsPreview());
+        d->setShowsOutline(true);
+        clearPage(d);
+        showActive();
+        return;
+    }
     if (d->isLatex()) {
         d->setShowsPreview(!d->showsPreview());
         showLatex(d->showsPreview(), true);
@@ -1583,7 +1668,7 @@ void Editor::renderPreview() {
         if (!alive.expired()) openMarkdownLink(url);
     };
     hooks.cellDoubleClick = [this, alive](int line, int row, int column, GtkWidget* cell) {
-        if (alive.expired()) return;
+        if (alive.expired() || (active_ && active_->isNotebook())) return;   // not the source's lines
         graphene_rect_t r;
         GdkRectangle at{0, 0, 1, 1};
         if (gtk_widget_compute_bounds(cell, view_, &r))
@@ -1593,10 +1678,12 @@ void Editor::renderPreview() {
         editMarkdownBlock(line + row + (row > 0 ? 1 : 0), column, at);
     };
     hooks.taskToggle = [this, alive](int line) {
-        if (!alive.expired()) toggleTaskBox(line);
+        if (!alive.expired() && !(active_ && active_->isNotebook())) toggleTaskBox(line);
     };
     const double renderStart = StartupLog::cpuMs();
-    d->pageInfo() = Markdown::render(GTK_TEXT_VIEW(view_), page, d->text(), hooks);
+    d->pageInfo() = Markdown::render(GTK_TEXT_VIEW(view_), page,
+                                     d->isNotebook() ? Notebook::markdownForFile(d->text())
+                                                     : d->text(), hooks);
     StartupLog::once("first-page", "editor: first Markdown page rendered (%.1f ms of cpu)",
                      StartupLog::cpuMs() - renderStart);
     fitPage();

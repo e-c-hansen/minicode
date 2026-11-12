@@ -4,6 +4,7 @@
 #include "Document.h"
 #include "CsvTable.h"
 #include "FileSniff.h"
+#include "JsonOutline.h"
 
 #include "BackupStore.h"
 #include "BracketColors.h"
@@ -198,6 +199,8 @@ void Document::clearSource() {
     largeFile_ = largeOff_ = largeOn_ = false;
     csv_ = 0;
     showsTable_ = false;
+    json_ = notebook_ = false;
+    showsOutline_ = true;
     stopWatching();
     stopHighlighting();
     if (taskTimer_) g_source_remove(taskTimer_);
@@ -257,7 +260,11 @@ void Document::sniffCsv(const std::string& text) {
     csv_ = k == FileSniff::Kind::Csv ? 1 : k == FileSniff::Kind::Tsv ? 2 : 0;
     showsTable_ = csv_ != 0 && !text.empty() && text.size() <= CsvTable::kMaxTableBytes;
     if (!showsTable_) csv_ = 0;
+    json_ = k == FileSniff::Kind::Json && text.size() <= kMaxOutlineBytes;
+    notebook_ = k == FileSniff::Kind::Notebook;
 }
+
+bool Document::jsonc() const { return JsonOutline::allowsComments(path_); }
 
 char Document::csvDelimiter(const std::string& text) const {
     return csv_ == 2 ? '\t' : Csv::detectDelimiter(text);
@@ -539,7 +546,7 @@ void Document::setPath(const std::string& path) {
 #ifdef MINICODE_ENABLE_PDF
         latex_ = ext == "tex" || ext == "ltx" || ext == "latex";
 #endif
-        if (showsPreview_ && !markdown_ && !latex_) showsPreview_ = false;
+        if (showsPreview_ && !markdown_ && !latex_ && !notebook_) showsPreview_ = false;
     }
     // Keep comparing against the same disk contents, under the new name.
     const bool watched = monitor_ != nullptr;

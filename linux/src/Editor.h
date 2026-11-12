@@ -34,6 +34,7 @@ class CodeView;
 class FoldUi;
 class MediaView;
 class CsvTable;
+class JsonOutlineView;
 class SnippetSession;
 class LatexPreview;
 class GitDiffView;
@@ -262,6 +263,10 @@ public:
     // A CSV or TSV tab shown as its table (CsvTable.h) rather than the text.
     // The table finishes a cell being typed before the tab goes.
     bool showsTable() const { return csvDoc_ != nullptr; }
+    // A JSON file's outline beside the text (JsonOutlineView.h); null until
+    // the first one is shown, and then hidden when the tab has none.
+    JsonOutlineView* jsonOutline() const { return outline_; }
+    bool showsOutline() const { return outlineDoc_ != nullptr; }
     CsvTable* csvTable() const { return csv_; }
     bool isMarkdown() const { return active_ && active_->isMarkdown(); }
     bool inPreview() const { return active_ && active_->showsPreview(); }
@@ -530,6 +535,13 @@ private:
     gulong         csvChanged_ = 0;       // csvDoc_'s buffer "changed"
     bool           csvApplying_ = false;  // the table's own edit is going in
     void showTable(Document* d);
+    JsonOutlineView* outline_ = nullptr;
+    GtkWidget*     outlinePaned_ = nullptr;
+    Document*      outlineDoc_ = nullptr;   // the tab it shows
+    gulong         outlineChanged_ = 0, outlineCursor_ = 0;
+    bool           outlineSelecting_ = false;   // the outline's own choice is going in
+    void syncOutline();
+    void dropOutline();
     void dropTable();
     GtkWidget*     scroller_ = nullptr;
     GtkWidget*     view_     = nullptr;   // GtkTextView: code_'s

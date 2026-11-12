@@ -185,6 +185,16 @@ public:
     char csvDelimiter(const std::string& text) const;
     bool showsTable() const { return isCsv() && showsTable_; }
     void setShowsTable(bool on) { showsTable_ = on; }
+    // A .json file (or .jsonc, tsconfig.json and the like): the text with an
+    // outline beside it (JsonOutlineView.h); the preview key hides and shows
+    // the outline. A .ipynb is both: rendered read-only as Markdown by
+    // default (Notebook.h), its JSON, with the outline, a toggle away.
+    static constexpr size_t kMaxOutlineBytes = 16u << 20;
+    bool isJson() const { return kind_ == Kind::Text && (json_ || notebook_); }
+    bool isNotebook() const { return kind_ == Kind::Text && notebook_; }
+    bool jsonc() const;
+    bool showsOutline() const { return isJson() && showsOutline_ && !(notebook_ && showsPreview_); }
+    void setShowsOutline(bool on) { showsOutline_ = on; }
     void setShowsPreview(bool on) { showsPreview_ = on; }
     // The window's preview tab (EditorTabs.h): its title in italics, and
     // the next file opened in preview replaces it.
@@ -425,6 +435,7 @@ private:
     bool          showsPreview_ = false;
     int           csv_ = 0;               // 1 comma-like, 2 tab separated (FileSniff)
     bool          showsTable_ = false;
+    bool          json_ = false, notebook_ = false, showsOutline_ = true;
     void          sniffCsv(const std::string& text);
     bool          previewTab_ = false;
     bool          agentPreview_ = false;

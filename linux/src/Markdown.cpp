@@ -217,6 +217,23 @@ GtkWidget* newPicture(GdkTexture* still, GdkPixbufAnimation* anim, int* width, i
 GtkWidget* loadPicture(const std::string& srcIn, const std::string& folder,
                        int* width, int* height) {
     std::string src = srcIn, path;
+    if (src.rfind("data:image/", 0) == 0) {
+        // A notebook's output picture (Notebook.h): base64 in the address.
+        const size_t comma = src.find(',');
+        const size_t b64 = src.find(";base64");
+        if (comma == std::string::npos || b64 == std::string::npos || b64 > comma)
+            return nullptr;
+        gsize n = 0;
+        guchar* raw = g_base64_decode(src.c_str() + comma + 1, &n);
+        if (!raw || n == 0 || n > 64u * 1024 * 1024) { g_free(raw); return nullptr; }
+        GBytes* bytes = g_bytes_new_take(raw, n);
+        GdkTexture* tex = gdk_texture_new_from_bytes(bytes, nullptr);
+        g_bytes_unref(bytes);
+        if (!tex) return nullptr;
+        GtkWidget* w = newPicture(tex, nullptr, width, height);
+        g_object_unref(tex);
+        return w;
+    }
     if (src.rfind("file://", 0) == 0) {
         char* f = g_filename_from_uri(src.c_str(), nullptr, nullptr);
         if (!f) return nullptr;

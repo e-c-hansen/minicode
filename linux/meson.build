@@ -37,6 +37,8 @@ core_sources = [
   core_dir / 'SyncTex.cpp',
   core_dir / 'Json.cpp',
   core_dir / 'Csv.cpp',
+  core_dir / 'JsonOutline.cpp',
+  core_dir / 'Notebook.cpp',
   core_dir / 'FileSniff.cpp',
   core_dir / 'LspClient.cpp',
   core_dir / 'LspProtocol.cpp',
@@ -159,6 +161,7 @@ gui_sources = [
   'src/Folds.cpp',
   'src/Markdown.cpp',
   'src/CsvTable.cpp',
+  'src/JsonOutlineView.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.
   'src/Terminal.cpp',

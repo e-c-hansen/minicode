@@ -3667,6 +3667,46 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   the part's buffer when it is open, and a folder left by a rename of the
   document (`setPath` keeping the pages) waits for the next launch's sweep.
 
+### 52. The JSON outline and notebooks (done, November 2026; `PARITY.md` item 4.1, part two)
+
+- **The outline** (`JsonOutlineView.{h,cpp}` over the core's `JsonOutline`):
+  a `GtkListView` over a `GtkTreeListModel` (one `GObject` a node, carrying
+  its index; children made when a row opens), right of the text behind a
+  `GtkPaned` divider that wraps the slot's overlay (`Editor::outlinePaned_`, hidden rather than removed when a tab has none,
+  so the find bar stays over the text). `Editor::syncOutline` (end of
+  `showActive`, and the preview key) shows it for a `Document::showsOutline()`
+  tab and `dropOutline` (in `stash`) disconnects it; the preview key
+  (`togglePreview`) hides and shows it. A row chosen (click, arrows, Enter)
+  selects its text in the buffer with the keyboard staying in the outline;
+  a member selects from its key's opening quote. `notify::cursor-position`
+  on the buffer chooses the deepest node under the caret (`nodeAt16`). The
+  core's offsets are UTF-16, the buffer's are characters: the view keeps the
+  parsed text as UTF-16 and converts with `utf16::toCharOffset` and
+  `fromCharOffset`.
+- **Parsing**: `schedule()` marks the outline stale at once (no row chooses
+  anything, either way, while stale) and parses 0.3 s after the last change.
+  A good parse rebuilds the tree and the editor looks for the caret's node
+  (`onParsed`); a bad one keeps the last good outline, dimmed (opacity 0.5)
+  under an error line ("Line 3, column 5: ..."), still stale. A file that
+  fails at its first parse shows the nodes read so far, dimmed. `.jsonc`
+  allowances come from `JsonOutline::allowsComments` (`Document::jsonc`).
+  Files over 16 MB (`Document::kMaxOutlineBytes`) and trees over 200,000
+  nodes are not outlined; `Document::sniffCsv` (now also the JSON and
+  notebook kind, from `FileSniff::classify`) decides.
+- **Notebooks**: a .ipynb is `Document::isNotebook()` and starts with
+  `showsPreview()` on: `renderPreview` renders `Notebook::markdownForFile` of
+  the buffer through the Markdown page, read-only (its source lines are not the
+  buffer's, so a double-click edit and a task box do nothing). The preview key
+  flips to the raw JSON with the outline and back. Pictures are `data:image/`
+  addresses, now decoded by `Markdown.cpp`'s `loadPicture` (png, jpeg, gif and
+  whatever gdk-pixbuf reads; an SVG shows its alt text if no loader). Nothing
+  runs.
+- **Checked by** `json_outline` (`JsonOutlineSuite.cpp`): the points in its
+  opening comment, with a real click on a row.
+- **Not done**: the outline's width is not kept, a notebook's scroll place is
+  not kept across tabs, a row click on the row already chosen selects nothing
+  again (Enter does), and SQLite (the rest of 4.1).
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

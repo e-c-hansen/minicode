@@ -666,7 +666,7 @@ void Editor::documentLoaded(Document* d, int result, bool blank) {
     if ((Document::Read)result != Document::Read::Ok)
         textRead(d, d->path(), result, std::string());
     else
-        d->setShowsPreview((d->isMarkdown() || d->isLatex()) && !blank);
+        d->setShowsPreview((d->isMarkdown() || d->isLatex() || d->isNotebook()) && !blank);
     if (d->place().haveRestore && !d->unread()) {
         d->place().haveRestore = false;
         placeTab(d, d->place().restore);

@@ -1405,8 +1405,10 @@ These may run in parallel.
   *Part one done:* files route by `FileSniff::classify` (a database or a
   binary file gets a message, not text), and a CSV, TSV or .tab file opens
   as a table (`CsvTable.cpp`, HANDOFF.md item 49), flipped to the text by
-  the preview key; `csv_table` checks it. The JSON outline, notebooks and
-  SQLite remain.
+  the preview key; `csv_table` checks it. SQLite remains.
+  *Part two done:* a .json file (and .jsonc, tsconfig*.json, .vscode/*.json)
+  has the outline beside its text, and a .ipynb opens rendered read-only
+  (`JsonOutlineView.cpp`, HANDOFF.md item 52); `json_outline` checks both.
 - [ ] **4.2 The preview to the side and scroll sync.** `MarkdownPage`,
   `PreviewScroll`. Measured for R1 (2026-11-09): opening README.md in the
   preview holds the main thread for 0.3 to 0.6 s of CPU, the same without

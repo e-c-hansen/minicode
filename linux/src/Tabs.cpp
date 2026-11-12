@@ -132,7 +132,7 @@ bool Editor::textRead(Document* d, const std::string& path, int result,
     d->loadText(path, content);
     const bool blank = std::all_of(content.begin(), content.end(),
                                    [](unsigned char c) { return std::isspace(c); });
-    d->setShowsPreview((d->isMarkdown() || d->isLatex()) && !blank);
+    d->setShowsPreview((d->isMarkdown() || d->isLatex() || d->isNotebook()) && !blank);
     return true;
 }
 
@@ -529,7 +529,7 @@ void Editor::placeTab(Document* d, const EditorTabs::ClosedTab& c) {
         d->place().restore = c;
         return;
     }
-    if (d->isMarkdown() || d->isLatex()) d->setShowsPreview(c.preview);
+    if (d->isMarkdown() || d->isLatex() || d->isNotebook()) d->setShowsPreview(c.preview);
     if (d->kind() != Document::Kind::Text) return;
     const int chars = gtk_text_buffer_get_char_count(d->buffer());
     GtkTextIter a, b;

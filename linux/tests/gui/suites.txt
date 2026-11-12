@@ -83,3 +83,4 @@ OwnerReportsSuite.cpp
 CsvTableSuite.cpp
 BrowserTabsSuite.cpp
 LatexProblemsSuite.cpp
+JsonOutlineSuite.cpp
