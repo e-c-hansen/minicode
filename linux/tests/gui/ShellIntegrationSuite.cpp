@@ -173,6 +173,40 @@ bool sameState(const ShellIntegration::ShellState& a, const ShellIntegration::Sh
            a.status == b.status && a.prompts == b.prompts && a.started == b.started && a.done == b.done;
 }
 
+std::string vteText() {
+    VteTerminal* vte = findVte(term()->widget());
+    char* t = vte ? vte_terminal_get_text(vte, nullptr, nullptr, nullptr) : nullptr;
+    std::string r = t ? t : "";
+    g_free(t);
+    return r;
+}
+
+// True when every occurrence of `word` ends its line (never `LEFT echo RIGHT`,
+// never `LEFTecho`): the half-typed line stayed apart from ours.
+bool alwaysEndsLine(const std::string& text, const std::string& word) {
+    for (size_t at = text.find(word); at != std::string::npos; at = text.find(word, at + 1)) {
+        size_t e = at + word.size();
+        while (e < text.size() && text[e] == ' ') e++;
+        if (e < text.size() && text[e] != '\n') return false;
+    }
+    return true;
+}
+
+bool hasLine(const std::string& text, const std::string& line) {
+    return text.find("\n" + line + "\n") != std::string::npos || text.compare(0, line.size() + 1, line + "\n") == 0;
+}
+
+// The text of the last non-empty line.
+std::string lastLine(std::string text) {
+    while (!text.empty() && (text.back() == '\n' || text.back() == ' ')) text.pop_back();
+    const size_t nl = text.rfind('\n');
+    return nl == std::string::npos ? text : text.substr(nl + 1);
+}
+
+bool endsWith(const std::string& s, const std::string& t) {
+    return s.size() >= t.size() && s.compare(s.size() - t.size(), t.size(), t) == 0;
+}
+
 std::string forged(const std::string& nonce) {
     return "\x1b]666;vte.ext.minicode.mark=p=99\\sx=99\\sd=0\\ss=77\\sc=forged\\smc=" + nonce + "\x1b\\";
 }
@@ -190,6 +224,7 @@ MC_GUI_SUITE(shell_integration) {
         GCHECK(gHome.find(MCGuiScratch()) == 0);   // never the user's own
         MCGuiWriteFile(gHome + "/.bashrc",
                        "PROMPT_COMMAND='echo \"$?\" >> \"$HOME/pc.log\"'\n"
+                       "bind '\"\\C-x\\C-t\": \"USERBIND-OK\"'\n"
                        "alias mcalias='echo alias-works > \"$HOME/alias.out\"'\n");
         term()->onShellStateChanged = [] { gAccepted++; };
         GCHECK(g_file_test("/bin/bash", G_FILE_TEST_IS_EXECUTABLE));
@@ -316,6 +351,62 @@ MC_GUI_SUITE(shell_integration) {
         GCHECK(gCli->exitCode == 0);
         GCHECK(gCli->out.find("echo hi") != std::string::npos);
         GCHECK(gCli->out.find("echo hi\nhi") != std::string::npos);
+    });
+    // ---- the half-typed line (HANDOFF item 48): set aside, then given back
+    MCGuiStep("the user's own bind still works", [] {
+        VteTerminal* vte = findVte(term()->widget());
+        vte_terminal_feed_child(vte, "\x15\x18\x14", 3);
+    });
+    MCGuiWait("its macro typed", 10, [] { return endsWith(lastLine(vteText()), "USERBIND-OK"); });
+    MCGuiStep("half-type echo LEFT, no Return", [] {
+        VteTerminal* vte = findVte(term()->widget());
+        const std::string bytes = "\x15" "echo LEFT";
+        vte_terminal_feed_child(vte, bytes.c_str(), (gssize)bytes.size());
+    });
+    MCGuiWait("it shows on the line", 10, [] { return endsWith(lastLine(vteText()), "echo LEFT"); });
+    MCGuiStep("term --run 'echo RIGHT' over it", [] {
+        gBefore = sh();
+        runCli({"term", "--run", "echo RIGHT"});
+    });
+    MCGuiWait("term answered (half line)", 20, [] { return gCli->done; });
+    MCGuiWait("RIGHT ran and LEFT came back", 15, [] {
+        return sh().atPrompt && sh().prompts > gBefore.prompts && hasLine(vteText(), "RIGHT") &&
+               endsWith(lastLine(vteText()), "echo LEFT");
+    });
+    MCGuiStep("RIGHT alone, LEFT never joined it", [] {
+        GCHECK(gCli->exitCode == 0);
+        const std::string t = vteText();
+        GCHECK(hasLine(t, "RIGHT"));
+        GCHECK(alwaysEndsLine(t, "LEFT"));
+        GCHECK(t.find("LEFTecho") == std::string::npos && t.find("LEFT echo") == std::string::npos);
+        GCHECK(sh().started == gBefore.started + 1);   // only ours ran
+        VteTerminal* vte = findVte(term()->widget());
+        vte_terminal_feed_child(vte, "\x15", 1);
+    });
+    MCGuiStep("half-type echo LEFTTWO, then Run File", [] {
+        VteTerminal* vte = findVte(term()->widget());
+        vte_terminal_feed_child(vte, "echo LEFTTWO", -1);
+        MCGuiWriteFile(gHome + "/rf2.sh", "echo RUNFILE-OUT\n");
+        GCHECK(MCGuiApp().editor->openFile(gHome + "/rf2.sh"));
+    });
+    MCGuiWait("LEFTTWO shows", 10, [] { return endsWith(lastLine(vteText()), "echo LEFTTWO"); });
+    MCGuiStep("Run File", [] {
+        gBefore = sh();
+        GAction* a = g_action_map_lookup_action(G_ACTION_MAP(MCGuiApp().window), "runfile");
+        GCHECK(a != nullptr);
+        if (a) g_action_activate(a, nullptr);
+    });
+    MCGuiWait("the file ran and LEFTTWO came back", 15, [] {
+        return sh().atPrompt && sh().prompts > gBefore.prompts && hasLine(vteText(), "RUNFILE-OUT") &&
+               endsWith(lastLine(vteText()), "echo LEFTTWO");
+    });
+    MCGuiStep("Run File's output alone, LEFTTWO apart", [] {
+        const std::string t = vteText();
+        GCHECK(alwaysEndsLine(t, "LEFTTWO"));
+        GCHECK(t.find("LEFTTWOecho") == std::string::npos && t.find("LEFTTWObash") == std::string::npos);
+        GCHECK(sh().started == gBefore.started + 1);
+        VteTerminal* vte = findVte(term()->widget());
+        vte_terminal_feed_child(vte, "\x15", 1);
         gBefore = sh();
         typeLine("sleep 3");
     });

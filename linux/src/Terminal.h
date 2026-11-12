@@ -224,6 +224,14 @@ private:
     std::function<int(gint64, std::string*)> runAttempt_;
     std::function<void(const std::string&)> runDone_;
     void typePending();
+    // The half-typed line (HANDOFF item 48): ESC [9999~ sets it aside before
+    // a typed command, and in bash ESC [9998~ gives it back at the first
+    // prompt after (zsh's push-input returns it by itself).
+    bool bashShell_ = false;
+    int  popOwed_ = 0;
+    long long pushPrompts_ = 0;
+    void setLineAside();
+    void giveLineBack();
     static void onCommit(VteTerminal* term, char* text, guint size, gpointer self);
     static void onContentsChanged(VteTerminal* term, gpointer self);
 };

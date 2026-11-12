@@ -227,6 +227,7 @@ void Terminal::onTermpropChanged(VteTerminal* term, const char* name, gpointer s
     self->shell_.apply(m);
     if (self->onShellStateChanged) self->onShellStateChanged();
     // The finishing mark ends the command: no polling for an integrated shell.
+    self->giveLineBack();
     if (ended && !self->shell_.busy && self->onCommandFinished) self->onCommandFinished();
 }
 
@@ -867,6 +868,8 @@ void Terminal::spawnShell() {
     // user's ZDOTDIR back (MINICODE_USER_ZDOTDIR when they had one).
     shell_ = ShellIntegration::ShellState();
     nonce_.clear();
+    bashShell_ = false;
+    popOwed_ = 0;
     std::vector<std::string> args = {shell};
     {
         char* baseName = g_path_get_basename(shell);
@@ -881,6 +884,7 @@ void Terminal::spawnShell() {
         if ((bash || zsh) && getrandom(raw, sizeof raw, 0) == (ssize_t)sizeof raw) {
             nonce_ = ShellIntegration::nonceHex(raw, sizeof raw);
             envv = g_environ_setenv(envv, "MINICODE_NONCE", nonce_.c_str(), TRUE);
+            bashShell_ = bash;
             if (bash) {
                 args.push_back("--rcfile");
                 args.push_back(dir + "/" + ShellIntegration::kBashScriptName);
@@ -958,10 +962,30 @@ void Terminal::typePending() {
         pendingType_.clear();
         return;
     }
+    setLineAside();
     // A paste, so a shell that asked for brackets (bash, zsh) shows it as
     // pasted and Return is the user's to press.
     vte_terminal_paste_text(VTE_TERMINAL(vte_), pendingType_.c_str());
     pendingType_.clear();
+}
+
+// Only to a shell the integration is in and that its marks say is at a
+// prompt (never into a program, where the bytes would be input); one that
+// has not drawn its first prompt has an empty line.
+void Terminal::setLineAside() {
+    if (!vte_ || nonce_.empty() || !shell_.known || !shell_.atPrompt || busy()) return;
+    vte_terminal_feed_child(VTE_TERMINAL(vte_), "\033[9999~", -1);
+    if (bashShell_) {
+        if (popOwed_ == 0) pushPrompts_ = shell_.prompts;
+        ++popOwed_;
+    }
+}
+
+void Terminal::giveLineBack() {
+    if (popOwed_ <= 0 || !vte_ || !shell_.atPrompt || shell_.prompts <= pushPrompts_) return;
+    if (busy()) return;
+    for (; popOwed_ > 0; --popOwed_)
+        vte_terminal_feed_child(VTE_TERMINAL(vte_), "\033[9998~", -1);
 }
 
 std::string Terminal::runBlocker(bool* wait) const {
@@ -1010,6 +1034,7 @@ void Terminal::runLine(const std::string& line, std::function<void(const std::st
             return 2;
         }
         VteTerminal* t = VTE_TERMINAL(vte_);
+        setLineAside();
         vte_terminal_paste_text(t, line.c_str());
         vte_terminal_feed_child(t, "\r", 1);
         runStarted_ = shell_.started;

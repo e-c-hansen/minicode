@@ -3434,6 +3434,25 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   (an `exec zsh` gets the nonce and starts its counts again; the app reads
   only the newest value, so counts going back are harmless). zsh is not
   installed on this machine or the ThinkPad: this half has not run here.
+- **The half-typed line**: before every command the app types (`term
+  --run`, Run File, Open in Terminal, the inline agent's commands and
+  tasks: `Terminal::runLine` and `typePending`) it sends the private key
+  `ESC [9999~` (`Terminal::setLineAside`), only to a shell with the
+  integration whose marks say it is at a prompt and with no program in the
+  foreground, so a half-typed `rm ` never joins `python3 file.py`. zsh:
+  the Mac's `__minicode_push` (`zle push-input`) brings it back by
+  itself. bash: `bind -x` on `\e[9999~` in emacs, vi-insert and vi-command
+  runs `__minicode_push`, which puts `READLINE_LINE` on a stack and empties
+  the line; the app then owes a pop and, at the first prompt mark after
+  (`giveLineBack`), sends `ESC [9998~` (`bind -x` `__minicode_pop`: the set-aside
+  text goes in front of the line, the caret after it). Chosen over
+  readline's kill ring because a user's own yank, yank-pop or kill between
+  would change or lose the text. A Ctrl+C at a prompt draws no new prompt
+  mark, so the text waits for the next command's prompt. Never sent into a
+  program, a busy shell, or a shell without the nonce. Checked by
+  `shell_integration` (`echo LEFT` half-typed, `term --run 'echo RIGHT'`
+  and Run File, a user's own `bind` in the .bashrc); the suite fails
+  without the key. zsh's half has not run here (no zsh).
 - **Other shells** (fish, sh, dash, anything else in `$SHELL`) start as
   before, with no nonce, and stay unknown. `exec` into another shell, or
   ssh, leaves the state as the last mark said: busy with that command.

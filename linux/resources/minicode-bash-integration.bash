@@ -80,6 +80,35 @@ if [[ -n $__minicode_nonce ]] &&
     __minicode_mark "$c"
   }
 
+  # The half-typed line (the Mac's ESC [9999~, zsh's push-input). The app
+  # sends ESC [9999~ before it types a command at a prompt: the line goes
+  # on a stack and the line is emptied, so ours is the whole line. Once the
+  # command has finished and a prompt is back, the app sends ESC [9998~,
+  # which puts the newest set-aside text in front of the line. readline's
+  # kill ring would also do it, but a user's own Ctrl+Y or yank-pop in
+  # between would change what comes back, and a kill would lose the text.
+  __minicode_set=()
+  __minicode_push() {
+    if [[ -n $READLINE_LINE ]]; then
+      __minicode_set+=("$READLINE_LINE")
+      READLINE_LINE=
+      READLINE_POINT=0
+    fi
+  }
+  __minicode_pop() {
+    local n=${#__minicode_set[@]}
+    (( n )) || return 0
+    local t=${__minicode_set[n-1]}
+    builtin unset '__minicode_set[n-1]'
+    READLINE_LINE=$t$READLINE_LINE
+    READLINE_POINT=$((${#t} + READLINE_POINT))
+  }
+  for __minicode_m in emacs vi-insert vi-command; do
+    builtin bind -m $__minicode_m -x '"\e[9999~": __minicode_push' 2>/dev/null
+    builtin bind -m $__minicode_m -x '"\e[9998~": __minicode_pop' 2>/dev/null
+  done
+  builtin unset __minicode_m
+
   if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )); then
     PROMPT_COMMAND=(__minicode_status ${PROMPT_COMMAND[@]+"${PROMPT_COMMAND[@]}"} __minicode_precmd)
   else
