@@ -82,6 +82,8 @@ MarkdownSide::MarkdownSide(GtkTextTagTable* tags) {
         static_cast<MarkdownSide*>(self)->fit();
     }), this);
     GtkGesture* click = gtk_gesture_click_new();
+    // Capture: the double-click is claimed before the view's own gestures get it.
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(click), GTK_PHASE_CAPTURE);
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
     g_signal_connect(click, "released", G_CALLBACK(+[](GtkGestureClick*, int, double x, double y,
                                                      gpointer self) {
@@ -89,9 +91,15 @@ MarkdownSide::MarkdownSide(GtkTextTagTable* tags) {
     }), this);
     g_signal_connect(click, "pressed", G_CALLBACK(+[](GtkGestureClick* g, int n, double x, double y,
                                                     gpointer self) {
-        if (n != 2) return;
+            if (n != 2) return;
+        // A table or picture in the page has its own double-click.
+        GtkWidget* hit = gtk_widget_pick(static_cast<MarkdownSide*>(self)->view_, x, y,
+                                         GTK_PICK_DEFAULT);
+        if (hit && hit != static_cast<MarkdownSide*>(self)->view_) return;
+        // The view's own press would take the keyboard from the editor
+        // opened here once the button is up.
+        gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
         static_cast<MarkdownSide*>(self)->doubleClicked(x, y);
-        (void)g;
     }), this);
     gtk_widget_add_controller(view_, GTK_EVENT_CONTROLLER(click));
     stale_ = true;
@@ -413,7 +421,7 @@ void MarkdownSide::doubleClicked(double x, double y) {
     for (const Info& in : infos_) {
         if (at < start + in.page.length) {
             const Markdown::Span* s = in.page.spanAt(at - start);
-            if (!s || s->line < 0) return;
+                    if (!s || s->line < 0) return;
             int wx, wy;
             gtk_text_view_buffer_to_window_coords(tv, GTK_TEXT_WINDOW_WIDGET, box.x, box.y, &wx, &wy);
             onEdit(s->line, -1, GdkRectangle{wx, wy, std::max(box.width, 1), std::max(box.height, 1)});

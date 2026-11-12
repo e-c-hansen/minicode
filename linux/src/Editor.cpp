@@ -2520,6 +2520,18 @@ void Editor::showMdPopover(const std::string& title, const std::string& text, bo
         gtk_box_append(GTK_BOX(box), scroll);
         gtk_box_append(GTK_BOX(box), buttons);
         gtk_popover_set_child(GTK_POPOVER(mdPop_), box);
+        // A popover that was not on screen yet takes the keyboard only once
+        // it is mapped (the grab below came too early over the side pane).
+        g_signal_connect(mdPop_, "map", G_CALLBACK(+[](GtkWidget*, gpointer selfp) {
+            Editor* self = static_cast<Editor*>(selfp);
+            if (!self->mdPopText_) return;
+            gtk_widget_grab_focus(self->mdPopText_);
+            GtkTextBuffer* b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->mdPopText_));
+            GtkTextIter lo;
+            GtkTextIter hi;
+            gtk_text_buffer_get_bounds(b, &lo, &hi);
+            gtk_text_buffer_select_range(b, &lo, &hi);
+        }), this);
     }
     gtk_label_set_text(GTK_LABEL(mdPopLabel_), title.c_str());
     GtkTextBuffer* b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(mdPopText_));

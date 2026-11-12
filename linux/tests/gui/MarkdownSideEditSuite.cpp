@@ -42,7 +42,8 @@ std::string bufferText() {
     return t;
 }
 
-// A double-click on `needle` in a text view (the pane's, or the full page's).
+// A double-click on `needle` in a text view (a little in from the pane's edge,
+// where the paned's handle takes the pointer) (the pane's, or the full page's).
 void doubleClickText(GtkWidget* view, const std::string& needle) {
     GtkTextView* tv = GTK_TEXT_VIEW(view);
     GtkTextBuffer* b = gtk_text_view_get_buffer(tv);
@@ -53,7 +54,7 @@ void doubleClickText(GtkWidget* view, const std::string& needle) {
     GdkRectangle r;
     gtk_text_view_get_iter_location(tv, &m, &r);
     int wx, wy;
-    gtk_text_view_buffer_to_window_coords(tv, GTK_TEXT_WINDOW_WIDGET, r.x + 3, r.y + r.height / 2,
+    gtk_text_view_buffer_to_window_coords(tv, GTK_TEXT_WINDOW_WIDGET, r.x + 16, r.y + r.height / 2,
                                           &wx, &wy);
     MCGuiDoubleClick(view, wx, wy);
 }
@@ -76,11 +77,8 @@ bool has(const std::string& hay, const std::string& needle) {
     return hay.find(needle) != std::string::npos;
 }
 
-// Edit the open editor's text and press Enter in it.
-void commit(const std::string& text) {
-    ed()->setBlockEditorText(text);
-    MCGuiKey("Return");
-}
+// Edit the open editor's text and press Enter in it (the key is the next step's, with the popover holding the keyboard).
+void commit(const std::string& text) { ed()->setBlockEditorText(text); }
 
 }  // namespace
 
@@ -109,6 +107,7 @@ MC_GUI_SUITE(markdown_side_edit) {
         GCHECK_EQ_STR(ed()->blockEditorText(), "Alpha paragraph words.");
         commit("Alpha CHANGED words.");
     });
+    MCGuiStep("Enter in the editor", [] { MCGuiKey("enter"); });
     MCGuiWait("the editor closed and the pane rendered", 10, [] {
         return !ed()->blockEditorOpen() && settled() && has(side()->pageText(), "CHANGED");
     });
@@ -131,6 +130,7 @@ MC_GUI_SUITE(markdown_side_edit) {
         doubleClickText(side()->textView(), "Alpha");
     });
     MCGuiWait("the page rendered", 10, [] { return settled() && has(side()->pageText(), "tail"); });
+    MCGuiWaitQuiet("the page still", 0.6, 10, [] { return (long)side()->stats().renders; });
     MCGuiStep("edited nothing and opened nothing", [] {
         GCHECK(!ed()->blockEditorOpen());
         GCHECK_EQ_STR(bufferText(), std::string(kDoc) + "tail\n");
@@ -144,6 +144,7 @@ MC_GUI_SUITE(markdown_side_edit) {
         t.replace(t.find("two"), 3, "2");
         commit(t);
     });
+    MCGuiStep("Enter in the editor", [] { MCGuiKey("enter"); });
     MCGuiWait("the item edited", 10, [] { return !ed()->blockEditorOpen() && settled() && has(side()->pageText(), "item 2"); });
     MCGuiStep("in the source, between its neighbours", [] {
         GCHECK(has(bufferText(), "- item one\n- item 2\n\n| h1"));
@@ -164,6 +165,7 @@ MC_GUI_SUITE(markdown_side_edit) {
         GCHECK_EQ_STR(ed()->blockEditorText(), "c1");
         commit("z1");
     });
+    MCGuiStep("Enter in the editor", [] { MCGuiKey("enter"); });
     MCGuiWait("the cell edited", 10, [] { return !ed()->blockEditorOpen() && settled() && has(bufferText(), "| z1 | c2 |"); });
     MCGuiStep("the page has it", [] {
         GtkWidget* cell = labelWith(side()->embedWidgets().at(0), "z1");
@@ -181,7 +183,7 @@ MC_GUI_SUITE(markdown_side_edit) {
     MCGuiStep("holds the paragraph, over the page", [] {
         GCHECK(!ed()->blockEditorInPane());
         GCHECK_EQ_STR(ed()->blockEditorText(), "Alpha paragraph words.");
-        MCGuiKey("Escape");
+        MCGuiKey("escape");
     });
     MCGuiWait("closed", 10, [] { return !ed()->blockEditorOpen(); });
     MCGuiStep("back to the source", [] { key("ctrl+shift+v"); });
