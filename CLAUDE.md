@@ -3557,7 +3557,7 @@ core file its files include. Traps paid for:
 
 ## Current state (2026-11-08)
 
-- **Released: 1.5.17** (2026-11-09), and the user's Homebrew copy is on it.
+- **Released: 1.5.20** (2026-11-12), and the user's Homebrew copy is on it.
   Since 1.5.8: 1.5.9 security and data safety (bracketed paste, secure
   keyboard entry, symlinked config writes, the tectonic checksum and
   `--untrusted`, formatter consent, the cask's arm64 requirement); 1.5.10
@@ -3578,7 +3578,9 @@ core file its files include. Traps paid for:
   and the owner's list (preview tabs, the split editor, browser tabs, Tab
   and Return in completion, inlay hints that leave the caret alone, the
   hints panel, Markdown's measure); 1.5.17 Markdown tables and code
-  backgrounds as drawn, Cmd+F in the browser. Every release from 1.5.7 on has notes of what
+  backgrounds as drawn, Cmd+F in the browser; 1.5.18 and 1.5.19 Linux
+  only; 1.5.20 web bookmarks and the browser window (`minicode
+  https://...`). Every release from 1.5.7 on has notes of what
   changed on GitHub (`gh release view v1.5.17`), written for users and
   given to release.sh as `MINICODE_RELEASE_NOTES`.
 - **PPA**: current at 1.5.15 (`1.5.15-1~ppa1~resolute1`, built for amd64 on
@@ -3587,7 +3589,8 @@ core file its files include. Traps paid for:
   (`echo test | gpg --clearsign -u EEF9635EDB7F9335`), or signing fails
   once the passphrase cache has expired (1.5.14 was skipped for that
   reason). ppa.sh then waits for Launchpad's build (see "Build, test, run,
-  release").
+  release"). 1.5.20 was cut on the Mac with `MINICODE_NO_PPA=1`, its
+  upload left to the ThinkPad.
 - The release is arm64 only (built on Apple silicon with no `-arch` flag);
   the README says so and the cask declares `depends_on arch: :arm64`.
 - **Left to the owner**: notarization (the paid Apple Developer Program),
