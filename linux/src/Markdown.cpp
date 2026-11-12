@@ -406,6 +406,17 @@ std::string cellMarkup(const std::vector<const MdRun*>& runs) {
     return m;
 }
 
+// The characters of the longest run without a space.
+constexpr int kLongWord = 18;
+int longestWord(const char* text) {
+    int best = 0, run = 0;
+    for (const char* p = text; *p; p = g_utf8_next_char(p)) {
+        if (g_unichar_isspace(g_utf8_get_char(p))) run = 0;
+        else best = std::max(best, ++run);
+    }
+    return best;
+}
+
 GtkWidget* buildTable(const std::vector<MdRun>& runs, size_t first, size_t end,
                       const std::shared_ptr<Markdown::Hooks>& hooks, Markdown::Embed& embed) {
     const int cols = runs[first].tableCols;
@@ -433,10 +444,14 @@ GtkWidget* buildTable(const std::vector<MdRun>& runs, size_t first, size_t end,
             GtkWidget* label = gtk_label_new(nullptr);
             gtk_label_set_markup(GTK_LABEL(label), cellMarkup(cell).c_str());
             gtk_label_set_wrap(GTK_LABEL(label), TRUE);
-            gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
-            // Its natural width is what fit() asks for, not the whole text on
-            // one line; the height then follows from the wrapping.
-            gtk_label_set_max_width_chars(GTK_LABEL(label), 1);
+            // Wrapping at words only: WORD_CHAR (and a max width of one
+            // character) made GTK measure every cell at many widths, 0.4 to
+            // 0.6 s of README's tables on the main thread (R1). A cell with a
+            // word too long for a column (a path, an address) still breaks
+            // anywhere. fit() gives the width, so none is asked for here.
+            gtk_label_set_wrap_mode(GTK_LABEL(label), longestWord(gtk_label_get_text(GTK_LABEL(label))) > kLongWord
+                                                          ? PANGO_WRAP_WORD_CHAR
+                                                          : PANGO_WRAP_WORD);
             gtk_label_set_xalign(GTK_LABEL(label), align == 2 ? 1.0f : align == 1 ? 0.5f : 0.0f);
             gtk_label_set_yalign(GTK_LABEL(label), 0.0f);
             gtk_widget_set_vexpand(label, TRUE);
