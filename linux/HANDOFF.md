@@ -3519,6 +3519,17 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
 
 ## How to work on it
 
+- **Trap: a key or click right after a popover menu closes can be lost**
+  (2026-11-11, `git_actions`, only in full runs, a few in ten). The menu is
+  unmapped and Escape was delivered, yet the next Ctrl+Shift+P or click is
+  still gone (the palette never opened; a diff row's click showed nothing),
+  and every later step then typed into the void, so the reports named the
+  branch picker, far from the cause. It was not the View menu's length (the
+  checks run the palette, never the menu). `RunFromPalette` presses the key
+  again every 2 s until the palette is open, and a click that must show
+  something is repeated after 3 s inside its wait; use the same where a step
+  follows a menu's close. Look for the first FAIL in the log, not the one a
+  report names.
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).
   From `linux/`, `meson test -C build --suite gui` runs every suite (about
   37 seconds in November 2026: 4 for the `keys` suite, 15 for the tab
