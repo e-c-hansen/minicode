@@ -643,8 +643,12 @@ void GitGutter::showChange(int index, const graphene_rect_t& rect) {
     // Twelve lines at most, then it scrolls.
     int lines = 1;
     for (char c : text) lines += c == '\n';
-    gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(oldScroll_),
-                                               std::min(lines, 12) * 18 + 10);
+    // A fixed height: sized by the text view's lazily validated lines, the
+    // popover queued resizes during its own allocation and was closed by GTK
+    // on X11 (HANDOFF item 34).
+    const int height = std::min(lines, 12) * 18 + 10;
+    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(oldScroll_), height);
+    gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(oldScroll_), height);
     gtk_widget_set_visible(oldScroll_, !text.empty());
 
     // Beside the bar: its rect from the gutter's coordinates to the view's.

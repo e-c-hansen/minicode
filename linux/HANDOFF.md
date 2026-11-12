@@ -2707,7 +2707,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   bars, which is why the `gutter` suite, which sets bars by hand, runs
   with it off. The bar's popover (a child of the text view, unparented on
   unrealize; shown on the button's release, since one popped up on the press
-  was closed again by GTK before a slower release, the first time) has Revert Change, a `MultiEdit::apply` of
+  was closed again by GTK before a slower release, the first time; and the old lines' scrolled window has a fixed height, since one sized by the text view's lazily validated lines queued resizes during the popover's own allocation and GTK closed the popover, about 1 run in 6 pinned to two cores) has Revert Change, a `MultiEdit::apply` of
   `QuickDiff::revertEdit` (UTF-16 offsets through `utf16::toCharOffset`),
   and Stage Change, refused when the entry no longer names the bars'
   object. The window's actions are `nextchange`, `previouschange`,
