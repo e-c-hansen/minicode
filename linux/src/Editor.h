@@ -309,6 +309,11 @@ public:
     // tab; null until the first one is shown.
     void toggleSidePreview();
     MarkdownSide* sidePane() const { return side_; }
+    // The block editor over the preview or the side pane (checks read these).
+    bool blockEditorOpen() const { return mdPop_ && gtk_widget_get_visible(mdPop_); }
+    std::string blockEditorText() const;
+    void setBlockEditorText(const std::string& text);
+    bool blockEditorInPane() const { return mdInPane_; }
     bool showsSide() const { return sideDoc_ != nullptr; }
     // A CSV or TSV tab shown as its table (CsvTable.h) rather than the text.
     // The table finishes a cell being typed before the tab goes.
@@ -525,8 +530,12 @@ private:
     bool scrollToAnchor(const std::string& anchor);
     // Editing from the preview: the block on source `line` (a cell, when
     // `column` is not -1) in a popover pointing at `at` (view coordinates).
-    void editMarkdownBlock(int line, int column, const GdkRectangle& at);
+    void editMarkdownBlock(int line, int column, const GdkRectangle& at, bool inPane = false);
+    void toggleSideTask(int line);
+    void applySourceFromPane(const std::string& source);
+    bool mdEditOnPane() const;
     void showMdPopover(const std::string& title, const std::string& text, bool allowsItem);
+    bool mdInPane_ = false;   // the open block editor is over the side pane
     void commitMdEdit();
     void dropMdPopover();
     // A new source from a preview edit: spliced into the source buffer as one

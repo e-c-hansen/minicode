@@ -82,10 +82,24 @@ MarkdownSide::MarkdownSide(GtkTextTagTable* tags) {
         static_cast<MarkdownSide*>(self)->fit();
     }), this);
     GtkGesture* click = gtk_gesture_click_new();
+    // Capture: the double-click is claimed before the view's own gestures get it.
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(click), GTK_PHASE_CAPTURE);
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
     g_signal_connect(click, "released", G_CALLBACK(+[](GtkGestureClick*, int, double x, double y,
                                                      gpointer self) {
         static_cast<MarkdownSide*>(self)->clicked(x, y);
+    }), this);
+    g_signal_connect(click, "pressed", G_CALLBACK(+[](GtkGestureClick* g, int n, double x, double y,
+                                                    gpointer self) {
+            if (n != 2) return;
+        // A table or picture in the page has its own double-click.
+        GtkWidget* hit = gtk_widget_pick(static_cast<MarkdownSide*>(self)->view_, x, y,
+                                         GTK_PICK_DEFAULT);
+        if (hit && hit != static_cast<MarkdownSide*>(self)->view_) return;
+        // The view's own press would take the keyboard from the editor
+        // opened here once the button is up.
+        gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+        static_cast<MarkdownSide*>(self)->doubleClicked(x, y);
     }), this);
     gtk_widget_add_controller(view_, GTK_EVENT_CONTROLLER(click));
     stale_ = true;
@@ -244,6 +258,19 @@ void MarkdownSide::apply(Job* job) {
         hooks_->link = [this, alive](const std::string& url) {
             if (!alive.expired() && onLink) onLink(url);
         };
+        hooks_->cellDoubleClick = [this, alive](int line, int row, int column, GtkWidget* cell) {
+            if (alive.expired() || !onEdit || !currentOrCatchUp()) return;
+            graphene_rect_t r;
+            GdkRectangle at{0, 0, 1, 1};
+            if (gtk_widget_compute_bounds(cell, view_, &r))
+                at = GdkRectangle{(int)r.origin.x, (int)r.origin.y, std::max(1, (int)r.size.width),
+                                  std::max(1, (int)r.size.height)};
+            // The separator row sits between the header and the first body row.
+            onEdit(line + row + (row > 0 ? 1 : 0), column, at);
+        };
+        hooks_->taskToggle = [this, alive](int line) {
+            if (!alive.expired() && onTask && currentOrCatchUp()) onTask(line);
+        };
     }
     GtkTextView* tv = GTK_TEXT_VIEW(view_);
     std::vector<Info> next;
@@ -272,6 +299,7 @@ void MarkdownSide::apply(Job* job) {
             if (delta)
                 for (Markdown::Span& s : in.page.spans)
                     if (s.line >= 0) s.line += delta;
+            if (delta) Markdown::shiftLines(in.page, delta);
             in.piece = np;
             pos += in.page.length;
             oc = (size_t)m + 1;
@@ -369,6 +397,39 @@ void MarkdownSide::placeArrived() {
 }
 
 // ------------------------------------------------------------ links
+
+// A click on a page older than the buffer (typing since the last render)
+// renders first and acts on nothing, as the Mac's catchUpSidePage.
+bool MarkdownSide::currentOrCatchUp() {
+    if (idle()) return true;
+    schedule(0);
+    return false;
+}
+
+void MarkdownSide::doubleClicked(double x, double y) {
+    if (!onEdit || !currentOrCatchUp()) return;
+    GtkTextView* tv = GTK_TEXT_VIEW(view_);
+    int bx = 0, by = 0;
+    gtk_text_view_window_to_buffer_coords(tv, GTK_TEXT_WINDOW_WIDGET, (int)x, (int)y, &bx, &by);
+    GtkTextIter it;
+    if (!gtk_text_view_get_iter_at_location(tv, &it, bx, by)) return;
+    GdkRectangle box;
+    gtk_text_view_get_iter_location(tv, &it, &box);
+    if (gtk_text_iter_ends_line(&it) && bx > box.x + std::max(box.width, 1)) return;
+    const int at = gtk_text_iter_get_offset(&it);
+    int start = 0;
+    for (const Info& in : infos_) {
+        if (at < start + in.page.length) {
+            const Markdown::Span* s = in.page.spanAt(at - start);
+                    if (!s || s->line < 0) return;
+            int wx, wy;
+            gtk_text_view_buffer_to_window_coords(tv, GTK_TEXT_WINDOW_WIDGET, box.x, box.y, &wx, &wy);
+            onEdit(s->line, -1, GdkRectangle{wx, wy, std::max(box.width, 1), std::max(box.height, 1)});
+            return;
+        }
+        start += in.page.length;
+    }
+}
 
 void MarkdownSide::clicked(double x, double y) {
     if (!onLink) return;

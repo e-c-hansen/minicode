@@ -381,6 +381,25 @@ struct CellInfo {
     int line, row, column;
 };
 
+}  // namespace
+
+void Markdown::shiftLines(Page& page, int delta) {
+    for (Embed& e : page.embeds) {
+        if (e.widget) {
+            if (auto* t = static_cast<TaskInfo*>(g_object_get_data(G_OBJECT(e.widget), "md-task")))
+                t->line += delta;
+        }
+        for (GtkWidget* label : e.labels) {
+            GtkWidget* box = gtk_widget_get_parent(label);
+            if (auto* c = box ? static_cast<CellInfo*>(g_object_get_data(G_OBJECT(box), "md-cell"))
+                              : nullptr)
+                c->line += delta;
+        }
+    }
+}
+
+namespace {
+
 std::string escaped(const std::string& s) {
     char* e = g_markup_escape_text(s.c_str(), (gssize)s.size());
     std::string out = e ? e : "";

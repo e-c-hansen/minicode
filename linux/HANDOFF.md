@@ -3804,9 +3804,28 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   page's text are off by the tables before them; search the buffer with
   iters. Measured: 0.3 to 0.7 ms of main-thread CPU for a sync at 20,000
   lines.
-- **Not done**: double-click editing in the pane (the
-  editor's popover is tied to its own view); a task box in the pane does
-  nothing; heading anchors are per piece (`#section` links in the pane do
+- **Editing from the pane** (`markdown_side_edit`): a double-click on text in
+  the pane (a capture-phase gesture on the pane's view, claimed so the view
+  does not take the keyboard from the editor once the button is up; a click
+  that lands on a table or picture child is left to its own gesture) or on a
+  table cell (the `cellDoubleClick` hook) calls `Editor::editMarkdownBlock`
+  with `inPane`: the same popover as the full preview's, now parented to
+  whichever view it is over (`showMdPopover`; dropped and made again when the
+  parent changes; it grabs the keyboard when mapped, since a grab before
+  that is lost). A span's line is the source line, so the block is found with
+  `MarkdownEdit::blockAt` on the source; the commit is
+  `applySourceFromPane`: `Document::spliceText` (one undo step), the caret
+  kept on its line and the source's scroll kept, and the pane renders by its
+  own 0.3 s path. A click while the page is older than the buffer
+  (`MarkdownSide::idle()` false) renders first and edits nothing; a block
+  edited while the buffer changed underneath is not applied, and its text goes
+  to the clipboard (with an error bell; the editor has no status line to
+  say it). A kept piece whose lines moved updates the lines its table cells
+  and task boxes carry (`Markdown::shiftLines`). A task box in the pane
+  toggles the task in the source (`toggleSideTask`). Trap for checks: the
+  paned's handle takes the pointer in the pane's first ten pixels, so click a
+  little in from the edge. The task box has no check of its own yet.
+- **Not done**: heading anchors are per piece (`#section` links in the pane do
   not resolve); the pane's width is the paned's default and is not kept;
   the page is not kept across a switch to another tab.
   Trap: "upper changed since the last value-changed" alone made a later user

@@ -35,6 +35,11 @@ public:
     std::function<std::string()> getText;
     // A link clicked in the page, as written.
     std::function<void(const std::string& url)> onLink;
+    // A double-click on the page's block at source `line` (and table
+    // `column`, else -1), anchored at `at` in the pane's view; the page is
+    // current when this is called. A task box clicked, likewise.
+    std::function<void(int line, int column, const GdkRectangle& at)> onEdit;
+    std::function<void(int line)> onTask;
 
     // What the pieces are built from. A change makes the next render whole.
     bool setContext(const std::string& folder, bool webImages, bool mermaid = false,
@@ -101,6 +106,8 @@ private:
     void fetchPictures(const Info& info);
     void placeArrived();
     void clicked(double x, double y);
+    void doubleClicked(double x, double y);
+    bool currentOrCatchUp();
 
     // scroll sync
     struct Target {
