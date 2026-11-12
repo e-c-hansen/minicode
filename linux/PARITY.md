@@ -1432,8 +1432,10 @@ These may run in parallel.
   *Scroll sync done:* `PreviewScroll` joined the Linux build; the source
   leads the page, the page leads the source, and a caret moved out of the
   page's view brings its block in (HANDOFF item 54; 0.3 ms of main-thread CPU
-  per sync at 20,000 lines). Editing from the pane and the tables'
-  first-render cost remain, so the box stays open.
+  per sync at 20,000 lines). *Tables' first-render cost done* (HANDOFF item 54, `markdown_tables`):
+  README's longest main-thread stall went from 439 ms (full preview) and
+  617 ms (side pane) of CPU to about 80 to 100 ms, by wrapping cells at words
+  only. Editing from the pane remains, so the box stays open.
 - [x] **4.3 Math, Mermaid, and Export as HTML.** `MathTex`, `MermaidDiagram`,
   `MarkdownHtml`.
   *Export and Mermaid done:* File > Export as HTML… (the command palette;

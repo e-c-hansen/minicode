@@ -3814,6 +3814,21 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   full run never followed a 20,000-line jump); it counts only within 50 ms of
   a `notify::upper`.
 
+Table cost (R1, 2026-11-12; `markdown_tables`): opening a copy of README.md
+(10 tables, about 540 cells) held the main thread 439 ms of CPU in the full
+preview and 617 ms in the side pane (the longest stall between two fires of a
+5 ms timer; total CPU 754 and 1,159 ms). Building the tables was only 39 ms of
+it; the rest was GTK measuring wrapping labels, because `PANGO_WRAP_WORD_CHAR`
+with `gtk_label_set_max_width_chars(1)` makes each label measured at many
+widths. A cell now wraps at words (`PANGO_WRAP_WORD`) with no max width, and
+only a cell holding a word over 18 characters keeps `WORD_CHAR`; `fit()` still
+gives each label its width. Now 80 to 100 ms of stall (bounded at 150 in the
+suite), total 360 to 500 ms spread over several idle slices. Looks, links,
+the cells' double-click and the labels' selection are unchanged. Tried and
+worse or no better: wrapping only once `fit()` has run. What remains if it
+must go lower: one custom widget per table, or building a table when it
+scrolls near.
+
 ### 55. LaTeX forward search (done, November 2026; `PARITY.md` item 4.4, second part)
 
 Ctrl+Alt+Shift+J (`latex-workshop.synctex`, "Show Line in PDF"; LaTeX
