@@ -271,6 +271,9 @@ private:
     std::function<int(gint64, std::string*)> runAttempt_;
     std::function<void(const std::string&)> runDone_;
     void typePending();
+    // The view to the newest row before the app types or clears (the Mac's
+    // grid snaps back for typed, pasted and app-typed text).
+    void scrollToEnd();
     // The half-typed line (HANDOFF item 48): ESC [9999~ sets it aside before
     // a typed command, and in bash ESC [9998~ gives it back at the first
     // prompt after (zsh's push-input returns it by itself).

@@ -895,8 +895,21 @@ std::string Terminal::findStatus() const {
 // shell without the integration has a prompt to clear too.
 bool Terminal::clearScreen() {
     if (!vte_ || busy()) return false;
+    scrollToEnd();
     vte_terminal_feed_child(VTE_TERMINAL(vte_), "\x0c", 1);
     return true;
+}
+
+// What the app feeds VTE is no key press, so scroll-on-keystroke never moves
+// the view, and with scroll-on-output off a view left above the end (a find's
+// match, the user reading back) stayed there: the command ran or the screen
+// cleared below it and none of it showed (CI's terminal_find, HANDOFF 60).
+// At the end, VTE follows the output by itself.
+void Terminal::scrollToEnd() {
+    if (!vte_) return;
+    GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(vte_));
+    if (!adj) return;
+    gtk_adjustment_set_value(adj, gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj));
 }
 
 // Colors and font. Everything here mirrors the macOS terminal panel or the
@@ -1156,6 +1169,7 @@ void Terminal::typePending() {
         pendingType_.clear();
         return;
     }
+    scrollToEnd();
     setLineAside();
     // A paste, so a shell that asked for brackets (bash, zsh) shows it as
     // pasted and Return is the user's to press.
@@ -1228,6 +1242,7 @@ void Terminal::runLine(const std::string& line, std::function<void(const std::st
             return 2;
         }
         VteTerminal* t = VTE_TERMINAL(vte_);
+        scrollToEnd();
         setLineAside();
         vte_terminal_paste_text(t, line.c_str());
         vte_terminal_feed_child(t, "\r", 1);
