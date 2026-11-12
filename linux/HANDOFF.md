@@ -4184,6 +4184,7 @@ panel has a row).
   new window on the folder comes back split as it was, and closing the
   right group's only tab closes the group. Not checked: the look (the
   selection hidden in the other group, the note for a viewer).
+Trap: split_editor needs the editor's full width; a browser pane an earlier suite left shown halves it and the groups' 150 px minimum stops the bar's 100 px drag, so the suite hides the browser and terminal at its start.
 
 ### 62. Find in the terminal, Clear, dock resize (done, November 2026; `PARITY.md` item 4.7, third part)
 

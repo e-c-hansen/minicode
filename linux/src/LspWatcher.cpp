@@ -35,6 +35,7 @@ struct FileWatcher::Shared {
     std::vector<Event> pending;
     GSource* timer = nullptr;
     bool full = false;   // kMaxFolders reached (said once)
+    bool failed = false; // a monitor could not be made (said once)
 };
 
 namespace {
@@ -72,6 +73,11 @@ bool watchFolder(Shared* sh, const std::string& dir) {
     GFileMonitor* m = g_file_monitor_directory(f, G_FILE_MONITOR_WATCH_MOVES, nullptr, &error);
     g_object_unref(f);
     if (!m) {
+        // Out of inotify instances or watches, most likely; said once.
+        if (!sh->failed)
+            g_printerr("MiniCode: the language servers' file watcher cannot watch %s: %s\n", dir.c_str(),
+                       error ? error->message : "unknown");
+        sh->failed = true;
         g_clear_error(&error);
         return false;
     }
@@ -91,7 +97,11 @@ void watchTree(Shared* sh, const std::string& top, std::vector<Lsp::FileChange>*
     while (!stack.empty() && sh->active.load()) {
         const std::string dir = stack.back();
         stack.pop_back();
-        if (!Lsp::watchDescends(dir) || !watchFolder(sh, dir)) continue;
+        if (!Lsp::watchDescends(dir)) continue;
+        // A new folder (`report`) is listed even when it cannot be watched,
+        // so what came with it is still reported; at start it is not worth
+        // walking a tree that cannot be watched.
+        if (!watchFolder(sh, dir) && !report) continue;
         DIR* d = opendir(dir.c_str());
         if (!d) continue;
         while (dirent* e = readdir(d)) {

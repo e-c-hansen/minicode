@@ -10,6 +10,7 @@
 // closing a group's last tab closes the group; the bar between the groups
 // drags, within each side's minimum; and a new window on the folder comes
 // back split.
+#include "WindowLayout.h"
 #include "Harness.h"
 
 #include "Document.h"
@@ -96,6 +97,11 @@ size_t gWindows = 0;
 MC_GUI_SUITE(split_editor) {
     MCGuiStep("three files in tabs, the first on show", [] {
         MCGuiSetKeyWindow(nullptr);
+        // The bar's drags need the editor's full width: with a browser pane
+        // an earlier suite left open the editor is half as wide and the
+        // groups' minimum stops the drag short (as it should).
+        if (MCGuiApp().layout->browserShown()) MCGuiApp().layout->hideBrowser();
+        if (MCGuiApp().layout->terminalShown()) MCGuiApp().layout->hideTerminal();
         for (int i = 1; i <= 120; i++) kA += "line " + std::to_string(i) + "\n";
         MCGuiWriteFile(F("s-a.txt"), kA);
         MCGuiWriteFile(F("s-b.txt"), "bee\n");
@@ -215,6 +221,8 @@ MC_GUI_SUITE(split_editor) {
     // ---- the bar between the groups
     MCGuiStep("the bar drags 100 px right", [] {
         gLeft = gtk_widget_get_width(ed()->groupWidget(0));
+        MCGuiNote("groups %d and %d px, the editor %d px wide", gtk_widget_get_width(ed()->groupWidget(0)),
+                  gtk_widget_get_width(ed()->groupWidget(1)), gtk_widget_get_width(ed()->widget()));
         DragBar(100);
     });
     MCGuiWait("the left group is 100 px wider", 5, [] {
