@@ -607,6 +607,12 @@ trap), zsh with the Mac's script and `__minicode_term=vte` in its .zshenv.
 Seen in the suite: a command's output in the same read as its start mark
 hides the start, as the probe found for marks.
 
+*The owner's decision, 2026-11-12:* command marks (Ctrl+Up and Ctrl+Down
+between commands, the bar beside a failed command, Copy Last Command Output)
+are left out of the port, as inlay hints were (D9): VTE cannot say where on
+screen a command started, and an approximate row could put a mark on the
+wrong line. Item 4.7 keeps the rest.
+
 **D11. Where state lives.** Sessions and the window's other remembered
 state are JSON (`Json`) under `$XDG_STATE_HOME/minicode` (default
 `~/.local/state/minicode`); backups under `$XDG_DATA_HOME/minicode/Backups`.
@@ -1457,7 +1463,7 @@ These may run in parallel.
   group can be a second view on the same buffer, which is simpler than the
   Mac's mirror.
 - [ ] **4.7 Terminal tabs and splits**, their own zoom, find, command marks
-  (D10), and Run File. `TerminalLayout`, `RunFile`.
+  (D10: left out, the owner's call), and Run File. `TerminalLayout`, `RunFile`.
   *Tabs done:* `TerminalDock` over a `TabStrip` and a +: New, Next,
   Previous and Close Terminal, Rename, Move Left and Right, a drag, a close
   question for a busy terminal, the last tab hiding the dock, Run File into a
