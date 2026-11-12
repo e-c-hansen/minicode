@@ -4047,6 +4047,84 @@ panel has a row).
   `latex_problems` leaving `XDG_RUNTIME_DIR` changed, so a later suite's CLI
   looked for the control socket in the wrong folder; it puts it back.
 
+### 60. The split editor (done, November 2026; `PARITY.md` item 4.6)
+
+- **Two groups, one view with everything**: `src/Groups.cpp` (Editor's
+  methods, as Tabs.cpp is). The view and all that hangs on it (gutter,
+  carets, folds, the find bar, the viewers, notes, the inline agent) stays
+  in the focused group, whose tabs are still `tabs_` and `active_`, so the
+  strip, `tabCount`, `document(i)`, `indexOf`, the tab keys and closing all
+  act on the focused group unchanged. The other group is `other_` and
+  `otherActive_`, shown by `otherBox_`: its own `TabStrip` over a plain
+  read-only, never-focusable `GtkTextView` (`mirrorView_`) on the **same
+  buffer** (D2 made that free; the Mac needs `MCEditorMirror`'s second
+  layout manager), so typing shows in both as it happens, with one undo
+  history, one dirty state and one backup. Focusing the other group
+  (`swapGroups`) trades the two: the view takes the other group's tab at
+  that group's place, and the other group keeps the view's tab at the
+  view's place. Sides are fixed (0 left); `groups_` is a box with a custom
+  layout putting `box_` (the focused group) on whichever side `focused_`
+  says, with `EditorTabs::leftGroupWidth` (150 px a side, the Mac's) and a
+  `.minicode-bar` the drag moves.
+- **`documents()` is every document once** (by value now): the focused
+  group's in tab order, then the other's. Backups, sessions, auto-save,
+  the disk checks and the language servers read it, so a file in both
+  groups is opened once on its server. `documentFor`, `documentById`,
+  `dirtyDocuments`, `pathMoved` and the settings loops read it too; a tab
+  menu's Close Others, Close to the Right and Close All, and File > Close
+  All Tabs, act on the focused group (`groupDocuments`).
+- **A buffer has one selection**, so the other group's caret and first
+  line are marks of its own (`mirrorIns_`, `mirrorBound_`, `mirrorTop_`,
+  refs we hold, since a mark outlives a buffer that goes) and its scroll is
+  its own view's; the mirror hides the selection the buffer shows for the
+  focused view (`.minicode-mirror`). `gtk_text_view_scroll_to_mark` waits
+  for the layout, so until three frames after one, `mirrorPlace` reads the
+  mark, not the view.
+- **Rules**: a file opens in the group you are in (`activate` adds the
+  other group's document to this group as a second tab of the same
+  document); Split Editor when split puts the tab in the other group; Ctrl+2
+  with no split splits (VS Code's, the Mac's); Move Editor alone in the only
+  group rings the bell (it would leave an empty group); closing a group's
+  last tab closes the group (`closeFocusedGroup`, `dropOther`); closing a
+  tab whose document the other group still has asks nothing
+  (`inBothGroups`, main.cpp's `closeTabAsking`) and is not remembered for
+  Reopen Closed Tab. A press anywhere in the other group is claimed in the
+  capture phase (the view would move the shared caret), and once over the
+  group is focused with the caret where it landed; its strip's press
+  selects that tab there; its close button closes it in that group; it has
+  no right click menu.
+- **Viewers stay in the focused group**: a picture, PDF, video, the CSV
+  table, SQLite, a diff, a page, the LaTeX preview and the rendered
+  Markdown page show only in the view's slot (a second `MediaView`, LaTeX
+  preview or page buffer would cost as much again); the other group names
+  the file, "Click to show it here". A text tab or a message shows as
+  text. The other group draws no gutter, squiggles, bracket colors past
+  what the highlighter tags, or inlay labels (the Mac's mirror leaves the
+  same out).
+- **Keys** (D1): Split Editor Ctrl+Backslash (VS Code's; an editor command, so the
+  terminal's program keeps it as SIGQUIT), Focus First and Second Editor
+  Group Ctrl+1 and Ctrl+2 (VS Code's, Global; Ctrl+1 was Focus Editor and
+  takes the registry's title now), Move Editor into Next and Previous Group
+  Ctrl+Alt+Shift+Page Down and Page Up: VS Code's Ctrl+Alt+Right and Left
+  are GNOME's, so the terminal tabs' Ctrl+Alt+Page Down and Up with Shift.
+- **Sessions**: `TabSessions::Session` gains `split` and `groups`
+  (`EditorTabs::GroupsSession`, written as "groups" only when split; an
+  older or damaged record is one group, `tab-sessions:groups`).
+  `Persistence::restoreSession` lays the split over the tabs that came back
+  (`EditorTabs::restoreGroups`, `Editor::restoreGroups`), reading each
+  group's tab on show.
+- **Checked**: `split_editor` (real keys, clicks and a drag): Ctrl+Backslash shows
+  one document in two views on one buffer (three documents for three
+  files), typing in one shows in the other and marks both tabs, Ctrl+Z in
+  the other group undoes it, each group's caret and scroll come back as
+  its own across Ctrl+1 and Ctrl+2, a click in the other group focuses it
+  with the caret on the line clicked, Move into Next and Previous Group
+  move the tab and the keyboard, Ctrl+Page Up and Alt+2 step through the
+  focused group only, the bar drags 100 px and stops at 150 px a side, a
+  new window on the folder comes back split as it was, and closing the
+  right group's only tab closes the group. Not checked: the look (the
+  selection hidden in the other group, the note for a viewer).
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

@@ -60,6 +60,10 @@ std::string stylesheet(const Settings& s) {
            "; color: " + fg(Surface::Editor) + "; }";
     css += ".minicode-editor text selection { background-color: " + selection + "; }";
     css += ".minicode-editor-scroller { background-color: transparent; }";
+    // The split editor's other group (Groups.cpp) shares its document's
+    // buffer, so the selection there is the focused group's: not drawn.
+    css += ".minicode-editor.minicode-mirror text selection { background-color: transparent; }";
+    css += ".minicode-mirror-note { color: alpha(currentColor, 0.6); }";
     // The line-number gutter (Gutter.cpp) paints editor.gutter-background
     // itself; the view's border window under it stays clear.
     css += ".minicode-editor > border { background-color: transparent; }";

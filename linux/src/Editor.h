@@ -84,8 +84,9 @@ public:
     // editor from GtkApplication's window-removed).
     ~Editor() override;
 
-    // The widget to drop into the layout: the tabs over the slot.
-    GtkWidget* widget() const { return box_; }
+    // The widget to drop into the layout: the tabs over the slot, and the
+    // second editor group beside them while the editor is split.
+    GtkWidget* widget() const { return groups_; }
     // A widget over the slot (under the tabs), placed by its own alignment
     // and margins: the find bar (FindBar.h).
     void addOverlay(GtkWidget* w) { gtk_overlay_add_overlay(GTK_OVERLAY(slotOverlay_), w); }
@@ -125,9 +126,14 @@ public:
     // tab then says why: missing, not text, too large).
     bool openFile(const std::string& path,
                   EditorTabs::OpenFrom from = EditorTabs::OpenFrom::Other);
+    // The tabs count, index and step in the focused group, the one the strip
+    // shows (the editor's only group while it is not split).
     int tabCount() const { return (int)tabs_.size(); }
     Document* document(int index) const;
-    const std::vector<Document*>& documents() const { return tabs_; }   // in tab order
+    // Every document of the window, in either group, once each: the focused
+    // group's in tab order, then the other's (backups, sessions, auto-save,
+    // the disk and the language servers).
+    std::vector<Document*> documents() const;
     Document* active() const { return active_; }
     int activeIndex() const;
     int indexOf(const Document* d) const;
@@ -190,6 +196,43 @@ public:
     // Mac's rule).
     void pathTrashed(const std::string& path);
     TabStrip* strip() const { return strip_; }
+
+    // ---- editor groups (PARITY.md 4.6, Groups.cpp): VS Code's Split
+    // Editor, two groups at most, side by side, the bar between them
+    // dragged to resize them (EditorTabs::leftGroupWidth). The view, with
+    // everything on it, is always in the focused group, whose tabs are the
+    // strip's; the other group shows its tab on show in a read-only view of
+    // its own on the same buffer (one document, one undo, one dirty state),
+    // with its own caret and scroll, as the Mac's MCEditorMirror. A press
+    // in it, or on its strip, focuses that group. Groups are 0 (left) and 1.
+    bool isSplit() const { return split_; }
+    int focusedGroup() const { return split_ ? focused_ : 0; }
+    std::vector<Document*> groupDocuments(int group) const;   // in tab order
+    Document* groupActive(int group) const;
+    bool isOpen(const Document* d) const;        // a tab in either group
+    bool inBothGroups(const Document* d) const;  // closing one asks nothing
+    // Split Editor: the tab on show in a second group on the right, which
+    // takes the keyboard; when split, it goes to the other group instead.
+    void splitEditor();
+    // The keyboard to a group's tab (Focus First and Second Editor Group);
+    // the second splits the editor when it is not split, as VS Code's does.
+    void focusGroup(int group);
+    // Move Editor into Next (1) or Previous (-1) Group: the tab on show
+    // leaves this group for the other, which takes the keyboard, making a
+    // group on the right when not split (EditorTabs::moveTarget).
+    void moveToGroup(int direction);
+    double groupFraction() const { return groupFraction_; }
+    void setGroupFraction(double f);
+    // For the session (Persistence.h), and back from it once the tabs are
+    // in: the split laid out over them, its tabs on show.
+    EditorTabs::GroupsSession groupsSession() const;
+    void restoreGroups(const EditorTabs::GroupLayout& layout);
+    // For the checks: the other group's strip and view, the bar, and a
+    // group's whole widget (its strip over its slot).
+    TabStrip* otherStrip() const { return otherStrip_; }
+    GtkWidget* mirrorView() const { return mirrorView_; }
+    GtkWidget* groupBar() const { return groupBar_; }
+    GtkWidget* groupWidget(int group) const;
     // A tab's close button or a middle click on it: the caller asks about
     // unsaved changes, then calls closeTab.
     std::function<void(Document*)> onCloseRequest;
@@ -545,6 +588,46 @@ private:
     static void onPdfShown(void* self);       // a PDF view came on or off screen
 
     GtkWidget*     box_      = nullptr;   // the strip over the slot
+    // ---- the groups (Groups.cpp)
+    GtkWidget*     groups_   = nullptr;   // box_, the other group and the bar
+    GtkWidget*     otherBox_ = nullptr;   // the other group: its strip over mirrorStack_
+    TabStrip*      otherStrip_ = nullptr;
+    GtkWidget*     mirrorStack_ = nullptr;   // the mirror view, or a note for a viewer
+    GtkWidget*     mirrorView_ = nullptr;    // plain GtkTextView, never the keyboard's
+    GtkWidget*     mirrorNote_ = nullptr;
+    GtkTextBuffer* mirrorEmpty_ = nullptr;
+    GtkWidget*     groupBar_ = nullptr;
+    bool           split_ = false;
+    int            focused_ = 0;            // the focused group, 0 left, 1 right
+    double         groupFraction_ = 0.5;    // the left group's share
+    std::vector<Document*> other_;          // the other group's tabs
+    Document*      otherActive_ = nullptr;  // and its tab on show
+    // The other group's selection and first line on show, in its document's
+    // buffer (refs of our own: a mark outlives a buffer that goes).
+    GtkTextMark*   mirrorIns_ = nullptr;
+    GtkTextMark*   mirrorBound_ = nullptr;
+    GtkTextMark*   mirrorTop_ = nullptr;
+    double         dragLeft_ = 0;           // the left width a bar drag started at
+    bool           mirrorScrollPending_ = false;   // its view has yet to reach mirrorTop_
+    int            mirrorTicks_ = 0;               // frames until it has
+    guint          mirrorTickId_ = 0;
+    void showInMirror(Document* d);         // the other group's tab on show, at its place
+    void buildGroups();
+    void refreshMirror();
+    void swapGroups();
+    void closeFocusedGroup();               // its last tab went: the other is the only one
+    void dropOther(Document* d, bool remember);
+    bool inOther(const Document* d) const;
+    void dropMirrorMarks();
+    // The other group's place for `d`: a selection and a first line on show
+    // (character offsets, -1 for unknown).
+    void setMirrorPlace(Document* d, int selStart, int selEnd, int top);
+    void mirrorPlace(int* selStart, int* selEnd, int* top) const;
+    void viewPlace(Document* d, int* selStart, int* selEnd, int* top);
+    void givePlace(Document* d, int selStart, int selEnd, int top);
+    static void groupsMeasure(GtkWidget* w, GtkOrientation o, int forSize, int* min, int* nat,
+                              int* minBase, int* natBase);
+    static void groupsAllocate(GtkWidget* w, int width, int height, int baseline);
     TabStrip*      strip_    = nullptr;
     GtkWidget*     slot_     = nullptr;   // GtkStack: scroller_, media, LaTeX previews, diff
     AgentNotes*    notes_ = nullptr;

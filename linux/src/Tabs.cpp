@@ -61,13 +61,13 @@ int Editor::activeIndex() const { return indexOf(active_); }
 
 Document* Editor::documentFor(const std::string& path) const {
     if (path.empty()) return nullptr;
-    for (Document* d : tabs_)
+    for (Document* d : documents())
         if (d->kind() != Document::Kind::Diff && d->path() == path) return d;
     return nullptr;
 }
 
 Document* Editor::documentById(uint64_t id) const {
-    for (Document* d : tabs_)
+    for (Document* d : documents())
         if (d->id() == id) return d;
     return nullptr;
 }
@@ -80,7 +80,7 @@ Document* Editor::previewTab() const {
 
 std::vector<Document*> Editor::dirtyDocuments() const {
     std::vector<Document*> out;
-    for (Document* d : tabs_)
+    for (Document* d : documents())
         if (d->dirty()) out.push_back(d);
     return out;
 }
@@ -343,7 +343,12 @@ EditorPage* Editor::currentPage() const { return active_ ? active_->editorPage()
 // changes, undo and place; the one shown is checked against the disk, and
 // asked about if it changed there while it had unsaved changes.
 void Editor::activate(Document* d) {
-    if (!d || indexOf(d) < 0) return;
+    if (!d) return;
+    // A file the other group has opens in this one too, as VS Code opens a
+    // file in the group you are in: one document, a tab in each.
+    if (indexOf(d) < 0 && inOther(d))
+        tabs_.insert(tabs_.begin() + EditorTabs::insertionIndex(activeIndex(), tabCount()), d);
+    if (indexOf(d) < 0) return;
     d->lastUsed = ++stamp_;
     if (d == active_) {
         refreshStrip();
@@ -407,9 +412,10 @@ void Editor::focusActiveDocument() {
 
 // ---------------------------------------------------------------- closing
 
+// The focused group's tab of it, else the other group's.
 void Editor::closeTab(Document* d) {
-    if (indexOf(d) < 0) return;
-    dropTab(d, true);
+    if (indexOf(d) >= 0) dropTab(d, true);
+    else if (inOther(d)) dropOther(d, true);
 }
 
 // Out of the row: remembered for Reopen Closed Tab when `remember` (a file's
@@ -420,7 +426,8 @@ void Editor::dropTab(Document* d, bool remember) {
     const bool wasActive = d == active_;
     if (wasActive) { if (notes_) notes_->activeWillChange(); if (onActiveWillChange) onActiveWillChange(); }
     if (wasActive) stash();
-    if (remember && d->kind() != Document::Kind::Diff && !d->path().empty()) {
+    // Still open in the other group: not closed, so not one to reopen.
+    if (remember && d->kind() != Document::Kind::Diff && !d->path().empty() && !inOther(d)) {
         EditorTabs::ClosedTab c = closedTabOf(d);
         c.index = index;
         closed_.remember(c);
@@ -429,8 +436,12 @@ void Editor::dropTab(Document* d, bool remember) {
     for (Document* t : tabs_) stamps.push_back(t->lastUsed);
     const int next = EditorTabs::activeAfterClose(stamps, activeIndex(), index);
     tabs_.erase(tabs_.begin() + index);
-    if (d == diffDoc_) diffDoc_ = nullptr;
-    if (wasActive) {
+    if (d == diffDoc_ && !inOther(d)) diffDoc_ = nullptr;
+    if (wasActive && split_ && tabs_.empty()) {
+        // The group's last tab: the group closes and the other has the editor.
+        active_ = nullptr;
+        closeFocusedGroup();
+    } else if (wasActive) {
         // The next tab on show first, so the language server lets go of this
         // one's buffer before it goes.
         active_ = nullptr;
@@ -442,7 +453,7 @@ void Editor::dropTab(Document* d, bool remember) {
         if (active_) active_->checkExternalChange();
         { if (onActiveChanged) onActiveChanged(); if (notes_) notes_->activeChanged(); }
     }
-    destroy(d);
+    if (!isOpen(d)) destroy(d);
     refreshStrip();
 }
 
@@ -471,8 +482,14 @@ void Editor::closeAllTabs() {
     stash();
     active_ = nullptr;
     diffDoc_ = nullptr;
-    const std::vector<Document*> all = tabs_;
+    const std::vector<Document*> all = documents();
     tabs_.clear();
+    other_.clear();
+    otherActive_ = nullptr;
+    split_ = false;
+    focused_ = 0;
+    dropMirrorMarks();
+    refreshMirror();
     showActive();   // the empty editor, with no buffer of theirs on show
     for (Document* d : all) destroy(d);
     { if (onActiveChanged) onActiveChanged(); if (notes_) notes_->activeChanged(); }
@@ -559,7 +576,8 @@ bool Editor::reopenClosedTab() {
     EditorTabs::ClosedTab c;
     while (closed_.take(&c, isRegularFile)) {
         if (Document* open = documentFor(c.path)) {
-            selectTab(indexOf(open));
+            activate(open);   // the other group's joins this one
+            focusActiveDocument();
             return true;
         }
         Document* d = new Document(this, &tags_);
@@ -576,7 +594,7 @@ bool Editor::reopenClosedTab() {
 // ---------------------------------------------------------------- moves and the Trash
 
 void Editor::pathMoved(const std::string& from, const std::string& to) {
-    for (Document* d : tabs_) {
+    for (Document* d : documents()) {
         if (d->kind() == Document::Kind::Diff || !isInside(d->path(), from)) continue;
         const std::string now = to + d->path().substr(from.size());
         const bool wasPreview = d->showsPreview();
@@ -602,10 +620,12 @@ void Editor::pathMoved(const std::string& from, const std::string& to) {
 }
 
 void Editor::pathTrashed(const std::string& path) {
-    const std::vector<Document*> all = tabs_;
+    const std::vector<Document*> all = documents();
     for (Document* d : all)
-        if (d->kind() != Document::Kind::Diff && !d->dirty() && isInside(d->path(), path))
-            dropTab(d, false);
+        if (d->kind() != Document::Kind::Diff && !d->dirty() && isInside(d->path(), path)) {
+            if (inOther(d)) dropOther(d, false);   // from both groups
+            if (indexOf(d) >= 0) dropTab(d, false);
+        }
 }
 
 // ---------------------------------------------------------------- the strip
@@ -631,6 +651,7 @@ void Editor::refreshStrip() {
     }
     strip_->setItems(items, activeIndex());
     gtk_widget_set_visible(strip_->widget(), !tabs_.empty());
+    refreshMirror();   // the other group's strip and view (Groups.cpp)
     if (onDocumentsChanged) onDocumentsChanged(nullptr);
     if (observer_) observer_->tabsChanged();   // every tab's file on its server
 }

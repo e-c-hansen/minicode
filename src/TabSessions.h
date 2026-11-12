@@ -56,6 +56,11 @@ struct Session {
     // written before the pane had tabs has none.
     std::vector<BrowserTab> browser;
     int browserActive = -1;
+    // The split editor's groups (EditorTabs::GroupsSession), when the
+    // editor was split; a session from before the split editor has none and
+    // comes back as one group.
+    bool split = false;
+    EditorTabs::GroupsSession groups;
 };
 
 // Every folder's, by its resolved path.

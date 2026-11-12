@@ -245,6 +245,16 @@ const std::vector<LinuxRow>& linuxRows() {
         // Editor Group is a chord), so Ctrl+Alt with the letter, which GNOME
         // leaves alone. It has Alt, so it works from the terminal too.
         {"minicode.toggleMaximizedPane", "ctrl+alt+m", 0, nullptr, nullptr},
+        // The split editor (PARITY.md 4.6). Split Editor is VS Code's Linux
+        // Ctrl+\, an editor command, so in the terminal the program keeps it
+        // (SIGQUIT). VS Code's Ctrl+Alt+Right and Left move a tab between
+        // groups, but GNOME takes Ctrl+Alt+arrows, so Ctrl+Alt+Shift with
+        // Page Down and Page Up, the terminal tabs' Ctrl+Alt+Page Down and
+        // Page Up with Shift for carrying the tab along.
+        {"workbench.action.splitEditor", "ctrl+\\", 0, nullptr, nullptr},
+        {"workbench.action.moveEditorToNextGroup", "ctrl+alt+shift+pagedown", 0, nullptr, nullptr},
+        {"workbench.action.moveEditorToPreviousGroup", "ctrl+alt+shift+pageup", 0, nullptr,
+         nullptr},
         {"minicode.toggleHiddenFiles", "ctrl+shift+.", 0, nullptr, nullptr},
         // The Mac's Cmd+J would be Ctrl+J here, which a Global command would
         // take from the shell (it ends a line), so Ctrl+` and Ctrl+Shift+T.
@@ -303,8 +313,11 @@ const std::vector<LinuxRow>& linuxRows() {
         // The keys out of the terminal without the mouse: Global, so the
         // shell never gets them.
         {"workbench.action.focusSideBar", "ctrl+0", Global, nullptr, nullptr},
-        // One editor until the split editor (PARITY.md 4.6).
-        {"workbench.action.focusFirstEditorGroup", "ctrl+1", Global, "Focus Editor", nullptr},
+        // VS Code's Linux Ctrl+1 and Ctrl+2 focus the first and second editor
+        // group (PARITY.md 4.6); Ctrl+2 splits the editor when it is not
+        // split. Global, as Ctrl+1 was, so both leave the terminal.
+        {"workbench.action.focusFirstEditorGroup", "ctrl+1", Global, nullptr, nullptr},
+        {"workbench.action.focusSecondEditorGroup", "ctrl+2", Global, nullptr, nullptr},
         // VS Code's Linux Ctrl+PageDown and Ctrl+PageUp, and the Mac's Ctrl+Tab
         // and Ctrl+Shift+Tab (VS Code's are its recently used list, which
         // minicode has not). Global, as Ctrl+Tab was before the tabs, so they

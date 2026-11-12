@@ -83,8 +83,10 @@ CodeView::~CodeView() { gutter_.reset(); }
 
 // ---------------------------------------------------------------- the buffer
 
-void CodeView::setBuffer(GtkTextBuffer* buffer) {
-    GtkTextBuffer* old = gtk_text_view_get_buffer(textView());
+void CodeView::setBuffer(GtkTextBuffer* buffer) { setViewBuffer(textView(), buffer); }
+
+void CodeView::setViewBuffer(GtkTextView* view, GtkTextBuffer* buffer) {
+    GtkTextBuffer* old = gtk_text_view_get_buffer(view);
     if (old == buffer) return;
     if (old) {
         static const char kFlush[] = "minicode-layout-flush";
@@ -97,7 +99,7 @@ void CodeView::setBuffer(GtkTextBuffer* buffer) {
         }
         gtk_text_tag_changed(tag, FALSE);
     }
-    gtk_text_view_set_buffer(textView(), buffer);
+    gtk_text_view_set_buffer(view, buffer);
 }
 
 // ---------------------------------------------------------------- passes

@@ -92,6 +92,19 @@ std::string encode(const Sessions &all) {
             e.set("browser", bt);
             e.set("browserActive", s.browserActive);
         }
+        if (s.split) {
+            Json g = Json::object();
+            for (int k = 0; k < 2; k++) {
+                Json files = Json::array();
+                for (const std::string &f : s.groups.groups[k]) files.push(Json(f));
+                g.set(k == 0 ? "left" : "right", files);
+            }
+            g.set("leftActive", s.groups.active[0]);
+            g.set("rightActive", s.groups.active[1]);
+            g.set("focused", s.groups.focused);
+            g.set("fraction", s.groups.fraction);
+            e.set("groups", g);
+        }
         root.set(kv.first, e);
     }
     return root.dump() + "\n";
@@ -140,6 +153,20 @@ Sessions decode(const std::string &text) {
         s.active = active >= 0 ? keptAt[(size_t)active] : -1;
         s.preview = preview >= 0 ? keptAt[(size_t)preview] : -1;
         s.used = e["used"].asNumber(0);
+        const Json &g = e["groups"];
+        if (g.isObject() && g["left"].isArray() && g["right"].isArray()) {
+            for (int k = 0; k < 2; k++)
+                for (const Json &f : g[k == 0 ? "left" : "right"].elements())
+                    if (f.isString() && !f.asString().empty())
+                        s.groups.groups[k].push_back(f.asString());
+            s.groups.active[0] = g["leftActive"].isString() ? g["leftActive"].asString() : "";
+            s.groups.active[1] = g["rightActive"].isString() ? g["rightActive"].asString() : "";
+            s.groups.focused = g["focused"].asNumber(0) == 1 ? 1 : 0;
+            const double fr = g["fraction"].asNumber(0.5);
+            s.groups.fraction = fr > 0 && fr < 1 ? fr : 0.5;
+            s.split = !s.groups.groups[0].empty() && !s.groups.groups[1].empty();
+            if (!s.split) s.groups = EditorTabs::GroupsSession();
+        }
         out[kv.first] = s;
     }
     return out;

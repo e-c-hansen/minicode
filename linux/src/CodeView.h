@@ -63,6 +63,8 @@ public:
     // (gtk_text_tag_changed; GTK's tag_changed_cb invalidates y 0 with equal
     // heights, which empties the cache whole).
     void setBuffer(GtkTextBuffer* buffer);
+    // The same for any text view (the split editor's other group).
+    static void setViewBuffer(GtkTextView* view, GtkTextBuffer* buffer);
 
     // ---- drawing passes
     enum class Layer { BelowText, AboveText };

@@ -259,6 +259,7 @@ Editor::Editor() {
     folds_ = new FoldUi(this);        // PARITY.md 1.10
     notes_ = new AgentNotes(this);    // PARITY.md 3.4
     inline_ = new InlineAgentBar(this);   // PARITY.md 3.3
+    buildGroups();   // the second group's widgets, hidden until a split (Groups.cpp)
     showActive();   // the empty editor
 }
 
@@ -297,12 +298,20 @@ Editor::~Editor() {
     colorSaveTimer_ = 0;
     dropColorPopover();
     active_ = nullptr;
-    for (Document* d : tabs_) destroy(d);
+    if (mirrorTickId_) gtk_widget_remove_tick_callback(mirrorView_, mirrorTickId_);
+    mirrorTickId_ = 0;
+    // The other group's view lets go of its buffer first.
+    if (mirrorView_) CodeView::setViewBuffer(GTK_TEXT_VIEW(mirrorView_), mirrorEmpty_);
+    dropMirrorMarks();
+    for (Document* d : documents()) destroy(d);
+    other_.clear();
+    otherActive_ = nullptr;
     tabs_.clear();
     delete large_;
     large_ = nullptr;
     g_signal_handlers_disconnect_by_data(view_, this);
-    for (GtkWidget* w : {view_, scroller_}) {
+    g_object_set_data(G_OBJECT(groups_), "minicode-editor", nullptr);   // its layout's
+    for (GtkWidget* w : {view_, scroller_, mirrorStack_, groups_}) {
         GListModel* ctrls = gtk_widget_observe_controllers(w);
         for (guint i = 0; i < g_list_model_get_n_items(ctrls); ++i) {
             GObject* c = static_cast<GObject*>(g_list_model_get_item(ctrls, i));
@@ -314,6 +323,10 @@ Editor::~Editor() {
     gtk_widget_insert_action_group(strip_->widget(), "tab", nullptr);
     g_object_unref(tabActions_);
     delete strip_;
+    delete otherStrip_;
+    otherStrip_ = nullptr;
+    if (mirrorEmpty_) g_object_unref(mirrorEmpty_);
+    mirrorEmpty_ = nullptr;
     delete media_;
     delete sqlite_;
     *compareAlive_ = false;
@@ -327,7 +340,8 @@ std::vector<void*> Editor::handlerOwners() const {
     std::vector<void*> out = {(void*)this,      (void*)media_,     (void*)strip_,
                               (void*)brackets_, (void*)autoClose_, (void*)large_,
                               (void*)carets_,   (void*)folds_,     (void*)snippets_};
-    for (Document* d : tabs_)
+    if (otherStrip_) out.push_back((void*)otherStrip_);
+    for (Document* d : documents())
         if (d->latexPreview()) out.push_back(d->latexPreview());
     return out;
 }
@@ -1024,7 +1038,7 @@ bool Editor::saveDocument(Document* d, std::string* error) {
 }
 
 void Editor::checkExternalChange() {
-    const std::vector<Document*> docs = tabs_;   // a question may come up meanwhile
+    const std::vector<Document*> docs = documents();   // a question may come up meanwhile
     for (Document* d : docs) d->checkExternalChange();
 }
 
@@ -1385,7 +1399,7 @@ bool Editor::showLineInPdf() {
         mainPath = root[0] == '/' ? root : std::string(g_path_get_dirname(file.c_str())) + "/" + root;
         mainPath = real(mainPath);
     } else if (text.find("\\documentclass") == std::string::npos) {
-        for (Document* o : tabs_)
+        for (Document* o : documents())
             if (o != d && o->latexPreview() && o->latexPreview()->readsFile(file)) {
                 mainPath = o->path();
                 break;
@@ -1467,10 +1481,10 @@ void Editor::applySettings(const Settings& s) {
     // each tab has them.
     brackets_->applySettings(s);
     BracketColors::applySettings(tags_.table, s);
-    for (Document* d : tabs_) d->bracketSettingChanged();
+    for (Document* d : documents()) d->bracketSettingChanged();
     // Semantic tokens' tags (every tab's), and off with their setting.
     SemanticColors::applySettings(tags_.table, s);
-    for (Document* d : tabs_) d->semanticSettingChanged();
+    for (Document* d : documents()) d->semanticSettingChanged();
     // The tags are every tab's: each recolors with them.
     GtkTextTagTable* t = tags_.table;
     for (int i = 0; i < kTokenStyleCount; ++i)
@@ -1487,7 +1501,7 @@ void Editor::applySettings(const Settings& s) {
     setTagColor(t, "md_link", "foreground-rgba", s.markdown(MarkdownColor::Link));
     setTagColor(t, "md_done", "foreground-rgba", s.markdown(MarkdownColor::Done));
     // Swatch text contrast depends on the editor background.
-    for (Document* d : tabs_)
+    for (Document* d : documents())
         if (d->isSettingsFile()) d->restartHighlighting();
     // Web pictures turned on or off: the preview shows them, or their alt
     // text, from now on.
