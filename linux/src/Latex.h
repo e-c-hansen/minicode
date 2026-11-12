@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "LatexDoc.h"
+#include "LatexLog.h"
 #include "SyncTex.h"
 
 class PdfView;
@@ -93,6 +94,30 @@ public:
     void startAddItem();
     void cancelEdit();
 
+    // Problems and warnings (CLAUDE.md, "Problems on lines"). A failed
+    // typeset lists tectonic's problems above its log, each a row that calls
+    // `open` with the file it is about and its line; a typeset that worked
+    // lists its warnings behind the bar's "N warnings" button. While the
+    // buffer is still the text last typeset the lines are marked in the
+    // gutter (tags latex-error and latex-warning); an edit or a good typeset
+    // takes the marks away. The host opens the file (an \input file in a tab).
+    using OpenProblemFn = std::function<void(const std::string& path, int line)>;
+    void setOpenProblem(OpenProblemFn fn) { openProblem_ = std::move(fn); }
+    // The problems of the last typeset, errors first.
+    const std::vector<LatexLog::Problem>& problems() const { return problems_; }
+    // Press row `index` of the log page's list, as a click does.
+    bool openProblemRow(int index);
+    // The warnings of the last good typeset, behind the bar's button.
+    int warningCount() const;
+    bool warningsShown() const;          // the bar's button is visible
+    std::string warningsLabel() const;
+    void showWarnings();                 // open the button's list
+    bool openWarningRow(int index);
+    bool marksShown() const { return marked_; }
+    // Where the hidden sibling and the output folder are (tests).
+    std::string siblingPathForTest() const { return scratchPath(); }
+    std::string outDirForTest() const { return outDir(); }
+
     // State, for tests and the status line.
     PdfView* pdfView() const { return pdf_; }
     bool busy() const { return proc_ != nullptr || debounce_ != 0; }
@@ -117,6 +142,15 @@ private:
     void showTectonicMissing();
     void setStatus(const std::string& text, bool busy);
     void setButton(const char* label, bool sensitive);
+    void setProblems(const std::string& output, const std::string& transcript, const std::string& src,
+                     const std::string& sibling, bool ok);
+    void fillRows(GtkWidget* box, bool warnings);
+    void markLines(const std::string& src);
+    void clearMarks();
+    void refreshWarnings(bool good);
+    void removeOutDir();
+    void writeRecord(const std::string& src);
+    bool pressRow(GtkWidget* box, int index);
     void downloadTectonic();
     void finishDownload(const std::string& problem);
 
@@ -141,6 +175,11 @@ private:
     GtkWidget* button_  = nullptr;   // Recompile / Download…
     GtkWidget* stack_   = nullptr;   // the pages, or the log
     GtkWidget* logView_ = nullptr;
+    GtkWidget* logPage_ = nullptr;    // the log page: problem rows over the log
+    GtkWidget* problemsBox_ = nullptr;
+    GtkWidget* warnButton_ = nullptr; // "N warnings", in the bar
+    GtkWidget* warnPopover_ = nullptr;
+    GtkWidget* warnBox_ = nullptr;
     GtkWidget* logScroll_ = nullptr;
     PdfView*   pdf_     = nullptr;
 
@@ -150,6 +189,11 @@ private:
     GtkWidget* popAdd_   = nullptr;   // "Add item", for spans in a list
 
     std::string path_;
+    OpenProblemFn openProblem_;
+    std::vector<LatexLog::Problem> problems_;
+    std::vector<std::string> problemFiles_;   // the file each is about
+    bool marked_ = false;
+    bool typesetProblems_ = false;   // problems_ are of the typeset being shown
     bool active_ = false;
     guint debounce_ = 0;
     gulong changedId_ = 0;
@@ -159,6 +203,7 @@ private:
     // generation is not the latest is dropped.
     GSubprocess* proc_ = nullptr;
     std::string runScratch_;
+    std::string runRecord_;   // the output folder's sibling.record
     // The run's hidden sibling, removed through its folder rather than by
     // path: an open descriptor of the folder follows it through a rename or
     // a move to the trash, so the copy never outlives the run wherever its

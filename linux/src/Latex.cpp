@@ -16,6 +16,11 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <dirent.h>
+
+#include "LatexScratch.h"
 
 namespace {
 
@@ -71,6 +76,56 @@ GSubprocessLauncher* newLauncher(GSubprocessFlags flags) {
     return l;
 }
 
+std::string fileText(const std::string& path) {
+    char* data = nullptr;
+    gsize len = 0;
+    std::string out;
+    if (g_file_get_contents(path.c_str(), &data, &len, nullptr)) out.assign(data, len);
+    g_free(data);
+    return out;
+}
+
+std::string sha256Hex(const std::string& s) {
+    char* h = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
+                                          reinterpret_cast<const guchar*>(s.data()), s.size());
+    std::string out = h ? h : "";
+    g_free(h);
+    return out;
+}
+
+// When process `pid` started, in whole seconds after boot (field 22 of
+// /proc/<pid>/stat, in ticks), or 0 when there is no such process. Against
+// pid reuse: a record or folder names the pid and this.
+long long processStart(long long pid) {
+    const std::string stat = fileText("/proc/" + std::to_string(pid) + "/stat");
+    const auto close = stat.rfind(')');
+    if (close == std::string::npos) return 0;
+    // After ") " field 3 (state) starts; starttime is the 20th token from there.
+    const char* p = stat.c_str() + close + 1;
+    for (int field = 3; field < 22; ++field) {
+        while (*p == ' ') ++p;
+        while (*p && *p != ' ') ++p;
+    }
+    while (*p == ' ') ++p;
+    const long hz = sysconf(_SC_CLK_TCK) > 0 ? sysconf(_SC_CLK_TCK) : 100;
+    return (long long)(std::strtoull(p, nullptr, 10) / (unsigned long long)hz) + 1;   // never 0
+}
+
+void removeTree(const std::string& dir) {
+    if (DIR* d = opendir(dir.c_str())) {
+        while (dirent* e = readdir(d)) {
+            const std::string n = e->d_name;
+            if (n == "." || n == "..") continue;
+            const std::string full = dir + "/" + n;
+            GStatBuf st;
+            if (g_lstat(full.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) removeTree(full);
+            else g_remove(full.c_str());
+        }
+        closedir(d);
+    }
+    g_rmdir(dir.c_str());
+}
+
 std::string describeSpan(const LatexSpan& span) {
     switch (span.kind) {
         case LatexSpanKind::Field: return "\\" + span.command;
@@ -92,7 +147,7 @@ std::size_t charStart(const std::string& s, std::size_t i) {
 struct LatexPreview::Job {
     std::shared_ptr<LatexPreview*> alive;
     unsigned generation = 0;
-    std::string src, scratch, pdf, synctex;
+    std::string src, scratch, pdf, synctex, log;
 };
 
 // ---------------------------------------------------------------- construction
@@ -123,8 +178,24 @@ LatexPreview::LatexPreview(GtkTextBuffer* buffer)
     gtk_widget_add_css_class(button_, "flat");
     g_signal_connect(button_, "clicked", G_CALLBACK(onButton), this);
     gtk_box_append(GTK_BOX(bar), spinner_);
+    warnButton_ = gtk_button_new_with_label("");
+    gtk_widget_add_css_class(warnButton_, "flat");
+    gtk_widget_set_visible(warnButton_, FALSE);
+    g_signal_connect_swapped(warnButton_, "clicked", G_CALLBACK(+[](gpointer self) {
+        static_cast<LatexPreview*>(self)->showWarnings();
+    }), this);
     gtk_box_append(GTK_BOX(bar), status_);
+    gtk_box_append(GTK_BOX(bar), warnButton_);
     gtk_box_append(GTK_BOX(bar), button_);
+    warnPopover_ = gtk_popover_new();
+    gtk_widget_set_parent(warnPopover_, warnButton_);
+    warnBox_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget* warnScroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(warnScroll), warnBox_);
+    gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(warnScroll), TRUE);
+    gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(warnScroll), 320);
+    gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(warnScroll), 420);
+    gtk_popover_set_child(GTK_POPOVER(warnPopover_), warnScroll);
     gtk_box_append(GTK_BOX(root_), bar);
 
     pdf_ = new PdfView();
@@ -146,7 +217,15 @@ LatexPreview::LatexPreview(GtkTextBuffer* buffer)
     stack_ = gtk_stack_new();
     gtk_widget_set_vexpand(stack_, TRUE);
     gtk_stack_add_named(GTK_STACK(stack_), pdf_->widget(), "pdf");
-    gtk_stack_add_named(GTK_STACK(stack_), logScroll_, "log");
+    // The failure page: the problems as rows over the log.
+    logPage_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    problemsBox_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_add_css_class(problemsBox_, "minicode-latex-problems");
+    gtk_widget_set_visible(problemsBox_, FALSE);
+    gtk_widget_set_vexpand(logScroll_, TRUE);
+    gtk_box_append(GTK_BOX(logPage_), problemsBox_);
+    gtk_box_append(GTK_BOX(logPage_), logScroll_);
+    gtk_stack_add_named(GTK_STACK(stack_), logPage_, "log");
     gtk_box_append(GTK_BOX(root_), stack_);
 
     // Preview edits are buffer edits, so undo is the buffer's.
@@ -238,7 +317,10 @@ LatexPreview::~LatexPreview() {
             g_signal_handler_disconnect(app, shutdownId_);
     if (pdfBytes_) g_bytes_unref(pdfBytes_);
     gtk_widget_unparent(popover_);
+    gtk_widget_unparent(warnPopover_);
+    clearMarks();
     delete pdf_;
+    removeOutDir();
     g_object_unref(root_);
 }
 
@@ -321,13 +403,83 @@ std::string outputBase() {
 
 // <outputBase>/<a hash of the document's path>, so two documents with the
 // same name in different folders never share output.
+// (LatexScratch::folderName, as on the Mac): one folder for each preview, so
+// two windows on one file never share a PDF, and a folder whose process has
+// gone is found by the first typeset of a launch.
+namespace {
+LatexScratch::Owner thisOwner(unsigned view) {
+    static const long long start = processStart(getpid());
+    LatexScratch::Owner o;
+    o.pid = getpid();
+    o.start = start;
+    o.view = view;
+    return o;
+}
+}  // namespace
+
 std::string LatexPreview::outDir() const {
     const std::string base = outputBase();
-    char* hash = g_compute_checksum_for_string(G_CHECKSUM_SHA1, path_.c_str(), -1);
-    std::string dir = base + "/" + std::string(hash).substr(0, 12);
-    g_free(hash);
+    const std::string dir = base + "/" + LatexScratch::folderName(
+        sha256Hex(path_).substr(0, 16), thisOwner(instance_));
     g_mkdir_with_parents(dir.c_str(), 0700);
     return dir;
+}
+
+void LatexPreview::removeOutDir() {
+    if (path_.empty() && instance_ == 0) return;
+    removeTree(outputBase() + "/" + LatexScratch::folderName(
+        sha256Hex(path_).substr(0, 16), thisOwner(instance_)));
+}
+
+// The first typeset of a launch: folders of previews whose process has gone
+// (a crash) are removed, and with them the hidden sibling their record names,
+// but only while it is still exactly the bytes recorded. Folders named by
+// the hash alone (older builds) and live processes' are left.
+namespace {
+void sweepOldFolders(const std::string& base) {
+    DIR* d = opendir(base.c_str());
+    if (!d) return;
+    std::vector<std::string> names;
+    while (dirent* e = readdir(d)) names.push_back(e->d_name);
+    closedir(d);
+    for (const std::string& n : names) {
+        LatexScratch::Owner o;
+        if (!LatexScratch::parseFolderName(n, &o)) continue;
+        if (!LatexScratch::ownerGone(o, (double)processStart(o.pid))) continue;
+        const std::string dir = base + "/" + n;
+        LatexScratch::Record r;
+        if (LatexScratch::parse(fileText(dir + "/sibling.record"), &r)) {
+            const bool alive = processStart(r.pid) > 0 &&
+                               std::abs((double)processStart(r.pid) - r.start) <= 1.0;
+            const std::string now = fileText(r.sibling);
+            GStatBuf st;
+            const bool exists = g_stat(r.sibling.c_str(), &st) == 0;
+            if (LatexScratch::decide(r, alive, exists, now.size(), sha256Hex(now)) ==
+                    LatexScratch::Action::RemoveSibling &&
+                LatexScratch::isPreviewCopyName(r.sibling))
+                g_remove(r.sibling.c_str());
+        }
+        removeTree(dir);
+    }
+}
+}  // namespace
+
+// Written before the sibling, so a crash after leaves the means to remove it.
+void LatexPreview::writeRecord(const std::string& src) {
+    static bool swept = false;
+    if (!swept) {
+        swept = true;
+        sweepOldFolders(outputBase());
+    }
+    LatexScratch::Record r;
+    r.sibling = scratchPath();
+    r.pid = getpid();
+    r.start = (double)thisOwner(instance_).start;
+    r.size = src.size();
+    r.sha256 = sha256Hex(src);
+    const std::string text = LatexScratch::format(r);
+    g_file_set_contents((outDir() + "/sibling.record").c_str(), text.data(), (gssize)text.size(),
+                        nullptr);
 }
 
 void LatexPreview::setPath(const std::string& path) {
@@ -371,6 +523,11 @@ void LatexPreview::close() {
     gtk_popover_popdown(GTK_POPOVER(popover_));
     editValid_ = false;
     pdf_->clear();
+    clearMarks();
+    problems_.clear();
+    problemFiles_.clear();
+    gtk_widget_set_visible(warnButton_, FALSE);
+    removeOutDir();
     if (pdfBytes_) g_bytes_unref(pdfBytes_);
     pdfBytes_ = nullptr;
     pdfSrc_.clear();
@@ -385,6 +542,7 @@ void LatexPreview::close() {
 
 void LatexPreview::onBufferChanged(GtkTextBuffer*, gpointer selfp) {
     LatexPreview* self = static_cast<LatexPreview*>(selfp);
+    self->clearMarks();   // the lines were the typeset text's
     if (self->active_ && !self->path_.empty()) self->scheduleCompile();
 }
 
@@ -417,6 +575,8 @@ void LatexPreview::stopRun() {
 // a move to the trash, so the copy goes wherever the folder went; by path
 // only if the folder could not be opened.
 void LatexPreview::removeScratch() {
+    if (!runRecord_.empty()) g_remove(runRecord_.c_str());
+    runRecord_.clear();
     if (runDirFd_ >= 0) {
         unlinkat(runDirFd_, runScratchName_.c_str(), 0);
         ::close(runDirFd_);
@@ -450,6 +610,10 @@ void LatexPreview::compileNow() {
     job->pdf = out + "/" + stem + ".pdf";
     job->synctex = out + "/" + stem + ".synctex.gz";
 
+    writeRecord(job->src);
+    runRecord_ = out + "/sibling.record";
+    job->log = out + "/" + stem + ".log";
+
     GError* err = nullptr;
     if (!g_file_set_contents(job->scratch.c_str(), job->src.data(), (gssize)job->src.size(),
                              &err)) {
@@ -467,7 +631,7 @@ void LatexPreview::compileNow() {
     GSubprocessLauncher* l = newLauncher(static_cast<GSubprocessFlags>(
         G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_MERGE));
     g_subprocess_launcher_set_cwd(l, dirName(path_).c_str());
-    proc_ = g_subprocess_launcher_spawn(l, &err, tool.c_str(), "--untrusted", "--synctex", "--chatter",
+    proc_ = g_subprocess_launcher_spawn(l, &err, tool.c_str(), "--untrusted", "--synctex", "--keep-logs", "--chatter",
                                         "minimal", "--color", "never", "--outdir",
                                         out.c_str(), job->scratch.c_str(), nullptr);
     g_object_unref(l);
@@ -517,6 +681,12 @@ void LatexPreview::finishCompile(Job* job, GBytes* output, bool ok) {
         }
     }
 
+    // TeX's transcript: read for its warnings and removed, whatever came of
+    // the run (--keep-logs leaves it beside the PDF).
+    const std::string transcript = fileText(job->log);
+    g_remove(job->log.c_str());
+    setProblems(log, transcript, job->src, job->scratch, ok);
+
     std::string problem;
     if (ok) {
         // The bytes are kept so an export is exactly what tectonic wrote.
@@ -544,6 +714,7 @@ void LatexPreview::finishCompile(Job* job, GBytes* output, bool ok) {
         problem = log.empty() ? "tectonic did not run." : log;
     }
     if (!problem.empty()) showFailure(problem);
+    refreshWarnings(problem.empty());
 
     if (queued_) compileNow();
     else answerWaiters(problem.empty() ? "" : "The document did not typeset. The preview "
@@ -558,7 +729,138 @@ void LatexPreview::showDocument() {
     setButton("Recompile", true);
 }
 
+// ---------------------------------------------------------------- problems
+
+void LatexPreview::setProblems(const std::string& output, const std::string& transcript,
+                               const std::string& src, const std::string& sibling, bool) {
+    clearMarks();
+    problems_ = LatexLog::collect(output, transcript);
+    problemFiles_.clear();
+    auto exists = [](const std::string& f) { return g_file_test(f.c_str(), G_FILE_TEST_IS_REGULAR); };
+    for (const LatexLog::Problem& pr : problems_)
+        problemFiles_.push_back(LatexLog::sourcePath(pr.file, path_, sibling, exists));
+    if (bufferText() == src) markLines(src);
+    typesetProblems_ = true;
+}
+
+void LatexPreview::markLines(const std::string&) {
+    GtkTextTagTable* table = gtk_text_buffer_get_tag_table(buffer_);
+    static const struct { const char* name; const char* color; } kinds[2] = {
+        {"latex-warning", "#CCA700"}, {"latex-error", "#F14C4C"}};
+    GtkTextTag* tags[2];
+    for (int i = 0; i < 2; ++i) {
+        tags[i] = gtk_text_tag_table_lookup(table, kinds[i].name);
+        if (!tags[i]) {
+            GdkRGBA c;
+            gdk_rgba_parse(&c, kinds[i].color);
+            tags[i] = gtk_text_buffer_create_tag(buffer_, kinds[i].name, "underline",
+                                                 PANGO_UNDERLINE_ERROR, "underline-rgba", &c, NULL);
+        }
+    }
+    const int lines = gtk_text_buffer_get_line_count(buffer_);
+    for (size_t i = 0; i < problems_.size(); ++i) {
+        const LatexLog::Problem& pr = problems_[i];
+        if (pr.line < 1 || pr.line > lines || problemFiles_[i] != path_) continue;
+        GtkTextIter a, b;
+        gtk_text_buffer_get_iter_at_line(buffer_, &a, pr.line - 1);
+        b = a;
+        gtk_text_iter_forward_to_line_end(&b);
+        if (gtk_text_iter_equal(&a, &b) && !gtk_text_iter_forward_char(&b)) continue;
+        gtk_text_buffer_apply_tag(buffer_, tags[pr.severity == LatexLog::Severity::Error ? 1 : 0],
+                                  &a, &b);
+        marked_ = true;
+    }
+}
+
+void LatexPreview::clearMarks() {
+    if (!marked_) return;
+    marked_ = false;
+    GtkTextTagTable* table = gtk_text_buffer_get_tag_table(buffer_);
+    GtkTextIter a, b;
+    gtk_text_buffer_get_bounds(buffer_, &a, &b);
+    for (const char* n : {"latex-error", "latex-warning"})
+        if (GtkTextTag* t = gtk_text_tag_table_lookup(table, n))
+            gtk_text_buffer_remove_tag(buffer_, t, &a, &b);
+}
+
+void LatexPreview::fillRows(GtkWidget* box, bool warnings) {
+    while (GtkWidget* c = gtk_widget_get_first_child(box)) gtk_box_remove(GTK_BOX(box), c);
+    int shown = 0;
+    for (size_t i = 0; i < problems_.size(); ++i) {
+        const LatexLog::Problem& pr = problems_[i];
+        const bool isWarning = pr.severity == LatexLog::Severity::Warning;
+        if (warnings && !isWarning) continue;
+        char* base = problemFiles_[i].empty() ? nullptr : g_path_get_basename(problemFiles_[i].c_str());
+        std::string where = base ? base : "";
+        g_free(base);
+        if (pr.line > 0) where += (where.empty() ? "line " : ":") + std::to_string(pr.line);
+        std::string text = std::string(isWarning ? "warning  " : "error  ") +
+                           (where.empty() ? "" : where + "  ") + pr.message;
+        GtkWidget* row = gtk_button_new();
+        GtkWidget* label = gtk_label_new(text.c_str());
+        gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+        gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+        gtk_button_set_child(GTK_BUTTON(row), label);
+        gtk_widget_add_css_class(row, "flat");
+        gtk_widget_set_tooltip_text(row, pr.message.c_str());
+        const bool linked = pr.line > 0 && !problemFiles_[i].empty();
+        gtk_widget_set_sensitive(row, linked);
+        g_object_set_data(G_OBJECT(row), "mc-problem", GINT_TO_POINTER((int)i + 1));
+        g_signal_connect(row, "clicked", G_CALLBACK(+[](GtkButton* b, gpointer selfp) {
+            LatexPreview* self = static_cast<LatexPreview*>(selfp);
+            const int i = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(b), "mc-problem")) - 1;
+            gtk_popover_popdown(GTK_POPOVER(self->warnPopover_));
+            if (i >= 0 && i < (int)self->problems_.size() && self->openProblem_)
+                self->openProblem_(self->problemFiles_[i], self->problems_[i].line);
+        }), this);
+        gtk_box_append(GTK_BOX(box), row);
+        ++shown;
+    }
+    gtk_widget_set_visible(box, shown > 0 || box == warnBox_);
+}
+
+bool LatexPreview::pressRow(GtkWidget* box, int index) {
+    GtkWidget* c = gtk_widget_get_first_child(box);
+    for (int i = 0; c && i < index; ++i) c = gtk_widget_get_next_sibling(c);
+    if (!c || !gtk_widget_get_sensitive(c)) return false;
+    g_signal_emit_by_name(c, "clicked");
+    return true;
+}
+
+bool LatexPreview::openProblemRow(int index) { return pressRow(problemsBox_, index); }
+bool LatexPreview::openWarningRow(int index) { return pressRow(warnBox_, index); }
+
+int LatexPreview::warningCount() const {
+    int n = 0;
+    for (const LatexLog::Problem& p : problems_) n += p.severity == LatexLog::Severity::Warning;
+    return n;
+}
+bool LatexPreview::warningsShown() const { return gtk_widget_get_visible(warnButton_); }
+std::string LatexPreview::warningsLabel() const { return gtk_button_get_label(GTK_BUTTON(warnButton_)); }
+void LatexPreview::showWarnings() {
+    if (warningsShown()) gtk_popover_popup(GTK_POPOVER(warnPopover_));
+}
+
+// After a typeset that worked: its warnings behind the bar's button.
+void LatexPreview::refreshWarnings(bool good) {
+    const int n = good ? warningCount() : 0;
+    if (n > 0) {
+        fillRows(warnBox_, true);
+        const std::string t = std::to_string(n) + (n == 1 ? " warning" : " warnings");
+        gtk_button_set_label(GTK_BUTTON(warnButton_), t.c_str());
+    }
+    gtk_widget_set_visible(warnButton_, n > 0);
+    if (n == 0) gtk_popover_popdown(GTK_POPOVER(warnPopover_));
+    typesetProblems_ = false;
+}
+
 void LatexPreview::showFailure(const std::string& log) {
+    if (!typesetProblems_) {   // not a typeset's: no problems to list
+        problems_.clear();
+        problemFiles_.clear();
+        clearMarks();
+    }
+    fillRows(problemsBox_, false);
     gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(logView_)),
                              log.c_str(), (int)log.size());
     gtk_stack_set_visible_child_name(GTK_STACK(stack_), "log");
@@ -568,6 +870,11 @@ void LatexPreview::showFailure(const std::string& log) {
 
 void LatexPreview::showTectonicMissing() {
     missing_ = true;
+    problems_.clear();
+    problemFiles_.clear();
+    clearMarks();
+    gtk_widget_set_visible(warnButton_, FALSE);
+    fillRows(problemsBox_, false);
     std::string text =
         "The LaTeX preview needs tectonic, a single-binary TeX engine.\n\n"
         "MiniCode uses whichever tectonic is already on your machine (on your PATH, "
@@ -602,7 +909,7 @@ void LatexPreview::setButton(const char* label, bool sensitive) {
 std::string LatexPreview::status() const { return gtk_label_get_text(GTK_LABEL(status_)); }
 
 bool LatexPreview::showingLog() const {
-    return gtk_stack_get_visible_child(GTK_STACK(stack_)) == logScroll_;
+    return gtk_stack_get_visible_child(GTK_STACK(stack_)) == logPage_;
 }
 
 std::string LatexPreview::logText() const {

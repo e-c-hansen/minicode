@@ -3531,6 +3531,57 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   poll, an exec into another shell (the Mac's `_integrated` NO), and the
   owner's own shell setup on a real desktop.
 
+### 51. LaTeX problems, warnings and scratch records (done, November 2026; `PARITY.md` item 4.4, first part)
+
+- **What it does**: a typeset that fails lists tectonic's problems
+  (`LatexLog::collect`: the summary's `error: file:line: message`, TeX's
+  `! ...` blocks only when the summary placed none) as rows above the log, in
+  `Latex.cpp`; a row is a flat button that calls `LatexPreview::setOpenProblem`'s
+  function with the file `LatexLog::sourcePath` finds (the sibling's name is
+  the document, an `\input` name is read against the document's folder) and
+  the line, and `Editor::makeLatex` opens that file in a tab and `revealLine`s
+  it (a row with no line or no file is insensitive). The failure page is
+  now `logPage_` (rows over the log), which `showingLog` compares against.
+- **Warnings**: every run passes `--keep-logs`; tectonic's own `warning:`
+  lines and TeX's transcript (`<stem>.log` beside the PDF, read and removed
+  at once, whatever came of the run) go through `LatexLog::collect`. A typeset
+  that worked shows a "N warnings" flat button in the preview's bar (not the
+  status bar, which this port keeps for the page count) that opens a popover
+  of the same rows. Underfull boxes are left out, as on the Mac.
+- **Gutter marks**: the lines are tagged `latex-error` and `latex-warning` in
+  the document's own buffer (an underline like a server's; the gutter's
+  default `diagTags_` names them beside `lsp-error` and `lsp-warning`), so a
+  language server's publish, which clears only its own tags, never replaces
+  them. Marks are laid only when the buffer still equals the text typeset,
+  only on lines of the document itself (not an `\input` part), and come off
+  at the first change to the buffer (`onBufferChanged`) or the next typeset
+  (a good one lays only its warnings). GTK tags follow edits, but the
+  rule here is the Mac's: they are the typeset text's lines, so they go.
+- **LatexScratch**: each preview's output folder is
+  `LatexScratch::folderName(<16 hex of the path's SHA-256>, owner)` under
+  `$XDG_RUNTIME_DIR/minicode-latex` (so two windows on one file share
+  nothing), removed with the preview (destructor, `close`). A
+  `sibling.record` (pid, start time from `/proc/<pid>/stat`, size, SHA-256)
+  is written before the hidden copy and removed with it; the first typeset of
+  a launch (`sweepOldFolders`) removes the folders of owners that have gone
+  and, by `LatexScratch::decide`, a copy a crashed process left only while it
+  is still exactly the recorded bytes. Folders named by the hash alone
+  (builds before this) are left alone. The sibling's own name stays
+  `.<file name>.<preview number>.minicode.tex` (which `isPreviewCopyName`
+  accepts); that is the port's, not the core's `siblingName`.
+- **Checks**: `latex_problems` (`tests/gui/LatexProblemsSuite.cpp`) stands a
+  shell script in for tectonic (`MINICODE_TECTONIC`), giving it canned
+  output made of tectonic 0.17.0's real lines (`tests/latex/logs`): the
+  error row, its mark and click, marks gone after typing, the five warnings
+  (tectonic's boxes with an underfull one dropped, the transcript's, one in
+  an `\input` part whose row opens that file at line 3), the transcript, the
+  record and the copy gone, and a dead process's folders swept (its copy
+  removed when unchanged, kept when the user had changed it).
+- **Not done**: forward search (Option+Ctrl+J), the rest of 4.4. The marks
+  do not follow edits (they leave), a part's own problems are not marked in
+  the part's buffer when it is open, and a folder left by a rename of the
+  document (`setPath` keeping the pages) waits for the next launch's sweep.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

@@ -1413,6 +1413,11 @@ These may run in parallel.
   `MarkdownHtml`.
 - [ ] **4.4 LaTeX problems, warnings, and forward search.** `LatexLog`,
   `LatexScratch`.
+  *Problems and warnings done:* a failed typeset's problems are rows that
+  open their file at the line, gutter marks (`latex-error`, `latex-warning`)
+  stay until an edit, a good typeset lists its warnings behind a bar button,
+  and the output folders and records follow `LatexScratch`
+  (`HANDOFF.md` item 51, `make` `latex_problems`). Forward search remains.
 - [ ] **4.5 Browser tabs, find in the page, and page zoom.** `BrowserTabs`.
 - [ ] **4.6 The split editor.** `EditorTabs::restoreGroups`. With D2 the second
   group can be a second view on the same buffer, which is simpler than the

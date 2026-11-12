@@ -73,7 +73,7 @@ Gutter::Gutter(GtkTextView* view) : view_(view) {
     MINICODE_GUTTER(widget_)->owner = this;
     gtk_widget_add_css_class(widget_, "minicode-gutter");
     gtk_widget_set_cursor_from_name(widget_, "default");
-    diagTags_ = {{"lsp-error", 1}, {"lsp-warning", 2}};
+    diagTags_ = {{"lsp-error", 1}, {"lsp-warning", 2}, {"latex-error", 1}, {"latex-warning", 2}};
 
     // Click, drag and Shift+click select lines. Claimed at once, so the
     // text view's own selection gestures never see a press here.
