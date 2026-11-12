@@ -280,6 +280,32 @@
 @property(nonatomic, readonly) BOOL canForgetFolderToolsAnswer;
 @end
 
+// EditorController+Bookmarks.mm: web bookmarks as .url files (Bookmarks.h).
+@interface EditorController (Bookmarks)
+// The window on the bookmark folder (browser.bookmarks, ~/Bookmarks), where
+// `minicode https://...` and bookmarks opened from Finder go.
+@property(nonatomic, readonly) BOOL isBrowserWindow;
+// Each http or https address in a browser tab of this window's pane (shown,
+// in the browser window over the editor's side while no file is open);
+// `focus` gives the first page the keyboard.
+- (void)showWebAddresses:(NSArray<NSString *> *)urls focusPage:(BOOL)focus;
+// File > Save Page as Bookmark (Cmd+D in the page): the page on show as a
+// .url file in the bookmark folder (in the browser window, the tree's
+// selected folder), selected in the tree when it lists it.
+- (void)saveBrowserBookmark:(id)sender;
+@property(nonatomic, readonly) BOOL canSaveBrowserBookmark;
+// File > Save All Tabs as Bookmarks: a .url file per tab in a new folder,
+// "Tabs 2026-11-12 14.03".
+- (void)saveBrowserTabsAsBookmarks:(id)sender;
+@property(nonatomic, readonly) BOOL canSaveBrowserTabs;
+// The tree's Open All in Browser Tabs (a folder holding bookmarks) and
+// Open as Text (a bookmark file, to mend its address).
+- (void)openBookmarksInTabs:(id)sender;
+@property(nonatomic, readonly) BOOL canOpenBookmarksInTabs;
+- (void)openBookmarkAsText:(id)sender;
+@property(nonatomic, readonly) BOOL canOpenBookmarkAsText;
+@end
+
 // EditorController+Agents.mm
 @interface EditorController (Agents)
 // runningTerminalCommands, leaving out Claude's terminal from Request a

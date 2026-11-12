@@ -189,7 +189,9 @@ goes here first, with tests; the GUI only displays it.
   pages: addresses, the origin limit, the console record).
 - Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`;
   `ProcessTable` (processes and ports per folder: tracking, groups, Stop's plan).
-- Files: `FileSniff` (how a file is shown), `Csv`, `JsonOutline`, `Notebook`.
+- Files: `FileSniff` (how a file is shown), `Csv`, `JsonOutline`, `Notebook`,
+  `WebBookmark` (web bookmarks as .url and .webloc files: reading, writing,
+  names, which addresses may open).
 
 ### The Mac app (Objective-C++)
 
@@ -224,7 +226,8 @@ goes here first, with tests; the GUI only displays it.
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
   `CompareView`.
 - `EditorMirror` (the split editor's group without the keyboard).
-- `Browser` (with `MCKeyboardWindow`), `TabStrip`, `Search` (Find in Folder and
+- `Browser` (with `MCKeyboardWindow`), `Bookmarks` (the bookmark folder,
+  reading and writing bookmark files), `TabStrip`, `Search` (Find in Folder and
   TODOs window), `GitPanel`, `GitGutter` (change bars), `TreeDetails`,
   `FormatRunner`, `BackupStore`,
   `PalettePanel`, `Navigation`.
@@ -249,7 +252,8 @@ tab. The rest is in `EditorController+<Concern>.mm`: Layout, StatusBar, Panels
 Tabs (tabs, closed tabs, saving), Groups (the split editor), Persistence (sessions, backups, auto-save,
 files changed outside), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
-editing hooks), Navigation, LanguageServers, Agents (inline agent, Request a
+editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,
+LanguageServers, Agents (inline agent, Request a
 Change, control channel, agent work), Processes (the Processes panel's
 hooks, its state in associated objects), LargeFile (large-file mode, its
 status bar note, the 50 MB question), Markdown and MarkdownRender. Rules, so it
@@ -2963,6 +2967,27 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   menus a moment later (wait for it); WebKit gives a script's click no
   modifiers, so the Command-click check hands the delegate an action
   subclass.
+- **Bookmarks and the browser window** (2026-11-12, `WebBookmark`,
+  `Bookmarks.{h,mm}`, `EditorController+Bookmarks.mm`, `bookmarks:*`, `make
+  guitest SUITES=bookmarks`): a bookmark is a `.url` file (the Internet
+  Shortcut, plain text, the owner's choice over `.webloc`, which is read
+  too, binary ones through Foundation). Only http and https addresses
+  ever open from one (`WebBookmark::isWebAddress`); a file with another
+  opens as text. `openFileAtPath:from:` hands a bookmark to the window's
+  own browser pane before anything else (a preview open keeps the
+  keyboard, a kept one gives it to the page), a tab already at the
+  address is shown again (`BrowserView openAddresses:`), and the tree's
+  Open as Text skips that once (`gOpenBookmarkAsText`). The browser window
+  is the window rooted at `browser.bookmarks` (~/Bookmarks): Finder's
+  bookmarks and `minicode https://...` go there (the launcher writes a
+  `web` request file, `MCTakeOpenRequest` reads it), made with the folder
+  when missing, the page over the editor's side while no file is open.
+  Save Page as Bookmark is Cmd+D, a page key whose selector only the pane
+  answers (`saveBookmarkFromPage:`; so Cmd+D after a scroll in a page is
+  still the editor's Add Next Occurrence), File > Save Page as Bookmark
+  from anywhere; in the browser window it saves to the tree's selected
+  folder. Finder keeps sending .url files to the default browser unless the
+  user picks minicode in Get Info (Info.plist only offers it, Alternate).
 - **Find in the page** (2026-11-09, `make guitest SUITES=browser_find`):
   the terminal's `MCTerminalFindBar` at the page's top right, Edit > Find's
   `performTextFinderAction:` answered by the pane in the responder chain
@@ -3342,8 +3367,8 @@ session has a display. Check first.
   terminal_exec, terminal_keys, terminal_zoom, run_file;
   git: git_panel, git_actions, git_hunks, git_verbs, git_sync, git_gutter;
   agents and control: agents, agent_panel, agent_places, agentcommands,
-  agent_autosave, attention, control, browserpages, browser_tabs, browser_find, idelink,
-  processes;
+  agent_autosave, attention, control, browserpages, browser_tabs, browser_find, bookmarks,
+  idelink, processes;
   run only when named: _backups_writer, _backups_restore.
   A suite's file is usually its name in CamelCase; the exceptions are
   mermaid (IdeLinkSuite.mm), foldperf (FoldingSuite.mm), the format_*

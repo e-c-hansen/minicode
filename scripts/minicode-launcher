@@ -15,6 +15,11 @@ Opens folders and files in minicode. With no path, opens the current folder.
                         it, else in the window in front (so, typed in
                         minicode's own terminal, in that window)
   minicode a.py b.py    open several files at once
+  minicode https://example.com
+                        open a web page in a browser tab of the browser
+                        window, the window on your bookmark folder
+                        (~/Bookmarks, or browser.bookmarks in settings);
+                        several addresses open as several tabs
 
 These are VS Code's rules for `code`: a file joins a window you already
 have, and a folder gets its own window unless you ask for the one in front.
@@ -30,7 +35,9 @@ Options:
   -h, --help         print this help
 
 Opening from Finder (Open With, or a drop on the Dock icon) follows the same
-rules as a file named here.
+rules as a file named here. A web bookmark (a .url or .webloc file) opens
+its page in the browser window instead; several opened together open as
+tabs of it.
 
   minicode install-skill [--dir DIR]
                      install the Claude Code skill that teaches Claude to
@@ -126,11 +133,32 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ ${#paths[@]} -eq 0 ] && paths=("$PWD")
+# Web addresses go to the browser window, as a request of their own below.
+urls=()
+rest=()
+for p in "${paths[@]}"; do
+  case "$p" in
+    [Hh][Tt][Tt][Pp]://*|[Hh][Tt][Tt][Pp][Ss]://*) urls+=("$p") ;;
+    *) rest+=("$p") ;;
+  esac
+done
+paths=()
+[ ${#rest[@]} -gt 0 ] && paths=("${rest[@]}")
+[ ${#paths[@]} -eq 0 ] && [ ${#urls[@]} -eq 0 ] && paths=("$PWD")
 
-# The app's own output is discarded below, so say here if a path is wrong.
+# The app's own output is discarded below, so say here if a path or an
+# address is wrong.
 status=0
 found=()
+web=()
+for u in "${urls[@]}"; do
+  case "$u" in
+    *[[:space:][:cntrl:]]*|[Hh][Tt][Tt][Pp]://|[Hh][Tt][Tt][Pp][Ss]://|*://[/?#]*)
+      echo "minicode: $u: not a web address" >&2
+      status=1 ;;
+    *) web+=("$u") ;;
+  esac
+done
 for p in "${paths[@]}"; do
   if [ ! -e "$p" ]; then
     echo "minicode: $p: no such file or directory" >&2
@@ -140,7 +168,7 @@ for p in "${paths[@]}"; do
   case "$p" in /*) ;; *) p="$PWD/$p" ;; esac
   found+=("$p")
 done
-[ ${#found[@]} -eq 0 ] && exit 1
+[ ${#found[@]} -eq 0 ] && [ ${#web[@]} -eq 0 ] && exit 1
 
 # For tests: print what would run instead of running it.
 run() {
@@ -155,16 +183,31 @@ fi
 
 # Launch Services passes only paths, so -r goes as a request file the app
 # reads and deletes: "minicode-open-1", "reuse", the paths, each ended by a
-# NUL, in $TMPDIR/MiniCode-open (the app reads that folder only).
-if [ $reuse = 1 ]; then
+# NUL, in $TMPDIR/MiniCode-open (the app reads that folder only). Web
+# addresses go the same way, as "web" and the addresses.
+request() {
+  local mode="$1"; shift
   req_dir="${TMPDIR:-/tmp}"
   req_dir="${req_dir%/}/MiniCode-open"
   mkdir -p "$req_dir" || exit 1
   tmp="$(mktemp "$req_dir/request.XXXXXX")" || exit 1
-  { printf 'minicode-open-1\0reuse\0'; printf '%s\0' "${found[@]}"; } >"$tmp"
+  { printf 'minicode-open-1\0%s\0' "$mode"; printf '%s\0' "$@"; } >"$tmp"
   req="$tmp.minicode-open"
   mv "$tmp" "$req" || exit 1
+}
+
+if [ $new_window = 1 ] && [ ${#web[@]} -gt 0 ]; then
+  echo "minicode: --new-window opens a path, not a web address" >&2
+  exit 2
+fi
+
+if [ $reuse = 1 ] && [ ${#found[@]} -gt 0 ]; then
+  request reuse "${found[@]}"
   found=("$req")
+fi
+if [ ${#web[@]} -gt 0 ]; then
+  request web "${web[@]}"
+  found+=("$req")
 fi
 
 if [ $new_window = 1 ]; then
