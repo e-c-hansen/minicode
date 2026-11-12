@@ -1108,6 +1108,71 @@ Verified by running it:
   and the signature hint on "(" and ",", closed by Escape.
 
 
+Stage 4 (documents and layout, `linux/PARITY.md` items 4.1 to 4.7; the
+details and traps are in `linux/HANDOFF.md`, items 49 to 63). Each is a GUI
+suite in `linux/tests/gui` with real keys and clicks through XTest on Xvfb:
+
+- Files by kind and the CSV table (item 49): `csv_table`. Cells edited and
+  committed as one-line splices on the tab's own buffer, undo, saving, BOM,
+  CRLF and quoting kept, the table dropped on leaving a tab; binary files,
+  Office files and databases shown as a message, never text.
+- The JSON outline and notebooks (item 52): `json_outline`, with a real click
+  on a row: selection both ways, the dimmed stale outline under an error
+  line, `.jsonc`, and a notebook rendered with its source behind the
+  preview key.
+- The SQLite viewer (item 57): `sqlite_view`, databases made with the C API:
+  tables, NULLs, queries, the 1,000-row cap, every writing statement
+  refused with the file's bytes unchanged and no journal made, WAL without
+  `-wal`, a reopen keeping the query, and an endless query stopped at 5 s.
+- Browser tabs (item 50): `browser_tabs`, pages that are files: tabs,
+  suspending, links in new tabs, dragging, keys, and the session through its
+  JSON. Find in the page and zoom per site (item 53): `browser_find`.
+- The Markdown page to the side (item 54): `markdown_side` (pieces kept, CPU
+  bounds at 1,200 and 20,000 lines), `markdown_side_sync` (scroll sync),
+  `markdown_side_edit` (editing from the pane) and `markdown_tables`.
+- Export as HTML and Mermaid (item 56): `mermaid` and `export_html`, with a
+  stand-in mmdc. Math (item 58): `markdown_math`, with a stand-in tectonic
+  and PDFs made with cairo.
+- LaTeX problems and warnings (item 51): `latex_problems`, with a stand-in
+  tectonic giving tectonic 0.17.0's real log lines. Forward search (item 55):
+  `latex_forward`, over the committed typeset of `tests/latex/fixtures`.
+- The split editor (item 61): `split_editor`. Terminal tabs (item 59):
+  `terminal_tabs`. Splits (item 60): `terminal_splits`. Find, Clear and the
+  dock's resize (item 62): `terminal_find`. Each terminal's own id (item 63):
+  `terminal_ids`.
+
+Not verified for Stage 4, which needs a real program or a person (the
+checklist is under "What needs a person"): anything a real tectonic would
+confirm (the math batch compiling under XeTeX, the `MC:` lines of its
+`--print` output, page sizes against the boxes, the look and size of a
+formula; real LaTeX problems, warnings and synctex), a real mmdc, real web
+pages in the tabs, find and zoom, a SQLite file made by another app, a
+real Claude Code with the hooks for the waiting dots, a quit and relaunch
+(only the session's JSON is checked), the look of the split editor's hidden
+selection and viewer note, the touchpad for scroll sync, and GNOME on
+Wayland taking any of the new keys.
+
+Stage 4 left out, or different from the Mac, on purpose or for now:
+
+- Command marks in the terminal (Ctrl+Up and Ctrl+Down to the previous
+  command, the red bar, Copy Last Command Output) are left out, the owner's
+  decision (D10: the terminal stays VTE).
+- Clear Terminal keeps the scrollback (the Mac drops both). Terminal find
+  has no match count (VTE cannot give one) and no key, since Ctrl+F is
+  readline's: Edit > Find or the palette. Case-insensitive only.
+- Zoom to Fit Width in the browser is not ported.
+- Closing the window does not yet count busy terminals (closing a tab does
+  ask), and terminals are not kept in the session: tabs, splits and their
+  titles do not come back. The split editor and the browser's tabs do.
+- The CSV table has no row or column insertion, header row or kept widths,
+  and no read-only table for files over 50 MB. The SQLite viewer has no
+  sorting, cell tooltips or query history. The side pane's heading links do
+  not resolve, and its width and the JSON outline's are not kept.
+- Math: the formula's size does not follow the font size, and the side pane
+  shows no "Typesetting" line. Forward search has no menu item (a hints row
+  and the key). `state` lacks the Mac's `cwd`, `message` and `session`.
+
+
 Not verified, for the work before November (what the November work leaves
 to a person is in "What needs a person", below):
 
@@ -1230,7 +1295,7 @@ re-investigates them.
 The GUI checks run on Xvfb, an X11 display with no window manager, no IBus,
 and no GPU, so what follows is left for someone at the ThinkPad under GNOME
 on Wayland. It gathers every "Needs the owner" note of the items done in
-`linux/PARITY.md` (Stage 0, Stage 1, and R1 to R3), merged, and should take
+`linux/PARITY.md` (Stage 0, Stage 1, R1 to R3, and Stage 4), merged, and should take
 about an hour; what the work before November left unchecked is under "Not
 verified" above. Write down anything that does not hold, with what you
 saw.
@@ -1424,6 +1489,72 @@ Displays.
   credential helper; the desktop's real Trash and Restore From Trash in
   GNOME Files after a discard; how the menus, the hunk links and the Sync
   button look; Ctrl and Shift clicks and Shift F10 under GNOME on Wayland.
+
+### Documents and layout (Stage 4, items 4.1 to 4.7)
+
+Everything here ran against stand-ins (a scripted tectonic and mmdc, pages
+that are files, databases made with the C API) on Xvfb. The details are in
+`linux/HANDOFF.md`, items 49 to 63.
+
+- [ ] CSV table (item 49): open a real CSV and a TSV exported from a
+  spreadsheet. Click a cell, type, press Enter and Tab, Escape out of an
+  edit, Ctrl+Z, and Save: only the changed line differs in `git diff`. Ctrl+Shift+V
+  flips to the text and back. Try a file with quoted fields, CRLF, and a
+  BOM.
+- [ ] JSON outline and notebooks (item 52): open a real `tsconfig.json`
+  and a `package.json`. Click and arrow through the outline (the text
+  selects, the keyboard stays), move the caret in the text (the node
+  follows), break the JSON (the outline dims under an error line). Open a
+  real `.ipynb` with plots: the pictures show and Ctrl+Shift+V flips to the
+  raw JSON.
+- [ ] SQLite (item 57): open a database an app made (Firefox's
+  `places.sqlite` copy, a Signal or Calibre file, one in WAL mode). Pick
+  tables, run a query, try an `INSERT` (refused), and confirm the file's
+  bytes and date did not change.
+- [ ] The Markdown page to the side (item 54): Ctrl+Alt+V on a long README.
+  Scroll the source and then the page with two fingers on the touchpad:
+  each follows the other without jumps. Move the caret into a block far
+  from the view. Double-click text and a table cell in the pane, edit, and
+  commit; Ctrl+Z in the source undoes it. Click a task box.
+- [ ] Math (item 58) with a real tectonic: a page with inline and display
+  formulas. Check that they typeset, the sizes next to the text (sizes are
+  a guess, 1 bp is 1.4 px, and do not follow the editor's font size), the
+  text color after a theme change, a bad formula's tooltip, and the line
+  "Typesetting N formulas…". Without tectonic, Download tectonic.
+- [ ] Mermaid (item 56) with a real mmdc (`npm i -g @mermaid-js/mermaid-cli`):
+  a flowchart and a sequence diagram, in a dark and a light theme, then a
+  broken one (its code stays with the complaint as a tooltip).
+- [ ] Export as HTML (item 56): from the palette or File menu, open the
+  result in Firefox. Links, tables, footnotes, code, and the math as text.
+- [ ] LaTeX with a real tectonic (items 51 and 55): a document with an
+  error, then one with an overfull box and an undefined reference. The
+  problem rows open the right file and line, the marks leave at the first
+  edit, the "N warnings" button lists them. Ctrl+Alt+Shift+J in the source,
+  also from an `\input` part, lights the right lines in the PDF.
+- [ ] Browser (items 50 and 53) on real sites: Ctrl+T, middle-click and
+  Ctrl+click a link, a target=_blank link, switching among five or more
+  tabs (the older ones suspend and come back), dragging a tab, Ctrl+W to
+  the last tab. Ctrl+F in a page (count, Enter, Shift+Enter, Esc), page
+  zoom kept per site across tabs and a relaunch. Quit with tabs open and
+  start again: the pages come back.
+- [ ] Split editor (item 61): View > Editor Layout, or Ctrl+Backslash. Type
+  in one group and see the other follow, use Ctrl+1 and Ctrl+2, drag the
+  bar, move a tab with Ctrl+Alt+Shift+Page Down, close the right group's
+  last tab, and quit and start again (it comes back split). Say how the
+  hidden selection and the note for a viewer look.
+- [ ] Terminal tabs and splits (items 59 and 60): Ctrl+Shift+` for a tab,
+  Ctrl+Shift+5 for a split, drag the bars with the mouse and the touchpad,
+  rename and move a tab, close a tab with `sleep 100` running (it asks),
+  and run a command in a hidden tab. Say whether GNOME or IBus takes any of
+  the keys.
+- [ ] Terminal find and Clear (item 62): Edit > Find, or the palette, with a
+  terminal focused; the bar finds in the scrollback, steps with Enter, and
+  Escape returns the keyboard. Clear Terminal (palette, no key) clears the
+  screen and keeps the scrollback. Up and Down in a lone pane resize the dock.
+- [ ] Waiting dots per terminal (item 63): run `minicode hooks --install`
+  yourself, start Claude Code in two terminal tabs and a split, and see the
+  dot (" ●") and the done mark (" ✓") on the right tab, Next Waiting Terminal
+  landing on it, and `minicode state` listing each terminal with its own id.
 
 ### Sessions and losing work
 
