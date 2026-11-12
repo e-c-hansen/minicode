@@ -1419,7 +1419,7 @@ These may run in parallel.
   and views listed, a query field and a column view of 1,000 rows at most,
   writing statements refused, a 5 s limit, one worker thread
   (`SqliteView.cpp`, HANDOFF.md item 57); `sqlite_view` checks it.
-- [ ] **4.2 The preview to the side and scroll sync.** `MarkdownPage`,
+- [x] **4.2 The preview to the side and scroll sync.** `MarkdownPage`,
   `PreviewScroll`. Measured for R1 (2026-11-09): opening README.md in the
   preview holds the main thread for 0.3 to 0.6 s of CPU, the same without
   its pictures, while CLAUDE.md (twice the size, few tables) never holds it
@@ -1435,7 +1435,10 @@ These may run in parallel.
   per sync at 20,000 lines). *Tables' first-render cost done* (HANDOFF item 54, `markdown_tables`):
   README's longest main-thread stall went from 439 ms (full preview) and
   617 ms (side pane) of CPU to about 80 to 100 ms, by wrapping cells at words
-  only. Editing from the pane remains, so the box stays open.
+  only. *Editing from the pane done* (HANDOFF item 54, `markdown_side_edit`):
+  a double-click on a paragraph, list item or table cell opens the block
+  editor over the pane, the edit is one undo step in the source, and a task
+  box toggles the task there.
 - [x] **4.3 Math, Mermaid, and Export as HTML.** `MathTex`, `MermaidDiagram`,
   `MarkdownHtml`.
   *Export and Mermaid done:* File > Export as HTML… (the command palette;
