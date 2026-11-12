@@ -32,6 +32,8 @@ core_sources = [
   # LspSessionCompletion.cpp, PARITY.md 2.5).
   core_dir / 'Snippet.cpp',
   core_dir / 'LatexDoc.cpp',
+  core_dir / 'LatexLog.cpp',
+  core_dir / 'LatexScratch.cpp',
   core_dir / 'SyncTex.cpp',
   core_dir / 'Json.cpp',
   core_dir / 'Csv.cpp',

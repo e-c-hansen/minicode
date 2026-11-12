@@ -1008,6 +1008,11 @@ LatexPreview* Editor::makeLatex(Document* d) {
     if (!d->latexPreview()) {
         LatexPreview* l = new LatexPreview(d->buffer());
         l->pdfView()->setShownCallback(onPdfShown, this);
+        // A problem row: its file in a tab (an \\input file too), at the line.
+        l->setOpenProblem([this](const std::string& path, int line) {
+            if (path.empty() || !openFile(path, EditorTabs::OpenFrom::Other)) return;
+            if (line > 0) revealLine(line, 0, 0);
+        });
         gtk_stack_add_child(GTK_STACK(slot_), l->widget());
         d->setLatexPreview(l);
     }

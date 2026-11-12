@@ -82,3 +82,4 @@ ShellIntegrationSuite.cpp
 OwnerReportsSuite.cpp
 CsvTableSuite.cpp
 BrowserTabsSuite.cpp
+LatexProblemsSuite.cpp

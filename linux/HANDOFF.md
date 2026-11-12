@@ -2777,6 +2777,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   agent (`inlineChat.start`) as the command Linux still lacks.
 - **Needs the owner:** real clangd and basedpyright, Ctrl+T under GNOME and
   in the terminal, and the folds' look from a real server.
+
 ### 36. Semantic tokens (done, November 2026; `PARITY.md` item 2.6)
 
 - **What it does**: the servers' `textDocument/semanticTokens/full` (then
@@ -2905,6 +2906,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `browse`, `page`, `open-url` and BROWSER, `notify` and `hooks`, `procs`,
   `tour` and `install-skill`, and the skill file. Another uid's refusal is
   untested (needs a second user).
+
 ### 39. The compare view (done, November 2026; `PARITY.md` item 3.2)
 
 - **`CompareView.{h,cpp}`** is the Mac's `MCCompareView`: two panes, each a
@@ -3146,6 +3148,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   the terminal from the client, and a per-tab mark (there are no terminal
   tabs). **Needs the owner**: the dot's look on a real theme, and the title
   count in GNOME's overview.
+
 ### 43. The Claude Code IDE link (done, November 2026; `PARITY.md` item 3.9)
 
 - **What it does**: the Mac's `/ide` answer, per window, off by default
@@ -3273,6 +3276,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   program that gets the folder as its argument instead, which the `agents`
   suite records. The worktree node's Open in New Window already existed.
 - **Remains:** the owner's eyes on the look and on a real `~/.claude`.
+
 ### 45. Agents checking pages (done, November 2026; `PARITY.md` item 3.7)
 
 - **What it does**: the Mac's `browse` and `page`, on WebKitGTK. `browse`
@@ -3408,6 +3412,7 @@ the right side was empty; it now returns, leaving a bare area (Toggle Editor,
 Toggle Sidebar, or opening a file brings things back). The Mac's rule
 (`RightArea::empty`) is unchanged and was right. `OwnerReportsSuite.cpp`
 (`owner_reports`) checks both with real keys and a real bar drag.
+
 ### 48. The shell integration (done, November 2026; D10, `PARITY.md` item 3.1)
 
 - **What it does**: the app's terminal knows when its shell is at a prompt,
@@ -3531,6 +3536,38 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   poll, an exec into another shell (the Mac's `_integrated` NO), and the
   owner's own shell setup on a real desktop.
 
+### 49. Files by kind and the CSV table (part one of `PARITY.md` item 4.1)
+
+- **Routing**: `Editor::loadInto` (Tabs.cpp) reads the first 8 KB and asks
+  `FileSniff::classify` after the media check. A SQLite database and a
+  binary file or Office-type document (the Mac's Quick Look kinds, which
+  have no counterpart here) become a `Document::Kind::Message` saying so,
+  never text. UTF-16 with a BOM is still refused by `readText` (not valid
+  UTF-8), as before. JSON and notebooks are text until their viewers come.
+- **The table** (`CsvTable.{h,cpp}`): a `GtkColumnView` over a
+  `GtkStringList` of row numbers, one `GtkEditableLabel` per cell, the
+  cells read from a `Csv::Document` parsed from the tab's text. A cell
+  edit serializes the table, takes the bytes between the old and new text's
+  common start and end (whole characters), and `Editor::showTable`'s
+  `onReplace` makes that one user action on the tab's own buffer, so undo,
+  dirty, backups, saving and the servers work unchanged; one cell changes
+  one line, an unedited file is never rewritten, and BOM, CRLF, quoting and
+  a missing last newline come from Csv. Text changed any other way (undo,
+  Ctrl+Z on the table calls `gtk_text_buffer_undo`, a reload) reaches the
+  table by the buffer's `changed` signal (`csvApplying_` skips its own).
+- **Choosing**: `Document::sniffCsv` (from `loadText` and `restoreText`)
+  asks `FileSniff::classify` on the text; `isCsv()`, `showsTable()`. A file
+  over 50 MB (`CsvTable::kMaxTableBytes`) or empty opens as text; the Mac's
+  read-only 100,000-row table for those is not done. Files over the
+  large-file background threshold are read in pieces and so open as text
+  too. The preview key (`Editor::togglePreview`) flips table and text.
+- **Trap**: `Editor::dropTable` (called on leaving a tab and before every
+  show) commits a cell being typed into the tab it was typed in, then
+  disconnects; the table is one widget for every tab, as the Mac's.
+- **Not done**: inserting and deleting rows and columns (Csv has them), the
+  first row as a header, multi-line cells typed in a cell, column widths
+  kept.
+
 ### 50. Browser tabs (tabs done, November 2026; `PARITY.md` item 4.5, first part)
 
 - **What it does**: the browser pane has the Mac's tabs. A `TabStrip` (the
@@ -3578,6 +3615,57 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   before `selectTab`, whose `applyLive` would otherwise make a plain one for
   the active tab. A signal's user data is the `Tab`, disconnected before the
   view is removed.
+
+### 51. LaTeX problems, warnings and scratch records (done, November 2026; `PARITY.md` item 4.4, first part)
+
+- **What it does**: a typeset that fails lists tectonic's problems
+  (`LatexLog::collect`: the summary's `error: file:line: message`, TeX's
+  `! ...` blocks only when the summary placed none) as rows above the log, in
+  `Latex.cpp`; a row is a flat button that calls `LatexPreview::setOpenProblem`'s
+  function with the file `LatexLog::sourcePath` finds (the sibling's name is
+  the document, an `\input` name is read against the document's folder) and
+  the line, and `Editor::makeLatex` opens that file in a tab and `revealLine`s
+  it (a row with no line or no file is insensitive). The failure page is
+  now `logPage_` (rows over the log), which `showingLog` compares against.
+- **Warnings**: every run passes `--keep-logs`; tectonic's own `warning:`
+  lines and TeX's transcript (`<stem>.log` beside the PDF, read and removed
+  at once, whatever came of the run) go through `LatexLog::collect`. A typeset
+  that worked shows a "N warnings" flat button in the preview's bar (not the
+  status bar, which this port keeps for the page count) that opens a popover
+  of the same rows. Underfull boxes are left out, as on the Mac.
+- **Gutter marks**: the lines are tagged `latex-error` and `latex-warning` in
+  the document's own buffer (an underline like a server's; the gutter's
+  default `diagTags_` names them beside `lsp-error` and `lsp-warning`), so a
+  language server's publish, which clears only its own tags, never replaces
+  them. Marks are laid only when the buffer still equals the text typeset,
+  only on lines of the document itself (not an `\input` part), and come off
+  at the first change to the buffer (`onBufferChanged`) or the next typeset
+  (a good one lays only its warnings). GTK tags follow edits, but the
+  rule here is the Mac's: they are the typeset text's lines, so they go.
+- **LatexScratch**: each preview's output folder is
+  `LatexScratch::folderName(<16 hex of the path's SHA-256>, owner)` under
+  `$XDG_RUNTIME_DIR/minicode-latex` (so two windows on one file share
+  nothing), removed with the preview (destructor, `close`). A
+  `sibling.record` (pid, start time from `/proc/<pid>/stat`, size, SHA-256)
+  is written before the hidden copy and removed with it; the first typeset of
+  a launch (`sweepOldFolders`) removes the folders of owners that have gone
+  and, by `LatexScratch::decide`, a copy a crashed process left only while it
+  is still exactly the recorded bytes. Folders named by the hash alone
+  (builds before this) are left alone. The sibling's own name stays
+  `.<file name>.<preview number>.minicode.tex` (which `isPreviewCopyName`
+  accepts); that is the port's, not the core's `siblingName`.
+- **Checks**: `latex_problems` (`tests/gui/LatexProblemsSuite.cpp`) stands a
+  shell script in for tectonic (`MINICODE_TECTONIC`), giving it canned
+  output made of tectonic 0.17.0's real lines (`tests/latex/logs`): the
+  error row, its mark and click, marks gone after typing, the five warnings
+  (tectonic's boxes with an underfull one dropped, the transcript's, one in
+  an `\input` part whose row opens that file at line 3), the transcript, the
+  record and the copy gone, and a dead process's folders swept (its copy
+  removed when unchanged, kept when the user had changed it).
+- **Not done**: forward search (Option+Ctrl+J), the rest of 4.4. The marks
+  do not follow edits (they leave), a part's own problems are not marked in
+  the part's buffer when it is open, and a folder left by a rename of the
+  document (`setPath` keeping the pages) waits for the next launch's sweep.
 
 ## How to work on it
 
@@ -4072,36 +4160,3 @@ File's busy check and the finishing mark.
   `meson.build`, so the package has it), else the checkout's own. The
   `control` suite installs with `--dir` into its scratch folder.
 - **Left of 3.1**: `split`, which waits for terminal tabs (item 4.7).
-
-### 49. Files by kind and the CSV table (part one of `PARITY.md` item 4.1)
-
-- **Routing**: `Editor::loadInto` (Tabs.cpp) reads the first 8 KB and asks
-  `FileSniff::classify` after the media check. A SQLite database and a
-  binary file or Office-type document (the Mac's Quick Look kinds, which
-  have no counterpart here) become a `Document::Kind::Message` saying so,
-  never text. UTF-16 with a BOM is still refused by `readText` (not valid
-  UTF-8), as before. JSON and notebooks are text until their viewers come.
-- **The table** (`CsvTable.{h,cpp}`): a `GtkColumnView` over a
-  `GtkStringList` of row numbers, one `GtkEditableLabel` per cell, the
-  cells read from a `Csv::Document` parsed from the tab's text. A cell
-  edit serializes the table, takes the bytes between the old and new text's
-  common start and end (whole characters), and `Editor::showTable`'s
-  `onReplace` makes that one user action on the tab's own buffer, so undo,
-  dirty, backups, saving and the servers work unchanged; one cell changes
-  one line, an unedited file is never rewritten, and BOM, CRLF, quoting and
-  a missing last newline come from Csv. Text changed any other way (undo,
-  Ctrl+Z on the table calls `gtk_text_buffer_undo`, a reload) reaches the
-  table by the buffer's `changed` signal (`csvApplying_` skips its own).
-- **Choosing**: `Document::sniffCsv` (from `loadText` and `restoreText`)
-  asks `FileSniff::classify` on the text; `isCsv()`, `showsTable()`. A file
-  over 50 MB (`CsvTable::kMaxTableBytes`) or empty opens as text; the Mac's
-  read-only 100,000-row table for those is not done. Files over the
-  large-file background threshold are read in pieces and so open as text
-  too. The preview key (`Editor::togglePreview`) flips table and text.
-- **Trap**: `Editor::dropTable` (called on leaving a tab and before every
-  show) commits a cell being typed into the tab it was typed in, then
-  disconnects; the table is one widget for every tab, as the Mac's.
-- **Not done**: inserting and deleting rows and columns (Csv has them), the
-  first row as a header, multi-line cells typed in a cell, column widths
-  kept.
-
