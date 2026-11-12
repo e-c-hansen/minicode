@@ -6,6 +6,7 @@
 // is a folder of the scratch world, the questions, and the panel's rows and
 // menus pressed for real.
 #pragma once
+#include <memory>
 
 #include "Harness.h"
 
@@ -238,7 +239,17 @@ inline std::string PaletteSelected() {
 // Ctrl+Shift+P, `query`, and Return once `label` is the row chosen.
 inline void RunFromPalette(const std::string& query, const std::string& label) {
     MCGuiStep("Ctrl+Shift+P for " + label, [] { MCGuiKey("ctrl+shift+p"); });
-    MCGuiWait("the palette", 10, [] { return Pal() && Pal()->isOpen() && !Pal()->isPick(); });
+    // A key sent while a popover menu that Escape just closed is still letting
+    // go of the keyboard goes nowhere (seen only in full runs, a few times in
+    // ten, whatever the View menu's length: the palette never opened and the
+    // steps after it typed into the void). Pressed again while it has not
+    // opened; on an open palette the key only takes the text again.
+    auto polls = std::make_shared<int>(0);
+    MCGuiWait("the palette", 10, [polls] {
+        if (Pal() && Pal()->isOpen() && !Pal()->isPick()) return true;
+        if (++*polls % 40 == 0) MCGuiKey("ctrl+shift+p");   // every 2 s
+        return false;
+    });
     MCGuiStep("\"" + query + "\"", [query] { MCGuiType(query); });
     MCGuiWait(label + " chosen", 10, [label] { return PaletteSelected() == label; });
     MCGuiStep("Return", [] { MCGuiKey("enter"); });
