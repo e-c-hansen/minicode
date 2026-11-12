@@ -87,3 +87,4 @@ LatexProblemsSuite.cpp
 LatexForwardSuite.cpp
 JsonOutlineSuite.cpp
 MarkdownSideSuite.cpp
+MermaidSuite.cpp

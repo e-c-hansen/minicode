@@ -36,7 +36,8 @@ public:
     std::function<void(const std::string& url)> onLink;
 
     // What the pieces are built from. A change makes the next render whole.
-    bool setContext(const std::string& folder, bool webImages);   // true when it changed
+    bool setContext(const std::string& folder, bool webImages, bool mermaid = false,
+                    bool dark = false);   // true when it changed
     void invalidate() { stale_ = true; }
 
     // The source is shown (or changed): render after `delayMs`.
@@ -87,6 +88,8 @@ private:
     std::shared_ptr<Markdown::Hooks> hooks_;
     std::string folder_;
     bool webImages_ = false;
+    bool mermaid_ = false, dark_ = false;   // diagrams drawn, in which theme
+    int mermaidListener_ = 0;
     bool stale_ = false;      // the context moved: build everything
     guint timer_ = 0, arrivedTimer_ = 0;
     Job* job_ = nullptr;      // running on the worker

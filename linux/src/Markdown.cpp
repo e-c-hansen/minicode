@@ -4,6 +4,8 @@
 // line, links blue+underlined), and like it draws tables as real tables and
 // shows local pictures, GIFs playing.
 #include "Markdown.h"
+#include "Mermaid.h"
+#include "MermaidDiagram.h"
 #include "MarkdownParser.h"
 #include "Palette.h"
 
@@ -555,6 +557,35 @@ Markdown::Page Markdown::renderRuns(GtkTextView* view, GtkTextBuffer* buffer,
         if (r.task == 2 && !r.marker) applyTag(buffer, "md_done", startOff, endOff);
     };
 
+    // ```mermaid blocks in the range (found only when the page draws them).
+    struct Diagram { size_t first, end; std::string source; };
+    std::vector<Diagram> diagrams;
+    if (hooks->mermaid) {
+        bool any = false;
+        for (size_t i = first; i < last && !any; i++) any = MermaidDiagram::isMermaidRun(runs[i]);
+        if (any) {
+            std::vector<MdRun> sub(runs.begin() + (long)first, runs.begin() + (long)last);
+            for (const MermaidDiagram::Block& b : MermaidDiagram::blocks(sub))
+                diagrams.push_back({first + b.first, first + b.end, b.source});
+        }
+    }
+    size_t nextDiagram = 0;
+    // A failed diagram's code carries its complaint as a tooltip.
+    bool tipOpen = false;
+    size_t tipEnd = 0;
+    int tipStart = 0;
+    std::string tipText;
+    auto closeTip = [&] {
+        if (!tipOpen) return;
+        tipOpen = false;
+        if (pos <= tipStart) return;
+        const std::string name = "md_tip:" + tipText;
+        GtkTextTagTable* table = gtk_text_buffer_get_tag_table(buffer);
+        if (!gtk_text_tag_table_lookup(table, name.c_str()))
+            gtk_text_buffer_create_tag(buffer, name.c_str(), nullptr);
+        applyTag(buffer, name.c_str(), tipStart, pos);
+    };
+
     std::string heading;   // the text of the heading being emitted
     int headingLine = -1, headingAt = 0;
     auto endHeading = [&] {
@@ -568,6 +599,37 @@ Markdown::Page Markdown::renderRuns(GtkTextView* view, GtkTextBuffer* buffer,
 
     for (size_t i = first; i < last; i++) {
         const MdRun& r = runs[i];
+        if (tipOpen && i >= tipEnd) closeTip();
+        if (nextDiagram < diagrams.size() && i == diagrams[nextDiagram].first) {
+            const Diagram& dg = diagrams[nextDiagram++];
+            const Mermaid::State st = Mermaid::want(dg.source, hooks->mermaidDark);
+            if (st.kind == Mermaid::State::Ready) {
+                // The picture is drawn at scale 2: half its pixels in points.
+                int w = 0, h = 0;
+                GtkWidget* pic = newPicture(st.texture, nullptr, &w, &h);
+                Embed embed;
+                embed.widget = pic;
+                embed.width = std::max(1, w / MermaidDiagram::kScale);
+                embed.height = std::max(1, h / MermaidDiagram::kScale);
+                anchorWidget(pic, r);
+                page.embeds.push_back(embed);
+                GtkTextIter lineEnd;
+                gtk_text_buffer_get_iter_at_offset(buffer, &lineEnd, pos);
+                gtk_text_buffer_insert(buffer, &lineEnd, "\n", 1);
+                pos++;
+                lineLen = 0;
+                i = dg.end - 1;
+                continue;
+            }
+            if (st.kind == Mermaid::State::Waiting) {
+                page.waiting++;
+            } else {
+                tipOpen = true;
+                tipEnd = dg.end;
+                tipStart = pos;
+                tipText = st.why;
+            }
+        }
         if (r.heading > 0 && r.line != headingLine) {
             endHeading();
             headingLine = r.line;
@@ -671,6 +733,7 @@ Markdown::Page Markdown::renderRuns(GtkTextView* view, GtkTextBuffer* buffer,
         }
     }
     endHeading();
+    closeTip();
     page.length = pos - at;
     if (at) {   // offsets are the piece's own
         for (Span& sp : page.spans) { sp.start -= at; sp.end -= at; }
@@ -678,6 +741,39 @@ Markdown::Page Markdown::renderRuns(GtkTextView* view, GtkTextBuffer* buffer,
         for (PendingPicture& pp : page.pending) { pp.start -= at; pp.end -= at; }
     }
     return page;
+}
+
+std::string Markdown::tooltipAt(GtkTextBuffer* buffer, int offset) {
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_offset(buffer, &it, offset);
+    GSList* tags = gtk_text_iter_get_tags(&it);
+    std::string out;
+    for (GSList* l = tags; l; l = l->next) {
+        gchar* name = nullptr;
+        g_object_get(l->data, "name", &name, nullptr);
+        if (name && g_str_has_prefix(name, "md_tip:")) out = name + 7;
+        g_free(name);
+    }
+    g_slist_free(tags);
+    return out;
+}
+
+static gboolean queryTooltip(GtkWidget* w, int x, int y, gboolean keyboard, GtkTooltip* tip, gpointer) {
+    if (keyboard) return FALSE;
+    GtkTextView* tv = GTK_TEXT_VIEW(w);
+    int bx = 0, by = 0;
+    gtk_text_view_window_to_buffer_coords(tv, GTK_TEXT_WINDOW_WIDGET, x, y, &bx, &by);
+    GtkTextIter it;
+    if (!gtk_text_view_get_iter_at_location(tv, &it, bx, by)) return FALSE;
+    const std::string t = Markdown::tooltipAt(gtk_text_view_get_buffer(tv), gtk_text_iter_get_offset(&it));
+    if (t.empty()) return FALSE;
+    gtk_tooltip_set_text(tip, t.c_str());
+    return TRUE;
+}
+
+void Markdown::installTooltips(GtkTextView* view) {
+    gtk_widget_set_has_tooltip(GTK_WIDGET(view), TRUE);
+    g_signal_connect(view, "query-tooltip", G_CALLBACK(queryTooltip), nullptr);
 }
 
 void Markdown::fit(Page& page, int width) {

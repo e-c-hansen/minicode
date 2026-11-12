@@ -50,6 +50,8 @@ const std::vector<LinuxRow>& linuxRows() {
         // Option+Cmd+S with Alt and Ctrl, as Show Hover's.
         {"workbench.action.files.saveAll", "ctrl+alt+s", 0, nullptr, nullptr},
         {"minicode.latex.exportPDF", "ctrl+shift+s", 0, nullptr, nullptr},
+        // Export as HTML has no key on the Mac either.
+        {"minicode.markdown.exportHtml", "", 0, nullptr, nullptr},
         // LaTeX Workshop's Linux key, Ctrl+Alt+J, is Unfold All's here (the
         // family's key, above), so Shift joins it; an Editor command like
         // Unfold All, so the two cannot share the key.

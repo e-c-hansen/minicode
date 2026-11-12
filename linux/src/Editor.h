@@ -284,6 +284,12 @@ public:
     // Ctrl+Shift+S: save the typeset PDF somewhere of the user's choosing.
     // False when the open file is not LaTeX.
     bool exportPdf(GtkWindow* parent);
+    // File > Export as HTML…: the active Markdown file (unsaved changes
+    // included) as a standalone page, chosen in a save dialog, or at
+    // $MINICODE_HTML_EXPORT_PATH when that is set (the checks).
+    bool exportHtml(GtkWindow* parent);
+    // The page written to `path` through the atomic writer; false with `error`.
+    bool exportHtmlTo(const std::string& path, std::string* error);
     // Ctrl+Alt+Shift+J: show the caret's line in the PDF (forward search). From
     // an \\input file the main document is the `% !TEX root` comment's, else
     // the open tab whose typeset read this file; its tab is shown. False when
@@ -638,6 +644,7 @@ private:
     // hold a weak reference to alive_ and do nothing once it is gone.
     std::vector<std::pair<std::string, WebImages::PicturePtr>> arrived_;
     guint arrivedTimer_ = 0;
+    int mermaidListener_ = 0;   // Mermaid.h: a diagram arrived
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
     GtkTextMark* holdMark_ = nullptr;   // the line that was at the top
     int    holdInto_ = 0;               // how far into it the view started

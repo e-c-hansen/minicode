@@ -295,6 +295,8 @@ static void updateTitle(void* userp) {
         g_simple_action_set_enabled(G_SIMPLE_ACTION(save), app->editor->canSave());
     if (GAction* exp = g_action_map_lookup_action(G_ACTION_MAP(app->window), "exportpdf"))
         g_simple_action_set_enabled(G_SIMPLE_ACTION(exp), app->editor->isLatex());
+    if (GAction* exh = g_action_map_lookup_action(G_ACTION_MAP(app->window), "exporthtml"))
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(exh), app->editor->isMarkdown());
     if (GAction* syn = g_action_map_lookup_action(G_ACTION_MAP(app->window), "latexsynctex"))
         g_simple_action_set_enabled(G_SIMPLE_ACTION(syn), app->editor->isLatex());
     // Format Document acts on a file's editable source only.
@@ -709,6 +711,12 @@ static void act_forget_folder_tools(GSimpleAction*, GVariant*, gpointer userp) {
 static void act_export_pdf(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     app->editor->exportPdf(GTK_WINDOW(app->window));
+}
+
+// File > Export as HTML…: a Markdown file as a standalone page.
+static void act_export_html(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    app->editor->exportHtml(GTK_WINDOW(app->window));
 }
 
 // Ctrl+Alt+Shift+J: the caret's line in the PDF, as the Mac's Option+Cmd+J.
@@ -3353,6 +3361,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "open",           G_CALLBACK(act_open));
     addAction(app, "save",           G_CALLBACK(act_save));
     addAction(app, "exportpdf",      G_CALLBACK(act_export_pdf));
+    addAction(app, "exporthtml",     G_CALLBACK(act_export_html));
     addAction(app, "latexsynctex",   G_CALLBACK(act_latex_synctex));
     addAction(app, "newfile",        G_CALLBACK(act_new_file));
     addAction(app, "newfolder",      G_CALLBACK(act_new_folder));
