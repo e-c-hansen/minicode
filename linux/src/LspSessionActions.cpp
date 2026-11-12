@@ -482,6 +482,9 @@ void LspSession::referencesArrived(const Json& result, const Json& error, int ge
 // others up no longer).
 void LspSession::askCodeActions(Lsp::Range range, const std::vector<std::string>& only,
                                 CodeActionsDone done) {
+    // Every server asked has the file's open text first, a second server
+    // that started after the file was shown included.
+    syncOpenDocuments();
     const std::vector<std::shared_ptr<Server>> servers = serversFor(Lsp::Feature::CodeActions);
     const int gen = ++act_->actionGen;
     rememberAsked();

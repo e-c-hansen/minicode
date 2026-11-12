@@ -125,7 +125,16 @@ std::shared_ptr<Server> LspSession::serverFor(Lsp::Feature f) const {
 std::vector<std::shared_ptr<Server>> LspSession::serversFor(Lsp::Feature f) const {
     const std::vector<std::shared_ptr<Server>> servers = fileServers();
     std::vector<std::shared_ptr<Server>> out;
-    for (int i : Lsp::serversOffering(f, viewsOf(servers))) out.push_back(servers[(size_t)i]);
+    for (int i : Lsp::serversOffering(f, viewsOf(servers))) {
+        // Only a server that has the file's text (didOpen sent, edits
+        // flushed): a request to one that has not would be answered for
+        // nothing, and a real Ruff's edits for nothing could damage the file.
+        const std::shared_ptr<Server>& s = servers[(size_t)i];
+        bool has = false;
+        for (const auto& [key, e] : sync_->entries)
+            if (e.server == s && e.uri == uri_) has = true;
+        if (has) out.push_back(s);
+    }
     return out;
 }
 
