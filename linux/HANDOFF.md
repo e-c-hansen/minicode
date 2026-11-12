@@ -1622,7 +1622,11 @@ What later items build on:
   keeps a dead key after a key it cannot compose with (dead acute then
   `(`), and Pango then warns "pango_layout_get_cursor_pos: assertion
   'index >= 0 ...' failed" with auto-closing or without; Escape ends the
-  composing. A tab closed before the view has drawn it (open a file, then
+  composing. The warning's stack (`G_DEBUG=fatal-criticals`, 2026-11-11) is
+  `gtk_text_view_get_cursor_locations` from GtkTextView's own idle, none of
+  ours, and only `auto_close`'s dead-key step raises it (green runs log it
+  too); it is not the palette's, whose `git_actions` flake did not repeat in
+  a whole-order run or under load. A tab closed before the view has drawn it (open a file, then
   `Editor::closeAllTabs()` in the same step) aborts with "Gtk-ERROR:
   gtk_text_btree_line_number couldn't find line" in GtkTextView's own
   snapshot; that is on main, reported, and `bracket_pairs` lets the view
