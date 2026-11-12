@@ -4032,6 +4032,16 @@ panel has a row).
   the delete. In a long combined run `terminal_tabs` can still fail on a
   loaded machine (see the coordinator's notes); alone and after
   `shell_integration` it passes with no GLib criticals.
+  Two more causes found with an ASan build (`-Db_sanitize=address
+  -Db_lundef=false`, the terminal suites): `TerminalDock::remove` deleted the
+  closing terminal while `app->terminal` still named it, and removing its
+  widget moved the focus, whose handler (`updateKeyPlace`, `Terminal::owns`)
+  read the freed object; the dock now hands the host the surviving terminal
+  first (the last tab's fresh replacement joins the stack before the old one
+  goes, the dock hidden before the widget leaves). And the failure in the
+  combined run ("minicode did not start within 10 seconds") was
+  `latex_problems` leaving `XDG_RUNTIME_DIR` changed, so a later suite's CLI
+  looked for the control socket in the wrong folder; it puts it back.
 
 ## How to work on it
 
