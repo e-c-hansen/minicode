@@ -82,6 +82,9 @@ public:
     // downloads into ~/.local/share/minicode/bin, then PATH.
     static std::string tectonicPath();
     static std::string managedTectonicPath();
+    // Download the pinned tectonic without a preview (the Markdown math's
+    // line); `done` runs on the main loop, with "" or the problem.
+    static void downloadTectonicThen(std::function<void(const std::string& problem)> done);
 
     // What the click path and the popover do, reachable for tests: the
     // double-click PdfView reports (0-based page, points from the page's

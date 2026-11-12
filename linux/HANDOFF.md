@@ -3916,6 +3916,58 @@ panel has a row).
 - **Not done**: sorting by a column, a cell's full text (a tooltip or copy),
   column widths kept, the table list's width kept, and a query history.
 
+### 58. Math in the Markdown preview (done, November 2026; `PARITY.md` item 4.3, second part)
+
+- **`src/Math.{h,cpp}`** is the Mac's `MarkdownMath.mm` over the core's
+  `MathTex` (the checks, the batch document, the nonce, `readLog`,
+  `firstError`; nothing of that is re-done). `Math::want(tex, display,
+  color)` is the one entry, like `Mermaid::want`: kept, waiting (queued on
+  first ask) or failed. Requests gather for 50 ms into one batch; one run at
+  a time on a worker thread: tectonic (`LatexPreview::tectonicPath()`, so
+  `MINICODE_TECTONIC`, the downloaded copy, PATH) with `-Z continue-on-errors
+  --untrusted --print --keep-logs --reruns 0` in a `g_dir_make_tmp` folder
+  of its own, in a session of its own (killed by group), 15 s without output
+  once the log shows `BEGIN:` and 60 s before (the formula TeX was in fails,
+  the rest go round again); a run with no PDF fails the formula TeX began and
+  never finished and reruns the rest; a page must be the size the log gave
+  its box. Compiled only with poppler (`MINICODE_ENABLE_PDF`); without it
+  `Math::built()` is false and a formula stays its TeX.
+- **Cache**: `$MINICODE_MATH_CACHE` or `$XDG_CACHE_HOME/minicode/math`, one
+  `<batch>.pdf` as tectonic wrote it and a `<batch>.idx` (`key page descent`,
+  header `minicode-math-index 1`) per run, 50 MB trimmed to 40. The key is
+  SHA-256 of `MathTex::kVersion`, display or inline, and the TeX; only
+  typeset formulas are indexed, so a failed one asks again after a reopen.
+- **Drawing**: the page is rendered by poppler at 2x onto white, its
+  luminance becomes alpha, and the mask is filled with the text color asked
+  for (`Editor::mathColor()`, the editor's), so a formula takes the color
+  around it (cairo's ARGB32, premultiplied, as a `GdkMemoryTexture`). 1 bp is
+  1.4 logical pixels (`kPxPerBp`, 10 pt TeX next to 13 px text). The picture is
+  an `MdPicture` anchored in the text; `MdPicture` now reports a baseline
+  (`height - depth`), so a formula's depth hangs below the line's baseline.
+  A display formula's anchor carries `md_mathcenter` (centered, 4 px above
+  and below); `Markdown::fit` scales a wider-than-the-pane formula with its
+  depth. `Page::waiting` counts formulas with Mermaid's diagrams (so the
+  re-render on an arrival and the side pane's rebuilding of such pieces are
+  the same code), `mathWaiting` the formulas, `mathMissing` those left as TeX
+  for want of tectonic. A failed formula stays code with `md_tip:` (TeX's
+  complaint) as its tooltip.
+- **The line**: `Editor::mathNote()`, a label over the preview's top right
+  (`updateMathNote`, from `notifyDocument`): "Typesetting N formulas…" while
+  any is out, else, with `markdown.math` on and no tectonic, "Math is shown
+  as TeX: tectonic is not installed." with a Download tectonic link, which
+  runs the LaTeX preview's download (`LatexPreview::downloadTectonicThen`, the
+  same function body as its button, the same checksum) and renders again.
+  The side pane has no such line (its pieces just rebuild as formulas
+  arrive).
+- **Checked by** `markdown_math` (`MathSuite.cpp`): a stand-in tectonic and
+  PDFs made with cairo; see the file's opening comment. A real tectonic
+  would confirm the batch document compiles under XeTeX, the log's
+  `MC:` lines in tectonic 0.17's `--print` output, the PDF page sizes against
+  the boxes, and the look and size of a real formula next to the text.
+- **Not done**: the line in the side pane; copying a formula copies an
+  anchor character (as on the Mac); the picture size does not follow the
+  preview's font size.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

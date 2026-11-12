@@ -38,6 +38,7 @@
 #include "ScrollSettle.h"
 #include "TabStrip.h"
 #include "WebImages.h"
+#include "Math.h"
 #include "Mermaid.h"
 #include "MarkdownHtml.h"
 #include "FolderSearch.h"
@@ -74,6 +75,10 @@ Editor::Editor() {
         std::weak_ptr<int> alive = alive_;
         mermaidListener_ = Mermaid::subscribe([this, alive] {
             if (!alive.expired() && inMarkdownPage() && active_->pageInfo().waiting) rerenderPreview();
+        });
+        // The same for a formula typeset (or failed).
+        mathListener_ = Math::subscribe([this, alive] {
+            if (!alive.expired() && inMarkdownPage() && active_->pageInfo().mathWaiting) rerenderPreview();
         });
     }
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(view_), TRUE);
@@ -219,6 +224,22 @@ Editor::Editor() {
     gtk_widget_set_hexpand(slotOverlay_, TRUE);
     gtk_widget_set_vexpand(slotOverlay_, TRUE);
     gtk_overlay_set_child(GTK_OVERLAY(slotOverlay_), slot_);
+    // The Markdown math's line ("Typesetting 3 formulas…", or the offer to
+    // download tectonic), over the preview's top right while it applies.
+    mathNote_ = gtk_label_new("");
+    gtk_label_set_use_markup(GTK_LABEL(mathNote_), TRUE);
+    gtk_widget_set_halign(mathNote_, GTK_ALIGN_END);
+    gtk_widget_set_valign(mathNote_, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(mathNote_, 4);
+    gtk_widget_set_margin_end(mathNote_, 16);
+    gtk_widget_add_css_class(mathNote_, "dim-label");
+    gtk_widget_add_css_class(mathNote_, "minicode-math-note");
+    gtk_widget_set_visible(mathNote_, FALSE);
+    g_signal_connect(mathNote_, "activate-link", G_CALLBACK(+[](GtkLabel*, const char*, gpointer p) -> gboolean {
+        static_cast<Editor*>(p)->downloadTectonicForMath();
+        return TRUE;
+    }), this);
+    gtk_overlay_add_overlay(GTK_OVERLAY(slotOverlay_), mathNote_);
     // The JSON outline sits right of the text, behind a divider (syncOutline).
     outlinePaned_ = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_widget_set_hexpand(outlinePaned_, TRUE);
@@ -246,6 +267,7 @@ Editor::Editor() {
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
     Mermaid::unsubscribe(mermaidListener_);
+    Math::unsubscribe(mathListener_);
     delete inline_;
     inline_ = nullptr;
     delete notes_;
@@ -453,7 +475,52 @@ const std::string& Editor::diffTitle() const {
 
 // A large file with its features off, or one past the sync limit, is no
 // document to a language server (LargeFileView.h), like a message.
+std::string Editor::mathColor() const {
+    const Rgba c = settings_.text(Surface::Editor);
+    char buf[16];
+    g_snprintf(buf, sizeof buf, "#%02x%02x%02x", c.r, c.g, c.b);
+    return buf;
+}
+
+std::string Editor::mathNote() const {
+    return gtk_widget_get_visible(mathNote_) ? gtk_label_get_text(GTK_LABEL(mathNote_)) : "";
+}
+
+// The line over the page: formulas out, or tectonic missing for them.
+void Editor::updateMathNote() {
+    std::string markup;
+    if (inMarkdownPage()) {
+        const Markdown::Page& p = active_->pageInfo();
+        if (mathDownloading_) {
+            markup = "Downloading tectonic…";
+        } else if (p.mathWaiting > 0) {
+            const int n = std::max(1, Math::outstanding());
+            markup = "Typesetting " + std::to_string(n) + (n == 1 ? " formula…" : " formulas…");
+        } else if (p.mathMissing > 0) {
+            markup = "Math is shown as TeX: tectonic is not installed. "
+                     "<a href=\"download\">Download tectonic</a>";
+        }
+    }
+    gtk_widget_set_visible(mathNote_, !markup.empty());
+    if (!markup.empty()) gtk_label_set_markup(GTK_LABEL(mathNote_), markup.c_str());
+}
+
+void Editor::downloadTectonicForMath() {
+    if (mathDownloading_) return;
+    mathDownloading_ = true;
+    updateMathNote();
+    std::weak_ptr<int> alive = alive_;
+    LatexPreview::downloadTectonicThen([this, alive](const std::string& problem) {
+        if (alive.expired()) return;
+        mathDownloading_ = false;
+        if (!problem.empty()) g_message("minicode: could not install tectonic: %s", problem.c_str());
+        if (inMarkdownPage()) rerenderPreview(); else updateMathNote();
+        syncSide();
+    });
+}
+
 void Editor::notifyDocument() {
+    updateMathNote();
     if (observer_)
         observer_->documentChanged(isSource() && active_->languageServerMayRead() ? active_->path()
                                                                                  : std::string());
@@ -745,7 +812,8 @@ void Editor::syncSide() {
     side_->getText = [d] { return d->text(); };
     char* dir = g_path_get_dirname(d->path().c_str());
     const bool moved = side_->setContext(dir ? dir : ".", settings_.webImages() && WebImages::available(),
-                                         settings_.mermaid() && Mermaid::available(), settings_.isDark());
+                                         settings_.mermaid() && Mermaid::available(), settings_.isDark(),
+                                         settings_.math() && Math::available(), mathColor());
     g_free(dir);
     if (render || moved) side_->schedule(0);
 }
@@ -1391,6 +1459,8 @@ void Editor::applySettings(const Settings& s) {
     if (compare_) compare_->applySettings(s);
     const bool webBefore = settings_.webImages();
     const bool mermaidBefore = settings_.mermaid(), darkBefore = settings_.isDark();
+    const bool mathBefore = settings_.math();
+    const std::string mathColorBefore = mathColor();
     settings_ = s;
     code_->applySettings(s);   // the ruler and the gutter
     // Bracket boxes, and the bracket colors' tags (every tab's) and whether
@@ -1428,8 +1498,10 @@ void Editor::applySettings(const Settings& s) {
         rerenderPreview();
         if (!scrolled) notePreviewRest();   // still where Ctrl+Shift+V left it
     }
-    if ((s.mermaid() != mermaidBefore || s.isDark() != darkBefore) && inMarkdownPage()) rerenderPreview();
-    if (s.webImages() != webBefore || s.mermaid() != mermaidBefore || s.isDark() != darkBefore)
+    const bool mathChanged = s.math() != mathBefore || mathColor() != mathColorBefore;
+    if ((s.mermaid() != mermaidBefore || s.isDark() != darkBefore || mathChanged) && inMarkdownPage())
+        rerenderPreview();
+    if (s.webImages() != webBefore || s.mermaid() != mermaidBefore || s.isDark() != darkBefore || mathChanged)
         syncSide();   // another context: the side page is built whole
 }
 
@@ -1881,6 +1953,9 @@ void Editor::renderPreview() {
     hooks.webImages = settings_.webImages() && WebImages::available();
     hooks.mermaid = settings_.mermaid() && Mermaid::available();
     hooks.mermaidDark = settings_.isDark();
+    hooks.math = settings_.math() && Math::available();
+    hooks.mathMissing = settings_.math() && Math::built() && !Math::available();
+    hooks.mathColor = mathColor();
     std::weak_ptr<int> alive = alive_;
     hooks.link = [this, alive](const std::string& url) {
         if (!alive.expired()) openMarkdownLink(url);
@@ -1908,7 +1983,7 @@ void Editor::renderPreview() {
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(page, &start);
     gtk_text_buffer_place_cursor(page, &start);
-    notifyDocument();
+    notifyDocument();   // also the math line
     fetchWebPictures();
 }
 

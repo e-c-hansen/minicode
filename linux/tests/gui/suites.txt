@@ -90,3 +90,4 @@ MarkdownSideSuite.cpp
 MarkdownSideSyncSuite.cpp
 MermaidSuite.cpp
 SqliteViewSuite.cpp
+MathSuite.cpp

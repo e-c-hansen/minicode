@@ -42,6 +42,7 @@ struct Embed {
     int columns = 0;                    // a table's
     std::vector<GtkWidget*> labels;     // a table's cell labels
     int width = 0, height = 0;          // a picture's own size
+    int depth = -1;                     // a formula's: pixels below the baseline
 };
 
 // A web picture not here yet: the alt text standing in for it.
@@ -61,7 +62,9 @@ struct Page {
     std::vector<PendingPicture> pending; // web pictures to fetch, in buffer order
     std::shared_ptr<Hooks> hooks;        // what the page's widgets call back
     int length = 0;                      // renderRuns: the characters it put in
-    int waiting = 0;                     // Mermaid diagrams still being drawn (code for now)
+    int waiting = 0;                     // Mermaid diagrams and formulas still being drawn (code for now)
+    int mathWaiting = 0;                 // of those, the formulas
+    int mathMissing = 0;                 // formulas left as TeX for want of tectonic
     // The span at character `offset`, or null.
     const Span* spanAt(int offset) const;
     // The first character from source line `line` or later (the end when none).
@@ -76,6 +79,11 @@ struct Hooks {
     // shown, the others ask for a run and show as code meanwhile (Page::waiting).
     bool mermaid = false;
     bool mermaidDark = false;   // the preview's theme
+    // Math is typeset by tectonic (Math.h): pictures in `mathColor`, "#rrggbb",
+    // the text's. Wanted but tectonic missing: mathMissing counts them.
+    bool math = false;
+    bool mathMissing = false;
+    std::string mathColor = "#d4d4d4";
     // A click on a link inside a table cell or on a linked picture (links
     // in the text are the editor's to handle, from the spans).
     std::function<void(const std::string& url)> link;

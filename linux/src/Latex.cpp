@@ -1065,28 +1065,11 @@ void LatexPreview::exportPdf(GtkWindow* parent) {
 
 // ---------------------------------------------------------------- downloading
 
-struct LatexPreview::Download {
-    std::shared_ptr<LatexPreview*> alive;
-    std::string problem;
-};
-
-void LatexPreview::downloadTectonic() {
-    if (downloading_ || !kTectonicArch) return;
-    downloading_ = true;
-    setStatus("Downloading tectonic…", true);
-    setButton("Download…", false);
-
-    GTask* task = g_task_new(nullptr, nullptr,
-        [](GObject*, GAsyncResult* res, gpointer) {
-            auto* d = static_cast<Download*>(g_task_get_task_data(G_TASK(res)));
-            if (LatexPreview* self = *d->alive) self->finishDownload(d->problem);
-        }, nullptr);
-    auto* d = new Download{alive_, ""};
-    g_task_set_task_data(task, d, [](gpointer p) { delete static_cast<Download*>(p); });
-    // The whole download runs on a worker thread, blocking on each tool in turn.
-    g_task_run_in_thread(task, [](GTask*, gpointer, gpointer data, GCancellable*) {
-        auto* d = static_cast<Download*>(data);
-        const std::string bin = dirName(managedTectonicPath());
+// The download itself, blocking: tectonic into the managed folder, or why not
+// in *problemOut (empty on success). Runs on a worker thread.
+static void fetchTectonicBlocking(std::string* problemOutP) {
+    std::string& problem = *problemOutP;
+        const std::string bin = dirName(LatexPreview::managedTectonicPath());
         const std::string file = std::string("tectonic-") + kTectonicVersion + "-" +
                                  kTectonicArch + ".tar.gz";
         const std::string url =
@@ -1134,11 +1117,11 @@ void LatexPreview::downloadTectonic() {
             fetch = {wget, "-q", "--https-only", "-O", archive, url};
             g_free(wget);
         } else {
-            d->problem = "Neither curl nor wget is installed, and one is needed to download.";
+            problem = "Neither curl nor wget is installed, and one is needed to download.";
             return;
         }
-        if (!run(fetch, &d->problem)) {
-            d->problem = "The download failed.\n\n" + d->problem;
+        if (!run(fetch, &problem)) {
+            problem = "The download failed.\n\n" + problem;
             g_remove(archive.c_str());
             return;
         }
@@ -1156,23 +1139,23 @@ void LatexPreview::downloadTectonic() {
         }
         if (sum != kTectonicSha256) {
             g_remove(archive.c_str());
-            d->problem = "The download did not match the checksum published for tectonic " +
+            problem = "The download did not match the checksum published for tectonic " +
                          std::string(kTectonicVersion) + ", so it was thrown away.";
             return;
         }
 
         g_mkdir_with_parents(unpack.c_str(), 0755);
         const std::string unpacked = unpack + "/tectonic";
-        const std::string dest = managedTectonicPath();
-        bool ok = run({"tar", "-xzf", archive, "-C", unpack}, &d->problem);
+        const std::string dest = LatexPreview::managedTectonicPath();
+        bool ok = run({"tar", "-xzf", archive, "-C", unpack}, &problem);
         if (ok && !g_file_test(unpacked.c_str(), G_FILE_TEST_IS_REGULAR)) {
-            d->problem = "The download did not contain tectonic.";
+            problem = "The download did not contain tectonic.";
             ok = false;
         }
         if (ok) {
             g_chmod(unpacked.c_str(), 0755);
             if (g_rename(unpacked.c_str(), dest.c_str()) != 0) {
-                d->problem = "Could not move tectonic into " + bin + ".";
+                problem = "Could not move tectonic into " + bin + ".";
                 ok = false;
             }
         }
@@ -1185,7 +1168,31 @@ void LatexPreview::downloadTectonic() {
             g_dir_close(dir);
         }
         g_rmdir(unpack.c_str());
-        if (ok && !isExecutable(dest)) d->problem = "The download did not contain tectonic.";
+        if (ok && !isExecutable(dest)) problem = "The download did not contain tectonic.";
+}
+
+struct LatexPreview::Download {
+    std::shared_ptr<LatexPreview*> alive;
+    std::string problem;
+};
+
+void LatexPreview::downloadTectonic() {
+    if (downloading_ || !kTectonicArch) return;
+    downloading_ = true;
+    setStatus("Downloading tectonic…", true);
+    setButton("Download…", false);
+
+    GTask* task = g_task_new(nullptr, nullptr,
+        [](GObject*, GAsyncResult* res, gpointer) {
+            auto* d = static_cast<Download*>(g_task_get_task_data(G_TASK(res)));
+            if (LatexPreview* self = *d->alive) self->finishDownload(d->problem);
+        }, nullptr);
+    auto* d = new Download{alive_, ""};
+    g_task_set_task_data(task, d, [](gpointer p) { delete static_cast<Download*>(p); });
+    // The whole download runs on a worker thread, blocking on each tool in turn.
+    g_task_run_in_thread(task, [](GTask*, gpointer, gpointer data, GCancellable*) {
+        auto* d = static_cast<Download*>(data);
+        fetchTectonicBlocking(&d->problem);
     });
     g_object_unref(task);
 }
@@ -1398,3 +1405,21 @@ gboolean LatexPreview::onRedo(GtkWidget*, GVariant*, gpointer selfp) {
 }
 
 #endif  // MINICODE_ENABLE_PDF
+
+// The same download for a caller with no preview (the Markdown preview's math
+// line): `done` runs on the main loop with the problem, "" when it worked.
+void LatexPreview::downloadTectonicThen(std::function<void(const std::string& problem)> done) {
+    if (!kTectonicArch) { done("There is no official tectonic build for this processor."); return; }
+    struct Ctx { std::string problem; std::function<void(const std::string&)> done; };
+    GTask* task = g_task_new(nullptr, nullptr,
+        [](GObject*, GAsyncResult* res, gpointer) {
+            auto* c = static_cast<Ctx*>(g_task_get_task_data(G_TASK(res)));
+            c->done(c->problem);
+        }, nullptr);
+    g_task_set_task_data(task, new Ctx{"", std::move(done)},
+                         [](gpointer p) { delete static_cast<Ctx*>(p); });
+    g_task_run_in_thread(task, [](GTask*, gpointer, gpointer data, GCancellable*) {
+        fetchTectonicBlocking(&static_cast<Ctx*>(data)->problem);
+    });
+    g_object_unref(task);
+}
