@@ -6,6 +6,7 @@
 #import "Bench.h"
 #import "Appearance.h"
 #import "AppSettings.h"
+#import "Bookmarks.h"
 #import "TerminalPanel.h"
 #import "TreeDetails.h"
 #import "FileTree.h"   // gShowHidden, for Show Hidden Files' checkmark
@@ -271,7 +272,10 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
 // $TMPDIR/MiniCode-open and opens that: "minicode-open-1", "reuse", then the
 // paths, each ended by a NUL. Only files in that folder of this user's own
 // temporary folder are read, and each is deleted once read.
-static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse) {
+// A request may instead be "web" and web addresses (`minicode
+// https://...`), which go to `web`, the browser window's.
+static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
+                                              NSMutableArray<NSString *> *web) {
     if (!url.isFileURL || ![url.pathExtension isEqualToString:@"minicode-open"]) return nil;
     NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-open"]
                         .stringByResolvingSymlinksInPath;
@@ -284,6 +288,11 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse) {
     NSArray<NSString *> *fields =
         [text componentsSeparatedByString:[NSString stringWithCharacters:&nul length:1]];
     if (fields.count < 2 || ![fields[0] isEqualToString:@"minicode-open-1"]) return @[];
+    if ([fields[1] isEqualToString:@"web"]) {
+        for (NSUInteger i = 2; i < fields.count; i++)
+            if (MCIsWebAddress(fields[i])) [web addObject:fields[i]];
+        return @[];
+    }
     *reuse = [fields[1] isEqualToString:@"reuse"];
     NSMutableArray<NSString *> *paths = [NSMutableArray array];
     for (NSUInteger i = 2; i < fields.count; i++)
@@ -301,22 +310,31 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse) {
     NSMutableArray<NSString *> *folders = [NSMutableArray array];
     NSMutableArray<NSString *> *files = [NSMutableArray array];
     BOOL reuse = NO;
+    // Web addresses and bookmark files, opened together in the browser
+    // window's tabs after the rest (+Bookmarks).
+    NSMutableArray<NSString *> *web = [NSMutableArray array];
     NSMutableArray<NSURL *> *all = [NSMutableArray array];
     for (NSURL *url in urls) {
-        NSArray<NSString *> *requested = MCTakeOpenRequest(url, &reuse);
+        NSArray<NSString *> *requested = MCTakeOpenRequest(url, &reuse, web);
         if (!requested) { [all addObject:url]; continue; }
         for (NSString *p in requested) [all addObject:[NSURL fileURLWithPath:p]];
     }
     for (NSURL *url in all) {
-        if (!url.isFileURL) continue;
+        if (!url.isFileURL) {
+            if (MCIsWebAddress(url.absoluteString ?: @"")) [web addObject:url.absoluteString];
+            continue;
+        }
         // Resolved, as a path on the command line is, so that /tmp and
         // /private/tmp name one folder.
         NSString *p = url.path.stringByResolvingSymlinksInPath;
         BOOL dir = NO;
         if (![fm fileExistsAtPath:p isDirectory:&dir]) continue;
+        // A bookmark without an address it may open is a file like any other.
+        NSString *address = dir ? nil : MCBookmarkAddress(p);
+        if (address) { [web addObject:address]; continue; }
         [(dir ? folders : files) addObject:p];
     }
-    if (!folders.count && !files.count) return;
+    if (!folders.count && !files.count && !web.count) return;
     // Before any "Save changes?" alert, so it is not behind another app.
     if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
 
@@ -362,6 +380,26 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse) {
         if (![c showFile:inRoot]) [declined addObject:c];
     }
     [front.window makeKeyAndOrderFront:nil];
+    if (web.count) [self openWebAddressesInBrowserWindow:web];
+}
+
+// `minicode https://...` and bookmarks opened from Finder: tabs in the
+// browser window, the window on the bookmark folder (made, with the
+// folder, when there is none). Should the folder not be made, the window
+// in front's browser pane takes them.
+- (void)openWebAddressesInBrowserWindow:(NSArray<NSString *> *)urls {
+    NSString *folder = MCBookmarksFolder();
+    NSString *err = nil;
+    EditorController *c = nil;
+    if (MCEnsureBookmarksFolder(folder, &err)) {
+        NSString *dir = MCComparablePath(folder);
+        c = [self controllerRootedAt:dir] ?: [self openWindowAtPath:dir];
+    } else {
+        NSLog(@"minicode: no bookmark folder (%@): %@", folder, err);
+        c = self.controllers.count ? [self current] : [self openWindowAtPath:NSHomeDirectory()];
+    }
+    [c.window makeKeyAndOrderFront:nil];
+    [c showWebAddresses:urls focusPage:YES];
 }
 
 // MiniCode has no untitled documents. Now that Info.plist declares document
@@ -550,6 +588,11 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)toggleSidePreview:(id)sender { [[self current] toggleSidePreview:sender]; }
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
 - (void)exportMarkdownHtml:(id)sender { [[self current] exportMarkdownHtml:sender]; }
+- (void)saveBrowserBookmark:(id)sender { [[self current] saveBrowserBookmark:sender]; }
+- (void)saveBrowserTabsAsBookmarks:(id)sender {
+    [[self current] saveBrowserTabsAsBookmarks:sender];
+}
+- (void)openBookmarksInTabs:(id)sender { [[self current] openBookmarksInTabs:sender]; }
 - (void)showLineInPDF:(id)sender   { [[self current] showLineInPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
@@ -566,6 +609,11 @@ static BOOL MCWindowTabAction(SEL a) {
         return (NSApp.keyWindow ?: NSApp.mainWindow) != nil;
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
     if (item.action == @selector(exportMarkdownHtml:)) return [self current].canExportMarkdownHtml;
+    if (item.action == @selector(saveBrowserBookmark:)) return [self current].canSaveBrowserBookmark;
+    if (item.action == @selector(saveBrowserTabsAsBookmarks:))
+        return [self current].canSaveBrowserTabs;
+    if (item.action == @selector(openBookmarksInTabs:))
+        return [self current].canOpenBookmarksInTabs;
     if (item.action == @selector(forgetFolderToolsAnswer:))
         return [self current].canForgetFolderToolsAnswer;
     if (item.action == @selector(showLineInPDF:)) return [self current].canShowLineInPDF;
@@ -874,6 +922,18 @@ static void BuildMenu(void) {
     // A Markdown file as a standalone page; VS Code has no export, so no key.
     [fileMenu addItemWithTitle:@"Export as HTML…"
                         action:@selector(exportMarkdownHtml:) keyEquivalent:@""];
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+
+    // Web bookmarks (.url files in the bookmark folder). Cmd+D does the
+    // first while the browser has the keyboard (the pane's own
+    // saveBookmarkFromPage:, a page key), so the key stays the editor's Add
+    // Next Occurrence; the tree's folder item repeats its right click.
+    [fileMenu addItemWithTitle:@"Save Page as Bookmark"
+                        action:@selector(saveBrowserBookmark:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Save All Tabs as Bookmarks"
+                        action:@selector(saveBrowserTabsAsBookmarks:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Open All in Browser Tabs"
+                        action:@selector(openBookmarksInTabs:) keyEquivalent:@""];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
     // The file tree's commands, on its clicked or selected row (else the

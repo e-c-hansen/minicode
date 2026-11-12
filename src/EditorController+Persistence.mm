@@ -134,6 +134,9 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
     if (fraction > 0.05 && fraction < 0.95) self.browserFraction = fraction;
     if ([b[@"visible"] boolValue]) {
         self.browserVisible = YES;
+        // The browser window's page over the editor's side, as it opened
+        // (+Bookmarks), unless the session brought a file back.
+        if (self.isBrowserWindow && !self.currentPath) self.editorHidden = YES;
         [self showRightArea];
     }
     [self relayoutRightArea];

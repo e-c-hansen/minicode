@@ -25,6 +25,7 @@
 #include "TerminalLayout.h"
 #include "RightAreaLayout.h"
 #include "BrowserTabs.h"
+#include "WebBookmark.h"
 #include "Formatter.h"
 #include "InstallHints.h"
 #include "ChangeRequest.h"
@@ -3959,8 +3960,9 @@ void testSettings() {
     // inlay hint keys, format.latex, editor.git-gutter with its three
     // colors, editor.bracket-pair-colorization with its four colors, and
     // syntax.escape and syntax.self, terminal.cursor-style, the two
-    // workbench.enable-preview keys, and markdown.max-width.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 122);
+    // workbench.enable-preview keys, markdown.max-width, and
+    // browser.bookmarks.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 123);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -10940,6 +10942,7 @@ static void testMultiCaretOccurrences() {
 #include "terminal_layout_tests.inc"
 #include "right_area_tests.inc"
 #include "browser_tabs_tests.inc"
+#include "bookmark_tests.inc"
 #include "snippet_tests.inc"
 #include "terminal_vt_tests.inc"
 #include "getting_around_tests.inc"
@@ -11010,6 +11013,7 @@ int main() {
     testGettingAround();
     testAdjustSettings();
     testBrowserTabs();
+    testWebBookmarks();
     testSnippets();
     testSnippetCompletionItems();
     testEditorTabs();

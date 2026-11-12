@@ -49,9 +49,20 @@
 - (void)closeTab:(NSUInteger)index;
 - (BOOL)moveTab:(NSUInteger)from to:(NSUInteger)to;
 @property(nonatomic, copy) void (^onEmpty)(void);
-// What the strip shows, and each tab's address.
+// What the strip shows, and each tab's address and full page title (""
+// before the page has one).
 - (NSArray<NSString *> *)tabTitles;
 - (NSArray<NSString *> *)tabAddresses;
+- (NSArray<NSString *> *)tabPageTitles;
+// Opens each address in a tab of its own (bookmarks, `minicode
+// https://...`): a tab already at that address is used again, the empty
+// tab on show (a pane just made, or left by closing the last tab) takes
+// the first, and the rest go right of the one on show, in order. The first
+// shows; the others load when shown. The keyboard stays where it is.
+- (void)openAddresses:(NSArray<NSString *> *)urls;
+// The keyboard to the user's page on show (a page that has loaded or is
+// loading), as a click in it would.
+- (void)focusPage;
 // How many tabs may keep a live page (BrowserTabs::kLivePages; at least
 // 1), how many do, and a tab's web view (nil while it is suspended).
 @property(nonatomic) NSInteger liveLimit;

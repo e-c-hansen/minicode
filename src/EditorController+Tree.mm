@@ -40,6 +40,12 @@
     NSMenuItem *wtLine = [NSMenuItem separatorItem];
     wtLine.tag = kWorktreeMenuTag;
     [m addItem:wtLine];
+    // A folder's bookmarks as browser tabs, and a bookmark file as its
+    // text (+Bookmarks); each shown only on its kind of row.
+    [m addItemWithTitle:@"Open All in Browser Tabs" action:@selector(openBookmarksInTabs:)
+          keyEquivalent:@""].tag = kBookmarkFolderMenuTag;
+    [m addItemWithTitle:@"Open as Text" action:@selector(openBookmarkAsText:)
+          keyEquivalent:@""].tag = kBookmarkFileMenuTag;
     [m addItemWithTitle:@"New File…" action:@selector(newFile:) keyEquivalent:@""];
     [m addItemWithTitle:@"New Folder…" action:@selector(newFolder:) keyEquivalent:@""];
     [m addItem:[NSMenuItem separatorItem]];
@@ -269,6 +275,8 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
         else                                    [self.outline expandItem:node];
         return;
     }
+    // A bookmark's page takes the keyboard instead of the editor.
+    if ([self openBookmarkAtPath:node.path focusPage:YES]) return;
     [self openFileAtPath:node.path from:EditorTabs::OpenFrom::TreeReturn];
     [self focusEditor:nil];   // opened it to work on it: kept
 }
@@ -700,8 +708,11 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     if (menu != self.outline.menu) return;
     const BOOL wt = [self worktreeMenuItem] != nil;
-    for (NSMenuItem *item in menu.itemArray)
+    for (NSMenuItem *item in menu.itemArray) {
         if (item.tag == kWorktreeMenuTag) item.hidden = !wt;
+        if (item.tag == kBookmarkFolderMenuTag) item.hidden = !self.canOpenBookmarksInTabs;
+        if (item.tag == kBookmarkFileMenuTag) item.hidden = !self.canOpenBookmarkAsText;
+    }
 }
 
 - (void)outlineViewItemDidExpand:(NSNotification *)note {
