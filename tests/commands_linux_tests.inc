@@ -26,10 +26,13 @@ static void testLinuxCommandTable() {
             std::printf("  CommandsLinux.cpp: %s is out of the registry's order\n", r.id);
         }
         lastIndex = at;
-        // Moved menus are top-level ones the port has.
+        // Moved menus are top-level ones the port has, or a submenu of one
+        // ("View > Editor Layout").
         if (r.menu) {
-            const std::string m = r.menu;
+            const std::string whole = r.menu;
+            const std::string m = whole.substr(0, whole.find(" > "));
             CHECK(m == "File" || m == "Edit" || m == "View" || m == "Navigate" || m == "Terminal");
+            CHECK(m == whole || whole.size() > m.size() + 3);
         }
         CHECK(!r.title || *r.title);
         CHECK((r.flags & ~(unsigned)Global) == 0);

@@ -251,10 +251,14 @@ const std::vector<LinuxRow>& linuxRows() {
         // groups, but GNOME takes Ctrl+Alt+arrows, so Ctrl+Alt+Shift with
         // Page Down and Page Up, the terminal tabs' Ctrl+Alt+Page Down and
         // Page Up with Shift for carrying the tab along.
-        {"workbench.action.splitEditor", "ctrl+\\", 0, nullptr, nullptr},
-        {"workbench.action.moveEditorToNextGroup", "ctrl+alt+shift+pagedown", 0, nullptr, nullptr},
+        // In VS Code's View > Editor Layout, not View itself: three more rows
+        // made View taller than a 1024-pixel screen (and the owner's 768),
+        // so its last rows could not be reached.
+        {"workbench.action.splitEditor", "ctrl+\\", 0, nullptr, "View > Editor Layout"},
+        {"workbench.action.moveEditorToNextGroup", "ctrl+alt+shift+pagedown", 0, nullptr,
+         "View > Editor Layout"},
         {"workbench.action.moveEditorToPreviousGroup", "ctrl+alt+shift+pageup", 0, nullptr,
-         nullptr},
+         "View > Editor Layout"},
         {"minicode.toggleHiddenFiles", "ctrl+shift+.", 0, nullptr, nullptr},
         // The Mac's Cmd+J would be Ctrl+J here, which a Global command would
         // take from the shell (it ends a line), so Ctrl+` and Ctrl+Shift+T.
