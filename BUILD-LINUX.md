@@ -35,6 +35,11 @@ The port now builds clean and runs, with every panel enabled. It was brought up
 on Ubuntu 26.04 with GTK 4.22.4, VTE 0.84.0 and WebKitGTK 2.52.3, compiling
 without a single warning at `warning_level=2`.
 
+Verified 2026-11-11 (PARITY.md R4 and R5): with no tab the editor is empty
+and read-only, and hiding the editor leaves the tree filling the window, or a
+bare area when the tree is hidden too, never a pane the user hid
+(`owner_reports` suite).
+
 Until October 2026 the checks below were temporary hooks inside the running
 app, removed afterwards, real X input in a container, and runs by hand, and
 the keys they name are the keys of the time (item 0.3 moved several; the

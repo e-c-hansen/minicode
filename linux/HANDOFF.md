@@ -3333,6 +3333,17 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
 - Not done: a command's request does not send the terminal's screen
   (`CommandRequest::screen` is empty; only the folder).
 
+### 47. The empty editor and hiding panes (done, November 2026; `PARITY.md` R4 and R5)
+
+R4: `Editor::Editor` no longer sets the welcome text; the buffer shown with
+no tab (`welcome_`, the name is the old one) is empty and read-only, so the
+window is the Mac's empty editor. R5: only one path brought out a hidden
+pane, `WindowLayout::collapseRightAreaIfEmpty` showing a hidden sidebar when
+the right side was empty; it now returns, leaving a bare area (Toggle Editor,
+Toggle Sidebar, or opening a file brings things back). The Mac's rule
+(`RightArea::empty`) is unchanged and was right. `OwnerReportsSuite.cpp`
+(`owner_reports`) checks both with real keys and a real bar drag.
+
 ## How to work on it
 
 - **The GUI checks, first** (`linux/tests/gui`, `PARITY.md` item 0.1).

@@ -178,9 +178,9 @@ MC_GUI_SUITE(tabs) {
         return ed()->tabCount() == 0 && !gtk_widget_get_visible(strip()->widget()) &&
                treeRow("tab-a.txt") && treeRow("tab-b.py") && treeRow("tab-c.txt");
     });
-    MCGuiStep("with no tab, the welcome text, and nothing to save", [] {
+    MCGuiStep("with no tab, an empty editor, and nothing to save", [] {
         GCHECK(!ed()->canSave() && ed()->currentPath().empty());
-        GCHECK(MCGuiEditorText().find("MiniCode") != std::string::npos);
+        GCHECK(MCGuiEditorText().empty());
         GCHECK_EQ_STR(title(), "MiniCode");
     });
 

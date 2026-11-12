@@ -53,16 +53,8 @@ Editor::Editor() {
     welcome_ = gtk_text_buffer_new(tags_.table);
     gtk_text_buffer_set_enable_undo(welcome_, FALSE);
     ensureTags();
-    const char* welcome =
-        "\n  MiniCode — a native C++ editor, now on GTK4\n\n"
-        "  - Select a file in the sidebar to view it\n"
-        "  - Source files are syntax-highlighted by type\n"
-        "  - Markdown (.md) files render formatted (Ctrl+Shift+V)\n\n"
-        "  Ctrl+O to open a different folder.";
-    gtk_text_buffer_set_text(welcome_, welcome, -1);
-    GtkTextIter wa, wb;
-    gtk_text_buffer_get_bounds(welcome_, &wa, &wb);
-    gtk_text_buffer_apply_tag_by_name(welcome_, "plainmsg", &wa, &wb);
+    // No text: with no tab the editor is empty and read-only, as the Mac's
+    // (PARITY.md R4).
 
     code_ = CodeView::create(welcome_);
     view_ = code_->widget();
@@ -218,7 +210,7 @@ Editor::Editor() {
     folds_ = new FoldUi(this);        // PARITY.md 1.10
     notes_ = new AgentNotes(this);    // PARITY.md 3.4
     inline_ = new InlineAgentBar(this);   // PARITY.md 3.3
-    showActive();   // the welcome text
+    showActive();   // the empty editor
 }
 
 // Runs while the window is being torn down but its widgets still exist
@@ -520,7 +512,7 @@ void Editor::capturePlace(Document* d) {
 }
 
 // The active tab on screen, from what it kept (the Mac's showActiveTab); the
-// welcome text with no tab open.
+// empty read-only editor with no tab open.
 void Editor::showActive() {
     Document* d = active_;
     // A tab come back from a session is read when it is first shown, and
