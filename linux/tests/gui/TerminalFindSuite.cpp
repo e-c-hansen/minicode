@@ -9,8 +9,13 @@
 //     leaves no selection and says "No results";
 //   - Escape closes the bar and the terminal has the keyboard again;
 //   - the bar closes when another pane or tab becomes the active one;
-//   - Clear Terminal at the prompt clears the screen and the shell is still
-//     at a prompt; while a program runs it sends nothing;
+//   - after a split and its close, with the view left up the scrollback by
+//     a find, a command typed into the remaining pane runs and the view
+//     comes back to the end to show it (CI's long prompt left a find's match
+//     a few rows up, and the pane looked dead);
+//   - Clear Terminal at the prompt clears the screen (from a view scrolled
+//     up too) and the shell is still at a prompt; while a program runs it
+//     sends nothing;
 //   - Resize Terminal Pane Up and Down on a pane alone in its column change
 //     the dock's height by four rows.
 #include "Harness.h"
@@ -61,6 +66,25 @@ void type(const std::string& q) {
 bool keyboardIn(GtkWidget* w) {
     GtkWidget* f = gtk_root_get_focus(GTK_ROOT(MCGuiApp().window));
     return f && (f == w || gtk_widget_is_ancestor(f, w));
+}
+
+// The view at the newest row, and the text of the rows on show.
+bool atEnd(Terminal* t) {
+    GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(t->vteWidget()));
+    return adj && std::lround(gtk_adjustment_get_value(adj)) ==
+                      std::lround(gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj));
+}
+
+void scrollToTop(Terminal* t) {
+    GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(t->vteWidget()));
+    gtk_adjustment_set_value(adj, gtk_adjustment_get_lower(adj));
+}
+
+std::string onScreen(Terminal* t) {
+    char* s = vte_terminal_get_text(VTE_TERMINAL(t->vteWidget()), nullptr, nullptr, nullptr);
+    std::string screen = s ? s : "";
+    g_free(s);
+    return screen;   // get_text covers the rows on show only
 }
 
 void runAndNote(Terminal* t, const std::string& line) {
@@ -165,19 +189,36 @@ MC_GUI_SUITE(terminal_find) {
         gA->focus();
     });
     MCGuiWait("one pane", 10, [] { return dock()->activeGroup()->count() == 1 && MCGuiApp().terminal == gA; });
+    MCGuiStep("a find far up the scrollback in the pane left", [] {
+        action("find");
+        GCHECK(gA->findOpen());
+        type("zeta-one");
+    });
+    MCGuiWait("its match is selected", 10, [] { return selected(gA) == "zeta-one"; });
+    MCGuiStep("Escape: the bar closes, the view stays on the match", [] { MCGuiKey("escape"); });
+    MCGuiWait("closed after the find", 5, [] { return !gA->findOpen(); });
+    MCGuiStep("the view is above the end; a command typed there", [] {
+        GCHECK(!atEnd(gA));
+        runAndNote(gA, "echo pane-left-$((6*7))");
+    });
+    MCGuiWait("the command ran in the remaining pane", 30, [] {
+        return gA->shellState().prompts > gPrompts && atPrompt(gA);
+    });
+    MCGuiStep("and the view came back to the end to show it", [] {
+        GCHECK(atEnd(gA));
+        GCHECK(onScreen(gA).find("pane-left-42") != std::string::npos);
+    });
 
     // ---- clear
     MCGuiStep("Clear Terminal at the prompt: the old lines leave the screen", [] {
         GCHECK(gA->recentText(200).find("zeta-") != std::string::npos);
         gPrompts = gA->shellState().prompts;
+        scrollToTop(gA);   // the user reading back: Clear brings the view to the end
+        GCHECK(!atEnd(gA));
         action("clearterminal");
     });
     MCGuiWait("cleared: no old line on the screen", 15, [] {
-        VteTerminal* v = VTE_TERMINAL(gA->vteWidget());
-        char* s = vte_terminal_get_text(v, nullptr, nullptr, nullptr);
-        std::string screen = s ? s : "";
-        g_free(s);
-        // get_text covers the visible screen only.
+        const std::string screen = onScreen(gA);
         return screen.find("zeta-") == std::string::npos && screen.find("ZETA-") == std::string::npos;
     });
     MCGuiStep("the shell is still at its prompt and takes a command", [] {

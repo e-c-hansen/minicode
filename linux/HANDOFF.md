@@ -4125,6 +4125,19 @@ panel has a row).
   in it and every Global terminal key (Ctrl+Shift+5, Ctrl+Shift+`) unbound.
   `onActiveChanged` now runs `updateKeyPlace`; `terminal_splits` checks the
   accelerators are bound before its first key.
+- **Trap: a pane that looked dead was a view left above the end (CI,
+  2026-11-12).** `terminal_find` failed "cleared: no old line on the screen"
+  after a split and its close, only at CI's prompt width (an `MC_GUI_ROOT`
+  44 characters long here). The shell was fine: probes after each step
+  (a `touch` fed to the pane, the slave's `FIONREAD`, the adjustment) showed
+  every line ran. The find had left the view on its last match, which the
+  long prompt's wrapped command line put three rows above the end; with
+  scroll-on-output off, and the app's text fed to VTE (no key press, so no
+  scroll-on-keystroke), Clear, `runLine` and Run in Terminal worked below a
+  view that never moved, and the split's rewrap kept it there. They now
+  bring the view to the end first (`Terminal::scrollToEnd`, the Mac's
+  snap-back for app-typed text); at the end VTE follows the output. The
+  suite checks it from a find far up the scrollback, at any prompt width.
 
 ### 61. The split editor (done, November 2026; `PARITY.md` item 4.6)
 
