@@ -104,7 +104,26 @@ Terminal::Terminal(const std::string& cwd) : cwd_(cwd) {
     g_signal_connect(root_, "map", G_CALLBACK(+[](GtkWidget*, gpointer p) {
         static_cast<Terminal*>(p)->makeTerminal();
     }), this);
+    GtkEventController* fc = focusCtl_ = gtk_event_controller_focus_new();
+    g_signal_connect(fc, "enter", G_CALLBACK(+[](GtkEventControllerFocus*, gpointer p) {
+        Terminal* t = static_cast<Terminal*>(p);
+        if (t->onFocusIn) t->onFocusIn();
+    }), this);
+    gtk_widget_add_controller(root_, fc);
 }
+
+void Terminal::cellSize(double* w, double* h) const {
+    *w = 8;
+    *h = 17;
+    if (!vte_) return;
+    const long cw = vte_terminal_get_char_width(VTE_TERMINAL(vte_));
+    const long ch = vte_terminal_get_char_height(VTE_TERMINAL(vte_));
+    if (cw > 0) *w = (double)cw;
+    if (ch > 0) *h = (double)ch;
+}
+
+int Terminal::columns() const { return vte_ ? (int)vte_terminal_get_column_count(VTE_TERMINAL(vte_)) : 0; }
+int Terminal::rows() const { return vte_ ? (int)vte_terminal_get_row_count(VTE_TERMINAL(vte_)) : 0; }
 
 void Terminal::setAttention(const std::string& markName, const std::string& tooltip) {
     attentionShown_ = markName;
@@ -436,6 +455,7 @@ Terminal::~Terminal() {
     g_cancellable_cancel(spawnCancel_);
     g_object_unref(spawnCancel_);
     g_signal_handlers_disconnect_by_data(root_, this);
+    if (focusCtl_) g_signal_handlers_disconnect_by_data(focusCtl_, this);
     if (vte_) g_signal_handlers_disconnect_by_data(vte_, this);
     for (GObject* o : handlers_) g_signal_handlers_disconnect_by_data(o, this);
     if (keysWindow_) {

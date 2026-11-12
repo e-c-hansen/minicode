@@ -541,7 +541,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Show the language server's quick fixes for the cursor or the selection | Command period | Ctrl period |  |
 | Show the type and documentation under the cursor | Option Command I | Ctrl Alt I | K, or Ctrl K |
 | Split the editor: the file on show in a second group beside it, with its own tabs | Command backslash, in the editor |  |  |
-| Split the terminal, with a new one beside it | Command backslash, in the terminal |  |  |
+| Split the terminal, with a new one beside it | Command backslash, in the terminal | Ctrl Shift 5 |  |
 | Split the terminal, with a new one below it | Split Terminal Down in the Terminal menu, or Option-click the ◫ button |  |  |
 | Sort every keep-sorted block in the file | Shift F9 | Shift F9 | Sort keep-sorted blocks in the ⋮ menu |
 | Sort the selected lines, or the keep-sorted block around the cursor | F9 (F9 may need fn on a laptop) | F9 | J, or Ctrl J |

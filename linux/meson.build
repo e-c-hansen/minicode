@@ -85,6 +85,7 @@ core_sources = [
   core_dir / 'EditorTabs.cpp',
   # How the right side of a window is shared (WindowLayout.cpp shows it).
   core_dir / 'RightAreaLayout.cpp',
+  core_dir / 'TerminalLayout.cpp',
   # Getting around (PARITY.md 1.11): Go Back and Forward's history and what
   # a window records in it (NavHistoryUi.cpp drives it), and the zoom and
   # word wrap rules (Zoom.cpp keeps their state).
@@ -173,6 +174,7 @@ gui_sources = [
   # #ifdef-guarded, so without the feature macros they are empty and harmless.
   'src/Terminal.cpp',
   'src/TerminalDock.cpp',
+  'src/TerminalGroup.cpp',
   'src/Browser.cpp',
   'src/BrowserPages.cpp',
   'src/AppSettings.cpp',

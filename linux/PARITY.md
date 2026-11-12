@@ -1468,7 +1468,10 @@ These may run in parallel.
   Previous and Close Terminal, Rename, Move Left and Right, a drag, a close
   question for a busy terminal, the last tab hiding the dock, Run File into a
   new tab when busy, `minicode term` making a tab (HANDOFF item 59,
-  `terminal_tabs`). Left: splits, find, command marks, per-terminal ids, the
+  `terminal_tabs`). *Splits done:* `TerminalGroup` panes over `TerminalLayout`
+  (Split Terminal Ctrl+Shift+5, Split Terminal Down, keyboard resize and
+  bar drags, closing a pane, `minicode split`; HANDOFF item 60,
+  `terminal_splits`). Left: find, command marks, per-terminal ids, the
   window close question counting busy terminals.
 
 ## Reported by the owner

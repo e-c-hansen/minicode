@@ -2902,7 +2902,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
 - **Checked by** the `control` GUI suite (the real client as a subprocess
   of the harness, since the server is the harness's own process), which
   fails with the server taken out, and `control:linux-socket-folder`.
-- **Left for later bites of 3.1**: `term`, `term-output`, `split`, `diff`,
+- **Left for later bites of 3.1**: `term`, `term-output`, `diff`,
   `browse`, `page`, `open-url` and BROWSER, `notify` and `hooks`, `procs`,
   `tour` and `install-skill`, and the skill file. Another uid's refusal is
   untested (needs a second user).
@@ -4043,6 +4043,46 @@ panel has a row).
   `latex_problems` leaving `XDG_RUNTIME_DIR` changed, so a later suite's CLI
   looked for the control socket in the wrong folder; it puts it back.
 
+### 60. Terminal splits (done, November 2026; `PARITY.md` item 4.7, second part)
+
+- **Panes**: a tab is a `TerminalGroup` (`src/TerminalGroup.{h,cpp}`), a box
+  with a `GtkCustomLayout` that places columns of stacked `Terminal`s from
+  the core's `TerminalLayout` (shares, `frames`, `split`, `nudge`,
+  `dragBoundary`, `removePane`; its minimums are 20 cell widths and 5 cell
+  heights from `Terminal::cellSize`, the gap 4 px). `TerminalDock` holds
+  groups: `count/at/activeIndex` are still tabs (`at` is the pane last
+  used), `all()` is every pane (now a vector by value), `split(down)`,
+  `closePane`, `resizeActive`, `focusPane`. `TerminalLayout.cpp` joined both
+  core lists.
+- **Keys** (D1): Split Terminal Ctrl+Shift+5 (VS Code's Linux key, Global);
+  Split Terminal Down and the four Resize Terminal Pane commands have no
+  key: the Mac's Ctrl+Cmd+arrows would be Ctrl+Alt+arrows (GNOME's
+  workspaces) or Ctrl+Alt+Shift+arrows (moving the window between them).
+  They are in the Terminal menu and the palette. Close Terminal
+  (Ctrl+Alt+Shift+W) closes the active pane, the tab with its last; the tab's
+  x closes the whole tab (asking for the first busy pane). Next and Previous
+  Terminal walk panes then tabs.
+- **Behaviour**: a split halves the active pane, evens all when a half
+  would be under the minimum, else beeps and adds nothing. The new pane has
+  the keyboard (a control-channel split leaves it where it was). The active
+  terminal follows the keyboard (`Terminal::onFocusIn`, a focus controller
+  on the terminal's root). A drag is one gesture on the group (capture
+  phase) that finds the bar near the press: a gesture on a bar measures from
+  the bar's moving origin. Bars are reused per boundary, last in the box.
+  Before the dock was ever allocated a split plans against 1000x300.
+- **`minicode split`**: `--right term` splits (title, cwd and run as `term`),
+  `--below term` is a new tab (as the Mac's `beside:NO` is on a dock),
+  `--right browse` is `browse`, and `open` is refused with the core's message.
+  `ControlHost::splitTerminal`.
+- **Not done**: Up and Down on a pane alone in its column do not resize the
+  dock (they beep); no ◫ button; per-terminal ids (all panes share the
+  window's id; the process monitor lists every pane); find.
+- **Checked by** `terminal_splits` (real keys, clicks and drags, bash): the
+  shares, frames, distinct shells and ptys' columns, the half/even/refuse
+  rule, bar drags, keyboard resize, closing, focus by click, and the four
+  `split` forms. `control` expected "not on Linux yet" for `split`; it now
+  expects the open refusal.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**
@@ -4535,4 +4575,4 @@ File's busy check and the finishing mark.
   `../share/minicode/skills/minicode/SKILL.md` (`install_data` in
   `meson.build`, so the package has it), else the checkout's own. The
   `control` suite installs with `--dir` into its scratch folder.
-- **Left of 3.1**: `split`, which waits for terminal tabs (item 4.7).
+- **Left of 3.1**: nothing of `split` (done with item 60).

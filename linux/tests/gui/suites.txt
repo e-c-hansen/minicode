@@ -87,6 +87,7 @@ LatexProblemsSuite.cpp
 LatexForwardSuite.cpp
 JsonOutlineSuite.cpp
 TerminalTabsSuite.cpp
+TerminalSplitsSuite.cpp
 MarkdownSideSuite.cpp
 MarkdownSideSyncSuite.cpp
 MermaidSuite.cpp

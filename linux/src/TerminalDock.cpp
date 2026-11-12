@@ -36,33 +36,57 @@ TerminalDock::TerminalDock(std::function<Terminal*()> make) : make_(std::move(ma
 TerminalDock::~TerminalDock() {
     closingAll_ = true;
     if (rename_) gtk_widget_unparent(rename_);
-    for (Terminal* t : terms_) {
-        t->onTitleChanged = nullptr;
-        delete t;
-    }
-    terms_.clear();
+    for (auto& g : groups_)
+        for (Terminal* t : g->panes()) {
+            t->onTitleChanged = nullptr;
+            t->onFocusIn = nullptr;
+        }
+    groups_.clear();   // each group deletes its terminals
     delete strip_;
     strip_ = nullptr;
 }
 
 int TerminalDock::indexOf(const Terminal* t) const {
-    for (size_t i = 0; i < terms_.size(); i++)
-        if (terms_[i] == t) return (int)i;
+    for (size_t i = 0; i < groups_.size(); i++)
+        if (groups_[i]->contains(t)) return (int)i;
     return -1;
 }
 
-void TerminalDock::add(Terminal* t, int at) {
-    terms_.insert(terms_.begin() + at, t);
-    gtk_stack_add_child(GTK_STACK(stack_), t->widget());
+std::vector<Terminal*> TerminalDock::all() const {
+    std::vector<Terminal*> out;
+    for (const auto& g : groups_) {
+        const auto p = g->panes();
+        out.insert(out.end(), p.begin(), p.end());
+    }
+    return out;
+}
+
+void TerminalDock::hook(Terminal* t) {
     t->onTitleChanged = [this] { refresh(); };
+    t->onFocusIn = [this, t] {
+        if (closingAll_) return;
+        const int i = indexOf(t);
+        if (i < 0 || i != active_) return;   // a hidden tab's pane gets no keyboard
+        if (groups_[(size_t)i]->active() == t) return;
+        groups_[(size_t)i]->setActive(t);
+        refresh();
+        if (onActiveChanged) onActiveChanged(t);
+        if (onChanged) onChanged();
+    };
+}
+
+void TerminalDock::add(Terminal* t, int at) {
+    groups_.insert(groups_.begin() + at, std::make_unique<TerminalGroup>(t));
+    gtk_stack_add_child(GTK_STACK(stack_), groups_[(size_t)at]->widget());
+    hook(t);
 }
 
 void TerminalDock::refresh() {
     if (closingAll_ || !strip_) return;
     std::vector<TabStrip::Item> items;
-    for (Terminal* t : terms_) {
+    for (const auto& g : groups_) {
         TabStrip::Item it;
-        it.title = t->title();
+        it.title = g->active()->title();
         it.tooltip = it.title;
         items.push_back(it);
     }
@@ -71,9 +95,9 @@ void TerminalDock::refresh() {
 
 void TerminalDock::activate(int i) {
     active_ = i;
-    gtk_stack_set_visible_child(GTK_STACK(stack_), terms_[(size_t)i]->widget());
+    gtk_stack_set_visible_child(GTK_STACK(stack_), groups_[(size_t)i]->widget());
     refresh();
-    if (onActiveChanged) onActiveChanged(terms_[(size_t)i]);
+    if (onActiveChanged) onActiveChanged(groups_[(size_t)i]->active());
 }
 
 Terminal* TerminalDock::newTerminal(const std::string& title) {
@@ -91,56 +115,123 @@ void TerminalDock::select(int i, bool focus) {
         activate(i);
         if (onChanged) onChanged();
     }
-    if (focus) terms_[(size_t)i]->focus();
+    if (focus) groups_[(size_t)i]->active()->focus();
 }
 
-void TerminalDock::next() { if (count() > 1) select((active_ + 1) % count()); }
-void TerminalDock::previous() { if (count() > 1) select((active_ + count() - 1) % count()); }
+// Next and Previous walk every pane, tab by tab, wrapping.
+void TerminalDock::step(int by) {
+    const std::vector<Terminal*> v = all();
+    if (v.size() < 2) return;
+    size_t at = 0;
+    for (size_t i = 0; i < v.size(); i++)
+        if (v[i] == active()) at = i;
+    focusPane(v[(at + v.size() + (size_t)(by < 0 ? v.size() - 1 : 1)) % v.size()]);
+}
+void TerminalDock::next() { step(1); }
+void TerminalDock::previous() { step(-1); }
 
+void TerminalDock::focusPane(Terminal* t) {
+    const int i = indexOf(t);
+    if (i < 0) return;
+    groups_[(size_t)i]->setActive(t);
+    if (i != active_) {
+        activate(i);
+        if (onChanged) onChanged();
+    } else if (onActiveChanged && active() == t) {
+        onActiveChanged(t);
+    }
+    t->focus();
+}
+
+// A whole tab. A program running in any pane asks first (the first such pane).
 void TerminalDock::close(int i, bool ask) {
     if (i < 0 || i >= count()) return;
-    Terminal* t = terms_[(size_t)i];
-    if (ask && confirmClose && t->busy()) {
-        auto alive = std::weak_ptr<int>(alive_);
-        confirmClose(t, [this, alive, t] {
-            if (alive.expired()) return;
-            const int now = indexOf(t);
-            if (now >= 0) remove(now);
-        });
-        return;
+    if (ask && confirmClose) {
+        for (Terminal* t : groups_[(size_t)i]->panes()) {
+            if (!t->busy()) continue;
+            auto alive = std::weak_ptr<int>(alive_);
+            confirmClose(t, [this, alive, t] {
+                if (alive.expired()) return;
+                const int now = indexOf(t);
+                if (now >= 0) remove(now);
+            });
+            return;
+        }
     }
     remove(i);
 }
 
+void TerminalDock::closePane(Terminal* t, bool ask) {
+    const int i = indexOf(t);
+    if (i < 0) return;
+    if (groups_[(size_t)i]->count() == 1) {
+        close(i, ask);
+        return;
+    }
+    if (ask && confirmClose && t->busy()) {
+        auto alive = std::weak_ptr<int>(alive_);
+        confirmClose(t, [this, alive, t] {
+            if (alive.expired()) return;
+            if (indexOf(t) >= 0) removePane(t);
+        });
+        return;
+    }
+    removePane(t);
+}
+
+// One pane of a tab that has others: its share goes to a neighbour, which
+// has the keyboard (when the pane had it).
+void TerminalDock::removePane(Terminal* t) {
+    const int i = indexOf(t);
+    if (i < 0) return;
+    TerminalGroup* g = groups_[(size_t)i].get();
+    const bool hadKeyboard = i == active_ && g->active() == t;
+    t->setControlId(0);
+    t->onTitleChanged = nullptr;
+    t->onFocusIn = nullptr;
+    Terminal* next = nullptr;
+    GtkWidget* w = GTK_WIDGET(g_object_ref(t->widget()));
+    next = g->take(t);
+    if (hadKeyboard && next && onActiveChanged) onActiveChanged(next);
+    delete t;
+    g_object_unref(w);
+    refresh();
+    if (onChanged) onChanged();
+    if (hadKeyboard && next) next->focus();
+}
+
 void TerminalDock::remove(int i) {
-    Terminal* t = terms_[(size_t)i];
+    TerminalGroup* g = groups_[(size_t)i].get();
     const bool last = count() == 1;
     // The board's mark and id belong to the window's terminals together:
     // a closing tab only lets go of its own.
-    if (!last) t->setControlId(0);
+    for (Terminal* t : g->panes()) {
+        if (!last) t->setControlId(0);
+        t->onTitleChanged = nullptr;
+        t->onFocusIn = nullptr;
+    }
     const int was = active_;
     // The last tab leaves a fresh terminal whose shell starts when the dock
     // is shown again; it joins the stack before the old one goes.
     Terminal* fresh = last ? make_() : nullptr;
     if (fresh) add(fresh, 1);
-    terms_.erase(terms_.begin() + i);
-    t->onTitleChanged = nullptr;
-    // app->terminal must never name the terminal being deleted: removing the
+    std::unique_ptr<TerminalGroup> gone = std::move(groups_[(size_t)i]);
+    groups_.erase(groups_.begin() + i);
+    // app->terminal must never name a terminal being deleted: removing the
     // widget moves the focus, and the focus handlers ask app->terminal (an
     // ASan use-after-free in Terminal::owns, TerminalTabsSuite).
     if (i == was && onActiveChanged) {
         const int near = fresh ? 0 : std::max(0, std::min(i, count() - 1));
-        onActiveChanged(terms_[(size_t)near]);
+        onActiveChanged(groups_[(size_t)near]->active());
     }
     // Hidden before the old widget leaves, so the new one is never mapped.
     if (last && onEmpty) onEmpty();
-    // The stack held the widget's last reference; the terminal's destructor
-    // still disconnects from its widgets and the draw function, so keep them
-    // alive until it has run (they were freed first: heap corruption that
-    // surfaced as a crash suites later).
-    GtkWidget* w = GTK_WIDGET(g_object_ref(t->widget()));
-    gtk_stack_remove(GTK_STACK(stack_), w);   // before the shell is hung up
-    delete t;
+    // The stack held the widget's last reference; the terminals' destructors
+    // still disconnect from their widgets and the draw function, so keep
+    // the group's widget (and theirs) alive until they have run.
+    GtkWidget* w = GTK_WIDGET(g_object_ref(gone->widget()));
+    gtk_stack_remove(GTK_STACK(stack_), w);   // before the shells are hung up
+    gone.reset();
     g_object_unref(w);
     if (last) {
         activate(0);
@@ -152,12 +243,38 @@ void TerminalDock::remove(int i) {
     else if (i == was) to = std::max(0, i - 1);
     activate(std::min(to, count() - 1));
     if (onChanged) onChanged();
-    terms_[(size_t)active_]->focus();
+    groups_[(size_t)active_]->active()->focus();
+}
+
+Terminal* TerminalDock::split(bool down, bool focus) {
+    if (groups_.empty()) return nullptr;
+    TerminalGroup* g = groups_[(size_t)active_].get();
+    Terminal* of = g->active();
+    if (g->plan(of, down) == TerminalLayout::Split::Refused) {
+        GdkDisplay* d = gdk_display_get_default();
+        if (d) gdk_display_beep(d);
+        return nullptr;
+    }
+    Terminal* fresh = make_();
+    g->split(of, fresh, down);
+    hook(fresh);
+    g->setActive(fresh);
+    refresh();
+    if (onActiveChanged) onActiveChanged(fresh);
+    if (onChanged) onChanged();
+    if (focus) fresh->focus();
+    return fresh;
+}
+
+bool TerminalDock::resizeActive(TerminalGroup::Dir d) {
+    if (groups_.empty()) return false;
+    TerminalGroup* g = groups_[(size_t)active_].get();
+    return g->resize(g->active(), d, 4);
 }
 
 void TerminalDock::rename(int i, const std::string& title) {
     if (i < 0 || i >= count()) return;
-    terms_[(size_t)i]->setUserTitle(title);   // refreshes through onTitleChanged
+    groups_[(size_t)i]->active()->setUserTitle(title);   // refreshes through onTitleChanged
     if (onChanged) onChanged();
 }
 
@@ -171,10 +288,10 @@ void TerminalDock::askRename(int i) {
     rename_ = gtk_popover_new();
     gtk_widget_set_parent(rename_, anchor);
     GtkWidget* entry = gtk_entry_new();
-    gtk_editable_set_text(GTK_EDITABLE(entry), terms_[(size_t)i]->userTitle().c_str());
+    gtk_editable_set_text(GTK_EDITABLE(entry), groups_[(size_t)i]->active()->userTitle().c_str());
     gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Terminal name");
     gtk_popover_set_child(GTK_POPOVER(rename_), entry);
-    Terminal* t = terms_[(size_t)i];
+    Terminal* t = groups_[(size_t)i]->active();
     auto alive = std::weak_ptr<int>(alive_);
     struct Ctx { TerminalDock* d; Terminal* t; std::weak_ptr<int> alive; };
     Ctx* ctx = new Ctx{this, t, alive};
@@ -196,9 +313,9 @@ void TerminalDock::move(int from, int to) {
     const int n = count();
     if (from < 0 || from >= n || to < 0 || to >= n || from == to) return;
     Terminal* on = active();
-    Terminal* t = terms_[(size_t)from];
-    terms_.erase(terms_.begin() + from);
-    terms_.insert(terms_.begin() + to, t);
+    auto g = std::move(groups_[(size_t)from]);
+    groups_.erase(groups_.begin() + from);
+    groups_.insert(groups_.begin() + to, std::move(g));
     active_ = indexOf(on);
     refresh();
     if (onChanged) onChanged();

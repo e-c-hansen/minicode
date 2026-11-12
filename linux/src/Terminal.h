@@ -41,6 +41,14 @@ public:
     // Whether the terminal and its shell were made yet (for the checks).
     bool made() const { return vte_ != nullptr; }
     void focus();
+    // The keyboard came into the terminal (a click, Tab, focus()): the dock
+    // makes it the active one (PARITY.md 4.7, splits).
+    std::function<void()> onFocusIn;
+    // One character cell in points (a guess before the shell is made), and
+    // the columns and rows VTE has been given (0 before).
+    void cellSize(double* w, double* h) const;
+    int columns() const;
+    int rows() const;
     // Is `w` the terminal itself or inside it? The window asks this of its
     // focus widget to decide which shortcuts belong to the shell.
     bool owns(GtkWidget* w) const;
@@ -184,6 +192,7 @@ private:
 
     int         controlId_ = 0;
     std::string userTitle_;
+    GtkEventController* focusCtl_ = nullptr;   // onFocusIn's
     GtkWidget*  attentionDot_ = nullptr;   // the mark, in the overlay
     std::string attentionShown_;
     std::string cwd_;
