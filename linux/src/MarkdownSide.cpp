@@ -55,6 +55,10 @@ MarkdownSide::MarkdownSide(GtkTextTagTable* tags) {
     gtk_widget_set_hexpand(scroller_, TRUE);
     gtk_widget_set_vexpand(scroller_, TRUE);
     g_object_ref_sink(scroller_);
+    paneAdj_ = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    g_signal_connect_swapped(paneAdj_, "value-changed", G_CALLBACK(+[](gpointer self) {
+        static_cast<MarkdownSide*>(self)->paneMoved();
+    }), this);
     g_signal_connect_swapped(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)),
                              "notify::page-size", G_CALLBACK(+[](gpointer self) {
         static_cast<MarkdownSide*>(self)->fit();
@@ -71,6 +75,8 @@ MarkdownSide::MarkdownSide(GtkTextTagTable* tags) {
 
 MarkdownSide::~MarkdownSide() {
     alive_.reset();   // a running job finds nobody
+    stopSettle();
+    if (srcAdj_) g_signal_handlers_disconnect_by_data(srcAdj_, this);
     if (timer_) g_source_remove(timer_);
     if (arrivedTimer_) g_source_remove(arrivedTimer_);
     if (job_) job_->self = nullptr;
@@ -111,6 +117,10 @@ void MarkdownSide::clear() {
     stats_.pieces = 0;
     stats_.builtTotal = 0;
     stale_ = false;
+    marks_.clear();
+    marksDirty_ = true;
+    pageLeads_ = false;
+    stopSettle();
 }
 
 int MarkdownSide::embedCount() const {
@@ -261,6 +271,9 @@ void MarkdownSide::apply(Job* job) {
     stats_.builtTotal += built;
     stats_.mainCpuMs = job->prepMs + (threadCpuMs() - c0);
     stats_.workerCpuMs = job->workerMs;
+    marksDirty_ = true;
+    afterRender();
+    stats_.mainCpuMs = job->prepMs + (threadCpuMs() - c0);
 }
 
 void MarkdownSide::fit() {
@@ -344,4 +357,217 @@ void MarkdownSide::clicked(double x, double y) {
         }
         start += in.page.length;
     }
+}
+
+// ------------------------------------------------------------ scroll sync
+//
+// The map is PreviewScroll's (core, previewscroll:*): a mark per source
+// line's first run, interpolated from one mark's top to the next one's both
+// ways. The marks here are (line, character) only; a mark's top is asked of
+// the page's layout when a question reaches it, and a question needs just the
+// two marks around its place (PreviewScroll::around), so the page is not laid
+// out beyond them. GTK lays a text view out lazily (a line has no height
+// until it is laid out, and big buffers are laid out in idle slices), so a
+// target is held: re-applied while the adjustment's upper bound still moves,
+// and given up on when the user moves anything. Our own scrolls are held
+// (holding_), and a value-changed that leaves a side where we last saw it,
+// or came with its upper bound moving (GTK keeping a line still while the
+// layout above it changes), is no move of the user's.
+
+void MarkdownSide::setSource(GtkTextView* source) {
+    if (source_ == source) return;
+    if (srcAdj_) g_signal_handlers_disconnect_by_data(srcAdj_, this);
+    source_ = source;
+    srcAdj_ = source ? gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(source)) : nullptr;
+    if (srcAdj_)
+        g_signal_connect_swapped(srcAdj_, "value-changed", G_CALLBACK(+[](gpointer self) {
+            static_cast<MarkdownSide*>(self)->sourceMoved();
+        }), this);
+}
+
+bool MarkdownSide::syncActive() {
+    return source_ && !infos_.empty() && gtk_widget_get_mapped(scroller_) &&
+           gtk_widget_get_mapped(GTK_WIDGET(source_));
+}
+
+void MarkdownSide::rebuildMarks() {
+    marks_.clear();
+    int start = 0, last = -1;
+    for (const Info& in : infos_) {
+        for (const Markdown::Span& s : in.page.spans)
+            if (s.line > last) {
+                marks_.push_back({s.line, -1, (long)start + s.start});
+                last = s.line;
+            }
+        start += in.page.length;
+    }
+    marksDirty_ = false;
+}
+
+double MarkdownSide::topOfAt(long at) {
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &it, (int)at);
+    GdkRectangle r;
+    gtk_text_view_get_iter_location(GTK_TEXT_VIEW(view_), &it, &r);
+    return r.y;
+}
+
+// The page around mark i (-1: before the first), tops asked for those two.
+PreviewScroll::Page MarkdownSide::pageAround(int i) {
+    if (marksDirty_) rebuildMarks();
+    std::vector<PreviewScroll::Mark> two;
+    const int n = (int)marks_.size();
+    int lines = source_ ? gtk_text_buffer_get_line_count(gtk_text_view_get_buffer(source_)) : 0;
+    double bottom = 0;
+    if (n == 0) return PreviewScroll::around(two, i, 0, lines);
+    const int k = std::max(0, std::min(i, n - 1));
+    two.push_back(marks_[(size_t)k]);
+    two.back().top = topOfAt(two.back().at);
+    if (i >= 0 && k + 1 < n) {
+        two.push_back(marks_[(size_t)k + 1]);
+        two.back().top = topOfAt(two.back().at);
+    } else if (i >= 0) {
+        GtkTextIter e;
+        gtk_text_buffer_get_end_iter(buffer_, &e);
+        GdkRectangle r;
+        gtk_text_view_get_iter_location(GTK_TEXT_VIEW(view_), &e, &r);
+        bottom = r.y + r.height;
+    }
+    return PreviewScroll::around(two, i < 0 ? -1 : 0, bottom, lines);
+}
+
+double MarkdownSide::paneYForLine(double line) {
+    if (marksDirty_) rebuildMarks();
+    PreviewScroll::Page whole;
+    whole.marks = marks_;   // lines only: markAt looks at no top
+    const int i = PreviewScroll::markAt(whole, line);
+    return PreviewScroll::yForLine(pageAround(i), line);
+}
+
+double MarkdownSide::paneTopLine() {
+    if (marksDirty_) rebuildMarks();
+    if (marks_.empty()) return 0;
+    GtkTextView* tv = GTK_TEXT_VIEW(view_);
+    GdkRectangle vis;
+    gtk_text_view_get_visible_rect(tv, &vis);
+    GtkTextIter it;
+    if (!gtk_text_view_get_iter_at_location(tv, &it, 0, vis.y))
+        gtk_text_view_get_iter_at_location(tv, &it, 8, vis.y);
+    const long off = gtk_text_iter_get_offset(&it);
+    auto ub = std::upper_bound(marks_.begin(), marks_.end(), off,
+                               [](long o, const PreviewScroll::Mark& m) { return o < m.at; });
+    const int i = (int)(ub - marks_.begin()) - 1;
+    return PreviewScroll::lineForY(pageAround(i), vis.y);
+}
+
+double MarkdownSide::sourceYForLine(double line) {
+    GtkTextBuffer* b = gtk_text_view_get_buffer(source_);
+    const int count = gtk_text_buffer_get_line_count(b);
+    const int n = std::max(0, std::min((int)std::floor(line), count - 1));
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_line(b, &it, n);
+    int y = 0, h = 0;
+    gtk_text_view_get_line_yrange(source_, &it, &y, &h);
+    return y + std::max(0.0, std::min(1.0, line - n)) * h;
+}
+
+double MarkdownSide::sourceTopLine() {
+    if (!source_) return 0;
+    GdkRectangle vis;
+    gtk_text_view_get_visible_rect(source_, &vis);
+    GtkTextIter it;
+    int top = 0;
+    gtk_text_view_get_line_at_y(source_, &it, vis.y, &top);
+    int y = 0, h = 0;
+    gtk_text_view_get_line_yrange(source_, &it, &y, &h);
+    const double frac = h > 0 ? std::max(0.0, std::min(1.0, (vis.y - y) / (double)h)) : 0;
+    return gtk_text_iter_get_line(&it) + frac;
+}
+
+void MarkdownSide::apply(const Target& t) {
+    if (!syncActive()) return;
+    holding_ = true;
+    if (t.toPane) {
+        const double size = gtk_adjustment_get_page_size(paneAdj_);
+        gtk_adjustment_set_value(paneAdj_, paneYForLine(t.line) - t.into * size);
+    } else {
+        gtk_adjustment_set_value(srcAdj_, sourceYForLine(t.line));
+    }
+    holding_ = false;
+    lastPaneV_ = gtk_adjustment_get_value(paneAdj_);
+    lastPaneUp_ = gtk_adjustment_get_upper(paneAdj_);
+    lastSrcV_ = gtk_adjustment_get_value(srcAdj_);
+    lastSrcUp_ = gtk_adjustment_get_upper(srcAdj_);
+}
+
+void MarkdownSide::follow(const Target& t) {
+    target_ = t;
+    apply(t);
+    startSettle();
+}
+
+void MarkdownSide::startSettle() {
+    GtkAdjustment* a = target_.toPane ? paneAdj_ : srcAdj_;
+    settleUpper_ = gtk_adjustment_get_upper(a);
+    settleStable_ = 0;
+    settleTicks_ = 0;
+    if (settleTimer_) return;
+    settleTimer_ = g_timeout_add(80, [](gpointer p) -> gboolean {
+        MarkdownSide* self = static_cast<MarkdownSide*>(p);
+        GtkAdjustment* a = self->target_.toPane ? self->paneAdj_ : self->srcAdj_;
+        const double up = gtk_adjustment_get_upper(a);
+        if (!self->syncActive() || ++self->settleTicks_ > 250) { self->settleTimer_ = 0; return G_SOURCE_REMOVE; }
+        if (up != self->settleUpper_) {
+            self->settleUpper_ = up;
+            self->settleStable_ = 0;
+            self->apply(self->target_);
+        } else if (++self->settleStable_ >= 4) {
+            self->settleTimer_ = 0;
+            return G_SOURCE_REMOVE;
+        }
+        return G_SOURCE_CONTINUE;
+    }, this);
+}
+
+void MarkdownSide::stopSettle() {
+    if (settleTimer_) g_source_remove(settleTimer_);
+    settleTimer_ = 0;
+}
+
+void MarkdownSide::sourceMoved() {
+    if (!srcAdj_) return;
+    const double v = gtk_adjustment_get_value(srcAdj_), up = gtk_adjustment_get_upper(srcAdj_);
+    const bool ours = holding_ || std::fabs(v - lastSrcV_) < 0.5 || up != lastSrcUp_;
+    lastSrcV_ = v;
+    lastSrcUp_ = up;
+    if (ours || !syncActive()) return;
+    pageLeads_ = false;
+    follow({true, sourceTopLine(), 0});
+}
+
+void MarkdownSide::paneMoved() {
+    const double v = gtk_adjustment_get_value(paneAdj_), up = gtk_adjustment_get_upper(paneAdj_);
+    const bool ours = holding_ || std::fabs(v - lastPaneV_) < 0.5 || up != lastPaneUp_;
+    lastPaneV_ = v;
+    lastPaneUp_ = up;
+    if (ours || !syncActive()) return;
+    pageLeads_ = true;
+    follow({false, paneTopLine(), 0});
+}
+
+// The caret's block in the page, brought into view when it is not (a third
+// of the way down, as the Mac's marker does).
+void MarkdownSide::sourceCaret(int line) {
+    if (!syncActive() || line < 0) return;
+    GdkRectangle vis;
+    gtk_text_view_get_visible_rect(GTK_TEXT_VIEW(view_), &vis);
+    const double y = paneYForLine(line);
+    if (y >= vis.y && y < vis.y + vis.height * 0.9) return;
+    pageLeads_ = false;
+    follow({true, (double)line, 0.3});
+}
+
+void MarkdownSide::afterRender() {
+    if (!syncActive() || pageLeads_) return;
+    follow({true, sourceTopLine(), 0});
 }

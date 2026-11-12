@@ -85,3 +85,4 @@ BrowserTabsSuite.cpp
 LatexProblemsSuite.cpp
 JsonOutlineSuite.cpp
 MarkdownSideSuite.cpp
+MarkdownSideSyncSuite.cpp

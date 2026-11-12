@@ -697,6 +697,7 @@ void Editor::syncSide() {
     if (!side_) {
         side_ = new MarkdownSide(tags_.table);
         side_->onLink = [this](const std::string& url) { openMarkdownLink(url); };
+        side_->setSource(GTK_TEXT_VIEW(view_));
     }
     bool render = false;
     if (sideDoc_ != d) {
@@ -704,7 +705,14 @@ void Editor::syncSide() {
         sideDoc_ = d;
         sideChanged_ = g_signal_connect(d->buffer(), "changed", G_CALLBACK(+[](GtkTextBuffer*, gpointer p) {
             Editor* self = static_cast<Editor*>(p);
-            if (self->side_) self->side_->schedule();
+            if (self->side_) { self->side_->edited(); self->side_->schedule(); }
+        }), this);
+        sideCaret_ = g_signal_connect(d->buffer(), "notify::cursor-position", G_CALLBACK(+[](GObject* b, GParamSpec*, gpointer p) {
+            Editor* self = static_cast<Editor*>(p);
+            if (!self->side_ || self->buffer_ != GTK_TEXT_BUFFER(b)) return;
+            GtkTextIter it;
+            gtk_text_buffer_get_iter_at_mark(GTK_TEXT_BUFFER(b), &it, gtk_text_buffer_get_insert(GTK_TEXT_BUFFER(b)));
+            self->side_->sourceCaret(gtk_text_iter_get_line(&it));
         }), this);
         render = true;
     }
@@ -721,7 +729,9 @@ void Editor::syncSide() {
 void Editor::dropSide() {
     if (!sideDoc_) return;
     g_signal_handler_disconnect(sideDoc_->buffer(), sideChanged_);
+    g_signal_handler_disconnect(sideDoc_->buffer(), sideCaret_);
     sideChanged_ = 0;
+    sideCaret_ = 0;
     sideDoc_ = nullptr;
     if (side_) side_->clear();
 }

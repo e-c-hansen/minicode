@@ -1419,7 +1419,11 @@ These may run in parallel.
   *Side pane done:* Ctrl+Alt+V (VS Code's chord Ctrl+K V; D1) shows the
   page right of the source in pieces (`MarkdownSide`, HANDOFF item 54): 0.7 ms
   of main-thread CPU after a one-letter edit at 1,200 lines, 4.5 ms at 20,000.
-  Scroll sync, editing from the pane and the tables' first-render cost remain.
+  *Scroll sync done:* `PreviewScroll` joined the Linux build; the source
+  leads the page, the page leads the source, and a caret moved out of the
+  page's view brings its block in (HANDOFF item 54; 0.3 ms of main-thread CPU
+  per sync at 20,000 lines). Editing from the pane and the tables'
+  first-render cost remain, so the box stays open.
 - [ ] **4.3 Math, Mermaid, and Export as HTML.** `MathTex`, `MermaidDiagram`,
   `MarkdownHtml`.
 - [ ] **4.4 LaTeX problems, warnings, and forward search.** `LatexLog`,
