@@ -84,3 +84,4 @@ CsvTableSuite.cpp
 BrowserTabsSuite.cpp
 LatexProblemsSuite.cpp
 JsonOutlineSuite.cpp
+MarkdownSideSuite.cpp

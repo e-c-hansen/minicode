@@ -3707,6 +3707,60 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
   not kept across tabs, a row click on the row already chosen selects nothing
   again (Enter does), and SQLite (the rest of 4.1).
 
+### 54. The Markdown page to the side, in pieces (done, November 2026; `PARITY.md` item 4.2, first part)
+
+- **Files**: `src/MarkdownSide.{h,cpp}` (the pane), `Markdown::renderRuns` in
+  `Markdown.cpp` (the page builder over a run range, inserting at a character
+  offset; `render` is it over every run), `MarkdownPage.cpp` joined the core
+  lists (`meson.build`, `Makefile`; Android's CMake has not got it, since it
+  has no side pane). `Editor::syncSide`/`dropSide`/`toggleSidePreview`, and
+  `Document::sideWanted`.
+- **The key** is Ctrl+Alt+V (`markdown.showPreviewToSide`, a `markdown`
+  language command in the registry): VS Code's Linux key is the chord Ctrl+K V
+  and the port has no chords, so it is the Mac's Ctrl+Cmd+V with Ctrl+Alt for
+  Cmd, as the task key's Ctrl+Alt+L is; GNOME takes no Ctrl+Alt+V.
+- **Where it sits**: the end child of `outlinePaned_`, the JSON outline's
+  place (a Markdown tab has no outline, a JSON tab no side page; both
+  widgets are ref'd so the paned can swap them). A GtkTextView of its own,
+  read-only, with a buffer of its own on the editor's tag table. It shows only
+  while the tab shows its source: the full preview (a Markdown file opens as
+  the page here, so the pane comes with Ctrl+Shift+V to the source) and
+  another tab drop it and clear its page; it is built again when it returns.
+  The wish is per tab (`Document::sideWanted`) and not kept in the session:
+  the port keeps no per-tab modes there.
+- **Pieces**: a buffer "changed" schedules a render 0.3 s later. The text is
+  copied on the main thread; `MarkdownParser::parse`, `MarkdownPage::split`
+  and `match` run on a GTask worker (generation counted; one job at a time,
+  another asked for while it runs follows it). On the main thread
+  `MarkdownSide::apply` walks the new pieces: a kept one keeps its text, its
+  widgets and its `Markdown::Page` (offsets are the piece's own, so only the
+  source lines move, by the change of the piece's base line); the old pieces
+  between kept ones are taken off the view (widgets first, or GTK 4.22
+  crashes in the buffer's deletion, as `clearPage` says) and deleted from the
+  buffer in one range; an unmatched piece is built at its place by
+  `renderRuns`. A piece holding a web picture still being fetched is not
+  matchable (`keep` false), and `placeArrived` puts a picture in, as the full
+  preview does, per piece. A new context (the file's folder, web pictures
+  on or off) is built whole (`setContext`, `invalidate`).
+- **Measured** (the main thread's CPU for a one-letter edit, from the
+  worker's answer to the splice done, `Stats::mainCpuMs`): 0.7 ms at 1,200
+  lines (607 pieces, 1 built), 4.5 ms at 20,000 lines (10,101 pieces, 1
+  built); the worker's 5 and 93 ms are off the main thread. The Mac bounds
+  10 and 30 ms. The first page is the full cost of every piece built, and a
+  README's tables (4.2's R1 figures) are in it: not measured here.
+- **Checked by** `markdown_side` (`MarkdownSideSuite.cpp`): the key opens and
+  closes the pane, the page against the source, an edit building one piece
+  and leaving every table widget the same pointer, a line added above, an
+  edit inside the table building a new widget, the full preview hiding the
+  pane and bringing it back, a second tab with no pane, a text file where the
+  key does nothing, and the CPU bounds (15 ms and 40 ms, with headroom for a
+  loaded machine) at 1,200 and 20,000 lines.
+- **Not done**: scroll sync (4.2b); double-click editing in the pane (the
+  editor's popover is tied to its own view); a task box in the pane does
+  nothing; heading anchors are per piece (`#section` links in the pane do
+  not resolve); the pane's width is the paned's default and is not kept;
+  the page is not kept across a switch to another tab.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

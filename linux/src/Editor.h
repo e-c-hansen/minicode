@@ -35,6 +35,7 @@ class FoldUi;
 class MediaView;
 class CsvTable;
 class JsonOutlineView;
+class MarkdownSide;
 class SnippetSession;
 class LatexPreview;
 class GitDiffView;
@@ -260,6 +261,11 @@ public:
     // the document's own, D3), or for LaTeX between the source and the
     // typeset pages. No-op for other files.
     void togglePreview();
+    // The Markdown file's page right of its source (MarkdownSide.h), per
+    // tab; null until the first one is shown.
+    void toggleSidePreview();
+    MarkdownSide* sidePane() const { return side_; }
+    bool showsSide() const { return sideDoc_ != nullptr; }
     // A CSV or TSV tab shown as its table (CsvTable.h) rather than the text.
     // The table finishes a cell being typed before the tab goes.
     bool showsTable() const { return csvDoc_ != nullptr; }
@@ -540,6 +546,11 @@ private:
     Document*      outlineDoc_ = nullptr;   // the tab it shows
     gulong         outlineChanged_ = 0, outlineCursor_ = 0;
     bool           outlineSelecting_ = false;   // the outline's own choice is going in
+    MarkdownSide*  side_ = nullptr;
+    Document*      sideDoc_ = nullptr;      // the tab it shows
+    gulong         sideChanged_ = 0;
+    void syncSide();
+    void dropSide();
     void syncOutline();
     void dropOutline();
     void dropTable();

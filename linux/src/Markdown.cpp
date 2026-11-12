@@ -485,11 +485,17 @@ int Markdown::Page::offsetForLine(int line, int endOffset) const {
 Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
                                 const std::string& source, const Hooks& hooksIn) {
     gtk_text_buffer_set_text(buffer, "", 0);
-    Page page;
-    auto hooks = std::make_shared<Hooks>(hooksIn);
-    page.hooks = hooks;
-
     std::vector<MdRun> runs = MarkdownParser::parse(source);
+    return renderRuns(view, buffer, runs, 0, runs.size(), 0, std::make_shared<Hooks>(hooksIn));
+}
+
+Markdown::Page Markdown::renderRuns(GtkTextView* view, GtkTextBuffer* buffer,
+                                    const std::vector<MdRun>& runs, size_t first, size_t last,
+                                    int at, const std::shared_ptr<Hooks>& hooks) {
+    Page page;
+    page.hooks = hooks;
+    // Where the next character goes, in the buffer's characters.
+    int pos = at;
 
     // Characters emitted since the last newline, i.e. the length of the logical
     // line being built up.
@@ -504,12 +510,12 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
         page.spans.push_back(sp);
     };
     auto anchorWidget = [&](GtkWidget* w, const MdRun& r) {
-        GtkTextIter end;
-        gtk_text_buffer_get_end_iter(buffer, &end);
-        const int at = gtk_text_buffer_get_char_count(buffer);
-        GtkTextChildAnchor* anchor = gtk_text_buffer_create_child_anchor(buffer, &end);
+        GtkTextIter here;
+        gtk_text_buffer_get_iter_at_offset(buffer, &here, pos);
+        GtkTextChildAnchor* anchor = gtk_text_buffer_create_child_anchor(buffer, &here);
         gtk_text_view_add_child_at_anchor(view, w, anchor);
-        addSpan(at, at + 1, r);
+        addSpan(pos, pos + 1, r);
+        pos++;
         lineLen++;
     };
 
@@ -518,11 +524,11 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
                          int* endOut = nullptr) {
         if (textIn.empty()) return;
         const std::string text = boundLogicalLines(textIn, lineLen);
-        GtkTextIter end;
-        gtk_text_buffer_get_end_iter(buffer, &end);
-        const int startOff = gtk_text_buffer_get_char_count(buffer);
-        gtk_text_buffer_insert(buffer, &end, text.c_str(), (int)text.size());
-        const int endOff = gtk_text_buffer_get_char_count(buffer);
+        GtkTextIter here;
+        gtk_text_buffer_get_iter_at_offset(buffer, &here, pos);
+        const int startOff = pos;
+        gtk_text_buffer_insert(buffer, &here, text.c_str(), (int)text.size());
+        const int endOff = pos = startOff + (int)g_utf8_strlen(text.c_str(), (gssize)text.size());
         addSpan(startOff, endOff, r);
         if (startOut) *startOut = startOff;
         if (endOut) *endOut = endOff;
@@ -560,23 +566,23 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
         heading.clear();
     };
 
-    for (size_t i = 0; i < runs.size(); i++) {
+    for (size_t i = first; i < last; i++) {
         const MdRun& r = runs[i];
         if (r.heading > 0 && r.line != headingLine) {
             endHeading();
             headingLine = r.line;
-            headingAt = gtk_text_buffer_get_char_count(buffer);
+            headingAt = pos;
         } else if (r.heading == 0) {
             endHeading();
         }
         if (r.heading > 0) heading += r.text;
         // A footnote, or a reference to one, that "#fn-1" links land on.
         if (!r.anchor.empty() && !page.anchors.count(r.anchor))
-            page.anchors[r.anchor] = gtk_text_buffer_get_char_count(buffer);
+            page.anchors[r.anchor] = pos;
 
         if (r.tableId > 0) {
             size_t end = i;
-            while (end < runs.size() && runs[end].tableId == r.tableId) end++;
+            while (end < last && runs[end].tableId == r.tableId) end++;
             Embed embed;
             GtkWidget* grid = buildTable(runs, i, end, hooks, embed);
             embed.widget = grid;
@@ -586,8 +592,9 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
             // them, so its line ends here, and the gap after it is a line
             // of its own.
             GtkTextIter lineEnd;
-            gtk_text_buffer_get_end_iter(buffer, &lineEnd);
+            gtk_text_buffer_get_iter_at_offset(buffer, &lineEnd, pos);
             gtk_text_buffer_insert(buffer, &lineEnd, "\n", 1);
+            pos++;
             lineLen = 0;
             i = end - 1;
             continue;
@@ -664,6 +671,12 @@ Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
         }
     }
     endHeading();
+    page.length = pos - at;
+    if (at) {   // offsets are the piece's own
+        for (Span& sp : page.spans) { sp.start -= at; sp.end -= at; }
+        for (auto& an : page.anchors) an.second -= at;
+        for (PendingPicture& pp : page.pending) { pp.start -= at; pp.end -= at; }
+    }
     return page;
 }
 

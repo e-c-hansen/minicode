@@ -16,6 +16,7 @@ core_sources = [
   core_dir / 'MarkdownParser.cpp',
   core_dir / 'MarkdownEdit.cpp',
   core_dir / 'MarkdownTasks.cpp',
+  core_dir / 'MarkdownPage.cpp',
   core_dir / 'Settings.cpp',
   core_dir / 'LineComments.cpp',
   core_dir / 'AutoIndent.cpp',
@@ -162,6 +163,7 @@ gui_sources = [
   'src/Markdown.cpp',
   'src/CsvTable.cpp',
   'src/JsonOutlineView.cpp',
+  'src/MarkdownSide.cpp',
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.
   'src/Terminal.cpp',

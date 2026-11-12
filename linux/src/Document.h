@@ -196,6 +196,10 @@ public:
     bool showsOutline() const { return isJson() && showsOutline_ && !(notebook_ && showsPreview_); }
     void setShowsOutline(bool on) { showsOutline_ = on; }
     void setShowsPreview(bool on) { showsPreview_ = on; }
+    // The page right of the source (MarkdownSide.h) is wanted for this tab;
+    // it shows while the source does, not beside the full preview.
+    bool sideWanted() const { return sideWanted_; }
+    void setSideWanted(bool on) { sideWanted_ = on; }
     // The window's preview tab (EditorTabs.h): its title in italics, and
     // the next file opened in preview replaces it.
     bool isPreviewTab() const { return previewTab_; }
@@ -433,6 +437,7 @@ private:
     std::string   path_, ext_;
     bool          markdown_ = false, latex_ = false;
     bool          showsPreview_ = false;
+    bool          sideWanted_ = false;
     int           csv_ = 0;               // 1 comma-like, 2 tab separated (FileSniff)
     bool          showsTable_ = false;
     bool          json_ = false, notebook_ = false, showsOutline_ = true;

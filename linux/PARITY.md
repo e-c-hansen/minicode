@@ -1416,6 +1416,10 @@ These may run in parallel.
   20 ms. The cost is GTK measuring the tables, each a `GtkGrid` of wrapping
   labels (`buildTable` in `Markdown.cpp`, about 540 cells in README). Its
   eight GIFs add about 130 ms of waiting on the image loader's process.
+  *Side pane done:* Ctrl+Alt+V (VS Code's chord Ctrl+K V; D1) shows the
+  page right of the source in pieces (`MarkdownSide`, HANDOFF item 54): 0.7 ms
+  of main-thread CPU after a one-letter edit at 1,200 lines, 4.5 ms at 20,000.
+  Scroll sync, editing from the pane and the tables' first-render cost remain.
 - [ ] **4.3 Math, Mermaid, and Export as HTML.** `MathTex`, `MermaidDiagram`,
   `MarkdownHtml`.
 - [ ] **4.4 LaTeX problems, warnings, and forward search.** `LatexLog`,
