@@ -2595,6 +2595,12 @@ What later items build on:
   `hoverVisible`, `watchedFolders`, `watchedFolderCount`,
   `watchedBatches`, `injectWatchedPaths`. A stand-in `ruff` (a script
   exec'ing build/fakelsp) gives a server the name ruff.
+- **A request goes only to a server that has the file's text**:
+  `serversFor` leaves out a server with no open entry for the file on
+  show, and `askCodeActions` and Organize Imports run `syncOpenDocuments`
+  first (it flushes edits too), so a second server that came up after the
+  file was shown is given didOpen before it is asked, never asked for
+  edits on nothing.
 - **Traps**: replacing the list's model takes the keyboard from the row
   that had it (the focused GtkListItemWidget goes); `setRows` does
   nothing for the same rows and gives the list the keyboard back after a

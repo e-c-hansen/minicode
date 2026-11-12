@@ -30,6 +30,7 @@ Lsp::Range wholeText(GtkTextBuffer* b) {
 }  // namespace
 
 void LspSession::organizeImports() {
+    syncOpenDocuments();   // a server that came up since has the file first
     if (!serverOffers(Lsp::Feature::CodeActions, "organize imports")) return;
     closeTransients();
     flushChanges();
@@ -61,6 +62,7 @@ void LspSession::organizeImports() {
 }
 
 bool LspSession::organizeImportsBeforeSave(std::function<void()> done) {
+    syncOpenDocuments();
     if (uri_.empty() || !buffer_ || serversFor(Lsp::Feature::CodeActions).empty()) return false;
     closeTransients();
     flushChanges();
