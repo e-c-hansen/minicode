@@ -44,7 +44,8 @@
 
 #include "AppSettings.h"
 #include "Appearance.h"
-#include "BookmarkOpen.h"
+#include "Bookmarks.h"
+#include "GitTrash.h"
 #include "BracketView.h"
 #include "WebBookmark.h"
 #include "Carets.h"
@@ -68,7 +69,6 @@
 #include "ProcessesPanel.h"
 #include "IdeLinkServer.h"
 #include "Browser.h"
-#include "BookmarkSave.h"
 #include "WebBookmark.h"
 #include "Search.h"
 #include "FindBar.h"
@@ -193,6 +193,9 @@ struct Shared {
     AppSettings*    settings = nullptr;   // one file, watched once
     GtkCssProvider* css = nullptr;        // one stylesheet for the display
     GMenuModel*     treeMenu = nullptr;   // the file tree's right-click menu
+    GMenu*          bookmarksMenu = nullptr;   // the menu bar's Bookmarks, refilled from the folder
+    std::vector<std::pair<std::string, GFileMonitor*>> bookmarkWatches;   // the folder and its folders
+    bool            bookmarkRefreshQueued = false;
     std::vector<App*> windows;            // open windows, oldest first
     // Dotfiles in the tree: the application's setting, as the Mac's
     // gShowHidden is one flag for every window.
@@ -608,11 +611,11 @@ static void openFileThen(App* app, const std::string& path, EditorTabs::OpenFrom
 static bool gOpenBookmarkAsText = false;
 
 static std::string bookmarksFolder() {
-    return BookmarkOpen::folder(g.settings->settings().browserBookmarks());
+    return Bookmarks::folder(g.settings->settings().browserBookmarks());
 }
 
 static bool isBrowserWindow(App* app) {
-    return !app->rootDir.empty() && BookmarkOpen::sameFolder(app->rootDir, bookmarksFolder());
+    return !app->rootDir.empty() && Bookmarks::sameFolder(app->rootDir, bookmarksFolder());
 }
 
 // The addresses shown in the window's browser pane, the pane made visible
@@ -643,7 +646,7 @@ static void showWebAddresses(App* app, const std::vector<std::string>& urls, boo
 static bool openBookmarkFile(App* app, const std::string& path, EditorTabs::OpenFrom from) {
 #ifdef MINICODE_ENABLE_BROWSER
     if (gOpenBookmarkAsText || !app->browser || !WebBookmark::isBookmarkPath(path)) return false;
-    const std::string url = BookmarkOpen::addressOf(path);
+    const std::string url = Bookmarks::addressOf(path);
     if (url.empty()) return false;
     EditorTabs::PreviewSettings ps;
     ps.enabled = g.settings->settings().enablePreview();
@@ -667,7 +670,7 @@ static void updateBookmarkActions(App* app) {
             g_simple_action_set_enabled(G_SIMPLE_ACTION(a), on);
     };
     enable("openbookmarkastext", file);
-    enable("openbookmarkstabs", isDir && BookmarkOpen::hasBookmarkIn(sel));
+    enable("openbookmarkstabs", isDir && Bookmarks::hasBookmarkIn(sel));
 }
 
 static void act_open_bookmark_as_text(GSimpleAction*, GVariant*, gpointer userp) {
@@ -688,13 +691,163 @@ static void act_open_bookmarks_in_tabs(GSimpleAction*, GVariant*, gpointer userp
     App* app = static_cast<App*>(userp);
     const std::string dir = app->tree->selectedDir();
     const std::vector<std::string> urls = dir.empty() ? std::vector<std::string>()
-                                                      : BookmarkOpen::addressesIn(dir);
+                                                      : Bookmarks::addressesIn(dir);
     if (urls.empty()) {
         if (!dir.empty()) flashStatus(app, "No bookmarks in “" + baseName(dir) + "”");
         gtk_widget_error_bell(app->window);
         return;
     }
     showWebAddresses(app, urls, true);
+}
+
+// ---- the star, the book, the Bookmarks menu and the palette (PARITY.md
+// 4.8, the last part). All read the bookmark folder when they are used, never
+// a copy: the book builds its menu each time it opens, the palette lists the
+// folder when it opens, and the Bookmarks menu in the bar (a GMenu, which has
+// no "about to open" signal) is refilled when the pointer or the keyboard
+// reaches the bar, when a window becomes active, when the settings change,
+// after the star or Save Page as Bookmark wrote or trashed a file, and when
+// a watch on the folder (and the folders in it) reports a change.
+
+static void refreshBookmarkUi();
+
+static void scheduleBookmarkRefresh() {
+    if (g.bookmarkRefreshQueued) return;
+    g.bookmarkRefreshQueued = true;
+    g_timeout_add(100, +[](gpointer) -> gboolean {
+        g.bookmarkRefreshQueued = false;
+        refreshBookmarkUi();
+        return G_SOURCE_REMOVE;
+    }, nullptr);
+}
+
+// A watch on the bookmark folder and the folders below it (three levels, a
+// hundred at most), made again when that set changes.
+static void watchBookmarkFolders() {
+    std::vector<std::string> dirs;
+    const std::string root = bookmarksFolder();
+    std::vector<std::pair<std::string, int>> todo = {{root, 0}};
+    while (!todo.empty() && dirs.size() < 100) {
+        const auto [dir, depth] = todo.back();
+        todo.pop_back();
+        if (!g_file_test(dir.c_str(), G_FILE_TEST_IS_DIR)) continue;
+        dirs.push_back(dir);
+        if (depth < 3)
+            for (const Bookmarks::Entry& e : Bookmarks::list(dir, 100))
+                if (e.isFolder) todo.push_back({e.path, depth + 1});
+    }
+    std::sort(dirs.begin(), dirs.end());
+    std::vector<std::string> have;
+    for (auto& w : g.bookmarkWatches) have.push_back(w.first);
+    std::sort(have.begin(), have.end());
+    if (have == dirs) return;
+    for (auto& w : g.bookmarkWatches) {
+        g_file_monitor_cancel(w.second);
+        g_object_unref(w.second);
+    }
+    g.bookmarkWatches.clear();
+    for (const std::string& d : dirs) {
+        GFile* f = g_file_new_for_path(d.c_str());
+        GFileMonitor* m = g_file_monitor_directory(f, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
+        g_object_unref(f);
+        if (!m) continue;
+        g_signal_connect(m, "changed", G_CALLBACK(+[](GFileMonitor*, GFile*, GFile*, GFileMonitorEvent,
+                                                      gpointer) { scheduleBookmarkRefresh(); }),
+                         nullptr);
+        g.bookmarkWatches.push_back({d, m});
+    }
+}
+
+// The menu bar's Bookmarks menu: Bookmark This Page, then the folder.
+static void fillBookmarksMenu() {
+    if (!g.bookmarksMenu) return;
+    g_menu_remove_all(g.bookmarksMenu);
+    GMenu* top = g_menu_new();
+    g_menu_append(top, "Bookmark This Page", "win.savebookmark");
+    g_menu_append_section(g.bookmarksMenu, nullptr, G_MENU_MODEL(top));
+    g_object_unref(top);
+    GMenu* list = Bookmarks::menu(bookmarksFolder());
+    g_menu_append_section(g.bookmarksMenu, nullptr, G_MENU_MODEL(list));
+    g_object_unref(list);
+}
+
+static void refreshBookmarkUi() {
+    fillBookmarksMenu();
+    watchBookmarkFolders();
+#ifdef MINICODE_ENABLE_BROWSER
+    for (App* a : g.windows)
+        if (a->browser) a->browser->refreshStar();
+#endif
+}
+
+// A bookmark from a menu or the palette loads in the tab on show; with Ctrl
+// held, as GTK reports it while the item's click is handled, in a new tab.
+static void act_open_bookmark(GSimpleAction*, GVariant* param, gpointer userp) {
+#ifdef MINICODE_ENABLE_BROWSER
+    App* app = static_cast<App*>(userp);
+    if (!param || !app->browser) return;
+    const std::string url = Bookmarks::addressOf(g_variant_get_string(param, nullptr));
+    if (url.empty()) {
+        flashStatus(app, "That bookmark has no address that can open");
+        return;
+    }
+    GdkModifierType mods = (GdkModifierType)0;
+    if (GdkDisplay* d = gdk_display_get_default())
+        if (GdkSeat* seat = gdk_display_get_default_seat(d))
+            if (GdkDevice* kb = gdk_seat_get_keyboard(seat)) mods = gdk_device_get_modifier_state(kb);
+    if (mods & GDK_CONTROL_MASK) {
+        app->browser->newTab(url);
+    } else if (app->browser->tabCount() == 0) {
+        app->browser->newTab(url);
+    } else {
+        app->browser->load(url);
+    }
+    app->layout->showBrowser();
+    app->browser->focusPage();
+#else
+    (void)param; (void)userp;
+#endif
+}
+
+static void act_open_bookmark_folder(GSimpleAction*, GVariant* param, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!param) return;
+    const std::string dir = g_variant_get_string(param, nullptr);
+    const std::vector<std::string> urls = Bookmarks::addressesIn(dir);
+    if (urls.empty()) {
+        flashStatus(app, "No bookmarks in \u201c" + baseName(dir) + "\u201d");
+        return;
+    }
+    showWebAddresses(app, urls, true);
+}
+
+// The star: a page not bookmarked is saved; the filled star moves its
+// bookmark to the Trash.
+static void starClicked(App* app, const std::string& url, bool bookmarked) {
+    if (app->dead) return;
+    if (!bookmarked) {
+        g_action_group_activate_action(G_ACTION_GROUP(app->window), "savebookmark", nullptr);
+        scheduleBookmarkRefresh();
+        return;
+    }
+    const std::string file = Bookmarks::fileFor(bookmarksFolder(), url);
+    std::string err;
+    if (file.empty()) {
+        flashStatus(app, "That page is not bookmarked");
+    } else if (!GitTrash::trash(file, nullptr, &err)) {
+        flashStatus(app, "The bookmark could not be moved to the Trash: " + err);
+    } else {
+        flashStatus(app, "Moved \u201c" + baseName(file) + "\u201d to the Trash");
+    }
+    refreshBookmarkUi();
+}
+
+// The palette's rows, "Bookmarks > Folder/Name", read now.
+static std::vector<PalettePanel::Context::BookmarkRow> paletteBookmarks() {
+    std::vector<PalettePanel::Context::BookmarkRow> out;
+    for (const Bookmarks::Found& f : Bookmarks::all(bookmarksFolder(), 3000))
+        out.push_back({"Bookmarks > " + f.menuPath, f.path});
+    return out;
 }
 
 // Called by everything that opens a file with nothing to do afterwards, in a
@@ -1266,11 +1419,8 @@ static void act_new_browser_tab(GSimpleAction*, GVariant*, gpointer userp) {
 // folder itself, made when missing. "" with a note in the status bar when it
 // cannot be made.
 static std::string bookmarkFolderForSaving(App* app) {
-    const std::string folder = BookmarkSave::folderFor(g.settings->settings().browserBookmarks());
-    char a[4096], b[4096];
-    const bool inBrowserWindow = !app->rootDir.empty() && realpath(app->rootDir.c_str(), a) &&
-                                 realpath(folder.c_str(), b) && std::string(a) == b;
-    if (inBrowserWindow) {
+    const std::string folder = bookmarksFolder();
+    if (isBrowserWindow(app)) {
         std::string sel = app->tree->selectedDir();
         if (sel.empty()) {
             const std::string file = app->tree->selectedPath();
@@ -1279,7 +1429,7 @@ static std::string bookmarkFolderForSaving(App* app) {
         return sel;
     }
     std::string err;
-    if (BookmarkSave::ensureFolder(folder, &err)) return folder;
+    if (Bookmarks::ensureFolder(folder, &err)) return folder;
     flashStatus(app, "No bookmark folder: " + err);
     return "";
 }
@@ -1291,22 +1441,22 @@ static void act_save_bookmark(GSimpleAction*, GVariant*, gpointer userp) {
     const std::string title = app->browser->tabTitle(app->browser->activeTab());
     if (!WebBookmark::isWebAddress(url)) return;
     // A page saved once is not saved again under another number.
-    const std::string base = BookmarkSave::folderFor(g.settings->settings().browserBookmarks());
-    const std::string have = BookmarkSave::fileFor(base, url);
+    const std::string have = Bookmarks::fileFor(bookmarksFolder(), url);
     if (!have.empty()) {
-        flashStatus(app, "Already bookmarked as " + BookmarkSave::shortPath(have));
+        flashStatus(app, "Already bookmarked as " + Bookmarks::shortPath(have));
         return;
     }
     const std::string folder = bookmarkFolderForSaving(app);
     if (folder.empty()) return;
     std::string err;
-    const std::string path = BookmarkSave::write(folder, title, url, &err);
+    const std::string path = Bookmarks::write(folder, title, url, &err);
     if (path.empty()) {
         flashStatus(app, "The bookmark was not saved: " + err);
         return;
     }
     flashStatus(app, "Saved \u201c" + path.substr(path.rfind('/') + 1) + "\u201d in " +
-                         BookmarkSave::shortPath(folder));
+                         Bookmarks::shortPath(folder));
+    scheduleBookmarkRefresh();
 }
 
 static void act_save_browser_tabs(GSimpleAction*, GVariant*, gpointer userp) {
@@ -1327,15 +1477,16 @@ static void act_save_browser_tabs(GSimpleAction*, GVariant*, gpointer userp) {
     strftime(when, sizeof when, "%Y-%m-%d %H.%M", &lt);
     std::string err;
     size_t saved = 0;
-    const std::string folder = BookmarkSave::writeTabs(parent, when, titles, urls, &saved, &err);
+    const std::string folder = Bookmarks::writeTabs(parent, when, titles, urls, &saved, &err);
     if (folder.empty()) {
         flashStatus(app, "The tabs were not saved: " + err);
         return;
     }
     std::string note = "Saved " + std::to_string(saved) + (saved == 1 ? " tab" : " tabs") +
-                       " in \u201c" + BookmarkSave::shortPath(folder) + "\u201d";
+                       " in \u201c" + Bookmarks::shortPath(folder) + "\u201d";
     if (!err.empty()) note += " (not all: " + err + ")";
     flashStatus(app, note);
+    scheduleBookmarkRefresh();
 }
 #else
 static void act_save_bookmark(GSimpleAction*, GVariant*, gpointer) {}
@@ -2683,6 +2834,7 @@ static void showPalette(App* app, const char* text) {
     ctx.openWorkspaceSymbol = [app](const Lsp::Symbol& symbol) {
         if (!app->dead && app->lsp) app->lsp->revealSymbol(symbol);
     };
+    ctx.bookmarks = [] { return paletteBookmarks(); };
     app->palette->show(text, ctx);
 }
 
@@ -3134,6 +3286,7 @@ static void onSettingsChanged(void*) {
                                   g_variant_new_boolean(g.settings->settings().ideLink()));
     applyStylesheet();
     for (App* a : g.windows) applyWindowSettings(a);
+    scheduleBookmarkRefresh();
 }
 
 // ---------------------------------------------------------------- keys
@@ -3301,6 +3454,11 @@ static void initShared() {
     // The menu bar, with View > Adjust Settings and View > Theme after the
     // registry's View commands.
     GMenuModel* bar = Keys::menuBar(Appearance::extendMenu);
+    // Bookmarks, after Navigate: the folder as a menu, refilled from it
+    // (refreshBookmarkUi), so it is current whenever the bar is used.
+    g.bookmarksMenu = g_menu_new();
+    g_menu_append_submenu(G_MENU(bar), "Bookmarks", G_MENU_MODEL(g.bookmarksMenu));
+    fillBookmarksMenu();
     gtk_application_set_menubar(g.gapp, bar);
     g_object_unref(bar);
     // The tree's right-click menu, in the Mac's order and grouping, ending
@@ -3455,6 +3613,28 @@ static App* newWindow(const std::string& root, const std::string& file) {
         GTK_APPLICATION_WINDOW(app->window), TRUE);
     // The keyboard back where it was after a choice from the menu bar.
     MenuBarFocus::attach(GTK_WINDOW(app->window));
+    // The Bookmarks menu is read from the folder when the window comes to
+    // the front and when the bar is first touched (a press or the keyboard
+    // reaching it, before its menu opens).
+    g_signal_connect(app->window, "notify::is-active", G_CALLBACK(+[](GObject* w, GParamSpec*, gpointer) {
+        if (gtk_window_is_active(GTK_WINDOW(w))) scheduleBookmarkRefresh();
+    }), nullptr);
+    g_signal_connect(app->window, "map", G_CALLBACK(+[](GtkWidget* w, gpointer) {
+        if (GtkWidget* bar = MenuBarFocus::bar(GTK_WINDOW(w))) {
+            GtkGesture* press = gtk_gesture_click_new();
+            gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(press), GTK_PHASE_CAPTURE);
+            g_signal_connect(press, "pressed", G_CALLBACK(+[](GtkGestureClick*, int, double, double, gpointer) {
+                refreshBookmarkUi();
+            }), nullptr);
+            gtk_widget_add_controller(bar, GTK_EVENT_CONTROLLER(press));
+            GtkEventController* enter = gtk_event_controller_motion_new();
+            g_signal_connect(enter, "enter", G_CALLBACK(+[](GtkEventControllerMotion*, double, double, gpointer) {
+                scheduleBookmarkRefresh();
+            }), nullptr);
+            gtk_widget_add_controller(bar, enter);
+        }
+        scheduleBookmarkRefresh();
+    }), nullptr);
 
     // Core widgets.
     app->tree = new FileTree(app->rootDir, g.showHidden);
@@ -3592,6 +3772,13 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->browser->onChanged = [app] {
         if (!app->dead && app->persist) app->persist->changed(nullptr);
     };
+    app->browser->isBookmarked = [](const std::string& url) {
+        return !Bookmarks::fileFor(bookmarksFolder(), url).empty();
+    };
+    app->browser->onStar = [app](const std::string& url, bool bookmarked) {
+        starClicked(app, url, bookmarked);
+    };
+    app->browser->bookMenu = [] { return Bookmarks::menu(bookmarksFolder()); };
     browserPane = app->browser->widget();
     StartupLog::mark("window: browser");
 #endif
@@ -3843,6 +4030,21 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "newbrowsertab",  G_CALLBACK(act_new_browser_tab));
     addAction(app, "savebookmark",   G_CALLBACK(act_save_bookmark));
     addAction(app, "savebrowsertabs", G_CALLBACK(act_save_browser_tabs));
+    const std::vector<std::pair<const char*, GCallback>> bookmarkActions = {
+        {"openbookmark", G_CALLBACK(act_open_bookmark)},
+        {"openbookmarkfolder", G_CALLBACK(act_open_bookmark_folder)}};
+    for (const auto& [name, cb] : bookmarkActions) {
+        GSimpleAction* a = g_simple_action_new(name, G_VARIANT_TYPE_STRING);
+        g_signal_connect(a, "activate", cb, app);
+        g_action_map_add_action(G_ACTION_MAP(app->window), G_ACTION(a));
+        g_object_unref(a);
+    }
+    {
+        GSimpleAction* a = g_simple_action_new("nobookmarks", nullptr);
+        g_simple_action_set_enabled(a, FALSE);
+        g_action_map_add_action(G_ACTION_MAP(app->window), G_ACTION(a));
+        g_object_unref(a);
+    }
     addAction(app, "togglegit",      G_CALLBACK(act_toggle_git));
     addAction(app, "toggleprocesses", G_CALLBACK(act_toggle_processes));
     addAction(app, "toggleagents", G_CALLBACK(act_toggle_agents));
@@ -4266,9 +4468,9 @@ static void handleCommandLine(char** args, int n, const char* cwd,
         const std::string folder = bookmarksFolder();
         App* target = nullptr;
         for (App* a : g.windows)
-            if (!a->dead && BookmarkOpen::sameFolder(a->rootDir, folder)) { target = a; break; }
+            if (!a->dead && Bookmarks::sameFolder(a->rootDir, folder)) { target = a; break; }
         std::string why;
-        if (!target && !BookmarkOpen::ensureFolder(folder, &why)) {
+        if (!target && !Bookmarks::ensureFolder(folder, &why)) {
             printerr("minicode: " + folder + ": " + why);
         } else {
             if (!target) {

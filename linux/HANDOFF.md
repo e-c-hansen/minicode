@@ -4394,6 +4394,71 @@ Trap: split_editor needs the editor's full width; a browser pane an earlier suit
   page might take it (no page we know binds it); where the status bar's note
   reads on a narrow window.
 
+### 66. Web bookmarks: the star, the book, the Bookmarks menu and the palette (done, November 2026; `PARITY.md` item 4.8, last part)
+
+- **One module.** `BookmarkOpen` and `BookmarkSave` each had a folder
+  resolver and an `ensureFolder`; they are `src/Bookmarks.{h,cpp}` now
+  (namespace `Bookmarks`, both build lists): `folder` (the setting, `~`
+  expanded, canonicalized), `ensureFolder`, `sameFolder`, `addressOf`,
+  `addressesIn`, `hasBookmarkIn`, `write`, `fileFor`, `shortPath`,
+  `writeTabs`, and for this bite `list` (a folder's entries, folders first,
+  the tree's name order), `all` (every bookmark under a folder with its
+  address and "Folder/Name", for the palette; 3,000 entries at most, loops
+  cut) and `menu` (a `GMenu` of the folder: a submenu a folder opening with
+  "Open All in Tabs", then its rows; 2,000 entries and six levels at most;
+  an underscore in a title is doubled, since GTK reads one as a mnemonic).
+  Titles are `WebBookmark::menuTitle`.
+- **The star** (`Browser`, a button after the address bar): `isBookmarked`,
+  `onStar` and `bookMenu` are set by the window, so `Browser` knows nothing
+  of files. `refreshStar` runs in `syncUrlBar` (every navigation and tab
+  switch) and from the window when the folder changed; the icon is
+  `starred-symbolic` while the address on show is bookmarked anywhere in the
+  folder (`fileFor`, a subfolder counts) and `non-starred-symbolic` else,
+  and the tooltip says what a click does; it is insensitive for a page that
+  may not be bookmarked. A click on the empty star runs `win.savebookmark`
+  (so the same once-only rule and the same folder choice); on the filled one
+  it moves the file to the Trash through `GitTrash::trash` (GIO's
+  `g_file_trash`, and the checks' scratch Trash) and the status bar says
+  "Moved “x.url” to the Trash".
+- **The book** is a `GtkMenuButton` beside it. Its model is made by
+  `set_create_popup_func`, which GTK calls each time before the popover
+  opens, so the folder is read then and never kept. An item runs
+  `win.openbookmark` (the path as a string target): it loads in the tab on
+  show, **with Ctrl held in a new tab**. A menu item's activation does not
+  carry the event, so the action asks the keyboard device
+  (`gdk_device_get_modifier_state`) for the modifier; the check holds Ctrl
+  through XTest. A folder's "Open All in Tabs" is `win.openbookmarkfolder`.
+  The page gets the keyboard.
+- **The Bookmarks menu** in the bar (after Navigate; "Bookmark This Page",
+  then the same listing). A `GMenu` has no "about to open" signal, so it
+  is refilled from the folder: when the pointer enters or presses the menu
+  bar (the press in the capture phase, before the menu opens;
+  `MenuBarFocus::bar` finds the widget), when a window becomes active,
+  when the settings change, after a save or the star's trash, and when
+  watches on the folder and the folders in it (three levels, a hundred
+  at most; `GFileMonitor`, made again when that set changes) report a
+  change, coalesced over 100 ms. The same refresh redraws every window's
+  star, so a bookmark made or deleted by hand outside minicode shows.
+- **The palette**: `PalettePanel::Context::bookmarks` is read when the
+  palette opens, and each bookmark is a command row "Bookmarks > Name" (or
+  "Bookmarks > Folder/Name") that runs `win.openbookmark` on its path, so
+  it ranks, matches and is remembered like a command.
+- **Checked by** `bookmark_menu` (`BookmarkMenuSuite.cpp`, a server in the
+  test process, scratch folder and Trash): the star filled for a bookmarked
+  page and one in a subfolder, empty for another, following a tab switch
+  and a bookmark made and deleted outside; a click saving, a click on the
+  filled star trashing with the note; the book's contents (a folder first,
+  titles, a file made just before) and real clicks loading in the tab on
+  show and, with Ctrl, in a new one; Open All in Tabs; the Bookmarks menu's
+  contents and its following the folder; the palette row. Core:
+  `commands:*`, `linux:build-lists`.
+- Left out: a bookmark folder created while no folder existed is not
+  watched until the next refresh (a save, a window coming to the front);
+  folders deeper than three levels are not watched (the bar's press still
+  reads them); no "Show Bookmarks Folder".
+- **Needs a person**: the look of the star and the book in the toolbar,
+  Ctrl+click on a real desktop, the Bookmarks menu with many entries.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

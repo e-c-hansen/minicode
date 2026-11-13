@@ -15,7 +15,7 @@
 #include "Harness.h"
 
 #include "AppSeam.h"
-#include "BookmarkOpen.h"
+#include "Bookmarks.h"
 #include "Browser.h"
 #include "BrowserPages.h"
 #include "Editor.h"

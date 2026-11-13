@@ -177,9 +177,8 @@ gui_sources = [
   'src/Terminal.cpp',
   'src/TerminalDock.cpp',
   'src/TerminalGroup.cpp',
-  'src/BookmarkOpen.cpp',
+  'src/Bookmarks.cpp',
   'src/Browser.cpp',
-  'src/BookmarkSave.cpp',
   'src/BrowserPages.cpp',
   'src/AppSettings.cpp',
   # Adjust Settings… in every right click menu, View > Theme, and what

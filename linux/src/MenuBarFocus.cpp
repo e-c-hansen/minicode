@@ -126,6 +126,8 @@ void findAndHook(GtkWindow* window, State* s) {
 
 namespace MenuBarFocus {
 
+GtkWidget* bar(GtkWindow* window) { return findBar(GTK_WIDGET(window)); }
+
 void attach(GtkWindow* window) {
     if (!window || g_object_get_data(G_OBJECT(window), kStateKey)) return;
     auto* s = new State;

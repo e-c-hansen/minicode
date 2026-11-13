@@ -86,6 +86,11 @@ public:
                                bool complete, const std::string& note)>;
         std::function<void(const std::string& query, WorkspaceDone done)> workspaceSymbols;
         std::function<void()> cancelWorkspaceSymbols;
+        // The web bookmarks of the window's bookmark folder, "Bookmarks >
+        // Folder/Name" with the file's path, read each time the palette
+        // opens to commands; choosing one runs win.openbookmark on it.
+        struct BookmarkRow { std::string label, path; };
+        std::function<std::vector<BookmarkRow>()> bookmarks;
         // Open a workspace symbol (its file, its name selected), on the
         // turn after the palette closed, inside aroundMove.
         std::function<void(const Lsp::Symbol& symbol)> openWorkspaceSymbol;
@@ -171,6 +176,7 @@ private:
     };
     struct Cmd {
         std::string id, action, label, title, keys;
+        std::string target;   // a string argument for the action (a bookmark's path)
     };
     struct ListJob;
     // Where the editor was when the palette opened, for closing without

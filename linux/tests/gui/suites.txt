@@ -99,3 +99,4 @@ TerminalFindSuite.cpp
 MarkdownSideEditSuite.cpp
 BookmarkSaveSuite.cpp
 BookmarksSuite.cpp
+BookmarkMenuSuite.cpp

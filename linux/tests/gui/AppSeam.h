@@ -72,6 +72,8 @@ struct MCGuiAppWindow {
 };
 
 GtkApplication* MCGuiApplication();
+// The menu bar's Bookmarks menu (4.8): Bookmark This Page, then the folder.
+GMenu* MCGuiBookmarksMenu();
 std::vector<MCGuiAppWindow> MCGuiAppWindows();   // open windows, oldest first
 MCGuiAppWindow MCGuiApp();                       // the newest; empty with none open
 

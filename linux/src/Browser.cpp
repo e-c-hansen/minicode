@@ -16,6 +16,7 @@
 #include "EditorTabs.h"
 #include "TabStrip.h"
 #include "StartupLog.h"
+#include "WebBookmark.h"
 #include "ViewZoom.h"
 
 // The toolbar is made at once and the web view when the panel is first
@@ -46,6 +47,30 @@ Browser::Browser(const std::string& homeUrl) : home_(homeUrl) {
     gtk_box_append(GTK_BOX(bar), fwd);
     gtk_box_append(GTK_BOX(bar), rel);
     gtk_box_append(GTK_BOX(bar), entry_);
+    star_ = gtk_button_new_from_icon_name("non-starred-symbolic");
+    gtk_widget_set_tooltip_text(star_, "Bookmark this page");
+    gtk_widget_set_focus_on_click(star_, FALSE);
+    gtk_widget_set_sensitive(star_, FALSE);
+    book_ = gtk_menu_button_new();
+    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(book_), "user-bookmarks-symbolic");
+    gtk_widget_set_tooltip_text(book_, "Bookmarks");
+    gtk_widget_set_focus_on_click(book_, FALSE);
+    gtk_box_append(GTK_BOX(bar), star_);
+    gtk_box_append(GTK_BOX(bar), book_);
+    g_signal_connect(star_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
+        static_cast<Browser*>(p)->starClicked();
+    }), this);
+    // The model is read from the folder each time the book opens.
+    gtk_menu_button_set_create_popup_func(
+        GTK_MENU_BUTTON(book_),
+        +[](GtkMenuButton* b, gpointer p) {
+            Browser* self = static_cast<Browser*>(p);
+            GMenu* m = self->bookMenu ? self->bookMenu() : nullptr;
+            if (!m) return;
+            gtk_menu_button_set_menu_model(b, G_MENU_MODEL(m));
+            g_object_unref(m);
+        },
+        this, nullptr);
 
     // The tabs, above the toolbar: the editor's strip, dragged to reorder,
     // and a + for a new one.
@@ -608,11 +633,38 @@ void Browser::syncUrlBar() {
     Tab* t = current();
     if (!t) {
         gtk_editable_set_text(GTK_EDITABLE(entry_), "");
+        refreshStar();
         return;
     }
     const char* uri = t->web ? webkit_web_view_get_uri(WEBKIT_WEB_VIEW(t->web)) : nullptr;
     const std::string shown = uri && *uri ? uri : t->url;
     gtk_editable_set_text(GTK_EDITABLE(entry_), shown.c_str());
+    refreshStar();
+}
+
+void Browser::starClicked() {
+    Tab* t = current();
+    if (!t || !onStar) return;
+    const char* uri = t->web ? webkit_web_view_get_uri(WEBKIT_WEB_VIEW(t->web)) : nullptr;
+    onStar(uri && *uri ? uri : t->url, starOn_);
+}
+
+// The star: filled while the page on show is bookmarked anywhere in the
+// folder, and only there to click for a page that may be bookmarked.
+void Browser::refreshStar() {
+    if (!star_) return;
+    Tab* t = current();
+    std::string url;
+    if (t) {
+        const char* uri = t->web ? webkit_web_view_get_uri(WEBKIT_WEB_VIEW(t->web)) : nullptr;
+        url = uri && *uri ? uri : t->url;
+    }
+    const bool web = WebBookmark::isWebAddress(url);
+    starOn_ = web && isBookmarked && isBookmarked(url);
+    gtk_button_set_icon_name(GTK_BUTTON(star_), starOn_ ? "starred-symbolic" : "non-starred-symbolic");
+    gtk_widget_set_tooltip_text(star_, starOn_ ? "Bookmarked: click to move the bookmark to the Trash"
+                                               : "Bookmark this page");
+    gtk_widget_set_sensitive(star_, web);
 }
 
 // URL bar plus back/forward sensitivity. Only call this where the back/forward

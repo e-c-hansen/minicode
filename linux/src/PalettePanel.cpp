@@ -545,6 +545,23 @@ void PalettePanel::collectCommands() {
         entries_.push_back(std::move(e));
         commands_.push_back(std::move(cmd));
     }
+    // The bookmarks, each a row that loads it in the browser.
+    if (ctx_.bookmarks && g_action_group_has_action(win, "openbookmark")) {
+        for (const Context::BookmarkRow& b : ctx_.bookmarks()) {
+            Cmd cmd;
+            cmd.id = "bookmark:" + b.path;
+            cmd.action = "win.openbookmark";
+            cmd.target = b.path;
+            cmd.title = b.label.substr(b.label.find(" > ") + 3);
+            cmd.label = b.label;
+            CommandPalette::Entry e;
+            e.label = Lsp::toUtf16(cmd.label);
+            e.title = Lsp::toUtf16(cmd.title);
+            e.id = cmd.id;
+            entries_.push_back(std::move(e));
+            commands_.push_back(std::move(cmd));
+        }
+    }
 }
 
 void PalettePanel::commandItems(const std::u16string& query, std::string* empty) {
@@ -555,16 +572,17 @@ void PalettePanel::commandItems(const std::u16string& query, std::string* empty)
         it.label = c.label;
         it.markup = marked(e.label, e.label.size() - e.title.size(), m.positions);
         it.keys = c.keys;
-        const std::string id = c.id, action = c.action;
+        const std::string id = c.id, action = c.action, target = c.target;
         GtkWindow* window = window_;
-        it.run = [this, id, action, window] {
+        it.run = [this, id, action, target, window] {
             noteRecent(true, id);
             close(true);
             // On the next turn, out of the field's own key handling, with the
             // keyboard back where it was, so the command acts on what had
             // it, as from the menu bar.
-            later([window, action] {
-                gtk_widget_activate_action(GTK_WIDGET(window), action.c_str(), nullptr);
+            later([window, action, target] {
+                gtk_widget_activate_action(GTK_WIDGET(window), action.c_str(),
+                                           target.empty() ? nullptr : "s", target.c_str());
             });
         };
         items_.push_back(std::move(it));

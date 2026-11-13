@@ -1500,7 +1500,7 @@ These may run in parallel.
   strip's mark and the process monitor all use it (HANDOFF item 63,
   `terminal_ids`). Left out by the owner's decision: command marks (D10).
   Left: the window close question counting busy terminals.
-- [ ] **4.8 Web bookmarks and the browser window.** `WebBookmark` (core,
+- [x] **4.8 Web bookmarks and the browser window.** `WebBookmark` (core,
   `bookmarks:*`; not yet in `meson.build` or the Makefile). Added to the
   Mac in 1.5.20 and 1.5.22, after this file was written. Mac: "Bookmarks
   and the browser window" in `../CLAUDE.md`, `src/Bookmarks.{h,mm}`,
@@ -1537,6 +1537,10 @@ These may run in parallel.
   Occurrence in the editor; on the Mac it is a page key, so only the
   browser takes it) and record it in Decisions and the README's Linux
   column.
+  *Done* (`HANDOFF.md` items 64 to 66): opening and the browser window (64),
+  Save Page as Bookmark on Ctrl+D (D14) and Save All Tabs (65), and the
+  toolbar's star, the book, the Bookmarks menu and the palette's rows (66).
+  Checked by the `bookmarks`, `bookmark_save` and `bookmark_menu` suites.
 
 ## Reported by the owner
 

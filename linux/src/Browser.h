@@ -42,6 +42,21 @@ public:
     // shown. Addresses are not checked here: callers pass only what
     // WebBookmark::isWebAddress accepts.
     void openAddresses(const std::vector<std::string>& urls);
+    // The toolbar's star and book (PARITY.md 4.8; the Mac's toolbar). The
+    // window supplies what they need: whether an address is bookmarked
+    // anywhere in the bookmark folder, what a click on the star does (save
+    // the page, or move its bookmark to the Trash), and the book's menu,
+    // asked for afresh each time the book opens so it is never stale.
+    // refreshStar redraws the star (filled while the address on show is
+    // bookmarked); it runs on every navigation and tab switch, and the
+    // window calls it when the folder changed.
+    std::function<bool(const std::string& url)> isBookmarked;
+    std::function<void(const std::string& url, bool bookmarked)> onStar;
+    std::function<GMenu*()> bookMenu;   // the caller gives up its reference
+    void refreshStar();
+    GtkWidget* starButton() const { return star_; }
+    GtkWidget* bookButton() const { return book_; }
+    bool starFilled() const { return starOn_; }
     // Go to a URL, or to what the URL bar would make of text typed into it.
     void load(const std::string& url);
     // Page Zoom on Safari's steps (ViewZoom::pageStep): in (+1), out (-1),
@@ -143,6 +158,7 @@ private:
     static void onTabUri(GObject* obj, GParamSpec* pspec, gpointer tab);
     static void onTabTitle(GObject* obj, GParamSpec* pspec, gpointer tab);
     static void onTabLoad(WebKitWebView* wv, WebKitLoadEvent ev, gpointer tab);
+    void starClicked();
     void syncUrlBar();   // URL bar text only
     void syncChrome();   // URL bar text + back/forward sensitivity
 
@@ -159,6 +175,9 @@ private:
     bool shown_ = false;           // views may be made (the pane was shown or a page loaded)
     TabStrip* strip_ = nullptr;
     GtkWidget* plus_ = nullptr;
+    GtkWidget* star_ = nullptr;
+    GtkWidget* book_ = nullptr;
+    bool starOn_ = false;
     GtkWidget* back_  = nullptr;
     GtkWidget* fwd_   = nullptr;
     GtkWidget* switcher_ = nullptr;   // Yours | Agent | x, shown with an agent page

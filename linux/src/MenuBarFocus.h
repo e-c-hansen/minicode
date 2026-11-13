@@ -22,4 +22,7 @@ namespace MenuBarFocus {
 // the window's focus and the bar's menus for the window's life.
 void attach(GtkWindow* window);
 
+// The window's menu bar (a GtkPopoverMenuBar), or null before it is made.
+GtkWidget* bar(GtkWindow* window);
+
 }  // namespace MenuBarFocus

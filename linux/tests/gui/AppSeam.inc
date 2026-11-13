@@ -3,6 +3,7 @@
 #include "AppSeam.h"
 
 GtkApplication* MCGuiApplication() { return g.gapp; }
+GMenu* MCGuiBookmarksMenu() { return g.bookmarksMenu; }
 
 static MCGuiAppWindow appWindowParts(App* a) {
     MCGuiAppWindow w;
