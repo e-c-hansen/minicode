@@ -32,6 +32,16 @@ public:
     // The web view, or null before the panel was first shown (for the checks).
     GtkWidget* webView() const;
     void focusUrlBar();
+    // The keyboard into the page on show (the address bar when the tab has
+    // no web view yet).
+    void focusPage();
+    // Bookmarks and `minicode https://...` (PARITY.md 4.8; the Mac's
+    // -openAddresses:). Each address shows the tab already at it, else gets
+    // a tab right of the one on show (the first takes the tab on show when
+    // that is empty, or still the home page); the first address's tab is
+    // shown. Addresses are not checked here: callers pass only what
+    // WebBookmark::isWebAddress accepts.
+    void openAddresses(const std::vector<std::string>& urls);
     // Go to a URL, or to what the URL bar would make of text typed into it.
     void load(const std::string& url);
     // Page Zoom on Safari's steps (ViewZoom::pageStep): in (+1), out (-1),

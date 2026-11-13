@@ -91,3 +91,7 @@ void MCGuiCloseAllWindows();
 // A new window on `folder`, as a second `minicode <folder>` opens one (the
 // Mac's suites open theirs through application:openURLs:).
 void MCGuiOpenWindow(const std::string& folder);
+// What `minicode <args...>` does in the running app (args without argv[0]);
+// what it would print for the terminal is appended to `*errors`.
+void MCGuiCommandLine(const std::vector<std::string>& args, const std::string& cwd,
+                      std::string* errors);

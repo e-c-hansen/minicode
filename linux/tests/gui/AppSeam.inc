@@ -78,3 +78,14 @@ void MCGuiCloseAllWindows() {
 }
 
 void MCGuiOpenWindow(const std::string& folder) { newWindow(folder, ""); }
+
+void MCGuiCommandLine(const std::vector<std::string>& args, const std::string& cwd,
+                      std::string* errors) {
+    std::vector<std::string> all = {"minicode"};
+    all.insert(all.end(), args.begin(), args.end());
+    std::vector<char*> ptrs;
+    for (std::string& a : all) ptrs.push_back(&a[0]);
+    handleCommandLine(ptrs.data(), (int)ptrs.size(), cwd.c_str(), [errors](const std::string& m) {
+        if (errors) *errors += m + "\n";
+    });
+}

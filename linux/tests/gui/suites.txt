@@ -98,3 +98,4 @@ SplitEditorSuite.cpp
 TerminalFindSuite.cpp
 MarkdownSideEditSuite.cpp
 BookmarkSaveSuite.cpp
+BookmarksSuite.cpp

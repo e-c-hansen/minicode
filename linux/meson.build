@@ -177,6 +177,7 @@ gui_sources = [
   'src/Terminal.cpp',
   'src/TerminalDock.cpp',
   'src/TerminalGroup.cpp',
+  'src/BookmarkOpen.cpp',
   'src/Browser.cpp',
   'src/BookmarkSave.cpp',
   'src/BrowserPages.cpp',

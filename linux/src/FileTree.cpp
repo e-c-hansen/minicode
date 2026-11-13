@@ -1126,6 +1126,7 @@ void FileTree::onRightClick(GtkGestureClick* g, int, double x, double y,
     else
         gtk_selection_model_unselect_all(model);
 
+    if (self->onContextMenu) self->onContextMenu();
     GtkWidget* menu = self->contextMenu_;
     if (self->worktreeModel_ && self->isWorktreeRow(self->selectedPath())) {
         if (!self->worktreeMenu_) {
