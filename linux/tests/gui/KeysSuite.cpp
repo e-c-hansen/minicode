@@ -144,7 +144,11 @@ void walkMenu(GMenuModel* model, std::vector<std::pair<std::string, std::string>
             GMenuModel* sub = g_menu_model_get_item_link(model, i, link);
             if (!sub) continue;
             if (tops && label && link == std::string(G_MENU_LINK_SUBMENU)) tops->push_back(label);
-            walkMenu(sub, items, nullptr);
+            // The Bookmarks menu is the bookmark folder's, read from it, and
+            // repeats Save Page as Bookmark as Bookmark This Page, as the
+            // Mac's does: no list of the registry's (bookmark_menu has it).
+            const bool folder = tops && label && std::string(label) == "Bookmarks";
+            if (!folder) walkMenu(sub, items, nullptr);
             g_object_unref(sub);
         }
         g_free(label);
@@ -204,7 +208,7 @@ MC_GUI_SUITE(keys) {
         std::vector<std::pair<std::string, std::string>> all, items;
         std::vector<std::string> tops;
         walkMenu(gtk_application_get_menubar(MCGuiApplication()), &all, &tops);
-        GCHECK_EQ_STR(joined(tops), "File Edit View Terminal Navigate");
+        GCHECK_EQ_STR(joined(tops), "File Edit View Terminal Navigate Bookmarks");
         // View > Adjust Settings and View > Theme are no commands of the
         // registry (a row a part of the window, a row a theme, as the Mac's
         // main.mm adds them); the adjust_settings and themes suites have them.

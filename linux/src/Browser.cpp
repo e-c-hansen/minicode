@@ -92,7 +92,14 @@ Browser::Browser(const std::string& homeUrl) : home_(homeUrl) {
     strip_->onClose = [this](int i) { closeTab(i); };
     strip_->onMove = [this](int from, int to) { moveTab(from, to); };
 
-    gtk_box_append(GTK_BOX(root_), bar);
+    // The star and the book made the bar wider than the pane's smallest, 150
+    // px (RightAreaLayout), which GTK would not allocate below: the bar is
+    // clipped at the right instead, in a scroller of no scroll bar of its own.
+    GtkWidget* clip = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(clip), GTK_POLICY_EXTERNAL, GTK_POLICY_NEVER);
+    gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(clip), TRUE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(clip), bar);
+    gtk_box_append(GTK_BOX(root_), clip);
 
     // Yours | Agent | x, only while there is an agent page.
     switcher_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
