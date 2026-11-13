@@ -66,6 +66,8 @@
 #include "ProcessesPanel.h"
 #include "IdeLinkServer.h"
 #include "Browser.h"
+#include "BookmarkSave.h"
+#include "WebBookmark.h"
 #include "Search.h"
 #include "FindBar.h"
 #include "FolderConsent.h"
@@ -1150,6 +1152,89 @@ static void act_new_browser_tab(GSimpleAction*, GVariant*, gpointer userp) {
     (void)userp;
 #endif
 }
+
+// ---- Saving pages as bookmarks (PARITY.md 4.8; the Mac's saveBrowserBookmark:)
+#ifdef MINICODE_ENABLE_BROWSER
+// Where a bookmark is saved: in the window rooted at the bookmark folder the
+// tree's selected folder (a selected file's folder), else the bookmark
+// folder itself, made when missing. "" with a note in the status bar when it
+// cannot be made.
+static std::string bookmarkFolderForSaving(App* app) {
+    const std::string folder = BookmarkSave::folderFor(g.settings->settings().browserBookmarks());
+    char a[4096], b[4096];
+    const bool inBrowserWindow = !app->rootDir.empty() && realpath(app->rootDir.c_str(), a) &&
+                                 realpath(folder.c_str(), b) && std::string(a) == b;
+    if (inBrowserWindow) {
+        std::string sel = app->tree->selectedDir();
+        if (sel.empty()) {
+            const std::string file = app->tree->selectedPath();
+            sel = file.empty() ? app->rootDir : file.substr(0, file.rfind('/'));
+        }
+        return sel;
+    }
+    std::string err;
+    if (BookmarkSave::ensureFolder(folder, &err)) return folder;
+    flashStatus(app, "No bookmark folder: " + err);
+    return "";
+}
+
+static void act_save_bookmark(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->browser || !app->layout->browserShown() || app->browser->activeTab() < 0) return;
+    const std::string url = app->browser->tabUrl(app->browser->activeTab());
+    const std::string title = app->browser->tabTitle(app->browser->activeTab());
+    if (!WebBookmark::isWebAddress(url)) return;
+    // A page saved once is not saved again under another number.
+    const std::string base = BookmarkSave::folderFor(g.settings->settings().browserBookmarks());
+    const std::string have = BookmarkSave::fileFor(base, url);
+    if (!have.empty()) {
+        flashStatus(app, "Already bookmarked as " + BookmarkSave::shortPath(have));
+        return;
+    }
+    const std::string folder = bookmarkFolderForSaving(app);
+    if (folder.empty()) return;
+    std::string err;
+    const std::string path = BookmarkSave::write(folder, title, url, &err);
+    if (path.empty()) {
+        flashStatus(app, "The bookmark was not saved: " + err);
+        return;
+    }
+    flashStatus(app, "Saved \u201c" + path.substr(path.rfind('/') + 1) + "\u201d in " +
+                         BookmarkSave::shortPath(folder));
+}
+
+static void act_save_browser_tabs(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->browser) return;
+    std::vector<std::string> urls, titles;
+    for (int i = 0; i < app->browser->tabCount(); i++) {
+        urls.push_back(app->browser->tabUrl(i));
+        titles.push_back(app->browser->tabTitle(i));
+    }
+    if (WebBookmark::tabAddresses(urls).empty()) return;
+    const std::string parent = bookmarkFolderForSaving(app);
+    if (parent.empty()) return;
+    char when[64];
+    const time_t now = time(nullptr);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    strftime(when, sizeof when, "%Y-%m-%d %H.%M", &lt);
+    std::string err;
+    size_t saved = 0;
+    const std::string folder = BookmarkSave::writeTabs(parent, when, titles, urls, &saved, &err);
+    if (folder.empty()) {
+        flashStatus(app, "The tabs were not saved: " + err);
+        return;
+    }
+    std::string note = "Saved " + std::to_string(saved) + (saved == 1 ? " tab" : " tabs") +
+                       " in \u201c" + BookmarkSave::shortPath(folder) + "\u201d";
+    if (!err.empty()) note += " (not all: " + err + ")";
+    flashStatus(app, note);
+}
+#else
+static void act_save_bookmark(GSimpleAction*, GVariant*, gpointer) {}
+static void act_save_browser_tabs(GSimpleAction*, GVariant*, gpointer) {}
+#endif
 
 static void act_toggle_browser(GSimpleAction*, GVariant*, gpointer userp) {
     static_cast<App*>(userp)->layout->toggleBrowser();
@@ -3640,6 +3725,8 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "runfile",        G_CALLBACK(act_run_file));
     addAction(app, "togglebrowser",  G_CALLBACK(act_toggle_browser));
     addAction(app, "newbrowsertab",  G_CALLBACK(act_new_browser_tab));
+    addAction(app, "savebookmark",   G_CALLBACK(act_save_bookmark));
+    addAction(app, "savebrowsertabs", G_CALLBACK(act_save_browser_tabs));
     addAction(app, "togglegit",      G_CALLBACK(act_toggle_git));
     addAction(app, "toggleprocesses", G_CALLBACK(act_toggle_processes));
     addAction(app, "toggleagents", G_CALLBACK(act_toggle_agents));

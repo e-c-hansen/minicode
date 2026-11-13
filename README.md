@@ -528,7 +528,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Run the selected lines, or the cursor's line, in a Python REPL in a terminal tab of its own | Shift Return, in a Python file |  |  |
 | Save | Command S | Ctrl S | S, or Ctrl S |
 | Save every tab with unsaved changes | Option Command S | Ctrl Alt S |  |
-| Save the browser's page as a bookmark, while the browser has the keyboard (the toolbar's star, or File > Save Page as Bookmark anywhere) | Command D |  |  |
+| Save the browser's page as a bookmark, while the browser has the keyboard (the toolbar's star, or File > Save Page as Bookmark anywhere) | Command D | Ctrl D |  |
 | Save the file under another name, the tab then showing the new file | Save As in the File menu (Shift Command S is Export PDF) |  |  |
 | Scroll the editor a line up or down, the cursor staying where it is |  | Ctrl Up, Ctrl Down |  |
 | See the language servers, restart one, or choose the Python interpreter | Click the server in the status bar, or the minicode menu |  |  |

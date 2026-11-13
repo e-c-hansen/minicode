@@ -97,6 +97,7 @@ core_sources = [
   core_dir / 'Backups.cpp',
   core_dir / 'TabSessions.cpp',
   core_dir / 'BrowserTabs.cpp',
+  core_dir / 'WebBookmark.cpp',
   # The gutter's line index, and the change bars it moves with the lines.
   core_dir / 'LineIndex.cpp',
   core_dir / 'QuickDiff.cpp',
@@ -177,6 +178,7 @@ gui_sources = [
   'src/TerminalDock.cpp',
   'src/TerminalGroup.cpp',
   'src/Browser.cpp',
+  'src/BookmarkSave.cpp',
   'src/BrowserPages.cpp',
   'src/AppSettings.cpp',
   # Adjust Settings… in every right click menu, View > Theme, and what

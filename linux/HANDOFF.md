@@ -4293,6 +4293,45 @@ Trap: split_editor needs the editor's full width; a browser pane an earlier suit
   term-output by id and the window's id refused, the monitor's rows.
 - Left out: the Mac's `cwd`, `message` and `session` fields in `state`.
 
+### 65. Web bookmarks: saving pages (done, November 2026; `PARITY.md` item 4.8, second part)
+
+- **The core** `WebBookmark.cpp` is in both build lists. `src/BookmarkSave.{h,cpp}`
+  (no GTK) is the file half of the Mac's `Bookmarks.mm`: `folderFor`
+  (`browser.bookmarks`, `~` expanded, a relative path from home, else
+  `~/Bookmarks`), `ensureFolder`, `write` (the core's `fileName` and
+  `uniqueName`, then `O_CREAT|O_EXCL` so a name taken meanwhile gets the
+  next number and a file is never replaced), `fileFor` (the bookmark for an
+  address anywhere under the folder by `sameAddress`, hidden entries
+  skipped, 10,000 entries and symlink loops cut), `writeTabs`.
+- **Save Page as Bookmark** is `minicode.browser.saveBookmark`, **Ctrl+D as a
+  Page command** (`PARITY.md` D14), with its row in `CommandsLinux.cpp` and
+  `Keys.cpp` (`win.savebookmark`, `act_save_bookmark` in `main.cpp`). The
+  editor keeps Ctrl+D for Add Next Occurrence: `Keys.cpp`'s `bound` and
+  `rank` give a Page command its keys only while `place.page` holds (the
+  browser's page or toolbar, or a PDF), as for Ctrl+T. File > Save Page as
+  Bookmark is the same action from anywhere. A page already bookmarked is not
+  saved again; the status bar says "Already bookmarked as ~/Bookmarks/x.url".
+  The file goes in the bookmark folder (made when missing), or, in the
+  window rooted at it, in the tree's selected folder (a selected file's
+  folder, else the root).
+- **Save All Tabs as Bookmarks** (`win.savebrowsertabs`, no key) makes
+  `Tabs YYYY-MM-DD HH.MM` (a number when taken) and writes a bookmark for each
+  tab with a web address, once each (`tabAddresses`' rule), named by the tab's
+  title; the status bar says how many.
+- **Checked by** `bookmark_save` (`BookmarkSaveSuite.cpp`): a server in the
+  process, a scratch `browser.bookmarks`; real Ctrl+D with the page focused,
+  a second one that writes nothing and says where, a taken title numbered, Ctrl+D
+  in the editor still Add Next Occurrence (carets) and saving nothing, the File
+  menu's action with the editor focused, Save All Tabs. Core: `commands:linux-*`
+  and the README's Linux column.
+- Left out: the toolbar's star (filled while bookmarked; a click moves the
+  bookmark to the Trash), the book and the Bookmarks menu, the palette's
+  bookmarks (the next bite); the actions are not disabled with no page (they
+  do nothing).
+- **Needs a person**: Ctrl+D in a real WebKit page on a desktop where the
+  page might take it (no page we know binds it); where the status bar's note
+  reads on a narrow window.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**
