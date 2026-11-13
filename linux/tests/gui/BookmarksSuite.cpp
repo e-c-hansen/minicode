@@ -94,7 +94,15 @@ void rightClickRow(const std::string& name) {
     GCHECK(treeRow(name) != nullptr);
     MCGuiClick(treeRow(name), -1, -1, 3);
 }
+// A full run leaves the project folder with a hundred entries, more than the
+// tree shows at once, and its list view makes rows only for what is on
+// screen: each row is brought into view before it is clicked.
+void bringRow(const std::string& name) {
+    MCGuiStep(name + "'s row brought into view in the tree", [name] { MCGuiApp().tree->revealPath(F(name)); });
+    MCGuiWait(name + "'s row", 10, [name] { return treeRow(name) != nullptr; });
+}
 int gTabs = 0, gWindows = 0;
+size_t gWindowsBefore = 0;   // open when the suite began; the rest are its own
 std::string gErrors;
 
 }  // namespace
@@ -117,6 +125,7 @@ MC_GUI_SUITE(bookmarks) {
         g_socket_service_start(gServer);
         GCHECK(gPort > 0);
 
+        gWindowsBefore = MCGuiAppWindows().size();
         gBm = MCGuiScratch() + "/bm-folder";   // not made: the command line makes it
         MCGuiSetSettings("lsp.enabled = false\nbrowser.bookmarks = " + gBm + "\n");
 
@@ -132,13 +141,16 @@ MC_GUI_SUITE(bookmarks) {
         MCGuiWriteFile(F("folder/notes.txt"), "not a bookmark\n");
         MCGuiWriteFile(F("empty/notes.txt"), "no bookmark here\n");
         MCGuiWriteFile(F("notes.txt"), "plain\n");
-        MCGuiApp().layout->hideBrowser();   // an earlier suite may have left it showing
+        // An earlier suite may have left the browser showing, and with tabs:
+        // the first open below must find no page to keep.
+        while (browser()->tabCount() > 0) browser()->closeTab(browser()->tabCount() - 1);
+        MCGuiApp().layout->hideBrowser();
         GCHECK(!MCGuiApp().layout->browserShown());
         GCHECK(MCGuiFileExists(gBm) == false);
     });
-    MCGuiWait("the tree lists them", 30, [] { return treeRow("a.url") && treeRow("js.url") && treeRow("binary.webloc") && treeRow("folder") && treeRow("empty") && treeRow("notes.txt"); });
 
     // ---- opening from the tree
+    bringRow("a.url");
     MCGuiStep("a single click on a .url", [] {
         GCHECK(!MCGuiApp().layout->browserShown());
         MCGuiClick(treeRow("a.url"));
@@ -156,9 +168,11 @@ MC_GUI_SUITE(bookmarks) {
         browser()->newTab(url("other"));   // another tab on show, so the first must be brought back
     });
     MCGuiWait("the other tab is on show", 60, [] { return browser()->activeTab() == 1 && browser()->userProbe(); });
+    bringRow("a-again.url");
     MCGuiStep("another bookmark of the same address", [] { MCGuiClick(treeRow("a-again.url")); });
     MCGuiWait("the first tab is shown again", 30, [] { return browser()->activeTab() == 0; });
     MCGuiStep("no new tab was made", [] { GCHECK(browser()->tabCount() == gTabs + 1); });
+    bringRow("a.url");
     MCGuiStep("a double-click on a bookmark gives the page the keyboard", [] {
         MCGuiApp().layout->toggleBrowser();   // hidden, to see it come back
         GCHECK(!MCGuiApp().layout->browserShown());
@@ -169,14 +183,17 @@ MC_GUI_SUITE(bookmarks) {
     });
 
     // ---- what is not a web address opens as text
+    bringRow("file.url");
     MCGuiStep("a file: bookmark", [] { MCGuiClick(treeRow("file.url")); });
     MCGuiWait("it is text in the editor", 30, [] { return ed()->currentPath() == F("file.url"); });
+    bringRow("js.url");
     MCGuiStep("a javascript: bookmark", [] {
         GCHECK(MCGuiEditorText().find("file:///etc/hostname") != std::string::npos);
         GCHECK(browser()->tabCount() == gTabs + 1);
         MCGuiClick(treeRow("js.url"));
     });
     MCGuiWait("it is text too", 30, [] { return ed()->currentPath() == F("js.url"); });
+    bringRow("binary.webloc");
     MCGuiStep("a binary .webloc", [] {
         GCHECK(MCGuiEditorText().find("javascript:alert(1)") != std::string::npos);
         MCGuiClick(treeRow("binary.webloc"));
@@ -185,6 +202,7 @@ MC_GUI_SUITE(bookmarks) {
     MCGuiStep("no tab was added for any of them", [] { GCHECK(browser()->tabCount() == gTabs + 1); });
 
     // ---- the right click menu
+    bringRow("a.url");
     MCGuiStep("a right click on a bookmark enables Open as Text only", [] { rightClickRow("a.url"); });
     MCGuiWait("the menu items follow the row", 10, [] {
         return actionEnabled("openbookmarkastext") && !actionEnabled("openbookmarkstabs");
@@ -201,20 +219,27 @@ MC_GUI_SUITE(bookmarks) {
         closeMenus(MCGuiApp().tree->widget());
     });
     MCGuiWait("the menu is closed", 10, [] { return !anyMenuOpen(MCGuiApp().tree->widget()); });
+    bringRow("notes.txt");
     MCGuiStep("a right click on a plain file", [] { rightClickRow("notes.txt"); });
     MCGuiWait("a plain file enables neither", 10, [] {
         return !actionEnabled("openbookmarkastext") && !actionEnabled("openbookmarkstabs");
     });
     MCGuiStep("close the menu", [] { closeMenus(MCGuiApp().tree->widget()); });
     MCGuiWait("it is closed", 10, [] { return !anyMenuOpen(MCGuiApp().tree->widget()); });
+    bringRow("empty");
     MCGuiStep("a folder with no bookmark enables neither", [] { rightClickRow("empty"); });
     MCGuiWait("still neither", 10, [] { return !actionEnabled("openbookmarkastext") && !actionEnabled("openbookmarkstabs"); });
     MCGuiStep("close the menu again", [] { closeMenus(MCGuiApp().tree->widget()); });
     MCGuiWait("it is closed again", 10, [] { return !anyMenuOpen(MCGuiApp().tree->widget()); });
+    bringRow("folder");
     MCGuiStep("a folder with bookmarks enables Open All", [] { rightClickRow("folder"); });
     MCGuiWait("Open All in Browser Tabs is enabled", 10, [] {
         return actionEnabled("openbookmarkstabs") && !actionEnabled("openbookmarkastext");
     });
+    // Run from its action, not a click on the item, so the menu stays up and
+    // would take the next suite's first click: it is closed first.
+    MCGuiStep("close the folder's menu", [] { closeMenus(MCGuiApp().tree->widget()); });
+    MCGuiWait("the folder's menu is closed", 10, [] { return !anyMenuOpen(MCGuiApp().tree->widget()); });
     MCGuiStep("Open All in Browser Tabs", [] {
         gTabs = browser()->tabCount();
         activate("openbookmarkstabs");
@@ -272,5 +297,20 @@ MC_GUI_SUITE(bookmarks) {
             g_object_unref(gServer);
             gServer = nullptr;
         }
+    });
+    // The window on the bookmark folder is the newest, which MCGuiApp()
+    // answers for every later suite: it goes, and the first window has the
+    // keyboard again.
+    MCGuiStep("the windows the suite made are closed", [] {
+        const auto all = MCGuiAppWindows();
+        for (size_t i = gWindowsBefore; i < all.size(); i++) gtk_window_close(all[i].window);
+    });
+    MCGuiWait("gone", 10, [] { return MCGuiAppWindows().size() == gWindowsBefore; });
+    // Also the X server's focus, which went to the root with the closed
+    // window: a later suite's first modifier click would raise the window
+    // over a menu it had just opened, and click the window instead.
+    MCGuiStep("the first window has the keyboard", [] {
+        MCGuiSetKeyWindow(nullptr);
+        MCGuiFocusKeyWindow();
     });
 }

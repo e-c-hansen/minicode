@@ -174,6 +174,8 @@ MC_GUI_SUITE(bookmark_menu) {
         writeBookmark(gFolder + "/Beta_x.url", url("/two"));
         writeBookmark(gFolder + "/Work/Delta.url", url("/three"));
         MCGuiWriteFile(gTrash + "/keep", "");
+        // An earlier suite may have left tabs: tab 0 must be the page loaded below.
+        while (browser()->tabCount() > 0) browser()->closeTab(browser()->tabCount() - 1);
         MCGuiApp().layout->showBrowser();
     });
     MCGuiWait("the first page is made", 60, [] { return browser()->userProbe() != nullptr; });
