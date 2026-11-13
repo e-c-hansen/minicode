@@ -16,6 +16,9 @@ namespace PageCheck {
 
 // The setting that lifts the origin limit (Settings.h, pageAnyOrigin).
 constexpr const char* kAnyOriginSetting = "control.page-any-origin";
+// The setting that lets `page --paste` type into the agent page (Settings.h,
+// pageInput).
+constexpr const char* kInputSetting = "control.page-input";
 // The most of a page's text `page --text` returns, in bytes.
 constexpr size_t kMaxTextBytes = 1024 * 1024;
 // Console entries kept per page load, and the most of one entry's text.
@@ -102,6 +105,21 @@ Json entryJson(const ConsoleEntry& e);
 // there is none: a file, or no answer yet), the title and whether a load
 // is still on its way.
 Json pageState(const std::string& url, int status, const std::string& title, bool loading);
+
+// ---------------------------------------------------------- typing
+// `page --paste` sends Cmd+V (after Cmd+A with --all) to the agent page, as
+// the user would type them, and only into a field the page already has the
+// keyboard in: what the user clicked into. What has the keyboard there
+// (document.activeElement): its tag name (upper case, as the DOM gives it),
+// for an INPUT its type (lower case), whether it is contenteditable, and
+// whether it is read-only or disabled.
+enum class Focus { None, Field, Frame };
+Focus focusKind(const std::string& tag, const std::string& type, bool editable, bool readOnly);
+// "field", "frame" or "none", as the answer names it.
+const char* focusName(Focus f);
+// The errors: the setting is off; nothing in the page takes text.
+std::string inputOffError();
+std::string noFieldError(const std::string& url);
 
 // Text cut to at most `maxBytes` bytes on a UTF-8 character boundary.
 std::string clipUtf8(const std::string& text, size_t maxBytes);

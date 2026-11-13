@@ -476,6 +476,10 @@ public:
     // Bookmark writes to, as written in the file ("~" not expanded); empty
     // for the default, ~/Bookmarks (WebBookmark.h).
     const std::string& browserBookmarks() const { return browserBookmarks_; }
+    // control.page-input: whether `minicode page --paste` may type Cmd+A and
+    // Cmd+V into the field the user clicked into on the agent page (off by
+    // default; PageCheck.h).
+    bool pageInput() const { return pageInput_; }
     static const std::vector<std::string>& formatLanguages();
     // git.autofetch: fetch the folder's repository in the background, as
     // VS Code's git.autofetch (off by default); git.autofetch-period, the
@@ -557,6 +561,7 @@ private:
     std::string agentCommand_;
     bool pageAnyOrigin_ = false;
     std::string browserBookmarks_;
+    bool pageInput_ = false;
 
     bool apply(const std::string& key, const std::string& value,
                std::string& error);

@@ -277,6 +277,20 @@ NSString *IsolatedListener(NSString *eventName) {
     }];
 }
 
+- (void)readFocus:(void (^)(PageCheck::Focus, NSString *))done {
+    NSString *script =
+        @"(function(){var e=document.activeElement;if(!e||e===document.body)return ['','',false,false];"
+        @"return [String(e.tagName||''),String(e.type||'').toLowerCase(),!!e.isContentEditable,"
+        @"!!(e.readOnly||e.disabled)];})()";
+    [self evaluate:script done:^(id value, NSString *error) {
+        NSArray *a = [value isKindOfClass:NSArray.class] ? value : nil;
+        if (error || a.count != 4) { done(PageCheck::Focus::None, error ?: @"the page did not say"); return; }
+        auto str = [](id v) { return std::string([v isKindOfClass:NSString.class] ? [v UTF8String] ?: "" : ""); };
+        auto flag = [](id v) { return [v isKindOfClass:NSNumber.class] && [v boolValue]; };
+        done(PageCheck::focusKind(str(a[0]), str(a[1]), flag(a[2]), flag(a[3])), nil);
+    }];
+}
+
 // Writes `png` to `path` as a new file: O_EXCL, so a file or a symlink
 // that appeared since the path was checked is never replaced or written
 // through. NO with *why.
