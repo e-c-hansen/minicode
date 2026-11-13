@@ -3579,7 +3579,7 @@ core file its files include. Traps paid for:
 
 ## Current state (2026-11-08)
 
-- **Released: 1.5.22** (2026-11-12), and the user's Homebrew copy is on it.
+- **Released: 1.5.23** (2026-11-13), and the user's Homebrew copy is on it.
   Since 1.5.8: 1.5.9 security and data safety (bracketed paste, secure
   keyboard entry, symlinked config writes, the tectonic checksum and
   `--untrusted`, formatter consent, the cask's arm64 requirement); 1.5.10
@@ -3603,7 +3603,10 @@ core file its files include. Traps paid for:
   backgrounds as drawn, Cmd+F in the browser; 1.5.18 and 1.5.19 Linux
   only; 1.5.20 web bookmarks and the browser window (`minicode
   https://...`); 1.5.21 Linux only; 1.5.22 the browser toolbar's star,
-  the bookmark folder as a menu, and saving a page once. Every release from 1.5.7 on has notes of what
+  the bookmark folder as a menu, and saving a page once; 1.5.23 `minicode
+  page --paste` (the page-paste branch of 2026-11-10, merged late: the
+  owner's settings already had `control.page-input`, which the status bar
+  called unknown). Every release from 1.5.7 on has notes of what
   changed on GitHub (`gh release view v1.5.17`), written for users and
   given to release.sh as `MINICODE_RELEASE_NOTES`.
 - **PPA**: current at 1.5.21 (`1.5.21-1~ppa1~resolute1`, a Linux-only
@@ -3612,8 +3615,8 @@ core file its files include. Traps paid for:
   (`echo test | gpg --clearsign -u EEF9635EDB7F9335`), or signing fails
   once the passphrase cache has expired (1.5.14 was skipped for that
   reason). ppa.sh then waits for Launchpad's build (see "Build, test, run,
-  release"). 1.5.20 and 1.5.22 were cut on the Mac with `MINICODE_NO_PPA=1`;
-  1.5.22 changed only the Mac, so the PPA owes it nothing.
+  release"). 1.5.20, 1.5.22 and 1.5.23 were cut on the Mac with `MINICODE_NO_PPA=1`;
+  1.5.22 and 1.5.23 changed only the Mac, so the PPA owes them nothing.
 - The release is arm64 only (built on Apple silicon with no `-arch` flag);
   the README says so and the cask declares `depends_on arch: :arm64`.
 - **Left to the owner**: notarization (the paid Apple Developer Program),
