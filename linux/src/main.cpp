@@ -44,7 +44,9 @@
 
 #include "AppSettings.h"
 #include "Appearance.h"
+#include "BookmarkOpen.h"
 #include "BracketView.h"
+#include "WebBookmark.h"
 #include "Carets.h"
 #include "ConsentBar.h"
 #include "Detach.h"
@@ -580,13 +582,117 @@ static bool askExternalChange(void* userp) {
 // there (a single click in the tree, a search result, a definition), else a
 // kept tab. The tab on show keeps its unsaved changes, so nothing is asked.
 // Anything to do once the file is on show goes in `then`.
+static bool openBookmarkFile(App* app, const std::string& path, EditorTabs::OpenFrom from);
+
 static void openFileThen(App* app, const std::string& path, EditorTabs::OpenFrom from,
                          std::function<void()> then) {
+    // A web bookmark loads in the browser pane instead (PARITY.md 4.8).
+    if (openBookmarkFile(app, path, from)) return;
     showEditorArea(app);   // opening a file must not disappear into a hidden pane
     app->editor->openFile(path, from);
     updateTitle(app);
     refreshHints(app);   // the Markdown line depends on the open file
     if (then) then();
+}
+
+
+// ------------------------------------------------------------ web bookmarks
+// PARITY.md 4.8, the first part (the Mac's EditorController+Bookmarks.mm): a
+// .url or .webloc opened in a window loads its address in that window's
+// browser pane; the window rooted at the bookmark folder is the browser
+// window, where `minicode https://...` opens its pages.
+
+// Open as Text on a bookmark file skips the browser once.
+static bool gOpenBookmarkAsText = false;
+
+static std::string bookmarksFolder() {
+    return BookmarkOpen::folder(g.settings->settings().browserBookmarks());
+}
+
+static bool isBrowserWindow(App* app) {
+    return !app->rootDir.empty() && BookmarkOpen::sameFolder(app->rootDir, bookmarksFolder());
+}
+
+// The addresses shown in the window's browser pane, the pane made visible
+// with the keyboard where it was; the page gets it when asked for (or when
+// what had it is hidden now). In the browser window the page has the whole
+// right side until a file is opened beside it.
+static void showWebAddresses(App* app, const std::vector<std::string>& urls, bool focusPage) {
+#ifdef MINICODE_ENABLE_BROWSER
+    if (!app->browser) return;
+    const std::vector<std::string> addresses = WebBookmark::tabAddresses(urls);
+    if (addresses.empty()) return;
+    // Loaded first, so a pane not shown before opens these pages, not its
+    // home page.
+    app->browser->openAddresses(addresses);
+    app->layout->showBrowser();
+    if (isBrowserWindow(app) && app->editor->currentPath().empty() && app->layout->editorShown())
+        app->layout->toggleEditor();
+    GtkWidget* held = gtk_root_get_focus(GTK_ROOT(app->window));
+    if (focusPage || (held && !gtk_widget_get_mapped(held))) app->browser->focusPage();
+#else
+    (void)app; (void)urls; (void)focusPage;
+#endif
+}
+
+// True when `path` is a bookmark with an address that may open and it was
+// shown in the browser. Any other file (a bookmark with another address,
+// an unreadable or binary .webloc) is left to open as text.
+static bool openBookmarkFile(App* app, const std::string& path, EditorTabs::OpenFrom from) {
+#ifdef MINICODE_ENABLE_BROWSER
+    if (gOpenBookmarkAsText || !app->browser || !WebBookmark::isBookmarkPath(path)) return false;
+    const std::string url = BookmarkOpen::addressOf(path);
+    if (url.empty()) return false;
+    EditorTabs::PreviewSettings ps;
+    ps.enabled = g.settings->settings().enablePreview();
+    ps.fromQuickOpen = g.settings->settings().enablePreviewFromQuickOpen();
+    showWebAddresses(app, {url}, !EditorTabs::opensInPreview(from, ps));
+    return true;
+#else
+    (void)app; (void)path; (void)from;
+    return false;
+#endif
+}
+
+// The tree's right-click items follow the row: Open as Text for a bookmark
+// file, Open All in Browser Tabs for a folder with a bookmark in it.
+static void updateBookmarkActions(App* app) {
+    const std::string sel = app->tree->selectedPath();
+    const bool isDir = !sel.empty() && g_file_test(sel.c_str(), G_FILE_TEST_IS_DIR);
+    const bool file = !sel.empty() && !isDir && WebBookmark::isBookmarkPath(sel);
+    auto enable = [app](const char* name, bool on) {
+        if (GAction* a = g_action_map_lookup_action(G_ACTION_MAP(app->window), name))
+            g_simple_action_set_enabled(G_SIMPLE_ACTION(a), on);
+    };
+    enable("openbookmarkastext", file);
+    enable("openbookmarkstabs", isDir && BookmarkOpen::hasBookmarkIn(sel));
+}
+
+static void act_open_bookmark_as_text(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    const std::string path = app->tree->selectedPath();
+    if (path.empty() || !WebBookmark::isBookmarkPath(path) ||
+        g_file_test(path.c_str(), G_FILE_TEST_IS_DIR)) {
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    gOpenBookmarkAsText = true;
+    openFileThen(app, path, EditorTabs::OpenFrom::Other, nullptr);
+    gOpenBookmarkAsText = false;
+    app->editor->focusActiveDocument();
+}
+
+static void act_open_bookmarks_in_tabs(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    const std::string dir = app->tree->selectedDir();
+    const std::vector<std::string> urls = dir.empty() ? std::vector<std::string>()
+                                                      : BookmarkOpen::addressesIn(dir);
+    if (urls.empty()) {
+        if (!dir.empty()) flashStatus(app, "No bookmarks in “" + baseName(dir) + "”");
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    showWebAddresses(app, urls, true);
 }
 
 // Called by everything that opens a file with nothing to do afterwards, in a
@@ -3116,6 +3222,13 @@ static void initShared() {
     // with Adjust Settings… for the tree's keys.
     g.treeMenu = Keys::menuOf({"explorer.newFile", "explorer.newFolder", "", "renameFile",
                                "moveFileToTrash", "", "revealFileInOS", "copyFilePath"});
+    {   // the bookmark items, enabled by the row (updateBookmarkActions)
+        GMenu* marks = g_menu_new();
+        g_menu_append(marks, "Open as Text", "win.openbookmarkastext");
+        g_menu_append(marks, "Open All in Browser Tabs", "win.openbookmarkstabs");
+        g_menu_append_section(G_MENU(g.treeMenu), nullptr, G_MENU_MODEL(marks));
+        g_object_unref(marks);
+    }
     Appearance::addItem(G_MENU(g.treeMenu), "tree");
     StartupLog::mark("keys and the menu bar");
 }
@@ -3617,6 +3730,9 @@ static App* newWindow(const std::string& root, const std::string& file) {
     addAction(app, "rename",         G_CALLBACK(act_rename));
     addAction(app, "trash",          G_CALLBACK(act_trash));
     addAction(app, "reveal",         G_CALLBACK(act_reveal));
+    addAction(app, "openbookmarkastext", G_CALLBACK(act_open_bookmark_as_text));
+    addAction(app, "openbookmarkstabs",  G_CALLBACK(act_open_bookmarks_in_tabs));
+    app->tree->onContextMenu = [app] { updateBookmarkActions(app); };
     addAction(app, "copypath",       G_CALLBACK(act_copy_path));
     addAction(app, "find",           G_CALLBACK(act_find));
     addAction(app, "replace",        G_CALLBACK(act_replace));
@@ -4023,28 +4139,74 @@ static void startControlChannel() {
 // HANDLES_COMMAND_LINE (rather than HANDLES_OPEN) is what lets us keep parsing
 // argv[1] ourselves: it can be a directory or a file, and GApplication must not
 // guess which.
-static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
-    StartupLog::mark("command line");
-    int n = 0;
-    char** args = g_application_command_line_get_arguments(cl, &n);
-    const Startup st = resolveStartupPath(n > 1 ? args[1] : nullptr,
-                                          g_application_command_line_get_cwd(cl));
-    g_strfreev(args);
+static void handleCommandLine(char** args, int n, const char* cwd,
+                              const std::function<void(const std::string&)>& printerr) {
+    // Web addresses are never paths: http and https ones go to the browser
+    // window (PARITY.md 4.8); the first other argument is the path, as before.
+    std::vector<std::string> addresses;
+    const char* pathArg = nullptr;
+    for (int i = 1; i < n; i++) {
+        if (WebBookmark::isWebAddress(args[i])) addresses.push_back(args[i]);
+        else if (!pathArg) pathArg = args[i];
+    }
+    const bool pathWanted = pathArg || addresses.empty();
+    const Startup st = pathWanted
+        ? resolveStartupPath(pathArg, cwd)
+        : Startup();
 
     // printerr on the command line object, not g_printerr: for a second
     // `minicode <path>` this routes the message back to the shell that ran it
     // instead of the stderr of the process that happens to own the window.
-    if (!st.error.empty()) g_application_command_line_printerr(cl, "%s\n", st.error.c_str());
+    if (!st.error.empty()) printerr(st.error);
 
-    for (App* a : g.windows) {
-        if (a->rootDir != st.root) continue;
-        if (!st.file.empty()) openFileCb(st.file, a);
-        gtk_window_present(GTK_WINDOW(a->window));
-        return 0;
+    bool windowMade = false;
+    if (pathWanted) {
+        App* found = nullptr;
+        for (App* a : g.windows)
+            if (a->rootDir == st.root) { found = a; break; }
+        if (found) {
+            if (!st.file.empty()) openFileCb(st.file, found);
+            gtk_window_present(GTK_WINDOW(found->window));
+        } else {
+            newWindow(st.root, st.file);
+            windowMade = true;
+        }
     }
-    newWindow(st.root, st.file);
-    reopenFoldersWithBackups();   // once, at the first launch
-    startControlChannel();        // once, with the first window
+    if (!addresses.empty()) {
+        // The window rooted at the bookmark folder, made with the folder when
+        // missing; later addresses join it.
+        initShared();
+        const std::string folder = bookmarksFolder();
+        App* target = nullptr;
+        for (App* a : g.windows)
+            if (!a->dead && BookmarkOpen::sameFolder(a->rootDir, folder)) { target = a; break; }
+        std::string why;
+        if (!target && !BookmarkOpen::ensureFolder(folder, &why)) {
+            printerr("minicode: " + folder + ": " + why);
+        } else {
+            if (!target) {
+                target = newWindow(folder, "");
+                windowMade = true;
+            }
+            showWebAddresses(target, addresses, true);
+            gtk_window_present(GTK_WINDOW(target->window));
+        }
+    }
+    if (windowMade) {
+        reopenFoldersWithBackups();   // once, at the first launch
+        startControlChannel();        // once, with the first window
+    }
+}
+
+static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
+    StartupLog::mark("command line");
+    int n = 0;
+    char** args = g_application_command_line_get_arguments(cl, &n);
+    handleCommandLine(args, n, g_application_command_line_get_cwd(cl),
+                      [cl](const std::string& m) {
+                          g_application_command_line_printerr(cl, "%s\n", m.c_str());
+                      });
+    g_strfreev(args);
     return 0;
 }
 

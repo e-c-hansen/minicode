@@ -128,6 +128,8 @@ core_sources = [
   core_dir / 'FolderTools.cpp',
   core_dir / 'PythonEnvs.cpp',
   core_dir / 'InstallHints.cpp',
+  # Web bookmarks: .url and .webloc files (BookmarkOpen.cpp, PARITY.md 4.8).
+  core_dir / 'WebBookmark.cpp',
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
@@ -176,6 +178,7 @@ gui_sources = [
   'src/Terminal.cpp',
   'src/TerminalDock.cpp',
   'src/TerminalGroup.cpp',
+  'src/BookmarkOpen.cpp',
   'src/Browser.cpp',
   'src/BrowserPages.cpp',
   'src/AppSettings.cpp',

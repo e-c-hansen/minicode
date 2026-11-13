@@ -41,7 +41,8 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/BracketMatch.cpp ../src/BracketPairs.cpp ../src/AutoClose.cpp \
         ../src/MultiCaret.cpp ../src/Snippet.cpp ../src/EditBatch.cpp ../src/Folding.cpp \
         ../src/Formatter.cpp ../src/FormatRun.cpp ../src/FolderTools.cpp \
-        ../src/PythonEnvs.cpp ../src/InstallHints.cpp
+        ../src/PythonEnvs.cpp ../src/InstallHints.cpp \
+        ../src/WebBookmark.cpp
 
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
@@ -50,7 +51,7 @@ GUI := src/main.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Do
        src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp src/CsvTable.cpp src/SqliteView.cpp src/JsonOutlineView.cpp src/MarkdownSide.cpp \
        src/BracketView.cpp src/BracketColors.cpp src/AutoCloseInput.cpp src/BufferText.cpp \
        src/Carets.cpp src/CaretEdits.cpp src/SnippetSession.cpp src/Folds.cpp \
-       src/Terminal.cpp src/TerminalDock.cpp src/TerminalGroup.cpp src/Browser.cpp src/BrowserPages.cpp src/AppSettings.cpp src/Appearance.cpp src/MenuBarFocus.cpp \
+       src/Terminal.cpp src/TerminalDock.cpp src/TerminalGroup.cpp src/Browser.cpp src/BrowserPages.cpp src/BookmarkOpen.cpp src/AppSettings.cpp src/Appearance.cpp src/MenuBarFocus.cpp \
        src/ThemeCss.cpp \
        src/Search.cpp src/FindBar.cpp src/MultiEdit.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
        src/LatexClick.cpp src/Latex.cpp src/TermLinkPath.cpp \

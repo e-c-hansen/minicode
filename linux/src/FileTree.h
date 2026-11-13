@@ -98,6 +98,9 @@ public:
     // The right-click menu. Its items name window actions ("win.rename"),
     // which resolve because the menu is parented inside the window.
     void setContextMenu(GMenuModel* model);
+    // Called after a right click selected its row and before the menu pops
+    // up, so the window can enable the items that depend on the row.
+    std::function<void()> onContextMenu;
     // The Worktrees node (PARITY.md 3.5): the title and tooltip of the
     // worktree at `path` (a folder of .claude/worktrees), false for none;
     // a right click on one pops `model`. redecorate() makes the rows say it.

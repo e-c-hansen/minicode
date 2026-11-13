@@ -12,8 +12,11 @@ Terminal=false
 Categories=Development;TextEditor;IDE;
 Keywords=code;editor;text;programming;
 # Only directories: main() treats argv[1] as the folder to open as the project
-# root, so handing it a plain file would not do what the user meant.
-MimeType=inode/directory;
+# root, so handing it a plain file would not do what the user meant. The one
+# file type is a web bookmark (a .url file), which opens in the browser pane;
+# listing it only offers minicode, as the Mac's Info.plist does, and takes no
+# default.
+MimeType=inode/directory;application/x-mswinurl;
 StartupNotify=true
 # Wayland matches the window by its GTK application id, which is already
 # org.minicode.Editor (= this file's name). This line is the X11/Xwayland

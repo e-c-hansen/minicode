@@ -4293,6 +4293,68 @@ Trap: split_editor needs the editor's full width; a browser pane an earlier suit
   term-output by id and the window's id refused, the monitor's rows.
 - Left out: the Mac's `cwd`, `message` and `session` fields in `state`.
 
+### 64. Web bookmarks: opening them, and the browser window (done, November 2026; `PARITY.md` item 4.8, first part)
+
+- **Core in the build.** `src/WebBookmark.cpp` is in `meson.build` and the
+  `Makefile` (`linux:build-lists` holds them together). `BookmarkOpen.{h,cpp}`
+  is the files side, with no GTK: the bookmark folder from
+  `browser.bookmarks` (`~` expanded, a relative path from the home folder,
+  `~/Bookmarks` when unset), `ensureFolder`, `sameFolder` (by realpath), a
+  file's address (`WebBookmark::addressIn`, so only what `isWebAddress`
+  accepts; a binary `.webloc` gives none) and `addressesIn` (the bookmarks
+  directly in a folder, in the tree's name order, dotfiles left out).
+- **Opening.** `openFileThen` (every open in `main.cpp`: the tree, the
+  command line, the palette, links) hands a bookmark to
+  `openBookmarkFile` first. A bookmark with an address that may open goes to
+  `showWebAddresses`: `Browser::openAddresses` (new: a tab already at the
+  address, compared without a trailing slash, is shown again; the first new
+  address takes the tab on show when that is empty or still the home page;
+  the others are tabs right of it), then the pane is shown. The pages are
+  loaded before the pane is shown, so a pane never shown before opens them
+  and not its home page. A preview open (`EditorTabs::opensInPreview`, a
+  single click) keeps the keyboard where it was, a kept one (double click,
+  Return) gives it to the page (`Browser::focusPage`); the keyboard also
+  goes to the page when what had it is hidden now. Any other address, an
+  unreadable file or a binary `.webloc` falls through to the text path.
+- **The tree's right click menu** has a section "Open as Text" and "Open All
+  in Browser Tabs" (`win.openbookmarkastext`, `win.openbookmarkstabs`). The
+  model is static, so `FileTree::onContextMenu` (called after the click
+  selected its row) enables them: the first for a selected bookmark file,
+  the second for a folder with a bookmark file directly in it. Open as Text
+  sets `gOpenBookmarkAsText` for one open and gives the editor the keyboard;
+  Open All opens `addressesIn(folder)` as tabs and gives the page the
+  keyboard.
+- **The browser window.** `handleCommandLine` (split out of `onCommandLine`
+  so the checks can call it) takes each argument for which
+  `WebBookmark::isWebAddress` is true as an address and the first other one
+  as the path, handled as before; with only addresses no window on the
+  current folder is made. The addresses go to the window rooted at the
+  bookmark folder (`sameFolder`), made, with the folder, when missing, else
+  reused, so later addresses join it. While no file is open there the editor
+  is hidden and the page has the right side. A folder that cannot be made is
+  said on the terminal's side of the command line. Detach and
+  `LaunchOptions` pass an address through as any word that does not start
+  with `-`, in the first process and in a second one handing over through
+  GApplication, so `Detach` needed no change; the help says what an address
+  does.
+- **The desktop file** offers `application/x-mswinurl`, as the Mac's
+  Info.plist offers `.url` to Finder: no default is taken.
+- **Checked by** `bookmarks` (`tests/gui/BookmarksSuite.cpp`, a server in the
+  test process): a tree click loads a tab with the keyboard left in the
+  tree, the same address from another file shows that tab and a double
+  click gives the page the keyboard; `file:`, `javascript:` and a binary
+  `.webloc` open as text; the menu items' enabled state by row, Open as
+  Text and Open All (three tabs in order, the bad one skipped); the command
+  line through `MCGuiCommandLine` (two addresses, two tabs, the folder made,
+  a later address in the same window, a path still a path).
+- Left out: a real second process handing over through GApplication (the
+  `detach` suite is the place; the argument handling is the same function);
+  `.webloc` binary property lists (opened as text); the Bookmarks menu, the
+  toolbar star and saving (the other half of 4.8).
+- Needs a person: the right click menu on a real desktop, a real
+  `minicode https://...` from a terminal, a double-clicked `.url` in the
+  file manager once the user picks minicode for the type.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

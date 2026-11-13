@@ -97,3 +97,4 @@ MathSuite.cpp
 SplitEditorSuite.cpp
 TerminalFindSuite.cpp
 MarkdownSideEditSuite.cpp
+BookmarksSuite.cpp

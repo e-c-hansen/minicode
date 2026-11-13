@@ -655,6 +655,69 @@ void Browser::focusUrlBar() {
     if (entry_) gtk_widget_grab_focus(entry_);
 }
 
+void Browser::focusPage() {
+    GtkWidget* w = webView();
+    if (!w) { focusUrlBar(); return; }
+    if (gtk_widget_grab_focus(w) && gtk_widget_has_focus(w)) return;
+    // The pane was just shown and its page is not mapped yet: once it is.
+    g_idle_add_full(G_PRIORITY_LOW, +[](gpointer p) -> gboolean {
+        GtkWidget* page = GTK_WIDGET(p);
+        if (gtk_widget_get_mapped(page)) gtk_widget_grab_focus(page);
+        return G_SOURCE_REMOVE;
+    }, g_object_ref(w), g_object_unref);
+}
+
+namespace {
+// An address without a lone trailing slash, so https://host and
+// https://host/ (what WebKit reports) are one page.
+std::string withoutSlash(std::string s) {
+    if (s.size() > 1 && s.back() == '/') s.pop_back();
+    return s;
+}
+}  // namespace
+
+void Browser::openAddresses(const std::vector<std::string>& urls) {
+    shown_ = true;   // the first page is this one, not the home page
+    showAgentPage(false);
+    int show = -1;
+    int at = -1;   // where the next new tab goes
+    for (const std::string& u : urls) {
+        if (u.empty()) continue;
+        int have = -1;
+        for (size_t i = 0; i < tabs_.size() && have < 0; i++)
+            if (withoutSlash(tabs_[i]->url) == withoutSlash(u)) have = (int)i;
+        if (have >= 0) {
+            if (show < 0) show = have;
+            continue;
+        }
+        Tab* cur = current();
+        if (show < 0 && cur && (cur->url.empty() || withoutSlash(cur->url) == withoutSlash(home_))) {
+            // The empty (or home page) tab on show takes the first address.
+            cur->url = u;
+            cur->title.clear();
+            cur->state.clear();
+            if (cur->web) webkit_web_view_load_uri(WEBKIT_WEB_VIEW(cur->web), u.c_str());
+            show = active_;
+            at = active_ + 1;
+            continue;
+        }
+        Tab* t = new Tab();
+        t->owner = this;
+        t->url = u;
+        if (at < 0) at = EditorTabs::insertionIndex(active_, (int)tabs_.size());
+        const Tab* shownBefore = cur;
+        tabs_.insert(tabs_.begin() + at, t);
+        active_ = shownBefore ? indexOfTab(shownBefore) : -1;
+        if (show < 0) show = at;
+        else if (show >= at) show++;
+        at++;
+    }
+    if (show < 0) return;
+    if (active_ < 0) active_ = 0;
+    // New tabs went right of the one on show, so active_ still names it.
+    selectTab(show);
+}
+
 // ---------------------------------------------------------------- zoom per site
 
 namespace {
