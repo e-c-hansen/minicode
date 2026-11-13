@@ -33,6 +33,8 @@ const std::vector<Action>& actions() {
         {"minicode.latex.exportPDF", "win.exportpdf", false},
         {"latex-workshop.synctex", "win.latexsynctex", false},
         {"minicode.markdown.exportHtml", "win.exporthtml", false},
+        {"minicode.browser.saveBookmark", "win.savebookmark", false},
+        {"minicode.browser.saveAllTabs", "win.savebrowsertabs", false},
         {"explorer.newFolder", "win.newfolder", true},
         {"renameFile", "win.rename", false},
         {"moveFileToTrash", "win.trash", false},

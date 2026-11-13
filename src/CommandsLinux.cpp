@@ -52,6 +52,10 @@ const std::vector<LinuxRow>& linuxRows() {
         {"minicode.latex.exportPDF", "ctrl+shift+s", 0, nullptr, nullptr},
         // Export as HTML has no key on the Mac either.
         {"minicode.markdown.exportHtml", "", 0, nullptr, nullptr},
+        // The Linux browsers' own key and the Mac's Cmd+D as a page key: a
+        // Page command, so the editor keeps Ctrl+D for Add Next Occurrence.
+        {"minicode.browser.saveBookmark", "ctrl+d", 0, nullptr, nullptr},
+        {"minicode.browser.saveAllTabs", "", 0, nullptr, nullptr},
         {"explorer.newFolder", "ctrl+alt+n", 0, nullptr, nullptr},
         // The tree's own keys, as in VS Code's explorer on Linux. The port
         // gives them to the tree's shortcut controller, never to the menu

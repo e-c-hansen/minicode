@@ -641,6 +641,15 @@ through `tests/gui/AppSeam.h`: a suite that needs more adds a field there,
 and nothing in `main.cpp` becomes global for a check. Timing bounds are CPU
 time of the thread doing the work (`GCHECK_TIME`).
 
+**D14. Save Page as Bookmark's key.** Ctrl+D, as a Page command. It is the
+Linux browsers' own key for a bookmark and the Mac's Cmd+D page key, so it
+costs the least to learn. Ctrl+D is also Add Next Occurrence in the editor,
+and `Keys.cpp` already ranks a Page command above an Editor one only while
+the page has the keyboard (as Ctrl+T is New Browser Tab there and Go to
+Symbol in Workspace elsewhere), so in the editor, the tree and the terminal
+the key stays as it was. File > Save Page as Bookmark has no other key and
+works from anywhere.
+
 ## Left out on purpose
 
 - Window blur: GTK 4 has no API and Mutter no protocol for it.
