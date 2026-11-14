@@ -21,6 +21,11 @@ static NSArray<NSString *> *MCStoredFolders(void) {
     return out;
 }
 
+static void MCNoteDockRecentFolder(NSString *path) {
+    [[NSDocumentController sharedDocumentController]
+        noteNewRecentDocumentURL:[NSURL fileURLWithPath:path isDirectory:YES]];
+}
+
 void MCNoteRecentFolder(NSString *path) {
     if (!path.length || MCRecentFoldersOff()) return;
     NSString *real = path.stringByResolvingSymlinksInPath;
@@ -30,6 +35,7 @@ void MCNoteRecentFolder(NSString *path) {
         if ([list[(NSUInteger)i].stringByResolvingSymlinksInPath isEqualToString:real])
             [list removeObjectAtIndex:(NSUInteger)i];
     [list insertObject:path atIndex:0];
+    MCNoteDockRecentFolder(path);
     while (list.count > kMaxRecentFolders) [list removeLastObject];
     [MCAppDefaults() setObject:list forKey:kRecentFoldersKey];
     [[NSNotificationCenter defaultCenter] postNotificationName:MCRecentFoldersDidChangeNotification
@@ -48,8 +54,27 @@ NSArray<NSString *> *MCRecentFolders(void) {
 
 void MCClearRecentFolders(void) {
     [MCAppDefaults() removeObjectForKey:kRecentFoldersKey];
+    [[NSDocumentController sharedDocumentController] clearRecentDocuments:nil];
     [[NSNotificationCenter defaultCenter] postNotificationName:MCRecentFoldersDidChangeNotification
                                                         object:nil];
+}
+
+void MCSeedDockRecentFolders(void) {
+    if (MCRecentFoldersOff()) return;
+    if ([NSDocumentController sharedDocumentController].recentDocumentURLs.count) return;
+    for (NSString *p in MCRecentFolders().reverseObjectEnumerator) MCNoteDockRecentFolder(p);
+}
+
+NSMenu *MCDockMenu(id target) {
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+    NSMenuItem *window = [menu addItemWithTitle:@"New Window" action:@selector(newWindow:)
+                                  keyEquivalent:@""];
+    window.target = target;
+    NSMenuItem *folder = [menu addItemWithTitle:@"Open Folder…"
+                                         action:@selector(openFolderInNewWindow:)
+                                  keyEquivalent:@""];
+    folder.target = target;
+    return menu;
 }
 
 static void MCFillRecentFoldersMenu(NSMenu *menu) {

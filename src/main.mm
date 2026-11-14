@@ -39,6 +39,10 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
            [e.charactersIgnoringModifiers isEqualToString:@"."];
 }
 
+// The Dock's Open Folder… asks this instead of showing the folder picker
+// when set (the GUI checks).
+NSURL * (^MCDockFolderChooser)(void) = nil;
+
 @implementation AppDelegate
 
 // Set up before any window can open: when Finder launches MiniCode to open
@@ -91,6 +95,9 @@ static BOOL MCIsCommandPeriod(NSEvent *e) {
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
+    // The Dock's recent folders, for a first launch of a minicode that keeps
+    // them (RecentFolders.h).
+    dispatch_async(dispatch_get_main_queue(), ^{ MCSeedDockRecentFolders(); });
     // After whichever windows this launch opens: folders whose unsaved
     // buffers outlived a crash get theirs (BackupStore).
     dispatch_async(dispatch_get_main_queue(), ^{ [self reopenFoldersWithBackups]; });
@@ -584,6 +591,32 @@ static BOOL MCWindowTabAction(SEL a) {
     else [self openWindowAtPath:path];
 }
 - (void)clearRecentFolders:(id)sender { (void)sender; MCClearRecentFolders(); }
+// The Dock icon's right click: the recent folders are the Dock's own list
+// (RecentFolders.h); these are New Window and Open Folder….
+- (NSMenu *)applicationDockMenu:(NSApplication *)sender {
+    (void)sender;
+    return MCDockMenu(self);
+}
+// The Dock's Open Folder…: a folder picker, then the window on that folder
+// comes forward or a new one opens on it, as for a folder dropped on the
+// Dock icon. The window in front keeps its own folder.
+- (void)openFolderInNewWindow:(id)sender {
+    (void)sender;
+    NSURL *url = nil;
+    if (MCDockFolderChooser) {
+        url = MCDockFolderChooser();
+    } else {
+        [NSApp activateIgnoringOtherApps:YES];
+        NSOpenPanel *panel = [NSOpenPanel openPanel];
+        panel.canChooseDirectories = YES;
+        panel.canChooseFiles = NO;
+        panel.allowsMultipleSelection = NO;
+        panel.prompt = @"Open";
+        panel.message = @"Choose a folder to open in a minicode window.";
+        if ([panel runModal] == NSModalResponseOK) url = panel.URL;
+    }
+    if (url) [self application:NSApp openURLs:@[ url ]];
+}
 - (void)togglePreview:(id)sender   { [[self current] togglePreview:sender]; }
 - (void)toggleSidePreview:(id)sender { [[self current] toggleSidePreview:sender]; }
 - (void)exportPDF:(id)sender       { [[self current] exportPDF:sender]; }
