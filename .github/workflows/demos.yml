@@ -22,7 +22,6 @@ on:
         default: ''
   push:
     tags: ['v*']
-    branches: [demos-ci]
 
 permissions:
   contents: write
