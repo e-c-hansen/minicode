@@ -3357,12 +3357,30 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
 
 ## Demo GIFs (`make demos`)
 
-`scripts/demos.sh` builds `/private/tmp/minicode-demo` (a 5-commit copy of
-`demo/` with fixed dates, scratch HOME and ZDOTDIR, `tools/demo-settings.conf`
-with the terminal in line mode, a copy of the tectonic cache, a `.vimrc`), runs
-the raw binary with `MINICODE_DEMO=<scene>` under `env -i`, kills only its own
-pid after 2 min, and runs `build/makegif`. `MINICODE_DEMO=list` lists scenes;
-`DEMO_KEEP_FRAMES=<dir>` keeps frames and the log.
+**The GIFs come from CI, not from a hand** (2026-11-14,
+`.github/workflows/demos.yml`): on a `v*` tag, or run by hand from the
+Actions tab (a `scenes` input), the macOS job plays every scene on the
+runner's own display and the Linux job every `_demo_` suite, and the last
+job (`scripts/demos-propose.sh`) commits the GIFs that changed on a
+`demos/<tag>-<run>` branch and opens a pull request against main (or prints
+the link where Actions may not open one). release.sh does not wait for it.
+The macOS runner (a VM, 1024x768 at 1x, display sleep off) lets
+`screencapture -l` work, since its TCC database grants /bin/bash Screen
+Recording; frames are 1x. Never run `make demos` on the owner's Mac
+unasked: it puts windows on the screen. The GTK scenes are underscore suites
+in `linux/tests/gui/DemoSuite.cpp`, recorded with ffmpeg's x11grab on the
+harness's Xvfb and written to `docs/demos/linux/` (one palette a GIF).
+
+`scripts/demos.sh` builds `/private/tmp/minicode-demo` (a 7-commit copy of
+`demo/` with fixed dates and a local git identity, a fresh HOME, ZDOTDIR and
+CFFIXED_USER_HOME per scene with a short zsh prompt and a `.vimrc`,
+`tools/demo-settings.conf` (the grid terminal), two made-up Claude Code
+sessions from `tools/demo-agents/make-transcripts.py`, a copy of the tectonic
+cache), runs the raw binary with `MINICODE_DEMO=<scene>` under `env -i`,
+kills only its own pid after 2 min, and runs `build/makegif`.
+`MINICODE_DEMO=list` lists scenes; `DEMO_KEEP_FRAMES=<dir>` keeps frames and
+the log. A scene ends with `exit(0)` once its frames are written, so a file
+it left unsaved never holds it on the quit question.
 
 - A scene is a function in `mac/src/Demo.mm` of queued builder steps (`clickFile:`,
   `type:`, `key:caption:`, `waitFor:timeout:recorded:`, ...), points resolved
@@ -3381,7 +3399,13 @@ pid after 2 min, and runs `build/makegif`. `MINICODE_DEMO=list` lists scenes;
   `-l` fails like a permission error. The lsp scene saves before F12; never
   press Esc in the editor in a scene (`complete:`); keep `demo/paper/notes.tex`
   free of math (the cache has no math fonts); the LaTeX scene exits 3 without
-  tectonic; `links` draws the hover underline itself.
+  tectonic. Terminal scenes find text on the grid (`TermPoint`, from
+  `TerminalScreen::lineText`); git's pager runs with LESS=FRX, which keeps the
+  main screen, so wait on `busy`, not `gridMode`. Posted keys with modifiers
+  go between flagsChanged events (`postFlags:`): without the release AppKit
+  kept Shift as held. On the runner a posted Cmd+P opened the command palette
+  rather than Go to File, and Shift+Cmd+A never reached the menu (the agents
+  scene falls back to the menu's action); neither has been seen by hand.
 
 ## Memory benchmark (`make membench-mac`, `make membench-linux`)
 

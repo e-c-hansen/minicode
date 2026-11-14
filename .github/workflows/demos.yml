@@ -1,0 +1,196 @@
+name: Demos
+
+# Records the README's demo GIFs (docs/demos) from the release itself, so
+# they never fall behind what the app looks like. On a v* tag, or by hand
+# from the Actions tab, the macOS job plays every scene of mac/src/Demo.mm in
+# the real app on the runner's own display (scripts/demos.sh), and when the
+# GIFs differ from the committed ones the last job opens a pull request with
+# them. Nothing here holds up a release: scripts/release.sh does not wait for
+# it, and a scene that fails leaves the old GIF in place.
+#
+# The runner is a macOS VM with a logged-in console session and a 1024x768
+# display that never sleeps; /bin/bash holds the Screen Recording permission
+# (the image's TCC database grants it), so `screencapture -l` works for what
+# the app starts. Seen on macos-26-arm64, image 20261102, November 2026.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenes:
+        description: 'Scenes to record, separated by spaces (empty: every scene)'
+        required: false
+        default: ''
+  push:
+    tags: ['v*']
+    branches: [demos-ci]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  mac:
+    name: Record the macOS scenes
+    runs-on: macos-latest
+    # A scene takes under a minute and there are eleven; the installs and
+    # the build take about five.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      # What the scenes show: clangd comes with Xcode; basedpyright is the
+      # Python server the README suggests, tectonic the LaTeX preview's
+      # engine, vim the vim scene's editor.
+      - name: Install the language server and tectonic
+        run: |
+          brew install basedpyright tectonic
+          command -v basedpyright-langserver tectonic vim
+
+      # tectonic fetches its bundle on the first document; doing that here
+      # keeps the download out of the latex scene's time limit.
+      - name: Fill tectonic's cache
+        run: |
+          mkdir -p "$RUNNER_TEMP/tectonic-cache" "$RUNNER_TEMP/tectonic-out"
+          TECTONIC_CACHE_DIR="$RUNNER_TEMP/tectonic-cache" \
+            tectonic -o "$RUNNER_TEMP/tectonic-out" demo/paper/notes.tex
+
+      - name: Build the app and makegif
+        run: make app build/makegif
+
+      - name: Record the scenes
+        env:
+          POSTERS: '1'
+          DEMO_TECTONIC_CACHE: ${{ runner.temp }}/tectonic-cache
+          DEMO_KEEP_FRAMES: ${{ runner.temp }}/frames
+        run: |
+          mkdir -p "$DEMO_KEEP_FRAMES"
+          # shellcheck disable=SC2086
+          scripts/demos.sh ${{ github.event.inputs.scenes }}
+
+      - name: Keep the GIFs and stills
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: demos-mac
+          path: |
+            docs/demos/*.gif
+            docs/demos/*.png
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Keep the frames and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: demos-mac-frames
+          path: ${{ runner.temp }}/frames
+          if-no-files-found: ignore
+          retention-days: 7
+
+  linux:
+    name: Record the GTK scenes
+    runs-on: ubuntu-latest
+    # The build is most of it (about ten minutes); a scene takes under one.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      # ci.yml's GTK packages and the GUI checks' tools, with ffmpeg to
+      # record the Xvfb and to make the GIFs.
+      - name: Install GTK4, VTE, WebKitGTK, poppler, the GUI checks' tools, and ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build build-essential pkg-config \
+            libgtk-4-dev libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev \
+            libpoppler-glib-dev libsqlite3-dev \
+            xvfb libxtst-dev dbus-daemon ffmpeg git python3
+
+      - name: Build the GUI checks
+        working-directory: linux
+        run: |
+          meson setup build -Dterminal=enabled -Dbrowser=enabled -Dpdf=enabled
+          meson compile -C build minicode-guitest
+
+      # Each scene is a "_demo_" suite of linux/tests/gui/DemoSuite.cpp,
+      # played on the harness's own Xvfb while ffmpeg records the window.
+      - name: Record the scenes
+        working-directory: linux
+        env:
+          MC_DEMO_OUT: ${{ runner.temp }}/linux-demos
+          MC_DEMO_SOURCE: ${{ github.workspace }}/demo
+          MC_GUI_SNAPSHOTS: ${{ runner.temp }}/linux-demos/stills
+          # A short scratch path, since the status bar shows the file's.
+          MC_GUI_ROOT: /tmp
+          WANTED: ${{ github.event.inputs.scenes }}
+        run: |
+          status=0
+          for s in tour terminal markdown git files settings; do
+            if [ -n "$WANTED" ] && ! printf ' %s ' "$WANTED" | grep -q " $s "; then continue; fi
+            echo "== $s"
+            ./build/minicode-guitest "_demo_$s" || { echo "demos: $s failed" >&2; status=1; }
+          done
+          exit $status
+
+      # One palette per GIF, and frames that change only where they change.
+      - name: Make the GIFs
+        if: always()
+        run: |
+          mkdir -p docs/demos/linux
+          for f in "$RUNNER_TEMP"/linux-demos/*.mkv; do
+            [ -s "$f" ] || continue
+            s=$(basename "$f" .mkv)
+            ffmpeg -y -loglevel error -i "$f" -vf \
+              "fps=10,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" \
+              "docs/demos/linux/$s.gif"
+            ls -l "docs/demos/linux/$s.gif"
+          done
+
+      - name: Keep the GIFs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: demos-linux
+          path: docs/demos/linux/*.gif
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Keep the stills and recordings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: demos-linux-recordings
+          path: ${{ runner.temp }}/linux-demos
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The GIFs that came out, against the committed ones: when any differ, a
+  # branch with them and a pull request against main (or, where the
+  # repository does not let Actions open pull requests, the branch and a
+  # link to open one). A scene that failed leaves its old GIF.
+  pull-request:
+    name: Propose the new GIFs
+    needs: [mac, linux]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v5
+        with:
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Commit and propose
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Only a tag or a run by hand proposes anything; a push to a
+          # branch stops at the commit.
+          PROPOSE: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
+          WHAT: ${{ github.ref_name }}
+        # A copy runs, since the script moves the checkout to main.
+        run: |
+          cp scripts/demos-propose.sh "$RUNNER_TEMP/"
+          bash "$RUNNER_TEMP/demos-propose.sh" "$RUNNER_TEMP/artifacts"
