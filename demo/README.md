@@ -1,15 +1,19 @@
-# minicode Demo
+# Field notes
 
-A **native** macOS editor written in *C++* — no Electron.
+A small folder for trying minicode: a Python script, some C++, a LaTeX
+paper, a table of cities, and this page.
 
-## Features
-- File tree browsing
-- Syntax highlighting for `.py`, `.cpp`, and more
-- Native Markdown rendering
+## What is here
+- `hello.py`, a circle and its area
+- `sample.cpp` and `vec/`, for trying clangd
+- `paper/notes.tex`, typeset beside its source
+- `data/cities.csv`, which opens as a table
 
-> Built from the ground up with only Apple frameworks.
+## To do
+- [x] Draw the icon
+- [ ] Add a perimeter to the circle
 
-Visit [the repo](https://example.com) for details.
+> Double-click a block of this page to edit its Markdown.
 
 ```python
 print("fenced code block")

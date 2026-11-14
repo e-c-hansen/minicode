@@ -101,3 +101,4 @@ BookmarkSaveSuite.cpp
 BookmarksSuite.cpp
 BookmarkMenuSuite.cpp
 RecentFoldersSuite.cpp
+DemoSuite.cpp

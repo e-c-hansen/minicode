@@ -39,8 +39,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-TECTONIC="$HOME/Library/Application Support/MiniCode/bin/tectonic"
-TECTONIC_CACHE="$HOME/Library/Caches/TectonicProject.Tectonic"
+# The tectonic minicode downloads, else one on PATH (CI installs it with
+# Homebrew); DEMO_TECTONIC and DEMO_TECTONIC_CACHE name others.
+TECTONIC="${DEMO_TECTONIC:-$HOME/Library/Application Support/MiniCode/bin/tectonic}"
+[ -x "$TECTONIC" ] || TECTONIC="$(command -v tectonic || true)"
+TECTONIC_CACHE="${DEMO_TECTONIC_CACHE:-$HOME/Library/Caches/TectonicProject.Tectonic}"
 
 # A fresh copy of demo/ for each scene, since scenes type into files and save.
 prepare_project() {
@@ -64,10 +67,62 @@ prepare_project() {
         commit "Add field notes in LaTeX" paper
         commit "Add a small vector type for the LSP demo" vec
         commit "Add the app icon" images
+        commit "Add a table of cities" data
+        # The git scene commits from the app, whose git has no global config.
+        git config user.name "MiniCode"
+        git config user.email "demo@example.com"
     )
     cp "$REPO/tools/demo-settings.conf" "$WORK/settings.conf"
+    # A fresh home each scene (CFFIXED_USER_HOME below makes it the app's
+    # own home too, since NSHomeDirectory ignores HOME): the app's defaults
+    # would otherwise carry over, and the color panel the settings scene
+    # opens came back in every scene after it.
+    rm -rf "$WORK/home"
+    mkdir -p "$WORK/home"
     # For the vim scene: line numbers and color, nothing else.
     printf 'syntax on\nset number\nset laststatus=2\n' >"$WORK/home/.vimrc"
+    # A short prompt: the folder's name, not the runner's long host name.
+    printf "PROMPT='%%1~ %%# '\n" >"$WORK/home/.zshrc"
+    # For the agents scene: two made-up Claude Code sessions in this folder,
+    # and the files the first one wrote, as it left them.
+    rm -rf "$WORK/claude"
+    mkdir -p "$WORK/claude/projects" "$WORK/claude/tmp"
+    python3 "$REPO/tools/demo-agents/make-transcripts.py" "$WORK/demo" "$WORK/claude/projects"
+}
+
+# What the agents scene's first session changed, written before that scene.
+agent_edits() {
+    (
+        cd "$WORK/demo"
+        python3 - <<'EOF'
+p = "hello.py"
+s = open(p).read()
+s = s.replace("    def area(self):",
+              "    def perimeter(self):\n        return 2 * math.pi * self.radius\n\n    def area(self):")
+open(p, "w").write(s)
+EOF
+        cat >test_hello.py <<'EOF'
+import math
+import unittest
+
+from hello import Circle
+
+
+class CircleTest(unittest.TestCase):
+    def test_area(self):
+        self.assertAlmostEqual(Circle(2).area(), 4 * math.pi)
+
+    def test_perimeter(self):
+        self.assertAlmostEqual(Circle(3.5).perimeter(), 7 * math.pi)
+
+    def test_zero_radius(self):
+        self.assertEqual(Circle(0).area(), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
+EOF
+    )
 }
 
 if [ $# -gt 0 ]; then
@@ -81,6 +136,7 @@ status=0
 for scene in "${SCENES[@]}"; do
     echo "== $scene"
     prepare_project
+    [ "$scene" = agents ] && agent_edits
     frames="$WORK/frames-$scene"
     rm -rf "$frames"
 
@@ -97,11 +153,12 @@ for scene in "${SCENES[@]}"; do
 
     env -i \
         PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin" \
-        HOME="$WORK/home" ZDOTDIR="$WORK/home" \
+        HOME="$WORK/home" ZDOTDIR="$WORK/home" CFFIXED_USER_HOME="$WORK/home" \
         USER="${USER:-demo}" LOGNAME="${LOGNAME:-demo}" SHELL=/bin/zsh \
         LANG="en_US.UTF-8" TMPDIR="${TMPDIR:-/tmp}" \
         GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
         MINICODE_SETTINGS="$WORK/settings.conf" \
+        MINICODE_CLAUDE_PROJECTS="$WORK/claude/projects" MINICODE_CLAUDE_TMP="$WORK/claude/tmp" \
         MINICODE_DEMO="$scene" MINICODE_DEMO_FRAMES="$frames" \
         "${extra[@]}" \
         "$APP" "$WORK/demo" >"$WORK/$scene.log" 2>&1 &

@@ -16,8 +16,14 @@
 // Adding a scene: write a function that calls the builder methods on MCDemo
 // (see the scenes at the bottom) and add it to kScenes.
 #import "Demo.h"
+#import "AgentWindow.h"
+#import "AgentsPanel.h"
 #import "EditorController.h"
+#import "GitPanel.h"
 #import "Latex.h"
+#import "MarkdownSidePreview.h"
+#import "Terminal.h"
+#import "TerminalGridView.h"
 #import <Quartz/Quartz.h>
 #include <initializer_list>
 #include <vector>
@@ -583,7 +589,13 @@ static void After(double seconds, dispatch_block_t block) {
 // Window point of the text `needle` in the editor (the first match after
 // `anchor`, when given). With atEnd, the point just past its last character.
 - (NSPoint)pointForText:(NSString *)needle after:(NSString *)anchor atEnd:(BOOL)atEnd {
-    NSTextView *tv = [self ui:@"textView"];
+    return [self pointForText:needle inView:[self ui:@"textView"] after:anchor atEnd:atEnd];
+}
+
+// The same in another text view: the side preview's page, a diff.
+- (NSPoint)pointForText:(NSString *)needle inView:(NSTextView *)tv after:(NSString *)anchor
+                  atEnd:(BOOL)atEnd {
+    if (!tv) [self fail:@"no text view to find text in"];
     NSString *s = tv.string;
     NSRange from = NSMakeRange(0, s.length);
     if (anchor.length) {
@@ -617,12 +629,15 @@ static void After(double seconds, dispatch_block_t block) {
         CGFloat maxY = MAX(0, NSHeight(tv.frame) - NSHeight(clip.bounds));
         CGFloat y0 = clip.bounds.origin.y;
         CGFloat y1 = MIN(maxY, MAX(0, rect.origin.y - 6));
+        // The line numbers are an inset of the clip view, so its left edge
+        // is not x = 0; keep x where it is.
+        const CGFloat x = clip.bounds.origin.x;
         const int steps = 18;
         for (int i = 1; i <= steps; i++) {
             double t = (double)i / steps;
             double e = t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2;
             After(i * 0.025, ^{
-                [clip scrollToPoint:NSMakePoint(0, y0 + (y1 - y0) * e)];
+                [clip scrollToPoint:NSMakePoint(x, y0 + (y1 - y0) * e)];
                 [scroll reflectScrolledClipView:clip];
                 if (i == steps) After(0.1, done);
             });
@@ -644,8 +659,28 @@ static BOOL KeyFor(unichar c, unsigned short *code, BOOL *shift) {
     return NO;
 }
 
+// The modifier keys going down or up, as a keyboard reports them. Without
+// the release, AppKit went on taking Shift as held after a typed ")", and
+// the Command+P after it matched Shift+Command+P.
+- (void)postFlags:(NSEventModifierFlags)flags {
+    NSEvent *e = [NSEvent keyEventWithType:NSEventTypeFlagsChanged
+                                  location:NSZeroPoint
+                             modifierFlags:flags
+                                 timestamp:[self stamp]
+                              windowNumber:(NSApp.keyWindow ?: self.window).windowNumber
+                                   context:nil
+                                characters:@""
+               charactersIgnoringModifiers:@""
+                                 isARepeat:NO
+                                   keyCode:flags & NSEventModifierFlagCommand ? 55 : 56];
+    [NSApp postEvent:e atStart:NO];
+}
+
 - (void)postKey:(NSString *)chars ignoring:(NSString *)ign code:(unsigned short)code
           flags:(NSEventModifierFlags)flags {
+    const NSEventModifierFlags held = flags & (NSEventModifierFlagShift |
+        NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagCommand);
+    if (held) [self postFlags:held];
     for (NSEventType t : {NSEventTypeKeyDown, NSEventTypeKeyUp}) {
         NSEvent *e = [NSEvent keyEventWithType:t
                                       location:NSZeroPoint
@@ -659,6 +694,7 @@ static BOOL KeyFor(unichar c, unsigned short *code, BOOL *shift) {
                                        keyCode:code];
         [NSApp postEvent:e atStart:NO];
     }
+    if (held) [self postFlags:0];
 }
 
 // Type text one key at a time. "\n" presses Return.
@@ -762,14 +798,19 @@ static BOOL KeyFor(unichar c, unsigned short *code, BOOL *shift) {
 }
 
 - (void)startRecordingTo:(NSString *)dir {
+    // macOS brings back the color panel an earlier scene left open (the
+    // settings scene's), whatever HOME says; no scene starts with it.
+    if ([NSColorPanel sharedColorPanelExists]) [[NSColorPanel sharedColorPanel] orderOut:nil];
     [self ignoreRealInput];
     _recorder = [[MCRecorder alloc] initWithDirectory:dir window:self.window];
     [_recorder start];
     [self next];
 }
 
+// Straight out once the frames are written: a quit would ask about a file
+// a scene left unsaved and wait for an answer nobody gives.
 - (void)finish {
-    [_recorder stopThen:^{ [NSApp terminate:nil]; }];
+    [_recorder stopThen:^{ exit(0); }];
 }
 @end
 
@@ -793,10 +834,13 @@ static void SceneTour(MCDemo *d) {
     [d poster];
     [d clickAt:^NSPoint { return [d pointForText:@"c.area():.2f}\")" after:nil atEnd:YES]; }];
     [d hidePointer];
-    [d type:@"\n    print(\"Diameter:\", 2 * c.radius)"];
+    // Return keeps the line's indentation, as it does in the editor.
+    [d type:@"\nprint(\"Diameter:\", 2 * c.radius)"];
     [d pause:0.5];
     [d key:@"cmd+s" caption:@"⌘S  Save"];
     [d pause:1.2];
+    // Not Cmd+P: on the CI runner the posted key opened the command
+    // palette rather than Go to File, which no hand has seen.
     [d clickFile:@"sample.cpp"];
     [d pause:1.8];
 }
@@ -806,6 +850,8 @@ static void SceneTerminal(MCDemo *d) {
     [d clickFile:@"hello.py"];
     [d pause:0.8];
     [d hidePointer];
+    // Room for the log, so git shows it without its pager.
+    [d run:^(MCDemo *m) { [m.controller setValue:@330 forKey:@"terminalHeight"]; }];
     [d key:@"ctrl+`" caption:@"⌃`  Terminal"];
     // Wait for zsh's first prompt; nobody needs to watch a shell start.
     [d waitFor:^BOOL(MCDemo *m) {
@@ -819,30 +865,46 @@ static void SceneTerminal(MCDemo *d) {
     [d type:@"python3 hello.py\n"];
     [d pause:1.4];
     [d poster];
-    [d pause:1.0];
+    [d key:@"cmd+\\" caption:@"⌘\\  Split the terminal"];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[[m ui:@"terminal"] valueForKey:@"atPrompt"] boolValue];
+    } timeout:15 recorded:NO];
+    [d pause:0.4];
+    [d type:@"git status --short\n"];
+    [d pause:1.8];
 }
 
-// Window point of `needle` in the terminal's output (the last match), and
-// the same text underlined the way holding Command over it does: the hover
-// follows the real mouse and Command key, which a recording cannot move.
-static NSRange TermOutputRange(MCDemo *m, NSString *needle) {
-    NSTextView *out = [[m ui:@"terminal"] valueForKey:@"output"];
-    NSRange r = [out.string rangeOfString:needle options:NSBackwardsSearch];
-    if (r.location == NSNotFound)
-        [m fail:[NSString stringWithFormat:@"no “%@” in the terminal", needle]];
-    return r;
+// The active terminal's cell grid (terminal.mode = grid, the default).
+static TerminalGridView *TermGrid(MCDemo *m) {
+    TerminalGridView *g = [[m ui:@"terminal"] valueForKey:@"grid"];
+    if (!g.screen) [m fail:@"the terminal has no grid"];
+    return g;
 }
-static NSPoint TermOutputPoint(MCDemo *m, NSString *needle) {
-    NSTextView *out = [[m ui:@"terminal"] valueForKey:@"output"];
-    NSRect screen = [out firstRectForCharacterRange:TermOutputRange(m, needle) actualRange:NULL];
-    NSRect rect = [out.window convertRectFromScreen:screen];
-    return NSMakePoint(NSMinX(rect) + NSWidth(rect) * 0.35, NSMidY(rect));
+
+// Window point of `needle` on the terminal's screen, the lowest match, a
+// third of the way into it. The lines the scenes look for are ASCII up to
+// the match, so a byte is a column.
+static NSPoint TermPoint(MCDemo *m, NSString *needle) {
+    TerminalGridView *g = TermGrid(m);
+    TerminalScreen *s = g.screen;
+    const std::string n = needle.UTF8String;
+    for (int row = s->rows() - 1; row >= 0; row--) {
+        const size_t at = s->lineText(row).rfind(n);
+        if (at == std::string::npos) continue;
+        const NSSize cell = [TerminalGridView cellSize];
+        const CGFloat pad = [TerminalGridView padding];
+        NSPoint p = NSMakePoint(pad + (at + n.size() / 3.0) * cell.width,
+                                pad + (row + 0.5) * cell.height);
+        return [g convertPoint:p toView:nil];
+    }
+    [m fail:[NSString stringWithFormat:@"no “%@” in the terminal", needle]];
+    return NSZeroPoint;
 }
-static void TermUnderline(MCDemo *m, NSString *needle) {
-    NSTextView *out = [[m ui:@"terminal"] valueForKey:@"output"];
-    [out.textStorage addAttribute:NSUnderlineStyleAttributeName
-                            value:@(NSUnderlineStyleSingle)
-                            range:TermOutputRange(m, needle)];
+
+// A point inside the terminal, for a click that gives it the keyboard back.
+static NSPoint TermInside(MCDemo *m) {
+    TerminalGridView *g = TermGrid(m);
+    return [g convertPoint:NSMakePoint(NSMidX(g.bounds), NSMaxY(g.bounds) - 30) toView:nil];
 }
 
 // Command+click what the terminal prints: a grep result opens at its line,
@@ -859,32 +921,26 @@ static void SceneLinks(MCDemo *d) {
     [d pause:0.4];
     [d type:@"grep -Hn \"def area\" *.py\n"];
     [d pause:1.0];
-    [d moveTo:^NSPoint { return TermOutputPoint(d, @"hello.py:9"); }];
+    [d moveTo:^NSPoint { return TermPoint(d, @"hello.py:9"); }];
     [d caption:@"⌘-click a file:line in the output"];
-    [d run:^(MCDemo *m) { TermUnderline(m, @"hello.py:9"); }];
     [d pause:0.9];
-    [d cmdClickAt:^NSPoint { return TermOutputPoint(d, @"hello.py:9"); }];
+    [d cmdClickAt:^NSPoint { return TermPoint(d, @"hello.py:9"); }];
     [d waitFor:^BOOL(MCDemo *m) {
         return [[[m ui:@"textView"] string] hasPrefix:@"# A sample Python file"];
     } timeout:10 recorded:YES];
     [d hidePointer];
     [d poster];
     [d pause:2.0];
-    // Opening the file moved focus to the editor; a click on the terminal's
-    // input line brings it back, as it would for a person.
-    [d clickAt:^NSPoint {
-        NSTextField *input = [[d ui:@"terminal"] valueForKey:@"input"];
-        NSRect r = [input convertRect:input.bounds toView:nil];
-        return NSMakePoint(NSMinX(r) + 120, NSMidY(r));
-    }];
+    // Opening the file moved focus to the editor; a click in the terminal
+    // brings it back, as it would for a person.
+    [d clickAt:^NSPoint { return TermInside(d); }];
     [d hidePointer];
     [d type:@"echo \"docs: https://docs.python.org/3/library/math.html\"\n"];
     [d pause:0.8];
-    [d moveTo:^NSPoint { return TermOutputPoint(d, @"docs.python.org"); }];
+    [d moveTo:^NSPoint { return TermPoint(d, @"docs.python.org"); }];
     [d caption:@"URLs open in the browser panel"];
-    [d run:^(MCDemo *m) { TermUnderline(m, @"https://docs.python.org/3/library/math.html"); }];
     [d pause:0.8];
-    [d cmdClickAt:^NSPoint { return TermOutputPoint(d, @"docs.python.org"); }];
+    [d cmdClickAt:^NSPoint { return TermPoint(d, @"docs.python.org"); }];
     [d hidePointer];
     [d waitFor:^BOOL(MCDemo *m) {
         return [[m.controller valueForKey:@"browserVisible"] boolValue];
@@ -927,18 +983,37 @@ static void PickColor(MCDemo *d, NSString *key, NSString *from, uint32_t to, int
     [d pause:0.6];
 }
 
+// Run a menu command by name from the command palette.
+static void Palette(MCDemo *d, NSString *typed, NSString *caption) {
+    [d key:@"shift+cmd+p" caption:caption];
+    [d pause:0.5];
+    [d type:typed];
+    [d pause:0.7];
+    [d key:@"return" caption:nil];
+}
+
 static void SceneSettings(MCDemo *d) {
     [d pause:0.6];
     [d clickFile:@"sample.cpp"];
     [d pause:1.0];
     [d hidePointer];
+    // Themes first: once the file sets colors of its own, picking a theme
+    // asks whether to comment them out.
+    Palette(d, @"theme light modern", @"⇧⌘P  Pick a theme by name");
+    [d pause:1.8];
+    Palette(d, @"theme solarized dark", nil);
+    [d pause:1.8];
+    Palette(d, @"theme dark+", nil);
+    [d pause:1.0];
     [d key:@"cmd+," caption:@"⌘,  Settings"];
     [d pause:1.0];
     [d scrollEditorTo:@"# The file tree."];
     [d pause:0.6];
-    PickColor(d, @"sidebar.background", @"#181818", 0x1B2536, 7);
-    PickColor(d, @"editor.background", @"#1F1F1F", 0x131B29, 7);
-    PickColor(d, @"statusbar.background", @"#181818", 0x7C3AED, 7);
+    // GitHub Dark's surfaces, and a quiet status bar: colors someone might
+    // keep, rather than a showcase of loud ones.
+    PickColor(d, @"sidebar.background", @"#181818", 0x1F2428, 7);
+    PickColor(d, @"editor.background", @"#1F1F1F", 0x24292E, 7);
+    PickColor(d, @"statusbar.background", @"#181818", 0x3A3F46, 7);
     [d run:^(MCDemo *m) { (void)m; [[NSColorPanel sharedColorPanel] orderOut:nil]; }];
     [d hidePointer];
     [d pause:0.6];
@@ -1018,23 +1093,23 @@ static void SceneLsp(MCDemo *d) {
     [d pause:0.5];
     [d key:@"return" caption:@"⏎  Complete"];
     [d pause:0.3];
-    // Without the parentheses: clangd says so as you type.
     [d type:@";"];
+    [d pause:0.6];
+    // A mistake, which clangd reports as you type.
+    [d type:@"\nint n = q + 1;"];
     [d waitFor:^BOOL(MCDemo *m) { return [LspStatus(m) hasSuffix:@"1 error"]; }
-       timeout:10 recorded:YES];
+       timeout:15 recorded:YES];
     [d poster];
     [d pause:1.2];
-    [d clickAt:^NSPoint { return [d pointForText:@"lengthSquared;" after:nil atEnd:NO]; }];
+    [d clickAt:^NSPoint { return [d pointForText:@"q + 1" after:@"int n" atEnd:NO]; }];
     [d hidePointer];
     [d pause:0.1];
     [d key:@"opt+cmd+i" caption:@"⌥⌘I  What is wrong here"];
-    [d pause:2.2];
+    [d pause:2.4];
     [d run:^(MCDemo *m) { [[[m ui:@"lsp"] valueForKey:@"hover"] close]; }];
-    [d clickAt:^NSPoint { return [d pointForText:@"lengthSquared" after:@"double d" atEnd:YES]; }];
-    [d hidePointer];
-    [d type:@"()"];
+    [d key:@"ctrl+shift+k" caption:@"⌃⇧K  Delete the line"];
     [d waitFor:^BOOL(MCDemo *m) { return [LspStatus(m) hasSuffix:@"no problems"]; }
-       timeout:10 recorded:YES];
+       timeout:15 recorded:YES];
     [d pause:0.5];
     [d clickAt:^NSPoint { return [d pointForText:@"scaled" after:nil atEnd:NO]; }];
     [d hidePointer];
@@ -1083,8 +1158,11 @@ static void SceneVim(MCDemo *d) {
     [d pause:0.4];
     [d type:@"cat todo.md\n"];
     [d pause:1.2];
+    // git's pager runs with LESS=FRX, so it keeps the main screen: wait for
+    // it to hold the terminal rather than for the alternate screen.
     [d type:@"git log\n"];
-    [d waitFor:grid timeout:10 recorded:YES];
+    [d waitFor:^BOOL(MCDemo *m) { return [[[m ui:@"terminal"] valueForKey:@"busy"] boolValue]; }
+       timeout:10 recorded:YES];
     [d pause:1.4];
     [d key:@"space" caption:@"Space  Next page"];
     [d pause:1.2];
@@ -1105,9 +1183,158 @@ static void SceneFiles(MCDemo *d) {
     [d caption:@"PDFs too, with the page count in the title"];
     [d hidePointer];
     [d pause:2.6];
-    [d clickFile:@"sample.cpp"];
+    [d clickFile:@"data/cities.csv"];
+    [d caption:@"A CSV file opens as a table you can edit"];
+    [d hidePointer];
+    [d pause:2.4];
+    [d key:@"shift+cmd+v" caption:@"⇧⌘V  The text behind it"];
+    [d pause:1.8];
+}
+
+// ---- source control
+
+static MCGitPanel *GitPanel(MCDemo *m) { return [m ui:@"gitPanel"]; }
+
+// The panel's row whose description ("  M hello.py", a header) holds `text`.
+static NSInteger GitRow(MCDemo *m, NSString *text) {
+    NSArray<NSString *> *rows = [GitPanel(m) rowDescriptions];
+    for (NSUInteger i = 0; i < rows.count; i++)
+        if ([rows[i] containsString:text]) return (NSInteger)i;
+    return -1;
+}
+
+static NSPoint GitRowPoint(MCDemo *m, NSString *text) {
+    NSInteger row = GitRow(m, text);
+    if (row < 0) [m fail:[NSString stringWithFormat:@"no %@ in the source control panel", text]];
+    NSTableView *list = GitPanel(m).list;
+    NSRect r = [list rectOfRow:row];
+    return [list convertPoint:NSMakePoint(NSMinX(r) + 70, NSMidY(r)) toView:nil];
+}
+
+// Edit a file, see its change bar, stage the hunk from the diff, commit,
+// and see the commit at the top of the graph.
+static void SceneGit(MCDemo *d) {
+    [d pause:0.6];
+    [d clickFile:@"hello.py"];
+    [d clickAt:^NSPoint { return [d pointForText:@"# A sample Python file" after:nil atEnd:YES]; }];
+    [d hidePointer];
+    [d type:@", with a circle"];
+    [d pause:0.4];
+    [d clickAt:^NSPoint { return [d pointForText:@"Circle(3.5)" after:nil atEnd:NO]; }];
+    [d hidePointer];
+    [d key:@"cmd+s" caption:@"Change bars mark the lines that changed"];
+    [d pause:1.8];
+    [d key:@"ctrl+shift+g" caption:@"⌃⇧G  Source control"];
+    [d waitFor:^BOOL(MCDemo *m) { return GitRow(m, @"W M hello.py") >= 0; }
+       timeout:10 recorded:YES];
+    [d pause:1.2];
+    [d clickAt:^NSPoint { return GitRowPoint(d, @"W M hello.py"); }];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[[m ui:@"diffView"] string] containsString:@"Stage Hunk"];
+    } timeout:10 recorded:YES];
+    [d poster];
+    [d pause:1.2];
+    [d caption:@"Stage one hunk from the diff"];
+    [d clickAt:^NSPoint {
+        return [d pointForText:@"Stage Hunk" inView:[d ui:@"diffView"] after:nil atEnd:NO];
+    }];
+    [d hidePointer];
+    [d waitFor:^BOOL(MCDemo *m) { return GitRow(m, @"S M hello.py") >= 0; }
+       timeout:10 recorded:YES];
+    [d pause:1.4];
+    [d clickAt:^NSPoint {
+        NSTextView *box = GitPanel(d).messageView;
+        return [box convertPoint:NSMakePoint(30, NSMidY(box.bounds)) toView:nil];
+    }];
+    [d hidePointer];
+    [d type:@"Say what the sample shows"];
+    [d pause:0.4];
+    [d key:@"cmd+return" caption:@"⌘⏎  Commit"];
+    [d waitFor:^BOOL(MCDemo *m) { return GitRow(m, @"hello.py") < 0; } timeout:10 recorded:YES];
+    [d pause:2.4];
+}
+
+// ---- Markdown
+
+static void SceneMarkdown(MCDemo *d) {
+    [d pause:0.6];
+    [d clickFile:@"README.md"];
     [d hidePointer];
     [d pause:1.6];
+    [d key:@"shift+cmd+v" caption:@"⇧⌘V  The source"];
+    [d pause:1.0];
+    [d key:@"ctrl+cmd+v" caption:@"⌃⌘V  The page beside it"];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[[m ui:@"sidePreview"] textView].string containsString:@"Field notes"];
+    } timeout:10 recorded:YES];
+    [d pause:1.0];
+    [d clickAt:^NSPoint {
+        return [d pointForText:@"Add a perimeter to the circle" after:nil atEnd:YES];
+    }];
+    [d hidePointer];
+    [d type:@"\nTry the page beside the source"];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[[m ui:@"sidePreview"] textView].string containsString:@"Try the page"];
+    } timeout:10 recorded:YES];
+    [d poster];
+    [d pause:1.2];
+    [d caption:@"Double-click the page to edit its Markdown"];
+    [d doubleClickAt:^NSPoint {
+        return [d pointForText:@"Double-click a block"
+                        inView:[[d ui:@"sidePreview"] textView] after:nil atEnd:NO];
+    }];
+    [d hidePointer];
+    [d pause:1.0];
+    [d type:@"> Edits made on the page go back into the source."];
+    [d pause:0.4];
+    [d key:@"return" caption:nil];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[[m ui:@"textView"] string] containsString:@"go back into the source"];
+    } timeout:10 recorded:YES];
+    [d pause:2.4];
+}
+
+// ---- agents
+
+static MCAgentsPanel *AgentsPanel(MCDemo *m) { return [[m ui:@"agents"] panel]; }
+
+static NSInteger AgentRow(MCDemo *m, NSString *text) {
+    NSArray<NSString *> *rows = [AgentsPanel(m) rowDescriptions];
+    for (NSUInteger i = 0; i < rows.count; i++)
+        if ([rows[i] containsString:text]) return (NSInteger)i;
+    return -1;
+}
+
+// The Agents panel over transcripts scripts/demos.sh writes
+// (tools/demo-agents): the sessions, the files one wrote, its evidence.
+static void SceneAgents(MCDemo *d) {
+    [d pause:0.6];
+    [d clickFile:@"hello.py"];
+    [d hidePointer];
+    [d pause:0.8];
+    [d key:@"shift+cmd+a" caption:@"⇧⌘A  What agents did in this folder"];
+    [d pause:0.6];
+    // On the runner the key once never reached the menu (the Services
+    // menu's own Shift+Command+A, perhaps); the menu's action then.
+    [d run:^(MCDemo *m) {
+        if (![[m.controller valueForKey:@"agentsVisible"] boolValue])
+            [NSApp sendAction:NSSelectorFromString(@"toggleAgents:") to:nil from:nil];
+    }];
+    [d waitFor:^BOOL(MCDemo *m) {
+        return AgentsPanel(m) && AgentRow(m, @"perimeter") >= 0;
+    } timeout:15 recorded:YES];
+    [d pause:1.4];
+    [d run:^(MCDemo *m) { [AgentsPanel(m) toggleRow:AgentRow(m, @"perimeter")]; }];
+    [d pause:1.6];
+    [d clickAt:^NSPoint {
+        NSOutlineView *o = AgentsPanel(d).outline;
+        NSRect r = [o rectOfRow:AgentRow(d, @"perimeter")];
+        return [o convertPoint:NSMakePoint(NSMinX(r) + 60, NSMidY(r)) toView:nil];
+    }];
+    [d caption:@"Its last message beside its last test run"];
+    [d hidePointer];
+    [d poster];
+    [d pause:3.2];
 }
 
 typedef void (*MCSceneBuilder)(MCDemo *d);
@@ -1120,6 +1347,9 @@ static const struct { const char *name; MCSceneBuilder build; } kScenes[] = {
     {"vim", SceneVim},
     {"files", SceneFiles},
     {"links", SceneLinks},
+    {"git", SceneGit},
+    {"markdown", SceneMarkdown},
+    {"agents", SceneAgents},
 };
 
 // ------------------------------------------------------------ entry points
