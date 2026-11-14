@@ -24,6 +24,8 @@ struct Parsed {
     bool help = false;
     bool version = false;
     bool foreground = false;
+    // --open-folder, which is also left in `args` for the running minicode.
+    bool openFolder = false;
     // A usage error, ready to print ("minicode: unknown option -x" and how
     // to get the help). Exit status 2, as the Mac's launcher.
     std::string error;

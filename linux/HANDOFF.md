@@ -4479,6 +4479,75 @@ The owner found the tab titles much too small: `.minicode-tab` fixed
   fails this under any desktop font but 9 pt), is 16 pt after
   `tabs.font-size = 16` with no restart, and goes back when the line goes.
 
+### 69. Recent folders, and the dock's menu (done, November 2026)
+
+The owner asked to right click minicode's icon in the dock and see the
+folders opened lately, with a way to choose another through the system's
+folder chooser; the Mac half is File > Open Recent (`src/RecentFolders.mm`).
+
+- **The list** (`RecentList.{h,cpp}`, linux/src, PARITY.md D11): a JSON array
+  in `$XDG_STATE_HOME/minicode/recent-folders.json`, written atomically
+  (0600). Every window's folder is noted (`newWindow`, and `openFolder` for
+  File > Open Folder): newest first, 20 at most, one entry a folder by its
+  realpath, folders that are gone left out when listed but kept in the file.
+  Off under `MINICODE_BENCH` or `MINICODE_DEMO` (the port has no demo; the
+  switch is there for the day). The port keeps it apart from the core since
+  the Mac's lives in its defaults; the rules are the Mac's.
+- **File > Open Recent**: the registry's `workbench.action.openRecent`
+  ("Open Recent…", `win.openrecent`) lists the folders as a pick list in the
+  palette's box (`PalettePanel::showPick`), and a submenu "Open Recent" right
+  after it lists them with Clear Recently Opened at the end (`app.openrecentfolder`
+  with the path as its target, `app.clearrecent`). Choosing one is
+  `showFolderWindow`: a window on the folder, or the one that shows it brought
+  forward, as `minicode <folder>` does (the Mac's opens it in this window).
+- **The key is Ctrl+R**, VS Code's Linux key and the Mac's. It is a plain
+  Ctrl key and not Global, so `linuxTerminalTakes` leaves it to the terminal:
+  with the terminal's keyboard, Ctrl+R is still the shell's history search.
+- **The dock's menu** (`DockMenu.{h,cpp}`): Ubuntu Dock and GNOME's dash show a
+  desktop file's `[Desktop Action]` groups in the icon's menu, running or
+  not (the dock's live quicklist over D-Bus works only while the app runs).
+  minicode writes its own copy of the installed `org.minicode.Editor.desktop`
+  (found in `$XDG_DATA_DIRS`, never `$XDG_DATA_HOME`) to
+  `$XDG_DATA_HOME/applications/`, which shadows the installed one under the
+  same id, so a pinned icon stays pinned. It is the installed
+  `[Desktop Entry]` verbatim plus `Actions=open-folder;new-window;recent-N;`
+  and `X-Minicode-Generated=true`, then the actions: Open Folder…
+  (`Exec=<binary> --open-folder`), New Window (when the installed file has
+  none; it runs the binary with no path, which raises the window on the
+  launcher's folder rather than making a second one on it), and one action for
+  each of the first 10 existing folders, named with `~` for home, with the
+  folder quoted as the Desktop Entry spec says (quoted, `"` `` ` `` `$` `\`
+  escaped, `%` doubled, then each `\` doubled for the file's own escapes). A
+  folder whose name holds a line break is left out. Written on startup and
+  whenever the list changes, only when the text differs. **A file there
+  without the marker is the user's own and is never written or removed**
+  (logged once). With no installed file (a run from a checkout) nothing is
+  written. GNOME watches the folder, so `update-desktop-database` is not
+  needed (it indexes only `MimeType`, which the copy repeats unchanged).
+- **`window.dock-menu`** (default true, in the `window.*` keys): false removes
+  the copy, if it carries the marker.
+- **`minicode --open-folder`** (`LaunchOptions`, left in the arguments so a
+  running minicode gets it over GApplication): the system's folder chooser
+  (`chooseFolder`, the one File > Open Folder uses, `GtkFileDialog`
+  `select_folder`, which goes through the desktop portal), over the front
+  window if there is one, starting in the home folder; the folder chosen
+  gets a window or is brought forward. The application is held while the
+  chooser is up, so a cancel with no window open quits.
+- **Checked** in the `recent_folders` suite in a scratch `XDG_STATE_HOME`,
+  `XDG_DATA_HOME` and `XDG_DATA_DIRS` (a fake installed file): the list's
+  order, dedupe through a symlink, cap and missing folders, `MINICODE_BENCH`;
+  the generated file's exact text with a folder with a space in it, the
+  spec's quoting, following the list, a file without the marker left alone,
+  the setting, no installed file; the submenu and the registry item in the
+  menu bar, an item opening and then raising a window, Ctrl+R's pick list,
+  Clear; `--open-folder` through `handleCommandLine` with the chooser
+  answered by the check (`MCGuiAnswerFolderChooser`) and a cancel.
+- **Needs a person**: the real dock on GNOME with the icon pinned (the
+  menu shows the actions, an item opens its folder, a pinned icon stays
+  pinned after the copy is written, and the first right click after a
+  new folder), and the portal's own folder chooser from the dock's Open
+  Folder… (with the app not running, and running).
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**

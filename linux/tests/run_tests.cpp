@@ -750,6 +750,16 @@ static void testLaunchOptions() {
     CHECK(!shouldDetach(parse(Args{"minicode", "--version"}), true, nullptr));
     CHECK(!shouldDetach(parse(Args{"minicode", "-q"}), true, nullptr));
 
+    GROUP("launch: --open-folder");
+    // The dock icon's Open Folder…: kept in what GApplication gets, so a
+    // running minicode shows the chooser, and told apart from a path.
+    p = parse(Args{"minicode", "--open-folder"});
+    CHECK(p.openFolder && p.error.empty() && p.args == (Args{"minicode", "--open-folder"}));
+    CHECK(!parse(Args{"minicode", "src"}).openFolder);
+    CHECK(!parse(Args{"minicode", "--", "--open-folder"}).openFolder);
+    CHECK(shouldDetach(p, true, nullptr));
+    CHECK(helpText().find("--open-folder") != std::string::npos);
+
     GROUP("launch: help and version");
     const std::string help = helpText();
     CHECK(help.rfind("Usage: minicode [options] [path]\n", 0) == 0);

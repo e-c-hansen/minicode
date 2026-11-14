@@ -30,6 +30,7 @@ const std::vector<Action>& actions() {
         {"workbench.action.files.openFolder", "win.open", false},
         {"workbench.action.files.save", "win.save", true},
         {"workbench.action.files.saveAll", "win.saveall", false},
+        {"workbench.action.openRecent", "win.openrecent", false},
         {"minicode.latex.exportPDF", "win.exportpdf", false},
         {"latex-workshop.synctex", "win.latexsynctex", false},
         {"minicode.markdown.exportHtml", "win.exporthtml", false},

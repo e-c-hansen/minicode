@@ -22,6 +22,12 @@ Parsed parse(const std::vector<std::string>& argv) {
             // GLib's, for a D-Bus activated start; the port's desktop entry
             // does not ask for one today, but GApplication still offers it.
             else if (a == "--gapplication-service") out.args.push_back(a);
+            // The dock icon's Open Folder…: the running minicode, or this one,
+            // shows the system's folder chooser (main.cpp, handleCommandLine).
+            else if (a == "--open-folder") {
+                out.openFolder = true;
+                out.args.push_back(a);
+            }
             else if (out.error.empty())
                 out.error = "minicode: unknown option " + a + "\nTry 'minicode --help'.\n";
             continue;
@@ -57,6 +63,8 @@ std::string helpText() {
            "what it prints goes nowhere, unless sent to a file.\n"
            "\n"
            "Options:\n"
+           "      --open-folder  choose a folder in the system's chooser and open a window\n"
+           "                     on it (the dock icon's Open Folder…)\n"
            "      --foreground   stay in the terminal until minicode quits, as any program\n"
            "                     run there does, with its output in the terminal; closing\n"
            "                     the terminal then closes minicode (MINICODE_FOREGROUND=1\n"

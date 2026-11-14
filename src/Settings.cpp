@@ -894,6 +894,7 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
         MC_KEY("window.opacity", Word, false, return opacityValue(v, s.windowOpacity_, e);),
         MC_KEY("window.text", Word, true, return colorValue(v, s.windowText_, e);),
         MC_KEY("window.blur", Word, false, return boolValue(v, s.blur_, e);),
+        MC_KEY("window.dock-menu", Word, false, return boolValue(v, s.dockMenu_, e);),
         MC_KEY("window.material", Word, false,
                const std::string m = lower(v);
                for (const char* name : kMaterials)
@@ -1564,6 +1565,10 @@ const char* Settings::defaultFileText() {
 # The blur's look (macOS only): under-window, window, content, titlebar,
 # header, sidebar, menu, popover, hud, sheet, fullscreen, or tooltip.
 # window.material = under-window
+# Linux only: the folders opened lately and Open Folder in the menu of
+# minicode's icon in the dock. minicode writes them into its own copy of the
+# desktop entry in ~/.local/share/applications; false removes that copy.
+# window.dock-menu = true
 
 # The title bar across the top of the window, and on Linux the menu bar.
 # titlebar.background = #323233

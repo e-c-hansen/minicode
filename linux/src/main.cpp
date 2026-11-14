@@ -45,6 +45,8 @@
 #include "AppSettings.h"
 #include "Appearance.h"
 #include "Bookmarks.h"
+#include "DockMenu.h"
+#include "RecentList.h"
 #include "GitTrash.h"
 #include "BracketView.h"
 #include "WebBookmark.h"
@@ -193,6 +195,8 @@ struct Shared {
     AppSettings*    settings = nullptr;   // one file, watched once
     GtkCssProvider* css = nullptr;        // one stylesheet for the display
     GMenuModel*     treeMenu = nullptr;   // the file tree's right-click menu
+    GMenu*          recentMenu = nullptr;     // File > Open Recent's folders, refilled from RecentList
+    int             recentListener = 0;
     GMenu*          bookmarksMenu = nullptr;   // the menu bar's Bookmarks, refilled from the folder
     std::vector<std::pair<std::string, GFileMonitor*>> bookmarkWatches;   // the folder and its folders
     bool            bookmarkRefreshQueued = false;
@@ -208,6 +212,8 @@ Shared g;
 }  // namespace
 
 static App* newWindow(const std::string& root, const std::string& file);
+// A window on `root`, or the one already on it brought forward.
+static void showFolderWindow(const std::string& root);
 
 // Defined with the rest of the hints panel further down; the pane toggles call
 // it so an open panel never reports stale state.
@@ -871,6 +877,7 @@ static void treeOpenCb(const std::string& path, EditorTabs::OpenFrom from, void*
 // about their unsaved changes), as on the Mac, so the editor never holds a
 // file the tree no longer shows.
 static void openFolder(App* app, const std::string& dir) {
+    RecentList::note(dir);
     app->persist->saveSession();   // the old folder's tabs, for when it is back
     app->rootDir = dir;
     app->tree->setRoot(dir);
@@ -910,32 +917,60 @@ static gboolean onCloseRequest(GtkWindow*, gpointer userp) {
 
 // ---------------------------------------------------------------- actions
 
-static void act_open(GSimpleAction*, GVariant*, gpointer userp) {
-    App* app = static_cast<App*>(userp);
-    confirmAllUnsaved(app, [app] {
-        GtkFileDialog* dlg = gtk_file_dialog_new();
-        gtk_file_dialog_set_title(dlg, "Open Folder");
-        GFile* start = g_file_new_for_path(app->rootDir.c_str());
-        gtk_file_dialog_set_initial_folder(dlg, start);
-        g_object_unref(start);
-        gtk_file_dialog_select_folder(dlg, GTK_WINDOW(app->window), nullptr,
-            [](GObject* src, GAsyncResult* res, gpointer up) {
-                App* a = static_cast<App*>(up);
-                GFile* folder = gtk_file_dialog_select_folder_finish(
-                    GTK_FILE_DIALOG(src), res, nullptr);
-                if (!folder) return;   // cancelled
-                if (a->dead) { g_object_unref(folder); return; }
-                char* path = g_file_get_path(folder);
-                // The edits were dealt with before the dialog opened, but the
-                // user may have typed more while it was up.
-                if (path) {
-                    std::string dir = path;
-                    confirmAllUnsaved(a, [a, dir] { openFolder(a, dir); });
+#ifdef MINICODE_GUITEST
+// The GUI checks answer the folder chooser themselves (the system's goes
+// through the desktop portal): given the parent, the folder it starts in and
+// what to do with the answer ("" for a cancel).
+std::function<void(GtkWindow*, const std::string&, std::function<void(const std::string&)>)>
+    gFolderChooserHook;
+#endif
+
+// The system's folder chooser, shared by File > Open Folder and `minicode
+// --open-folder` (the dock icon's Open Folder…). `done` gets the folder's
+// path, or "" when it was cancelled or failed. `parent` may be null.
+static void chooseFolder(GtkWindow* parent, const std::string& start,
+                         std::function<void(const std::string&)> done) {
+#ifdef MINICODE_GUITEST
+    if (gFolderChooserHook) {
+        gFolderChooserHook(parent, start, std::move(done));
+        return;
+    }
+#endif
+    GtkFileDialog* dlg = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dlg, "Open Folder");
+    if (!start.empty()) {
+        GFile* f = g_file_new_for_path(start.c_str());
+        gtk_file_dialog_set_initial_folder(dlg, f);
+        g_object_unref(f);
+    }
+    auto* held = new std::function<void(const std::string&)>(std::move(done));
+    gtk_file_dialog_select_folder(dlg, parent, nullptr,
+        [](GObject* src, GAsyncResult* res, gpointer up) {
+            auto* fn = static_cast<std::function<void(const std::string&)>*>(up);
+            GFile* folder = gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(src), res, nullptr);
+            std::string dir;
+            if (folder) {
+                if (char* path = g_file_get_path(folder)) {
+                    dir = path;
                     g_free(path);
                 }
                 g_object_unref(folder);
-            }, app);
-        g_object_unref(dlg);
+            }
+            (*fn)(dir);
+            delete fn;
+        }, held);
+    g_object_unref(dlg);
+}
+
+static void act_open(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    confirmAllUnsaved(app, [app] {
+        chooseFolder(GTK_WINDOW(app->window), app->rootDir, [app](const std::string& dir) {
+            if (dir.empty() || app->dead) return;   // cancelled, or the window went
+            // The edits were dealt with before the dialog opened, but the
+            // user may have typed more while it was up.
+            confirmAllUnsaved(app, [app, dir] { openFolder(app, dir); });
+        });
     });
 }
 
@@ -1675,6 +1710,24 @@ static void act_toggle_agents(GSimpleAction*, GVariant*, gpointer userp);
 static void showEvidence(App* app, const std::string& transcript, const std::string& name);
 static void setupWorktrees(App* app);
 static void addAction(App* app, const char* name, GCallback cb);
+
+// File > Open Recent…, Ctrl+R: the folders opened lately as a pick list, as
+// the palette's own. A choice opens a window on the folder or brings forward
+// the one that shows it.
+static void act_open_recent(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->palette) return;
+    const std::vector<std::string> folders = RecentList::folders();
+    const char* home = g_get_home_dir();
+    PalettePanel::Pick pick;
+    pick.placeholder = "Open a folder opened lately";
+    pick.emptyText = "No recent folders";
+    for (const std::string& f : folders) pick.labels.push_back(RecentList::tilded(f, home));
+    pick.choose = [folders](int i) {
+        if (i >= 0 && i < (int)folders.size()) showFolderWindow(folders[i]);
+    };
+    app->palette->showPick(pick);
+}
 
 // New Window: one on this window's folder, as the Mac's opens one on the
 // front window's root.
@@ -3263,6 +3316,57 @@ static void applyWindowSettings(App* app) {
     showConfigErrors(app);
 }
 
+// File > Open Recent's folders (the registry's "Open Recent…" has the pick
+// list and the key), and the dock icon's copy of the desktop file.
+static void fillRecentMenu() {
+    if (!g.recentMenu) return;
+    g_menu_remove_all(g.recentMenu);
+    GMenu* list = g_menu_new();
+    const char* home = g_get_home_dir();
+    for (const std::string& f : RecentList::folders()) {
+        GMenuItem* item = g_menu_item_new(RecentList::tilded(f, home).c_str(), nullptr);
+        g_menu_item_set_action_and_target_value(item, "app.openrecentfolder",
+                                                g_variant_new_string(f.c_str()));
+        g_menu_append_item(list, item);
+        g_object_unref(item);
+    }
+    if (g_menu_model_get_n_items(G_MENU_MODEL(list)) == 0)
+        g_menu_append(list, "No Recent Folders", nullptr);   // no action: shown dimmed
+    g_menu_append_section(g.recentMenu, nullptr, G_MENU_MODEL(list));
+    g_object_unref(list);
+    GMenu* clear = g_menu_new();
+    g_menu_append(clear, "Clear Recently Opened", "app.clearrecent");
+    g_menu_append_section(g.recentMenu, nullptr, G_MENU_MODEL(clear));
+    g_object_unref(clear);
+}
+
+// Open Recent as a submenu right after the registry's Open Recent… item.
+static void insertRecentSubmenu(GMenu* file) {
+    const int n = g_menu_model_get_n_items(G_MENU_MODEL(file));
+    for (int i = 0; i < n; i++) {
+        GMenuModel* section = g_menu_model_get_item_link(G_MENU_MODEL(file), i, G_MENU_LINK_SECTION);
+        if (!section) continue;
+        const int m = g_menu_model_get_n_items(section);
+        for (int j = 0; j < m; j++) {
+            GVariant* a = g_menu_model_get_item_attribute_value(section, j, "action",
+                                                                G_VARIANT_TYPE_STRING);
+            const bool hit = a && std::string(g_variant_get_string(a, nullptr)) == "win.openrecent";
+            if (a) g_variant_unref(a);
+            if (hit) {
+                g_menu_insert_submenu(G_MENU(section), j + 1, "Open Recent",
+                                      G_MENU_MODEL(g.recentMenu));
+                g_object_unref(section);
+                return;
+            }
+        }
+        g_object_unref(section);
+    }
+}
+
+static void refreshDockMenu() {
+    if (g.settings) DockMenu::update(g.settings->settings().dockMenu());
+}
+
 // The stylesheet, which is the display's and so shared by every window.
 static void applyStylesheet() {
     if (!g.css) {
@@ -3287,6 +3391,7 @@ static void onSettingsChanged(void*) {
     applyStylesheet();
     for (App* a : g.windows) applyWindowSettings(a);
     scheduleBookmarkRefresh();
+    refreshDockMenu();   // window.dock-menu
 }
 
 // ---------------------------------------------------------------- keys
@@ -3397,6 +3502,20 @@ static void initShared() {
     g_signal_connect(quit, "activate", G_CALLBACK(act_quit), nullptr);
     g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(quit));
     g_object_unref(quit);
+    GSimpleAction* openRecent = g_simple_action_new("openrecentfolder", G_VARIANT_TYPE_STRING);
+    g_signal_connect(openRecent, "activate",
+                     G_CALLBACK(+[](GSimpleAction*, GVariant* v, gpointer) {
+                         if (v) showFolderWindow(g_variant_get_string(v, nullptr));
+                     }),
+                     nullptr);
+    g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(openRecent));
+    g_object_unref(openRecent);
+    GSimpleAction* clearRecent = g_simple_action_new("clearrecent", nullptr);
+    g_signal_connect(clearRecent, "activate",
+                     G_CALLBACK(+[](GSimpleAction*, GVariant*, gpointer) { RecentList::clear(); }),
+                     nullptr);
+    g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(clearRecent));
+    g_object_unref(clearRecent);
     GSimpleAction* hidden = g_simple_action_new_stateful(
         "showhidden", nullptr, g_variant_new_boolean(g.showHidden));
     g_signal_connect(hidden, "change-state", G_CALLBACK(onShowHiddenChanged), nullptr);
@@ -3453,13 +3572,24 @@ static void initShared() {
         }});
     // The menu bar, with View > Adjust Settings and View > Theme after the
     // registry's View commands.
-    GMenuModel* bar = Keys::menuBar(Appearance::extendMenu);
+    g.recentMenu = g_menu_new();
+    fillRecentMenu();
+    GMenuModel* bar = Keys::menuBar([](const std::string& top, GMenu* menu) {
+        Appearance::extendMenu(top, menu);
+        if (top == "File") insertRecentSubmenu(menu);
+    });
     // Bookmarks, after Navigate: the folder as a menu, refilled from it
     // (refreshBookmarkUi), so it is current whenever the bar is used.
     g.bookmarksMenu = g_menu_new();
     g_menu_append_submenu(G_MENU(bar), "Bookmarks", G_MENU_MODEL(g.bookmarksMenu));
     fillBookmarksMenu();
     gtk_application_set_menubar(g.gapp, bar);
+    // The list moves the menu and the dock's copy of the desktop file.
+    g.recentListener = RecentList::listen([] {
+        fillRecentMenu();
+        refreshDockMenu();
+    });
+    refreshDockMenu();
     g_object_unref(bar);
     // The tree's right-click menu, in the Mac's order and grouping, ending
     // with Adjust Settings… for the tree's keys.
@@ -3603,6 +3733,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     static int nextControlId = 1;
     app->controlId = nextControlId++;
     app->rootDir = root;
+    RecentList::note(root);
     g.windows.push_back(app);
 
     app->window = gtk_application_window_new(g.gapp);
@@ -3979,6 +4110,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     // Actions. The menu bar and the accelerators are the application's
     // (initShared); these are what they name in this window.
     addAction(app, "newwindow",      G_CALLBACK(act_new_window));
+    addAction(app, "openrecent",     G_CALLBACK(act_open_recent));
     addAction(app, "close",          G_CALLBACK(act_close_window));
     addAction(app, "complete",       G_CALLBACK(act_complete));
     addAction(app, "definition",     G_CALLBACK(act_definition));
@@ -4413,6 +4545,21 @@ static void startControlChannel() {
     if (!gControl->start(&error)) g_printerr("minicode: %s\n", error.c_str());
 }
 
+static void showFolderWindow(const std::string& root) {
+    auto same = [](const std::string& a, const std::string& b) {
+        char x[PATH_MAX], y[PATH_MAX];
+        return a == b || (realpath(a.c_str(), x) && realpath(b.c_str(), y) && !strcmp(x, y));
+    };
+    for (App* a : g.windows)
+        if (!a->dead && same(a->rootDir, root)) {
+            gtk_window_present(GTK_WINDOW(a->window));
+            return;
+        }
+    newWindow(root, "");
+    reopenFoldersWithBackups();
+    startControlChannel();
+}
+
 // Handles both the first launch and every later `minicode <path>` run while
 // MiniCode is already open. GApplication is single-instance: the second
 // process hands its arguments to this one over D-Bus and exits, so this is
@@ -4434,11 +4581,13 @@ static void handleCommandLine(char** args, int n, const char* cwd,
     // window (PARITY.md 4.8); the first other argument is the path, as before.
     std::vector<std::string> addresses;
     const char* pathArg = nullptr;
+    bool chooseOne = false;   // --open-folder: the dock icon's Open Folder…
     for (int i = 1; i < n; i++) {
-        if (WebBookmark::isWebAddress(args[i])) addresses.push_back(args[i]);
+        if (std::string(args[i]) == "--open-folder") chooseOne = true;
+        else if (WebBookmark::isWebAddress(args[i])) addresses.push_back(args[i]);
         else if (!pathArg) pathArg = args[i];
     }
-    const bool pathWanted = pathArg || addresses.empty();
+    const bool pathWanted = pathArg || (addresses.empty() && !chooseOne);
     const Startup st = pathWanted
         ? resolveStartupPath(pathArg, cwd)
         : Startup();
@@ -4480,6 +4629,17 @@ static void handleCommandLine(char** args, int n, const char* cwd,
             showWebAddresses(target, addresses, true);
             gtk_window_present(GTK_WINDOW(target->window));
         }
+    }
+    if (chooseOne) {
+        // The system's chooser, over the front window if there is one. The
+        // application is held while it is up, so a cancel with no window
+        // open lets it quit.
+        g_application_hold(G_APPLICATION(g.gapp));
+        GtkWindow* parent = gtk_application_get_active_window(g.gapp);
+        chooseFolder(parent, g_get_home_dir(), [](const std::string& dir) {
+            if (!dir.empty()) showFolderWindow(dir);
+            g_application_release(G_APPLICATION(g.gapp));
+        });
     }
     if (windowMade) {
         reopenFoldersWithBackups();   // once, at the first launch

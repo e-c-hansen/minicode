@@ -503,7 +503,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | Command click it | Ctrl click it | Tap it |
 | Open a file from the file tree in a tab of its own, not the preview tab | Double-click it, or Command click it | Double-click it, Ctrl click it, or select it and press Enter |  |
 | Open a folder | Command O | Ctrl O | O, or Ctrl O |
-| Open a folder opened before, in this window | Control R (File > Open Recent lists them too) |  |  |
+| Open a folder opened before, in this window | Control R (File > Open Recent lists them too) | Ctrl R (the File menu lists them too; in the terminal the program has it) |  |
 | Open a new terminal in a new tab | Control Shift backtick | Ctrl Shift backtick |  |
 | Open the command palette, to find any menu command by name and run it | Shift Command P, or F1 | Ctrl Shift P, or F1 (in the terminal only Ctrl Shift P) |  |
 | Open the rendered Markdown page beside its source, or close it | Control Command V | Ctrl Alt V |  |

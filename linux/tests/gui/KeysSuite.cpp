@@ -17,6 +17,7 @@
 
 #ifdef MINICODE_ENABLE_TERMINAL
 #include "Terminal.h"
+#include <algorithm>
 #include <vte/vte.h>
 #endif
 
@@ -209,6 +210,16 @@ MC_GUI_SUITE(keys) {
         std::vector<std::string> tops;
         walkMenu(gtk_application_get_menubar(MCGuiApplication()), &all, &tops);
         GCHECK_EQ_STR(joined(tops), "File Edit View Terminal Navigate Bookmarks");
+        // File > Open Recent's folders, its Clear item and the dimmed "No
+        // Recent Folders" are no commands either (the recent_folders suite
+        // has them); the registry's own Open Recent… is counted here.
+        all.erase(std::remove_if(all.begin(), all.end(),
+                                 [](const std::pair<std::string, std::string>& item) {
+                                     return item.second == "app.openrecentfolder" ||
+                                            item.second == "app.clearrecent" ||
+                                            item.first == "No Recent Folders";
+                                 }),
+                  all.end());
         // View > Adjust Settings and View > Theme are no commands of the
         // registry (a row a part of the window, a row a theme, as the Mac's
         // main.mm adds them); the adjust_settings and themes suites have them.

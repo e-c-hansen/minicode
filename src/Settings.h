@@ -224,6 +224,8 @@ public:
     Rgba terminalInputText() const;
 
     bool blur() const { return blur_; }
+    // window.dock-menu: Linux's recent folders in the dock icon's menu.
+    bool dockMenu() const { return dockMenu_; }
     const std::string& material() const { return material_; }
     // False when anything behind the window can show through.
     bool windowIsOpaque() const;
@@ -508,6 +510,7 @@ private:
     std::optional<double> windowOpacity_;
     std::optional<Rgba> windowText_;
     bool blur_ = false;
+    bool dockMenu_ = true;
     std::string material_ = "under-window";
     std::optional<Rgba> syntax_[kTokenStyleCount];
     std::optional<Rgba> markdown_[kMarkdownColorCount];

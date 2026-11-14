@@ -100,3 +100,4 @@ MarkdownSideEditSuite.cpp
 BookmarkSaveSuite.cpp
 BookmarksSuite.cpp
 BookmarkMenuSuite.cpp
+RecentFoldersSuite.cpp

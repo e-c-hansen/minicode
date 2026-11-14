@@ -9,6 +9,7 @@
 #pragma once
 
 #include <gtk/gtk.h>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -97,3 +98,10 @@ void MCGuiOpenWindow(const std::string& folder);
 // what it would print for the terminal is appended to `*errors`.
 void MCGuiCommandLine(const std::vector<std::string>& args, const std::string& cwd,
                       std::string* errors);
+// File > Open Recent's menu (its folders, then Clear Recently Opened).
+GMenu* MCGuiRecentMenu();
+// The folder chooser (File > Open Folder, `minicode --open-folder`) answered
+// by the check instead of the portal: `answer` gets the folder the chooser
+// would start in and returns the one "chosen", "" for a cancel. An empty
+// function puts the real chooser back.
+void MCGuiAnswerFolderChooser(std::function<std::string(const std::string& start)> answer);

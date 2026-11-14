@@ -49,6 +49,9 @@ const std::vector<LinuxRow>& linuxRows() {
         // VS Code's Linux Save All is a chord (Ctrl+K S), so the Mac's
         // Option+Cmd+S with Alt and Ctrl, as Show Hover's.
         {"workbench.action.files.saveAll", "ctrl+alt+s", 0, nullptr, nullptr},
+        // VS Code's Linux key and the Mac's. A plain Ctrl key, so the
+        // terminal keeps it for the shell's history search (not Global).
+        {"workbench.action.openRecent", "ctrl+r", 0, nullptr, nullptr},
         {"minicode.latex.exportPDF", "ctrl+shift+s", 0, nullptr, nullptr},
         // Export as HTML has no key on the Mac either.
         {"minicode.markdown.exportHtml", "", 0, nullptr, nullptr},

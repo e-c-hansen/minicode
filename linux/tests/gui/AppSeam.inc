@@ -90,3 +90,22 @@ void MCGuiCommandLine(const std::vector<std::string>& args, const std::string& c
         if (errors) *errors += m + "\n";
     });
 }
+
+GMenu* MCGuiRecentMenu() { return g.recentMenu; }
+
+void MCGuiAnswerFolderChooser(std::function<std::string(const std::string& start)> answer) {
+    if (!answer) {
+        gFolderChooserHook = nullptr;
+        return;
+    }
+    gFolderChooserHook = [answer](GtkWindow*, const std::string& start,
+                                  std::function<void(const std::string&)> done) {
+        const std::string chosen = answer(start);
+        // Later, as the portal's answer is.
+        g_idle_add_once([](gpointer p) {
+            auto* f = static_cast<std::function<void()>*>(p);
+            (*f)();
+            delete f;
+        }, new std::function<void()>([done, chosen] { done(chosen); }));
+    };
+}

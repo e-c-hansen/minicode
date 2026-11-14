@@ -289,6 +289,10 @@ gui_sources = [
   # auto-save (the Mac's BackupStore and EditorController+Persistence).
   'src/BackupStore.cpp',
   'src/Persistence.cpp',
+  # Recent folders: File > Open Recent, and the dock icon's menu as desktop
+  # actions in a copy of the desktop file (HANDOFF.md item 69).
+  'src/RecentList.cpp',
+  'src/DockMenu.cpp',
   # The palette over the window: commands, Quick Open, Go to Line, symbols.
   'src/PalettePanel.cpp',
   # Big files and long lines: large-file mode, the question past 50 MB,
