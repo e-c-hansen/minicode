@@ -29,10 +29,10 @@ namespace pal {
     constexpr const char* MdHeading  = "#FFFFFF";
     constexpr const char* MdCode     = "#CE9178";
     constexpr const char* MdCodeBg   = "#2A2A2A";
-    constexpr const char* MdQuote    = "#9CA3AF";
+    constexpr const char* MdQuote    = "#9D9D9D";
     constexpr const char* MdRule     = "#555555";
     constexpr const char* MdLink     = "#4EA1F7";
-    constexpr const char* MdPlainMsg = "#9CA3AF";
+    constexpr const char* MdPlainMsg = "#9D9D9D";
     constexpr const char* MdDone     = "#858585";  // a checked task's text
 }
 

@@ -47,6 +47,6 @@ static inline NSColor *SeverityColor(NSInteger severity) {
     case 1: return LHex(0xF14C4C);   // error
     case 2: return LHex(0xCCA700);   // warning
     case 3: return LHex(0x3794FF);   // information
-    default: return LHex(0x9CA3AF);  // hint
+    default: return LHex(0x9D9D9D);  // hint
     }
 }

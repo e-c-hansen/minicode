@@ -4992,7 +4992,7 @@ void testSettingsColorEditing() {
                                 "editor.background = #000000\n# editor.opacity = 1\n"
                                 "# editor.text = #D4D4D4\n"
                                 "markdown.heading = #FFFFFF\nmarkdown.link = #4EA1F7\n"
-                                "# markdown.code = #CE9178\n# markdown.quote = #9CA3AF\n";
+                                "# markdown.code = #CE9178\n# markdown.quote = #9D9D9D\n";
         std::string m = Settings::missingSurfaceLines(old, "markdown");
         CHECK(m == "# A checked task's text (\"- [x] ...\"), which is also struck through.\n"
                    "# markdown.done = #858585\n");

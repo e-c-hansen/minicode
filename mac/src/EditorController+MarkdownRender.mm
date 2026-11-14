@@ -417,7 +417,7 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
         }
         // Missing, still on its way, or a web picture that may not or could
         // not be fetched: its alt text, muted.
-        if (!r.link) color = Hex(0x9CA3AF);
+        if (!r.link) color = Hex(0x9D9D9D);
         if (s.length == 0) s = src;
     }
 

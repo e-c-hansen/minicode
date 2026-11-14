@@ -274,7 +274,7 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
     NSString *name = t.currentPath.lastPathComponent ?: t.diffName ?: @"";
     NSString *line = [NSString stringWithFormat:@"%@: click to show", name];
     NSDictionary *a = @{NSFontAttributeName: [NSFont systemFontOfSize:13],
-                        NSForegroundColorAttributeName: Hex(0x9CA3AF)};
+                        NSForegroundColorAttributeName: Hex(0x9D9D9D)};
     const NSSize s = [line sizeWithAttributes:a];
     return [NSImage imageWithSize:NSMakeSize(ceil(s.width) + 32, ceil(s.height) + 32)
                           flipped:YES

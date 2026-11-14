@@ -253,7 +253,7 @@ static const CGFloat kPickerRowHeight = 20;
     [_content addSubview:_field];
     NSTextField *hint = [NSTextField labelWithString:@"Return to rename, Esc to cancel"];
     hint.font = [NSFont systemFontOfSize:11];
-    hint.textColor = PHex(0x9CA3AF);
+    hint.textColor = PHex(0x9D9D9D);
     hint.frame = NSMakeRect(9, 5, w - 18, 15);
     [_content addSubview:hint];
     // A click anywhere else takes the keyboard away, which cancels.

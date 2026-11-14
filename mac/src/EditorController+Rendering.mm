@@ -845,7 +845,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
 - (void)setPlainMessage:(NSString *)msg {
     NSDictionary *a = @{
         NSFontAttributeName: [NSFont systemFontOfSize:14],
-        NSForegroundColorAttributeName: Hex(0x9CA3AF),
+        NSForegroundColorAttributeName: Hex(0x9D9D9D),
     };
     _liveHighlight = NO;
     [self.textView.textStorage setAttributedString:

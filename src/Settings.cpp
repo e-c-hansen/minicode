@@ -63,7 +63,7 @@ const Theme kThemes[] = {
      {0xCCCCCC, 0xCCCCCC, 0xD4D4D4, 0xD4D4D4, 0xD4D4D4, 0xFFFFFF},
      {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA,
       0xD7BA7D, 0x569CD6},
-     {0xFFFFFF, 0x4EA1F7, 0xCE9178, 0x9CA3AF, 0x858585},
+     {0xFFFFFF, 0x4EA1F7, 0xCE9178, 0x9D9D9D, 0x858585},
      0x2A2A2A, 0x5A5A5A, 0xEDEDED,
      0x858585, 0xC6C6C6, 0x888888,
      {0x4EC9B0, 0x9CDCFE, 0x9CDCFE, 0x9CDCFE, 0x4FC1FF},
@@ -1775,7 +1775,7 @@ const char* Settings::defaultFileText() {
 # markdown.heading = #FFFFFF
 # markdown.link = #4EA1F7
 # markdown.code = #CE9178
-# markdown.quote = #9CA3AF
+# markdown.quote = #9D9D9D
 # A checked task's text ("- [x] ..."), which is also struck through.
 # markdown.done = #858585
 # Pictures in Markdown with an https address are downloaded and shown. Turn

@@ -214,7 +214,7 @@ unsigned letterColor(char c, bool unmerged) {
     case 'A': return 0x81B88B;
     case 'D': return 0xC74E39;
     case 'R': case 'C': case 'U': return 0x73C991;
-    default: return 0x9CA3AF;
+    default: return 0x9D9D9D;
     }
 }
 

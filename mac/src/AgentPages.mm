@@ -26,7 +26,7 @@ static NSString *PNS(const std::string &s) {
 }
 static std::string PU8(NSString *s) { return s.UTF8String ? std::string(s.UTF8String) : ""; }
 
-static NSColor *Muted() { return PHex(0x9CA3AF); }
+static NSColor *Muted() { return PHex(0x9D9D9D); }
 static NSColor *Red() { return PHex(0xF14C4C); }
 static NSColor *Green() { return PHex(0x73C991); }
 static NSColor *Accent() { return PHex(0x4EA1F7); }

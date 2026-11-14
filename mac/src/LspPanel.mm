@@ -18,7 +18,7 @@ static NSColor *StateColor(MCLspState state) {
     case MCLspStateRestarting: return PHex(0xCCA700);
     case MCLspStateFailed:
     case MCLspStateCrashed: return PHex(0xF14C4C);
-    default: return PHex(0x9CA3AF);
+    default: return PHex(0x9D9D9D);
     }
 }
 
@@ -211,7 +211,7 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
     [card addArrangedSubview:header];
     [header.widthAnchor constraintEqualToConstant:kPanelWidth - 24].active = YES;
 
-    NSColor *muted = PHex(0x9CA3AF);
+    NSColor *muted = PHex(0x9D9D9D);
     if (info.state == MCLspStateOff) {
         [card addArrangedSubview:Label([NSString stringWithFormat:
             @"Switched off in the settings file (lsp.%@ = off, or lsp.enabled = false).",
@@ -322,7 +322,7 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
                               @"(lsp.python.also for a second Python server), and "
                               @"python.interpreter sets the default Python. MiniCode never "
                               @"installs a server itself.",
-                              Small(), PHex(0x9CA3AF), YES, NO);
+                              Small(), PHex(0x9D9D9D), YES, NO);
     NSButton *settings = [NSButton buttonWithTitle:@"Open Settings" target:self
                                             action:@selector(openSettings:)];
     settings.controlSize = NSControlSizeSmall;

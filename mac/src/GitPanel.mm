@@ -302,7 +302,7 @@ static long long MCGitNow(void) { return (long long)NSDate.date.timeIntervalSinc
 static NSAttributedString *MCGitStyledText(const GitUi::StyledText &t, NSFont *font) {
     AppSettings *cfg = [AppSettings shared];
     NSColor *plain = [cfg text:Surface::Editor];
-    NSColor *muted = GHex(0x9CA3AF);
+    NSColor *muted = GHex(0x9D9D9D);
     NSFont *bold = [[NSFontManager sharedFontManager] convertFont:font
                                                      toHaveTrait:NSBoldFontMask];
     NSString *text = [[NSString alloc] initWithBytes:t.text.data() length:t.text.size()
@@ -525,7 +525,7 @@ static CGFloat DrawPill(const Git::Ref &r, CGFloat x, CGFloat midY, CGFloat maxW
     if (!g) return;
     const NSRect b = self.bounds;
     const CGFloat h = b.size.height, mid = floor(h / 2);
-    NSColor *muted = GHex(0x9CA3AF);
+    NSColor *muted = GHex(0x9D9D9D);
     if (self.index >= (NSInteger)g->g.commits.size()) {
         [[NSString stringWithFormat:@"Show %ld more…", (long)kGraphBatch]
             drawAtPoint:NSMakePoint(18, 3)
@@ -670,7 +670,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     NSRect b = self.bounds;
     MCGitRow *r = self.row;
     if (!r) return;
-    NSColor *muted = GHex(0x9CA3AF);
+    NSColor *muted = GHex(0x9D9D9D);
     if (r.header) {
         NSDictionary *a = @{
             NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightSemibold],
@@ -844,7 +844,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
                             self.textContainerInset.height);
     [@"Message (⌘⏎ to commit)" drawAtPoint:p withAttributes:@{
         NSFontAttributeName: self.font ?: [NSFont systemFontOfSize:12],
-        NSForegroundColorAttributeName: GHex(0x6B7280),
+        NSForegroundColorAttributeName: GHex(0x858585),
     }];
 }
 @end
@@ -1053,7 +1053,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 
     _notice = [NSTextField wrappingLabelWithString:@""];
     _notice.font = [NSFont systemFontOfSize:12];
-    _notice.textColor = GHex(0x9CA3AF);
+    _notice.textColor = GHex(0x9D9D9D);
     _notice.hidden = YES;
     [self addSubview:_notice];
 
@@ -1068,7 +1068,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         initWithString:@"GRAPH"
             attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:10
                                                                 weight:NSFontWeightSemibold],
-                         NSForegroundColorAttributeName: GHex(0x9CA3AF),
+                         NSForegroundColorAttributeName: GHex(0x9D9D9D),
                          NSKernAttributeName: @0.6}];
     [self addSubview:_graphHeading];
     _allToggle = [NSButton checkboxWithTitle:@"All branches" target:self
@@ -1080,7 +1080,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     [self addSubview:_allToggle];
     _summaryLabel = [NSTextField labelWithString:@""];
     _summaryLabel.font = [NSFont systemFontOfSize:11];
-    _summaryLabel.textColor = GHex(0x9CA3AF);
+    _summaryLabel.textColor = GHex(0x9D9D9D);
     _summaryLabel.lineBreakMode = NSLineBreakByTruncatingTail;
     [self addSubview:_summaryLabel];
 
@@ -1217,14 +1217,14 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _allToggle.attributedTitle = [[NSAttributedString alloc]
         initWithString:@"All branches"
             attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
-                         NSForegroundColorAttributeName: GHex(0x9CA3AF)}];
+                         NSForegroundColorAttributeName: GHex(0x9D9D9D)}];
     [_table reloadData];
     [_graphTable reloadData];
     [self updateErrorColor];
 }
 
 - (void)updateErrorColor {
-    _errorLabel.textColor = _errorIsInfo ? GHex(0x9CA3AF) : GHex(0xF48771);
+    _errorLabel.textColor = _errorIsInfo ? GHex(0x9D9D9D) : GHex(0xF48771);
 }
 
 - (void)showMessageArea:(BOOL)show {

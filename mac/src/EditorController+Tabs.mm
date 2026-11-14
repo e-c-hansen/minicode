@@ -246,7 +246,7 @@
     self.tabStrip.activeText = [cfg text:Surface::Editor];
     self.tabStrip.inactiveText = [[cfg text:Surface::Sidebar] colorWithAlphaComponent:0.7];
     self.tabStrip.needsDisplay = YES;
-    self.emptyLabel.textColor = Hex(0x9CA3AF);
+    self.emptyLabel.textColor = Hex(0x9D9D9D);
     [self colorOtherGroupStrip];
 }
 

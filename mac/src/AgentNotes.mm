@@ -44,7 +44,7 @@ static const unsigned kAccent = 0x4EA1F7;
     b.bordered = NO;
     b.refusesFirstResponder = YES;
     b.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium];
-    b.contentTintColor = NHex(0x9CA3AF, 1);
+    b.contentTintColor = NHex(0x9D9D9D, 1);
     [self addSubview:b];
     return b;
 }

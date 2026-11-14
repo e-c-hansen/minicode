@@ -364,7 +364,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   `lsp.*` or a surface's `.background`, is code in `apply()`), its default,
   the commented `defaultFileText` (`settings:key-table` fails on a row it
   lacks) and the view's `applySettings`. Per-language blocks are not done. Still inline hex (`Hex`, `THex`, `SHex`): accents #4EA1F7,
-  muted #9CA3AF, dividers #333333, the hints overlay, terminal panel messages,
+  muted #9D9D9D (Dark Modern's descriptionForeground; #9CA3AF, Tailwind's gray-400,
+  until 2026-11-14, and still in linux/src and Android), dividers #333333,
+  the hints overlay, terminal panel messages,
   the git panel, the developer amber #E8A33D, the ANSI
   palette in `TermColor::rgb()`; `linux/src/Palette.h` mirrors the defaults.
   The find bar and Find in Folder take a palette per theme
