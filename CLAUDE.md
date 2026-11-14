@@ -3651,9 +3651,9 @@ core file its files include. Traps paid for:
   `tar` fails with ENOSYS under Docker Desktop's amd64 emulation; gpg-agent
   cannot be forwarded into Docker Desktop, so signing is on the host.
 
-## Current state (2026-11-08)
+## Current state (2026-11-14)
 
-- **Released: 1.5.23** (2026-11-13), and the user's Homebrew copy is on it.
+- **Released: 1.5.25** (2026-11-14), and the user's Homebrew copy is on it.
   Since 1.5.8: 1.5.9 security and data safety (bracketed paste, secure
   keyboard entry, symlinked config writes, the tectonic checksum and
   `--untrusted`, formatter consent, the cask's arm64 requirement); 1.5.10
@@ -3680,17 +3680,22 @@ core file its files include. Traps paid for:
   the bookmark folder as a menu, and saving a page once; 1.5.23 `minicode
   page --paste` (the page-paste branch of 2026-11-10, merged late: the
   owner's settings already had `control.page-input`, which the status bar
-  called unknown). Every release from 1.5.7 on has notes of what
+  called unknown); 1.5.24 Linux only (bookmarks); 1.5.25 the Dock
+  icon's menu, `tabs.font-size`, paste without smart spaces, the find
+  bar's history, parameter-name inlay hints off by default, and in the
+  terminal Cmd+L (Clear to Previous Mark), Cmd+T and a scroll bar that
+  takes the mouse, with the Mac's files moved to `mac/`. Every release from 1.5.7 on has notes of what
   changed on GitHub (`gh release view v1.5.17`), written for users and
   given to release.sh as `MINICODE_RELEASE_NOTES`.
-- **PPA**: current at 1.5.21 (`1.5.21-1~ppa1~resolute1`, a Linux-only
+- **PPA**: current at 1.5.24 (`1.5.24-1~ppa1~resolute1`, a Linux-only
   release from the ThinkPad). Uploads go from the ThinkPad (`ssh thinkpad`, checkout
   `~/minicode`), since the Mac has no Docker; unlock its gpg key first
   (`echo test | gpg --clearsign -u EEF9635EDB7F9335`), or signing fails
   once the passphrase cache has expired (1.5.14 was skipped for that
   reason). ppa.sh then waits for Launchpad's build (see "Build, test, run,
-  release"). 1.5.20, 1.5.22 and 1.5.23 were cut on the Mac with `MINICODE_NO_PPA=1`;
-  1.5.22 and 1.5.23 changed only the Mac, so the PPA owes them nothing.
+  release"). 1.5.20, 1.5.22, 1.5.23 and 1.5.25 were cut on the Mac with
+  `MINICODE_NO_PPA=1`; 1.5.22, 1.5.23 and 1.5.25 changed only the Mac, so
+  the PPA owes them nothing.
 - The release is arm64 only (built on Apple silicon with no `-arch` flag);
   the README says so and the cask declares `depends_on arch: :arm64`.
 - **Left to the owner**: notarization (the paid Apple Developer Program),
