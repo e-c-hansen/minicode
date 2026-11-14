@@ -40,6 +40,7 @@
 #include <unistd.h>
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <string>
@@ -392,6 +393,26 @@ const char* kBase = "lsp.enabled = false\n";
 
 }  // namespace
 
+// The point size a tab's title is drawn at, from its Pango context (what the
+// CSS resolved to), and the desktop's interface font size.
+double tabTitlePoints() {
+    GtkWidget* title = ed()->strip()->titleWidget(0);
+    const PangoFontDescription* d =
+        title ? pango_context_get_font_description(gtk_widget_get_pango_context(title)) : nullptr;
+    if (!d) return -1;
+    double size = (double)pango_font_description_get_size(d) / PANGO_SCALE;
+    return pango_font_description_get_size_is_absolute(d) ? size * 72.0 / 96.0 : size;
+}
+double desktopPoints() {
+    char* name = nullptr;
+    g_object_get(gtk_settings_get_default(), "gtk-font-name", &name, nullptr);
+    PangoFontDescription* d = pango_font_description_from_string(name ? name : "Sans 10");
+    double size = (double)pango_font_description_get_size(d) / PANGO_SCALE;
+    pango_font_description_free(d);
+    g_free(name);
+    return size;
+}
+
 MC_GUI_SUITE(themes) {
     MCGuiStep("a file of source, the plain settings, and a window of its own", [] {
         MCGuiWriteFile(F("themes.py"), "def shown():\n    return 1\n");
@@ -417,6 +438,22 @@ MC_GUI_SUITE(themes) {
     });
     MCGuiStep("the keyboard in the editor", [] { MCGuiKey("ctrl+1"); });
     waitInTheme("dark-plus");
+
+    // ---- tabs.font-size: unset, the desktop's interface font (the old rule
+    // fixed 12 px, about 9 pt); set, that many points, at once; unset again.
+    MCGuiStep("the tab title at the desktop's size", [] {
+        double want = desktopPoints(), got = tabTitlePoints();
+        GCHECK(got > 0 && want > 0 && std::abs(got - want) < 0.6);
+        MCGuiSetSettings(std::string(kBase) + "tabs.font-size = 16\n");
+    });
+    MCGuiWait("16 pt", 10, [] { return std::abs(tabTitlePoints() - 16) < 0.6; });
+    MCGuiStep("a picture, then the key removed", [] {
+        GCHECK(gtk_widget_get_height(ed()->strip()->widget()) >=
+               gtk_widget_get_height(ed()->strip()->titleWidget(0)));
+        MCGuiSetSettings(kBase);
+    });
+    MCGuiWait("back to the desktop's size", 10,
+              [] { return std::abs(tabTitlePoints() - desktopPoints()) < 0.6; });
 
     // ---- a light theme and a dark one, from the menu bar
     chooseTheme("Solarized Light");

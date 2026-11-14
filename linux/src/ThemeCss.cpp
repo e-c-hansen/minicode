@@ -1,5 +1,6 @@
 // ThemeCss.cpp — see ThemeCss.h.
 #include "ThemeCss.h"
+#include <cstdio>
 
 namespace theme {
 
@@ -77,8 +78,15 @@ std::string stylesheet(const Settings& s) {
     dim.a *= 0.7;
     css += ".minicode-tabs { background-color: " + bg(Surface::Sidebar) +
            "; border-bottom: 1px solid #333333; }";
-    css += ".minicode-tab { padding: 5px 6px 5px 12px; border-right: 1px solid #333333;"
-           " font-size: 12px; }";
+    // The title's size is tabs.font-size when the file sets it, else the
+    // desktop's interface font (no size here, so GTK's own applies).
+    css += ".minicode-tab { padding: 5px 6px 5px 12px; border-right: 1px solid #333333;";
+    if (s.tabsFontSizeSet()) {
+        char pt[32];
+        std::snprintf(pt, sizeof pt, " font-size: %gpt;", s.tabsFontSize());
+        css += pt;
+    }
+    css += " }";
     css += ".minicode-tab label { color: " + cssColor(dim) + "; }";
     css += ".minicode-tab.active { background-color: " + bg(Surface::Editor) +
            "; box-shadow: inset 0 2px #4EA1F7; }";

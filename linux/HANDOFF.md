@@ -4952,3 +4952,23 @@ File's busy check and the finishing mark.
   `meson.build`, so the package has it), else the checkout's own. The
   `control` suite installs with `--dir` into its scratch folder.
 - **Left of 3.1**: nothing of `split` (done with item 60).
+
+### 68. The tabs' font size (done, November 2026)
+
+The owner found the tab titles much too small: `.minicode-tab` fixed
+`font-size: 12px`, about 9 pt, against GNOME's 11 pt interface font.
+
+- **`tabs.font-size`** is a core setting (`Settings::tabsFontSizeSet`,
+  `tabsFontSize`, points, 6 to 72, as `editor.font-size`), in the Tabs
+  surface's keys, so Adjust Settings on a tab opens the file at it. The
+  Mac's own side is its session's.
+- **Unset, no size is written**: `ThemeCss.cpp` leaves `.minicode-tab`
+  without a `font-size`, so the labels take GTK's own font
+  (`gtk-font-name`, the desktop's interface font). Set, it writes
+  `font-size: Npt`. The editor, terminal and browser strips share the
+  class, so all follow. The padding is in pixels and the height follows the
+  label, so a large size is not clipped.
+- **Checked** in the `themes` suite: the title's size read from its Pango
+  context equals `gtk-font-name`'s with the key unset (the old pixel rule
+  fails this under any desktop font but 9 pt), is 16 pt after
+  `tabs.font-size = 16` with no restart, and goes back when the line goes.

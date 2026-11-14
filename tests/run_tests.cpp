@@ -3963,7 +3963,7 @@ void testSettings() {
     // workbench.enable-preview keys, markdown.max-width, and
     // browser.bookmarks.
     // control.page-input.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 124);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 125);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new

@@ -632,7 +632,7 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
         {"tabs", "Tabs",
          {"editor.background", "editor.opacity", "editor.text",
           "sidebar.background", "sidebar.opacity", "sidebar.text",
-          "window.opacity", "window.text"}, false},
+          "tabs.font-size", "window.opacity", "window.text"}, false},
         {"terminal-tabs", "Terminal Tabs",
          {"terminal.background", "terminal.opacity", "terminal.text",
           "sidebar.background", "sidebar.opacity", "sidebar.text",
@@ -1118,6 +1118,10 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.terminalScrollback_ = (int)lines;
                return true;),
+        MC_KEY("tabs.font-size", Word, false,
+               if (!fontSizeValue(v, s.tabsFontSize_, e)) return false;
+               s.tabsFontSizeSet_ = true;
+               return true;),
         MC_KEY("terminal.font-size", Word, false,
                if (!fontSizeValue(v, s.terminalFontSize_, e)) return false;
                s.terminalFontSizeSet_ = true;
@@ -1600,6 +1604,10 @@ const char* Settings::defaultFileText() {
 # The editor's font size in points. Cmd+= and Cmd+- zoom in and out from
 # it, and Option+Cmd+0 comes back to it (macOS).
 # editor.font-size = 13
+# The font size of the tab titles, in points, for the editor's tabs and the
+# terminal's and browser's. Unset, each platform uses its own: Linux follows
+# the desktop's interface font, and macOS uses 12.
+# tabs.font-size = 12
 # Line numbers beside the editor: on, off, or relative (counted up and down
 # from the caret's line, which shows its own number).
 # editor.line-numbers = on

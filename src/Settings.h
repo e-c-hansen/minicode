@@ -289,6 +289,10 @@ public:
     // all. The GTK port starts from the desktop's own size when it does
     // not, as it always did; the Mac uses the defaults.
     bool editorFontSizeSet() const { return editorFontSizeSet_; }
+    // tabs.font-size, in points: set only when the file gives it; unset, the
+    // platform's own size (Linux: the interface font, macOS: 12).
+    bool tabsFontSizeSet() const { return tabsFontSizeSet_; }
+    double tabsFontSize() const { return tabsFontSize_; }
     bool terminalFontSizeSet() const { return terminalFontSizeSet_; }
     // editor.line-numbers: the gutter beside the editor with each line's
     // number (on, the default), none (off), or numbers counted from the
@@ -526,6 +530,8 @@ private:
     std::optional<Rgba> rulerColor_;
     double editorFontSize_ = 13;
     bool editorFontSizeSet_ = false, terminalFontSizeSet_ = false;
+    bool tabsFontSizeSet_ = false;
+    double tabsFontSize_ = 12;
     LineNumbers lineNumbers_ = LineNumbers::On;
     bool wordWrap_ = true;
     bool autoClose_ = true;
