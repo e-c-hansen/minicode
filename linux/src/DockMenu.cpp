@@ -145,30 +145,26 @@ std::string render(const std::string& installed, const std::vector<std::string>&
     for (const Group& g : groups) {
         if (!startsWith(g.header, "[Desktop Action ")) continue;
         const std::string id = g.header.substr(16, g.header.size() - 17);
-        if (ours.count(id) && id != "new-window") continue;
+        if (ours.count(id)) continue;   // an installed New Window is replaced by ours
         kept.push_back(id);
         keptText += g.header + "\n";
         for (const std::string& l : g.lines) keptText += l + "\n";
         keptText += "\n";
     }
-    const bool hasNewWindow = [&] {
-        for (const std::string& k : kept) if (k == "new-window") return true;
-        return false;
-    }();
 
     std::string out = entry->header + "\n";
     for (const std::string& l : entry->lines) {
         if (startsWith(l, "Actions=") || l == kMarker) continue;
         out += l + "\n";
     }
-    std::string actions = "Actions=open-folder;";
-    if (!hasNewWindow) actions += "new-window;";
+    std::string actions = "Actions=open-folder;new-window;";
     for (const std::string& r : recent) actions += r + ";";
     for (const std::string& k : kept) actions += k + ";";
     out += actions + "\n" + kMarker + "\n\n";
     out += "[Desktop Action open-folder]\nName=Open Folder…\nExec=" + binary +
            " --open-folder\n\n";
-    if (!hasNewWindow) out += "[Desktop Action new-window]\nName=New Window\nExec=" + binary + "\n\n";
+    out += "[Desktop Action new-window]\nName=New Window\nExec=" + binary +
+           " --new-window\n\n";
     for (const std::string& r : recentGroups) out += r + "\n";
     out += keptText;
     while (out.size() > 1 && out[out.size() - 1] == '\n' && out[out.size() - 2] == '\n')

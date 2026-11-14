@@ -10,19 +10,24 @@
 //     symlink to a folder is that folder), 20 at most, folders that are gone
 //     left out, nothing noted under MINICODE_BENCH;
 //   - File > Open Recent: the submenu lists them and ends with Clear
-//     Recently Opened, an item opens a window on the folder or brings
-//     forward the one that shows it, Ctrl+R lists them as a pick list;
+//     Recently Opened; an item, and Ctrl+R's pick, bring forward the window
+//     on the folder, else move the window in front to it (asking about
+//     unsaved tabs, Cancel leaving it), and a folder that is gone changes
+//     nothing (the Mac's rule, HANDOFF.md item 71);
 //   - the dock's menu: the generated desktop file's exact text (a folder
 //     with a space quoted, a hostile name quoted per the spec), kept
 //     current as the list changes, a file without the marker left alone,
 //     window.dock-menu = false removing the copy, no installed file and
 //     nothing written;
 //   - `--open-folder` through the command line: the chooser's folder gets a
-//     window (and no window for the current folder), a cancel gets nothing.
+//     window (and no window for the current folder), a cancel gets nothing;
+//   - `--new-window`: always a window, on a path, on the front window's
+//     folder or with a file, and the dock's New Window action runs it.
 #include "Harness.h"
 
 #include "DockMenu.h"
 #include "Editor.h"
+#include "FileTree.h"
 #include "PalettePanel.h"
 #include "RecentList.h"
 
@@ -110,13 +115,40 @@ std::string expected(const std::vector<std::string>& folders) {
     }
     return std::string(kInstalled) + actions + "\nX-Minicode-Generated=true\n\n"
            "[Desktop Action open-folder]\nName=Open Folder…\nExec=/opt/mc/bin/minicode --open-folder\n\n"
-           "[Desktop Action new-window]\nName=New Window\nExec=/opt/mc/bin/minicode\n" + tail;
+           "[Desktop Action new-window]\nName=New Window\nExec=/opt/mc/bin/minicode --new-window\n" + tail;
 }
 
 void closeExtraWindows() {
     const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
     for (size_t i = gWindows; i < all.size(); i++) gtk_window_close(all[i].window);
 }
+
+// The question about unsaved tabs (a GtkAlertDialog window of its own).
+bool questionUp() {
+    GtkWindow* top = MCGuiTopWindow();
+    if (top == MCGuiApp().window) return false;
+    GtkWidget* b = MCGuiFindButton(GTK_WIDGET(top), "Cancel");
+    return b && gtk_widget_get_width(b) > 0 && gtk_widget_get_height(b) > 0;
+}
+bool questionGone() { return MCGuiTopWindow() == MCGuiApp().window; }
+void answer(const std::string& button) {
+    MCGuiSetKeyWindow(MCGuiTopWindow());
+    MCGuiClick(MCGuiFindButton(GTK_WIDGET(MCGuiTopWindow()), button));
+}
+void openRecent(const std::string& folder) {
+    g_action_group_activate_action(G_ACTION_GROUP(MCGuiApplication()), "openrecentfolder",
+                                   g_variant_new_string(folder.c_str()));
+}
+// The newest window has the keyboard, so it is the one in front.
+void front() {
+    MCGuiSetKeyWindow(nullptr);
+    MCGuiFocusKeyWindow();
+}
+bool newestOn(const std::string& folder) {
+    return MCGuiApp().rootDir == folder && MCGuiApp().tree && MCGuiApp().tree->root() == folder;
+}
+std::string gX, gY, gLater;
+int gWant = 0;
 
 }  // namespace
 
@@ -264,36 +296,126 @@ MC_GUI_SUITE(recent_folders) {
         GCHECK(has(bar, "File/Open Recent/Clear Recently Opened"));
         GCHECK(has(bar, "File/Open Recent…"));   // the registry's command, with the key
     });
-    MCGuiStep("a recent folder opens a window on it", [] {
-        g_action_group_activate_action(G_ACTION_GROUP(MCGuiApplication()), "openrecentfolder",
-                                       g_variant_new_string(dir("a").c_str()));
+    // The Mac's rule: the window on the folder comes forward, else the
+    // window in front moves to it, asking about unsaved tabs first.
+    MCGuiStep("a window on a folder of its own, in front", [] {
+        gX = dir("x");
+        gY = dir("y");
+        MCGuiWriteFile(gY + "/note.txt", "note\n");
+        MCGuiOpenWindow(gX);
     });
-    MCGuiWait("the window shows the folder", 20, [] {
-        return MCGuiAppWindows().size() == gWindows + 1 && MCGuiApp().rootDir == dir("a");
+    MCGuiWait("it shows x", 20, [] { return MCGuiAppWindows().size() == gWindows + 1 && newestOn(gX); });
+    MCGuiStep("Open Recent to y", [] {
+        front();
+        openRecent(gY);
     });
-    MCGuiStep("the same folder again brings that window forward", [] {
-        g_action_group_activate_action(G_ACTION_GROUP(MCGuiApplication()), "openrecentfolder",
-                                       g_variant_new_string(dir("a").c_str()));
-    });
-    MCGuiPause(0.5);   // a negative check: no second window comes
-    MCGuiStep("still one window on it", [] {
+    MCGuiWait("the same window shows y", 20, [] { return newestOn(gY); });
+    MCGuiStep("no window was made, and y is the newest recent folder", [] {
         GCHECK(MCGuiAppWindows().size() == gWindows + 1);
-        // The folder it was opened on is the newest in the list.
-        GCHECK(RecentList::folders()[0] == dir("a"));
+        GCHECK(RecentList::folders()[0] == gY);
     });
-    MCGuiStep("Ctrl+R lists them as a pick list", [] {
+    MCGuiStep("a tab with unsaved text in it", [] {
+        MCGuiOpenFileKept(gY + "/note.txt");
+    });
+    MCGuiWait("note.txt on show", 10, [] { return MCGuiApp().editor->currentPath() == gY + "/note.txt"; });
+    MCGuiStep("typed into", [] {
+        MCGuiClick(MCGuiApp().editor->textView());
+        MCGuiKey("ctrl+Home");
+        MCGuiType("edit ");
+    });
+    MCGuiWait("unsaved", 10, [] { return MCGuiApp().editor->dirty(); });
+    MCGuiStep("Open Recent to x asks first", [] { openRecent(gX); });
+    MCGuiWait("the question is up", 10, [] { return questionUp(); });
+    MCGuiStep("Cancel", [] { answer("Cancel"); });
+    MCGuiWait("the question is gone", 10, [] { return questionGone(); });
+    MCGuiStep("the window stays on y with its edit", [] {
         MCGuiSetKeyWindow(nullptr);
-        MCGuiFocusKeyWindow();
+        GCHECK(newestOn(gY));
+        GCHECK(MCGuiAppWindows().size() == gWindows + 1);
+        GCHECK(MCGuiApp().editor->dirty());
+    });
+    MCGuiStep("again, and Don't Save lets it go", [] {
+        openRecent(gX);
+    });
+    MCGuiWait("the question is up again", 10, [] { return questionUp(); });
+    MCGuiStep("Don't Save", [] { answer("Don't Save"); });
+    MCGuiWait("the window shows x", 20, [] { return newestOn(gX); });
+    MCGuiStep("with no tab of y's, and the file unchanged", [] {
+        MCGuiSetKeyWindow(nullptr);
+        GCHECK(!MCGuiApp().editor->dirty());
+        GCHECK_EQ_STR(MCGuiReadFile(gY + "/note.txt"), "note\n");
+        GCHECK(MCGuiAppWindows().size() == gWindows + 1);
+    });
+    MCGuiStep("a second window, in front, on another folder", [] {
+        gLater = dir("later");
+        MCGuiOpenWindow(gLater);
+    });
+    MCGuiWait("it shows later", 20, [] { return MCGuiAppWindows().size() == gWindows + 2 && newestOn(gLater); });
+    MCGuiStep("Open Recent to x, which the first window has", [] {
+        front();
+        openRecent(gX);
+    });
+    MCGuiPause(0.5);   // a negative check: neither window moves, no third opens
+    MCGuiStep("it is that window that comes forward, and nothing else changes", [] {
+        const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
+        GCHECK(all.size() == gWindows + 2);
+        GCHECK(all[gWindows].rootDir == gX && all[gWindows + 1].rootDir == gLater);
+    });
+    MCGuiStep("a folder that is gone changes nothing", [] {
+        front();
+        const std::string gone = dir("vanished");
+        RecentList::note(gone);
+        g_rmdir(gone.c_str());
+        openRecent(gone);
+    });
+    MCGuiPause(0.5);   // a negative check: no window opens and none moves
+    MCGuiStep("both windows as they were", [] {
+        const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
+        GCHECK(all.size() == gWindows + 2);
+        GCHECK(all[gWindows].rootDir == gX && all[gWindows + 1].rootDir == gLater);
+    });
+    // The palette's pick is the same rule, for the window it was opened in.
+    MCGuiStep("Ctrl+R lists them as a pick list", [] {
+        front();
         MCGuiClick(MCGuiApp().editor->textView());
         MCGuiKey("ctrl+r");
     });
     MCGuiWait("the pick list is open", 10, [] { return MCGuiApp().palette && MCGuiApp().palette->isPick(); });
-    MCGuiStep("with the folders as rows", [] {
+    MCGuiStep("with the folders as rows, y chosen", [] {
         const std::vector<std::string> l = MCGuiApp().palette->labels();
-        GCHECK((l == std::vector<std::string>{tilde(dir("a")), tilde(dir("b"))}));
-        MCGuiKey("escape");
+        GCHECK(has(l, tilde(gY)) && has(l, tilde(gX)) && has(l, tilde(gLater)));
+        GCHECK(!has(l, tilde(dir("vanished"))));
+        gWant = (int)(std::find(l.begin(), l.end(), tilde(gY)) - l.begin());
+        for (int i = MCGuiApp().palette->selected(); i < gWant; i++) MCGuiKey("down");
     });
-    MCGuiWait("it closes", 10, [] { return !MCGuiApp().palette->isOpen(); });
+    MCGuiWait("y is selected", 10, [] { return MCGuiApp().palette->selected() == gWant; });
+    MCGuiStep("and taken", [] { MCGuiKey("return"); });
+    MCGuiWait("the window in front shows y", 20, [] { return newestOn(gY); });
+    MCGuiStep("no window was made, and the first one stayed on x", [] {
+        const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
+        GCHECK(all.size() == gWindows + 2);
+        GCHECK(all[gWindows].rootDir == gX);
+        GCHECK(!MCGuiApp().palette->isOpen());
+    });
+    MCGuiStep("a pick of a folder another window has raises it", [] {
+        front();
+        MCGuiClick(MCGuiApp().editor->textView());
+        MCGuiKey("ctrl+r");
+    });
+    MCGuiWait("the pick list is open again", 10, [] { return MCGuiApp().palette && MCGuiApp().palette->isPick(); });
+    MCGuiStep("x chosen", [] {
+        const std::vector<std::string> l = MCGuiApp().palette->labels();
+        gWant = (int)(std::find(l.begin(), l.end(), tilde(gX)) - l.begin());
+        for (int i = MCGuiApp().palette->selected(); i < gWant; i++) MCGuiKey("down");
+    });
+    MCGuiWait("x is selected", 10, [] { return MCGuiApp().palette->selected() == gWant; });
+    MCGuiStep("and taken", [] { MCGuiKey("return"); });
+    MCGuiPause(0.5);   // a negative check: the pick opens nothing and moves nothing
+    MCGuiStep("both windows as they were", [] {
+        const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
+        GCHECK(all.size() == gWindows + 2);
+        GCHECK(all[gWindows].rootDir == gX && all[gWindows + 1].rootDir == gY);
+    });
     MCGuiStep("Clear Recently Opened empties the list and the menu", [] {
         g_action_group_activate_action(G_ACTION_GROUP(MCGuiApplication()), "clearrecent", nullptr);
         GCHECK(RecentList::folders().empty());
@@ -337,6 +459,60 @@ MC_GUI_SUITE(recent_folders) {
     MCGuiStep("still the one window", [] {
         GCHECK(MCGuiAppWindows().size() == gWindows + 1);
         GCHECK(RecentList::folders()[0] == dir("chosen"));
+    });
+
+    // ---- minicode --new-window
+    MCGuiStep("--new-window adds a window on the folder a window already shows", [] {
+        closeExtraWindows();
+    });
+    MCGuiWait("the others are closed", 20, [] { return MCGuiAppWindows().size() == gWindows; });
+    MCGuiStep("one window on the chosen folder, in front", [] {
+        MCGuiOpenWindow(dir("chosen"));
+    });
+    MCGuiWait("it shows chosen", 20, [] { return MCGuiAppWindows().size() == gWindows + 1 && newestOn(dir("chosen")); });
+    MCGuiStep("with the path of that folder", [] {
+        front();
+        std::string errors;
+        MCGuiCommandLine({"--new-window", dir("chosen")}, gBase, &errors);
+        GCHECK(errors.empty());
+    });
+    MCGuiWait("a second window on it", 20, [] {
+        return MCGuiAppWindows().size() == gWindows + 2 && newestOn(dir("chosen"));
+    });
+    MCGuiStep("with no path: the front window's folder", [] {
+        front();
+        std::string errors;
+        MCGuiCommandLine({"--new-window"}, gBase, &errors);
+        GCHECK(errors.empty());
+    });
+    MCGuiWait("a third", 20, [] { return MCGuiAppWindows().size() == gWindows + 3 && newestOn(dir("chosen")); });
+    MCGuiStep("with a file of that folder: a window of its own, the file in it", [] {
+        MCGuiWriteFile(dir("chosen") + "/f.txt", "f\n");
+        std::string errors;
+        MCGuiCommandLine({dir("chosen") + "/f.txt", "--new-window"}, gBase, &errors);
+        GCHECK(errors.empty());
+    });
+    MCGuiWait("a fourth, with the file", 20, [] {
+        return MCGuiAppWindows().size() == gWindows + 4 &&
+               MCGuiApp().editor->currentPath() == dir("chosen") + "/f.txt";
+    });
+    MCGuiStep("without the option the same path only raises", [] {
+        std::string errors;
+        MCGuiCommandLine({dir("chosen")}, gBase, &errors);
+    });
+    MCGuiPause(0.5);   // a negative check: no window is made
+    MCGuiStep("still four", [] { GCHECK(MCGuiAppWindows().size() == gWindows + 4); });
+    MCGuiStep("the dock's New Window runs it, also from an installed file's own action", [] {
+        const std::string text = MCGuiReadFile(gDesktop);
+        GCHECK(text.find("[Desktop Action new-window]\nName=New Window\nExec=/opt/mc/bin/minicode "
+                         "--new-window\n") != std::string::npos);
+        const std::string own = std::string(kInstalled) +
+            "Actions=new-window;\n\n[Desktop Action new-window]\nName=Nouvelle\nExec=/opt/mc/bin/minicode\n";
+        const std::string out = DockMenu::render(own, {}, "/home/u");
+        GCHECK(out.find("Exec=/opt/mc/bin/minicode --new-window\n") != std::string::npos);
+        GCHECK(out.find("Name=Nouvelle") == std::string::npos);
+        GCHECK(out.find("[Desktop Action new-window]") == out.rfind("[Desktop Action new-window]"));
+        GCHECK(out.find("Actions=open-folder;new-window;\n") != std::string::npos);
     });
 
     MCGuiStep("put away: the chooser, the windows, the environment, the keyboard", [] {

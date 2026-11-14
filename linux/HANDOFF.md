@@ -4530,8 +4530,8 @@ folder chooser; the Mac half is File > Open Recent (`src/RecentFolders.mm`).
   palette's box (`PalettePanel::showPick`), and a submenu "Open Recent" right
   after it lists them with Clear Recently Opened at the end (`app.openrecentfolder`
   with the path as its target, `app.clearrecent`). Choosing one is
-  `showFolderWindow`: a window on the folder, or the one that shows it brought
-  forward, as `minicode <folder>` does (the Mac's opens it in this window).
+  `openRecentFolder` (item 71): the window in front moves to the folder, as the
+  Mac's does.
 - **The key is Ctrl+R**, VS Code's Linux key and the Mac's. It is a plain
   Ctrl key and not Global, so `linuxTerminalTakes` leaves it to the terminal:
   with the terminal's keyboard, Ctrl+R is still the shell's history search.
@@ -4544,9 +4544,9 @@ folder chooser; the Mac half is File > Open Recent (`src/RecentFolders.mm`).
   same id, so a pinned icon stays pinned. It is the installed
   `[Desktop Entry]` verbatim plus `Actions=open-folder;new-window;recent-N;`
   and `X-Minicode-Generated=true`, then the actions: Open Folder…
-  (`Exec=<binary> --open-folder`), New Window (when the installed file has
-  none; it runs the binary with no path, which raises the window on the
-  launcher's folder rather than making a second one on it), and one action for
+  (`Exec=<binary> --open-folder`), New Window (`Exec=<binary> --new-window`,
+  item 71; first it ran the binary with no path, which only raised the window
+  on the launcher's folder), and one action for
   each of the first 10 existing folders, named with `~` for home, with the
   folder quoted as the Desktop Entry spec says (quoted, `"` `` ` `` `$` `\`
   escaped, `%` doubled, then each `\` doubled for the file's own escapes). A
@@ -4571,7 +4571,8 @@ folder chooser; the Mac half is File > Open Recent (`src/RecentFolders.mm`).
   the generated file's exact text with a folder with a space in it, the
   spec's quoting, following the list, a file without the marker left alone,
   the setting, no installed file; the submenu and the registry item in the
-  menu bar, an item opening and then raising a window, Ctrl+R's pick list,
+  menu bar, an item opening and then raising a window (before item 71),
+  Ctrl+R's pick list,
   Clear; `--open-folder` through `handleCommandLine` with the chooser
   answered by the check (`MCGuiAnswerFolderChooser`) and a cancel.
 - **Needs a person**: the real dock on GNOME with the icon pinned (the
@@ -4611,6 +4612,39 @@ folder chooser; the Mac half is File > Open Recent (`src/RecentFolders.mm`).
   ClickCount (checked by making `press` return GTK's n). The idles have no
   deterministic check: a runner slow enough to run the idle first cannot be
   made on demand, so they are unchecked beyond the existing suites.
+
+### 71. Open Recent in this window, and `minicode --new-window` (done, November 2026)
+
+The owner's choice, 2026-11-14: Open Recent follows the Mac, and the dock's
+New Window makes a window.
+
+- **Open Recent** (`openRecentFolder`, main.cpp): a window already on the
+  folder (resolved) comes forward; else the window in front moves to it
+  through `confirmAllUnsaved` and `openFolder`, the path File > Open Folder
+  takes, so a Cancel leaves the window alone; with no window one is opened
+  (`showFolderWindow`); a folder that is gone rings
+  `gtk_widget_error_bell` and changes nothing. The palette's pick (Ctrl+R)
+  uses the window it was opened in, the app action `openrecentfolder` (the
+  File > Open Recent submenu) the active window. `handleCommandLine` is
+  unchanged for paths: the dock's recent entries run `minicode <folder>`,
+  which still means "the window on that folder, or a new one", as the Mac's
+  Dock picks do.
+- **`minicode --new-window`** (`LaunchOptions`, left in the arguments, any
+  order): always a new window, never raising one that exists: on the path's
+  folder (a named file opens in it), else the active window's folder as File
+  > New Window, else the home folder when none is open. The generated
+  desktop file's New Window action is `Exec=<binary> --new-window`, and an
+  installed file's own `new-window` action is replaced by ours, so the option
+  is there in every case (the others of its actions are kept as before).
+- **Checked** in `recent_folders`: Open Recent, by the action and by the
+  palette's pick, re-roots the one window (no new window, title and tree on
+  the new folder); a dirty tab asks, and Cancel leaves the window and the
+  tab; a folder another window has is raised; a missing folder changes
+  nothing; `--new-window` adds a window on a folder a window already has, on
+  a path, and with the active window's folder; the generated New Window line
+  and an installed one's both end in `--new-window`; `launch:` groups in
+  `make test` cover the option and the help text. Each fails without its
+  change.
 
 ## How to work on it
 

@@ -28,6 +28,11 @@ Parsed parse(const std::vector<std::string>& argv) {
                 out.openFolder = true;
                 out.args.push_back(a);
             }
+            // The dock icon's New Window: always a window of its own.
+            else if (a == "--new-window") {
+                out.newWindow = true;
+                out.args.push_back(a);
+            }
             else if (out.error.empty())
                 out.error = "minicode: unknown option " + a + "\nTry 'minicode --help'.\n";
             continue;
@@ -65,6 +70,9 @@ std::string helpText() {
            "Options:\n"
            "      --open-folder  choose a folder in the system's chooser and open a window\n"
            "                     on it (the dock icon's Open Folder…)\n"
+           "      --new-window   open a new window, never bringing one forward: on the path's\n"
+           "                     folder, else on the front window's, else on the home folder\n"
+           "                     (the dock icon's New Window)\n"
            "      --foreground   stay in the terminal until minicode quits, as any program\n"
            "                     run there does, with its output in the terminal; closing\n"
            "                     the terminal then closes minicode (MINICODE_FOREGROUND=1\n"

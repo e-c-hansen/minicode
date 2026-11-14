@@ -716,7 +716,7 @@ static void testLaunchOptions() {
     CHECK(p.foreground && p.args == (Args{"minicode", "src"}));
     // An option the port does not have is a usage error, as the Mac's
     // launcher says it; -n and -r are the Mac's and not the port's.
-    for (const char* o : {"-n", "-r", "--new-window", "--reuse-window", "-x", "-hv", "--bogus"}) {
+    for (const char* o : {"-n", "-r", "--reuse-window", "-x", "-hv", "--bogus"}) {
         p = parse(Args{"minicode", o});
         CHECK(p.error == std::string("minicode: unknown option ") + o + "\nTry 'minicode --help'.\n");
     }
@@ -761,6 +761,16 @@ static void testLaunchOptions() {
     CHECK(shouldDetach(p, true, nullptr));
     CHECK(helpText().find("--open-folder") != std::string::npos);
 
+    GROUP("launch: --new-window");
+    // The dock icon's New Window: kept in what GApplication gets, any order.
+    p = parse(Args{"minicode", "--new-window"});
+    CHECK(p.newWindow && p.error.empty() && p.args == (Args{"minicode", "--new-window"}));
+    p = parse(Args{"minicode", "src", "--new-window"});
+    CHECK(p.newWindow && p.args == (Args{"minicode", "src", "--new-window"}));
+    CHECK(!parse(Args{"minicode", "src"}).newWindow);
+    CHECK(!parse(Args{"minicode", "--", "--new-window"}).newWindow);
+    CHECK(helpText().find("--new-window") != std::string::npos);
+
     GROUP("launch: help and version");
     const std::string help = helpText();
     CHECK(help.rfind("Usage: minicode [options] [path]\n", 0) == 0);
@@ -768,7 +778,6 @@ static void testLaunchOptions() {
                              "  -h, --help", "returns"})
         CHECK(help.find(line) != std::string::npos);
     // Only what the port has.
-    CHECK(help.find("--new-window") == std::string::npos);
     CHECK(help.find("--reuse-window") == std::string::npos);
     // Within 80 columns, for a terminal.
     size_t start = 0, widest = 0;

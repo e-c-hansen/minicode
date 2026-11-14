@@ -53,6 +53,7 @@ public:
 
     // Re-root at a new directory (Open Folder).
     void setRoot(const std::string& rootDir);
+    const std::string& root() const { return root_; }
 
     // Show or hide entries whose names start with a dot, the Mac's rule
     // (Shift+Cmd+. there, Ctrl+H or Ctrl+Shift+. here). The setting is the

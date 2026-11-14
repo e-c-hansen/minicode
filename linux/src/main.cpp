@@ -215,6 +215,7 @@ Shared g;
 static App* newWindow(const std::string& root, const std::string& file);
 // A window on `root`, or the one already on it brought forward.
 static void showFolderWindow(const std::string& root);
+static void openRecentFolder(App* app, const std::string& dir);
 
 // Defined with the rest of the hints panel further down; the pane toggles call
 // it so an open panel never reports stale state.
@@ -1713,8 +1714,8 @@ static void setupWorktrees(App* app);
 static void addAction(App* app, const char* name, GCallback cb);
 
 // File > Open Recent…, Ctrl+R: the folders opened lately as a pick list, as
-// the palette's own. A choice opens a window on the folder or brings forward
-// the one that shows it.
+// the palette's own. A choice is the Mac's rule (openRecentFolder): the window
+// that shows the folder comes forward, else this window moves to it.
 static void act_open_recent(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     if (!app->palette) return;
@@ -1724,8 +1725,8 @@ static void act_open_recent(GSimpleAction*, GVariant*, gpointer userp) {
     pick.placeholder = "Open a folder opened lately";
     pick.emptyText = "No recent folders";
     for (const std::string& f : folders) pick.labels.push_back(RecentList::tilded(f, home));
-    pick.choose = [folders](int i) {
-        if (i >= 0 && i < (int)folders.size()) showFolderWindow(folders[i]);
+    pick.choose = [app, folders](int i) {
+        if (i >= 0 && i < (int)folders.size() && !app->dead) openRecentFolder(app, folders[i]);
     };
     app->palette->showPick(pick);
 }
@@ -3506,7 +3507,10 @@ static void initShared() {
     GSimpleAction* openRecent = g_simple_action_new("openrecentfolder", G_VARIANT_TYPE_STRING);
     g_signal_connect(openRecent, "activate",
                      G_CALLBACK(+[](GSimpleAction*, GVariant* v, gpointer) {
-                         if (v) showFolderWindow(g_variant_get_string(v, nullptr));
+                         if (!v) return;
+                         App* front = appForWindow(gtk_application_get_active_window(g.gapp));
+                         openRecentFolder(front && !front->dead ? front : nullptr,
+                                          g_variant_get_string(v, nullptr));
                      }),
                      nullptr);
     g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(openRecent));
@@ -4571,19 +4575,43 @@ static void startControlChannel() {
     if (!gControl->start(&error)) g_printerr("minicode: %s\n", error.c_str());
 }
 
+static bool sameFolder(const std::string& a, const std::string& b) {
+    char x[PATH_MAX], y[PATH_MAX];
+    return a == b || (realpath(a.c_str(), x) && realpath(b.c_str(), y) && !strcmp(x, y));
+}
+
 static void showFolderWindow(const std::string& root) {
-    auto same = [](const std::string& a, const std::string& b) {
-        char x[PATH_MAX], y[PATH_MAX];
-        return a == b || (realpath(a.c_str(), x) && realpath(b.c_str(), y) && !strcmp(x, y));
-    };
     for (App* a : g.windows)
-        if (!a->dead && same(a->rootDir, root)) {
+        if (!a->dead && sameFolder(a->rootDir, root)) {
             gtk_window_present(GTK_WINDOW(a->window));
             return;
         }
     newWindow(root, "");
     reopenFoldersWithBackups();
     startControlChannel();
+}
+
+// File > Open Recent and the palette's pick, the Mac's openRecentFolder: a
+// window already on the folder comes forward; else the window in front
+// (`front`, null when none) moves to it, asking about unsaved tabs first as
+// Open Folder does, and with no window one is opened. A folder that is gone
+// beeps and changes nothing. The command line's path does not come here: a
+// dock entry runs `minicode <folder>`, the window on it or a new one.
+static void openRecentFolder(App* front, const std::string& dir) {
+    struct stat sb;
+    if (stat(dir.c_str(), &sb) != 0 || !S_ISDIR(sb.st_mode)) {
+        if (front) gtk_widget_error_bell(front->window);
+        return;
+    }
+    for (App* a : g.windows)
+        if (!a->dead && sameFolder(a->rootDir, dir)) {
+            gtk_window_present(GTK_WINDOW(a->window));
+            return;
+        }
+    if (!front) { showFolderWindow(dir); return; }
+    confirmAllUnsaved(front, [front, dir] {
+        if (!front->dead) openFolder(front, dir);
+    });
 }
 
 // Handles both the first launch and every later `minicode <path>` run while
@@ -4608,15 +4636,25 @@ static void handleCommandLine(char** args, int n, const char* cwd,
     std::vector<std::string> addresses;
     const char* pathArg = nullptr;
     bool chooseOne = false;   // --open-folder: the dock icon's Open Folder…
+    bool newOne = false;      // --new-window: a window of its own, never one raised
     for (int i = 1; i < n; i++) {
         if (std::string(args[i]) == "--open-folder") chooseOne = true;
+        else if (std::string(args[i]) == "--new-window") newOne = true;
         else if (WebBookmark::isWebAddress(args[i])) addresses.push_back(args[i]);
         else if (!pathArg) pathArg = args[i];
     }
     const bool pathWanted = pathArg || (addresses.empty() && !chooseOne);
-    const Startup st = pathWanted
+    Startup st = pathWanted
         ? resolveStartupPath(pathArg, cwd)
         : Startup();
+    if (newOne && !pathArg) {
+        // The front window's folder, as File > New Window; none open, home.
+        App* front = appForWindow(gtk_application_get_active_window(g.gapp));
+        if (!front || front->dead)
+            for (App* a : g.windows) if (!a->dead) front = a;
+        st.root = front ? front->rootDir : g_get_home_dir();
+        st.file.clear();
+    }
 
     // printerr on the command line object, not g_printerr: for a second
     // `minicode <path>` this routes the message back to the shell that ran it
@@ -4627,7 +4665,7 @@ static void handleCommandLine(char** args, int n, const char* cwd,
     if (pathWanted) {
         App* found = nullptr;
         for (App* a : g.windows)
-            if (a->rootDir == st.root) { found = a; break; }
+            if (!newOne && a->rootDir == st.root) { found = a; break; }
         if (found) {
             if (!st.file.empty()) openFileCb(st.file, found);
             gtk_window_present(GTK_WINDOW(found->window));
