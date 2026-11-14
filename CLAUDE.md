@@ -853,6 +853,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   character are mapped by counting non-whitespace characters within a hunk;
   hunks with only blank lines between are joined. Small edits (Cmd+/, F9) call
   `breakUndoCoalescing`, so each is its own undo step.
+- **No smart copy and paste** (2026-11-14): `smartInsertDeleteEnabled` is
+  off on the editor, since AppKit's default put a space before a word
+  pasted after a dot ("obj. thing"); editor_keys checks paste and cut.
 - `CodeTextView` hooks: `onFocusLost`, `onMouseHover`, `onPreviewDoubleClick`,
   `onFindAction`/`validateFindAction`, `drawBehindText`. The ruler
   (`editor.ruler`: a column, a list such as 80,120, or off, 100 by default;
@@ -2467,7 +2470,15 @@ for full-screen programs. Both can be open at once.
   `resize` as reflow points (reflowMain looks only at each line's own
   points: thousands of marks over 100,000 lines), and an A followed by
   PROMPT_SP's wrap moves down to the prompt. `commands()`, `commandOutput`,
-  `previous/nextCommandLine`. The grid: Cmd+Up and Cmd+Down to the previous
+  `previous/nextCommandLine`. Cmd+L (2026-11-14, the owner's ask) is
+  Terminal.app's Clear to Previous Mark (`clearToPreviousMark`): the last
+  command that ran, prompt and output, leaves the screen and scrollback,
+  what follows comes up and the scrollback comes down over the cursor;
+  its marks go by order, from its prompt mark to the current one, so an
+  earlier command's end mark at the start of its first line stays
+  (`screen:clear-to-mark`, and the terminal fuzzer). A registry row of
+  its own (`When::Terminal`; Cmd+L stays Select Line in the editor), run
+  by the key monitor. The grid: Cmd+Up and Cmd+Down to the previous
   or next command that ran (outlined, its prompt at the top), Shift to
   select whole lines from where the first press started; a red bar beside a
   failed command's prompt; Terminal > Copy Last Command Output. Fixed
@@ -2496,7 +2507,12 @@ for full-screen programs. Both can be open at once.
 - **The view** (`TerminalGridView`): scroll offset, selection and hovered link
   are line numbers from `historyBase()`, so they stay on their text while
   output arrives; typing, pasting and app-typed commands snap back; on the
-  alternate screen the wheel sends arrows unless the program takes the mouse. A
+  alternate screen the wheel sends arrows unless the program takes the mouse.
+  The scroll bar is the view's own (2026-11-14: the owner could not hit
+  the old 4-point marker, which took no presses): presses in the right 14
+  points while there is scrollback drag its thumb, or center it on the
+  track first, and never select or reach the program; it widens with a
+  track under the pointer (`scrollBarThumb:track:`, terminal_reflow). A
   double click's word is anything but blanks, brackets, quotes and `|;,` (so
   paths and URLs). Typing goes through `interpretKeyEvents:`, so dead keys and
   input methods compose; marked text wraps onto the rows below

@@ -608,6 +608,10 @@ const std::vector<Command>& all() {
          "nextWaitingTerminal:", 0, 0, nullptr},
         {"workbench.action.terminal.clear", "Clear Terminal", "Terminal", "cmd+k", T,
          "clearTerminal:", 0, 0, nullptr},
+        // Terminal.app's Clear to Previous Mark, on its key; VS Code has no
+        // such command. Cmd+L stays Select Line in the editor.
+        {"minicode.terminal.clearToPreviousMark", "Clear to Previous Mark", "Terminal", "cmd+l",
+         T, "clearToPreviousMark:", 0, 0, nullptr},
         // VS Code has no key for it either.
         {"workbench.action.terminal.copyLastCommandOutput", "Copy Last Command Output",
          "Terminal", "", T, "copyLastCommandOutput:", 0, 0, nullptr},

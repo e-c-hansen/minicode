@@ -34,6 +34,14 @@ NSEvent *Mouse(TerminalGridView *g, NSEventType type, int row, int col,
                             clickCount:clicks pressure:1];
 }
 
+// A mouse event at a point of the view (flipped: y from the top).
+NSEvent *MouseAt(TerminalGridView *g, NSEventType type, NSPoint p) {
+    return [NSEvent mouseEventWithType:type location:[g convertPoint:p toView:nil] modifierFlags:0
+                             timestamp:NSProcessInfo.processInfo.systemUptime
+                          windowNumber:g.window.windowNumber context:nil eventNumber:0
+                            clickCount:1 pressure:1];
+}
+
 void Click(TerminalGridView *g, int row, int col, NSEventModifierFlags flags, NSInteger clicks) {
     [g mouseDown:Mouse(g, NSEventTypeLeftMouseDown, row, col, flags, clicks)];
     [g mouseUp:Mouse(g, NSEventTypeLeftMouseUp, row, col, flags, clicks)];
@@ -126,6 +134,25 @@ MC_GUI_SUITE(terminal_reflow) {
         GCHECK([[term recentText:5] containsString:bees]);
         int r = RowStarting(s, @"BBB");
         GCHECK(r >= 0 && s->lineWraps(r));
+    });
+    // The scroll bar takes the mouse (the owner could not hit the old
+    // 4-point marker, which took no presses at all).
+    MCGuiStep(@"a press high on the scroll bar's track goes back; dragging down returns", ^{
+        GCHECK(grid.scrollOffset == 0 && Screen(term)->historySize() > 100);
+        const NSUInteger before = sent.length;
+        const CGFloat x = NSWidth(grid.bounds) - 5, H = NSHeight(grid.bounds);
+        [grid mouseDown:MouseAt(grid, NSEventTypeLeftMouseDown, NSMakePoint(x, 4))];
+        MCGuiNote(@"after a press near the top: %d of %d lines back", grid.scrollOffset,
+                  Screen(term)->historySize());
+        GCHECK(grid.scrollOffset > Screen(term)->historySize() * 3 / 4);
+        [grid mouseDragged:MouseAt(grid, NSEventTypeLeftMouseDragged, NSMakePoint(x, H / 2))];
+        const int middle = grid.scrollOffset;
+        GCHECK(middle > 0 && middle < Screen(term)->historySize());
+        [grid mouseDragged:MouseAt(grid, NSEventTypeLeftMouseDragged, NSMakePoint(x, H + 40))];
+        GCHECK(grid.scrollOffset == 0);
+        [grid mouseUp:MouseAt(grid, NSEventTypeLeftMouseUp, NSMakePoint(x, H + 40))];
+        GCHECK(sent.length == before);                  // nothing went to the shell
+        GCHECK(grid.selectedText.length == 0);       // no selection
     });
     MCGuiStep(@"scroll back with the wheel", ^{
         for (int i = 0; i < 30; i++) Wheel(grid, 1, 0);

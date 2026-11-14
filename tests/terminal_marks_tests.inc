@@ -2,7 +2,8 @@
 // `screen:marks*` groups of run_tests.cpp: character widths from Unicode's
 // data (termCharWidth, tables written by tools/gen-term-width.py), emoji
 // sequences drawn as one cell, and the shell integration's marks kept on
-// the screen for moving between commands (TerminalScreen::commands).
+// the screen for moving between commands (TerminalScreen::commands) and for
+// Cmd+L's Clear to Previous Mark (`screen:clear-to-mark`).
 
 namespace {
 
@@ -271,5 +272,83 @@ void testTerminalMarks() {
                     "%.0f ms\n", feedMs);
         CHECK_TIME(feedMs, 15000);
         CHECK(big.commands().size() < 5000);   // the oldest left the scrollback
+    }
+
+    GROUP("screen:clear-to-mark");
+    {
+        // All on the screen: the last command and its output go, the prompt
+        // comes up, blank rows below.
+        TerminalScreen s(20, 6);
+        s.setScrollbackLimit(1000);
+        s.setMarkNonce("n0");
+        s.feed(session("a", "A1\r\nA2\r\n", 0) + session("b", "B1\r\n", 0) + mark("A") + "% ");
+        CHECK(s.cursorRow() == 5 && s.commands().size() == 3);
+        CHECK(s.clearToPreviousMark());
+        CHECK(s.rowText(0) == "% a" && s.rowText(2) == "A2" && s.rowText(3) == "%");
+        CHECK(s.rowText(4).empty() && s.rowText(5).empty());
+        CHECK(s.cursorRow() == 3 && s.cursorCol() == 2);
+        auto cmds = s.commands();
+        CHECK(cmds.size() == 2 && cmds[0].ran && cmds[0].ended && cmds[1].promptLine == 3);
+        CHECK(cmds[0].endLine == 3 && cmds[0].status == 0);
+        CHECK(s.commandOutput(cmds[0]) == "A1\nA2");
+        s.feed("x");
+        CHECK(s.rowText(3) == "% x");
+        // Again: the command before goes; then there is none left.
+        CHECK(s.clearToPreviousMark());
+        CHECK(s.rowText(0) == "% x" && s.cursorRow() == 0 && s.commands().size() == 1);
+        CHECK(!s.clearToPreviousMark());
+        CHECK(s.rowText(0) == "% x");
+
+        // A command reaching into the scrollback: its lines there go too,
+        // and the scrollback above comes down over the cursor.
+        TerminalScreen t(20, 4);
+        t.setScrollbackLimit(1000);
+        t.setMarkNonce("n0");
+        t.feed(session("a", "A1\r\n", 2) + session("b", "B1\r\nB2\r\nB3\r\n", 1) + mark("A") + "% ");
+        CHECK(t.historySize() == 3 && t.cursorRow() == 3);
+        const long long idBefore = t.historyBase() - t.historySize();   // "% a"'s number
+        CHECK(t.clearToPreviousMark());
+        CHECK(t.historySize() == 0);
+        CHECK(t.rowText(0) == "% a" && t.rowText(1) == "A1" && t.rowText(2) == "%");
+        CHECK(t.rowText(3).empty() && t.cursorRow() == 2);
+        CHECK(t.historyBase() == idBefore);   // what stays keeps its number
+        cmds = t.commands();
+        CHECK(cmds.size() == 2 && cmds[0].promptLine == 0 && cmds[1].promptLine == 2);
+        CHECK(cmds[0].ended && cmds[0].status == 2);   // a's own end mark, not b's
+        CHECK(t.commandOutput(cmds[0]) == "A1");
+
+        // More scrollback than the rows to fill: the cursor keeps its row.
+        TerminalScreen u(20, 4);
+        u.setScrollbackLimit(1000);
+        u.setMarkNonce("n0");
+        std::string many;
+        for (int i = 0; i < 10; i++) many += "old " + std::to_string(i) + "\r\n";
+        u.feed(many + session("b", "B1\r\n", 0) + mark("A") + "% ");
+        CHECK(u.cursorRow() == 3);
+        CHECK(u.clearToPreviousMark());
+        CHECK(u.cursorRow() == 3 && u.rowText(3) == "%" && u.rowText(2) == "old 9");
+
+        // The prompt itself in the scrollback, under a line typed at it
+        // that wrapped past the screen: only scrollback lines go.
+        TerminalScreen w(10, 3);
+        w.setScrollbackLimit(1000);
+        w.setMarkNonce("n0");
+        // (zsh's PROMPT_SP ends with a carriage return before the prompt.)
+        w.feed(session("a", "A1\r\n", 0) + session("b", "B1\r\n", 0) + mark("A") + "\r% " +
+               std::string(40, 'x'));
+        CHECK(w.commands().back().promptLine < 0);
+        const std::string typed = w.rowText(w.cursorRow());
+        CHECK(w.clearToPreviousMark());
+        CHECK(w.rowText(w.cursorRow()) == typed);
+        auto wc = w.commands();
+        CHECK(wc.size() == 2 && wc[0].ran && w.commandOutput(wc[0]) == "A1");
+
+        // Nothing on the alternate screen, or with no command that ran.
+        TerminalScreen v(20, 4);
+        v.setMarkNonce("n0");
+        v.feed(mark("A") + "% ");
+        CHECK(!v.clearToPreviousMark());
+        v.feed(session("a", "A1\r\n", 0) + mark("A") + "% " + "\x1b[?1049h");
+        CHECK(!v.clearToPreviousMark());
     }
 }

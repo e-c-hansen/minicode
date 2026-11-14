@@ -905,6 +905,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         return [self gridShowing] && item.tag >= NSTextFinderActionShowFindInterface &&
                item.tag <= NSTextFinderActionPreviousMatch;
     if (item.action == @selector(clearTerminal:)) return !_closed;
+    if (item.action == @selector(clearToPreviousMark:)) return [self canClearToPreviousMark];
     if (item.action == @selector(copyLastCommandOutput:)) return self.lastCommandOutput != nil;
     return [self respondsToSelector:item.action];
 }
@@ -975,6 +976,28 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         [self sendBytes:ShellIntegration::kZleClearKey length:strlen(ShellIntegration::kZleClearKey)];
     } else {
         _screen.clearToCursorLine();
+    }
+    [self.grid contentCleared];
+}
+
+// Terminal > Clear to Previous Mark (Cmd+L), as in Terminal.app: the last
+// command that ran, its prompt and its output go from the screen and the
+// scrollback, and what follows comes up (TerminalScreen::clearToPreviousMark);
+// again, the one before. Grid mode only: the line mode's log keeps no marks.
+// Nothing is sent to the shell; ZLE moves its cursor relative to where it is.
+- (BOOL)canClearToPreviousMark {
+    if (_closed || _lineMode || _screen.altScreen()) return NO;
+    const std::vector<TermCommand> cmds = _screen.commands();
+    for (const TermCommand &c : cmds)
+        if (c.ran && c.promptLine < _screen.cursorRow()) return YES;
+    return NO;
+}
+
+- (void)clearToPreviousMark:(id)sender {
+    (void)sender;
+    if (![self canClearToPreviousMark] || !_screen.clearToPreviousMark()) {
+        NSBeep();
+        return;
     }
     [self.grid contentCleared];
 }

@@ -124,6 +124,10 @@ static bool MCSameCells(const std::vector<TermCell> &a, const std::vector<TermCe
     int _unitStartCol, _unitEndCol;
     CGFloat _scrollAccum;
     int _offset;                   // lines scrolled back
+    // The scroll bar at the right edge: the pointer over its strip, a drag
+    // of its thumb in progress, and where in the thumb the press landed.
+    BOOL _barHover, _barDrag;
+    CGFloat _barGrab;
     long long _lastBase;           // historyBase() when last drawn
     // The link under the pointer while Cmd is held: from _linkCol0 of line
     // _linkId to _linkCol1 (exclusive) of line _linkEndId, which is a later
@@ -1484,17 +1488,18 @@ static BOOL RectsCover(const NSRect *rects, NSInteger n, NSRect r) {
         }
     }
 
-    // Scrolled back: a slim bar at the right edge says where in the
-    // scrollback the view is.
-    int hist = [self maxOffset];
-    if (_offset > 0 && hist > 0) {
-        CGFloat H = self.bounds.size.height - 4;
-        CGFloat total = hist + rows;
-        CGFloat h = MAX(20, H * rows / total);
-        CGFloat y = 2 + (H - h) * (CGFloat)(hist - _offset) / hist;
-        NSRect bar = NSMakeRect(self.bounds.size.width - 6, y, 4, h);
-        [[[[AppSettings shared] text:Surface::Terminal] colorWithAlphaComponent:0.35] setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:bar xRadius:2 yRadius:2] fill];
+    // The scroll bar: slim while scrolled back, wider with a track while the
+    // pointer is over the right edge or drags it (scrollBarThumb:).
+    NSRect thumb, track;
+    if ((_offset > 0 || _barHover || _barDrag) && [self scrollBarThumb:&thumb track:&track]) {
+        NSColor *ink = [[AppSettings shared] text:Surface::Terminal];
+        if (_barHover || _barDrag) {
+            [[ink colorWithAlphaComponent:0.08] setFill];
+            NSRectFill(track);
+        }
+        [[ink colorWithAlphaComponent:_barDrag ? 0.6 : _barHover ? 0.45 : 0.35] setFill];
+        CGFloat r = NSWidth(thumb) / 2;
+        [[NSBezierPath bezierPathWithRoundedRect:thumb xRadius:r yRadius:r] fill];
     }
     if (_secureOn) [self drawSecureInputLock];
 }
@@ -1918,6 +1923,8 @@ static MCTermLink *MCHyperlinkFor(const std::string &uri) {
 }
 
 - (void)mouseMoved:(NSEvent *)e {
+    [self setBarHover:[self pointIsOnScrollBar:[self convertPoint:e.locationInWindow
+                                                         fromView:nil]]];
     [self updateLinkHover];
     // DECSET 1003: motion with no button down too.
     TerminalScreen *s = self.screen;
@@ -1927,11 +1934,56 @@ static MCTermLink *MCHyperlinkFor(const std::string &uri) {
 }
 - (void)mouseExited:(NSEvent *)e {
     (void)e;
+    [self setBarHover:NO];
     if (_linkId != kNoLine) { _link = nil; _linkId = _linkEndId = kNoLine; [self setNeedsDisplay:YES]; }
 }
 - (void)cursorUpdate:(NSEvent *)e {
     (void)e;
     [(_linkId != kNoLine ? [NSCursor pointingHandCursor] : [NSCursor arrowCursor]) set];
+}
+
+// ---------------------------------------------------------------- scroll bar
+// The strip at the right edge the scroll bar takes presses in, wider than
+// the bar so it is easy to hit.
+static const CGFloat kBarHitWidth = 14;
+
+// The thumb and its track, in view coordinates (flipped: the top is the
+// oldest scrollback). NO when there is nothing to scroll.
+- (BOOL)scrollBarThumb:(NSRect *)thumb track:(NSRect *)track {
+    const int hist = [self maxOffset];
+    TerminalScreen *s = self.screen;
+    if (!s || hist <= 0) return NO;
+    const CGFloat W = self.bounds.size.width, H = self.bounds.size.height - 4;
+    const CGFloat rows = s->rows(), total = hist + rows;
+    const CGFloat h = MIN(H, MAX(24, H * rows / total));
+    const CGFloat y = 2 + (H - h) * (CGFloat)(hist - _offset) / hist;
+    const BOOL wide = _barHover || _barDrag;
+    const CGFloat w = wide ? 8 : 4;
+    if (thumb) *thumb = NSMakeRect(W - w - 3, y, w, h);
+    if (track) *track = NSMakeRect(W - kBarHitWidth, 0, kBarHitWidth, self.bounds.size.height);
+    return YES;
+}
+
+- (BOOL)pointIsOnScrollBar:(NSPoint)p {
+    return [self maxOffset] > 0 && NSPointInRect(p, self.bounds) &&
+           p.x >= self.bounds.size.width - kBarHitWidth;
+}
+
+// The offset that puts the thumb's top at `top`.
+- (void)scrollBarThumbTopTo:(CGFloat)top {
+    NSRect thumb;
+    if (![self scrollBarThumb:&thumb track:NULL]) return;
+    const int hist = [self maxOffset];
+    const CGFloat H = self.bounds.size.height - 4, span = H - NSHeight(thumb);
+    if (span <= 0) return;
+    const CGFloat f = MAX(0, MIN(1, (top - 2) / span));
+    [self setOffset:hist - (int)lround(f * hist)];
+}
+
+- (void)setBarHover:(BOOL)hover {
+    if (hover == _barHover) return;
+    _barHover = hover;
+    [self setNeedsDisplay:YES];
 }
 
 // ---------------------------------------------------------------- mouse
@@ -1983,6 +2035,23 @@ static BOOL IsWordCell(const TermCell &cell) {
 }
 
 - (void)mouseDown:(NSEvent *)e {
+    // The scroll bar first: a press on the thumb drags it, one on the track
+    // centers the thumb there and drags from it. Never a selection, a link
+    // or a click sent to the program.
+    NSPoint at = [self convertPoint:e.locationInWindow fromView:nil];
+    NSRect thumb;
+    if ([self pointIsOnScrollBar:at] && [self scrollBarThumb:&thumb track:NULL]) {
+        [self forgetCommand];
+        _barDrag = YES;
+        if (at.y >= NSMinY(thumb) && at.y <= NSMaxY(thumb)) {
+            _barGrab = at.y - NSMinY(thumb);
+        } else {
+            _barGrab = NSHeight(thumb) / 2;
+            [self scrollBarThumbTopTo:at.y - _barGrab];
+        }
+        [self setNeedsDisplay:YES];
+        return;
+    }
     [self forgetCommand];
     if (e.modifierFlags & NSEventModifierFlagCommand) {
         int line, endLine, c0, c1;
@@ -2096,6 +2165,11 @@ static BOOL IsWordCell(const TermCell &cell) {
 }
 
 - (void)mouseDragged:(NSEvent *)e {
+    if (_barDrag) {
+        NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+        [self scrollBarThumbTopTo:p.y - _barGrab];
+        return;
+    }
     if (_reportButton == 0) { [self report:TermMouse::Motion button:0 event:e]; return; }
     if (!_selecting || !self.screen) return;
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
@@ -2131,6 +2205,13 @@ static BOOL IsWordCell(const TermCell &cell) {
 }
 
 - (void)mouseUp:(NSEvent *)e {
+    if (_barDrag) {
+        _barDrag = NO;
+        [self setBarHover:[self pointIsOnScrollBar:[self convertPoint:e.locationInWindow
+                                                             fromView:nil]]];
+        [self setNeedsDisplay:YES];
+        return;
+    }
     if (_reportButton == 0) {
         [self report:TermMouse::Release button:0 event:e];
         _reportButton = -1;

@@ -331,6 +331,69 @@ void TerminalScreen::clearToCursorLine() {
     savedMain_.y = std::max(0, savedMain_.y - up);
 }
 
+bool TerminalScreen::clearToPreviousMark() {
+    if (onAlt_) return false;
+    // The prompt the cursor is at (the last one at or above it), and the
+    // nearest command above it that ran.
+    const std::vector<TermCommand> cmds = commands();
+    int cur = -1, prev = -1;
+    for (int i = 0; i < (int)cmds.size(); i++)
+        if (cmds[i].promptLine <= y_) cur = i;
+    if (cur < 0) return false;
+    const int L1 = cmds[cur].promptLine;
+    for (int i = 0; i < cur; i++)
+        if (cmds[i].ran && cmds[i].promptLine < L1) prev = i;
+    const int H = historySize();
+    if (prev < 0 || cmds[prev].promptLine < -H || L1 > y_) return false;
+    const int L0 = cmds[prev].promptLine, n = L1 - L0;
+    // The marks go by their order, not their lines: from the removed
+    // command's prompt mark up to the current prompt's. An earlier
+    // command's end mark at the start of line L0 stays (it then sits where
+    // the current prompt begins, as it did before that command), and the
+    // removed command's own end mark, at the start of line L1, goes.
+    // (commands() numbers the prompt marks from the first one kept.)
+    const long long first = historyBase_ - H;
+    size_t prevA = SIZE_MAX, curA = SIZE_MAX;
+    int seen = -1;
+    for (size_t i = 0; i < marks_.size(); i++) {
+        if (marks_[i].id < first || marks_[i].kind != 'A') continue;
+        ++seen;
+        if (seen == prev) prevA = i;
+        if (seen == cur) curA = i;
+    }
+    if (prevA == SIZE_MAX || curA == SIZE_MAX || prevA >= curA) return false;
+    touchAll();
+    marks_.erase(marks_.begin() + (long)prevA, marks_.begin() + (long)curA);
+    marksVersion_++;
+    for (size_t i = prevA; i < marks_.size(); i++) marks_[i].id -= n;
+    // Lines [L0, L1) go: h from the end of the scrollback, s rows from the
+    // top of the screen. (The current prompt may itself be in the
+    // scrollback, under a long line typed at it: then only scrollback
+    // lines go.)
+    const int h = std::max(0, std::min(L1, 0) - L0);
+    const int s = std::max(0, L1 - std::max(L0, 0));
+    if (h > 0) history_.erase(history_.begin() + (H + L0), history_.begin() + (H + L0 + h));
+    if (s > 0) main_.erase(main_.begin() + std::max(L0, 0), main_.begin() + std::max(L0, 0) + s);
+    // The rows over the cursor are filled from the scrollback: k lines come
+    // down to the top, and blank rows make up the rest at the bottom.
+    const int k = std::min(s, (int)history_.size());
+    for (int i = 0; i < k; i++) {
+        Row row = unpack(history_.back());
+        history_.pop_back();
+        row.resize(cols_, TermCell());
+        if (cols_ > 0 && row[cols_ - 1].width == 2) row[cols_ - 1] = TermCell();
+        main_.insert(main_.begin(), std::move(row));
+    }
+    for (int i = k; i < s; i++) main_.push_back(Row(cols_, TermCell()));
+    // Line numbers (historyBase_ + line) of what stays are as before, less
+    // n for the lines after the removed ones.
+    historyBase_ -= h + k;
+    y_ += k - s;
+    savedMain_.y = std::max(0, std::min(rows_ - 1, savedMain_.y + k - s));
+    below_.clear();
+    return true;
+}
+
 // ------------------------------------------------------------- scrollback
 TerminalScreen::HistLine TerminalScreen::pack(const Row& row, size_t width) {
     HistLine h;

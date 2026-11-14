@@ -1704,6 +1704,12 @@ static void BuildMenu(void) {
     [termMenu addItemWithTitle:@"Clear Terminal"
                         action:@selector(clearTerminal:)
                  keyEquivalent:@"k"];
+    // Cmd+L as in Terminal.app: the last command and its output go
+    // (TerminalView clearToPreviousMark:). The key is Select Line's in the
+    // editor, so the key monitor runs it while a terminal has the keyboard.
+    [termMenu addItemWithTitle:@"Clear to Previous Mark"
+                        action:@selector(clearToPreviousMark:)
+                 keyEquivalent:@""];
     // What the last command printed, from the shell integration's marks
     // (TerminalView copyLastCommandOutput:); no key, as in VS Code.
     [termMenu addItemWithTitle:@"Copy Last Command Output"

@@ -224,6 +224,14 @@ public:
     // its last line. On the alternate screen both clear only the scrollback.
     void clearAll();
     void clearToCursorLine();
+    // Cmd+L, Terminal.app's Clear to Previous Mark: the last command that
+    // ran before the prompt the cursor is at, with its prompt and output,
+    // goes, and the lines below come up in its place; the scrollback above
+    // comes down to fill the rows over the cursor, so the cursor stays on
+    // its row while there is scrollback to fill them. Pressed again, the
+    // command before goes. NO (nothing changed) on the alternate screen or
+    // with no such command.
+    bool clearToPreviousMark();
 
     // One row as UTF-8, trailing blanks dropped.
     std::string rowText(int row) const;

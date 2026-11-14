@@ -138,6 +138,9 @@ extern NSNotificationName const MCTerminalDidCloseNotification;
 // copyLastCommandOutput: puts it on the pasteboard (Terminal menu).
 @property(nonatomic, readonly, copy) NSString *lastCommandOutput;
 - (void)copyLastCommandOutput:(id)sender;
+// Terminal > Clear to Previous Mark (Cmd+L, Terminal.app's): the last
+// command that ran and its output leave the screen and the scrollback.
+- (void)clearToPreviousMark:(id)sender;
 // The last `maxLines` lines the terminal shows, scrollback included, as
 // plain text: what the inline agent is told the terminal holds.
 - (NSString *)recentText:(NSUInteger)maxLines;

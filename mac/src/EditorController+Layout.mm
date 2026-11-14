@@ -103,6 +103,11 @@
     self.textView.allowsUndo = YES;
     self.textView.automaticSpellingCorrectionEnabled = NO;
     self.textView.automaticDashSubstitutionEnabled = NO;
+    // No smart copy and paste: AppKit's default adds a space around a pasted
+    // word and takes one away with a cut word, for prose. Pasting "thing"
+    // over "other_thing" in "obj.other_thing" gave "obj. thing" (the
+    // owner's report, 2026-11-14); VS Code pastes exactly what was copied.
+    self.textView.smartInsertDeleteEnabled = NO;
     self.textView.usesFindBar = NO;                // Cmd+F is MCEditorFind's bar
     // Not the Font panel: MiniCode sets its own fonts, and a text view that
     // uses it also pushes the color under the caret into the shared color

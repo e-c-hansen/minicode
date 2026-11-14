@@ -515,6 +515,9 @@ static const CGFloat kHintsPad = 16;
                         key2:nil label2:nil state:nil];
         [self appendHintsRow:s key:[self hk:@"actions.find"] label:@"Find in the terminal"
                         key2:[self hk:@"workbench.action.terminal.clear"] label2:@"Clear the terminal" state:nil];
+        [self appendHintsRow:s key:[self hk:@"minicode.terminal.clearToPreviousMark"]
+                       label:@"Remove the last command and its output"
+                        key2:nil label2:nil state:nil];
         [self appendHintsRow:s
                          key:[NSString stringWithFormat:@"%@ %@",
                               [self hk:@"workbench.action.terminal.fontZoomIn"],
