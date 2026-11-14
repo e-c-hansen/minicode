@@ -1275,7 +1275,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   queue), never once per keystroke in the query, and draws through `drawBehindText`. Cmd+G /
   Shift+Cmd+G, Return / Shift+Return; Option+Cmd+C, W, R; Return in the replace
   field replaces and moves on; Shift+Cmd+1 replaces only while the bar has the
-  keyboard (Go to Tab 1 elsewhere); Option+Cmd+Return replaces all as one
+  keyboard (Go to Tab 1 elsewhere); Up and Down in either field walk its
+  history (2026-11-14, `FindHistory.h`, VS Code's: newest last, a text
+  kept once, 50, added after half a second or on Return, every window's
+  bar sharing it); Option+Cmd+Return replaces all as one
   programmatic edit; Esc; Cmd+E. A preview finds but does not replace. Menu
   items still send `performTextFinderAction:` with NSTextFinderAction tags, so
   the terminal and diff view answer their own.

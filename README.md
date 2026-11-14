@@ -468,7 +468,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Format the file, or the selected lines where the formatter can | Shift Option F | Ctrl Shift I (in the terminal the program has it) |  |
 | Go back to where you were before a jump (a definition, a symbol, a line, a problem, another tab), or forward again | Control minus, Control Shift minus | Ctrl Alt minus, Ctrl Shift minus (in the terminal Ctrl Shift minus is the program's) |  |
 | Go to a line of the open file, by its number (42:7 for a column too) | Control G | Ctrl G (in the terminal the program has it) |  |
-| Go to a symbol anywhere in the folder, from the language servers running in the window (outside the browser, where it opens a tab) | Command T | Ctrl T (in the terminal the program's) |  |
+| Go to a symbol anywhere in the folder, from the language servers running in the window (outside the browser and the terminal, where it opens a tab) | Command T | Ctrl T (in the terminal the program's) |  |
 | Go to a symbol of the open file (its functions, classes and headings, or @: grouped by kind), from its language server or minicode's own outline | Shift Command O | Ctrl Shift O |  |
 | Go to definition | F12, or Command click (F12 may need fn on a laptop) | F12, or Ctrl click | G, or Ctrl G |
 | Go to tab 1 to 8, or the last tab | Control 1 to 9, or Shift Command 1 to 9 (macOS keeps Shift Command 3, 4 and 5 for screenshots) | Alt 1 to 8, and Alt 9 or Alt 0 for the last |  |
@@ -505,7 +505,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Open a file from the file tree in a tab of its own, not the preview tab | Double-click it, or Command click it | Double-click it, Ctrl click it, or select it and press Enter |  |
 | Open a folder | Command O | Ctrl O | O, or Ctrl O |
 | Open a folder opened before, in this window | Control R (File > Open Recent lists them too) | Ctrl R (the File menu lists them too; in the terminal the program has it) |  |
-| Open a new terminal in a new tab | Control Shift backtick | Ctrl Shift backtick |  |
+| Open a new terminal in a new tab | Control Shift backtick, or Command T in the terminal | Ctrl Shift backtick |  |
 | Open the command palette, to find any menu command by name and run it | Shift Command P, or F1 | Ctrl Shift P, or F1 (in the terminal only Ctrl Shift P) |  |
 | Open the rendered Markdown page beside its source, or close it | Control Command V | Ctrl Alt V |  |
 | Open the right click menu of what has the keyboard, at the selected row or the cursor | Shift F10, or Control Return, or the Menu key of a PC keyboard |  |  |
@@ -546,6 +546,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Show the cursor's line of a LaTeX file on the typeset page | Option Command J | Ctrl Alt Shift J |  |
 | Show the language server's quick fixes for the cursor or the selection | Command period | Ctrl period |  |
 | Show the type and documentation under the cursor | Option Command I | Ctrl Alt I | K, or Ctrl K |
+| Show what you searched for or replaced with before, in the find bar's fields | Up, Down (in the field) |  |  |
 | Split the editor: the file on show in a second group beside it, with its own tabs | Command backslash, in the editor | Ctrl backslash, in the editor |  |
 | Split the terminal, with a new one beside it | Command backslash, in the terminal | Ctrl Shift 5 |  |
 | Split the terminal, with a new one below it | Split Terminal Down in the Terminal menu, or Option-click the ◫ button |  |  |

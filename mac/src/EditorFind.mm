@@ -5,6 +5,7 @@
 // findMatchHighlightBackground (every match), findMatchBackground (the one
 // selected) and findRangeHighlightBackground (Find in Selection's scope).
 #import "EditorFind.h"
+#include "FindHistory.h"
 #import "AppSettings.h"
 #import "FindWidget.h"
 #import "Lsp.h"
@@ -91,6 +92,11 @@ static const CGFloat kPartRight = 30;       // border 1 + padding 4 + margin 25
 - (BOOL)preserveOn;
 - (void)setPreserveOn:(BOOL)on;
 @end
+
+// What was searched for and replaced with, for Up and Down in the fields
+// (VS Code's find widget history), shared by every window's bar.
+static FindHistory &MCFindQueryHistory() { static FindHistory h; return h; }
+static FindHistory &MCFindReplaceHistory() { static FindHistory h; return h; }
 
 @implementation MCEditorFindBar {
     MCFindStyle *_style;
@@ -361,8 +367,41 @@ static const CGFloat kPartRight = 30;       // border 1 + padding 4 + margin 25
 - (void)replaceClicked:(id)sender { (void)sender; if (self.onReplace) self.onReplace(NO); }
 - (void)replaceAllClicked:(id)sender { (void)sender; if (self.onReplace) self.onReplace(YES); }
 
+- (FindHistory &)historyFor:(NSControl *)field {
+    return field == _replaceInput.field ? MCFindReplaceHistory() : MCFindQueryHistory();
+}
+
+// A field's text goes into its history once it has stood half a second, as
+// VS Code adds it, or at once on Return.
+- (void)rememberFields {
+    MCFindQueryHistory().add(_findInput.field.stringValue.UTF8String ?: "");
+    if (_replaceShown) MCFindReplaceHistory().add(_replaceInput.field.stringValue.UTF8String ?: "");
+}
+- (void)rememberFieldsSoon {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(rememberFields)
+                                               object:nil];
+    [self performSelector:@selector(rememberFields) withObject:nil afterDelay:0.5];
+}
+
 - (void)controlTextDidChange:(NSNotification *)note {
+    [self historyFor:note.object].reset();   // typing ends a walk through it
+    [self rememberFieldsSoon];
     if (note.object == _findInput.field && self.onChange) self.onChange();
+}
+
+// Up and Down: an earlier or later entry of the field's history.
+- (BOOL)stepHistory:(NSControl *)field back:(BOOL)back {
+    FindHistory &h = [self historyFor:field];
+    std::string out;
+    const std::string now = [(NSTextField *)field stringValue].UTF8String ?: "";
+    if (!(back ? h.previous(now, out) : h.next(out))) return NO;
+    NSString *text = [NSString stringWithUTF8String:out.c_str()] ?: @"";
+    NSTextField *f = (NSTextField *)field;
+    f.stringValue = text;
+    NSText *editor = [f currentEditor];
+    editor.selectedRange = NSMakeRange(text.length, 0);
+    if (field == _findInput.field && self.onChange) self.onChange();
+    return YES;
 }
 
 - (void)controlTextDidBeginEditing:(NSNotification *)note {
@@ -379,6 +418,9 @@ static const CGFloat kPartRight = 30;       // border 1 + padding 4 + margin 25
     if (sel == @selector(insertNewline:) || sel == @selector(insertNewlineIgnoringFieldEditor:) ||
         sel == @selector(insertLineBreak:)) {
         NSEventModifierFlags f = NSApp.currentEvent.modifierFlags;
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(rememberFields)
+                                                   object:nil];
+        [self rememberFields];
         if (control == _replaceInput.field) {
             if (self.onReplace) self.onReplace((f & NSEventModifierFlagCommand) != 0);
         } else if (self.onNext) {
@@ -389,6 +431,10 @@ static const CGFloat kPartRight = 30;       // border 1 + padding 4 + margin 25
     if (sel == @selector(cancelOperation:)) {
         if (self.onClose) self.onClose();
         return YES;
+    }
+    if (sel == @selector(moveUp:) || sel == @selector(moveDown:)) {
+        [self stepHistory:control back:sel == @selector(moveUp:)];
+        return YES;   // a one-line field has nowhere else to go
     }
     if (sel == @selector(insertTab:) || sel == @selector(insertBacktab:)) {
         if (!_replaceShown) return YES;   // nowhere else to go in the bar

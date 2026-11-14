@@ -3,7 +3,8 @@
 // shape of every port's multi-range edit), and what the editor's find bar
 // decides (FindRules.h): the seed, the count, the search with a scope in
 // UTF-16 and code points, the changes Replace and Replace All make, and
-// the theme colors, held to the Mac's table. Included there.
+// the theme colors, held to the Mac's table; and the find fields' history
+// (FindHistory.h, `findhistory:*`). Included there.
 
 static void testEditSpansAndFindRules() {
     using EditSpans::Span;
@@ -302,5 +303,38 @@ static void testEditSpansAndFindRules() {
                 CHECK(mac == ours);
             }
         }
+    }
+
+    GROUP("findhistory:walk");
+    {
+        FindHistory h(3);
+        std::string out;
+        CHECK(!h.previous("", out) && !h.next(out));   // nothing yet
+        h.add("alpha");
+        h.add("beta");
+        h.add("");                                      // never kept
+        CHECK(h.entries() == (std::vector<std::string>{"alpha", "beta"}));
+        // The field holds the newest: Up shows the one before, and stays
+        // at the oldest.
+        CHECK(h.previous("beta", out) && out == "alpha");
+        CHECK(!h.previous("alpha", out));
+        // Down: forward, then past the newest back to what was typed.
+        CHECK(h.next(out) && out == "beta");
+        CHECK(h.next(out) && out == "beta");
+        CHECK(!h.next(out));
+        // From other text: the newest first; Down gives the text back.
+        CHECK(h.previous("gam", out) && out == "beta");
+        CHECK(h.previous("beta", out) && out == "alpha");
+        CHECK(h.next(out) && out == "beta" && h.next(out) && out == "gam");
+        // Searched again it moves to the end; past the limit the oldest goes.
+        h.add("alpha");
+        CHECK(h.entries() == (std::vector<std::string>{"beta", "alpha"}));
+        h.add("gamma");
+        h.add("delta");
+        CHECK(h.entries() == (std::vector<std::string>{"alpha", "gamma", "delta"}));
+        // Typing ends a walk.
+        CHECK(h.previous("x", out) && out == "delta");
+        h.reset();
+        CHECK(!h.next(out));
     }
 }

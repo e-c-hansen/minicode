@@ -59,6 +59,7 @@
 #include "Commands.h"
 #include "EditSpans.h"
 #include "EditBatch.h"
+#include "FindHistory.h"
 #include "FindRules.h"
 #include "PageMeasure.h"
 #include "LegacyHighlighter.h"

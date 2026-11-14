@@ -561,8 +561,17 @@ static NSString *MCAskTerminalName(TerminalView *t) {
 }
 - (void)tabMenuClose:(NSMenuItem *)item { [self closeTab:(NSUInteger)item.tag]; }
 
+// Cmd+T while a terminal has the keyboard (minicode.terminal.newTab, run by
+// the key monitor): a new terminal in a new tab, as Terminal.app's.
+- (void)newTerminalTab:(id)sender {
+    (void)sender;
+    [self addTab];
+    [self focusActive];
+}
+
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (item.action == @selector(resizeTerminalPane:)) return [self hasFocus];
+    if (item.action == @selector(newTerminalTab:)) return [self hasFocus];
     if (item.action == @selector(tabMenuMoveLeft:)) return item.tag > 0;
     if (item.action == @selector(tabMenuMoveRight:)) return item.tag + 1 < (NSInteger)_tabs.count;
     return YES;
