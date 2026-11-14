@@ -450,7 +450,7 @@
 // hidden and the other takes the whole width. The terminal docks below both,
 // across the full width, or fills the pane when the top is empty.
 // The smallest top while dragging: the tab strip and 40 points of editor.
-static const CGFloat kMinTopSlotHeight = 40 + kMCTabStripHeight;
+static CGFloat MinTopSlotHeight(void) { return 40 + MCTabStripHeight(); }
 static const CGFloat kTopSnapDistance  = 16;   // bar this close to the top hides it
 static const CGFloat kMinSideWidth     = 150;  // editor or browser beside the other
 static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides that pane
@@ -487,13 +487,13 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     CGFloat probH = 0;
     if (showProblems)
         probH = (topShown || showTerm)
-            ? MIN(MAX(round(H * 0.3), 100), MAX(60, H - kMinTopSlotHeight - (showTerm ? 80 : 0)))
+            ? MIN(MAX(round(H * 0.3), 100), MAX(60, H - MinTopSlotHeight() - (showTerm ? 80 : 0)))
             : H;
     const CGFloat Hrest = MAX(0, H - probH);
     CGFloat termH = 0;
     if (showTerm)
         termH = topShown ? MIN(MAX(self.terminalHeight, 80),
-                               MAX(80, Hrest - kMinTopSlotHeight))
+                               MAX(80, Hrest - MinTopSlotHeight()))
                          : Hrest;
     NSRect topRect = NSMakeRect(0, termH + probH, W, MAX(0, Hrest - termH));
     if (self.problemsPanel) {
@@ -644,7 +644,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
         }
     } else {
         if (!topShown) self.editorHidden = NO;
-        self.terminalHeight = MIN(MAX(y, 80), MAX(80, H - kMinTopSlotHeight));
+        self.terminalHeight = MIN(MAX(y, 80), MAX(80, H - MinTopSlotHeight()));
     }
     [self relayoutRightArea];
     if (self.hintsVisible) [self updateHints];

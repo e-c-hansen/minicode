@@ -344,6 +344,27 @@ MC_GUI_SUITE(preview_tabs) {
         GCHECK(StripAgrees(c));
     });
 
+    // ---- tabs.font-size: the titles' size, and the strip grows to fit.
+    __block CGFloat width12 = 0;
+    MCGuiStep(@"unset, the titles are 12 points in a 30-point strip", ^{
+        GCHECK(MCTabStripFont().pointSize == 12);
+        GCHECK(MCTabStripHeight() == 30);
+        GCHECK(NSHeight(Strip(c).frame) == 30);
+        width12 = NSWidth([Strip(c) rectForTab:0]);
+        MCGuiSetSettings(@"lsp.enabled = false\ntabs.font-size = 20\n");
+    });
+    MCGuiWait(@"the strip at its new height", 10, ^BOOL {
+        return NSHeight(Strip(c).frame) == MCTabStripHeight() && MCTabStripHeight() > 30;
+    });
+    MCGuiStep(@"tabs.font-size = 20: bigger titles, a taller strip, wider tabs", ^{
+        MCGuiNote(@"strip %.0f high, first tab %.0f wide (was %.0f)", NSHeight(Strip(c).frame),
+                  NSWidth([Strip(c) rectForTab:0]), width12);
+        GCHECK(MCTabStripFont().pointSize == 20);
+        GCHECK(NSWidth([Strip(c) rectForTab:0]) > width12);
+        MCGuiSetSettings(@"lsp.enabled = false\n");
+    });
+    MCGuiWait(@"back to 30 points", 10, ^BOOL { return NSHeight(Strip(c).frame) == 30; });
+
     MCGuiStep(@"tidy up: the window closes", ^{
         MCGuiSetSettings(@"lsp.enabled = false\n");
         for (MCTab *t in [TabsOf(c) copy]) [c closeTab:t prompt:NO];

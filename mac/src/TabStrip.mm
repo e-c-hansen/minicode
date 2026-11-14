@@ -1,11 +1,22 @@
 // TabStrip.mm — see TabStrip.h.
 #import "TabStrip.h"
 #import "Appearance.h"
+#import "AppSettings.h"
 #include "EditorTabs.h"
 #include <cmath>
 #include <vector>
 
-const CGFloat kMCTabStripHeight = 30;
+NSFont *MCTabStripFont(void) {
+    const Settings &s = [AppSettings shared].settings;
+    return [NSFont systemFontOfSize:s.tabsFontSizeSet() ? (CGFloat)s.tabsFontSize() : 12];
+}
+
+CGFloat MCTabStripHeight(void) {
+    NSFont *f = MCTabStripFont();
+    // The line's height with 7 points above and below; 12 points fits the
+    // strip's old 30.
+    return MAX(30, ceil(f.ascender - f.descender + f.leading) + 14);
+}
 
 @implementation MCTabStripItem
 @end
@@ -45,15 +56,21 @@ static const CGFloat kDragThreshold = 4;
         _dragFrom = -1;
         _dropTarget = -1;
         self.wantsLayer = YES;
+        // tabs.font-size: new widths at once; the owner sets the height.
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(relayout)
+                                                     name:MCSettingsDidChangeNotification
+                                                   object:nil];
     }
     return self;
 }
+
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 
 - (BOOL)isFlipped { return YES; }
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
 - (BOOL)mouseDownCanMoveWindow { return NO; }
 
-- (NSFont *)titleFont { return [NSFont systemFontOfSize:12]; }
+- (NSFont *)titleFont { return MCTabStripFont(); }
 
 - (void)setItems:(NSArray<MCTabStripItem *> *)items {
     _items = [items copy];
@@ -322,7 +339,7 @@ static const CGFloat kDragThreshold = 4;
         [self endDrag];
         // Let go over the strip (a little above or below counts): moved;
         // anywhere else: left where it was.
-        if (NSPointInRect(p, NSInsetRect(self.bounds, 0, -kMCTabStripHeight)) && to >= 0 &&
+        if (NSPointInRect(p, NSInsetRect(self.bounds, 0, -MCTabStripHeight())) && to >= 0 &&
             to != from && self.onMove)
             self.onMove(from, to);
         return;
