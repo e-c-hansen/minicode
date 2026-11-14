@@ -323,7 +323,10 @@ MC_GUI_SUITE(daily_work) {
                               isEqualToString:dockDir.stringByResolvingSymlinksInPath]);
         [docked.window close];
         docked = nil;
-        MCGuiSetKeyWindow(c.window);
+        // The newest window is the one keys go to again, for the rest of
+        // this suite and the suites after (never pin a window here: one
+        // pinned and left open took every later suite's keys).
+        GCHECK(MCGuiController() == c);
     });
     MCGuiStep(@"F1 opens the command palette", ^{
         GCHECK(MenuKey(c, 122, 0));
