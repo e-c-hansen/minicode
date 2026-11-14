@@ -714,16 +714,46 @@ void Browser::focusUrlBar() {
     if (entry_) gtk_widget_grab_focus(entry_);
 }
 
+namespace {
+// The page takes the keyboard after what is already queued, if still mapped.
+void grabWhenIdle(GtkWidget* page) {
+    g_idle_add_full(G_PRIORITY_LOW, +[](gpointer p) -> gboolean {
+        GtkWidget* pg = GTK_WIDGET(p);
+        if (gtk_widget_get_mapped(pg)) gtk_widget_grab_focus(pg);
+        return G_SOURCE_REMOVE;
+    }, g_object_ref(page), g_object_unref);
+}
+}  // namespace
+
 void Browser::focusPage() {
     GtkWidget* w = webView();
     if (!w) { focusUrlBar(); return; }
     if (gtk_widget_grab_focus(w) && gtk_widget_has_focus(w)) return;
-    // The pane was just shown and its page is not mapped yet: once it is.
-    g_idle_add_full(G_PRIORITY_LOW, +[](gpointer p) -> gboolean {
-        GtkWidget* page = GTK_WIDGET(p);
-        if (gtk_widget_get_mapped(page)) gtk_widget_grab_focus(page);
-        return G_SOURCE_REMOVE;
-    }, g_object_ref(w), g_object_unref);
+    // The pane was just shown and its page is not mapped yet: it takes the
+    // keyboard once mapped, after what is already queued (the tree's second
+    // press of a double-click). One try in an idle missed on CI's runner,
+    // where the page was mapped later than the idle ran, and the keyboard
+    // stayed in the tree.
+    if (gtk_widget_get_mapped(w)) {
+        grabWhenIdle(w);
+        return;
+    }
+    // Only soon: a page mapped much later (the pane hidden again meanwhile)
+    // must not take the keyboard from wherever the user has it by then.
+    struct Once {
+        gulong id = 0;
+        gint64 until = 0;
+    };
+    auto* once = new Once;
+    once->until = g_get_monotonic_time() + 3 * G_USEC_PER_SEC;
+    once->id = g_signal_connect_data(
+        w, "map", G_CALLBACK(+[](GtkWidget* page, gpointer p) {
+            auto* o = static_cast<Once*>(p);
+            const bool soon = g_get_monotonic_time() < o->until;
+            g_signal_handler_disconnect(page, o->id);   // frees `o` through the notify
+            if (soon) grabWhenIdle(page);
+        }),
+        once, +[](gpointer p, GClosure*) { delete static_cast<Once*>(p); }, G_CONNECT_DEFAULT);
 }
 
 namespace {
