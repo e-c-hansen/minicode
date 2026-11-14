@@ -94,7 +94,9 @@ None retried. Checks seen failing on CI and passing on a rerun, with no
 fix yet, are listed here with the run that showed them, and removed when
 fixed.
 
-- (none open as of 2026-11-14)
+- `search` (Mac), SearchSuite.mm "20,000 matches in 2 files": once "in 3
+  files" (PR #8, run 43610029465), never before in the history read. Cause
+  unknown; the check now names the files when it fails.
 
 ## Branch protection (for the owner to decide)
 

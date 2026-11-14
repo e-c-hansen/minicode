@@ -264,8 +264,11 @@ MC_GUI_SUITE(utf16) {
     });
 
     MCGuiStep(@"the window closes", ^{
-        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Don't Save
-        [c.window performClose:nil];
+        // close, not performClose: with a Don't Save answer queued: CI showed
+        // no question came, and the answer left over would have answered a
+        // later suite's (the harness's LEAK check). close asks nothing and
+        // lets what is unsaved go.
+        [c.window close];
     });
     MCGuiWait(@"gone", 10, ^BOOL { return ![MCGuiControllers() containsObject:c]; });
 }

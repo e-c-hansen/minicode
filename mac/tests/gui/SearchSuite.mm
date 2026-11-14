@@ -92,7 +92,13 @@ MC_GUI_SUITE(search) {
         MCGuiNote(@"%lu rows: %@", (unsigned long)Hits(c).count, p.status.stringValue);
         GCHECK(Hits(c).count == 20000);
         GCHECK([p.status.stringValue hasSuffix:@". Stopped at 20,000 results"]);
-        GCHECK([p.status.stringValue hasPrefix:@"20,000 matches in 2 files"]);
+        // Failed once on CI with "in 3 files" (PR #8, run 43610029465): the
+        // files, so the next time says which one was the third.
+        if (!GCHECK([p.status.stringValue hasPrefix:@"20,000 matches in 2 files"])) {
+            NSMutableOrderedSet *files = [NSMutableOrderedSet orderedSet];
+            for (id h in Hits(c)) [files addObject:[h valueForKey:@"path"] ?: @"?"];
+            MCGuiNote(@"the files: %@", [files.array componentsJoinedByString:@", "]);
+        }
         // Showing them again: the tree of 20,000 lines is built on the main
         // thread, bounded in that thread's CPU time.
         NSArray *hits = [Hits(c) copy];
