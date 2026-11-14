@@ -356,11 +356,12 @@ MC_GUI_SUITE(preview_tabs) {
     MCGuiWait(@"the strip at its new height", 10, ^BOOL {
         return NSHeight(Strip(c).frame) == MCTabStripHeight() && MCTabStripHeight() > 30;
     });
-    MCGuiStep(@"tabs.font-size = 20: bigger titles, a taller strip, wider tabs", ^{
+    MCGuiStep(@"tabs.font-size = 20: bigger titles in a taller strip", ^{
         MCGuiNote(@"strip %.0f high, first tab %.0f wide (was %.0f)", NSHeight(Strip(c).frame),
                   NSWidth([Strip(c) rectForTab:0]), width12);
         GCHECK(MCTabStripFont().pointSize == 20);
-        GCHECK(NSWidth([Strip(c) rectForTab:0]) > width12);
+        // No width check: with five tabs in the test window they share its
+        // width evenly at either size.
         MCGuiSetSettings(@"lsp.enabled = false\n");
     });
     MCGuiWait(@"back to 30 points", 10, ^BOOL { return NSHeight(Strip(c).frame) == 30; });

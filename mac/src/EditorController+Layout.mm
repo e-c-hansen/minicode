@@ -392,6 +392,9 @@
 
     [w invalidateShadow];
     [self layoutContainer];
+    // The tab strips' height follows tabs.font-size; the split view keeps its
+    // size, so the right side is laid out again here.
+    [self relayoutRightArea];
 }
 
 // Problems in settings.conf, then in keys.conf (Keymap.h), on the left of
