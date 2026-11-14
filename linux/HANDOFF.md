@@ -1151,7 +1151,7 @@ core). Nothing here decides what a task is: that is `MarkdownParser`, so a
   completion list is open: `EditorObserver::takesReturn`, which the LSP
   session answers with `completionVisible()`. Shift+Return is a plain new
   line, for a second line in the same item.
-- **The title** says "MiniCode — TODO.md * — 3 of 7 done" while a Markdown
+- **The title** says "minicode — TODO.md * — 3 of 7 done" while a Markdown
   file with at least one task is open. The counts live in the editor
   (`tasksDone`, `tasksTotal`), recounted 0.3 s after typing stops, at once
   after a toggle, a preview edit, an undo of one, a reload from disk and a

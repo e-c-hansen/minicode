@@ -443,8 +443,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   and for shifted variants.
 - No third-party dependencies, ever; new capabilities use system frameworks.
 - README and user-facing prose: plain sentences, Oxford commas, no emoji, no
-  LLM-ish phrasing; the name is "minicode", lowercase, in prose. No labels the
-  user did not choose.
+  LLM-ish phrasing; the name is "minicode", lowercase, in prose and in every
+  port's window title (2026-11-14; the bundle, the menu bar's app name, the
+  launcher's label and folder names stay MiniCode). No labels the user did
+  not choose.
 - Commits in the repo's style (the area, then why and what was checked), ending
   with the Co-Authored-By trailer.
 - A finished user-visible Mac change is pushed, released and upgraded on the

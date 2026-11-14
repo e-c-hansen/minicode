@@ -15,5 +15,5 @@ export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 GTK_A11Y=none GDK_BACKEND=x11
 export HOME=/t/home XDG_CONFIG_HOME=/t/home/.config SHELL=/bin/bash
 cd /t/proj
 dbus-run-session -- "${BIN:-/build/minicode}" /t/proj >/tmp/app.log 2>&1 &
-for i in $(seq 1 50); do xdotool search --name MiniCode >/dev/null 2>&1 && break; sleep 0.2; done
+for i in $(seq 1 50); do xdotool search --name minicode >/dev/null 2>&1 && break; sleep 0.2; done
 sleep "${WAIT:-1.5}"

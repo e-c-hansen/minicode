@@ -856,7 +856,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
 }
 
 - (void)setStatus:(NSString *)path {
-    self.window.title = [NSString stringWithFormat:@"MiniCode — %@",
+    self.window.title = [NSString stringWithFormat:@"minicode — %@",
                          path.lastPathComponent];
 }
 

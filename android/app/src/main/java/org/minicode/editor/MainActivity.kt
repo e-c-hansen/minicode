@@ -2088,14 +2088,14 @@ class MainActivity : AppCompatActivity() {
                         ?: if (ui.terminal.isTermux || wantsTermuxShell()) "Termux home"
                            else "MiniCode's own folder")
             browserShowing -> "Browser" to null
-            ui.start.visibility == View.VISIBLE -> "MiniCode" to "No folder open"
+            ui.start.visibility == View.VISIBLE -> "minicode" to "No folder open"
             ui.gitPanel.visibility == View.VISIBLE -> "Source Control" to where(folder)
             ui.todos.visibility == View.VISIBLE -> "TODOs" to where(folder)
             showingList -> {
                 val dir = current ?: folder
                 // The top of shared storage is a folder called "0".
                 val top = dir != null && where(dir) == PHONE_STORAGE
-                (if (top) PHONE_STORAGE else dir?.name ?: "MiniCode") to when {
+                (if (top) PHONE_STORAGE else dir?.name ?: "minicode") to when {
                     lostAccess -> "Cannot open this folder"
                     top -> "The top of the phone's storage"
                     else -> where(dir)
@@ -2122,7 +2122,7 @@ class MainActivity : AppCompatActivity() {
                 // A Markdown file with tasks: "notes.md — 3 of 7 done".
                 val tasks = taskCount?.takeIf { !showingMedia && isMarkdown(file?.name) }
                     ?.let { " — ${it[0]} of ${it[1]} done" }.orEmpty()
-                ((if (dirty) "● " else "") + (file?.name ?: "MiniCode") + extra + tasks) to
+                ((if (dirty) "● " else "") + (file?.name ?: "minicode") + extra + tasks) to
                         listOfNotNull(state, mode, file?.let(::whereFileIs)).joinToString(" · ")
             }
         }

@@ -288,15 +288,15 @@ static void updateMediaKey(App* app) {
 
 static void updateTitle(void* userp) {
     App* app = static_cast<App*>(userp);
-    std::string title = "MiniCode";
+    std::string title = "minicode";
     const std::string& p = app->editor->currentPath();
     if (app->editor->isDiff()) {
         // "name (diff)" or "<short hash> <subject>", as the Mac titles it.
-        title = "MiniCode — " + app->editor->diffTitle();
+        title = "minicode — " + app->editor->diffTitle();
     } else if (!p.empty()) {
         auto slash = p.find_last_of('/');
         std::string base = slash == std::string::npos ? p : p.substr(slash + 1);
-        title = "MiniCode — " + base + (app->editor->dirty() ? " *" : "");
+        title = "minicode — " + base + (app->editor->dirty() ? " *" : "");
         // A Markdown file with tasks: how many are done.
         if (app->editor->tasksTotal() > 0)
             title += " — " + std::to_string(app->editor->tasksDone()) + " of " +
@@ -3740,7 +3740,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     app->window = gtk_application_window_new(g.gapp);
     gtk_widget_add_css_class(app->window, "minicode-window");
     gtk_window_set_default_size(GTK_WINDOW(app->window), 1100, 720);
-    gtk_window_set_title(GTK_WINDOW(app->window), "MiniCode");
+    gtk_window_set_title(GTK_WINDOW(app->window), "minicode");
     gtk_application_window_set_show_menubar(
         GTK_APPLICATION_WINDOW(app->window), TRUE);
     // The keyboard back where it was after a choice from the menu bar.
