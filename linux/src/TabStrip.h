@@ -15,6 +15,8 @@
 
 #include <gtk/gtk.h>
 
+#include "ClickCount.h"
+
 #include <functional>
 #include <memory>
 #include <string>
@@ -92,6 +94,7 @@ private:
     int active_ = -1;
     int pressClose_ = -1;           // the close button a press went down on
     int pressMiddle_ = -1;          // the tab a middle press went down on
+    ClickCount clicks_;             // double-clicks by event time
     int dragFrom_ = -1;             // the tab a primary press went down on
     double dragX_ = 0;              // where, in the row's coordinates
     guint sightIdle_ = 0;

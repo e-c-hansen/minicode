@@ -44,6 +44,7 @@
 #include <string>
 #include <vector>
 
+#include "ClickCount.h"
 #include "FolderSearch.h"
 
 class Editor;
@@ -68,6 +69,8 @@ public:
     SearchPanel& operator=(const SearchPanel&) = delete;
 
     void setOpenCallback(OpenCb cb, void* user) { openCb_ = cb; openUser_ = user; }
+    OpenCb openCallback() const { return openCb_; }   // the harness wraps it with a slow one
+    void*  openCallbackUser() const { return openUser_; }
     // Replace in Folder's view of the tabs: every window's editor, asked
     // each time, and this window's, whose clean tabs it edits.
     void setEditors(std::function<std::vector<Editor*>()> all, Editor* mine) {
@@ -173,6 +176,8 @@ private:
     GtkWidget*     listView_   = nullptr;
     GtkStringList* rows_       = nullptr;   // one display string per match
     guint          pressRow_   = GTK_INVALID_LIST_POSITION;   // where a click began
+    guint32        pressTime_  = 0;
+    ClickCount     clicks_;
     // Find mode only (null in the TODOs window).
     GtkWidget* chevron_ = nullptr;
     GtkWidget* case_ = nullptr;

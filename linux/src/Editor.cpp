@@ -989,16 +989,42 @@ void Editor::documentWillReload(Document* d) {
 }
 
 namespace {
-// Scroll offsets, put back once the view has laid out the new text as well
-// as straight away (the adjustment's range may lag the buffer by a frame).
-struct ScrollKeep {
-    GtkAdjustment* h;
-    GtkAdjustment* v;
-    double hv, vv;
+// An adjustment's value, put back as soon as its range reaches it. GTK lays
+// out in idle slices, so right after a reload or a render the range may still
+// be short and set_value clamps; a low-priority idle ran before the layout on
+// a slow runner. This sets it now and again on each "changed" until the range
+// holds the value (or 3 s pass, so a shorter file gives up).
+struct ScrollHold {
+    GtkAdjustment* adj;
+    double want;
+    gulong handler = 0;
+    guint timer = 0;
 };
-void restoreScroll(ScrollKeep* k) {
-    gtk_adjustment_set_value(k->h, k->hv);
-    gtk_adjustment_set_value(k->v, k->vv);
+void endScrollHold(ScrollHold* h) {
+    if (h->handler) g_signal_handler_disconnect(h->adj, h->handler);
+    h->handler = 0;
+    if (h->timer) g_source_remove(h->timer);
+    h->timer = 0;
+    g_object_unref(h->adj);
+    delete h;
+}
+bool applyScrollHold(ScrollHold* h) {
+    gtk_adjustment_set_value(h->adj, h->want);
+    return gtk_adjustment_get_upper(h->adj) - gtk_adjustment_get_page_size(h->adj) >= h->want - 0.5;
+}
+void holdScrollOffset(GtkAdjustment* adj, double want) {
+    auto* h = new ScrollHold{GTK_ADJUSTMENT(g_object_ref(adj)), want};
+    applyScrollHold(h);
+    h->handler = g_signal_connect(adj, "changed", G_CALLBACK(+[](GtkAdjustment*, gpointer p) {
+        auto* k = static_cast<ScrollHold*>(p);
+        if (applyScrollHold(k)) endScrollHold(k);
+    }), h);
+    h->timer = g_timeout_add(3000, [](gpointer p) -> gboolean {
+        auto* k = static_cast<ScrollHold*>(p);
+        k->timer = 0;
+        endScrollHold(k);
+        return G_SOURCE_REMOVE;
+    }, h);
 }
 }  // namespace
 
@@ -1007,22 +1033,10 @@ void Editor::documentReloaded(Document* d) {
     if (d == active_ && inMarkdownPage()) rerenderPreview();
     if (reloadKeep_) {
         reloadKeep_ = false;
-        auto* keep = new ScrollKeep{
-            gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)),
-            gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_)), reloadH_,
-            reloadV_};
-        g_object_ref(keep->h);
-        g_object_ref(keep->v);
-        restoreScroll(keep);
-        g_idle_add_full(G_PRIORITY_LOW, [](gpointer p) -> gboolean {
-            restoreScroll(static_cast<ScrollKeep*>(p));
-            return G_SOURCE_REMOVE;
-        }, keep, [](gpointer p) {
-            auto* k = static_cast<ScrollKeep*>(p);
-            g_object_unref(k->h);
-            g_object_unref(k->v);
-            delete k;
-        });
+        holdScrollOffset(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller_)),
+                         reloadH_);
+        holdScrollOffset(gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_)),
+                         reloadV_);
     }
     if (d == active_) titleChanged();
 }
@@ -2035,22 +2049,12 @@ void Editor::notePreviewRest() {
 }
 
 // Rendered again in place (an edit from the preview, its undo, a setting):
-// the same scroll offset, set now and again once the new text is laid out.
+// the same scroll offset, set now and again as the new text is laid out.
 void Editor::rerenderPreview() {
     GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
     const double keep = gtk_adjustment_get_value(v);
     renderPreview();
-    gtk_adjustment_set_value(v, keep);
-    auto* again = new std::pair<GtkAdjustment*, double>(GTK_ADJUSTMENT(g_object_ref(v)), keep);
-    g_idle_add_full(G_PRIORITY_LOW, [](gpointer d) -> gboolean {
-        auto* p = static_cast<std::pair<GtkAdjustment*, double>*>(d);
-        gtk_adjustment_set_value(p->first, p->second);
-        return G_SOURCE_REMOVE;
-    }, again, [](gpointer d) {
-        auto* p = static_cast<std::pair<GtkAdjustment*, double>*>(d);
-        g_object_unref(p->first);
-        delete p;
-    });
+    holdScrollOffset(v, keep);
 }
 
 // ---------------------------------------------------------------- web pictures

@@ -46,8 +46,7 @@ TabStrip::TabStrip() {
 
 TabStrip::~TabStrip() {
     alive_.reset();   // callbacks waiting in an idle find the strip gone
-    if (sightIdle_) g_source_remove(sightIdle_);
-    sightIdle_ = 0;
+    sightIdle_ = 0;   // a tick waiting for layout finds the strip gone through alive_
     dropMenu();
     for (const Tab& t : tabs_) {
         GListModel* ctrls = gtk_widget_observe_controllers(t.box);
@@ -182,6 +181,9 @@ void TabStrip::onPressed(GtkGestureClick* g, int n, double x, double y, gpointer
         self->dragFrom_ = i;
         self->dragX_ = rowX(box, self->row_, x, y);
     }
+    // GTK's count is reset by a slow first click (selecting a tab shows a
+    // file); the presses' event times decide too.
+    n = self->clicks_.press(g, box, n);
     if (n == 2) self->later(self->onDoubleClick, i);
     else if (n == 1) self->later(self->onSelect, i);
 }
@@ -246,18 +248,33 @@ void TabStrip::dropMenu() {
     if (gtk_widget_get_parent(m)) gtk_widget_unparent(m);
 }
 
-// After the row is laid out, scroll it so the active tab is in sight.
+// Scroll the row so the active tab is in sight, once the row is laid out: the
+// tab has its width and the scroller's adjustment reaches the row's (a low
+// priority idle ran before that on a slow runner and clamped to the old range).
+// A tick callback tries each frame; after 3 s it acts on what there is.
 void TabStrip::keepActiveInSight() {
     if (sightIdle_) return;
-    sightIdle_ = g_idle_add_full(G_PRIORITY_LOW, [](gpointer p) -> gboolean {
-        TabStrip* self = static_cast<TabStrip*>(p);
-        self->sightIdle_ = 0;
+    sightIdle_ = 1;
+    struct Ctx {
+        std::weak_ptr<int> alive;
+        TabStrip* self;
+        gint64 until;
+    };
+    auto* ctx = new Ctx{alive_, this, g_get_monotonic_time() + 3 * G_USEC_PER_SEC};
+    gtk_widget_add_tick_callback(scroller_, [](GtkWidget*, GdkFrameClock*, gpointer p) -> gboolean {
+        auto* c = static_cast<Ctx*>(p);
+        if (c->alive.expired()) return G_SOURCE_REMOVE;
+        TabStrip* self = c->self;
         GtkWidget* tab = self->tabWidget(self->active_);
-        if (!tab) return G_SOURCE_REMOVE;
-        graphene_rect_t r;
-        if (!gtk_widget_compute_bounds(tab, self->row_, &r)) return G_SOURCE_REMOVE;
+        if (!tab) { self->sightIdle_ = 0; return G_SOURCE_REMOVE; }
         GtkAdjustment* h = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(self->scroller_));
-        gtk_adjustment_clamp_page(h, r.origin.x, r.origin.x + r.size.width);
+        const bool laidOut = gtk_widget_get_width(tab) > 0 &&
+                             gtk_adjustment_get_upper(h) >= gtk_widget_get_width(self->row_);
+        if (!laidOut && g_get_monotonic_time() < c->until) return G_SOURCE_CONTINUE;
+        self->sightIdle_ = 0;
+        graphene_rect_t r;
+        if (gtk_widget_compute_bounds(tab, self->row_, &r))
+            gtk_adjustment_clamp_page(h, r.origin.x, r.origin.x + r.size.width);
         return G_SOURCE_REMOVE;
-    }, this, nullptr);
+    }, ctx, [](gpointer p) { delete static_cast<Ctx*>(p); });
 }

@@ -12,6 +12,7 @@
 #include "Document.h"
 #include "Editor.h"
 #include "FileTree.h"
+#include "Search.h"
 #include "TabStrip.h"
 
 #include <string>
@@ -66,6 +67,24 @@ GtkWidget* labelHolding(GtkWidget* root, const std::string& part) {
 }
 
 GtkWindow* gSearch = nullptr;
+
+// A first click that is slow, as opening a file is: its action holds the main
+// loop for longer than gtk-double-click-time, so GTK's own count for the
+// second press starts again at 1 (the second press waits in the queue until
+// the stall is over). The decision must come from the presses' event times
+// (ClickCount.h); without it the double-click was lost on a slow runner.
+constexpr double kStallMs = 700;
+void stall() {
+    const double t0 = MCGuiNowMs();
+    while (MCGuiNowMs() - t0 < kStallMs) g_usleep(2000);
+}
+SearchPanel::OpenCb gRealOpen = nullptr;
+void* gRealOpenUser = nullptr;
+void slowOpen(const FolderSearchMatch& m, bool kept, void* user) {
+    if (!kept) stall();   // the first click's preview open
+    gRealOpen(m, kept, user);
+}
+std::function<void(int)> gRealSelect;
 size_t gClosed = 0;
 
 // A click on a Find in Folder result, its window brought up first (opening
@@ -203,6 +222,30 @@ MC_GUI_SUITE(preview_tabs) {
     });
     MCGuiWait("kept", 10, [] { return row() == "p-b.txt p-e.txt p-c.txt p-d.txt"; });
 
+    // ---- a double-click on a tab whose first click is slow
+    MCGuiPause(0.5);   // the double-click interval
+    MCGuiStep("a preview tab to keep", [] { MCGuiClick(treeRow("p-a.txt")); });
+    MCGuiWait("drawn", 10, [] {
+        return row() == "p-b.txt p-e.txt [p-a.txt] p-c.txt p-d.txt" &&
+               MCGuiOnScreen(strip()->titleWidget(2));
+    });
+    MCGuiStep("a double-click on its title, the select slow", [] {
+        gRealSelect = strip()->onSelect;
+        strip()->onSelect = [](int i) {
+            stall();
+            if (gRealSelect) gRealSelect(i);
+        };
+        MCGuiDoubleClick(strip()->titleWidget(2));
+    });
+    MCGuiWait("kept though GTK counted one", 15, [] {
+        return row() == "p-b.txt p-e.txt p-a.txt p-c.txt p-d.txt" && italicsAgree();
+    });
+    MCGuiStep("the select back, the tab closed", [] {
+        strip()->onSelect = gRealSelect;
+        MCGuiKey("ctrl+w");
+    });
+    MCGuiWait("gone", 10, [] { return row() == "p-b.txt p-e.txt p-c.txt p-d.txt"; });
+
     // ---- the setting
     MCGuiStep("with workbench.enable-preview off, a click opens a kept tab", [] {
         MCGuiSetSettings("lsp.enabled = false\nworkbench.enable-preview = off\n");
@@ -245,6 +288,22 @@ MC_GUI_SUITE(preview_tabs) {
     MCGuiPause(0.5);   // the double-click interval
     MCGuiStep("a double-click on it keeps it", [] { clickResult("needle two", true); });
     MCGuiWait("kept", 10, [] { return row() == "p-b.txt p-e.txt p-a.txt two.txt p-c.txt p-d.txt"; });
+    // The same with a slow first click: GTK's timer has reset by the second.
+    MCGuiPause(0.5);   // the double-click interval
+    MCGuiStep("a slow first click on a result, then the second", [] {
+        SearchPanel* sp = MCGuiApp().search;
+        gRealOpen = sp->openCallback();
+        gRealOpenUser = sp->openCallbackUser();
+        sp->setOpenCallback(slowOpen, gRealOpenUser);
+        clickResult("needle one", true);
+    });
+    MCGuiWait("kept though GTK counted one", 15, [] {
+        Document* d = ed()->documentFor(F("found/one.txt"));
+        return d && !d->isPreviewTab();
+    });
+    MCGuiStep("the real open back", [] {
+        MCGuiApp().search->setOpenCallback(gRealOpen, gRealOpenUser);
+    });
     MCGuiStep("the search window closed", [] {
         MCGuiSetKeyWindow(gSearch);
         MCGuiKey("escape");

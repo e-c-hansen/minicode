@@ -137,6 +137,7 @@ core_sources = [
 main_source = 'src/main.cpp'
 gui_sources = [
   'src/FileTree.cpp',
+  'src/ClickCount.cpp',
   # The editor: the view (Editor.cpp), each open file (Document.cpp), the
   # tabs (Tabs.cpp) and their strip (TabStrip.cpp).
   'src/Editor.cpp',

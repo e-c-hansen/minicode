@@ -6,6 +6,8 @@
 #pragma once
 
 #include <gtk/gtk.h>
+
+#include "ClickCount.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -204,7 +206,8 @@ private:
     GtkTreeListRow* pressRow_ = nullptr;
     double          pressX_ = 0, pressY_ = 0;
     GtkTreeListRow* lastReleaseRow_ = nullptr;
-    guint32         pressTime_ = 0, prevPressTime_ = 0;   // event times of the last two presses
+    guint32         pressTime_ = 0;   // the last press's event time
+    ClickCount      clicks_;
 
     DropCb      dropCb_;
     // The drag over the tree right now: what it carries (empty while files

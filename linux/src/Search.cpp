@@ -1003,18 +1003,25 @@ guint SearchPanel::selectedRow() const {
     return gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(model));
 }
 
-void SearchPanel::onRowPressed(GtkGestureClick*, int, double x, double y, gpointer selfp) {
+void SearchPanel::onRowPressed(GtkGestureClick* g, int, double x, double y, gpointer selfp) {
     SearchPanel* self = static_cast<SearchPanel*>(selfp);
+    self->pressTime_ = gtk_event_controller_get_current_event_time(GTK_EVENT_CONTROLLER(g));
     self->pressRow_ = self->rowAt(x, y);
 }
 
 // The first click of a double-click opens the match in the preview tab; the
 // second keeps it in a tab of its own, as on the Mac. A press released over
 // another row does nothing.
-void SearchPanel::onRowReleased(GtkGestureClick*, int n, double x, double y, gpointer selfp) {
+// The count is by the presses' event times (ClickCount): a slow first open
+// made GTK's own timer reset the second press to n = 1.
+void SearchPanel::onRowReleased(GtkGestureClick*, int gtkN, double x, double y, gpointer selfp) {
     SearchPanel* self = static_cast<SearchPanel*>(selfp);
     const guint pressed = self->pressRow_;
     self->pressRow_ = GTK_INVALID_LIST_POSITION;
+    const int n = pressed == GTK_INVALID_LIST_POSITION
+                      ? gtkN
+                      : self->clicks_.press(self->listView_, self->pressTime_,
+                                            GUINT_TO_POINTER(pressed + 1), gtkN);
     if ((n == 1 || n == 2) && pressed != GTK_INVALID_LIST_POSITION &&
         self->rowAt(x, y) == pressed)
         self->openRow(pressed, n == 2);

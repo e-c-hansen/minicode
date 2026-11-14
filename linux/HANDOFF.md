@@ -4580,6 +4580,38 @@ folder chooser; the Mac half is File > Open Recent (`src/RecentFolders.mm`).
   new folder), and the portal's own folder chooser from the dock's Open
   Folder… (with the app not running, and running).
 
+### 70. Double-clicks counted by event time, and idles that wait for layout (done, November 2026)
+
+- **The bug class**: GtkGestureClick counts presses with a timer on the main
+  loop. When the first click's handler is slow (it opens a file, shows a
+  pane) the second press is handled after GTK reset its count and arrives as
+  n = 1, so the double-click's action never happens (the tree, 7abeb99; CI
+  lost bookmarks' double-click so).
+- **`src/ClickCount.{h,cpp}`**: one counter per widget; `press(widget, time,
+  target, gtkN)` answers 2 when the press before was on the same target and
+  the event times (`gtk_event_controller_get_current_event_time`) are within
+  `gtk-double-click-time`, with GTK's count as a floor. Used by the file tree
+  (replacing its own copy), `SearchPanel::onRowReleased` (the first click
+  previews a result, the second keeps it) and `TabStrip::onPressed` (a double
+  click keeps the preview tab). Left alone: `Carets` (already counts by event
+  time and place), the Markdown page's double-click in `Editor::onPressed`
+  and the LaTeX PDF's (`PdfView`, `Latex.cpp`): their first click does
+  nothing slow; `GitDiffView` and `FoldUi` only act on n == 1.
+- **Idles that read layout**: `Editor::documentReloaded` and
+  `rerenderPreview` restored the scroll in a low-priority idle, which can run
+  before GtkTextView has laid out the new text, so `set_value` clamped to the
+  old range. `holdScrollOffset` (Editor.cpp) sets the value now and again on
+  each adjustment `changed` until the range reaches it, at most 3 s.
+  `TabStrip::keepActiveInSight` read the tab's bounds and the scroller's
+  range in an idle; it is a tick callback now that acts once the tab has a
+  width and the range holds the row, or after 3 s.
+- **Checks**: `preview_tabs` has a slow first click (`stall()`: the first
+  click's action holds the loop 700 ms, the second press waits in the queue)
+  on a Find in Folder result and on a tab's title; both fail without
+  ClickCount (checked by making `press` return GTK's n). The idles have no
+  deterministic check: a runner slow enough to run the idle first cannot be
+  made on demand, so they are unchecked beyond the existing suites.
+
 ## How to work on it
 
 - **Trap: a key or click right after a popover menu closes can be lost**
@@ -4679,6 +4711,11 @@ Do not claim a GUI behaviour works when it was only compiled.
 
 ## Traps already known
 
+- GtkGestureClick counts a double-click with a timer on the main loop, not
+  by the events' times: a slow first-click handler makes the second press
+  arrive as n = 1. Count with `ClickCount` (item 70) wherever the first
+  click does real work. Likewise a low-priority idle can run before GTK's
+  idle layout: wait for the adjustment's `changed` or a tick, bounded.
 - `gtk_list_view_scroll_to` with `GTK_LIST_SCROLL_FOCUS` moves the list's
   cursor, not the keyboard: Tab from the commit message into the list left
   the caret in the message until the list view was also given
