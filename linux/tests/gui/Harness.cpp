@@ -3,6 +3,7 @@
 #include "Harness.h"
 
 #include "Editor.h"
+#include "TerminalDock.h"
 
 #include <execinfo.h>
 #include <limits.h>
@@ -13,6 +14,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -60,7 +62,7 @@ size_t gIndex = 0;
 Item* gWaiting = nullptr;
 double gDeadlineMs = 0;
 bool gAsyncDone = false;
-int gPass = 0, gFail = 0, gSuitePass = 0, gSuiteFail = 0;
+int gPass = 0, gFail = 0, gSuitePass = 0, gSuiteFail = 0, gSlow = 0, gLeaks = 0;
 std::string gSuite, gStep;
 double gStartedMs = 0;
 double gStepSeconds = 60;
@@ -79,18 +81,27 @@ Item* enqueue(Kind kind, const std::string& name, double timeout) {
     i->timeout = timeout;
     return i;
 }
+// A factor of at least 1 from the environment (CI sets these; Harness.h).
+double factor(const char* name) {
+    const char* s = getenv(name);
+    const double v = s ? atof(s) : 0;
+    return v > 1 ? v : 1;
+}
 }  // namespace
+
+double MCGuiWaitScale() { return factor("MC_GUI_WAIT_SCALE"); }
+double MCGuiTimingScale() { return factor("MC_TIMING_SCALE"); }
 
 void MCGuiStep(const std::string& name, std::function<void()> block) {
     enqueue(Kind::Step, name, 0)->block = std::move(block);
 }
 
 void MCGuiWait(const std::string& what, double timeout, std::function<bool()> until) {
-    enqueue(Kind::Wait, what, timeout)->until = std::move(until);
+    enqueue(Kind::Wait, what, timeout * MCGuiWaitScale())->until = std::move(until);
 }
 
 void MCGuiAsync(const std::string& name, double timeout, std::function<void(MCGuiDone)> block) {
-    enqueue(Kind::Async, name, timeout)->async = std::move(block);
+    enqueue(Kind::Async, name, timeout * MCGuiWaitScale())->async = std::move(block);
 }
 
 void MCGuiPause(double seconds) {
@@ -179,10 +190,48 @@ bool MCGuiTimingSkipped() {
     return s && *s && strcmp(s, "0") != 0;
 }
 
+// Every timing check's share of its bound, for the end of the run's list of
+// those closest to failing.
+namespace {
+struct Timed {
+    double ratio;
+    std::string line;
+};
+std::vector<Timed> gTimed;
+
+void printNearestBounds() {
+    if (gTimed.empty()) return;
+    std::sort(gTimed.begin(), gTimed.end(), [](const Timed& a, const Timed& b) { return a.ratio > b.ratio; });
+    printf("Timing checks closest to their bounds (CPU time over the bound):\n");
+    for (size_t i = 0; i < gTimed.size() && i < 10; i++) printf("%s\n", gTimed[i].line.c_str());
+}
+}  // namespace
+
 bool MCGuiCheckTime(double ms, double bound, const std::string& what, const char* file, int line) {
-    char text[64];
-    snprintf(text, sizeof text, " under %.0f ms of CPU (%.2f)", bound, ms);
-    return MCGuiCheck(MCGuiTimingSkipped() || ms < bound, what + text, file, line);
+    if (bound > 0) {
+        const char* slash = strrchr(file, '/');
+        char buf[512];
+        snprintf(buf, sizeof buf, "  NEAR [%s] %s:%d  %s: %.0f%% (%.2f of %.0f ms)", gSuite.c_str(),
+                 slash ? slash + 1 : file, line, what.c_str(), 100 * ms / bound, ms, bound);
+        gTimed.push_back({ms / bound, buf});
+    }
+    const double scale = MCGuiTimingScale();
+    if (!MCGuiTimingSkipped() && ms >= bound && ms < bound * scale) {
+        // Over the bound, within the room this runner is given: a pass, said
+        // loudly, so a bound being outgrown shows in the job's summary first.
+        gSlow++;
+        const char* slash = strrchr(file, '/');
+        printf("  SLOW [%s] %s:%d  %s: %.2f ms of CPU, over its bound of %.0f (passed within "
+               "this runner's x%.2g)\n",
+               gSuite.c_str(), slash ? slash + 1 : file, line, what.c_str(), ms, bound, scale);
+        fflush(stdout);
+    }
+    char text[96];
+    if (scale > 1)
+        snprintf(text, sizeof text, " under %.0f ms of CPU, x%.2g on this runner (%.2f)", bound, scale, ms);
+    else
+        snprintf(text, sizeof text, " under %.0f ms of CPU (%.2f)", bound, ms);
+    return MCGuiCheck(MCGuiTimingSkipped() || ms < bound * scale, what + text, file, line);
 }
 
 // ----------------------------------------------------------------- world
@@ -494,6 +543,88 @@ void noteState() {
               gtk_text_iter_get_offset(&b), gtk_adjustment_get_value(v), text.c_str());
 }
 
+// ------------------------------------------------ what a suite leaves behind
+// A suite starts from what the one before left, so what one leaves fails
+// later suites that never touched it (HANDOFF.md: a terminal's width after
+// zoom, the editor's font, a row menu left open; on the Mac, a key window
+// left pinned failed five suites). The world is looked at as each suite
+// starts and again as it ends; a difference is a LEAK line naming the suite,
+// a failed check of that suite, and put back where the harness can, so the
+// suites after it start clean. MC_GUI_LEAKS=note prints without failing or
+// putting anything back.
+struct World {
+    size_t windows = 0;
+    int terminals = 0;
+    bool otherOnTop = false;
+    std::string settings, keys;
+};
+World gWorldAtStart;
+
+World lookAtWorld() {
+    World w;
+    const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
+    w.windows = all.size();
+#ifdef MINICODE_ENABLE_TERMINAL
+    for (const MCGuiAppWindow& a : all)
+        if (a.termDock) w.terminals += a.termDock->count();
+#endif
+    w.otherOnTop = MCGuiTopWindow() != MCGuiApp().window;
+    w.settings = MCGuiReadFile(envOr("MINICODE_SETTINGS"));
+    w.keys = MCGuiReadFile(envOr("MINICODE_KEYS"));
+    return w;
+}
+
+bool leaksFail() { return envOr("MC_GUI_LEAKS") != "note"; }
+
+std::string shortText(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        if (out.size() >= 120) return out + "...";
+        out += c == '\n' ? std::string("\\n") : std::string(1, c);
+    }
+    return out;
+}
+
+void leak(const std::string& what) {
+    gLeaks++;
+    printf("  LEAK [%s] %s\n", gSuite.c_str(), what.c_str());
+    fflush(stdout);
+    if (leaksFail()) {
+        gFail++;
+        gSuiteFail++;
+    }
+}
+
+void checkWhatSuiteLeft() {
+    if (gSuite.empty()) return;
+    const bool putBack = leaksFail();
+    if (MCGuiPinnedKeyWindow() && MCGuiPinnedKeyWindow() != MCGuiApp().window) {
+        leak("left the key window pinned to a window still open (MCGuiSetKeyWindow(nullptr) at its end)");
+        if (putBack) MCGuiSetKeyWindow(nullptr);
+    }
+    const World now = lookAtWorld(), was = gWorldAtStart;
+    if (now.windows != was.windows)
+        leak("left " + std::to_string(now.windows) + " app window(s) where it found " +
+             std::to_string(was.windows));
+    if (now.otherOnTop && !was.otherOnTop) {
+        const char* title = gtk_window_get_title(MCGuiTopWindow());
+        leak(std::string("left another window on top of the app's: \"") + (title ? title : "") + "\"");
+    }
+    if (now.terminals > was.terminals)
+        leak("left " + std::to_string(now.terminals) + " terminal tab(s) where it found " +
+             std::to_string(was.terminals));
+    if (now.settings != was.settings) {
+        leak("left settings.conf changed: \"" + shortText(now.settings) + "\" (was \"" +
+             shortText(was.settings) + "\")");
+        if (putBack) MCGuiSetSettings(was.settings);
+    }
+    if (now.keys != was.keys) {
+        leak("left keys.conf changed: \"" + shortText(now.keys) + "\" (was \"" + shortText(was.keys) +
+             "\")");
+        if (putBack) MCGuiSetKeys(was.keys);
+    }
+}
+
 // Steps are played on a timer at the loop's default priority, as X events are,
 // so the events a step sends arrive before the next step reads anything.
 bool gFinished = false;
@@ -527,6 +658,8 @@ gboolean tick(gpointer) {
         gWaiting = nullptr;
     }
     if (gIndex >= gItems.size()) {
+        gStep = "what the suite left";
+        runGuarded(gStep, checkWhatSuiteLeft);
         endSuite();
         finish();
         return G_SOURCE_REMOVE;
@@ -536,10 +669,14 @@ gboolean tick(gpointer) {
     startItem(item);
     switch (item->kind) {
     case Kind::Suite:
+        gStep = "what the suite left";
+        runGuarded(gStep, checkWhatSuiteLeft);
+        gStep = item->name;
         endSuite();
         gSuite = item->name;
         gSuiteName = item->name.c_str();
         gSuitePass = gSuiteFail = 0;
+        runGuarded("looking at the world", [] { gWorldAtStart = lookAtWorld(); });
         printf("Suite %s\n", item->name.c_str());
         fflush(stdout);
         break;
@@ -595,6 +732,10 @@ void finish() {
     gItemDeadlineMs = MCGuiNowMs() + 30000;
     printf("\nGUI checks: %d passed, %d failed (%.1f s)\n", gPass, gFail,
            (MCGuiNowMs() - gStartedMs) / 1000);
+    if (gSlow || gLeaks)
+        printf("Also: %d timing check(s) over their bound within this runner's room, %d leak(s) "
+               "between suites\n", gSlow, gLeaks);
+    printNearestBounds();
     fflush(stdout);
     // The windows go the way a user's do (the shells hung up, the servers
     // told to stop), then a short turn of the loop for what that starts. The

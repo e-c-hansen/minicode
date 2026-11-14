@@ -54,6 +54,20 @@
 // MC_GUI_TOTAL_SECONDS is the limit on the whole run (20 minutes) and
 // MC_GUI_STEP_SECONDS the limit on one step (a minute, on top of a wait's own
 // timeout), which also catches a step that never returns to the main loop.
+// For slower machines (CI's job sets them): MC_GUI_WAIT_SCALE multiplies
+// every wait's and async step's timeout (a wait polls, so more room only
+// delays a failure); MC_TIMING_SCALE multiplies every GCHECK_TIME bound,
+// and a time over the bound but within the scaled one passes with a
+// "SLOW [suite]" line, so a bound being outgrown shows before it fails.
+//
+// Between suites the runner compares the world with what the suite found
+// (app windows, another window such as a question left on top, terminal
+// tabs, settings.conf, keys.conf, a key window left pinned): a difference is
+// a "LEAK [suite]" line and a failed check of the suite that left it, and
+// the pin and the two files are put back, so one suite's leftovers never
+// fail the suites after it. MC_GUI_LEAKS=note only prints the lines. (The
+// Mac's harness does the same; HANDOFF.md has the GTK cascades that led to
+// it: a terminal's width, the editor's font, a row menu left open.)
 //
 // Traps worth knowing, some from the Mac's harness and some the port's own:
 //   - Before a positive check after input, wait on what the check reads
@@ -122,6 +136,8 @@ void MCGuiNote(const char* format, ...) G_GNUC_PRINTF(1, 2);
 double MCGuiThreadCpuMs();
 double MCGuiNowMs();
 bool MCGuiTimingSkipped();   // MC_SKIP_TIMING=1 passes every bound
+double MCGuiTimingScale();   // MC_TIMING_SCALE, 1 when unset (see above)
+double MCGuiWaitScale();     // MC_GUI_WAIT_SCALE, the same
 // `ms` (CPU time) under `bound`, the value in the check's text either way.
 bool MCGuiCheckTime(double ms, double bound, const std::string& what, const char* file, int line);
 #define GCHECK_TIME(ms, bound, what) MCGuiCheckTime((ms), (bound), (what), __FILE__, __LINE__)
@@ -178,6 +194,7 @@ bool MCGuiTextLaidOut(GtkWidget* textView);
 // Each call gives it the X focus first, as a window manager would.
 void MCGuiSetKeyWindow(GtkWindow* window);   // null: the newest
 GtkWindow* MCGuiKeyWindow();
+GtkWindow* MCGuiPinnedKeyWindow();   // MCGuiSetKeyWindow's, while still mapped; else null
 void MCGuiFocusKeyWindow();
 // A chord in the registry's notation (src/Commands.h): "ctrl+s",
 // "ctrl+shift+p", "alt+shift+f", "f2", "enter", "ctrl+`". Modifiers are held

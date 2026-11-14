@@ -173,6 +173,12 @@ void button(int b, bool down) {
 
 void MCGuiSetKeyWindow(GtkWindow* window) { gKeyWindow = window; }
 
+GtkWindow* MCGuiPinnedKeyWindow() {
+    if (gKeyWindow && GTK_IS_WINDOW(gKeyWindow) && gtk_widget_get_mapped(GTK_WIDGET(gKeyWindow)))
+        return gKeyWindow;
+    return nullptr;
+}
+
 GtkWindow* MCGuiKeyWindow() {
     if (gKeyWindow && GTK_IS_WINDOW(gKeyWindow) && gtk_widget_get_mapped(GTK_WIDGET(gKeyWindow)))
         return gKeyWindow;

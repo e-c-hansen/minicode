@@ -295,7 +295,17 @@ MC_GUI_SUITE(terminal_draw) {
         // 2x) every frame drew everything: agent frames median 32 ms, p95 45
         // ms; build pieces median 15 ms, p95 18 ms. After (2026-11-07): about 0.2
         // and 1.0 ms, and 1.3 and 1.6 ms.
-        GCHECK(ca.p95 < 8);
+        //
+        // The p95 frame redraws the whole screen (rows p95 40.8 of 40), so it
+        // costs about a full draw, and CI's runner gave a full draw a median
+        // of 0.7 ms on one run and 9 ms on another (2026-11-14): a fixed 8
+        // ms failed PR #6 at 10.25 and passed its rerun. The bound is now
+        // 8 ms or two full draws of this same replay on this same thread,
+        // whichever is more; that every frame drawing everything is caught
+        // by the rows check above.
+        MCGuiCheckTime(ca.p95, MAX(8.0, 2 * full.median),
+                       [NSString stringWithFormat:@"agent frames' p95 (full draw median %.2f)", full.median],
+                       __FILE__, __LINE__);
         // A build piece scrolls the whole screen, about 1.4 full draws here
         // (each rect drawn into a bitmap of its own); a slower machine
         // (CI's runners, an efficiency core under load) gets room in
