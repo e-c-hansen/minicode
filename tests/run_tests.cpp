@@ -9452,7 +9452,7 @@ void testLineDiff() {
 #include "FileDetailsTests.cpp"
 
 // How to install the servers and formatters: one table, the app's notes and
-// the README.
+// docs/REFERENCE.md.
 static void testInstallHints() {
     GROUP("install:table");
     const Install::Tool *py = Install::server("python");
@@ -9668,20 +9668,20 @@ static void testInstallHints() {
           std::set<std::string>{"rust"});
 
     GROUP("install:readme");
-    // The README's "Language servers and formatters" section lists every
+    // docs/REFERENCE.md's "Installing servers and formatters" section lists every
     // command the app suggests, word for word.
-    std::ifstream f("README.md");
+    std::ifstream f("docs/REFERENCE.md");
     if (!f) {
-        std::printf("  (README.md not found here; README checks skipped)\n");
+        std::printf("  (docs/REFERENCE.md not found here; its checks skipped)\n");
         return;
     }
     std::stringstream ss;
     ss << f.rdbuf();
-    std::string readme = ss.str();
+    std::string readme = ss.str();   // docs/REFERENCE.md
     for (const Install::Tool *t : Install::all())
         for (const Install::Way &w : t->ways) {
             bool found = readme.find("`" + w.command + "`") != std::string::npos;
-            if (!found) std::printf("  README lacks `%s`\n", w.command.c_str());
+            if (!found) std::printf("  docs/REFERENCE.md lacks `%s`\n", w.command.c_str());
             CHECK(found);
         }
 }

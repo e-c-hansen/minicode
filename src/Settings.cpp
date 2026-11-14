@@ -1809,8 +1809,8 @@ const char* Settings::defaultFileText() {
 # Servers... in the MiniCode menu, to see each server's state, where it was
 # found and how to install a missing one, and to restart or stop it. A file
 # whose server is missing says so in a line over the editor, with the
-# command to install it. The README's "Installing servers and formatters"
-# section lists every command.
+# command to install it. "Installing servers and formatters" in the
+# repository's docs/REFERENCE.md lists every command.
 # lsp.enabled = true
 # lsp.cpp = clangd
 # lsp.python = basedpyright-langserver --stdio
@@ -1818,7 +1818,7 @@ const char* Settings::defaultFileText() {
 # lsp.rust = rust-analyzer
 # lsp.typescript = typescript-language-server --stdio
 # These run only when installed, and are never offered for installing
-# unasked (the README says how): texlab for LaTeX and BibTeX, marksman for
+# unasked (docs/REFERENCE.md says how): texlab for LaTeX and BibTeX, marksman for
 # Markdown, taplo for TOML, and bash-language-server for shell scripts.
 # lsp.latex = texlab
 # lsp.markdown = marksman server
@@ -1878,8 +1878,8 @@ const char* Settings::defaultFileText() {
 # Giving a command here runs exactly that, whatever the project says; {file}
 # stands for the file's path. off leaves a language alone. Google's internal
 # 2-space Python is pyink --pyink-indentation 2 with the options below.
-# A missing formatter's note says how to install it, and so does the
-# README's "Installing servers and formatters" section.
+# A missing formatter's note says how to install it, and so does
+# "Installing servers and formatters" in docs/REFERENCE.md.
 # format.python = pyink --line-length 80 --pyink-use-majority-quotes --quiet --stdin-filename {file} -
 # format.cpp = clang-format --style=file --fallback-style=Google --assume-filename={file}
 # format.go = gofmt

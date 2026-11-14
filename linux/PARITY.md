@@ -629,7 +629,7 @@ registry.** Today `main.cpp` writes its `GMenu` and accelerators by hand. A
 table in the port maps a command id to its GAction; a command with none on
 Linux appears nowhere, and an action's enabled state decides whether the
 palette offers it. Each item adds its rows to that table, so the menus, the
-hints panel, the palette, and `README.md`'s Linux column cannot drift apart.
+hints panel, the palette, and `docs/REFERENCE.md`'s Linux column cannot drift apart.
 
 **D13. GUI checks.** An item's checks are suites in `linux/tests/gui`, one
 file a suite and one line in `suites.txt` (merged by union, so parallel
@@ -702,7 +702,7 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
 - [x] **0.3 The registry and keys (D1, D12).** Build `Commands` into the port,
   add `CommandsLinux.cpp` with core tests (each id exists, no key twice where
   places overlap, keys.conf applies), and drive the accelerators, the menu
-  bar, and the hints from it. Move the keys D1 names and update the Linux column in `README.md`
+  bar, and the hints from it. Move the keys D1 names and update the Linux column in `docs/REFERENCE.md`
   and `BUILD-LINUX.md`. *Done means:* a GUI suite presses every moved key
   through XTest, in the editor and with the terminal focused.
   *Verified on the ThinkPad, 2026-11-09:* `commands:linux-*` hold the table
@@ -1535,8 +1535,8 @@ These may run in parallel.
     without becoming the default.
   Decide the Linux key for Save Page as Bookmark (Ctrl+D is Add Next
   Occurrence in the editor; on the Mac it is a page key, so only the
-  browser takes it) and record it in Decisions and the README's Linux
-  column.
+  browser takes it) and record it in Decisions and the Linux column of
+  `docs/REFERENCE.md`.
   *Done* (`HANDOFF.md` items 64 to 66): opening and the browser window (64),
   Save Page as Bookmark on Ctrl+D (D14) and Save All Tabs (65), and the
   toolbar's star, the book, the Bookmarks menu and the palette's rows (66).

@@ -1,8 +1,9 @@
 // MarkdownTablesSuite.cpp — what opening a table-heavy page costs the main
 // thread (`./build/minicode-guitest markdown_tables`, linux/PARITY.md item
-// 4.2, R1): a copy of the repo's README.md in the full preview and in the
-// side pane, the longest stall (main-thread CPU between two fires of a 5 ms
-// timer) and the total CPU of the open.
+// 4.2, R1): a copy of the repo's docs/REFERENCE.md (whose tables were the
+// README's until 2026-11-14) in the full preview and in the side pane, the
+// longest stall (main-thread CPU between two fires of a 5 ms timer) and the
+// total CPU of the open.
 #include "Harness.h"
 
 #include "Document.h"
@@ -56,15 +57,15 @@ bool settled() {
 }  // namespace
 
 MC_GUI_SUITE(markdown_tables) {
-    MCGuiStep("README.md copied in", [] {
+    MCGuiStep("docs/REFERENCE.md copied in", [] {
         ed()->closeAllTabs();
-        // The tables are what is measured: README's $x^2$ would start a typeset
+        // The tables are what is measured: the reference's $x^2$ would start a typeset
         // (and count against markdown_math's runs).
         MCGuiSetSettings("lsp.enabled = false\ntheme = dark-plus\nmarkdown.math = false\n");
         const char* root = g_getenv("MC_REPO_ROOT");
-        std::string src = std::string(root ? root : "..") + "/README.md";
+        std::string src = std::string(root ? root : "..") + "/docs/REFERENCE.md";
         std::string text = MCGuiReadFile(src);
-        if (text.empty()) text = MCGuiReadFile(MCGuiBuildDir() + "/../../README.md");
+        if (text.empty()) text = MCGuiReadFile(MCGuiBuildDir() + "/../../docs/REFERENCE.md");
         GCHECK(!text.empty());
         MCGuiWriteFile(F("readme.md"), text);
     });

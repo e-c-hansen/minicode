@@ -1,6 +1,6 @@
 // commands_linux_tests.inc — the registry's Linux keys (CommandsLinux.cpp,
 // linux/PARITY.md D1): the table, keys.conf on Linux, the terminal's rule,
-// GTK's accelerator strings, and README's Linux column. Included by
+// GTK's accelerator strings, and docs/REFERENCE.md's Linux column. Included by
 // run_tests.cpp after commands_tests.inc, whose K, HasKey and ReadmeKeys it
 // uses.
 
@@ -479,15 +479,15 @@ static void testLinuxKeymapFile() {
     CHECK(text.find("# ---- File") != std::string::npos && text.find("# ---- minicode") == std::string::npos);
 }
 
-// README's Linux column against the table: every key in the table is in it,
+// docs/REFERENCE.md's Linux column against the table: every key in the table is in it,
 // and every key in it is the table's or one the editor and the tree handle
 // themselves, so a key that moves cannot stay behind there.
 static void testLinuxCommandsReadme() {
     using namespace Commands;
     GROUP("commands:linux-readme");
-    std::ifstream f("README.md");
+    std::ifstream f("docs/REFERENCE.md");
     if (!f) {
-        std::printf("  (README.md not found here; README checks skipped)\n");
+        std::printf("  (docs/REFERENCE.md not found here; its checks skipped)\n");
         return;
     }
     std::stringstream ss;
@@ -513,7 +513,7 @@ static void testLinuxCommandsReadme() {
         for (const Key &k : d.keysOf(r.id)) {
             table.insert(format(k));
             const bool found = listed.count(format(k)) > 0;
-            if (!found) std::printf("  README's Linux column lacks %s (%s)\n", format(k).c_str(), r.id);
+            if (!found) std::printf("  docs/REFERENCE.md's Linux column lacks %s (%s)\n", format(k).c_str(), r.id);
             CHECK(found);
         }
     // The text view's undo and indent keys and the tree's arrows, which no
@@ -532,7 +532,7 @@ static void testLinuxCommandsReadme() {
         // A lone letter is a word of the prose ("or a pinch").
         if (key.mods == 0 && key.name.size() == 1) continue;
         const bool known = table.count(k) || own.count(k);
-        if (!known) std::printf("  README's Linux column has %s, which no Linux command has\n", k.c_str());
+        if (!known) std::printf("  docs/REFERENCE.md's Linux column has %s, which no Linux command has\n", k.c_str());
         CHECK(known);
     }
 }

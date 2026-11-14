@@ -1,7 +1,7 @@
 // InstallHints.h — pure C++. How to install the language servers and
 // formatters MiniCode talks to but never ships: one table, so the app's
 // notes (the bar shown when a file's server is missing, the Language Servers
-// popover, Format Document's note) and the README say the same thing.
+// popover, Format Document's note) and docs/REFERENCE.md say the same thing.
 // MiniCode never runs these itself; it shows them, copies them, or types
 // them into a terminal for the user to run.
 //
@@ -54,7 +54,7 @@ const Tool* server(const std::string& key);
 const Tool* formatter(const std::string& program);
 // Every tool, the servers first, then the formatters.
 std::vector<const Tool*> all();
-// The main server keys `server` knows, in the README's order.
+// The main server keys `server` knows, in docs/REFERENCE.md's order.
 const std::vector<std::string>& serverKeys();
 // A tool's ways on `os`, best first.
 std::vector<Way> waysOn(const Tool& tool, Os os);

@@ -60,12 +60,13 @@ opening comment says what it does in more detail than the lines below.
   `tests/*.inc` groups and the `*Tests.cpp` files) in `build/test-obj`, without
   -O2, and exits non-zero on failure. Groups are named `area:case`. Counts grow
   with every feature; do not quote them (8,490 at the end of 2026-11-05). Run
-  it from the repo root: corpus and README checks read files there and skip
+  it from the repo root: corpus and docs checks read files there and skip
   themselves when missing. clang++ on the Mac, make's default (g++) elsewhere,
   so CI runs it on Linux; `make test CXX=g++-16` reproduces CI's libstdc++ job
   on the Mac. Checks that read the docs: `commands:readme` (every default key
-  is in the README's macOS column), `install:readme` (every install command is
-  in the README in backticks), `linux:build-lists` (linux/Makefile and
+  is in `docs/REFERENCE.md`'s macOS column), `commands:linux-readme` (its
+  Linux column against the Linux table, both ways), `install:readme` (every
+  install command is in `docs/REFERENCE.md` in backticks), `linux:build-lists` (linux/Makefile and
   meson.build name the same core files, and Android's CMakeLists names every
   core file its own files include), `docs:gui-suites` (the GUI suite list
   under "Verification" names every suite and nothing else), and the
@@ -432,8 +433,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   where VS Code has the command, else `minicode.*`; title, menu, default keys,
   where it applies, selector, tag); the menu item in `main.mm` (and a
   forwarding method on AppDelegate if needed); a hints row (`appendHintsRow:`
-  with `[self hk:@"id"]`, which reads the registry); a README table row, sorted
-  by action, a column per platform. The hints panel is an attributed string on
+  with `[self hk:@"id"]`, which reads the registry); a row in `docs/REFERENCE.md`'s
+  table, sorted by action, a column per platform (the README's short table
+  only for an essential key). The hints panel is an attributed string on
   tab stops; never align it with spaces (⌘ ⇧ ⌃ ⌫ ⏎ differ in width). Its
   stops come from the drawn widths of each column's keys and labels
   (`PageMeasure::layoutHints`): two columns when they fit the window, else
@@ -442,6 +444,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   menu items with key equivalents to the key monitor: they work in every pane
   and for shifted variants.
 - No third-party dependencies, ever; new capabilities use system frameworks.
+- The README is the front page (GIFs, highlights, getting started, the
+  essential keys, links), kept short; the detail goes in `docs/REFERENCE.md`
+  (every feature, settings, servers and formatters with the install table,
+  the command line and agents, the ports, every shortcut, limitations), one
+  file for every platform (split 2026-11-14, when the README was 23,000
+  words).
 - README and user-facing prose: plain sentences, Oxford commas, no emoji, no
   LLM-ish phrasing; the name is "minicode", lowercase, in prose and in every
   port's window title (2026-11-14; the bundle, the menu bar's app name, the
@@ -1432,8 +1440,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   `uv tool install basedpyright`, which brings its own Node; Homebrew's node
   broke pyright here). `suggest` picks the first way whose installer
   `MCInstallerAvailable` finds, else adds `brew install uv` or a link;
-  `$MINICODE_INSTALL_HAVE` fakes installers. `install:readme` ties it to the
-  README.
+  `$MINICODE_INSTALL_HAVE` fakes installers. `install:readme` ties it to
+  `docs/REFERENCE.md`.
 - `MCInstallBar` under the strip when a wanted server is `NotInstalled`, once
   per language per launch (`MCInstallBarTakeOffer`), until ×, Don't Show Again
   (`MCInstallHintsMuted`), or the server appearing. `MCInstallView` (command,
@@ -3449,7 +3457,9 @@ named for it (`-mac`, `-linux`).
   `build/membench-linux-*.procs`. Scratch data is under
   `/tmp/membench-linux`; processes are stopped by recorded pid, never
   `pkill`. First complete run, 2026-11-14 (settled 60 s, 5 samples):
-  957 MB against 2,081 MB (`linux/HANDOFF.md` item 67).
+  957 MB against 2,081 MB (`linux/HANDOFF.md` item 67; in the README's
+  Memory section beside the Mac's, each table compared only within itself,
+  since PSS and the physical footprint count differently).
 
 Check each side's breakdown before quoting a number (a first Mac run
 "measured" 55 MB with clangd and WebKit missing).

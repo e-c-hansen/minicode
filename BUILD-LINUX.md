@@ -43,7 +43,7 @@ bare area when the tree is hidden too, never a pane the user hid
 Until October 2026 the checks below were temporary hooks inside the running
 app, removed afterwards, real X input in a container, and runs by hand, and
 the keys they name are the keys of the time (item 0.3 moved several; the
-Linux column of `README.md`'s table has them as they are). Since November
+Linux column of `docs/REFERENCE.md`'s table has them as they are). Since November
 (`linux/PARITY.md`) each feature has GUI suites in `linux/tests/gui` that
 run the whole app on a private Xvfb, X11 with no window manager, and press
 real keys and clicks through XTest; CI's GTK job runs them on every push.
@@ -1770,10 +1770,10 @@ minicode first; `linux/HANDOFF.md`, item 24).
 
 ## Keyboard shortcuts
 
-The keys are the Linux column of the table in `README.md` ("Keyboard
-shortcuts"). They come from one table, `src/CommandsLinux.cpp`, beside the
-Mac's in `src/Commands.cpp`, which builds the menu bar, the accelerators, the
-file tree's keys and the shortcut hints, and a core test holds the README's
+The keys are the Linux column of the table in `docs/REFERENCE.md`
+("Keyboard shortcuts"). They come from one table, `src/CommandsLinux.cpp`,
+beside the Mac's in `src/Commands.cpp`, which builds the menu bar, the accelerators, the
+file tree's keys and the shortcut hints, and a core test holds the reference's
 column to it. They follow the Mac's set by `linux/PARITY.md`'s rule D1: VS
 Code's Linux key for a feature VS Code has, minicode's own Shift Command keys
 as Ctrl Shift with the same letter, and its Command keys as Ctrl unless VS
