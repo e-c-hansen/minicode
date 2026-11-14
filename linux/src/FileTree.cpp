@@ -821,8 +821,10 @@ GtkListItem* FileTree::listItemAt(double x, double y, bool* onArrow) const {
     return nullptr;
 }
 
-void FileTree::onPrimaryPressed(GtkGestureClick*, int, double x, double y, gpointer selfp) {
+void FileTree::onPrimaryPressed(GtkGestureClick* g, int, double x, double y, gpointer selfp) {
     FileTree* self = static_cast<FileTree*>(selfp);
+    self->prevPressTime_ = self->pressTime_;
+    self->pressTime_ = gtk_event_controller_get_current_event_time(GTK_EVENT_CONTROLLER(g));
     bool onArrow = false;
     GtkTreeListRow* row = self->rowObjectAt(x, y, &onArrow);
     // A press on the arrow is the expander's; this click leaves it alone.
@@ -853,13 +855,26 @@ void FileTree::onPrimaryReleased(GtkGestureClick* g, int n, double x, double y,
     bool onArrow = false;
     self->rowObjectAt(x, y, &onArrow);
     const bool moved = std::hypot(x - self->pressX_, y - self->pressY_) > threshold;
-    if (n >= 1 && n <= 2 && pressed && !moved && !onArrow) {
+    // GTK counts a double-click with a timer on the main loop, so when the
+    // first click's open is slow (showing the browser for a bookmark, a big
+    // file) the second press comes in after the count was reset and reads as
+    // a click of its own: the file stayed a preview. The presses' own event
+    // times decide too, as the Mac's tree does (the bookmarks suite and CI on
+    // 5025c5f and 752eda1 lost double-clicks that way).
+    int clicks = n;
+    if (n == 1 && pressed && pressed == self->lastReleaseRow_ && self->prevPressTime_ != 0) {
+        int doubleMs = 400;
+        g_object_get(gtk_widget_get_settings(self->listView_), "gtk-double-click-time", &doubleMs,
+                     nullptr);
+        if (self->pressTime_ - self->prevPressTime_ <= (guint32)doubleMs) clicks = 2;
+    }
+    if (clicks >= 1 && clicks <= 2 && pressed && !moved && !onArrow) {
         const GdkModifierType mods =
             gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(g));
         const EditorTabs::OpenFrom from = EditorTabs::treeClick(
-            n, pressed == self->lastReleaseRow_, (mods & GDK_CONTROL_MASK) != 0);
+            clicks, pressed == self->lastReleaseRow_, (mods & GDK_CONTROL_MASK) != 0);
         holdRow(&self->lastReleaseRow_, pressed);
-        if (n != 2 || from == EditorTabs::OpenFrom::TreeDoubleClick) {
+        if (clicks != 2 || from == EditorTabs::OpenFrom::TreeDoubleClick) {
             self->pendingReveal_.clear();   // the user picked a row; an older reveal gives way
             self->actOnRow(pressed, from);
         }

@@ -99,7 +99,16 @@ void rightClickRow(const std::string& name) {
 // screen: each row is brought into view before it is clicked.
 void bringRow(const std::string& name) {
     MCGuiStep(name + "'s row brought into view in the tree", [name] { MCGuiApp().tree->revealPath(F(name)); });
-    MCGuiWait(name + "'s row", 10, [name] { return treeRow(name) != nullptr; });
+    // Until the row stands still: the list may still be scrolling to it, and
+    // a double-click whose second press lands on the next row up is two
+    // single clicks to the tree (CI on 5025c5f and 752eda1 kept the keyboard
+    // in the tree that way).
+    MCGuiWaitQuiet(name + "'s row, standing still", 0.3, 10, [name]() -> long {
+        GtkWidget* row = treeRow(name);
+        graphene_point_t in = GRAPHENE_POINT_INIT(0, 0), at;
+        if (!row || !gtk_widget_compute_point(row, MCGuiApp().tree->widget(), &in, &at)) return -100000;
+        return (long)at.y;
+    });
 }
 int gTabs = 0, gWindows = 0;
 size_t gWindowsBefore = 0;   // open when the suite began; the rest are its own

@@ -204,6 +204,7 @@ private:
     GtkTreeListRow* pressRow_ = nullptr;
     double          pressX_ = 0, pressY_ = 0;
     GtkTreeListRow* lastReleaseRow_ = nullptr;
+    guint32         pressTime_ = 0, prevPressTime_ = 0;   // event times of the last two presses
 
     DropCb      dropCb_;
     // The drag over the tree right now: what it carries (empty while files

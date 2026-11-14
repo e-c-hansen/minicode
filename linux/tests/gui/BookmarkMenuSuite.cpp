@@ -162,6 +162,11 @@ MC_GUI_SUITE(bookmark_menu) {
         gFolder = MCGuiScratch() + "/bookmark-menu";
         gTrash = MCGuiScratch() + "/bookmark-menu-trash";
         GitTrash::useFolderForChecks(gTrash);
+        // The X server's focus on the first window before any menu opens: a
+        // suite before may have closed a window and left it on the root, and
+        // the Ctrl+click below would raise the window over the book's menu.
+        MCGuiSetKeyWindow(nullptr);
+        MCGuiFocusKeyWindow();
         MCGuiSetSettings("lsp.enabled = false\nbrowser.bookmarks = " + gFolder + "\n");
         GCHECK(browser() != nullptr);
         if (!browser()) return;
