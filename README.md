@@ -26,6 +26,8 @@ With a language server installed (clangd, basedpyright, gopls, rust-analyzer, ty
 
 ### Git, down to the line
 
+![Saving a change, then staging that hunk and committing it in the source control panel](docs/demos/git.gif)
+
 Control Shift G swaps the tree for a source control panel: changes and their diffs, the commit graph with what is and is not pushed, and push, pull, and fetch. Stage or discard a file, a hunk, or the lines you select, and a discard can be undone. Bars beside the line numbers mark what changed, and a click on one reverts or stages that change alone.
 
 ### A real terminal
@@ -42,6 +44,8 @@ Shift Command B opens a browser with tabs to the right of the editor, the termin
 
 ### Markdown and LaTeX, edited on the page
 
+![Editing a quote by double clicking it in the Markdown page beside its source](docs/demos/markdown.gif)
+
 ![Editing a list entry by double clicking it in the typeset page](docs/demos/latex.gif)
 
 Markdown renders as GitHub renders it, with tables, task lists, footnotes, math, and Mermaid diagrams, beside its source or in its place. A .tex file is typeset by tectonic as you type and shown as its PDF. In either, double click a paragraph, a heading, a table cell, or an equation, and a small editor opens on the source behind it.
@@ -53,6 +57,8 @@ Markdown renders as GitHub renders it, with tables, task lists, footnotes, math,
 Pictures, PDFs, video, and audio open in the editor's pane. CSV files open as a table you can edit, JSON gets an outline, Jupyter notebooks render with their outputs, and SQLite databases open read-only with a box for queries. On the Mac, anything else, from a Word document to a Keynote deck, opens as a Quick Look preview in a tab.
 
 ### Claude Code
+
+![The Agents panel listing the folder's Claude Code sessions, and one session's final message and test runs](docs/demos/agents.gif)
 
 minicode works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), which you install yourself. Command I asks it for a change at the cursor and shows the diff before applying it. With the `minicode` command an agent opens a file at a line with a note, shows a side-by-side diff, or runs the tests in a terminal you can watch. The Agents panel lists the sessions that worked in the folder, with the files each changed and the commands it ran, and the Processes panel shows what they left running. Claude Code's /ide can link to minicode too.
 
