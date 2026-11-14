@@ -1,6 +1,7 @@
 // Harness.mm — see Harness.h.
 #import "Harness.h"
 #import "EditorController.h"
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <mach-o/dyld.h>
@@ -15,6 +16,7 @@
 
 #import "AppSettings.h"
 #import "ControlServer.h"
+#import "TreeDetails.h"   // MCAppDefaults
 
 int minicode_main(int argc, const char *argv[]);   // mac/src/main.mm, renamed
 
@@ -46,7 +48,7 @@ typedef NS_ENUM(NSInteger, MCGuiKind) { MCGuiKindStep, MCGuiKindWait, MCGuiKindA
 @end
 
 static NSMutableArray<MCGuiItem *> *gItems;
-static int gPass, gFail;
+static int gPass, gFail, gSlow, gLeaks;
 static int gSuitePass, gSuiteFail;
 static NSString *gSuite;
 static NSString *gStep;
@@ -58,6 +60,17 @@ static void Enqueue(MCGuiItem *item) {
     if (!gItems) gItems = [NSMutableArray array];
     [gItems addObject:item];
 }
+
+static NSString *Env(NSString *name) { return NSProcessInfo.processInfo.environment[name]; }
+
+// A factor of at least 1 from the environment (CI sets these; see Harness.h).
+static double Factor(NSString *name) {
+    const double v = Env(name).doubleValue;
+    return v > 1 ? v : 1;
+}
+
+double MCGuiWaitScale(void) { return Factor(@"MC_GUI_WAIT_SCALE"); }
+double MCGuiTimingScale(void) { return Factor(@"MC_TIMING_SCALE"); }
 
 void MCGuiStep(NSString *name, void (^block)(void)) {
     MCGuiItem *i = [MCGuiItem new];
@@ -72,7 +85,7 @@ void MCGuiWait(NSString *what, NSTimeInterval timeout, BOOL (^until)(void)) {
     i.kind = MCGuiKindWait;
     i.name = what;
     i.until = until;
-    i.timeout = timeout;
+    i.timeout = timeout * MCGuiWaitScale();
     Enqueue(i);
 }
 
@@ -81,7 +94,7 @@ void MCGuiAsync(NSString *name, NSTimeInterval timeout, void (^block)(MCGuiDone)
     i.kind = MCGuiKindAsync;
     i.name = name;
     i.async = block;
-    i.timeout = timeout;
+    i.timeout = timeout * MCGuiWaitScale();
     Enqueue(i);
 }
 
@@ -116,9 +129,11 @@ void MCGuiWaitQuiet(NSString *what, NSTimeInterval quiet, NSTimeInterval timeout
         }
         return -since.timeIntervalSinceNow >= quiet;
     };
-    i.timeout = timeout;
+    i.timeout = timeout * MCGuiWaitScale();
     Enqueue(i);
 }
+
+static NSWindow *TestKeyWindow(void);
 
 BOOL MCGuiCheck(BOOL ok, NSString *what, const char *file, int line) {
     if (ok) {
@@ -131,6 +146,20 @@ BOOL MCGuiCheck(BOOL ok, NSString *what, const char *file, int line) {
         std::printf("  FAIL [%s] %s:%d  %s  (in: %s)\n", gSuite.UTF8String ?: "",
                     slash ? slash + 1 : file, line, what.UTF8String, gStep.UTF8String ?: "");
         std::fflush(stdout);
+        // A picture of the test window as it was (CI keeps them when the job
+        // fails), the first few only: a run that goes wrong early can fail
+        // every check after.
+        NSString *dir = Env(@"MC_GUI_SNAPSHOTS");
+        if (dir.length && gFail <= 10 && NSThread.isMainThread) {
+            NSString *name = [NSString stringWithFormat:@"fail-%d-%@", gFail, gSuite ?: @"start"];
+            @try {
+                MCGuiSnapshot(TestKeyWindow().contentView, name);
+                std::printf("    a picture of the window: %s/%s.png\n", dir.UTF8String, name.UTF8String);
+            } @catch (NSException *e) {
+                std::printf("    no picture: %s\n", e.reason.UTF8String ?: "");
+            }
+            std::fflush(stdout);
+        }
     }
     return ok;
 }
@@ -161,13 +190,52 @@ BOOL MCGuiTimingSkipped(void) {
     return s.length && ![s isEqualToString:@"0"];
 }
 
+// Every timing check's share of its bound, for the end of the run's list of
+// those closest to failing.
+namespace {
+struct Timed {
+    double ratio;
+    std::string line;
+};
+std::vector<Timed> gTimed;
+}  // namespace
+
+static void PrintNearestBounds(void) {
+    if (gTimed.empty()) return;
+    std::sort(gTimed.begin(), gTimed.end(), [](const Timed &a, const Timed &b) { return a.ratio > b.ratio; });
+    std::printf("Timing checks closest to their bounds (CPU time over the bound set on a Mac):\n");
+    for (size_t i = 0; i < gTimed.size() && i < 10; i++) std::printf("%s\n", gTimed[i].line.c_str());
+}
+
 BOOL MCGuiCheckTime(double ms, double bound, NSString *what, const char *file, int line) {
-    NSString *text = [NSString stringWithFormat:@"%@ under %.0f ms of CPU (%.2f)", what, bound, ms];
-    return MCGuiCheck(MCGuiTimingSkipped() || ms < bound, text, file, line);
+    if (bound > 0) {
+        const char *slash = strrchr(file, '/');
+        char buf[512];
+        snprintf(buf, sizeof buf, "  NEAR [%s] %s:%d  %s: %.0f%% (%.2f of %.0f ms)", gSuite.UTF8String ?: "",
+                 slash ? slash + 1 : file, line, what.UTF8String, 100 * ms / bound, ms, bound);
+        gTimed.push_back({ms / bound, buf});
+    }
+    const double scale = MCGuiTimingScale();
+    if (!MCGuiTimingSkipped() && ms >= bound && ms < bound * scale) {
+        // Over the bound set on a Mac, within the room this runner is given:
+        // a pass, said loudly, so a bound that is being outgrown shows in
+        // the job's summary before it fails.
+        gSlow++;
+        const char *slash = strrchr(file, '/');
+        std::printf("  SLOW [%s] %s:%d  %s: %.2f ms of CPU, over its bound of %.0f "
+                    "(passed within this runner's x%.2g)\n",
+                    gSuite.UTF8String ?: "", slash ? slash + 1 : file, line, what.UTF8String, ms,
+                    bound, scale);
+        std::fflush(stdout);
+    }
+    NSString *text = scale > 1
+        ? [NSString stringWithFormat:@"%@ under %.0f ms of CPU, x%.2g on this runner (%.2f)", what,
+                                     bound, scale, ms]
+        : [NSString stringWithFormat:@"%@ under %.0f ms of CPU (%.2f)", what, bound, ms];
+    return MCGuiCheck(MCGuiTimingSkipped() || ms < bound * scale, text, file, line);
 }
 
 // ---------------------------------------------------------------- world
-static NSString *Env(NSString *name) { return NSProcessInfo.processInfo.environment[name]; }
 NSString *MCGuiScratch(void) { return Env(@"MC_GUI_SCRATCH"); }
 NSString *MCGuiProject(void) { return [MCGuiScratch() stringByAppendingPathComponent:@"project"]; }
 NSString *MCGuiProjectFile(NSString *name) { return [MCGuiProject() stringByAppendingPathComponent:name]; }
@@ -274,6 +342,139 @@ void MCGuiSnapshot(NSView *view, NSString *name) {
     NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
     [png writeToFile:[dir stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"png"]]
           atomically:YES];
+}
+
+// ------------------------------------------------------- what a suite leaves
+// A suite starts from what the one before left, so what one leaves behind
+// fails later suites that never touched it (2026-11-14: daily_work left the
+// key window pinned to its own window, and git_gutter, git_panel,
+// git_actions, git_verbs and git_sync failed on CI). The runner looks at the
+// world as each suite starts and again as it ends, and a difference is a
+// LEAK line naming the suite, a failed check of that suite, and put back
+// where the harness can put it back, so the suites after it start clean.
+// MC_GUI_LEAKS=note prints the lines without failing or putting anything
+// back.
+static NSString *KeysPath(void) {
+    NSString *env = Env(@"MINICODE_KEYS");
+    return env.length ? env.stringByExpandingTildeInPath
+                      : [NSHomeDirectory() stringByAppendingPathComponent:@".config/minicode/keys.conf"];
+}
+
+static NSString *FileText(NSString *path) {
+    return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+}
+
+static NSString *Short(NSString *s) {
+    if (!s) return @"(none)";
+    NSString *one = [[s stringByReplacingOccurrencesOfString:@"\n" withString:@"\\n"]
+        stringByReplacingOccurrencesOfString:@"\t" withString:@"\\t"];
+    return one.length > 120 ? [[one substringToIndex:120] stringByAppendingString:@"..."] : one;
+}
+
+namespace {
+struct World {
+    NSInteger windows = 0, terminals = 0, sheets = 0;
+    NSString *settings, *keys;
+    double editorZoom = 0, terminalZoom = 0;
+    BOOL showHidden = NO;
+    NSInteger treeColumns = 0;
+};
+World gWorldAtStart;
+}  // namespace
+
+static World LookAtWorld(void) {
+    World w;
+    NSArray<EditorController *> *cs = MCGuiControllers();
+    w.windows = (NSInteger)cs.count;
+    for (EditorController *c in cs) {
+        if (c.window.attachedSheet) w.sheets++;
+        @try {
+            id panel = [c valueForKey:@"terminalPanel"];
+            NSArray *list = [panel valueForKey:@"terminals"];
+            if ([list isKindOfClass:NSArray.class]) w.terminals += (NSInteger)list.count;
+        } @catch (NSException *) {
+        }
+    }
+    w.settings = FileText(Env(@"MINICODE_SETTINGS"));
+    w.keys = FileText(KeysPath());
+    NSUserDefaults *d = MCAppDefaults();
+    w.editorZoom = [d doubleForKey:@"MCEditorZoom"];
+    // Read without making it: MCTerminalZoom() writes the key when missing.
+    w.terminalZoom = [d objectForKey:@"MCTerminalZoom"] ? [d doubleForKey:@"MCTerminalZoom"]
+                                                        : w.editorZoom;
+    w.showHidden = [d boolForKey:@"MCShowHiddenFiles"];
+    w.treeColumns = [d integerForKey:@"MCTreeColumns"];
+    return w;
+}
+
+static BOOL LeaksFail(void) { return ![Env(@"MC_GUI_LEAKS") isEqualToString:@"note"]; }
+static NSUInteger gAlertsAtStart;
+
+// A LEAK fails the suite (what a later suite trips over: a pin, answers, a
+// window, a zoom); a LEFT line only warns (a file the harness puts back
+// itself, a terminal left open).
+static void Leak(NSString *suite, NSString *what, BOOL fails = YES) {
+    if (fails) gLeaks++;
+    std::printf("  %s [%s] %s\n", fails ? "LEAK" : "LEFT", suite.UTF8String ?: "", what.UTF8String);
+    std::fflush(stdout);
+    if (fails && LeaksFail()) {
+        gFail++;
+        gSuiteFail++;
+    }
+}
+
+static void CheckWhatSuiteLeft(NSString *suite) {
+    // A "_" suite runs alone in a process of its own, which it may end.
+    if (!suite || [suite hasPrefix:@"_"]) return;
+    const BOOL putBack = LeaksFail();
+    if (gKeyWindow) {
+        Leak(suite, @"left the key window pinned (MCGuiSetKeyWindow(nil) at its end)");
+        if (putBack) gKeyWindow = nil;
+    }
+    if (gAnswers.count) {
+        NSArray *shown = gAlerts.count > gAlertsAtStart
+            ? [gAlerts subarrayWithRange:NSMakeRange(gAlertsAtStart, gAlerts.count - gAlertsAtStart)]
+            : @[];
+        Leak(suite, [NSString stringWithFormat:@"left %lu alert answer(s) unused, which would answer "
+                                               @"a later suite's questions (questions it saw: \"%@\")",
+                                               (unsigned long)gAnswers.count,
+                                               [shown componentsJoinedByString:@"\", \""]]);
+        if (putBack) [gAnswers removeAllObjects];
+    }
+    World now = LookAtWorld(), was = gWorldAtStart;
+    if (now.windows != was.windows)
+        Leak(suite, [NSString stringWithFormat:@"left %ld editor window(s) where it found %ld",
+                                               (long)now.windows, (long)was.windows]);
+    if (now.sheets > was.sheets)
+        Leak(suite, [NSString stringWithFormat:@"left %ld sheet(s) open on its windows", (long)now.sheets]);
+    if (now.terminals > was.terminals)
+        Leak(suite, [NSString stringWithFormat:@"left %ld terminal(s) open where it found %ld",
+                                               (long)now.terminals, (long)was.terminals], NO);
+    // The two files are the harness's to put back between suites, so a suite
+    // that changes them needs no step of its own to undo it; said, not failed.
+    if (!(now.settings == was.settings || [now.settings isEqualToString:was.settings])) {
+        Leak(suite, [NSString stringWithFormat:@"left settings.conf changed, put back: \"%@\" (was \"%@\")",
+                                               Short(now.settings), Short(was.settings)], NO);
+        if (putBack && was.settings) MCGuiSetSettings(was.settings);
+    }
+    if (!(now.keys == was.keys || [now.keys isEqualToString:was.keys])) {
+        Leak(suite, [NSString stringWithFormat:@"left keys.conf changed, put back: \"%@\" (was \"%@\")",
+                                               Short(now.keys), Short(was.keys)], NO);
+        // The app watches the file and reads it again itself.
+        if (putBack) {
+            if (was.keys) MCGuiWriteFile(KeysPath(), was.keys);
+            else [[NSFileManager defaultManager] removeItemAtPath:KeysPath() error:nil];
+        }
+    }
+    if (now.editorZoom != was.editorZoom || now.terminalZoom != was.terminalZoom)
+        Leak(suite, [NSString stringWithFormat:@"left the zoom changed: editor %+g, terminals %+g (was "
+                                               @"%+g, %+g)", now.editorZoom, now.terminalZoom,
+                                               was.editorZoom, was.terminalZoom]);
+    if (now.showHidden != was.showHidden)
+        Leak(suite, [NSString stringWithFormat:@"left Show Hidden Files %@", now.showHidden ? @"on" : @"off"]);
+    if (now.treeColumns != was.treeColumns)
+        Leak(suite, [NSString stringWithFormat:@"left the tree's columns changed (%ld, was %ld)",
+                                               (long)now.treeColumns, (long)was.treeColumns]);
 }
 
 // Windows of this process on screen now; there must never be any.
@@ -482,6 +683,8 @@ void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, N
         _waiting = nil;
     }
     if (_index >= gItems.count) {
+        gStep = @"what the suite left";
+        CheckWhatSuiteLeft(gSuite);
         [self endSuite];
         [self finish];
         return;
@@ -491,9 +694,14 @@ void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, N
     gStep = item.name;
     switch (item.kind) {
     case MCGuiKindSuite:
+        gStep = @"what the suite left";
+        CheckWhatSuiteLeft(gSuite);
+        gStep = item.name;
         [self endSuite];
         gSuite = item.name;
         gSuitePass = gSuiteFail = 0;
+        gWorldAtStart = LookAtWorld();
+        gAlertsAtStart = gAlerts.count;
         std::printf("Suite %s\n", item.name.UTF8String);
         std::fflush(stdout);
         break;
@@ -536,6 +744,10 @@ void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, N
     MCGuiCheck(gOnScreen == 0, @"no window of this process was ever on screen", __FILE__, __LINE__);
     std::printf("\nGUI checks: %d passed, %d failed (%.1f s)\n", gPass, gFail,
                 -[_started timeIntervalSinceNow]);
+    if (gSlow || gLeaks)
+        std::printf("Also: %d timing check(s) over their bound within this runner's room, "
+                    "%d leak(s) between suites\n", gSlow, gLeaks);
+    PrintNearestBounds();
     std::fflush(stdout);
     // The windows go (their shells hung up and reaped), then the world.
     for (EditorController *c in [MCGuiControllers() copy]) [c.window close];

@@ -313,7 +313,9 @@ MC_GUI_SUITE(latex) {
         tabA2 = nil;
         [second.window close];
         second = nil;
-        MCGuiSetKeyWindow(first.window);
+        // The newest window again, not pinned: a pin outlives the suite and
+        // sends later suites' keys here (the harness's LEAK check).
+        MCGuiSetKeyWindow(nil);
         GCHECK(MCGuiController() == first);
     });
     MCGuiWait(@"taking its preview's folder, and leaving the first's", 10, ^BOOL {

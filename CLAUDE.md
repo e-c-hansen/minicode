@@ -98,6 +98,19 @@ opening comment says what it does in more detail than the lines below.
   password), never the owner's release key. Every job has a
   `timeout-minutes` (macOS 40, tsan 45, the rest 20; `ci:timeouts` checks
   a new job has one), so a hang never holds a runner for six hours.
+  **Since 2026-11-14** (`docs/ci.md`, the failure history and the branch
+  protection the owner may turn on): a seventh job, **CI passed**, is
+  green only when the six are (the one check to require); each job's
+  last step, `scripts/ci-summary.sh`, puts one line per failed check
+  (FAIL, FATAL, sanitizer reports, compiler errors) plus SLOW, NEAR and
+  LEAK lines at the top of the run's page and on the PR; the runner
+  images are named (`macos-26`, `ubuntu-26.04`), never `latest`; a newer
+  push cancels a PR's older run. `scripts/ci-local.sh` runs on the Mac
+  what CI runs, without Docker (`--quick` before a push: core tests,
+  build, check-minos, the sweep; the full run adds g++, the sanitizers,
+  `make guitest`, which takes the keyboard, and the release zip). No
+  blanket retries: a retry for one named check prints FLAKY and is
+  listed in docs/ci.md's "Known flaky checks".
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `mac/tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
@@ -3486,7 +3499,34 @@ session has a display. Check first.
   loaded Mac a thread may run on an efficiency core (`taskpolicy -b`
   reproduces it), several times slower, so leave room for that or compare
   with a baseline taken on the same thread in the same step (large_file).
-  `MC_SKIP_TIMING=1` passes every bound.
+  `MC_SKIP_TIMING=1` passes every bound. **CI's room** (2026-11-14, both
+  harnesses): CI runs the GUI checks with `MC_TIMING_SCALE=1.5` (a time
+  between the bound and 1.5 times it passes with a `SLOW [suite]` line)
+  and `MC_GUI_WAIT_SCALE=1.5` (every wait's timeout; a wait polls, so
+  this only delays a failure). Every timing miss that passed on a rerun
+  from November 6 to 14 was under 1.45 times its bound, every real
+  regression 1.8 or more; CI's virtual Mac ran one terminal full draw at
+  0.7 ms of CPU and, on another run, 9 ms. Set a bound for this Mac, not
+  for CI, and where the work's cost follows the machine compare with a
+  baseline from the same run (terminal_draw against its full draws). The
+  end of a run lists the ten timing checks nearest their bounds (`NEAR`).
+  A timing check goes through GCHECK_TIME, never a plain GCHECK, or
+  neither the room nor MC_SKIP_TIMING applies.
+- **What a suite leaves** (2026-11-14, both harnesses): the runner
+  compares the world as each suite starts and ends (editor windows,
+  sheets, terminals, settings.conf, keys.conf, the zooms, Show Hidden
+  Files, the tree's columns, a key window left pinned, alert answers
+  left unused; on GTK app windows, a window on top, terminal tabs, the
+  two files, a pin) and prints `LEAK [suite]`, naming the suite that
+  left it rather than the one that later fails (daily_work's pinned key
+  window failed five git suites on CI). It fails that suite and puts
+  back what it can (the pin, the answers). The two files are the
+  harness's to put back between suites and an extra terminal is only
+  noted: `LEFT [suite]`, a warning, so a suite needs no step to undo its
+  settings. `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
+  are skipped. A failed check with `MC_GUI_SNAPSHOTS` set leaves a
+  picture of the test window (the first ten); CI keeps them as an
+  artifact.
 - **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
   window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
   through the window then the main menu (`MCGuiPerformMenuKey`, built from the

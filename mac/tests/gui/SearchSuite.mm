@@ -22,6 +22,7 @@ void WriteBytes(NSString *path, NSData *data) {
 
 MC_GUI_SUITE(search) {
     __block EditorController *c = nil;
+    __block NSString *scopeInclude = nil;   // what setScope: put in files to include
     NSString *dir = MCGuiProjectFile(@"searchsuite");
 
     MCGuiStep(@"a small file, a 2 MB one, one in Latin-1, a binary", ^{
@@ -66,8 +67,15 @@ MC_GUI_SUITE(search) {
         GCHECK(NSMinY(p.skippedNote.frame) >= NSMaxY(scroll.frame));
         GCHECK(NSMaxY(p.skippedNote.frame) <= NSHeight(content.bounds));
         MCGuiSnapshot(content, @"search-skipped");
-        // A search that skips nothing hides it.
-        p.includeField.stringValue = @"a.txt";
+        // A search that skips nothing hides it. What setScope: put in the
+        // field is kept for the steps after: in a window whose folder holds
+        // the suite's, the scope is "./searchsuite" there, and emptying the
+        // field searched the whole project (another suite's ide/b.py has
+        // the word too). It passed only while a window an earlier suite
+        // left open, on another folder, happened to be the newest.
+        scopeInclude = p.includeField.stringValue;
+        p.includeField.stringValue = [scopeInclude.length ? [scopeInclude stringByAppendingString:@"/"] : @""
+                                         stringByAppendingString:@"a.txt"];
         [p runSearch:nil];
     });
     MCGuiWait(@"searched again", 10, ^BOOL { return !Panel(c).busy && Hits(c).count == 1; });
@@ -76,7 +84,7 @@ MC_GUI_SUITE(search) {
         GCHECK(p.skippedNote.hidden);
         [p.window.contentView layoutSubtreeIfNeeded];
         GCHECK(NSMaxY(p.table.enclosingScrollView.frame) == NSHeight(p.window.contentView.bounds));
-        p.includeField.stringValue = @"";
+        p.includeField.stringValue = scopeInclude ?: @"";
     });
 
     // ---- 20,000 lines at most
@@ -92,7 +100,13 @@ MC_GUI_SUITE(search) {
         MCGuiNote(@"%lu rows: %@", (unsigned long)Hits(c).count, p.status.stringValue);
         GCHECK(Hits(c).count == 20000);
         GCHECK([p.status.stringValue hasSuffix:@". Stopped at 20,000 results"]);
-        GCHECK([p.status.stringValue hasPrefix:@"20,000 matches in 2 files"]);
+        // Failed once on CI with "in 3 files" (PR #8, run 43610029465): the
+        // files, so the next time says which one was the third.
+        if (!GCHECK([p.status.stringValue hasPrefix:@"20,000 matches in 2 files"])) {
+            NSMutableOrderedSet *files = [NSMutableOrderedSet orderedSet];
+            for (id h in Hits(c)) [files addObject:[h valueForKey:@"path"] ?: @"?"];
+            MCGuiNote(@"the files: %@", [files.array componentsJoinedByString:@", "]);
+        }
         // Showing them again: the tree of 20,000 lines is built on the main
         // thread, bounded in that thread's CPU time.
         NSArray *hits = [Hits(c) copy];

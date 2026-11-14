@@ -42,6 +42,26 @@
 //       });
 //   }
 //
+// Between suites the runner compares the world with what the suite found
+// (editor windows, sheets, terminals, settings.conf, keys.conf, the zooms,
+// Show Hidden Files, the tree's columns, a key window left pinned, alert
+// answers left unused): a difference is a "LEAK [suite]" line and a failed
+// check of the suite that left it, and what the harness can put back (the
+// pin, the answers) it puts back, so one suite's leftovers never fail the
+// suites after it. settings.conf and keys.conf are the harness's to put
+// back between suites, and a terminal left open is only noted: those are
+// "LEFT [suite]" lines, which warn. MC_GUI_LEAKS=note prints the lines and
+// neither fails nor puts anything back. A "_" suite (a second process) is
+// not looked at.
+//
+// Environment for slower machines (CI's job sets them; see
+// .github/workflows/ci.yml): MC_GUI_WAIT_SCALE multiplies every wait's and
+// async step's timeout (a wait polls, so more room only delays a failure);
+// MC_TIMING_SCALE multiplies every GCHECK_TIME bound, and a time over the
+// bound but within the scaled one passes with a "SLOW [suite]" line, so a
+// bound being outgrown shows before it fails. MC_GUI_SNAPSHOTS=dir also
+// gets a picture of the test window at each of the first ten failures.
+//
 // `make guitest` runs every suite; `make guitest SUITES="control"` some.
 // A suite whose name starts with "_" runs only when named: it is a part
 // another suite runs in a second process (MCGuiRunChild), as BackupsSuite
@@ -103,6 +123,9 @@ double MCGuiThreadCpuMs(void);
 double MCGuiNowMs(void);
 // MC_SKIP_TIMING=1 passes every timing check (the numbers are still noted).
 BOOL MCGuiTimingSkipped(void);
+// MC_TIMING_SCALE and MC_GUI_WAIT_SCALE, 1 when unset (see above).
+double MCGuiTimingScale(void);
+double MCGuiWaitScale(void);
 // `ms` (CPU time) under `bound`, the value in the check's text either way.
 BOOL MCGuiCheckTime(double ms, double bound, NSString *what, const char *file, int line);
 #define GCHECK_TIME(ms, bound, what) MCGuiCheckTime((ms), (bound), (what), __FILE__, __LINE__)

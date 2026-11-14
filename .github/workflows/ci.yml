@@ -4,11 +4,34 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A run by hand (the Actions tab, or `gh workflow run CI --ref <branch>`),
+  # for checking a branch again or measuring how often a check fails.
+  workflow_dispatch:
 
+# A newer push to a pull request's branch cancels that branch's run still
+# going, which nobody will read; runs on main always finish, so each commit
+# there has a verdict. A run by hand is a group of its own, so several can
+# run at once on one commit (measuring how often a check fails).
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# bash with pipefail everywhere (the default shell on macOS runners has no
+# pipefail), so a test's status survives the `| tee` that keeps its log.
+defaults:
+  run:
+    shell: bash
+
+# Every test step keeps its output in $RUNNER_TEMP/ci-logs, and each job's
+# last step (scripts/ci-summary.sh) turns what failed there into one line a
+# check, at the top of the run's page and as annotations on the pull
+# request. The runner images are named, not "latest", so a new image (a new
+# Xcode, a new libstdc++) arrives as a change of this file, on a branch,
+# rather than as a red main.
 jobs:
   macos:
     name: macOS app
-    runs-on: macos-latest
+    runs-on: macos-26
     # Every job has a limit well past its usual length (the slowest of the Linux
     # jobs, ASan, takes about 7 minutes), so a hang fails the job instead of
     # holding a runner and main's status for the six hours GitHub allows. This
@@ -18,10 +41,12 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Run core unit tests
-        run: make test
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-logs"
+          make test 2>&1 | tee "$RUNNER_TEMP/ci-logs/core-tests.log"
 
       - name: Build the app
-        run: make app
+        run: make app 2>&1 | tee "$RUNNER_TEMP/ci-logs/build.log"
 
       # Every binary built for Info.plist's LSMinimumSystemVersion, and the
       # cask saying the same.
@@ -37,15 +62,45 @@ jobs:
       # stops a hang.
       - name: Sweep the LaTeX preview's click-to-source
         timeout-minutes: 10
-        run: make latex-sweep
+        run: make latex-sweep 2>&1 | tee "$RUNNER_TEMP/ci-logs/latex-sweep.log"
 
       # The app driven offscreen (mac/tests/gui/Harness.h): no window ever
       # reaches the screen, and the run has its own home, settings and
       # temporary folder. The language server checks talk to a scripted
       # server (tests/fakelsp) that make guitest builds, so none of them
       # needs a real server installed on the runner.
+      #
+      # The runner is a shared virtual Mac, slower than the Macs the bounds
+      # were set on and uneven from run to run (a full terminal draw took
+      # 0.7 ms of CPU on one run and 9 ms on another, November 2026), so it
+      # gets room the harness says out loud (Harness.h): waits half again
+      # as long (a wait polls, so that only delays a failure), and CPU-time
+      # bounds half again as high, a time over the bound but within that
+      # passing with a SLOW line in the summary. Of the timing failures on
+      # CI from November 6 to 14, all that passed on a rerun were under 1.45
+      # times their bound; the real regressions were 1.8 times or more.
+      # What a suite leaves for the next (a pinned key window, a window, an
+      # alert answer) fails that suite by name, a LEAK line (Harness.h).
       - name: Run the GUI checks
-        run: make guitest
+        id: gui
+        env:
+          MC_GUI_WAIT_SCALE: '1.5'
+          MC_TIMING_SCALE: '1.5'
+          MC_GUI_SNAPSHOTS: ${{ runner.temp }}/gui-pictures
+        run: make guitest 2>&1 | tee "$RUNNER_TEMP/ci-logs/gui-checks.log"
+
+      # A picture of the test window at each of the first ten failed checks,
+      # and the logs, only when the GUI checks failed.
+      - name: Keep the GUI checks' pictures
+        if: failure() && steps.gui.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: mac-gui-checks
+          path: |
+            ${{ runner.temp }}/gui-pictures
+            ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
 
       # The release build, as scripts/release.sh makes it: no demo scenes
       # or benchmark in the binary (main.mm gets their stubs), the zip
@@ -64,9 +119,13 @@ jobs:
           unzip -l MiniCode.zip | grep -q ' MiniCode.app/Contents/MacOS/minicode-cli$'
           scripts/check-minos.sh MiniCode.app
 
+      - name: Summary
+        if: always()
+        run: scripts/ci-summary.sh "macOS app" "$RUNNER_TEMP/ci-logs"
+
   linux:
     name: GTK4 port
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # About 25 minutes with Stage 4's GUI suites (2026-11-12); the package
     # install alone once took 13 (Ubuntu's mirror, 2026-11-10) and the job
     # was cancelled mid-build at 20.
@@ -100,7 +159,9 @@ jobs:
       # The shared core in ../src, the same tests the macOS job runs, built
       # here with g++ (the top-level Makefile picks clang++ only on the Mac).
       - name: Run core unit tests
-        run: make test
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-logs"
+          make test 2>&1 | tee "$RUNNER_TEMP/ci-logs/core-tests.log"
 
       # -Denabled rather than the default auto-detection: this job exists to
       # compile Terminal.cpp, Browser.cpp and PdfView.cpp, so a missing library
@@ -111,17 +172,17 @@ jobs:
 
       - name: Build
         working-directory: linux
-        run: meson compile -C build
+        run: meson compile -C build 2>&1 | tee "$RUNNER_TEMP/ci-logs/build.log"
 
       - name: Test
         working-directory: linux
-        run: meson test -C build --print-errorlogs
+        run: meson test -C build --print-errorlogs 2>&1 | tee "$RUNNER_TEMP/ci-logs/meson-tests.log"
 
       # The Makefile is the documented fallback for a minimal install. Its test
       # target needs no GTK and no display, so it is cheap to keep honest.
       - name: Makefile fallback tests
         working-directory: linux
-        run: make test
+        run: make test 2>&1 | tee "$RUNNER_TEMP/ci-logs/makefile-tests.log"
 
       # The GUI checks (linux/tests/gui/Harness.h): the whole app on an Xvfb
       # of its own, driven by real X input through XTest, with a scratch home
@@ -145,11 +206,18 @@ jobs:
         # The whole list ran about 7 minutes here before Stage 4 and passed
         # 420 s at terminal_tabs with fifteen suites to go after it
         # (2026-11-12); about 10 minutes on a ThinkPad core pair.
+        #
+        # The same room as the macOS job's GUI checks (see there and
+        # linux/tests/gui/Harness.h): waits and CPU-time bounds half again,
+        # a SLOW line for a time over its bound, and what a suite leaves for
+        # the next failing that suite by name (LEAK lines).
         timeout-minutes: 20
         env:
           MC_GUI_TOTAL_SECONDS: '1080'
           MC_GUI_SNAPSHOTS: ${{ runner.temp }}/gui-pictures
-        run: meson test -C build --suite gui -v --print-errorlogs
+          MC_GUI_WAIT_SCALE: '1.5'
+          MC_TIMING_SCALE: '1.5'
+        run: meson test -C build --suite gui -v --print-errorlogs 2>&1 | tee "$RUNNER_TEMP/ci-logs/gui-checks.log"
 
       # A picture of the window on top at each failed check (the first ten),
       # and Meson's log of the run, only when the checks failed.
@@ -164,6 +232,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Summary
+        if: always()
+        run: scripts/ci-summary.sh "GTK4 port" "$RUNNER_TEMP/ci-logs"
+
   # The core tests again, built with AddressSanitizer and
   # UndefinedBehaviorSanitizer (`make test-asan`, g++ here), with the
   # fuzz groups (tests/parser_fuzz.inc, tests/terminal_fuzz.inc) feeding
@@ -171,7 +243,7 @@ jobs:
   # stop the run at its first report, and leaks fail it at exit.
   sanitizers:
     name: Core tests under ASan and UBSan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
@@ -180,7 +252,13 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1:detect_stack_use_after_return=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: make test-asan
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-logs"
+          make test-asan 2>&1 | tee "$RUNNER_TEMP/ci-logs/core-tests-asan.log"
+
+      - name: Summary
+        if: always()
+        run: scripts/ci-summary.sh "Core tests under ASan and UBSan" "$RUNNER_TEMP/ci-logs"
 
   # The core tests under ThreadSanitizer (`make test-tsan`, clang here):
   # Find in Folder's parallel walk, TextFind's regex worker, the language
@@ -197,7 +275,7 @@ jobs:
   # UBSan here. clang on Linux still runs the Linux code paths.
   tsan:
     name: Core tests under ThreadSanitizer
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # A crash once left TSan's signal handler hanging until GitHub's six
     # hours ran out; the steps below have limits of their own, so a hang
     # fails and the backtrace step still runs.
@@ -227,7 +305,8 @@ jobs:
           MC_PRINT_GROUPS: '1'
         run: |
           set -o pipefail
-          timeout 25m make test-tsan CXX=clang++-22 2>&1 | tee tsan.log
+          mkdir -p "$RUNNER_TEMP/ci-logs"
+          timeout 25m make test-tsan CXX=clang++-22 2>&1 | tee tsan.log "$RUNNER_TEMP/ci-logs/core-tests-tsan.log"
 
       # Only after a crash (a signal, not a race report): the same binary
       # again under gdb, for a backtrace and the library each frame is in.
@@ -242,9 +321,13 @@ jobs:
                 -ex run -ex 'bt 40' -ex 'info sharedlibrary' \
                 -ex 'x/6i $pc' build/test-tsan/run_tests
 
+      - name: Summary
+        if: always()
+        run: scripts/ci-summary.sh "Core tests under ThreadSanitizer" "$RUNNER_TEMP/ci-logs"
+
   android:
     name: Android debug APK and Kotlin checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
@@ -279,7 +362,7 @@ jobs:
   # update must carry its signature, so it stays on the release Mac.
   android-release:
     name: Android release APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
@@ -312,3 +395,30 @@ jobs:
           "$apksigner" verify --print-certs android/app/build/outputs/apk/release/app-release.apk \
             | tee "$RUNNER_TEMP/certs.txt"
           grep -q 'CN=minicode CI throwaway' "$RUNNER_TEMP/certs.txt"
+
+  # One check that is green only when every job above is: the one to make
+  # required in main's branch protection (docs/ci.md), so a job added or
+  # renamed later is covered without changing the repository's settings.
+  # It runs even when a job failed or was cancelled (always()), and fails
+  # then, naming the jobs.
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [macos, linux, sanitizers, tsan, android, android-release]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          bad="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")"
+          {
+            echo "### CI passed?"
+            echo
+            if [ -z "$bad" ]; then echo "Every job passed."; else
+              echo "Not every job passed:"
+              printf '%s\n' "$bad" | sed 's/^/- /'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ -z "$bad" ] || { printf '%s\n' "$bad"; exit 1; }

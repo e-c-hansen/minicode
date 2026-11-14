@@ -244,6 +244,7 @@ static void CsvSteps(void);
 static void JsonSteps(void);
 static void NotebookSteps(void);
 static void SqliteSteps(void);
+static __weak EditorController *gPreviewsWindow;   // the suite's own window
 
 MC_GUI_SUITE(previews) {
     QuietQuickLookPanel();
@@ -269,6 +270,7 @@ MC_GUI_SUITE(previews) {
                                            withObject:Fixture(@"").stringByStandardizingPath];
         MCGuiSetKeyWindow(nil);
         GCHECK(mine != nil && MCGuiController() == mine);
+        gPreviewsWindow = mine;
     });
     MCGuiAsync(@"a movie is written", 60, ^(MCGuiDone done) {
         WriteMovie(Fixture(@"clip.mov"), ^(BOOL ok) {
@@ -476,6 +478,19 @@ MC_GUI_SUITE(previews) {
     JsonSteps();
     NotebookSteps();
     SqliteSteps();
+    // The suite's own window goes with it (the harness's LEAK check): close,
+    // not performClose:, so no question about what the steps left unsaved.
+    __block EditorController *closing = nil;
+    MCGuiStep(@"the suite's window closes", ^{
+        closing = gPreviewsWindow;
+        GCHECK(closing != nil);
+        [closing.window close];
+    });
+    MCGuiWait(@"its window is gone", 10, ^BOOL {
+        if ([MCGuiControllers() containsObject:closing]) return NO;
+        closing = nil;
+        return YES;
+    });
 }
 
 // ---------------------------------------------------------------- CSV
