@@ -174,7 +174,7 @@ MC_GUI_SUITE(structure) {
         };
         GCHECK(isHex(colorAt(@"-old"), 0xF14C4C));
         GCHECK(isHex(colorAt(@"+new"), 0x73C991));
-        GCHECK(isHex(colorAt(@"@@ -1,2"), 0x9CA3AF));
+        GCHECK(isHex(colorAt(@"@@ -1,2"), 0x9D9D9D));
         // The whole added line, to its last character, is green.
         NSRange added = [t rangeOfString:@"+new café\n"];
         NSRange eff;

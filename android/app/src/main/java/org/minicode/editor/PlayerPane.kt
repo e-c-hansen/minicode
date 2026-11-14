@@ -687,7 +687,7 @@ class PlayerPane @JvmOverloads constructor(
         val VIDEO_EXTENSIONS = setOf("mp4", "m4v", "mov", "3gp", "webm", "mkv")
         val AUDIO_EXTENSIONS = setOf("mp3", "wav", "m4a", "aac", "flac", "ogg", "opus")
 
-        private const val BAR_COLOR = 0xE6252526.toInt()
+        private const val BAR_COLOR = 0xE6181818.toInt()
         /** How far the bar's text sits above its bottom, for CurvedEdges. */
         private const val BAR_TEXT_DP = 12f
         private const val BAR_TIMEOUT_MS = 3000L

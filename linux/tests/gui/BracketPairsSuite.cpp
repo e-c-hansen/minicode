@@ -1,7 +1,7 @@
 // BracketPairsSuite.cpp — `./build/minicode-guitest bracket_pairs`:
 // bracket-pair colors in the editor (editor.bracket-pair-colorization,
 // linux/PARITY.md item 1.7, BracketColors.h), the counterpart of the Mac's
-// BracketPairsSuite. Three depths take Dark+'s three bracket colors, as the
+// BracketPairsSuite. Three depths take Dark Modern's three bracket colors, as the
 // tags on the characters and as pixels; a closer with nothing open takes
 // the unexpected color; brackets in strings and comments keep the lexer's.
 // Lines off screen are not painted until they scroll into view (by the
@@ -17,6 +17,7 @@
 #include "BracketColors.h"
 #include "Document.h"
 #include "Editor.h"
+#include "Settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -36,6 +37,9 @@ const std::string kGold = "#FFD700", kOrchid = "#DA70D6", kBlue = "#179FFF",
                   kUnexpected = "#FF1212", kString = "#CE9178", kComment = "#6A9955",
                   kEscape = "#D7BA7D", kSelf = "#569CD6";
 const char* kBase = "lsp.enabled = false\neditor.auto-close = off\n";
+// The editor's text with no theme named, which the plain tag draws in.
+const Rgba kPlainText = Settings::parse(kBase).text(Surface::Editor);
+const std::string kPlain = Settings::formatColor(kPlainText);
 const std::string kOff = std::string(kBase) + "editor.bracket-pair-colorization = off\n";
 
 std::string text() {
@@ -86,7 +90,7 @@ std::string colorAt(size_t i) {
         if (c) gdk_rgba_free(c);
     }
     g_slist_free(tags);
-    return out == "#D4D4D4" ? "plain" : out;
+    return out == kPlain ? "plain" : out;
 }
 
 bool hasBracketTag(size_t i) {
@@ -324,7 +328,7 @@ MC_GUI_SUITE(bracket_pairs) {
         GCHECK(colors()->linesPainted() < 200);
     });
     MCGuiWait("and they are drawn so", 5, [] {
-        const std::vector<uint32_t> three = {0xFFD700, 0xDA70D6, 0x179FFF, 0xD4D4D4};
+        const std::vector<uint32_t> three = {0xFFD700, 0xDA70D6, 0x179FFF, kPlainText.rgb()};
         const int a = drawnIn(14, three), b = drawnIn(20, three), d = drawnIn(24, three);
         if (a == 0 && b == 1 && d == 2) {
             MCGuiSnapshot(ed()->textView(), "bracket-pairs");

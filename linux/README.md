@@ -111,7 +111,7 @@ how each finished item was built and the traps it paid for.
   (`../src/CommandsLinux.cpp`, with `keys.conf` applied) the menu bar, the
   accelerators, the file tree's own keys and the hints' key text. Which
   keys are the shell's while the terminal has the keyboard is decided here.
-- `src/Palette.h` — the dark color palette, mirrored from the macOS build.
+- `src/Palette.h` — the default dark colors (Dark Modern's), as the core's settings resolve them.
 - `tests/gui/` — the GUI checks (`meson test -C build --suite gui`): the
   whole app on a private Xvfb, driven by real key presses and clicks, a
   suite a file, listed in `suites.txt`.

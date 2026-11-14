@@ -17,7 +17,7 @@ static NSColor *SeverityColor(NSInteger severity) {
     case 1: return PHex(0xF14C4C);
     case 2: return PHex(0xCCA700);
     case 3: return PHex(0x3794FF);
-    default: return PHex(0x9CA3AF);
+    default: return PHex(0x9D9D9D);
     }
 }
 

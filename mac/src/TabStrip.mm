@@ -182,7 +182,7 @@ static const CGFloat kDragThreshold = 4;
         if (!active) NSRectFill(NSMakeRect(NSMinX(r), NSMaxY(r) - 1, NSWidth(r), 1));
 
         NSColor *text = active ? (self.activeText ?: TabHex(0xE0E0E0, 1))
-                               : (self.inactiveText ?: TabHex(0x9CA3AF, 1));
+                               : (self.inactiveText ?: TabHex(0x9D9D9D, 1));
         NSFont *font = [self titleFont];
         if (item.preview)
             font = [[NSFontManager sharedFontManager] convertFont:font

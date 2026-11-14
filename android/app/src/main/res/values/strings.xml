@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">MiniCode</string>
+    <!-- The bar's title with nothing open, lowercase as the desktop windows' titles. -->
+    <string name="window_title">minicode</string>
 </resources>

@@ -77,8 +77,8 @@ struct AppearanceSurface {
 };
 
 // A color theme: a color for everything the settings file can color. The
-// settings file's `theme` key picks one (dark-plus, minicode's look since
-// the start, when unset), and a color set in the file wins over the theme's,
+// settings file's `theme` key picks one (dark-modern, VS Code's own
+// default, when unset), and a color set in the file wins over the theme's,
 // as workbench.colorCustomizations do in VS Code. The themes are VS Code's
 // own built-in ones, read off their theme files and mapped onto minicode's
 // fewer keys: a surface's background and text, the seven syntax styles,
@@ -194,7 +194,7 @@ public:
     // over the editor background.
     Rgba contrastText(const Rgba& c) const;
 
-    // The theme the file picks (dark-plus when it names none).
+    // The theme the file picks (dark-modern when it names none).
     const Theme& theme() const { return *theme_; }
     // Whether the editor's background, as resolved, is dark: the window's
     // own controls (scroll bars, menus in it, text fields) follow this.
@@ -506,7 +506,7 @@ public:
     static std::vector<std::string> tableKeys();
 
 private:
-    const Theme* theme_ = findTheme("dark-plus");
+    const Theme* theme_ = findTheme("dark-modern");
     struct SurfaceSettings {
         std::optional<Rgba> background, text;
         std::optional<double> opacity;

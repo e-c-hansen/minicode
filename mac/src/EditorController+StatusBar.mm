@@ -291,7 +291,7 @@ static const CGFloat kHintsPad = 16;
                                 NSForegroundColorAttributeName: Hex(0xE0E0E0),
                                 NSParagraphStyleAttributeName: ps};
     NSDictionary *stateAttr = @{NSFontAttributeName: labelFont,
-                                NSForegroundColorAttributeName: Hex(0x9CA3AF),
+                                NSForegroundColorAttributeName: Hex(0x9D9D9D),
                                 NSParagraphStyleAttributeName: ps};
     NSMutableAttributedString *s = [NSMutableAttributedString new];
     void (^add)(NSString *, NSDictionary *) = ^(NSString *t, NSDictionary *a) {
@@ -305,7 +305,7 @@ static const CGFloat kHintsPad = 16;
             hp.paragraphSpacing = round(4 * z);
             add([row[@"heading"] stringByAppendingString:@"\n"], @{
                 NSFontAttributeName: headingFont,
-                NSForegroundColorAttributeName: Hex(0x9CA3AF),
+                NSForegroundColorAttributeName: Hex(0x9D9D9D),
                 NSKernAttributeName: @(0.6 * z),
                 NSParagraphStyleAttributeName: hp,
             });

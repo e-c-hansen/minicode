@@ -463,7 +463,7 @@ void writeTheme(const std::string& id, bool commentColors) {
 void installThemeAction(GtkApplication* app, ThemeHost host) {
     gThemeHost = std::move(host);
     const char* current =
-        gThemeHost.settings ? gThemeHost.settings->settings().theme().id : "dark-plus";
+        gThemeHost.settings ? gThemeHost.settings->settings().theme().id : "dark-modern";
     gThemeAction =
         g_simple_action_new_stateful("theme", G_VARIANT_TYPE_STRING, g_variant_new_string(current));
     // A row's choice is a request: the check moves when the file says so.

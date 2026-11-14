@@ -1,6 +1,6 @@
 // BracketPairsSuite.mm — `make guitest SUITES=bracket_pairs`: bracket-pair
 // colors in the editor (editor.bracket-pair-colorization, BracketPairs.h).
-// Three depths take Dark+'s three bracket colors, in the storage and in
+// Three depths take Dark Modern's three bracket colors, in the storage and in
 // pixels; a closer with nothing open takes the unexpected color; brackets
 // in strings and comments keep the lexer's. A typed "(" at the top recolors
 // the brackets on screen at once by painting only those lines (counted),
@@ -14,6 +14,7 @@
 #import "EditorController+Private.h"
 #import "ControlServer.h"
 #import "Lsp.h"   // CodeTextView replaceRanges:
+#include "Settings.h"
 
 namespace {
 NSTextView *Text(EditorController *c) { return (NSTextView *)[c valueForKey:@"textView"]; }
@@ -112,7 +113,10 @@ int DrawnIn(EditorController *c, NSUInteger i, NSArray<NSNumber *> *colors) {
 
 namespace {
 NSString *const kGold = @"#FFD700", *const kOrchid = @"#DA70D6", *const kBlue = @"#179FFF";
-NSString *const kUnexpected = @"#FF1212", *const kString = @"#CE9178", *const kPlain = @"#D4D4D4";
+NSString *const kUnexpected = @"#FF1212", *const kString = @"#CE9178";
+// The editor's text with no theme named, which plain text is drawn in.
+const Rgba kPlainText = Settings::parse("").text(Surface::Editor);
+NSString *const kPlain = @(Settings::formatColor(kPlainText).c_str());
 NSString *const kComment = @"#6A9955", *const kEscape = @"#D7BA7D", *const kSelf = @"#569CD6";
 }  // namespace
 
@@ -194,7 +198,7 @@ MC_GUI_SUITE(bracket_pairs) {
 
     MCGuiStep(@"and they are drawn so", ^{
         NSString *s = Text(c).string;
-        NSArray *three = @[@0xFFD700, @0xDA70D6, @0x179FFF, @0xD4D4D4];
+        NSArray *three = @[@0xFFD700, @0xDA70D6, @0x179FFF, @(kPlainText.rgb())];
         const int a = DrawnIn(c, Nth(s, @"(", 0), three);
         const int b = DrawnIn(c, Nth(s, @"[", 0), three);
         const int d = DrawnIn(c, Nth(s, @"{", 0), three);

@@ -265,7 +265,7 @@ static void testLspInlayHints() {
         Settings d = parseSettings("");
         CHECK(d.inlayHints());
         CHECK(d.inlayHintColor() == Rgba::hex(0x969696));
-        CHECK(d.inlayHintBackground().rgb() == 0x4D4D4D && d.inlayHintBackground().a < 0.11 &&
+        CHECK(d.inlayHintBackground().rgb() == 0x616161 && d.inlayHintBackground().a < 0.11 &&
               d.inlayHintBackground().a > 0.09);
         // The documented defaults are the real ones.
         Settings un = parseSettings(uncommentKeys(Settings::defaultFileText()));
@@ -276,6 +276,7 @@ static void testLspInlayHints() {
         CHECK(parseSettings("theme = dark-modern").inlayHintBackground().rgb() == 0x616161);
         CHECK(parseSettings("theme = light-modern").inlayHintBackground().rgb() == 0xCCCCCC);
         CHECK(parseSettings("theme = quiet-light").inlayHintBackground().rgb() == 0xC4C4C4);
+        CHECK(parseSettings("theme = dark-plus").inlayHintBackground().rgb() == 0x4D4D4D);
         std::vector<SettingsError> e;
         Settings off = parseSettings("editor.inlay-hints = off\n"
                                      "editor.inlay-hint-color = #FF0000\n", &e);

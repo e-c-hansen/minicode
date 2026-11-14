@@ -750,7 +750,7 @@ static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *an
     ps.paragraphSpacing = 10;
     NSDictionary *muted = @{
         NSFontAttributeName: [NSFont systemFontOfSize:MCZoomed(12)],
-        NSForegroundColorAttributeName: Hex(0x9CA3AF),
+        NSForegroundColorAttributeName: Hex(0x9D9D9D),
         NSParagraphStyleAttributeName: ps,
         kMarkdownMathNote: @YES,
     };

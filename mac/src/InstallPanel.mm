@@ -52,7 +52,7 @@ static NSTextField *Text(NSString *s, NSFont *font, NSColor *color, CGFloat widt
 static NSTextField *Link(NSString *before, NSString *title, NSString *url, CGFloat width) {
     NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
         initWithString:before ?: @""
-            attributes:@{NSFontAttributeName: Small(), NSForegroundColorAttributeName: IHex(0x9CA3AF)}];
+            attributes:@{NSFontAttributeName: Small(), NSForegroundColorAttributeName: IHex(0x9D9D9D)}];
     [s appendAttributedString:[[NSAttributedString alloc] initWithString:title
         attributes:@{NSFontAttributeName: Small(), NSLinkAttributeName: [NSURL URLWithString:url],
                      NSForegroundColorAttributeName: IHex(0x4EA1F7)}]];
@@ -220,13 +220,13 @@ static void CollectText(NSView *v, NSMutableArray<NSString *> *out) {
         _alternatives = [alts copy];
         if (alts.count) {
             [stack addArrangedSubview:Text(alts.count == 1 ? @"Or:" : @"Or one of these:",
-                                           Small(), IHex(0x9CA3AF), inner)];
+                                           Small(), IHex(0x9D9D9D), inner)];
             for (NSString *a in alts) [stack addArrangedSubview:Row(a, inner, NO, _actions)];
         }
         [stack addArrangedSubview:Text(
             @"Run in Terminal types the command into the terminal; press Return there to run "
             @"it. minicode finds the program by itself once it is installed, with no restart.",
-            Small(), IHex(0x9CA3AF), inner)];
+            Small(), IHex(0x9D9D9D), inner)];
         [stack addArrangedSubview:Link(@"", [NSString stringWithFormat:@"%@'s website",
                                                                        NS(tool->name)],
                                        NS(tool->homepage), inner)];

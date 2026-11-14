@@ -20,7 +20,7 @@
                                               styleMask:style
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
-    self.window.title = @"MiniCode";
+    self.window.title = @"minicode";
     // ARC owns the window through the strong `window` property. NSWindow defaults
     // to releasedWhenClosed=YES, which adds a legacy unbalanced release on close;
     // combined with the ARC release that's a double-free that crashes on close.
@@ -911,7 +911,7 @@ static NSString *MCFormatDuration(double seconds) {
     [self updateLargeFileNote];
     // With no file open, the folder's name.
     NSString *name = self.currentPath.lastPathComponent ?: _root.path.lastPathComponent;
-    if (!name.length) name = @"MiniCode";
+    if (!name.length) name = @"minicode";
     if (_activeTab.gone) name = [name stringByAppendingString:@" (deleted)"];
     if (self.isDiff)
         name = _activeTab.page ? (_activeTab.page.pageTitle ?: @"")
@@ -946,7 +946,7 @@ static NSString *MCFormatDuration(double seconds) {
         if (c.total > 0)
             mode = [mode stringByAppendingFormat:@"  %d of %d done", c.done, c.total];
     }
-    self.window.title = [NSString stringWithFormat:@"%@%@ — MiniCode%@",
+    self.window.title = [NSString stringWithFormat:@"%@%@ — minicode%@",
                          flag, name, mode];
     // The close button's dot: unsaved changes in any tab.
     self.window.documentEdited = [self hasUnsavedChanges];

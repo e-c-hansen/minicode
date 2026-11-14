@@ -205,7 +205,7 @@ static NSFont *PickerMono(void) {
     NSInteger select = -1;
     NSUInteger caret = _tv.selectedRange.location;
     NSDictionary *muted = @{NSFontAttributeName: PickerMono(),
-                            NSForegroundColorAttributeName: LHex(0x9CA3AF)};
+                            NSForegroundColorAttributeName: LHex(0x9D9D9D)};
     NSDictionary *plain = @{NSFontAttributeName: PickerMono(),
                             NSForegroundColorAttributeName: LHex(0xD4D4D4)};
     NSString *rootReal = RealPath(_root);
@@ -231,7 +231,7 @@ static NSFont *PickerMono(void) {
                                                     f.ranges.size()];
         [h appendAttributedString:[[NSAttributedString alloc]
             initWithString:tail attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
-                                             NSForegroundColorAttributeName: LHex(0x9CA3AF)}]];
+                                             NSForegroundColorAttributeName: LHex(0x9D9D9D)}]];
         [headers addIndex:rows.count];
         [rows addObject:h];
         where.push_back(Lsp::Location());
@@ -555,7 +555,7 @@ static NSString *ActionKindName(const std::string &kind) {
             [row appendAttributedString:[[NSAttributedString alloc]
                 initWithString:[@"   " stringByAppendingString:kind]
                     attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
-                                 NSForegroundColorAttributeName: LHex(0x9CA3AF)}]];
+                                 NSForegroundColorAttributeName: LHex(0x9D9D9D)}]];
         [rows addObject:row];
     }
     _actions = actions;

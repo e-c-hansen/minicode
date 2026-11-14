@@ -47,7 +47,7 @@ static const CGFloat kButtonWidth = 26;   // + and ◫ at the strip's right end
 
 - (void)drawGlyph:(NSString *)glyph inRect:(NSRect)r size:(CGFloat)size {
     NSDictionary *a = @{NSFontAttributeName: [NSFont systemFontOfSize:size],
-                        NSForegroundColorAttributeName: PHex(0x9CA3AF)};
+                        NSForegroundColorAttributeName: PHex(0x9D9D9D)};
     NSSize sz = [glyph sizeWithAttributes:a];
     [glyph drawAtPoint:NSMakePoint(floor(NSMidX(r) - sz.width / 2),
                                    floor(NSMidY(r) - sz.height / 2))

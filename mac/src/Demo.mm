@@ -936,9 +936,9 @@ static void SceneSettings(MCDemo *d) {
     [d pause:1.0];
     [d scrollEditorTo:@"# The file tree."];
     [d pause:0.6];
-    PickColor(d, @"sidebar.background", @"#252526", 0x1B2536, 7);
-    PickColor(d, @"editor.background", @"#1E1E1E", 0x131B29, 7);
-    PickColor(d, @"statusbar.background", @"#007ACC", 0x7C3AED, 7);
+    PickColor(d, @"sidebar.background", @"#181818", 0x1B2536, 7);
+    PickColor(d, @"editor.background", @"#1F1F1F", 0x131B29, 7);
+    PickColor(d, @"statusbar.background", @"#181818", 0x7C3AED, 7);
     [d run:^(MCDemo *m) { (void)m; [[NSColorPanel sharedColorPanel] orderOut:nil]; }];
     [d hidePointer];
     [d pause:0.6];

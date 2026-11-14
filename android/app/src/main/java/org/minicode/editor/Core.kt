@@ -208,25 +208,25 @@ object Core {
     const val SELF = 9
 }
 
-/** The dark palette the other two ports use (VS Code Dark+ values). */
+/** The dark palette the other two ports use with no theme named (VS Code Dark Modern values). */
 object Palette {
-    const val BACKGROUND = 0xFF1E1E1E.toInt()
-    const val SIDEBAR = 0xFF252526.toInt()
-    const val TEXT = 0xFFD4D4D4.toInt()
+    const val BACKGROUND = 0xFF1F1F1F.toInt()
+    const val SIDEBAR = 0xFF181818.toInt()
+    const val TEXT = 0xFFCCCCCC.toInt()
     const val MUTED = 0xFF9CA3AF.toInt()
     const val ACCENT = 0xFF4EA1F7.toInt()
     const val DIVIDER = 0xFF333333.toInt()
 
     // Markdown, from the same defaults the other ports use.
     const val MD_HEADING = 0xFF4EA1F7.toInt()
-    const val MD_LINK = 0xFF4EA1F7.toInt()
+    const val MD_LINK = 0xFF4DAAFC.toInt()
     const val MD_CODE = 0xFFCE9178.toInt()
     const val MD_QUOTE = 0xFF9CA3AF.toInt()
     /** A checked task's text, struck through too (the desktop's markdown.done). */
-    const val MD_DONE = 0xFF858585.toInt()
+    const val MD_DONE = 0xFF6E7681.toInt()
 
     val styles = intArrayOf(
-        0xFFD4D4D4.toInt(),   // plain
+        0xFFCCCCCC.toInt(),   // plain
         0xFF569CD6.toInt(),   // keyword
         0xFF4EC9B0.toInt(),   // type
         0xFFCE9178.toInt(),   // string

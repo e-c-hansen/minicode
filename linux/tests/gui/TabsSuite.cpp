@@ -181,7 +181,7 @@ MC_GUI_SUITE(tabs) {
     MCGuiStep("with no tab, an empty editor, and nothing to save", [] {
         GCHECK(!ed()->canSave() && ed()->currentPath().empty());
         GCHECK(MCGuiEditorText().empty());
-        GCHECK_EQ_STR(title(), "MiniCode");
+        GCHECK_EQ_STR(title(), "minicode");
     });
 
     // ---- opening from the tree

@@ -108,7 +108,7 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
     (void)dirty;
     const NSRect b = self.bounds;
     NSColor *text = self.textColor ?: NSColor.textColor;
-    NSColor *muted = PHex(0x9CA3AF);
+    NSColor *muted = PHex(0x9D9D9D);
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
     ps.lineBreakMode = NSLineBreakByTruncatingTail;
     NSMutableParagraphStyle *right = [NSMutableParagraphStyle new];
@@ -140,7 +140,7 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
         return;
     }
     MCProcItem *p = self.item;
-    NSColor *dot = !p.alive ? PHex(0x6B7280) : p.orphan ? PHex(0xE8A33D) : PHex(0x73C991);
+    NSColor *dot = !p.alive ? PHex(0x858585) : p.orphan ? PHex(0xE8A33D) : PHex(0x73C991);
     [dot setFill];
     [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(2, 8, 7, 7)] fill];
     NSString *mem = p.alive ? PNS(Procs::formatBytes(p.memory)) : @"";
@@ -279,23 +279,23 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
     _heading.attributedStringValue = [[NSAttributedString alloc]
         initWithString:@"PROCESSES"
             attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightSemibold],
-                         NSForegroundColorAttributeName: PHex(0x9CA3AF),
+                         NSForegroundColorAttributeName: PHex(0x9D9D9D),
                          NSKernAttributeName: @0.6}];
     [self addSubview:_heading];
     _summary = [NSTextField labelWithString:@""];
     _summary.font = [NSFont systemFontOfSize:11];
-    _summary.textColor = PHex(0x9CA3AF);
+    _summary.textColor = PHex(0x9D9D9D);
     _summary.alignment = NSTextAlignmentRight;
     _summary.lineBreakMode = NSLineBreakByTruncatingTail;
     [self addSubview:_summary];
     _notice = [NSTextField wrappingLabelWithString:
         @"Nothing is running from this window's terminals, or in this folder."];
     _notice.font = [NSFont systemFontOfSize:12];
-    _notice.textColor = PHex(0x9CA3AF);
+    _notice.textColor = PHex(0x9D9D9D);
     [self addSubview:_notice];
     _help = [NSTextField wrappingLabelWithString:PNS(Procs::helpText())];
     _help.font = [NSFont systemFontOfSize:10.5];
-    _help.textColor = PHex(0x9CA3AF);
+    _help.textColor = PHex(0x9D9D9D);
     [self addSubview:_help];
 
     _scroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];

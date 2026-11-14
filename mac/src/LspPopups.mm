@@ -154,7 +154,7 @@ static const NSInteger kMaxRows = 10;
         [s appendAttributedString:[[NSAttributedString alloc]
             initWithString:[@"   " stringByAppendingString:detail]
                 attributes:@{NSFontAttributeName: mono,
-                             NSForegroundColorAttributeName: LHex(0x9CA3AF)}]];
+                             NSForegroundColorAttributeName: LHex(0x9D9D9D)}]];
     f.attributedStringValue = s;
     return f;
 }

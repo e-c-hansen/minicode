@@ -69,7 +69,7 @@ static NSAttributedString *MCSignatureText(const Lsp::SignatureHelp &help) {
             initWithString:[NSString stringWithFormat:@"   %d of %zu",
                                help.activeSignature + 1, help.signatures.size()]
                 attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
-                             NSForegroundColorAttributeName: LHex(0x9CA3AF)}]];
+                             NSForegroundColorAttributeName: LHex(0x9D9D9D)}]];
     NSString *doc = nil;
     if (ap >= 0 && (size_t)ap < sig.paramDocs.size() && !sig.paramDocs[(size_t)ap].empty())
         doc = FirstParagraph(sig.paramDocs[(size_t)ap], true);
@@ -79,7 +79,7 @@ static NSAttributedString *MCSignatureText(const Lsp::SignatureHelp &help) {
         [s appendAttributedString:[[NSAttributedString alloc]
             initWithString:[@"\n" stringByAppendingString:doc]
                 attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
-                             NSForegroundColorAttributeName: LHex(0x9CA3AF)}]];
+                             NSForegroundColorAttributeName: LHex(0x9D9D9D)}]];
     return s;
 }
 

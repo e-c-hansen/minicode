@@ -279,17 +279,18 @@ void testThemeCss() {
 
     GROUP("theme:defaults");
     const std::string d = theme::stylesheet(Settings::parse(""));
-    CHECK(has(d, ".minicode-editor text { background-color: rgba(30,30,30,1.000); color: rgba(212,212,212,1.000); }"));
-    CHECK(has(d, ".minicode-sidebar { background-color: rgba(37,37,38,1.000); }"));
+    // Dark Modern's, the theme when none is named.
+    CHECK(has(d, ".minicode-editor text { background-color: rgba(31,31,31,1.000); color: rgba(204,204,204,1.000); }"));
+    CHECK(has(d, ".minicode-sidebar { background-color: rgba(24,24,24,1.000); }"));
     CHECK(has(d, ".minicode-tree-label { color: rgba(204,204,204,1.000); }"));
-    CHECK(has(d, ".minicode-status { background-color: rgba(0,122,204,1.000)"));
-    CHECK(has(d, ".minicode-browser-bar { background-color: rgba(42,42,42,1.000)"));
+    CHECK(has(d, ".minicode-status { background-color: rgba(24,24,24,1.000)"));
+    CHECK(has(d, ".minicode-browser-bar { background-color: rgba(31,31,31,1.000)"));
     CHECK(!has(d, "background-color: transparent; }window"));   // sanity
     CHECK(!has(d, "window.minicode-window.background"));        // opaque window
     CHECK(!has(d, "menubar"));                                  // theme's title bar
     CHECK(!has(d, ".minicode-browser-bar entry"));
     // A translucent color must be painted exactly once per panel.
-    CHECK(has(d, ".minicode-editor { background-color: transparent; color: rgba(212,212,212,1.000); }"));
+    CHECK(has(d, ".minicode-editor { background-color: transparent; color: rgba(204,204,204,1.000); }"));
     CHECK(has(d, ".minicode-tree, .minicode-tree > row { background-color: transparent; }"));
     CHECK(has(d, ".minicode-terminal { background-color: transparent; }"));
     // No locale-dependent decimal commas anywhere.
@@ -299,19 +300,19 @@ void testThemeCss() {
     const std::string t = theme::stylesheet(Settings::parse(
         "editor.opacity = 0.5\nsidebar.opacity = 25%\nstatusbar.text = #000\n"
         "browser.text = #ABCDEF\n"));
-    CHECK(has(t, ".minicode-editor text { background-color: rgba(30,30,30,0.500)"));
-    CHECK(has(t, ".minicode-sidebar { background-color: rgba(37,37,38,0.250); }"));
+    CHECK(has(t, ".minicode-editor text { background-color: rgba(31,31,31,0.500)"));
+    CHECK(has(t, ".minicode-sidebar { background-color: rgba(24,24,24,0.250); }"));
     CHECK(has(t, "window.minicode-window.background { background-color: transparent; }"));
     CHECK(has(t, ".minicode-status label { color: rgba(0,0,0,1.000); }"));
     CHECK(has(t, ".minicode-browser-bar entry { color: rgba(171,205,239,1.000); }"));
     // A see-through window takes over the title and menu bar too.
     CHECK(has(t, "window.minicode-window menubar {"));
-    CHECK(has(t, "background-color: rgba(50,50,51,1.000); background-image: none;"));
+    CHECK(has(t, "background-color: rgba(24,24,24,1.000); background-image: none;"));
 
     GROUP("theme:titlebar");
     const std::string tb = theme::stylesheet(Settings::parse(
         "titlebar.opacity = 0.2\ntitlebar.text = #FF0000\n"));
-    CHECK(has(tb, "background-color: rgba(50,50,51,0.200); background-image: none;"
+    CHECK(has(tb, "background-color: rgba(24,24,24,0.200); background-image: none;"
                   " box-shadow: none; color: rgba(255,0,0,1.000); }"));
     CHECK(has(tb, "window.minicode-window menubar > item, window.minicode-window"
                   " headerbar label { color: rgba(255,0,0,1.000); }"));
@@ -319,7 +320,7 @@ void testThemeCss() {
 
     GROUP("theme:light");
     // A light theme (View > Theme): its colors, and the selection and
-    // scroll bars no key sets made light too; a dark one keeps Dark+'s.
+    // scroll bars no key sets made light too; a dark one keeps VS Code's dark ones.
     CHECK(has(d, ".minicode-editor text selection { background-color: #264F78; }"));
     CHECK(has(d, "scrollbar slider { background-color: rgba(255,255,255,0.22);"));
     const std::string lp = theme::stylesheet(Settings::parse("theme = light-plus\n"));

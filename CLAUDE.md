@@ -354,7 +354,7 @@ container (PanelHost, laid out by hand in layoutContainer)
 └── MCPaletteOverlay                              while the palette is open
 ```
 
-- Colors come from `Settings` (defaults are VS Code Dark+'s). Each view has an
+- Colors come from `Settings` (defaults are VS Code Dark Modern's). Each view has an
   `applySettings`, run at startup and on `MCSettingsDidChangeNotification`,
   that recolors what is on screen (editor re-highlights, Markdown re-renders
   keeping scroll, terminal text marked `MCTerminalDefaultForeground` follows).
@@ -364,7 +364,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   `lsp.*` or a surface's `.background`, is code in `apply()`), its default,
   the commented `defaultFileText` (`settings:key-table` fails on a row it
   lacks) and the view's `applySettings`. Per-language blocks are not done. Still inline hex (`Hex`, `THex`, `SHex`): accents #4EA1F7,
-  muted #9CA3AF, dividers #333333, the hints overlay, terminal panel messages,
+  muted #9D9D9D (Dark Modern's descriptionForeground; #9CA3AF, Tailwind's gray-400,
+  until 2026-11-14, and still in linux/src and Android), dividers #333333,
+  the hints overlay, terminal panel messages,
   the git panel, the developer amber #E8A33D, the ANSI
   palette in `TermColor::rgb()`; `linux/src/Palette.h` mirrors the defaults.
   The find bar and Find in Folder take a palette per theme
@@ -441,8 +443,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   and for shifted variants.
 - No third-party dependencies, ever; new capabilities use system frameworks.
 - README and user-facing prose: plain sentences, Oxford commas, no emoji, no
-  LLM-ish phrasing; the name is "minicode", lowercase, in prose. No labels the
-  user did not choose.
+  LLM-ish phrasing; the name is "minicode", lowercase, in prose and in every
+  port's window title (2026-11-14; the bundle, the menu bar's app name, the
+  launcher's label and folder names stay MiniCode). No labels the user did
+  not choose.
 - Commits in the repo's style (the area, then why and what was checked), ending
   with the Co-Authored-By trailer.
 - A finished user-visible Mac change is pushed, released and upgraded on the
@@ -485,8 +489,13 @@ container (PanelHost, laid out by hand in layoutContainer)
 - **Themes**: `theme = <id>` (`kThemes`: dark-modern, dark-plus, monokai,
   solarized-dark, tomorrow-night-blue, light-modern, light-plus, quiet-light,
   solarized-light, mapped by hand from VS Code's files) gives every color; any
-  color the file sets wins. Unset is dark-plus, value for value the old look;
-  `defaultFileText` keeps Dark+'s values. Opacity is separate. View > Theme
+  color the file sets wins. Unset is dark-modern, VS Code's own default
+  (2026-11-14; until then dark-plus, minicode's look from the start):
+  `Settings::theme_` starts there, every color reads the theme, and
+  `settings:default-theme` holds an empty file to `theme = dark-modern`
+  color for color; `defaultFileText` shows Dark Modern's values, and
+  `linux/src/Palette.h` and Android's `Palette` (Core.kt) follow them.
+  Opacity is separate. View > Theme
   (`MCThemeSubmenu`) writes the line through `Settings::withTheme` (CRLF kept)
   and, when the file sets colors of its own (`colorOverrides`), offers to
   comment them out. `Settings::isDark()` sets the window's NSAppearance;

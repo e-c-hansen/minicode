@@ -31,7 +31,7 @@ NSNotificationName const MCPythonInterpreterDidChangeNotification =
 static NSColor *DotGreen(void) { return LHex(0x73C991); }
 static NSColor *DotYellow(void) { return LHex(0xCCA700); }
 static NSColor *DotRed(void) { return LHex(0xF14C4C); }
-static NSColor *DotGray(void) { return LHex(0x9CA3AF); }
+static NSColor *DotGray(void) { return LHex(0x9D9D9D); }
 
 // ------------------------------------------------------------ LspSession
 @implementation MCLspServerInfo

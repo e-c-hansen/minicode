@@ -652,7 +652,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     NSFont *font = [NSFont systemFontOfSize:12.5];
     if (node == _worktreesItem) {
         *icon = @"arrow.triangle.branch";
-        *tint = Hex(0x9CA3AF);
+        *tint = Hex(0x9D9D9D);
         *tip = [NSString stringWithFormat:@"The agents' worktrees, in %@\n"
                 @"Right click one: Compare with Main, Open in New Window",
                 [node.path stringByAbbreviatingWithTildeInPath]];

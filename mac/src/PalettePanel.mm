@@ -30,7 +30,7 @@ static NSColor *PHex(unsigned rgb, CGFloat alpha = 1) {
                                alpha:alpha];
 }
 static NSColor *PAccent(void) { return PHex(0x4EA1F7); }
-static NSColor *PMuted(void) { return PHex(0x9CA3AF); }
+static NSColor *PMuted(void) { return PHex(0x9D9D9D); }
 
 static std::u16string PU16(NSString *s) {
     std::u16string out(s.length, u'\0');
