@@ -437,7 +437,7 @@ MC_GUI_SUITE(themes) {
             ;
     });
     MCGuiStep("the keyboard in the editor", [] { MCGuiKey("ctrl+1"); });
-    waitInTheme("dark-plus");
+    waitInTheme("dark-modern");
 
     // ---- tabs.font-size: unset, the desktop's interface font (the old rule
     // fixed 12 px, about 9 pt); set, that many points, at once; unset again.
@@ -505,18 +505,18 @@ MC_GUI_SUITE(themes) {
         gDisk = std::string(kBase) + "editor.background = #102030\n";
         MCGuiSetSettings(gDisk);
     });
-    chooseTheme("Dark Modern");
+    chooseTheme("Dark+");
     answer("Cancel");
     // Time is the condition: a write would have come at once.
     MCGuiPause(0.5);
     MCGuiStep("Cancel wrote nothing", [] {
         GCHECK_EQ_STR(MCGuiReadFile(settingsPath()), gDisk);
-        GCHECK_EQ_STR(themeState(), "dark-plus");
+        GCHECK_EQ_STR(themeState(), "dark-modern");
     });
 
     // ---- CRLF kept
     MCGuiStep("a settings file with CRLF line breaks", [] {
-        MCGuiSetSettings("lsp.enabled = false\r\n# theme = dark-plus\r\n");
+        MCGuiSetSettings("lsp.enabled = false\r\n# theme = dark-modern\r\n");
     });
     chooseTheme("Monokai");
     MCGuiWait("the line uncommented, CRLF kept", 10, [] {
@@ -552,7 +552,7 @@ MC_GUI_SUITE(themes) {
         MCGuiSetSettings(kBase);
         GCHECK(!isLink(settingsPath()));
     });
-    waitInTheme("dark-plus");
+    waitInTheme("dark-modern");
 
     // ---- refused while a tab holds the file with unsaved changes
     MCGuiStep("the settings file in a tab, an edit unsaved", [] {
@@ -580,7 +580,7 @@ MC_GUI_SUITE(themes) {
                       "close that tab, then try again.");
         GCHECK_EQ_STR(MCGuiReadFile(settingsPath()), gDisk);
         GCHECK(ed()->dirty() && bufferText(ed()->buffer()) == "x" + gDisk);
-        GCHECK_EQ_STR(themeState(), "dark-plus");
+        GCHECK_EQ_STR(themeState(), "dark-modern");
     });
     undoUntilClean();
     chooseTheme("Solarized Dark");
@@ -711,10 +711,10 @@ MC_GUI_SUITE(themes) {
         MCGuiKey("ctrl+shift+w");
     });
     MCGuiWait("one window fewer", 10, [] { return MCGuiAppWindows().size() == gWindows; });
-    MCGuiStep("the first window has the keyboard again, in Dark+", [] {
+    MCGuiStep("the first window has the keyboard again, in Dark Modern", [] {
         MCGuiSetKeyWindow(nullptr);
         MCGuiFocusKeyWindow();
-        GCHECK_EQ_STR(themeState(), "dark-plus");
+        GCHECK_EQ_STR(themeState(), "dark-modern");
         GCHECK(colorScheme() == GTK_INTERFACE_COLOR_SCHEME_DARK);
     });
 }

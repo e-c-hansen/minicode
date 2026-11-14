@@ -28,9 +28,10 @@ const char* const kMarkdownNames[kMarkdownColorCount] = {
 // terminal input text; line numbers, the caret line's number, the bracket
 // match box; the semantic colors (class, variable, parameter, property,
 // constant); the bracket-pair colors (1, 2, 3, unexpected).
-// Dark+ is minicode's look from the start, so its values are the defaults
-// the settings file documents; the others come from the themes' own files
-// (editor, sideBar, titleBar, panel and statusBar colors, the token colors
+// Dark Modern, VS Code's own default, is minicode's too when the file names
+// no theme (Dark+ was until 2026-11-14), so its values are the defaults the
+// settings file documents. The rows come from the themes' own files, where
+// Dark+ keeps minicode's old Markdown colors (editor, sideBar, titleBar, panel and statusBar colors, the token colors
 // for comments, strings, keywords, keyword.control, types, numbers and
 // function names, editorLineNumber's foreground and activeForeground,
 // editorBracketMatch's border), the nearest where a theme leaves a color to
@@ -1549,17 +1550,18 @@ const char* Settings::defaultFileText() {
 # background only, so text stays solid while the desktop shows through.
 
 # The color theme, one of VS Code's built-in themes: dark-modern (VS Code's
-# own default), dark-plus, monokai, solarized-dark, tomorrow-night-blue,
-# light-modern, light-plus, quiet-light, or solarized-light. View > Theme
-# sets this line for you. Every color below that you uncomment wins over the
-# theme's, so a theme can be adjusted color by color; the colors shown below
-# are Dark+'s, the theme used when none is chosen.
-# theme = dark-plus
+# own default, and minicode's), dark-plus, monokai, solarized-dark,
+# tomorrow-night-blue, light-modern, light-plus, quiet-light, or
+# solarized-light. View > Theme sets this line for you. Every color below
+# that you uncomment wins over the theme's, so a theme can be adjusted color
+# by color; the colors shown below are Dark Modern's, the theme used when
+# none is chosen.
+# theme = dark-modern
 
 # The whole window. window.opacity is the default for every panel below that
 # doesn't set its own, and window.text is the default text color.
 # window.opacity = 1
-# window.text = #D4D4D4
+# window.text = #CCCCCC
 # Blur what is behind the window, like frosted glass. Pair it with panel
 # opacity below 1, or the panels cover it up. macOS only; Linux desktops
 # don't offer apps a way to blur behind a window, so it is ignored there.
@@ -1573,12 +1575,12 @@ const char* Settings::defaultFileText() {
 # window.dock-menu = true
 
 # The title bar across the top of the window, and on Linux the menu bar.
-# titlebar.background = #323233
+# titlebar.background = #181818
 # titlebar.opacity = 1
 # titlebar.text = #CCCCCC
 
 # The file tree.
-# sidebar.background = #252526
+# sidebar.background = #181818
 # sidebar.opacity = 1
 # sidebar.text = #CCCCCC
 # In a git folder, names take the color of their status, as in VS Code's
@@ -1601,9 +1603,9 @@ const char* Settings::defaultFileText() {
 # workbench.enable-preview-from-quick-open = off
 
 # The file editor and Markdown preview.
-# editor.background = #1E1E1E
+# editor.background = #1F1F1F
 # editor.opacity = 1
-# editor.text = #D4D4D4
+# editor.text = #CCCCCC
 # A thin line down the editor at this column, to show where lines get long:
 # a column, several without spaces (80,120), or off.
 # editor.ruler = 100
@@ -1649,9 +1651,9 @@ const char* Settings::defaultFileText() {
 # editor.bracket-pair-colorization = on
 # The gutter behind the numbers, which is the editor's background unless set
 # here. The caret's line has its number in the active color.
-# editor.gutter-background = #1E1E1E
-# editor.line-number-color = #858585
-# editor.line-number-active-color = #C6C6C6
+# editor.gutter-background = #1F1F1F
+# editor.line-number-color = #6E7681
+# editor.line-number-active-color = #CCCCCC
 # The box around the bracket beside the caret and its partner.
 # editor.bracket-match = #888888
 # What a language server can say between the words, drawn in the text
@@ -1667,7 +1669,7 @@ const char* Settings::defaultFileText() {
 # Code's unless set; the background is mostly transparent.
 # editor.inlay-hints = on
 # editor.inlay-hint-color = #969696
-# editor.inlay-hint-background = #4D4D4D1A
+# editor.inlay-hint-background = #6161611A
 # editor.inlay-hint-parameter-names = false
 # Sort the lines between "keep-sorted start" and "keep-sorted end" comments
 # every time a file is saved, as Google's keep-sorted tool would.
@@ -1697,7 +1699,7 @@ const char* Settings::defaultFileText() {
 # The terminal panel.
 # terminal.background = #181818
 # terminal.opacity = 1
-# terminal.text = #D4D4D4
+# terminal.text = #CCCCCC
 # grid: a real terminal, with zsh's own prompt, Tab completion, Ctrl+R and
 # the rest of its line editor. line: the older log with an input line below
 # it (a fallback, to be removed). Applies to terminals opened after a change.
@@ -1729,9 +1731,9 @@ const char* Settings::defaultFileText() {
 # search.use-ignore-files = true
 
 # The browser's toolbar. Web pages draw their own background.
-# browser.background = #2A2A2A
+# browser.background = #1F1F1F
 # browser.opacity = 1
-# browser.text = #D4D4D4
+# browser.text = #CCCCCC
 # The folder of web bookmarks: pages saved with Save Page as Bookmark (Cmd+D
 # in the browser, macOS only for now) as .url files, the Internet Shortcuts
 # every browser opens. `minicode https://...` opens a window on it with the
@@ -1740,9 +1742,9 @@ const char* Settings::defaultFileText() {
 # browser.bookmarks = auto
 
 # The status bar along the bottom.
-# statusbar.background = #007ACC
+# statusbar.background = #181818
 # statusbar.opacity = 1
-# statusbar.text = #FFFFFF
+# statusbar.text = #CCCCCC
 
 # Syntax highlighting. Plain text uses editor.text.
 # syntax.keyword = #569CD6
@@ -1773,11 +1775,11 @@ const char* Settings::defaultFileText() {
 
 # Rendered Markdown. Body text uses editor.text.
 # markdown.heading = #FFFFFF
-# markdown.link = #4EA1F7
+# markdown.link = #4DAAFC
 # markdown.code = #CE9178
 # markdown.quote = #9D9D9D
 # A checked task's text ("- [x] ..."), which is also struck through.
-# markdown.done = #858585
+# markdown.done = #6E7681
 # Pictures in Markdown with an https address are downloaded and shown. Turn
 # this off to show their alt text instead, so opening a file never contacts
 # the sites it links to.

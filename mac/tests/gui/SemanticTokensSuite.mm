@@ -20,6 +20,7 @@
 #import "EditorController.h"
 #import "Lsp.h"
 #include "LspClient.h"
+#include "Settings.h"
 #include <pwd.h>
 #include <time.h>
 #include <unistd.h>
@@ -81,8 +82,9 @@ double ThreadCpu() {
 
 NSString *const kParameter = @"#FF0000";   // syntax.parameter, set below
 NSString *const kVariable = @"#00FF00";    // syntax.variable
-NSString *const kFunction = @"#DCDCAA";    // Dark+'s syntax.function
-NSString *const kPlain = @"#D4D4D4";       // Dark+'s editor.text
+NSString *const kFunction = @"#DCDCAA";    // the default theme's syntax.function
+// The default theme's editor.text (Dark Modern's).
+NSString *const kPlain = @(Settings::formatColor(Settings::parse("").text(Surface::Editor)).c_str());
 NSString *const kSettings = @"syntax.parameter = #FF0000\nsyntax.variable = #00FF00\n";
 }  // namespace
 

@@ -71,7 +71,7 @@ const Palette kPalettes[] = {
 const Palette &PaletteFor(const char *theme, bool dark) {
     for (const Palette &p : kPalettes)
         if (!strcmp(p.theme, theme)) return p;
-    return kPalettes[dark ? 1 : 6];   // dark-plus or light-plus
+    return kPalettes[dark ? 0 : 5];   // dark-modern or light-modern, the defaults
 }
 
 NSColor *Opt(uint32_t rgba) { return rgba ? Hexa(rgba) : nil; }

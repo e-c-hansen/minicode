@@ -288,7 +288,7 @@ const Palette& palette(const std::string& theme, bool dark) {
     const std::vector<Palette>& all = palettes();
     for (const Palette& p : all)
         if (theme == p.theme) return p;
-    return all[dark ? 1 : 6];   // dark-plus or light-plus
+    return all[dark ? 0 : 5];   // dark-modern or light-modern, the defaults
 }
 
 // The Mac draws them with these colors (EditorFind.mm, drawHighlightsInRect).

@@ -268,8 +268,8 @@ static void testEditSpansAndFindRules() {
                                 "quiet-light", "solarized-light"};
         for (const char *t : themes)
             CHECK(std::string(FindRules::palette(t, true).theme) == t);
-        CHECK(std::string(FindRules::palette("nope", true).theme) == "dark-plus");
-        CHECK(std::string(FindRules::palette("nope", false).theme) == "light-plus");
+        CHECK(std::string(FindRules::palette("nope", true).theme) == "dark-modern");
+        CHECK(std::string(FindRules::palette("nope", false).theme) == "light-modern");
         CHECK(FindRules::currentMatch(true) != FindRules::currentMatch(false));
         // The Mac's table (FindWidget.mm's kPalettes) and this one agree,
         // number for number, so the two ports' bars look alike.

@@ -6,7 +6,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#1E1E1E"
+    android:background="#1F1F1F"
     android:fitsSystemWindows="true">
 
     <LinearLayout
@@ -14,7 +14,7 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="#252526"
+        android:background="#181818"
         android:paddingHorizontal="4dp">
 
         <TextView
@@ -41,7 +41,7 @@
                 android:id="@+id/title"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textColor="#D4D4D4"
+                android:textColor="#CCCCCC"
                 android:textSize="14sp"
                 android:singleLine="true"
                 android:ellipsize="start"
@@ -87,7 +87,7 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:background="#252526"
+        android:background="#181818"
         android:visibility="gone" />
 
     <androidx.recyclerview.widget.RecyclerView
@@ -95,7 +95,7 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:background="#252526" />
+        android:background="#181818" />
 
     <!-- Source control, in the file list's place (GitPanel.kt): leader V. -->
     <org.minicode.editor.GitPanel
@@ -119,8 +119,8 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:background="#1E1E1E"
-        android:textColor="#D4D4D4"
+        android:background="#1F1F1F"
+        android:textColor="#CCCCCC"
         android:textColorHighlight="#264F78"
         android:fontFamily="monospace"
         android:textSize="13sp"
@@ -139,7 +139,7 @@
         android:id="@+id/lspBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#252526"
+        android:background="#181818"
         android:paddingHorizontal="8dp"
         android:paddingVertical="3dp"
         android:textColor="#9CA3AF"
@@ -170,7 +170,7 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:background="#1E1E1E"
+        android:background="#1F1F1F"
         android:visibility="gone" />
 
     <!-- A diff or a commit from the source control panel, in the editor's
@@ -197,7 +197,7 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:background="#1E1E1E"
+        android:background="#1F1F1F"
         android:scaleType="fitCenter"
         android:adjustViewBounds="false"
         android:contentDescription="@string/app_name"
@@ -227,8 +227,8 @@
             android:id="@+id/url"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#252526"
-            android:textColor="#D4D4D4"
+            android:background="#181818"
+            android:textColor="#CCCCCC"
             android:textColorHint="#9CA3AF"
             android:hint="Search or type a URL"
             android:paddingHorizontal="10dp"

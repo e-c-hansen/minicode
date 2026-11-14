@@ -354,7 +354,7 @@ container (PanelHost, laid out by hand in layoutContainer)
 └── MCPaletteOverlay                              while the palette is open
 ```
 
-- Colors come from `Settings` (defaults are VS Code Dark+'s). Each view has an
+- Colors come from `Settings` (defaults are VS Code Dark Modern's). Each view has an
   `applySettings`, run at startup and on `MCSettingsDidChangeNotification`,
   that recolors what is on screen (editor re-highlights, Markdown re-renders
   keeping scroll, terminal text marked `MCTerminalDefaultForeground` follows).
@@ -487,8 +487,13 @@ container (PanelHost, laid out by hand in layoutContainer)
 - **Themes**: `theme = <id>` (`kThemes`: dark-modern, dark-plus, monokai,
   solarized-dark, tomorrow-night-blue, light-modern, light-plus, quiet-light,
   solarized-light, mapped by hand from VS Code's files) gives every color; any
-  color the file sets wins. Unset is dark-plus, value for value the old look;
-  `defaultFileText` keeps Dark+'s values. Opacity is separate. View > Theme
+  color the file sets wins. Unset is dark-modern, VS Code's own default
+  (2026-11-14; until then dark-plus, minicode's look from the start):
+  `Settings::theme_` starts there, every color reads the theme, and
+  `settings:default-theme` holds an empty file to `theme = dark-modern`
+  color for color; `defaultFileText` shows Dark Modern's values, and
+  `linux/src/Palette.h` and Android's `Palette` (Core.kt) follow them.
+  Opacity is separate. View > Theme
   (`MCThemeSubmenu`) writes the line through `Settings::withTheme` (CRLF kept)
   and, when the file sets colors of its own (`colorOverrides`), offers to
   comment them out. `Settings::isDark()` sets the window's NSAppearance;

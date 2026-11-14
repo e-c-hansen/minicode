@@ -1,39 +1,40 @@
-// Palette.h — the MiniCode dark color palette, mirrored from the macOS build
-// (mac/src/EditorController.mm, Hex() and ColorForStyle()). Keeping these values
-// identical is what makes the Linux port look like the same editor.
+// Palette.h — minicode's default dark colors, VS Code's Dark Modern as the
+// core's Settings resolves them with no theme named (src/Settings.cpp,
+// kThemes), for what is drawn before the settings apply and what they do not
+// color. Keeping these values identical is what makes the Linux port look
+// like the same editor.
 #pragma once
 
 #include "SyntaxHighlighter.h"
 
 // Core chrome colors, as "#RRGGBB" strings (the form GTK CSS and GdkRGBA parse).
 namespace pal {
-    constexpr const char* EditorBg   = "#1E1E1E";  // editor background
-    constexpr const char* EditorText = "#D4D4D4";  // default foreground
-    constexpr const char* SidebarBg  = "#252526";  // file tree background
+    constexpr const char* EditorBg   = "#1F1F1F";  // editor background
+    constexpr const char* EditorText = "#CCCCCC";  // default foreground
+    constexpr const char* SidebarBg  = "#181818";  // file tree background
     constexpr const char* TreeText   = "#CCCCCC";  // file tree row text
     constexpr const char* DirIcon    = "#C09553";  // folder icon tint
     constexpr const char* FileIcon   = "#8A99A8";  // file icon tint
-    constexpr const char* StatusBg   = "#007ACC";  // status bar (VS Code blue)
-    constexpr const char* StatusText = "#FFFFFF";
+    constexpr const char* StatusBg   = "#181818";  // status bar
+    constexpr const char* StatusText = "#CCCCCC";
     constexpr const char* Divider    = "#333333";  // pane dividers
     constexpr const char* Selection  = "#264F78";  // selected text, editor and terminal
 
     // Terminal panel. The background is a shade darker than the editor so the
-    // panel reads as a separate surface, matching the macOS terminal
-    // (mac/src/Terminal.mm, THex(0x181818)).
+    // panel reads as a separate surface, as the theme's panel is.
     constexpr const char* TermBg     = "#181818";
-    constexpr const char* TermText   = "#D4D4D4";
+    constexpr const char* TermText   = "#CCCCCC";
     constexpr const char* TermCursor = "#AEAFAD";
 
     // Markdown preview colors.
     constexpr const char* MdHeading  = "#FFFFFF";
     constexpr const char* MdCode     = "#CE9178";
-    constexpr const char* MdCodeBg   = "#2A2A2A";
+    constexpr const char* MdCodeBg   = "#2B2B2B";
     constexpr const char* MdQuote    = "#9D9D9D";
     constexpr const char* MdRule     = "#555555";
-    constexpr const char* MdLink     = "#4EA1F7";
+    constexpr const char* MdLink     = "#4DAAFC";
     constexpr const char* MdPlainMsg = "#9D9D9D";
-    constexpr const char* MdDone     = "#858585";  // a checked task's text
+    constexpr const char* MdDone     = "#6E7681";  // a checked task's text
 }
 
 // The concrete color for each syntax token style. Mirrors ColorForStyle().
@@ -49,7 +50,7 @@ inline const char* ColorForStyle(TokenStyle s) {
         case TokenStyle::Escape:       return "#D7BA7D";
         case TokenStyle::Self:         return "#569CD6";
         case TokenStyle::Plain:
-        default:                       return "#D4D4D4";
+        default:                       return "#CCCCCC";
     }
 }
 

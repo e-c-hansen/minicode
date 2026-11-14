@@ -3780,20 +3780,21 @@ void testSettings() {
 
     GROUP("settings:defaults");
     Settings d = parseSettings("");
-    CHECK(colorIs(d.background(Surface::Editor), 0x1E1E1E));
-    CHECK(colorIs(d.background(Surface::Sidebar), 0x252526));
+    // Dark Modern's, VS Code's own default theme.
+    CHECK(colorIs(d.background(Surface::Editor), 0x1F1F1F));
+    CHECK(colorIs(d.background(Surface::Sidebar), 0x181818));
     CHECK(colorIs(d.background(Surface::Terminal), 0x181818));
-    CHECK(colorIs(d.background(Surface::Statusbar), 0x007ACC));
-    CHECK(colorIs(d.background(Surface::Browser), 0x2A2A2A));
-    CHECK(colorIs(d.text(Surface::Editor), 0xD4D4D4));
+    CHECK(colorIs(d.background(Surface::Statusbar), 0x181818));
+    CHECK(colorIs(d.background(Surface::Browser), 0x1F1F1F));
+    CHECK(colorIs(d.text(Surface::Editor), 0xCCCCCC));
     CHECK(colorIs(d.text(Surface::Sidebar), 0xCCCCCC));
-    CHECK(colorIs(d.text(Surface::Statusbar), 0xFFFFFF));
+    CHECK(colorIs(d.text(Surface::Statusbar), 0xCCCCCC));
     CHECK(colorIs(d.syntax(TokenStyle::Keyword), 0x569CD6));
     CHECK(colorIs(d.syntax(TokenStyle::Comment), 0x6A9955));
-    CHECK(colorIs(d.syntax(TokenStyle::Plain), 0xD4D4D4));
-    CHECK(colorIs(d.markdown(MarkdownColor::Link), 0x4EA1F7));
-    CHECK(colorIs(d.markdownCodeBackground(), 0x2A2A2A));
-    CHECK(colorIs(d.terminalInputText(), 0xEDEDED));
+    CHECK(colorIs(d.syntax(TokenStyle::Plain), 0xCCCCCC));
+    CHECK(colorIs(d.markdown(MarkdownColor::Link), 0x4DAAFC));
+    CHECK(colorIs(d.markdownCodeBackground(), 0x2B2B2B));
+    CHECK(colorIs(d.terminalInputText(), 0xE6E6E6));
     CHECK(near(d.opacity(Surface::Editor), 1));
     CHECK(!d.blur());
     CHECK(d.material() == "under-window");
@@ -3804,10 +3805,10 @@ void testSettings() {
 
     GROUP("settings:panel-opacity");
     Settings p = parseSettings("editor.opacity = 0.6\nsidebar.opacity = 40%\n");
-    CHECK(colorIs(p.background(Surface::Editor), 0x1E1E1E, 0.6));
-    CHECK(colorIs(p.background(Surface::Sidebar), 0x252526, 0.4));
+    CHECK(colorIs(p.background(Surface::Editor), 0x1F1F1F, 0.6));
+    CHECK(colorIs(p.background(Surface::Sidebar), 0x181818, 0.4));
     CHECK(colorIs(p.background(Surface::Terminal), 0x181818, 1));  // untouched
-    CHECK(colorIs(p.text(Surface::Editor), 0xD4D4D4, 1));          // text stays solid
+    CHECK(colorIs(p.text(Surface::Editor), 0xCCCCCC, 1));          // text stays solid
     CHECK(near(p.markdownCodeBackground().a, 0.6));                // follows editor
     CHECK(!p.windowIsOpaque());
     CHECK(p.customTitlebar());   // a see-through window draws its own title bar
@@ -3902,7 +3903,7 @@ void testSettings() {
     CHECK(colorIs(f.text(Surface::Terminal), 0x00FF00));
     CHECK(e1.size() == 1);   // "#FF0000#not..." is not a color
     CHECK(e1.size() == 1 && e1[0].line == 6);
-    CHECK(colorIs(f.background(Surface::Statusbar), 0x007ACC));  // default kept
+    CHECK(colorIs(f.background(Surface::Statusbar), 0x181818));  // default kept
 
     GROUP("settings:errors");
     std::vector<SettingsError> e2;
@@ -4013,7 +4014,7 @@ void testSettings() {
         CHECK(un.markdown((MarkdownColor)i) == d.markdown((MarkdownColor)i));
     CHECK(un.material() == d.material() && un.blur() == d.blur());
     CHECK(std::string(un.theme().id) == d.theme().id &&
-          std::string(d.theme().id) == "dark-plus");
+          std::string(d.theme().id) == "dark-modern");
     // The documented servers are the first ones the built-in search tries.
     CHECK(un.lspEnabled() == d.lspEnabled());
     CHECK(un.webImages() == d.webImages());
@@ -4068,11 +4069,12 @@ void testSettings() {
 
     GROUP("settings:themes");
     {
-        // Dark+ is the built-in look, value for value.
-        const Theme *plus = Settings::findTheme("dark-plus");
-        CHECK(plus && &d.theme() == plus && d.isDark());
-        CHECK(d.background(Surface::Editor) == Rgba::hex(0x1E1E1E));
+        // Dark Modern, VS Code's own default, is the built-in look.
+        const Theme *modern = Settings::findTheme("dark-modern");
+        CHECK(modern && &d.theme() == modern && d.isDark());
+        CHECK(d.background(Surface::Editor) == Rgba::hex(0x1F1F1F));
         CHECK(d.syntax(TokenStyle::Keyword) == Rgba::hex(0x569CD6));
+        CHECK(Settings::findTheme("dark-plus")->background[(int)Surface::Editor] == 0x1E1E1E);
         CHECK(Settings::findTheme(" Light-Plus ") == Settings::findTheme("light-plus"));
         CHECK(!Settings::findTheme("dracula"));
         // Every theme is whole: no color left at 0 by mistake (black is a
@@ -4126,9 +4128,64 @@ void testSettings() {
         CHECK(op.markdownCodeBackground().a == 0.5);
         std::vector<SettingsError> te;
         Settings bad = parseSettings("theme = dracula\n", &te);
-        CHECK(te.size() == 1 && &bad.theme() == plus);
+        CHECK(te.size() == 1 && &bad.theme() == modern);
         CHECK(te.size() == 1 && te[0].message.find("unknown theme 'dracula'") == 0 &&
               te[0].message.find("solarized-light") != std::string::npos);
+
+        GROUP("settings:default-theme");
+        // An empty file resolves every color exactly as theme = dark-modern
+        // does: nothing keeps a default of its own apart from the theme.
+        {
+            const Settings none = parseSettings("");
+            const Settings named = parseSettings("theme = dark-modern\n");
+            CHECK(&none.theme() == &named.theme() && none.isDark() == named.isDark());
+            int differ = 0;
+            auto same = [&](const Rgba &a, const Rgba &b, const char *what) {
+                if (a == b) return;
+                differ++;
+                std::printf("    %s: %s unset, %s named\n", what, Settings::formatColor(a).c_str(),
+                            Settings::formatColor(b).c_str());
+            };
+            for (int i = 0; i < kSurfaceCount; i++) {
+                same(none.background((Surface)i), named.background((Surface)i), "background");
+                same(none.text((Surface)i), named.text((Surface)i), "text");
+            }
+            for (int i = 0; i < kTokenStyleCount; i++)
+                same(none.syntax((TokenStyle)i), named.syntax((TokenStyle)i), "syntax");
+            for (int i = 0; i < kSemanticColorCount; i++)
+                same(none.semanticColor((SemanticColor)i), named.semanticColor((SemanticColor)i),
+                     "semantic");
+            for (int i = 0; i < 4; i++) same(none.bracketColor(i), named.bracketColor(i), "bracket");
+            for (int i = 0; i < kMarkdownColorCount; i++)
+                same(none.markdown((MarkdownColor)i), named.markdown((MarkdownColor)i), "markdown");
+            for (int i = 0; i < kTreeGitColorCount; i++)
+                same(none.treeGitColor((TreeGitColor)i), named.treeGitColor((TreeGitColor)i),
+                     "tree status");
+            for (int i = 0; i < 3; i++)
+                same(none.gitGutterColor(i), named.gitGutterColor(i), "change bar");
+            same(none.markdownCodeBackground(), named.markdownCodeBackground(), "code background");
+            same(none.terminalInputText(), named.terminalInputText(), "terminal input");
+            same(none.rulerColor(), named.rulerColor(), "ruler");
+            same(none.gutterBackground(), named.gutterBackground(), "gutter");
+            same(none.lineNumberColor(), named.lineNumberColor(), "line number");
+            same(none.lineNumberActiveColor(), named.lineNumberActiveColor(), "active line number");
+            same(none.bracketMatchColor(), named.bracketMatchColor(), "bracket match");
+            same(none.inlayHintColor(), named.inlayHintColor(), "inlay hint");
+            same(none.inlayHintBackground(), named.inlayHintBackground(), "inlay hint background");
+            for (uint32_t c : {0x000000u, 0x808080u, 0xFFFFFFu, 0x4DAAFCu})
+                same(none.contrastText(Rgba::hex(c)), named.contrastText(Rgba::hex(c)), "contrast");
+            CHECK(differ == 0);
+            // And the settings file's commented values are those colors.
+            const Settings documented = parseSettings(uncommentKeys(Settings::defaultFileText()));
+            CHECK(&documented.theme() == &named.theme());
+            CHECK(documented.inlayHintBackground() == named.inlayHintBackground());
+            CHECK(documented.inlayHintColor() == named.inlayHintColor());
+            for (int i = 0; i < kTreeGitColorCount; i++)
+                CHECK(documented.treeGitColor((TreeGitColor)i) ==
+                      named.treeGitColor((TreeGitColor)i));
+            for (int i = 0; i < 3; i++)
+                CHECK(documented.gitGutterColor(i) == named.gitGutterColor(i));
+        }
 
         GROUP("settings:with-theme");
         CHECK(Settings::isColorKey("editor.background") && Settings::isColorKey("syntax.type"));
@@ -4141,7 +4198,7 @@ void testSettings() {
         std::string w = Settings::withTheme(df2, "monokai", false);
         CHECK(w.find("\ntheme = monokai\n") != std::string::npos);
         CHECK(w.find("# theme = ") == std::string::npos);
-        CHECK(w.size() == df2.size() - 2 - std::string("dark-plus").size() + 7);
+        CHECK(w.size() == df2.size() - 2 - std::string("dark-modern").size() + 7);
         CHECK(&parseSettings(w).theme() == Settings::findTheme("monokai"));
         // Set again: the active line changes, keeping its comment.
         std::string w2 = Settings::withTheme("theme = monokai  # mine\nx.y = 1\n",
@@ -4202,10 +4259,10 @@ void testSettings() {
 
     GROUP("settings:gutter");
     {
-        // VS Code's Dark+ values: editorLineNumber.foreground and
+        // VS Code's Dark Modern values: editorLineNumber.foreground and
         // activeForeground, editorBracketMatch.border.
-        CHECK(d.lineNumberColor() == Rgba::hex(0x858585));
-        CHECK(d.lineNumberActiveColor() == Rgba::hex(0xC6C6C6));
+        CHECK(d.lineNumberColor() == Rgba::hex(0x6E7681));
+        CHECK(d.lineNumberActiveColor() == Rgba::hex(0xCCCCCC));
         CHECK(d.bracketMatchColor() == Rgba::hex(0x888888));
         // The gutter follows the editor's background, set or themed, and
         // its opacity.
@@ -4215,7 +4272,7 @@ void testSettings() {
         Settings gb = parseSettings("editor.gutter-background = #102030\n"
                                     "editor.opacity = 0.8\n");
         CHECK(gb.gutterBackground() == Rgba::hex(0x102030, 0.8));
-        CHECK(gb.background(Surface::Editor) == Rgba::hex(0x1E1E1E, 0.8));
+        CHECK(gb.background(Surface::Editor) == Rgba::hex(0x1F1F1F, 0.8));
         Settings lm = parseSettings("theme = light-plus\n");
         CHECK(lm.lineNumberColor() == Rgba::hex(0x237893));
         CHECK(lm.lineNumberActiveColor() == Rgba::hex(0x0B216F));
@@ -4979,12 +5036,12 @@ void testSettingsColorEditing() {
         CHECK(t == "# The whole window. window.opacity is the default for every panel below that\n"
                    "# doesn't set its own, and window.text is the default text color.\n"
                    "# window.opacity = 1\n"
-                   "# window.text = #D4D4D4\n"
+                   "# window.text = #CCCCCC\n"
                    "\n"
                    "# The terminal panel.\n"
                    "# terminal.background = #181818\n"
                    "# terminal.opacity = 1\n"
-                   "# terminal.text = #D4D4D4\n");
+                   "# terminal.text = #CCCCCC\n");
         // An old file with the window and editor keys, set or commented,
         // lacks only the syntax and Markdown ones; a key's own note comes
         // with it.
@@ -4995,12 +5052,12 @@ void testSettingsColorEditing() {
                                 "# markdown.code = #CE9178\n# markdown.quote = #9D9D9D\n";
         std::string m = Settings::missingSurfaceLines(old, "markdown");
         CHECK(m == "# A checked task's text (\"- [x] ...\"), which is also struck through.\n"
-                   "# markdown.done = #858585\n");
+                   "# markdown.done = #6E7681\n");
         std::string e = Settings::missingSurfaceLines(old, "editor");
         // The gutter's and the bracket match's keys came later than the
         // file, so they are added too, with their notes.
         CHECK(e.rfind("# The gutter behind the numbers", 0) == 0);
-        CHECK(e.find("# editor.gutter-background = #1E1E1E\n") != std::string::npos);
+        CHECK(e.find("# editor.gutter-background = #1F1F1F\n") != std::string::npos);
         CHECK(e.find("# The box around the bracket beside the caret and its partner.\n"
                      "# editor.bracket-match = #888888\n") != std::string::npos);
         CHECK(e.find("# Syntax highlighting. Plain text uses editor.text.\n"
