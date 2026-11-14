@@ -3281,6 +3281,16 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   no window of its own when one exists and argv is empty (a Finder launch has /
   as cwd). `main()` registers `NSTreatUnknownArgumentsAsOpen` NO, so argv goes
   through the argv code only.
+- **The Dock icon's menu** (2026-11-14, RecentFolders.mm): the recent
+  folders go to `NSDocumentController noteNewRecentDocumentURL:` as well as
+  minicode's own list, so the Dock lists them with minicode closed too (a
+  folder URL is taken because Info.plist claims public.folder; checked in
+  the real bundle). A pick arrives as an odoc at `application:openURLs:`.
+  `applicationDockMenu:` adds New Window and Open Folder…
+  (`openFolderInNewWindow:`, a folder picker, then `openURLs:`; the window
+  in front keeps its folder). The first launch seeds the Dock's list from
+  the stored folders when it is empty; Clear Recently Opened clears both.
+  How the Dock shows it needs the owner's eyes.
 - The launcher (`scripts/minicode-launcher`, `Contents/Resources/minicode`):
   paths go to a running app with `open -b com.minicode.editor`, else `open -a`
   its own bundle (VS Code's `code` rules); `-r` writes a request file to

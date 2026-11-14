@@ -13,6 +13,7 @@
 #import "Lsp.h"
 #import "PalettePanel.h"
 #import "RecentFolders.h"
+#import "ControlServer.h"   // MCControlAppHost
 #import "Terminal.h"
 #import "TerminalPanel.h"
 #import "TreeDetails.h"   // MCAppDefaults
@@ -280,6 +281,52 @@ MC_GUI_SUITE(daily_work) {
         [(NSTextView *)MCCommandPaletteField(palette).currentEditor
             doCommandBySelector:@selector(cancelOperation:)];   // Esc
         GCHECK(MCCommandPaletteIn(c.window) == nil);
+    });
+    // ---- The Dock icon's menu (RecentFolders.h): the recent folders are the
+    // Dock's own list, which a real Dock shows; checked here are its items.
+    __block EditorController *docked = nil;
+    NSString *dockDir = MCGuiProjectFile(@"dock-folder");
+    MCGuiStep(@"the Dock icon's menu has New Window and Open Folder…", ^{
+        NSMenu *m = [(id<NSApplicationDelegate>)NSApp.delegate applicationDockMenu:NSApp];
+        NSArray *titles = [m.itemArray valueForKey:@"title"];
+        MCGuiNote(@"Dock menu: %@", titles);
+        GCHECK([titles isEqualToArray:(@[ @"New Window", @"Open Folder…" ])]);
+        for (NSMenuItem *it in m.itemArray) GCHECK(it.target == NSApp.delegate);
+        GCHECK([m itemAtIndex:1].action == @selector(openFolderInNewWindow:));
+    });
+    MCGuiStep(@"Open Folder… from the Dock opens a window on the chosen folder", ^{
+        [[NSFileManager defaultManager] createDirectoryAtPath:dockDir
+                                  withIntermediateDirectories:YES attributes:nil error:nil];
+        MCDockFolderChooser = ^NSURL * { return [NSURL fileURLWithPath:dockDir isDirectory:YES]; };
+        id<MCControlAppHost> app = (id<MCControlAppHost>)NSApp.delegate;
+        NSUInteger before = app.controlControllers.count;
+        NSString *frontRoot = c.rootPath;
+        NSMenu *m = [(id<NSApplicationDelegate>)NSApp.delegate applicationDockMenu:NSApp];
+        [NSApp sendAction:[m itemAtIndex:1].action to:[m itemAtIndex:1].target
+                     from:[m itemAtIndex:1]];
+        GCHECK(app.controlControllers.count == before + 1);
+        for (EditorController *e in app.controlControllers)
+            if ([e.rootPath.stringByResolvingSymlinksInPath
+                    isEqualToString:dockDir.stringByResolvingSymlinksInPath])
+                docked = e;
+        GCHECK(docked != nil && docked != c);
+        GCHECK_EQ_STR(c.rootPath, frontRoot);   // the window in front kept its folder
+        // Chosen again, the window already on it comes forward.
+        [NSApp sendAction:[m itemAtIndex:1].action to:[m itemAtIndex:1].target
+                     from:[m itemAtIndex:1]];
+        GCHECK(app.controlControllers.count == before + 1);
+        MCDockFolderChooser = nil;
+    });
+    MCGuiStep(@"the folder opened from the Dock is the most recent", ^{
+        NSArray<NSString *> *r = MCRecentFolders();
+        GCHECK(r.count && [r[0].stringByResolvingSymlinksInPath
+                              isEqualToString:dockDir.stringByResolvingSymlinksInPath]);
+        [docked.window close];
+        docked = nil;
+        // The newest window is the one keys go to again, for the rest of
+        // this suite and the suites after (never pin a window here: one
+        // pinned and left open took every later suite's keys).
+        GCHECK(MCGuiController() == c);
     });
     MCGuiStep(@"F1 opens the command palette", ^{
         GCHECK(MenuKey(c, 122, 0));
