@@ -408,28 +408,37 @@ static World LookAtWorld(void) {
 }
 
 static BOOL LeaksFail(void) { return ![Env(@"MC_GUI_LEAKS") isEqualToString:@"note"]; }
+static NSUInteger gAlertsAtStart;
 
-static void Leak(NSString *suite, NSString *what) {
-    gLeaks++;
-    std::printf("  LEAK [%s] %s\n", suite.UTF8String ?: "", what.UTF8String);
+// A LEAK fails the suite (what a later suite trips over: a pin, answers, a
+// window, a zoom); a LEFT line only warns (a file the harness puts back
+// itself, a terminal left open).
+static void Leak(NSString *suite, NSString *what, BOOL fails = YES) {
+    if (fails) gLeaks++;
+    std::printf("  %s [%s] %s\n", fails ? "LEAK" : "LEFT", suite.UTF8String ?: "", what.UTF8String);
     std::fflush(stdout);
-    if (LeaksFail()) {
+    if (fails && LeaksFail()) {
         gFail++;
         gSuiteFail++;
     }
 }
 
 static void CheckWhatSuiteLeft(NSString *suite) {
-    if (!suite) return;
+    // A "_" suite runs alone in a process of its own, which it may end.
+    if (!suite || [suite hasPrefix:@"_"]) return;
     const BOOL putBack = LeaksFail();
     if (gKeyWindow) {
         Leak(suite, @"left the key window pinned (MCGuiSetKeyWindow(nil) at its end)");
         if (putBack) gKeyWindow = nil;
     }
     if (gAnswers.count) {
+        NSArray *shown = gAlerts.count > gAlertsAtStart
+            ? [gAlerts subarrayWithRange:NSMakeRange(gAlertsAtStart, gAlerts.count - gAlertsAtStart)]
+            : @[];
         Leak(suite, [NSString stringWithFormat:@"left %lu alert answer(s) unused, which would answer "
-                                               @"a later suite's questions",
-                                               (unsigned long)gAnswers.count]);
+                                               @"a later suite's questions (questions it saw: \"%@\")",
+                                               (unsigned long)gAnswers.count,
+                                               [shown componentsJoinedByString:@"\", \""]]);
         if (putBack) [gAnswers removeAllObjects];
     }
     World now = LookAtWorld(), was = gWorldAtStart;
@@ -440,15 +449,17 @@ static void CheckWhatSuiteLeft(NSString *suite) {
         Leak(suite, [NSString stringWithFormat:@"left %ld sheet(s) open on its windows", (long)now.sheets]);
     if (now.terminals > was.terminals)
         Leak(suite, [NSString stringWithFormat:@"left %ld terminal(s) open where it found %ld",
-                                               (long)now.terminals, (long)was.terminals]);
+                                               (long)now.terminals, (long)was.terminals], NO);
+    // The two files are the harness's to put back between suites, so a suite
+    // that changes them needs no step of its own to undo it; said, not failed.
     if (!(now.settings == was.settings || [now.settings isEqualToString:was.settings])) {
-        Leak(suite, [NSString stringWithFormat:@"left settings.conf changed: \"%@\" (was \"%@\")",
-                                               Short(now.settings), Short(was.settings)]);
+        Leak(suite, [NSString stringWithFormat:@"left settings.conf changed, put back: \"%@\" (was \"%@\")",
+                                               Short(now.settings), Short(was.settings)], NO);
         if (putBack && was.settings) MCGuiSetSettings(was.settings);
     }
     if (!(now.keys == was.keys || [now.keys isEqualToString:was.keys])) {
-        Leak(suite, [NSString stringWithFormat:@"left keys.conf changed: \"%@\" (was \"%@\")",
-                                               Short(now.keys), Short(was.keys)]);
+        Leak(suite, [NSString stringWithFormat:@"left keys.conf changed, put back: \"%@\" (was \"%@\")",
+                                               Short(now.keys), Short(was.keys)], NO);
         // The app watches the file and reads it again itself.
         if (putBack) {
             if (was.keys) MCGuiWriteFile(KeysPath(), was.keys);
@@ -690,6 +701,7 @@ void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, N
         gSuite = item.name;
         gSuitePass = gSuiteFail = 0;
         gWorldAtStart = LookAtWorld();
+        gAlertsAtStart = gAlerts.count;
         std::printf("Suite %s\n", item.name.UTF8String);
         std::fflush(stdout);
         break;

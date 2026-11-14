@@ -108,7 +108,7 @@ if step build make app; then
         echo "The GUI checks take the keyboard for about 10 minutes (no window shows). Ctrl+C now to stop."
         sleep 5
         # The same room CI's job gives (keep in step with ci.yml).
-        MC_GUI_WAIT_SCALE=1.5 MC_TIMING_SCALE=1.5 MC_GUI_LEAKS=note \
+        MC_GUI_WAIT_SCALE=1.5 MC_TIMING_SCALE=1.5 \
             step gui-checks make guitest
     else skip gui-checks "--no-gui, --quick, or no terminal"
     fi

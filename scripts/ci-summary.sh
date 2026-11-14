@@ -10,6 +10,10 @@
 #   "  FAIL [group] file:line  ..."   the core tests and both GUI harnesses
 #   "FATAL ..."                       a GUI harness's crash or stuck step
 #   "  LEAK [suite] ..."              state a GUI suite left for the next
+#                                     (fails the suite)
+#   "  LEFT [suite] ..."              the same, warned only: a settings or
+#                                     keys file the harness put back, or a
+#                                     terminal left open
 #   "  SLOW [suite] ..."              a timing check over its bound, within
 #                                     the room CI gives (a pass)
 #   "  NEAR [suite] ..."              the timing checks closest to their bounds
@@ -36,6 +40,7 @@ grab() {   # grab REGEX: matching lines of every log, cleaned, in order, unique
 
 fails="$(grab '^  FAIL \[|^FATAL|SUMMARY: (Address|Undefined|Thread|Leak)Sanitizer|^WARNING: ThreadSanitizer|runtime error: ')"
 leaks="$(grab '^  LEAK \[')"
+left="$(grab '^  LEFT \[')"
 slow="$(grab '^  SLOW \[')"
 near="$(grab '^  NEAR \[' | head -10)"
 builds="$(grab '(: error: |^FAILED: |^make(\[[0-9]+\])?: \*\*\* |^ninja: build stopped|^error: )' | head -15)"
@@ -86,6 +91,13 @@ annotate() {   # annotate error|warning LINE
     fi
     lines "$leaks"
     lines "$slow"
+    if [ -n "$left" ]; then
+        echo
+        echo "<details><summary>$(count "$left") thing(s) GUI suites left that the harness put back or only warns about (LEFT)</summary>"
+        echo
+        lines "$left"
+        echo "</details>"
+    fi
     if [ -n "$totals" ]; then
         echo
         echo "<details><summary>Totals</summary>"

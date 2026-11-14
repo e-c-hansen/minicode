@@ -3520,10 +3520,13 @@ session has a display. Check first.
   two files, a pin) and prints `LEAK [suite]`, naming the suite that
   left it rather than the one that later fails (daily_work's pinned key
   window failed five git suites on CI). It fails that suite and puts
-  back what it can (the pin, the answers, the files), except with
-  `MC_GUI_LEAKS=note`, which CI sets until the suites that leak are
-  fixed. A failed check with `MC_GUI_SNAPSHOTS` set leaves a picture of
-  the test window (the first ten); CI keeps them as an artifact.
+  back what it can (the pin, the answers). The two files are the
+  harness's to put back between suites and an extra terminal is only
+  noted: `LEFT [suite]`, a warning, so a suite needs no step to undo its
+  settings. `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
+  are skipped. A failed check with `MC_GUI_SNAPSHOTS` set leaves a
+  picture of the test window (the first ten); CI keeps them as an
+  artifact.
 - **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
   window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
   through the window then the main menu (`MCGuiPerformMenuKey`, built from the

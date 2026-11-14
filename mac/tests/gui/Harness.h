@@ -47,8 +47,12 @@
 // Show Hidden Files, the tree's columns, a key window left pinned, alert
 // answers left unused): a difference is a "LEAK [suite]" line and a failed
 // check of the suite that left it, and what the harness can put back (the
-// pin, the answers, the two files) it puts back, so one suite's leftovers
-// never fail the suites after it. MC_GUI_LEAKS=note only prints the lines.
+// pin, the answers) it puts back, so one suite's leftovers never fail the
+// suites after it. settings.conf and keys.conf are the harness's to put
+// back between suites, and a terminal left open is only noted: those are
+// "LEFT [suite]" lines, which warn. MC_GUI_LEAKS=note prints the lines and
+// neither fails nor puts anything back. A "_" suite (a second process) is
+// not looked at.
 //
 // Environment for slower machines (CI's job sets them; see
 // .github/workflows/ci.yml): MC_GUI_WAIT_SCALE multiplies every wait's and

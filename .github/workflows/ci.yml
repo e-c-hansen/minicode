@@ -78,14 +78,13 @@ jobs:
       # passing with a SLOW line in the summary. Of the timing failures on
       # CI from November 6 to 14, all that passed on a rerun were under 1.45
       # times their bound; the real regressions were 1.8 times or more.
-      # MC_GUI_LEAKS=note: what a suite leaves for the next is printed,
-      # not yet failed, while the suites that leave something are fixed.
+      # What a suite leaves for the next (a pinned key window, a window, an
+      # alert answer) fails that suite by name, a LEAK line (Harness.h).
       - name: Run the GUI checks
         id: gui
         env:
           MC_GUI_WAIT_SCALE: '1.5'
           MC_TIMING_SCALE: '1.5'
-          MC_GUI_LEAKS: note
           MC_GUI_SNAPSHOTS: ${{ runner.temp }}/gui-pictures
         run: make guitest 2>&1 | tee "$RUNNER_TEMP/ci-logs/gui-checks.log"
 
@@ -121,8 +120,6 @@ jobs:
 
       - name: Summary
         if: always()
-        env:
-          MC_GUI_LEAKS: note
         run: scripts/ci-summary.sh "macOS app" "$RUNNER_TEMP/ci-logs"
 
   linux:
@@ -212,14 +209,13 @@ jobs:
         # The same room as the macOS job's GUI checks (see there and
         # linux/tests/gui/Harness.h): waits and CPU-time bounds half again,
         # a SLOW line for a time over its bound, and what a suite leaves for
-        # the next printed (LEAK lines), not yet failed.
+        # the next failing that suite by name (LEAK lines).
         timeout-minutes: 20
         env:
           MC_GUI_TOTAL_SECONDS: '1080'
           MC_GUI_SNAPSHOTS: ${{ runner.temp }}/gui-pictures
           MC_GUI_WAIT_SCALE: '1.5'
           MC_TIMING_SCALE: '1.5'
-          MC_GUI_LEAKS: note
         run: meson test -C build --suite gui -v --print-errorlogs 2>&1 | tee "$RUNNER_TEMP/ci-logs/gui-checks.log"
 
       # A picture of the window on top at each failed check (the first ten),
@@ -237,8 +233,6 @@ jobs:
 
       - name: Summary
         if: always()
-        env:
-          MC_GUI_LEAKS: note
         run: scripts/ci-summary.sh "GTK4 port" "$RUNNER_TEMP/ci-logs"
 
   # The core tests again, built with AddressSanitizer and

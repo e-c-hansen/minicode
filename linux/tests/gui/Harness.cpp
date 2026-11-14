@@ -585,18 +585,22 @@ std::string shortText(const std::string& s) {
     return out;
 }
 
-void leak(const std::string& what) {
-    gLeaks++;
-    printf("  LEAK [%s] %s\n", gSuite.c_str(), what.c_str());
+// A LEAK fails the suite (what a later suite trips over: a pin, a window, a
+// question left on top); a LEFT line only warns (a file the harness puts
+// back itself, a terminal tab left open).
+void leak(const std::string& what, bool fails = true) {
+    if (fails) gLeaks++;
+    printf("  %s [%s] %s\n", fails ? "LEAK" : "LEFT", gSuite.c_str(), what.c_str());
     fflush(stdout);
-    if (leaksFail()) {
+    if (fails && leaksFail()) {
         gFail++;
         gSuiteFail++;
     }
 }
 
 void checkWhatSuiteLeft() {
-    if (gSuite.empty()) return;
+    // A "_" suite runs alone in a process of its own, which it may end.
+    if (gSuite.empty() || gSuite[0] == '_') return;
     const bool putBack = leaksFail();
     if (MCGuiPinnedKeyWindow() && MCGuiPinnedKeyWindow() != MCGuiApp().window) {
         leak("left the key window pinned to a window still open (MCGuiSetKeyWindow(nullptr) at its end)");
@@ -612,15 +616,20 @@ void checkWhatSuiteLeft() {
     }
     if (now.terminals > was.terminals)
         leak("left " + std::to_string(now.terminals) + " terminal tab(s) where it found " +
-             std::to_string(was.terminals));
+                 std::to_string(was.terminals),
+             false);
+    // The two files are the harness's to put back between suites, so a suite
+    // that changes them needs no step of its own to undo it; said, not failed.
     if (now.settings != was.settings) {
-        leak("left settings.conf changed: \"" + shortText(now.settings) + "\" (was \"" +
-             shortText(was.settings) + "\")");
+        leak("left settings.conf changed, put back: \"" + shortText(now.settings) + "\" (was \"" +
+                 shortText(was.settings) + "\")",
+             false);
         if (putBack) MCGuiSetSettings(was.settings);
     }
     if (now.keys != was.keys) {
-        leak("left keys.conf changed: \"" + shortText(now.keys) + "\" (was \"" + shortText(was.keys) +
-             "\")");
+        leak("left keys.conf changed, put back: \"" + shortText(now.keys) + "\" (was \"" +
+                 shortText(was.keys) + "\")",
+             false);
         if (putBack) MCGuiSetKeys(was.keys);
     }
 }

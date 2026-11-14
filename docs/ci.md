@@ -37,10 +37,12 @@ Three more kinds of line warn before anything fails:
   given (below). A bound that shows here repeatedly is being outgrown.
 - `NEAR [suite]`, under "Timing checks closest to their bounds": the ten
   timing checks with the least margin in that run.
-- `LEAK [suite]`: state a GUI suite left for the next (a window, a sheet or
-  question, a terminal, a settings or keys file, a zoom, a key window
-  pinned, alert answers unused). It names the suite that left it, not the
-  one that fails because of it.
+- `LEAK [suite]` (a failure) and `LEFT [suite]` (a warning): state a GUI
+  suite left for the next. LEAK is what a later suite would trip over (a
+  window, a sheet or question, a zoom, a key window pinned, alert answers
+  unused); LEFT is a settings or keys file, which the harness puts back
+  between suites anyway, or a terminal left open. Either names the suite
+  that left it, not the one that would fail because of it.
 
 ## Why a check passes here and fails on CI
 
