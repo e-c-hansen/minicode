@@ -378,7 +378,11 @@ MC_GUI_SUITE(inlay_hints) {
     });
     MCGuiWait(@"width= and height= go", 10, ^BOOL { return Text(c).inlayHints.count == 2; });
     MCGuiStep(@"the two left are the type labels", ^{
-        GCHECK([Labels(c) isEqualToArray:(@[@"-> int", @": int"])]);
+        // The text still says grand_total, so the server's answer is `second`.
+        NSArray *labels = Labels(c);
+        if (![labels isEqualToArray:(@[@"-> int", @": float"])])
+            MCGuiNote(@"labels: %@", [labels componentsJoinedByString:@" | "]);
+        GCHECK([labels isEqualToArray:(@[@"-> int", @": float"])]);
         MCGuiSetSettings([NSString stringWithFormat:
             @"lsp.enabled = true\neditor.inlay-hint-parameter-names = on\nlsp.python = %@\n"
             @"lsp.python.also = off\n", cmd]);
