@@ -94,9 +94,12 @@ None retried. Checks seen failing on CI and passing on a rerun, with no
 fix yet, are listed here with the run that showed them, and removed when
 fixed.
 
-- `search` (Mac), SearchSuite.mm "20,000 matches in 2 files": once "in 3
-  files" (PR #8, run 43610029465), never before in the history read. Cause
-  unknown; the check now names the files when it fails.
+- (none open as of 2026-11-14)
+
+Found while checking this: `search` failed twice on PR #8 once the leak
+check closed a window `previews` had left open. The suite had searched
+the whole project instead of its own folder, and passed only because that
+leftover window, on another folder, was the newest. Fixed in the suite.
 
 ## Branch protection (for the owner to decide)
 
