@@ -1021,7 +1021,7 @@ void SearchPanel::onRowReleased(GtkGestureClick*, int gtkN, double x, double y, 
     const int n = pressed == GTK_INVALID_LIST_POSITION
                       ? gtkN
                       : self->clicks_.press(self->listView_, self->pressTime_,
-                                            GUINT_TO_POINTER(pressed + 1), gtkN);
+                                            GUINT_TO_POINTER(pressed + 1), gtkN, x, y);
     if ((n == 1 || n == 2) && pressed != GTK_INVALID_LIST_POSITION &&
         self->rowAt(x, y) == pressed)
         self->openRow(pressed, n == 2);

@@ -856,7 +856,8 @@ void FileTree::onPrimaryReleased(GtkGestureClick* g, int n, double x, double y,
     const bool moved = std::hypot(x - self->pressX_, y - self->pressY_) > threshold;
     // GTK's own count can be reset by a slow first click; ClickCount adds the
     // presses' event times (the bookmarks suite and CI lost double-clicks so).
-    const int clicks = self->clicks_.press(self->listView_, self->pressTime_, pressed, n);
+    const int clicks = self->clicks_.press(self->listView_, self->pressTime_, pressed, n,
+                                           self->pressX_, self->pressY_);
     if (clicks >= 1 && clicks <= 2 && pressed && !moved && !onArrow) {
         const GdkModifierType mods =
             gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(g));

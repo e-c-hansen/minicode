@@ -183,7 +183,7 @@ void TabStrip::onPressed(GtkGestureClick* g, int n, double x, double y, gpointer
     }
     // GTK's count is reset by a slow first click (selecting a tab shows a
     // file); the presses' event times decide too.
-    n = self->clicks_.press(g, box, n);
+    n = self->clicks_.press(g, box, n, x, y);
     if (n == 2) self->later(self->onDoubleClick, i);
     else if (n == 1) self->later(self->onSelect, i);
 }
