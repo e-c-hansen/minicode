@@ -525,8 +525,9 @@ static void testKeymapFile() {
     for (const Command &c : all()) CHECK(text.find(c.id) != std::string::npos || (c.flags & Fixed));
 }
 
-// ------------------------------------------------- the README's table
-// The keys a README cell names, spelled as the README spells them: "Shift
+// ------------------------------------------- the reference's key table
+// The keys a cell of docs/REFERENCE.md's shortcut table names, spelled as
+// it spells them (the README's short table spells them the same way): "Shift
 // Command P", "Control 1 to 9", "Option Command [", "Command equals (or
 // Command plus)". In the Linux column (`onLinux`) the words are Ctrl, Alt and
 // Shift, and Delete is the forward delete key.
@@ -607,14 +608,14 @@ static void testCommandsReadme() {
     CHECK(got.size() > 14 && got[10] == "alt+cmd+]" && got[11] == "cmd+=" && got[12] == "shift+cmd+=");
     CHECK(got.size() > 14 && got[13] == "cmd+numpad0" && got[14] == "contextmenu");
 
-    std::ifstream f("README.md");
+    std::ifstream f("docs/REFERENCE.md");
     if (!f) {
-        std::printf("  (README.md not found here; README checks skipped)\n");
+        std::printf("  (docs/REFERENCE.md not found here; its checks skipped)\n");
         return;
     }
     std::stringstream ss;
     ss << f.rdbuf();
-    const std::string readme = ss.str();
+    const std::string readme = ss.str();   // docs/REFERENCE.md
     size_t start = readme.find("| Action | macOS |");
     CHECK(start != std::string::npos);
     if (start == std::string::npos) return;
@@ -633,7 +634,7 @@ static void testCommandsReadme() {
     for (const Command &c : all())
         for (const Key &k : defaultKeys(c)) {
             bool found = listed.count(format(k)) > 0;
-            if (!found) std::printf("  README's table lacks %s (%s)\n", format(k).c_str(), c.id);
+            if (!found) std::printf("  docs/REFERENCE.md's table lacks %s (%s)\n", format(k).c_str(), c.id);
             CHECK(found);
         }
 }

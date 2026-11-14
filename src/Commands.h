@@ -228,7 +228,8 @@ bool linuxTerminalOwnKey(const Key& k);
 // the keyval a key produced and counts Shift as used up by it; the keypad's
 // plus and minus are added beside "+" and "-". None for a key with cmd.
 std::vector<std::string> linuxAccelerators(const Key& k);
-// As the shortcut hints, the status bar and README's Linux column write it:
+// As the shortcut hints, the status bar and docs/REFERENCE.md's Linux column
+// write it:
 // "Ctrl Shift P", "Ctrl `", "Shift F3", "Page Up"; with "+" between,
 // "Ctrl+Shift+H".
 std::string linuxLabel(const Key& k, const char* between = " ");

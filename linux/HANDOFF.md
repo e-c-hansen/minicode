@@ -4823,7 +4823,7 @@ Do not claim a GUI behaviour works when it was only compiled.
   the Mac's do not fit), a row in `Keys.cpp`'s `actions()` naming its
   GAction, the action itself (`addAction` in `main.cpp`), a row in
   `hintsText` if the hints should list it (its key comes from
-  `Keys::label`), and its README row (`commands:linux-readme` fails
+  `Keys::label`), and its row in `docs/REFERENCE.md` (`commands:linux-readme` fails
   without it). The menu bar and the accelerators follow from the tables,
   and the `keys` GUI suite fails when the two disagree. A plain Ctrl key or
   a key with no modifier goes to the program while the terminal has the
