@@ -4459,6 +4459,38 @@ Trap: split_editor needs the editor's full width; a browser pane an earlier suit
 - **Needs a person**: the look of the star and the book in the toolbar,
   Ctrl+click on a real desktop, the Bookmarks menu with many entries.
 
+### 67. The memory benchmark (done, November 2026)
+
+`scripts/membench-linux.sh` (`make membench-linux`) runs the Mac's workload
+(the repo copied as the project, tests/run_tests.cpp open with clangd, a bash
+terminal, demo/paper/notes.tex typeset by tectonic with the PDF on screen,
+one web page) on a release build of the GTK port (`linux/build-bench`,
+`MINICODE_BENCH`, `linux/src/Bench.cpp`) and on the VS Code snap with the
+clangd extension, Chrome and Papers. Memory is PSS from
+`/proc/<pid>/smaps_rollup` (`tools/procmem-linux.c`), since shared libraries
+(WebKitGTK, Chrome's) would be counted per process by RSS. A side is its root
+pid, its descendants and any process in the same `snap.*` scope. Each side
+runs under its own `dbus-run-session` in a private Xvfb with scratch profiles
+under `/tmp/membench-linux`; nothing appears on the desktop.
+
+Result, 2026-11-14, Ubuntu 26.04, i7-8550U, 8 cores, 23 GB, minicode 1.5.24,
+VS Code 1.145.2, Chrome 157, Papers 50.2, clangd 21.1.8; settled 60 s, median
+of 5 samples:
+
+- minicode 957 MB: clangd 504, minicode 271, WebKit (web page and PDF) 177,
+  dbus 2, shell 1, bwrap 1.
+- VS Code + Chrome + Papers 2,081 MB: VS Code 908 (main, renderer 413,
+  four node utility processes including the extension host, GPU, network),
+  clangd 503, Chrome 468 (browser, GPU, network, renderers), Papers 196,
+  cat 4, shell and dbus 2.
+
+Caveat: Xvfb has no GPU, so Chrome, Electron and WebKit draw in software;
+their numbers differ on a real desktop. The "bus can't be made" and "Failed to
+open display" lines in the logs of an earlier attempt were teardown noise:
+each app was stopped while others still ran. The script started all three
+apps under one bus without trouble, and the process lists
+(`build/membench-linux-*.procs`) show every expected process present.
+
 ### 68. The tabs' font size (done, November 2026)
 
 The owner found the tab titles much too small: `.minicode-tab` fixed

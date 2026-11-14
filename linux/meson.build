@@ -320,6 +320,8 @@ gui_sources = [
   'src/LaunchOptions.cpp',
   'src/Detach.cpp',
   # MINICODE_STARTUP_LOG=1: where the time to a usable window goes (R3).
+  # MINICODE_BENCH: the memory benchmark's workload (make membench-linux).
+  'src/Bench.cpp',
   'src/StartupLog.cpp',
   # What a window puts off until it has drawn its first frame (R3).
   'src/WhenDrawn.cpp',

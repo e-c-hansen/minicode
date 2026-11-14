@@ -94,6 +94,7 @@
 #include "Zoom.h"
 #include "ControlCommands.h"
 #include "ControlServer.h"
+#include "Bench.h"
 #include "StartupLog.h"
 
 #include <algorithm>
@@ -4302,6 +4303,31 @@ static App* newWindow(const std::string& root, const std::string& file) {
     // welcome text first. Markdown arrives rendered, the same as a click in the
     // sidebar would give (Editor::openFile decides that).
     if (!file.empty()) openFileCb(file, app);
+
+    // make membench-linux (inert unless MINICODE_BENCH is set): the workload
+    // the memory benchmark measures, driven through this first window.
+    if (Bench::active()) {
+        Bench::Hooks hooks;
+        hooks.openFile = [app](const std::string& p) {
+            if (!app->dead) app->editor->openFile(p);
+        };
+        hooks.showTerminal = [app] {
+            if (!app->dead) showTerminalQuietly(app);
+        };
+        hooks.showAddress = [app](const std::string& url) {
+#ifdef MINICODE_ENABLE_BROWSER
+            if (app->dead || !app->browser) return;
+            app->browser->openAddresses({url});
+            app->layout->showBrowser();
+#else
+            (void)url;
+#endif
+        };
+        hooks.openInNewWindow = [app](const std::string& p) {
+            if (!app->dead) newWindow(app->rootDir, p);
+        };
+        Bench::start(hooks);
+    }
 
     StartupLog::watchFrames(app->window);
     gtk_window_present(GTK_WINDOW(app->window));

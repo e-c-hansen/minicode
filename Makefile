@@ -72,7 +72,7 @@ OBJ      := $(patsubst mac/src/%,$(OBJDIR)/%.o,$(patsubst src/%,$(OBJDIR)/%.o,$(
 
 # A release build (`make dist-zip RELEASE=1`, as scripts/release.sh runs it)
 # leaves out the demo scenes and the memory benchmark (mac/src/Demo.mm,
-# mac/src/Bench.mm), which only `make demos` and `make membench` use; main.mm is
+# mac/src/Bench.mm), which only `make demos` and `make membench-mac` use; main.mm is
 # compiled with MC_RELEASE and gets their stubs from Demo.h and Bench.h. Only
 # main.mm and the link differ, so switching costs one file and a relink
 # (build/obj/variant.txt says which was built last).
@@ -107,7 +107,7 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(VARIANT)' > $(OBJDIR)/variant.txt)
 endif
 
-.PHONY: all app run test test-asan test-tsan guitest fakelsp latex-sweep install dmg dist-zip clean demos membench icon
+.PHONY: all app run test test-asan test-tsan guitest fakelsp latex-sweep install dmg dist-zip clean demos membench-mac membench-linux icon
 
 all: app
 
@@ -425,13 +425,18 @@ clean:
 	rm -rf build $(BUNDLE) $(APP).dmg $(APP).zip
 
 # Memory used by MiniCode for a day-to-day workload, against VS Code plus
-# Chrome plus Preview doing the same work; see scripts/membench.sh. Windows
+# Chrome plus Preview doing the same work; see scripts/membench-mac.sh. Windows
 # appear on screen while it runs, for a few minutes.
-build/procmem: tools/procmem.c
+build/procmem-mac: tools/procmem-mac.c
 	@mkdir -p build
 	$(CC) -O2 -Wall -Wextra $< -o $@
 
-membench: app build/procmem
-	./scripts/membench.sh
+membench-mac: app build/procmem-mac
+	./scripts/membench-mac.sh
+
+# The same workload on Linux (a private Xvfb by default; see the script).
+# Builds linux/build-bench as a release build first.
+membench-linux:
+	./scripts/membench-linux.sh
 
 -include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(ASAN_OBJ:.o=.d) $(TSAN_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(GUI_OBJ:.o=.d) $(FAKELSP_OBJ:.o=.d) $(SWEEP_OBJ:.o=.d)

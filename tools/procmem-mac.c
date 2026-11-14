@@ -1,7 +1,7 @@
 // procmem — print every process this user can see, one per line:
 //   pid <TAB> parent pid <TAB> responsible pid <TAB> physical footprint (bytes) <TAB> name
 //
-// Used by scripts/membench.sh to add up what an editor costs. The physical
+// Used by scripts/membench-mac.sh to add up what an editor costs. The physical
 // footprint is the number Activity Monitor calls "Memory": resident plus
 // compressed, without shared framework pages counted over and over the way
 // summing RSS does. The responsible pid is how macOS ties a helper started

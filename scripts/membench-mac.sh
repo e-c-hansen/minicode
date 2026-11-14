@@ -3,7 +3,7 @@
 # much the usual alternative needs for the same work: VS Code, plus Chrome for
 # the web page and Preview for the typeset PDF.
 #
-#   scripts/membench.sh            (run through `make membench`)
+#   scripts/membench-mac.sh            (run through `make membench-mac`)
 #
 #   SETTLE=60     seconds to let each setup settle before measuring
 #   SAMPLES=5     measurements per setup, 5 seconds apart; the median is kept
@@ -34,7 +34,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-PROCMEM="$REPO/build/procmem"
+PROCMEM="$REPO/build/procmem-mac"
 MINICODE="$REPO/MiniCode.app/Contents/MacOS/MiniCode"
 VSCODE_APP="/Applications/Visual Studio Code.app"
 CHROME_APP="/Applications/Google Chrome.app"
@@ -255,6 +255,6 @@ row() { sort -t$'\t' -k2 -nr "$1" | awk -F'\t' '{printf "  %-26s %6.0f MB\n", $1
     echo
     echo "VS Code + Chrome + Preview: $(total "$WORK/results/others") MB"
     row "$WORK/results/others"
-} | tee "$REPO/build/membench.txt"
+} | tee "$REPO/build/membench-mac.txt"
 echo
-echo "Saved to build/membench.txt"
+echo "Saved to build/membench-mac.txt"

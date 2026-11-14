@@ -147,7 +147,7 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     // A benchmark runs in the background, so it never takes the keyboard.
     if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
     MCDemoStart(c);   // no-op unless MINICODE_DEMO is set (make demos)
-    MCBenchStart(c);  // no-op unless MINICODE_BENCH is set (make membench)
+    MCBenchStart(c);  // no-op unless MINICODE_BENCH is set (make membench-mac)
 }
 
 // A window for every folder with backups that no window holds (a crash in a

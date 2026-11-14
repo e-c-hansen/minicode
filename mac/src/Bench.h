@@ -1,4 +1,4 @@
-// Bench.h — the MiniCode side of scripts/membench.sh.
+// Bench.h — the MiniCode side of scripts/membench-mac.sh.
 //
 // Compiled into development builds but inert: nothing runs unless
 // MINICODE_BENCH is set. A release build (`make RELEASE=1`) leaves Bench.mm

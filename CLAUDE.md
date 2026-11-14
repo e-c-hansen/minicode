@@ -101,7 +101,7 @@ opening comment says what it does in more detail than the lines below.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `mac/tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
-  [SCENES="tour latex"] [POSTERS=1]`, `make membench`, `make install` (runs `minicode
+  [SCENES="tour latex"] [POSTERS=1]`, `make membench-mac`, `make membench-linux`, `make install` (runs `minicode
   install-skill` from the checkout: `skills/minicode/SKILL.md` to
   `~/.claude/skills/minicode`; the bundle carries the skill in
   `Contents/Resources/skills`, so a Homebrew copy can install it too), `make dist-zip`,
@@ -243,9 +243,10 @@ goes here first, with tests; the GUI only displays it.
   `AgentsPanel`, `AgentPages`, `AgentWindow`, `ProcessMonitor` (libproc,
   `minicode procs`), `ProcessesPanel`.
 - `Demo` (`make demos`, inert unless `MINICODE_DEMO`), `Bench`
-  (`MINICODE_BENCH`).
+  (`MINICODE_BENCH`; the Linux port's is `linux/src/Bench.cpp`).
 - Elsewhere: `tools/minicode-cli.cpp`, `scripts/minicode-launcher`,
-  `tools/makegif.m`, `tools/procmem.c`, `skills/minicode/SKILL.md`,
+  `tools/makegif.m`, `tools/procmem-mac.c`, `tools/procmem-linux.c`,
+  `scripts/membench-mac.sh`, `scripts/membench-linux.sh`, `skills/minicode/SKILL.md`,
   `tests/fixtures/claude`, `mac/tests/gui`, `tests/latex`, `tests/markdown`,
   `tests/keepsorted`.
 
@@ -3360,16 +3361,51 @@ pid after 2 min, and runs `build/makegif`. `MINICODE_DEMO=list` lists scenes;
   free of math (the cache has no math fonts); the LaTeX scene exits 3 without
   tectonic; `links` draws the hover underline itself.
 
-## Memory benchmark (`make membench`)
+## Memory benchmark (`make membench-mac`, `make membench-linux`)
 
-`scripts/membench.sh` runs one workload on minicode and on VS Code + Chrome +
-Preview and sums each side's physical footprint (`tools/procmem.c`,
-`proc_pid_rusage`; 320 MB against 1,283 MB on 2026-09-21, in the README). A
-process belongs to a side by parent or responsible pid (WebKit's helpers are
-launchd's children); a shell-launched app makes the terminal responsible, so
-minicode starts with `open -n -g --env`. `mac/src/Bench.mm` resolves paths like the
-tree; a tiny VS Code extension types the command; `MINICODE_BENCH` skips
-activation. Check each side's breakdown before quoting a number (a first run
+Two scripts run one workload (a copy of the repo as the project,
+tests/run_tests.cpp open with clangd, a shell, demo/paper/notes.tex typeset
+by tectonic with the PDF on screen, one web page) on minicode and on the
+usual alternative, and sum each side's memory; each system's files are
+named for it (`-mac`, `-linux`).
+
+- **Mac**: `scripts/membench-mac.sh` and `tools/procmem-mac.c` (built as
+  `build/procmem-mac`): VS Code + Chrome + Preview against minicode, summing
+  the physical footprint (`proc_pid_rusage`; 320 MB against 1,283 MB on
+  2026-09-21, in the README). A process belongs to a side by parent or
+  responsible pid (WebKit's helpers are launchd's children); a shell-launched
+  app makes the terminal responsible, so minicode starts with `open -n -g
+  --env`. `mac/src/Bench.mm` resolves paths like the tree; a tiny VS Code
+  extension types the command; `MINICODE_BENCH` skips activation. Report:
+  `build/membench-mac.txt`.
+- **Linux**: `scripts/membench-linux.sh` and `tools/procmem-linux.c`
+  (`build/procmem-linux`): the VS Code snap, Chrome and GNOME's Papers
+  against a release build of the GTK port (`linux/build-bench`, made with
+  `meson setup build-bench --buildtype=release`), summing PSS, the `Pss:`
+  line of `/proc/<pid>/smaps_rollup`, which splits each shared page between
+  the processes mapping it (WebKitGTK's and Chrome's libraries are counted
+  once between them; RSS would count them per process). A side is the
+  launched root and its descendants by `/proc`'s parent pids, plus any
+  process sharing a `snap.*` systemd scope with one of them (a snap's
+  launcher can leave its children to init; `code --wait` keeps them under
+  it). The Mac needs the responsible pid because launchd starts helpers on an
+  app's behalf; here a helper is a child, so the tree is enough. Everything
+  runs in a private `Xvfb` with each side under its own `dbus-run-session`
+  and GTK, Chrome and Electron on X11 (no window on the owner's screen);
+  `MEMBENCH_DISPLAY=desktop` uses the session's display, run by the owner
+  only. A virtual display has no GPU, so Chrome, Electron and WebKit draw in
+  software and their numbers shift somewhat. `linux/src/Bench.cpp`
+  (`MINICODE_BENCH`, inert otherwise) opens the C++ file, shows the terminal
+  and the page, opens the LaTeX preview in a second window as the Mac's
+  does, and prints `minicode bench: ready`. Language servers are turned on
+  by the scratch `settings.conf` in `MINICODE_SETTINGS`. Report:
+  `build/membench-linux.txt`, with each side's process list in
+  `build/membench-linux-*.procs`. Scratch data is under
+  `/tmp/membench-linux`; processes are stopped by recorded pid, never
+  `pkill`. First complete run, 2026-11-14 (settled 60 s, 5 samples):
+  957 MB against 2,081 MB (`linux/HANDOFF.md` item 67).
+
+Check each side's breakdown before quoting a number (a first Mac run
 "measured" 55 MB with clangd and WebKit missing).
 
 ## Verification reality (important)
