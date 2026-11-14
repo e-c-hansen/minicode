@@ -3457,7 +3457,9 @@ named for it (`-mac`, `-linux`).
   `build/membench-linux-*.procs`. Scratch data is under
   `/tmp/membench-linux`; processes are stopped by recorded pid, never
   `pkill`. First complete run, 2026-11-14 (settled 60 s, 5 samples):
-  957 MB against 2,081 MB (`linux/HANDOFF.md` item 67).
+  957 MB against 2,081 MB (`linux/HANDOFF.md` item 67; in the README's
+  Memory section beside the Mac's, each table compared only within itself,
+  since PSS and the physical footprint count differently).
 
 Check each side's breakdown before quoting a number (a first Mac run
 "measured" 55 MB with clangd and WebKit missing).

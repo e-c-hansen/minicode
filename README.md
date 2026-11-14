@@ -2,7 +2,7 @@
 
 minicode is a file browser that opens everything in place, in one window you drive from the keyboard. Each file opens where you are: code in an editor with language servers behind it, Markdown and LaTeX as pages you can edit, and PDFs, pictures, video, spreadsheets, and databases in viewers of their own. A terminal, a browser, a git panel, and a dashboard of what your Claude Code sessions did are a keystroke away. It runs on macOS and Linux.
 
-Web pages, PDFs, video, and documents such as Word and Keynote files are shown by the operating system's own components: WebKit, PDFKit, AVKit, and Quick Look on the Mac, and WebKitGTK, poppler, and GStreamer on Linux. The rest is written from scratch, with no third-party libraries: the editor, a syntax highlighter for over 200 languages, the language server client, the Markdown renderer, the git panel, and on the Mac the terminal emulator (Linux uses VTE). On the Mac it is a download of under 4 MB, and on the same work it used 320 MB of memory where VS Code, Chrome, and Preview together used 1,283 MB, about a quarter as much.
+Web pages, PDFs, video, and documents such as Word and Keynote files are shown by the operating system's own components: WebKit, PDFKit, AVKit, and Quick Look on the Mac, and WebKitGTK, poppler, and GStreamer on Linux. The rest is written from scratch, with no third-party libraries: the editor, a syntax highlighter for over 200 languages, the language server client, the Markdown renderer, the git panel, and on the Mac the terminal emulator (Linux uses VTE). On the Mac it is a download of under 4 MB, and on the same work it used 320 MB of memory where VS Code, Chrome, and Preview together used 1,283 MB, about a quarter as much. On Linux it used less than half of what VS Code, Chrome, and Papers did.
 
 ![Clicking through the demo folder in minicode](docs/demos/tour.gif)
 
@@ -64,14 +64,25 @@ Settings are one text file, opened by Command comma and applied when saved. Ever
 
 ## Memory
 
-The benchmark is a simple workload on this repository: clangd on a C++ file, some work in the terminal, typesetting a LaTeX document, and loading a Wikipedia page. The numbers are the RAM footprint on an M3 Mac with 16 GB, measured after a minute of settling, on 21 September 2026 with minicode 1.3.3, VS Code 1.107.1, and Chrome 153:
+The benchmark is a simple workload on this repository: clangd on a C++ file, some work in the terminal, typesetting a LaTeX document, and loading a web page. Both sides run the same clangd.
+
+On the Mac, the numbers are the RAM footprint on an M3 Mac with 16 GB, measured after a minute of settling, on 21 September 2026 with minicode 1.3.3, VS Code 1.107.1, and Chrome 153:
 
 |   | Memory |
 | --- | --- |
 | minicode | 320 MB |
 | VS Code, Chrome and Preview | 1,283 MB |
 
-Both sides run the same clangd. minicode has gained many features since 1.3.3 and has not been measured again; make membench runs the same workload on scratch profiles, so you can measure the version you have. On disk, MiniCode.app 1.5.15 is 8.6 MB and Visual Studio Code.app 1.107.1 is 659 MB.
+minicode has gained many features since 1.3.3 and has not been measured again on the Mac. On disk, MiniCode.app 1.5.15 is 8.6 MB and Visual Studio Code.app 1.107.1 is 659 MB.
+
+On Linux, the numbers are the proportional set size (PSS), the median of five samples after a minute of settling, on an i7-8550U with Ubuntu 26.04 and a virtual display with no GPU, on 14 November 2026 with minicode 1.5.24, VS Code 1.145.2, Chrome 157, and Papers 50.2:
+
+|   | Memory | Without clangd |
+| --- | --- | --- |
+| minicode | 957 MB | 453 MB |
+| VS Code, Chrome and Papers | 2,081 MB | 1,578 MB |
+
+The two systems count memory differently, so compare each table only within itself. `make membench-mac` and `make membench-linux` run the workload on scratch profiles, so you can measure the version you have.
 
 ## Get started
 
