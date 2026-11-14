@@ -303,5 +303,17 @@ static void testLspInlayHints() {
               !Settings::inlayHintsShown(M::OnUnlessPressed, true));
         CHECK(!Settings::inlayHintsShown(M::OffUnlessPressed, false) &&
               Settings::inlayHintsShown(M::OffUnlessPressed, true));
+        // Parameter names are left out unless asked for, and the filter
+        // keeps every other kind.
+        CHECK(!d.inlayHintParameterNames() && !un.inlayHintParameterNames());
+        CHECK(parseSettings("editor.inlay-hint-parameter-names = on\n").inlayHintParameterNames());
+        std::vector<Lsp::InlayHint> hs = Lsp::parseInlayHints(parsed(
+            "[{\"position\":{\"line\":0,\"character\":6},\"label\":\"order_id=\",\"kind\":2},"
+            "{\"position\":{\"line\":0,\"character\":1},\"label\":\": B\",\"kind\":1},"
+            "{\"position\":{\"line\":0,\"character\":9},\"label\":\"side=\",\"kind\":2},"
+            "{\"position\":{\"line\":1,\"character\":0},\"label\":\"other\"}]"));
+        CHECK(hs.size() == 4);
+        Lsp::dropParameterHints(hs);
+        CHECK(hs.size() == 2 && hs[0].label == ": B" && hs[1].label == "other");
     }
 }

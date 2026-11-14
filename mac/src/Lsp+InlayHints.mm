@@ -117,6 +117,7 @@ static NSUInteger InlayLineEnd(NSString *s, NSUInteger i) {
     MCInlayWatchModifiers();
     _inlayShown = Settings::inlayHintsShown([AppSettings shared].settings.inlayHintsMode(),
                                             gInlayPressed);
+    _inlayParameterNames = [AppSettings shared].settings.inlayHintParameterNames();
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
     [nc addObserver:self selector:@selector(inlayHintsTextEdited:)
                name:NSTextStorageDidProcessEditingNotification object:_tv.textStorage];
@@ -174,7 +175,14 @@ static NSUInteger InlayLineEnd(NSString *s, NSUInteger i) {
     (void)note;
     const BOOL shown = Settings::inlayHintsShown([AppSettings shared].settings.inlayHintsMode(),
                                                  gInlayPressed);
-    if (shown == _inlayShown) return;
+    // editor.inlay-hint-parameter-names turned over: ask again.
+    const BOOL names = [AppSettings shared].settings.inlayHintParameterNames();
+    const BOOL namesChanged = names != _inlayParameterNames;
+    _inlayParameterNames = names;
+    if (shown == _inlayShown) {
+        if (shown && namesChanged) [self scheduleInlayHints:0];
+        return;
+    }
     _inlayShown = shown;
     if (shown) [self scheduleInlayHints:0];
     else [self clearInlayHints];
@@ -314,6 +322,7 @@ static NSUInteger InlayLineEnd(NSString *s, NSUInteger i) {
             return;
         me->_inlayEdits = edits;
         std::vector<Lsp::InlayHint> hints = Lsp::parseInlayHints(result);
+        if (![AppSettings shared].settings.inlayHintParameterNames()) Lsp::dropParameterHints(hints);
         Lsp::shortenInlayLabels(hints);
         [me->_tv.inlayHints showHints:hints
                                placed:Lsp::placeInlayHints(hints, *window, a, firstLine)];

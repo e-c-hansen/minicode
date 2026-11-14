@@ -3962,8 +3962,8 @@ void testSettings() {
     // syntax.escape and syntax.self, terminal.cursor-style, the two
     // workbench.enable-preview keys, markdown.max-width, and
     // browser.bookmarks.
-    // control.page-input.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 126);
+    // control.page-input, and editor.inlay-hint-parameter-names.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 127);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new

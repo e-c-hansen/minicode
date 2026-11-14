@@ -1713,7 +1713,10 @@ view is disposed (on `unrealize`), or dispose loops forever.
   by any edit, and an answer for older text is dropped), when scrolling
   leaves the window asked about, and on `workspace/inlayHint/refresh`.
   Only a Ready server that offers them is asked. `shortenInlayLabels` is
-  VS Code's maximumLength 43 per line. A hint after a word follows it when
+  VS Code's maximumLength 43 per line. Parameter-name hints (kind 2) are
+  dropped unless `editor.inlay-hint-parameter-names` (off; the owner's
+  call, 2026-11-14: they made lines too long, and no formatter counts
+  them; `Lsp::dropParameterHints`). A hint after a word follows it when
   typing lands right at it; one before an argument stays put
   (`followsBefore`). A hint at a line's start goes with what follows it and
   is a line-start gap (see "Gaps"); only one at the start of an empty last
