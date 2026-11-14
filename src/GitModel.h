@@ -3,7 +3,7 @@
 // the two change lists, the line about what is pushed, the argument vectors
 // for every command it runs, where the selection goes after a refresh, the
 // tooltips, the commit graph, and the diff and commit text with a style per
-// run. The panels run git and draw: the Mac's src/GitPanel.mm, the GTK
+// run. The panels run git and draw: the Mac's mac/src/GitPanel.mm, the GTK
 // port's linux/src/GitPanel.cpp and Android's git_jni.cpp. Tested in
 // tests/gitmodel_tests.inc (`git-ui:*`). See "Git panel" in CLAUDE.md.
 #pragma once

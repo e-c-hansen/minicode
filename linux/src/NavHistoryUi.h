@@ -1,7 +1,7 @@
 // NavHistoryUi.h — Go Back and Go Forward in the GTK port (linux/PARITY.md
 // item 1.11; VS Code's Linux Ctrl+Alt+- and Ctrl+Shift+-): one per window,
 // the host of the core's Nav::Recorder (../src/NavRecorder.h, over
-// NavHistory.h's rules), as the Mac's MCNavigator (src/Navigation.mm) is.
+// NavHistory.h's rules), as the Mac's MCNavigator (mac/src/Navigation.mm) is.
 //
 // What it records, as the Mac does, of what the port has: a tab switch
 // (every way of switching: the strip, the keys, Quick Open, the tree,

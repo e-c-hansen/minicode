@@ -1,7 +1,7 @@
 // Harness.h — offscreen GUI checks for the macOS app (`make guitest`).
 //
 // build/guitest is the whole app (every src/*.mm and .cpp, with main.mm's
-// main renamed minicode_main) plus the suites in tests/gui/*.mm. It never
+// main renamed minicode_main) plus the suites in mac/tests/gui/*.mm. It never
 // puts a window on screen or activates the app, so it runs while someone
 // works at the Mac, and in the macOS CI job:
 //

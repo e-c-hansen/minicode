@@ -1,7 +1,7 @@
 // Lsp.cpp — see Lsp.h. The session's life: made with its parts, the buffer
 // on show it holds, positions in it, the view's key controller, and the
 // popovers' teardown. The parts are LspSession*.cpp (Lsp.h lists them); the
-// server processes are LspProcess.cpp. The macOS counterpart is src/Lsp.mm,
+// server processes are LspProcess.cpp. The macOS counterpart is mac/src/Lsp.mm,
 // and the behaviour follows it closely.
 #include "LspSessionPrivate.h"
 

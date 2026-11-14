@@ -1,4 +1,4 @@
-# fake_lsp.py — a scripted language server for tests/gui/LanguageSuite.mm.
+# fake_lsp.py — a scripted language server for mac/tests/gui/LanguageSuite.mm.
 #
 #   python3 fake_lsp.py SCRIPT.json LOG.jsonl
 #

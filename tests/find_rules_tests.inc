@@ -272,9 +272,9 @@ static void testEditSpansAndFindRules() {
         CHECK(FindRules::currentMatch(true) != FindRules::currentMatch(false));
         // The Mac's table (FindWidget.mm's kPalettes) and this one agree,
         // number for number, so the two ports' bars look alike.
-        std::ifstream mm("src/FindWidget.mm");
+        std::ifstream mm("mac/src/FindWidget.mm");
         if (!mm) {
-            std::printf("  (src/FindWidget.mm not found here; palette mirror skipped)\n");
+            std::printf("  (mac/src/FindWidget.mm not found here; palette mirror skipped)\n");
         } else {
             std::stringstream ss;
             ss << mm.rdbuf();

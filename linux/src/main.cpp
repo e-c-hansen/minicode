@@ -4708,5 +4708,5 @@ int main(int argc, char** argv) {
 // What the GUI checks may reach of this file (linux/tests/gui/AppSeam.h),
 // compiled only into minicode-guitest.
 #ifdef MINICODE_GUITEST
-#include "../tests/gui/AppSeam.inc"
+#include "../mac/tests/gui/AppSeam.inc"
 #endif

@@ -1,5 +1,5 @@
 // ProcessesPanel.h — the Processes panel (PARITY.md item 3.8, part two; the
-// Mac's MCProcessesPanel in src/ProcessesPanel.mm). It takes the file tree's
+// Mac's MCProcessesPanel in mac/src/ProcessesPanel.mm). It takes the file tree's
 // place in the sidebar as the Source Control panel does (main.cpp's
 // act_toggle_processes). Its rows come from ProcessMonitor::view for this
 // window, grouped as the core's buildView says: each terminal, orphans (their

@@ -1,5 +1,5 @@
 // AgentModel.h — one window's view of the agents that worked in its folder
-// (PARITY.md item 3.5, part one; the Mac's MCAgentModel in src/AgentModel.mm).
+// (PARITY.md item 3.5, part one; the Mac's MCAgentModel in mac/src/AgentModel.mm).
 // The core's AgentIndex lives on a worker thread of its own (it is not
 // thread-safe and its rows point into it); what the main loop sees is an
 // immutable Snapshot copied out of it and handed over with g_idle_add.

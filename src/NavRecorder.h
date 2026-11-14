@@ -1,6 +1,6 @@
 // NavRecorder.h — pure C++. What a window records for Go Back and Go
 // Forward, over NavHistory.h's rules: the Mac's MCNavigator
-// (src/Navigation.mm) as a class any port drives. The GTK port's
+// (mac/src/Navigation.mm) as a class any port drives. The GTK port's
 // linux/src/NavHistoryUi.cpp is its host; the Mac keeps its own, which this
 // follows rule for rule.
 //

@@ -1,5 +1,5 @@
 // GitGutter.h — the editor's change bars on Linux, linux/PARITY.md item
-// 2.10: the GTK counterpart of the Mac's MCGitGutter (src/GitGutter.mm),
+// 2.10: the GTK counterpart of the Mac's MCGitGutter (mac/src/GitGutter.mm),
 // over the core's QuickDiff.h, as VS Code's quick diff draws them. Which
 // lines of the file on show were added or changed against the version in
 // git's index, and where lines were deleted, in the gutter's change lane

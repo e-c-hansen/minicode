@@ -1,5 +1,5 @@
 // FindBar.cpp — see FindBar.h. The steps follow the Mac's MCEditorFind
-// (src/EditorFind.mm) one for one where GTK allows; the rules themselves
+// (mac/src/EditorFind.mm) one for one where GTK allows; the rules themselves
 // are FindRules.h's.
 #include "FindBar.h"
 

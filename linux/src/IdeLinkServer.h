@@ -1,5 +1,5 @@
 // IdeLinkServer.h — the Claude Code IDE link for one window, the GTK port's
-// counterpart of the Mac's MCIdeLink (src/IdeLinkServer.mm), PARITY.md item
+// counterpart of the Mac's MCIdeLink (mac/src/IdeLinkServer.mm), PARITY.md item
 // 3.9: Claude Code's `/ide` answered per window, as VS Code's extension does.
 // The protocol is the core's IdeLink.h; this is the sockets on the GLib main
 // loop (127.0.0.1 only, no thread), the lock file, and the tools mapped onto

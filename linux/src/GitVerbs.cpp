@@ -1,5 +1,5 @@
 // GitVerbs.cpp — the Source Control panel's commands (PARITY.md 2.9), the
-// Mac's in src/GitPanel.mm: Fetch, Pull, Push and Sync, and autofetch; Stage
+// Mac's in mac/src/GitPanel.mm: Fetch, Pull, Push and Sync, and autofetch; Stage
 // All and Unstage All; Discard Changes, one row or several, with the file as
 // it was in the Trash (GitTrash.h), and Undo Discard; a hunk's or the
 // selected lines' Stage, Unstage and Discard; the branch picker; Commit and

@@ -1,4 +1,4 @@
-// GitGutter.cpp — see GitGutter.h. The Mac's src/GitGutter.mm, step for
+// GitGutter.cpp — see GitGutter.h. The Mac's mac/src/GitGutter.mm, step for
 // step where GTK allows.
 #include "GitGutter.h"
 

@@ -1,5 +1,5 @@
 // AgentsPanel.h — the Agents panel (PARITY.md item 3.5, part one; the Mac's
-// MCAgentsPanel in src/AgentsPanel.mm). It takes the file tree's place in the
+// MCAgentsPanel in mac/src/AgentsPanel.mm). It takes the file tree's place in the
 // sidebar as the Processes panel does (main.cpp's act_toggle_agents). Rows
 // come from AgentModel: each session that worked in the window's folder,
 // newest first, with its subagents nested; a session opens to the files it

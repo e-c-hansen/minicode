@@ -16,7 +16,7 @@
 #import "AppSettings.h"
 #import "ControlServer.h"
 
-int minicode_main(int argc, const char *argv[]);   // src/main.mm, renamed
+int minicode_main(int argc, const char *argv[]);   // mac/src/main.mm, renamed
 
 // ------------------------------------------------------------- registry
 namespace {

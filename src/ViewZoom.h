@@ -1,6 +1,6 @@
 // ViewZoom.h — pure C++. The editor's zoom, the terminals' zoom and the
 // word wrap toggle, as rules a port shows. The GTK port keeps its state in
-// linux/src/Zoom.cpp; the Mac keeps its own (src/EditorFont.mm, its zoom in
+// linux/src/Zoom.cpp; the Mac keeps its own (mac/src/EditorFont.mm, its zoom in
 // the user defaults), which these follow rule for rule.
 //
 // The editor's text is its base size (editor.font-size) plus the zoom,
@@ -42,7 +42,7 @@ double zoomed(double points, double zoom);
 // A web page's zoom after a step in (dir > 0) or out (dir < 0), on
 // Safari's steps from 50% to 300%; a zoom between steps goes to the next
 // step that way, and one past an end stays where it is; dir 0 is 100%. The
-// Mac's MCZoomStep (src/PageZoom.mm).
+// Mac's MCZoomStep (mac/src/PageZoom.mm).
 double pageStep(double zoom, int dir);
 
 // What a port keeps between runs: both zooms, in points.

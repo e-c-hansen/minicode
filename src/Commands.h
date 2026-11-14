@@ -27,7 +27,7 @@
 // unshifted punctuation `-=[]\;',./, f1 to f20, up, down, left, right, home,
 // end, pageup, pagedown, enter (Return), tab, space, escape, backspace,
 // delete (forward), numpad0 to numpad9 and contextmenu (a PC keyboard's Menu
-// key). Pure C++, no I/O; src/Keymap.mm puts the result on the menus.
+// key). Pure C++, no I/O; mac/src/Keymap.mm puts the result on the menus.
 //
 // The keys in each row are the Mac's. The GTK port's are a table of their
 // own, src/CommandsLinux.cpp (linux/PARITY.md, D1), in the same notation and

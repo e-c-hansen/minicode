@@ -1,7 +1,7 @@
 // CodeView.h — the editor's GtkTextView, linux/PARITY.md item 1.4 (D4): a
 // subclass that does the editor's own drawing in snapshot_layer, and holds
 // the line-number gutter (Gutter.h) in its left border window. The Mac's
-// counterpart is CodeTextView (src/CodeTextView.mm), whose
+// counterpart is CodeTextView (mac/src/CodeTextView.mm), whose
 // drawViewBackgroundInRect: and drawRect: do the same jobs.
 //
 // Drawing passes: what the editor draws itself goes in a pass, a function

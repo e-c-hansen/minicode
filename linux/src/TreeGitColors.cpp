@@ -1,4 +1,4 @@
-// TreeGitColors.cpp — see TreeGitColors.h. The Mac's src/TreeGitColors.mm,
+// TreeGitColors.cpp — see TreeGitColors.h. The Mac's mac/src/TreeGitColors.mm,
 // step for step, with a watch on the git folder added (GIO's monitors are
 // not recursive).
 #include "TreeGitColors.h"

@@ -1,5 +1,5 @@
 // EvidencePage.h — the Evidence view of one agent session (PARITY.md item
-// 3.5, part two; the Mac's MCEvidencePage in src/AgentPages.mm), a page in an
+// 3.5, part two; the Mac's MCEvidencePage in mac/src/AgentPages.mm), a page in an
 // editor tab (EditorPage.h). The session's final message sits beside the last
 // test command's result; below, every shell command the agent ran, in order,
 // with what it said it was for, whether it failed, and the first and last 20

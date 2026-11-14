@@ -39,7 +39,7 @@ jobs:
         timeout-minutes: 10
         run: make latex-sweep
 
-      # The app driven offscreen (tests/gui/Harness.h): no window ever
+      # The app driven offscreen (mac/tests/gui/Harness.h): no window ever
       # reaches the screen, and the run has its own home, settings and
       # temporary folder. The language server checks talk to a scripted
       # server (tests/fakelsp) that make guitest builds, so none of them

@@ -1,5 +1,5 @@
 // CompareView.h — a side-by-side diff in the editor's slot, the Mac's
-// MCCompareView (src/CompareView.mm), linux/PARITY.md item 3.2: the old text
+// MCCompareView (mac/src/CompareView.mm), linux/PARITY.md item 3.2: the old text
 // on the left, the new on the right, each read-only with its line numbers,
 // lined up row by row (ComparePanes.h) so equal lines sit side by side and a
 // line only one side has faces a hatched filler row. Removed lines are tinted

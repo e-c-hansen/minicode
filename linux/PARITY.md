@@ -1504,8 +1504,8 @@ These may run in parallel.
   `bookmarks:*`; not yet in `meson.build` or the Makefile). Added to the
   Mac in 1.5.20 and 1.5.22, after this file was written. Mac: "Bookmarks
   and the browser window" in `../CLAUDE.md`, `src/Bookmarks.{h,mm}`,
-  `src/EditorController+Bookmarks.mm`, the toolbar in `src/Browser.mm`,
-  the Bookmarks menu in `src/main.mm`, and the `bookmarks` GUI suite.
+  `mac/src/EditorController+Bookmarks.mm`, the toolbar in `mac/src/Browser.mm`,
+  the Bookmarks menu in `mac/src/main.mm`, and the `bookmarks` GUI suite.
   What it needs:
   - A bookmark is a `.url` file (the Internet Shortcut); `.webloc` files
     are read too. The core reads XML ones; a binary `.webloc` (bplist) is

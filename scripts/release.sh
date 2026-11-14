@@ -168,7 +168,7 @@ fi
 echo "==> Running the core tests"
 make test
 
-# The GUI checks (tests/gui) take a few minutes and put no window on screen.
+# The GUI checks (mac/tests/gui) take a few minutes and put no window on screen.
 # CI runs them on every push; when it has passed on this commit they are not
 # run again here.
 HEAD_SHA="$(git rev-parse HEAD)"

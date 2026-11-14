@@ -1,6 +1,6 @@
 // SnippetSession.h — the tab stops of a snippet completion in the editor's
 // text view (linux/PARITY.md item 2.5), the GTK port's counterpart of the
-// Mac's MCSnippetSession (src/SnippetSession.mm). The text logic is the
+// Mac's MCSnippetSession (mac/src/SnippetSession.mm). The text logic is the
 // core's Snippet::Session (src/Snippet.h), the same on both, here in
 // characters (Snippet::inCodePoints), which is what GtkTextIter counts.
 //

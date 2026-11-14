@@ -4,7 +4,9 @@
 APP      := MiniCode
 BUNDLE   := $(APP).app
 BIN      := build/$(APP)
-SRC      := $(wildcard src/*.mm) $(wildcard src/*.cpp)
+# The Mac app (mac/src) over the shared core (src), which the Linux and
+# Android ports build too.
+SRC      := $(wildcard mac/src/*.mm) $(wildcard src/*.cpp)
 
 # clang++ on the Mac, where it is the only compiler that builds the app. On
 # other systems (the Linux CI job runs `make test`) keep make's default, g++,
@@ -27,7 +29,7 @@ ifeq ($(shell uname -s),Darwin)
     MINFLAGS += -Werror=unguarded-availability-new
   endif
 endif
-CXXFLAGS := -std=c++17 -fobjc-arc -Wall -Wextra -O2 -Isrc $(MINFLAGS)
+CXXFLAGS := -std=c++17 -fobjc-arc -Wall -Wextra -O2 -Isrc -Imac/src $(MINFLAGS)
 LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices \
             -framework Quartz -framework AVKit -framework AVFoundation \
             -framework CoreMedia -framework Carbon -lz -lsqlite3
@@ -66,11 +68,11 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
 # one file rebuilds that file and relinks. A change to the compiler or the
 # flags rebuilds everything (build/obj/flags.txt keeps the last command).
 OBJDIR   := build/obj
-OBJ      := $(patsubst src/%,$(OBJDIR)/%.o,$(SRC))
+OBJ      := $(patsubst mac/src/%,$(OBJDIR)/%.o,$(patsubst src/%,$(OBJDIR)/%.o,$(SRC)))
 
 # A release build (`make dist-zip RELEASE=1`, as scripts/release.sh runs it)
-# leaves out the demo scenes and the memory benchmark (src/Demo.mm,
-# src/Bench.mm), which only `make demos` and `make membench` use; main.mm is
+# leaves out the demo scenes and the memory benchmark (mac/src/Demo.mm,
+# mac/src/Bench.mm), which only `make demos` and `make membench` use; main.mm is
 # compiled with MC_RELEASE and gets their stubs from Demo.h and Bench.h. Only
 # main.mm and the link differ, so switching costs one file and a relink
 # (build/obj/variant.txt says which was built last).
@@ -152,11 +154,11 @@ $(OBJDIR)/flags.txt:
 $(OBJDIR)/variant.txt:
 	@mkdir -p $(@D) && printf '%s\n' '$(VARIANT)' > $@
 
-$(OBJDIR)/main.mm.o: src/main.mm $(OBJDIR)/flags.txt $(OBJDIR)/variant.txt
+$(OBJDIR)/main.mm.o: mac/src/main.mm $(OBJDIR)/flags.txt $(OBJDIR)/variant.txt
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS)$(if $(RELEASE), -DMC_RELEASE) -MMD -MP -c $< -o $@
 
-$(OBJDIR)/%.mm.o: src/%.mm $(OBJDIR)/flags.txt
+$(OBJDIR)/%.mm.o: mac/src/%.mm $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
@@ -318,22 +320,22 @@ $(TSANDIR)/%.cpp.o: src/%.cpp $(TSANDIR)/flags.txt
 	@mkdir -p $(@D)
 	$(CXX) $(TSANFLAGS) -MMD -MP -c $< -o $@
 
-# GUI checks (tests/gui, see tests/gui/README.md): the whole app, main.mm
+# GUI checks (mac/tests/gui, see mac/tests/gui/Harness.h): the whole app, main.mm
 # included as minicode_main, driven offscreen by a harness that never puts
 # a window on screen or activates the app. `make guitest SUITES=control`
 # runs one suite.
 GUIDIR  := build/gui-obj
-GUI_SRC := $(wildcard tests/gui/*.mm)
-GUI_OBJ := $(patsubst tests/gui/%,$(GUIDIR)/%.o,$(GUI_SRC)) $(GUIDIR)/main.mm.o \
+GUI_SRC := $(wildcard mac/tests/gui/*.mm)
+GUI_OBJ := $(patsubst mac/tests/gui/%,$(GUIDIR)/%.o,$(GUI_SRC)) $(GUIDIR)/main.mm.o \
            $(filter-out $(OBJDIR)/main.mm.o,$(OBJ))
 
-$(GUIDIR)/main.mm.o: src/main.mm $(OBJDIR)/flags.txt
+$(GUIDIR)/main.mm.o: mac/src/main.mm $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Dmain=minicode_main -MMD -MP -c $< -o $@
 
-$(GUIDIR)/%.mm.o: tests/gui/%.mm $(OBJDIR)/flags.txt
+$(GUIDIR)/%.mm.o: mac/tests/gui/%.mm $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -Itests/gui -MMD -MP -c $< -o $@
+	$(CXX) $(CXXFLAGS) -Imac/tests/gui -MMD -MP -c $< -o $@
 
 build/guitest: $(GUI_OBJ)
 	$(CXX) $(CXXFLAGS) $(GUI_OBJ) $(LDFLAGS) -o $@
@@ -397,7 +399,7 @@ icon:
 	@echo "Regenerated resources/AppIcon.icns"
 
 # Record the README's demo GIFs (docs/demos/*.gif) by playing scripted scenes
-# in the real app; see src/Demo.mm and scripts/demos.sh. Windows appear on
+# in the real app; see mac/src/Demo.mm and scripts/demos.sh. Windows appear on
 # screen while it runs. `make demos SCENES="tour latex"` records just those;
 # POSTERS=1 also writes a still PNG of each.
 build/makegif: tools/makegif.m

@@ -1,5 +1,5 @@
 // ComparePanes.h — what the compare view shows, worked out without GTK (the
-// Mac's MCComparison prepare, src/CompareView.mm): two texts lined up row by
+// Mac's MCComparison prepare, mac/src/CompareView.mm): two texts lined up row by
 // row (SideBySide::align), each pane's text as UTF-8 with its syntax colors
 // (by the file's name; plain past 2 MB a side) and the words that changed
 // inside the changed rows (budgeted), all as byte offsets into the pane's

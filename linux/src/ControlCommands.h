@@ -1,5 +1,5 @@
 // ControlCommands.h — the control channel's handlers for the GTK port
-// (PARITY.md 3.1; the Mac's are src/ControlCommands.mm): ping, window, open,
+// (PARITY.md 3.1; the Mac's are mac/src/ControlCommands.mm): ping, window, open,
 // state and selection. Every other command in ControlProtocol's table is
 // registered too and answers "not on Linux yet", so the table never makes a
 // crash and an agent reads what is missing.

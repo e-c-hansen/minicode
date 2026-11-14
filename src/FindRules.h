@@ -3,7 +3,7 @@
 // search with Find in Selection's scope, the changes Replace and Replace
 // All make, and the colors of each theme. The GTK port's bar
 // (linux/src/FindBar.cpp) follows it. The Mac's MCEditorFind
-// (src/EditorFind.mm), which came first, keeps the same rules in its own
+// (mac/src/EditorFind.mm), which came first, keeps the same rules in its own
 // code; nothing here changes it. Pure C++17 over TextFind.h, no I/O.
 //
 // Positions: the search runs on UTF-16, as TextFind does, and every match
