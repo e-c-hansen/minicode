@@ -18,6 +18,7 @@
 #include "AutoCloseInput.h"
 #include "Editor.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -90,6 +91,32 @@ void unwatchInserts() {
 }
 
 double gCpu0 = 0, gKeyMs[2] = {0, 0};
+
+// Waits until the main thread has had 300 ms with under 3 ms of CPU, so what
+// a settings change sets off (GTK restyling and laying out the 100,000-line
+// view after the theme's CSS is replaced, on later frames) is over before the
+// clock starts; it was inside the timed window, and on CI's runner made
+// typing with auto-closing 37 ms a key against 5 (51ad82f). Gives up quietly
+// after 5 s, as the check below still bounds what it measures.
+void waitForQuiet(const std::string& what) {
+    auto start = std::make_shared<double>(0), since = std::make_shared<double>(0),
+         cpu0 = std::make_shared<double>(0);
+    MCGuiWait(what, 10, [=] {
+        const double now = MCGuiNowMs(), cpu = MCGuiThreadCpuMs();
+        if (*start == 0) {
+            *start = *since = now;
+            *cpu0 = cpu;
+            return false;
+        }
+        if (now - *start > 5000) return true;
+        if (cpu - *cpu0 > 3) {
+            *since = now;
+            *cpu0 = cpu;
+            return false;
+        }
+        return now - *since >= 300;
+    });
+}
 size_t gBigChars = 0;
 int gFrames = 0;
 guint gTick = 0;
@@ -318,8 +345,11 @@ MC_GUI_SUITE(auto_close) {
     // from it failed.
     for (int round = 0; round < 4; round++) {
         const int on = round % 2 == 0;
-        MCGuiStep(on ? "( and a space, five times" : "again with the setting off", [on] {
+        MCGuiStep(on ? "auto-closing on" : "auto-closing off", [on] {
             MCGuiSetSettings(std::string(kBase) + (on ? "" : "editor.auto-close = off\n"));
+        });
+        waitForQuiet("the settings change has settled");
+        MCGuiStep(on ? "( and a space, five times" : "again with the setting off", [] {
             gCpu0 = MCGuiThreadCpuMs();
             MCGuiType("( ( ( ( ( ");
         });
