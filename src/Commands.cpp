@@ -591,6 +591,11 @@ const std::vector<Command>& all() {
         // ---- Terminal
         {"workbench.action.terminal.new", "New Terminal", "Terminal", "ctrl+shift+`", A,
          "newTerminal:", 0, Global, nullptr},
+        // Terminal.app's and iTerm's new tab, while a terminal has the
+        // keyboard (the owner's ask, 2026-11-14); elsewhere Cmd+T stays Go
+        // to Symbol in Workspace. Only the terminal panel answers it.
+        {"minicode.terminal.newTab", "New Terminal Tab", "Terminal", "cmd+t", T,
+         "newTerminalTab:", 0, 0, "the terminal (Terminal > New Terminal opens one from anywhere)"},
         {"workbench.action.terminal.split", "Split Terminal", "Terminal", "cmd+\\", T,
          "splitTerminal:", 0, 0, nullptr},
         // VS Code's terminal groups take one direction from the panel's
@@ -608,6 +613,10 @@ const std::vector<Command>& all() {
          "nextWaitingTerminal:", 0, 0, nullptr},
         {"workbench.action.terminal.clear", "Clear Terminal", "Terminal", "cmd+k", T,
          "clearTerminal:", 0, 0, nullptr},
+        // Terminal.app's Clear to Previous Mark, on its key; VS Code has no
+        // such command. Cmd+L stays Select Line in the editor.
+        {"minicode.terminal.clearToPreviousMark", "Clear to Previous Mark", "Terminal", "cmd+l",
+         T, "clearToPreviousMark:", 0, 0, nullptr},
         // VS Code has no key for it either.
         {"workbench.action.terminal.copyLastCommandOutput", "Copy Last Command Output",
          "Terminal", "", T, "copyLastCommandOutput:", 0, 0, nullptr},
@@ -651,8 +660,9 @@ const std::vector<Command>& all() {
          0, nullptr},
         {"workbench.action.gotoSymbol", "Go to Symbol in File…", "Navigate", "shift+cmd+o", A,
          "goToSymbolInFile:", 0, 0, nullptr},
-        // In the browser's page Cmd+T is New Browser Tab, as in Safari.
-        {"workbench.action.showAllSymbols", "Go to Symbol in Workspace…", "Navigate", "cmd+t", NP,
+        // In the browser's page Cmd+T is New Browser Tab, as in Safari, and
+        // in the terminal New Terminal Tab, as in Terminal.app.
+        {"workbench.action.showAllSymbols", "Go to Symbol in Workspace…", "Navigate", "cmd+t", NPT,
          "goToSymbolInWorkspace:", 0, 0, nullptr},
         {"workbench.action.navigateBack", "Go Back", "Navigate", "ctrl+-", A, "navigateBack:", 0,
          0, nullptr},

@@ -20,6 +20,7 @@
 //   - Tabs drag to a new place along the strip, and Move Terminal Left and
 //     Right move them, each terminal keeping its shell (`echo $$`).
 #import "Harness.h"
+#import "PalettePanel.h"
 #import "EditorController.h"
 #import "EditorPanes.h"
 #import "TabStrip.h"
@@ -314,6 +315,20 @@ MC_GUI_SUITE(terminal_splits) {
         GCHECK(MCGuiPerformMenuKey(s.c.window, kVK_ANSI_LeftBracket,
                                    NSEventModifierFlagOption | NSEventModifierFlagCommand, nil, nil));
         GCHECK([s.t2 hasFocus] && s.panel.activeTerminal == s.t2);
+    });
+
+    // ---- Cmd+T in a terminal: a new terminal tab (Go to Symbol elsewhere)
+    MCGuiStep(@"Cmd+T in a terminal opens a terminal tab, which is closed again", ^{
+        [s.t2 focusInput];
+        const NSUInteger tabs = s.panel.tabCount;
+        MCGuiSendKeyToApp(s.c.window, kVK_ANSI_T, NSEventModifierFlagCommand, @"t", @"t");
+        GCHECK(s.panel.tabCount == tabs + 1);
+        GCHECK(s.panel.selectedTab == (NSInteger)tabs && [s.panel.activeTerminal hasFocus]);
+        GCHECK(MCCommandPaletteIn(s.c.window) == nil);   // not Go to Symbol in Workspace
+        GCHECK([s.panel closeTab:tabs]);
+        [s.panel selectTab:(NSUInteger)s.tab];
+        [s.t2 focusInput];
+        GCHECK(s.panel.tabCount == tabs && [s.t2 hasFocus]);
     });
 
     // ---- Ctrl+Shift+W with the keyboard in a pane

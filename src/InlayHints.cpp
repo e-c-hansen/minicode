@@ -72,6 +72,12 @@ std::vector<InlayHint> parseInlayHints(const Json& result) {
     return out;
 }
 
+void dropParameterHints(std::vector<InlayHint>& hints) {
+    hints.erase(std::remove_if(hints.begin(), hints.end(),
+                               [](const InlayHint& h) { return h.kind == InlayHintKind::Parameter; }),
+                hints.end());
+}
+
 void shortenInlayLabels(std::vector<InlayHint>& hints, size_t maximumLength) {
     if (maximumLength == 0) return;
     std::vector<InlayHint> kept;

@@ -501,7 +501,10 @@ static const CGFloat kHintsPad = 16;
     [self appendHintsRow:s key:@"⇧⌘T" label:[self hkAlso:@"workbench.action.terminal.toggleTerminal" title:@"Terminal"]
                     key2:nil label2:nil state:openOr(self.terminalVisible)];
     if (self.terminalVisible) {
-        [self appendHintsRow:s key:[self hk:@"workbench.action.terminal.new"] label:@"New terminal"
+        [self appendHintsRow:s
+                         key:[NSString stringWithFormat:@"%@ %@", [self hk:@"workbench.action.terminal.new"],
+                              [self hk:@"minicode.terminal.newTab"]]
+                       label:@"New terminal (⌘T in one)"
                         key2:[self hk:@"workbench.action.terminal.split"] label2:@"Split terminal" state:nil];
         [self appendHintsRow:s key:[self hk:@"workbench.action.terminal.focusNext"] label:@"Next terminal"
                         key2:[self hk:@"workbench.action.terminal.focusPrevious"] label2:@"Previous" state:nil];
@@ -515,6 +518,9 @@ static const CGFloat kHintsPad = 16;
                         key2:nil label2:nil state:nil];
         [self appendHintsRow:s key:[self hk:@"actions.find"] label:@"Find in the terminal"
                         key2:[self hk:@"workbench.action.terminal.clear"] label2:@"Clear the terminal" state:nil];
+        [self appendHintsRow:s key:[self hk:@"minicode.terminal.clearToPreviousMark"]
+                       label:@"Remove the last command and its output"
+                        key2:nil label2:nil state:nil];
         [self appendHintsRow:s
                          key:[NSString stringWithFormat:@"%@ %@",
                               [self hk:@"workbench.action.terminal.fontZoomIn"],

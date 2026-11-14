@@ -328,6 +328,11 @@ public:
     bool inlayHints() const { return inlayHints_ != InlayHints::Off; }
     // Whether they show in `mode`, with Control+Option held down or not.
     static bool inlayHintsShown(InlayHints mode, bool pressed);
+    // editor.inlay-hint-parameter-names: whether a parameter's name before
+    // an argument (side="BUY") shows too. Off by default (the owner's call,
+    // 2026-11-14): those labels lengthen calls the most, and no formatter
+    // can count them, since they are not in the file.
+    bool inlayHintParameterNames() const { return inlayHintParameterNames_; }
     // editor.git-gutter: change bars beside the line numbers of a file git
     // tracks (QuickDiff.h; on, the default, as VS Code's scm.diffDecorations
     // "all"). editor.git-added, editor.git-modified and editor.git-deleted
@@ -539,6 +544,7 @@ private:
     bool wordWrap_ = true;
     bool autoClose_ = true;
     InlayHints inlayHints_ = InlayHints::On;
+    bool inlayHintParameterNames_ = false;
     std::optional<Rgba> inlayHintColor_, inlayHintBackground_;
     bool gitGutter_ = true;
     std::optional<Rgba> gitGutterColor_[3];

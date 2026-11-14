@@ -16,6 +16,7 @@
     // Hints show now: editor.inlay-hints, and in its two "unless pressed"
     // modes whether Control+Option are held down.
     BOOL _inlayShown;
+    BOOL _inlayParameterNames;   // editor.inlay-hint-parameter-names when last asked
     NSUInteger _inlayEdits;      // _edits when the hints shown were asked for
     __weak NSClipView *_inlayClip;   // whose scrolling is followed
 }

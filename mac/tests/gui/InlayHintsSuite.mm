@@ -214,7 +214,7 @@ MC_GUI_SUITE(inlay_hints) {
         MCGuiWriteFile(file, kSource);
         cmd = MCGuiFakeLsp(@"inlay", script, nil, nil);
         MCGuiSetSettings([NSString stringWithFormat:
-            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n", cmd]);
+            @"lsp.enabled = true\neditor.inlay-hint-parameter-names = on\nlsp.python = %@\nlsp.python.also = off\n", cmd]);
         GCHECK([c showFile:file]);
         line3 = [Text(c).string rangeOfString:@"total"].location;
     });
@@ -354,7 +354,7 @@ MC_GUI_SUITE(inlay_hints) {
     });
     MCGuiStep(@"editor.inlay-hints = off takes them away", ^{
         MCGuiSetSettings([NSString stringWithFormat:
-            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n"
+            @"lsp.enabled = true\neditor.inlay-hint-parameter-names = on\nlsp.python = %@\nlsp.python.also = off\n"
             @"editor.inlay-hints = off\n", cmd]);
     });
     MCGuiWait(@"they go", 10, ^BOOL { return Text(c).inlayHints.count == 0; });
@@ -367,9 +367,27 @@ MC_GUI_SUITE(inlay_hints) {
     MCGuiStep(@"none was asked; on again, they come back", ^{
         GCHECK(Session(c).inlayHintRequests == asked);
         MCGuiSetSettings([NSString stringWithFormat:
-            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n", cmd]);
+            @"lsp.enabled = true\neditor.inlay-hint-parameter-names = on\nlsp.python = %@\nlsp.python.also = off\n", cmd]);
     });
     MCGuiWait(@"they come back", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
+
+    // -------------------------------------------- parameter names (off by default)
+    MCGuiStep(@"without editor.inlay-hint-parameter-names: the types only", ^{
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n", cmd]);
+    });
+    MCGuiWait(@"width= and height= go", 10, ^BOOL { return Text(c).inlayHints.count == 2; });
+    MCGuiStep(@"the two left are the type labels", ^{
+        // The text still says grand_total, so the server's answer is `second`.
+        NSArray *labels = Labels(c);
+        if (![labels isEqualToArray:(@[@"-> int", @": float"])])
+            MCGuiNote(@"labels: %@", [labels componentsJoinedByString:@" | "]);
+        GCHECK([labels isEqualToArray:(@[@"-> int", @": float"])]);
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\neditor.inlay-hint-parameter-names = on\nlsp.python = %@\n"
+            @"lsp.python.also = off\n", cmd]);
+    });
+    MCGuiWait(@"turned on, the names come back", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
 
     // ------------------------------------------------ at a line's start
     // A hint at offset 0 and one at a line's start (an argument on a
@@ -723,7 +741,7 @@ MC_GUI_SUITE(inlay_hints) {
     // ---------------------------------------- unless pressed, and the menu
     MCGuiStep(@"on-unless-pressed: shown, and gone while Control+Option are held", ^{
         MCGuiSetSettings([NSString stringWithFormat:
-            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n"
+            @"lsp.enabled = true\neditor.inlay-hint-parameter-names = on\nlsp.python = %@\nlsp.python.also = off\n"
             @"editor.inlay-hints = on-unless-pressed\n", cmd]);
         GCHECK(Session(c).inlayHintsShown);
         GCHECK(Text(c).inlayHints.count == 4);
@@ -735,7 +753,7 @@ MC_GUI_SUITE(inlay_hints) {
     MCGuiWait(@"back once let go", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
     MCGuiStep(@"off-unless-pressed (VS Code's spelling): none", ^{
         MCGuiSetSettings([NSString stringWithFormat:
-            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n"
+            @"lsp.enabled = true\neditor.inlay-hint-parameter-names = on\nlsp.python = %@\nlsp.python.also = off\n"
             @"editor.inlay-hints = offUnlessPressed\n", cmd]);
         GCHECK(Text(c).inlayHints.count == 0);
         MCInlayHintsSetPressed(YES);
@@ -745,7 +763,7 @@ MC_GUI_SUITE(inlay_hints) {
         MCInlayHintsSetPressed(NO);
         GCHECK(Text(c).inlayHints.count == 0);
         MCGuiSetSettings([NSString stringWithFormat:
-            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n", cmd]);
+            @"lsp.enabled = true\neditor.inlay-hint-parameter-names = on\nlsp.python = %@\nlsp.python.also = off\n", cmd]);
     });
     MCGuiWait(@"on again", 10, ^BOOL { return Text(c).inlayHints.count == 4; });
     MCGuiStep(@"View > Inlay Hints, checked, turns them off in the settings file", ^{
@@ -780,7 +798,7 @@ MC_GUI_SUITE(inlay_hints) {
     MCGuiStep(@"the same file under basedpyright", ^{
         MCGuiWriteFile(real, kReal);
         MCGuiSetSettings([NSString stringWithFormat:
-            @"lsp.enabled = true\nlsp.python = %@ --stdio\nlsp.python.also = off\n", bp]);
+            @"lsp.enabled = true\neditor.inlay-hint-parameter-names = on\nlsp.python = %@ --stdio\nlsp.python.also = off\n", bp]);
         GCHECK([c showFile:real]);
     });
     MCGuiWait(@"basedpyright's hints arrive", 60, ^BOOL {

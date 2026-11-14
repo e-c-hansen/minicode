@@ -252,6 +252,22 @@ MC_GUI_SUITE(editor_keys) {
         GCHECK_EQ_STR(tv.string, text);
         GCHECK(![[c valueForKey:@"dirty"] boolValue]);
     });
+    // ------------------------------------------------------------ paste
+    // No smart copy and paste: a word pasted over another after a dot is
+    // just that word (AppKit's default made "n = arr. arr").
+    MCGuiStep(@"copy arr, paste it over size: arr.arr, no space added", ^{
+        tv.selectedRange = NSMakeRange(4, 3);   // arr
+        [tv copy:nil];
+        tv.selectedRange = NSMakeRange(8, 4);   // size
+        MCGuiUndoGroup(tv.undoManager, ^{ [tv paste:nil]; });
+        GCHECK_EQ_STR([tv.string substringToIndex:12], @"n = arr.arr\n");
+        tv.selectedRange = NSMakeRange(4, 3);
+        MCGuiUndoGroup(tv.undoManager, ^{ [tv cut:nil]; });
+        GCHECK_EQ_STR([tv.string substringToIndex:9], @"n = .arr\n");   // the space stays too
+        [tv.undoManager undo];
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(tv.string, text);
+    });
     MCGuiStep(@"the registry and the hints say so", ^{
         GCHECK_EQ_STR(MCKeymapGlyphs(@"cursorTop"), @"⌘↑");
         GCHECK_EQ_STR(MCKeymapGlyphs(@"cursorBottomSelect"), @"⇧⌘↓");

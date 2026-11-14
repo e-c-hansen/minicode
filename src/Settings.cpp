@@ -1022,6 +1022,8 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.largeFileOptimizations_ = on;
                return true;),
+        MC_KEY("editor.inlay-hint-parameter-names", Word, false,
+               return boolValue(v, s.inlayHintParameterNames_, e);),
         MC_KEY("editor.inlay-hints", Word, false,
                const std::string w = lower(v);
                bool on = true;
@@ -1654,8 +1656,11 @@ const char* Settings::defaultFileText() {
 # editor.bracket-match = #888888
 # What a language server can say between the words, drawn in the text
 # without being part of it, as in VS Code: a variable's type after its name
-# (x: int), a function's return type, a parameter's name before an
-# argument. basedpyright, clangd and rust-analyzer send them (macOS). A
+# (x: int), a function's return type, and with
+# editor.inlay-hint-parameter-names on a parameter's name before an argument
+# (side="BUY"), left out by default since those lengthen calls the most and
+# no formatter can count them. basedpyright, clangd and rust-analyzer send
+# them (macOS). A
 # double-click on one writes it into the text. on-unless-pressed hides them
 # while Control and Option are held down, off-unless-pressed shows them only
 # then, and View > Inlay Hints turns them on and off. The colors are VS
@@ -1663,6 +1668,7 @@ const char* Settings::defaultFileText() {
 # editor.inlay-hints = on
 # editor.inlay-hint-color = #969696
 # editor.inlay-hint-background = #4D4D4D1A
+# editor.inlay-hint-parameter-names = false
 # Sort the lines between "keep-sorted start" and "keep-sorted end" comments
 # every time a file is saved, as Google's keep-sorted tool would.
 # editor.keep-sorted-on-save = false

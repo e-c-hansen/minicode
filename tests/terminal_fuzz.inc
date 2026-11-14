@@ -111,6 +111,10 @@ void testTerminalFuzz() {
                         if (!p.empty() && problems++ == 0) first = "after a resize: " + p;
                     }
                     if (rng() % 15 == 0) s.clearToCursorLine();
+                    if (rng() % 6 == 0 && s.clearToPreviousMark()) {
+                        std::string p = screenProblem(s);
+                        if (!p.empty() && problems++ == 0) first = "after Clear to Previous Mark: " + p;
+                    }
                     if (rng() % 10 == 0) (void)s.find(rng() % 2 ? "a" : "日", rng() % 2);
                 }
             }

@@ -193,6 +193,25 @@ MC_GUI_SUITE(terminal_marks) {
                                                  andAction:@selector(copyLastCommandOutput:)] >= 0);
     });
 
+    // Cmd+L, Terminal.app's Clear to Previous Mark: through the key monitor
+    // (the key is Select Line's in the editor), the last command goes.
+    MCGuiStep(@"Cmd+L in the terminal takes the last command and its output away", ^{
+        TerminalGridView *g = Grid(s.term);
+        [s.c.window makeFirstResponder:g];
+        const size_t ran = Ran(s.term).size();
+        GCHECK(ran >= 4);
+        GCHECK([s.term.lastCommandOutput hasPrefix:@"1\n2\n"]);   // seq 1 80's
+        MCGuiSendKeyToApp(s.c.window, kVK_ANSI_L, NSEventModifierFlagCommand, @"l", @"l");
+        MCGuiNote(@"commands that ran: %zu, then %zu", ran, Ran(s.term).size());
+        GCHECK(Ran(s.term).size() == ran - 1);
+        GCHECK_EQ_STR(s.term.lastCommandOutput, @"");               // false's: nothing
+        GCHECK(g.screen->text().find("\n79\n80\n") == std::string::npos);
+        GCHECK(s.term.atPrompt);                                    // the shell untouched
+        // The menu has it, in the Terminal menu.
+        NSMenuItem *terminalMenu = [NSApp.mainMenu itemWithTitle:@"Terminal"];
+        GCHECK([terminalMenu.submenu indexOfItemWithTarget:nil
+                                                 andAction:@selector(clearToPreviousMark:)] >= 0);
+    });
     MCGuiStep(@"typing goes back to the bottom; the terminal closes", ^{
         TerminalGridView *g = Grid(s.term);
         Arrow(s.term, YES, NO);

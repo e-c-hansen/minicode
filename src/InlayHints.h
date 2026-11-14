@@ -35,6 +35,10 @@ struct InlayHint {
 // position. A hint without a position or with an empty label is left out.
 std::vector<InlayHint> parseInlayHints(const Json& result);
 
+// Leaves out the parameter-name hints (kind Parameter: `side=` before an
+// argument), unless editor.inlay-hint-parameter-names asks for them.
+void dropParameterHints(std::vector<InlayHint>& hints);
+
 // VS Code's editor.inlayHints.maximumLength (43 by default; 0 never cuts):
 // on each line the labels are counted in order, and the one that takes the
 // line's total past the limit ends in "…" where the limit falls; hints

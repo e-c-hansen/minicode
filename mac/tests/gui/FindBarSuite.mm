@@ -138,6 +138,25 @@ MC_GUI_SUITE(find_bar) {
         GCHECK_EQ_STR(Text(c).string, original);
         GCHECK(![[c valueForKey:@"dirty"] boolValue]);
     });
+    MCGuiStep(@"Up and Down in the find field walk what was searched for", ^{
+        NSTextField *f = Find(c).bar.findField;
+        [c.window makeFirstResponder:f];
+        SetField(f, @"hist-one");
+        [Editor(f) doCommandBySelector:@selector(insertNewline:)];
+        SetField(f, @"hist-two");
+        [Editor(f) doCommandBySelector:@selector(insertNewline:)];
+        [Editor(f) doCommandBySelector:@selector(moveUp:)];
+        GCHECK_EQ_STR(f.stringValue, @"hist-one");
+        [Editor(f) doCommandBySelector:@selector(moveDown:)];
+        GCHECK_EQ_STR(f.stringValue, @"hist-two");
+        // From new text, Up shows the newest; Down gives the text back.
+        SetField(f, @"his");
+        [Editor(f) doCommandBySelector:@selector(moveUp:)];
+        GCHECK_EQ_STR(f.stringValue, @"hist-two");
+        [Editor(f) doCommandBySelector:@selector(moveDown:)];
+        GCHECK_EQ_STR(f.stringValue, @"his");
+        [c.window makeFirstResponder:Find(c).bar.replaceField];
+    });
     MCGuiStep(@"Esc closes the bar; the editor has the keyboard", ^{
         [Editor(Find(c).bar.replaceField) doCommandBySelector:@selector(cancelOperation:)];
         GCHECK(!Find(c).shown);
