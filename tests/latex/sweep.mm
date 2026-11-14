@@ -1,5 +1,5 @@
 // sweep.mm — double-clicks every word of a typeset LaTeX document through the
-// preview's real click path (MCLatexSpanAtPoint in src/Latex.mm) and reports
+// preview's real click path (MCLatexSpanAtPoint in mac/src/Latex.mm) and reports
 // how often it finds the source of what was clicked. Run it with sweep.sh,
 // which typesets the document the way the app does.
 //

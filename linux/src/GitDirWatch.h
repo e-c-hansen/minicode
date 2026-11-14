@@ -1,6 +1,6 @@
 // GitDirWatch.h — a repository's git folder watched for a change to its
 // index or HEAD, linux/PARITY.md item 2.10: the counterpart of the Mac's
-// MCGitDirWatch in src/GitGutter.mm, shared here by the change bars
+// MCGitDirWatch in mac/src/GitGutter.mm, shared here by the change bars
 // (GitGutter.h) and the tree's git colors (TreeGitColors.h).
 //
 // git writes the index and HEAD by renaming a lock file over them, which a

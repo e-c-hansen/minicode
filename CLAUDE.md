@@ -8,8 +8,14 @@ libsqlite3. The LaTeX preview and the Markdown math run tectonic, which the
 user installs or the app downloads on request; the language servers, formatters
 and Claude Code it talks to are the user's own.
 
-There is a GTK4 Linux port under `linux/` and an Android port under `android/`,
-both sharing the portable C++ core verbatim. Their handoff notes are
+The shared core is `src/` (C++ only); the Mac app is under `mac/` (`mac/src`,
+its GUI checks in `mac/tests/gui`), the GTK4 Linux app under `linux/` and the
+Android app under `android/`, all three building the core verbatim. The
+owner's rule (2026-11-14): shared logic looks generic, and anything specific
+to one system is named for it, by its folder or its name. A new Mac-only
+file goes in `mac/`; a Mac-only file outside those folders (a script, a
+tool) carries `-mac` in its name. Until 2026-11-14 the Mac's files were in
+`src/` beside the core. Their handoff notes are
 `BUILD-LINUX.md`, `linux/HANDOFF.md`, `linux/README.md` and
 `android/README.md`; this file covers the macOS app except where it says
 otherwise. Almost everything added since 1.5.0 is Mac-only, with its logic in
@@ -93,7 +99,7 @@ opening comment says what it does in more detail than the lines below.
   `timeout-minutes` (macOS 40, tsan 45, the rest 20; `ci:timeouts` checks
   a new job has one), so a hang never holds a runner for six hours.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
-  `tests/gui` (see "Verification").
+  `mac/tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
   [SCENES="tour latex"] [POSTERS=1]`, `make membench`, `make install` (runs `minicode
   install-skill` from the checkout: `skills/minicode/SKILL.md` to
@@ -193,7 +199,7 @@ goes here first, with tests; the GUI only displays it.
   `WebBookmark` (web bookmarks as .url and .webloc files: reading, writing,
   names, which addresses may open).
 
-### The Mac app (Objective-C++)
+### The Mac app (`mac/src`, Objective-C++)
 
 - `main.mm`: `AppDelegate`, the menus, windows, the open handler, and the one
   local key monitor (which asks `MCKeymapHandleKeyDown` first).
@@ -240,7 +246,7 @@ goes here first, with tests; the GUI only displays it.
   (`MINICODE_BENCH`).
 - Elsewhere: `tools/minicode-cli.cpp`, `scripts/minicode-launcher`,
   `tools/makegif.m`, `tools/procmem.c`, `skills/minicode/SKILL.md`,
-  `tests/fixtures/claude`, `tests/gui`, `tests/latex`, `tests/markdown`,
+  `tests/fixtures/claude`, `mac/tests/gui`, `tests/latex`, `tests/markdown`,
   `tests/keepsorted`.
 
 ### EditorController and its categories
@@ -2917,7 +2923,7 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   built in, else `MCChangeCloneFolder()` (`~/Library/Application
   Support/MiniCode/source`), cloned on first use by one typed line (`(git clone
   --branch v<version> <repo> <dir> || git clone <repo> <dir>) && cd <dir> &&
-  claude ...`). "Source" means a Makefile and `src/EditorController.mm`. A 2 s
+  claude ...`). "Source" means a Makefile and `mac/src/EditorController.mm`. A 2 s
   timer watches `<source>/MiniCode.app/Contents/_CodeSignature/CodeResources`
   (codesign is `make app`'s last step, and that file is its target, so a
   `make` with nothing to do leaves it alone) and offers Restart once it is
@@ -3313,7 +3319,7 @@ the raw binary with `MINICODE_DEMO=<scene>` under `env -i`, kills only its own
 pid after 2 min, and runs `build/makegif`. `MINICODE_DEMO=list` lists scenes;
 `DEMO_KEEP_FRAMES=<dir>` keeps frames and the log.
 
-- A scene is a function in `src/Demo.mm` of queued builder steps (`clickFile:`,
+- A scene is a function in `mac/src/Demo.mm` of queued builder steps (`clickFile:`,
   `type:`, `key:caption:`, `waitFor:timeout:recorded:`, ...), points resolved
   lazily (`pointForText:` through `firstRectForCharacterRange:`). Input is real
   posted `NSEvent`s; the pointer and key captions are an overlay view. The
@@ -3339,7 +3345,7 @@ Preview and sums each side's physical footprint (`tools/procmem.c`,
 `proc_pid_rusage`; 320 MB against 1,283 MB on 2026-09-21, in the README). A
 process belongs to a side by parent or responsible pid (WebKit's helpers are
 launchd's children); a shell-launched app makes the terminal responsible, so
-minicode starts with `open -n -g --env`. `src/Bench.mm` resolves paths like the
+minicode starts with `open -n -g --env`. `mac/src/Bench.mm` resolves paths like the
 tree; a tiny VS Code extension types the command; `MINICODE_BENCH` skips
 activation. Check each side's breakdown before quoting a number (a first run
 "measured" 55 MB with clangd and WebKit missing).
@@ -3354,8 +3360,8 @@ session has a display. Check first.
   test-tsan` (clang; CI uses clang++-22 on Linux) for races.
 - **The Mac, committed checks**: `make guitest [SUITES=...]` builds
   `build/guitest` (the whole app with main.mm's `main` renamed `minicode_main`,
-  plus `tests/gui/*.mm`) and runs it offscreen; the macOS CI job runs it. The
-  harness (`tests/gui/Harness.{h,mm}`) re-execs into a scratch world under
+  plus `mac/tests/gui/*.mm`) and runs it offscreen; the macOS CI job runs it. The
+  harness (`mac/tests/gui/Harness.{h,mm}`) re-execs into a scratch world under
   `/tmp/mcgui-*` (HOME and CFFIXED_USER_HOME, ZDOTDIR with an empty .zshrc, a
   short TMPDIR for socket paths, settings with language servers off, a defaults
   suite, backups, a private pasteboard, git without global config), swizzles
@@ -3379,7 +3385,7 @@ session has a display. Check first.
   (`MCGuiPause` is for a negative check or where time is the condition, with
   a comment saying which; `MCGuiWaitQuiet` waits for a count to stop
   changing). **New user-visible behaviour gets a committed check here.**
-- **The GUI suites**, by area (each an `MC_GUI_SUITE` in `tests/gui`; the
+- **The GUI suites**, by area (each an `MC_GUI_SUITE` in `mac/tests/gui`; the
   core's `docs:gui-suites` holds this list to them, both ways):
   editing: keystroke, multiedit, editor_keys, auto_close, bracket_pairs,
   folding, foldperf, multicaretclick, multicaret_rows, find_bar,
@@ -3454,7 +3460,7 @@ session has a display. Check first.
   scroll bars always take room (no trackpad), and a reverse DNS lookup of
   127.0.0.1 can stall. `MC_GUI_SCROLLBARS=always` gives the scroll bars here;
   compute pixel checks from `backingScaleFactor`, never from a picture's
-  width; local servers in checks are `tests/gui/serve.py` (http.server
+  width; local servers in checks are `mac/tests/gui/serve.py` (http.server
   without the getfqdn it makes between bind and listen, which kept the port
   closed and the banner unprinted past the waits). An exception AppKit cannot
   recover from (one in `drawRect:`) prints `FATAL exception in [suite] (step:

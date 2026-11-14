@@ -1,4 +1,4 @@
-// Gutter.cpp — see Gutter.h. The Mac's src/Gutter.mm is the model, drawing
+// Gutter.cpp — see Gutter.h. The Mac's mac/src/Gutter.mm is the model, drawing
 // for drawing.
 #include "Gutter.h"
 

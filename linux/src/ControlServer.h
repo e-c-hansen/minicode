@@ -1,5 +1,5 @@
 // ControlServer.h — the control channel's socket, on the GLib main loop
-// (PARITY.md 3.1; the Mac's is src/ControlServer.mm). What an agent, a script
+// (PARITY.md 3.1; the Mac's is mac/src/ControlServer.mm). What an agent, a script
 // or `minicode open|window|state|selection` asks arrives here as one JSON
 // object a line (ControlProtocol.h) and goes to the Dispatcher, whose
 // handlers run on the main loop; ControlCommands.cpp registers them.

@@ -1,6 +1,6 @@
 // TerminalLinksSuite.mm — `make guitest SUITES=terminal_links`: web pages
 // opened from a terminal land in minicode's browser pane, the user's page.
-// A local server (tests/gui/serve.py: http.server on 127.0.0.1) prints its address,
+// A local server (mac/tests/gui/serve.py: http.server on 127.0.0.1) prints its address,
 // and a Cmd+click on it loads it there, the keyboard staying in the
 // terminal; 0.0.0.0 is read as localhost; an OSC 8 hyperlink printed by
 // printf opens its own address on Cmd+click (a file one in the editor),
@@ -53,7 +53,7 @@ int FreePort() {
 // http.server, less its reverse DNS lookup (see serve.py).
 NSString *Serve(void) {
     return [[MCGuiBuildDir() stringByDeletingLastPathComponent]
-        stringByAppendingPathComponent:@"tests/gui/serve.py"];
+        stringByAppendingPathComponent:@"mac/tests/gui/serve.py"];
 }
 
 NSString *Local(NSString *path) {

@@ -1,6 +1,6 @@
 // TreeGitColors.h — the file tree's git colors on Linux, linux/PARITY.md
 // item 2.10: the GTK counterpart of the Mac's MCTreeGitColors
-// (src/TreeGitColors.mm), over the core's Git::Decorations (GitStatus.h),
+// (mac/src/TreeGitColors.mm), over the core's Git::Decorations (GitStatus.h),
 // as VS Code's explorer decorations color a row.
 //
 // One `git status --porcelain=v2 -z --ignored=matching` per look, on a

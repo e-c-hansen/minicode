@@ -1,9 +1,9 @@
 // GitDiffView.h — a diff or a commit, read-only and colored, in the editor's
 // slot (Editor makes one on the first diff), the Mac's diffScroll in
-// src/EditorController+Rendering.mm with MCGitDiffText's colors.
+// mac/src/EditorController+Rendering.mm with MCGitDiffText's colors.
 //
 // A file's diff that the Source Control panel showed last also carries the
-// panel's hunk actions (PARITY.md 2.9, the Mac's W26 in src/GitPanel.mm):
+// panel's hunk actions (PARITY.md 2.9, the Mac's W26 in mac/src/GitPanel.mm):
 // "Stage Hunk · Discard Hunk", or "Unstage Hunk" in a staged diff, as links
 // after each hunk's header on the same line, so line i of the text stays line
 // i of what git printed (GitUi::diffTextWithActions); and a right click, the

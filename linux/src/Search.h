@@ -1,7 +1,7 @@
 // Search.h — Find in Folder (Ctrl+Shift+F) and Replace in Folder
 // (Ctrl+Alt+Shift+F): the GTK front end for the shared FolderSearch core
 // (../src/FolderSearch.h). A separate window, like the macOS SearchPanel
-// (src/Search.mm): a scope row naming the folder; the query with Match Case,
+// (mac/src/Search.mm): a scope row naming the folder; the query with Match Case,
 // Whole Word and Regular Expression beside it, and the chevron that shows
 // the replace row (the replacement with Preserve Case, and Replace All);
 // files to include and exclude behind "…" (FolderSearch::PathFilter, VS

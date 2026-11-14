@@ -1,4 +1,4 @@
-// GitPanel.cpp — see GitPanel.h. The Mac's src/GitPanel.mm, in GTK: the
+// GitPanel.cpp — see GitPanel.h. The Mac's mac/src/GitPanel.mm, in GTK: the
 // panel, its lists and their keys, the refresh, and the drawing. Running git
 // is GitRun.cpp, the commands GitVerbs.cpp, the menus GitMenus.cpp, the diff
 // view GitDiffView.cpp.

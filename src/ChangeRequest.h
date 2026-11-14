@@ -60,7 +60,8 @@ std::string resumeCommand(const std::string &command, const std::string &source)
 bool promptFileIsStale(const std::string &name, double ageSeconds,
                        const std::function<bool(int)> &alive);
 
-// A folder holding minicode's source: a Makefile and src/EditorController.mm.
+// A folder holding minicode's source: a Makefile and mac/src/EditorController.mm
+// (src/ in a checkout from before 2026-11-14).
 bool looksLikeSource(const std::string &dir,
                      const std::function<bool(const std::string &)> &exists);
 // The folder an app bundle was built in ("/x/minicode" for

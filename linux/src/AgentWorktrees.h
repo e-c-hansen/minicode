@@ -1,6 +1,6 @@
 // AgentWorktrees.h — the worktrees under the window's folder, for the file
 // tree's Worktrees node and Compare with Main (PARITY.md item 3.5, part two;
-// the Mac's worktree half of MCAgentModel in src/AgentModel.mm). git runs off
+// the Mac's worktree half of MCAgentModel in mac/src/AgentModel.mm). git runs off
 // the main thread: `worktree list --porcelain` in the folder, then for each
 // worktree inside it `rev-list --count <main>..<head>` (how far ahead) and
 // `status --porcelain` (changes). A worktree is named for its agent when the

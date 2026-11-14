@@ -318,9 +318,9 @@ make run DIR=demo
 The same minicode command drives the copy that is running, which is how a coding agent such as Claude Code can show its work in minicode rather than describe it in a chat. Each command acts in the window in front (or the one named with `--window` or `--folder`), never takes the keyboard, and only ever adds: no tab or terminal you have is closed, replaced or moved.
 
 ```
-minicode open src/main.mm:100              # a file at a line, by the usual open rules
-minicode open src/Lsp+WorkspaceEdit.mm:88 --to 160 --note "Applies rename edits to every file"
-minicode diff src/Lsp.h                    # side by side against HEAD; --base REF, or two files
+minicode open mac/src/main.mm:100              # a file at a line, by the usual open rules
+minicode open mac/src/Lsp+WorkspaceEdit.mm:88 --to 160 --note "Applies rename edits to every file"
+minicode diff mac/src/Lsp.h                    # side by side against HEAD; --base REF, or two files
 minicode term --run "make test"            # a new terminal, the command typed and run in plain sight
 minicode term-output 3 --lines 50          # what a terminal shows, scrollback included
 minicode browse localhost:5173 --wait      # the agent page in the browser pane; prints the status

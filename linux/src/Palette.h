@@ -1,5 +1,5 @@
 // Palette.h — the MiniCode dark color palette, mirrored from the macOS build
-// (src/EditorController.mm, Hex() and ColorForStyle()). Keeping these values
+// (mac/src/EditorController.mm, Hex() and ColorForStyle()). Keeping these values
 // identical is what makes the Linux port look like the same editor.
 #pragma once
 
@@ -20,7 +20,7 @@ namespace pal {
 
     // Terminal panel. The background is a shade darker than the editor so the
     // panel reads as a separate surface, matching the macOS terminal
-    // (src/Terminal.mm, THex(0x181818)).
+    // (mac/src/Terminal.mm, THex(0x181818)).
     constexpr const char* TermBg     = "#181818";
     constexpr const char* TermText   = "#D4D4D4";
     constexpr const char* TermCursor = "#AEAFAD";

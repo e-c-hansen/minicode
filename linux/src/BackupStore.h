@@ -1,6 +1,6 @@
 // BackupStore.h — the backups of unsaved tabs, one store for the process
 // over the core's Backups (../src/Backups.h): the GTK port's counterpart of
-// the Mac's MCBackupStore (src/BackupStore.mm). Persistence.h decides what
+// the Mac's MCBackupStore (mac/src/BackupStore.mm). Persistence.h decides what
 // is written and when; this writes it, on a thread of its own, and answers
 // what a window opening a folder brings back.
 //

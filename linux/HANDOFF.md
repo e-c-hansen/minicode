@@ -159,7 +159,7 @@ test never opened.
 ### 2. File tree actions (done, September 2026)
 
 The Mac has New File, New Folder, Rename, Move to Trash, Reveal and Copy Path
-in the tree's right-click menu and the File menu (`src/EditorController.mm`).
+in the tree's right-click menu and the File menu (`mac/src/EditorController.mm`).
 Linux creates `untitled.txt` in the root and has no rename (`main.cpp`,
 `act_new_file`).
 
@@ -400,7 +400,7 @@ plainly, for the PDF viewer and the LaTeX preview alike (both are a
 
 ### 5. Find in folder (done, September 2026)
 
-Mac: `src/Search.mm`. The search is now `../src/FolderSearch.{h,cpp}`, a pure
+Mac: `mac/src/Search.mm`. The search is now `../src/FolderSearch.{h,cpp}`, a pure
 C++17 function (a folder, a query, an `std::atomic<bool>` cancel flag, and
 matches out with the line, the column in characters and in bytes, and the
 cleaned display text) with the Mac's rules, tested in the core suite. Android
@@ -448,7 +448,7 @@ continuation, after the open.
 
 ### 6. Language servers (done, September 2026)
 
-Mac: `src/Lsp.mm` over `../src/LspClient.cpp`, described in the "LSP"
+Mac: `mac/src/Lsp.mm` over `../src/LspClient.cpp`, described in the "LSP"
 section of `../CLAUDE.md`. The GTK side is `src/Lsp.{h,cpp}` over the same
 `LspClient` and `Json`, now in `meson.build` and the Makefile. It follows the
 Mac's behaviour; what differs is how.
@@ -540,7 +540,7 @@ a row), since the hook called the same functions directly.
 
 ### 7. The LaTeX preview (done, September 2026)
 
-Mac: `src/Latex.mm`; read the whole "LaTeX preview" section of `../CLAUDE.md`
+Mac: `mac/src/Latex.mm`; read the whole "LaTeX preview" section of `../CLAUDE.md`
 before starting. Android: `LatexPreview.kt` and `latex_jni.cpp`.
 
 - tectonic comes from `MINICODE_TECTONIC`, then
@@ -791,7 +791,7 @@ Mac tools.
 ### 9. Terminal links (done, September 2026)
 
 Ctrl+click on a file reference or a URL in the terminal's output opens it,
-as Command+click does on the Mac (`src/Terminal.mm`, `TerminalGridView.mm`,
+as Command+click does on the Mac (`mac/src/Terminal.mm`, `TerminalGridView.mm`,
 `EditorController.mm -openTerminalLink:`). A file opens at the line and
 column the reference names, a folder is selected in the tree (the sidebar
 is shown first; a folder outside the project only beeps, as on the Mac), and
@@ -860,7 +860,7 @@ have them either.
 
 ### 10. The Source Control panel (done, September 2026)
 
-Mac: `src/GitPanel.mm` and "Git panel" in `../CLAUDE.md`. GTK:
+Mac: `mac/src/GitPanel.mm` and "Git panel" in `../CLAUDE.md`. GTK:
 `src/GitPanel.{h,cpp}`. Both, and Android, over the core's
 `../src/GitModel.{h,cpp}` (it lived here until 2026-11-06), which is plain
 C++ and holds everything that can be decided without a GUI (rows, keys, the

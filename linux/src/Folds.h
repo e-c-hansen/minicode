@@ -1,6 +1,6 @@
 // Folds.h — code folding in the GTK port, linux/PARITY.md item 1.10 (D8).
 // The regions and the closed folds are the core's (../src/Folding.h); the
-// Mac's counterpart is src/FoldView.mm (MCFolds) with CodeTextView's hooks.
+// Mac's counterpart is mac/src/FoldView.mm (MCFolds) with CodeTextView's hooks.
 //
 // How a fold hides its lines. The text never changes (D6): an invisible
 // tag, `minicode-fold`, lies over the whole buffer lines a fold hides, from

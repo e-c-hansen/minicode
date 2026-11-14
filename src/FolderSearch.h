@@ -3,7 +3,7 @@
 // tree and plain byte scanning to match. The GTK port runs it on a worker
 // thread; Android can call it through JNI the same way.
 //
-// The semantics are the macOS search panel's (src/Search.mm), so the three
+// The semantics are the macOS search panel's (mac/src/Search.mm), so the three
 // front ends agree on what a search finds:
 //
 // - The query is trimmed of surrounding whitespace and needs at least two

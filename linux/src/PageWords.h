@@ -3,7 +3,7 @@
 // in linux/tests/run_tests.cpp and shared by the preview and the sweep.
 //
 // This is the Linux form of what the Mac gets from PDFKit's
-// selectionForWordAtPoint: plus extendSelectionAtStart:/AtEnd: (src/Latex.mm),
+// selectionForWordAtPoint: plus extendSelectionAtStart:/AtEnd: (mac/src/Latex.mm),
 // and Android from PdfRenderer's selection (LatexPreview.kt). poppler gives
 // the page as text (poppler_page_get_text) and a rectangle for every character
 // of it, newlines included (poppler_page_get_text_layout); a word is a run of

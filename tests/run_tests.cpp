@@ -9689,9 +9689,9 @@ static void checkCategoryIvars(const std::string &prefix, const std::string &cor
                                const std::string &extensionStart, size_t minShared,
                                size_t minCategories, size_t minHeaders) {
     namespace fs = std::filesystem;
-    std::ifstream ph("src/" + prefix + "Private.h");
+    std::ifstream ph("mac/src/" + prefix + "Private.h");
     if (!ph) {
-        std::printf("  (src/ not found here; ivar checks skipped)\n");
+        std::printf("  (mac/src/ not found here; ivar checks skipped)\n");
         return;
     }
     std::stringstream ps;
@@ -9707,7 +9707,7 @@ static void checkCategoryIvars(const std::string &prefix, const std::string &cor
     std::map<std::string, std::string> categories;   // file name -> text
     std::vector<std::string> ivarHeaders;
     std::string core;
-    for (const auto &e : fs::directory_iterator("src")) {
+    for (const auto &e : fs::directory_iterator("mac/src")) {
         const std::string name = e.path().filename().string();
         std::ifstream f(e.path());
         std::stringstream s;
@@ -9739,7 +9739,7 @@ static void checkCategoryIvars(const std::string &prefix, const std::string &cor
         CHECK(laidOut);
         // No category the header is not imported by uses its variables (the
         // compiler says so too), and the shared block repeats none of them.
-        std::ifstream f("src/" + h);
+        std::ifstream f("mac/src/" + h);
         std::stringstream s;
         s << f.rdbuf();
         for (const std::string &v : ivarNamesIn(s.str())) {
@@ -9799,20 +9799,20 @@ static void testLinuxGuiSuiteList() {
 static void testGuiSuiteList() {
     GROUP("docs:gui-suites");
     // CLAUDE.md's "The GUI suites" item once named 26 of 73 suites. Every
-    // MC_GUI_SUITE in tests/gui/*.mm must be in that list, and every name in
+    // MC_GUI_SUITE in mac/tests/gui/*.mm must be in that list, and every name in
     // the list must be a suite.
     std::ifstream doc("CLAUDE.md");
-    DIR *dir = opendir("tests/gui");
+    DIR *dir = opendir("mac/tests/gui");
     if (!doc || !dir) {
         if (dir) closedir(dir);
-        std::printf("  (CLAUDE.md or tests/gui not found here; suite list check skipped)\n");
+        std::printf("  (CLAUDE.md or mac/tests/gui not found here; suite list check skipped)\n");
         return;
     }
     std::set<std::string> suites;
     while (dirent *e = readdir(dir)) {
         std::string name = e->d_name;
         if (name.size() < 4 || name.compare(name.size() - 3, 3, ".mm") != 0) continue;
-        std::ifstream f("tests/gui/" + name);
+        std::ifstream f("mac/tests/gui/" + name);
         std::stringstream ss;
         ss << f.rdbuf();
         const std::string text = ss.str();
@@ -10052,10 +10052,11 @@ static void testChangeRequest() {
           "cd /s && claude \"$(cat /t/r.txt)\"");
 
     GROUP("change:source");
-    std::set<std::string> files = {"/x/mc/Makefile", "/x/mc/src/EditorController.mm",
-                                   "/y/Makefile"};
+    std::set<std::string> files = {"/x/mc/Makefile", "/x/mc/mac/src/EditorController.mm",
+                                   "/y/Makefile", "/old/Makefile", "/old/src/EditorController.mm"};
     auto exists = [&](const std::string &f) { return files.count(f) > 0; };
     CHECK(looksLikeSource("/x/mc", exists));
+    CHECK(looksLikeSource("/old", exists));   // a checkout from before mac/src
     CHECK(looksLikeSource("/x/mc/", exists));
     CHECK(!looksLikeSource("/y", exists));
     CHECK(!looksLikeSource("", exists));

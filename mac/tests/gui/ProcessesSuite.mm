@@ -82,7 +82,7 @@ NSString *ServeCommand(MCProcsState *s, int port) {
         // http.server, less its reverse DNS lookup (see serve.py).
         return [NSString stringWithFormat:@"'%@' '%@' %d", s.server,
                 [[MCGuiBuildDir() stringByDeletingLastPathComponent]
-                    stringByAppendingPathComponent:@"tests/gui/serve.py"], port];
+                    stringByAppendingPathComponent:@"mac/tests/gui/serve.py"], port];
     return [NSString stringWithFormat:@"/usr/bin/nc -lk 127.0.0.1 %d", port];
 }
 

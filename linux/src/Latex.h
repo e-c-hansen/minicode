@@ -1,7 +1,7 @@
 // Latex.h — the LaTeX preview: the document typeset by tectonic, every page
 // shown in a PdfView in the editor's slot, and a double-click on the text
 // opening the LaTeX behind it for editing. The GTK form of LatexView in the
-// macOS build (src/Latex.mm); read "LaTeX preview" in CLAUDE.md first.
+// macOS build (mac/src/Latex.mm); read "LaTeX preview" in CLAUDE.md first.
 //
 // How it differs from the Mac, and why:
 //   * The preview has no copy of the source. The editor's GtkTextBuffer keeps

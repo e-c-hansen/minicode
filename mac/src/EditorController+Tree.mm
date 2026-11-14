@@ -851,7 +851,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     [self copyText:node ? node.path : _root.path];
 }
 
-// The same path from the open folder ("src/main.mm"); "." for the folder.
+// The same path from the open folder ("mac/src/main.mm"); "." for the folder.
 - (void)copyRelativePath:(id)sender {
     FileItem *node = [self clickedOrSelectedItem];
     NSString *p = node ? node.path : _root.path;

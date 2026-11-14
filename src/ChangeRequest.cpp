@@ -90,7 +90,10 @@ bool looksLikeSource(const std::string &dir,
     if (dir.empty()) return false;
     const std::string d = stripSlashes(dir);
     const std::string base = d == "/" ? "" : d;
-    return exists(base + "/Makefile") && exists(base + "/src/EditorController.mm");
+    // The Mac app is in mac/src since 2026-11-14; a clone of an older tag
+    // still has it in src.
+    return exists(base + "/Makefile") && (exists(base + "/mac/src/EditorController.mm") ||
+                                          exists(base + "/src/EditorController.mm"));
 }
 
 std::string checkoutOfBundle(const std::string &bundlePath) {

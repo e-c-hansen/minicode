@@ -1,5 +1,5 @@
 // LanguageSuite.mm — `make guitest SUITES=language`: the language server
-// fixes of the third review, against a scripted server (tests/gui/
+// fixes of the third review, against a scripted server (mac/tests/gui/
 // fake_lsp.py, run by python3; the server parts are skipped with a note
 // when python3 is missing).
 //
@@ -122,7 +122,7 @@ MC_GUI_SUITE(language) {
     NSString *scriptPath = [dir stringByAppendingPathComponent:@"script.json"];
     NSString *logPath = [dir stringByAppendingPathComponent:@"log.jsonl"];
     NSString *server = [[MCGuiBuildDir() stringByDeletingLastPathComponent]
-        stringByAppendingPathComponent:@"tests/gui/fake_lsp.py"];
+        stringByAppendingPathComponent:@"mac/tests/gui/fake_lsp.py"];
     NSString *python = MCFindProgram(@"python3");
     NSString *const kMain =
         @"import os\n"                    // 0

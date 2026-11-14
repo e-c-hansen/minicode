@@ -1,4 +1,4 @@
-// Folds.cpp — see Folds.h. The Mac's src/FoldView.mm is the model, command
+// Folds.cpp — see Folds.h. The Mac's mac/src/FoldView.mm is the model, command
 // for command.
 #include "Folds.h"
 

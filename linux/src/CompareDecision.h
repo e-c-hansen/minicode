@@ -1,5 +1,5 @@
 // CompareDecision.h — a comparison offered for the user's decision, the Mac's
-// MCComparison decision (src/CompareView.mm), linux/PARITY.md item 3.2: the
+// MCComparison decision (mac/src/CompareView.mm), linux/PARITY.md item 3.2: the
 // Claude Code IDE link's openDiff (item 3.9) shows a change and waits for
 // Accept or Reject. The view puts a bar with `prompt` over the panes and a
 // check and a cross for each hunk in a gutter between them; this class holds

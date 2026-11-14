@@ -9,7 +9,7 @@
 //
 // Pure C++ in UTF-16 code units like LineComments and MultiCaret, so matched
 // positions map straight onto NSRange. Which commands exist and whether they
-// are enabled is the GUI's business (src/PalettePanel.mm walks the main
+// are enabled is the GUI's business (mac/src/PalettePanel.mm walks the main
 // menu); everything here works on their labels alone. The one piece of I/O
 // is listFiles, the walk Quick Open lists, run off the main thread.
 #pragma once
