@@ -138,7 +138,7 @@ void CheckSizes(NSArray<TerminalView *> *terms, NSString *tag) {
 // or stacked with a 1-point gap.
 void CheckTiled(MCTerminalPanel *panel, NSInteger tab) {
     NSArray<NSArray<TerminalView *> *> *columns = [panel columnsInTab:(NSUInteger)tab];
-    CGFloat W = panel.bounds.size.width, H = panel.bounds.size.height - kMCTabStripHeight;
+    CGFloat W = panel.bounds.size.width, H = panel.bounds.size.height - MCTabStripHeight();
     CGFloat x = 0;
     for (NSArray<TerminalView *> *column in columns) {
         CGFloat top = H;
@@ -173,12 +173,12 @@ MC_GUI_SUITE(terminal_splits) {
         GCHECK([s.panel terminalsInTab:(NSUInteger)s.tab].count == 1);
         GCHECK([s.panel splitBars].count == 0);
         // A dock tall enough for a stack of two with room to move its bar.
-        [s.c setValue:@(3 * [MCTerminalPanel minPaneHeight] + kMCTabStripHeight + 60)
+        [s.c setValue:@(3 * [MCTerminalPanel minPaneHeight] + MCTabStripHeight() + 60)
                forKey:@"terminalHeight"];
         [s.c relayoutRightArea];
         MCGuiNote(@"window %@, dock %@", NSStringFromSize(s.c.window.frame.size),
                   NSStringFromSize(s.panel.frame.size));
-        GCHECK(s.panel.frame.size.height - kMCTabStripHeight >= 3 * [MCTerminalPanel minPaneHeight]);
+        GCHECK(s.panel.frame.size.height - MCTabStripHeight() >= 3 * [MCTerminalPanel minPaneHeight]);
     });
     MCGuiWait(@"its prompt", 20, ^BOOL { return Idle(s.t1); });
 

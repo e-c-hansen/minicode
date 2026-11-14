@@ -553,7 +553,7 @@ container (PanelHost, laid out by hand in layoutContainer)
   one tab.
 - `EditorTabs` rules: a new tab right of the active one, the most recently used
   after closing the active one, wrap on next and previous, labels that add
-  folders when names clash. `TabStrip` only draws and reports clicks. A tab's
+  folders when names clash. `TabStrip` only draws and reports clicks. Its titles are `tabs.font-size` points (12 unset; `MCTabStripFont`) in every strip, editor, split group, browser and terminals, and a strip is `MCTabStripHeight()` tall (30, more for a bigger font), which the owners read on every layout and lay out again on a settings change. A tab's
   right click (`menuForTabAtIndex:`) has the close commands, copy paths,
   reveal, rename and trash; the File menu repeats them for the active tab so
   the palette finds them.

@@ -219,6 +219,7 @@ static const int kResizeCells = 4;
     self.strip.needsDisplay = YES;
     self.buttons.stripColor = self.strip.stripColor;
     self.buttons.needsDisplay = YES;
+    [self layoutPanes];   // tabs.font-size may have changed the strip's height
 }
 
 // Titles and the selected tab, after anything that changes them.
@@ -333,7 +334,7 @@ static const int kResizeCells = 4;
 // The space the panes share: the panel below its strip.
 - (NSSize)paneArea {
     NSRect b = self.bounds;
-    return NSMakeSize(b.size.width, MAX(0, b.size.height - kMCTabStripHeight));
+    return NSMakeSize(b.size.width, MAX(0, b.size.height - MCTabStripHeight()));
 }
 + (CGFloat)minPaneWidth {
     return kMinSplitColumns * [TerminalGridView cellSize].width + 2 * [TerminalGridView padding];
@@ -696,8 +697,8 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
 // Hidden tabs keep the same frames, so their programs keep the size they had.
 - (void)layoutPanes {
     NSRect b = self.bounds;
-    CGFloat W = b.size.width, H = MAX(0, b.size.height - kMCTabStripHeight);
-    CGFloat stripH = MIN(kMCTabStripHeight, b.size.height);
+    CGFloat W = b.size.width, H = MAX(0, b.size.height - MCTabStripHeight());
+    CGFloat stripH = MIN(MCTabStripHeight(), b.size.height);
     CGFloat buttonsW = MIN(2 * kButtonWidth, W);
     self.strip.frame = NSMakeRect(0, H, W - buttonsW, stripH);
     self.buttons.frame = NSMakeRect(W - buttonsW, H, buttonsW, stripH);

@@ -263,7 +263,7 @@
         self.emptyLabel.frame = NSMakeRect(NSMinX(slot) + 16, NSMidY(slot) + 10,
                                            MAX(0, NSWidth(slot) - 32), 20);
     if (!strip) return slot;
-    const CGFloat h = MIN(kMCTabStripHeight, NSHeight(slot));
+    const CGFloat h = MIN(MCTabStripHeight(), NSHeight(slot));
     self.tabStrip.frame = NSMakeRect(NSMinX(slot), NSMaxY(slot) - h, NSWidth(slot), h);
     return NSMakeRect(NSMinX(slot), NSMinY(slot), NSWidth(slot), NSHeight(slot) - h);
 }

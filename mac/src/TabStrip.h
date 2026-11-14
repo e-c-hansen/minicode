@@ -3,8 +3,13 @@
 // owner keeps the tabs (see EditorTabs.h for the rules the editor follows).
 #import <Cocoa/Cocoa.h>
 
-// How tall the strip is, in points.
-extern const CGFloat kMCTabStripHeight;
+// The titles' font: tabs.font-size points (12 when unset), the same for
+// every strip (the editor's, the split group's, the browser's and the
+// terminals'), so a change in the settings file reaches all of them.
+NSFont *MCTabStripFont(void);
+// How tall a strip is, in points: 30, or more when the titles' font needs
+// it. Owners lay strips out at this height again on a settings change.
+CGFloat MCTabStripHeight(void);
 
 // A dot before a tab's title: a terminal waiting for the user (orange) or
 // done (green), from `minicode notify` (TerminalAttention.h).

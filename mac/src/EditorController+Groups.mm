@@ -145,7 +145,7 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
     const NSRect right = NSMakeRect(NSMinX(slot) + lw, NSMinY(slot), W - lw, NSHeight(slot));
     const NSRect live = _focusedGroup == 0 ? left : right;
     const NSRect other = _focusedGroup == 0 ? right : left;
-    const CGFloat h = MIN(kMCTabStripHeight, NSHeight(other));
+    const CGFloat h = MIN(MCTabStripHeight(), NSHeight(other));
     _parkedStrip.hidden = !shown;
     _parkedStrip.frame = NSMakeRect(NSMinX(other), NSMaxY(other) - h, NSWidth(other), h);
     [_mirror layoutInRect:NSMakeRect(NSMinX(other), NSMinY(other), NSWidth(other),

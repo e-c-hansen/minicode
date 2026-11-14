@@ -381,6 +381,7 @@ static id MCRecordFromData(NSData *data, BOOL archived) {
     self.strip.needsDisplay = YES;
     self.plus.stripColor = self.strip.stripColor;
     self.plus.needsDisplay = YES;
+    [self layoutChildren];   // tabs.font-size may have changed the strip's height
 }
 
 // A right click on the toolbar.
@@ -515,12 +516,12 @@ static const CGFloat kBrowserBarHeight = 36;
 // Below the strip and the toolbar.
 - (NSRect)pageRect {
     const CGFloat W = self.bounds.size.width, H = self.bounds.size.height;
-    return NSMakeRect(0, 0, W, MAX(0, H - kMCTabStripHeight - kBrowserBarHeight));
+    return NSMakeRect(0, 0, W, MAX(0, H - MCTabStripHeight() - kBrowserBarHeight));
 }
 
 - (void)layoutChildren {
     CGFloat W = self.bounds.size.width, H = self.bounds.size.height;
-    const CGFloat stripH = MIN(kMCTabStripHeight, H), plusW = MIN(kBrowserPlusWidth, W);
+    const CGFloat stripH = MIN(MCTabStripHeight(), H), plusW = MIN(kBrowserPlusWidth, W);
     self.strip.frame = NSMakeRect(0, H - stripH, W - plusW, stripH);
     self.plus.frame = NSMakeRect(W - plusW, H - stripH, plusW, stripH);
     const CGFloat bw = 34, pad = 6;
