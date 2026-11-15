@@ -572,8 +572,10 @@ MC_GUI_SUITE(attention) {
         MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn), @(NSAlertFirstButtonReturn)]);
         [((MCInstallBar *)Panel(c).noticeBar).installButton performClick:nil];
     });
-    MCGuiWait(@"Add the Hooks, then where they went", 5, ^BOOL {
-        return MCGuiAlertsShown().count >= alertsBefore + 2;
+    // The bar goes in the last alert's handler, which the harness runs a
+    // turn after answering it (as AppKit runs a sheet's): wait for that too.
+    MCGuiWait(@"Add the Hooks, then where they went, and the bar goes", 5, ^BOOL {
+        return MCGuiAlertsShown().count >= alertsBefore + 2 && Panel(c).noticeBar == nil;
     });
     MCGuiStep(@"the four hooks are in, the user's setting kept, one backup, and the bar gone", ^{
         GCHECK_EQ_STR(MCGuiAlertsShown()[alertsBefore + 1], @"The hooks are on");
