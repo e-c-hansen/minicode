@@ -84,8 +84,21 @@
 // Whether the keyboard is in the pane: a page, the address bar, a button.
 - (BOOL)keyboardInPane;
 // Loads an address in the user's tab on show, or searches for words that
-// are not one, and shows it.
+// are not one, and shows it. A file name or path (`index.html`,
+// `docs/a.html`, `~/x.html`) loads that file from the window's folder
+// (PageCheck::typedAddress), with read access to the folder so its
+// stylesheets and pictures load; a file that is not there is said so over
+// the address bar (`addressNotice`) and nothing loads.
 - (void)navigateToString:(NSString *)raw;
+// The window's folder, which file names typed in the address bar are
+// looked up in.
+@property(nonatomic, copy) NSString * (^folderForAddresses)(void);
+// The address bar: one line, scrolling while typed in, a long address
+// shown with "…" in its middle otherwise.
+@property(nonatomic, readonly) NSTextField *urlBar;
+// "No file named index.html in this folder", over the address bar's right
+// end until the address is edited or a few seconds pass.
+@property(nonatomic, readonly) NSTextField *addressNotice;
 // The agent page's probe (BrowserPages.h), the page made on first use; it
 // is not shown by this.
 - (MCPageProbe *)openAgentPage;

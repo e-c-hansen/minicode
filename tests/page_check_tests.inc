@@ -66,6 +66,57 @@ static void testPageCheck() {
         CHECK(fileAddress("/a/b#c?.html") == "file:///a/b%23c%3F.html");
     }
 
+    GROUP("page:typed-address");
+    {
+        auto exists = [](const std::string &p) {
+            return p == "/w/site/index.html" || p == "/w/site/docs/a.html" ||
+                   p == "/Users/me/x.html" || p == "/w/site/my page.html" ||
+                   p == "/w/site/example.com" || p == "/w/other.html";
+        };
+        auto typed = [&](const std::string &raw) {
+            return typedAddress(raw, "/w/site", "/Users/me", exists);
+        };
+        // File names and paths from the window's folder.
+        TypedAddress t = typed("index.html");
+        CHECK(t.kind == Typed::File && t.url == "file:///w/site/index.html" &&
+              t.path == "/w/site/index.html");
+        CHECK(typed("  docs/a.html ").url == "file:///w/site/docs/a.html");
+        CHECK(typed("./index.html").path == "/w/site/index.html");
+        CHECK(typed("docs/../index.html").path == "/w/site/index.html");
+        CHECK(typed("../other.html").path == "/w/other.html");
+        CHECK(typed("~/x.html").url == "file:///Users/me/x.html");
+        CHECK(typed("/Users/me/x.html").kind == Typed::File);
+        CHECK(typed("my page.html").url == "file:///w/site/my%20page.html");
+        CHECK(typed("index.html#intro").url == "file:///w/site/index.html#intro");
+        // A file of the folder named like a site is the file.
+        CHECK(typed("example.com").kind == Typed::File);
+        // Missing files say so.
+        t = typed("missing.html");
+        CHECK(t.kind == Typed::NoFile && t.message == "No file named missing.html in this folder");
+        CHECK(typed("docs/b.html").kind == Typed::NoFile);
+        CHECK(typed("docs/readme").kind == Typed::NoFile);
+        CHECK(typed("./x").kind == Typed::NoFile);
+        CHECK(typed("/nope/x.html").message == "No file at /nope/x.html");
+        CHECK(typed("~/nope.html").message == "No file at ~/nope.html");
+        CHECK(typedAddress("index.html", "", "/Users/me", exists).message ==
+              "No file named index.html: this window has no folder");
+        // The web as before.
+        CHECK(typed("example.org").kind == Typed::Web && typed("example.org").url == "https://example.org");
+        CHECK(typed("example.org/page.html").url == "https://example.org/page.html");
+        CHECK(typed("github.io").url == "https://github.io");
+        CHECK(typed("https://example.com/a b").url == "https://example.com/a b");
+        CHECK(typed("file:///w/site/index.html").kind == Typed::Web);
+        CHECK(typed("about:blank").url == "about:blank");
+        CHECK(typed("localhost:5173").url == "http://localhost:5173");
+        CHECK(typed("localhost/app.html").url == "http://localhost/app.html");
+        CHECK(typed("127.0.0.1:8000/x.html").url == "http://127.0.0.1:8000/x.html");
+        t = typed("how to center a div");
+        CHECK(t.kind == Typed::Search && t.url == "https://duckduckgo.com/?q=how%20to%20center%20a%20div");
+        CHECK(typed("what is index.html").kind == Typed::Search);
+        CHECK(typed("").kind == Typed::Nothing && typed("   ").kind == Typed::Nothing);
+        CHECK(typed("a\x01.html").kind == Typed::Nothing);
+    }
+
     GROUP("page:console-log");
     {
         ConsoleLog log;

@@ -8,7 +8,10 @@
 // beside; only two pages stay live, the others suspended to their address
 // and WebKit's record and brought back on show, their WebKit processes
 // gone; the session keeps every tab, and an older session's single page
-// still comes back. It measures the memory of eight tabs both ways.
+// still comes back. It measures the memory of eight tabs both ways. A file
+// name typed in the address bar opens that file from the window's folder,
+// its stylesheet and picture loading; a missing one is said so; a long
+// address stays on one line.
 //
 // Only local pages (file://). Keys are CGEvent-made, through [NSApp
 // sendEvent:] (the key monitor, the window's views, then the menus). It
@@ -568,6 +571,85 @@ MC_GUI_SUITE(browser_tabs) {
         GCHECK([c.browser webViewOfTab:7] != nil && [c.browser webViewOfTab:6] == nil);
     });
     MCGuiWait(@"heavy 1 is back", 20, ^BOOL { return Loaded(c.browser, @"Heavy 1"); });
+
+    // ------------------------------------------- file names in the address bar
+    // Typed as the user types: the field editor's text, then Return.
+    void (^typeAddress)(NSString *) = ^(NSString *text) {
+        [c.browser focusURLBar];
+        NSTextView *ed = (NSTextView *)UrlBar(c.browser).currentEditor;
+        GCHECK(ed != nil);
+        [ed setString:text];
+        [ed didChangeText];
+        [ed doCommandBySelector:@selector(insertNewline:)];
+    };
+    MCGuiStep(@"a file name typed in the address bar opens it from the window's folder", ^{
+        MCGuiWriteFile(F(@"site/style.css"), @"body { color: rgb(1, 2, 3); }\n");
+        MCGuiWriteFile(F(@"site/pic.svg"),
+                       @"<svg xmlns='http://www.w3.org/2000/svg' width='37' height='5'></svg>");
+        MCGuiWriteFile(F(@"site/typed.html"),
+                       @"<html><head><title>Typed</title>"
+                       @"<link rel=stylesheet href='style.css'></head>"
+                       @"<body><img id=pic src='pic.svg'><p>typed</p></body></html>");
+        typeAddress(@"site/typed.html");
+        GCHECK(c.browser.addressNotice.hidden);
+    });
+    MCGuiWait(@"the typed file loads", 20, ^BOOL { return Loaded(c.browser, @"Typed"); });
+    MCGuiAsync(@"a file page's stylesheet and picture load from its folder", 10, ^(MCGuiDone done) {
+        WKWebView *w = ShownWeb(c.browser);
+        GCHECK(w.URL.isFileURL && [w.URL.path hasSuffix:@"/site/typed.html"]);
+        [w evaluateJavaScript:@"getComputedStyle(document.body).color + ' ' + "
+                              @"document.getElementById('pic').naturalWidth"
+            completionHandler:^(id value, NSError *error) {
+                (void)error;
+                GCHECK_EQ_STR(value, @"rgb(1, 2, 3) 37");
+                done();
+            }];
+    });
+    __block NSString *beforeMissing = nil;
+    MCGuiStep(@"a file name that is not there is said so, and nothing loads", ^{
+        beforeMissing = ShownWeb(c.browser).URL.absoluteString;
+        typeAddress(@"missing.html");
+        GCHECK(!c.browser.addressNotice.hidden);
+        GCHECK_EQ_STR(c.browser.addressNotice.stringValue,
+                      @"No file named missing.html in this folder");
+        // Inside the address bar, at its right end.
+        GCHECK(NSContainsRect(NSInsetRect(UrlBar(c.browser).frame, -1, -1),
+                              c.browser.addressNotice.frame));
+        GCHECK(!ShownWeb(c.browser).isLoading);
+        GCHECK_EQ_STR(ShownWeb(c.browser).URL.absoluteString, beforeMissing);
+    });
+    MCGuiStep(@"editing the address takes the notice away", ^{
+        [c.browser focusURLBar];
+        GCHECK(!c.browser.addressNotice.hidden);
+        NSTextView *ed = (NSTextView *)UrlBar(c.browser).currentEditor;
+        GCHECK(ed != nil);
+        [ed insertText:@"x" replacementRange:ed.selectedRange];
+        GCHECK(c.browser.addressNotice.hidden);
+    });
+    MCGuiStep(@"a long address stays on one line", ^{
+        NSTextField *bar = UrlBar(c.browser);
+        NSString *longAddress = [@"file:///" stringByPaddingToLength:200
+                                                          withString:@"long-folder-name/"
+                                                     startingAtIndex:0];
+        [c.window makeFirstResponder:nil];
+        bar.stringValue = longAddress;
+        NSTextFieldCell *cell = (NSTextFieldCell *)bar.cell;
+        GCHECK(cell.usesSingleLineMode && !cell.wraps);
+        GCHECK(cell.lineBreakMode == NSLineBreakByTruncatingMiddle);
+        const CGFloat oneLine = [cell cellSizeForBounds:NSMakeRect(0, 0, 10000, 1000)].height;
+        const CGFloat fitted = [cell cellSizeForBounds:NSMakeRect(0, 0, bar.bounds.size.width, 1000)].height;
+        MCGuiNote(@"address bar: one line %.1f, fitted to %.0f points %.1f",
+                  oneLine, bar.bounds.size.width, fitted);
+        GCHECK(fitted <= oneLine + 0.5);
+        GCHECK(bar.frame.size.height < 2 * bar.font.pointSize + 6);
+        MCGuiSnapshot(c.browser, @"browser-long-address");
+        // While typed in it scrolls, still one line.
+        [c.browser focusURLBar];
+        NSTextView *ed = (NSTextView *)bar.currentEditor;
+        GCHECK(ed != nil && !ed.textContainer.widthTracksTextView);
+        GCHECK(ed.textContainer.size.width > bar.bounds.size.width);
+        [c.window makeFirstResponder:nil];
+    });
 
     MCGuiStep(@"the suite's window closes", ^{
         [c.window close];

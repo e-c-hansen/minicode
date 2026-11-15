@@ -231,6 +231,143 @@ bool agentAddress(const std::string& raw, const std::function<bool(const std::st
     return false;
 }
 
+namespace {
+
+// "/a/./b/../c" -> "/a/c"; an absolute path in, an absolute path out.
+std::string normalizePath(const std::string& path) {
+    std::vector<std::string> parts;
+    size_t i = 0;
+    while (i <= path.size()) {
+        size_t j = path.find('/', i);
+        if (j == std::string::npos) j = path.size();
+        std::string part = path.substr(i, j - i);
+        if (part == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else if (!part.empty() && part != ".") {
+            parts.push_back(part);
+        }
+        i = j + 1;
+    }
+    std::string out;
+    for (const std::string& p : parts) out += "/" + p;
+    return out.empty() ? "/" : out;
+}
+
+// Endings that are files and no web domain's, so "notes.html" that is not
+// in the folder is a missing file and never https://notes.html.
+bool fileEnding(const std::string& name) {
+    size_t slash = name.rfind('/');
+    std::string last = slash == std::string::npos ? name : name.substr(slash + 1);
+    size_t dot = last.rfind('.');
+    if (dot == std::string::npos || dot == 0) return false;
+    static const char* const kEndings[] = {
+        "html", "htm", "xhtml", "shtml", "svg", "pdf", "txt", "png", "jpg", "jpeg",
+        "gif", "webp", "css", "js", "mjs", "json", "xml", "csv", "tsv", "markdown"};
+    const std::string ext = lower(last.substr(dot + 1));
+    for (const char* e : kEndings)
+        if (ext == e) return true;
+    return false;
+}
+
+std::string searchAddress(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out = "https://duckduckgo.com/?q=";
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += (char)c;
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 15];
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+TypedAddress typedAddress(const std::string& raw, const std::string& base,
+                          const std::string& home,
+                          const std::function<bool(const std::string&)>& exists) {
+    TypedAddress r;
+    const std::string s = trim(raw);
+    if (s.empty() || hasControl(s)) return r;
+    const std::string scheme = schemeOf(s);
+    if ((scheme == "http" || scheme == "https" || scheme == "file") &&
+        s.compare(scheme.size() + 1, 2, "//") == 0) {
+        r.kind = Typed::Web;
+        r.url = s;
+        return r;
+    }
+    if (lower(s) == "about:blank") {
+        r.kind = Typed::Web;
+        r.url = "about:blank";
+        return r;
+    }
+
+    // A file: the path before any #fragment.
+    const size_t hash = s.find('#');
+    const std::string name = s.substr(0, hash);
+    const std::string fragment = hash == std::string::npos ? "" : s.substr(hash);
+    const bool spaces = name.find(' ') != std::string::npos;
+    std::string path;
+    bool plainlyFile = false;  // a missing one is said to be missing
+    bool relative = false;
+    if (!name.empty() && name[0] == '/') {
+        path = name;
+        plainlyFile = true;
+    } else if (name == "~" || name.compare(0, 2, "~/") == 0) {
+        if (!home.empty()) path = home + name.substr(1);
+        plainlyFile = true;
+    } else if (!name.empty() && scheme.empty()) {
+        relative = true;
+        if (!base.empty()) path = base + "/" + name;
+        // A file name with a file's ending ("index.html"), or a folder
+        // before a slash ("docs/a.html", where a site would be
+        // "example.com/a.html").
+        const size_t slash = name.find('/');
+        const std::string first = name.substr(0, slash);
+        plainlyFile = name.compare(0, 2, "./") == 0 || name.compare(0, 3, "../") == 0 ||
+                      (!spaces && slash == std::string::npos && fileEnding(name)) ||
+                      (!spaces && slash != std::string::npos && slash > 0 &&
+                       first.find('.') == std::string::npos && lower(first) != "localhost");
+    }
+    if (!path.empty()) {
+        path = normalizePath(path);
+        if (exists && exists(path)) {
+            r.kind = Typed::File;
+            r.path = path;
+            r.url = fileAddress(path) + fragment;
+            return r;
+        }
+    }
+    if (plainlyFile) {
+        r.kind = Typed::NoFile;
+        if (!relative)
+            r.message = "No file at " + name;
+        else if (base.empty())
+            r.message = "No file named " + name + ": this window has no folder";
+        else
+            r.message = "No file named " + name + " in this folder";
+        return r;
+    }
+
+    bool local = false;
+    if (s.find("://") == std::string::npos && !spaces && isHostPort(s, local)) {
+        r.kind = Typed::Web;
+        r.url = "http://" + s;
+        return r;
+    }
+    if (s.find('.') != std::string::npos && s.find(' ') == std::string::npos && s[0] != '.') {
+        r.kind = Typed::Web;
+        r.url = "https://" + s;
+        return r;
+    }
+    r.kind = Typed::Search;
+    r.url = searchAddress(s);
+    return r;
+}
+
 // ------------------------------------------------------------ console log
 int64_t ConsoleLog::add(ConsoleEntry e) {
     e.seq = next_++;

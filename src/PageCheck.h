@@ -48,6 +48,28 @@ bool agentAddress(const std::string& raw, const std::function<bool(const std::st
 // "/a b/c.html" -> "file:///a%20b/c.html".
 std::string fileAddress(const std::string& path);
 
+// What the browser pane's address bar loads for what the user typed there.
+// An http, https or file address and about:blank go as they are; a file
+// name or path (`index.html`, `docs/a.html`, `./x.html`, `~/x.html`,
+// `/Users/me/x.html`, with an optional `#fragment`) is looked up against
+// `base` (the window's folder) or `home`, and loads as a file address when
+// `exists` says a file is there; a name that is plainly a file (a path
+// form, a folder before a slash, or an ending such as .html that is no web
+// domain's) and is not there is `NoFile`, with `message` saying so, rather
+// than a web address that will never answer. Otherwise "localhost:5173" or
+// "127.0.0.1:8000" go to http, a name with a dot ("example.com") to https,
+// and anything else is a web search.
+enum class Typed { Nothing, Web, File, NoFile, Search };
+struct TypedAddress {
+    Typed kind = Typed::Nothing;
+    std::string url;      // what to load (Web, File, Search)
+    std::string path;     // File: the file's absolute path, "." and ".." resolved
+    std::string message;  // NoFile: "No file named index.html in this folder"
+};
+TypedAddress typedAddress(const std::string& raw, const std::string& base,
+                          const std::string& home,
+                          const std::function<bool(const std::string&)>& exists);
+
 // ---------------------------------------------------------- the console
 struct ConsoleEntry {
     int64_t seq = 0;          // counts up for the life of the page, across loads

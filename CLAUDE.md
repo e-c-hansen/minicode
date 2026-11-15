@@ -3183,6 +3183,20 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   on show (`BrowserView showAddress:inNewTab:`, Command for a new tab).
   Finder keeps sending .url files to the default browser unless the
   user picks minicode in Get Info (Info.plist only offers it, Alternate).
+- **The address bar** (2026-11-15, `PageCheck::typedAddress`,
+  `page:typed-address`, the `browser_tabs` suite): one line
+  (`usesSingleLineMode`, not wrapping, truncated in the middle while not
+  edited; a field made with `init` wraps, and a long file:// address went
+  onto a second line, cut off). `loadString:` asks the core: a file name or
+  path (`index.html`, `docs/a.html`, `./x`, `~/x.html`, `/abs`, a
+  `#fragment` kept) found from the window's folder (`folderForAddresses`,
+  the controller's rootPath) loads with `loadFileURL:allowingReadAccessToURL:`
+  scoped to that folder (the file's own folder when outside it), as does a
+  typed file:// address; one plainly a file (a path form, a folder before
+  a slash, an ending such as .html that is no domain's) and missing is
+  said over the bar's right end (`addressNotice`, 5 s or until edited)
+  and nothing loads; host:port goes to http; else a name with a dot to
+  https and the rest to a search, as before.
 - **Find in the page** (2026-11-09, `make guitest SUITES=browser_find`):
   the terminal's `MCTerminalFindBar` at the page's top right, Edit > Find's
   `performTextFinderAction:` answered by the pane in the responder chain
