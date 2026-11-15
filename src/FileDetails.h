@@ -12,6 +12,8 @@
 //     FSEvents, so a change lists only the folders it touched; and for the
 //     GTK port's tree, the splices that put a fresh listing in a folder's
 //     rows and when a changing folder is listed again.
+//   - FileIcon: what a click on a file opens, by its extension, for the
+//     row's icon (a picture, a film, a table, ...).
 //
 // The Mac's EditorController and TreeDetails.mm use it, and the GTK port's
 // FileTree.cpp its TreeRefresh; nothing here touches a GUI. measure() reads
@@ -290,3 +292,27 @@ private:
 };
 
 }  // namespace TreeRefresh
+
+namespace FileIcon {
+
+// What a click on a file opens, by its extension alone (the tree never reads
+// a row's file to draw it): a picture, a player for video or audio, a PDF
+// page, a table (CSV, TSV), a rendered notebook, a database, an archive (Quick
+// Look), a web page (HTML), a web bookmark (.url, .webloc), source code (an
+// extension the highlighter has a grammar for, Markdown and LaTeX left as
+// text since they open as pages), or text.
+enum class Kind {
+    Text, Code, Image, Video, Audio, Pdf, Table, Notebook, Database, Archive, Web, Bookmark,
+};
+Kind kindOf(const std::string &path);
+const char *kindName(Kind k);   // "text", "code", "image", ... for tests
+
+// The extensions the Mac's viewers take as a picture (SVG is source, PDF
+// has its own viewer), as video and as audio AVFoundation plays (WebM,
+// Matroska and the like are not; .ts and .mts are TypeScript). `ext` is in
+// lower case without the dot.
+bool isImageExtension(const std::string &ext);
+bool isVideoExtension(const std::string &ext);
+bool isAudioExtension(const std::string &ext);
+
+}  // namespace FileIcon

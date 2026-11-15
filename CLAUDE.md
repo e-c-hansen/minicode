@@ -2897,6 +2897,13 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   never shows as the agent deleting it; `AgentView::compareBase`) and Open in
   New Window. A window on `/` or the home folder indexes no sessions
   (`AgentView::indexesFolder`): every transcript on the Mac is inside them.
+- **Icons by kind** (2026-11-15): `FileIcon::kindOf` (FileDetails, by
+  extension only, `tree:icons`; the image, video and audio tables there
+  are the ones `isImagePath:`/`isMediaPath:` read) picks the row's SF
+  Symbol (`MCTreeIconSymbol`, TreeDetails.mm), each image made once
+  (`MCTreeSymbolImage`, which falls back to doc.text for a symbol the
+  system lacks: cylinder is macOS 12). Folders and worktree rows keep
+  theirs; the git colors tint the name, not the icon. GTK not yet.
 - **Columns** (`MCTreeColumns` bitmask, `toggleTreeColumn:`): size, saved and
   created (`st_birthtimespec`) on their own keys, the rightmost dropped first
   on a narrow row; switching one on widens a narrow sidebar

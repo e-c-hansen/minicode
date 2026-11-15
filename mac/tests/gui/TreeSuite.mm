@@ -7,7 +7,9 @@
 // one, an ignored folder) and lose it once committed; drag and drop moves a
 // row into a folder and refuses a folder into itself or below itself, and
 // copies a file from Finder in; Sort By size and date order the rows; the
-// size column shows each file's size; hidden files come and go.
+// size column shows each file's size; hidden files come and go; a file's
+// icon says what a click opens (a picture, a film, a table, a database,
+// code, text), a folder's stays a folder.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -120,6 +122,11 @@ MC_GUI_SUITE(tree) {
         MCGuiWriteFile(file(@"src/b.txt"), @"bravo\n");
         MCGuiWriteFile(file(@"src/deep/d.txt"), @"delta\n");
         MCGuiWriteFile(file(@"docs/readme.md"), @"# docs\n");
+        // One file of each of a few kinds, for the icons (the tree reads
+        // only their names).
+        for (NSString *name in @[@"shot.png", @"clip.mp4", @"table.csv", @"app.sqlite",
+                                 @"main.cpp", @"page.html"])
+            MCGuiWriteFile(file([@"docs" stringByAppendingPathComponent:name]), @"x");
         MCGuiWriteFile(file(@".gitignore"), @"build/\n");
         MCGuiWriteFile(file(@"small.txt"), @"s\n");
         MCGuiWriteFile(file(@"medium.txt"), [@"" stringByPaddingToLength:3000 withString:@"m" startingAtIndex:0]);
@@ -191,6 +198,28 @@ MC_GUI_SUITE(tree) {
     });
     MCGuiWaitQuiet(@"the commit's last status runs out first", 1.0, 20, ^NSInteger {
         return (NSInteger)[c treeGitRuns];
+    });
+    MCGuiStep(@"each file's icon says what a click opens; folders stay folders", ^{
+        NSDictionary<NSString *, NSString *> *want = @{
+            @"docs/shot.png": @"photo", @"docs/clip.mp4": @"film",
+            @"docs/table.csv": @"tablecells", @"docs/app.sqlite": @"cylinder",
+            @"docs/main.cpp": @"chevron.left.forwardslash.chevron.right",
+            @"docs/page.html": @"globe", @"docs/readme.md": @"doc.text",
+        };
+        for (NSString *rel in want) {
+            MCTreeCell *cell = CellAt(c, file(rel));
+            GCHECK(cell != nil);
+            GCHECK_EQ_STR(MCTreeIconSymbol(file(rel)), want[rel]);
+            const BOOL same = cell.imageView.image == MCTreeSymbolImage(want[rel]);
+            if (!same) MCGuiNote(@"%@ shows %@", rel, cell.imageView.image);
+            GCHECK(same);
+        }
+        // Each kind its own picture (cylinder is a macOS 12 symbol).
+        GCHECK(MCTreeSymbolImage(@"photo") != MCTreeSymbolImage(@"film"));
+        GCHECK(MCTreeSymbolImage(@"tablecells") != MCTreeSymbolImage(@"doc.text"));
+        GCHECK(CellAt(c, docs).imageView.image == MCTreeSymbolImage(@"folder.fill"));
+        // A symbol this macOS lacks falls back to the page.
+        GCHECK(MCTreeSymbolImage(@"no.such.symbol.here") == MCTreeSymbolImage(@"doc.text"));
     });
     MCGuiStep(@"a change only inside the ignored folder runs no status", ^{
         if (!git) return;

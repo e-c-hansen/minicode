@@ -115,6 +115,36 @@ void MCSetTreeSortForRoot(NSString *root, const TreeSort::Options &options) {
 }
 
 // ------------------------------------------------------------ formatting
+NSString *MCTreeIconSymbol(NSString *path) {
+    switch (FileIcon::kindOf(path.fileSystemRepresentation ?: "")) {
+    case FileIcon::Kind::Image: return @"photo";
+    case FileIcon::Kind::Video: return @"film";
+    case FileIcon::Kind::Audio: return @"waveform";
+    case FileIcon::Kind::Pdf: return @"doc.richtext";
+    case FileIcon::Kind::Table: return @"tablecells";
+    case FileIcon::Kind::Notebook: return @"book";
+    case FileIcon::Kind::Database: return @"cylinder";
+    case FileIcon::Kind::Archive: return @"doc.zipper";
+    case FileIcon::Kind::Web: return @"globe";
+    case FileIcon::Kind::Bookmark: return @"bookmark";
+    case FileIcon::Kind::Code: return @"chevron.left.forwardslash.chevron.right";
+    case FileIcon::Kind::Text: break;
+    }
+    return @"doc.text";
+}
+
+NSImage *MCTreeSymbolImage(NSString *name) {
+    static NSMutableDictionary<NSString *, NSImage *> *images;
+    if (!images) images = [NSMutableDictionary dictionary];
+    if (!name.length) name = @"doc.text";
+    NSImage *image = images[name];
+    if (image) return image;
+    image = [NSImage imageWithSystemSymbolName:name accessibilityDescription:nil];
+    if (!image && ![name isEqualToString:@"doc.text"]) image = MCTreeSymbolImage(@"doc.text");
+    if (image) images[name] = image;
+    return image;
+}
+
 NSString *MCFormatByteCount(long long bytes) {
     static NSByteCountFormatter *f;
     if (!f) {

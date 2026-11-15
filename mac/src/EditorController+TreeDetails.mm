@@ -94,13 +94,14 @@ static NSString *MCGroupedCount(long long n) {
     NSColor *gitColor = [self gitColorOf:node tip:&gitTip];
     cell.textField.textColor = gitColor ?: text;
     cell.textField.font = [NSFont systemFontOfSize:12.5];
-    NSString *sym = node.isDir ? @"folder.fill" : @"doc.text";
+    // A file's icon says what a click opens: a picture, a film, a table...
+    NSString *sym = node.isDir ? @"folder.fill" : MCTreeIconSymbol(node.path);
     NSColor *tint = node.isDir ? Hex(0xC09553) : Hex(0x8A99A8);
     NSString *worktreeTip = nil;
     NSAttributedString *worktree = [self worktreeTitleFor:node color:text icon:&sym tint:&tint
                                                       tip:&worktreeTip];
     if (worktree) cell.textField.attributedStringValue = worktree;
-    cell.imageView.image = [NSImage imageWithSystemSymbolName:sym accessibilityDescription:nil];
+    cell.imageView.image = MCTreeSymbolImage(sym);
     cell.imageView.contentTintColor = tint;
     if (worktree) {
         [cell setSize:nil saved:nil created:nil color:nil];
