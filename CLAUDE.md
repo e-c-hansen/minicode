@@ -2723,7 +2723,11 @@ for full-screen programs. Both can be open at once.
   names the roots tried; paths resolved so /private/tmp matches a /tmp root.
   The log checks `characterIndexForPoint:` against the character's own rect (it
   answers past a line's end); a flagsChanged monitor catches Cmd pressed
-  without moving. A URL goes to `openWebAddressFromTerminal:` (the user's
+  without moving. Without Cmd, a rest of 0.5 s on a link (a timer each
+  `mouseMoved:` re-arms, so no lookup per move) sets the tooltip to
+  "Cmd+click to open" (`showRestHint`, both modes; with a hyperlink's
+  address on a second line), never while a program takes the mouse or a
+  selection is dragged; a move, a press, or leaving the view clears it. A URL goes to `openWebAddressFromTerminal:` (the user's
   page, pane shown quietly with no home page, keyboard kept; 0.0.0.0 and [::]
   become localhost, `TermLinks::browserAddress`).
 - **OSC 8** (grid only; the line-mode log ignores them): `TerminalScreen`
@@ -2951,7 +2955,11 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   Worktree rows are never colored. `tree.git-*` keys, VS Code's dark or
   light defaults by `Theme::dark`.
 - **The Worktrees node** (first, shown with or without hidden files, not again
-  inside .claude): each worktree named for its agent with its ahead count and
+  inside .claude; 2026-11-15: neither it nor a worktree row offers Rename…
+  or Move to Trash, tagged `kNotOnWorktreeMenuTag` and hidden in
+  `menuNeedsUpdate:`, and `renameSelected:`/`deleteSelected:`, which F2
+  and Cmd+Delete reach through the key monitor, refuse them with a status
+  note): each worktree named for its agent with its ahead count and
   changes (git off the main thread); right click Compare with Main (each
   changed file side by side with main at the merge base, so main's later work
   never shows as the agent deleting it; `AgentView::compareBase`) and Open in
@@ -3333,6 +3341,11 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   from the tail, no verdicts. Paths: `~/.claude/projects`
   (`$MINICODE_CLAUDE_PROJECTS`), the `/private/tmp/claude-<uid>` scratchpads
   (`$MINICODE_CLAUDE_TMP`). Fixtures: `tests/fixtures/claude`.
+- **The panel's column** stays the list's width (`autoresizesOutlineColumn`
+  off, `fitColumn` on layout, expansion and the clip view's frame
+  changes), so a title's "…" is at the pane's edge once rows expand
+  (2026-11-15; file rows' paths had widened it off screen); a file row's
+  name and folder each give way in the middle.
 - **Mac**: `MCAgentModel` keeps the index on one serial queue and git on
   another, copies rows to the main thread, follows FSEvents on transcripts and
   scratchpads, and empties (saying so) if the transcripts folder goes.

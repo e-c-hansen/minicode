@@ -122,6 +122,19 @@ void WithCommandHover(TerminalGridView *g, int row, int col, void (^block)(void)
     method_setImplementation(mouse, oldMouse);
 }
 
+// The pointer resting on a cell with no key held, for the rest hint.
+void WithPlainHover(TerminalGridView *g, int row, int col, void (^block)(void)) {
+    Method flags = class_getClassMethod(NSEvent.class, @selector(modifierFlags));
+    Method mouse = class_getInstanceMethod(NSWindow.class, @selector(mouseLocationOutsideOfEventStream));
+    IMP oldFlags = method_getImplementation(flags), oldMouse = method_getImplementation(mouse);
+    NSPoint at = CellPoint(g, row, col);
+    method_setImplementation(flags, imp_implementationWithBlock(^NSEventModifierFlags(id) { return 0; }));
+    method_setImplementation(mouse, imp_implementationWithBlock(^NSPoint(id) { return at; }));
+    block();
+    method_setImplementation(flags, oldFlags);
+    method_setImplementation(mouse, oldMouse);
+}
+
 BrowserView *Pane(EditorController *c) { return [c browserPane]; }
 
 BOOL PaneShows(EditorController *c, NSString *title) {
@@ -233,6 +246,18 @@ MC_GUI_SUITE(terminal_links) {
         GCHECK([[grid valueForKey:@"linkId"] longLongValue] != LLONG_MIN);
         GCHECK([[grid valueForKey:@"linkCol0"] intValue] == col);
         GCHECK(grid.toolTip == nil);   // a link read from the text says where it goes
+        // Resting on it without Cmd: a hint that Cmd+click opens it.
+        WithPlainHover(grid, row, col + 5, ^{
+            [grid updateLinkHover];
+            [grid showRestHint];
+        });
+        GCHECK_EQ_STR(grid.toolTip, MCTerminalLinkHint);
+        // Off the address (the line's first cell, "Serving"), a move takes it away.
+        WithPlainHover(grid, row, 0, ^{
+            [grid updateLinkHover];
+            [grid showRestHint];
+        });
+        GCHECK(grid.toolTip == nil);
         Click(grid, row, col + 5, NSEventModifierFlagCommand);
     });
     MCGuiWait(@"the page is in the pane, the user's", 20, ^BOOL { return PaneShows(c, @"Served"); });
@@ -277,6 +302,12 @@ MC_GUI_SUITE(terminal_links) {
         GCHECK([[grid valueForKey:@"linkCol0"] intValue] == 0);
         GCHECK([[grid valueForKey:@"linkCol1"] intValue] == 12);
         GCHECK_EQ_STR(grid.toolTip, Local(@"/osc8.html"));
+        WithPlainHover(grid, row, 5, ^{
+            [grid updateLinkHover];
+            [grid showRestHint];
+        });
+        GCHECK_EQ_STR(grid.toolTip, ([NSString stringWithFormat:@"%@\n%@", MCTerminalLinkHint,
+                                     Local(@"/osc8.html")]));
         int bad = RowStarting(s, @"Not a link");
         GCHECK(bad >= 0 && s->lineCell(bad, 0).style.link == 0);
         WithCommandHover(grid, bad, 2, ^{ [grid updateLinkHover]; });
@@ -310,6 +341,12 @@ MC_GUI_SUITE(terminal_links) {
         int col = ColumnOf(s, row, @"http://");
         WithCommandHover(grid, row, col + 3, ^{ [grid updateLinkHover]; });
         GCHECK([[grid valueForKey:@"linkCol0"] intValue] == col);
+        // The program takes plain clicks, so resting there hints nothing.
+        WithPlainHover(grid, row, col + 3, ^{
+            [grid updateLinkHover];
+            [grid showRestHint];
+        });
+        GCHECK(grid.toolTip == nil);
         Click(grid, row, col + 3, NSEventModifierFlagCommand);
     });
     MCGuiWait(@"the address shown loads", 20, ^BOOL { return PaneShows(c, @"Cmd"); });

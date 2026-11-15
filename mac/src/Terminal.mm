@@ -423,10 +423,13 @@ static const CFTimeInterval kSliceSeconds = 0.012;
 @property(nonatomic, copy) void (^openLink)(MCTermLink *link);
 - (void)updateLinkHover;
 - (void)clearLinkHover;
+// The rest hint, as the grid's (TerminalGridView showRestHint).
+- (void)showRestHint;
 @end
 @implementation TerminalOutputView {
     NSRange _hoverRange;                        // location NSNotFound: none
     NSMutableArray<NSArray *> *_savedUnderline; // [range value, underline] pairs
+    NSTimer *_restTimer;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -517,10 +520,30 @@ static const CFTimeInterval kSliceSeconds = 0.012;
 - (void)mouseMoved:(NSEvent *)event {
     [super mouseMoved:event];
     [self updateLinkHover];
+    [_restTimer invalidate];
+    _restTimer = nil;
+    if (self.toolTip) self.toolTip = nil;
+    if (event.modifierFlags & NSEventModifierFlagCommand) return;
+    __weak TerminalOutputView *weakSelf = self;
+    _restTimer = [NSTimer timerWithTimeInterval:0.5 repeats:NO block:^(NSTimer *t) {
+        (void)t;
+        [weakSelf showRestHint];
+    }];
+    [[NSRunLoop currentRunLoop] addTimer:_restTimer forMode:NSRunLoopCommonModes];
+}
+- (void)showRestHint {
+    _restTimer = nil;
+    if (!self.window || (NSEvent.modifierFlags & NSEventModifierFlagCommand)) return;
+    NSPoint p = [self convertPoint:[self.window mouseLocationOutsideOfEventStream] fromView:nil];
+    if (NSPointInRect(p, self.visibleRect) && [self linkAtPoint:p range:NULL])
+        self.toolTip = MCTerminalLinkHint;
 }
 - (void)mouseExited:(NSEvent *)event {
     [super mouseExited:event];
     [self clearLinkHover];
+    [_restTimer invalidate];
+    _restTimer = nil;
+    self.toolTip = nil;
 }
 - (void)cursorUpdate:(NSEvent *)event {
     if (_hoverRange.location != NSNotFound) [[NSCursor pointingHandCursor] set];
@@ -528,6 +551,9 @@ static const CFTimeInterval kSliceSeconds = 0.012;
 }
 
 - (void)mouseDown:(NSEvent *)event {
+    [_restTimer invalidate];
+    _restTimer = nil;
+    self.toolTip = nil;
     if (event.modifierFlags & NSEventModifierFlagCommand) {
         NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
         MCTermLink *link = [self linkAtPoint:p range:NULL];
