@@ -101,77 +101,31 @@ check closed a window `previews` had left open. The suite had searched
 the whole project instead of its own folder, and passed only because that
 leftover window, on another folder, was the newest. Fixed in the suite.
 
-## Branch protection (for the owner to decide)
+## Branch protection (on since 2026-11-14)
 
-Today pushes land on main directly, and "no merge to main while a job on
-main is red" is kept by hand. GitHub can keep it instead. The settings
-below are a recommendation; nothing here has been changed in the
-repository's settings.
+The owner turned on classic branch protection for `main`:
 
-**Recommended: a ruleset on `main`** (Settings > Rules > Rulesets > New
-branch ruleset, target the default branch):
+- **Required status check: CI passed** (the `ci-passed` job), one check so
+  adding or renaming a job never needs the settings touched. "Require
+  branches to be up to date" is off.
+- **No pull request or review is required**, and **administrators are not
+  held to it** (`enforce_admins` off), so `scripts/release.sh` can still
+  push its version commit to main; GitHub then prints "Required status
+  check 'CI passed' is expected" as a bypass notice.
+- Force pushes and deletions are refused.
 
-1. *Require status checks to pass*, with the one check **CI passed**
-   (the `ci-passed` job). One check, so adding or renaming a job never
-   needs the settings touched. Turn on *Require branches to be up to date
-   before merging*: a pull request's run tests it merged with main as main
-   was when the run started, so two that pass apart can still fail
-   together once both land; up to date makes the run that passed test what
-   lands.
-2. *Require a pull request before merging*, with 0 approvals required (a
-   solo project; the point is that CI runs on the branch first), and
-   *Require conversation resolution* off.
-3. *Block force pushes* and *Restrict deletions*.
-4. Bypass list: empty. Every agent pushes with the owner's credentials, so
-   a bypass for the owner is a bypass for every agent.
+**How the sessions work under it** (2026-11-14, after a direct push of an
+unchecked commit turned main red; the owner: "why do we not know the
+outcome before trying to ship it?"): every change goes to a branch and a
+pull request, rebased onto the latest main before its last run, and is
+merged only once **CI passed** is green on that exact commit, never with
+`--admin`. The one direct push is release.sh's version commit, made only
+from a commit whose CI already passed. A pull request with no run (one the
+Demos workflow opened before `scripts/demos-propose.sh` started CI itself)
+gets one by hand: `gh workflow run CI --ref <branch>`.
 
-**What it changes:**
-
-- Agents push a branch and open a pull request; whoever merges (the owner
-  or the Mac session) merges only when **CI passed** is green. The
-  coordinating sessions already work this way (PRs #4 to #7).
-- `scripts/release.sh` pushes its version commit straight to main, which
-  the ruleset would refuse. It would push the commit to a `release-X.Y.Z`
-  branch, open a pull request, wait for CI (`gh pr checks --watch`), merge
-  it (`gh pr merge --rebase`), then tag the merged commit and go on. That
-  is a change to release.sh to make together with the ruleset, not before.
-  The Linux-only release (`--linux`) on the ThinkPad needs the same.
-- A run takes about 25 minutes (the GTK job), so a merge waits that long
-  after the last push to its branch.
-
-**A lighter first step**, if the release change should wait: the same
-ruleset with only rule 1 (required status checks) and rule 3. Direct
-pushes then still work, but only of commits that already passed CI (a
-branch's run, or `gh workflow run CI --ref <branch>`), and release.sh
-would push its commit to a branch, run CI there, then push the same commit
-to main.
-
-To apply the recommended ruleset from the command line (the owner, not an
-agent):
-
-```sh
-gh api repos/e-c-hansen/minicode/rulesets --method POST --input - <<'EOF'
-{
-  "name": "main stays green",
-  "target": "branch",
-  "enforcement": "active",
-  "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
-  "rules": [
-    {"type": "required_status_checks",
-     "parameters": {"strict_required_status_checks_policy": true,
-                    "required_status_checks": [{"context": "CI passed"}]}},
-    {"type": "pull_request",
-     "parameters": {"required_approving_review_count": 0,
-                    "dismiss_stale_reviews_on_push": false,
-                    "require_code_owner_review": false,
-                    "require_last_push_approval": false,
-                    "required_review_thread_resolution": false}},
-    {"type": "non_fast_forward"},
-    {"type": "deletion"}
-  ]
-}
-EOF
-```
+A run takes about 25 minutes (the GTK job), so a merge waits that long
+after the last push to its branch.
 
 ## Measuring a flake rate
 

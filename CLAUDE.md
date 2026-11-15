@@ -100,8 +100,12 @@ opening comment says what it does in more detail than the lines below.
   `timeout-minutes` (macOS 40, tsan 45, the rest 20; `ci:timeouts` checks
   a new job has one), so a hang never holds a runner for six hours.
   **Since 2026-11-14** (`docs/ci.md`, the failure history and the branch
-  protection the owner may turn on): a seventh job, **CI passed**, is
-  green only when the six are (the one check to require); each job's
+  protection): a seventh job, **CI passed**, is green only when the six
+  are, and main's branch protection requires it (administrators, so
+  release.sh, are not held to it). Every change goes to a branch and a
+  pull request and is merged only once CI passed is green on that exact
+  commit, never with `--admin`; the one direct push is release.sh's
+  version commit, from a commit whose CI already passed. Each job's
   last step, `scripts/ci-summary.sh`, puts one line per failed check
   (FAIL, FATAL, sanitizer reports, compiler errors) plus SLOW, NEAR and
   LEAK lines at the top of the run's page and on the PR; the runner
@@ -3737,9 +3741,9 @@ core file its files include. Traps paid for:
   `tar` fails with ENOSYS under Docker Desktop's amd64 emulation; gpg-agent
   cannot be forwarded into Docker Desktop, so signing is on the host.
 
-## Current state (2026-11-14)
+## Current state (2026-11-15)
 
-- **Released: 1.5.25** (2026-11-14), and the user's Homebrew copy is on it.
+- **Released: 1.5.26** (2026-11-14), and the user's Homebrew copy is on it.
   Since 1.5.8: 1.5.9 security and data safety (bracketed paste, secure
   keyboard entry, symlinked config writes, the tectonic checksum and
   `--untrusted`, formatter consent, the cask's arm64 requirement); 1.5.10
@@ -3770,22 +3774,29 @@ core file its files include. Traps paid for:
   icon's menu, `tabs.font-size`, paste without smart spaces, the find
   bar's history, parameter-name inlay hints off by default, and in the
   terminal Cmd+L (Clear to Previous Mark), Cmd+T and a scroll bar that
-  takes the mouse, with the Mac's files moved to `mac/`. Every release from 1.5.7 on has notes of what
+  takes the mouse, with the Mac's files moved to `mac/`; 1.5.26 Dark
+  Modern as the default theme on every port (`theme = dark-plus` for the
+  old look), VS Code's muted grays, "minicode" as the window title, Linux
+  double-clicks recognized when busy and layout waits, and the README split
+  into a short front page and `docs/REFERENCE.md`, with GIFs the Demos
+  workflow records. Every release from 1.5.7 on has notes of what
   changed on GitHub (`gh release view v1.5.17`), written for users and
   given to release.sh as `MINICODE_RELEASE_NOTES`.
-- **PPA**: current at 1.5.24 (`1.5.24-1~ppa1~resolute1`, a Linux-only
-  release from the ThinkPad). Uploads go from the ThinkPad (`ssh thinkpad`, checkout
+- **PPA**: current at 1.5.26 (`1.5.26-1~ppa1~resolute1`, built by
+  Launchpad 2026-11-15, uploaded from the ThinkPad from the v1.5.26 tag).
+  Uploads go from the ThinkPad (`ssh thinkpad`, checkout
   `~/minicode`), since the Mac has no Docker; unlock its gpg key first
   (`echo test | gpg --clearsign -u EEF9635EDB7F9335`), or signing fails
   once the passphrase cache has expired (1.5.14 was skipped for that
   reason). ppa.sh then waits for Launchpad's build (see "Build, test, run,
   release"). 1.5.20, 1.5.22, 1.5.23 and 1.5.25 were cut on the Mac with
   `MINICODE_NO_PPA=1`; 1.5.22, 1.5.23 and 1.5.25 changed only the Mac, so
-  the PPA owes them nothing.
+  the PPA owes them nothing. 1.5.26 was cut on the Mac the same way and
+  uploaded from the ThinkPad afterwards.
 - The release is arm64 only (built on Apple silicon with no `-arch` flag);
   the README says so and the cask declares `depends_on arch: :arm64`.
-- **Left to the owner**: notarization (the paid Apple Developer Program),
-  branch protection on main, and a run of the IDE link against a real
+- **Left to the owner**: notarization (the paid Apple Developer Program)
+  and a run of the IDE link against a real
   Claude Code session (it needs the owner's logged-in Claude Code, and no
   agent writes to `~/.claude`). Multiplayer and remote workspaces are the
   owner's ideas for later, not plans.
@@ -3819,7 +3830,13 @@ core file its files include. Traps paid for:
   UTF-16 file (a PowerShell script or Windows log) opened, edited and
   saved. From 1.5.17: a new zoom on a Markdown page scrolled down (the
   stale margins never reproduced offscreen); the look of the browser's
-  find bar and of WebKit's selected match.
+  find bar and of WebKit's selected match. From 1.5.25 and 1.5.26: the
+  terminal's scroll bar, Cmd+L in a terminal, `tabs.font-size`, the Dock
+  menu, the bookmark star's Trash, `minicode page --paste --all` in a
+  real code pad; Dark Modern as a whole (the status bar, title bar and
+  tree now share #181818), and the inline colors left from Dark+ beside
+  it (popups at #252526, now lighter than the window; the #4EA1F7
+  accent beside Dark Modern's #0078D4; #333333 dividers).
   **Linux**: none of the 1.5 work ran on Linux beyond CI and Launchpad's
   package build; the ThinkPad still owes the folder picker after closing
   its window, F2 rename in the tree, renames across two windows under
