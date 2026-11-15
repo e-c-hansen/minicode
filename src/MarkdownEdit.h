@@ -4,6 +4,7 @@
 // replaces exactly one byte range, so nothing else in the file changes.
 #pragma once
 #include <string>
+#include <utility>
 
 namespace MarkdownEdit {
 
@@ -44,5 +45,17 @@ std::string replace(const std::string& source, const Block& block,
 // `block`, which must be a list item. `newStart` gets where `text` begins.
 std::string addItem(const std::string& source, const Block& block,
                     const std::string& text, size_t* newStart = nullptr);
+
+// Where a word picked on a rendered page (a double-click's) sits in the
+// Markdown `source` of its block: [first, second) bytes of `source`, or
+// both std::string::npos when it is not there. `before` and `after` are the
+// page's text on either side of it, which choose between the places the
+// word occurs ("the" twice in a paragraph). Both sides are compared as
+// lowercase letters and digits with every run of anything else one gap,
+// so emphasis, links, inline code and escapes in the source are looked
+// through; a whole word is preferred to a piece of a longer one.
+std::pair<size_t, size_t> sourceOffsetFor(const std::string& source, const std::string& word,
+                                          const std::string& before = "",
+                                          const std::string& after = "");
 
 }  // namespace MarkdownEdit

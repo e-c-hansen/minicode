@@ -547,6 +547,14 @@ MC_GUI_SUITE(markdown_side_sync) {
         MCMarkdownEditPanel *panel = [c valueForKey:@"markdownEditPanel"];
         NSTextView *editor = [panel valueForKey:@"_editor"];
         GCHECK_EQ_STR(editor.string, @"Paragraph 70 line one\ncontinues on line two of 70.");
+        // It opens on the word that was double-clicked, and no more of it.
+        GCHECK(NSEqualRanges(editor.selectedRange, NSMakeRange(0, 9)));
+        MCGuiNote(@"selected: %@", NSStringFromRange(editor.selectedRange));
+        // As wide as the page's lines (460 points at least).
+        NSPopover *pop = [panel valueForKey:@"_popover"];
+        const CGFloat lineWidth = page.textContainer.size.width - 2 * page.textContainer.lineFragmentPadding;
+        MCGuiNote(@"box %.0f wide for lines %.0f wide", NSWidth(pop.contentViewController.view.frame), lineWidth);
+        GCHECK(NSWidth(pop.contentViewController.view.frame) >= MAX(460, lineWidth) - 1);
         NSString *before = [tv.string copy];   // the view's string is its live storage
         // The caret, on line 904 since the step before, after the edit.
         const NSRange caret = tv.selectedRange;

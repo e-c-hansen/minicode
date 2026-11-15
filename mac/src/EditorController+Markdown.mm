@@ -387,7 +387,41 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
             [me applyMarkdownEdit:[NSString stringWithUTF8String:edited.c_str()] side:side];
         };
     }
+    // The box opens on the word that was double-clicked, found in the
+    // block's Markdown by the page's text around it, as wide as the page's
+    // lines and in its type size for prose.
+    NSRange selection = NSMakeRange(NSNotFound, 0);
+    NSString *pageText = st.string;
+    const NSRange word = [page selectionRangeForProposedRange:NSMakeRange(index, 0)
+                                                  granularity:NSSelectByWord];
+    if (word.length && NSMaxRange(word) <= pageText.length) {
+        const NSRange para = [pageText paragraphRangeForRange:word];
+        const NSUInteger from = MAX(para.location, word.location >= 40 ? word.location - 40 : 0);
+        const NSUInteger to = MIN(NSMaxRange(para), NSMaxRange(word) + 40);
+        NSString *before = [pageText substringWithRange:NSMakeRange(from, word.location - from)];
+        NSString *after = [pageText substringWithRange:NSMakeRange(NSMaxRange(word),
+                                                                   to - NSMaxRange(word))];
+        const std::string blockText = src.substr(block.start, block.end - block.start);
+        const auto at = MarkdownEdit::sourceOffsetFor(
+            blockText, Utf8String([pageText substringWithRange:word]), Utf8String(before),
+            Utf8String(after));
+        if (at.first != std::string::npos) {
+            NSString *head = [[NSString alloc] initWithBytes:blockText.data() length:at.first
+                                                    encoding:NSUTF8StringEncoding];
+            NSString *hit = [[NSString alloc] initWithBytes:blockText.data() + at.first
+                                                     length:at.second - at.first
+                                                   encoding:NSUTF8StringEncoding];
+            if (head && hit) selection = NSMakeRange(head.length, hit.length);
+        }
+    }
+    NSTextContainer *box = page.textContainer;
+    const CGFloat lineWidth = box.size.width - 2 * box.lineFragmentPadding;
+    const BOOL prose = block.kind != MarkdownEdit::Block::Code &&
+                       block.kind != MarkdownEdit::Block::Math &&
+                       block.kind != MarkdownEdit::Block::Html;
+    NSFont *font = prose ? [NSFont systemFontOfSize:MCZoomed(15)] : nil;
     [self.markdownEditPanel showText:text title:title inView:page rect:anchor
+        selection:selection width:lineWidth font:font
         commit:^(NSString *newText) {
             EditorController *me = weakSelf;
             if (!me) return;

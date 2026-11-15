@@ -1482,6 +1482,39 @@ void testMarkdownEdit() {
     }
     CHECK(ok);
 
+    GROUP("mdedit:word");
+    {
+        // Where a word double-clicked on the page sits in its block's source.
+        auto at = [](const std::string &src, const std::string &word, const std::string &before = "",
+                     const std::string &after = "") {
+            const auto r = sourceOffsetFor(src, word, before, after);
+            return r.first == std::string::npos ? std::string("<none>")
+                                                 : src.substr(r.first, r.second - r.first) + "@" +
+                                                       std::to_string(r.first);
+        };
+        // Through emphasis, links, inline code and escapes.
+        CHECK(at("A **bold** move.", "bold", "A ", " move.") == "bold@4");
+        CHECK(at("Read [the guide](https://x.org/guide) now.", "guide", "Read the ", " now.") ==
+              "guide@10");
+        CHECK(at("Call `run()` twice.", "run", "Call ", "() twice.") == "run@6");
+        CHECK(at("A \\*literal\\* star.", "literal", "A *", "* star.") == "literal@4");
+        CHECK(at("_Emph_ and more", "Emph", "", " and more") == "Emph@1");
+        // A word twice: the text around it says which.
+        const std::string twice = "the fox saw the dog, and the dog ran.";
+        CHECK(at(twice, "dog", "and the ", " ran.") == "dog@29");
+        CHECK(at(twice, "dog", "fox saw the ", ", and") == "dog@16");
+        CHECK(at(twice, "the", "", " fox saw") == "the@0");
+        CHECK(at(twice, "the", "dog, and ", " dog ran.") == "the@25");
+        // Case is ignored, and a whole word beats a piece of a longer one.
+        CHECK(at("Others are THE best.", "the", "Others are ", " best.") == "THE@11");
+        CHECK(at("otherwise the", "the") == "the@10");
+        // Letters beyond ASCII, whole characters.
+        CHECK(at("Café **crème** brûlée", "crème", "Café ", " brûlée") == "crème@8");
+        // Nothing to find: punctuation alone, or a word the source lacks.
+        CHECK(at("A, b.", ",") == "<none>" && at("abc", "xyz") == "<none>" && at("", "a") == "<none>");
+        CHECK(at("a [x](http://example.org) b", "example") == "example@13");   // only in the URL
+    }
+
     GROUP("mdedit:blocks-more");
     const std::string more =
         "- item one\n"          // 0
