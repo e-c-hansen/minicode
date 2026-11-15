@@ -875,7 +875,12 @@ MCChangeReviewPage *Review(EditorController *c) {
     return [page isKindOfClass:MCChangeReviewPage.class] ? page : nil;
 }
 NSInteger RowNamed(MCChangeReviewPage *p, NSString *description) {
-    return (NSInteger)[p.rowDescriptions indexOfObject:description];
+    const NSUInteger at = [p.rowDescriptions indexOfObject:description];
+    return at == NSNotFound ? -1 : (NSInteger)at;
+}
+// Whether a row is on screen.
+BOOL RowShows(MCChangeReviewPage *p, NSInteger row) {
+    return row >= 0 && NSIntersectsRect([p rectOfRow:row], p.scrollView.contentView.bounds);
 }
 // The first block's row after a file's header row.
 NSInteger FirstBlockAfter(MCChangeReviewPage *p, NSInteger header) {
@@ -954,8 +959,8 @@ MC_GUI_SUITE(git_review) {
         }
         for (NSString *t in @[@"Side by Side", @"Open", @"Discard File", @"Stage File"])
             GCHECK(!NSIsEmptyRect([p buttonRect:t row:at]));
-        // Opened at f.txt: its section row at the top.
-        GCHECK(p.topRow <= at && at - p.topRow <= 1);
+        // Opened at f.txt: its header on screen.
+        GCHECK(RowShows(p, at));
         // g.py's "def" in the keyword color.
         NSTextStorage *ts = p.textView.textStorage;
         const NSRange def = [ts.string rangeOfString:@"def f():"];
@@ -987,7 +992,9 @@ MC_GUI_SUITE(git_review) {
         GCHECK_EQ_STR(Read(f), edited);
         const NSInteger at = [p rowOfFile:@"f.txt" staged:NO];
         MCGuiNote(@"after staging: top %ld, f.txt's header %ld", (long)p.topRow, (long)at);
-        GCHECK(at >= 0 && p.topRow <= at && at - p.topRow <= 1);
+        // Still in sight, though the staged list came in above it (on a
+        // page taller than the pane it is the top row again).
+        GCHECK(RowShows(p, at));
         GCHECK([p.rowDescriptions containsObject:@"F f.txt  +2 -2"]);
         // The staged block has Unstage, not Stage or Discard.
         const NSInteger staged = FirstBlockAfter(p, [p rowOfFile:@"f.txt" staged:YES]);

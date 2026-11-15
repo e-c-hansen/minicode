@@ -230,10 +230,24 @@ std::u16string linesResult(const FileDiff& d, const std::vector<int>& oldLines,
     std::vector<bool> changedOld = takeOld, changedNew = takeNew;
     for (size_t i = 0; i < takeOld.size(); i++) takeOld[i] = invert && changedOld[i];
     for (size_t i = 0; i < takeNew.size(); i++) takeNew[i] = invert && changedNew[i];
+    // A line of a changed pair (an old line replaced by a new one) chosen
+    // on either side takes the pair: the change of that line, as VS Code's
+    // selected ranges take the original lines under the modified ones.
+    std::vector<bool> chosenOld(takeOld.size(), false), chosenNew(takeNew.size(), false);
     for (int l : oldLines)
-        if (l >= 0 && (size_t)l < takeOld.size() && changedOld[(size_t)l]) takeOld[(size_t)l] = !invert;
+        if (l >= 0 && (size_t)l < chosenOld.size()) chosenOld[(size_t)l] = true;
     for (int l : newLines)
-        if (l >= 0 && (size_t)l < takeNew.size() && changedNew[(size_t)l]) takeNew[(size_t)l] = !invert;
+        if (l >= 0 && (size_t)l < chosenNew.size()) chosenNew[(size_t)l] = true;
+    for (const SideBySide::Row& r : d.rows) {
+        if (r.kind != SideBySide::Kind::Changed || r.left < 0 || r.right < 0) continue;
+        if ((size_t)r.left >= chosenOld.size() || (size_t)r.right >= chosenNew.size()) continue;
+        if (chosenOld[(size_t)r.left] || chosenNew[(size_t)r.right])
+            chosenOld[(size_t)r.left] = chosenNew[(size_t)r.right] = true;
+    }
+    for (size_t l = 0; l < takeOld.size(); l++)
+        if (chosenOld[l] && changedOld[l]) takeOld[l] = !invert;
+    for (size_t l = 0; l < takeNew.size(); l++)
+        if (chosenNew[l] && changedNew[l]) takeNew[l] = !invert;
     return pick(d, takeOld, takeNew, op != Op::Stage);
 }
 

@@ -95,7 +95,9 @@ std::u16string pick(const FileDiff& d, const std::vector<bool>& takeOld,
 // text less the block); Discard, the work tree without it.
 std::u16string blockResult(const FileDiff& d, size_t block, Op op);
 // The same for changed lines chosen by a selection: old lines (removed)
-// and new lines (added), 0-based; lines that are not changed are ignored.
+// and new lines (added), 0-based; lines that are not changed are ignored,
+// and a line of a changed pair (an old line replaced by a new one) takes
+// its partner, so choosing the new line takes that line's change.
 std::u16string linesResult(const FileDiff& d, const std::vector<int>& oldLines,
                            const std::vector<int>& newLines, Op op);
 // Whether any of those lines is a changed one.

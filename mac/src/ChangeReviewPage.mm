@@ -656,6 +656,8 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     BOOL _revealTop;
     long _currentBlockRow;
     CGFloat _lastX;
+    BOOL _stale;              // something changed while out of sight
+    BOOL _closed;             // its tab closed
     size_t _columns;          // the longest row, a tab as 8
 }
 
@@ -723,6 +725,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     tc.widthTracksTextView = NO;
     [lm addTextContainer:tc];
     lm.allowsNonContiguousLayout = YES;
+    // Only what is drawn is laid out: idle-time layout of a page of 100,000
+    // rows ran on the main thread long after the page was put away.
+    lm.backgroundLayoutEnabled = NO;
     _text = [[MCReviewTextView alloc] initWithFrame:NSMakeRect(0, 0, 600, 366) textContainer:tc];
     _text.owner = self;
     _text.editable = NO;
@@ -802,6 +807,12 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 - (NSTextView *)textView { return _text; }
 - (NSScrollView *)scrollView { return _scroll; }
 
+// Whether the page is on screen in its tab; a page out of sight reads and
+// recolors nothing until it shows again.
+- (BOOL)onShow {
+    return _view.window != nil && !_view.isHiddenOrHasHiddenAncestor;
+}
+
 - (void)pageApplySettings {
     AppSettings *cfg = [AppSettings shared];
     NSColor *bg = [cfg background:Surface::Editor];
@@ -812,13 +823,17 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     _text.numberColor = [text colorWithAlphaComponent:0.4];
     _text.textColor = text;
     _text.insertionPointColor = text;
-    if (_data) [self fillText];
+    if (_data && [self onShow]) [self fillText];
+    else if (_data) _stale = YES;
     _text.needsDisplay = YES;
 }
 
 - (void)pageClosed {
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    _closed = YES;
+    _data = nullptr;
+    [_text.textStorage setAttributedString:[NSAttributedString new]];
 }
 
 // ------------------------------------------------------------ reading
@@ -829,6 +844,13 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 }
 
 - (void)reload {
+    // Out of sight (another tab, a closed window): read when shown again.
+    if (_closed) return;
+    if (![self onShow]) {
+        _stale = YES;
+        return;
+    }
+    _stale = NO;
     if (_loading) {
         _again = YES;
         return;

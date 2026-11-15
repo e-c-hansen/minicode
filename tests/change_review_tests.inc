@@ -64,12 +64,16 @@ static void testChangeReview() {
     GROUP("review:lines");
     {
         FileDiff d = diffFile(file("a\nb\nc\n", "a\nB1\nB2\nc\n"), "");
-        // Only the second added line staged: the removed b stays.
+        // Only the second added line (added alone) staged: the removed b stays.
         expect(linesResult(d, {}, {2}, Op::Stage), "a\nb\nB2\nc\n");
-        // The removal alone staged.
-        expect(linesResult(d, {1}, {}, Op::Stage), "a\nc\n");
-        // The first added line discarded: the rest of the change stays.
-        expect(linesResult(d, {}, {1}, Op::Discard), "a\nB2\nc\n");
+        // b and B1 are a pair: either side chosen takes the change b -> B1.
+        expect(linesResult(d, {1}, {}, Op::Stage), "a\nB1\nc\n");
+        expect(linesResult(d, {}, {1}, Op::Stage), "a\nB1\nc\n");
+        // B1 discarded: b comes back, B2 (added on its own) stays.
+        expect(linesResult(d, {}, {1}, Op::Discard), "a\nb\nB2\nc\n");
+        // Unstaging a pair from the staged list puts the old line back.
+        FileDiff st = diffFile(file("a\nb\nc\n", "a\nB1\nB2\nc\n", Section::Staged), "");
+        expect(linesResult(st, {}, {1}, Op::Unstage), "a\nb\nB2\nc\n");
         // Unchanged lines chosen do nothing.
         CHECK(!anyChanged(d, {0}, {0, 3}));
         CHECK(anyChanged(d, {}, {2}));
