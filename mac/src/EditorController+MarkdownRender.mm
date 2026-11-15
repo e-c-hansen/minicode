@@ -402,7 +402,14 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
             a[kMarkdownWebImage] = @[src, @(++_webImageMarks)];
         }
         if (picture) {
-            MCMarkdownImage *att = [[MCMarkdownImage alloc] initWithPicture:picture];
+            // <img width height>: CSS pixels, points at no zoom, so the
+            // zoom scales them as it scales the text.
+            const NSSize wanted = NSMakeSize(
+                r.width.percent ? 0 : MCZoomed(r.width.value),
+                r.height.percent ? 0 : MCZoomed(r.height.value));
+            MCMarkdownImage *att = [[MCMarkdownImage alloc]
+                initWithPicture:picture size:wanted
+                   widthPercent:r.width.percent ? r.width.value : 0];
             NSMutableAttributedString *pic = [[NSMutableAttributedString alloc]
                 initWithAttributedString:
                     [NSAttributedString attributedStringWithAttachment:att]];

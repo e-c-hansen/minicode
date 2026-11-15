@@ -11009,6 +11009,7 @@ static void testMultiCaretOccurrences() {
 #include "latex_tests.inc"
 #include "markdown_gfm_tests.inc"
 #include "markdown_html_tests.inc"
+#include "markdown_media_tests.inc"
 #include "markdown_page_tests.inc"
 #include "lsp_watch_tests.inc"
 #include "large_file_tests.inc"
@@ -11058,6 +11059,7 @@ int main() {
     testMarkdownEdit();
     testMarkdownGfm();
     testMarkdownHtml();
+    testMarkdownMedia();
     testMarkdownPage();
     testTerminalStream();
     testTerminalScreen();

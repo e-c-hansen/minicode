@@ -5,6 +5,19 @@
 #include <string>
 #include <vector>
 
+// A size from an HTML attribute (<img width="120">, height="50%"): CSS
+// pixels, which a GUI draws as points at no zoom, or a percentage of the
+// line's width when `percent` is set. 0 when the attribute is missing or
+// does not start with a number. Read as HTML reads dimension values:
+// leading spaces, then digits (a fraction is dropped), then "%" or
+// anything else, so "120px" is 120.
+struct MdLength {
+    int value = 0;
+    bool percent = false;
+    bool operator==(const MdLength& o) const { return value == o.value && percent == o.percent; }
+    bool operator!=(const MdLength& o) const { return !(*this == o); }
+};
+
 struct MdRun {
     std::string text;
     int  heading   = 0;      // 0 = body, 1..6 = # levels
@@ -50,6 +63,9 @@ struct MdRun {
     int  line      = -1;     // the 0-based source line the run came from
     bool image     = false;  // ![alt](src): text is the alt text
     std::string src;         // the image's path or URL, as written
+    // An <img>'s width and height attributes. A picture with one of them
+    // keeps its proportions; neither makes it wider than the line.
+    MdLength width, height;
     // Vertical space. Every block ends with a "\n" run of its own; between
     // two blocks comes one more "\n" run with `gap` set, which a GUI may draw
     // shorter than a line (the items of a tight list have none between

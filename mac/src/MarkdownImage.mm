@@ -3,13 +3,36 @@
 
 @interface MCAnimatedImageCell : NSTextAttachmentCell
 - (instancetype)initWithPicture:(NSImage *)picture;
+@property (nonatomic) NSSize wanted;          // points, 0 for a side not given
+@property (nonatomic) CGFloat widthPercent;   // of the line, 0 for none
 @end
 
-static CGRect MCFitPicture(NSImage *picture, CGFloat width) {
+// The picture's frame with `left` points left on a line `line` points wide:
+// its own size, or the size its attributes ask for (a percentage of the
+// line), scaled down whole to fit what is left (never up, unless asked for).
+static CGRect MCFitPicture(NSImage *picture, CGFloat line, CGFloat left, NSSize wanted,
+                           CGFloat percent) {
     const NSSize s = picture.size;
     if (s.width <= 0 || s.height <= 0) return CGRectZero;
-    const CGFloat w = MIN(s.width, MAX(width, 16.0));
-    return CGRectMake(0, 0, w, round(s.height * w / s.width));
+    const CGFloat room = MAX(left, 16.0);
+    CGFloat w = s.width, h = s.height;
+    const CGFloat askW = percent > 0 ? MAX(line, 16.0) * MIN(percent, 100.0) / 100 : wanted.width;
+    const CGFloat askH = wanted.height;
+    if (askW > 0 && askH > 0) {
+        w = askW;
+        h = askH;
+    } else if (askW > 0) {
+        w = askW;
+        h = s.height * askW / s.width;
+    } else if (askH > 0) {
+        h = askH;
+        w = s.width * askH / s.height;
+    }
+    if (w > room) {
+        h = h * room / w;
+        w = room;
+    }
+    return CGRectMake(0, 0, round(MAX(w, 1)), round(MAX(h, 1)));
 }
 
 @implementation MCMarkdownImage {
@@ -23,9 +46,17 @@ static CGRect MCFitPicture(NSImage *picture, CGFloat width) {
 }
 
 - (instancetype)initWithPicture:(NSImage *)picture {
+    return [self initWithPicture:picture size:NSZeroSize widthPercent:0];
+}
+
+- (instancetype)initWithPicture:(NSImage *)picture
+                           size:(NSSize)size
+                   widthPercent:(CGFloat)widthPercent {
     if ((self = [super initWithData:nil ofType:nil])) {
         _picture = picture;
         _cell = [[MCAnimatedImageCell alloc] initWithPicture:picture];
+        _cell.wanted = size;
+        _cell.widthPercent = widthPercent;
     }
     return self;
 }
@@ -74,7 +105,7 @@ static CGRect MCFitPicture(NSImage *picture, CGFloat width) {
                       glyphPosition:(NSPoint)position
                      characterIndex:(NSUInteger)charIndex {
     const CGFloat room = lineFrag.size.width - 2 * textContainer.lineFragmentPadding;
-    return MCFitPicture(self.image, room - position.x);
+    return MCFitPicture(self.image, room, room - position.x, self.wanted, self.widthPercent);
 }
 
 - (void)drawWithFrame:(NSRect)frame inView:(NSView *)view {

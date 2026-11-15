@@ -1976,7 +1976,13 @@ view is disposed (on `unrealize`), or dispose loops forever.
   clicked word the same way (`MCLatexClickedWord`). Editing in place on
   the page, Typora's way, is the planned second step.
 - **Pictures**: `MCMarkdownImage` attachments with `MCAnimatedImageCell` (sized
-  to the line; a GIF's timer runs only while on screen). Traps: the TextKit 1
+  to the line; a GIF's timer runs only while on screen). An `<img>`'s width
+  and height (`MdRun::width`/`height`, `MdLength`: CSS pixels or a percent of
+  the line, read as HTML reads dimensions, `md:img-size`) go to
+  `initWithPicture:size:widthPercent:`, pixels times `MCZoomed`; one side
+  keeps the proportions, and anything wider than the line is scaled down
+  whole. A percent height is ignored, as a browser does with an auto-height
+  page. Traps: the TextKit 1
   editor never asks for a TextKit 2 view provider (1.4.1 shipped still GIFs);
   `attachmentCell` set in init reads back nil, so it is an override. **Web
   pictures** (`MCWebImageLoader`): https only (redirects too), one ephemeral

@@ -300,6 +300,29 @@ struct Context {
 
 // ------------------------------------------------------------ inline HTML
 
+// An HTML width or height attribute (MdLength): nothing past 10,000
+// pixels or 100 percent, since neither shows wider than the line.
+MdLength htmlLength(const std::map<std::string, std::string>& attrs, const char* name) {
+    MdLength out;
+    const auto it = attrs.find(name);
+    if (it == attrs.end()) return out;
+    const std::string& v = it->second;
+    size_t k = 0;
+    while (k < v.size() && std::isspace((unsigned char)v[k])) k++;
+    long n = 0;
+    const size_t digits = k;
+    while (k < v.size() && std::isdigit((unsigned char)v[k])) {
+        if (n < 100000) n = n * 10 + (v[k] - '0');
+        k++;
+    }
+    if (k == digits) return out;
+    while (k < v.size() && (v[k] == '.' || std::isdigit((unsigned char)v[k]))) k++;
+    out.percent = k < v.size() && v[k] == '%';
+    out.value = (int)std::min(n, out.percent ? 100L : 10000L);
+    if (out.value == 0) out.percent = false;
+    return out;
+}
+
 struct Tag {
     std::string name;           // lowercased; empty for a comment or declaration
     bool closing = false;
@@ -444,6 +467,7 @@ struct Piece {
     bool link = false;
     std::string url;        // a link's target (for a tag, <a>'s href)
     std::string src;        // an image's source
+    MdLength width, height; // an <img>'s size
     // A run of * _ or ~ still to be matched.
     char dc = 0;
     int count = 0, orig = 0;
@@ -1172,6 +1196,8 @@ private:
             im.src = src->second;
             const auto alt = tag.attrs.find("alt");
             if (alt != tag.attrs.end()) im.text = alt->second;
+            im.width = htmlLength(tag.attrs, "width");
+            im.height = htmlLength(tag.attrs, "height");
             out.push_back(std::move(im));
             return;
         }
@@ -1331,6 +1357,8 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
             r.image = true;
             r.text = p.text;
             r.src = p.src;
+            r.width = p.width;
+            r.height = p.height;
             canMerge = false;
             break;
         case Piece::Note:
