@@ -26,6 +26,8 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # To start CI on the proposed branch (scripts/demos-propose.sh).
+  actions: write
 
 jobs:
   mac:
