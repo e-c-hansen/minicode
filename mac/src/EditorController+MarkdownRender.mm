@@ -3,6 +3,7 @@
 #import "EditorFont.h"
 #import "EditorController+MarkdownIvars.h"
 #import <objc/runtime.h>
+#include "Notebook.h"
 #include "PageMeasure.h"
 
 // A task list item's box, drawn rather than the ☐ and ☑ characters, whose
@@ -175,6 +176,22 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
     }
     for (NSTextBlock *b in quotes) MCAddBlock(blocks, b);
     if (r.codeBlock) {
+        if (!*code && r.lang == Notebook::kOutputLanguage) {
+            // A notebook's output reads as a result, as in Jupyter and VS
+            // Code: no box, a thin rule at its left.
+            NSTextBlock *b = MCFullWidthBlock();
+            if (levels > 0) MCIndentBlock(b, levels * step);
+            [b setWidth:2 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder
+                   edge:NSRectEdgeMinX];
+            [b setBorderColor:Hex(0x4B5563) forEdge:NSRectEdgeMinX];
+            [b setWidth:12 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                   edge:NSRectEdgeMinX];
+            [b setWidth:3 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                   edge:NSRectEdgeMinY];
+            [b setWidth:3 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
+                   edge:NSRectEdgeMaxY];
+            *code = b;
+        }
         if (!*code) {
             NSTextBlock *b = MCFullWidthBlock();
             if (levels > 0) MCIndentBlock(b, levels * step);   // at a list item's indent
@@ -236,6 +253,27 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
     return ps;
 }
 
+// A fenced block's label (MdRun::label: a notebook's "In [3]" and
+// "Out [3]"), a small muted line just above the block.
+- (NSAttributedString *)markdownLabelFor:(const MdRun &)r {
+    MdRun label = r;
+    label.code = label.codeBlock = false;
+    label.lang.clear();
+    label.label.clear();
+    label.text = r.label + "\n";
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.paragraphSpacing = 1;
+    if (r.listDepth > 0) ps.firstLineHeadIndent = ps.headIndent = r.listDepth * MCZoomed(kMarkdownListStep);
+    NSMutableAttributedString *s = [[self markdownRun:label style:ps inCell:NO] mutableCopy];
+    const NSRange all = NSMakeRange(0, s.length);
+    [s addAttribute:NSFontAttributeName value:MCMonoFont(MCZoomed(11), NSFontWeightRegular)
+              range:all];
+    [s addAttribute:NSForegroundColorAttributeName
+              value:[[AppSettings shared] markdown:MarkdownColor::Quote] range:all];
+    [s addAttribute:kMarkdownCodeLabel value:@YES range:all];
+    return s;
+}
+
 // One run of rendered Markdown, set in the paragraph style `ps`. Inside a
 // table cell (`inCell`) the text is set in the body font, since a real
 // table lines its columns up without monospace.
@@ -270,7 +308,9 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
     const BOOL boxedMath = r.math == 2 && r.heading == 0 && !r.table;
     if (r.codeBlock || r.code) {
         font = mono;
-        color = [cfg markdown:MarkdownColor::Code];
+        // A notebook's output is in the page's own color, the code in code's.
+        color = r.codeBlock && r.lang == Notebook::kOutputLanguage ? [cfg text:Surface::Editor]
+                                                                   : [cfg markdown:MarkdownColor::Code];
         if (!r.codeBlock && !boxedMath)   // a code block's box is its paragraphs' text block
             a[NSBackgroundColorAttributeName] =
                 MCColor(cfg.settings.markdownCodeBackground());

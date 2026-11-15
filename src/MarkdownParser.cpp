@@ -1512,6 +1512,7 @@ struct Block {
     Kind kind = Para;
     bool math = false;           // a ```math fence: display math, not code
     std::string lang;            // a fence's language, from its info string
+    std::string label;           // and the rest of that string (MdRun::label)
     std::string tex;             // a Math block's TeX
     int first = 0, last = 0;     // source lines
     int edit = -1;               // MdLine::block of its lines
@@ -1623,6 +1624,21 @@ bool isFenceOpen(const std::string& body, char& ch, size_t& len, std::string* in
         *info = lowerAscii(rest.substr(0, rest.find_first_of(" \t{")));
     }
     return true;
+}
+
+// What follows the language in an opening fence's info string, trimmed:
+// "In [3]" for "```python In [3]". Braces ({.class}) end it, as they end
+// the language.
+std::string fenceLabel(const std::string& body) {
+    size_t n = 0;
+    while (n < body.size() && body[n] == body[0]) n++;
+    const std::string rest = trim(body.substr(n));
+    const size_t word = rest.find_first_of(" \t{");
+    if (word == std::string::npos || rest[word] == '{') return std::string();
+    std::string label = trim(rest.substr(word));
+    const size_t brace = label.find('{');
+    if (brace != std::string::npos) label = trim(label.substr(0, brace));
+    return label;
 }
 
 bool endsWith(const std::string& s, const std::string& tail) {
@@ -2048,6 +2064,7 @@ Doc analyze(const std::string& md) {
                 if (fence) {
                     f.math = info == "math";
                     f.lang = info;
+                    f.label = fenceLabel(body);
                     fenceBlock = (int)d.blocks.size() - 1;
                     fenceIndent = cols;
                     inFence = true;
@@ -2140,6 +2157,7 @@ Doc analyze(const std::string& md) {
             f.depth = (int)list.size();   // a list item's code sits at its indent
             f.math = info == "math";
             f.lang = info;
+            f.label = fenceLabel(body);
             fenceBlock = (int)d.blocks.size() - 1;
             fenceIndent = cols;
             inFence = true;
@@ -2607,6 +2625,7 @@ void emitBlock(const Block& b, const Context& ctx, int& tables, std::vector<MdRu
             MdRun r;
             r.code = r.codeBlock = true;
             r.lang = b.lang;
+            r.label = b.label;
             r.quote = b.quote;
             r.listDepth = b.depth;   // in a list item, at its indent
             r.text = line.first + "\n";
@@ -2740,6 +2759,7 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
         if (afterCode) {
             tail.code = tail.codeBlock = false;
             tail.lang.clear();
+            tail.label.clear();
             closing++;
         }
         std::vector<MdRun> back;

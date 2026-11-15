@@ -360,8 +360,14 @@ std::string toMarkdown(const Document &doc) {
         case Cell::Kind::Raw:
             appendBlock(md, cell.source, "");
             break;
-        case Cell::Kind::Code:
-            appendBlock(md, cell.source, doc.language.empty() ? "python" : doc.language);
+        case Cell::Kind::Code: {
+            // Jupyter's prompts, after the language: "In [3]" on the code
+            // and "Out [3]" on its result (MdRun::label), when it has run.
+            const std::string count =
+                cell.executionCount >= 0 ? " [" + std::to_string(cell.executionCount) + "]" : "";
+            appendBlock(md, cell.source,
+                        (doc.language.empty() ? "python" : doc.language) +
+                            (count.empty() ? "" : " In" + count));
             for (const Output &o : cell.outputs) {
                 switch (o.kind) {
                 case Output::Kind::Image:
@@ -371,12 +377,18 @@ std::string toMarkdown(const Document &doc) {
                     md += trimTrailingNewlines(o.text) + "\n\n";
                     break;
                 default:
+                    // Text, a stream or an error, fenced as output so the
+                    // page sets it apart from the code (kOutputLanguage).
                     if (!trimTrailingNewlines(o.text).empty())
-                        appendBlock(md, shortenOutput(o.text), "");
+                        appendBlock(md, shortenOutput(o.text),
+                                    std::string(kOutputLanguage) +
+                                        (o.kind == Output::Kind::Text && !count.empty()
+                                             ? " Out" + count : ""));
                     break;
                 }
             }
             break;
+        }
         }
     }
     return md;

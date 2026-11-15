@@ -16,6 +16,10 @@ struct MdRun {
     // A fenced block's language, the first word of its info string
     // lowercased ("python" for ```python), on its runs; "" otherwise.
     std::string lang;
+    // The rest of a fenced block's info string after its language, trimmed
+    // and as written ("In [3]" for ```python In [3]), on its runs; "" when
+    // none. A notebook's cells carry their prompts here (Notebook.h).
+    std::string label;
     bool quote     = false;  // inside a block quote
     // How many quotes deep (1 in a quote, 2 in a quote inside a quote...),
     // where `quote` is set; 0 elsewhere.

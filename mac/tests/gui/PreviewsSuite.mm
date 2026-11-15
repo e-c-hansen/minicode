@@ -1050,6 +1050,40 @@ static void NotebookSteps(void) {
         const NSUInteger out = [tv.string rangeOfString:@"\n42"].location + 1;
         GCHECK(!SameColor(ColorOf(tv, @"42", out), [cfg syntax:TokenStyle::Number]));
     });
+    MCGuiStep(@"outputs read as results: no box, the page's own color; prompts above", ^{
+        EditorController *c = MCGuiController();
+        NSTextView *tv = EditorText(c);
+        AppSettings *cfg = [AppSettings shared];
+        NSTextStorage *st = tv.textStorage;
+        auto blocksAt = ^NSArray<NSTextBlock *> *(NSUInteger at) {
+            NSParagraphStyle *ps = [st attribute:NSParagraphStyleAttributeName atIndex:at
+                                  effectiveRange:nil];
+            return ps.textBlocks ?: @[];
+        };
+        auto boxed = ^BOOL(NSArray<NSTextBlock *> *blocks) {
+            for (NSTextBlock *b in blocks)
+                if (b.backgroundColor) return YES;
+            return NO;
+        };
+        const NSUInteger code = [tv.string rangeOfString:@"def double"].location;
+        const NSUInteger out = [tv.string rangeOfString:@"\n42"].location + 1;
+        const NSUInteger err = [tv.string rangeOfString:@"KeyError: 'k'"].location;
+        GCHECK(code != NSNotFound && out != NSNotFound && err != NSNotFound);
+        if (code == NSNotFound || out == NSNotFound || err == NSNotFound) return;
+        GCHECK(boxed(blocksAt(code)));                    // the code in its box
+        GCHECK(!boxed(blocksAt(out)) && blocksAt(out).count > 0);   // a rule, no box
+        GCHECK(!boxed(blocksAt(err)));
+        GCHECK(SameColor(ColorOf(tv, @"42", out), [cfg text:Surface::Editor]));
+        // "In [1]" above the code, muted, and not part of it.
+        const NSRange in = [tv.string rangeOfString:@"In [1]\n"];
+        GCHECK(in.location != NSNotFound && in.location < code);
+        if (in.location != NSNotFound) {
+            GCHECK([[st attribute:@"MCMarkdownCodeLabel" atIndex:in.location effectiveRange:nil] boolValue]);
+            GCHECK(!boxed(blocksAt(in.location)));
+        }
+        // Streams and errors have no prompt, as in Jupyter.
+        GCHECK([tv.string rangeOfString:@"Out ["].location == NSNotFound);
+    });
     MCGuiStep(@"saved unedited it is untouched; Shift+Cmd+V shows its JSON", ^{
         EditorController *c = MCGuiController();
         NSData *before = [NSData dataWithContentsOfFile:Fixture(@"analysis.ipynb")];
