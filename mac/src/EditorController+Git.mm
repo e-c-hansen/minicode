@@ -9,6 +9,8 @@
 // Previous Change, Revert Change and Stage Change.
 #import "EditorController+Private.h"
 #import "EditorController+GitIvars.h"
+#import "ChangeReviewPage.h"
+#import "CompareView.h"
 #import "GitGutter.h"
 #import "GitPanel.h"
 #import "PalettePanel.h"
@@ -30,6 +32,9 @@
     self.gitPanel.onShowDiff = ^(NSString *name, NSString *path, NSData *diff) {
         [weakSelf showDiffNamed:name path:path data:diff];
     };
+    self.gitPanel.onReview = ^(NSString *path, BOOL staged) {
+        [weakSelf showChangeReviewAt:path staged:staged];
+    };
     self.gitPanel.onShowCommit = ^(NSString *title, NSData *show) {
         [weakSelf showCommitTitled:title data:show];
     };
@@ -48,6 +53,43 @@
     self.gitPanel.onRevealFile = ^(NSString *path) { [weakSelf revealGitPath:path]; };
     self.gitPanel.onChooseBranch = ^{ [weakSelf gitCheckout:nil]; };
     return self.gitPanel;
+}
+
+// The review of every uncommitted change (ChangeReviewPage.h), one tab per
+// window, at a file (a click on its row in the panel) or from its top.
+- (void)showChangeReviewAt:(NSString *)rel staged:(BOOL)staged {
+    MCGitPanel *panel = [self ensureGitPanel];
+    NSString *key = [@"review:" stringByAppendingString:_root.path ?: @""];
+    MCChangeReviewPage *page = nil;
+    for (MCTab *t in _tabs)
+        if ([t.page isKindOfClass:MCChangeReviewPage.class] && [t.page.pageKey isEqualToString:key])
+            page = (MCChangeReviewPage *)t.page;
+    if (!page) {
+        page = [[MCChangeReviewPage alloc] initWithRoot:_root.path panel:panel];
+        __weak EditorController *weakSelf = self;
+        page.onOpenFile = ^(NSString *path, NSInteger line) {
+            EditorController *s = weakSelf;
+            NSString *mine = [s gitPathInRoot:path];
+            [s openFileAtPath:mine];
+            if (line > 0 && [s.currentPath isEqualToString:mine]) [s goToLine:(int)line column:0];
+        };
+        page.onShowComparison = ^(MCComparison *c) { [weakSelf showComparison:c preview:NO]; };
+        page.hasUnsavedText = ^BOOL(NSString *path) {
+            EditorController *s = weakSelf;
+            NSString *mine = [s gitPathInRoot:path];
+            for (MCTab *t in s->_tabs)
+                if (t.dirty && ([t.currentPath isEqualToString:mine] || [t.currentPath isEqualToString:path]))
+                    return YES;
+            return NO;
+        };
+    }
+    [self showPage:page];
+    [page revealFile:rel staged:staged];
+}
+
+- (void)gitReviewChanges:(id)sender {
+    (void)sender;
+    [self showChangeReviewAt:nil staged:NO];
 }
 
 // git names files from its top level with links resolved (/private/tmp);

@@ -206,7 +206,9 @@ goes here first, with tests; the GUI only displays it.
 - `FolderSearch` (Find and Replace in Folder, atomic writes, TODOs),
   `GitStatus` (status, diffs, git time limits), `GitGraph` (log, refs, lanes),
   `GitModel` (what every port's Source Control panel shows and runs),
-  `QuickDiff` (the editor's change bars against the index).
+  `QuickDiff` (the editor's change bars against the index), `ChangeReview`
+  (the review view's rows, and what staging, unstaging or discarding one
+  block or a few lines makes of the file).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
@@ -253,7 +255,8 @@ goes here first, with tests; the GUI only displays it.
 - `EditorMirror` (the split editor's group without the keyboard).
 - `Browser` (with `MCKeyboardWindow`), `Bookmarks` (the bookmark folder,
   reading and writing bookmark files), `TabStrip`, `Search` (Find in Folder and
-  TODOs window), `GitPanel`, `GitGutter` (change bars), `TreeDetails`,
+  TODOs window), `GitPanel`, `ChangeReviewPage` (every uncommitted change in
+  one tab), `GitGutter` (change bars), `TreeDetails`,
   `FormatRunner`, `BackupStore`,
   `PalettePanel`, `Navigation`.
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
@@ -2951,6 +2954,38 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `update-ref -d HEAD` for a first commit; its message back in the box), Stash
   (`--include-untracked`) and Pop Stash are `GitUi` plans run by `runVerb:`;
   amend and undo ask when `headIsPushed`, undo asks for a merge.
+- **The review view** (Mac, 2026-11-15, `ChangeReviewPage.{h,mm}`, core
+  `ChangeReview.{h,cpp}`, `review:*`, `make guitest SUITES=git_review`):
+  Zed's Uncommitted Changes as an `EditorPage` (key `review:<root>`, one
+  per window). A file row's click, Return and Open Changes call the
+  panel's `onReview` (Open as git Diff keeps the raw diff and its hunk
+  links); Review Changes (the panel's top, View > Source Control) opens
+  it at its top. Staged files (HEAD to index, Unstage) then the Changes
+  list (index to work tree, Stage and Discard), each file a header row
+  then blocks split at every run of changed rows (`SideBySide::hunks`,
+  never git's context), unchanged runs folded past 3 lines of context
+  (`Opened`, keyed by the new line a gap starts on). Reading is one
+  status, one `ls-files --stage`, one `ls-tree -r HEAD` and one `cat-file
+  --batch` for every file (`ChangeReview::parse*`), then the disk; texts
+  read as the gutter reads them (`QuickDiff::readOriginal` with the work
+  tree's encoding; the staged list by the index blob's own mark), "\r"
+  before "\n" ignored when aligning, and `ChangeReview::pick` writing
+  lines from the other side with the base's line break, so a CRLF file
+  stays CRLF. Stage and Unstage write the index text as Stage Change does
+  (hash-object, update-index) after checking the entry's object; Discard
+  asks through the panel, checks the file's bytes and the index are as
+  read, puts a copy in the Trash (`+[MCGitPanel trashCopyOf:]`,
+  `rememberDiscardAt:` for Undo Discard) and writes through
+  `writeFileAtomically`, so a clean tab follows the disk ("Reload from
+  Disk"); a dirty tab's file is refused. Every action, and every panel
+  refresh (`MCGitPanelDidRefreshNotification`), reads again and keeps the
+  place by `ChangeReview::anchorAt`/`rowFor`. Rows are one height
+  (`ReviewRowHeight`), so places are arithmetic and layout is
+  non-contiguous; tints, numbers and the buttons are drawn, the buttons
+  pinned to the visible right edge (a sideways scroll redraws). New,
+  deleted, binary, submodule, conflicted and `add -N` files go whole
+  (`wholeOnlyReason`). The GTK and Android panels can follow over the
+  same core.
 - **Change bars** (Mac, `GitGutter.mm`, core `QuickDiff`): the original is
   the index entry, as VS Code's quick diff (`ls-files --stage`, then `cat-file
   blob` of its object), read again only when the file or the index file's stat
@@ -3708,15 +3743,15 @@ session has a display. Check first.
   terminal: terminal_draw, terminal_links, terminal_marks, terminal_paste,
   terminal_pty, terminal_reflow, terminal_splits, terminal_vt,
   terminal_exec, terminal_keys, terminal_zoom, run_file;
-  git: git_panel, git_actions, git_hunks, git_verbs, git_sync, git_gutter;
+  git: git_panel, git_actions, git_hunks, git_verbs, git_review, git_sync, git_gutter;
   agents and control: agents, agent_panel, agent_places, agentcommands,
   agent_autosave, attention, control, browserpages, browser_tabs, browser_find, bookmarks,
   idelink, processes;
   run only when named: _backups_writer, _backups_restore.
   A suite's file is usually its name in CamelCase; the exceptions are
   mermaid (IdeLinkSuite.mm), foldperf (FoldingSuite.mm), the format_*
-  suites (FormatSuite.mm), git_actions, git_hunks and git_verbs
-  (GitPanelSuite.mm), markdown_side_sync (MarkdownSideSuite.mm), and
+  suites (FormatSuite.mm), git_actions, git_hunks, git_review
+  and git_verbs (GitPanelSuite.mm), markdown_side_sync (MarkdownSideSuite.mm), and
   LooseEndsSuite.mm (terminal_exec, terminal_keys, terminal_zoom,
   agent_autosave, multicaret_rows), and PageMeasureSuite.mm (hints_panel,
   markdown_width, swatch_escape).

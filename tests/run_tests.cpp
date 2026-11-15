@@ -44,6 +44,8 @@
 #include "ControlProtocol.h"
 #include "PageCheck.h"
 #include "SideBySide.h"
+#include "ChangeReview.h"
+#include "QuickDiff.h"
 #include "PreviewScroll.h"
 #include "MarkdownHtml.h"
 #include "MarkdownPage.h"
@@ -11074,6 +11076,7 @@ static void testMultiCaretOccurrences() {
 #include "auto_close_tests.inc"
 #include "find_rules_tests.inc"
 #include "side_by_side_tests.inc"
+#include "change_review_tests.inc"
 #include "lsp_inlay_tests.inc"
 #include "lsp_semantic_tests.inc"
 #include "preview_scroll_tests.inc"
@@ -11204,6 +11207,7 @@ int main() {
     testPageCheck();
     testSideBySide();
     testSideBySideReview();
+    testChangeReview();
     testPreviewScroll();
     testAgentTranscript();
     testAgentIndex();

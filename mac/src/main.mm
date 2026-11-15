@@ -731,6 +731,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)openBrowserTab:(id)sender  { [[self current] openBrowserTab:sender]; }
 - (void)toggleSidebarVisibility:(id)sender   { [[self current] toggleSidebarVisibility:sender]; }
 - (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
+- (void)gitReviewChanges:(id)sender { [[self current] gitReviewChanges:sender]; }
 - (void)gitFetch:(id)sender { [[self current] gitFetch:sender]; }
 - (void)gitPull:(id)sender  { [[self current] gitPull:sender]; }
 - (void)gitPush:(id)sender  { [[self current] gitPush:sender]; }
@@ -1472,6 +1473,10 @@ static void BuildMenu(void) {
     NSMenuItem *gitItem = [[NSMenuItem alloc] initWithTitle:@"Source Control" action:nil
                                               keyEquivalent:@""];
     NSMenu *gitMenu = [[NSMenu alloc] initWithTitle:@"Source Control"];
+    // Every uncommitted change in one tab (ChangeReviewPage.h).
+    [gitMenu addItemWithTitle:@"Review Changes" action:@selector(gitReviewChanges:)
+                keyEquivalent:@""];
+    [gitMenu addItem:[NSMenuItem separatorItem]];
     [gitMenu addItemWithTitle:@"Fetch" action:@selector(gitFetch:) keyEquivalent:@""];
     [gitMenu addItemWithTitle:@"Pull" action:@selector(gitPull:) keyEquivalent:@""];
     [gitMenu addItemWithTitle:@"Push" action:@selector(gitPush:) keyEquivalent:@""];

@@ -88,6 +88,15 @@ extern NSNotificationName const MCGitPanelDidRefreshNotification;
 // Show a commit from the graph: "<short hash> <subject>" and what git show
 // printed (for MCGitCommitText).
 @property(nonatomic, copy) void (^onShowCommit)(NSString *title, NSData *show);
+// A file row clicked, or Return or Open Changes on it: the review of every
+// uncommitted change (ChangeReviewPage.h) opens at that file, the path
+// relative to the top level. Without it (and from the row menu's Open as
+// git Diff) the row's raw diff goes to onShowDiff.
+@property(nonatomic, copy) void (^onReview)(NSString *path, BOOL staged);
+// The panel's "Review Changes" row, and View > Source Control > Review
+// Changes: the review from its top.
+- (void)reviewChanges;
+- (void)reviewRow:(NSInteger)row;   // a file row's click: the review at its file
 
 // Reload the status (coalesced; runs off the main thread). Does nothing
 // while the panel is not in a window.
@@ -167,6 +176,18 @@ extern NSNotificationName const MCGitPanelDidRefreshNotification;
 @property(nonatomic, readonly) id<NSTextViewDelegate> diffDelegate;
 - (void)runHunkOp:(NSInteger)op fromLine:(NSUInteger)first toLine:(NSUInteger)last
             lines:(BOOL)lines;   // op: GitUi::HunkOp's order (stage, unstage, discard)
+
+// For the review page (ChangeReviewPage.h), which acts on this panel's
+// repository: what it did goes under the Commit button (and to the status
+// bar while the panel is hidden); a question as the panel asks one; a
+// discard it made, for Undo Discard; and a copy of a file in the Trash,
+// by way of a folder of our own so the Trash names it as the file is
+// named (nil, with `failure`, if it failed).
+- (void)showActionMessage:(NSString *)text ok:(BOOL)ok;
+- (void)askQuestion:(NSString *)question detail:(NSString *)detail button:(NSString *)button
+               then:(void (^)(void))go;
+- (void)rememberDiscardAt:(NSString *)path rel:(NSString *)rel trashed:(NSURL *)trashed;
++ (NSURL *)trashCopyOf:(NSString *)path failure:(NSString **)failure;
 
 // The commit graph under the change lists.
 @property(nonatomic, readonly) NSTableView *graphList;
