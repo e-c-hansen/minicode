@@ -38,6 +38,9 @@
     self.gitPanel.onShowCommit = ^(NSString *title, NSData *show) {
         [weakSelf showCommitTitled:title data:show];
     };
+    self.gitPanel.onReviewCommit = ^(NSString *hash, NSString *title) {
+        [weakSelf showCommitReview:hash title:title];
+    };
     // Autofetch only while this window has the keyboard, as VS Code's waits
     // for its window's focus.
     self.gitPanel.isActive = ^BOOL {
@@ -85,6 +88,38 @@
     }
     [self showPage:page];
     [page revealFile:rel staged:staged];
+}
+
+// A commit from the graph as a readable change: one page per window, which
+// each commit shown replaces, as the diff tab did.
+- (void)showCommitReview:(NSString *)hash title:(NSString *)title {
+    MCGitPanel *panel = [self ensureGitPanel];
+    NSString *key = [@"commit:" stringByAppendingString:_root.path ?: @""];
+    MCChangeReviewPage *page = nil;
+    MCTab *tab = nil;
+    for (MCTab *t in _tabs)
+        if ([t.page isKindOfClass:MCChangeReviewPage.class] && [t.page.pageKey isEqualToString:key]) {
+            page = (MCChangeReviewPage *)t.page;
+            tab = t;
+        }
+    if (!page) {
+        page = [[MCChangeReviewPage alloc] initForCommitsWithRoot:_root.path panel:panel];
+        __weak EditorController *weakSelf = self;
+        page.onOpenFile = ^(NSString *path, NSInteger line) {
+            EditorController *s = weakSelf;
+            NSString *mine = [s gitPathInRoot:path];
+            [s openFileAtPath:mine];
+            if (line > 0 && [s.currentPath isEqualToString:mine]) [s goToLine:(int)line column:0];
+        };
+        page.onShowComparison = ^(MCComparison *c) { [weakSelf showComparison:c preview:NO]; };
+    }
+    [page showCommit:hash title:title];
+    if (tab) {
+        tab.diffName = page.pageTitle;
+        [self reloadTabStrip];
+    }
+    [self showPage:page];
+    [self updateTitle];
 }
 
 - (void)gitReviewChanges:(id)sender {

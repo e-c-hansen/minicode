@@ -322,6 +322,31 @@ static void testChangeReview() {
         std::string batch = oid1 + " blob 3\nab\n\n" + oid2 + " missing\n" + oid3 + " blob 0\n\n";
         std::map<std::string, std::string> b = parseBatch(batch);
         CHECK(b.size() == 2 && b[oid1] == "ab\n" && b[oid3].empty() && !b.count(oid2));
+        // diff-tree's raw records: a change, a rename, an add, a delete.
+        const std::string z(40, '0');
+        auto rec = [](const std::string &t) { return t + std::string(1, (char)0); };
+        std::string raw = rec(":100644 100644 " + oid1 + " " + oid2 + " M") + rec("src/a.py") +
+                          rec(":100644 100644 " + oid1 + " " + oid1 + " R100") + rec("old name.txt") +
+                          rec("new name.txt") + rec(":000000 100644 " + z + " " + oid3 + " A") +
+                          rec("n.txt") + rec(":100644 000000 " + oid1 + " " + z + " D") + rec("d.txt");
+        std::vector<RawChange> rc = parseRawDiff(raw);
+        CHECK(rc.size() == 4);
+        if (rc.size() == 4) {
+            CHECK(rc[0].letter == 'M' && rc[0].path == "src/a.py" && rc[0].newObject == oid2);
+            CHECK(rc[1].letter == 'R' && rc[1].origPath == "old name.txt" && rc[1].path == "new name.txt");
+            CHECK(rc[2].letter == 'A' && rc[2].oldMode == "000000" && nullObject(rc[2].oldObject));
+            CHECK(rc[3].letter == 'D' && rc[3].newMode == "000000" && !nullObject(rc[3].oldObject));
+        }
+        CHECK(parseRawDiff("").empty());
+        CHECK((commitDiffArgs("abc", "") ==
+               std::vector<std::string>{"-c", "core.quotePath=false", "diff-tree", "-r", "-z", "-M",
+                                        "--no-commit-id", "--no-ext-diff", "--root", "abc", "--"}));
+        CHECK(commitDiffArgs("abc", "def")[9] == "abc" && commitDiffArgs("abc", "def")[8] == "def");
+        CHECK(commitHeaderArgs("abc")[1] == "-s");
+        auto day = [](long long) { return std::string("Sep 23, 2026 at 14:02"); };
+        CHECK(commitByline("Ann", 1000, oid1, 1, 1000 + 3 * 86400, day) ==
+              "Ann, 3 days ago (Sep 23, 2026 at 14:02)  aaaaaaa");
+        CHECK(commitByline("Ann", 1000, oid1, 2, 1000, day).find("first parent") != std::string::npos);
         // Bytes holding a newline in the middle of the header's count.
         std::string nul = oid1 + " blob 3\n" + std::string("a\0b", 3) + "\n";
         CHECK(parseBatch(nul)[oid1] == std::string("a\0b", 3));

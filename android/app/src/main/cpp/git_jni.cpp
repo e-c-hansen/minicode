@@ -152,6 +152,12 @@ Java_org_minicode_editor_GitNative_firstLine(JNIEnv *env, jclass, jbyteArray out
     return jnistr::ToJava(env, GitUi::firstLine(Bytes(env, out)));
 }
 
+// What a commit did, in words: "Committed “Subject” to main.  1a2b3c4".
+JNIEXPORT jstring JNICALL
+Java_org_minicode_editor_GitNative_commitDoneText(JNIEnv *env, jclass, jbyteArray out) {
+    return jnistr::ToJava(env, GitUi::commitDoneText(Bytes(env, out)));
+}
+
 // `rev-parse --show-toplevel --absolute-git-dir` output: {top, gitDir}, or
 // null when it does not say.
 JNIEXPORT jobjectArray JNICALL

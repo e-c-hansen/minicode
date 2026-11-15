@@ -88,6 +88,9 @@ extern NSNotificationName const MCGitPanelDidRefreshNotification;
 // Show a commit from the graph: "<short hash> <subject>" and what git show
 // printed (for MCGitCommitText).
 @property(nonatomic, copy) void (^onShowCommit)(NSString *title, NSData *show);
+// The same as a readable change (ChangeReviewPage.h): the commit's full
+// name and "<short hash> <subject>". When set, onShowCommit is not used.
+@property(nonatomic, copy) void (^onReviewCommit)(NSString *hash, NSString *title);
 // A file row clicked, or Return or Open Changes on it: the review of every
 // uncommitted change (ChangeReviewPage.h) opens at that file, the path
 // relative to the top level. Without it (and from the row menu's Open as

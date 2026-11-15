@@ -110,10 +110,10 @@ bool graphWanted(const Snapshot& s) {
 }
 
 std::string summaryText(const Snapshot& s) {
-    if (s.detached) return "HEAD is detached, so there is no upstream to compare with.";
+    if (s.detached) return "HEAD is detached: there is no upstream to compare with.";
     if (s.upstream.empty())
         return (s.branch.empty() ? std::string("This branch") : s.branch) +
-               " has no upstream, so nothing here is marked as pushed or not.";
+               " has no upstream: nothing is marked as pushed.";
     if (!s.hasAheadBehind) return "The upstream " + s.upstream + " is gone.";
     if (!s.ahead && !s.behind) return "Up to date with " + s.upstream + ".";
     std::string parts;
@@ -140,6 +140,48 @@ std::string failureText(int status, const std::string& out, const std::string& e
 std::string firstLine(const std::string& out) {
     size_t nl = out.find('\n');
     return validUtf8(nl == std::string::npos ? out : out.substr(0, nl));
+}
+
+CommitDone commitDone(const std::string& out) {
+    CommitDone d;
+    const std::string line = firstLine(out);
+    d.words = line;
+    // "[main 1a2b3c4] Subject", "[main (root-commit) 1a2b3c4] Subject",
+    // "[detached HEAD 1a2b3c4] Subject".
+    const size_t close = line.find("] ");
+    if (line.empty() || line[0] != '[' || close == std::string::npos) return d;
+    std::vector<std::string> parts;
+    const std::string inside = line.substr(1, close - 1);
+    for (size_t at = 0; at <= inside.size();) {
+        size_t sp = inside.find(' ', at);
+        if (sp == std::string::npos) sp = inside.size();
+        if (sp > at) parts.push_back(inside.substr(at, sp - at));
+        at = sp + 1;
+    }
+    if (parts.size() < 2) return d;
+    const std::string hash = parts.back();
+    if (hash.size() < 4 || hash.find_first_not_of("0123456789abcdef") != std::string::npos) return d;
+    parts.pop_back();
+    bool root = false;
+    if (!parts.empty() && parts.back() == "(root-commit)") {
+        root = true;
+        parts.pop_back();
+    }
+    std::string branch;
+    for (const std::string& p : parts) branch += (branch.empty() ? "" : " ") + p;
+    if (branch.empty()) return d;
+    const std::string subject = "\u201C" + line.substr(close + 2) + "\u201D";
+    d.parsed = true;
+    d.hash = hash;
+    if (branch == "detached HEAD") d.words = "Committed " + subject + " on a detached HEAD.";
+    else if (root) d.words = "Committed " + subject + " to " + branch + ", its first commit.";
+    else d.words = "Committed " + subject + " to " + branch + ".";
+    return d;
+}
+
+std::string commitDoneText(const std::string& out) {
+    const CommitDone d = commitDone(out);
+    return d.parsed ? d.words + "  " + d.hash : d.words;
 }
 
 int nextFileRow(const std::vector<Row>& rows, int from, int step) {

@@ -8,6 +8,7 @@
 #include "ChangeReview.h"
 #include "FolderSearch.h"
 #include "GitModel.h"
+#include "GitGraph.h"
 #include "GitStatus.h"
 #include "QuickDiff.h"
 #include "SyntaxHighlighter.h"
@@ -82,6 +83,7 @@ struct ReviewData {
     std::string top;
     bool initial = false;
     std::string error;
+    Git::CommitDetail commit;      // a commit's page: its header
     std::vector<FileDiff> diffs;
     std::vector<Extra> extras;
     Page page;
@@ -269,6 +271,93 @@ std::shared_ptr<ReviewData> ReadReview(NSString *root, const ChangeReview::Opene
     return data;
 }
 
+// A commit and what it changed against its first parent, read off the
+// main thread: its header, diff-tree's records, and their blobs in one
+// cat-file --batch.
+std::shared_ptr<ReviewData> ReadCommit(NSString *root, NSString *hash,
+                                       const ChangeReview::Opened &opened) {
+    auto data = std::make_shared<ReviewData>();
+    if (!MCGitExecutable()) {
+        data->error = "git was not found, so the commit cannot be shown.";
+        return data;
+    }
+    MCGitResult *r = MCGitRunSync(root, Args(GitUi::topLevelArgs()));
+    std::string top, gitDir;
+    if (!r.ok || !GitUi::parseTopLevel(Bytes(r.output), top, gitDir)) {
+        data->error = "This folder is not in a git repository.";
+        return data;
+    }
+    data->top = top;
+    NSString *topNS = NS8(top);
+    MCGitResult *h = MCGitRunSync(topNS, Args(ChangeReview::commitHeaderArgs(Std(hash))));
+    if (!h.ok || !Git::parseShow(Bytes(h.output), data->commit)) {
+        data->error = Std(h.errorText.length ? h.errorText : @"git show failed.");
+        return data;
+    }
+    const std::string parent = data->commit.parents.empty() ? "" : data->commit.parents[0];
+    MCGitResult *dt = MCGitRunSync(topNS, Args(ChangeReview::commitDiffArgs(data->commit.hash, parent)));
+    if (!dt.ok) {
+        data->error = Std(dt.errorText.length ? dt.errorText : @"git diff-tree failed.");
+        return data;
+    }
+    const std::vector<ChangeReview::RawChange> changes = ChangeReview::parseRawDiff(Bytes(dt.output));
+    std::string want;
+    auto wanted = [](const std::string &mode, const std::string &object) {
+        return mode != "000000" && mode != "160000" && !ChangeReview::nullObject(object);
+    };
+    for (const ChangeReview::RawChange &c : changes) {
+        if (wanted(c.oldMode, c.oldObject)) want += c.oldObject + "\n";
+        if (wanted(c.newMode, c.newObject)) want += c.newObject + "\n";
+    }
+    std::map<std::string, std::string> blobs;
+    if (!want.empty()) {
+        MCGitResult *b = MCGitRunSyncWithInput(topNS, Args(ChangeReview::batchArgs()),
+                                               [NSData dataWithBytes:want.data() length:want.size()]);
+        if (b.ok) blobs = ChangeReview::parseBatch(Bytes(b.output));
+    }
+    size_t total = 0;
+    for (const ChangeReview::RawChange &c : changes) {
+        ChangeReview::File f;
+        Extra x;
+        f.path = c.path;
+        f.origPath = c.origPath;
+        f.section = Section::Plain;
+        f.letter = c.letter;
+        f.oldExists = c.oldMode != "000000";
+        f.newExists = c.newMode != "000000";
+        f.submodule = c.oldMode == "160000" || c.newMode == "160000";
+        f.symlink = c.oldMode == "120000" || c.newMode == "120000";
+        x.row.path = c.path;
+        x.row.origPath = c.origPath;
+        x.row.letter = c.letter;
+        if (!f.submodule && !f.symlink) {
+            auto blob = [&](const std::string &object) {
+                auto it = blobs.find(object);
+                return it == blobs.end() ? std::string() : it->second;
+            };
+            const std::string oldBytes = f.oldExists ? blob(c.oldObject) : std::string();
+            const std::string newBytes = f.newExists ? blob(c.newObject) : std::string();
+            total += oldBytes.size() + newBytes.size();
+            if (oldBytes.size() > kMaxSideBytes || newBytes.size() > kMaxSideBytes ||
+                total > kMaxTotalBytes)
+                f.tooLarge = true;
+            else if (ChangeReview::looksBinary(oldBytes) || ChangeReview::looksBinary(newBytes))
+                f.binary = true;
+            else {
+                FolderSearch::TextEncoding enc;
+                bool bom = false;
+                EncodingOfBlob(f.newExists ? newBytes : oldBytes, &enc, &bom);
+                f.oldText = QuickDiff::readOriginal(oldBytes, enc, bom).text;
+                f.newText = QuickDiff::readOriginal(newBytes, enc, bom).text;
+            }
+        }
+        data->extras.push_back(x);
+        data->diffs.push_back(ChangeReview::diffFile(f, ExtOf(f.path)));
+    }
+    data->page = ChangeReview::layout(data->diffs, opened);
+    return data;
+}
+
 // The rows' font and height: one height for every row, so the page's size
 // and a row's place are arithmetic.
 NSFont *ReviewFont() { return MCMonoFont(12.5, NSFontWeightRegular); }
@@ -364,9 +453,12 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const ChangeReview::File &f = d->diffs[pr.file].file;
     std::vector<Act> acts;
     if (pr.kind == RowKind::File) {
-        const bool shows = !f.binary && !f.submodule && !f.conflict;
+        const bool shows = !f.binary && !f.submodule && !f.conflict && !f.symlink;
         if (shows) acts.push_back(ActSide);
-        if (f.section != Section::Staged || f.newExists) acts.push_back(ActOpen);
+        // A commit's page (Plain) acts on nothing: only Side by Side, a way
+        // of looking.
+        if (f.section == Section::Changes || (f.section == Section::Staged && f.newExists))
+            acts.push_back(ActOpen);
         if (f.section == Section::Changes) {
             if (!f.conflict && !f.submodule) acts.push_back(ActDiscardFile);
             acts.push_back(ActStageFile);
@@ -674,6 +766,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     BOOL _stale;              // something changed while out of sight
     BOOL _closed;             // its tab closed
     size_t _columns;          // the longest row, a tab as 8
+    BOOL _commitMode;         // a commit's page, not the uncommitted changes
+    NSString *_commitTitle;   // "a1b2c3d Subject", the tab's title
+    NSTextField *_bodyLabel;  // the rest of a commit's message
 }
 
 - (instancetype)initWithRoot:(NSString *)root panel:(MCGitPanel *)panel {
@@ -691,6 +786,31 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                                                    object:nil];
     }
     return self;
+}
+
+- (instancetype)initForCommitsWithRoot:(NSString *)root panel:(MCGitPanel *)panel {
+    if ((self = [self initWithRoot:root panel:panel])) {
+        _commitMode = YES;
+        // A commit does not change: the panel's refreshes are not for it.
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                        name:MCGitPanelDidRefreshNotification
+                                                      object:panel];
+        _titleLabel.stringValue = @"";
+    }
+    return self;
+}
+
+- (void)showCommit:(NSString *)hash title:(NSString *)title {
+    if (!_commitMode || !hash.length) return;
+    const BOOL same = [hash isEqualToString:_commit];
+    _commit = [hash copy];
+    _commitTitle = [title copy];
+    if (!same) {
+        _opened.clear();
+        _data = nullptr;   // a new commit starts at its top
+        _revealTop = YES;
+    }
+    [self reload];
 }
 
 - (void)dealloc {
@@ -724,7 +844,13 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     _undoButton.controlSize = NSControlSizeSmall;
     _undoButton.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
     _undoButton.hidden = YES;
-    for (NSView *v in @[_titleLabel, _summaryLabel, _messageLabel, _undoButton]) [_view addSubview:v];
+    _bodyLabel = [NSTextField wrappingLabelWithString:@""];
+    _bodyLabel.font = [NSFont systemFontOfSize:12];
+    _bodyLabel.maximumNumberOfLines = 12;
+    _bodyLabel.selectable = YES;
+    _bodyLabel.hidden = YES;
+    for (NSView *v in @[_titleLabel, _summaryLabel, _messageLabel, _undoButton, _bodyLabel])
+        [_view addSubview:v];
 
     _scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, kTopBarHeight, 600, 366)];
     _scroll.hasVerticalScroller = YES;
@@ -787,14 +913,31 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         _undoButton.frame = NSMakeRect(right, floor((kTopBarHeight - sz.height) / 2), sz.width, sz.height);
         right -= 8;
     }
-    const CGFloat titleW = ceil(_titleLabel.fittingSize.width);
-    _titleLabel.frame = NSMakeRect(12, 9, titleW, 17);
-    const CGFloat sumX = 12 + titleW + 10;
-    const CGFloat sumW = MIN(ceil(_summaryLabel.fittingSize.width), MAX(0, right - sumX));
-    _summaryLabel.frame = NSMakeRect(sumX, 10, sumW, 16);
-    const CGFloat msgX = sumX + sumW + 12;
-    _messageLabel.frame = NSMakeRect(msgX, 10, MAX(0, right - msgX), 16);
-    _scroll.frame = NSMakeRect(0, kTopBarHeight, W, MAX(0, NSHeight(b) - kTopBarHeight));
+    CGFloat barH = kTopBarHeight;
+    if (_commitMode) {
+        // The subject on its line, the author and date under it, then the
+        // rest of the message.
+        _titleLabel.frame = NSMakeRect(12, 9, MAX(0, W - 24), 17);
+        _summaryLabel.frame = NSMakeRect(12, 29, MAX(0, W - 24), 16);
+        CGFloat y = 49;
+        if (!_bodyLabel.hidden) {
+            const CGFloat h = MIN(200.0, ceil([_bodyLabel.cell cellSizeForBounds:
+                                                    NSMakeRect(0, 0, MAX(0, W - 24), 400)].height));
+            _bodyLabel.frame = NSMakeRect(12, y + 2, MAX(0, W - 24), h);
+            y += h + 6;
+        }
+        _messageLabel.frame = NSZeroRect;
+        barH = y + 4;
+    } else {
+        const CGFloat titleW = ceil(_titleLabel.fittingSize.width);
+        _titleLabel.frame = NSMakeRect(12, 9, titleW, 17);
+        const CGFloat sumX = 12 + titleW + 10;
+        const CGFloat sumW = MIN(ceil(_summaryLabel.fittingSize.width), MAX(0, right - sumX));
+        _summaryLabel.frame = NSMakeRect(sumX, 10, sumW, 16);
+        const CGFloat msgX = sumX + sumW + 12;
+        _messageLabel.frame = NSMakeRect(msgX, 10, MAX(0, right - msgX), 16);
+    }
+    _scroll.frame = NSMakeRect(0, barH, W, MAX(0, NSHeight(b) - barH));
     [self fitText];
 }
 
@@ -811,9 +954,15 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 }
 
 // ------------------------------------------------------- EditorPage
-- (NSString *)pageTitle { return @"Uncommitted Changes"; }
-- (NSString *)pageKind { return @"review"; }
-- (NSString *)pageKey { return [@"review:" stringByAppendingString:_root ?: @""]; }
+- (NSString *)pageTitle {
+    return _commitMode ? (_commitTitle ?: @"Commit") : @"Uncommitted Changes";
+}
+- (NSString *)pageKind { return _commitMode ? @"commit" : @"review"; }
+- (NSString *)pageKey {
+    return [(_commitMode ? @"commit:" : @"review:") stringByAppendingString:_root ?: @""];
+}
+- (NSString *)headerTitle { return _titleLabel.stringValue; }
+- (NSString *)headerDetail { return _summaryLabel.stringValue; }
 - (NSView *)pageView { return _view; }
 - (NSView *)pageFocusView { return _text; }
 - (NSTextView *)textView { return _text; }
@@ -832,6 +981,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     _view.layer.backgroundColor = bg.CGColor;
     _titleLabel.textColor = text;
     _summaryLabel.textColor = [text colorWithAlphaComponent:0.6];
+    _bodyLabel.textColor = [text colorWithAlphaComponent:0.8];
     _text.numberColor = [text colorWithAlphaComponent:0.4];
     _text.textColor = text;
     _text.insertionPointColor = text;
@@ -867,12 +1017,15 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         _again = YES;
         return;
     }
+    if (_commitMode && !_commit) return;
     _loading = YES;
-    NSString *root = _root;
+    NSString *root = _root, *commit = _commit;
+    const BOOL commitMode = _commitMode;
     const ChangeReview::Opened opened = _opened;
     __weak MCChangeReviewPage *weakSelf = self;
     dispatch_async(_queue, ^{
-        std::shared_ptr<ReviewData> d = ReadReview(root, opened);
+        std::shared_ptr<ReviewData> d = commitMode ? ReadCommit(root, commit, opened)
+                                                   : ReadReview(root, opened);
         dispatch_async(dispatch_get_main_queue(), ^{
             MCChangeReviewPage *s = weakSelf;
             if (!s) return;
@@ -881,6 +1034,11 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             // nobody sees is not built (100,000 rows cost seconds of the
             // main thread, laid out in idle time, after every suite since).
             if (s->_closed) return;
+            // A commit shown meanwhile: this read is the old one's.
+            if (commitMode && ![commit isEqualToString:s->_commit]) {
+                [s reload];
+                return;
+            }
             [s show:d];
             if (s->_again) {
                 s->_again = NO;
@@ -991,7 +1149,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                            NSParagraphStyleAttributeName: rows};
     NSMutableAttributedString *s;
     if (!_data->error.empty() || _data->diffs.empty()) {
-        NSString *why = !_data->error.empty() ? NS8(_data->error) : @"No uncommitted changes.";
+        NSString *why = !_data->error.empty() ? NS8(_data->error)
+                        : _commitMode         ? @"This commit changes no files."
+                                              : @"No uncommitted changes.";
         s = [[NSMutableAttributedString alloc] initWithString:why attributes:base];
         [s addAttribute:NSForegroundColorAttributeName value:muted range:NSMakeRange(0, s.length)];
         [s addAttribute:NSFontAttributeName value:[NSFont systemFontOfSize:12.5]
@@ -1053,12 +1213,29 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             added += d.added;
             removed += d.removed;
         }
-    _summaryLabel.stringValue =
-        files == 0 ? @""
-                   : [NSString stringWithFormat:@"%zu %@, +%zu -%zu", files,
-                                                files == 1 ? @"file" : @"files", added, removed];
+    NSString *counts = files == 0 ? @""
+                       : [NSString stringWithFormat:@"%zu %@, +%zu -%zu", files,
+                                                    files == 1 ? @"file" : @"files", added, removed];
+    if (_commitMode && _data && _data->error.empty()) {
+        const Git::CommitDetail &c = _data->commit;
+        const std::string msg = GitUi::validUtf8(c.message);
+        const size_t nl = msg.find('\n');
+        _titleLabel.stringValue = NS8(nl == std::string::npos ? msg : msg.substr(0, nl));
+        std::string body = nl == std::string::npos ? "" : msg.substr(nl + 1);
+        while (!body.empty() && (body[0] == '\n' || body[0] == '\r')) body.erase(0, 1);
+        _bodyLabel.stringValue = NS8(body);
+        _bodyLabel.hidden = body.empty();
+        NSString *by = NS8(ChangeReview::commitByline(c.author, c.time, c.hash, c.parents.size(),
+                                                      (long long)NSDate.date.timeIntervalSince1970));
+        _summaryLabel.stringValue = counts.length ? [NSString stringWithFormat:@"%@  ·  %@", by, counts] : by;
+        _summaryLabel.toolTip = c.committer.empty() ? nil : NS8("Committed by " + c.committer);
+        _undoButton.hidden = YES;
+        [self layoutView];
+        return;
+    }
+    _summaryLabel.stringValue = counts;
     MCGitPanel *panel = _panel;
-    NSString *undo = panel.undoDiscardTitle;
+    NSString *undo = _commitMode ? nil : panel.undoDiscardTitle;
     _undoButton.hidden = undo == nil;
     _undoButton.toolTip = undo;
     [self layoutView];

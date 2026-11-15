@@ -147,7 +147,71 @@ MC_GUI_SUITE(git_panel) {
         GCHECK([g.firstObject containsString:@"Second commit"]);
         GCHECK([g.lastObject containsString:@"first"]);
         GCHECK([Git(c).errorLine containsString:@"Second commit"]);
+        // In words, the short hash after them.
+        GCHECK([Git(c).errorLine hasPrefix:@"Committed \u201CSecond commit\u201D to main.  "]);
         GCHECK(Git(c).messageView.string.length == 0);
+    });
+    MCGuiStep(@"the line over the graph wraps in a narrow panel and has a tooltip", ^{
+        if (!git) return;
+        MCGitPanel *panel = Git(c);
+        NSTextField *summary = [panel valueForKey:@"summaryLabel"];
+        GCHECK_EQ_STR(panel.graphSummary, @"main has no upstream: nothing is marked as pushed.");
+        const NSSize was = panel.frame.size;
+        [panel setFrameSize:NSMakeSize(200, was.height)];
+        [panel resizeSubviewsWithOldSize:was];
+        const NSSize need = [summary.cell cellSizeForBounds:NSMakeRect(0, 0, NSWidth(summary.frame), 400)];
+        MCGuiNote(@"summary at 200 points: frame %@, needs %@", NSStringFromRect(summary.frame),
+                  NSStringFromSize(need));
+        GCHECK(NSHeight(summary.frame) + 0.5 >= need.height && NSHeight(summary.frame) > 16);
+        GCHECK_EQ_STR(summary.toolTip, panel.graphSummary);
+        // The graph starts under it.
+        NSScrollView *graph = [panel valueForKey:@"graphScroll"];
+        GCHECK(NSMinY(graph.frame) >= NSMaxY(summary.frame));
+        [panel setFrameSize:was];
+        [panel resizeSubviewsWithOldSize:NSMakeSize(200, was.height)];
+        // The new commit from the graph: the review page, not git show text.
+        [panel showCommitAtRow:0];
+    });
+    MCGuiWait(@"the commit's page", 15, ^BOOL {
+        if (!git) return YES;
+        id page = [[c valueForKey:@"activeTab"] valueForKey:@"page"];
+        return [page isKindOfClass:MCChangeReviewPage.class] && [page loaded];
+    });
+    MCGuiStep(@"its header in words, its files colored, no buttons but Side by Side", ^{
+        if (!git) return;
+        MCChangeReviewPage *p = [[c valueForKey:@"activeTab"] valueForKey:@"page"];
+        NSArray *rows = p.rowDescriptions;
+        MCGuiNote(@"commit page: %@ / %@ / %@", p.headerTitle, p.headerDetail, rows);
+        GCHECK_EQ_STR(p.pageKind, @"commit");
+        GCHECK_EQ_STR(p.headerTitle, @"Second commit");
+        GCHECK([p.headerDetail containsString:@"2 files, +2 -1"]);
+        GCHECK([c.window.title hasPrefix:[Git(c).graphDescriptions.firstObject substringToIndex:7]] ||
+               [c.window.title containsString:@"Second commit"]);
+        GCHECK([rows containsObject:@"F a.txt  +1 -1"]);
+        GCHECK([rows containsObject:@"F c.txt  (new)  +1"]);
+        GCHECK([rows containsObject:@"- two"] && [rows containsObject:@"+ TWO"]);
+        for (NSString *r in rows) GCHECK(![r containsString:@"diff --git"] && ![r hasPrefix:@"  commit "]);
+        const NSInteger header = (NSInteger)[rows indexOfObject:@"F a.txt  +1 -1"];
+        GCHECK(!NSIsEmptyRect([p buttonRect:@"Side by Side" row:header]));
+        GCHECK(NSIsEmptyRect([p buttonRect:@"Open" row:header]));
+        GCHECK(NSIsEmptyRect([p buttonRect:@"Stage" row:[p rowOfBlock:0]]));
+        GCHECK(NSIsEmptyRect([p buttonRect:@"Discard" row:[p rowOfBlock:0]]));
+        // The first commit replaces it in the same tab.
+        [Git(c) showCommitAtRow:1];
+    });
+    MCGuiWait(@"the first commit in its place", 15, ^BOOL {
+        if (!git) return YES;
+        MCChangeReviewPage *p = [[c valueForKey:@"activeTab"] valueForKey:@"page"];
+        return [p isKindOfClass:MCChangeReviewPage.class] && [p.headerTitle isEqualToString:@"first"];
+    });
+    MCGuiStep(@"a root commit: every file new; one commit tab", ^{
+        if (!git) return;
+        MCChangeReviewPage *p = [[c valueForKey:@"activeTab"] valueForKey:@"page"];
+        GCHECK([p.rowDescriptions containsObject:@"F a.txt  (new)  +2"]);
+        NSUInteger commitTabs = 0;
+        for (id t in [c valueForKey:@"tabs"])
+            if ([[[t valueForKey:@"page"] pageKind] isEqualToString:@"commit"]) commitTabs++;
+        GCHECK(commitTabs == 1);
     });
     MCGuiAsync(@"git agrees: the body kept, b.txt still in HEAD", 15, ^(MCGuiDone done) {
         if (!git) { done(); return; }
