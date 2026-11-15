@@ -6,8 +6,10 @@
 #import "Appearance.h"
 #import "CompareView.h"
 
+#include "AgentEdits.h"
 #include "AgentEvidence.h"
 #include "AgentTranscript.h"
+#include "InlineAgent.h"
 #include "AgentView.h"
 #include "Settings.h"
 
@@ -50,6 +52,26 @@ static const size_t kExpandBytes = 1 << 20;   // a whole output, shown up to 1 M
 @implementation MCEvCommand
 @end
 
+// One file edit the Evidence page lists among the commands (main thread).
+@interface MCEvEdit : NSObject
+@property(nonatomic, copy) NSString *tool, *path;
+@property(nonatomic) NSTimeInterval time;
+@property(nonatomic) BOOL answered, isError;
+@end
+@implementation MCEvEdit
+@end
+
+static NSString *ClockTime(NSTimeInterval t) {
+    if (t <= 0) return @"";
+    static NSDateFormatter *f;
+    if (!f) {
+        f = [NSDateFormatter new];
+        f.dateStyle = NSDateFormatterNoStyle;
+        f.timeStyle = NSDateFormatterMediumStyle;
+    }
+    return [f stringFromDate:[NSDate dateWithTimeIntervalSince1970:t]];
+}
+
 // What the queue remembers of an output it read.
 struct LoadedOutput {
     AgentTranscript::Output out;
@@ -86,6 +108,7 @@ static NSArray<NSString *> *Lines(const std::vector<std::string> &v) {
     NSTextField *_testLabel;
     NSView *_claimBox, *_testBox;
     NSArray<MCEvCommand *> *_commands;
+    NSArray<MCEvEdit *> *_edits;
     NSString *_cwd, *_final, *_info;
     NSInteger _lastTest;
     BOOL _updating, _again, _closed;
@@ -352,6 +375,16 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
         return cmds;
     };
 
+    NSMutableArray<MCEvEdit *> *edits = [NSMutableArray arrayWithCapacity:ev.edits.size()];
+    for (const AgentEvidence::FileEdit &fe : ev.edits) {
+        MCEvEdit *e = [MCEvEdit new];
+        e.tool = PNS(fe.tool);
+        e.path = PNS(fe.path);
+        e.time = fe.time;
+        e.answered = fe.answered;
+        e.isError = fe.isError;
+        [edits addObject:e];
+    }
     NSString *final = PNS(ev.finalMessage);
     if (ev.finalCut) final = [final stringByAppendingString:@"…"];
     NSMutableArray *versions = [NSMutableArray array];
@@ -366,6 +399,7 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
         dispatch_async(dispatch_get_main_queue(), ^{
             MCEvidencePage *s = weakSelf;
             if (!s) return;
+            s->_edits = edits;
             [s showCommands:cmds final:final cwd:cwd versions:versions lastTest:lastTest
                    badLines:bad outputs:done];
         });
@@ -388,6 +422,9 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
     [info addObject:[NSString stringWithFormat:@"%lu %@, %lu %@", (unsigned long)cmds.count,
                      cmds.count == 1 ? @"command" : @"commands", (unsigned long)tests,
                      tests == 1 ? @"test run" : @"test runs"]];
+    if (_edits.count)
+        [info addObject:[NSString stringWithFormat:@"%lu file %@", (unsigned long)_edits.count,
+                         _edits.count == 1 ? @"edit" : @"edits"]];
     if (versions.count)
         [info addObject:[@"Claude Code " stringByAppendingString:[versions componentsJoinedByString:@", "]]];
     if (bad > 0)
@@ -582,17 +619,73 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
         [all appendAttributedString:[[NSAttributedString alloc] initWithString:@"Reading the transcript…"
             attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5],
                          NSForegroundColorAttributeName: Muted()}]];
-    } else if (!_commands.count) {
+    } else if (!_commands.count && !_edits.count) {
         [all appendAttributedString:[[NSAttributedString alloc]
             initWithString:@"This session ran no shell commands."
                 attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5],
                              NSForegroundColorAttributeName: Muted()}]];
     }
-    for (NSUInteger i = 0; i < _commands.count; i++)
-        [all appendAttributedString:[self blockFor:_commands[i] index:i color:text]];
+    // Commands and file edits in the order they were asked for.
+    NSUInteger ci = 0, ei = 0;
+    while (ci < _commands.count || ei < _edits.count) {
+        const BOOL edit = ei < _edits.count &&
+                          (ci >= _commands.count || _edits[ei].time < _commands[ci].time);
+        if (edit) {
+            [all appendAttributedString:[self editBlock:_edits[ei] index:ei color:text]];
+            ei++;
+        } else {
+            [all appendAttributedString:[self blockFor:_commands[ci] index:ci color:text]];
+            ci++;
+        }
+    }
     [_commandsView.textStorage setAttributedString:all];
     [scroll.contentView scrollToPoint:origin];
     [scroll reflectScrolledClipView:scroll.contentView];
+}
+
+// One file edit: the tool's word, the file (a link to its page), the time.
+- (NSAttributedString *)editBlock:(MCEvEdit *)e index:(NSUInteger)i color:(NSColor *)text {
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    NSFont *small = [NSFont systemFontOfSize:11];
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.headIndent = 28;
+    ps.paragraphSpacingBefore = 14;
+    ps.tabStops = @[[[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft location:28 options:@{}]];
+    auto add = [&](NSString *str, NSDictionary *attrs) {
+        NSMutableDictionary *a = [attrs mutableCopy];
+        a[NSParagraphStyleAttributeName] = ps;
+        [s appendAttributedString:[[NSAttributedString alloc] initWithString:str ?: @"" attributes:a]];
+    };
+    NSString *word = [e.tool isEqualToString:@"Write"] ? @"Wrote"
+                   : [e.tool isEqualToString:@"NotebookEdit"] ? @"Edited a cell of" : @"Edited";
+    add(@"\t", @{NSFontAttributeName: small});
+    add([word stringByAppendingString:@" "],
+        @{NSFontAttributeName: [NSFont systemFontOfSize:12.5], NSForegroundColorAttributeName: text});
+    NSString *shown = _cwd.length && [e.path hasPrefix:[_cwd stringByAppendingString:@"/"]]
+        ? [e.path substringFromIndex:_cwd.length + 1] : [e.path stringByAbbreviatingWithTildeInPath];
+    add(shown, @{NSFontAttributeName: MCMonoFont(12, NSFontWeightRegular),
+                 NSLinkAttributeName: [NSURL URLWithString:[NSString stringWithFormat:
+                     @"minicode-evidence://file/%lu", (unsigned long)i]]});
+    if (e.answered && e.isError)
+        add(@"   refused", @{NSFontAttributeName: [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold],
+                             NSForegroundColorAttributeName: Red()});
+    NSString *when = ClockTime(e.time);
+    if (when.length)
+        add([@"   " stringByAppendingString:when],
+            @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted()});
+    add(@"\n", @{NSFontAttributeName: small});
+    return s;
+}
+
+- (NSUInteger)editCount { return _edits.count; }
+
+- (NSString *)editText:(NSUInteger)index {
+    if (index >= _edits.count) return @"";
+    return [self editBlock:_edits[index] index:index color:NSColor.textColor].string;
+}
+
+- (void)openEdit:(NSUInteger)index {
+    if (index < _edits.count && self.onShowFileChanges) self.onShowFileChanges(_edits[index].path);
 }
 
 - (NSString *)commandText:(NSUInteger)index {
@@ -609,6 +702,7 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
     if ([url.host isEqualToString:@"expand"]) [self expandCommand:i];
     else if ([url.host isEqualToString:@"less"]) [self collapseCommand:i];
     else if ([url.host isEqualToString:@"terminal"]) [self openCommandInTerminal:i];
+    else if ([url.host isEqualToString:@"file"]) [self openEdit:i];
     return YES;
 }
 
@@ -633,6 +727,438 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
     if (index >= _commands.count || !self.onOpenInTerminal) return;
     MCEvCommand *c = _commands[index];
     self.onOpenInTerminal(c.command ?: @"", c.cwd.length ? c.cwd : _cwd);
+}
+
+@end
+
+// ================================================================ a session's file
+// One change as the page shows it (main thread).
+@interface MCFileChange : NSObject
+@property(nonatomic) AgentEdits::Tool tool;
+@property(nonatomic, copy) NSString *oldText, *putText;   // what it replaced, and put in
+@property(nonatomic) NSTimeInterval time;
+@property(nonatomic) BOOL replaceAll, refused, answered, created;
+@property(nonatomic) NSInteger part, parts;
+@property(nonatomic) AgentEdits::Standing standing;
+@end
+@implementation MCFileChange
+@end
+
+static std::u16string U16Of(NSString *s) {
+    std::u16string out(s.length, u'\0');
+    if (s.length) [s getCharacters:(unichar *)out.data() range:NSMakeRange(0, s.length)];
+    return out;
+}
+
+@interface MCSessionFilePage () <NSTextViewDelegate>
+@end
+
+@implementation MCSessionFilePage {
+    NSString *_name;
+    __weak MCAgentModel *_model;
+    dispatch_queue_t _queue;
+    MCEvidenceView *_view;
+    NSTextField *_titleLabel, *_infoLabel;
+    NSScrollView *_scroll;
+    NSTextView *_text;
+    NSArray<MCFileChange *> *_changes;
+    NSString *_before, *_now, *_why, *_summary;
+    BOOL _existedBefore, _existsNow, _updating, _again, _closed;
+    NSInteger _standing, _gone, _unreadable;
+    id _observer;
+}
+
+- (instancetype)initWithTranscript:(NSString *)transcript sessionName:(NSString *)name
+                              file:(NSString *)path model:(MCAgentModel *)model {
+    if ((self = [super init])) {
+        _transcript = [transcript copy];
+        _path = [path copy];
+        _name = name.length ? [name copy] : transcript.lastPathComponent;
+        _model = model;
+        _queue = dispatch_queue_create("minicode.session-file", DISPATCH_QUEUE_SERIAL);
+        _changes = @[];
+        [self build];
+        [self pageApplySettings];
+        __weak MCSessionFilePage *weakSelf = self;
+        _observer = [NSNotificationCenter.defaultCenter
+            addObserverForName:MCAgentModelDidChangeNotification object:model queue:nil
+                    usingBlock:^(NSNotification *n) { (void)n; [weakSelf update]; }];
+        [self update];
+    }
+    return self;
+}
+
+- (void)dealloc {
+    if (_observer) [NSNotificationCenter.defaultCenter removeObserver:_observer];
+}
+
+// ---- MCEditorPage
+- (NSString *)pageTitle {
+    return [NSString stringWithFormat:@"%@, changed by %@", _path.lastPathComponent, _name];
+}
+- (NSString *)pageKind { return @"session-file"; }
+- (NSString *)pageKey {
+    return [NSString stringWithFormat:@"session-file:%@#%@", _transcript, _path];
+}
+- (NSView *)pageView { return _view; }
+- (NSView *)pageFocusView { return _text; }
+- (void)pageClosed {
+    _closed = YES;
+    if (_observer) [NSNotificationCenter.defaultCenter removeObserver:_observer];
+    _observer = nil;
+}
+
+- (void)build {
+    _view = [[MCEvidenceView alloc] initWithFrame:NSMakeRect(0, 0, 600, 400)];
+    _view.wantsLayer = YES;
+    _view.postsFrameChangedNotifications = YES;
+    __weak MCSessionFilePage *weakSelf = self;
+    [NSNotificationCenter.defaultCenter addObserverForName:NSViewFrameDidChangeNotification
+                                                    object:_view queue:nil
+                                                usingBlock:^(NSNotification *n) {
+        (void)n;
+        [weakSelf layout];
+    }];
+    _titleLabel = [NSTextField labelWithString:@""];
+    _titleLabel.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+    _titleLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    _titleLabel.selectable = YES;
+    _infoLabel = [NSTextField labelWithString:@""];
+    _infoLabel.font = [NSFont systemFontOfSize:11];
+    _infoLabel.textColor = Muted();
+    _infoLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    _infoLabel.selectable = YES;
+    [_view addSubview:_titleLabel];
+    [_view addSubview:_infoLabel];
+    _scroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];
+    _text = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 400, 100)];
+    _text.editable = NO;
+    _text.selectable = YES;
+    _text.richText = YES;
+    _text.drawsBackground = NO;
+    _text.usesFontPanel = NO;
+    _text.usesFindBar = YES;
+    _text.incrementalSearchingEnabled = YES;
+    _text.textContainerInset = NSMakeSize(6, 6);
+    _text.minSize = NSMakeSize(0, 0);
+    _text.maxSize = NSMakeSize(FLT_MAX, FLT_MAX);
+    _text.verticallyResizable = YES;
+    _text.horizontallyResizable = NO;
+    _text.autoresizingMask = NSViewWidthSizable;
+    _text.textContainer.widthTracksTextView = YES;
+    _text.layoutManager.allowsNonContiguousLayout = YES;
+    _text.delegate = self;
+    _text.linkTextAttributes = @{NSCursorAttributeName: NSCursor.pointingHandCursor,
+                                 NSForegroundColorAttributeName: Accent()};
+    _scroll.hasVerticalScroller = YES;
+    _scroll.autohidesScrollers = YES;
+    _scroll.drawsBackground = NO;
+    _scroll.documentView = _text;
+    [_view addSubview:_scroll];
+    _view.menu = MCAdjustSettingsMenu(@"editor", _view);
+    [self layout];
+}
+
+- (void)layout {
+    const CGFloat W = _view.bounds.size.width, H = _view.bounds.size.height, pad = 12;
+    _titleLabel.frame = NSMakeRect(pad, 10, W - 2 * pad, 20);
+    _infoLabel.frame = NSMakeRect(pad, 31, W - 2 * pad, 16);
+    _scroll.frame = NSMakeRect(pad - 6, 52, W - 2 * pad + 6, MAX(0, H - 56));
+}
+
+- (void)pageApplySettings {
+    AppSettings *cfg = [AppSettings shared];
+    _view.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
+    _titleLabel.textColor = [cfg text:Surface::Editor];
+    [self render];
+}
+
+- (NSTextView *)textView { return _text; }
+- (NSUInteger)changeCount { return _changes.count; }
+
+// ------------------------------------------------------------- reading
+- (void)update {
+    if (_closed) return;
+    if (_updating) { _again = YES; return; }
+    _updating = YES;
+    NSString *transcript = _transcript, *path = _path;
+    __weak MCSessionFilePage *weakSelf = self;
+    dispatch_async(_queue, ^{
+        // The transcript once from the start, each edit's input once, the
+        // file as it is: all off the main thread (an input can be megabytes).
+        const AgentTranscript::Fs fs = AgentTranscript::posixFs();
+        AgentEdits::FileHistory h = AgentEdits::collect(fs, PU8(transcript), PU8(path));
+        NSData *data = [NSData dataWithContentsOfFile:path];
+        NSString *now = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+        const bool exists = now != nil;
+        AgentEdits::Result r = AgentEdits::analyze(h.changes, exists ? PU8(now) : "", exists);
+        NSMutableArray<MCFileChange *> *changes = [NSMutableArray array];
+        for (const AgentEdits::Change &c : r.changes) {
+            MCFileChange *m = [MCFileChange new];
+            m.tool = c.tool;
+            m.oldText = PNS(c.oldText);
+            m.putText = PNS(c.newText);
+            m.time = c.time;
+            m.replaceAll = c.replaceAll;
+            m.refused = c.refused;
+            m.answered = c.answered;
+            m.created = c.created;
+            m.part = c.part;
+            m.parts = c.parts;
+            m.standing = c.standing;
+            [changes addObject:m];
+        }
+        NSString *before = r.rebuilt ? PNS(r.before) : nil;
+        NSString *why = PNS(r.why);
+        const BOOL existedBefore = r.existedBefore;
+        const NSInteger standing = r.standing, gone = r.gone, unreadable = h.unreadable;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MCSessionFilePage *s = weakSelf;
+            if (!s) return;
+            s->_changes = changes;
+            s->_before = before;
+            s->_now = now;
+            s->_existsNow = exists;
+            s->_existedBefore = existedBefore;
+            s->_why = why;
+            s->_standing = standing;
+            s->_gone = gone;
+            s->_unreadable = unreadable;
+            s->_loaded = YES;
+            [s render];
+            s->_updating = NO;
+            if (s->_again) {
+                s->_again = NO;
+                [s update];
+            }
+            if (s.onUpdate) s.onUpdate();
+        });
+    });
+}
+
+- (BOOL)rebuilt { return _before != nil; }
+
+// ------------------------------------------------------------- drawing
+static NSString *CountLines(NSString *s) {
+    __block NSUInteger n = 0;
+    [s enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) { (void)line; (void)stop; n++; }];
+    return [NSString stringWithFormat:@"%lu line%@", (unsigned long)n, n == 1 ? @"" : @"s"];
+}
+
+- (NSAttributedString *)summaryFor:(NSColor *)text {
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    NSFont *body = [NSFont systemFontOfSize:12.5];
+    NSFont *small = [NSFont systemFontOfSize:11];
+    auto add = [&](NSString *str, NSDictionary *attrs) {
+        [s appendAttributedString:[[NSAttributedString alloc] initWithString:str ?: @"" attributes:attrs]];
+    };
+    NSUInteger counted = 0, refused = 0;
+    for (MCFileChange *c in _changes) {
+        if (c.refused) refused++;
+        else counted++;
+    }
+    if (!_changes.count) {
+        add(_unreadable ? @"The session's edits of this file could not be read from its transcript."
+                        : @"This session did not change this file.",
+            @{NSFontAttributeName: body, NSForegroundColorAttributeName: Muted()});
+        add(@"\n", @{NSFontAttributeName: body});
+    } else {
+        NSString *what = [NSString stringWithFormat:@"%lu %@", (unsigned long)counted,
+                          counted == 1 ? @"change" : @"changes"];
+        NSString *standing = _gone == 0 && _standing == (NSInteger)counted
+            ? (counted == 1 ? @"still in the file" : @"all still in the file")
+            : [NSString stringWithFormat:@"%ld still in the file, %ld changed since", (long)_standing,
+               (long)_gone];
+        add([NSString stringWithFormat:@"%@, %@", what, standing],
+            @{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold],
+              NSForegroundColorAttributeName: _gone ? PHex(0xE8A33D) : text});
+        if (refused)
+            add([NSString stringWithFormat:@"; %lu refused and not made", (unsigned long)refused],
+                @{NSFontAttributeName: body, NSForegroundColorAttributeName: Muted()});
+        add(@"\n", @{NSFontAttributeName: body});
+    }
+    if (_before) {
+        NSString *line = !_existedBefore
+            ? [NSString stringWithFormat:@"The session made this file; it has %@ now.",
+               CountLines(_now ?: @"")]
+            : [NSString stringWithFormat:@"Before the session it had %@; now %@.", CountLines(_before),
+               CountLines(_now ?: @"")];
+        add(line, @{NSFontAttributeName: body, NSForegroundColorAttributeName: text});
+        add(@"   ", @{NSFontAttributeName: small});
+        add(@"Compare Before and Now", @{NSFontAttributeName: small,
+            NSLinkAttributeName: [NSURL URLWithString:@"minicode-session-file://compare"]});
+    } else if (_why.length && _changes.count) {
+        add(_why, @{NSFontAttributeName: body, NSForegroundColorAttributeName: Muted()});
+    }
+    if (_existsNow) {
+        add(@"   ", @{NSFontAttributeName: small});
+        add(@"Open the File", @{NSFontAttributeName: small,
+            NSLinkAttributeName: [NSURL URLWithString:@"minicode-session-file://open"]});
+    }
+    if (_unreadable && _changes.count)
+        add([NSString stringWithFormat:@"\n%ld more could not be read from the transcript.",
+             (long)_unreadable], @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted()});
+    add(@"\n", @{NSFontAttributeName: body});
+    return s;
+}
+
+- (NSString *)summaryText {
+    return [self summaryFor:NSColor.textColor].string ?: @"";
+}
+
+- (NSAttributedString *)blockFor:(MCFileChange *)c index:(NSUInteger)i color:(NSColor *)text {
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    NSFont *body = [NSFont systemFontOfSize:12.5];
+    NSFont *bold = [NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold];
+    NSFont *small = [NSFont systemFontOfSize:11];
+    NSFont *mono = MCMonoFont(11.5, NSFontWeightRegular);
+    NSMutableParagraphStyle *first = [NSMutableParagraphStyle new];
+    first.paragraphSpacingBefore = 16;
+    first.headIndent = 28;
+    first.tabStops = @[[[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft location:28 options:@{}]];
+    NSMutableParagraphStyle *indented = [first mutableCopy];
+    indented.paragraphSpacingBefore = 0;
+    indented.firstLineHeadIndent = 28;
+    auto add = [&](NSString *str, NSDictionary *attrs) {
+        [s appendAttributedString:[[NSAttributedString alloc] initWithString:str ?: @"" attributes:attrs]];
+    };
+    NSString *what;
+    switch (c.tool) {
+    case AgentEdits::Tool::Write: what = c.created ? @"Made the file" : @"Rewrote the whole file"; break;
+    case AgentEdits::Tool::NotebookEdit: what = @"Changed a notebook cell"; break;
+    case AgentEdits::Tool::MultiEdit:
+        what = [NSString stringWithFormat:@"Edit, part %ld of %ld", (long)c.part + 1, (long)c.parts];
+        break;
+    case AgentEdits::Tool::Edit: what = c.replaceAll ? @"Edit, every place" : @"Edit"; break;
+    }
+    add([NSString stringWithFormat:@"%lu\t", (unsigned long)i + 1],
+        @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted(),
+          NSParagraphStyleAttributeName: first});
+    add(what, @{NSFontAttributeName: bold, NSForegroundColorAttributeName: text,
+                NSParagraphStyleAttributeName: first});
+    NSString *when = ClockTime(c.time);
+    if (when.length)
+        add([@"   " stringByAppendingString:when],
+            @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted(),
+              NSParagraphStyleAttributeName: first});
+    add(@"\n", @{NSFontAttributeName: body, NSParagraphStyleAttributeName: first});
+    NSString *note = nil;
+    NSColor *noteColor = Muted();
+    if (c.refused) {
+        note = @"Refused: Claude Code reported an error and did not make this change.";
+        noteColor = Red();
+    } else if (c.standing == AgentEdits::Standing::Gone) {
+        note = c.tool == AgentEdits::Tool::Write
+            ? @"No longer what the file holds: something changed it since."
+            : @"No longer in the file: something changed this text since.";
+        noteColor = PHex(0xE8A33D);
+    } else if (!c.answered) {
+        note = @"No result yet in the transcript.";
+    }
+    if (note)
+        add([note stringByAppendingString:@"\n"],
+            @{NSFontAttributeName: small, NSForegroundColorAttributeName: noteColor,
+              NSParagraphStyleAttributeName: indented});
+    // The change as a small diff: old lines red, new green, changed words
+    // marked (InlineAgent::pendingDiff, as the inline agent's bar shows one).
+    NSColor *red = Red(), *green = Green();
+    const std::u16string a = U16Of(c.oldText ?: @""), b = U16Of(c.putText ?: @"");
+    for (const InlineAgent::DiffLine &d : InlineAgent::pendingDiff(a, b, 2, 200)) {
+        NSString *lineBody = [NSString stringWithCharacters:(const unichar *)d.text.data()
+                                                     length:d.text.size()];
+        NSString *line = nil;
+        NSColor *fg = text, *bg = nil, *strong = nil;
+        switch (d.kind) {
+        case InlineAgent::DiffLine::Gap:
+            line = d.more ? [NSString stringWithFormat:@"  ⋯ %zu more line%@", d.more,
+                                                       d.more == 1 ? @"" : @"s"]
+                          : @"  ⋯";
+            fg = Muted();
+            break;
+        case InlineAgent::DiffLine::Context:
+            line = [@"  " stringByAppendingString:lineBody];
+            fg = Muted();
+            break;
+        case InlineAgent::DiffLine::Removed:
+            line = [@"- " stringByAppendingString:lineBody];
+            bg = [red colorWithAlphaComponent:0.18];
+            strong = [red colorWithAlphaComponent:0.45];
+            break;
+        case InlineAgent::DiffLine::Added:
+            line = [@"+ " stringByAppendingString:lineBody];
+            bg = [green colorWithAlphaComponent:0.18];
+            strong = [green colorWithAlphaComponent:0.45];
+            break;
+        }
+        NSMutableDictionary *attrs = [@{NSFontAttributeName: mono, NSForegroundColorAttributeName: fg,
+                                        NSParagraphStyleAttributeName: indented} mutableCopy];
+        if (bg) attrs[NSBackgroundColorAttributeName] = bg;
+        NSMutableAttributedString *l = [[NSMutableAttributedString alloc]
+            initWithString:[line stringByAppendingString:@"\n"] attributes:attrs];
+        const NSUInteger at = line.length - lineBody.length;
+        for (const auto &w : d.words)
+            if (d.kind != InlineAgent::DiffLine::Gap && w.first + w.second <= lineBody.length)
+                [l addAttribute:NSBackgroundColorAttributeName value:strong
+                          range:NSMakeRange(at + w.first, w.second)];
+        [s appendAttributedString:l];
+    }
+    return s;
+}
+
+- (NSString *)changeText:(NSUInteger)index {
+    if (index >= _changes.count) return @"";
+    return [self blockFor:_changes[index] index:index color:NSColor.textColor].string;
+}
+
+- (void)render {
+    NSColor *text = [[AppSettings shared] text:Surface::Editor];
+    _titleLabel.stringValue = [self pageTitle];
+    _infoLabel.stringValue = [_path stringByAbbreviatingWithTildeInPath] ?: @"";
+    const NSPoint origin = _scroll.contentView.bounds.origin;
+    NSMutableAttributedString *all = [NSMutableAttributedString new];
+    if (!_loaded) {
+        [all appendAttributedString:[[NSAttributedString alloc] initWithString:@"Reading the transcript…"
+            attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5],
+                         NSForegroundColorAttributeName: Muted()}]];
+    } else {
+        [all appendAttributedString:[self summaryFor:text]];
+        for (NSUInteger i = 0; i < _changes.count; i++)
+            [all appendAttributedString:[self blockFor:_changes[i] index:i color:text]];
+    }
+    [_text.textStorage setAttributedString:all];
+    [_scroll.contentView scrollToPoint:origin];
+    [_scroll reflectScrolledClipView:_scroll.contentView];
+}
+
+// ------------------------------------------------------------- actions
+- (MCComparison *)beforeAndNow {
+    if (!_before) return nil;
+    MCComparison *c = [MCComparison new];
+    c.title = [NSString stringWithFormat:@"%@: before %@ and now", _path.lastPathComponent, _name];
+    c.leftLabel = _existedBefore ? [NSString stringWithFormat:@"Before the session: %@",
+                                    _path.lastPathComponent]
+                                 : @"Before the session: no file";
+    c.rightLabel = [@"Now: " stringByAppendingString:_path.lastPathComponent];
+    c.leftText = _before;
+    c.rightText = _now ?: @"";
+    c.path = _path;
+    return c;
+}
+
+- (void)compareBeforeAndNow {
+    MCComparison *c = [self beforeAndNow];
+    if (!c) { NSBeep(); return; }
+    [c prepare];
+    if (self.onShowComparison) self.onShowComparison(c);
+}
+
+- (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)charIndex {
+    (void)tv; (void)charIndex;
+    NSURL *url = [link isKindOfClass:NSURL.class] ? link : [NSURL URLWithString:[link description]];
+    if (![url.scheme isEqualToString:@"minicode-session-file"]) return NO;
+    if ([url.host isEqualToString:@"compare"]) [self compareBeforeAndNow];
+    else if ([url.host isEqualToString:@"open"] && self.onOpenFile) self.onOpenFile(_path);
+    return YES;
 }
 
 @end

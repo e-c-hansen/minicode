@@ -71,6 +71,9 @@ static NSString *WNS(const std::string &s) {
             link.target = path;
             [s->_host openTerminalLink:link];
         };
+        _panel.onShowFileChanges = ^(NSString *path, NSString *transcript, NSString *name) {
+            [weakSelf showChangesToFile:path transcript:transcript name:name];
+        };
         _panel.onOpenFolderInNewWindow = ^(NSString *path) { [weakSelf openFolderInNewWindow:path]; };
         _panel.onTab = ^{
             MCAgentWindow *s = weakSelf;
@@ -114,6 +117,31 @@ static NSString *WNS(const std::string &s) {
     __weak MCAgentWindow *weakSelf = self;
     page.onOpenInTerminal = ^(NSString *command, NSString *cwd) {
         [weakSelf typeCommand:command inFolder:cwd];
+    };
+    NSString *t = [transcript copy], *n = [name copy];
+    page.onShowFileChanges = ^(NSString *path) {
+        [weakSelf showChangesToFile:path transcript:t name:n];
+    };
+    [_host showPage:page];
+}
+
+- (void)showChangesToFile:(NSString *)path transcript:(NSString *)transcript
+                     name:(NSString *)name {
+    if (!path.length || !transcript.length) return;
+    MCSessionFilePage *page = [[MCSessionFilePage alloc] initWithTranscript:transcript
+                                                                sessionName:name
+                                                                       file:path
+                                                                      model:self.model];
+    __weak MCAgentWindow *weakSelf = self;
+    page.onShowComparison = ^(MCComparison *c) {
+        MCAgentWindow *s = weakSelf;
+        [s->_host showComparison:c preview:YES];
+    };
+    page.onOpenFile = ^(NSString *file) {
+        MCAgentWindow *s = weakSelf;
+        MCTermLink *link = [MCTermLink new];
+        link.target = file;
+        [s->_host openTerminalLink:link];
     };
     [_host showPage:page];
 }

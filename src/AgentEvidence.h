@@ -95,10 +95,23 @@ struct Command {
     Summary summary;            // for a test command, once answered
 };
 
+// A file the session changed with Edit, MultiEdit, Write or NotebookEdit:
+// the Evidence page lists these beside the commands, each leading to that
+// file's page (AgentEdits.h reads what the call changed).
+struct FileEdit {
+    std::string toolUseId;
+    std::string tool;           // "Edit", "MultiEdit", "Write", "NotebookEdit"
+    std::string path;           // file_path (or notebook_path) as written
+    double time = 0;
+    bool answered = false;
+    bool isError = false;       // refused: Claude Code did not apply it
+};
+
 struct Evidence {
     std::string transcript;
     std::string cwd;                    // the session's first cwd
     std::vector<Command> commands;      // in the order they were asked for
+    std::vector<FileEdit> edits;        // likewise
     // The last assistant message that had text: its text blocks joined.
     std::string finalMessage;
     bool finalCut = false;
@@ -127,6 +140,7 @@ private:
     AgentTranscript::Tail tail_;
     Evidence ev_;
     std::map<std::string, size_t> pending_;   // Bash tool_use id -> commands[]
+    std::map<std::string, size_t> pendingEdits_;   // edit tool_use id -> edits[]
     std::string lastMessageId_;
     bool sideFirst_ = false, sawFirst_ = false;
     uint64_t bytesRead_ = 0;

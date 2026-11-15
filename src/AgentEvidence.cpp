@@ -615,7 +615,17 @@ bool Reader::update(const Fs &fs) {
         if (l.sidechain && !sideFirst_) return true;
         if (l.type == "assistant") {
             for (const Block &b : l.blocks) {
-                if (b.kind == Block::Kind::ToolUse && b.name == "Bash") {
+                if (b.kind == Block::Kind::ToolUse && !b.filePath.empty() &&
+                    (b.name == "Edit" || b.name == "MultiEdit" || b.name == "Write" ||
+                     b.name == "NotebookEdit")) {
+                    FileEdit fe;
+                    fe.toolUseId = b.id;
+                    fe.tool = b.name;
+                    fe.path = b.filePath;
+                    fe.time = l.time;
+                    if (!b.id.empty()) pendingEdits_[b.id] = ev_.edits.size();
+                    ev_.edits.push_back(std::move(fe));
+                } else if (b.kind == Block::Kind::ToolUse && b.name == "Bash") {
                     Command c;
                     c.toolUseId = b.id;
                     c.description = b.description;
@@ -644,6 +654,13 @@ bool Reader::update(const Fs &fs) {
         } else {
             for (const Block &b : l.blocks) {
                 if (b.kind != Block::Kind::ToolResult) continue;
+                auto ed = pendingEdits_.find(b.id);
+                if (ed != pendingEdits_.end()) {
+                    ev_.edits[ed->second].answered = true;
+                    ev_.edits[ed->second].isError = b.isError;
+                    pendingEdits_.erase(ed);
+                    continue;
+                }
                 auto it = pending_.find(b.id);
                 if (it == pending_.end()) continue;
                 Command &c = ev_.commands[it->second];
@@ -675,6 +692,7 @@ bool Reader::update(const Fs &fs) {
         ev_ = Evidence();
         ev_.transcript = t;
         pending_.clear();
+        pendingEdits_.clear();
         lastMessageId_.clear();
         sawFirst_ = sideFirst_ = false;
         changed = true;

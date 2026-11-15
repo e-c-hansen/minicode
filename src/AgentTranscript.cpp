@@ -439,6 +439,8 @@ private:
                 out->blocks.push_back(std::move(b));
             } else if (type == "tool_use") {
                 b.kind = Block::Kind::ToolUse;
+                if (inS && *inS == '{')
+                    b.input = Span{offset + (uint64_t)(inS - base), (uint64_t)(inE - inS)};
                 if (inS && *inS == '{') {
                     members(inS, inE, 4, [&](SV k, const char *vs, const char *ve) {
                         if (k == "file_path" || (k == "notebook_path" && b.filePath.empty()))
