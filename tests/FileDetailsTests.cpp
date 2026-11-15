@@ -48,6 +48,41 @@ static void testFileDetails() {
         fdEntry("Build", true, 7000, 300),
     };
 
+    GROUP("tree:icons");
+    {
+        using FileIcon::Kind;
+        struct Case { const char *path; Kind kind; };
+        const Case cases[] = {
+            {"/p/shot.PNG", Kind::Image},       {"/p/a.jpeg", Kind::Image},
+            {"/p/clip.mp4", Kind::Video},       {"/p/clip.MOV", Kind::Video},
+            {"/p/song.mp3", Kind::Audio},       {"/p/take.flac", Kind::Audio},
+            {"/p/paper.pdf", Kind::Pdf},        {"/p/data.csv", Kind::Table},
+            {"/p/data.tsv", Kind::Table},       {"/p/run.ipynb", Kind::Notebook},
+            {"/p/app.sqlite", Kind::Database},  {"/p/app.db", Kind::Database},
+            {"/p/src.zip", Kind::Archive},      {"/p/src.tar.gz", Kind::Archive},
+            {"/p/index.html", Kind::Web},       {"/p/docs.url", Kind::Bookmark},
+            {"/p/site.webloc", Kind::Bookmark}, {"/p/main.cpp", Kind::Code},
+            {"/p/tool.py", Kind::Code},         {"/p/conf.json", Kind::Code},
+            {"/p/app.ts", Kind::Code},          {"/p/logo.svg", Kind::Text},
+            {"/p/README.md", Kind::Text},       {"/p/notes.txt", Kind::Text},
+            {"/p/paper.tex", Kind::Text},       {"/p/Makefile", Kind::Text},
+            {"/p/strange.qqq", Kind::Text},     {"/p/noext", Kind::Text},
+        };
+        for (const Case &c : cases) {
+            const Kind k = FileIcon::kindOf(c.path);
+            if (k != c.kind)
+                std::printf("    %s: %s, wanted %s\n", c.path, FileIcon::kindName(k),
+                            FileIcon::kindName(c.kind));
+            CHECK(k == c.kind);
+        }
+        // The viewers' own tables: what opens as a picture or in the player.
+        CHECK(FileIcon::isImageExtension("heic") && !FileIcon::isImageExtension("svg"));
+        CHECK(!FileIcon::isImageExtension("pdf"));
+        CHECK(FileIcon::isVideoExtension("m4v") && !FileIcon::isVideoExtension("ts"));
+        CHECK(FileIcon::isAudioExtension("opus") && !FileIcon::isAudioExtension("mp4"));
+        CHECK(std::string(FileIcon::kindName(Kind::Database)) == "database");
+    }
+
     GROUP("tree:name");
     Options o;   // the defaults: today's order
     CHECK(o.key == Key::Name && o.ascending && o.foldersFirst);

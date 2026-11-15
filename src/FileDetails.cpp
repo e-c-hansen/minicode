@@ -1,8 +1,12 @@
 // FileDetails.cpp — see FileDetails.h.
 #include "FileDetails.h"
 
+#include "FileSniff.h"
+#include "SyntaxHighlighter.h"
+
 #include <algorithm>
 #include <chrono>
+#include <initializer_list>
 #include <cstdio>
 #include <numeric>
 
@@ -471,3 +475,68 @@ double Pacer::finished(double now) {
 }
 
 }  // namespace TreeRefresh
+
+namespace FileIcon {
+
+namespace {
+bool among(const std::string &ext, std::initializer_list<const char *> list) {
+    for (const char *e : list)
+        if (ext == e) return true;
+    return false;
+}
+}  // namespace
+
+bool isImageExtension(const std::string &ext) {
+    return among(ext, {"png", "jpg", "jpeg", "gif", "tif", "tiff", "bmp", "heic", "heif", "webp",
+                       "ico", "icns"});
+}
+
+bool isVideoExtension(const std::string &ext) {
+    return among(ext, {"mp4", "m4v", "mov", "3gp", "avi"});
+}
+
+bool isAudioExtension(const std::string &ext) {
+    return among(ext, {"mp3", "wav", "m4a", "aac", "aif", "aiff", "flac", "ogg", "opus"});
+}
+
+Kind kindOf(const std::string &path) {
+    const std::string ext = FileSniff::extensionOf(path);
+    if (ext.empty()) return Kind::Text;
+    if (isImageExtension(ext)) return Kind::Image;
+    if (isVideoExtension(ext)) return Kind::Video;
+    if (isAudioExtension(ext)) return Kind::Audio;
+    if (ext == "pdf") return Kind::Pdf;
+    if (ext == "csv" || ext == "tsv") return Kind::Table;
+    if (ext == "ipynb") return Kind::Notebook;
+    if (among(ext, {"sqlite", "sqlite3", "db", "db3", "s3db", "sl3"})) return Kind::Database;
+    if (among(ext, {"zip", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz", "zst", "7z",
+                    "rar", "jar", "dmg"}))
+        return Kind::Archive;
+    if (among(ext, {"html", "htm", "xhtml"})) return Kind::Web;
+    if (ext == "url" || ext == "webloc") return Kind::Bookmark;
+    // Markdown and LaTeX open as pages, and plain text is text.
+    if (among(ext, {"md", "markdown", "txt", "text", "rst", "tex", "ltx", "latex", "log"}))
+        return Kind::Text;
+    if (SyntaxHighlighter::supports(ext)) return Kind::Code;
+    return Kind::Text;
+}
+
+const char *kindName(Kind k) {
+    switch (k) {
+    case Kind::Text: return "text";
+    case Kind::Code: return "code";
+    case Kind::Image: return "image";
+    case Kind::Video: return "video";
+    case Kind::Audio: return "audio";
+    case Kind::Pdf: return "pdf";
+    case Kind::Table: return "table";
+    case Kind::Notebook: return "notebook";
+    case Kind::Database: return "database";
+    case Kind::Archive: return "archive";
+    case Kind::Web: return "web";
+    case Kind::Bookmark: return "bookmark";
+    }
+    return "text";
+}
+
+}  // namespace FileIcon

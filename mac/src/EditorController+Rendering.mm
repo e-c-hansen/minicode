@@ -2,6 +2,7 @@
 #import "EditorController+Private.h"
 #import "EditorFont.h"
 #import "PageZoom.h"
+#include "FileDetails.h"
 #include "LatexLog.h"
 
 @implementation EditorController (Rendering)
@@ -155,13 +156,8 @@ static void *kMediaItemContext = &kMediaItemContext;
 // left out because it is source people edit, and PDF has its own viewer
 // (showPDFAtPath:), since a picture of it would be only its first page.
 + (BOOL)isImagePath:(NSString *)path {
-    static NSSet<NSString *> *exts;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        exts = [NSSet setWithArray:@[@"png", @"jpg", @"jpeg", @"gif", @"tif",
-            @"tiff", @"bmp", @"heic", @"heif", @"webp", @"ico", @"icns"]];
-    });
-    return [exts containsObject:path.pathExtension.lowercaseString];
+    // The core's table, which the tree's icons read too.
+    return FileIcon::isImageExtension(path.pathExtension.lowercaseString.UTF8String ?: "");
 }
 
 // Show an image in the editor's slot. Returns NO if it can't be decoded, and
@@ -251,15 +247,9 @@ static void *kMediaItemContext = &kMediaItemContext;
 // video, WMV and FLV are not, so they are left to the "Cannot display"
 // message. .ts and .mts are TypeScript here, not MPEG transport streams.
 + (BOOL)isMediaPath:(NSString *)path {
-    static NSSet<NSString *> *exts;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        exts = [NSSet setWithArray:@[
-            @"mp4", @"m4v", @"mov", @"3gp", @"avi",                 // video
-            @"mp3", @"wav", @"m4a", @"aac", @"aif", @"aiff",       // audio
-            @"flac", @"ogg", @"opus"]];
-    });
-    return [exts containsObject:path.pathExtension.lowercaseString];
+    // The core's tables, which the tree's icons read too.
+    const std::string ext = path.pathExtension.lowercaseString.UTF8String ?: "";
+    return FileIcon::isVideoExtension(ext) || FileIcon::isAudioExtension(ext);
 }
 
 // Watch one player item for its status, size and duration; nil stops.
