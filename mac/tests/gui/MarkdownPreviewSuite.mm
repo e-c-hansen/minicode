@@ -451,8 +451,11 @@ MC_GUI_SUITE(markdown_preview) {
         MCGuiNote(@"picture sizes: %@", sizes);
         GCHECK(sizes.count == 6);
         if (sizes.count != 6) return;
-        const CGFloat line = [[c valueForKey:@"markdownPageWidth"] doubleValue];
-        MCGuiNote(@"line width %.0f", line);
+        // The line's room is what the too-wide picture was cut to (the
+        // page's width, less a scroll bar where scroll bars take room).
+        const CGFloat line = sizes[4].sizeValue.width;
+        MCGuiNote(@"line width %.0f (page width %.0f)", line,
+                  [[c valueForKey:@"markdownPageWidth"] doubleValue]);
         auto near = [](CGFloat a, CGFloat b) { return fabs(a - b) <= 1.5; };
         GCHECK(near(sizes[0].sizeValue.width, MCZoomed(120)) &&
                near(sizes[0].sizeValue.height, MCZoomed(60)));
@@ -460,10 +463,10 @@ MC_GUI_SUITE(markdown_preview) {
                near(sizes[1].sizeValue.height, MCZoomed(50)));
         GCHECK(near(sizes[2].sizeValue.width, MCZoomed(60)) &&
                near(sizes[2].sizeValue.height, MCZoomed(60)));
-        // Half the line, and never wider than it.
-        GCHECK(line > 100 && near(sizes[3].sizeValue.width, round(line / 2)));
-        GCHECK(sizes[4].sizeValue.width <= line + 1 &&
-               near(sizes[4].sizeValue.height, sizes[4].sizeValue.width / 2));
+        // Never wider than the line, proportions kept; half of it for 50%.
+        GCHECK(line > 100 && line <= [[c valueForKey:@"markdownPageWidth"] doubleValue] + 1 &&
+               near(sizes[4].sizeValue.height, line / 2));
+        GCHECK(near(sizes[3].sizeValue.width, round(line / 2)));
         // A picture with no size keeps its own (on a line wide enough).
         GCHECK(near(sizes[5].sizeValue.width, MIN(400, line)) &&
                near(sizes[5].sizeValue.height, MIN(400, line) / 2));
