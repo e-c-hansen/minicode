@@ -419,6 +419,16 @@ const CGFloat kMCInstallBarHeight = 30;
                close:@"Ask again next time minicode starts"];
 }
 
+- (void)showMessage:(NSString *)text tip:(NSString *)tip button:(NSString *)button
+               mute:(NSString *)mute close:(NSString *)closeTip {
+    _serverKey = nil;
+    _consentEnvironment = nil;
+    _consentServer = nil;
+    _label.stringValue = text ?: @"";
+    _label.toolTip = tip.length ? tip : text;
+    [self setButtons:button mute:mute close:closeTip];
+}
+
 - (void)setButtons:(NSString *)install mute:(NSString *)mute close:(NSString *)closeTip {
     _install.title = install;
     _muteTitle = mute;

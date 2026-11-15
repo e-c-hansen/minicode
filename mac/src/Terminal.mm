@@ -61,6 +61,7 @@
 #include "TermLinks.h"
 #include "AgentIndex.h"
 #include "AttentionBoard.h"
+#include "ClaudeHooks.h"
 #include "ShellIntegration.h"
 
 #include <util.h>
@@ -210,6 +211,8 @@ static NSString *IntegrationDirectory(BOOL grid) {
 
 NSNotificationName const MCTerminalUserDidTypeNotification = @"MCTerminalUserDidTypeNotification";
 NSNotificationName const MCTerminalDidCloseNotification = @"MCTerminalDidCloseNotification";
+NSNotificationName const MCTerminalClaudeDidStartNotification =
+    @"MCTerminalClaudeDidStartNotification";
 NSNotificationName const MCTerminalCommandDidFinishNotification =
     @"MCTerminalCommandDidFinish";
 
@@ -559,6 +562,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     pid_t _shellPid;             // 0 when no shell
     int _generation;             // bumps per shell, so stale output is ignored
     NSDate *_shellStarted;
+    NSUInteger _commandNumber;   // counts CommandStart marks (lookForClaude)
     BOOL _integrated;            // the shell sends the integration's marks: the
                                  // file was written and the shell is still zsh
     BOOL _integrationFile;       // the shell integration file was written
@@ -1536,6 +1540,32 @@ static BOOL MCIsOtherShell(pid_t pid) {
     _integrated = YES;
 }
 
+// Claude Code starting here (MCTerminalClaudeDidStartNotification): the
+// typed command names it, or, a second later and still running, the
+// foreground process is its binary (an alias such as `c`, or a script).
+- (void)lookForClaude {
+    if (ClaudeHooks::startsClaude(_runningCommand.UTF8String ?: "")) {
+        [[NSNotificationCenter defaultCenter]
+            postNotificationName:MCTerminalClaudeDidStartNotification object:self];
+        return;
+    }
+    __weak TerminalView *weakSelf = self;
+    const NSUInteger commandNumber = ++_commandNumber;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        TerminalView *s = weakSelf;
+        if (!s || s->_closed || s->_commandNumber != commandNumber || s->_atPrompt ||
+            s->_master < 0 || s->_shellPid <= 0)
+            return;
+        const pid_t fg = tcgetpgrp(s->_master);
+        char path[PROC_PIDPATHINFO_MAXSIZE] = {0};
+        if (fg <= 0 || fg == s->_shellPid || proc_pidpath(fg, path, sizeof path) <= 0) return;
+        if (!ClaudeHooks::isClaudeProgramPath(path)) return;
+        [[NSNotificationCenter defaultCenter]
+            postNotificationName:MCTerminalClaudeDidStartNotification object:s];
+    });
+}
+
 - (void)postCommandFinished {
     [[NSNotificationCenter defaultCenter]
         postNotificationName:MCTerminalCommandDidFinishNotification object:self];
@@ -2466,6 +2496,7 @@ static NSString *MCBrowserHelperPath(void) {
             _runningCommand = typed.length ? typed : @"";
             [self titleChanged];
             [self watchShell];
+            [self lookForClaude];
             break;
         }
         case TermEvent::CommandEnd:

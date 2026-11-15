@@ -274,6 +274,9 @@ const std::vector<Command>& all() {
          "selectPythonInterpreter:", 0, 0, nullptr},
         {"minicode.forgetFolderToolsAnswer", "Ask Again About This Folder's Tools", "minicode",
          "", A, "forgetFolderToolsAnswer:", 0, 0, nullptr},
+        // The waiting dots' hooks in Claude Code's settings (ClaudeHooksOffer.h).
+        {"minicode.installClaudeHooks", "Install Claude Code Hooks…", "minicode", "", A,
+         "installClaudeHooks:", 0, 0, nullptr},
         {"minicode.requestChange", "Request a Change to minicode…", "minicode", "shift+cmd+k", A,
          "requestChange:", 0, 0, nullptr},
         {"minicode.restart", "Restart minicode", "minicode", "", A, "restartMinicode:", 0, 0,

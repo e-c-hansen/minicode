@@ -42,6 +42,12 @@ extern NSNotificationName const MCTerminalCommandDidFinishNotification;
 // good. A "waiting" or "done" mark on its tab goes (TerminalAttention.h).
 extern NSNotificationName const MCTerminalUserDidTypeNotification;
 extern NSNotificationName const MCTerminalDidCloseNotification;
+// Posted (object: the TerminalView) when Claude Code starts in a terminal:
+// a typed command whose program is `claude` (ClaudeHooks::startsClaude), or
+// a command whose foreground process is Claude Code's binary a moment after
+// it started (an alias). What offers the waiting dots listens
+// (ClaudeHooksOffer.h).
+extern NSNotificationName const MCTerminalClaudeDidStartNotification;
 
 @interface TerminalView : NSView
 // Cmd+click on a link in the output. The window opens files and URLs.

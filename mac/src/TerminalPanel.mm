@@ -696,6 +696,14 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
 }
 
 // ------------------------------------------------------------------ layout
+- (void)setNoticeBar:(NSView *)bar {
+    if (bar == _noticeBar) return;
+    [_noticeBar removeFromSuperview];
+    _noticeBar = bar;
+    if (bar) [self addSubview:bar];
+    [self layoutPanes];
+}
+
 - (void)setFrameSize:(NSSize)size {
     [super setFrameSize:size];
     [self layoutPanes];
@@ -712,6 +720,11 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
     self.strip.frame = NSMakeRect(0, H, W - buttonsW, stripH);
     self.buttons.frame = NSMakeRect(W - buttonsW, H, buttonsW, stripH);
     [self reloadStrip];
+    if (_noticeBar) {
+        const CGFloat barH = MIN(_noticeBar.frame.size.height, H);
+        H -= barH;
+        _noticeBar.frame = NSMakeRect(0, H, W, barH);
+    }
 
     for (NSUInteger i = 0; i < _tabs.count; i++) {
         MCTerminalTab *tab = _tabs[i];

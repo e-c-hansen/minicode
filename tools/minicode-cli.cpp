@@ -345,99 +345,32 @@ std::string readStdin(size_t limit) {
     return out;
 }
 
-// Claude Code's settings file: $CLAUDE_CONFIG_DIR/settings.json when that is
+// `minicode hooks --print` and `--install` (R7.5). The settings file is
+// ClaudeHooks::settingsPath's: $CLAUDE_CONFIG_DIR/settings.json when that is
 // set (Claude Code reads its settings from there then), else
-// ~/.claude/settings.json.
-std::string claudeSettingsPath() {
-    const char *dir = getenv("CLAUDE_CONFIG_DIR");
-    if (dir && *dir) return trimmed(dir) + "/settings.json";
-    const char *home = getenv("HOME");
-    return std::string(home && *home ? home : "/") + "/.claude/settings.json";
-}
-
-bool readFile(const std::string &path, std::string &text, bool &exists, std::string &error) {
-    text.clear();
-    exists = false;
-    struct stat st;
-    if (stat(path.c_str(), &st) != 0) {
-        if (errno == ENOENT) return true;
-        error = path + ": " + std::strerror(errno);
-        return false;
-    }
-    if (!S_ISREG(st.st_mode)) {
-        error = path + " is not a plain file";
-        return false;
-    }
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        error = path + ": " + std::strerror(errno);
-        return false;
-    }
-    std::stringstream ss;
-    ss << in.rdbuf();
-    text = ss.str();
-    exists = true;
-    return true;
-}
-
-// `minicode hooks --print` and `--install` (R7.5).
+// ~/.claude/settings.json. The app's Install Claude Code Hooks… does the
+// same through ClaudeHooks::install.
 int runHooks(const std::string &action) {
     if (action == "print") {
         std::printf("%s\n", prettyJson(ClaudeHooks::configuration()).c_str());
         return kExitOK;
     }
-    const std::string path = claudeSettingsPath();
-    std::string text, error;
-    bool exists = false;
-    if (!readFile(path, text, exists, error)) {
-        std::fprintf(stderr, "minicode: %s\n", error.c_str());
-        return kExitFailed;
-    }
-    ClaudeHooks::MergeResult r = ClaudeHooks::merge(text);
+    const std::string path = ClaudeHooks::settingsPath(getenv("CLAUDE_CONFIG_DIR"), getenv("HOME"));
+    ClaudeHooks::InstallResult r =
+        ClaudeHooks::install(path, ClaudeHooks::kCommand, (long)time(nullptr));
     if (!r.ok) {
-        std::fprintf(stderr, "minicode: %s was left alone: %s\n", path.c_str(), r.error.c_str());
+        std::fprintf(stderr, "minicode: %s\n", r.error.c_str());
         return kExitFailed;
     }
     if (!r.changed) {
         std::printf("The hooks are already in %s; nothing changed.\n", path.c_str());
         return kExitOK;
     }
-    mode_t mode = 0600;
-    if (exists) {
-        struct stat st;
-        if (stat(path.c_str(), &st) == 0) mode = st.st_mode & 07777;
-        // A backup of the file as it was, named for the time, never over
-        // an earlier one.
-        char stamp[32];
-        time_t t = time(nullptr);
-        struct tm tm;
-        localtime_r(&t, &tm);
-        strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
-        std::string backup = path + ".minicode-backup-" + stamp;
-        for (int n = 2; access(backup.c_str(), F_OK) == 0; n++)
-            backup = path + ".minicode-backup-" + stamp + "-" + std::to_string(n);
-        if (!ClaudeHooks::writeSettingsFile(backup, text, mode, error)) {
-            std::fprintf(stderr, "minicode: could not back up %s, so it was left alone: %s\n",
-                         path.c_str(), error.c_str());
-            return kExitFailed;
-        }
-        std::printf("Backed up %s to %s\n", path.c_str(), backup.c_str());
-    } else {
-        std::string dir = path.substr(0, path.rfind('/'));
-        if (!dir.empty()) mkdir(dir.c_str(), 0700);
-    }
-    if (!ClaudeHooks::writeSettingsFile(path, r.text, mode, error)) {
-        std::fprintf(stderr, "minicode: %s\n", error.c_str());
-        return kExitFailed;
-    }
-    std::string added;
-    for (size_t i = 0; i < r.added.size(); i++)
-        added += (i ? (i + 1 == r.added.size() ? ", and " : ", ") : "") + r.added[i];
-    if (r.added.size() == 2) added = r.added[0] + " and " + r.added[1];
+    if (!r.backup.empty()) std::printf("Backed up %s to %s\n", path.c_str(), r.backup.c_str());
     std::printf("Added `%s` to the %s hooks in %s.\n"
                 "Claude Code sessions started from now on in minicode's terminals mark "
                 "their tabs.\n",
-                ClaudeHooks::kCommand, added.c_str(), path.c_str());
+                ClaudeHooks::kCommand, ClaudeHooks::eventList(r.added).c_str(), path.c_str());
     return kExitOK;
 }
 

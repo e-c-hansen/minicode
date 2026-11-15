@@ -54,6 +54,15 @@ extern const char *const kCommand;   // "minicode notify --from-hook"
 const std::vector<std::string> &events();
 // {"hooks": {"Notification": [{"hooks": [{"type": "command", "command": ...}]}], ...}}
 Json configuration();
+// The same with another spelling of the command (commandFor's), for only
+// these events (every event when empty): what an install adds, to show.
+Json configuration(const std::string &command, const std::vector<std::string> &onlyEvents);
+
+// The command to install: kCommand when `minicode` is on the PATH Claude
+// Code's hooks see (`launcher` empty), else the launcher's full path,
+// quoted for the shell, then " notify --from-hook" (an app copied by hand,
+// with no `minicode` on the PATH).
+std::string commandFor(const std::string &launcher);
 
 struct MergeResult {
     bool ok = false;
@@ -70,6 +79,16 @@ struct MergeResult {
 // is the wrong type, is refused, so nothing of the user's is lost.
 // The text is written with two-space indents, as Claude Code writes it.
 MergeResult merge(const std::string &settingsText);
+// The same, adding `command` (commandFor's) rather than kCommand.
+MergeResult merge(const std::string &settingsText, const std::string &command);
+
+// Are the hooks in this settings text already (every event runs our
+// command)? False for a file merge would refuse.
+bool installed(const std::string &settingsText);
+
+// "Notification, Stop, and PostToolUse": the events in prose, with an
+// Oxford comma, for the messages that name what was added.
+std::string eventList(const std::vector<std::string> &events);
 
 // Does this hook entry (one element of an event's list) run minicode's
 // command?
@@ -92,5 +111,44 @@ std::string writeTarget(const std::string &path);
 // nothing was written.
 bool writeSettingsFile(const std::string &path, const std::string &text, unsigned newMode,
                        std::string &error);
+
+// ------------------------------------------------------- installing
+// Claude Code's settings file: $CLAUDE_CONFIG_DIR/settings.json when that
+// variable is set (either argument may be null), else ~/.claude/settings.json.
+std::string settingsPath(const char *configDir, const char *home);
+
+// Reads the settings file. A file that is not there is no error: true,
+// `exists` false, `text` empty. False with `error` for one that cannot be
+// read or is not a plain file.
+bool readSettingsFile(const std::string &path, std::string &text, bool &exists,
+                      std::string &error);
+
+struct InstallResult {
+    bool ok = false;                 // false: nothing was written, `error` says why
+    std::string error;
+    bool refused = false;            // the file is not one merge can change (left alone)
+    bool changed = false;            // false with ok: the hooks were there already
+    std::vector<std::string> added;  // the events given the hook
+    std::string backup;              // where the old file was copied, "" for a new file
+};
+
+// `minicode hooks --install`, and the app's Install Claude Code Hooks…
+// after the user said yes to what it adds: reads the file at `path`,
+// merges `command` in (merge), and when that changes it, first copies the
+// file as it was to `<path>.minicode-backup-<YYYYmmdd-HHMMSS>` (local time
+// of `now`, never over an earlier backup), then writes the new text
+// (writeSettingsFile; a new file gets mode 0600 in a folder made 0700).
+InstallResult install(const std::string &path, const std::string &command, long now);
+
+// ------------------------------------------------------- seeing Claude Code
+// Does a command line typed at the shell (633;E's text) start Claude Code?
+// Its program, past variable assignments and exec, command, builtin,
+// noglob, nohup, time and env (with env's own assignments), is `claude` or
+// a path ending in /claude.
+bool startsClaude(const std::string &commandLine);
+// Is this executable's path Claude Code's (proc_pidpath of the foreground
+// process)? Its name is `claude`, or it sits in a `claude/versions` folder,
+// where the native installer keeps each version under its number.
+bool isClaudeProgramPath(const std::string &path);
 
 }  // namespace ClaudeHooks
