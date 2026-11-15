@@ -660,6 +660,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
         [self makeLatexPreview];
     } else {
         [self.latex setPath:self.currentPath source:self.sourceText ?: @""];
+        [self.latex refreshStatus];   // an \input file saved or edited meanwhile
     }
     [self relayoutRightArea];
     [self.window makeFirstResponder:self.latex];
@@ -684,6 +685,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     view.onOpenProblem = ^(NSString *path, NSInteger line) {
         [weakSelf openLatexProblemAt:path line:line];
     };
+    [self wireLatexInputsOf:view];
     [self.rightArea addSubview:view];
 }
 

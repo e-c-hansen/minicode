@@ -2183,6 +2183,22 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
 - **Edits are byte splices** of the span's own LaTeX (nothing escaped or
   re-serialized), marked dirty, saved only by Cmd+S, undone through
   `LatexView`'s own snapshot stack (50) via `undo:`/`redo:`.
+- **Clicks in `\input` files** (2026-11-15, the owner's yes to saving them
+  from the preview): `MCLatexSpanAtPointInFiles` tries the inputs the
+  boxes under the point name, likeliest first, then the document
+  (`SyncTexIndex::tagsAtPoint`); an input is read from its tab's buffer,
+  else the disk, and parsed with `LatexDoc::parseInput` (all body text: a
+  part has no `\begin{document}`, and `parse` found nothing in it). The
+  edit goes into that file's tab (`EditorController+LatexInputs.mm`,
+  opened behind the preview when not open, `putBackText:inTab:actionName:`
+  "Edit in Preview", one step of that tab's undo, not the preview's
+  stack), refused if the file changed while the box was open. The bar
+  names input files with unsaved changes (tectonic reads them from disk);
+  Cmd+S with the preview on show saves them (`saveLatexInputsOfActiveTab`),
+  and any save of a file a preview read typesets it again
+  (`latexFileSaved:`). The sweep clicks the three-file fixture too
+  (`sweep_bound_inputs.txt`, 100%); its single-file rate is unchanged.
+  Not done: Linux, and Cmd+Z in the preview undoing an input file's edit.
 - **Export PDF** (Shift+Cmd+S): `pdfForPath:source:completion:` hands back
   tectonic's bytes (`_pdfData`, `_pdfSrc`), typesetting first if they are not
   the buffer's. Trap: a synthetic `NSEvent` for Shift+Cmd+S with "s" matched

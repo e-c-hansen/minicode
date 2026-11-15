@@ -56,6 +56,9 @@ struct LatexDoc {
     std::vector<int> titleLines;
 
     static LatexDoc parse(const std::string &src);
+    // A file the document reads (\input, \include): all of it is body
+    // text, with no \begin{document} of its own.
+    static LatexDoc parseInput(const std::string &src);
 
     // Spans whose first line is `line`, nearest-first by source order.
     std::vector<const LatexSpan *> spansOnLine(int line) const;

@@ -46,6 +46,17 @@ public:
                    const std::function<std::string(const std::string &)> &canonical =
                        nullptr) const;
 
+    // The inputs with a path (the document and the files it reads; the
+    // engine's own files, which tectonic leaves unnamed, are left out),
+    // by tag.
+    const std::map<int, std::string> &inputs() const { return inputs_; }
+
+    // The inputs a click at a point may have come from, the likeliest
+    // first: the tags of textHitsAtPoint's hits in their order, each once,
+    // then `mainTag` (the document) when no hit named it and it is not 0.
+    // A click in an \input file's text names that file first.
+    std::vector<int> tagsAtPoint(int page, double x, double y, int mainTag) const;
+
     // Boxes covering (or nearest to) a point, best first, at most `maxHits`.
     // `page` is 1-based; x and y are in points from the page's top-left.
     std::vector<SyncTexHit> hitsAtPoint(int page, double x, double y,

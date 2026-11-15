@@ -30,7 +30,11 @@
 // and Option+Cmd+J in an \input file shows its line in the main
 // document's preview, found by a "% !TEX root" comment or by the open
 // preview whose typeset read the file. A preview's first document opens
-// with its first page's top edge in view, not scrolled part way down.
+// with its first page's top edge in view, not scrolled part way down. A
+// double-click on an \input file's text opens its source in a box titled
+// with its name, and the edit goes into that file's tab, opened behind the
+// preview, unsaved, which the bar names until Cmd+S on the preview saves
+// it and the page typesets again.
 #import "Harness.h"
 #import "Lsp.h"   // MCDiagnosticColor
 #import "EditorController.h"
@@ -780,6 +784,85 @@ MC_GUI_SUITE(latex) {
         GCHECK([c closeTab:tabM prompt:NO]);   // the edit is not saved
         tabX = tabC = tabM = nil;
         GCHECK_EQ_STR(ReadText(mainTex), ReadText(Fixtures(@"fixtures/main.tex")));
+    });
+
+    // A double-click on text from an \input file edits that file: its
+    // source in the box, titled with its name, the edit in its tab (opened
+    // behind the preview), unsaved; the bar says so, and Cmd+S on the
+    // preview saves it, which typesets the document again.
+    __block MCTab *tabP = nil;
+    __block NSString *chapterBefore = nil;
+    MCGuiStep(@"the fixture document again, with no tab for the chapter", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c tabForPath:chapter] == nil);
+        GCHECK([c showFile:mainTex]);
+        tabP = Active(c);
+        GCHECK(tabP.isLatex && tabP.latex != nil);
+        chapterBefore = ReadText(chapter);
+    });
+    MCGuiWait(@"and typesets", 20, ^BOOL {
+        return ![[tabP.latex valueForKey:@"compiling"] boolValue] &&
+               [tabP.latex latexPDFView].document.pageCount == 2;
+    });
+    MCGuiStep(@"a double-click on the chapter's lemur opens the chapter's source", ^{
+        LatexView *v = tabP.latex;
+        NSArray<PDFSelection *> *hits = [[v latexPDFView].document findString:@"lemur" withOptions:0];
+        GCHECK(hits.count == 1);
+        if (hits.count != 1) return;
+        PDFPage *page = hits[0].pages.firstObject;
+        const NSRect box = [hits[0] boundsForPage:page];
+        [v openEditorForPage:page point:NSMakePoint(NSMidX(box), NSMidY(box))];
+        NSTextView *edit = [v valueForKey:@"editText"];
+        GCHECK(edit != nil);
+        NSString *span = [edit.string copy] ?: @"";
+        MCGuiNote(@"the span: \"%@\"", span);
+        GCHECK([span containsString:@"lemur in the snow"]);
+        GCHECK([chapterBefore rangeOfString:span].location != NSNotFound);
+        NSString *title = nil;
+        for (NSView *sub in ((NSView *)[v valueForKeyPath:@"popover.contentViewController.view"]).subviews)
+            if ([sub isKindOfClass:[NSTextField class]] &&
+                [((NSTextField *)sub).stringValue hasPrefix:@"Editing"])
+                title = ((NSTextField *)sub).stringValue;
+        MCGuiNote(@"the box: %@", title);
+        GCHECK([title hasSuffix:@" in chapter.tex"]);
+        edit.string = [span stringByReplacingOccurrencesOfString:@"lemur" withString:@"ocelot"];
+        [v commitEdit:nil];
+    });
+    MCGuiStep(@"the edit is in the chapter's tab, opened behind the preview, unsaved", ^{
+        EditorController *c = MCGuiController();
+        MCTab *t = [c tabForPath:chapter];
+        GCHECK(t != nil && t != tabP);
+        GCHECK(Active(c) == tabP && c.previewMode);
+        GCHECK(t.dirty && !tabP.dirty);
+        GCHECK_EQ_STR(t.sourceText, [chapterBefore stringByReplacingOccurrencesOfString:@"lemur"
+                                                                             withString:@"ocelot"]);
+        GCHECK_EQ_STR(ReadText(chapter), chapterBefore);   // nothing saved
+        GCHECK([t.undoManager canUndo]);
+        GCHECK_EQ_STR(t.undoManager.undoActionName, @"Edit in Preview");
+        NSString *status = [tabP.latex valueForKeyPath:@"statusLabel.stringValue"];
+        MCGuiNote(@"status: %@", status);
+        GCHECK([status containsString:@"chapter.tex has unsaved changes: save to see them in the PDF"]);
+        GCHECK([[tabP.latex inputFiles] containsObject:chapter]);
+    });
+    MCGuiStep(@"Cmd+S on the preview saves the chapter too", ^{
+        EditorController *c = MCGuiController();
+        [c saveCurrentFile:c];
+        MCTab *t = [c tabForPath:chapter];
+        GCHECK(t && !t.dirty);
+        GCHECK([ReadText(chapter) containsString:@"a ocelot in the snow"]);
+        GCHECK_EQ_STR(ReadText(mainTex), ReadText(Fixtures(@"fixtures/main.tex")));
+    });
+    MCGuiWait(@"which typesets the document again, the bar no longer naming it", 20, ^BOOL {
+        return ![[tabP.latex valueForKey:@"compiling"] boolValue] &&
+               ![[tabP.latex valueForKeyPath:@"statusLabel.stringValue"] containsString:@"unsaved"];
+    });
+    MCGuiStep(@"close them, the chapter as it was", ^{
+        EditorController *c = MCGuiController();
+        MCTab *t = [c tabForPath:chapter];
+        if (t) GCHECK([c closeTab:t prompt:NO]);
+        GCHECK([c closeTab:tabP prompt:NO]);
+        tabP = nil;
+        MCGuiWriteFile(chapter, ReadText(Fixtures(@"fixtures/chapter.tex")));
     });
 
     // MC_GUI_REAL_TECTONIC=<a tectonic> (with TECTONIC_CACHE_DIR at a scratch

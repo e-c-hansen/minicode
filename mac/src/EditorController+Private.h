@@ -356,6 +356,19 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (MCProcessesPanel *)processesPanelOnShow;           // nil unless shown
 @end
 
+// EditorController+LatexInputs.mm: the files a LaTeX document reads, as its
+// preview edits and saves them.
+@class LatexView;
+@interface EditorController (LatexInputs)
+// The preview's hooks for \input files: their text, an edit put into their
+// tab, whether they have unsaved changes.
+- (void)wireLatexInputsOf:(LatexView *)view;
+// Cmd+S with the preview on show: the files the last typeset read, saved.
+- (void)saveLatexInputsOfActiveTab;
+// A tab was written: previews that read its file typeset again.
+- (void)latexFileSaved:(MCTab *)saved;
+@end
+
 // EditorController+ZoomFit.mm: Page Zoom for the browser and PDFs, and word wrap.
 @interface EditorController (ZoomFit)
 // What Cmd+= zooms in a page: a BrowserView or a PDFView, or nil.
@@ -629,7 +642,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)takeDiskRead:(MCDiskText *)d intoCleanTab:(MCTab *)t
                 diff:(std::shared_ptr<MCSourceDiff>)diff;
 - (void)registerReloadUndoForTab:(MCTab *)t text:(NSString *)old;
+- (void)registerTextUndoForTab:(MCTab *)t text:(NSString *)old actionName:(NSString *)name;
 - (void)putBackText:(NSString *)text inTab:(MCTab *)t;
+- (void)putBackText:(NSString *)text inTab:(MCTab *)t actionName:(NSString *)name;
 - (void)checkExternalChange;
 - (void)takeDiskText:(MCDiskText *)d forTab:(MCTab *)t;
 - (void)tabWentMissing:(MCTab *)t;

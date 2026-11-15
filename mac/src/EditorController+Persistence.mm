@@ -581,25 +581,39 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
 // Undoing a reload in a tab that was not on show as text: the old text
 // comes back, unsaved; redo takes the disk's again.
 - (void)registerReloadUndoForTab:(MCTab *)t text:(NSString *)old {
+    [self registerTextUndoForTab:t text:old actionName:@"Reload from Disk"];
+}
+
+// A whole-text step in a tab's own undo stack, named `name`: undoing it puts
+// `old` back (putBackText:inTab:actionName:), which registers the way back.
+- (void)registerTextUndoForTab:(MCTab *)t text:(NSString *)old actionName:(NSString *)name {
     __weak MCTab *weakTab = t;
+    NSString *title = [name copy];
     [t.undoManager registerUndoWithTarget:self handler:^(EditorController *s) {
         MCTab *tab = weakTab;
-        if (tab) [s putBackText:old inTab:tab];
+        if (tab) [s putBackText:old inTab:tab actionName:title];
     }];
-    [t.undoManager setActionName:@"Reload from Disk"];
+    [t.undoManager setActionName:title];
 }
 
 - (void)putBackText:(NSString *)text inTab:(MCTab *)t {
+    [self putBackText:text inTab:t actionName:@"Reload from Disk"];
+}
+
+// `text` becomes the tab's, unsaved, as one undo step named `name`: in the
+// editor when it shows the tab as text, else in the tab's buffer (also an
+// edit the LaTeX preview makes in an \input file's background tab).
+- (void)putBackText:(NSString *)text inTab:(MCTab *)t actionName:(NSString *)name {
     NSString *now = t == _activeTab && self.textView.editable && !t.showingMessage
                         ? [self.textView.string copy] : (t.sourceText ?: @"");
     // Its redo (or undo again) is this same step the other way. The text
     // view's own registration stays out of it: made during an undo, it
     // redid onto the wrong range.
-    [self registerReloadUndoForTab:t text:now];
+    [self registerTextUndoForTab:t text:now actionName:name];
     if (t == _activeTab && self.textView.editable && !t.showingMessage) {
         NSUndoManager *um = self.textView.undoManager;
         [um disableUndoRegistration];
-        [self replaceSourceWithText:text actionName:@"Reload from Disk"];
+        [self replaceSourceWithText:text actionName:name];
         [um enableUndoRegistration];
         self.sourceText = self.textView.string;
         [self noteEdited];

@@ -54,6 +54,23 @@
 // Called when an edit in the preview changed the document.
 @property(nonatomic, copy) void (^onSourceEdited)(NSString *newSource);
 
+// The files the document reads (\input, \include): a double-click on
+// their text in the PDF edits them. inputText gives a file's text as it is
+// now (its tab's buffer, else nil for the disk's); onInputEdited puts an
+// edit into the file's tab (`range` is UTF-16 in that text), opening the
+// tab in the background when need be, unsaved, NO when it could not;
+// inputUnsaved says whether a file has unsaved changes, which the typeset
+// does not see, and the bar says so.
+@property(nonatomic, copy) NSString *(^inputText)(NSString *path);
+@property(nonatomic, copy) BOOL (^onInputEdited)(NSString *path, NSRange range, NSString *text);
+@property(nonatomic, copy) BOOL (^inputUnsaved)(NSString *path);
+// The files of the user's the last typeset read besides the document, as
+// the document's folder spells them.
+- (NSArray<NSString *> *)inputFiles;
+// The bar's page count and notes again (an \input file was saved or
+// edited elsewhere), when the page is on show.
+- (void)refreshStatus;
+
 // The source changed elsewhere (the user typed in the editor, or opened a
 // different file); re-typeset it.
 - (void)setPath:(NSString *)texPath source:(NSString *)source;
@@ -108,6 +125,7 @@ void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed));
 
 #ifdef __cplusplus
 #import <Quartz/Quartz.h>
+#include <functional>
 #include <vector>
 struct LatexDoc;
 struct LatexSpan;
@@ -122,4 +140,13 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
                                     int tag, PDFPage *page, int pageNumber,
                                     NSPoint pagePoint,
                                     std::vector<SyncTexHit> *hitsOut);
+// The same over a document of several files: the inputs the boxes under the
+// point name, the likeliest first, then the document (`mainTag`)
+// (SyncTexIndex::tagsAtPoint), each tried with its own source from `docFor`
+// (nullptr for an input that is no file of the user's), until one places
+// the click. *tagOut is the input whose span it is (0 when refused).
+const LatexSpan *MCLatexSpanAtPointInFiles(
+    const SyncTexIndex &sync, int mainTag, PDFPage *page, int pageNumber, NSPoint pagePoint,
+    const std::function<const LatexDoc *(int tag)> &docFor, int *tagOut,
+    std::vector<SyncTexHit> *hitsOut);
 #endif
