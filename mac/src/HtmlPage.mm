@@ -23,6 +23,7 @@ static BOOL SameStamp(MCDiskStamp *a, MCDiskStamp *b) {
 
 // An address without its #fragment.
 static NSURL *WithoutFragment(NSURL *url) {
+    if (!url) return nil;
     NSURLComponents *c = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
     c.fragment = nil;
     return c.URL ?: url;
