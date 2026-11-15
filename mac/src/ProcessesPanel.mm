@@ -565,6 +565,13 @@ static const CGFloat kStopWidth = 40;
     }
 }
 
+// A row view made or reused: whether its row is selected, from the row
+// (rowForItem: in viewForTableColumn: walked every row, per row).
+- (void)outlineView:(NSOutlineView *)ov didAddRowView:(NSTableRowView *)rowView forRow:(NSInteger)row {
+    MCProcRowView *v = [rowView viewAtColumn:0];
+    if ([v isKindOfClass:MCProcRowView.class]) v.selected = [ov isRowSelected:row];
+}
+
 - (void)outlineViewSelectionDidChange:(NSNotification *)n {
     (void)n;
     [self updateSelectedRows];
@@ -626,7 +633,6 @@ static const CGFloat kStopWidth = 40;
     }
     v.item = item;
     v.textColor = _text;
-    v.selected = [ov isRowSelected:[ov rowForItem:item]];
     if (!v.onStop) {
         __weak MCProcessesPanel *weakSelf = self;
         v.onStop = ^(MCProcRowView *row) {
