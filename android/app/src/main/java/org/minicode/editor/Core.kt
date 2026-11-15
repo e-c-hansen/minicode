@@ -206,6 +206,9 @@ object Core {
     const val FUNCTION = 7
     const val ESCAPE = 8
     const val SELF = 9
+    const val TAG = 10
+    const val ATTRIBUTE = 11
+    const val TAG_BRACKET = 12
 }
 
 /** The dark palette the other two ports use with no theme named (VS Code Dark Modern values). */
@@ -236,5 +239,8 @@ object Palette {
         0xFFDCDCAA.toInt(),   // function
         0xFFD7BA7D.toInt(),   // escape
         0xFF569CD6.toInt(),   // self, this
+        0xFF569CD6.toInt(),   // a markup tag's name
+        0xFF9CDCFE.toInt(),   // a markup attribute's name
+        0xFF808080.toInt(),   // a tag's < > />
     )
 }

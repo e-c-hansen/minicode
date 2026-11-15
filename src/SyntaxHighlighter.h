@@ -34,8 +34,11 @@ enum class TokenStyle {
     Function,     // a name called or defined (foo(, def foo, fn foo), @decorator
     Escape,       // an escape inside a string: \n, \x41, \u{1F600}
     Self,         // self, cls, this, super: VS Code's variable.language
+    Tag,          // a markup tag's name: <div>, </p>, <!DOCTYPE (entity.name.tag)
+    Attribute,    // a markup attribute's name: class=, href= (entity.other.attribute-name)
+    TagBracket,   // a tag's < </ > /> <? ?> (punctuation.definition.tag)
 };
-constexpr int kTokenStyleCount = 10;
+constexpr int kTokenStyleCount = 13;
 
 // An escape is part of its string: anything asking whether a token is inside
 // a string (auto-closing, folding, bracket matching) asks this.
@@ -76,6 +79,12 @@ struct LexState {
         Template,       // inside a JavaScript template literal, maybe inside
                         // one of its ${} fields: quote = the state text id of
                         // the stack of templates and fields that are open
+        Markup,         // HTML or XML: inside a tag, an attribute's quoted
+                        // value, a comment or CDATA; quote says which (the
+                        // markup lexer's kMu* bits)
+        MarkupEmbed,    // inside an HTML <script> or <style> body: quote =
+                        // the state text id of the body's kind and the state
+                        // its JavaScript or CSS lexer ended the line in
     };
     // Some states need more than 16 bits: the delimiter of a raw string can
     // be 16 characters long, and a template literal can sit in a field of
@@ -93,6 +102,14 @@ struct LexState {
     bool operator==(const LexState& o) const { return kind == o.kind && quote == o.quote; }
     bool operator!=(const LexState& o) const { return !(*this == o); }
 };
+
+// What a line ending in st leaves open, as the line after it starts: st
+// itself in every language but HTML and XML, whose states say BlockComment
+// inside a comment, StringCont inside an attribute's value or CDATA, Normal
+// in text or between a tag's attributes, and inside a <script> or <style>
+// body whatever its JavaScript or CSS lexer left open. For callers that ask
+// only whether a line starts inside a string or comment (folding).
+LexState openToken(LexState st);
 
 class SyntaxHighlighter {
 public:

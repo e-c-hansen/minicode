@@ -737,7 +737,9 @@ bool newGrammar(const std::string &ext) {
            // C-family languages whose strings the frozen lexer read as C's
            // (raw strings, triple quotes, Rust's lifetimes): see mayHoldNewLiteral.
            ext == "rs" || ext == "go" || ext == "cs" || ext == "swift" ||
-           ext == "kt" || ext == "java";
+           ext == "kt" || ext == "java" ||
+           // HTML and XML (2026-11-15).
+           ext == "html" || ext == "xml" || ext == "vue" || ext == "svg";
 }
 // Text the frozen lexer read differently since literals were added
 // (2026-11-04), for the grammars it is still compared against: a number with
@@ -827,14 +829,17 @@ std::vector<Token> legacyView(const std::vector<Token> &toks, const std::string 
     std::vector<Token> out;
     size_t k = 0;
     const size_t n = text.size();
+    size_t keptEnd = 0;   // a name may start right where a kept token ends (1_000 as 1, _000)
     for (size_t i = 0; i < n;) {
         if (k < kept.size() && kept[k].start <= i) {
             out.push_back(kept[k]);
             i = std::max(i, kept[k].start + kept[k].length);
+            keptEnd = i;
             k++;
             continue;
         }
-        if (!legacy::isIdentStart(text[i]) || (i > 0 && legacy::isIdentChar(text[i - 1]))) {
+        if (!legacy::isIdentStart(text[i]) ||
+            (i > 0 && legacy::isIdentChar(text[i - 1]) && i != keptEnd)) {
             i++;
             continue;
         }
@@ -925,6 +930,11 @@ const char *const kFragments[] = {
     // Line breaks other than '\n' (2026-11-06): a lone '\r', which a '\n'
     // typed after it joins, and U+2029.
     "\r", "\r\r", "x\ry", "\xE2\x80\xA9", "/*\r", "\"\"\"\r",
+    // HTML and XML (2026-11-15): tags, values, comments, CDATA, entities,
+    // and <script> and <style> bodies opened and ended.
+    "<", ">", "</", "/>", "<p>", "<div class=\"", "<a href=x>", "=", "<!--", "-->",
+    "<![CDATA[", "]]>", "<?xml ", "?>", "<!DOCTYPE html>", "&amp;", "&#x26;", "<script>",
+    "</script>", "<style>", "</style>", "<script type=\"text/template\">", "<SCRIPT\n>",
 };
 
 template <class Ch>
@@ -1130,11 +1140,18 @@ void testIncrementalHighlight() {
         "\\verb|$%| and \\verb*+\\[+ \\verb|open\n"
         "\\begin{comment}\nhidden $\n\\end{comment}\n"
         "@article{k, title = {On $x$}}\n\\end{document}\n"});
+    samples.push_back({"html",
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <title>Caf\xC3\xA9 &amp; co</title>\n"
+        "  <style>\n    body { font: 12px \"Helvetica\"; } /* a\n    b */\n  </style>\n"
+        "  <script type=\"module\">\n    const s = `x ${y}\n    z`; // </p>\n"
+        "    if (a < b && c > d) f('</scrip');\n  </script>\n</head>\n"
+        "<body class=x data-v='1\n2'>\n  <!-- note\n  --> <p>\xE6\x97\xA5 &#x26; <br/></p>\n"
+        "  <svg><![CDATA[ <x> ]]></svg><?php echo 1 ?>\n</body>\n</html>\n"});
     // The old-lexer comparison covers only the grammars it had; the random
     // edits also run TeX, checked against a full lex (see newGrammar).
     const char *exts[] = {"cpp", "py", "js", "sh", "txt"};
     const char *fuzzExts[] = {"cpp", "py", "js", "sh", "txt", "tex", "bib", "sty",
-                              "rs", "go", "cs", "swift", "kt"};
+                              "rs", "go", "cs", "swift", "kt", "html", "xml"};
 
     GROUP("incremental:matches-old-lexer");
     // The line lexer changed no token anywhere, joined back into whole tokens.
@@ -1343,6 +1360,37 @@ void benchIncrementalHighlight() {
     CHECK_TIME(perKey, 10);
     CHECK_TIME(openAll, 1500);
     CHECK_TIME(closeAll, 1500);
+
+    // A large generated page (2026-11-15): tags, attributes, entities, and
+    // <script> and <style> bodies handed to their own lexers.
+    std::string page;
+    const char *block =
+        "<div class=\"row\" id=\"r\" data-x='1'>\n"
+        "  <a href=\"/p?a=1&amp;b=2\" title=\"T\">Caf\xC3\xA9 &amp; more</a> <!-- note -->\n"
+        "  <style>\n    .row { color: #333; margin: 0 4px; } /* c */\n  </style>\n"
+        "  <script>\n    const s = `x ${y}`; if (a < b) f('q'); // c\n  </script>\n"
+        "  <img src=x.png alt=\"\"/>\n</div>\n";
+    size_t pageLines = 0;
+    while (pageLines < 100000) { page += block; pageLines += 10; }
+    std::u16string html = toU16(page);
+    IncrementalHighlighter<char16_t> hh("html");
+    t0 = Clock::now();
+    all.clear();
+    hh.reset(StringSource<char16_t>(html), &all);
+    double htmlFull = ms(Clock::now() - t0);
+    size_t at = html.find(u"const s", html.size() / 2);
+    t0 = Clock::now();
+    for (int k = 0; k < kEdits; ++k) {
+        out.clear();
+        if (k % 2 == 0) { html.insert(at, 1, u'x'); hh.edit(StringSource<char16_t>(html), at, 0, 1, out); }
+        else { html.erase(at, 1); hh.edit(StringSource<char16_t>(html), at, 1, 0, out); }
+    }
+    double htmlKey = ms(Clock::now() - t0) / kEdits;
+    std::printf("  bench: %zu lines of HTML (%zu tokens): full lex %.1f ms, one keystroke in "
+                "a script %.4f ms\n",
+                pageLines, all.size(), htmlFull, htmlKey);
+    CHECK_TIME(htmlFull, 1500);
+    CHECK_TIME(htmlKey, 10);
 }
 
 // --------------------------------------------------------------- markdown
@@ -3964,8 +4012,9 @@ void testSettings() {
     // syntax.escape and syntax.self, terminal.cursor-style, the two
     // workbench.enable-preview keys, markdown.max-width, and
     // browser.bookmarks.
-    // control.page-input, and editor.inlay-hint-parameter-names.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 127);
+    // control.page-input, and editor.inlay-hint-parameter-names, and
+    // syntax.tag, syntax.attribute and syntax.tag-bracket.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 130);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -10998,6 +11047,7 @@ static void testMultiCaretOccurrences() {
 #include "shell_vte_tests.inc"
 #include "ppa_wait_tests.inc"
 #include "lexer_styles_tests.inc"
+#include "markup_syntax_tests.inc"
 #include "bracket_pairs_tests.inc"
 #include "terminal_layout_tests.inc"
 #include "right_area_tests.inc"
@@ -11067,6 +11117,7 @@ int main() {
     testGitModel();
     testQuickDiff();
     testLexerStyles();
+    testMarkupSyntax();
     testBracketPairs();
     testTerminalLayout();
     testRightArea();

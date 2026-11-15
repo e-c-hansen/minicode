@@ -13,7 +13,7 @@ const char* const kSurfaceNames[kSurfaceCount] = {
 // Indexed by TokenStyle; Plain has no key of its own (it is editor.text).
 const char* const kSyntaxNames[kTokenStyleCount] = {
     nullptr, "keyword", "type", "string", "comment", "number", "preprocessor", "function",
-    "escape", "self",
+    "escape", "self", "tag", "attribute", "tag-bracket",
 };
 // Indexed by MarkdownColor.
 const char* const kMarkdownNames[kMarkdownColorCount] = {
@@ -23,7 +23,8 @@ const char* const kMarkdownNames[kMarkdownColorCount] = {
 // VS Code's built-in themes. Each row: id, title, dark; backgrounds and texts
 // in Surface order (title bar, sidebar, editor, terminal, browser toolbar,
 // status bar); syntax in TokenStyle order (plain unused, keyword, type,
-// string, comment, number, preprocessor, function, escape, self); Markdown
+// string, comment, number, preprocessor, function, escape, self, tag,
+// attribute, tag bracket); Markdown
 // (heading, link, code, quote, done); code block background, ruler,
 // terminal input text; line numbers, the caret line's number, the bracket
 // match box; the semantic colors (class, variable, parameter, property,
@@ -43,7 +44,10 @@ const char* const kMarkdownNames[kMarkdownColorCount] = {
 // font styles (Monokai's underlined classes) are left out, as the lexer's are.
 // An escape takes what the theme gives constant.character.escape (else
 // constant.character, as TextMate falls back), self and this what it gives
-// variable.language (else variable). The bracket-pair colors are VS Code's
+// variable.language (else variable), and a markup tag's name, attribute
+// name and brackets what it gives entity.name.tag,
+// entity.other.attribute-name and punctuation.definition.tag (else meta.tag,
+// else the editor's text). The bracket-pair colors are VS Code's
 // editorBracketHighlight.foreground1 to 3 for dark and light themes
 // (editorColorRegistry.ts), which only Solarized Dark sets for itself, and
 // unexpectedBracket.foreground, which is #FF1212 at 80% in every one.
@@ -53,7 +57,8 @@ const Theme kThemes[] = {
      {0x181818, 0x181818, 0x1F1F1F, 0x181818, 0x1F1F1F, 0x181818},
      {0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC, 0xCCCCCC},
      {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA,
-      0xD7BA7D, 0x569CD6},
+      0xD7BA7D, 0x569CD6,
+      0x569CD6, 0x9CDCFE, 0x808080},
      {0xFFFFFF, 0x4DAAFC, 0xCE9178, 0x9D9D9D, 0x6E7681},
      0x2B2B2B, 0x5A5A5A, 0xE6E6E6,
      0x6E7681, 0xCCCCCC, 0x888888,
@@ -63,7 +68,8 @@ const Theme kThemes[] = {
      {0x323233, 0x252526, 0x1E1E1E, 0x181818, 0x2A2A2A, 0x007ACC},
      {0xCCCCCC, 0xCCCCCC, 0xD4D4D4, 0xD4D4D4, 0xD4D4D4, 0xFFFFFF},
      {0, 0x569CD6, 0x4EC9B0, 0xCE9178, 0x6A9955, 0xB5CEA8, 0xC586C0, 0xDCDCAA,
-      0xD7BA7D, 0x569CD6},
+      0xD7BA7D, 0x569CD6,
+      0x569CD6, 0x9CDCFE, 0x808080},
      {0xFFFFFF, 0x4EA1F7, 0xCE9178, 0x9D9D9D, 0x858585},
      0x2A2A2A, 0x5A5A5A, 0xEDEDED,
      0x858585, 0xC6C6C6, 0x888888,
@@ -73,7 +79,8 @@ const Theme kThemes[] = {
      {0x1E1F1C, 0x1E1F1C, 0x272822, 0x1E1F1C, 0x1E1F1C, 0x414339},
      {0xCCCCCC, 0xCCCCCC, 0xF8F8F2, 0xF8F8F2, 0xF8F8F2, 0xFFFFFF},
      {0, 0xF92672, 0x66D9EF, 0xE6DB74, 0x88846F, 0xAE81FF, 0xF92672, 0xA6E22E,
-      0xAE81FF, 0xFD971F},
+      0xAE81FF, 0xFD971F,
+      0xF92672, 0xA6E22E, 0xF8F8F2},
      {0xF8F8F2, 0x66D9EF, 0xE6DB74, 0x88846F, 0x75715E},
      0x3E3D32, 0x464741, 0xFFFFFF,
      0x90908A, 0xC2C2BF, 0x888888,
@@ -83,7 +90,8 @@ const Theme kThemes[] = {
      {0x002C39, 0x00212B, 0x002B36, 0x00212B, 0x00212B, 0x00212B},
      {0x93A1A1, 0x93A1A1, 0x839496, 0x839496, 0x93A1A1, 0x93A1A1},
      {0, 0x859900, 0xB58900, 0x2AA198, 0x586E75, 0xD33682, 0xCB4B16, 0x268BD2,
-      0xCB4B16, 0x268BD2},
+      0xCB4B16, 0x268BD2,
+      0x268BD2, 0x93A1A1, 0x586E75},
      {0x93A1A1, 0x268BD2, 0x2AA198, 0x657B83, 0x586E75},
      0x073642, 0x0C4A59, 0x93A1A1,
      0x858585, 0x949494, 0x888888,
@@ -93,7 +101,8 @@ const Theme kThemes[] = {
      {0x001126, 0x001C40, 0x002451, 0x001C40, 0x001C40, 0x001126},
      {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF},
      {0, 0xEBBBFF, 0xFFEEAD, 0xD1F1A9, 0x7285B7, 0xFFC58F, 0xEBBBFF, 0xBBDAFF,
-      0xFFC58F, 0xFF9DA4},
+      0xFFC58F, 0xFF9DA4,
+      0xFF9DA4, 0xFF9DA4, 0xFF9DA4},
      {0xFFFFFF, 0xBBDAFF, 0xD1F1A9, 0x7285B7, 0x7285B7},
      0x00346E, 0x003F8E, 0xFFFFFF,
      0x7285B7, 0xFFFFFF, 0x888888,
@@ -103,7 +112,8 @@ const Theme kThemes[] = {
      {0xF8F8F8, 0xF8F8F8, 0xFFFFFF, 0xF8F8F8, 0xF8F8F8, 0xF8F8F8},
      {0x1E1E1E, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B, 0x3B3B3B},
      {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26,
-      0xEE0000, 0x0000FF},
+      0xEE0000, 0x0000FF,
+      0x800000, 0xE50000, 0x800000},
      {0x1F1F1F, 0x005FB8, 0xA31515, 0x6E7781, 0x8B949E},
      0xF0F0F0, 0xD3D3D3, 0x1F1F1F,
      0x6E7681, 0x171184, 0xB9B9B9,
@@ -113,7 +123,8 @@ const Theme kThemes[] = {
      {0xDDDDDD, 0xF3F3F3, 0xFFFFFF, 0xFFFFFF, 0xF3F3F3, 0x007ACC},
      {0x333333, 0x616161, 0x000000, 0x333333, 0x333333, 0xFFFFFF},
      {0, 0x0000FF, 0x267F99, 0xA31515, 0x008000, 0x098658, 0xAF00DB, 0x795E26,
-      0xEE0000, 0x0000FF},
+      0xEE0000, 0x0000FF,
+      0x800000, 0xE50000, 0x800000},
      {0x000000, 0x006AB1, 0xA31515, 0x6A737D, 0x8E8E8E},
      0xF3F3F3, 0xD3D3D3, 0x000000,
      0x237893, 0x0B216F, 0xB9B9B9,
@@ -123,7 +134,8 @@ const Theme kThemes[] = {
      {0xC4B7D7, 0xF2F2F2, 0xF5F5F5, 0xF5F5F5, 0xF2F2F2, 0x705697},
      {0x333333, 0x333333, 0x333333, 0x333333, 0x333333, 0xFFFFFF},
      {0, 0x4B83CD, 0x7A3E9D, 0x448C27, 0xAAAAAA, 0xAB6526, 0x7A3E9D, 0xAA3731,
-      0x777777, 0x9C5D27},
+      0x777777, 0x9C5D27,
+      0x4B69C6, 0x8190A0, 0x91B3E0},
      {0x333333, 0x4B83CD, 0x448C27, 0x777777, 0xAAAAAA},
      0xE8E8E8, 0xD3D3D3, 0x000000,
      0x6D705B, 0x9769DC, 0xB9B9B9,
@@ -133,7 +145,8 @@ const Theme kThemes[] = {
      {0xEEE8D5, 0xEEE8D5, 0xFDF6E3, 0xEEE8D5, 0xEEE8D5, 0xEEE8D5},
      {0x586E75, 0x586E75, 0x657B83, 0x586E75, 0x586E75, 0x586E75},
      {0, 0x859900, 0xB58900, 0x2AA198, 0x93A1A1, 0xD33682, 0xCB4B16, 0x268BD2,
-      0xCB4B16, 0x268BD2},
+      0xCB4B16, 0x268BD2,
+      0x268BD2, 0x93A1A1, 0x93A1A1},
      {0x586E75, 0x268BD2, 0x2AA198, 0x93A1A1, 0x93A1A1},
      0xEEE8D5, 0xDDD6C1, 0x073642,
      0x237893, 0x567983, 0xB9B9B9,
@@ -599,14 +612,16 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
           "editor.git-added", "editor.git-modified", "editor.git-deleted",
           "syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
-          "syntax.escape", "syntax.self", "syntax.class", "syntax.variable",
+          "syntax.escape", "syntax.self", "syntax.tag", "syntax.attribute",
+          "syntax.tag-bracket", "syntax.class", "syntax.variable",
           "syntax.parameter", "syntax.property", "syntax.constant",
           "syntax.bracket-1", "syntax.bracket-2", "syntax.bracket-3",
           "syntax.bracket-unexpected", "window.opacity", "window.text"}, false},
         {"syntax", "Syntax Colors",
          {"syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
-          "syntax.escape", "syntax.self", "syntax.class", "syntax.variable",
+          "syntax.escape", "syntax.self", "syntax.tag", "syntax.attribute",
+          "syntax.tag-bracket", "syntax.class", "syntax.variable",
           "syntax.parameter", "syntax.property", "syntax.constant",
           "syntax.bracket-1", "syntax.bracket-2", "syntax.bracket-3",
           "syntax.bracket-unexpected", "editor.text"}, false},
@@ -1757,6 +1772,10 @@ const char* Settings::defaultFileText() {
 # An escape in a string (\n, \x41), and self, cls, this and super.
 # syntax.escape = #D7BA7D
 # syntax.self = #569CD6
+# HTML and XML: a tag's name, an attribute's name, and a tag's < > and />.
+# syntax.tag = #569CD6
+# syntax.attribute = #9CDCFE
+# syntax.tag-bracket = #808080
 # The names a language server says what they are (semantic tokens, with
 # editor.semantic-highlighting on): classes, types and namespaces;
 # variables; parameters; properties; and constants (enum members, read-only

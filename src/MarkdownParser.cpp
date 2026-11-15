@@ -2827,6 +2827,8 @@ std::string MarkdownParser::extensionForLanguage(const std::string& lang) {
         {"toml", "toml"}, {"ini", "ini"}, {"css", "css"}, {"scss", "scss"},
         {"tex", "tex"}, {"latex", "tex"}, {"makefile", "mk"}, {"make", "mk"},
         {"dockerfile", "dockerfile"}, {"lisp", "lisp"}, {"clojure", "clj"}, {"elixir", "ex"},
+        {"html", "html"}, {"htm", "html"}, {"xhtml", "html"}, {"vue", "vue"},
+        {"xml", "xml"}, {"svg", "svg"}, {"plist", "plist"},
     };
     std::string key;
     for (char ch : lang) key += (char)std::tolower((unsigned char)ch);

@@ -8,7 +8,7 @@ namespace {
 // The style at each unit, '-' where no token is (TokenStyle order).
 std::string styleMap(const std::string &text, const std::string &ext) {
     std::string m(text.size(), '-');
-    const char *letters = "pktscnPfeS";
+    const char *letters = "pktscnPfeSTa<";
     for (const Token &t : SyntaxHighlighter::highlight(text, ext))
         for (size_t k = t.start; k < t.start + t.length && k < m.size(); ++k)
             m[k] = letters[(int)t.style];
