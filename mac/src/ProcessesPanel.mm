@@ -99,10 +99,91 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
 @interface MCProcRowView : NSView
 @property(nonatomic, strong) id item;
 @property(nonatomic, strong) NSColor *textColor;
+@property(nonatomic) BOOL selected;                 // its row is selected
+@property(nonatomic) BOOL hovered;                  // the pointer is over its row
+@property(nonatomic, readonly) NSButton *stopButton;
+@property(nonatomic, copy) void (^onStop)(MCProcRowView *row);
+- (void)updateStopButton;
 @end
 
-@implementation MCProcRowView
+static const CGFloat kStopWidth = 40;
+
+@implementation MCProcRowView {
+    NSButton *_stop;
+}
 - (BOOL)isFlipped { return YES; }
+
+// The button is made the first time it shows: a reload makes and sizes
+// many row views, and a button in each (measured on every frame change)
+// took the panel's redraw from 3 to 90 ms of CPU on CI's runner.
+- (NSButton *)stopButton {
+    if (!_stop) {
+        _stop = [NSButton buttonWithTitle:@"Stop" target:self action:@selector(stopPressed:)];
+        _stop.bezelStyle = NSBezelStyleInline;
+        _stop.controlSize = NSControlSizeSmall;
+        _stop.font = [NSFont systemFontOfSize:10.5 weight:NSFontWeightMedium];
+        _stop.hidden = YES;
+        [self addSubview:_stop];
+    }
+    return _stop;
+}
+
+- (void)stopPressed:(id)sender {
+    (void)sender;
+    if (self.onStop) self.onStop(self);
+}
+
+- (BOOL)stoppable {
+    return [self.item isKindOfClass:MCProcItem.class] && ((MCProcItem *)self.item).alive;
+}
+
+// While the pointer is over the row or it is selected, as Finder's and VS
+// Code's row actions show; the memory figure moves left to make room.
+- (void)updateStopButton {
+    const BOOL show = [self stoppable] && (_hovered || self.selected);
+    if (!show && (!_stop || _stop.hidden)) return;
+    NSButton *stop = self.stopButton;
+    if (stop.hidden == !show) return;
+    stop.hidden = !show;
+    if (show) {
+        MCProcItem *p = self.item;
+        _stop.title = p.orphan ? @"Stop" : @"Stop…";
+        _stop.toolTip = p.orphan ? [NSString stringWithFormat:@"Stop %@ now", p.name]
+                                 : [NSString stringWithFormat:@"Stop %@ (asks first)", p.name];
+    }
+    [self layoutStop];
+    [self setNeedsDisplay:YES];
+}
+
+- (void)layoutStop {
+    if (!_stop || _stop.hidden) return;
+    const NSRect b = self.bounds;
+    [_stop sizeToFit];
+    const CGFloat w = MAX(kStopWidth, _stop.frame.size.width);
+    _stop.frame = NSMakeRect(b.size.width - w - 6, round((b.size.height - 18) / 2), w, 18);
+}
+
+- (void)setFrameSize:(NSSize)size {
+    [super setFrameSize:size];
+    [self layoutStop];
+}
+
+- (void)setSelected:(BOOL)selected {
+    _selected = selected;
+    [self updateStopButton];
+}
+
+- (void)setItem:(id)item {
+    _item = item;
+    _hovered = NO;
+    [self updateStopButton];
+}
+
+- (void)setHovered:(BOOL)hovered {
+    if (hovered == _hovered) return;
+    _hovered = hovered;
+    [self updateStopButton];
+}
 
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
@@ -149,8 +230,11 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
                                NSForegroundColorAttributeName: text,
                                NSParagraphStyleAttributeName: right};
     const CGFloat memW = ceil([mem sizeWithAttributes:memAttrs].width) + 4;
-    [mem drawWithRect:NSMakeRect(b.size.width - memW - 6, 3, memW, 16) options:opts attributes:memAttrs];
-    [p.name drawWithRect:NSMakeRect(14, 2, MAX(0, b.size.width - memW - 24), 17)
+    // The Stop button, when shown, takes the right edge.
+    const CGFloat stopW = !_stop || _stop.hidden ? 0 : _stop.frame.size.width + 6;
+    [mem drawWithRect:NSMakeRect(b.size.width - memW - 6 - stopW, 3, memW, 16) options:opts
+           attributes:memAttrs];
+    [p.name drawWithRect:NSMakeRect(14, 2, MAX(0, b.size.width - memW - 24 - stopW), 17)
                  options:opts
               attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium],
                            NSForegroundColorAttributeName: p.alive ? text : muted,
@@ -179,7 +263,7 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
         [line appendAttributedString:[[NSAttributedString alloc]
             initWithString:[NSString stringWithFormat:@"  from terminal %ld", (long)p.terminal]
                 attributes:small]];
-    [line drawWithRect:NSMakeRect(14, 19, MAX(0, b.size.width - 20), 15) options:opts];
+    [line drawWithRect:NSMakeRect(14, 19, MAX(0, b.size.width - 20 - stopW), 15) options:opts];
 }
 @end
 
@@ -190,9 +274,42 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
 @property(nonatomic, copy) void (^onStop)(NSInteger row);
 @property(nonatomic, copy) void (^onTab)(void);
 @property(nonatomic, copy) NSMenu *(^menuFor)(NSInteger row);
+// The row under the pointer (-1 for none), from one tracking area on the
+// whole list rather than one per row view.
+@property(nonatomic, copy) void (^onHover)(NSInteger row);
 @end
 
-@implementation MCProcOutline
+@implementation MCProcOutline {
+    NSTrackingArea *_hoverArea;
+    NSInteger _hoverPlusOne;   // the hovered row + 1; 0 for none
+}
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_hoverArea) [self removeTrackingArea:_hoverArea];
+    _hoverArea = [[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+             options:NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited |
+                     NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+               owner:self userInfo:nil];
+    [self addTrackingArea:_hoverArea];
+}
+- (void)hoverAt:(NSInteger)row {
+    if (row + 1 == _hoverPlusOne) return;
+    _hoverPlusOne = row + 1;
+    if (self.onHover) self.onHover(row);
+}
+- (void)mouseMoved:(NSEvent *)event {
+    [super mouseMoved:event];
+    [self hoverAt:[self rowAtPoint:[self convertPoint:event.locationInWindow fromView:nil]]];
+}
+- (void)mouseEntered:(NSEvent *)event {
+    [super mouseEntered:event];
+    [self hoverAt:[self rowAtPoint:[self convertPoint:event.locationInWindow fromView:nil]]];
+}
+- (void)mouseExited:(NSEvent *)event {
+    [super mouseExited:event];
+    [self hoverAt:-1];
+}
 - (void)keyDown:(NSEvent *)event {
     NSEventModifierFlags m = event.modifierFlags &
         (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption);
@@ -236,6 +353,9 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
     NSColor *_text;
     id _observer, _settingsObserver;
     BOOL _appeared;
+    NSInteger _revealTerminal;     // revealTerminal:job:, until a look has it
+    int _revealJob;
+    NSDate *_revealUntil;
 }
 
 - (instancetype)init {
@@ -320,6 +440,14 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
     _outline.onActivate = ^(NSInteger row) { [weakSelf activateRow:row]; };
     _outline.onToggle = ^(NSInteger row) { [weakSelf toggleRow:row]; };
     _outline.onStop = ^(NSInteger row) { [weakSelf stopRow:row]; };
+    _outline.onHover = ^(NSInteger row) {
+        MCProcessesPanel *s = weakSelf;
+        if (!s) return;
+        for (NSInteger r = 0; r < s->_outline.numberOfRows; r++) {
+            MCProcRowView *v = [s->_outline viewAtColumn:0 row:r makeIfNecessary:NO];
+            if ([v isKindOfClass:MCProcRowView.class]) v.hovered = r == row;
+        }
+    };
     _outline.onTab = ^{
         MCProcessesPanel *s = weakSelf;
         if (s.onTab) s.onTab();
@@ -421,6 +549,65 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
     _summary.stringValue = v.count ? PNS(Procs::summary(v.memory, v.count)) : @"";
     _notice.hidden = _groups.count > 0;
     _scroll.hidden = _groups.count == 0;
+    [self updateSelectedRows];
+    [self applyReveal];
+}
+
+- (void)revealTerminal:(NSInteger)terminal job:(int)job {
+    _revealTerminal = terminal;
+    _revealJob = job;
+    _revealUntil = [NSDate dateWithTimeIntervalSinceNow:15];
+    [self applyReveal];
+}
+
+- (void)applyReveal {
+    if (!_revealUntil) return;
+    if (_revealUntil.timeIntervalSinceNow < 0) { _revealUntil = nil; return; }
+    NSInteger row = _revealJob > 0 ? [self rowForPid:_revealJob] : -1;
+    if (row < 0) {
+        for (NSInteger r = 0; r < _outline.numberOfRows && row < 0; r++) {
+            id item = [_outline itemAtRow:r];
+            if (![item isKindOfClass:MCProcGroupItem.class]) continue;
+            MCProcGroupItem *g = item;
+            if (g.kind != Procs::GroupKind::Terminal || g.terminal != _revealTerminal) continue;
+            if (!g.children.count) break;
+            if (![_outline isItemExpanded:g]) [_outline expandItem:g];
+            // A job the foreground named but not yet seen: wait for a look
+            // that has it, then fall back to the group's first process.
+            if (_revealJob > 0 && _revealUntil.timeIntervalSinceNow > 12) return;
+            row = [_outline rowForItem:g.children.firstObject];
+        }
+    }
+    if (row < 0) return;
+    _revealUntil = nil;
+    [_outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row] byExtendingSelection:NO];
+    [_outline scrollRowToVisible:row];
+    [self.window makeFirstResponder:_outline];
+}
+
+- (void)updateSelectedRows {
+    for (NSInteger r = 0; r < _outline.numberOfRows; r++) {
+        MCProcRowView *v = [_outline viewAtColumn:0 row:r makeIfNecessary:NO];
+        if ([v isKindOfClass:MCProcRowView.class]) v.selected = [_outline isRowSelected:r];
+    }
+}
+
+// A row view made or reused: whether its row is selected, from the row
+// (rowForItem: in viewForTableColumn: walked every row, per row).
+- (void)outlineView:(NSOutlineView *)ov didAddRowView:(NSTableRowView *)rowView forRow:(NSInteger)row {
+    MCProcRowView *v = [rowView viewAtColumn:0];
+    if ([v isKindOfClass:MCProcRowView.class]) v.selected = [ov isRowSelected:row];
+}
+
+- (void)outlineViewSelectionDidChange:(NSNotification *)n {
+    (void)n;
+    [self updateSelectedRows];
+}
+
+- (NSButton *)stopButtonForRow:(NSInteger)row {
+    if (![self procAtRow:row].alive) return nil;
+    MCProcRowView *v = [_outline viewAtColumn:0 row:row makeIfNecessary:YES];
+    return [v isKindOfClass:MCProcRowView.class] ? v.stopButton : nil;
 }
 
 - (void)restoreExpansion {
@@ -473,6 +660,13 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
     }
     v.item = item;
     v.textColor = _text;
+    if (!v.onStop) {
+        __weak MCProcessesPanel *weakSelf = self;
+        v.onStop = ^(MCProcRowView *row) {
+            MCProcessesPanel *s = weakSelf;
+            if (s) [s stopRow:[s->_outline rowForView:row]];
+        };
+    }
     if ([item isKindOfClass:MCProcItem.class]) {
         MCProcItem *p = item;
         NSMutableArray *tip = [NSMutableArray arrayWithObject:p.command ?: @""];

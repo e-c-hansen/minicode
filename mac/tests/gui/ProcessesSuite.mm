@@ -4,7 +4,9 @@
 // port, in the panel and in `minicode procs`; with `disown` and the terminal
 // closed it moves to the orphans, and Stop ends it without asking. A sleep
 // in a second terminal: Reveal Origin shows its terminal, and Stop asks
-// first (Cancel keeps it). A server started outside minicode in the folder
+// first (Cancel keeps it). The close question is a sheet on the window,
+// whose Show in Processes selects the job and keeps the terminal; the
+// orphan's row has a Stop button; Shift+Cmd+J toggles the panel. A server started outside minicode in the folder
 // is "not started here". The time a look takes is measured with at least
 // 200 processes on the machine. Every process here is one this suite
 // started, and only those are signalled.
@@ -435,13 +437,37 @@ MC_GUI_SUITE(processes) {
     // ----------------------------------------------- disown, close: orphans
     MCGuiStep(@"disown, in the first terminal", ^{ [s.termA runCommand:@"disown"]; });
     MCGuiWait(@"done", 10, ^BOOL { return s.termA.atPrompt && !s.termA.busy; });
-    MCGuiStep(@"closing the terminal (it asks: the server still runs)", ^{
+    MCGuiStep(@"closing the terminal asks in a sheet on its window; Show in Processes keeps it", ^{
+        s.alerts = MCGuiAlertsShown().count;
+        NSUInteger sheets = MCGuiSheetsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertThirdButtonReturn)]);
+        MCTerminalPanel *tp = [s.c valueForKey:@"terminalPanel"];
+        // Elsewhere in the list first, so the reveal is seen to move it.
+        [s.panel.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+        [tp closeTerminalAsking:s.termA];   // the tab's ×, Cmd+W, Ctrl+Shift+W
+        GCHECK(MCGuiSheetsShown().count == sheets + 1);
+        GCHECK_EQ_STR(MCGuiSheetsShown().lastObject, @"Close the terminal?");
+        GCHECK(MCGuiLastSheetWindow() == s.c.window);
+        GCHECK(MCGuiAlertsShown().count == s.alerts + 1);
+        // A second press while the sheet is up asks nothing more.
+        [tp closeTerminalAsking:s.termA];
+        GCHECK(MCGuiAlertsShown().count == s.alerts + 1);
+    });
+    MCGuiWait(@"the Processes panel selects the server, and the terminal stays", 15, ^BOOL {
+        NSInteger row = s.panel.outline.selectedRow;
+        return row >= 0 && row == [s.panel rowForPid:s.serverPid];
+    });
+    MCGuiStep(@"closing it again, answered Close", ^{
+        MCTerminalPanel *tp = [s.c valueForKey:@"terminalPanel"];
+        GCHECK([tp.terminals containsObject:s.termA] && Alive(s.termA.shellPid));
         s.alerts = MCGuiAlertsShown().count;
         MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
-        MCTerminalPanel *tp = [s.c valueForKey:@"terminalPanel"];
-        GCHECK([tp closeTerminal:s.termA]);
+        [tp closeTerminalAsking:s.termA];
         GCHECK(MCGuiAlertsShown().count == s.alerts + 1);   // "Close the terminal?"
-        GCHECK(![tp.terminals containsObject:s.termA]);
+    });
+    MCGuiWait(@"it closes once the sheet is answered", 5, ^BOOL {
+        MCTerminalPanel *tp = [s.c valueForKey:@"terminalPanel"];
+        return ![tp.terminals containsObject:s.termA];
     });
     MCGuiWait(@"the server moves to the orphans", 15, ^BOOL {
         return GroupHasPort(s.panel, @"G orphans", s.port);
@@ -456,9 +482,23 @@ MC_GUI_SUITE(processes) {
         GCHECK(st == 0);
         GCHECK([GroupWithPid(JSONOf(out), s.serverPid)[@"kind"] isEqualToString:@"orphans"]);
     });
-    MCGuiStep(@"Stop on the orphan, unasked", ^{
+    MCGuiStep(@"the orphan's row, selected, shows a Stop button; pressed, it stops unasked", ^{
+        const NSInteger row = [s.panel rowForPid:s.serverPid];
+        GCHECK(row >= 0);
+        [s.panel.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
+                     byExtendingSelection:NO];
+        NSButton *stop = [s.panel stopButtonForRow:row];
+        GCHECK(stop != nil && !stop.hidden);
+        GCHECK_EQ_STR(stop.title, @"Stop");
+        GCHECK(NSMaxX(stop.frame) <= NSWidth(stop.superview.bounds) + 0.5);
+        // A row neither selected nor under the pointer shows none.
+        for (NSInteger r = 0; r < s.panel.outline.numberOfRows; r++) {
+            NSButton *b = r == row ? nil : [s.panel stopButtonForRow:r];
+            if (b) GCHECK(b.hidden);
+        }
+        MCGuiSnapshot(s.panel, @"processes-stop-button");
         s.alerts = MCGuiAlertsShown().count;
-        [s.panel stopRow:[s.panel rowForPid:s.serverPid]];
+        [stop performClick:nil];
         GCHECK(MCGuiAlertsShown().count == s.alerts);
     });
     MCGuiWait(@"the server ends", 6, ^BOOL { return !Alive(s.serverPid); });
@@ -549,8 +589,9 @@ MC_GUI_SUITE(processes) {
     });
 
     // --------------------------------------------------------------- after
-    MCGuiStep(@"the panel goes, the tree comes back", ^{
-        [s.c toggleProcesses:nil];
+    MCGuiStep(@"Shift+Cmd+J, Toggle Processes: the panel goes, the tree comes back", ^{
+        GCHECK(MCGuiPerformMenuKey(s.c.window, 38 /* J */,
+                                   NSEventModifierFlagCommand | NSEventModifierFlagShift, nil, nil));
         GCHECK(s.panel.window == nil);
         GCHECK([MCProcessMonitor shared].interval == 10);
         for (NSNumber *p in s.started)
@@ -562,5 +603,11 @@ MC_GUI_SUITE(processes) {
             if (s.termB.runningCommands.count) MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
             [tp closeTerminal:s.termB];
         }
+        // Back with the key, then away again.
+        GCHECK(MCGuiPerformMenuKey(s.c.window, 38, NSEventModifierFlagCommand | NSEventModifierFlagShift,
+                                   nil, nil));
+        GCHECK(s.panel.window != nil);
+        [s.c toggleProcesses:nil];
+        GCHECK(s.panel.window == nil);
     });
 }

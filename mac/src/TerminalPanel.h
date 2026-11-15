@@ -103,9 +103,23 @@ typedef NS_ENUM(NSInteger, MCPaneDirection) {
 - (void)moveActive:(NSInteger)delta;
 // Close a terminal, or a tab's terminals. A command still running in one,
 // waiting to start, or a background job (see TerminalView runningCommands)
-// is asked about first; NO when the user kept it.
+// is asked about first, in a dialog that answers at once; NO when the user
+// kept it (Cancel, or Show in Processes).
 - (BOOL)closeTerminal:(TerminalView *)terminal;
 - (BOOL)closeTab:(NSUInteger)tab;
+// The same as the user meets it (the tab's ×, its menu's Close, Cmd+W,
+// Ctrl+Shift+W): the question drops down as a sheet from the panel's
+// window, so it is plain why nothing closed yet, and the close happens on
+// its answer: Close, Cancel, or Show in Processes (onShowInProcesses, the
+// terminal kept). While one sheet is up another close only beeps, so a
+// second press of × never tears a terminal down twice. With nothing
+// running, or no window, it closes at once.
+- (void)closeTerminalAsking:(TerminalView *)terminal;
+- (void)closeTabAsking:(NSUInteger)tab;
+// The close question's Show in Processes: the Processes panel with
+// `terminal`'s job selected (`job`: its foreground process group, 0 for a
+// background job only).
+@property(nonatomic, copy) void (^onShowInProcesses)(TerminalView *terminal, pid_t job);
 // Every terminal, unasked (the window is closing): shells hung up and reaped.
 - (void)closeAll;
 - (void)focusActive;
@@ -121,3 +135,7 @@ NSArray<NSString *> *MCRunningCommands(NSArray<TerminalView *> *terminals);
 // once when nothing is running.
 BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
                              NSString *button);
+// That alert, with Show in Processes as a third button when `processes`:
+// answers NSAlertFirstButtonReturn (go ahead), Second (Cancel), Third.
+NSAlert *MCClosingRunningAlert(NSArray<NSString *> *commands, NSString *question,
+                               NSString *button, BOOL processes);

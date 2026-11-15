@@ -547,8 +547,10 @@ const std::vector<Command>& all() {
          nullptr},
         {"minicode.toggleAgents", "Toggle Agents", "View", "shift+cmd+a", A, "toggleAgents:", 0,
          0, nullptr},
-        {"minicode.toggleProcesses", "Toggle Processes", "View", "", A, "toggleProcesses:", 0, 0,
-         nullptr},
+        // minicode's own (VS Code has no such view): J for the jobs agents
+        // leave running, beside Cmd+J's terminal.
+        {"minicode.toggleProcesses", "Toggle Processes", "View", "shift+cmd+j", A,
+         "toggleProcesses:", 0, 0, nullptr},
         {"minicode.toggleIdeLink", "Claude Code IDE Link", "View", "", A, "toggleIdeLink:", 0,
          0, nullptr},
         {"workbench.actions.view.problems", "Problems", "View", "shift+cmd+m", A,

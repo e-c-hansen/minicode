@@ -242,7 +242,7 @@ const std::vector<LinuxRow>& linuxRows() {
         // The Mac's Shift+Cmd+A (PARITY.md 3.5); with Shift, so it works from
         // the terminal too.
         {"minicode.toggleAgents", "ctrl+shift+a", 0, nullptr, nullptr},
-        // The Mac gives View > Toggle Processes no key either.
+        // No key yet; the Mac's is Shift+Cmd+J.
         {"minicode.toggleProcesses", "", 0, nullptr, nullptr},
         // The Claude Code IDE link (PARITY.md 3.9); no key, as on the Mac.
         {"minicode.toggleIdeLink", "", 0, nullptr, nullptr},

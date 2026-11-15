@@ -54,6 +54,11 @@ static char kProcessesPanelKey, kProcessesShownKey;
     return self.processesVisible ? [self processesPanel] : nil;
 }
 
+- (void)showProcessesForTerminal:(TerminalView *)t job:(pid_t)job {
+    if (!self.processesVisible) [self toggleProcesses:nil];
+    [[self processesPanel] revealTerminal:MCControlTerminalID(t) job:job];
+}
+
 // The panel takes the sidebar's place, and gives the tree back when toggled
 // again; the sidebar's width is kept, and a collapsed sidebar opens for it.
 - (void)toggleProcesses:(id)sender {

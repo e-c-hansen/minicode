@@ -31,6 +31,9 @@
     };
     self.terminalPanel.onEmpty = ^{ [weakSelf terminalPanelEmptied]; };
     self.terminalPanel.onNote = ^(NSString *note) { [weakSelf showStatusNote:note]; };
+    self.terminalPanel.onShowInProcesses = ^(TerminalView *t, pid_t job) {
+        [weakSelf showProcessesForTerminal:t job:job];
+    };
     self.terminalPanel.onResizeDock = ^BOOL(CGFloat delta) {
         return [weakSelf resizeTerminalDockBy:delta];
     };
@@ -157,7 +160,7 @@
 // keyboard is elsewhere, so Cmd+W can fall through to closing something else.
 - (BOOL)closeFocusedTerminal {
     if (!(self.terminalVisible && [self.terminalPanel hasFocus])) return NO;
-    [self.terminalPanel closeTerminal:self.terminalPanel.activeTerminal];
+    [self.terminalPanel closeTerminalAsking:self.terminalPanel.activeTerminal];
     return YES;
 }
 
@@ -165,7 +168,7 @@
 // keyboard is.
 - (void)closeTerminal:(id)sender {
     if (!(self.terminalVisible && self.terminalPanel)) { NSBeep(); return; }
-    [self.terminalPanel closeTerminal:self.terminalPanel.activeTerminal];
+    [self.terminalPanel closeTerminalAsking:self.terminalPanel.activeTerminal];
 }
 
 // Shift+Cmd+Return: run the open file in a terminal, typed as if by hand so

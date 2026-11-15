@@ -2682,7 +2682,14 @@ for full-screen programs. Both can be open at once.
   both take a non-terminal argument as "the active one". `make guitest
   SUITES=terminal_splits`.
 - **Closing** (`TerminalView close`, `stopShell`, `_closed`): a terminal with
-  `runningCommands` asks: a command since 133;C, a foreground process group
+  `runningCommands` asks (since 2026-11-15, as the user closes it, the
+  tab's ×, its menu, Cmd+W, Ctrl+Shift+W: `closeTerminalAsking:` and
+  `closeTabAsking:`, a sheet on the window, the close in its handler,
+  `_askingClose` so a second press only beeps; Close, Cancel, and Show in
+  Processes, which shows the Processes panel with the terminal's
+  `foregroundJob` or its group's first process selected,
+  `revealTerminal:job:`, and keeps the terminal; `closeTerminal:` and
+  `closeTab:` still answer at once with runModal, for code and checks): a command since 133;C, a foreground process group
   other than the shell's (`tcgetpgrp`, `proc_name`), a `runCommand:` still
   waiting, and background jobs (processes with the pty as controlling tty,
   `KERN_PROC_TTY`, in other groups, named from `KERN_PROCARGS2`;
@@ -3379,6 +3386,11 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   process group only when every member is the process or below it, so a
   server Claude started never takes Claude's group down; never minicode, its
   group, a shell, pid 1.
+- **The panel** (Shift+Cmd+J, minicode's own key since 2026-11-15): a
+  process row shows a Stop button at its right while hovered (a tracking
+  area) or selected (`outlineViewSelectionDidChange:` sets each row view's
+  `selected`), which runs `stopRow:` with its questions; the memory figure
+  moves left for it.
 - **Mac**: `MCProcessMonitor` starts itself at launch (`+load` observes
   didFinishLaunching), samples on its own serial queue every 10 s, 2 s while
   a panel shows; at each look it asks AppDelegate's `controlControllers` for
