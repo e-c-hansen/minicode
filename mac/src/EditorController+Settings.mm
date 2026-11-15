@@ -1,5 +1,6 @@
 // EditorController+Settings.mm — EditorController: the settings file: color swatches, opacity, Adjust Settings.
 #import "EditorController+Private.h"
+#import "MarkdownMermaid.h"   // MCMermaidDownloadLink
 
 @implementation EditorController (Settings)
 
@@ -100,6 +101,10 @@ static NSColor *ContrastColor(const Rgba &c) {
     if (self.isMarkdown && self.previewMode && [link isKindOfClass:NSString.class] &&
         [link hasPrefix:kTaskLinkPrefix]) {
         [self toggleTaskOnSourceLine:[[link substringFromIndex:kTaskLinkPrefix.length] intValue]];
+        return YES;
+    }
+    if ([self showsRenderedMarkdown] && [link isEqual:MCMermaidDownloadLink]) {
+        [self downloadMermaidForPreview];
         return YES;
     }
     if (self.isMarkdown && self.previewMode && [link isEqual:kMathDownloadLink]) {

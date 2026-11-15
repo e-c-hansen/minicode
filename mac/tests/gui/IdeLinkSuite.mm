@@ -9,7 +9,10 @@
 //
 // mermaid: ```mermaid blocks in the Markdown preview (MarkdownMermaid.h),
 // drawn by a stand-in mmdc that writes a known picture and records how it
-// was run, or fails as mmdc does on a diagram that does not parse.
+// was run, or fails as mmdc does on a diagram that does not parse; and
+// without mmdc, the page's line offering mermaid.js, its download (one
+// not matching the checksum refused), and a stand-in mermaid.js drawing
+// SVG in a WebKit view that loads nothing.
 #import "Harness.h"
 #import "EditorController.h"
 #import "AgentNotes.h"
@@ -18,6 +21,7 @@
 #import "IdeLinkServer.h"
 #import "MarkdownImage.h"
 #import "MarkdownMermaid.h"
+#import <CommonCrypto/CommonDigest.h>
 #include "IdeLink.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -765,6 +769,129 @@ MC_GUI_SUITE(mermaid) {
         GCHECK([c showFile:MCGuiProjectFile(@"other.md")]);
         NSTextView *tv = [c valueForKey:@"textView"];
         GCHECK([tv.string containsString:@"A->>B: hi"]);
+        unsetenv("MINICODE_MMDC");
+    });
+
+    // Without mmdc: the pinned mermaid.js, downloaded from the page. A
+    // stand-in plays it here (the real file is 5.5 MB from the web).
+    static NSString *standIn, *standInHash, *mermaidDir;
+    MCGuiStep(@"no mmdc and no mermaid.js: a line above the diagram offers the download", ^{
+        setenv("MINICODE_MMDC", "/nonexistent/mmdc", 1);
+        unsetenv("MINICODE_MERMAID_JS");
+        mermaidDir = [MCGuiScratch() stringByAppendingPathComponent:@"mermaid"];
+        GCHECK(MCMermaidPath() == nil && MCMermaidJsPath() == nil && MCMermaidDrawerState() == 0);
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:MCGuiProjectFile(@"other.md")]);
+        [c togglePreview:nil];
+        [c togglePreview:nil];
+        NSTextView *tv = [c valueForKey:@"textView"];
+        NSRange link = [tv.string rangeOfString:@"Download Mermaid"];
+        GCHECK(link.location != NSNotFound && [tv.string containsString:@"A->>B: hi"]);
+        if (link.location != NSNotFound)
+            GCHECK([[tv.textStorage attribute:NSLinkAttributeName atIndex:link.location effectiveRange:nil]
+                       isEqual:MCMermaidDownloadLink]);
+        // The line comes before the diagram's source.
+        GCHECK(link.location < [tv.string rangeOfString:@"A->>B: hi"].location);
+    });
+    MCGuiAsync(@"a download that does not match the checksum is refused", 20, ^(MCGuiDone done) {
+        NSString *support = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,
+                                                                NSUserDomainMask, YES).firstObject;
+        const BOOL safe = [support hasPrefix:MCGuiScratch()] ||
+                          [support hasPrefix:[@"/private" stringByAppendingString:MCGuiScratch()]];
+        GCHECK(safe);
+        if (!safe) { done(); return; }
+        standIn = [mermaidDir stringByAppendingPathComponent:@"mermaid.min.js"];
+        MCGuiWriteFile(standIn,
+            @"globalThis.mermaid = (() => { let cfg = {}; return {\n"
+            @"  initialize(c) { cfg = c; },\n"
+            @"  async render(id, src) {\n"
+            @"    let leaked = false;\n"
+            @"    try { await fetch('https://pictures.minicode-test.invalid/leak'); leaked = true; } catch (e) {}\n"
+            @"    const f = document.createElement('iframe');\n"
+            @"    f.src = 'https://pictures.minicode-test.invalid/frame';\n"
+            @"    document.body.appendChild(f);\n"
+            @"    if (src.includes('broken')) throw new Error('Parse error on line 2: broken');\n"
+            @"    return {svg: '<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 120 40\" '\n"
+            @"      + 'style=\"max-width: 120px\"><desc>theme:' + cfg.theme + ' labels:' + cfg.htmlLabels\n"
+            @"      + ' leaked:' + leaked + '</desc><rect width=\"120\" height=\"40\" fill=\"#888\"/></svg>'};\n"
+            @"  } }; })();\n");
+        NSData *bytes = [NSData dataWithContentsOfFile:standIn];
+        unsigned char digest[32];
+        CC_SHA256(bytes.bytes, (CC_LONG)bytes.length, digest);
+        NSMutableString *hex = [NSMutableString string];
+        for (int i = 0; i < 32; i++) [hex appendFormat:@"%02x", digest[i]];
+        standInHash = hex;
+        setenv("MINICODE_MERMAID_DOWNLOAD", [NSURL fileURLWithPath:standIn].absoluteString.UTF8String, 1);
+        MCDownloadMermaid(^(NSString *problem) {
+            MCGuiNote(@"the download said: %@", problem);
+            GCHECK([problem containsString:@"checksum"]);
+            GCHECK(MCMermaidJsPath() == nil && MCMermaidDrawerState() == 2);
+            done();
+        });
+    });
+    MCGuiAsync(@"one that matches is kept; a copy not matching the pinned release is still not used", 20,
+               ^(MCGuiDone done) {
+        setenv("MINICODE_MERMAID_SHA256", standInHash.UTF8String, 1);
+        MCDownloadMermaid(^(NSString *problem) {
+            GCHECK(problem == nil);
+            NSString *support = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,
+                                                                    NSUserDomainMask, YES).firstObject;
+            NSString *kept = [support stringByAppendingPathComponent:@"MiniCode/mermaid/mermaid-12.3.0.min.js"];
+            GCHECK([[NSFileManager defaultManager] fileExistsAtPath:kept]);
+            GCHECK(MCMermaidJsPath() == nil);   // the stand-in is not mermaid.js 12.3.0
+            [[NSFileManager defaultManager] removeItemAtPath:kept error:nil];
+            unsetenv("MINICODE_MERMAID_SHA256");
+            unsetenv("MINICODE_MERMAID_DOWNLOAD");
+            done();
+        });
+    });
+    MCGuiStep(@"with mermaid.js: the diagrams go to it", ^{
+        setenv("MINICODE_MERMAID_JS", standIn.fileSystemRepresentation, 1);
+        GCHECK(MCMermaidDrawerState() == 3);
+        MCGuiWriteFile(MCGuiProjectFile(@"web.md"),
+                       @"# Diagrams\n\n```mermaid\nflowchart LR\n  Web --> Drawn\n```\n\n"
+                       @"Between.\n\n```mermaid\nflowchart LR\n  broken -->\n```\n\nAfter.\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:MCGuiProjectFile(@"web.md")]);
+        NSTextView *tv = [c valueForKey:@"textView"];
+        GCHECK(![tv.string containsString:@"Download Mermaid"]);
+    });
+    MCGuiWait(@"the diagram arrives as a picture, and the broken one's complaint", 40, ^BOOL {
+        NSTextView *tv = [MCGuiController() valueForKey:@"textView"];
+        if ([tv.string containsString:@"Web --> Drawn"]) return NO;
+        NSRange broken = [tv.string rangeOfString:@"broken -->"];
+        if (broken.location == NSNotFound) return NO;
+        NSString *tip = [tv.textStorage attribute:NSToolTipAttributeName atIndex:broken.location
+                                   effectiveRange:nil];
+        return tip.length > 0;
+    });
+    MCGuiStep(@"an SVG at its own size in the page's theme, plain labels, nothing loaded", ^{
+        NSTextView *tv = [MCGuiController() valueForKey:@"textView"];
+        NSTextStorage *st = tv.textStorage;
+        __block MCMarkdownImage *pic = nil;
+        [st enumerateAttribute:NSAttachmentAttributeName inRange:NSMakeRange(0, st.length) options:0
+                    usingBlock:^(id value, NSRange range, BOOL *stop) {
+            (void)range;
+            if ([value isKindOfClass:MCMarkdownImage.class]) { pic = value; *stop = YES; }
+        }];
+        GCHECK(pic != nil);
+        MCGuiNote(@"picture %@", NSStringFromSize(pic.picture.size));
+        GCHECK(NSEqualSizes(pic.picture.size, NSMakeSize(120, 40)));
+        NSRange broken = [tv.string rangeOfString:@"broken -->"];
+        NSString *tip = broken.location == NSNotFound ? nil
+            : [st attribute:NSToolTipAttributeName atIndex:broken.location effectiveRange:nil];
+        GCHECK([tip containsString:@"Parse error on line 2: broken"]);
+        NSString *svg = nil;
+        for (NSString *name in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:MCMermaidCacheDirectory()
+                                                                                   error:nil])
+            if ([name.pathExtension isEqualToString:@"svg"])
+                svg = [NSString stringWithContentsOfFile:[MCMermaidCacheDirectory() stringByAppendingPathComponent:name]
+                                                encoding:NSUTF8StringEncoding error:nil];
+        MCGuiNote(@"the kept SVG: %@", svg);
+        GCHECK([svg containsString:@"theme:dark labels:false leaked:false"]);
+        GCHECK([svg containsString:@"width=\"120\""] && ![svg containsString:@"max-width"]);
+        GCHECK(MCMermaidWebLoadsRefused() >= 1);   // the frame it tried to open
+        unsetenv("MINICODE_MERMAID_JS");
         unsetenv("MINICODE_MMDC");
     });
 

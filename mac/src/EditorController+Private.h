@@ -855,6 +855,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSAttributedString *)mathNoteTypesetting:(NSUInteger)count;
 - (NSAttributedString *)mathNote;
 - (void)downloadTectonicForMath;
+- (void)downloadMermaidForPreview;
 - (NSUInteger)mathNoteLength;
 - (MCMathFormula *)typesetFormulaFor:(const MdRun &)r;
 - (void)markdownMathArrived:(NSNotification *)note;

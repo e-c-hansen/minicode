@@ -709,6 +709,14 @@ static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *an
                 mermaidEnd = i;
                 while (mermaidEnd < to && MermaidDiagram::isMermaidRun(runs[mermaidEnd]))
                     mermaidEnd++;
+            } else if (NSAttributedString *note = [mermaid
+                           downloadNoteForRuns:runs at:i
+                                          font:[NSFont systemFontOfSize:MCZoomed(12)]
+                                         color:Hex(0x9D9D9D)
+                                     linkColor:[[AppSettings shared] markdown:MarkdownColor::Link]]) {
+                // Neither mmdc nor mermaid.js: what would draw the diagrams,
+                // a click away.
+                [out appendAttributedString:note];
             }
         }
         if (lineStart) {
@@ -864,6 +872,19 @@ static BOOL MCTectonicCacheIsEmpty(void) {
         me->_tectonicProblem = [problem copy];
         if (me.isMarkdown && [path isEqualToString:me.currentPath])
             [me renderShownMarkdownKeepingPlace];
+    });
+    [self renderShownMarkdownKeepingPlace];   // "Downloading..."
+}
+
+// "Download Mermaid" on the line above a page's first diagram: mermaid.js
+// is fetched and checked, and the page on show is built again, saying so
+// meanwhile and drawing its diagrams once it is there.
+- (void)downloadMermaidForPreview {
+    if (MCMermaidDownloading()) return;
+    __weak EditorController *weakSelf = self;
+    MCDownloadMermaid(^(NSString *problem) {
+        (void)problem;   // the line above the diagram says it (MCMermaidDownloadProblem)
+        [weakSelf renderShownMarkdownKeepingPlace];
     });
     [self renderShownMarkdownKeepingPlace];   // "Downloading..."
 }
@@ -1223,10 +1244,10 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
 // ones is built again whole.
 - (NSString *)sidePageContextFor:(MCMarkdownSidePreview *)side {
     const Settings &cfg = [AppSettings shared].settings;
-    return [NSString stringWithFormat:@"%@|%.2f|%.3f|%d%d%d%d%d", self.currentPath ?: @"",
+    return [NSString stringWithFormat:@"%@|%.2f|%.3f|%d%d%d%d%d%d", self.currentPath ?: @"",
                                       side.pageWidth, MCZoomScale(), cfg.isDark(),
                                       [self typesetsMath], cfg.mermaid(), cfg.webImages(),
-                                      cfg.math()];
+                                      cfg.math(), MCMermaidDrawerState()];
 }
 
 // Piece k of `page` as text, its source lines as MCMarkdownLine objects
@@ -1558,6 +1579,10 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
     }
     if ([href isEqualToString:kMathDownloadLink]) {
         [self downloadTectonicForMath];
+        return YES;
+    }
+    if ([href isEqualToString:MCMermaidDownloadLink]) {
+        [self downloadMermaidForPreview];
         return YES;
     }
     if ([href hasPrefix:@"#"]) {

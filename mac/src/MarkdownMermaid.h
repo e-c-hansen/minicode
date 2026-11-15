@@ -3,7 +3,12 @@
 // A ```mermaid block is drawn by mermaid-cli's `mmdc` when it is installed
 // (npm install -g @mermaid-js/mermaid-cli), as math is by tectonic: minicode
 // bundles no Mermaid code (it has no third-party code at all) and draws no
-// diagram itself. Each diagram is drawn in the background, one mmdc run at a
+// diagram itself. Without mmdc, a line above the first diagram offers to
+// download one pinned mermaid.js (5.5 MB, kept in Application Support,
+// checked against the SHA-256 in MermaidDiagram.cpp as tectonic is), which
+// then draws each diagram as SVG in one WebKit view that is never in a
+// window, has a non-persistent data store and a content rule list blocking
+// every load, and loads nothing but an empty page. Each diagram is drawn in the background, one mmdc run at a
 // time, as a transparent PNG at twice its size in the preview's theme, and
 // kept in memory and under ~/Library/Caches/MiniCode/mermaid (by a key of
 // its source and theme, MermaidDiagram.h), so a page opened again shows its
@@ -18,6 +23,28 @@
 // mmdc: $MINICODE_MMDC, else found on PATH and the usual folders
 // (MCFindProgram); nil when there is none.
 NSString *MCMermaidPath(void);
+// The pinned mermaid.js: $MINICODE_MERMAID_JS (a file used as it is, for
+// checks), else the downloaded copy when it is there and still matches its
+// checksum; nil otherwise.
+NSString *MCMermaidJsPath(void);
+// Downloads the pinned mermaid.js (from $MINICODE_MERMAID_DOWNLOAD instead,
+// for checks, held to $MINICODE_MERMAID_SHA256 when that is set too, else
+// to the pinned checksum) into Application Support; `done` gets nil or
+// why it failed, on the main thread. One download at a time.
+void MCDownloadMermaid(void (^done)(NSString *problem));
+BOOL MCMermaidDownloading(void);
+// Why the last download failed, until the next one starts; nil otherwise.
+NSString *MCMermaidDownloadProblem(void);
+// The link on the line above a diagram that downloads mermaid.js.
+extern NSString *const MCMermaidDownloadLink;
+// How the page's diagrams can be drawn now, for a page built in pieces to
+// know it must be built again: 0 not at all, 1 downloading mermaid.js,
+// 2 a failed download, 3 by mermaid.js, 4 by mmdc.
+int MCMermaidDrawerState(void);
+// How many loads the drawing view was asked to make, every one refused
+// but its empty page (for checks).
+NSUInteger MCMermaidWebLoadsRefused(void);
+
 // Where drawn diagrams are kept: $MINICODE_MERMAID_CACHE, else
 // ~/Library/Caches/MiniCode/mermaid (at most 50 MB, oldest first out).
 NSString *MCMermaidCacheDirectory(void);
@@ -50,7 +77,17 @@ extern NSString *const MCMermaidKeysKey;
                                lineKey:(NSAttributedStringKey)lineKey
                              complaint:(NSString **)complaint
                                    key:(NSString **)key;
-// The render is done: diagrams it is missing go to mmdc.
+// When diagrams cannot be drawn because neither mmdc nor mermaid.js is
+// there (and markdown.mermaid is on), the line to put above the block at
+// run `i`, the first block of the page only: what is missing and a
+// Download Mermaid link (MCMermaidDownloadLink), or how the download is
+// going. nil otherwise.
+- (NSAttributedString *)downloadNoteForRuns:(const std::vector<MdRun> &)runs
+                                         at:(size_t)i
+                                       font:(NSFont *)font
+                                      color:(NSColor *)color
+                                  linkColor:(NSColor *)linkColor;
+// The render is done: diagrams it is missing go to mmdc or mermaid.js.
 - (void)endPage;
 // Called (on the main thread, once for diagrams arriving together) when a
 // diagram the last page waited for is drawn.
