@@ -1057,10 +1057,16 @@ static const CGFloat kStatusHeight = 26;
 
 // The \input file's source, parsed, from its tab's buffer or the disk;
 // nullptr when it cannot be read. Parsed again only when its text changed.
-- (const LatexDoc *)docOfInputFile:(NSString *)path source:(std::string *)srcOut {
+// An \input file's text as the user has it: its tab's buffer, else the disk.
+- (NSString *)textOfInputFile:(NSString *)path {
     NSString *text = self.inputText ? self.inputText(path) : nil;
     if (!text) text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding
                                                    error:nil];
+    return text;
+}
+
+- (const LatexDoc *)docOfInputFile:(NSString *)path source:(std::string *)srcOut {
+    NSString *text = [self textOfInputFile:path];
     if (!text) return nullptr;
     const std::string src = Utf8(text);
     auto &slot = _inputDocs[Utf8(path)];
@@ -1608,7 +1614,7 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
 - (void)commitInputEdit:(const std::string &)text adding:(BOOL)adding {
     NSString *file = _editingFile;
     NSString *name = file.lastPathComponent;
-    NSString *nowText = self.inputText ? self.inputText(file) : nil;
+    NSString *nowText = [self textOfInputFile:file];
     const std::string now = Utf8(nowText ?: @"");
     if (!nowText || now != _editingSrc) {
         [self setStatus:[NSString stringWithFormat:@"%@ changed while the box was open, "
