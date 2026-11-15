@@ -634,10 +634,25 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     [super viewDidUnhide];
     [self.owner reload];
 }
+- (void)viewWillMoveToWindow:(NSWindow *)w {
+    [super viewWillMoveToWindow:w];
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    if (self.window) [nc removeObserver:self name:NSWindowWillCloseNotification object:self.window];
+    if (w) [nc addObserver:self selector:@selector(windowClosing:) name:NSWindowWillCloseNotification object:w];
+}
 - (void)viewDidMoveToWindow {
     [super viewDidMoveToWindow];
     if (self.window) [self.owner reload];
 }
+// A closed window keeps its views (releasedWhenClosed is NO), so the page
+// would go on answering settings changes with a page it no longer shows:
+// it lets go of everything, as when its tab closes.
+- (void)windowClosing:(NSNotification *)note {
+    (void)note;
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:NSWindowWillCloseNotification object:nil];
+    [self.owner pageClosed];
+}
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 @end
 
 // ------------------------------------------------------------- the page
@@ -725,9 +740,6 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     tc.widthTracksTextView = NO;
     [lm addTextContainer:tc];
     lm.allowsNonContiguousLayout = YES;
-    // Only what is drawn is laid out: idle-time layout of a page of 100,000
-    // rows ran on the main thread long after the page was put away.
-    lm.backgroundLayoutEnabled = NO;
     _text = [[MCReviewTextView alloc] initWithFrame:NSMakeRect(0, 0, 600, 366) textContainer:tc];
     _text.owner = self;
     _text.editable = NO;
