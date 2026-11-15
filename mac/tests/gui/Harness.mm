@@ -54,6 +54,8 @@ static NSString *gSuite;
 static NSString *gStep;
 static NSMutableArray<NSNumber *> *gAnswers;
 static NSMutableArray<NSString *> *gAlerts;
+static NSMutableArray<NSString *> *gSheets;
+static __weak NSWindow *gLastSheetWindow;
 static __weak NSWindow *gKeyWindow;
 
 static void Enqueue(MCGuiItem *item) {
@@ -269,6 +271,8 @@ void MCGuiAnswerAlerts(NSArray<NSNumber *> *answers) {
     [gAnswers addObjectsFromArray:answers];
 }
 NSArray<NSString *> *MCGuiAlertsShown(void) { return [gAlerts copy] ?: @[]; }
+NSArray<NSString *> *MCGuiSheetsShown(void) { return [gSheets copy] ?: @[]; }
+NSWindow *MCGuiLastSheetWindow(void) { return gLastSheetWindow; }
 
 void MCGuiWriteFile(NSString *path, NSString *text) {
     [[NSFileManager defaultManager] createDirectoryAtPath:path.stringByDeletingLastPathComponent
@@ -840,7 +844,10 @@ static void InstallSwizzles(void) {
         return NSAlertFirstButtonReturn;
     });
     Replace(NSAlert.class, @selector(beginSheetModalForWindow:completionHandler:),
-            ^(NSAlert *a, NSWindow *, void (^handler)(NSModalResponse)) {
+            ^(NSAlert *a, NSWindow *window, void (^handler)(NSModalResponse)) {
+        if (!gSheets) gSheets = [NSMutableArray array];
+        [gSheets addObject:a.messageText ?: @""];
+        gLastSheetWindow = window;
         NSModalResponse r = [a runModal];
         if (handler) dispatch_async(dispatch_get_main_queue(), ^{ handler(r); });
     });

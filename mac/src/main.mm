@@ -1502,11 +1502,13 @@ static void BuildMenu(void) {
     [viewMenu addItem:agents];
 
     // What this window's terminals started and what runs in its folder, in
-    // the sidebar's place (ProcessesPanel.h). No key by default: keys.conf
-    // can give it one (minicode.toggleProcesses).
-    [viewMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Toggle Processes"
-                                                 action:@selector(toggleProcesses:)
-                                          keyEquivalent:@""]];
+    // the sidebar's place (ProcessesPanel.h). Shift+Cmd+J, minicode's own.
+    NSMenuItem *processes =
+        [[NSMenuItem alloc] initWithTitle:@"Toggle Processes"
+                                   action:@selector(toggleProcesses:)
+                            keyEquivalent:@"j"];
+    processes.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [viewMenu addItem:processes];
     // Claude Code's /ide for each window (agent.ide-link; IdeLinkServer.h).
     [viewMenu addItem:MCIdeLinkMenuItem()];
 

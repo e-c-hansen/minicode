@@ -4,12 +4,14 @@
 // Source Control are. MCProcessMonitor (ProcessMonitor.h) does the looking;
 // this file only draws and asks.
 //
-// The heading says the folder's total ("1.8 GB in 14 processes"); then a
+// Shift+Cmd+J shows it, and so does the terminal close question's Show in
+// Processes (revealTerminal:job:). The heading says the folder's total ("1.8 GB in 14 processes"); then a
 // group per terminal of the window, orphans (their terminal closed), and
 // "not started here" (other programs whose working folder is in the
 // folder), each with its memory, the processes in it as a tree, children
 // folded under their parent. A row: the name, memory, CPU and listening
-// ports. Actions (right click, and keys): Stop (asks first unless an
+// ports, and a Stop button at its right while the pointer is over it or it
+// is selected. Actions (right click, and keys): Stop (asks first unless an
 // orphan), Open localhost:PORT in the browser pane, Reveal Origin (the
 // terminal), Copy Command Line, Copy Process ID. Return opens the row's
 // first port, else reveals its terminal; Space or Right unfolds; Cmd+Delete
@@ -29,6 +31,10 @@
 - (void)applySettings;
 - (void)focusList;
 - (void)reload;
+// Selects terminal `terminal`'s process `job` (its process group's leader),
+// or with none the first process under that terminal's group, once a look
+// has it on show (within 15 s), and gives the list the keyboard.
+- (void)revealTerminal:(NSInteger)terminal job:(int)job;
 
 // For the GUI checks.
 @property(nonatomic, readonly) NSOutlineView *outline;
@@ -44,4 +50,7 @@
 - (void)revealOriginOfRow:(NSInteger)row;
 - (void)openPortOfRow:(NSInteger)row;
 - (NSMenu *)menuForRow:(NSInteger)row;
+// The row's Stop button (nil for a group or an exited process); shown while
+// the pointer is over the row or it is selected.
+- (NSButton *)stopButtonForRow:(NSInteger)row;
 @end

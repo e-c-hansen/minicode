@@ -148,6 +148,7 @@ static const int kResizeCells = 4;
     // through its content view, and a strong reference here kept a closed
     // window, the panel and every shell in it alive until the app quit.
     __weak NSWindow *_observedWindow;
+    BOOL _askingClose;                            // a close question's sheet is up
 }
 
 - (instancetype)initWithDirectory:(NSString *)dir {
@@ -173,7 +174,7 @@ static const int kResizeCells = 4;
             [weakSelf selectTab:(NSUInteger)i];
             [weakSelf focusActive];
         };
-        self.strip.onClose = ^(NSInteger i) { [weakSelf closeTab:(NSUInteger)i]; };
+        self.strip.onClose = ^(NSInteger i) { [weakSelf closeTabAsking:(NSUInteger)i]; };
         self.strip.onMove = ^(NSInteger from, NSInteger to) {
             [weakSelf moveTab:(NSUInteger)from to:(NSUInteger)to];
         };
@@ -559,7 +560,7 @@ static NSString *MCAskTerminalName(TerminalView *t) {
     [self selectTab:(NSUInteger)item.tag];
     [self splitActiveDown];
 }
-- (void)tabMenuClose:(NSMenuItem *)item { [self closeTab:(NSUInteger)item.tag]; }
+- (void)tabMenuClose:(NSMenuItem *)item { [self closeTabAsking:(NSUInteger)item.tag]; }
 
 // Cmd+T while a terminal has the keyboard (minicode.terminal.newTab, run by
 // the key monitor): a new terminal in a new tab, as Terminal.app's.
@@ -587,6 +588,11 @@ NSArray<NSString *> *MCRunningCommands(NSArray<TerminalView *> *terminals) {
 BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
                              NSString *button) {
     if (commands.count == 0) return YES;
+    return [MCClosingRunningAlert(commands, question, button, NO) runModal] == NSAlertFirstButtonReturn;
+}
+
+NSAlert *MCClosingRunningAlert(NSArray<NSString *> *commands, NSString *question,
+                               NSString *button, BOOL processes) {
     NSAlert *a = [[NSAlert alloc] init];
     a.messageText = question;
     if (commands.count == 1)
@@ -598,14 +604,83 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
     [a addButtonWithTitle:button];      // 1000, Return
     [a addButtonWithTitle:@"Cancel"];   // 1001, Esc
     a.buttons[1].keyEquivalent = @"\033";
-    return [a runModal] == NSAlertFirstButtonReturn;
+    // 1002: what is running, in the Processes panel, the terminal kept.
+    if (processes) [a addButtonWithTitle:@"Show in Processes"];
+    return a;
+}
+
+- (NSAlert *)closingAlertFor:(NSArray<TerminalView *> *)terminals {
+    NSArray<NSString *> *running = MCRunningCommands(terminals);
+    if (running.count == 0) return nil;
+    return MCClosingRunningAlert(running, terminals.count > 1 ? @"Close these terminals?"
+                                                              : @"Close the terminal?",
+                                 @"Close", self.onShowInProcesses != nil);
+}
+
+// What Show in Processes selects: the first terminal's foreground program,
+// else (a background job) its terminal's group.
+- (void)showInProcesses:(NSArray<TerminalView *> *)terminals {
+    if (!self.onShowInProcesses) return;
+    TerminalView *pick = terminals.firstObject;
+    for (TerminalView *t in terminals)
+        if (t.foregroundJob > 0) { pick = t; break; }
+    for (TerminalView *t in terminals)
+        if (pick.runningCommands.count == 0 && t.runningCommands.count) pick = t;
+    self.onShowInProcesses(pick, pick.foregroundJob);
 }
 
 - (BOOL)confirmClosing:(NSArray<TerminalView *> *)terminals {
-    NSArray<NSString *> *running = MCRunningCommands(terminals);
-    return MCConfirmClosingRunning(running, terminals.count > 1 ? @"Close these terminals?"
-                                                                : @"Close the terminal?",
-                                   @"Close");
+    NSAlert *a = [self closingAlertFor:terminals];
+    if (!a) return YES;
+    const NSModalResponse r = [a runModal];
+    if (r == NSAlertThirdButtonReturn) [self showInProcesses:terminals];
+    return r == NSAlertFirstButtonReturn;
+}
+
+// The sheet's way (closeTerminalAsking:): `then` runs with YES for Close,
+// after the sheet has gone; at once with YES when nothing runs.
+- (void)askClosing:(NSArray<TerminalView *> *)terminals then:(void (^)(void))then {
+    NSAlert *a = [self closingAlertFor:terminals];
+    if (!a) { then(); return; }
+    NSWindow *window = self.window;
+    if (!window) {
+        if ([self confirmClosing:terminals]) then();
+        return;
+    }
+    if (_askingClose || window.attachedSheet) { NSBeep(); return; }
+    _askingClose = YES;
+    __weak MCTerminalPanel *weakSelf = self;
+    [a beginSheetModalForWindow:window completionHandler:^(NSModalResponse r) {
+        MCTerminalPanel *s = weakSelf;
+        if (!s) return;
+        s->_askingClose = NO;
+        if (r == NSAlertFirstButtonReturn) then();
+        else if (r == NSAlertThirdButtonReturn) [s showInProcesses:terminals];
+    }];
+}
+
+- (void)closeTerminalAsking:(TerminalView *)terminal {
+    if (terminal && ![terminal isKindOfClass:TerminalView.class]) terminal = self.activeTerminal;
+    if (!terminal || ![self.terminals containsObject:terminal]) return;
+    __weak MCTerminalPanel *weakSelf = self;
+    [self askClosing:@[terminal] then:^{
+        MCTerminalPanel *s = weakSelf;
+        // Still here: something else may have closed it while it asked.
+        if (s && [s.terminals containsObject:terminal]) [s removeTerminal:terminal];
+    }];
+}
+
+- (void)closeTabAsking:(NSUInteger)i {
+    if (i >= _tabs.count) return;
+    MCTerminalTab *tab = _tabs[i];
+    NSArray<TerminalView *> *panes = [tab all];
+    __weak MCTerminalPanel *weakSelf = self;
+    [self askClosing:panes then:^{
+        MCTerminalPanel *s = weakSelf;
+        if (!s) return;
+        const NSUInteger now = [s->_tabs indexOfObject:tab];
+        if (now != NSNotFound) [s removeTab:now panes:[tab all]];
+    }];
 }
 
 // A command queued for a terminal that closes before its prompt never runs;
@@ -622,13 +697,28 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
     // Also Close Terminal's action (Ctrl+Shift+W), which reaches the panel
     // before the window's controller when the keyboard is in a terminal,
     // and closed nothing: the active one, as the controller's would. nil
-    // is still nothing (callers pass a terminal they may have lost).
-    if (terminal && ![terminal isKindOfClass:TerminalView.class]) terminal = self.activeTerminal;
+    // is still nothing (callers pass a terminal they may have lost). From
+    // the menu it is the user's close, so the question is a sheet.
+    if (terminal && ![terminal isKindOfClass:TerminalView.class]) {
+        [self closeTerminalAsking:self.activeTerminal];
+        return NO;
+    }
     for (NSUInteger i = 0; i < _tabs.count; i++) {
         MCTerminalTab *tab = _tabs[i];
         NSUInteger c = 0, r = 0;
         if (![tab find:terminal column:&c row:&r]) continue;
         if (![self confirmClosing:@[terminal]]) return NO;
+        return [self removeTerminal:terminal];
+    }
+    return YES;
+}
+
+// Closes it, unasked (the question, if any, was answered).
+- (BOOL)removeTerminal:(TerminalView *)terminal {
+    for (NSUInteger i = 0; i < _tabs.count; i++) {
+        MCTerminalTab *tab = _tabs[i];
+        NSUInteger c = 0, r = 0;
+        if (![tab find:terminal column:&c row:&r]) continue;
         BOOL hadFocus = [terminal hasFocus];
         NSUInteger flat = [[tab all] indexOfObject:terminal];
         [self noteDroppedCommands:@[terminal]];
@@ -654,6 +744,11 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
     if (i >= _tabs.count) return YES;
     NSArray<TerminalView *> *panes = [_tabs[i] all];
     if (![self confirmClosing:panes]) return NO;
+    [self removeTab:i panes:panes];
+    return YES;
+}
+
+- (void)removeTab:(NSUInteger)i panes:(NSArray<TerminalView *> *)panes {
     [self noteDroppedCommands:panes];
     BOOL hadFocus = NO;
     for (TerminalView *t in panes) {
@@ -663,7 +758,6 @@ BOOL MCConfirmClosingRunning(NSArray<NSString *> *commands, NSString *question,
     }
     [self removeTab:i];
     [self finishClose:hadFocus];
-    return YES;
 }
 
 - (void)closeAll {

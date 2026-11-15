@@ -566,6 +566,8 @@ static const CGFloat kHintsPad = 16;
                     key2:nil label2:nil state:openOr(self.gitPanelVisible)];
     [self appendHintsRow:s key:[self hk:@"minicode.toggleAgents"] label:@"Agents"
                     key2:nil label2:nil state:openOr(self.agentsVisible)];
+    [self appendHintsRow:s key:[self hk:@"minicode.toggleProcesses"] label:@"Processes"
+                    key2:nil label2:nil state:openOr(self.processesVisible)];
     [self appendHintsRow:s key:[self hk:@"workbench.actions.view.problems"] label:@"Problems"
                     key2:nil label2:nil state:openOr(self.problemsVisible)];
     if (self.problemsVisible) {

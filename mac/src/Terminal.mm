@@ -1228,6 +1228,12 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
 - (pid_t)shellPid { return _shellPid; }
 
+- (pid_t)foregroundJob {
+    if (_closed || _shellPid <= 0 || _master < 0) return 0;
+    const pid_t fg = tcgetpgrp(_master);
+    return fg > 0 && fg != _shellPid ? fg : 0;
+}
+
 // The shell's jobs that are not in the foreground: every process whose
 // controlling terminal is this pty, in a process group other than the
 // shell's and the foreground one, so "sleep 100 &" counts, one entry per

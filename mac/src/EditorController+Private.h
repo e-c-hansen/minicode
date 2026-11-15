@@ -354,6 +354,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 @property(nonatomic, assign) BOOL processesVisible;   // the panel in the sidebar's place
 - (MCProcessesPanel *)processesPanel;                 // made on first use
 - (MCProcessesPanel *)processesPanelOnShow;           // nil unless shown
+// The close question's Show in Processes: the panel shown, `t`'s job selected.
+- (void)showProcessesForTerminal:(TerminalView *)t job:(pid_t)job;
 @end
 
 // EditorController+ZoomFit.mm: Page Zoom for the browser and PDFs, and word wrap.

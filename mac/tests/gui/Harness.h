@@ -141,6 +141,10 @@ void MCGuiSetKeyWindow(NSWindow *window);   // what keyWindow reports (nil: the 
 // Answers for the next alerts (NSAlertFirstButtonReturn and so on), in order.
 void MCGuiAnswerAlerts(NSArray<NSNumber *> *answers);
 NSArray<NSString *> *MCGuiAlertsShown(void); // their message texts, so far
+// Those of them begun as sheets (beginSheetModalForWindow:, answered as
+// runModal is, the handler a turn later), with the window each was for.
+NSArray<NSString *> *MCGuiSheetsShown(void);
+NSWindow *MCGuiLastSheetWindow(void);
 // Writes a file (making folders), UTF-8.
 void MCGuiWriteFile(NSString *path, NSString *text);
 // A picture of a view as drawn (cacheDisplayInRect:), written as
