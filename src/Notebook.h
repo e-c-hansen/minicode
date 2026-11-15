@@ -21,6 +21,7 @@ struct Output {
     std::string text;     // the text (for an image, its plain alternative)
     std::string mime;     // an image's: "image/png", "image/jpeg", "image/gif", "image/svg+xml"
     std::string base64;   // an image's data, without whitespace
+    bool result = false;  // the cell's value (execute_result), which Jupyter labels Out [n]
 };
 
 struct Cell {

@@ -115,6 +115,7 @@ void readOutputs(const Json &list, int nbformat, Cell &cell) {
     for (const Json &out : list.elements()) {
         const std::string type = out["output_type"].asString();
         Output o;
+        o.result = type == "execute_result" || type == "pyout";
         if (type == "stream") {
             o.kind = Output::Kind::Stream;
             o.name = out["name"].asString(nbformat >= 4 ? "stdout" : out["stream"].asString("stdout"));
@@ -382,7 +383,7 @@ std::string toMarkdown(const Document &doc) {
                     if (!trimTrailingNewlines(o.text).empty())
                         appendBlock(md, shortenOutput(o.text),
                                     std::string(kOutputLanguage) +
-                                        (o.kind == Output::Kind::Text && !count.empty()
+                                        (o.result && !count.empty()
                                              ? " Out" + count : ""));
                     break;
                 }

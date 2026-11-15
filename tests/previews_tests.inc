@@ -571,6 +571,17 @@ static void testNotebook() {
         CHECK(sawPython);
         CHECK(sawImage);
         CHECK(sawResult && sawStream);
+        // Only the cell's value is labelled: a display (an HTML table) has
+        // no prompt, as in Jupyter.
+        const std::string shown = Notebook::markdownForFile(R"nb({"nbformat": 4, "cells": [
+            {"cell_type": "code", "execution_count": 7, "source": "show()", "outputs": [
+              {"output_type": "display_data", "metadata": {},
+               "data": {"text/html": ["<table><tr><td>t</td></tr></table>"]}},
+              {"output_type": "execute_result", "execution_count": 7, "metadata": {},
+               "data": {"text/plain": ["7"]}}]}]})nb");
+        CHECK(shown.find("```output\nt\n```") != std::string::npos);
+        CHECK(shown.find("```output Out [7]\n7\n```") != std::string::npos);
+        CHECK(shown.find("```python In [7]\nshow()\n```") != std::string::npos);
     }
     GROUP("md:fence-label");
     {
