@@ -56,13 +56,15 @@ void keyOf(const std::vector<MdRun>& runs, Piece& p) {
         h.str(r.url);
         h.str(r.src);
         h.str(r.anchor);
+        h.str(r.poster);
         const long nums[] = {r.heading, r.bold, r.italic, r.strike, r.code, r.codeBlock, r.quote,
                              r.quoteDepth, r.quoteIndent, r.rule, r.table, relTable(r, p.firstTable),
                              r.tableRow, r.tableCol, r.tableCols, r.tableAlign, r.listDepth,
                              r.ordered, r.marker, r.task, r.link, relLine(r, p.base), r.image,
                              r.gap, r.hardBreak, r.math, r.footnote, r.footnotes,
                              r.width.value, r.width.percent, r.height.value, r.height.percent,
-                             r.details, relDetails(r, p.base), r.summary, r.detailsOpen};
+                             r.details, relDetails(r, p.base), r.summary, r.detailsOpen,
+                             r.media};
         for (long v : nums) h.num(v);
     }
     p.key = h.h;
@@ -81,7 +83,7 @@ bool sameRun(const MdRun& a, int baseA, int tableA, const MdRun& b, int baseB, i
            relLine(a, baseA) == relLine(b, baseB) && a.image == b.image && a.src == b.src &&
            a.width == b.width && a.height == b.height && a.details == b.details &&
            relDetails(a, baseA) == relDetails(b, baseB) && a.summary == b.summary &&
-           a.detailsOpen == b.detailsOpen &&
+           a.detailsOpen == b.detailsOpen && a.media == b.media && a.poster == b.poster &&
            a.gap == b.gap && a.hardBreak == b.hardBreak && a.math == b.math &&
            a.footnote == b.footnote && a.footnotes == b.footnotes && a.anchor == b.anchor;
 }

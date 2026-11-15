@@ -337,8 +337,9 @@ $(GUIDIR)/%.mm.o: mac/tests/gui/%.mm $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Imac/tests/gui -MMD -MP -c $< -o $@
 
+# CoreVideo only for the checks, which make a small video to play.
 build/guitest: $(GUI_OBJ)
-	$(CXX) $(CXXFLAGS) $(GUI_OBJ) $(LDFLAGS) -o $@
+	$(CXX) $(CXXFLAGS) $(GUI_OBJ) $(LDFLAGS) -framework CoreVideo -o $@
 
 # A scripted language server (tests/fakelsp/fakelsp.cpp) for the GUI checks
 # of language server features, so they run where no real server is

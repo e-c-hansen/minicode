@@ -247,7 +247,7 @@ goes here first, with tests; the GUI only displays it.
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
   `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
-- Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownEditPanel`,
+- Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownMedia`, `MarkdownEditPanel`,
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
   `CompareView`.
 - `EditorMirror` (the split editor's group without the keyboard).
@@ -2032,6 +2032,23 @@ view is disposed (on `unrealize`), or dispose loops forever.
   at its first fetch from `ephemeralSessionConfiguration`, swapped for the
   step) a URL protocol answering `https://pictures.minicode-test.invalid/`
   half a second late, in both previews, and sees http never asked for.
+- **Video and audio** (2026-11-15, `MarkdownMedia.{h,mm}`, `md:media`):
+  `MdRun::media` (1 video, 2 audio) from `<video>`/`<audio>` (src, else the
+  first `<source src>`; what else is inside is a browser's fallback and is
+  hidden) or a picture whose address has a media extension
+  (`MarkdownParser::mediaKind`). `MCMarkdownMedia` is the attachment: its
+  cell draws the first frame and a play button, or an audio bar, from
+  `MCMediaInfo` (playable, size with rotation, poster, worked out once per
+  URL on AVFoundation's queue; https assets send no cookies), and lays
+  itself out again when that arrives (it finds its own character). A click
+  (`trackMouse:`, or `playInView:frame:` for checks) puts an AVPlayerView
+  over it as a subview of the page's text view, which the cell's drawing
+  keeps in place; scrolled out of view it pauses; `stopMedia` (tab change,
+  window close) calls `MCMarkdownMediaStopAll`; a replaced page frees the
+  attachment, whose dealloc takes the player away. Kept side pieces keep
+  their attachment, so typing does not stop a playing video; a full
+  preview render (a formula or picture arriving) does. The GUI checks make
+  their own clip with AVAssetWriter (guitest links CoreVideo for it).
 - **Task lists** (all ports): `MdRun::task`; the Mac's box is an `MCTaskBox`
   with `NSLinkAttributeName` `minicode-task:<line>` (`clickedOnCell:` never
   fired), applied as a preview edit, never saved by itself (the user ruled out

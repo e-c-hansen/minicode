@@ -14,6 +14,10 @@
 #import "MarkdownEditPanel.h"
 #import "MarkdownMath.h"
 #import "MarkdownImage.h"
+#import "MarkdownMedia.h"
+#import <AVFoundation/AVFoundation.h>
+#import <AVKit/AVKit.h>
+#import <CoreVideo/CoreVideo.h>
 #import "MarkdownSidePreview.h"
 #import "EditorFont.h"
 #include "MarkdownHtml.h"
@@ -202,6 +206,71 @@ NSArray<NSValue *> *PictureSizes(NSTextView *tv) {
         if (![v isKindOfClass:MCMarkdownImage.class]) return;
         const NSUInteger g = [lm glyphIndexForCharacterAtIndex:r.location];
         [out addObject:[NSValue valueWithSize:[lm attachmentSizeForGlyphAtIndex:g]]];
+    }];
+    return out;
+}
+
+// A one-second 160 by 90 H.264 video of ten frames at `path`; NO when this
+// Mac cannot write one.
+BOOL MakeClip(NSString *path) {
+    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    NSError *error = nil;
+    AVAssetWriter *w = [AVAssetWriter assetWriterWithURL:[NSURL fileURLWithPath:path]
+                                                fileType:AVFileTypeMPEG4 error:&error];
+    if (!w) return NO;
+    AVAssetWriterInput *in = [AVAssetWriterInput
+        assetWriterInputWithMediaType:AVMediaTypeVideo
+                       outputSettings:@{AVVideoCodecKey: AVVideoCodecTypeH264,
+                                        AVVideoWidthKey: @160, AVVideoHeightKey: @90}];
+    in.expectsMediaDataInRealTime = NO;
+    AVAssetWriterInputPixelBufferAdaptor *ad = [AVAssetWriterInputPixelBufferAdaptor
+        assetWriterInputPixelBufferAdaptorWithAssetWriterInput:in sourcePixelBufferAttributes:@{
+            (id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA),
+            (id)kCVPixelBufferWidthKey: @160, (id)kCVPixelBufferHeightKey: @90}];
+    if (![w canAddInput:in]) return NO;
+    [w addInput:in];
+    if (![w startWriting]) return NO;
+    [w startSessionAtSourceTime:kCMTimeZero];
+    for (int i = 0; i < 10; i++) {
+        for (int k = 0; k < 2000 && !in.readyForMoreMediaData; k++) usleep(1000);
+        CVPixelBufferRef pb = NULL;
+        if (!ad.pixelBufferPool ||
+            CVPixelBufferPoolCreatePixelBuffer(NULL, ad.pixelBufferPool, &pb) != kCVReturnSuccess)
+            return NO;
+        CVPixelBufferLockBaseAddress(pb, 0);
+        memset(CVPixelBufferGetBaseAddress(pb), 40 + i * 20, CVPixelBufferGetBytesPerRow(pb) * 90);
+        CVPixelBufferUnlockBaseAddress(pb, 0);
+        [ad appendPixelBuffer:pb withPresentationTime:CMTimeMake(i, 10)];
+        CVPixelBufferRelease(pb);
+    }
+    [in markAsFinished];
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    [w finishWritingWithCompletionHandler:^{ dispatch_semaphore_signal(done); }];
+    dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC));
+    return w.status == AVAssetWriterStatusCompleted;
+}
+
+// A second of silence as a WAV file: 8 kHz, 16-bit, mono.
+void MakeTone(NSString *path) {
+    const uint32_t samples = 8000, bytes = samples * 2;
+    NSMutableData *d = [NSMutableData data];
+    auto u32 = [&](uint32_t v) { [d appendBytes:&v length:4]; };
+    auto u16 = [&](uint16_t v) { [d appendBytes:&v length:2]; };
+    [d appendBytes:"RIFF" length:4]; u32(36 + bytes);
+    [d appendBytes:"WAVEfmt " length:8]; u32(16); u16(1); u16(1); u32(8000); u32(16000); u16(2); u16(16);
+    [d appendBytes:"data" length:4]; u32(bytes);
+    [d increaseLengthBy:bytes];
+    [d writeToFile:path atomically:YES];
+}
+
+// The page's players, in page order.
+NSArray<MCMarkdownMedia *> *Players(NSTextView *tv) {
+    NSTextStorage *st = tv.textStorage;
+    NSMutableArray *out = [NSMutableArray array];
+    [st enumerateAttribute:NSAttachmentAttributeName inRange:NSMakeRange(0, st.length) options:0
+                usingBlock:^(id v, NSRange r, BOOL *stop) {
+        (void)r; (void)stop;
+        if ([v isKindOfClass:MCMarkdownMedia.class]) [out addObject:v];
     }];
     return out;
 }
@@ -559,6 +628,63 @@ MC_GUI_SUITE(markdown_preview) {
         // A picture with no size keeps its own (on a line wide enough).
         GCHECK(near(sizes[5].sizeValue.width, MIN(400, line)) &&
                near(sizes[5].sizeValue.height, MIN(400, line) / 2));
+    });
+
+    __block BOOL clipMade = NO;
+    __block MCMarkdownMedia *videoPlayer = nil;
+    MCGuiStep(@"video and audio: a player for each, the fallback inside left out", ^{
+        clipMade = MakeClip(Fixture(@"clip.mp4"));
+        MCGuiNote(@"a clip was made: %d", clipMade);
+        MakeTone(Fixture(@"tone.wav"));
+        MCGuiWriteFile(Fixture(@"media.md"),
+                       @"<video src=\"clip.mp4\">Your browser cannot play this.</video>\n\n"
+                       @"![a tone](tone.wav)\n\n<video src=\"missing.mp4\"></video>\n\nAfter.\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"media.md")] && c.previewMode);
+        NSArray<MCMarkdownMedia *> *players = Players(Text(c));
+        GCHECK(players.count == 2);
+        if (players.count != 2) return;
+        GCHECK(players[0].video && !players[1].video);
+        GCHECK(At(c, @"cannot play this") == NSNotFound);
+        GCHECK(At(c, @"missing.mp4") != NSNotFound);   // no file: its name, as a missing picture's alt
+        videoPlayer = players[0];
+    });
+    MCGuiWait(@"the video's size and first frame", 20, ^BOOL {
+        return !clipMade || MCMarkdownMediaInfo(videoPlayer.url) != nil;
+    });
+    MCGuiStep(@"it shows at its own size with its first frame; a press plays it there", ^{
+        if (!clipMade) { MCGuiNote(@"no clip could be made here: the size and playing go unchecked"); return; }
+        MCMediaInfo *info = MCMarkdownMediaInfo(videoPlayer.url);
+        MCGuiNote(@"playable %d, size %@, poster %@, problem %@", info.playable,
+                  NSStringFromSize(info.size), info.poster, info.problem);
+        GCHECK(info.playable && NSEqualSizes(info.size, NSMakeSize(160, 90)) && info.poster);
+        EditorController *c = MCGuiController();
+        NSTextView *tv = Text(c);
+        NSLayoutManager *lm = tv.layoutManager;
+        [lm ensureLayoutForTextContainer:tv.textContainer];
+        NSTextStorage *st = tv.textStorage;
+        __block NSUInteger at = NSNotFound;
+        [st enumerateAttribute:NSAttachmentAttributeName inRange:NSMakeRange(0, st.length) options:0
+                    usingBlock:^(id v, NSRange r, BOOL *stop) {
+            if (v == videoPlayer) { at = r.location; *stop = YES; }
+        }];
+        GCHECK(at != NSNotFound);
+        if (at == NSNotFound) return;
+        const NSUInteger g = [lm glyphIndexForCharacterAtIndex:at];
+        const NSSize size = [lm attachmentSizeForGlyphAtIndex:g];
+        MCGuiNote(@"laid out at %@", NSStringFromSize(size));
+        GCHECK(NSEqualSizes(size, NSMakeSize(160, 90)));   // its own size, never enlarged
+        const NSRect r = [c textRectForCharacter:at];
+        [videoPlayer playInView:tv frame:NSMakeRect(NSMinX(r), NSMinY(r), size.width, size.height)];
+        GCHECK(videoPlayer.playerView.superview == tv && videoPlayer.playerView.player.rate > 0);
+    });
+    MCGuiStep(@"another file: the player stops and goes", ^{
+        if (!clipMade) return;
+        AVPlayer *player = videoPlayer.playerView.player;
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:corpus]);
+        GCHECK(player.rate == 0 && videoPlayer.playerView == nil);
+        videoPlayer = nil;
     });
 
     __block NSString *topBefore = nil;

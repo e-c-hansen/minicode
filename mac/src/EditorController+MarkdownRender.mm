@@ -2,6 +2,7 @@
 #import "EditorController+Private.h"
 #import "EditorFont.h"
 #import "EditorController+MarkdownIvars.h"
+#import "MarkdownMedia.h"
 #import <objc/runtime.h>
 #include "Notebook.h"
 #include "PageMeasure.h"
@@ -433,6 +434,30 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
             [_mathWanted addObject:@[s, @(display)]];
             a[kMarkdownMath] = @[key, @(++_mathMarks)];
         }
+    }
+    if (r.media) {
+        // A player: a local file, or an https one under the same switch as
+        // web pictures. Anything else shows its name, muted, as a missing
+        // picture shows its alt text.
+        NSString *src = [NSString stringWithUTF8String:r.src.c_str()] ?: @"";
+        NSURL *url = MCMarkdownMediaURL(src, self.currentPath.stringByDeletingLastPathComponent,
+                                        cfg.settings.webImages());
+        if (url) {
+            const NSSize wanted = NSMakeSize(r.width.percent ? 0 : MCZoomed(r.width.value),
+                                             r.height.percent ? 0 : MCZoomed(r.height.value));
+            MCMarkdownMedia *att = [[MCMarkdownMedia alloc]
+                initWithURL:url video:r.media == 1 name:s size:wanted
+               widthPercent:r.width.percent ? r.width.value : 0];
+            NSMutableAttributedString *player = [[NSMutableAttributedString alloc]
+                initWithAttributedString:[NSAttributedString attributedStringWithAttachment:att]];
+            NSMutableDictionary *pa = [NSMutableDictionary dictionary];
+            pa[NSParagraphStyleAttributeName] = ps;
+            if (r.line >= 0) pa[kMarkdownSourceLine] = @(r.line);
+            [player addAttributes:pa range:NSMakeRange(0, player.length)];
+            return player;
+        }
+        if (!r.link) color = Hex(0x9D9D9D);
+        if (s.length == 0) s = src;
     }
     if (r.image) {
         NSString *src = [NSString stringWithUTF8String:r.src.c_str()];

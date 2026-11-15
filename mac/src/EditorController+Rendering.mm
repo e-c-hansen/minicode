@@ -1,5 +1,6 @@
 // EditorController+Rendering.mm — EditorController: what the editor's slot shows: a file's mode, pictures, PDFs, media, viewers, diffs, LaTeX.
 #import "EditorController+Private.h"
+#import "MarkdownMedia.h"
 #import "EditorFont.h"
 #import "PageZoom.h"
 #include "FileDetails.h"
@@ -265,6 +266,7 @@ static void *kMediaItemContext = &kMediaItemContext;
 // Pause and let go of the player, so nothing keeps playing once another file,
 // folder or message takes the slot, or the window closes.
 - (void)stopMedia {
+    MCMarkdownMediaStopAll(self.window);   // a Markdown page's players too
     [self.playerView.player pause];
     [self observeMediaItem:nil];
     self.playerView.player = nil;
