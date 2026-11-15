@@ -1,5 +1,5 @@
-// markdown_media_tests.inc — the `md:img-size` and `md:details` groups of
-// run_tests.cpp:
+// markdown_media_tests.inc — the `md:img-size`, `md:details` and
+// `md:media` groups of run_tests.cpp:
 // what the parser reads of pictures, video, audio and folding blocks
 // written as HTML in Markdown. Included there; mdText, mdRun, mdAny and
 // mdCount are its helpers.
@@ -138,5 +138,56 @@ static void testMarkdownMedia() {
         P::fold(many, shut);
         MarkdownHtml::page(deep, "t");
         CHECK_TIME(cpuMs() - t0, 1000);
+    }
+
+    GROUP("md:media");
+    {
+        auto firstMedia = [](const std::string &md) {
+            for (const MdRun &r : P::parse(md))
+                if (r.media) return r;
+            return MdRun();
+        };
+        // <video src>, with its poster and size; the fallback inside is left out.
+        auto v = P::parse("<video src=\"clip.mp4\" poster=\"still.png\" width=\"320\" controls>"
+                          "Your browser cannot play this.</video>\n\nAfter\n");
+        const MdRun video = firstMedia("<video src=\"clip.mp4\" poster=\"still.png\" width=\"320\">"
+                                       "x</video>\n");
+        CHECK(video.media == 1 && video.src == "clip.mp4" && video.poster == "still.png" &&
+              video.width.value == 320 && video.text == "clip.mp4" && !video.image);
+        CHECK(mdText(v).find("cannot play") == std::string::npos && mdText(v).find("After") != std::string::npos);
+        // A <source> inside gives the address when the tag has none.
+        const MdRun sourced = firstMedia("<video controls>\n<source src=\"media/a.mov\" type=\"video/quicktime\">\n"
+                                         "Fallback text\n</video>\n");
+        CHECK(sourced.media == 1 && sourced.src == "media/a.mov" && sourced.text == "a.mov");
+        CHECK(mdText(P::parse("<video controls>\n<source src=\"a.mov\">\nFallback text\n</video>\n"))
+                  .find("Fallback") == std::string::npos);
+        // Audio, inline in a paragraph too.
+        const MdRun audio = firstMedia("Listen: <audio src=\"https://x.org/talk.mp3?dl=1\"></audio> now.\n");
+        CHECK(audio.media == 2 && audio.src == "https://x.org/talk.mp3?dl=1" && audio.text == "talk.mp3");
+        CHECK(mdText(P::parse("Listen: <audio src=\"t.mp3\"></audio> now.\n")).find("now.") !=
+              std::string::npos);
+        // A picture whose address is a video or a sound is a player.
+        const MdRun pic = firstMedia("![The demo](demo/run.MP4)\n");
+        CHECK(pic.media == 1 && !pic.image && pic.text == "The demo" && pic.src == "demo/run.MP4");
+        CHECK(firstMedia("![](a.m4a#t=3)\n").media == 2 && firstMedia("![](a.m4a)\n").text == "a.m4a");
+        CHECK(firstMedia("![x](a.png)\n").media == 0 && firstMedia("![x](a.mp4.png)\n").media == 0);
+        CHECK(P::mediaKind("x.webm") == 0 && P::mediaKind("dir.mp4/file") == 0 &&
+              P::mediaKind("a.wav") == 2 && P::mediaKind("a.m4v?x=1") == 1);
+        // No address at all: nothing shows, and no player.
+        CHECK(firstMedia("<video controls></video>\n").media == 0);
+        // The side preview's pieces see the address and the poster.
+        auto one = P::parse("<video src=a.mp4 poster=p.png></video>\n");
+        auto two = P::parse("<video src=a.mp4 poster=q.png></video>\n");
+        const auto pa = MarkdownPage::split(one), pb = MarkdownPage::split(two);
+        CHECK(pa.size() == 1 && pb.size() == 1 && !MarkdownPage::alike(pa[0], pb[0]));
+        // Export as HTML: players with the browser's controls, for relative
+        // and https addresses only.
+        const std::string html = MarkdownHtml::page(
+            "<video src=\"clip.mp4\" poster=\"still.png\" width=\"320\"></video>\n\n"
+            "![talk](https://x.org/t.mp3)\n\n<video src=\"javascript:alert(1)\"></video>\n", "t");
+        CHECK(html.find("<video controls src=\"clip.mp4\" poster=\"still.png\" width=\"320\">clip.mp4</video>") !=
+              std::string::npos);
+        CHECK(html.find("<audio controls src=\"https://x.org/t.mp3\">talk</audio>") != std::string::npos);
+        CHECK(html.find("javascript") == std::string::npos || html.find("src=\"javascript") == std::string::npos);
     }
 }

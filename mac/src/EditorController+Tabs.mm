@@ -1,5 +1,6 @@
 // EditorController+Tabs.mm — EditorController: tabs, closed tabs, a tab's menu, saving.
 #import "EditorController+Private.h"
+#import "MarkdownMedia.h"
 #import "EditorController+TabsIvars.h"
 #import "TextKit2.h"
 
@@ -498,6 +499,7 @@
     [self saveBeforeLeavingFormatSave];   // Cmd+S is never lost to a tab switch
     NSTextView *tv = self.textView;
     [self.markdownEditPanel close];
+    MCMarkdownMediaStopAll(self.window);   // a Markdown page's video or audio stops with its tab
     [self sidePreviewTabWillLeave:t];   // the page beside the source: where it was
     [_viewers commitEditing];   // a CSV cell typed into lands in this tab's file
     // A color pick saves the settings file a moment later (colorPicked:);

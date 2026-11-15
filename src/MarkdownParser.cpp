@@ -347,6 +347,16 @@ MdLength htmlLength(const std::map<std::string, std::string>& attrs, const char*
     return out;
 }
 
+// A media address's file name, what stands in for its player where there
+// is none: the last part of its path, without a query or fragment.
+std::string mediaName(const std::string& src) {
+    std::string path = src.substr(0, src.find_first_of("?#"));
+    while (!path.empty() && path.back() == '/') path.pop_back();
+    const size_t slash = path.find_last_of('/');
+    std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+    return name.empty() ? src : name;
+}
+
 struct Tag {
     std::string name;           // lowercased; empty for a comment or declaration
     bool closing = false;
@@ -482,7 +492,8 @@ bool isBlockTag(const std::string& name) {
 
 struct Piece {
     enum Kind { Text, Delim, Code, Image, Soft, Hard, TagOpen, TagClose, Math, Note,
-                DetailsOpen, DetailsClose, SummaryOpen, SummaryClose };
+                DetailsOpen, DetailsClose, SummaryOpen, SummaryClose,
+                MediaOpen, MediaClose, Source };
     Kind kind = Text;
     std::string text;       // what shows (a delimiter's remaining characters)
     size_t at = 0;          // where it starts in the block's text
@@ -492,7 +503,10 @@ struct Piece {
     bool link = false;
     std::string url;        // a link's target (for a tag, <a>'s href)
     std::string src;        // an image's source
-    MdLength width, height; // an <img>'s size
+    MdLength width, height; // an <img>'s size, or a <video>'s
+    int media = 0;          // MediaOpen: 1 video, 2 audio
+    std::string poster;     // MediaOpen: a <video>'s poster
+    bool hidden = false;    // inside <video> or <audio>: fallback, not shown
     // A run of * _ or ~ still to be matched.
     char dc = 0;
     int count = 0, orig = 0;
@@ -1226,6 +1240,27 @@ private:
             out.push_back(std::move(im));
             return;
         }
+        if (tag.name == "video" || tag.name == "audio" || tag.name == "source") {
+            Piece m;
+            m.at = at;
+            if (tag.name == "source") {
+                if (tag.closing) return;
+                m.kind = Piece::Source;
+            } else {
+                m.kind = tag.closing ? Piece::MediaClose : Piece::MediaOpen;
+                m.media = tag.name == "video" ? 1 : 2;
+            }
+            if (!tag.closing) {
+                const auto src = tag.attrs.find("src");
+                if (src != tag.attrs.end()) m.src = trim(src->second);
+                const auto poster = tag.attrs.find("poster");
+                if (poster != tag.attrs.end() && m.media == 1) m.poster = trim(poster->second);
+                m.width = htmlLength(tag.attrs, "width");
+                m.height = htmlLength(tag.attrs, "height");
+            }
+            out.push_back(std::move(m));
+            return;
+        }
         if (tag.name == "details" || tag.name == "summary") {
             Piece d;
             d.kind = tag.name == "details" ? (tag.closing ? Piece::DetailsClose : Piece::DetailsOpen)
@@ -1309,6 +1344,26 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
         processEmphasis(pieces);
     }
 
+    // <video> and <audio>: the address from a <source> inside when the tag
+    // has none, and what else is inside (a browser's fallback) hidden.
+    for (size_t k = 0; k < pieces.size(); k++) {
+        if (pieces[k].kind != Piece::MediaOpen) continue;
+        size_t e = k + 1;
+        while (e < pieces.size() && pieces[e].kind != Piece::MediaClose &&
+               pieces[e].kind != Piece::MediaOpen)
+            e++;
+        for (size_t q = k + 1; q < e; q++) {
+            Piece& in = pieces[q];
+            if (in.kind == Piece::Source && pieces[k].src.empty() && !in.src.empty())
+                pieces[k].src = in.src;
+            if (in.kind == Piece::Text || in.kind == Piece::Code || in.kind == Piece::Image ||
+                in.kind == Piece::Math || in.kind == Piece::Soft || in.kind == Piece::Hard ||
+                in.kind == Piece::Note)
+                in.hidden = true;
+        }
+        k = e > k ? e - 1 : k;
+    }
+
     // HTML tags style what lies between them.
     int tb = 0, ti = 0, ts = 0, tc = 0;
     std::vector<std::string> hrefs;
@@ -1339,8 +1394,10 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
 
     // Line breaks at either end of the text show nothing.
     auto shows = [](const Piece& p) {
+        if (p.hidden) return false;
         return p.kind == Piece::Image || p.kind == Piece::Code || p.kind == Piece::Math ||
-               p.kind == Piece::Note || (p.kind == Piece::Text && !p.text.empty());
+               p.kind == Piece::Note || (p.kind == Piece::Text && !p.text.empty()) ||
+               (p.kind == Piece::MediaOpen && !p.src.empty());
     };
     size_t first = 0, last = pieces.size();
     while (first < last && !shows(pieces[first])) first++;
@@ -1389,6 +1446,8 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
         }
         if (k < first || k >= last) continue;
         if (p.kind == Piece::TagOpen || p.kind == Piece::TagClose) continue;
+        if (p.hidden || p.kind == Piece::MediaClose || p.kind == Piece::Source) continue;
+        if (p.kind == Piece::MediaOpen && p.src.empty()) continue;
         if (ownLine && p.kind == Piece::Math && p.display) {
             // The spaces and breaks before it end in a line break instead.
             while (out.size() > begin && !out.back().image && !out.back().math &&
@@ -1437,6 +1496,21 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
             r.width = p.width;
             r.height = p.height;
             canMerge = false;
+            // ![clip](demo.mp4): a player, as GitHub shows one.
+            if (const int kind = MarkdownParser::mediaKind(p.src)) {
+                r.image = false;
+                r.media = kind;
+                if (r.text.empty()) r.text = mediaName(p.src);
+            }
+            break;
+        case Piece::MediaOpen:
+            r.media = p.media;
+            r.src = p.src;
+            r.poster = p.poster;
+            r.width = p.width;
+            r.height = p.height;
+            r.text = mediaName(p.src);
+            canMerge = false;
             break;
         case Piece::Note:
             r.footnote = p.note;
@@ -1463,7 +1537,7 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
             if (afterBreak) r.text.erase(0, r.text.find_first_not_of(' '));
             break;
         }
-        if (r.text.empty() && !r.image) continue;
+        if (r.text.empty() && !r.image && !r.media) continue;
         afterBreak = p.kind == Piece::Soft || p.kind == Piece::Hard;
         if (canMerge && mergeable && !out.empty()) {
             MdRun& prev = out.back();
@@ -2769,7 +2843,7 @@ void emitBlock(const Block& b, const Context& ctx, int& tables, std::vector<MdRu
 bool visible(const std::vector<MdRun>& runs, size_t from) {
     for (size_t k = from; k < runs.size(); k++) {
         const MdRun& r = runs[k];
-        if (r.image || r.rule || r.codeBlock || r.table ||
+        if (r.image || r.media || r.rule || r.codeBlock || r.table ||
             r.text.find_first_not_of(" \t\n") != std::string::npos)
             return true;
     }
@@ -3055,6 +3129,16 @@ std::string MarkdownParser::anchor(const std::string& headingText) {
         out += encodeUtf8(c);
     }
     return out;
+}
+
+int MarkdownParser::mediaKind(const std::string& src) {
+    const std::string path = src.substr(0, src.find_first_of("?#"));
+    const size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos || path.find('/', dot) != std::string::npos) return 0;
+    const std::string ext = lowerAscii(path.substr(dot + 1));
+    if (ext == "mp4" || ext == "mov" || ext == "m4v") return 1;
+    if (ext == "mp3" || ext == "m4a" || ext == "wav") return 2;
+    return 0;
 }
 
 std::string MarkdownParser::extensionForLanguage(const std::string& lang) {

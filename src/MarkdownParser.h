@@ -71,6 +71,16 @@ struct MdRun {
     // An <img>'s width and height attributes. A picture with one of them
     // keeps its proportions; neither makes it wider than the line.
     MdLength width, height;
+    // Video or audio: 1 a video, 2 audio, from <video> and <audio> (their
+    // src or the first <source src> inside; what else they hold is the
+    // fallback a browser shows only when it cannot play, so it is left
+    // out) or a picture whose address ends in .mp4, .mov, .m4v, .mp3, .m4a
+    // or .wav (GitHub shows uploaded videos that way). `src` is its
+    // address as written, `text` what a port that does not play it shows
+    // (the alt text, else the file's name), `poster` a <video poster>, and
+    // `width` and `height` as for a picture.
+    int  media = 0;
+    std::string poster;
     // Vertical space. Every block ends with a "\n" run of its own; between
     // two blocks comes one more "\n" run with `gap` set, which a GUI may draw
     // shorter than a line (the items of a tight list have none between
@@ -167,4 +177,8 @@ public:
     // The extension SyntaxHighlighter knows a fenced block's language by
     // ("python" and "py" give "py", "c++" gives "cpp"), or "" for none.
     static std::string extensionForLanguage(const std::string& lang);
+    // The kind of media an address names by its extension, as MdRun::media
+    // counts it: 1 video (.mp4, .mov, .m4v), 2 audio (.mp3, .m4a, .wav), 0
+    // neither. A query or fragment after it is allowed.
+    static int mediaKind(const std::string& src);
 };

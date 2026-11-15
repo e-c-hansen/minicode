@@ -143,6 +143,15 @@ bool pictureAllowed(const std::string& src) {
     return true;
 }
 
+// A video's, audio's or poster's address: relative or https.
+bool mediaAllowed(const std::string& src) {
+    for (const std::string& form : readings(src)) {
+        const std::string s = schemeOf(form);
+        if (!(s.empty() || s == "https")) return false;
+    }
+    return true;
+}
+
 // The end of a paragraph, heading, item or line of display math: a "\n"
 // run that is neither the space between blocks nor a line break inside a
 // paragraph.
@@ -419,7 +428,19 @@ private:
     std::string piece(const MdRun& r) {
         std::string s;
         if (r.hardBreak) return "<br>\n";
-        if (r.image) {
+        if (r.media) {
+            // A player with the browser's own controls, for an address a
+            // picture could have (relative or https).
+            if (!r.src.empty() && mediaAllowed(r.src)) {
+                const char* tag = r.media == 1 ? "video" : "audio";
+                s = std::string("<") + tag + " controls src=\"" + escape(r.src) + "\"";
+                if (!r.poster.empty() && mediaAllowed(r.poster)) s += " poster=\"" + escape(r.poster) + "\"";
+                if (r.media == 1) s += size("width", r.width) + size("height", r.height);
+                s += ">" + escape(r.text) + "</" + tag + ">";
+            } else {
+                s = escape(r.text.empty() ? r.src : r.text);
+            }
+        } else if (r.image) {
             if (!r.src.empty() && pictureAllowed(r.src))
                 s = "<img src=\"" + escape(r.src) + "\" alt=\"" + escape(r.text) + "\"" +
                     size("width", r.width) + size("height", r.height) + ">";
@@ -505,7 +526,7 @@ const char* const kStyle =
     "th, td { padding: 6px 13px; border: 1px solid #d1d9e0; }\n"
     "th { background: #f6f8fa; }\n"
     "hr { height: .25em; margin: 24px 0; border: 0; background: #d1d9e0; }\n"
-    "img { max-width: 100%; }\n"
+    "img, video { max-width: 100%; }\n"
     ".task-list-item { list-style: none; }\n"
     ".task-list-item input { margin: 0 .3em .25em -1.4em; vertical-align: middle; }\n"
     ".footnotes { font-size: 85%; color: #59636e; }\n"
