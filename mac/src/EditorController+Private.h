@@ -129,6 +129,10 @@ static NSString *const kMathDownloadLink = @"minicode-math:download-tectonic";
 // Link value on a task's box in rendered Markdown, followed by its 0-based
 // source line: a click ticks or clears it.
 static NSString *const kTaskLinkPrefix = @"minicode-task:";
+// Link value on a <details> block's summary in rendered Markdown:
+// "minicode-details:<tag line>:<summary run's line>:<1 open, 0 closed>". A
+// click opens or closes it (toggleMarkdownDetails:atIndex:inPage:).
+static NSString *const kDetailsLinkPrefix = @"minicode-details:";
 
 // Panel, text and syntax colors come from the settings file (AppSettings);
 // Hex is for the fixed accents that aren't configurable.
@@ -902,6 +906,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)closeSidePreview;
 - (void)sidePreviewBarDraggedTo:(CGFloat)x;
 - (BOOL)sidePreviewClickedLink:(id)link atIndex:(NSUInteger)index;
+- (BOOL)toggleMarkdownDetails:(NSString *)link atIndex:(NSUInteger)index inPage:(NSTextView *)page;
+- (std::map<int, bool>)markdownDetailsOpened;
 - (BOOL)sidePageIsCurrent;
 - (BOOL)catchUpSidePage;
 - (void)renderSidePreviewAfterTyping;

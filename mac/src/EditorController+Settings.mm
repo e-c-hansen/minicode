@@ -107,6 +107,9 @@ static NSColor *ContrastColor(const Rgba &c) {
         [self downloadMermaidForPreview];
         return YES;
     }
+    if ([self showsRenderedMarkdown] && [link isKindOfClass:NSString.class] &&
+        [link hasPrefix:kDetailsLinkPrefix])
+        return [self toggleMarkdownDetails:link atIndex:i inPage:tv];
     if (self.isMarkdown && self.previewMode && [link isEqual:kMathDownloadLink]) {
         [self downloadTectonicForMath];
         return YES;

@@ -195,6 +195,7 @@ public:
                 i++;
                 continue;
             }
+            details(r);
             if (r.footnotes && !inNotes_) {
                 closeTo(0);
                 out_ += "<section class=\"footnotes\">\n";
@@ -230,6 +231,10 @@ public:
             i = end < runs_.size() && endsUnit(runs_[end]) ? end + 1 : end;
         }
         closeTo(0);
+        while (!details_.empty()) {
+            details_.pop_back();
+            out_ += "</details>\n";
+        }
         if (inNotes_) out_ += "</section>\n";
         return out_;
     }
@@ -240,6 +245,25 @@ private:
     std::vector<Box> open_;
     bool inNotes_ = false;
     std::set<std::string> anchors_;   // the heading anchors given
+    std::vector<int> details_;        // the <details> open, by their tags' lines
+
+    // Opens and closes <details> to put the writer in the ones `r` is in.
+    // They hold whole blocks, so lists and quotes close around them.
+    void details(const MdRun& r) {
+        const size_t d = (size_t)std::max(0, r.details);
+        size_t keep = std::min(details_.size(), d);
+        if (d > 0 && keep == d && details_[d - 1] != r.detailsLine) keep = d - 1;
+        if (keep == details_.size() && d == details_.size()) return;
+        closeTo(0);
+        while (details_.size() > keep) {
+            details_.pop_back();
+            out_ += "</details>\n";
+        }
+        while (details_.size() < d) {
+            details_.push_back(details_.size() + 1 == d ? r.detailsLine : -1);
+            out_ += details_.size() == d && r.detailsOpen ? "<details open>\n" : "<details>\n";
+        }
+    }
 
     void closeTo(size_t keep) {
         while (open_.size() > keep) {
@@ -322,6 +346,12 @@ private:
             return;
         }
         enter(r, false);
+        if (r.summary) {
+            out_ += "<summary>";
+            inline_(from, to);
+            out_ += "</summary>\n";
+            return;
+        }
         if (r.heading > 0) {
             std::string title;
             for (size_t k = from; k < to; k++) title += runs_[k].text;

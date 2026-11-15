@@ -60,6 +60,24 @@ NSUInteger LinkAt(EditorController *c, NSString *href) {
     return found;
 }
 
+// The first character carrying a link that starts with `prefix`, and the
+// link, or NSNotFound.
+NSUInteger LinkStarting(EditorController *c, NSString *prefix, NSString *__strong *link) {
+    NSTextStorage *st = Text(c).textStorage;
+    __block NSUInteger found = NSNotFound;
+    __block NSString *seen = nil;
+    [st enumerateAttribute:NSLinkAttributeName inRange:NSMakeRange(0, st.length) options:0
+                usingBlock:^(id v, NSRange r, BOOL *stop) {
+        if ([v isKindOfClass:NSString.class] && [v hasPrefix:prefix]) {
+            found = r.location;
+            seen = v;
+            *stop = YES;
+        }
+    }];
+    if (link) *link = seen;
+    return found;
+}
+
 // Whether character `i` is in the part of the page on show.
 BOOL Showing(EditorController *c, NSUInteger i) {
     NSRect r = [c textRectForCharacter:i];
@@ -401,6 +419,40 @@ MC_GUI_SUITE(markdown_preview) {
                NSHeight(scroll.contentView.bounds));
         [panel close];
         GCHECK([c showFile:corpus]);
+    });
+
+    MCGuiStep(@"a <details> block shows closed; a click on its summary opens and closes it", ^{
+        EditorController *c = MCGuiController();
+        NSArray *sourceLines = [original componentsSeparatedByString:@"\n"];
+        const NSUInteger tag = [sourceLines indexOfObject:@"<details>"];
+        GCHECK(tag != NSNotFound);
+        // Closed, as GitHub shows it: a triangle, the summary, no body.
+        GCHECK(At(c, @"\u25B8 A summary, in bold") != NSNotFound);
+        GCHECK(At(c, @"Markdown again, after a blank line.") == NSNotFound);
+        NSString *link = nil;
+        const NSUInteger at = LinkStarting(c, kDetailsLinkPrefix, &link);
+        MCGuiNote(@"details link %@", link);
+        NSString *want = [NSString stringWithFormat:@"%@%lu:", kDetailsLinkPrefix, (unsigned long)tag];
+        GCHECK(at != NSNotFound && [link hasPrefix:want]);
+        if (at == NSNotFound) return;
+        NSString *source = [c.sourceText copy];
+        GCHECK([c textView:Text(c) clickedOnLink:link atIndex:at]);
+        GCHECK(At(c, @"\u25BE A summary, in bold") != NSNotFound);
+        GCHECK(At(c, @"Markdown again, after a blank line.") != NSNotFound);
+        GCHECK([c.sourceText isEqualToString:source]);   // the source is untouched
+        // Kept while the tab is open: a render keeps it open.
+        [c renderMarkdownKeepingPlace];
+        GCHECK(At(c, @"Markdown again, after a blank line.") != NSNotFound);
+        // A second click closes it, and a third opens it for the steps below.
+        NSString *again = nil;
+        const NSUInteger at2 = LinkStarting(c, kDetailsLinkPrefix, &again);
+        GCHECK(at2 != NSNotFound && [again hasSuffix:@":1"]);
+        if (at2 == NSNotFound) return;
+        GCHECK([c textView:Text(c) clickedOnLink:again atIndex:at2]);
+        GCHECK(At(c, @"Markdown again, after a blank line.") == NSNotFound);
+        const NSUInteger at3 = LinkStarting(c, kDetailsLinkPrefix, &again);
+        GCHECK([c textView:Text(c) clickedOnLink:again atIndex:at3]);
+        GCHECK(At(c, @"Markdown again, after a blank line.") != NSNotFound);
     });
 
     MCGuiStep(@"an edit after the file changed underneath goes to the clipboard, and says so", ^{

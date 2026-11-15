@@ -293,9 +293,33 @@ struct Notes {
 };
 
 // What the inline pass looks things up in.
+// The <details> blocks open where the parser is: one entry a level, the
+// innermost last, carried from block to block, since a block's body is
+// Markdown between the HTML blocks holding its tags.
+struct Details {
+    struct Open {
+        int line = -1;          // its <details> tag's
+        bool open = false;      // the tag's open attribute
+        bool inSummary = false;
+    };
+    std::vector<Open> stack;
+    long changes = 0;   // how many tags have been read, to tell a block that held one
+    void stamp(MdRun& r) const {
+        r.details = (int)stack.size();
+        r.detailsLine = stack.empty() ? -1 : stack.back().line;
+        r.detailsOpen = !stack.empty() && stack.back().open;
+        r.summary = !stack.empty() && stack.back().inSummary;
+    }
+    bool same(const MdRun& a, const MdRun& b) const {
+        return a.details == b.details && a.detailsLine == b.detailsLine &&
+               a.summary == b.summary && a.detailsOpen == b.detailsOpen;
+    }
+};
+
 struct Context {
     const Refs& refs;
     Notes* notes;
+    Details* details;
 };
 
 // ------------------------------------------------------------ inline HTML
@@ -457,13 +481,14 @@ bool isBlockTag(const std::string& name) {
 // ------------------------------------------------------------ inline pass
 
 struct Piece {
-    enum Kind { Text, Delim, Code, Image, Soft, Hard, TagOpen, TagClose, Math, Note };
+    enum Kind { Text, Delim, Code, Image, Soft, Hard, TagOpen, TagClose, Math, Note,
+                DetailsOpen, DetailsClose, SummaryOpen, SummaryClose };
     Kind kind = Text;
     std::string text;       // what shows (a delimiter's remaining characters)
     size_t at = 0;          // where it starts in the block's text
     int bold = 0, italic = 0, strike = 0;
     bool codeTag = false;   // inside <code> or <kbd>
-    bool display = false;   // Math: display math, not inline
+    bool display = false;   // Math: display math, not inline; DetailsOpen: open
     bool link = false;
     std::string url;        // a link's target (for a tag, <a>'s href)
     std::string src;        // an image's source
@@ -1201,9 +1226,33 @@ private:
             out.push_back(std::move(im));
             return;
         }
+        if (tag.name == "details" || tag.name == "summary") {
+            Piece d;
+            d.kind = tag.name == "details" ? (tag.closing ? Piece::DetailsClose : Piece::DetailsOpen)
+                                           : (tag.closing ? Piece::SummaryClose : Piece::SummaryOpen);
+            d.at = at;
+            d.display = !tag.closing && tag.attrs.count("open") > 0;
+            // A summary is bold too: the tag after this one says so.
+            if (tag.name == "summary" && tag.closing) {
+                Piece t;
+                t.kind = Piece::TagClose;
+                t.tag = 1;
+                t.at = at;
+                out.push_back(std::move(t));
+            }
+            out.push_back(d);
+            if (tag.name == "summary" && !tag.closing) {
+                Piece t;
+                t.kind = Piece::TagOpen;
+                t.tag = 1;
+                t.at = at;
+                out.push_back(std::move(t));
+            }
+            return;
+        }
         int style = 0;
         const std::string& n = tag.name;
-        if (n == "b" || n == "strong" || n == "summary" ||
+        if (n == "b" || n == "strong" ||
             (n.size() == 2 && n[0] == 'h' && n[1] >= '1' && n[1] <= '6'))
             style = 1;
         else if (n == "i" || n == "em") style = 2;
@@ -1302,16 +1351,43 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
     const bool ownLine = base.heading == 0 && !base.table;
     const size_t begin = out.size();
     bool lineAfterMath = false;   // display math ended the line: the next text starts one
+    Details* details = ctx.details;
     auto newline = [&](int line) {
         MdRun nl = base;
         nl.text = "\n";
         nl.line = line;
+        if (details) details->stamp(nl);
         out.push_back(std::move(nl));
     };
 
     bool mergeable = false, afterBreak = false;
-    for (size_t k = first; k < last; k++) {
+    for (size_t k = 0; k < pieces.size(); k++) {
         const Piece& p = pieces[k];
+        // <details> and <summary> count wherever they are, even with
+        // nothing shown around them; they show nothing themselves.
+        if (p.kind == Piece::DetailsOpen || p.kind == Piece::DetailsClose ||
+            p.kind == Piece::SummaryOpen || p.kind == Piece::SummaryClose) {
+            if (!details) continue;
+            details->changes++;
+            auto& st = details->stack;
+            if (p.kind == Piece::DetailsOpen) {
+                if (st.size() < 64) st.push_back({lineOf(p.at), p.display, false});
+            } else if (p.kind == Piece::DetailsClose) {
+                if (!st.empty()) st.pop_back();
+            } else if (!st.empty()) {
+                const bool closing = p.kind == Piece::SummaryClose;
+                // The summary ends its line: the break before </summary>
+                // ends a paragraph, so the body starts one of its own.
+                if (closing && st.back().inSummary && out.size() > begin &&
+                    out.back().hardBreak && out.back().summary) {
+                    out.back().hardBreak = false;
+                    mergeable = false;
+                }
+                st.back().inSummary = !closing;
+            }
+            continue;
+        }
+        if (k < first || k >= last) continue;
         if (p.kind == Piece::TagOpen || p.kind == Piece::TagClose) continue;
         if (ownLine && p.kind == Piece::Math && p.display) {
             // The spaces and breaks before it end in a line break instead.
@@ -1333,6 +1409,7 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
             afterBreak = true;
         }
         MdRun r = base;
+        if (details) details->stamp(r);
         r.bold = base.bold || p.bold > 0;
         r.italic = base.italic || p.italic > 0;
         r.strike = base.strike || p.strike > 0;
@@ -1392,7 +1469,7 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
             MdRun& prev = out.back();
             if (prev.bold == r.bold && prev.italic == r.italic && prev.strike == r.strike &&
                 prev.code == r.code && prev.link == r.link && prev.url == r.url &&
-                prev.line == r.line) {
+                prev.line == r.line && (!details || details->same(prev, r))) {
                 prev.text += r.text;
                 continue;
             }
@@ -2548,6 +2625,7 @@ Doc analyze(const std::string& md) {
 // Appends the runs of one block, without the space around it.
 void emitBlock(const Block& b, const Context& ctx, int& tables, std::vector<MdRun>& out) {
     const size_t start = out.size();
+    const long before = ctx.details ? ctx.details->changes : 0;
     MdRun base;
     base.quote = b.quote;
     if (b.quote) {
@@ -2616,7 +2694,15 @@ void emitBlock(const Block& b, const Context& ctx, int& tables, std::vector<MdRu
             break;
         }
         inlineRuns(b.text, base, ctx, out, true);
-        if (out.size() > start) out.push_back(std::move(end));
+        if (out.size() > start) {
+            // The block's end goes with what it ends (a summary, say).
+            const MdRun& last = out.back();
+            end.details = last.details;
+            end.detailsLine = last.detailsLine;
+            end.summary = last.summary;
+            end.detailsOpen = last.detailsOpen;
+            out.push_back(std::move(end));
+        }
         break;
     case Block::Math: {
         MdRun r = base;
@@ -2673,6 +2759,10 @@ void emitBlock(const Block& b, const Context& ctx, int& tables, std::vector<MdRu
         emitTable(b.rows, b.aligns, ++tables, b.first, ctx, out);
         break;
     }
+    // A block that opens or closes no <details> is all inside the ones
+    // open around it.
+    if (ctx.details && ctx.details->changes == before)
+        for (size_t k = start; k < out.size(); k++) ctx.details->stamp(out[k]);
 }
 
 // Whether runs[from...] show anything.
@@ -2703,7 +2793,8 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
     const Doc d = analyze(markdown);
     Notes notes;
     notes.defined = d.noteFor;
-    const Context ctx{d.refs, &notes};
+    Details details;
+    const Context ctx{d.refs, &notes, &details};
     std::vector<MdRun> out;
     int tables = 0;
     // The block shown last, for the space before the next.
@@ -2724,6 +2815,7 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
             g.text = "\n";
             g.gap = true;
             g.line = std::min(prev.last + 1, b.first);
+            details.stamp(g);
             g.quote = prev.quote && b.quote && prev.quoteGroup == b.quoteGroup;
             if (g.quote) {
                 g.quoteDepth = std::max(1, std::min(prev.quoteDepth, b.quoteDepth));
@@ -2746,6 +2838,7 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
     for (const Block& b : d.blocks)
         if (b.note < 0) emit(b);   // footnotes come at the end
     if (notes.order.empty()) return out;
+    details.stack.clear();   // the footnotes are in no <details> left open
 
     // The footnotes, numbered as they were first referred to (a footnote
     // may refer to another, which joins the end of the list), after a rule.
@@ -2810,6 +2903,112 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
         out.insert(out.begin() + (std::ptrdiff_t)closing, back.begin(), back.end());
     }
     return out;
+}
+
+std::vector<MdRun> MarkdownParser::fold(const std::vector<MdRun>& runs,
+                                        const std::function<bool(int, bool)>& isOpen) {
+    bool any = false;
+    for (const MdRun& r : runs)
+        if (r.details > 0) {
+            any = true;
+            break;
+        }
+    if (!any) return runs;
+
+    struct Level {
+        int line = -1;
+        bool open = true;
+        bool summarySeen = true;
+    };
+    std::vector<Level> levels;
+    std::vector<MdRun> out;
+    std::vector<char> shown;   // per run of `out`; a gap's is decided after
+    out.reserve(runs.size() + 16);
+    shown.reserve(runs.size() + 16);
+    auto plain = [](const MdRun& from, const std::string& text) {
+        MdRun t;
+        t.quote = from.quote;
+        t.quoteDepth = from.quoteDepth;
+        t.quoteIndent = from.quoteIndent;
+        t.listDepth = from.listDepth;
+        t.footnotes = from.footnotes;
+        t.details = from.details;
+        t.detailsLine = from.detailsLine;
+        t.detailsOpen = from.detailsOpen;
+        t.summary = true;
+        t.line = from.detailsLine >= 0 && from.line < 0 ? from.detailsLine : from.line;
+        t.text = text;
+        return t;
+    };
+    for (const MdRun& run : runs) {
+        MdRun r = run;
+        const size_t d = (size_t)std::max(0, r.details);
+        if (d == 0) {
+            levels.clear();
+            out.push_back(std::move(r));
+            shown.push_back(1);
+            continue;
+        }
+        if (!(levels.size() >= d && levels[d - 1].line == r.detailsLine)) {
+            if (levels.size() > d - 1) levels.resize(d - 1);
+            while (levels.size() < d - 1) levels.push_back(Level());   // not seen: open
+            Level l;
+            l.line = r.detailsLine;
+            l.open = isOpen ? isOpen(r.detailsLine, r.detailsOpen) : r.detailsOpen;
+            l.summarySeen = false;
+            levels.push_back(l);
+        } else if (levels.size() > d) {
+            levels.resize(d);
+        }
+        bool outside = true;   // every block around this one is open
+        for (size_t k = 0; k + 1 < d; k++) outside = outside && levels[k].open;
+        Level& me = levels[d - 1];
+        r.detailsOpen = me.open;
+        const char* triangle = me.open ? "\xE2\x96\xBE " : "\xE2\x96\xB8 ";   // ▾ ▸
+        if (r.summary) {
+            if (!me.summarySeen) {
+                out.push_back(plain(r, triangle));
+                shown.push_back(outside);
+                me.summarySeen = true;
+            }
+            out.push_back(std::move(r));
+            shown.push_back(outside);
+            continue;
+        }
+        if (!me.summarySeen && !r.gap) {
+            // No <summary>: "Details", as a browser shows it, then a gap.
+            out.push_back(plain(r, triangle));
+            MdRun name = plain(r, "Details");
+            name.bold = true;
+            out.push_back(name);
+            out.push_back(plain(r, "\n"));
+            for (int k = 0; k < 3; k++) shown.push_back(outside);
+            MdRun g = plain(r, "\n");
+            g.summary = false;
+            g.gap = true;
+            out.push_back(std::move(g));
+            shown.push_back(outside && me.open);
+            me.summarySeen = true;
+        }
+        const bool gap = r.gap;
+        out.push_back(std::move(r));
+        shown.push_back(gap ? 2 : (outside && me.open));
+    }
+    // The space between two blocks goes with the block after it.
+    char next = 0;
+    for (size_t k = out.size(); k-- > 0;) {
+        if (out[k].gap) shown[k] = (shown[k] != 0) && next;
+        else next = shown[k];
+    }
+    std::vector<MdRun> folded;
+    folded.reserve(out.size());
+    for (size_t k = 0; k < out.size(); k++) {
+        if (!shown[k]) continue;
+        // No two gaps together, and none to start the page.
+        if (out[k].gap && (folded.empty() || folded.back().gap)) continue;
+        folded.push_back(std::move(out[k]));
+    }
+    return folded;
 }
 
 std::vector<MdLine> MarkdownParser::lines(const std::string& markdown) {

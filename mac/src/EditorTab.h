@@ -177,6 +177,10 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 // in the session), and where it was scrolled while another tab showed.
 @property(nonatomic, assign) BOOL sidePreview;
 @property(nonatomic, assign) CGFloat sidePreviewY;
+// A Markdown page's <details> blocks opened or closed by a click, by the
+// source line of each one's tag (MarkdownParser::fold); the others are as
+// their tags say. Kept while the tab is open.
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *detailsOpen;
 // Its closed folds (FoldView.h), as UTF-16 spans of the source, while
 // another tab is shown; forgotten when the text is read again from disk.
 @property(nonatomic, copy)   NSArray<NSValue *> *folds;

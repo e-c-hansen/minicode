@@ -10,6 +10,7 @@
 #include "FolderSearch.h"
 #include "MermaidDiagram.h"
 #import <objc/runtime.h>
+#include <map>
 #include <unordered_map>
 
 // ------------------------------------------- the side page, in pieces
@@ -55,11 +56,20 @@
 @implementation MCSidePage
 @end
 
+// The runs a page shows: its <details> blocks open or closed as the tab
+// left them (`opened`, by tag line), else as their tags say.
+static std::vector<MdRun> MCFoldedRuns(const std::string &md, const std::map<int, bool> &opened) {
+    return MarkdownParser::fold(MarkdownParser::parse(md), [&opened](int line, bool open) {
+        const auto it = opened.find(line);
+        return it == opened.end() ? open : it->second;
+    });
+}
+
 // The runs and pieces of `text`; any thread.
-static MCSidePage *MCSidePageParse(NSString *text) {
+static MCSidePage *MCSidePageParse(NSString *text, const std::map<int, bool> &opened) {
     MCSidePage *page = [MCSidePage new];
     const char *md = text.UTF8String;
-    page->runs = MarkdownParser::parse(md ? md : "");
+    page->runs = MCFoldedRuns(md ? md : "", opened);
     page->pieces = MarkdownPage::split(page->runs);
     return page;
 }
@@ -343,9 +353,12 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
     if (index > 0 && !NSPointInRect(point, MCTextViewRectForCharacter(page, index)) &&
         NSPointInRect(point, MCTextViewRectForCharacter(page, index - 1)))
         index--;
-    // A box was ticked by the first click; the second does nothing more.
+    // A box was ticked, or a <details> block opened, by the first click;
+    // the second does nothing more.
     id link = [st attribute:NSLinkAttributeName atIndex:index effectiveRange:NULL];
-    if ([link isKindOfClass:NSString.class] && [link hasPrefix:kTaskLinkPrefix]) return YES;
+    if ([link isKindOfClass:NSString.class] &&
+        ([link hasPrefix:kTaskLinkPrefix] || [link hasPrefix:kDetailsLinkPrefix]))
+        return YES;
     const int lineOf = MCMarkdownLineOf([st attribute:kMarkdownSourceLine atIndex:index
                                                    effectiveRange:NULL]);
     if (lineOf < 0) return NO;
@@ -614,7 +627,7 @@ static char kMarkdownMermaidKey;
                                          width:(CGFloat)width
                                        anchors:(NSDictionary **)anchorsOut {
     std::string md = content.UTF8String ? content.UTF8String : "";
-    std::vector<MdRun> runs = MarkdownParser::parse(md);
+    std::vector<MdRun> runs = MCFoldedRuns(md, [self markdownDetailsOpened]);
     [self beginMarkdownPageWidth:width];
     NSMutableArray<NSArray *> *found = [NSMutableArray array];
     NSMutableAttributedString *out = [self markdownRuns:runs from:0 to:runs.size() anchors:found];
@@ -1253,8 +1266,9 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
     __block std::vector<bool> keep(old.info.count);
     for (NSUInteger k = 0; k < old.info.count; k++) keep[k] = old.info[k].keep;
     __weak EditorController *weakSelf = self;
+    const std::map<int, bool> opened = [self markdownDetailsOpened];
     dispatch_async(MCSidePageQueue(), ^{
-        MCSidePage *parsed = MCSidePageParse(text);
+        MCSidePage *parsed = MCSidePageParse(text, opened);
         if (old) {
             parsed->match = MarkdownPage::match(old->pieces, keep, parsed->pieces);
             parsed.matchedTo = old;
@@ -1347,7 +1361,7 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
     MCMarkdownSidePreview *side = [self sidePreview];
     [side cancelRender];
     NSString *text = self.sourceText ?: @"";
-    if (!parsed) parsed = MCSidePageParse(text);
+    if (!parsed) parsed = MCSidePageParse(text, [self markdownDetailsOpened]);
     NSTextView *tv = side.textView;
     NSTextStorage *st = tv.textStorage;
     MCSidePage *previous = [side.pageState isKindOfClass:MCSidePage.class] ? side.pageState : nil;
@@ -1609,6 +1623,10 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
         [self renderSidePreviewKeepingPlace];
         return YES;
     }
+    if ([href hasPrefix:kDetailsLinkPrefix]) {
+        if ([self catchUpSidePage]) return YES;
+        return [self toggleMarkdownDetails:href atIndex:index inPage:_sidePreview.textView];
+    }
     if ([href isEqualToString:kMathDownloadLink]) {
         [self downloadTectonicForMath];
         return YES;
@@ -1622,6 +1640,38 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
         return YES;
     }
     [self openMarkdownLink:href];
+    return YES;
+}
+
+// ------------------------------------------------- <details> on the page
+// A click on a <details> block's summary opens or closes it for as long
+// as the tab is open (MCTab detailsOpen, by the line of its tag), and the
+// page is built again in its place: the full preview whole, the one beside
+// the source only in the pieces that changed (the folded runs differ there).
+
+- (std::map<int, bool>)markdownDetailsOpened {
+    std::map<int, bool> out;
+    for (NSNumber *k in _activeTab.detailsOpen) out[k.intValue] = _activeTab.detailsOpen[k].boolValue;
+    return out;
+}
+
+- (BOOL)toggleMarkdownDetails:(NSString *)link atIndex:(NSUInteger)index inPage:(NSTextView *)page {
+    NSArray<NSString *> *parts =
+        [[link substringFromIndex:kDetailsLinkPrefix.length] componentsSeparatedByString:@":"];
+    if (parts.count != 3 || !_activeTab) return NO;
+    int tagLine = parts[0].intValue;
+    // A kept piece of the side page has moved lines since its link was made:
+    // its run's line now says by how much.
+    NSTextStorage *st = page.textStorage;
+    const int now = index < st.length ? MCMarkdownLineOf([st attribute:kMarkdownSourceLine
+                                                                atIndex:index
+                                                         effectiveRange:NULL])
+                                      : -1;
+    if (now >= 0) tagLine += now - parts[1].intValue;
+    if (!_activeTab.detailsOpen) _activeTab.detailsOpen = [NSMutableDictionary dictionary];
+    _activeTab.detailsOpen[@(tagLine)] = @(!parts[2].boolValue);
+    if (page == _sidePreview.textView) [self renderSidePreviewKeepingPlace];
+    else [self renderMarkdownKeepingPlace];
     return YES;
 }
 
