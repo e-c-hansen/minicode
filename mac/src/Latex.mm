@@ -23,6 +23,7 @@
 #import "EditorFont.h"
 #import "AppSettings.h"
 #import "Lsp.h"   // MCDiagnosticColor
+#import "MarkdownMath.h"   // MCMathWarmUp
 #import <Quartz/Quartz.h>
 #import <CommonCrypto/CommonDigest.h>
 #include "LatexDoc.h"
@@ -1559,6 +1560,8 @@ void MCDownloadTectonic(void (^done)(NSString *problem)) {
         dispatch_async(dispatch_get_main_queue(), ^{
             NSArray<void (^)(NSString *)> *waiters = gTectonicWaiters;
             gTectonicWaiters = nil;
+            // Its LaTeX files fetched now, not when a page first needs them.
+            if (!problem) MCMathWarmUp();
             for (void (^w)(NSString *) in waiters) w(problem);
         });
     }];

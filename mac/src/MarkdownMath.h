@@ -54,6 +54,33 @@ extern NSNotificationName const MCMathTypesetNotification;
 extern NSString *const MCMathKeysKey;
 extern NSString *const MCMathErrorKey;
 
+// How a run is getting on while tectonic downloads the LaTeX files its
+// first run needs (it prints a line for each): posted on the main thread,
+// at most a few times a second, with MCMathFilesKey, an NSNumber of the
+// files fetched so far by the run under way.
+extern NSNotificationName const MCMathProgressNotification;
+extern NSString *const MCMathFilesKey;
+
+// The files the run under way has fetched so far; 0 when no run is going
+// or it fetched none. Main thread only.
+NSUInteger MCMathFilesFetched(void);
+
+// About how many files a first run fetches: 292 for a batch of two
+// formulas with tectonic 0.17.0 and an empty cache (2026-11-15), about
+// 42 MB, which took 30 s on a good line.
+extern const NSUInteger MCMathFirstRunFiles;
+
+// Whether tectonic's own cache of LaTeX files ($TECTONIC_CACHE_DIR, or
+// ~/Library/Caches/TectonicProject.Tectonic) is empty: its next run
+// downloads them first.
+BOOL MCTectonicCacheIsEmpty(void);
+
+// When tectonic's cache is empty, typesets one small formula in the
+// background, so the files a first run needs are fetched now rather than
+// when a page first needs them. Called when the tectonic download
+// succeeds. Main thread only.
+void MCMathWarmUp(void);
+
 // Where typeset formulas are kept: $MINICODE_MATH_CACHE, or
 // ~/Library/Caches/MiniCode/math. At most 50 MB, the runs used longest ago
 // going first.

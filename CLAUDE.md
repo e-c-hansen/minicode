@@ -2105,7 +2105,14 @@ false`) a formula shows as its TeX in the code style.
   (`kMarkdownMath`), re-rendered on `MCMathTypesetNotification` keeping the
   place. While formulas are out the top line says "Typesetting N formulas…",
   and that a first run downloads LaTeX files when tectonic's cache is empty (a
-  first run once sat 44 s with only TeX showing). Without tectonic, a muted
+  first run once sat 44 s with only TeX showing). Since 2026-11-15 the run
+  counts tectonic's "note: downloading " lines as it reads them
+  (`MCMathProgressNotification`, `MCMathFilesFetched`, at most five a
+  second) and the line says "N of about 290" (`MCMathFirstRunFiles`,
+  measured with 0.17.0 and an empty cache), changed in place in the full
+  preview (anchors shifted) and by a render keeping place beside the
+  source; `MCDownloadTectonic`'s success calls `MCMathWarmUp`, one formula
+  typeset when tectonic's cache is empty, so the files come at once. Without tectonic, a muted
   line with a Download tectonic link (`MCDownloadTectonic`, shared with the
   LaTeX preview).
 - Known gaps: copying a typeset formula copies an attachment character;

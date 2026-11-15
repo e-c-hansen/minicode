@@ -868,6 +868,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSUInteger)mathNoteLength;
 - (MCMathFormula *)typesetFormulaFor:(const MdRun &)r;
 - (void)markdownMathArrived:(NSNotification *)note;
+- (void)markdownMathProgress:(NSNotification *)note;
 - (void)showArrivedMathForPath:(NSString *)path;
 - (void)markdownWebImageArrived:(NSNotification *)note;
 - (void)showArrivedWebImagesForPath:(NSString *)path;
