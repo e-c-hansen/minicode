@@ -792,6 +792,21 @@ static const CGFloat kStatusHeight = 26;
     BOOL hadDoc = self.pdf.document != nil;
 
     self.pdf.document = doc;
+    if (!hadDoc) {
+        // The first document opens at the top of its first page, margin and
+        // all, as Preview opens a PDF. PDFView left it where its own scroll
+        // view's insets and the first rescale to the pane's width put it,
+        // which cut the title off under the bar. Once now and once after
+        // the layout this turn brings; later typesets keep the reader's place.
+        [self showFirstPageTop];
+        __weak LatexView *weakSelf = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            LatexView *me = weakSelf;
+            // A forward search waiting for this typeset has put its line
+            // in view since: that place wins.
+            if (me && me.pdf.document == doc && !me->_forwardMarks) [me showFirstPageTop];
+        });
+    }
     if (hadDoc && pageIndex < doc.pageCount) {
         PDFPage *page = [doc pageAtIndex:pageIndex];
         PDFDestination *dest = [[PDFDestination alloc] initWithPage:page
@@ -810,6 +825,29 @@ static const CGFloat kStatusHeight = 26;
     [self showPagesStatus];
     self.actionButton.title = @"Recompile";
     if (_forwardLine > 0 && !self.compiling && _pdfSrc == _src) [self runForwardSearch];
+}
+
+// Scrolls the PDF to the top of its document (the first page's top edge with
+// the page-break margin above it), with no automatic content insets: the
+// view is never under the title bar, and an inset made the top unreachable.
+- (void)showFirstPageTop {
+    MCPdfView *v = self.pdf;
+    if (!v.document.pageCount) return;
+    [v layoutDocumentView];
+    NSView *docView = v.documentView;
+    NSScrollView *sv = docView.enclosingScrollView;
+    if (!sv) {
+        [v goToPage:[v.document pageAtIndex:0]];
+        return;
+    }
+    sv.automaticallyAdjustsContentInsets = NO;
+    sv.contentInsets = NSEdgeInsetsZero;
+    NSClipView *clip = sv.contentView;
+    const NSRect doc = [clip convertRect:docView.bounds fromView:docView];
+    NSRect want = clip.bounds;
+    want.origin.y = clip.isFlipped ? NSMinY(doc) : NSMaxY(doc) - NSHeight(want);
+    [clip scrollToPoint:[clip constrainBoundsRect:want].origin];
+    [sv reflectScrolledClipView:clip];
 }
 
 // "2 pages · 3 warnings · double-click text to edit it", and the Warnings
