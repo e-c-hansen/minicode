@@ -891,7 +891,8 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     [self fitText];
     NSClipView *clip = _scroll.contentView;
     NSRect want = clip.bounds;
-    want.origin.y = NSMinY([_text rectOfRow:row]) - 6 + offset;
+    // The row's top at the pane's top (the first row with the inset above it).
+    want.origin.y = row == 0 ? offset : NSMinY([_text rectOfRow:row]) + offset;
     want.origin.y = MAX(0, MIN(want.origin.y, NSHeight(_text.frame) - NSHeight(want)));
     [clip scrollToPoint:[clip constrainBoundsRect:want].origin];
     [_scroll reflectScrolledClipView:clip];
@@ -913,7 +914,8 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     if (_data && !_data->page.rows.empty()) {
         const NSInteger top = self.topRow;
         anchor = ChangeReview::anchorAt(_data->page, _data->diffs, (size_t)top);
-        offset = NSMinY(_scroll.contentView.bounds) - NSMinY([_text rectOfRow:(size_t)top]) + 6;
+        offset = NSMinY(_scroll.contentView.bounds) -
+                 (top == 0 ? 0 : NSMinY([_text rectOfRow:(size_t)top]));
     }
     const BOOL first = _data == nullptr;
     _data = d;
