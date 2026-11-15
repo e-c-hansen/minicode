@@ -8,7 +8,9 @@
 # The checkout moves to origin/main, the GIFs go over the committed ones,
 # and when any differ they are committed on a branch of their own. With
 # PROPOSE=true the branch is pushed and a pull request against main opened
-# (or, where Actions may not open one, a link printed to open it by hand);
+# (or, where Actions may not open one, a link printed to open it by hand),
+# with a run of CI started on the branch by hand, since the workflow's own
+# token starts no workflow and main requires "CI passed";
 # otherwise the commit stays local. WHAT names the release or ref in the
 # titles. Only GIFs are taken: the stills and recordings stay artifacts.
 set -euo pipefail
@@ -43,6 +45,13 @@ fi
 
 branch="demos/${what//\//-}-${GITHUB_RUN_ID:-0}"
 git push -q origin "HEAD:refs/heads/$branch"
+# A push or pull request made with the workflow's own token starts no
+# workflow, so the pull request would never get "CI passed", which main
+# requires. A run by hand is the exception GitHub allows, and its checks
+# land on the branch's commit, so the pull request gets them.
+if ! gh workflow run ci.yml --ref "$branch"; then
+    echo "Could not start CI on $branch; run it from the Actions tab before merging."
+fi
 body="The demo GIFs recorded again by the Demos workflow for $what ($run).
 
 Look at each before merging. A scene that failed kept its old GIF, and the run's log says which. The Linux GIFs are in docs/demos/linux."

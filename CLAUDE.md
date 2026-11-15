@@ -3371,7 +3371,10 @@ Actions tab (a `scenes` input), the macOS job plays every scene on the
 runner's own display and the Linux job every `_demo_` suite, and the last
 job (`scripts/demos-propose.sh`) commits the GIFs that changed on a
 `demos/<tag>-<run>` branch and opens a pull request against main (or prints
-the link where Actions may not open one). release.sh does not wait for it.
+the link where Actions may not open one), then starts CI on that branch by
+hand (`gh workflow run`): a push or pull request made with the workflow's
+own token starts no workflow, so the pull request would never get "CI
+passed", which main requires. release.sh does not wait for it.
 The macOS runner (a VM, 1024x768 at 1x, display sleep off) lets
 `screencapture -l` work, since its TCC database grants /bin/bash Screen
 Recording; frames are 1x. Never run `make demos` on the owner's Mac
