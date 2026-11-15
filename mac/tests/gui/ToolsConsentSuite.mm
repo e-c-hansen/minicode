@@ -9,7 +9,13 @@
 //   - the Language Servers popover says what was answered, and its Ask
 //     Again takes a Don't Allow back the same way;
 //   - a question put off with × this launch comes back once an answer
-//     given meanwhile (Format Document's) is taken back.
+//     given meanwhile (Format Document's) is taken back;
+//   - with a server that reads a root .venv's packages by itself (a
+//     stand-in run as basedpyright-langserver) no bar asks, since nothing
+//     a person would notice waits on the answer, and the popover offers
+//     Allow and Don't Allow with what the answer still changes; with
+//     pylsp, which does not, the bar asks, saying completions do not see
+//     the packages.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -188,6 +194,45 @@ MC_GUI_SUITE(tools_consent) {
         [c forgetFolderToolsAnswer:item];
     });
     MCGuiWait(@"taken back, the question put off with × comes back", 5, barAsks);
+    __block NSString *bpCmd = nil, *pylspCmd = nil;
+    MCGuiStep(@"no answer, and a server that reads .venv by itself (basedpyright)", ^{
+        bpCmd = MCGuiFakeLsp(@"bp-reads-venv", @{@"rules": @[]}, @"basedpyright-langserver", nil);
+        pylspCmd = MCGuiFakeLsp(@"pylsp-venv", @{@"rules": @[]}, @"pylsp", nil);
+        MCSetFolderToolsConsent(c.rootPath, NO);
+        [c forgetFolderToolsAnswer:nil];   // no answer, nothing put off
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n", bpCmd]);
+    });
+    MCGuiWait(@"basedpyright starts", 10, ^BOOL {
+        showPython();
+        return [Session(c).folderEnvironmentServer isEqualToString:@"basedpyright"];
+    });
+    MCGuiStep(@"no bar asks; the popover offers the choice and says what it changes", ^{
+        GCHECK(answer() == nil);
+        GCHECK_EQ_STR(Session(c).folderEnvironmentAwaitingConsent, @".venv");
+        [c updateInstallBar];
+        GCHECK(!barAsks());
+        MCGuiNote(@"the bar: %@", c.installBar.hidden ? @"hidden" : c.installBar.text);
+        NSView *popover = MCLanguageServersView(Session(c), nil);
+        GCHECK(ShowsText(popover, @"basedpyright already reads the packages in .venv"));
+        GCHECK(ButtonTitled(popover, @"Don't Allow") != nil);
+        NSButton *allow = ButtonTitled(popover, @"Allow");
+        GCHECK(allow != nil);
+        [allow performClick:nil];
+        GCHECK_EQ_STR(answer(), @"allow");
+        [c forgetFolderToolsAnswer:nil];
+        GCHECK(answer() == nil);
+        MCGuiSetSettings([NSString stringWithFormat:
+            @"lsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n", pylspCmd]);
+    });
+    MCGuiWait(@"pylsp starts, and the bar asks", 10, ^BOOL {
+        showPython();
+        return [Session(c).folderEnvironmentServer isEqualToString:@"pylsp"] && barAsks();
+    });
+    MCGuiStep(@"saying completions do not see the packages", ^{
+        MCGuiNote(@"the bar: %@", c.installBar.text);
+        GCHECK([c.installBar.text containsString:@"do not see the packages in .venv"]);
+    });
     MCGuiStep(@"tidy up: servers off, no .venv, no answer", ^{
         MCGuiSetSettings(@"lsp.enabled = false\n");
         [[NSFileManager defaultManager] removeItemAtPath:venv error:nil];

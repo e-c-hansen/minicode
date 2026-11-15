@@ -70,6 +70,9 @@ NSPopover *MCShowInstallPopover(MCInstallView *view, NSView *anchor, NSRect rect
 // above and serverKey.
 - (void)showMessage:(NSString *)text tip:(NSString *)tip button:(NSString *)button
                mute:(NSString *)mute close:(NSString *)closeTip;
+// The environment question in other words (FolderTools::
+// environmentBarQuestion: what the open file's server is missing).
+- (void)askAboutEnvironment:(NSString *)env question:(NSString *)question;
 @property(nonatomic, readonly, copy) NSString *text;
 @property(nonatomic, readonly) NSButton *installButton;
 @property(nonatomic, copy) void (^onInstall)(NSButton *sender);

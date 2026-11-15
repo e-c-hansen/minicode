@@ -1671,7 +1671,16 @@ view is disposed (on `unrealize`), or dispose loops forever.
   .venv out until the folder's answer (`MCPythonEnvironmentConsent` in
   `MCAppDefaults()`) is "allow"; the install bar asks first (Use It, Don't Use
   It, × for this launch). Run File, which the user starts, still uses it
-  (`pythonInterpreterWithSource:`). Format Document shares the answer (see
+  (`pythonInterpreterWithSource:`). **The bar asks only when something a
+  person would notice waits** (2026-11-15, round 8's C1): basedpyright
+  reads a root .venv's site-packages by itself, running nothing, so its
+  completions and errors worked before any answer and Use It changed
+  nothing visible. `FolderTools::environmentBarQuestion` (the server from
+  `LspSession folderEnvironmentServer`: nil before one is tried, "" when
+  none runs) gives "" then, and otherwise says what the server is missing;
+  the Language Servers popover offers Allow and Don't Allow while the
+  folder has no answer (`environmentPopoverText`). Linux's bar keeps the
+  old words. Format Document shares the answer (see
   "Formatting"). minicode > Ask Again About This Folder's Tools (and Ask
   Again in the Language Servers popover, which sends the same action) takes
   it back (`MCForgetFolderToolsConsent`) and clears a × put-off, so the bar

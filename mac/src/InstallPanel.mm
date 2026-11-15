@@ -7,6 +7,7 @@
 #import "TreeDetails.h"   // MCAppDefaults
 #import <objc/runtime.h>
 
+#include "FolderTools.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -404,6 +405,13 @@ const CGFloat kMCInstallBarHeight = 30;
          "minicode menu takes it back.", env];
     [self setButtons:@"Use It" mute:@"Don't Use It"
                close:@"Ask again next time minicode starts"];
+}
+
+- (void)askAboutEnvironment:(NSString *)env question:(NSString *)question {
+    self.consentEnvironment = env;
+    if (!env || !question.length) return;
+    _label.stringValue = question;
+    _label.toolTip = NS(FolderTools::environmentTooltip(Std(env), "minicode"));
 }
 
 - (void)askAboutServer:(NSString *)key question:(NSString *)question {

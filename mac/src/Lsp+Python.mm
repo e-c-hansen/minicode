@@ -200,6 +200,22 @@ static BOOL IsRunnable(NSString *path) {
     return env;
 }
 
+- (NSString *)folderEnvironmentServer {
+    MCLspEntry *e = _entries[@"python"];
+    if (!e) return nil;
+    switch (e.state) {
+    case MCLspStateStarting:
+    case MCLspStateRunning:
+    case MCLspStateRestarting:
+        return NS(Lsp::pythonServerName(e.pythonKind));
+    case MCLspStateIdle:
+    case MCLspStateWaiting:
+        return nil;
+    default:
+        return @"";
+    }
+}
+
 - (void)setFolderEnvironmentAllowed:(BOOL)allow {
     MCSetFolderToolsConsent(_root, allow);
 }
