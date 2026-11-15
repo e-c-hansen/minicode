@@ -46,6 +46,7 @@ static NSURL *WithoutFragment(NSURL *url) {
     BOOL _restoreScroll;
     double _scrollX, _scrollY;
     NSTextField *_question;
+    NSMutableSet<NSString *> *_requested;   // files this page was asked to load
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -239,6 +240,8 @@ static NSURL *WithoutFragment(NSURL *url) {
                         [self.path hasPrefix:[root stringByAppendingString:@"/"]]))
         access = root;
     self.loads++;
+    if (!_requested) _requested = [NSMutableSet set];
+    [_requested addObject:self.path.stringByStandardizingPath];
     // From the origin each time, so a changed stylesheet or picture beside
     // it is read again too.
     if ([WithoutFragment(self.webView.URL) isEqual:file]) [self.webView reloadFromOrigin];
@@ -273,6 +276,13 @@ static NSURL *WithoutFragment(NSURL *url) {
     const BOOL blank = [url.scheme.lowercaseString isEqualToString:@"about"];
     if (url && mainFrame && !ownPage && !blank) {
         handler(WKNavigationActionPolicyCancel, prefs);
+        // A load or reload of a file shown before, still on its way when
+        // another file took its place: dropped, not opened again.
+        const WKNavigationType type = action.navigationType;
+        const BOOL stale = type == WKNavigationTypeReload || type == WKNavigationTypeBackForward ||
+                           (type == WKNavigationTypeOther && url.isFileURL &&
+                            [_requested containsObject:url.path.stringByStandardizingPath]);
+        if (stale) return;
         void (^open)(NSURL *) = self.onOpenLink;
         if (open) dispatch_async(dispatch_get_main_queue(), ^{ open(url); });
         return;
