@@ -221,6 +221,16 @@ bool nullObject(const std::string& object);
 std::string commitByline(const std::string& author, long long time, const std::string& hash,
                          size_t parents, long long now, GitUi::DateFormat date = GitUi::dateText);
 
+// A worktree against main (Compare with Main): `git diff --raw` against the
+// merge base, whose new side is the worktree's files on disk, and its
+// untracked files (GitUi::untrackedArgs). The main checkout is the first
+// entry of `git worktree list --porcelain`.
+std::vector<std::string> worktreeRawArgs(const std::string& base);
+std::vector<std::string> worktreeListArgs();
+std::string mainWorktreePath(const std::string& porcelain);
+// `ls-files -z` output as paths.
+std::vector<std::string> nulPaths(const std::string& out);
+
 // Whether bytes read from git or the disk hold a NUL in their first 8 KB
 // (and are not UTF-16 with its byte order mark): a binary file.
 bool looksBinary(const std::string& bytes);

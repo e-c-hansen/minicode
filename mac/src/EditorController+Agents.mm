@@ -692,6 +692,15 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     [_agents folderChangedOnDisk:path];
 }
 
+// A file at a 1-based line (0 leaves the caret), for the agent pages
+// (a worktree's review). Paths git spelled resolved are respelled from the
+// window's folder.
+- (void)openFileAtPath:(NSString *)path line:(NSInteger)line {
+    NSString *mine = [self gitPathInRoot:path];
+    [self openFileAtPath:mine];
+    if (line > 0 && [self.currentPath isEqualToString:mine]) [self goToLine:(int)line column:0];
+}
+
 // The side-by-side view, made on first use in the editor's slot.
 - (MCCompareView *)compareViewMade {
     if (!self.compareView) {

@@ -2996,6 +2996,21 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   the short hash muted after it; the GTK and Android panels show
   `commitDoneText`). The line over the graph (`summaryText`) wraps, its
   height measured on every layout, with the whole of it as its tooltip.
+  **A worktree's page** (Compare with Main, 2026-11-15, `make guitest
+  SUITES=worktree_review`): `diff --raw -z -M <merge base>` in the
+  worktree (its new side read from disk) plus `ls-files --others
+  --exclude-standard`, `Section::Plain` with Side by Side and Open. Apply
+  to Main… (`GitUi::applyToMainPlan`) reads main's status first and
+  refuses, naming them, when main has changes of its own in those files,
+  else asks naming the files; the patch is the worktree's `diff --binary`
+  against the merge base plus a `diff --no-index /dev/null <file>` per
+  untracked file (never `add -N` in the worktree's index), given to `git
+  apply` in the main checkout (the first `worktree list --porcelain`
+  entry), all or nothing; when that fails, `apply --3way`, which leaves
+  conflict marks (and git's unmerged entries) in the files that clash and
+  stages the rest, which are then unstaged (`GitUi::unstageArgs`), so
+  everything arrives unstaged. Never a commit, merge or branch switch.
+  `apply` has git's two-minute limit (`Git::timeoutFor`).
 - **Change bars** (Mac, `GitGutter.mm`, core `QuickDiff`): the original is
   the index entry, as VS Code's quick diff (`ls-files --stage`, then `cat-file
   blob` of its object), read again only when the file or the index file's stat
@@ -3065,10 +3080,12 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `menuNeedsUpdate:`, and `renameSelected:`/`deleteSelected:`, which F2
   and Cmd+Delete reach through the key monitor, refuse them with a status
   note): each worktree named for its agent with its ahead count and
-  changes (git off the main thread); right click Compare with Main (each
-  changed file side by side with main at the merge base, so main's later work
-  never shows as the agent deleting it; `AgentView::compareBase`) and Open in
-  New Window. A window on `/` or the home folder indexes no sessions
+  changes (git off the main thread); right click Compare with Main (the
+  review page in worktree mode, `initForWorktree:`, every changed file in
+  one scroll against main at the merge base, so main's later work never
+  shows as the agent deleting it; `AgentView::compareBase`; with Apply to
+  Main…, see "The review view") and Open in New Window. A window on `/` or
+  the home folder indexes no sessions
   (`AgentView::indexesFolder`): every transcript on the Mac is inside them.
 - **Icons by kind** (2026-11-15): `FileIcon::kindOf` (FileDetails, by
   extension only, `tree:icons`; the image, video and audio tables there
@@ -3753,15 +3770,16 @@ session has a display. Check first.
   terminal: terminal_draw, terminal_links, terminal_marks, terminal_paste,
   terminal_pty, terminal_reflow, terminal_splits, terminal_vt,
   terminal_exec, terminal_keys, terminal_zoom, run_file;
-  git: git_panel, git_actions, git_hunks, git_verbs, git_review, git_sync, git_gutter;
+  git: git_panel, git_actions, git_hunks, git_verbs, git_review, worktree_review, git_sync,
+  git_gutter;
   agents and control: agents, agent_panel, agent_places, agentcommands,
   agent_autosave, attention, control, browserpages, browser_tabs, browser_find, bookmarks,
   idelink, processes;
   run only when named: _backups_writer, _backups_restore.
   A suite's file is usually its name in CamelCase; the exceptions are
   mermaid (IdeLinkSuite.mm), foldperf (FoldingSuite.mm), the format_*
-  suites (FormatSuite.mm), git_actions, git_hunks, git_review
-  and git_verbs (GitPanelSuite.mm), markdown_side_sync (MarkdownSideSuite.mm), and
+  suites (FormatSuite.mm), git_actions, git_hunks, git_review,
+  git_verbs and worktree_review (GitPanelSuite.mm), markdown_side_sync (MarkdownSideSuite.mm), and
   LooseEndsSuite.mm (terminal_exec, terminal_keys, terminal_zoom,
   agent_autosave, multicaret_rows), and PageMeasureSuite.mm (hints_panel,
   markdown_width, swatch_escape).

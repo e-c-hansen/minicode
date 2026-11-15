@@ -14,6 +14,7 @@
 #import "AgentModel.h"
 #import "AgentPages.h"
 #import "AgentWindow.h"
+#import "ChangeReviewPage.h"
 #import "AgentsPanel.h"
 #import "CompareView.h"
 #import "ControlServer.h"
@@ -771,21 +772,30 @@ MC_GUI_SUITE(agents) {
         [c compareWorktreeWithMain:nil];
         GCHECK_EQ_STR(ActiveTab(c)[@"kind"], @"worktree-changes");
     });
-    MCGuiWait(@"the changed files are listed", 15, ^BOOL {
-        MCWorktreeChangesPage *pg = ActivePage(c);
-        return [pg isKindOfClass:MCWorktreeChangesPage.class] && pg.loaded;
+    MCGuiWait(@"the changed files are read", 15, ^BOOL {
+        MCChangeReviewPage *pg = ActivePage(c);
+        return [pg isKindOfClass:MCChangeReviewPage.class] && pg.loaded;
     });
-    MCGuiStep(@"committed, added and untracked files against main", ^{
-        MCWorktreeChangesPage *pg = ActivePage(c);
-        NSArray *rows = pg.rowDescriptions;
-        GCHECK(pg.errorText == nil);
-        GCHECK([rows containsObject:@"M src/Terminal.mm"]);
-        GCHECK([rows containsObject:@"A src/LspClient.h"]);
-        GCHECK([rows containsObject:@"A src/LspPicker.h"]);
-        GCHECK([rows containsObject:@"? notes.md"]);
-        GCHECK(![rows containsObject:@"M src/only-main.txt"]);
+    MCGuiStep(@"committed, added and untracked files against main, in one scroll", ^{
+        MCChangeReviewPage *pg = ActivePage(c);
+        NSArray<NSString *> *rows = pg.rowDescriptions;
+        MCGuiNote(@"worktree review: %@ / %@", pg.headerTitle, pg.headerDetail);
+        NSInteger terminal = -1;
+        for (NSUInteger i = 0; i < rows.count; i++)
+            if ([rows[i] hasPrefix:@"F src/Terminal.mm  "]) terminal = (NSInteger)i;
+        GCHECK(terminal >= 0);
+        GCHECK([rows containsObject:@"F src/LspClient.h  (new)  +1"]);
+        GCHECK([rows containsObject:@"F src/LspPicker.h  (new)  +1"]);
+        GCHECK([rows containsObject:@"F notes.md  (new)  +1"]);
+        GCHECK([rows containsObject:@"- main line 1"] && [rows containsObject:@"+ worktree line 1"]);
+        for (NSString *r in rows) GCHECK(![r containsString:@"only-main"]);
+        GCHECK([pg.headerDetail hasPrefix:@"against main at the branch point ("]);
+        // Each file's Side by Side and Open; no Stage or Discard here.
+        GCHECK(!NSIsEmptyRect([pg buttonRect:@"Open" row:terminal]));
+        GCHECK(NSIsEmptyRect([pg buttonRect:@"Stage" row:[pg rowOfBlock:0]]));
         MCGuiSnapshot(pg.pageView, @"agents-worktree-changes");
-        [pg openChangeAtRow:(NSInteger)[rows indexOfObject:@"M src/Terminal.mm"]];
+        const NSRect side = [pg buttonRect:@"Side by Side" row:terminal];
+        GCHECK([pg pressAtPoint:NSMakePoint(NSMidX(side), NSMidY(side))]);
     });
     MCGuiWait(@"the side-by-side comparison shows", 15, ^BOOL {
         return [ActiveTab(c)[@"kind"] isEqualToString:@"diff"];

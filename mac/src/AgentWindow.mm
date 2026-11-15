@@ -3,6 +3,7 @@
 #import "AgentModel.h"
 #import "AgentPages.h"
 #import "AgentsPanel.h"
+#import "ChangeReviewPage.h"
 #import "CompareView.h"
 #import "ControlServer.h"
 #import "LspPicker.h"
@@ -176,13 +177,23 @@ static NSString *WNS(const std::string &s) {
         [self.model refreshWorktrees];
         return;
     }
-    MCWorktreeChangesPage *page = [[MCWorktreeChangesPage alloc] initWithWorktree:w model:self.model];
+    // Every file in one scroll, against where the branch left main, with
+    // Apply to Main… (ChangeReviewPage.h).
+    MCChangeReviewPage *page = [[MCChangeReviewPage alloc] initForWorktree:w.path
+                                                                     label:w.label
+                                                                    branch:w.branch
+                                                                   mainRef:self.model.mainBranch];
     __weak MCAgentWindow *weakSelf = self;
     page.onShowComparison = ^(MCComparison *c) {
         MCAgentWindow *s = weakSelf;
-        [s->_host showComparison:c preview:YES];
+        if (s) [s->_host showComparison:c preview:YES];
+    };
+    page.onOpenFile = ^(NSString *file, NSInteger line) {
+        MCAgentWindow *s = weakSelf;
+        if (s) [s->_host openFileAtPath:file line:line];
     };
     [_host showPage:page];
+    [page reload];
 }
 
 - (void)openFolderInNewWindow:(NSString *)path {

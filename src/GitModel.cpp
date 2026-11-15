@@ -663,6 +663,92 @@ std::vector<std::string> updateIndexArgs(const IndexEntry& e, const std::string&
     return {"update-index", "--cacheinfo", e.mode + "," + trim(object) + "," + rel};
 }
 
+// ---------------------------------------------- a worktree's work into main
+std::vector<std::string> worktreeDiffArgs(const std::string& base) {
+    return {"-c", "core.quotePath=false", "diff", "--binary", "--no-ext-diff", "--no-color",
+            "-M", "--src-prefix=a/", "--dst-prefix=b/", base, "--"};
+}
+
+std::vector<std::string> untrackedArgs() {
+    return {"ls-files", "--others", "--exclude-standard", "-z"};
+}
+
+std::vector<std::string> newFilePatchArgs(const std::string& path) {
+    return {"-c", "core.quotePath=false", "diff", "--binary", "--no-ext-diff", "--no-color",
+            "--src-prefix=a/", "--dst-prefix=b/", "--no-index", "--", "/dev/null", path};
+}
+
+std::vector<std::string> applyToMainArgs(bool threeWay) {
+    if (threeWay) return {"apply", "--3way", "--whitespace=nowarn", "-"};
+    return {"apply", "--whitespace=nowarn", "-"};
+}
+
+std::vector<std::string> unstageArgs(const std::vector<std::string>& paths) {
+    std::vector<std::string> a = {"--literal-pathspecs", "restore", "--staged", "--"};
+    a.insert(a.end(), paths.begin(), paths.end());
+    return a;
+}
+
+namespace {
+// "a.txt", "a.txt and b.txt", "a.txt, b.txt, and c.txt", past six "and 3 more".
+std::string nameList(const std::vector<std::string>& names) {
+    std::vector<std::string> items(names.begin(), names.begin() + std::min<size_t>(names.size(), 6));
+    if (names.size() > items.size()) items.push_back(std::to_string(names.size() - items.size()) + " more");
+    std::string s;
+    for (size_t i = 0; i < items.size(); i++) {
+        if (i > 0) s += items.size() == 2 ? " and " : (i + 1 == items.size() ? ", and " : ", ");
+        s += items[i];
+    }
+    return s;
+}
+}  // namespace
+
+ApplyPlan applyToMainPlan(const std::vector<std::string>& paths, const Git::Status& mainStatus,
+                          const std::string& mainName, const std::string& worktreeName) {
+    ApplyPlan p;
+    p.paths = paths;
+    if (paths.empty()) {
+        p.refusal = worktreeName + " has no changes against " + mainName + " to bring in.";
+        return p;
+    }
+    std::vector<std::string> busy;
+    for (const Git::Entry& e : mainStatus.entries) {
+        const bool mine = std::find(paths.begin(), paths.end(), e.path) != paths.end() ||
+                          (!e.origPath.empty() &&
+                           std::find(paths.begin(), paths.end(), e.origPath) != paths.end());
+        if (mine) busy.push_back(e.path);
+    }
+    if (!busy.empty()) {
+        p.refusal = "The main checkout has uncommitted changes of its own in " + nameList(busy) +
+                    ", so nothing was brought in. Commit or stash them there first.";
+        return p;
+    }
+    const std::string n = std::to_string(paths.size());
+    p.question = "Bring " + (paths.size() == 1 ? std::string("this file's") : "these " + n + " files'") +
+                 " changes into " + mainName + "?";
+    p.detail = nameList(paths) + (paths.size() == 1 ? " comes" : " come") +
+               " into the main checkout as uncommitted changes, for you to review and commit in "
+               "Source Control. Nothing is committed, and the worktree is left as it is. A file "
+               "that does not apply cleanly comes in with conflict marks.";
+    p.button = "Apply to Main";
+    return p;
+}
+
+std::string applyDoneText(size_t files, const std::vector<std::string>& conflicts,
+                          const std::string& mainName) {
+    const std::string what = files == 1 ? "1 file's changes" : std::to_string(files) + " files' changes";
+    if (conflicts.empty())
+        return "Brought " + what + " into " + mainName +
+               " as uncommitted changes. Review and commit them in Source Control.";
+    return "Brought " + what + " into " + mainName + "; " + nameList(conflicts) +
+           " did not apply cleanly and came in with conflict marks, listed as conflicts in Source "
+           "Control.";
+}
+
+std::string applyFailureText(int status, const std::string& out, const std::string& err) {
+    return "Nothing was brought into the main checkout: " + failureText(status, out, err);
+}
+
 // ------------------------------------------------- hunks and lines of a diff
 DiffSide diffSideOf(const Row& r) {
     if (r.untracked) return DiffSide::Untracked;

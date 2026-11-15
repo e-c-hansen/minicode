@@ -347,6 +347,11 @@ static void testChangeReview() {
         CHECK(commitByline("Ann", 1000, oid1, 1, 1000 + 3 * 86400, day) ==
               "Ann, 3 days ago (Sep 23, 2026 at 14:02)  aaaaaaa");
         CHECK(commitByline("Ann", 1000, oid1, 2, 1000, day).find("first parent") != std::string::npos);
+        CHECK(mainWorktreePath("worktree /a/b c\nHEAD 123\nbranch refs/heads/main\n\nworktree /a/b c/.claude/x\n") ==
+              "/a/b c");
+        CHECK(mainWorktreePath("").empty());
+        CHECK(worktreeRawArgs("abc")[7] == "abc" && worktreeRawArgs("abc")[3] == "--raw");
+        CHECK((nulPaths(std::string("a\0b c\0", 6)) == std::vector<std::string>{"a", "b c"}));
         // Bytes holding a newline in the middle of the header's count.
         std::string nul = oid1 + " blob 3\n" + std::string("a\0b", 3) + "\n";
         CHECK(parseBatch(nul)[oid1] == std::string("a\0b", 3));

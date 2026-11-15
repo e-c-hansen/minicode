@@ -352,6 +352,53 @@ static void testGitModel() {
     CHECK(failureText(128, "", "") == "git exited with status 128.");
     CHECK(failureText(1, "", "a\n  \nb") == "a\nb");
     CHECK(firstLine("[main 1a2b3c4] Subject\n 1 file changed\n") == "[main 1a2b3c4] Subject");
+    GROUP("git-ui:apply-to-main");
+    {
+        CHECK(Git::timeoutFor(applyToMainArgs(true)) == 120);
+        CHECK((applyToMainArgs(false) == std::vector<std::string>{"apply", "--whitespace=nowarn", "-"}));
+        CHECK(applyToMainArgs(true)[1] == "--3way");
+        CHECK(worktreeDiffArgs("abc")[9] == "abc" && worktreeDiffArgs("abc").back() == "--");
+        CHECK(newFilePatchArgs("-n.txt").back() == "-n.txt" &&
+              newFilePatchArgs("x")[newFilePatchArgs("x").size() - 3] == "--");
+        CHECK((unstageArgs({"a", "b"}) ==
+               std::vector<std::string>{"--literal-pathspecs", "restore", "--staged", "--", "a", "b"}));
+        Git::Status clean;
+        ApplyPlan p = applyToMainPlan({"a.txt", "b.txt", "n.txt"}, clean, "main", "agent-x");
+        CHECK(p.refusal.empty() && p.args.empty());
+        CHECK(p.question == "Bring these 3 files' changes into main?");
+        CHECK(p.detail.rfind("a.txt, b.txt, and n.txt come into the main checkout", 0) == 0);
+        CHECK(p.detail.find("Nothing is committed") != std::string::npos && p.button == "Apply to Main");
+        CHECK(applyToMainPlan({"a.txt"}, clean, "main", "x").question ==
+              "Bring this file's changes into main?");
+        CHECK(applyToMainPlan({}, clean, "main", "agent-x").refusal ==
+              "agent-x has no changes against main to bring in.");
+        // Main busy in one of the files: refused, naming it; an unrelated
+        // change in main does not matter.
+        Git::Status busy;
+        Git::Entry e;
+        e.path = "b.txt";
+        e.unstaged = 'M';
+        busy.entries.push_back(e);
+        e.path = "other.txt";
+        busy.entries.push_back(e);
+        ApplyPlan r = applyToMainPlan({"a.txt", "b.txt"}, busy, "main", "x");
+        CHECK(r.question.empty() &&
+              r.refusal == "The main checkout has uncommitted changes of its own in b.txt, so "
+                           "nothing was brought in. Commit or stash them there first.");
+        std::vector<std::string> many;
+        for (int i = 0; i < 8; i++) many.push_back("f" + std::to_string(i));
+        CHECK(applyToMainPlan(many, clean, "main", "x").detail.rfind(
+                  "f0, f1, f2, f3, f4, f5, and 2 more come", 0) == 0);
+        CHECK(applyDoneText(3, {}, "main") ==
+              "Brought 3 files' changes into main as uncommitted changes. Review and commit them "
+              "in Source Control.");
+        CHECK(applyDoneText(1, {"a.txt"}, "main") ==
+              "Brought 1 file's changes into main; a.txt did not apply cleanly and came in with "
+              "conflict marks, listed as conflicts in Source Control.");
+        CHECK(applyFailureText(1, "", "error: n.txt: already exists in working directory\n") ==
+              "Nothing was brought into the main checkout: error: n.txt: already exists in working "
+              "directory");
+    }
     GROUP("git-ui:commit-done");
     {
         CommitDone d = commitDone("[main acbd818] Keep item 1 stock from going negative\n 1 file changed\n");

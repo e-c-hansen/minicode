@@ -22,9 +22,8 @@
 // Compare Before and Now shows the two side by side (CompareView.h). Read
 // on a queue, again whenever the transcript grows.
 //
-// MCWorktreeChangesPage, "Compare with Main" for a worktree (R2.9): the
-// files it changed against the main branch; Return or a click on one shows
-// the main branch's version beside the worktree's (CompareView.h).
+// "Compare with Main" for a worktree (R2.9) is a review page
+// (ChangeReviewPage.h, initForWorktree:), every file in one scroll.
 #import <Cocoa/Cocoa.h>
 #import "EditorPage.h"
 
@@ -79,18 +78,4 @@
 - (NSString *)changeText:(NSUInteger)index;               // one change's block, as shown
 - (MCComparison *)beforeAndNow;      // nil unless rebuilt
 - (void)compareBeforeAndNow;         // the link's action
-@end
-
-@interface MCWorktreeChangesPage : NSObject <MCEditorPage>
-- (instancetype)initWithWorktree:(MCAgentWorktree *)worktree model:(MCAgentModel *)model;
-@property(nonatomic, readonly, strong) MCAgentWorktree *worktree;
-@property(nonatomic, copy) void (^onShowComparison)(MCComparison *comparison);
-
-// For the GUI checks.
-@property(nonatomic, readonly) BOOL loaded;
-@property(nonatomic, readonly, copy) NSArray<NSString *> *rowDescriptions;   // "M src/a.cpp"
-@property(nonatomic, readonly, copy) NSString *errorText;
-@property(nonatomic, readonly) NSTableView *list;
-@property(nonatomic, copy) void (^onLoaded)(void);
-- (void)openChangeAtRow:(NSInteger)row;
 @end
