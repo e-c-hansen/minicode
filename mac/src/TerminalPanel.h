@@ -34,6 +34,10 @@ typedef NS_ENUM(NSInteger, MCPaneDirection) {
 @property(nonatomic, copy) void (^onEmpty)(void);
 // A passing note for the status bar (a queued command dropped by a close).
 @property(nonatomic, copy) void (^onNote)(NSString *note);
+// A bar across the panel under its strip, above the terminals (the offer
+// of the waiting dots, ClaudeHooksOffer.h); nil for none. Its frame's
+// height is kept; the panes share what is left.
+@property(nonatomic, strong) NSView *noticeBar;
 @property(nonatomic, copy) NSString *projectRoot;     // passed to every terminal
 @property(nonatomic, copy) NSArray<NSString *> *(^extraLinkRoots)(void);   // likewise
 @property(nonatomic, copy) NSArray<NSString *> *(^sessionLinkRoots)(TerminalView *);   // likewise

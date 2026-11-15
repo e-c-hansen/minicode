@@ -5,7 +5,10 @@
 // and its tooltip, the Dock badge across windows, typing clearing a mark,
 // Ctrl+Cmd+W, the session recorded for the Agents panel's Show Terminal and
 // for paths the session printed, and `minicode hooks --install` on a
-// scratch settings file.
+// scratch settings file; and the app's own offer of the hooks: the bar a
+// stand-in `claude` brings over the terminals, Turn On's question and its
+// write with a backup, a second press that changes nothing, and the Agents
+// panel's line.
 //
 // The world is scratch: its own folder and window, a transcripts folder and
 // temp root named through MINICODE_CLAUDE_PROJECTS and MINICODE_CLAUDE_TMP,
@@ -15,12 +18,15 @@
 #import "EditorController.h"
 #import "AgentWindow.h"
 #import "AgentsPanel.h"
+#import "ClaudeHooksOffer.h"
+#import "InstallPanel.h"
 #import "ControlServer.h"
 #import "TabStrip.h"
 #import "Terminal.h"
 #import "TerminalAttention.h"
 #import "TerminalPanel.h"
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 
 @interface TerminalView (AttentionSuite)
@@ -406,6 +412,9 @@ MC_GUI_SUITE(attention) {
         NSArray<NSString *> *rows = [p rowDescriptions];
         for (NSUInteger i = 0; i < rows.count; i++)
             if ([rows[i] containsString:@"Wait for me in tab two"]) row = (NSInteger)i;
+        // The hooks are not in yet, so the header offers them.
+        GCHECK(p.hooksButton != nil && !p.hooksButton.hidden);
+        GCHECK([p.hooksButton.title containsString:@"waiting on you"]);
         NSMenu *m = [p menuForRow:row];
         NSMenuItem *show = [m itemWithTitle:@"Show Terminal"];
         GCHECK(show != nil);
@@ -510,6 +519,108 @@ MC_GUI_SUITE(attention) {
             });
         });
     });
+
+    // ------------------------------------------- the offer inside the app
+    __block NSString *offerCfg = nil, *offerSettings = nil, *offerOriginal = nil, *savedCfg = nil;
+    __block NSUInteger alertsBefore = 0;
+    MCGuiStep(@"Claude Code's settings in a scratch folder, with a setting of the user's", ^{
+        savedCfg = NSProcessInfo.processInfo.environment[@"CLAUDE_CONFIG_DIR"];
+        offerCfg = [MCGuiScratch() stringByAppendingPathComponent:@"attention-offer-config"];
+        GCHECK([offerCfg hasPrefix:MCGuiScratch()]);   // never the real ~/.claude
+        setenv("CLAUDE_CONFIG_DIR", offerCfg.fileSystemRepresentation, 1);
+        offerSettings = [offerCfg stringByAppendingPathComponent:@"settings.json"];
+        GCHECK_EQ_STR(MCClaudeSettingsPath(), offerSettings);
+        offerOriginal = @"{\n  \"model\": \"sonnet\"\n}\n";
+        MCGuiWriteFile(offerSettings, offerOriginal);
+        MCInstallBarSetMuted(MCClaudeHooksOfferKey, NO);
+        GCHECK(!MCClaudeHooksInstalled());
+        GCHECK([MCClaudeHooksPreview() containsString:@"notify --from-hook"]);
+        GCHECK(Panel(c).noticeBar == nil);
+        // A stand-in for Claude Code: a program named claude.
+        NSString *bin = [MCGuiScratch() stringByAppendingPathComponent:@"attention-bin"];
+        MCGuiWriteFile([bin stringByAppendingPathComponent:@"claude"], @"#!/bin/sh\nsleep 1\n");
+        chmod([bin stringByAppendingPathComponent:@"claude"].fileSystemRepresentation, 0755);
+        [Panel(c) selectTab:0];
+        [t1 runCommand:[NSString stringWithFormat:@"%@ --continue",
+                        Quote([bin stringByAppendingPathComponent:@"claude"])]];
+    });
+    MCGuiWait(@"the bar comes over the terminals", 10, ^BOOL { return Panel(c).noticeBar != nil; });
+    MCGuiStep(@"it says what it offers, under the strip, above the panes", ^{
+        MCInstallBar *bar = (MCInstallBar *)Panel(c).noticeBar;
+        GCHECK([bar isKindOfClass:MCInstallBar.class]);
+        GCHECK([bar.text isEqualToString:@"minicode can show which Claude Code session is waiting on you."]);
+        GCHECK([bar.installButton.title isEqualToString:@"Turn On…"]);
+        GCHECK(NSMaxY(t1.frame) <= NSMinY(bar.frame) + 0.5);
+        GCHECK(NSMaxY(bar.frame) <= NSMinY(Strip(c).frame) + 0.5);
+        MCGuiSnapshot(Panel(c), @"attention-hooks-offer");
+        // Nothing is written by the bar's showing.
+        GCHECK([[NSString stringWithContentsOfFile:offerSettings encoding:NSUTF8StringEncoding error:nil]
+                   isEqualToString:offerOriginal]);
+        alertsBefore = MCGuiAlertsShown().count;
+        // Turn On, then Cancel at the question: nothing written.
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);
+        [bar.installButton performClick:nil];
+    });
+    MCGuiWait(@"the question was asked", 5, ^BOOL { return MCGuiAlertsShown().count > alertsBefore; });
+    MCGuiStep(@"Cancel wrote nothing and kept the bar", ^{
+        GCHECK_EQ_STR(MCGuiAlertsShown()[alertsBefore],
+                      @"Add minicode's hooks to Claude Code's settings?");
+        GCHECK([[NSString stringWithContentsOfFile:offerSettings encoding:NSUTF8StringEncoding error:nil]
+                   isEqualToString:offerOriginal]);
+        GCHECK(Panel(c).noticeBar != nil);
+        alertsBefore = MCGuiAlertsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn), @(NSAlertFirstButtonReturn)]);
+        [((MCInstallBar *)Panel(c).noticeBar).installButton performClick:nil];
+    });
+    MCGuiWait(@"Add the Hooks, then where they went", 5, ^BOOL {
+        return MCGuiAlertsShown().count >= alertsBefore + 2;
+    });
+    MCGuiStep(@"the four hooks are in, the user's setting kept, one backup, and the bar gone", ^{
+        GCHECK_EQ_STR(MCGuiAlertsShown()[alertsBefore + 1], @"The hooks are on");
+        NSData *d = [NSData dataWithContentsOfFile:offerSettings];
+        NSDictionary *j = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
+        GCHECK([j[@"model"] isEqual:@"sonnet"]);
+        for (NSString *ev in @[@"Notification", @"Stop", @"UserPromptSubmit", @"PostToolUse"]) {
+            NSString *cmd = j[@"hooks"][ev][0][@"hooks"][0][@"command"];
+            GCHECK([cmd hasSuffix:@"notify --from-hook"]);
+            GCHECK_EQ_STR(cmd, MCClaudeHooksCommand());
+        }
+        NSArray *backups = [[NSFileManager.defaultManager contentsOfDirectoryAtPath:offerCfg error:nil]
+            filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:
+                @"SELF BEGINSWITH 'settings.json.minicode-backup-'"]];
+        GCHECK(backups.count == 1);
+        if (backups.count == 1)
+            GCHECK([[NSString stringWithContentsOfFile:[offerCfg stringByAppendingPathComponent:backups[0]]
+                                              encoding:NSUTF8StringEncoding error:nil]
+                       isEqualToString:offerOriginal]);
+        GCHECK(MCClaudeHooksInstalled() && MCClaudeHooksPreview() == nil);
+        GCHECK(Panel(c).noticeBar == nil);
+        alertsBefore = MCGuiAlertsShown().count;
+        // A second press, from the minicode menu: says so, writes nothing.
+        NSMenuItem *item = nil;
+        for (NSMenuItem *top in NSApp.mainMenu.itemArray)
+            for (NSMenuItem *i in top.submenu.itemArray)
+                if (i.action == @selector(installClaudeHooks:)) item = i;
+        GCHECK([item.title isEqualToString:@"Install Claude Code Hooks…"]);
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        if (item) [NSApp sendAction:item.action to:item.target from:item];
+    });
+    MCGuiWait(@"it answers", 5, ^BOOL { return MCGuiAlertsShown().count > alertsBefore; });
+    MCGuiStep(@"already on: the file and its one backup as they were", ^{
+        GCHECK_EQ_STR(MCGuiAlertsShown()[alertsBefore], @"The hooks are already on");
+        NSArray *files = [NSFileManager.defaultManager contentsOfDirectoryAtPath:offerCfg error:nil];
+        GCHECK(files.count == 2);
+        // Started again, Claude Code brings no bar now.
+        GCHECK(!MCOfferClaudeHooksForTerminal(t1) && Panel(c).noticeBar == nil);
+        [c toggleAgents:nil];
+        MCAgentsPanel *p = ((MCAgentWindow *)[c valueForKey:@"agents"]).panel;
+        [p reload];
+        GCHECK(p.hooksButton.hidden);
+        [c toggleAgents:nil];
+        if (savedCfg) setenv("CLAUDE_CONFIG_DIR", savedCfg.fileSystemRepresentation, 1);
+        else unsetenv("CLAUDE_CONFIG_DIR");
+    });
+    MCGuiWait(@"the stand-in claude has exited", 10, ^BOOL { return t1.atPrompt; });
 
     MCGuiStep(@"the suite's window closes, leaving the first window to the next suite", ^{
         [c.window close];

@@ -891,6 +891,8 @@ int main(int argc, const char *argv[]) {
                 @"MINICODE_BACKUP_DIR": [root stringByAppendingPathComponent:@"backups"],
                 @"MINICODE_PASTEBOARD": [suite stringByAppendingString:@".pasteboard"],
                 @"MINICODE_MATH_CACHE": [root stringByAppendingPathComponent:@"math"],
+                // Claude Code's settings and lock files, never ~/.claude's.
+                @"CLAUDE_CONFIG_DIR": [root stringByAppendingPathComponent:@"claude"],
                 @"GIT_CONFIG_GLOBAL": @"/dev/null",
                 @"GIT_CONFIG_NOSYSTEM": @"1",
                 @"GIT_AUTHOR_NAME": @"GUI Check", @"GIT_AUTHOR_EMAIL": @"gui@example.invalid",

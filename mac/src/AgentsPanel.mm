@@ -5,6 +5,7 @@
 #import "Appearance.h"
 #import "TreeDetails.h"
 #import "TerminalAttention.h"
+#import "ClaudeHooksOffer.h"
 
 #include "AgentView.h"
 #include "Settings.h"
@@ -161,6 +162,7 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
 
 @implementation MCAgentsPanel {
     NSTextField *_heading, *_summary, *_notice;
+    NSButton *_hooks;
     NSScrollView *_scroll;
     MCAgentsOutline *_outline;
     NSArray<MCAgentWork *> *_sessions;
@@ -211,7 +213,14 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     _summary.alignment = NSTextAlignmentRight;
     _summary.lineBreakMode = NSLineBreakByTruncatingTail;
     [self addSubview:_summary];
-    _notice = [NSTextField wrappingLabelWithString:@""];
+    _hooks = [NSButton buttonWithTitle:@"" target:self action:@selector(offerHooks:)];
+    _hooks.bordered = NO;
+    _hooks.alignment = NSTextAlignmentLeft;
+    _hooks.toolTip = @"Adds a hook to Claude Code's settings, after showing you what it adds, so "
+                      "a terminal's tab gets an orange dot while its session waits for you.";
+    [self setHooksTitle];
+    [self addSubview:_hooks];
+        _notice = [NSTextField wrappingLabelWithString:@""];
     _notice.font = [NSFont systemFontOfSize:12];
     _notice.textColor = AHex(0x9D9D9D);
     _notice.selectable = YES;
@@ -269,9 +278,41 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     const CGFloat W = self.bounds.size.width, H = self.bounds.size.height, pad = 10;
     _heading.frame = NSMakeRect(pad, 10, 80, 16);
     _summary.frame = NSMakeRect(pad + 60, 10, MAX(0, W - 2 * pad - 60), 16);
+    const CGFloat top = _hooks.hidden ? 32 : 52;
+    _hooks.frame = NSMakeRect(pad - 2, 30, MAX(0, W - 2 * pad + 2), 18);
     _notice.preferredMaxLayoutWidth = MAX(40, W - 2 * pad);
-    _notice.frame = NSMakeRect(pad, 34, MAX(40, W - 2 * pad), 80);
-    _scroll.frame = NSMakeRect(0, 32, W, MAX(0, H - 32));
+    _notice.frame = NSMakeRect(pad, top + 2, MAX(40, W - 2 * pad), 80);
+    _scroll.frame = NSMakeRect(0, top, W, MAX(0, H - top));
+}
+
+- (void)setHooksTitle {
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.lineBreakMode = NSLineBreakByTruncatingTail;
+    _hooks.attributedTitle = [[NSAttributedString alloc]
+        initWithString:@"Show which session is waiting on you…"
+            attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11.5],
+                         NSForegroundColorAttributeName: AHex(0x4EA1F7),
+                         NSParagraphStyleAttributeName: ps}];
+}
+
+- (NSButton *)hooksButton { return _hooks; }
+
+// The line shows only while the hooks are missing; the file is small and
+// read on each reload (the model's changes and the 30 s timer).
+- (void)updateHooksLine {
+    const BOOL hide = MCClaudeHooksInstalled();
+    if (_hooks.hidden == hide) return;
+    _hooks.hidden = hide;
+    [self layoutPanel];
+}
+
+- (void)offerHooks:(id)sender {
+    (void)sender;
+    __weak MCAgentsPanel *weakSelf = self;
+    MCInstallClaudeHooks(self.window, ^(BOOL installed) {
+        (void)installed;
+        [weakSelf updateHooksLine];
+    });
 }
 
 - (void)viewDidMoveToWindow {
@@ -331,6 +372,7 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
                                                        stringByAbbreviatingWithTildeInPath])));
     _notice.hidden = _sessions.count > 0;
     _scroll.hidden = _sessions.count == 0;
+    [self updateHooksLine];
 }
 
 - (void)restoreExpansion {

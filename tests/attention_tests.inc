@@ -244,6 +244,109 @@ static void testClaudeHooks() {
         CHECK(::stat(other.c_str(), &st) == 0 && (st.st_mode & 07777) == 0604);
         fs::remove_all(dir, ec);
     }
+
+    GROUP("hooks:command");
+    {
+        CHECK(commandFor("") == kCommand);
+        CHECK(commandFor("/Applications/MiniCode.app/Contents/Resources/minicode") ==
+              "/Applications/MiniCode.app/Contents/Resources/minicode notify --from-hook");
+        CHECK(commandFor("/Users/a b/Mini'Code.app/minicode") ==
+              "'/Users/a b/Mini'\\''Code.app/minicode' notify --from-hook");
+        // Any of these spellings counts as installed, so a second press
+        // after a move to Homebrew adds nothing.
+        Json e = configuration(commandFor("/x y/minicode"), {})["hooks"]["Stop"][0];
+        CHECK(runsOurCommand(e));
+        Json some = configuration(kCommand, {"Stop", "PostToolUse"});
+        CHECK(some["hooks"].size() == 2 && some["hooks"].has("Stop") &&
+              some["hooks"].has("PostToolUse") && !some["hooks"].has("Notification"));
+        MergeResult r = merge("{}", commandFor("/opt/m/minicode"));
+        CHECK(r.ok && r.changed && r.added.size() == 4 &&
+              r.text.find("/opt/m/minicode notify --from-hook") != std::string::npos);
+        CHECK(installed(r.text) && !installed("{}") && !installed("[1]") && !installed(""));
+        CHECK(eventList({"A"}) == "A" && eventList({"A", "B"}) == "A and B" &&
+              eventList({"A", "B", "C"}) == "A, B, and C" && eventList({}).empty());
+        CHECK(settingsPath("/c/cfg/", "/h") == "/c/cfg/settings.json");
+        CHECK(settingsPath(nullptr, "/h") == "/h/.claude/settings.json");
+        CHECK(settingsPath("", "/h") == "/h/.claude/settings.json");
+    }
+
+    GROUP("hooks:install");
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path dir = fs::temp_directory_path() /
+                             ("minicode-hooks-install-" + std::to_string((long)getpid()));
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        auto read = [](const fs::path &p) {
+            std::ifstream in(p, std::ios::binary);
+            std::stringstream ss;
+            ss << in.rdbuf();
+            return ss.str();
+        };
+        // A file not there yet: its folder made 0700, the file 0600, no backup.
+        const fs::path fresh = dir / "new" / "settings.json";
+        InstallResult r = install(fresh.string(), kCommand, 1763200000);
+        CHECK(r.ok && r.changed && r.backup.empty() && r.added.size() == 4);
+        CHECK(installed(read(fresh)));
+        struct stat st;
+        CHECK(::stat(fresh.c_str(), &st) == 0 && (st.st_mode & 07777) == 0600);
+        CHECK(::stat((dir / "new").c_str(), &st) == 0 && (st.st_mode & 07777) == 0700);
+        // Again: nothing changes, nothing is backed up.
+        InstallResult again = install(fresh.string(), kCommand, 1763200000);
+        CHECK(again.ok && !again.changed && again.backup.empty());
+        int files = 0;
+        for (const auto &e : fs::directory_iterator(dir / "new")) (void)e, files++;
+        CHECK(files == 1);
+        // A file with the user's own settings: backed up first, byte for byte,
+        // twice at the same second without overwriting the first backup.
+        const fs::path mine = dir / "settings.json";
+        const std::string original = "{\"model\": \"opus\", \"hooks\": {\"Stop\": []}}";
+        { std::ofstream(mine) << original; }
+        ::chmod(mine.c_str(), 0640);
+        InstallResult b = install(mine.string(), kCommand, 1763200000);
+        CHECK(b.ok && b.changed && !b.backup.empty() && read(b.backup) == original);
+        CHECK(b.backup.find("settings.json.minicode-backup-") != std::string::npos);
+        CHECK(::stat(mine.c_str(), &st) == 0 && (st.st_mode & 07777) == 0640);
+        CHECK(read(mine).find("\"model\": \"opus\"") != std::string::npos && installed(read(mine)));
+        { std::ofstream(mine) << original; }
+        InstallResult b2 = install(mine.string(), kCommand, 1763200000);
+        CHECK(b2.ok && b2.changed && b2.backup != b.backup && read(b.backup) == original &&
+              read(b2.backup) == original);
+        // A file merge refuses is left as it was, with no backup.
+        const fs::path broken = dir / "broken.json";
+        { std::ofstream(broken) << "{ \"model\": "; }
+        InstallResult bad = install(broken.string(), kCommand, 1763200000);
+        CHECK(!bad.ok && bad.refused && bad.error.find("left alone") != std::string::npos);
+        CHECK(read(broken) == "{ \"model\": ");
+        int backups = 0;
+        for (const auto &e : fs::directory_iterator(dir))
+            if (e.path().filename().string().rfind("broken.json.minicode-backup-", 0) == 0) backups++;
+        CHECK(backups == 0);
+        // A folder where the file should be.
+        fs::create_directories(dir / "folder.json", ec);
+        InstallResult folder = install((dir / "folder.json").string(), kCommand, 1763200000);
+        CHECK(!folder.ok && !folder.refused && folder.error.find("plain file") != std::string::npos);
+        fs::remove_all(dir, ec);
+    }
+
+    GROUP("hooks:starts-claude");
+    {
+        for (const char *yes : {"claude", "claude --continue", "  claude -p 'hi'", "exec claude",
+                                "FOO=1 claude", "env -i FOO=1 claude", "command claude",
+                                "~/.local/bin/claude", "/opt/homebrew/bin/claude --resume x",
+                                "'claude'", "nohup claude > log", "exec -a cc claude",
+                                "time claude; ls", "caffeinate -i claude"})
+            CHECK(startsClaude(yes));
+        for (const char *no : {"", "ls", "claudette", "echo claude", "vim claude.md",
+                               "ls | claude", "git commit -m claude", "cat ~/.claude/x",
+                               "FOO=claude", "exec", "cd claude && ls"})
+            CHECK(!startsClaude(no));
+        CHECK(isClaudeProgramPath("/Users/a/.local/share/claude/versions/2.1.319"));
+        CHECK(isClaudeProgramPath("/opt/homebrew/bin/claude"));
+        CHECK(!isClaudeProgramPath("/usr/local/bin/node") && !isClaudeProgramPath("/bin/zsh") &&
+              !isClaudeProgramPath(""));
+    }
 }
 
 static void testNotifyCommandLine() {

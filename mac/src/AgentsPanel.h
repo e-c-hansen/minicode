@@ -30,6 +30,10 @@
 // running state and ages also move on a 30 s timer).
 - (void)reload;
 
+// While Claude Code's hooks for the waiting dots are missing, a line under
+// the heading offers them (ClaudeHooksOffer.h); hidden once they are in.
+@property(nonatomic, readonly) NSButton *hooksButton;
+
 // For the GUI checks.
 @property(nonatomic, readonly) NSOutlineView *outline;
 @property(nonatomic, readonly, copy) NSString *noticeText;    // the empty state, "" with rows

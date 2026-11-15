@@ -65,6 +65,11 @@ NSPopover *MCShowInstallPopover(MCInstallView *view, NSView *anchor, NSRect rect
 // Don't Allow. Either question clears the other.
 @property(nonatomic, readonly, copy) NSString *consentServer;
 - (void)askAboutServer:(NSString *)key question:(NSString *)question;
+// Any other offer (the waiting dots, ClaudeHooksOffer.h): `text` with `tip`
+// as its tooltip, and the three controls' titles. Clears the questions
+// above and serverKey.
+- (void)showMessage:(NSString *)text tip:(NSString *)tip button:(NSString *)button
+               mute:(NSString *)mute close:(NSString *)closeTip;
 @property(nonatomic, readonly, copy) NSString *text;
 @property(nonatomic, readonly) NSButton *installButton;
 @property(nonatomic, copy) void (^onInstall)(NSButton *sender);

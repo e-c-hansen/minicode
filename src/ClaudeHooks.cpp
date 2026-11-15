@@ -5,6 +5,7 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -89,10 +90,10 @@ const std::vector<std::string> &events() {
 
 namespace {
 
-Json entry() {
+Json entry(const std::string &command) {
     Json hook = Json::object();
     hook.set("type", "command");
-    hook.set("command", kCommand);
+    hook.set("command", command);
     Json list = Json::array();
     list.push(hook);
     Json e = Json::object();
@@ -117,11 +118,16 @@ bool runsOurCommand(const Json &e) {
     return false;
 }
 
-Json configuration() {
+Json configuration() { return configuration(kCommand, {}); }
+
+Json configuration(const std::string &command, const std::vector<std::string> &only) {
     Json hooks = Json::object();
     for (const std::string &ev : events()) {
+        bool wanted = only.empty();
+        for (const std::string &o : only) wanted = wanted || o == ev;
+        if (!wanted) continue;
         Json list = Json::array();
-        list.push(entry());
+        list.push(entry(command));
         hooks.set(ev, list);
     }
     Json root = Json::object();
@@ -129,7 +135,41 @@ Json configuration() {
     return root;
 }
 
-MergeResult merge(const std::string &text) {
+std::string commandFor(const std::string &launcher) {
+    if (launcher.empty()) return kCommand;
+    bool plain = true;
+    for (unsigned char c : launcher) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                        c == '/' || c == '.' || c == '_' || c == '-' || c == '+' || c == ',' ||
+                        c == ':' || c == '@' || c == '%';
+        plain = plain && ok;
+    }
+    std::string quoted = launcher;
+    if (!plain) {
+        quoted = "'";
+        for (char c : launcher) quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
+        quoted += "'";
+    }
+    return quoted + " notify --from-hook";
+}
+
+bool installed(const std::string &text) {
+    MergeResult r = merge(text);
+    return r.ok && !r.changed;
+}
+
+std::string eventList(const std::vector<std::string> &ev) {
+    std::string out;
+    for (size_t i = 0; i < ev.size(); i++) {
+        if (i) out += ev.size() == 2 ? " and " : (i + 1 == ev.size() ? ", and " : ", ");
+        out += ev[i];
+    }
+    return out;
+}
+
+MergeResult merge(const std::string &text) { return merge(text, kCommand); }
+
+MergeResult merge(const std::string &text, const std::string &command) {
     MergeResult r;
     bool blank = true;
     for (char c : text)
@@ -177,14 +217,14 @@ MergeResult merge(const std::string &text) {
         }
         Json list = Json::array();
         for (size_t i = 0; i < kv.second.size(); i++) list.push(kv.second[i]);
-        list.push(entry());
+        list.push(entry(command));
         hooks.set(kv.first, list);
         r.added.push_back(kv.first);
     }
     for (const std::string &ev : events()) {
         if (oldHooks.has(ev)) continue;
         Json list = Json::array();
-        list.push(entry());
+        list.push(entry(command));
         hooks.set(ev, list);
         r.added.push_back(ev);
     }
@@ -297,6 +337,183 @@ bool writeSettingsFile(const std::string &path, const std::string &text, unsigne
         return false;
     }
     return true;
+}
+
+// ------------------------------------------------------- installing
+std::string settingsPath(const char *configDir, const char *home) {
+    if (configDir && *configDir) {
+        std::string dir = configDir;
+        while (!dir.empty() && (dir.back() == ' ' || dir.back() == '\n' || dir.back() == '\t'))
+            dir.pop_back();
+        while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
+        return dir + "/settings.json";
+    }
+    return std::string(home && *home ? home : "") + "/.claude/settings.json";
+}
+
+bool readSettingsFile(const std::string &path, std::string &text, bool &exists,
+                      std::string &error) {
+    text.clear();
+    exists = false;
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) {
+        if (errno == ENOENT) return true;
+        error = path + ": " + std::strerror(errno);
+        return false;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        error = path + " is not a plain file";
+        return false;
+    }
+    const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        error = path + ": " + std::strerror(errno);
+        return false;
+    }
+    char buf[65536];
+    for (;;) {
+        const ssize_t n = read(fd, buf, sizeof buf);
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) {
+            error = path + ": " + std::strerror(errno);
+            close(fd);
+            return false;
+        }
+        if (n == 0) break;
+        text.append(buf, (size_t)n);
+    }
+    close(fd);
+    exists = true;
+    return true;
+}
+
+InstallResult install(const std::string &path, const std::string &command, long now) {
+    InstallResult out;
+    std::string text, error;
+    bool exists = false;
+    if (!readSettingsFile(path, text, exists, error)) {
+        out.error = error;
+        return out;
+    }
+    MergeResult r = merge(text, command);
+    if (!r.ok) {
+        out.refused = true;
+        out.error = path + " was left alone: " + r.error;
+        return out;
+    }
+    out.added = r.added;
+    if (!r.changed) {
+        out.ok = true;
+        return out;
+    }
+    mode_t mode = 0600;
+    if (exists) {
+        struct stat st;
+        if (stat(path.c_str(), &st) == 0) mode = st.st_mode & 07777;
+        // A backup of the file as it was, named for the time, never over
+        // an earlier one.
+        char stamp[32];
+        const time_t t = (time_t)now;
+        struct tm tm;
+        localtime_r(&t, &tm);
+        strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
+        std::string backup = path + ".minicode-backup-" + stamp;
+        for (int n = 2; access(backup.c_str(), F_OK) == 0; n++)
+            backup = path + ".minicode-backup-" + stamp + "-" + std::to_string(n);
+        if (!writeSettingsFile(backup, text, mode, error)) {
+            out.error = "could not back up " + path + ", so it was left alone: " + error;
+            return out;
+        }
+        out.backup = backup;
+    } else {
+        const size_t slash = path.rfind('/');
+        if (slash != std::string::npos && slash > 0) mkdir(path.substr(0, slash).c_str(), 0700);
+    }
+    if (!writeSettingsFile(path, r.text, mode, error)) {
+        out.error = error;
+        return out;
+    }
+    out.ok = true;
+    out.changed = true;
+    return out;
+}
+
+// ------------------------------------------------------- seeing Claude Code
+namespace {
+
+std::string baseName(const std::string &word) {
+    const size_t slash = word.rfind('/');
+    return slash == std::string::npos ? word : word.substr(slash + 1);
+}
+
+bool isAssignment(const std::string &w) {
+    const size_t eq = w.find('=');
+    if (eq == std::string::npos || eq == 0) return false;
+    for (size_t i = 0; i < eq; i++) {
+        const char c = w[i];
+        const bool ok = c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (i > 0 && c >= '0' && c <= '9');
+        if (!ok) return false;
+    }
+    return true;
+}
+
+// The line's words, quotes taken off; stops at the first ; & | or newline,
+// since only the line's first command is looked at.
+std::vector<std::string> firstCommandWords(const std::string &line) {
+    std::vector<std::string> words;
+    std::string w;
+    bool in = false;
+    char quote = 0;
+    for (size_t i = 0; i < line.size(); i++) {
+        const char c = line[i];
+        if (quote) {
+            if (c == quote) quote = 0;
+            else w += c;
+            continue;
+        }
+        if (c == '\'' || c == '"') { quote = c; in = true; continue; }
+        if (c == '\\' && i + 1 < line.size()) { w += line[++i]; in = true; continue; }
+        if (c == ';' || c == '&' || c == '|' || c == '\n' || c == '(' || c == ')') break;
+        if (c == ' ' || c == '\t') {
+            if (in) words.push_back(w);
+            w.clear();
+            in = false;
+            continue;
+        }
+        w += c;
+        in = true;
+    }
+    if (in) words.push_back(w);
+    return words;
+}
+
+}  // namespace
+
+bool startsClaude(const std::string &line) {
+    const std::vector<std::string> words = firstCommandWords(line);
+    size_t i = 0;
+    while (i < words.size()) {
+        const std::string &w = words[i];
+        if (isAssignment(w)) { i++; continue; }
+        if (w == "exec" || w == "command" || w == "builtin" || w == "noglob" || w == "nohup" ||
+            w == "time" || w == "env" || w == "caffeinate") {
+            i++;
+            // Their own options (env -i, exec -a name, caffeinate -i).
+            while (i < words.size() && !words[i].empty() && words[i][0] == '-') {
+                if ((w == "exec" && words[i] == "-a") || (w == "env" && words[i] == "-u")) i++;
+                i++;
+            }
+            continue;
+        }
+        return baseName(w) == "claude";
+    }
+    return false;
+}
+
+bool isClaudeProgramPath(const std::string &path) {
+    if (baseName(path) == "claude") return true;
+    return path.find("/claude/versions/") != std::string::npos;
 }
 
 }  // namespace ClaudeHooks

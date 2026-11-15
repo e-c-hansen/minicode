@@ -19,6 +19,7 @@
 #import "ControlServer.h"
 #import "Keymap.h"
 #import "TerminalAttention.h"
+#import "ClaudeHooksOffer.h"
 #import "RecentFolders.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting, MCControlAppHost>
@@ -882,6 +883,12 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)forgetFolderToolsAnswer:(id)sender {
     [[self current] forgetFolderToolsAnswer:sender];
 }
+// Claude Code's hooks for the waiting dots, asked about first
+// (ClaudeHooksOffer.h); on the key window's sheet when there is one.
+- (void)installClaudeHooks:(id)sender {
+    (void)sender;
+    MCInstallClaudeHooks(NSApp.keyWindow ?: NSApp.mainWindow, nil);
+}
 
 @end
 
@@ -921,6 +928,11 @@ static void BuildMenu(void) {
     // programs (the install bar's, Format Document's), taken back.
     [appMenu addItemWithTitle:@"Ask Again About This Folder's Tools"
                        action:@selector(forgetFolderToolsAnswer:)
+                keyEquivalent:@""];
+    // What makes a terminal's tab show that its Claude Code session waits
+    // for you: the hooks, added to Claude Code's settings once asked.
+    [appMenu addItemWithTitle:@"Install Claude Code Hooks…"
+                       action:@selector(installClaudeHooks:)
                 keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     // Hands a change to Claude Code in a terminal of minicode's own source

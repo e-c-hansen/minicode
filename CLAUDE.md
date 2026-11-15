@@ -257,6 +257,7 @@ goes here first, with tests; the GUI only displays it.
   `PalettePanel`, `Navigation`.
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
+  `ClaudeHooksOffer` (the waiting dots' hooks, offered in the app),
   `AgentNotes`, `AgentModel`,
   `AgentsPanel`, `AgentPages`, `AgentWindow`, `ProcessMonitor` (libproc,
   `minicode procs`), `ProcessesPanel`.
@@ -3207,7 +3208,10 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   page's WebKit process by about 0 MB (the page process itself is 25-35 MB).
 - Ground rules for this and the agent workspace: nothing runs because a folder
   or file was opened; Claude Code's data is read, never written, moved or
-  deleted; nothing leaves the Mac.
+  deleted, with one exception the owner approved (2026-11-15): the hooks
+  for the waiting dots go into ~/.claude/settings.json when the user asks
+  (Install Claude Code Hooks…, after a question showing exactly what is
+  added, with a backup; see "The agent workspace"); nothing leaves the Mac.
 
 ## The Claude Code IDE link (Mac, agent.ide-link)
 
@@ -3293,7 +3297,25 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   `minicode hooks --install` (run by the user only; backs up, merges, a second
   run changes nothing; a symlinked settings.json stays a link and a
   hard-linked one is written in place, `ClaudeHooks::writeSettingsFile`) adds `minicode notify --from-hook` to Claude Code's
-  Notification, Stop, UserPromptSubmit and PostToolUse hooks; notify never
+  Notification, Stop, UserPromptSubmit and PostToolUse hooks. **The app
+  offers it too** (2026-11-15, `ClaudeHooksOffer.{h,mm}`, the owner's yes
+  to writing ~/.claude/settings.json on the user's two presses): the
+  terminal posts `MCTerminalClaudeDidStartNotification` when a typed
+  command's program is `claude` (`ClaudeHooks::startsClaude`) or, a second
+  later, the foreground binary is Claude Code's
+  (`isClaudeProgramPath`: a native install's process is named for its
+  version), and a bar over that window's terminals (`MCTerminalPanel
+  noticeBar`, an `MCInstallBar` in `showMessage:` form) offers Turn On…
+  once per launch (`MCInstallBarTakeOffer`), muted for good by Not Now
+  (`MCInstallBarMuted("claude-hooks")`), never once the hooks are in;
+  minicode > Install Claude Code Hooks… (`minicode.installClaudeHooks`)
+  and the Agents panel header's line (shown while they are missing) run
+  the same `MCInstallClaudeHooks`: a question with the JSON to be added,
+  then `ClaudeHooks::install` (the CLI's code, moved to the core), then
+  where it wrote and the backup. The command is `commandFor`'s: plain
+  `minicode notify --from-hook` when `MCFindProgram(@"minicode")` finds
+  it, else the bundle's launcher by its quoted path. The harness gives
+  every run a scratch `CLAUDE_CONFIG_DIR`; tests never touch ~/.claude; notify never
   starts minicode and with --from-hook prints nothing and exits 0 whatever
   happens. Core: `ClaudeHooks` (hook JSON, the settings merge) and
   `AttentionBoard` (marks, sessions); Mac: `MCTerminalAttention` draws it
