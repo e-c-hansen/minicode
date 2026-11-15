@@ -2324,7 +2324,13 @@ mermaid.js.
   selecting nothing (`stale`: its offsets are off). `.jsonc`, tsconfig*.json,
   `.vscode/*.json` and the like allow comments (`JsonOutline::allowsComments`).
 - **Notebooks** (`Notebook`): nbformat 4 (and 3's cells) to Markdown, rendered
-  read-only (`showsRenderedMarkdown`); outputs as plain blocks, pictures as
+  read-only (`showsRenderedMarkdown`); text outputs as blocks fenced
+  ```output (`Notebook::kOutputLanguage`), which the Mac draws unboxed with
+  a left rule in the text color (2026-11-15), and Jupyter's prompts after
+  the language (```python In [3], ```output Out [3] on a result), which
+  the parser keeps as `MdRun::label` and the Mac sets as a small muted line
+  above the block (`markdownLabelFor:`); GTK and Android show plain code
+  for now, pictures as
   data: images (SVG too, base64'd), HTML as text, an output past 5,000 lines
   or 512 KB cut to its first and last 1,000 (`shortenOutput`). Nothing runs.
 - **SQLite** (`SqliteView.mm`): `SQLITE_OPEN_READONLY` with a `mode=ro` URI,

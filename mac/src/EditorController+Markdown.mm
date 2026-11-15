@@ -731,6 +731,9 @@ static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *an
                                                         encoding:NSUTF8StringEncoding] ?: @"";
                 [anchors addObject:@[@YES, slug, @(out.length)]];
             }
+            // A fenced block's label ("In [3]") on its own small line above it.
+            if (r.codeBlock && !r.label.empty() && !codeBox)
+                [out appendAttributedString:[self markdownLabelFor:r]];
             para = [self markdownParagraphFor:r quotes:quoteBlocks code:&codeBox];
         }
         if (!r.anchor.empty()) {   // a footnote, or a reference to one, that links land on

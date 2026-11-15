@@ -4,7 +4,7 @@
 // Markdown cells as written (their attached pictures inlined), code cells
 // as fenced blocks in the notebook's language (so they are highlighted),
 // and outputs after them: text streams, results and errors (ANSI colors
-// stripped) as plain blocks (a long one cut in the middle), pictures (SVG
+// stripped) as blocks fenced as output (a long one cut in the middle), pictures (SVG
 // too) as data: images, Markdown results as Markdown, and HTML results as
 // their plain text alternative, or the HTML's text when there is none.
 #pragma once
@@ -21,6 +21,7 @@ struct Output {
     std::string text;     // the text (for an image, its plain alternative)
     std::string mime;     // an image's: "image/png", "image/jpeg", "image/gif", "image/svg+xml"
     std::string base64;   // an image's data, without whitespace
+    bool result = false;  // the cell's value (execute_result), which Jupyter labels Out [n]
 };
 
 struct Cell {
@@ -44,6 +45,13 @@ bool parse(const std::string &json, Document &out, std::string *error = nullptr)
 std::string toMarkdown(const Document &doc);
 // The same from the file's text, saying so when it cannot be read.
 std::string markdownForFile(const std::string &json);
+
+// The fence language a text output is written with ("output"), so a page
+// can set results apart from code: the Mac draws them unboxed with a rule
+// at the left in the page's own text color; elsewhere they are plain code.
+// A code cell that has run carries "In [n]" after its language, and its
+// result "Out [n]" after this (MdRun::label).
+constexpr const char *kOutputLanguage = "output";
 
 // Helpers, tested on their own.
 std::string stripAnsi(const std::string &s);

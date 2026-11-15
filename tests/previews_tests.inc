@@ -546,18 +546,59 @@ static void testNotebook() {
 
         const std::string md = Notebook::toMarkdown(d);
         CHECK(md.find("# Title\nSome *text*.\n\n") == 0);
-        CHECK(md.find("```python\nprint('hi')\nx = 1\n```\n") != std::string::npos);
-        CHECK(md.find("```\nhi\n```\n") != std::string::npos);
+        // The code with its prompt; outputs fenced as output, the result
+        // with its prompt (Jupyter's: streams and errors have none).
+        CHECK(md.find("```python In [3]\nprint('hi')\nx = 1\n```\n") != std::string::npos);
+        CHECK(md.find("```output\nhi\n```\n") != std::string::npos);
+        CHECK(md.find("```output Out [3]\n1\n```\n") != std::string::npos);
         CHECK(md.find("![output](data:image/png;base64,iVBORw0KGgo=)") != std::string::npos);
-        CHECK(md.find("```\nValueError: bad\n```") != std::string::npos);
-        // The preview reads it as intended: the code is a python block.
-        bool sawPython = false, sawImage = false;
+        CHECK(md.find("```output\nValueError: bad\n```") != std::string::npos);
+        // A cell never run has no prompt.
+        CHECK(md.find("```python\n\n```") != std::string::npos);
+        // The preview reads it as intended: the code is a python block with
+        // its label, the outputs blocks of their own language.
+        bool sawPython = false, sawImage = false, sawResult = false, sawStream = false;
         for (const MdRun &r : MarkdownParser::parse(md)) {
-            if (r.codeBlock && r.lang == "python" && r.text == "print('hi')\n") sawPython = true;
+            if (r.codeBlock && r.lang == "python" && r.text == "print('hi')\n" &&
+                r.label == "In [3]")
+                sawPython = true;
             if (r.image && r.src.rfind("data:image/png;base64,", 0) == 0) sawImage = true;
+            if (r.codeBlock && r.lang == "output" && r.text == "1\n" && r.label == "Out [3]")
+                sawResult = true;
+            if (r.codeBlock && r.lang == "output" && r.text == "hi\n" && r.label.empty())
+                sawStream = true;
         }
         CHECK(sawPython);
         CHECK(sawImage);
+        CHECK(sawResult && sawStream);
+        // Only the cell's value is labelled: a display (an HTML table) has
+        // no prompt, as in Jupyter.
+        const std::string shown = Notebook::markdownForFile(R"nb({"nbformat": 4, "cells": [
+            {"cell_type": "code", "execution_count": 7, "source": "show()", "outputs": [
+              {"output_type": "display_data", "metadata": {},
+               "data": {"text/html": ["<table><tr><td>t</td></tr></table>"]}},
+              {"output_type": "execute_result", "execution_count": 7, "metadata": {},
+               "data": {"text/plain": ["7"]}}]}]})nb");
+        CHECK(shown.find("```output\nt\n```") != std::string::npos);
+        CHECK(shown.find("```output Out [7]\n7\n```") != std::string::npos);
+        CHECK(shown.find("```python In [7]\nshow()\n```") != std::string::npos);
+    }
+    GROUP("md:fence-label");
+    {
+        // The words after a fence's language, as written; none for a bare
+        // fence or one with attributes in braces only.
+        auto labelOf = [](const std::string &md) {
+            for (const MdRun &r : MarkdownParser::parse(md))
+                if (r.codeBlock) return r.label;
+            return std::string("(no code)");
+        };
+        CHECK(labelOf("```python In [12]\nx\n```\n") == "In [12]");
+        CHECK(labelOf("```Python   Out [1]  \nx\n```\n") == "Out [1]");
+        CHECK(labelOf("```python\nx\n```\n").empty());
+        CHECK(labelOf("```\nx\n```\n").empty());
+        CHECK(labelOf("```js {.line-numbers}\nx\n```\n").empty());
+        CHECK(labelOf("```js title {.x}\nx\n```\n") == "title");
+        CHECK(labelOf("- item\n\n  ```sh In [2]\n  ls\n  ```\n") == "In [2]");
     }
     GROUP("notebook:edges");
     {

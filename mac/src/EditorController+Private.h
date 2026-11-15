@@ -111,6 +111,8 @@ static NSString *const kColorLink = @"minicode-color";
 static NSString *const kOpacityLink = @"minicode-opacity";
 // On rendered Markdown: the 0-based source line a stretch of text came from.
 static NSAttributedStringKey const kMarkdownSourceLine = @"MCMarkdownSourceLine";
+// On a fenced block's label line above it (a notebook's "In [3]"), for tests.
+static NSAttributedStringKey const kMarkdownCodeLabel = @"MCMarkdownCodeLabel";
 // On a rendered table cell: @[row, column], row 0 being the header.
 static NSAttributedStringKey const kMarkdownTableCell = @"MCMarkdownTableCell";
 // On the alt text standing in for a web picture still on its way:
@@ -910,6 +912,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSParagraphStyle *)markdownParagraphFor:(const MdRun &)r
                                     quotes:(NSMutableArray<NSTextBlock *> *)quotes
                                       code:(NSTextBlock * __strong *)code;
+- (NSAttributedString *)markdownLabelFor:(const MdRun &)r;
 - (NSAttributedString *)markdownRun:(const MdRun &)r
                               style:(NSParagraphStyle *)ps
                              inCell:(BOOL)inCell;
