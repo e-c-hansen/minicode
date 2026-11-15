@@ -5,9 +5,11 @@
 //
 // minicode draws no diagram itself and bundles no Mermaid code (it has no
 // third-party code at all): a page's diagrams are drawn by mermaid-cli's
-// `mmdc` when the user has it installed, as its math is by tectonic, and
-// show as their source in the code style otherwise (MarkdownMermaid.mm,
-// macOS; Linux and Android show the source).
+// `mmdc` when the user has it installed, else by one pinned mermaid.js the
+// user downloads from the page (checked against kMermaidJsSha256, as
+// tectonic is), run in a WebKit view that loads nothing else, and show as
+// their source in the code style otherwise (MarkdownMermaid.mm, macOS;
+// Linux and Android show the source).
 #pragma once
 #include "MarkdownParser.h"
 #include <string>
@@ -32,8 +34,32 @@ bool isMermaidRun(const MdRun &r);
 
 // The theme mmdc draws in, for a dark or a light preview.
 std::string theme(bool dark);
-// A hex key for the diagram: kVersion, the theme and the source.
-std::string key(const std::string &source, const std::string &theme);
+// What drew a diagram, which its key holds: mermaid-cli's mmdc, or the
+// pinned mermaid.js.
+extern const char *const kDrawerMmdc;
+extern const char *const kDrawerMermaidJs;   // "mermaid.js <kMermaidJsVersion>"
+
+// A hex key for the diagram: kVersion, the drawer, the theme and the source.
+std::string key(const std::string &source, const std::string &theme,
+                const std::string &drawer = kDrawerMmdc);
+
+// The mermaid.js minicode downloads on request: its version, where from
+// (the npm package's file, through jsDelivr's mirror of npm), and the
+// SHA-256 of mermaid.min.js in the npm package mermaid@12.3.0, which the
+// download must match (5,537,838 bytes, checked against the registry's
+// tarball on 2026-11-15).
+extern const char *const kMermaidJsVersion;
+extern const char *const kMermaidJsUrl;
+extern const char *const kMermaidJsSha256;
+extern const long kMermaidJsBytes;
+
+// The body of the async function the WebKit view runs for one diagram,
+// given `source` and `theme`: mermaid.render with plain SVG text labels
+// (htmlLabels off, so NSImage can draw the result; HTML labels are
+// foreignObject, which it leaves out), strict security, and the SVG's
+// width and height set from its viewBox, its style (a max-width, a
+// background) dropped. It returns the SVG as text.
+std::string renderScript();
 
 // The pixels per point a diagram is drawn at (sharp on a Retina screen).
 extern const int kScale;

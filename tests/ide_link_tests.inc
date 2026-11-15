@@ -451,6 +451,23 @@ static void testMermaidDiagram() {
         CHECK(k1 != MermaidDiagram::key("graph TD\n", "default"));
         CHECK(k1 != MermaidDiagram::key("graph LR\n", "dark"));
         CHECK(MermaidDiagram::theme(true) == "dark" && MermaidDiagram::theme(false) == "default");
+        // Which drawer made a picture is in its key, and so is the pinned
+        // mermaid.js's version.
+        CHECK(k1 == MermaidDiagram::key("graph TD\n", "dark", MermaidDiagram::kDrawerMmdc));
+        CHECK(k1 != MermaidDiagram::key("graph TD\n", "dark", MermaidDiagram::kDrawerMermaidJs));
+        CHECK(std::string(MermaidDiagram::kDrawerMermaidJs).find(MermaidDiagram::kMermaidJsVersion) !=
+              std::string::npos);
+        CHECK(std::string(MermaidDiagram::kMermaidJsUrl).find(std::string("mermaid@") +
+                                                             MermaidDiagram::kMermaidJsVersion) !=
+              std::string::npos);
+        CHECK(std::string(MermaidDiagram::kMermaidJsUrl).rfind("https://", 0) == 0);
+        const std::string sha = MermaidDiagram::kMermaidJsSha256;
+        CHECK(sha.size() == 64 && sha.find_first_not_of("0123456789abcdef") == std::string::npos);
+        // The drawing script: plain SVG labels, strict, the SVG sized.
+        const std::string js = MermaidDiagram::renderScript();
+        CHECK(js.find("htmlLabels: false") != std::string::npos &&
+              js.find("securityLevel: 'strict'") != std::string::npos &&
+              js.find("mermaid.render(") != std::string::npos && js.find("return ") != std::string::npos);
         std::vector<std::string> a = MermaidDiagram::arguments("/t/in.mmd", "/t/out.png", "dark");
         const std::vector<std::string> want = {"-i", "/t/in.mmd", "-o", "/t/out.png", "-t", "dark",
                                                "-b", "transparent", "-s", "2", "-q"};

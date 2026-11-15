@@ -4,8 +4,33 @@
 
 namespace MermaidDiagram {
 
-const int kVersion = 1;
+const int kVersion = 2;   // 2: the drawer is in the key
 const int kScale = 2;
+
+const char *const kDrawerMmdc = "mmdc";
+const char *const kDrawerMermaidJs = "mermaid.js 12.3.0";
+const char *const kMermaidJsVersion = "12.3.0";
+const char *const kMermaidJsUrl = "https://cdn.jsdelivr.net/npm/mermaid@12.3.0/dist/mermaid.min.js";
+const char *const kMermaidJsSha256 =
+    "336df803d87a38b70a01e736e666c8f7601d2ce42f5e47c8fafe5d721074b9a3";
+const long kMermaidJsBytes = 5537838;
+
+std::string renderScript() {
+    return
+        "mermaid.initialize({startOnLoad: false, theme: theme, securityLevel: 'strict',\n"
+        "                    htmlLabels: false, flowchart: {htmlLabels: false}});\n"
+        "const id = 'mc' + Math.random().toString(36).slice(2);\n"
+        "const out = await mermaid.render(id, source);\n"
+        "const doc = new DOMParser().parseFromString(out.svg, 'image/svg+xml');\n"
+        "const svg = doc.documentElement;\n"
+        "const box = svg.viewBox && svg.viewBox.baseVal;\n"
+        "if (box && box.width > 0 && box.height > 0) {\n"
+        "  svg.setAttribute('width', String(Math.ceil(box.width)));\n"
+        "  svg.setAttribute('height', String(Math.ceil(box.height)));\n"
+        "}\n"
+        "svg.removeAttribute('style');\n"
+        "return new XMLSerializer().serializeToString(svg);\n";
+}
 
 bool isMermaidRun(const MdRun &r) { return r.codeBlock && r.lang == "mermaid"; }
 
@@ -27,8 +52,9 @@ std::vector<Block> blocks(const std::vector<MdRun> &runs) {
 
 std::string theme(bool dark) { return dark ? "dark" : "default"; }
 
-std::string key(const std::string &source, const std::string &theme) {
-    return IdeLink::toHex(IdeLink::sha1(std::to_string(kVersion) + "\n" + theme + "\n" + source));
+std::string key(const std::string &source, const std::string &theme, const std::string &drawer) {
+    return IdeLink::toHex(IdeLink::sha1(std::to_string(kVersion) + "\n" + drawer + "\n" + theme +
+                                        "\n" + source));
 }
 
 std::vector<std::string> arguments(const std::string &input, const std::string &output,

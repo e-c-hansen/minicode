@@ -5,7 +5,8 @@ no third-party dependencies. It links only Apple system frameworks (Cocoa,
 WebKit, CoreServices, Quartz for PDFKit and Quick Look, AVKit, AVFoundation,
 CoreMedia, and Carbon for the terminal's secure keyboard entry) plus the C++ standard library, the system zlib and the system
 libsqlite3. The LaTeX preview and the Markdown math run tectonic, which the
-user installs or the app downloads on request; the language servers, formatters
+user installs or the app downloads on request, and Markdown's diagrams the
+user's mermaid-cli or a pinned mermaid.js downloaded the same way; the language servers, formatters
 and Claude Code it talks to are the user's own.
 
 The shared core is `src/` (C++ only); the Mac app is under `mac/` (`mac/src`,
@@ -2095,6 +2096,25 @@ which NSImage leaves out. Until it arrives, and without mmdc or with
 place. Core: `MermaidDiagram.{h,cpp}` (`mermaid:*`); Mac: `MarkdownMermaid.mm`,
 a hook in `renderMarkdown:`. `make guitest SUITES=mermaid` uses a stand-in
 mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
+
+**mermaid.js without mmdc** (2026-11-15, the owner's call, change 25):
+without mmdc a line above the page's first diagram (`downloadNoteForRuns:`)
+offers Download Mermaid (`MCMermaidDownloadLink`, `downloadMermaidForPreview`):
+one pinned `mermaid.min.js` (`MermaidDiagram::kMermaidJsVersion`, 12.3.0,
+from jsDelivr's npm mirror, `kMermaidJsSha256` checked against the npm
+tarball's file) into Application Support, refused unless its SHA-256 matches
+(`$MINICODE_MERMAID_DOWNLOAD` and `$MINICODE_MERMAID_SHA256` for checks;
+`$MINICODE_MERMAID_JS` uses a file as it is), and checked again once a
+launch. `MCMermaidWeb` draws: one WKWebView never in a window, a
+non-persistent data store, the script as a user script, a content rule list
+blocking every subresource and a navigation delegate refusing every load
+but its empty page (`MCMermaidWebLoadsRefused`), `callAsyncJavaScript` with
+`MermaidDiagram::renderScript()` (htmlLabels off, so the SVG has plain text
+NSImage draws; width and height from the viewBox). The key holds the
+drawer (`kDrawerMmdc`, `kDrawerMermaidJs`, `kVersion` 2), the SVG is cached
+as `<key>.svg`, mmdc wins when installed, and the side page's context
+holds `MCMermaidDrawerState()`. The `mermaid` suite plays a stand-in
+mermaid.js.
 
 ## LaTeX preview (read before touching it)
 
