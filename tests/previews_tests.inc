@@ -50,6 +50,31 @@ static void testFileSniff() {
         CHECK(classify("/a/noext", std::string("\xCA\xFE\xBA\xBE\0\0", 6)) == Kind::QuickLook);
         CHECK(std::string(kindName(Kind::QuickLook)) == "quicklook");
     }
+    GROUP("sniff:html");
+    {
+        CHECK(classify("/a/index.html", std::string("<!doctype html><p>x")) == Kind::Html);
+        CHECK(classify("/a/OLD.HTM", std::string("<p>x")) == Kind::Html);
+        CHECK(classify("/a/page.xhtml", std::string("<?xml version='1.0'?>")) == Kind::Html);
+        CHECK(classify("/a/empty.html", std::string()) == Kind::Html);
+        CHECK(classify("/a/t.html", std::string("\xFF\xFE<\0p\0>\0", 8)) == Kind::Html);
+        CHECK(classify("/a/x.html", std::string("<p>\0\x01\x02", 6)) == Kind::QuickLook);
+        CHECK(classify("/a/x.svg", std::string("<svg/>")) == Kind::Text);
+        CHECK(std::string(kindName(Kind::Html)) == "html");
+        // What would run as a script.
+        for (const char *t : {"<script>alert(1)</script>", "<SCRIPT src=a.js></SCRIPT>",
+                              "<script\nsrc=a.js>", "<body onload=\"go()\">",
+                              "<img src=x OnError = 'x()'>", "<a href=\"javascript:go()\">",
+                              "<a href=JavaScript:go()>", "<iframe src=b.html></iframe>",
+                              "<frameset><frame src=a.html>", "<object data=x></object>",
+                              "<embed src=x.swf>", "<svg><script>x()</script></svg>",
+                              "<div\ton-x=\"\" onclick=f()>", "<p onmouseover\n=f>"})
+            CHECK(htmlMayRunScripts(t));
+        for (const char *t : {"", "<p>Hello</p>", "<link rel=stylesheet href=style.css>",
+                              "<p>on=3 and scripts</p>",
+                              "<p>script</p>", "<scripture>x</scripture>", "<svg><path d=M0/></svg>",
+                              "<div data-onclick=x>", "<p>a > onclick=f</p>", "<button>x</button>"})
+            CHECK(!htmlMayRunScripts(t));
+    }
     GROUP("sniff:utf16");
     {
         // UTF-16 with a byte order mark is text, NULs and all (round 6's

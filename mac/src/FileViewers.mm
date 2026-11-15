@@ -4,6 +4,7 @@
 #import "CsvTable.h"
 #import "JsonOutlineView.h"
 #import "SqliteView.h"
+#import "HtmlPage.h"
 #include "FileSniff.h"
 #include "JsonOutline.h"
 #include "Notebook.h"
@@ -39,6 +40,7 @@ MCViewerKind MCViewerKindForFile(NSString *path) {
     case FileSniff::Kind::Json: return MCViewerJson;
     case FileSniff::Kind::Notebook: return MCViewerNotebook;
     case FileSniff::Kind::Sqlite: return MCViewerSqlite;
+    case FileSniff::Kind::Html: return MCViewerHtml;
     default: return MCViewerNone;
     }
 }
@@ -48,7 +50,7 @@ BOOL MCViewerKindWithoutText(MCViewerKind kind) {
 }
 
 BOOL MCViewerKindOverText(MCViewerKind kind) {
-    return kind == MCViewerCsv || kind == MCViewerTsv;
+    return kind == MCViewerCsv || kind == MCViewerTsv || kind == MCViewerHtml;
 }
 
 BOOL MCViewerKindBesideText(MCViewerKind kind) {
@@ -79,9 +81,15 @@ static BOOL IsTsvPath(NSString *path) {
     MCCsvTableView *_csv;
     MCJsonOutlinePane *_json;
     MCSqliteView *_sqlite;
+    MCHtmlPage *_html;
 }
 
 - (MCSqliteView *)sqlite { return _sqlite; }
+- (MCHtmlPage *)html { return _html; }
+
+- (void)htmlFileMayHaveChanged {
+    if (_kind == MCViewerHtml) [_html reloadIfChanged];
+}
 
 - (instancetype)initWithContainer:(NSView *)container below:(NSView *)sibling {
     if ((self = [super init])) {
@@ -170,6 +178,24 @@ static BOOL IsTsvPath(NSString *path) {
         [[self makeCsv] showText:text path:path tsv:kind == MCViewerTsv];
         _kind = kind;
     }
+    if (kind == MCViewerHtml) {
+        // The page is the saved file; the text is what Shift+Cmd+V shows.
+        if (!_html) {
+            _html = [[MCHtmlPage alloc] initWithFrame:NSZeroRect];
+            __weak MCFileViewers *weakSelf = self;
+            _html.readAccessFolder = ^NSString * {
+                MCFileViewers *me = weakSelf;
+                return me.htmlFolder ? me.htmlFolder() : nil;
+            };
+            _html.onOpenLink = ^(NSURL *url) {
+                MCFileViewers *me = weakSelf;
+                if (me.onOpenLink) me.onOpenLink(url);
+            };
+            [self addView:_html];
+        }
+        _kind = kind;
+        [_html showFile:path];
+    }
 }
 
 - (void)commitEditing {
@@ -181,6 +207,7 @@ static BOOL IsTsvPath(NSString *path) {
     if (_kind == MCViewerCsv || _kind == MCViewerTsv || _kind == MCViewerCsvLarge) [_csv clear];
     if (_kind == MCViewerJson) [_json attachToTextView:nil];
     if (_kind == MCViewerSqlite) [_sqlite close];
+    if (_kind == MCViewerHtml) [_html clear];
     _kind = MCViewerNone;
 }
 
@@ -205,6 +232,12 @@ static BOOL IsTsvPath(NSString *path) {
         _sqlite.hidden = !on;
         covers = covers || on;
     }
+    if (_html) {
+        const BOOL on = shown && _kind == MCViewerHtml;
+        _html.frame = rect;
+        _html.hidden = !on;
+        covers = covers || on;
+    }
     NSRect text = rect;
     if (_json) {
         // At the right of the text, a third of the slot within reason, and
@@ -227,7 +260,20 @@ static BOOL IsTsvPath(NSString *path) {
     case MCViewerTsv:
     case MCViewerCsvLarge: return _csv.table;
     case MCViewerSqlite: return _sqlite.objectsTable;
+    case MCViewerHtml: return (NSView *)_html.webView;
     default: return nil;
     }
+}
+
+- (BOOL)focusInWindow:(NSWindow *)window {
+    if (_kind == MCViewerHtml) {
+        if (!_html.webView) return NO;
+        [_html takeKeyboard];
+        return YES;
+    }
+    NSView *v = self.focusView;
+    if (!v) return NO;
+    [window makeFirstResponder:v];
+    return YES;
 }
 @end

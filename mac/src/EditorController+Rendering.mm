@@ -352,6 +352,13 @@ static void *kMediaItemContext = &kMediaItemContext;
             EditorController *me = weakSelf;
             return me ? me->_activeTab.undoManager : nil;
         };
+        // An HTML file's page reads the window's folder; its links open as
+        // a rendered Markdown page's do (a file in its tab, a web address
+        // in the browser pane).
+        _viewers.htmlFolder = ^NSString * { return weakSelf.rootPath; };
+        _viewers.onOpenLink = ^(NSURL *url) {
+            [weakSelf openMarkdownLink:url.absoluteString ?: @""];
+        };
     }
     return _viewers;
 }
@@ -576,6 +583,8 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     t.fileSize = s ? (int64_t)s.size : -1;
     t.tooLargeToFollow = NO;
     if (t == _activeTab) [self updateSavedStatus];
+    // The file as now on disk is the tab's: an HTML page on show follows it.
+    if (t == _activeTab && self.previewMode) [_viewers htmlFileMayHaveChanged];
 }
 - (void)recordModDate { [self recordDiskStateOf:_activeTab]; }
 

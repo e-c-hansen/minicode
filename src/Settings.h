@@ -237,6 +237,11 @@ public:
     // markdown.web-images: whether the Markdown preview fetches pictures
     // from https addresses (on by default). Off, they show their alt text.
     bool webImages() const { return webImages_; }
+    // html.scripts: whether a page opened from an .html file runs its
+    // scripts. ask (the default) shows the page with them off and asks;
+    // on runs them, as Safari does; off never does.
+    enum class HtmlScripts { Ask, On, Off };
+    HtmlScripts htmlScripts() const { return htmlScripts_; }
     // markdown.math: whether the Markdown preview typesets math (on by
     // default, where tectonic is found). Off, formulas show as their TeX.
     bool math() const { return math_; }
@@ -522,6 +527,7 @@ private:
     bool titlebarKeySet_ = false;
     bool lspEnabled_ = true;
     bool webImages_ = true;
+    HtmlScripts htmlScripts_ = HtmlScripts::Ask;
     bool math_ = true;
     bool mermaid_ = true;
     int markdownMaxWidth_ = kDefaultMarkdownMaxWidth;

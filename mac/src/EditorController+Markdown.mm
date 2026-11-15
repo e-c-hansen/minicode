@@ -190,7 +190,7 @@ static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *an
     }
     if (!self.previewMode) [self.window makeFirstResponder:tv];
     else if (MCViewerKindOverText(self.viewerKind) && _viewers.focusView)
-        [self.window makeFirstResponder:_viewers.focusView];
+        [_viewers focusInWindow:self.window];
 }
 
 // Back from a CSV's text to its table. The table empties the text view,

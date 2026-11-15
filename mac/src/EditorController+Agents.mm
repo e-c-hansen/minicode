@@ -757,7 +757,8 @@ static NSUInteger MCLineStart(NSString *text, int line) {
                        : t.viewerKind == MCViewerCsv || t.viewerKind == MCViewerTsv ||
                          t.viewerKind == MCViewerCsvLarge ? @"table"
                        : t.viewerKind == MCViewerNotebook ? @"notebook"
-                       : t.viewerKind == MCViewerSqlite ? @"sqlite" : @"text";
+                       : t.viewerKind == MCViewerSqlite ? @"sqlite"
+                       : t.viewerKind == MCViewerHtml && t.previewMode ? @"html" : @"text";
         NSString *path = t.currentPath ?: t.comparison.path;
         NSString *title = t.page ? t.page.pageTitle : t.comparison ? t.comparison.title
                         : t.isDiff ? t.diffName : t.currentPath.lastPathComponent;

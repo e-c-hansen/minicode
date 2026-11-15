@@ -773,7 +773,7 @@ static const NSUInteger kMaxClosedTabs = 50;
     else if (self.isDiff && self.diffView) [self.window makeFirstResponder:self.diffView];
     else if (self.isImage) [self.window makeFirstResponder:nil];   // nothing in it takes keys
     else if (self.viewerKind != MCViewerNone && _viewers.focusView)
-        [self.window makeFirstResponder:_viewers.focusView];
+        [_viewers focusInWindow:self.window];
     else [self.window makeFirstResponder:self.textView];
 }
 
