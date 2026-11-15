@@ -380,7 +380,7 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     v.now = _now;
     if ([item isKindOfClass:MCAgentFile.class]) {
         MCAgentFile *f = item;
-        v.toolTip = [NSString stringWithFormat:@"%@\n%ld %@, %ld %@%@%@", f.path, (long)f.writes,
+        v.toolTip = [NSString stringWithFormat:@"%@\n%ld %@, %ld %@%@%@\nClick: what the session changed", f.path, (long)f.writes,
                      f.writes == 1 ? @"write" : @"writes", (long)f.edits,
                      f.edits == 1 ? @"edit" : @"edits",
                      f.failed ? [NSString stringWithFormat:@", %ld refused", (long)f.failed] : @"",
@@ -421,10 +421,19 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     } else if ([item isKindOfClass:MCAgentFile.class]) {
         MCAgentFile *f = item;
         if (!f.exists) { NSBeep(); return; }
-        if (self.onOpenFile) self.onOpenFile(f.path);
+        MCAgentWork *s = [self sessionOfFile:item];
+        if (self.onShowFileChanges && s) self.onShowFileChanges(f.path, s.transcript, s.name);
+        else if (self.onOpenFile) self.onOpenFile(f.path);
     } else {
         [self toggleRow:row];
     }
+}
+
+// The session a file row is under (file, then its group, then the session).
+- (MCAgentWork *)sessionOfFile:(id)file {
+    for (id up = [_outline parentForItem:file]; up; up = [_outline parentForItem:up])
+        if ([up isKindOfClass:MCAgentWork.class]) return up;
+    return nil;
 }
 
 - (void)toggleRow:(NSInteger)row {
@@ -506,7 +515,12 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
         }];
     } else if ([item isKindOfClass:MCAgentFile.class]) {
         MCAgentFile *f = item;
-        [self item:@"Open" in:m run:^{ [weakSelf activateRow:row]; }].enabled = f.exists;
+        [self item:@"Show What the Session Changed" in:m run:^{ [weakSelf activateRow:row]; }].enabled =
+            f.exists;
+        [self item:@"Open" in:m run:^{
+            MCAgentsPanel *p = weakSelf;
+            if (p.onOpenFile) p.onOpenFile(f.path);
+        }].enabled = f.exists;
         [self item:@"Reveal in Finder" in:m run:^{
             [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:f.path]]];
         }].enabled = f.exists;

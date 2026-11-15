@@ -10,9 +10,9 @@
 // disk is struck through. The model is MCAgentModel; this file only draws.
 //
 // Keys, as in the git panel: Up and Down move, Return shows a session's
-// Evidence or opens a file, Space or Right expands (Left collapses), Tab
-// goes to the editor. A click on a session shows its Evidence, on a file
-// opens it.
+// Evidence or what it changed in a file, Space or Right expands (Left
+// collapses), Tab goes to the editor. A click on a session shows its
+// Evidence, on a file what the session changed in it.
 #import <Cocoa/Cocoa.h>
 
 @class MCAgentModel;
@@ -22,6 +22,10 @@
 @property(nonatomic, readonly, strong) MCAgentModel *model;
 @property(nonatomic, copy) void (^onShowEvidence)(NSString *transcript, NSString *name);
 @property(nonatomic, copy) void (^onOpenFile)(NSString *path);
+// A click (or Return) on a file under a session: what that session changed
+// in it (AgentPages.h's MCSessionFilePage). The row's menu still has Open.
+@property(nonatomic, copy) void (^onShowFileChanges)(NSString *path, NSString *transcript,
+                                                     NSString *sessionName);
 @property(nonatomic, copy) void (^onOpenFolderInNewWindow)(NSString *path);
 @property(nonatomic, copy) void (^onTab)(void);
 - (void)applySettings;

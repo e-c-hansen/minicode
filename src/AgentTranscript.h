@@ -87,6 +87,10 @@ struct Block {
     std::string command;
     bool commandCut = false;
     std::string description;
+    // ToolUse: where the whole input object is in the file, braces
+    // included, for a reader that needs more of it (AgentEdits.h reads an
+    // Edit's old and new text from there, on demand).
+    Span input;
     // ToolResult: is_error, and where the output's text is in the file: a
     // JSON string, quotes included (the content itself when it is a string,
     // else the first text block's text). Empty when there is none.

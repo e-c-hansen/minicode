@@ -41,6 +41,9 @@
 
 // ---- the Agents panel's and the tree's actions
 - (void)showEvidenceForTranscript:(NSString *)transcript name:(NSString *)name;
+// What a session changed in one file (MCSessionFilePage), in a tab.
+- (void)showChangesToFile:(NSString *)path transcript:(NSString *)transcript
+                     name:(NSString *)name;
 - (void)compareWorktreeAt:(NSString *)path;          // R2.9 Compare with Main
 - (void)openFolderInNewWindow:(NSString *)path;      // R2.9 Open in New Window
 - (MCAgentWorktree *)worktreeAtPath:(NSString *)path;   // nil until git answers

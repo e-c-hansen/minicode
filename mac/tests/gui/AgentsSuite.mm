@@ -1,6 +1,7 @@
 // AgentsSuite.mm — `make guitest SUITES=agents`: the Agents panel
 // (Shift+Cmd+A), the Evidence view, the Worktrees node in the file tree with
-// Compare with Main and Open in New Window, and terminal paths resolved
+// Compare with Main and Open in New Window, what a session changed in one
+// of its files (and the edits in its Evidence), and terminal paths resolved
 // through the folder's worktrees and scratchpads.
 //
 // The world is scratch: a git repository with a worktree where Claude Code
@@ -177,6 +178,22 @@ void BuildWorld() {
     NSString *fail = @"sess-fail";
     NSMutableString *f = [NSMutableString string];
     [f appendFormat:@"%@\n", Prompt(fail, 900, @"Make the parser faster")];
+    // It also made hello.py and edited it twice; the file is as it left it.
+    NSString *hello = [gReal stringByAppendingPathComponent:@"hello.py"];
+    NSString *made = @"def hello():\n    print('hi')\n\n\ndef main():\n    hello()\n";
+    [f appendFormat:@"%@\n", Use(fail, 898, @"h1", @"Write", @{@"file_path": hello, @"content": made})];
+    [f appendFormat:@"%@\n", Result(fail, 897, @"h1",
+                                    [@"File created successfully at: " stringByAppendingString:hello], NO)];
+    [f appendFormat:@"%@\n", Use(fail, 896, @"h2", @"Edit",
+                                 @{@"file_path": hello, @"old_string": @"print('hi')",
+                                   @"new_string": @"print('hello, world')", @"replace_all": @NO})];
+    [f appendFormat:@"%@\n", Result(fail, 895, @"h2", @"The file has been updated successfully.", NO)];
+    [f appendFormat:@"%@\n", Use(fail, 894, @"h3", @"Edit",
+                                 @{@"file_path": hello, @"old_string": @"    hello()\n",
+                                   @"new_string": @"    hello()\n    hello()\n", @"replace_all": @NO})];
+    [f appendFormat:@"%@\n", Result(fail, 893, @"h3", @"The file has been updated successfully.", NO)];
+    MCGuiWriteFile([gProj stringByAppendingPathComponent:@"hello.py"],
+                   @"def hello():\n    print('hello, world')\n\n\ndef main():\n    hello()\n    hello()\n");
     [f appendFormat:@"%@\n", Use(fail, 890, @"t1", @"Bash",
                                  @{@"command": @"make test 2>&1 | tail -3", @"description": @"Run the tests"})];
     [f appendFormat:@"%@\n", Result(fail, 880, @"t1", @"building\n12 passed, 0 failed", NO)];
@@ -390,16 +407,37 @@ MC_GUI_SUITE(agents) {
         MCGuiSnapshot(p, @"agents-panel-expanded");
     });
 
-    MCGuiStep(@"Return on a file opens it; a missing one opens nothing", ^{
+    MCGuiStep(@"Return on a file shows what its session changed there; a missing one opens nothing", ^{
         MCAgentsPanel *p = Panel(c);
         NSOutlineView *ov = p.outline;
         NSInteger client = RowWith(p, @"src/LspClient.h");
         [ov selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)client] byExtendingSelection:NO];
         [ov keyDown:Key(c.window, 36, @"\r")];
-        GCHECK([[ActiveTab(c)[@"path"] description] hasSuffix:@"src/LspClient.h"]);
+        GCHECK_EQ_STR(ActiveTab(c)[@"kind"], @"session-file");
+        MCSessionFilePage *pg = ActivePage(c);
+        GCHECK([pg isKindOfClass:MCSessionFilePage.class]);
+        GCHECK([pg.pageTitle hasPrefix:@"LspClient.h, changed by LSP rename, references, quick fixes"]);
         NSUInteger tabs = [c controlTabs].count;
         [p activateRow:RowWith(p, @"edit1.py (missing)")];
         GCHECK([c controlTabs].count == tabs);
+    });
+    MCGuiWait(@"the subagent's edit of it is read", 10, ^BOOL {
+        MCSessionFilePage *pg = ActivePage(c);
+        return [pg isKindOfClass:MCSessionFilePage.class] && pg.loaded;
+    });
+    MCGuiStep(@"its one edit, no longer in the file; the row's menu still opens the file", ^{
+        MCSessionFilePage *pg = ActivePage(c);
+        GCHECK(pg.changeCount == 1 && !pg.rebuilt);
+        GCHECK([pg.summaryText containsString:@"0 still in the file, 1 changed since"]);
+        NSString *one = [pg changeText:0];
+        GCHECK([one containsString:@"- old"] && [one containsString:@"+ new"]);
+        GCHECK([one containsString:@"No longer in the file"]);
+        MCAgentsPanel *p = Panel(c);
+        NSMenu *m = [p menuForRow:RowWith(p, @"src/LspClient.h")];
+        NSMenuItem *open = [m itemWithTitle:@"Open"];
+        GCHECK(open != nil && [m itemWithTitle:@"Show What the Session Changed"] != nil);
+        if (open) [NSApp sendAction:open.action to:open.target from:open];
+        GCHECK([[ActiveTab(c)[@"path"] description] hasSuffix:@"src/LspClient.h"]);
     });
 
     // ------------------------------------------------------------ evidence
@@ -451,6 +489,45 @@ MC_GUI_SUITE(agents) {
         GCHECK([e.lastTestText containsString:@"reported an error"]);
         GCHECK([[e commandText:0] containsString:@"12 passed, 0 failed"]);
         MCGuiSnapshot(e.pageView, @"agents-evidence-failed");
+        // Its file edits are listed too, in time order, before the tests ran.
+        GCHECK(e.editCount == 3);
+        GCHECK([[e editText:0] containsString:@"Wrote hello.py"]);
+        GCHECK([[e editText:1] containsString:@"Edited hello.py"]);
+        NSString *all = e.commandsView.string;
+        const NSRange edit = [all rangeOfString:@"Wrote hello.py"],
+                      test = [all rangeOfString:@"Run the tests"];
+        GCHECK(edit.location != NSNotFound && test.location != NSNotFound && edit.location < test.location);
+        [e openEdit:1];
+        GCHECK_EQ_STR(ActiveTab(c)[@"kind"], @"session-file");
+    });
+    MCGuiWait(@"hello.py's page is read", 10, ^BOOL {
+        MCSessionFilePage *pg = ActivePage(c);
+        return [pg isKindOfClass:MCSessionFilePage.class] && pg.loaded;
+    });
+    MCGuiStep(@"three changes in order, all standing, and the file before the session worked out", ^{
+        MCSessionFilePage *pg = ActivePage(c);
+        GCHECK([pg.pageTitle isEqualToString:@"hello.py, changed by Make the parser faster"]);
+        GCHECK(pg.changeCount == 3 && pg.rebuilt);
+        GCHECK([pg.summaryText containsString:@"3 changes, all still in the file"]);
+        GCHECK([pg.summaryText containsString:@"The session made this file"]);
+        GCHECK([[pg changeText:0] containsString:@"Made the file"]);
+        NSString *second = [pg changeText:1];
+        GCHECK([second containsString:@"- " ] && [second containsString:@"print('hi')"] &&
+               [second containsString:@"+ "] && [second containsString:@"print('hello, world')"]);
+        GCHECK(![second containsString:@"No longer"]);
+        // The changed words are marked inside the changed line.
+        NSTextStorage *ts = pg.textView.textStorage;
+        const NSRange hw = [ts.string rangeOfString:@"hello, world"];
+        GCHECK(hw.location != NSNotFound);
+        if (hw.location != NSNotFound) {
+            NSColor *bg = [ts attribute:NSBackgroundColorAttributeName atIndex:hw.location effectiveRange:NULL];
+            GCHECK(bg != nil && bg.alphaComponent > 0.3);
+        }
+        MCComparison *cmp = [pg beforeAndNow];
+        GCHECK(cmp != nil && cmp.leftText.length == 0 && [cmp.rightText containsString:@"hello, world"]);
+        MCGuiSnapshot(pg.pageView, @"agents-session-file");
+        [pg compareBeforeAndNow];
+        GCHECK_EQ_STR(ActiveTab(c)[@"kind"], @"diff");
     });
 
     MCGuiStep(@"a 1.3 MB output opens without holding up the window", ^{

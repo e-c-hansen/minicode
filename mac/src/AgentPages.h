@@ -12,6 +12,16 @@
 // output never holds up the window. "Open in Terminal" types a command into
 // a new terminal at the session's folder without running it.
 //
+// MCSessionFilePage, what one session changed in one file (A1b), opened by
+// a click on a file under a session in the Agents panel and from the edits
+// the Evidence view lists: each Edit, MultiEdit part, Write and notebook
+// edit in order, as a small diff (old lines red, new green, changed words
+// marked) with its time, refused ones and ones no longer in the file said
+// so (AgentEdits.h decides). When the edits undo cleanly from the file as
+// it is, the top says how the file differs from before the session and
+// Compare Before and Now shows the two side by side (CompareView.h). Read
+// on a queue, again whenever the transcript grows.
+//
 // MCWorktreeChangesPage, "Compare with Main" for a worktree (R2.9): the
 // files it changed against the main branch; Return or a click on one shows
 // the main branch's version beside the worktree's (CompareView.h).
@@ -27,6 +37,8 @@
 @property(nonatomic, readonly, copy) NSString *transcript;
 // "Open in Terminal": the command and the folder it ran in.
 @property(nonatomic, copy) void (^onOpenInTerminal)(NSString *command, NSString *cwd);
+// A file the session changed, listed among the commands: its page.
+@property(nonatomic, copy) void (^onShowFileChanges)(NSString *path);
 // Read the transcript again (the model calls it when it grows).
 - (void)update;
 
@@ -42,6 +54,31 @@
 - (void)expandCommand:(NSUInteger)index;                 // its whole output
 - (BOOL)isExpanded:(NSUInteger)index;
 - (void)openCommandInTerminal:(NSUInteger)index;
+@property(nonatomic, readonly) NSUInteger editCount;     // the file edits listed
+- (NSString *)editText:(NSUInteger)index;                 // one edit's line, as shown
+- (void)openEdit:(NSUInteger)index;                       // its file's page
+@end
+
+@interface MCSessionFilePage : NSObject <MCEditorPage>
+- (instancetype)initWithTranscript:(NSString *)transcript
+                       sessionName:(NSString *)name
+                              file:(NSString *)path
+                             model:(MCAgentModel *)model;
+@property(nonatomic, readonly, copy) NSString *transcript, *path;
+@property(nonatomic, copy) void (^onShowComparison)(MCComparison *comparison);
+@property(nonatomic, copy) void (^onOpenFile)(NSString *path);
+- (void)update;                      // read the transcript and the file again
+
+// For the GUI checks.
+@property(nonatomic, readonly) BOOL loaded;
+@property(nonatomic, readonly) NSUInteger changeCount;
+@property(nonatomic, readonly) BOOL rebuilt;              // the file before the session is known
+@property(nonatomic, readonly, copy) NSString *summaryText;   // the lines at the top, as text
+@property(nonatomic, readonly) NSTextView *textView;
+@property(nonatomic, copy) void (^onUpdate)(void);
+- (NSString *)changeText:(NSUInteger)index;               // one change's block, as shown
+- (MCComparison *)beforeAndNow;      // nil unless rebuilt
+- (void)compareBeforeAndNow;         // the link's action
 @end
 
 @interface MCWorktreeChangesPage : NSObject <MCEditorPage>

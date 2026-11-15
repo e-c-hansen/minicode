@@ -3254,6 +3254,15 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   sessions whose cwd is the folder or inside it, from the files' own cwd (the
   first decides), never from the lossy encoded folder names; a file whose first
   cwd is elsewhere is read for 64 KB once. Not thread-safe: copy rows out.
+  `AgentEdits` (2026-11-15, `agentedits:*`): one session's Edit,
+  MultiEdit, Write and NotebookEdit calls on one file (`collect`: a
+  tool call's input is a `Block::input` Span, read once on demand, never
+  kept per line; paths through `samePath`, realpath and /private/tmp =
+  /tmp), and `analyze` against the file as it is: each change stands or
+  is gone, and undone last first while each new text is found exactly
+  once (a created Write ends it with no file) gives the file before the
+  session; anything ambiguous stops that with a sentence saying why.
+  `AgentEvidence` also lists the file edits (`Evidence::edits`).
   `AgentEvidence`: every Bash call, test commands recognised anywhere in a
   chain past env, time, timeout and assignments (pytest forms, make test and
   check, ctest, npm/pnpm/yarn test, cargo test, go test, python -m unittest,
@@ -3266,7 +3275,13 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   scratchpads, and empties (saying so) if the transcripts folder goes.
   `MCAgentWindow` is made lazily. The Agents panel (Shift+Cmd+A) swaps in like
   the git panel: sessions newest first, subagents nested, files in the folder,
-  the worktree and outside (gone ones struck through). The Evidence view
+  the worktree and outside (gone ones struck through); a click on a file
+  is `MCSessionFilePage` (AgentPages, kind `session-file`), what that
+  session changed there (each change an `InlineAgent::pendingDiff`, the
+  whole as an MCComparison of before and now when `analyze` rebuilt it),
+  read on its own queue and again on the model's change notification;
+  the row menu keeps Open. The Evidence view lists the edits among the
+  commands, each a link to that page. The Evidence view
   (`MCEvidencePage`, an `EditorPage`): the final message beside the last test
   command's result, then every command with the first and last 20 lines of
   output read lazily (Show all up to 1 MB); Open in Terminal types a command at

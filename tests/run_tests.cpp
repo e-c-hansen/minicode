@@ -10954,6 +10954,7 @@ static void testMultiCaretOccurrences() {
 #include "gitmodel_tests.inc"
 #include "agent_index_tests.inc"
 #include "agent_evidence_tests.inc"
+#include "agent_edits_tests.inc"
 #include "agent_view_tests.inc"
 #include "fold_tests.inc"
 #include "previews_tests.inc"
@@ -11121,6 +11122,7 @@ int main() {
     testAgentTranscript();
     testAgentIndex();
     testAgentEvidence();
+    testAgentEdits();
     testAgentView();
     testFolding();
     testFileSniff();
