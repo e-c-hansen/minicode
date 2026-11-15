@@ -16,6 +16,7 @@
 #include "Editor.h"
 #include "FileTree.h"
 #include "Keys.h"
+#include "ProblemsPanel.h"
 #include "TabStrip.h"
 #include "WindowLayout.h"
 
@@ -69,6 +70,26 @@ bool emptyEditor() {
 void pressUntilProblemsHidden() {
     if (problemsOn()) MCGuiKey("ctrl+shift+m");
     if (problemsOn()) MCGuiKey("ctrl+shift+m");
+}
+
+// The keyboard in the Problems panel and on screen. With no rows the list is
+// hidden; the keyboard once went to it there, off screen, and GTK sometimes
+// moved it on before the second Ctrl+Shift+M (CI, 2026-11-15).
+bool problemsHaveKeys() {
+    GtkWidget* f = gtk_root_get_focus(GTK_ROOT(MCGuiApp().window));
+    return MCGuiApp().problems->hasFocus() && f && gtk_widget_get_mapped(f);
+}
+
+// The same presses as steps of their own: the keys are X events, so the
+// second must wait until the first has put the keyboard in the panel. The
+// first only when the keyboard is elsewhere.
+void hideProblemsByKey() {
+    MCGuiStep("Ctrl+Shift+M: the keyboard into Problems", [] {
+        if (!MCGuiApp().problems->hasFocus()) MCGuiKey("ctrl+shift+m");
+    });
+    MCGuiWait("the keyboard in Problems, on screen", 10, problemsHaveKeys);
+    MCGuiStep("Ctrl+Shift+M again: hidden", [] { MCGuiKey("ctrl+shift+m"); });
+    MCGuiWait("Problems hidden", 10, [] { return !problemsOn(); });
 }
 
 // Terminal, browser and Problems all hidden, the editor and tree shown.
@@ -218,14 +239,14 @@ MC_GUI_SUITE(owner_reports) {
     MCGuiWait("shown", 10, [] { return problemsOn(); });
     MCGuiStep("the editor hidden", [] { MCGuiKey("ctrl+shift+e"); });
     MCGuiWait("Problems takes the side", 10, [] { return !editorOn() && problemsOn() && !termOn(); });
-    MCGuiStep("Problems hidden", [] { pressUntilProblemsHidden(); });
+    hideProblemsByKey();
     MCGuiWait("the tree fills the window; nothing came out", 10, treeFills);
     MCGuiStep("tree hidden, Problems shown and hidden", [] {
         MCGuiKey("ctrl+b");
         MCGuiKey("ctrl+shift+m");
     });
     MCGuiWait("Problems alone", 10, [] { return problemsOn() && !treeOn(); });
-    MCGuiStep("Problems hidden", [] { pressUntilProblemsHidden(); });
+    hideProblemsByKey();
     MCGuiWait("bare", 10, bare);
     MCGuiStep("Toggle Sidebar", [] { MCGuiKey("ctrl+b"); });
     MCGuiWait("the tree fills the window", 10, treeFills);

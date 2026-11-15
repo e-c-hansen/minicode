@@ -237,11 +237,13 @@ ProblemsPanel::ProblemsPanel(LspSession* lsp, Host host) : lsp_(lsp), host_(std:
     }), new Ref(ref), [](gpointer p, GClosure*) { delete static_cast<Ref*>(p); }, GConnectFlags(0));
     list_ = gtk_list_view_new(GTK_SELECTION_MODEL(selection_), factory);
     gtk_widget_add_css_class(list_, "minicode-problems-list");
+    // The keys on the whole panel, so that Esc works with no rows too, when
+    // the panel itself has the keyboard (focusList).
     GtkEventController* keys = gtk_event_controller_key_new();
     gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
     g_signal_connect_data(keys, "key-pressed", G_CALLBACK(onKey), new Ref(ref),
                           [](gpointer p, GClosure*) { delete static_cast<Ref*>(p); }, GConnectFlags(0));
-    gtk_widget_add_controller(list_, keys);
+    gtk_widget_add_controller(root_, keys);
     scroll_ = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll_), GTK_POLICY_NEVER,
                                    GTK_POLICY_AUTOMATIC);
@@ -254,6 +256,7 @@ ProblemsPanel::ProblemsPanel(LspSession* lsp, Host host) : lsp_(lsp), host_(std:
     gtk_widget_set_vexpand(empty_, TRUE);
     gtk_widget_add_css_class(empty_, "minicode-problems-empty");
     gtk_box_append(GTK_BOX(root_), empty_);
+    gtk_widget_set_focusable(root_, TRUE);   // while there are no rows (focusList)
     gtk_widget_set_visible(root_, FALSE);
 
     // The status bar's counts: a click opens or closes the list.
@@ -309,6 +312,14 @@ void ProblemsPanel::hide() {
 
 void ProblemsPanel::focusList() {
     if (!shown_) return;
+    // With no rows the list is hidden, and a hidden list given the keyboard
+    // held it only until GTK moved it on: the next Ctrl+Shift+M then gave it
+    // the keyboard again instead of closing the panel (owner_reports on CI,
+    // 2026-11-15). The panel itself takes it, on screen.
+    if (rows_.empty()) {
+        gtk_widget_grab_focus(root_);
+        return;
+    }
     if (selectedRow() < 0) moveBy(1);
     else select(selectedRow());
     gtk_widget_grab_focus(list_);
@@ -363,6 +374,7 @@ void ProblemsPanel::setRows(std::vector<LspProblem> rows, const std::string& cou
     bound_.assign(rows_.size(), nullptr);
     gtk_widget_set_visible(scroll_, !rows_.empty());
     gtk_widget_set_visible(empty_, rows_.empty());
+    gtk_widget_set_focusable(root_, rows_.empty());
     // The model holds only a count; every row is bound again.
     std::vector<const char*> items(rows_.size(), "");
     items.push_back(nullptr);
