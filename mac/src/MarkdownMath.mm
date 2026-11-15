@@ -31,6 +31,40 @@
 NSNotificationName const MCMathTypesetNotification = @"MCMathTypesetNotification";
 NSString *const MCMathKeysKey = @"keys";
 NSString *const MCMathErrorKey = @"error";
+NSNotificationName const MCMathProgressNotification = @"MCMathProgressNotification";
+NSString *const MCMathFilesKey = @"files";
+const NSUInteger MCMathFirstRunFiles = 290;
+
+// What tectonic prints before each file it downloads.
+static const char kDownloadNote[] = "note: downloading ";
+static NSUInteger gFilesFetched;   // main thread: the run under way's
+
+NSUInteger MCMathFilesFetched(void) {
+    return gFilesFetched;
+}
+
+// The fetched count, told to the main thread no more than five times a
+// second (and always at its last), from the run's reading thread.
+static void MCMathTellFetched(NSUInteger files, BOOL last) {
+    static NSDate *told;   // the reading thread's alone: runs go one at a time
+    if (!last && told && -told.timeIntervalSinceNow < 0.2) return;
+    told = [NSDate date];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        gFilesFetched = files;
+        [[NSNotificationCenter defaultCenter] postNotificationName:MCMathProgressNotification
+                                                            object:nil
+                                                          userInfo:@{MCMathFilesKey: @(files)}];
+    });
+}
+
+BOOL MCTectonicCacheIsEmpty(void) {
+    NSString *dir = NSProcessInfo.processInfo.environment[@"TECTONIC_CACHE_DIR"];
+    if (!dir.length)
+        dir = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES)
+                   .firstObject stringByAppendingPathComponent:@"TectonicProject.Tectonic"];
+    NSArray *inside = [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil];
+    return inside.count == 0;
+}
 
 // A whole run that failed is tried again after this long.
 static const NSTimeInterval kRetryAfter = 60;
@@ -418,6 +452,8 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
     dispatch_resume(watch);
     NSString *begin = MCStr(MathTex::logMark(nonce) + "BEGIN:");
     NSData *needle = [begin dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *download = [NSData dataWithBytes:kDownloadNote length:sizeof kDownloadNote - 1];
+    NSUInteger fetched = 0;
     NSFileHandle *reader = pipe.fileHandleForReading;
     for (;;) {
         NSData *chunk = [reader availableData];
@@ -425,6 +461,20 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
         @synchronized(lock) {
             [output appendData:chunk];
             lastWord = [NSDate date];
+            // A file downloaded: counted where this chunk's text starts,
+            // and a note split across two chunks counted once, with the
+            // second.
+            const NSUInteger before = fetched;
+            const NSUInteger reach = output.length - chunk.length;
+            NSUInteger at = reach > download.length - 1 ? reach - (download.length - 1) : 0;
+            for (;;) {
+                const NSRange hit = [output rangeOfData:download options:0
+                                                  range:NSMakeRange(at, output.length - at)];
+                if (hit.location == NSNotFound) break;
+                if (NSMaxRange(hit) > reach) fetched++;
+                at = NSMaxRange(hit);
+            }
+            if (fetched != before) MCMathTellFetched(fetched, NO);
             if (!inFormulas) {
                 // Back far enough for a mark split across two chunks.
                 const NSUInteger from = output.length > chunk.length + needle.length
@@ -437,6 +487,7 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
     }
     [task waitUntilExit];
     dispatch_source_cancel(watch);
+    if (fetched) MCMathTellFetched(fetched, YES);
     BOOL wasKilled;
     @synchronized(lock) { wasKilled = killed; }
 
@@ -571,6 +622,10 @@ static NSDictionary<NSString *, MCMathFormula *> *MCMathRunBatch(
 
 // ------------------------------------------------------------------ requests
 
+void MCMathWarmUp(void) {
+    if (MCTectonicPath() && MCTectonicCacheIsEmpty()) MCMathTypeset(@[@[@"x", @NO]]);
+}
+
 static NSMutableDictionary<NSString *, NSArray *> *gQueued;   // key -> @[tex, display]
 static NSMutableArray<NSString *> *gQueueOrder;
 static NSMutableSet<NSString *> *gUnderWay;
@@ -649,6 +704,7 @@ static void MCMathFlush(void) {
                     gIndex[p.key] = @[p.batch, @(p.page), @(p.descent)];
             [gUnderWay minusSet:keys];
             gRunning = NO;
+            gFilesFetched = 0;
             NSMutableDictionary *info = [@{MCMathKeysKey: keys} mutableCopy];
             if (wholeError) info[MCMathErrorKey] = wholeError;
             [[NSNotificationCenter defaultCenter] postNotificationName:MCMathTypesetNotification

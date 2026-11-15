@@ -812,27 +812,56 @@ static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *an
                          link:nil];
 }
 
-// tectonic keeps the LaTeX files it downloads in its own cache. Before its
-// first run there is none, and that run fetches about 42 MB first.
-static BOOL MCTectonicCacheIsEmpty(void) {
-    NSString *dir = NSProcessInfo.processInfo.environment[@"TECTONIC_CACHE_DIR"];
-    if (!dir.length)
-        dir = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES)
-                   .firstObject stringByAppendingPathComponent:@"TectonicProject.Tectonic"];
-    NSArray *inside = [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil];
-    return inside.count == 0;
-}
-
 // "Typesetting 12 formulas…" while they are out with tectonic, with a word
-// on the wait when this is tectonic's first run.
+// on the wait when this is tectonic's first run: how many of the LaTeX
+// files it downloads first have come, once they start coming (tectonic's
+// cache keeps them, so this is once per Mac).
 - (NSAttributedString *)mathNoteTypesetting:(NSUInteger)count {
     NSString *text = count == 1 ? @"Typesetting 1 formula…"
                                 : [NSString stringWithFormat:@"Typesetting %lu formulas…",
                                                              (unsigned long)count];
-    if (MCTectonicCacheIsEmpty())
+    const NSUInteger files = MCMathFilesFetched();
+    if (files > 0 && files < MCMathFirstRunFiles)
+        text = [text stringByAppendingFormat:
+            @" tectonic's first run is getting its LaTeX files: %lu of about %lu so far.",
+            (unsigned long)files, (unsigned long)MCMathFirstRunFiles];
+    else if (files > 0)
+        text = [text stringByAppendingFormat:
+            @" tectonic's first run is getting its LaTeX files: %lu so far.", (unsigned long)files];
+    else if (MCTectonicCacheIsEmpty())
         text = [text stringByAppendingString:
             @" tectonic's first run downloads its LaTeX files first, which takes about a minute."];
     return [self mathNoteText:text link:nil];
+}
+
+static NSUInteger MCMathNoteLength(NSTextStorage *st);
+
+// tectonic fetched more of its first run's files: the line at the top of
+// the page on show says how many, while that page still waits for its
+// formulas. The full preview's line is changed in place (the places links
+// land on moved with it); the page beside the source is rendered again in
+// its place, which puts in a new line and keeps every piece.
+- (void)markdownMathProgress:(NSNotification *)note {
+    (void)note;
+    if (!_awaitedMath.count || ![self showsMarkdownPage]) return;
+    if ([self sidePreviewShowing]) {
+        [self renderSidePreviewKeepingPlace];
+        return;
+    }
+    NSTextStorage *st = self.textView.textStorage;
+    const NSUInteger old = MCMathNoteLength(st);
+    if (old == 0) return;
+    NSAttributedString *now = [self mathNoteTypesetting:_awaitedMath.count];
+    if ([[st.string substringToIndex:old] isEqualToString:now.string]) return;
+    [st replaceCharactersInRange:NSMakeRange(0, old) withAttributedString:now];
+    const NSInteger delta = (NSInteger)now.length - (NSInteger)old;
+    if (delta == 0) return;
+    NSMutableDictionary<NSString *, NSNumber *> *moved = [NSMutableDictionary dictionary];
+    [_markdownAnchors enumerateKeysAndObjectsUsingBlock:^(NSString *k, NSNumber *v, BOOL *stop) {
+        (void)stop;
+        moved[k] = @((NSUInteger)((NSInteger)v.unsignedIntegerValue + delta));
+    }];
+    _markdownAnchors = moved;
 }
 
 // "Math shows as TeX..." with a link that downloads tectonic, or how that

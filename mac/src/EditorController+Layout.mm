@@ -247,6 +247,9 @@
         addObserver:self selector:@selector(markdownMathArrived:)
                name:MCMathTypesetNotification object:nil];
     [[NSNotificationCenter defaultCenter]
+        addObserver:self selector:@selector(markdownMathProgress:)
+               name:MCMathProgressNotification object:nil];
+    [[NSNotificationCenter defaultCenter]
         addObserver:self selector:@selector(treeDetailsChanged:)
                name:MCTreeDetailsDidChangeNotification object:nil];
     [self updateDetailsTimer];

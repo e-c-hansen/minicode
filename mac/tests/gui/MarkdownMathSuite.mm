@@ -7,7 +7,9 @@
 // the stand-in tectonic never run. MC_GUI_REAL_TECTONIC=<a tectonic> adds a
 // real batch where one formula tries to change the next ($ inside braces
 // closes its box early, then \def): it fails, and the formulas after it are
-// typeset as they would be alone.
+// typeset as they would be alone. A stand-in tectonic printing download
+// lines slowly checks that the line at the top of the page counts them on
+// a first run.
 #import "Harness.h"
 #import "AppSettings.h"
 #import "EditorController.h"
@@ -207,6 +209,54 @@ MC_GUI_SUITE(markdown_math) {
             GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
         });
     }
+
+    // tectonic's first run: a stand-in that prints the lines tectonic
+    // prints as it downloads its LaTeX files, slowly, with its cache empty.
+    NSString *slow = [MCGuiScratch() stringByAppendingPathComponent:@"mdmath-tectonic-fetching"];
+    NSString *emptyCache = [MCGuiScratch() stringByAppendingPathComponent:@"mdmath-empty-cache"];
+    __block NSString *cacheBefore = nil;
+    auto topLine = [](EditorController *ec) {
+        NSString *s = Text(ec).string;
+        const NSRange nl = [s rangeOfString:@"\n"];
+        return nl.location == NSNotFound ? s : [s substringToIndex:nl.location];
+    };
+    MCGuiStep(@"a first run: the line at the top counts tectonic's downloads", ^{
+        NSMutableString *script = [NSMutableString stringWithString:@"#!/bin/sh\n"];
+        for (int k = 1; k <= 6; k++)
+            [script appendFormat:@"echo 'note: downloading file%d.tex'\n/bin/sleep 0.5\n", k];
+        [script appendString:@"/bin/sleep 3\nexit 1\n"];   // time to look before it ends
+        MCGuiWriteFile(slow, script);
+        chmod(slow.fileSystemRepresentation, 0755);
+        setenv("MINICODE_TECTONIC", slow.fileSystemRepresentation, 1);
+        [fm createDirectoryAtPath:emptyCache withIntermediateDirectories:YES attributes:nil error:nil];
+        const char *was = getenv("TECTONIC_CACHE_DIR");
+        cacheBefore = was ? @(was) : nil;
+        setenv("TECTONIC_CACHE_DIR", emptyCache.fileSystemRepresentation, 1);
+        GCHECK(MCTectonicCacheIsEmpty());
+        NSString *first = Fixture(@"first-run.md");
+        MCGuiWriteFile(first, @"A formula never typeset before: $z^3 + 1$.\n");
+        GCHECK([c showFile:first]);
+        MCGuiNote(@"the line at the top: %@", topLine(c));
+        GCHECK([topLine(c) hasPrefix:@"Typesetting 1 formula"]);
+    });
+    MCGuiWait(@"the count to appear", 10, ^BOOL {
+        return [topLine(c) containsString:@"of about 290 so far"];
+    });
+    MCGuiWait(@"the count to rise to six", 10, ^BOOL {
+        return [topLine(c) containsString:@": 6 of about 290 so far"];
+    });
+    MCGuiStep(@"the count rose, and the formula still shows as its TeX", ^{
+        MCGuiNote(@"the line at the top: %@", topLine(c));
+        GCHECK([Text(c).string containsString:@"z^3 + 1"]);
+        GCHECK(MCMathFilesFetched() == 6);
+    });
+    MCGuiWait(@"the run to end", 10, ^BOOL { return MCMathFilesFetched() == 0; });
+    MCGuiStep(@"back to the stand-in that never runs", ^{
+        setenv("MINICODE_TECTONIC", fake.fileSystemRepresentation, 1);
+        if (cacheBefore) setenv("TECTONIC_CACHE_DIR", cacheBefore.fileSystemRepresentation, 1);
+        else unsetenv("TECTONIC_CACHE_DIR");
+        GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
+    });
 
     MCGuiStep(@"put everything back", ^{
         if (tectonicBefore) setenv("MINICODE_TECTONIC", tectonicBefore.fileSystemRepresentation, 1);
