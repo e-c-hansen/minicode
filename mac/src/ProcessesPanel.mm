@@ -100,6 +100,7 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
 @property(nonatomic, strong) id item;
 @property(nonatomic, strong) NSColor *textColor;
 @property(nonatomic) BOOL selected;                 // its row is selected
+@property(nonatomic) BOOL hovered;                  // the pointer is over its row
 @property(nonatomic, readonly) NSButton *stopButton;
 @property(nonatomic, copy) void (^onStop)(MCProcRowView *row);
 - (void)updateStopButton;
@@ -109,13 +110,14 @@ static const CGFloat kStopWidth = 40;
 
 @implementation MCProcRowView {
     NSButton *_stop;
-    NSTrackingArea *_tracking;
-    BOOL _hovered;
 }
 - (BOOL)isFlipped { return YES; }
 
-- (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super initWithFrame:frame])) {
+// The button is made the first time it shows: a reload makes and sizes
+// many row views, and a button in each (measured on every frame change)
+// took the panel's redraw from 3 to 90 ms of CPU on CI's runner.
+- (NSButton *)stopButton {
+    if (!_stop) {
         _stop = [NSButton buttonWithTitle:@"Stop" target:self action:@selector(stopPressed:)];
         _stop.bezelStyle = NSBezelStyleInline;
         _stop.controlSize = NSControlSizeSmall;
@@ -123,10 +125,8 @@ static const CGFloat kStopWidth = 40;
         _stop.hidden = YES;
         [self addSubview:_stop];
     }
-    return self;
+    return _stop;
 }
-
-- (NSButton *)stopButton { return _stop; }
 
 - (void)stopPressed:(id)sender {
     (void)sender;
@@ -141,8 +141,10 @@ static const CGFloat kStopWidth = 40;
 // Code's row actions show; the memory figure moves left to make room.
 - (void)updateStopButton {
     const BOOL show = [self stoppable] && (_hovered || self.selected);
-    if (_stop.hidden == !show) return;
-    _stop.hidden = !show;
+    if (!show && (!_stop || _stop.hidden)) return;
+    NSButton *stop = self.stopButton;
+    if (stop.hidden == !show) return;
+    stop.hidden = !show;
     if (show) {
         MCProcItem *p = self.item;
         _stop.title = p.orphan ? @"Stop" : @"Stop…";
@@ -154,6 +156,7 @@ static const CGFloat kStopWidth = 40;
 }
 
 - (void)layoutStop {
+    if (!_stop || _stop.hidden) return;
     const NSRect b = self.bounds;
     [_stop sizeToFit];
     const CGFloat w = MAX(kStopWidth, _stop.frame.size.width);
@@ -176,26 +179,9 @@ static const CGFloat kStopWidth = 40;
     [self updateStopButton];
 }
 
-- (void)updateTrackingAreas {
-    [super updateTrackingAreas];
-    if (_tracking) [self removeTrackingArea:_tracking];
-    _tracking = [[NSTrackingArea alloc]
-        initWithRect:NSZeroRect
-             options:NSTrackingMouseEnteredAndExited | NSTrackingActiveInKeyWindow |
-                     NSTrackingInVisibleRect
-               owner:self userInfo:nil];
-    [self addTrackingArea:_tracking];
-}
-
-- (void)mouseEntered:(NSEvent *)event {
-    (void)event;
-    _hovered = YES;
-    [self updateStopButton];
-}
-
-- (void)mouseExited:(NSEvent *)event {
-    (void)event;
-    _hovered = NO;
+- (void)setHovered:(BOOL)hovered {
+    if (hovered == _hovered) return;
+    _hovered = hovered;
     [self updateStopButton];
 }
 
@@ -245,7 +231,7 @@ static const CGFloat kStopWidth = 40;
                                NSParagraphStyleAttributeName: right};
     const CGFloat memW = ceil([mem sizeWithAttributes:memAttrs].width) + 4;
     // The Stop button, when shown, takes the right edge.
-    const CGFloat stopW = _stop.hidden ? 0 : _stop.frame.size.width + 6;
+    const CGFloat stopW = !_stop || _stop.hidden ? 0 : _stop.frame.size.width + 6;
     [mem drawWithRect:NSMakeRect(b.size.width - memW - 6 - stopW, 3, memW, 16) options:opts
            attributes:memAttrs];
     [p.name drawWithRect:NSMakeRect(14, 2, MAX(0, b.size.width - memW - 24 - stopW), 17)
@@ -288,9 +274,42 @@ static const CGFloat kStopWidth = 40;
 @property(nonatomic, copy) void (^onStop)(NSInteger row);
 @property(nonatomic, copy) void (^onTab)(void);
 @property(nonatomic, copy) NSMenu *(^menuFor)(NSInteger row);
+// The row under the pointer (-1 for none), from one tracking area on the
+// whole list rather than one per row view.
+@property(nonatomic, copy) void (^onHover)(NSInteger row);
 @end
 
-@implementation MCProcOutline
+@implementation MCProcOutline {
+    NSTrackingArea *_hoverArea;
+    NSInteger _hoverPlusOne;   // the hovered row + 1; 0 for none
+}
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_hoverArea) [self removeTrackingArea:_hoverArea];
+    _hoverArea = [[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+             options:NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited |
+                     NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+               owner:self userInfo:nil];
+    [self addTrackingArea:_hoverArea];
+}
+- (void)hoverAt:(NSInteger)row {
+    if (row + 1 == _hoverPlusOne) return;
+    _hoverPlusOne = row + 1;
+    if (self.onHover) self.onHover(row);
+}
+- (void)mouseMoved:(NSEvent *)event {
+    [super mouseMoved:event];
+    [self hoverAt:[self rowAtPoint:[self convertPoint:event.locationInWindow fromView:nil]]];
+}
+- (void)mouseEntered:(NSEvent *)event {
+    [super mouseEntered:event];
+    [self hoverAt:[self rowAtPoint:[self convertPoint:event.locationInWindow fromView:nil]]];
+}
+- (void)mouseExited:(NSEvent *)event {
+    [super mouseExited:event];
+    [self hoverAt:-1];
+}
 - (void)keyDown:(NSEvent *)event {
     NSEventModifierFlags m = event.modifierFlags &
         (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption);
@@ -421,6 +440,14 @@ static const CGFloat kStopWidth = 40;
     _outline.onActivate = ^(NSInteger row) { [weakSelf activateRow:row]; };
     _outline.onToggle = ^(NSInteger row) { [weakSelf toggleRow:row]; };
     _outline.onStop = ^(NSInteger row) { [weakSelf stopRow:row]; };
+    _outline.onHover = ^(NSInteger row) {
+        MCProcessesPanel *s = weakSelf;
+        if (!s) return;
+        for (NSInteger r = 0; r < s->_outline.numberOfRows; r++) {
+            MCProcRowView *v = [s->_outline viewAtColumn:0 row:r makeIfNecessary:NO];
+            if ([v isKindOfClass:MCProcRowView.class]) v.hovered = r == row;
+        }
+    };
     _outline.onTab = ^{
         MCProcessesPanel *s = weakSelf;
         if (s.onTab) s.onTab();
