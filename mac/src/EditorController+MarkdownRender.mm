@@ -342,6 +342,13 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
     NSString *href = r.link && !r.url.empty()
                          ? [NSString stringWithUTF8String:r.url.c_str()] : nil;
     if (href.length) a[NSLinkAttributeName] = href;
+    // A <details> block's summary, its triangle included, opens and
+    // closes it (toggleMarkdownDetails:atIndex:inPage:).
+    if (r.summary && r.detailsLine >= 0 && !href.length) {
+        a[NSLinkAttributeName] = [kDetailsLinkPrefix
+            stringByAppendingFormat:@"%d:%d:%d", r.detailsLine, r.line, r.detailsOpen ? 1 : 0];
+        a[NSToolTipAttributeName] = r.detailsOpen ? @"Click to close" : @"Click to open";
+    }
     if (r.line >= 0) a[kMarkdownSourceLine] = @(r.line);
     // A checked task's text: muted and struck through.
     if (r.task == 2 && !r.marker) {

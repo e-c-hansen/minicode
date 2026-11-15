@@ -2,6 +2,7 @@
 // The GUI layer converts runs into an NSAttributedString.
 #pragma once
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -100,6 +101,18 @@ struct MdRun {
     // list, "fnref-N" on its first reference and "fnref-N-2", ... on the
     // ones after.
     std::string anchor;
+    // <details> blocks, as GitHub shows them. `details` is how many deep
+    // the run is (0 outside any), `detailsLine` the source line of the
+    // innermost one's <details> tag (what names it, -1 outside), `summary`
+    // whether the run is that one's <summary>, and `detailsOpen` whether it
+    // is open: as its tag says (the `open` attribute) in parse()'s runs, as
+    // the reader left it in fold()'s. The summary ends its own line, and
+    // the body's Markdown (after a blank line, as on GitHub) is parsed as
+    // Markdown. A port that does not fold shows every block open.
+    int  details = 0;
+    int  detailsLine = -1;
+    bool summary = false;
+    bool detailsOpen = false;
 };
 
 // How the parser read one line of the source. MarkdownEdit works from this,
@@ -136,6 +149,16 @@ public:
     static std::vector<MdRun> parse(const std::string& markdown);
     // One entry per source line, as parse() reads them.
     static std::vector<MdLine> lines(const std::string& markdown);
+    // The runs a page shows with its <details> blocks folded: `isOpen`
+    // answers for each block by its detailsLine and whether its tag says
+    // open. A closed block keeps only its summary; a block with no
+    // <summary> gets "Details", as browsers show it; each summary starts
+    // with a triangle run ("\u25B8 " closed, "\u25BE " open, summary set),
+    // and every run of a block carries the state in effect in
+    // `detailsOpen`. The space between two blocks goes with the block after
+    // it, so a closed body leaves no extra gap.
+    static std::vector<MdRun> fold(const std::vector<MdRun>& runs,
+                                   const std::function<bool(int line, bool open)>& isOpen);
     // GitHub's anchor for a heading, what a "#section" link names:
     // lowercased, spaces as hyphens, and punctuation and symbols (ASCII or
     // not, § and emoji included) dropped. Letters and digits of any script,

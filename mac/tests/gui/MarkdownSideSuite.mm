@@ -659,6 +659,49 @@ MC_GUI_SUITE(markdown_side_sync) {
             if ([t.currentPath isEqualToString:big]) [c closeTab:t prompt:NO];
     });
 
+    NSString *folded = MCGuiProjectFile(@"details.md");
+    MCGuiStep(@"a closed <details> block: its body is not on the page, lines below still sync", ^{
+        NSMutableString *t = [NSMutableString string];
+        for (int k = 0; k < 20; k++) [t appendFormat:@"Above %d.\n\n", k];    // lines 0 to 39
+        [t appendString:@"<details>\n<summary>Folded notes</summary>\n\n"];  // 40, 41, 42
+        for (int k = 0; k < 40; k++) [t appendFormat:@"Hidden %d.\n\n", k];   // 43 to 122
+        [t appendString:@"</details>\n\n"];                                   // 123, 124
+        for (int k = 0; k < 60; k++) [t appendFormat:@"Below %d.\n\n", k];    // 125 + 2k
+        MCGuiWriteFile(folded, t);
+        GCHECK([c showFile:folded]);
+        if (c.previewMode) [c togglePreview:nil];
+        [c focusEditor:nil];
+        if (![c sidePreviewShowing]) [c toggleSidePreview:nil];
+        GCHECK([c sidePreviewShowing]);
+        GCHECK([Page(c) containsString:@"Folded notes"] && ![Page(c) containsString:@"Hidden"]);
+        for (NSUInteger line : {165u, 205u}) {
+            ScrollSourceToLine(c, line);
+            MCGuiNote(@"source at %lu: page at %ld", (unsigned long)SourceTop(c), (long)PageTop(c));
+            GCHECK(labs(PageTop(c) - (NSInteger)line) <= 1);
+        }
+        MCScrollTextViewToY(SourceScroll(c), Source(c), 0);
+    });
+    MCGuiStep(@"a click on its summary opens it, built as a whole render builds it", ^{
+        NSTextView *page = Side(c).textView;
+        NSString *link = @"minicode-details:40:41:0";
+        const NSUInteger at = LinkAt(page, link);
+        GCHECK(at != NSNotFound);
+        if (at == NSNotFound) return;
+        GCHECK([c sidePreviewClickedLink:link atIndex:at]);
+        GCHECK([Page(c) containsString:@"Hidden 39."]);
+        GCHECK(LinkAt(page, @"minicode-details:40:41:1") != NSNotFound);
+        GCHECK_EQ_STR(Page(c), WholePage(c));
+        ScrollSourceToLine(c, 63);
+        MCGuiNote(@"open: source at 63, page at %ld", (long)PageTop(c));
+        GCHECK(labs(PageTop(c) - 63) <= 1);
+        // The full preview of the same tab shows it open too.
+        [c togglePreview:nil];
+        GCHECK(c.previewMode && [Source(c).string containsString:@"Hidden 39."]);
+        [c togglePreview:nil];
+        for (MCTab *tab in [(NSArray *)[c valueForKey:@"tabs"] copy])
+            if ([tab.currentPath isEqualToString:folded]) [c closeTab:tab prompt:NO];
+    });
+
     MCGuiStep(@"done", ^{
         [Source(c).undoManager removeAllActions];
         for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy])

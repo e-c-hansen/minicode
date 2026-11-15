@@ -1860,6 +1860,20 @@ view is disposed (on `unrealize`), or dispose loops forever.
   marker: a fence there is the note's code block, eight columns after a
   blank line indented code (`codeIndent`); the ↩ links follow a note's last
   code block on a line of their own.
+  `<details>` (2026-11-15, `md:details`): the parser carries a stack of
+  open blocks from block to block (`Details` in the Context, a body's
+  Markdown sits between the HTML blocks holding the tags) and stamps each
+  run's `details` depth, `detailsLine` (its tag's line, the block's name),
+  `summary` and the tag's `open`; the break before `</summary>` ends a
+  paragraph, so a summary is a line of its own. `MarkdownParser::fold`
+  (Mac only so far) drops what closed blocks hide, adds the triangle run
+  and a "Details" summary where there is none, and gives a gap the
+  visibility of the block after it; the Mac folds before rendering and
+  before the side page's split (`MCFoldedRuns`), so a click changes the
+  folded runs and the side page rebuilds just those pieces. State is
+  `MCTab detailsOpen` by tag line; the summary's link is
+  `minicode-details:<tag line>:<run line>:<open>`, the run line giving a
+  kept side piece's shift (`toggleMarkdownDetails:atIndex:inPage:`).
   Quotes carry `quoteDepth` and, inside a list item, `quoteIndent`; a quote
   keeps its own list stack (`quoteList`), and a fence in an item its depth.
   Between blocks comes exactly one `"\n"`
