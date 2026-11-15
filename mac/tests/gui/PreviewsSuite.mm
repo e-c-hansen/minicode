@@ -244,6 +244,7 @@ static void CsvSteps(void);
 static void JsonSteps(void);
 static void NotebookSteps(void);
 static void SqliteSteps(void);
+static void MarkupSteps(void);
 static __weak EditorController *gPreviewsWindow;   // the suite's own window
 
 MC_GUI_SUITE(previews) {
@@ -478,6 +479,7 @@ MC_GUI_SUITE(previews) {
     JsonSteps();
     NotebookSteps();
     SqliteSteps();
+    MarkupSteps();
     // The suite's own window goes with it (the harness's LEAK check): close,
     // not performClose:, so no question about what the steps left unsaved.
     __block EditorController *closing = nil;
@@ -1384,5 +1386,60 @@ static void SqliteSteps(void) {
         GCHECK_EQ_STR(ActiveKind(c), @"sqlite");
         GCHECK([Sqlite(c).statusText hasPrefix:@"This database cannot be opened: "]);
         GCHECK(!Sqlite(c).hidden);
+    });
+}
+
+// HTML and XML in the editor (2026-11-15): tags, attributes, values, entities
+// and a tag's brackets in their own colors, and in a Vue file (HTML to the
+// highlighter, and always source, whatever opens .html as a page) the
+// <script> block as JavaScript and the <style> block as CSS.
+static void MarkupSteps(void) {
+    MCGuiStep(@"a Vue file opens as colored source", ^{
+        MCGuiWriteFile(Fixture(@"card.vue"),
+                       @"<template>\n  <div class=\"card\">Tea &amp; cake</div>\n</template>\n"
+                       @"<script>\nlet count = 1 // n\n</script>\n"
+                       @"<style>\n.card { color: red; } /* c */\n</style>\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"card.vue")]);
+        GCHECK(EditorText(c).editable);
+    });
+    MCGuiWait(@"the Vue file's tags are colored", 5, ^BOOL {
+        return SameColor(ColorOf(EditorText(MCGuiController()), @"div", 0),
+                         [[AppSettings shared] syntax:TokenStyle::Tag]);
+    });
+    MCGuiStep(@"each part in its color", ^{
+        NSTextView *tv = EditorText(MCGuiController());
+        AppSettings *cfg = [AppSettings shared];
+        GCHECK(SameColor(ColorOf(tv, @"template", 0), [cfg syntax:TokenStyle::Tag]));
+        GCHECK(SameColor(ColorOf(tv, @"class", 0), [cfg syntax:TokenStyle::Attribute]));
+        GCHECK(SameColor(ColorOf(tv, @"\"card\"", 0), [cfg syntax:TokenStyle::String]));
+        GCHECK(SameColor(ColorOf(tv, @"&amp;", 0), [cfg syntax:TokenStyle::Escape]));
+        GCHECK(SameColor(ColorOf(tv, @"</", 0), [cfg syntax:TokenStyle::TagBracket]));
+        GCHECK(!SameColor(ColorOf(tv, @"Tea", 0), [cfg syntax:TokenStyle::Tag]));
+        // The script block is JavaScript, the style block CSS.
+        GCHECK(SameColor(ColorOf(tv, @"let", 0), [cfg syntax:TokenStyle::Keyword]));
+        GCHECK(SameColor(ColorOf(tv, @"// n", 0), [cfg syntax:TokenStyle::Comment]));
+        GCHECK(SameColor(ColorOf(tv, @"/* c */", 0), [cfg syntax:TokenStyle::Comment]));
+        // The colors differ in Dark Modern, so the checks above tell them apart.
+        GCHECK(!SameColor([cfg syntax:TokenStyle::Attribute], [cfg syntax:TokenStyle::Tag]));
+        GCHECK(!SameColor([cfg syntax:TokenStyle::TagBracket], [cfg syntax:TokenStyle::Tag]));
+    });
+    MCGuiStep(@"an XML file too", ^{
+        MCGuiWriteFile(Fixture(@"feed.xml"),
+                       @"<?xml version=\"1.0\"?>\n<feed lang='en'><!-- c --><t>A</t></feed>\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"feed.xml")]);
+    });
+    MCGuiWait(@"the XML file's tags are colored", 5, ^BOOL {
+        return SameColor(ColorOf(EditorText(MCGuiController()), @"feed", 0),
+                         [[AppSettings shared] syntax:TokenStyle::Tag]);
+    });
+    MCGuiStep(@"its attributes, values and comment", ^{
+        NSTextView *tv = EditorText(MCGuiController());
+        AppSettings *cfg = [AppSettings shared];
+        GCHECK(SameColor(ColorOf(tv, @"lang", 0), [cfg syntax:TokenStyle::Attribute]));
+        GCHECK(SameColor(ColorOf(tv, @"'en'", 0), [cfg syntax:TokenStyle::String]));
+        GCHECK(SameColor(ColorOf(tv, @"<!-- c -->", 0), [cfg syntax:TokenStyle::Comment]));
+        GCHECK(SameColor(ColorOf(tv, @"version", 0), [cfg syntax:TokenStyle::Attribute]));
     });
 }

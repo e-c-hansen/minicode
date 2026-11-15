@@ -63,7 +63,7 @@ static void testFileDetails() {
             {"/p/index.html", Kind::Web},       {"/p/docs.url", Kind::Bookmark},
             {"/p/site.webloc", Kind::Bookmark}, {"/p/main.cpp", Kind::Code},
             {"/p/tool.py", Kind::Code},         {"/p/conf.json", Kind::Code},
-            {"/p/app.ts", Kind::Code},          {"/p/logo.svg", Kind::Text},
+            {"/p/app.ts", Kind::Code},          {"/p/logo.svg", Kind::Code},
             {"/p/README.md", Kind::Text},       {"/p/notes.txt", Kind::Text},
             {"/p/paper.tex", Kind::Text},       {"/p/Makefile", Kind::Text},
             {"/p/strange.qqq", Kind::Text},     {"/p/noext", Kind::Text},

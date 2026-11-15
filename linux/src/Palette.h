@@ -49,6 +49,9 @@ inline const char* ColorForStyle(TokenStyle s) {
         case TokenStyle::Function:     return "#DCDCAA";
         case TokenStyle::Escape:       return "#D7BA7D";
         case TokenStyle::Self:         return "#569CD6";
+        case TokenStyle::Tag:          return "#569CD6";
+        case TokenStyle::Attribute:    return "#9CDCFE";
+        case TokenStyle::TagBracket:   return "#808080";
         case TokenStyle::Plain:
         default:                       return "#CCCCCC";
     }
@@ -66,6 +69,9 @@ inline const char* TagNameForStyle(TokenStyle s) {
         case TokenStyle::Function:     return "func";
         case TokenStyle::Escape:       return "esc";
         case TokenStyle::Self:         return "self";
+        case TokenStyle::Tag:          return "tag";
+        case TokenStyle::Attribute:    return "attr";
+        case TokenStyle::TagBracket:   return "tagbracket";
         case TokenStyle::Plain:
         default:                       return "plain";
     }

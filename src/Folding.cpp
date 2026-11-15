@@ -110,7 +110,10 @@ Lexed lex(const char16_t* text, size_t length, const std::string& ext) {
     IncrementalHighlighter<char16_t> h(ext);
     h.reset(PtrSource(text, length), &out.tokens);
     out.ends.reserve(h.lineCount());
-    for (size_t l = 0; l < h.lineCount(); l++) out.ends.push_back(h.endState(l));
+    // What each line leaves open (openToken: in HTML, a line inside a
+    // <script> body is code unless its JavaScript left a string or comment
+    // open).
+    for (size_t l = 0; l < h.lineCount(); l++) out.ends.push_back(openToken(h.endState(l)));
     return out;
 }
 

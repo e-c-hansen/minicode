@@ -646,6 +646,7 @@ static void testNotebook() {
         CHECK(MarkdownParser::extensionForLanguage("Python") == "py");
         CHECK(MarkdownParser::extensionForLanguage("c++") == "cpp");
         CHECK(MarkdownParser::extensionForLanguage("bash") == "sh");
+        CHECK(MarkdownParser::extensionForLanguage("HTML") == "html");
         CHECK(MarkdownParser::extensionForLanguage("klingon") == "");
         for (const char *l : {"python", "js", "typescript", "cpp", "go", "rust", "bash", "json", "yaml"})
             CHECK(SyntaxHighlighter::supports(MarkdownParser::extensionForLanguage(l)));

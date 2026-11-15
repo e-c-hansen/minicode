@@ -29,6 +29,9 @@ struct SyntaxGrammar {
     bool texAtLetter = false;                // .sty/.cls: '@' is always a letter
     bool jsCode = false;                     // JavaScript/TypeScript: regex literals and
                                              // template literals (lexJsLine)
+    bool markup = false;                     // HTML and XML: lexed by lexMarkupLine
+    bool htmlRaw = false;                    // HTML: <script> and <style> bodies are
+                                             // JavaScript and CSS, tag names any case
     bool cppRaw = false;                     // C++ raw strings, R"d( ... )d"
     bool rust = false;                       // Rust: r#"..."#, "..." over lines, 'a lifetimes
     bool goRaw = false;                      // Go: `raw strings`, over lines
@@ -79,7 +82,7 @@ const std::unordered_set<std::string> kJs = {
 // Which grammar each extension gets. Several are near enough that one
 // grammar serves them all: C's serves the brace languages, JavaScript's the
 // JSON family (JSON Lines included), and the '#' one shell and config files.
-enum class Family { C, Python, Js, Css, Hash, Ini, Lisp, Dash, Tex };
+enum class Family { C, Python, Js, Css, Hash, Ini, Lisp, Dash, Tex, Html, Xml };
 
 const std::unordered_map<std::string, Family>& families() {
     static const std::unordered_map<std::string, Family> m = [] {
@@ -124,6 +127,13 @@ const std::unordered_map<std::string, Family>& families() {
                            "condarc", "npmrc", "yarnrc", "nanorc", "mailmap",
                            "pri", "bb", "bbappend", "graphql", "gql"});
         add(Family::Css, {"css", "scss", "less"});
+        // Vue's single-file components are HTML to the lexer: its template,
+        // and its <script> and <style> blocks as JavaScript and CSS.
+        add(Family::Html, {"html", "htm", "xhtml", "shtml", "vue"});
+        add(Family::Xml, {"xml", "svg", "plist", "xsd", "xsl", "xslt", "rss", "atom",
+                          "xaml", "csproj", "vbproj", "fsproj", "props", "targets",
+                          "resx", "storyboard", "xib", "entitlements", "gpx", "kml",
+                          "wsdl", "dtd", "xliff", "xlf", "sdef", "mobileconfig"});
         add(Family::Ini, {"ini", "reg", "inf", "iss"});
         add(Family::Lisp, {"asm", "s", "nasm", "el", "lisp", "lsp", "scm",
                            "ss", "rkt", "clj", "cljs", "cljc", "edn", "fnl"});
@@ -144,6 +154,11 @@ SyntaxGrammar makeGrammar(const std::string& ext) {
         d.tex = true;
         d.bibEntries = ext == "bib";
         d.texAtLetter = ext == "sty" || ext == "cls";
+        break;
+    case Family::Html:
+    case Family::Xml:
+        d.markup = true;
+        d.htmlRaw = fam == Family::Html;
         break;
     case Family::Python:
         d.lineComments = {"#"}; d.stringDelims = "\"'"; d.tripleQuotes = true;
@@ -1429,9 +1444,14 @@ LexState lexJsLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
 // the state the line above ended in. Tokens go to out at offset `base`.
 // Returns the state this line ends in.
 template <class Ch>
+LexState lexMarkupLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
+                       size_t base, std::vector<Token>& out, std::string& word);
+
+template <class Ch>
 LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
                  size_t base, std::vector<Token>& out, std::string& word) {
     if (d.tex) return lexTexLine(d, s, n, in, base, out, word);
+    if (d.markup) return lexMarkupLine(d, s, n, in, base, out, word);
     if (d.jsCode) return lexJsLine(d, s, n, in, base, out, word);
     size_t i = 0;
     bool atLineStart = true;
@@ -1587,6 +1607,345 @@ LexState lexLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
     return LexState{};
 }
 
+// ------------------------------------------------------------ markup
+//
+// HTML and XML have their own line lexer (lexMarkupLine), colored as VS
+// Code's html and xml grammars scope them: a tag's name Tag, its < </ > />
+// TagBracket, an attribute's name Attribute and its value String, a
+// comment, an entity (&amp; &#38; &#x26;) Escape, in text and in values
+// alike, CDATA String between TagBracket marks, and <!DOCTYPE ...> and
+// <?xml ...?> as tags whose words are attributes.
+//
+// In HTML (htmlRaw), a <script> body is JavaScript and a <style> body CSS,
+// read by those languages' own line lexers up to the first </script or
+// </style on the line, which ends the body wherever it stands (inside a
+// string or comment too), as browsers end it. A <script> whose type names
+// something else (a template, text/x-shader) is plain text to its end. XML
+// has no such bodies: an SVG's <style> is text.
+//
+// What a line ends inside goes into the state. In a tag, a value, a
+// comment or CDATA it is a Markup state whose quote holds these bits; in a
+// body, a MarkupEmbed state whose quote is the state text id of four
+// characters: the body's kind ('J' JavaScript, 'C' CSS, 'P' plain), then the
+// kind and the two bytes of the quote of the state its lexer ended in.
+const char16_t kMuSub = 0x000F;     // where: one of these
+const char16_t kMuTag = 1;          //   between a tag's name and attributes
+const char16_t kMuDq = 2;           //   in an attribute's "value"
+const char16_t kMuSq = 3;           //   in an attribute's 'value'
+const char16_t kMuComment = 4;      //   in <!-- ... -->
+const char16_t kMuCData = 5;        //   in <![CDATA[ ... ]]>
+const int kMuRawShift = 4;          // what the tag's body is (bits 4 and 5):
+const char16_t kMuRaw = 0x0030;     //   0 markup, 1 JavaScript, 2 CSS, 3 plain
+const char16_t kMuAfterEq = 0x0040; // after an attribute's '=': a value is next
+const int kMuCtxShift = 8;          // which kind of tag (bits 8 and 9):
+const char16_t kMuCtx = 0x0300;     //   0 an element, 1 <?...?>, 2 <!...>
+const std::string kCommentOpen = "<!--", kCommentClose = "-->";
+const std::string kCDataOpen = "<![CDATA[", kCDataClose = "]]>";
+enum { kBodyNone = 0, kBodyJs = 1, kBodyCss = 2, kBodyPlain = 3 };
+enum { kCtxElement = 0, kCtxPi = 1, kCtxDecl = 2 };
+
+const SyntaxGrammar& embeddedGrammar(bool css) {
+    static const SyntaxGrammar js = makeGrammar("js");
+    static const SyntaxGrammar cs = makeGrammar("css");
+    return css ? cs : js;
+}
+
+template <class Ch> inline bool isMarkupSpace(Ch c) {
+    return c == Ch(' ') || c == Ch('\t') || c == Ch('\n') || c == Ch('\r') || c == Ch('\f');
+}
+template <class Ch> inline unsigned lowerAscii(Ch c) {
+    unsigned u = code(c);
+    return u >= 'A' && u <= 'Z' ? u + 32 : u;
+}
+// Whether s[i, i + len) is word (lowercase ASCII), ignoring case.
+template <class Ch>
+bool equalsWord(const Ch* s, size_t i, size_t len, const char* word) {
+    size_t k = 0;
+    for (; k < len && word[k]; ++k)
+        if (lowerAscii(s[i + k]) != (unsigned char)word[k]) return false;
+    return k == len && !word[k];
+}
+// A name in a tag: up to a space, a quote, '=', '/', '<' or '>'.
+template <class Ch> inline bool isMarkupNameChar(Ch c) {
+    return !isMarkupSpace(c) && c != Ch('"') && c != Ch('\'') && c != Ch('=') &&
+           c != Ch('/') && c != Ch('<') && c != Ch('>');
+}
+// The end of the entity at s[i] ('&'), or 0 when it is none: a name of up to
+// 32 letters and digits, #digits or #xhex, ended by ';'.
+template <class Ch>
+size_t entityEnd(const Ch* s, size_t n, size_t i) {
+    size_t j = i + 1;
+    if (j < n && s[j] == Ch('#')) {
+        j++;
+        const bool hex = j < n && (s[j] == Ch('x') || s[j] == Ch('X'));
+        if (hex) j++;
+        const size_t st = j;
+        while (j < n && j - st < 8 && (hex ? isHexDigit(s[j]) : isDigit(s[j]))) j++;
+        if (j == st) return 0;
+    } else {
+        if (j >= n || !isAlpha(s[j])) return 0;
+        const size_t st = j;
+        while (j < n && j - st < 32 && isAlnum(s[j])) j++;
+    }
+    return j < n && s[j] == Ch(';') ? j + 1 : 0;
+}
+// s[from, to) as `style`, its entities as Escape.
+template <class Ch, class Push>
+void pushWithEntities(const Ch* s, size_t from, size_t to, TokenStyle style, Push& push) {
+    for (size_t i = from; i < to; ++i) {
+        if (s[i] != Ch('&')) continue;
+        const size_t e = entityEnd(s, to, i);
+        if (!e) continue;
+        push(from, i - from, style);
+        push(i, e - i, TokenStyle::Escape);
+        from = e;
+        i = e - 1;
+    }
+    push(from, to - from, style);
+}
+// A token over s[from, to) with the characters beyond ASCII at either end
+// left out, so tokens start and end at ASCII characters.
+template <class Ch, class Push>
+void pushAscii(const Ch* s, size_t from, size_t to, TokenStyle style, Push& push) {
+    while (from < to && code(s[from]) >= 128) from++;
+    while (to > from && code(s[to - 1]) >= 128) to--;
+    push(from, to - from, style);
+}
+// Where the body ends: the first </name (any case) from i followed by a
+// space, '/', '>' or the line's end, else n.
+template <class Ch>
+size_t bodyEnd(const Ch* s, size_t n, size_t i, const char* name, size_t len) {
+    for (; i + 1 < n; ++i) {
+        if (s[i] != Ch('<') || s[i + 1] != Ch('/')) continue;
+        if (i + 2 + len > n || !equalsWord(s, i + 2, len, name)) continue;
+        const size_t k = i + 2 + len;
+        if (k >= n || isMarkupSpace(s[k]) || s[k] == Ch('/') || s[k] == Ch('>')) return i;
+    }
+    return n;
+}
+// Whether a <script type="..."> is JavaScript (or JSON, which its lexer
+// colors well): no type, a JavaScript one, a module, an import map.
+bool scriptTypeIsCode(std::string t) {
+    for (char& c : t) c = (char)std::tolower((unsigned char)c);
+    size_t a = t.find_first_not_of(" \t"), b = t.find_last_not_of(" \t");
+    t = a == std::string::npos ? std::string() : t.substr(a, b - a + 1);
+    if (t.empty() || t == "module" || t == "importmap" || t == "speculationrules") return true;
+    for (const char* w : {"javascript", "ecmascript", "jscript", "babel", "jsx", "typescript",
+                          "json"})
+        if (t.find(w) != std::string::npos) return true;
+    return false;
+}
+
+template <class Ch>
+LexState lexMarkupLine(const SyntaxGrammar& d, const Ch* s, size_t n, LexState in,
+                       size_t base, std::vector<Token>& out, std::string& word) {
+    auto push = [&](size_t start, size_t len, TokenStyle st) {
+        if (len) out.push_back({base + start, len, st});
+    };
+    size_t i = 0;
+    char16_t sub = 0;               // kMuSub's values, 0 in text
+    int raw = kBodyNone, ctx = kCtxElement;
+    bool afterEq = false;
+    bool typeNext = false;          // the attribute just read is a <script>'s type
+    int body = kBodyNone;           // in a body of this kind
+    LexState inner;                 // ... where its lexer stands
+
+    if (in.kind == LexState::Markup) {
+        sub = in.quote & kMuSub;
+        raw = (in.quote & kMuRaw) >> kMuRawShift;
+        afterEq = (in.quote & kMuAfterEq) != 0;
+        ctx = (in.quote & kMuCtx) >> kMuCtxShift;
+    } else if (in.kind == LexState::MarkupEmbed) {
+        const std::string t = stateText(in.quote);
+        if (t.size() == 4) {
+            body = t[0] == 'J' ? kBodyJs : t[0] == 'C' ? kBodyCss : kBodyPlain;
+            inner.kind = (uint8_t)t[1];
+            inner.quote = (char16_t)(((unsigned char)t[2] << 8) | (unsigned char)t[3]);
+        }
+    }
+
+    while (i < n) {
+        if (body != kBodyNone) {
+            const bool css = body == kBodyCss;
+            const size_t e = css ? bodyEnd(s, n, i, "style", 5) : bodyEnd(s, n, i, "script", 6);
+            if (body != kBodyPlain)
+                inner = lexLine(embeddedGrammar(css), s + i, e - i, inner, base + i, out, word);
+            if (e >= n) {
+                std::string t(4, '\0');
+                t[0] = body == kBodyJs ? 'J' : css ? 'C' : 'P';
+                t[1] = (char)inner.kind;
+                t[2] = (char)(inner.quote >> 8);
+                t[3] = (char)(inner.quote & 0xFF);
+                const char16_t id = stateTextId(t);
+                return id ? LexState{LexState::MarkupEmbed, id} : LexState{};
+            }
+            body = kBodyNone;
+            inner = LexState{};
+            i = e;   // the end tag, read as text below
+            continue;
+        }
+
+        if (sub == kMuComment) {
+            const size_t st = i;
+            while (i < n && !matchesAt(s, n, i, kCommentClose)) i++;
+            if (i >= n) { push(st, n - st, TokenStyle::Comment); break; }
+            i += 3;
+            push(st, i - st, TokenStyle::Comment);
+            sub = 0;
+            continue;
+        }
+        if (sub == kMuCData) {
+            const size_t st = i;
+            while (i < n && !matchesAt(s, n, i, kCDataClose)) i++;
+            push(st, i - st, TokenStyle::String);
+            if (i >= n) break;
+            push(i, 3, TokenStyle::TagBracket);
+            i += 3;
+            sub = 0;
+            continue;
+        }
+        if (sub == kMuDq || sub == kMuSq) {
+            const Ch q = sub == kMuDq ? Ch('"') : Ch('\'');
+            const size_t st = i;
+            while (i < n && s[i] != q) i++;
+            if (i >= n) { pushWithEntities(s, st, n, TokenStyle::String, push); break; }
+            i++;
+            pushWithEntities(s, st, i, TokenStyle::String, push);
+            sub = kMuTag;
+            afterEq = false;
+            continue;
+        }
+        if (sub == kMuTag) {
+            const Ch c = s[i];
+            if (isMarkupSpace(c)) { i++; continue; }
+            if (ctx == kCtxPi && c == Ch('?') && i + 1 < n && s[i + 1] == Ch('>')) {
+                push(i, 2, TokenStyle::TagBracket);
+                i += 2;
+                sub = 0; ctx = kCtxElement; raw = kBodyNone; afterEq = false;
+                continue;
+            }
+            if (c == Ch('>') && ctx != kCtxPi) {
+                push(i, 1, TokenStyle::TagBracket);
+                i++;
+                if (ctx == kCtxElement) body = raw;
+                sub = 0; ctx = kCtxElement; raw = kBodyNone; afterEq = false;
+                continue;
+            }
+            if (c == Ch('/') && i + 1 < n && s[i + 1] == Ch('>') && ctx == kCtxElement) {
+                push(i, 2, TokenStyle::TagBracket);
+                i += 2;
+                sub = 0; raw = kBodyNone; afterEq = false;
+                continue;
+            }
+            if (c == Ch('"') || c == Ch('\'')) {
+                // A quoted value: after '=', or a declaration's "public id".
+                const size_t st = i++;
+                while (i < n && s[i] != c) i++;
+                if (i >= n) {
+                    pushWithEntities(s, st, n, TokenStyle::String, push);
+                    sub = c == Ch('"') ? kMuDq : kMuSq;
+                    break;
+                }
+                i++;
+                pushWithEntities(s, st, i, TokenStyle::String, push);
+                if (typeNext) {
+                    std::string t;
+                    for (size_t k = st + 1; k + 1 < i; ++k)
+                        t += code(s[k]) < 128 ? (char)code(s[k]) : '?';
+                    raw = scriptTypeIsCode(t) ? kBodyJs : kBodyPlain;
+                }
+                typeNext = false;
+                afterEq = false;
+                continue;
+            }
+            if (c == Ch('=')) { i++; afterEq = true; continue; }
+            if (afterEq) {
+                // An unquoted value, up to a space or '>'.
+                const size_t st = i;
+                while (i < n && !isMarkupSpace(s[i]) && s[i] != Ch('>')) i++;
+                pushAscii(s, st, i, TokenStyle::String, push);
+                if (typeNext) {
+                    std::string t;
+                    for (size_t k = st; k < i; ++k) t += code(s[k]) < 128 ? (char)code(s[k]) : '?';
+                    raw = scriptTypeIsCode(t) ? kBodyJs : kBodyPlain;
+                }
+                typeNext = false;
+                afterEq = false;
+                continue;
+            }
+            if (isMarkupNameChar(c)) {
+                const size_t st = i;
+                while (i < n && isMarkupNameChar(s[i])) i++;
+                pushAscii(s, st, i, TokenStyle::Attribute, push);
+                typeNext = (raw == kBodyJs || raw == kBodyPlain) &&
+                           equalsWord(s, st, i - st, "type");
+                continue;
+            }
+            i++;   // a stray '/' or '<'
+            continue;
+        }
+
+        // Text, up to a tag or an entity.
+        const Ch c = s[i];
+        if (c == Ch('&')) {
+            const size_t e = entityEnd(s, n, i);
+            if (e) push(i, e - i, TokenStyle::Escape);
+            i = e ? e : i + 1;
+            continue;
+        }
+        if (c != Ch('<') || i + 1 >= n) { i++; continue; }
+        const Ch c1 = s[i + 1];
+        if (matchesAt(s, n, i, kCommentOpen)) {
+            const size_t st = i;
+            i += 4;
+            while (i < n && !matchesAt(s, n, i, kCommentClose)) i++;
+            if (i >= n) { push(st, n - st, TokenStyle::Comment); sub = kMuComment; break; }
+            i += 3;
+            push(st, i - st, TokenStyle::Comment);
+            continue;
+        }
+        if (matchesAt(s, n, i, kCDataOpen)) {
+            push(i, 9, TokenStyle::TagBracket);
+            i += 9;
+            sub = kMuCData;
+            continue;
+        }
+        size_t open = 0;   // the length of what opens a tag here: < </ <! <?
+        int kind = kCtxElement;
+        if (isAlpha(c1) || c1 == Ch('_')) open = 1;
+        else if (c1 == Ch('/') && i + 2 < n && (isAlpha(s[i + 2]) || s[i + 2] == Ch('_'))) open = 2;
+        else if (c1 == Ch('!') && i + 2 < n && isAlpha(s[i + 2])) { open = 2; kind = kCtxDecl; }
+        else if (c1 == Ch('?')) { open = 2; kind = kCtxPi; }
+        if (!open) { i++; continue; }
+        const bool closing = c1 == Ch('/');
+        push(i, open, TokenStyle::TagBracket);
+        i += open;
+        const size_t st = i;
+        while (i < n && isMarkupNameChar(s[i]) && !(kind == kCtxPi && s[i] == Ch('?'))) i++;
+        pushAscii(s, st, i, TokenStyle::Tag, push);
+        sub = kMuTag;
+        ctx = kind;
+        afterEq = false;
+        raw = kBodyNone;
+        if (d.htmlRaw && kind == kCtxElement && !closing) {
+            if (equalsWord(s, st, i - st, "script")) raw = kBodyJs;
+            else if (equalsWord(s, st, i - st, "style")) raw = kBodyCss;
+        }
+    }
+
+    if (body != kBodyNone) {
+        // A body opened by the line's last '>': it starts on the next line.
+        std::string t(4, '\0');
+        t[0] = body == kBodyJs ? 'J' : body == kBodyCss ? 'C' : 'P';
+        const char16_t id = stateTextId(t);
+        return id ? LexState{LexState::MarkupEmbed, id} : LexState{};
+    }
+    if (!sub) return LexState{};
+    return LexState{LexState::Markup,
+                    (char16_t)(sub | (raw << kMuRawShift) | (afterEq ? kMuAfterEq : 0) |
+                               (ctx << kMuCtxShift))};
+}
+
 // lexLine for any line of a text: s[0, n) is the line with its break, which
 // may be changed while it is read (the caller owns it; it is put back).
 // A '\r' or U+2029 break is read as '\n', and U+2029's other two UTF-8
@@ -1615,6 +1974,27 @@ LexState lexAnyLine(const SyntaxGrammar& d, Ch* s, size_t n, LexState in, size_t
 }
 
 } // namespace
+
+LexState openToken(LexState st) {
+    if (st.kind == LexState::Markup) {
+        switch (st.quote & kMuSub) {
+        case kMuComment: return LexState{LexState::BlockComment, 0};
+        case kMuDq: return LexState{LexState::StringCont, u'"'};
+        case kMuSq: return LexState{LexState::StringCont, u'\''};
+        case kMuCData: return LexState{LexState::StringCont, 0};
+        default: return LexState{};
+        }
+    }
+    if (st.kind == LexState::MarkupEmbed) {
+        const std::string t = stateText(st.quote);
+        if (t.size() != 4) return LexState{};
+        LexState inner;
+        inner.kind = (uint8_t)t[1];
+        inner.quote = (char16_t)(((unsigned char)t[2] << 8) | (unsigned char)t[3]);
+        return inner;
+    }
+    return st;
+}
 
 bool SyntaxHighlighter::supports(const std::string& ext) {
     return families().count(ext) > 0;

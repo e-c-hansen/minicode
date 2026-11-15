@@ -1043,6 +1043,23 @@ container (PanelHost, laid out by hand in layoutContainer)
   only); a Python decorator is `@name.attr` in Function, its arguments
   code. Anything asking "inside a string?" asks `isStringStyle` (Escape
   counts); arrays by style are `kTokenStyleCount` long on every port.
+- **HTML and XML** (2026-11-15, `lexMarkupLine`, `tests/markup_syntax_tests.inc`,
+  `syntax:markup*`, the `previews` suite's last steps on a .vue and an .xml file): three styles of their own, `Tag`, `Attribute` and
+  `TagBracket` (`syntax.tag`, `syntax.attribute`, `syntax.tag-bracket`,
+  each theme's entity.name.tag, entity.other.attribute-name and
+  punctuation.definition.tag); values are String, entities Escape. Lines
+  end in `LexState::Markup` (inside a tag, a value, a comment or CDATA,
+  the `kMu*` bits) or, in HTML and Vue, `MarkupEmbed` inside a `<script>`
+  or `<style>` body: the state text of the body's kind and the state the
+  JavaScript or CSS line lexer (run on the slice before the first
+  `</script`/`</style`, which ends the body even in a string, as browsers
+  do) ended in. A script whose type is not JavaScript or JSON is plain.
+  XML (svg, plist, ...) has no bodies. Folding asks `openToken(state)`,
+  never the kind: a body line is code unless its JavaScript left a string
+  or comment open. A new token style needs its color in every theme row,
+  `kSyntaxNames`, the default file, Linux's `Palette.h` tag names (a
+  missing one made a second "plain" tag) and Android's `Palette.styles`
+  (indexed by style).
 - Tests: `tests/LegacyHighlighter.h` is the frozen old lexer, an oracle under
   random edits; where it cannot apply (`newGrammar`, `mayHoldFString`,
   `mayHoldNewLiteral`, `hasOtherBreak`: it split at '\n' only) the edits
