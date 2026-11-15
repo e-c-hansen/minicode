@@ -406,6 +406,27 @@ MC_GUI_SUITE(agents) {
         GCHECK(RowWith(p, @"src/LspClient.h (missing)") < 0);
         MCGuiSnapshot(p, @"agents-panel-expanded");
     });
+    MCGuiStep(@"expanded and narrow, titles still end at the pane's edge: the column fits the list", ^{
+        MCAgentsPanel *p = Panel(c);
+        NSOutlineView *ov = p.outline;
+        NSSplitView *split = [c valueForKey:@"splitView"];
+        const CGFloat before = p.frame.size.width;
+        [split setPosition:170 ofDividerAtIndex:0];
+        [split layoutSubtreeIfNeeded];
+        const CGFloat clipW = ov.enclosingScrollView.contentSize.width;
+        const CGFloat colW = ov.tableColumns.firstObject.width;
+        if (colW > clipW + 0.5) MCGuiNote(@"column %.1f, list %.1f", colW, clipW);
+        GCHECK(colW <= clipW + 0.5);
+        GCHECK(p.frame.size.width < before);
+        // Each row view ends inside what the list shows.
+        NSInteger mainRow = RowWith(p, @"Placeholder request");
+        NSView *row = [ov viewAtColumn:0 row:mainRow makeIfNecessary:YES];
+        GCHECK(NSMaxX([row convertRect:row.bounds toView:ov.enclosingScrollView.contentView]) <=
+               NSMaxX(ov.enclosingScrollView.contentView.bounds) + 0.5);
+        GCHECK([row.toolTip hasPrefix:@"Placeholder request"]);   // the whole title on hover
+        MCGuiSnapshot(p, @"agents-panel-narrow");
+        [split setPosition:before ofDividerAtIndex:0];
+    });
 
     MCGuiStep(@"Return on a file shows what its session changed there; a missing one opens nothing", ^{
         MCAgentsPanel *p = Panel(c);
@@ -715,10 +736,33 @@ MC_GUI_SUITE(agents) {
         [tree selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)other] byExtendingSelection:NO];
         [(id<NSMenuDelegate>)c menuNeedsUpdate:menu];
         GCHECK([menu itemWithTitle:@"Compare with Main"].hidden);
+        GCHECK(![menu itemWithTitle:@"Rename…"].hidden && ![menu itemWithTitle:@"Move to Trash"].hidden);
         [tree selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)wtRow] byExtendingSelection:NO];
         [(id<NSMenuDelegate>)c menuNeedsUpdate:menu];
         GCHECK(![menu itemWithTitle:@"Compare with Main"].hidden);
         GCHECK(![menu itemWithTitle:@"Open in New Window"].hidden);
+        // Nothing that renames or trashes it (an agent's uncommitted work
+        // would go with it), on the worktree or on the Worktrees node.
+        GCHECK([menu itemWithTitle:@"Rename…"].hidden && [menu itemWithTitle:@"Move to Trash"].hidden);
+        [tree selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+        [(id<NSMenuDelegate>)c menuNeedsUpdate:menu];
+        GCHECK([menu itemWithTitle:@"Rename…"].hidden && [menu itemWithTitle:@"Move to Trash"].hidden);
+        // No two separators left side by side.
+        NSMenuItem *prev = nil;
+        for (NSMenuItem *it in menu.itemArray) {
+            if (it.hidden) continue;
+            GCHECK(!(it.isSeparatorItem && prev.isSeparatorItem));
+            prev = it;
+        }
+        // F2 and Cmd+Delete (the actions the key monitor runs) refuse it:
+        // no question, the folder where it was.
+        [tree selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)wtRow] byExtendingSelection:NO];
+        const NSUInteger alerts = MCGuiAlertsShown().count;
+        [c deleteSelected:nil];
+        [c renameSelected:nil];
+        GCHECK(MCGuiAlertsShown().count == alerts);
+        BOOL dir = NO;
+        GCHECK([NSFileManager.defaultManager fileExistsAtPath:gWorktree isDirectory:&dir] && dir);
         [c compareWorktreeWithMain:nil];
         GCHECK_EQ_STR(ActiveTab(c)[@"kind"], @"worktree-changes");
     });

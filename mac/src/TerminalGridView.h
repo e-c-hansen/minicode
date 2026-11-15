@@ -54,6 +54,12 @@ NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
 - (NSString *)selectedText;
 // Cmd went down or up, or the pointer moved: redo the link under it.
 - (void)updateLinkHover;
+// The pointer has rested (about half a second, from mouseMoved:) without
+// Cmd: over an address or a path, the tooltip says "Cmd+click to open"
+// (with a hyperlink's address), as VS Code's "Follow link (cmd + click)".
+// None while a program takes the mouse or a selection is being dragged.
+- (void)showRestHint;
+extern NSString *const MCTerminalLinkHint;   // "Cmd+click to open"
 
 + (NSFont *)cellFont;
 // Size of one cell, and the margin around the grid.

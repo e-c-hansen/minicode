@@ -163,6 +163,9 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
 
 // The tree menu's items for a worktree (shown only on one).
 static const NSInteger kWorktreeMenuTag = 7701;
+// Rename… and Move to Trash (and the line after them): hidden on a worktree
+// row and the Worktrees node, where they would lose an agent's work.
+static const NSInteger kNotOnWorktreeMenuTag = 7702;
 // And for a folder holding web bookmarks, and for a bookmark file
 // (EditorController+Bookmarks.mm).
 static const NSInteger kBookmarkFolderMenuTag = 7702;
@@ -467,6 +470,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSString *)worktreesFolder;
 - (NSArray<FileItem *> *)withWorktreesNode:(NSArray<FileItem *> *)shown of:(FileItem *)node;
 - (BOOL)isWorktreeRow:(FileItem *)node;
+// A worktree's row or the Worktrees node: never renamed or trashed here.
+- (BOOL)isWorktreeRowOrNode:(FileItem *)node;
 - (NSAttributedString *)worktreeTitleFor:(FileItem *)node color:(NSColor *)text
                                     icon:(NSString **)icon tint:(NSColor **)tint
                                      tip:(NSString **)tip;

@@ -104,17 +104,24 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
             name[NSStrikethroughStyleAttributeName] = @(NSUnderlineStyleSingle);
             name[NSStrikethroughColorAttributeName] = muted;
         }
-        NSMutableAttributedString *s =
-            [[NSMutableAttributedString alloc] initWithString:f.path.lastPathComponent ?: @""
-                                                   attributes:name];
+        // The file's name stays in sight: a name wider than the row gives
+        // way in its middle (keeping its extension), and the folder after
+        // it takes what is left, giving way in its middle too.
+        NSMutableParagraphStyle *middle = [NSMutableParagraphStyle new];
+        middle.lineBreakMode = NSLineBreakByTruncatingMiddle;
+        name[NSParagraphStyleAttributeName] = middle;
+        NSString *fileName = f.path.lastPathComponent ?: @"";
+        const CGFloat avail = MAX(0, b.size.width - 4);
+        const CGFloat nameW = MIN(avail, ceil([fileName sizeWithAttributes:name].width) + 1);
+        [fileName drawWithRect:NSMakeRect(2, 3, nameW, 16) options:opts attributes:name];
         NSString *dir = f.folderText;
-        if (dir.length)
-            [s appendAttributedString:[[NSAttributedString alloc]
-                initWithString:[@"  " stringByAppendingString:dir]
-                    attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:10.5],
-                                 NSForegroundColorAttributeName: muted,
-                                 NSParagraphStyleAttributeName: ps}]];
-        [s drawWithRect:NSMakeRect(2, 3, MAX(0, b.size.width - 4), 16) options:opts];
+        const CGFloat gap = 8, dirX = 2 + nameW + gap;
+        if (dir.length && dirX + 20 < b.size.width - 2)
+            [dir drawWithRect:NSMakeRect(dirX, 4, b.size.width - 2 - dirX, 15)
+                      options:opts
+                   attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:10.5],
+                                NSForegroundColorAttributeName: muted,
+                                NSParagraphStyleAttributeName: middle}];
     }
 }
 @end
@@ -192,6 +199,7 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
 }
 
 - (void)dealloc {
+    [NSNotificationCenter.defaultCenter removeObserver:self];
     if (_observer) [NSNotificationCenter.defaultCenter removeObserver:_observer];
     [_timer invalidate];
 }
@@ -242,6 +250,10 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     _outline.indentationPerLevel = 12;
     _outline.style = NSTableViewStylePlain;
     _outline.columnAutoresizingStyle = NSTableViewLastColumnOnlyAutoresizingStyle;
+    // Expanding a session added file rows that widened the column past the
+    // pane, so every title's "…" was drawn off screen; the column is kept
+    // at the list's width (layoutPanel), as the Processes panel's is.
+    _outline.autoresizesOutlineColumn = NO;
     _outline.dataSource = self;
     _outline.delegate = self;
     _outline.onActivate = ^(NSInteger row) { [weakSelf activateRow:row]; };
@@ -254,6 +266,17 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     _outline.menuFor = ^NSMenu *(NSInteger row) { return [weakSelf menuForRow:row]; };
     _scroll.documentView = _outline;
     [self addSubview:_scroll];
+    // A scroll bar that comes or goes (rows added, legacy scrollers) changes
+    // the width the list shows.
+    _scroll.contentView.postsFrameChangedNotifications = YES;
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(clipResized:)
+                                               name:NSViewFrameDidChangeNotification
+                                             object:_scroll.contentView];
+}
+
+- (void)clipResized:(NSNotification *)n {
+    (void)n;
+    [self fitColumn];
 }
 
 - (NSMenu *)menuForEvent:(NSEvent *)event {
@@ -283,6 +306,15 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     _notice.preferredMaxLayoutWidth = MAX(40, W - 2 * pad);
     _notice.frame = NSMakeRect(pad, top + 2, MAX(40, W - 2 * pad), 80);
     _scroll.frame = NSMakeRect(0, top, W, MAX(0, H - top));
+    [self fitColumn];
+}
+
+// One column exactly as wide as what the list shows, so a row's text ends
+// in "…" at the pane's edge, expanded or not.
+- (void)fitColumn {
+    NSTableColumn *col = _outline.tableColumns.firstObject;
+    const CGFloat colW = MAX(60, _scroll.contentSize.width);
+    if (fabs(col.width - colW) > 0.5) col.width = colW;
 }
 
 - (void)setHooksTitle {
@@ -448,6 +480,7 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
 }
 - (void)outlineViewItemDidExpand:(NSNotification *)n {
     [_expanded addObject:KeyOf(n.userInfo[@"NSObject"])];
+    [self fitColumn];
 }
 - (void)outlineViewItemDidCollapse:(NSNotification *)n {
     [_expanded removeObject:KeyOf(n.userInfo[@"NSObject"])];

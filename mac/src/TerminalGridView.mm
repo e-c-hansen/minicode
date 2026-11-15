@@ -138,6 +138,10 @@ static bool MCSameCells(const std::vector<TermCell> &a, const std::vector<TermCe
     // The address of the OSC 8 hyperlink linkAtPoint: last found (nil for a
     // link read from the text), shown as the tooltip while Cmd hovers it.
     NSString *_hyperlinkAddress;
+    // The rest hint (showRestHint): its timer, re-armed by each move, and
+    // whether the tooltip is the hint.
+    NSTimer *_restTimer;
+    BOOL _restHintShown;
     // Mouse reporting: the button held down and reported (-1 none), and the
     // cell last reported, so motion is sent once per cell.
     int _reportButton;
@@ -1905,6 +1909,7 @@ static MCTermLink *MCHyperlinkFor(const std::string &uri) {
     // A hyperlink's text may say anything: its address shows as the tooltip.
     NSString *tip = link ? _hyperlinkAddress : nil;
     if (tip != self.toolTip && ![tip isEqualToString:self.toolTip]) self.toolTip = tip;
+    _restHintShown = NO;
     if (link) [[NSCursor pointingHandCursor] set];
     else if (changed) [[NSCursor arrowCursor] set];
     if (changed) [self setNeedsDisplay:YES];
@@ -1922,10 +1927,54 @@ static MCTermLink *MCHyperlinkFor(const std::string &uri) {
                owner:self userInfo:nil]];
 }
 
+NSString *const MCTerminalLinkHint = @"Cmd+click to open";
+
+// A move hides the hint and starts the wait again: the link is looked up
+// once the pointer has rested, never on every move.
+- (void)armRestHint {
+    [_restTimer invalidate];
+    _restTimer = nil;
+    if (NSEvent.modifierFlags & NSEventModifierFlagCommand) return;
+    __weak TerminalGridView *weakSelf = self;
+    _restTimer = [NSTimer timerWithTimeInterval:0.5 repeats:NO block:^(NSTimer *t) {
+        (void)t;
+        [weakSelf showRestHint];
+    }];
+    [[NSRunLoop currentRunLoop] addTimer:_restTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)hideRestHint {
+    [_restTimer invalidate];
+    _restTimer = nil;
+    if (_restHintShown) {
+        _restHintShown = NO;
+        self.toolTip = nil;
+    }
+}
+
+- (void)showRestHint {
+    _restTimer = nil;
+    TerminalScreen *s = self.screen;
+    if (!self.window || !s || _selecting || _barDrag) return;
+    const NSEventModifierFlags mods = NSEvent.modifierFlags;
+    if (mods & NSEventModifierFlagCommand) return;   // updateLinkHover's, then
+    // A program that takes the mouse gets plain clicks; no hint there.
+    if (s->mouseTracking() && _offset == 0 && !(mods & NSEventModifierFlagShift)) return;
+    NSPoint p = [self convertPoint:[self.window mouseLocationOutsideOfEventStream] fromView:nil];
+    if (!NSPointInRect(p, self.bounds) || [self pointIsOnScrollBar:p]) return;
+    int line, endLine, c0, c1;
+    if (![self linkAtPoint:p line:&line col0:&c0 endLine:&endLine col1:&c1]) return;
+    self.toolTip = _hyperlinkAddress
+        ? [NSString stringWithFormat:@"%@\n%@", MCTerminalLinkHint, _hyperlinkAddress]
+        : MCTerminalLinkHint;
+    _restHintShown = YES;
+}
+
 - (void)mouseMoved:(NSEvent *)e {
     [self setBarHover:[self pointIsOnScrollBar:[self convertPoint:e.locationInWindow
                                                          fromView:nil]]];
     [self updateLinkHover];
+    [self armRestHint];
     // DECSET 1003: motion with no button down too.
     TerminalScreen *s = self.screen;
     if (s && s->mouseTracking() == 1003 && _reportButton < 0 && [self reportsMouse:e] &&
@@ -1935,6 +1984,7 @@ static MCTermLink *MCHyperlinkFor(const std::string &uri) {
 - (void)mouseExited:(NSEvent *)e {
     (void)e;
     [self setBarHover:NO];
+    [self hideRestHint];
     if (_linkId != kNoLine) { _link = nil; _linkId = _linkEndId = kNoLine; [self setNeedsDisplay:YES]; }
 }
 - (void)cursorUpdate:(NSEvent *)e {
@@ -2035,6 +2085,7 @@ static BOOL IsWordCell(const TermCell &cell) {
 }
 
 - (void)mouseDown:(NSEvent *)e {
+    [self hideRestHint];
     // The scroll bar first: a press on the thumb drags it, one on the track
     // centers the thumb there and drags from it. Never a selection, a link
     // or a click sent to the program.

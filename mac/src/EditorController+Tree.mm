@@ -49,9 +49,13 @@
     [m addItemWithTitle:@"New File…" action:@selector(newFile:) keyEquivalent:@""];
     [m addItemWithTitle:@"New Folder…" action:@selector(newFolder:) keyEquivalent:@""];
     [m addItem:[NSMenuItem separatorItem]];
-    [m addItemWithTitle:@"Rename…" action:@selector(renameSelected:) keyEquivalent:@""];
-    [m addItemWithTitle:@"Move to Trash" action:@selector(deleteSelected:) keyEquivalent:@""];
-    [m addItem:[NSMenuItem separatorItem]];
+    [m addItemWithTitle:@"Rename…" action:@selector(renameSelected:) keyEquivalent:@""].tag =
+        kNotOnWorktreeMenuTag;
+    [m addItemWithTitle:@"Move to Trash" action:@selector(deleteSelected:) keyEquivalent:@""].tag =
+        kNotOnWorktreeMenuTag;
+    NSMenuItem *afterTrash = [NSMenuItem separatorItem];
+    afterTrash.tag = kNotOnWorktreeMenuTag;
+    [m addItem:afterTrash];
     [m addItemWithTitle:@"Reveal in Finder" action:@selector(revealInFinder:) keyEquivalent:@""];
     [m addItemWithTitle:@"Copy Path" action:@selector(copyPath:) keyEquivalent:@""];
     [m addItemWithTitle:@"Copy Relative Path" action:@selector(copyRelativePath:)
@@ -644,6 +648,22 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
            [node.path.stringByDeletingLastPathComponent isEqualToString:_worktreesItem.path];
 }
 
+- (BOOL)isWorktreeRowOrNode:(FileItem *)node {
+    return node && (node == _worktreesItem || [self isWorktreeRow:node]);
+}
+
+// F2 and Cmd+Delete reach renameSelected: and deleteSelected: through the
+// key monitor, not the menu, so the refusal is here: renaming or trashing
+// a worktree would lose whatever its agent left uncommitted, and leave git
+// with a worktree it cannot find.
+- (BOOL)refuseWorktree:(FileItem *)node doing:(NSString *)what {
+    if (![self isWorktreeRowOrNode:node]) return NO;
+    NSBeep();
+    [self showStatusNote:[NSString stringWithFormat:
+        @"A worktree is not %@ here: its agent's uncommitted work would go with it", what]];
+    return YES;
+}
+
 // The Worktrees node's title, and a worktree's: its agent's description and
 // how it stands against the main branch ("3 ahead · modified").
 - (NSAttributedString *)worktreeTitleFor:(FileItem *)node color:(NSColor *)text
@@ -708,8 +728,10 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     if (menu != self.outline.menu) return;
     const BOOL wt = [self worktreeMenuItem] != nil;
+    const BOOL keep = [self isWorktreeRowOrNode:[self clickedOrSelectedItem]];
     for (NSMenuItem *item in menu.itemArray) {
         if (item.tag == kWorktreeMenuTag) item.hidden = !wt;
+        if (item.tag == kNotOnWorktreeMenuTag) item.hidden = keep;
         if (item.tag == kBookmarkFolderMenuTag) item.hidden = !self.canOpenBookmarksInTabs;
         if (item.tag == kBookmarkFileMenuTag) item.hidden = !self.canOpenBookmarkAsText;
     }
@@ -782,6 +804,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 - (void)renameSelected:(id)sender {
     FileItem *node = [self clickedOrSelectedItem];
     if (!node) { NSBeep(); return; }
+    if ([self refuseWorktree:node doing:@"renamed"]) return;
     [self renamePath:node.path];
 }
 
@@ -805,6 +828,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 - (void)deleteSelected:(id)sender {
     FileItem *node = [self clickedOrSelectedItem];
     if (!node) { NSBeep(); return; }
+    if ([self refuseWorktree:node doing:@"moved to the Trash"]) return;
     [self trashPath:node.path];
 }
 
