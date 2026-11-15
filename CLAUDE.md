@@ -2127,7 +2127,10 @@ mmdc; `MC_GUI_REAL_MMDC=<an mmdc>` adds a real diagram and a picture.
 - Compiles are debounced (0.6 s) and generation-counted; a run has 5 minutes,
   then SIGTERM and SIGKILL, with a log line (a looping document spun a core and
   queued every later edit). Scroll and zoom are restored by page index and
-  point.
+  point. The first document opens at the top of its first page
+  (`showFirstPageTop`, now and again on the next turn, unless a forward
+  search placed it; the PDF view's inner scroll view takes no automatic
+  insets): PDFView alone left it part way down, the title under the bar.
 - **Unknown commands are looked through, not skipped**: `LatexDoc` skips only
   known machinery (`\label`, `\includegraphics`, `\setlength`, ...) and enters
   the first braced argument `looksLikeProse` accepts (not `{0.5em}`, `{l}`,

@@ -29,7 +29,8 @@
 // source and an edit there is one splice of the buffer, which turns dirty;
 // and Option+Cmd+J in an \input file shows its line in the main
 // document's preview, found by a "% !TEX root" comment or by the open
-// preview whose typeset read the file.
+// preview whose typeset read the file. A preview's first document opens
+// with its first page's top edge in view, not scrolled part way down.
 #import "Harness.h"
 #import "Lsp.h"   // MCDiagnosticColor
 #import "EditorController.h"
@@ -114,6 +115,19 @@ NSTextView *ShownLog(LatexView *v) {
 NSString *PdfName(LatexView *v) {
     return [v.siblingPath.lastPathComponent.stringByDeletingPathExtension
         stringByAppendingPathExtension:@"pdf"];
+}
+
+// Whether the first page's top edge is inside the PDF view's visible rect:
+// the preview opens at the top of the document, not part way down it.
+BOOL FirstPageTopInView(LatexView *v, NSString **why) {
+    PDFView *pdf = [v latexPDFView];
+    PDFPage *page = [pdf.document pageAtIndex:0];
+    if (!page) return NO;
+    const NSRect r = [pdf convertRect:[page boundsForBox:kPDFDisplayBoxCropBox] fromPage:page];
+    const CGFloat top = pdf.isFlipped ? NSMinY(r) : NSMaxY(r);
+    const NSRect seen = pdf.bounds;
+    if (why) *why = [NSString stringWithFormat:@"page top at %.1f, view %@", top, NSStringFromRect(seen)];
+    return top >= NSMinY(seen) - 0.5 && top <= NSMaxY(seen) + 0.5;
 }
 
 NSString *const kStale = @"stale/.old.minicode.tex";    // a dead process's copy
@@ -391,6 +405,14 @@ MC_GUI_SUITE(latex) {
     MCGuiWait(@"and typesets", 20, ^BOOL {
         return [tabF.latex latexPDFView].document.pageCount == 2;
     });
+    MCGuiWait(@"opening at the top of its first page, above the pane's height", 5, ^BOOL {
+        return FirstPageTopInView(tabF.latex, nil);
+    });
+    MCGuiStep(@"(where the page top is)", ^{
+        NSString *why = nil;
+        GCHECK(FirstPageTopInView(tabF.latex, &why));
+        MCGuiNote(@"%@", why);
+    });
     MCGuiStep(@"to the source, the caret on line 5", ^{
         EditorController *c = MCGuiController();
         [c goToLine:5 column:0];
@@ -646,6 +668,9 @@ MC_GUI_SUITE(latex) {
     });
     MCGuiWait(@"and shows its two pages", 20, ^BOOL {
         return [tabM.latex latexPDFView].document.pageCount == 2;
+    });
+    MCGuiWait(@"with the first page's top edge in view", 5, ^BOOL {
+        return FirstPageTopInView(tabM.latex, nil);
     });
     __block NSString *before = nil, *spanText = nil;
     MCGuiStep(@"a double-click on \"walrus\" opens its source", ^{
