@@ -57,7 +57,8 @@ void keyOf(const std::vector<MdRun>& runs, Piece& p) {
                              r.quoteDepth, r.quoteIndent, r.rule, r.table, relTable(r, p.firstTable),
                              r.tableRow, r.tableCol, r.tableCols, r.tableAlign, r.listDepth,
                              r.ordered, r.marker, r.task, r.link, relLine(r, p.base), r.image,
-                             r.gap, r.hardBreak, r.math, r.footnote, r.footnotes};
+                             r.gap, r.hardBreak, r.math, r.footnote, r.footnotes,
+                             r.width.value, r.width.percent, r.height.value, r.height.percent};
         for (long v : nums) h.num(v);
     }
     p.key = h.h;
@@ -74,6 +75,7 @@ bool sameRun(const MdRun& a, int baseA, int tableA, const MdRun& b, int baseB, i
            a.listDepth == b.listDepth && a.ordered == b.ordered && a.marker == b.marker &&
            a.task == b.task && a.link == b.link && a.url == b.url &&
            relLine(a, baseA) == relLine(b, baseB) && a.image == b.image && a.src == b.src &&
+           a.width == b.width && a.height == b.height &&
            a.gap == b.gap && a.hardBreak == b.hardBreak && a.math == b.math &&
            a.footnote == b.footnote && a.footnotes == b.footnotes && a.anchor == b.anchor;
 }

@@ -6,6 +6,15 @@
 // play. A cell draws it (see MCAnimatedImageCell in the .mm).
 @interface MCMarkdownImage : NSTextAttachment
 - (instancetype)initWithPicture:(NSImage *)picture;
+// A picture drawn at the size an <img>'s width and height attributes ask
+// for: `size` in points (0 for a side not given), or a width of
+// `widthPercent` percent of the line (0 for none; it wins over
+// size.width). Given one side, the other keeps the picture's proportions;
+// given both, both are kept. Never wider than the line: a picture too wide
+// is scaled down whole.
+- (instancetype)initWithPicture:(NSImage *)picture
+                           size:(NSSize)size
+                   widthPercent:(CGFloat)widthPercent;
 @property (nonatomic, readonly) NSImage *picture;
 @end
 

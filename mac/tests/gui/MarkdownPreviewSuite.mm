@@ -15,6 +15,7 @@
 #import "MarkdownMath.h"
 #import "MarkdownImage.h"
 #import "MarkdownSidePreview.h"
+#import "EditorFont.h"
 #include "MarkdownHtml.h"
 #import <objc/runtime.h>
 
@@ -169,6 +170,22 @@ NSUInteger PictureCount(NSTextView *tv) {
         if ([v isKindOfClass:MCMarkdownImage.class]) n++;
     }];
     return n;
+}
+
+// The size the page gives each picture on it, in page order.
+NSArray<NSValue *> *PictureSizes(NSTextView *tv) {
+    NSTextStorage *st = tv.textStorage;
+    NSLayoutManager *lm = tv.layoutManager;
+    [lm ensureLayoutForTextContainer:tv.textContainer];
+    NSMutableArray<NSValue *> *out = [NSMutableArray array];
+    [st enumerateAttribute:NSAttachmentAttributeName inRange:NSMakeRange(0, st.length) options:0
+                usingBlock:^(id v, NSRange r, BOOL *stop) {
+        (void)stop;
+        if (![v isKindOfClass:MCMarkdownImage.class]) return;
+        const NSUInteger g = [lm glyphIndexForCharacterAtIndex:r.location];
+        [out addObject:[NSValue valueWithSize:[lm attachmentSizeForGlyphAtIndex:g]]];
+    }];
+    return out;
 }
 
 // The text at the top of the part of `tv` on show.
@@ -410,6 +427,46 @@ MC_GUI_SUITE(markdown_preview) {
         NSTextBlock *boxed = Para(c, code).textBlocks.lastObject;
         GCHECK(boxed.backgroundColor != nil);   // the code block's box
         GCHECK(At(c, @"\xE2\x86\xA9") > code);   // the way back, after the code
+    });
+
+    MCGuiStep(@"<img width> and height size a picture, keeping its proportions", ^{
+        // A 400 by 200 picture beside the page.
+        NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
+            initWithBitmapDataPlanes:NULL pixelsWide:400 pixelsHigh:200 bitsPerSample:8
+                     samplesPerPixel:4 hasAlpha:YES isPlanar:NO
+                      colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+        memset(rep.bitmapData, 0x60, (size_t)rep.bytesPerRow * 200);
+        [[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
+            writeToFile:Fixture(@"wide.png") atomically:YES];
+        NSString *path = Fixture(@"sized.md");
+        MCGuiWriteFile(path, @"<img src=\"wide.png\" width=\"120\">\n\n"
+                             @"<img src=\"wide.png\" height=\"50\">\n\n"
+                             @"<img src=\"wide.png\" width=\"60\" height=\"60\">\n\n"
+                             @"<img src=\"wide.png\" width=\"50%\">\n\n"
+                             @"<img src=\"wide.png\" width=\"5000\">\n\n"
+                             @"![plain](wide.png)\n");
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:path] && c.previewMode);
+        NSArray<NSValue *> *sizes = PictureSizes(Text(c));
+        MCGuiNote(@"picture sizes: %@", sizes);
+        GCHECK(sizes.count == 6);
+        if (sizes.count != 6) return;
+        const CGFloat line = [[c valueForKey:@"markdownPageWidth"] doubleValue];
+        MCGuiNote(@"line width %.0f", line);
+        auto near = [](CGFloat a, CGFloat b) { return fabs(a - b) <= 1.5; };
+        GCHECK(near(sizes[0].sizeValue.width, MCZoomed(120)) &&
+               near(sizes[0].sizeValue.height, MCZoomed(60)));
+        GCHECK(near(sizes[1].sizeValue.width, MCZoomed(100)) &&
+               near(sizes[1].sizeValue.height, MCZoomed(50)));
+        GCHECK(near(sizes[2].sizeValue.width, MCZoomed(60)) &&
+               near(sizes[2].sizeValue.height, MCZoomed(60)));
+        // Half the line, and never wider than it.
+        GCHECK(line > 100 && near(sizes[3].sizeValue.width, round(line / 2)));
+        GCHECK(sizes[4].sizeValue.width <= line + 1 &&
+               near(sizes[4].sizeValue.height, sizes[4].sizeValue.width / 2));
+        // A picture with no size keeps its own (on a line wide enough).
+        GCHECK(near(sizes[5].sizeValue.width, MIN(400, line)) &&
+               near(sizes[5].sizeValue.height, MIN(400, line) / 2));
     });
 
     __block NSString *topBefore = nil;

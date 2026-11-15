@@ -379,12 +379,20 @@ private:
         closeLink();
     }
 
+    // An <img>'s width or height attribute as the parser read it, or "".
+    static std::string size(const char* name, const MdLength& l) {
+        if (l.value <= 0) return "";
+        return std::string(" ") + name + "=\"" + std::to_string(l.value) + (l.percent ? "%" : "") +
+               "\"";
+    }
+
     std::string piece(const MdRun& r) {
         std::string s;
         if (r.hardBreak) return "<br>\n";
         if (r.image) {
             if (!r.src.empty() && pictureAllowed(r.src))
-                s = "<img src=\"" + escape(r.src) + "\" alt=\"" + escape(r.text) + "\">";
+                s = "<img src=\"" + escape(r.src) + "\" alt=\"" + escape(r.text) + "\"" +
+                    size("width", r.width) + size("height", r.height) + ">";
             else
                 s = escape(r.text.empty() ? r.src : r.text);
         } else if (r.math == 1) {
