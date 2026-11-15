@@ -49,6 +49,8 @@ extern NSString *const MCMarkdownMediaURLKey;
                widthPercent:(CGFloat)widthPercent;
 @property(nonatomic, readonly) NSURL *url;
 @property(nonatomic, readonly) BOOL video;
+// A <video poster>, drawn in place of the first frame when set.
+@property(nonatomic, strong) NSImage *poster;
 // The player over it, while there is one.
 @property(nonatomic, readonly) AVPlayerView *playerView;
 // What a click does: the player over `frame` (the attachment's place in

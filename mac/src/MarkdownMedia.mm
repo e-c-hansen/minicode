@@ -299,7 +299,7 @@ static const CGFloat kAudioHeight = 36, kAudioWidth = 380;
     }
     [[NSColor colorWithWhite:0.08 alpha:1] setFill];
     NSRectFill(frame);
-    if (NSImage *poster = self.info.poster) {
+    if (NSImage *poster = owner.poster ?: self.info.poster) {
         [poster drawInRect:frame fromRect:NSZeroRect operation:NSCompositingOperationSourceOver
                   fraction:1 respectFlipped:YES
                      hints:@{NSImageHintInterpolation: @(NSImageInterpolationHigh)}];

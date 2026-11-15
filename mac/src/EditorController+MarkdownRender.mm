@@ -448,6 +448,14 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
             MCMarkdownMedia *att = [[MCMarkdownMedia alloc]
                 initWithURL:url video:r.media == 1 name:s size:wanted
                widthPercent:r.width.percent ? r.width.value : 0];
+            // <video poster>: a picture as the page finds pictures (a web
+            // one only when it is in memory already, and under the switch).
+            if (!r.poster.empty()) {
+                NSString *p = [NSString stringWithUTF8String:r.poster.c_str()] ?: @"";
+                att.poster = MCMarkdownLoadImage(p, self.currentPath.stringByDeletingLastPathComponent);
+                if (!att.poster && cfg.settings.webImages() && MCMarkdownWebImageIsReady(p))
+                    att.poster = MCMarkdownWebImage(p, NULL);
+            }
             NSMutableAttributedString *player = [[NSMutableAttributedString alloc]
                 initWithAttributedString:[NSAttributedString attributedStringWithAttachment:att]];
             NSMutableDictionary *pa = [NSMutableDictionary dictionary];
