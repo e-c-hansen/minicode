@@ -165,7 +165,7 @@ typedef NS_ENUM(NSInteger, MCDiskDecision) { MCDiskWrite, MCDiskReload, MCDiskCa
 static const NSInteger kWorktreeMenuTag = 7701;
 // Rename… and Move to Trash (and the line after them): hidden on a worktree
 // row and the Worktrees node, where they would lose an agent's work.
-static const NSInteger kNotOnWorktreeMenuTag = 7702;
+static const NSInteger kNotOnWorktreeMenuTag = 7710;
 // And for a folder holding web bookmarks, and for a bookmark file
 // (EditorController+Bookmarks.mm).
 static const NSInteger kBookmarkFolderMenuTag = 7702;

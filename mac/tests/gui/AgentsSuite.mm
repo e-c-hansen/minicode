@@ -418,11 +418,16 @@ MC_GUI_SUITE(agents) {
         if (colW > clipW + 0.5) MCGuiNote(@"column %.1f, list %.1f", colW, clipW);
         GCHECK(colW <= clipW + 0.5);
         GCHECK(p.frame.size.width < before);
-        // Each row view ends inside what the list shows.
+        // What the rows draw in ends inside what the list shows.
+        [ov tile];
+        [ov layoutSubtreeIfNeeded];
+        const NSRect colRect = [ov rectOfColumn:0];
+        if (NSMaxX(colRect) > NSMaxX(ov.enclosingScrollView.contentView.bounds) + 0.5)
+            MCGuiNote(@"column rect %@, clip %@", NSStringFromRect(colRect),
+                      NSStringFromRect(ov.enclosingScrollView.contentView.bounds));
+        GCHECK(NSMaxX(colRect) <= NSMaxX(ov.enclosingScrollView.contentView.bounds) + 0.5);
         NSInteger mainRow = RowWith(p, @"Placeholder request");
         NSView *row = [ov viewAtColumn:0 row:mainRow makeIfNecessary:YES];
-        GCHECK(NSMaxX([row convertRect:row.bounds toView:ov.enclosingScrollView.contentView]) <=
-               NSMaxX(ov.enclosingScrollView.contentView.bounds) + 0.5);
         GCHECK([row.toolTip hasPrefix:@"Placeholder request"]);   // the whole title on hover
         MCGuiSnapshot(p, @"agents-panel-narrow");
         [split setPosition:before ofDividerAtIndex:0];
