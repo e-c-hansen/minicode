@@ -1966,6 +1966,15 @@ view is disposed (on `unrealize`), or dispose loops forever.
   re-renders at the same scroll. An edit made while the buffer changed
   underneath is not applied: its text goes to the clipboard with a status
   note (`MCKeepLostMarkdownEdit`).
+  The box opens on the double-clicked word (2026-11-15, D2's first step):
+  `MarkdownEdit::sourceOffsetFor` finds the page's word in the block's
+  Markdown by the 40 characters either side (letters and digits compared,
+  markup looked through, `mdedit:word`), and `MCMarkdownEditPanel
+  showText:...selection:width:font:` selects just it, is as wide as the
+  page's lines, in the page's 15 points for prose, and as tall as the
+  text; nothing is preselected otherwise. The LaTeX popover selects the
+  clicked word the same way (`MCLatexClickedWord`). Editing in place on
+  the page, Typora's way, is the planned second step.
 - **Pictures**: `MCMarkdownImage` attachments with `MCAnimatedImageCell` (sized
   to the line; a GIF's timer runs only while on screen). Traps: the TextKit 1
   editor never asks for a TextKit 2 view provider (1.4.1 shipped still GIFs);

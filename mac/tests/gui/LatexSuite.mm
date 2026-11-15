@@ -691,6 +691,9 @@ MC_GUI_SUITE(latex) {
         GCHECK([before rangeOfString:spanText].location != NSNotFound);
         GCHECK(![spanText containsString:@"heron"]);   // its own paragraph only
         MCGuiNote(@"the span: \"%@\"", spanText);
+        // It opens on the clicked word, not the whole span preselected.
+        GCHECK(NSMaxRange(edit.selectedRange) <= spanText.length &&
+               [[spanText substringWithRange:edit.selectedRange] isEqualToString:@"walrus"]);
         // The edit, saved as the popover's Return would.
         edit.string = [spanText stringByReplacingOccurrencesOfString:@"walrus"
                                                           withString:@"narwhal"];

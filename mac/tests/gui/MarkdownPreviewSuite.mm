@@ -338,6 +338,7 @@ MC_GUI_SUITE(markdown_preview) {
         MCMarkdownEditPanel *panel = [c valueForKey:@"markdownEditPanel"];
         NSTextView *editor = [panel valueForKey:@"_editor"];
         GCHECK_EQ_STR(editor.string, @"empty cells");
+        GCHECK(NSEqualRanges(editor.selectedRange, NSMakeRange(0, 5)));   // the word clicked
         NSString *before = c.sourceText;
         SaveEdit(c, @"full | cells");
         NSString *with = nil;
@@ -347,6 +348,42 @@ MC_GUI_SUITE(markdown_preview) {
         GCHECK([c.sourceText containsString:@"|  | full \\| cells |  |"]);
         GCHECK(At(c, @"full | cells") != NSNotFound);   // shown again, the pipe a pipe
         GCHECK([ActiveTab(c)[@"dirty"] boolValue]);
+    });
+
+    MCGuiStep(@"a double-click opens the box on that word: the second \"fox\", wide as the page", ^{
+        NSString *path = Fixture(@"word.md");
+        NSString *para = @"The quick **brown** fox saw [the dog](https://example.org/fox) and the fox ran "
+                         @"off, over a hill and far away, as foxes do when nobody is looking at them.";
+        MCGuiWriteFile(path, [para stringByAppendingString:@"\n"]);
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:path] && c.previewMode);
+        const NSUInteger at = At(c, @"fox ran");
+        GCHECK(at != NSNotFound);
+        if (at == NSNotFound) return;
+        NSRect r = [c textRectForCharacter:at + 1];
+        GCHECK([c editMarkdownAtCharacter:at + 1 point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        MCMarkdownEditPanel *panel = [c valueForKey:@"markdownEditPanel"];
+        NSTextView *editor = [panel valueForKey:@"_editor"];
+        GCHECK_EQ_STR(editor.string, para);
+        const NSRange want = [para rangeOfString:@"fox ran"];
+        MCGuiNote(@"selected %@, the second fox at %lu", NSStringFromRange(editor.selectedRange),
+                  (unsigned long)want.location);
+        GCHECK(NSEqualRanges(editor.selectedRange, NSMakeRange(want.location, 3)));
+        // As wide as the page's lines, in the page's type size, the whole
+        // paragraph in view.
+        NSTextContainer *box = Text(c).textContainer;
+        const CGFloat lineWidth = box.size.width - 2 * box.lineFragmentPadding;
+        NSPopover *pop = [panel valueForKey:@"_popover"];
+        const NSRect content = pop.contentViewController.view.frame;
+        MCGuiNote(@"box %@ for lines %.0f wide", NSStringFromRect(content), lineWidth);
+        GCHECK(NSWidth(content) >= MAX(460, lineWidth) - 1);
+        GCHECK(fabs(editor.font.pointSize - MCZoomed(15)) < 0.5);
+        NSScrollView *scroll = editor.enclosingScrollView;
+        [editor.layoutManager ensureLayoutForTextContainer:editor.textContainer];
+        GCHECK(NSHeight([editor.layoutManager usedRectForTextContainer:editor.textContainer]) <=
+               NSHeight(scroll.contentView.bounds));
+        [panel close];
+        GCHECK([c showFile:corpus]);
     });
 
     MCGuiStep(@"an edit after the file changed underneath goes to the clipboard, and says so", ^{

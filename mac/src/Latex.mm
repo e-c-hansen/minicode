@@ -26,6 +26,7 @@
 #import <Quartz/Quartz.h>
 #import <CommonCrypto/CommonDigest.h>
 #include "LatexDoc.h"
+#include "MarkdownEdit.h"   // sourceOffsetFor
 #include "LatexLog.h"
 #include "LatexScratch.h"
 #include "SyncTex.h"
@@ -1211,6 +1212,30 @@ static void MCJoinHyphenation(NSString **word, NSString **before, NSString **aft
     }
 }
 
+// The word under `pagePoint` and the page's text on either side of it (40
+// characters, a hyphenated word joined), or nil when the PDF gives no word
+// there that has letters or digits.
+static NSString *MCLatexClickedWord(PDFPage *page, NSPoint pagePoint, NSString **before,
+                                    NSString **after) {
+    PDFSelection *word = [page selectionForWordAtPoint:pagePoint];
+    NSString *clicked = word.string ?: @"";
+    *before = @"";
+    *after = @"";
+    if (LatexDoc::matchKey(Utf8(clicked)).empty()) return nil;
+    // The text on either side tells a common word's occurrences apart: which
+    // "the" was clicked is settled by the words around it.
+    PDFSelection *wide = [word copy];
+    [wide extendSelectionAtStart:40];
+    if ([wide.string hasSuffix:clicked])
+        *before = [wide.string substringToIndex:wide.string.length - clicked.length];
+    wide = [word copy];
+    [wide extendSelectionAtEnd:40];
+    if ([wide.string hasPrefix:clicked])
+        *after = [wide.string substringFromIndex:clicked.length];
+    MCJoinHyphenation(&clicked, before, after);
+    return clicked;
+}
+
 const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &sync,
                                     int tag, PDFPage *page, int pageNumber,
                                     NSPoint pagePoint,
@@ -1228,24 +1253,12 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
     // The word under the pointer names what was clicked. When the PDF cannot
     // give one (a glyph from a picture font, a logo, a bullet), fall back to
     // the whole line, which the matcher can still place.
-    PDFSelection *word = [page selectionForWordAtPoint:pagePoint];
-    NSString *clicked = word.string ?: @"";
-    if (LatexDoc::matchKey(Utf8(clicked)).empty()) {
-        clicked = [page selectionForLineAtPoint:pagePoint].string ?: clicked;
+    NSString *before = @"", *after = @"";
+    NSString *clicked = MCLatexClickedWord(page, pagePoint, &before, &after);
+    if (!clicked) {
+        clicked = [page selectionForLineAtPoint:pagePoint].string ?: @"";
         return doc.spanForClick(lines, Utf8(clicked));
     }
-    // The text on either side tells a common word's occurrences apart: which
-    // "the" was clicked is settled by the words around it.
-    NSString *before = @"", *after = @"";
-    PDFSelection *wide = [word copy];
-    [wide extendSelectionAtStart:40];
-    if ([wide.string hasSuffix:clicked])
-        before = [wide.string substringToIndex:wide.string.length - clicked.length];
-    wide = [word copy];
-    [wide extendSelectionAtEnd:40];
-    if ([wide.string hasPrefix:clicked])
-        after = [wide.string substringFromIndex:clicked.length];
-    MCJoinHyphenation(&clicked, &before, &after);
     return doc.spanForClick(lines, Utf8(clicked), Utf8(before), Utf8(after));
 }
 
@@ -1276,7 +1289,24 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
     }
     NSRect inView = [self.pdf convertRect:[self.pdf convertRect:anchor fromPage:page]
                                    toView:self];
-    [self showPopoverForSpan:*span anchor:inView];
+    // The box opens on the word that was clicked, found in the span's
+    // LaTeX by the text around it, never the whole span preselected.
+    NSString *before = @"", *after = @"";
+    NSString *clicked = MCLatexClickedWord(page, pagePoint, &before, &after);
+    NSRange selection = NSMakeRange(NSNotFound, 0);
+    if (clicked) {
+        const std::string body = _src.substr(span->start, span->end - span->start);
+        const auto at = MarkdownEdit::sourceOffsetFor(body, Utf8(clicked), Utf8(before), Utf8(after));
+        if (at.first != std::string::npos) {
+            NSString *head = [[NSString alloc] initWithBytes:body.data() length:at.first
+                                                    encoding:NSUTF8StringEncoding];
+            NSString *hit = [[NSString alloc] initWithBytes:body.data() + at.first
+                                                     length:at.second - at.first
+                                                   encoding:NSUTF8StringEncoding];
+            if (head && hit) selection = NSMakeRange(head.length, hit.length);
+        }
+    }
+    [self showPopoverForSpan:*span anchor:inView selection:selection];
 }
 
 // ------------------------------------------------------------ editing popover
@@ -1294,6 +1324,10 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
 }
 
 - (void)showPopoverForSpan:(const LatexSpan &)span anchor:(NSRect)rect {
+    [self showPopoverForSpan:span anchor:rect selection:NSMakeRange(NSNotFound, 0)];
+}
+
+- (void)showPopoverForSpan:(const LatexSpan &)span anchor:(NSRect)rect selection:(NSRange)selection {
     _editing = span;
     _editingValid = YES;
     _addingItem = NO;
@@ -1307,13 +1341,15 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
                                    [self describeSpan:span]]
                              text:body
                        allowsItem:inList
-                           anchor:rect];
+                           anchor:rect
+                        selection:selection];
 }
 
 - (void)presentPopoverWithTitle:(NSString *)title
                            text:(NSString *)text
                      allowsItem:(BOOL)allowsItem
-                         anchor:(NSRect)rect {
+                         anchor:(NSRect)rect
+                      selection:(NSRange)selection {
     NSView *content = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 360, 150)];
 
     NSTextField *label = [NSTextField labelWithString:title];
@@ -1382,7 +1418,13 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
     [self.popover showRelativeToRect:rect ofView:self
                        preferredEdge:NSRectEdgeMaxY];
     [self.window makeFirstResponder:editor];
-    [editor setSelectedRange:NSMakeRange(0, editor.string.length)];
+    // The clicked word, or the caret at the end: never the whole span,
+    // which one key would replace.
+    if (selection.location != NSNotFound && NSMaxRange(selection) <= editor.string.length)
+        [editor setSelectedRange:selection];
+    else
+        [editor setSelectedRange:NSMakeRange(editor.string.length, 0)];
+    [editor scrollRangeToVisible:editor.selectedRange];
 }
 
 - (void)cancelEdit:(id)sender {
@@ -1396,7 +1438,8 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
     [self presentPopoverWithTitle:@"New list entry"
                              text:@""
                        allowsItem:NO
-                           anchor:rect];
+                           anchor:rect
+                        selection:NSMakeRange(NSNotFound, 0)];
 }
 
 - (void)commitEdit:(id)sender {

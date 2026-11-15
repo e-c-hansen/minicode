@@ -162,4 +162,70 @@ std::string addItem(const std::string& source, const Block& block, const std::st
     return source.substr(0, block.end) + insert + source.substr(block.end);
 }
 
+namespace {
+
+// Text as sourceOffsetFor compares it: ASCII letters and digits lowercased,
+// every byte of a non-ASCII character kept, and each run of anything else
+// one space; `at` holds each kept byte's offset in the text.
+struct Key {
+    std::string s;
+    std::vector<size_t> at;
+};
+
+Key keyOf(const std::string& text) {
+    Key k;
+    for (size_t i = 0; i < text.size(); i++) {
+        const unsigned char c = (unsigned char)text[i];
+        if (c >= 0x80 || std::isalnum(c)) {
+            k.s += c < 0x80 ? (char)std::tolower(c) : (char)c;
+            k.at.push_back(i);
+        } else if (k.s.empty() || k.s.back() != ' ') {
+            k.s += ' ';
+            k.at.push_back(i);
+        }
+    }
+    return k;
+}
+
+std::string trimmed(std::string s) {
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    size_t a = 0;
+    while (a < s.size() && s[a] == ' ') a++;
+    return s.substr(a);
+}
+
+}  // namespace
+
+std::pair<size_t, size_t> sourceOffsetFor(const std::string& source, const std::string& word,
+                                          const std::string& before, const std::string& after) {
+    const size_t npos = std::string::npos;
+    const Key src = keyOf(source);
+    const std::string w = trimmed(keyOf(word).s);
+    if (w.empty() || src.s.size() < w.size()) return {npos, npos};
+    const std::string b = keyOf(before).s, a = keyOf(after).s;
+    // The page's text either side: a word ends at a gap there unless the
+    // page ran it straight on.
+    const bool gapBefore = before.empty() || b.empty() || b.back() == ' ';
+    const bool gapAfter = after.empty() || a.empty() || a.front() == ' ';
+    size_t best = npos;
+    long bestScore = -1;
+    for (size_t p = src.s.find(w); p != npos; p = src.s.find(w, p + 1)) {
+        const size_t e = p + w.size();
+        const bool whole = (p == 0 || src.s[p - 1] == ' ') && (e == src.s.size() || src.s[e] == ' ');
+        // How much of the text around it agrees, from the word outwards.
+        long score = 0;
+        for (size_t i = p, j = b.size(); i > 0 && j > 0 && src.s[i - 1] == b[j - 1]; i--, j--) score++;
+        for (size_t i = e, j = 0; i < src.s.size() && j < a.size() && src.s[i] == a[j]; i++, j++)
+            score++;
+        // A whole word beats a piece of one by more than any context.
+        if (whole == (gapBefore && gapAfter)) score += 1000000;
+        if (score > bestScore) {
+            bestScore = score;
+            best = p;
+        }
+    }
+    if (best == npos) return {npos, npos};
+    return {src.at[best], src.at[best + w.size() - 1] + 1};
+}
+
 }  // namespace MarkdownEdit

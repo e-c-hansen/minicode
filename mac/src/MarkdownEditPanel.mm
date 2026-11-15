@@ -32,6 +32,8 @@
     BOOL _adding;
     __weak NSView *_view;
     NSRect _rect;
+    CGFloat _width;
+    NSFont *_font;
 }
 
 - (BOOL)shown { return _popover.shown; }
@@ -46,21 +48,50 @@
             rect:(NSRect)rect
           commit:(void (^)(NSString *))commit
          addItem:(void (^)(NSString *))addItem {
+    [self showText:text title:title inView:view rect:rect
+         selection:NSMakeRange(NSNotFound, 0) width:0 font:nil commit:commit addItem:addItem];
+}
+
+- (void)showText:(NSString *)text
+           title:(NSString *)title
+          inView:(NSView *)view
+            rect:(NSRect)rect
+       selection:(NSRange)selection
+           width:(CGFloat)width
+            font:(NSFont *)font
+          commit:(void (^)(NSString *))commit
+         addItem:(void (^)(NSString *))addItem {
     _commit = [commit copy];
     _addItem = [addItem copy];
     _adding = NO;
     _view = view;
     _rect = rect;
-    [self presentText:text title:title allowsItem:addItem != nil];
+    _width = width;
+    _font = font;
+    [self presentText:text title:title allowsItem:addItem != nil selection:selection];
 }
 
-- (void)presentText:(NSString *)text title:(NSString *)title allowsItem:(BOOL)allowsItem {
-    // Taller for text that already runs over several lines.
-    NSUInteger lines = 1;
-    for (NSUInteger i = 0; i < text.length; i++)
-        if ([text characterAtIndex:i] == '\n') lines++;
-    const CGFloat editorHeight = MIN(260, MAX(74, 18.0 * lines + 20));
-    const CGFloat width = 460, height = editorHeight + 76;
+- (void)presentText:(NSString *)text
+              title:(NSString *)title
+         allowsItem:(BOOL)allowsItem
+          selection:(NSRange)selection {
+    // As wide as asked (the paragraph on the page), within reason, and as
+    // tall as the text is there, from two lines to a screenful.
+    const CGFloat width = MIN(1400, MAX(460, _width > 0 ? _width + 24 : 460));
+    NSFont *font = _font ?: MCMonoFont(MCZoomed(12), NSFontWeightRegular);
+    NSTextStorage *measure = [[NSTextStorage alloc]
+        initWithString:text.length ? text : @"M"
+            attributes:@{NSFontAttributeName: font}];
+    NSLayoutManager *lm = [NSLayoutManager new];
+    NSTextContainer *tc = [[NSTextContainer alloc]
+        initWithContainerSize:NSMakeSize(width - 24 - 4 - 16, CGFLOAT_MAX)];   // insets, scroller
+    [lm addTextContainer:tc];
+    [measure addLayoutManager:lm];
+    [lm ensureLayoutForTextContainer:tc];
+    const CGFloat line = ceil([lm defaultLineHeightForFont:font]);
+    const CGFloat needed = ceil(NSHeight([lm usedRectForTextContainer:tc])) + 8 + line;
+    const CGFloat editorHeight = MIN(420, MAX(2 * line + 8, needed));
+    const CGFloat height = editorHeight + 76;
     NSView *content = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];
 
     NSTextField *label = [NSTextField labelWithString:title];
@@ -75,7 +106,7 @@
     scroll.borderType = NSBezelBorder;
     MCMarkdownEditText *editor = [[MCMarkdownEditText alloc]
         initWithFrame:NSMakeRect(0, 0, width - 24, editorHeight)];
-    editor.font = MCMonoFont(MCZoomed(12), NSFontWeightRegular);
+    editor.font = font;
     editor.string = text ?: @"";
     editor.richText = NO;
     editor.automaticQuoteSubstitutionEnabled = NO;
@@ -124,12 +155,19 @@
     if (!view) return;
     [_popover showRelativeToRect:_rect ofView:view preferredEdge:NSRectEdgeMaxY];
     [editor.window makeFirstResponder:editor];
-    [editor setSelectedRange:NSMakeRange(0, editor.string.length)];
+    // The word that was double-clicked, as a double-click selects one
+    // anywhere else; never the whole block, which one key would replace.
+    if (selection.location != NSNotFound && NSMaxRange(selection) <= editor.string.length)
+        [editor setSelectedRange:selection];
+    else
+        [editor setSelectedRange:NSMakeRange(editor.string.length, 0)];
+    [editor scrollRangeToVisible:editor.selectedRange];
 }
 
 - (void)startAddItem:(id)sender {
     _adding = YES;
-    [self presentText:@"" title:@"New list entry" allowsItem:NO];
+    [self presentText:@"" title:@"New list entry" allowsItem:NO
+            selection:NSMakeRange(NSNotFound, 0)];
 }
 
 - (void)save:(id)sender {
