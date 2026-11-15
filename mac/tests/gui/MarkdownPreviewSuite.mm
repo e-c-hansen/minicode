@@ -435,10 +435,11 @@ MC_GUI_SUITE(markdown_preview) {
         NSString *want = [NSString stringWithFormat:@"%@%lu:", kDetailsLinkPrefix, (unsigned long)tag];
         GCHECK(at != NSNotFound && [link hasPrefix:want]);
         if (at == NSNotFound) return;
+        NSString *source = [c.sourceText copy];
         GCHECK([c textView:Text(c) clickedOnLink:link atIndex:at]);
         GCHECK(At(c, @"\u25BE A summary, in bold") != NSNotFound);
         GCHECK(At(c, @"Markdown again, after a blank line.") != NSNotFound);
-        GCHECK(![ActiveTab(c)[@"dirty"] boolValue]);   // the source is untouched
+        GCHECK([c.sourceText isEqualToString:source]);   // the source is untouched
         // Kept while the tab is open: a render keeps it open.
         [c renderMarkdownKeepingPlace];
         GCHECK(At(c, @"Markdown again, after a blank line.") != NSNotFound);
