@@ -900,6 +900,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     BOOL _errorIsInfo;                // the line under the button is news, not a failure
     BOOL _errorFromStatus;            // ...and it came from a failing status
     NSTextField *_branchLabel;
+    NSButton *_reviewButton;          // "Review Changes", while there are some
     NSScrollView *_messageScroll;
     MCCommitTextView *_message;
     NSButton *_commitButton;
@@ -977,6 +978,17 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _branchLabel.toolTip = @"Switch Branch…";
     [self addSubview:_branchLabel];
 
+    // Every change in one scroll, each with its own Stage and Discard
+    // (ChangeReviewPage.h), as Zed's Uncommitted Changes.
+    _reviewButton = [NSButton buttonWithTitle:@"Review Changes" target:self
+                                       action:@selector(reviewFromButton:)];
+    _reviewButton.bezelStyle = NSBezelStyleRecessed;
+    _reviewButton.controlSize = NSControlSizeSmall;
+    _reviewButton.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+    _reviewButton.toolTip = @"Every uncommitted change in one tab, each with Stage and Discard";
+    _reviewButton.hidden = YES;
+    [self addSubview:_reviewButton];
+
     _messageScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 200, 60)];
     _messageScroll.hasVerticalScroller = YES;
     _messageScroll.autohidesScrollers = YES;
@@ -1040,8 +1052,8 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _table.allowsMultipleSelection = YES;   // Stage, Unstage and Discard act on all of them
     _table.dataSource = self;
     _table.delegate = self;
-    _table.onActivate = ^(NSInteger row) { [weakSelf showDiffAtRow:row]; };
-    _table.onClick = ^(NSInteger row) { [weakSelf showDiffAtRow:row]; };
+    _table.onActivate = ^(NSInteger row) { [weakSelf reviewRow:row]; };
+    _table.onClick = ^(NSInteger row) { [weakSelf reviewRow:row]; };
     _table.onToggle = ^(NSInteger row) { [weakSelf toggleStageAtRow:row]; };
     _table.onTab = ^{ [weakSelf focusGraph]; };
     _table.onBackTab = ^{ [weakSelf focusMessage]; };
@@ -1197,6 +1209,8 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 - (void)stageAllFromMenu:(id)sender { (void)sender; [self stageAll]; }
 - (void)unstageAllFromMenu:(id)sender { (void)sender; [self unstageAll]; }
 - (void)undoDiscardFromMenu:(id)sender { (void)sender; [self undoDiscard]; }
+- (void)reviewFromButton:(id)sender { (void)sender; [self reviewChanges]; }
+- (BOOL)reviewButtonShown { return !_reviewButton.hidden; }   // tests, by KVC
 - (void)branchClicked:(id)sender {
     (void)sender;
     if (self.onChooseBranch) self.onChooseBranch();
@@ -1241,7 +1255,13 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     const CGFloat W = self.bounds.size.width, H = self.bounds.size.height, pad = 10;
     const CGFloat inner = MAX(0, W - 2 * pad);
     CGFloat y = 8;
-    _branchLabel.frame = NSMakeRect(pad, y, inner, 18);
+    CGFloat branchW = inner;
+    if (!_reviewButton.hidden) {
+        const NSSize fit = _reviewButton.fittingSize;
+        _reviewButton.frame = NSMakeRect(W - pad - fit.width, y - 1, fit.width, 20);
+        branchW = MAX(0, inner - fit.width - 6);
+    }
+    _branchLabel.frame = NSMakeRect(pad, y, branchW, 18);
     y += 24;
     if (!_messageScroll.hidden) {
         _messageScroll.frame = NSMakeRect(pad, y, inner, 60);
@@ -1560,6 +1580,9 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _branchText = [s.branchText copy];
     _initial = s.initial;
     _rows = s.rows ?: @[];
+    BOOL anyFile = NO;
+    for (MCGitRow *r in _rows) anyFile = anyFile || !r.header;
+    _reviewButton.hidden = !anyFile;
     _branchLabel.stringValue = s.inRepository ? (s.branchText ?: @"") : @"Source Control";
     [self showMessageArea:s.inRepository];
     _notice.stringValue = s.notice ?: @"";
@@ -1743,6 +1766,38 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 
 - (void)actionDone {
     if (self.onActionDone) self.onActionDone();
+}
+
+- (void)showActionMessage:(NSString *)text ok:(BOOL)ok { [self say:text info:ok]; }
+
+- (void)askQuestion:(NSString *)question detail:(NSString *)detail button:(NSString *)button
+               then:(void (^)(void))go {
+    GitUi::ActionPlan plan;
+    plan.question = question.UTF8String ?: "";
+    plan.detail = detail.UTF8String ?: "";
+    plan.button = button.UTF8String ?: "";
+    [self ask:plan then:go];
+}
+
+- (void)rememberDiscardAt:(NSString *)path rel:(NSString *)rel trashed:(NSURL *)trashed {
+    MCGitDiscard *u = [MCGitDiscard new];
+    u.path = path;
+    u.rel = rel;
+    u.trashed = trashed;
+    if (!_discards) _discards = [NSMutableArray array];
+    [_discards addObject:u];
+    while (_discards.count > 20) [_discards removeObjectAtIndex:0];
+}
+
+// The review of every change, at a row's file, or from its top.
+- (void)reviewChanges {
+    if (self.onReview) self.onReview(nil, NO);
+}
+- (void)reviewRow:(NSInteger)row {
+    MCGitRow *r = [self fileRow:row];
+    if (!r) return;
+    if (self.onReview) self.onReview(r.path, r.staged);
+    else [self showDiffAtRow:row];
 }
 
 // Stage All and Unstage All: planned from a status read now, so the counts
@@ -2114,6 +2169,7 @@ typedef GitUi::ActionPlan (^MCGitVerbPlan)(MCGitSnapshot *snap);
     }
     add(@"Open File", @selector(menuOpenFile:));
     add(@"Open Changes", @selector(menuOpenChanges:));
+    add(@"Open as git Diff", @selector(menuOpenRawDiff:));
     add(r.staged ? @"Unstage Changes" : @"Stage Changes", @selector(menuToggleStage:));
     if (!r.staged) {
         NSMenuItem *it = add(r.untracked ? @"Discard (Move to Trash)…" : @"Discard Changes…",
@@ -2134,7 +2190,8 @@ typedef GitUi::ActionPlan (^MCGitVerbPlan)(MCGitSnapshot *snap);
     NSString *path = [self pathOfRow:item.tag];
     if (path && self.onOpenFile) self.onOpenFile(path);
 }
-- (void)menuOpenChanges:(NSMenuItem *)item { [self showDiffAtRow:item.tag]; }
+- (void)menuOpenChanges:(NSMenuItem *)item { [self reviewRow:item.tag]; }
+- (void)menuOpenRawDiff:(NSMenuItem *)item { [self showDiffAtRow:item.tag]; }
 - (void)menuToggleStage:(NSMenuItem *)item { [self toggleStageAtRow:item.tag]; }
 - (void)menuStage:(NSMenuItem *)item { [self stageRow:item.tag stage:YES]; }
 - (void)menuUnstage:(NSMenuItem *)item { [self stageRow:item.tag stage:NO]; }
@@ -2569,15 +2626,7 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
             }
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (!failure && trashed) {
-                MCGitDiscard *u = [MCGitDiscard new];
-                u.path = path;
-                u.rel = rel;
-                u.trashed = trashed;
-                if (!self->_discards) self->_discards = [NSMutableArray array];
-                [self->_discards addObject:u];
-                if (self->_discards.count > 20) [self->_discards removeObjectAtIndex:0];
-            }
+            if (!failure && trashed) [self rememberDiscardAt:path rel:rel trashed:trashed];
             if ([root isEqualToString:self.root]) {
                 [self say:failure ?: NSFromBytes(p.doneText) info:failure == nil];
                 [self runRefresh];

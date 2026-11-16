@@ -518,6 +518,8 @@ const std::vector<Command>& all() {
         {"workbench.view.scm", "Toggle Source Control", "View", "ctrl+shift+g", A,
          "toggleSourceControl:", 0, 0, nullptr},
         // VS Code has these without keys.
+        {"minicode.git.reviewChanges", "Review Changes", "View > Source Control", "", A,
+         "gitReviewChanges:", 0, 0, nullptr},
         {"git.fetch", "Fetch", "View > Source Control", "", A, "gitFetch:", 0, 0, nullptr},
         {"git.pull", "Pull", "View > Source Control", "", A, "gitPull:", 0, 0, nullptr},
         {"git.push", "Push", "View > Source Control", "", A, "gitPush:", 0, 0, nullptr},

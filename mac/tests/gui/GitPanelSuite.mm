@@ -7,6 +7,8 @@
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorFont.h"
+#import "AppSettings.h"
+#import "ChangeReviewPage.h"
 #import "GitPanel.h"
 #import "PalettePanel.h"
 #include <objc/runtime.h>
@@ -370,7 +372,7 @@ MC_GUI_SUITE(git_actions) {
     MCGuiStep(@"a file row's right click", ^{
         NSArray *titles = MenuTitles([Git(c) menuForRow:RowOf(c, @"W U c.txt")]);
         MCGuiNote(@"row menu: %@", titles);
-        NSArray *want = @[@"Open File", @"Open Changes", @"Stage Changes",
+        NSArray *want = @[@"Open File", @"Open Changes", @"Open as git Diff", @"Stage Changes",
                           @"Discard (Move to Trash)…", @"Reveal in File Tree"];
         GCHECK([titles isEqualToArray:want]);
         NSEvent *none = nil;   // the selected row, as the keyboard's Menu key asks
@@ -851,6 +853,300 @@ MC_GUI_SUITE(git_verbs) {
     MCGuiWait(@"refused", 10, ^BOOL { return actions == 1; });
     MCGuiStep(@"said why; the window closes", ^{
         GCHECK_EQ_STR(Git(c).errorLine, @"There is no stash to pop.");
+        UseScratchTrash(NO);
+        [c.window close];
+    });
+    MCGuiWait(@"gone", 5, ^BOOL { return ![MCGuiControllers() containsObject:c]; });
+}
+
+// `make guitest SUITES=git_review`: the review of every uncommitted change
+// (ChangeReviewPage.h). A click on a file row opens it at that file, with
+// no git headers; three edits a line apart are three blocks, each with its
+// own buttons; Stage on the middle one leaves only it in the index; Discard
+// asks, writes the file (a clean tab on it follows the disk as one undo
+// step) and Undo Discard puts it back; Stage Selected Lines from the right
+// click; Unstage in the staged list; an index changed from outside since
+// the view was drawn refuses with words; the place is kept after an action;
+// F7 steps through the blocks; a folded stretch opens on a click; syntax
+// colors show; and 50,000 changed lines go on show within a CPU bound.
+namespace {
+MCChangeReviewPage *Review(EditorController *c) {
+    id page = [[c valueForKey:@"activeTab"] valueForKey:@"page"];
+    return [page isKindOfClass:MCChangeReviewPage.class] ? page : nil;
+}
+NSInteger RowNamed(MCChangeReviewPage *p, NSString *description) {
+    const NSUInteger at = [p.rowDescriptions indexOfObject:description];
+    return at == NSNotFound ? -1 : (NSInteger)at;
+}
+// Whether a row is on screen.
+BOOL RowShows(MCChangeReviewPage *p, NSInteger row) {
+    return row >= 0 && NSIntersectsRect([p rectOfRow:row], p.scrollView.contentView.bounds);
+}
+// The first block's row after a file's header row.
+NSInteger FirstBlockAfter(MCChangeReviewPage *p, NSInteger header) {
+    for (NSUInteger b = 0; b < p.blockCount; b++)
+        if ([p rowOfBlock:b] > header) return [p rowOfBlock:b];
+    return -1;
+}
+BOOL PressButton(MCChangeReviewPage *p, NSString *title, NSInteger row) {
+    const NSRect r = [p buttonRect:title row:row];
+    if (NSIsEmptyRect(r)) return NO;
+    return [p pressAtPoint:NSMakePoint(NSMidX(r), NSMidY(r))];
+}
+}  // namespace
+
+MC_GUI_SUITE(git_review) {
+    __block EditorController *c = nil;
+    NSString *git = MCGitExecutable();
+    NSString *repo = [MCGuiScratch() stringByAppendingPathComponent:@"gitreview"];
+    NSString *G = git ? [NSString stringWithFormat:@"'%@'", git] : @"git";
+    NSString *f = [repo stringByAppendingPathComponent:@"f.txt"];
+    __block NSInteger actions = 0;
+    __block NSUInteger loads = 0, alerts = 0;
+    if (!git) {
+        MCGuiStep(@"no git", ^{ MCGuiNote(@"no git here: the review checks are skipped"); });
+        return;
+    }
+    NSString *edited = @"a\nB\nc\nD\ne\nF\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n";
+    NSString *(^index)(void) = ^NSString * { return GitText(repo, @[@"show", @":f.txt"]); };
+
+    GitShell(@"a repository; f.txt changed on three lines a line apart, g.py on one", [NSString
+        stringWithFormat:@"set -e; mkdir -p '%@'; cd '%@'; %@ init -q -b main; "
+                          "printf 'a\\nb\\nc\\nd\\ne\\nf\\ng\\nh\\ni\\nj\\nk\\nl\\nm\\nn\\no\\np\\nq\\nr\\ns\\nt\\n' > f.txt; "
+                          "printf 'def f():\\n    return 1\\n' > g.py; "
+                          "%@ add -A; %@ commit -qm first; "
+                          "printf 'a\\nB\\nc\\nD\\ne\\nF\\ng\\nh\\ni\\nj\\nk\\nl\\nm\\nn\\no\\np\\nq\\nr\\ns\\nt\\n' > f.txt; "
+                          "printf 'def f():\\n    return 2\\n' > g.py",
+                          repo, repo, G, G, G]);
+    MCGuiStep(@"a window on it; the panel; a Trash of our own", ^{
+        UseScratchTrash(YES);
+        NSUInteger before = MCGuiControllers().count;
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:repo]]];
+        GCHECK(MCGuiControllers().count == before + 1);
+        c = MCGuiController();
+        [c toggleSourceControl:nil];
+    });
+    MCGuiWait(@"both files listed", 15, ^BOOL {
+        return Rows(c, @[@"# Changes  2", @"W M f.txt", @"W M g.py"]);
+    });
+    MCGuiStep(@"Review Changes shows; a click on f.txt's row opens the review", ^{
+        GCHECK([[Git(c) valueForKey:@"reviewButtonShown"] boolValue]);
+        [Git(c) reviewRow:RowOf(c, @"W M f.txt")];
+    });
+    MCGuiWait(@"the review, read", 15, ^BOOL { return Review(c).loaded && Review(c).blockCount == 4; });
+    MCGuiStep(@"every file in one scroll, three blocks in f.txt, no git headers", ^{
+        MCChangeReviewPage *p = Review(c);
+        p.onActionDone = ^{ actions++; };
+        NSArray<NSString *> *rows = p.rowDescriptions;
+        MCGuiNote(@"review rows: %@", rows);
+        GCHECK_EQ_STR(rows.firstObject, @"§ Changes  2");
+        GCHECK([rows containsObject:@"F f.txt  +3 -3"]);
+        GCHECK([rows containsObject:@"F g.py  +1 -1"]);
+        GCHECK([rows containsObject:@"~ 11 unchanged lines"]);
+        NSArray *want = @[@"F f.txt  +3 -3", @"  a", @"- b", @"+ B", @"  c", @"- d", @"+ D",
+                          @"  e", @"- f", @"+ F", @"  g", @"  h", @"  i", @"~ 11 unchanged lines"];
+        const NSInteger at = RowNamed(p, @"F f.txt  +3 -3");
+        GCHECK(at >= 0 && [[rows subarrayWithRange:NSMakeRange((NSUInteger)at, want.count)]
+                              isEqualToArray:want]);
+        for (NSString *r in rows)
+            GCHECK(![r containsString:@"diff --git"] && ![r containsString:@"@@"] &&
+                   ![r containsString:@"index "]);
+        // Each block has its own Stage and Discard; the header its own.
+        for (NSUInteger b = 0; b < 3; b++) {
+            GCHECK(!NSIsEmptyRect([p buttonRect:@"Stage" row:[p rowOfBlock:b]]));
+            GCHECK(!NSIsEmptyRect([p buttonRect:@"Discard" row:[p rowOfBlock:b]]));
+        }
+        for (NSString *t in @[@"Side by Side", @"Open", @"Discard File", @"Stage File"])
+            GCHECK(!NSIsEmptyRect([p buttonRect:t row:at]));
+        // Opened at f.txt: its header on screen.
+        GCHECK(RowShows(p, at));
+        // g.py's "def" in the keyword color.
+        NSTextStorage *ts = p.textView.textStorage;
+        const NSRange def = [ts.string rangeOfString:@"def f():"];
+        GCHECK(def.location != NSNotFound);
+        if (def.location != NSNotFound) {
+            NSColor *color = [ts attribute:NSForegroundColorAttributeName atIndex:def.location
+                            effectiveRange:nil];
+            GCHECK([color isEqual:[[AppSettings shared] syntax:TokenStyle::Keyword]]);
+        }
+        // The changed word of g.py's line marked more strongly than the line.
+        const NSRange two = [ts.string rangeOfString:@"    return 2"];
+        GCHECK(two.location != NSNotFound);
+        if (two.location != NSNotFound)
+            GCHECK([ts attribute:NSBackgroundColorAttributeName atIndex:NSMaxRange(two) - 1
+                  effectiveRange:nil] != nil);
+        MCGuiSnapshot(p.pageView, @"git-review");
+        loads = p.loads;
+        actions = 0;
+        GCHECK(PressButton(p, @"Stage", [p rowOfBlock:1]));
+    });
+    MCGuiWait(@"the middle block staged, and read again", 15, ^BOOL {
+        return actions == 1 && Review(c).loads > loads &&
+               [Review(c).rowDescriptions containsObject:@"§ Staged Changes  1"];
+    });
+    MCGuiStep(@"only it is in the index; the file untouched; the eye on f.txt still", ^{
+        MCChangeReviewPage *p = Review(c);
+        GCHECK_EQ_STR(p.message, @"Staged a change to f.txt.");
+        GCHECK_EQ_STR(index(), @"a\nb\nc\nD\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n");
+        GCHECK_EQ_STR(Read(f), edited);
+        const NSInteger at = [p rowOfFile:@"f.txt" staged:NO];
+        MCGuiNote(@"after staging: top %ld, f.txt's header %ld", (long)p.topRow, (long)at);
+        // Still in sight, though the staged list came in above it (on a
+        // page taller than the pane it is the top row again).
+        GCHECK(RowShows(p, at));
+        GCHECK([p.rowDescriptions containsObject:@"F f.txt  +2 -2"]);
+        // The staged block has Unstage, not Stage or Discard.
+        const NSInteger staged = FirstBlockAfter(p, [p rowOfFile:@"f.txt" staged:YES]);
+        GCHECK(staged >= 0 && !NSIsEmptyRect([p buttonRect:@"Unstage" row:staged]));
+        GCHECK(NSIsEmptyRect([p buttonRect:@"Discard" row:staged]));
+        // f.txt open in a clean tab, then the review again.
+        GCHECK([c showFile:f]);
+        [c gitReviewChanges:nil];
+        GCHECK(Review(c) == p);
+    });
+    MCGuiStep(@"Discard on f.txt's first block asks; yes", ^{
+        MCChangeReviewPage *p = Review(c);
+        const NSInteger block = FirstBlockAfter(p, [p rowOfFile:@"f.txt" staged:NO]);
+        alerts = MCGuiAlertsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        actions = 0;
+        loads = p.loads;
+        GCHECK(PressButton(p, @"Discard", block));
+        NSArray *shown = MCGuiAlertsShown();
+        GCHECK([[shown subarrayWithRange:NSMakeRange(alerts, shown.count - alerts)]
+            isEqualToArray:@[@"Discard this change to f.txt?"]]);
+    });
+    MCGuiWait(@"discarded", 15, ^BOOL { return actions == 1 && Review(c).loads > loads; });
+    MCGuiStep(@"b is back, D and F kept; the file as it was is in the Trash", ^{
+        MCChangeReviewPage *p = Review(c);
+        MCGuiNote(@"after discard: %@", p.message);
+        GCHECK_EQ_STR(Read(f), @"a\nb\nc\nD\ne\nF\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n");
+        GCHECK([TrashedTexts() containsObject:edited]);
+        GCHECK_EQ_STR(Git(c).undoDiscardTitle, @"Undo Discard of f.txt");
+        GCHECK([c showFile:f]);
+    });
+    MCGuiWait(@"the clean tab follows the disk, as one undo step", 10, ^BOOL {
+        return [[[c valueForKey:@"textView"] string] hasPrefix:@"a\nb\nc\nD\n"];
+    });
+    MCGuiStep(@"its undo step; Undo Discard", ^{
+        NSTextView *tv = [c valueForKey:@"textView"];
+        MCGuiNote(@"tab's undo: %@", tv.undoManager.undoActionName);
+        GCHECK_EQ_STR(tv.undoManager.undoActionName, @"Reload from Disk");
+        [c gitReviewChanges:nil];
+        actions = 0;
+        [Git(c) undoDiscard];
+    });
+    MCGuiWait(@"undone", 15, ^BOOL { return [Read(f) isEqualToString:edited]; });
+    MCGuiWait(@"and the review shows B again", 15, ^BOOL {
+        return [Review(c).rowDescriptions containsObject:@"+ B"];
+    });
+    MCGuiStep(@"select the + F line; the right click stages the selected lines", ^{
+        MCChangeReviewPage *p = Review(c);
+        NSTextView *tv = p.textView;
+        const NSInteger row = RowNamed(p, @"+ F");
+        GCHECK(row >= 0);
+        // The row's characters: the text is one line per row.
+        NSArray *lines = [tv.string componentsSeparatedByString:@"\n"];
+        NSUInteger start = 0;
+        for (NSInteger i = 0; i < row; i++) start += [lines[(NSUInteger)i] length] + 1;
+        tv.selectedRange = NSMakeRange(start, 1);
+        NSEvent *right = [NSEvent mouseEventWithType:NSEventTypeRightMouseDown
+                                            location:NSZeroPoint modifierFlags:0 timestamp:0
+                                        windowNumber:c.window.windowNumber context:nil
+                                         eventNumber:0 clickCount:1 pressure:1];
+        NSMenu *menu = [tv menuForEvent:right];
+        NSArray *titles = MenuTitles(menu);
+        MCGuiNote(@"review menu: %@", titles);
+        GCHECK([titles containsObject:@"Stage Selected Lines"] &&
+               [titles containsObject:@"Discard Selected Lines…"]);
+        GCHECK([titles.lastObject hasPrefix:@"Adjust Settings"]);
+        actions = 0;
+        loads = p.loads;
+        [menu performActionForItemAtIndex:[menu indexOfItemWithTitle:@"Stage Selected Lines"]];
+    });
+    MCGuiWait(@"F staged as well", 15, ^BOOL {
+        return actions == 1 && Review(c).loads > loads &&
+               [index() isEqualToString:@"a\nb\nc\nD\ne\nF\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n"];
+    });
+    MCGuiStep(@"Unstage on the staged list's first block", ^{
+        MCChangeReviewPage *p = Review(c);
+        GCHECK_EQ_STR(p.message, @"Staged the selected lines of f.txt.");
+        const NSInteger block = FirstBlockAfter(p, [p rowOfFile:@"f.txt" staged:YES]);
+        actions = 0;
+        loads = p.loads;
+        GCHECK(PressButton(p, @"Unstage", block));
+    });
+    MCGuiWait(@"D unstaged, F still staged", 15, ^BOOL {
+        return actions == 1 &&
+               [index() isEqualToString:@"a\nb\nc\nd\ne\nF\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n"];
+    });
+    MCGuiWait(@"read again", 15, ^BOOL { return Review(c).loads > loads; });
+    MCGuiStep(@"the index changed from outside since the view was drawn: Stage refuses", ^{
+        MCChangeReviewPage *p = Review(c);
+        // In the same step, so the page has not read it yet.
+        MCGitResult *r = MCGitRunSync(repo, @[@"add", @"f.txt"]);
+        GCHECK(r.ok);
+        const NSInteger header = [p rowOfFile:@"f.txt" staged:NO];
+        GCHECK(header >= 0);
+        actions = 0;
+        GCHECK(PressButton(p, @"Stage", FirstBlockAfter(p, header)));
+    });
+    MCGuiWait(@"refused", 15, ^BOOL { return actions == 1; });
+    MCGuiStep(@"said why; the index is what git add made", ^{
+        MCChangeReviewPage *p = Review(c);
+        MCGuiNote(@"stale: %@", p.message);
+        GCHECK([p.message hasPrefix:@"The staged version of f.txt changed since this view was drawn"]);
+        GCHECK_EQ_STR(index(), edited);
+    });
+    MCGuiWait(@"read again: f.txt only staged now", 15, ^BOOL {
+        return [Review(c) rowOfFile:@"f.txt" staged:NO] < 0 &&
+               [Review(c) rowOfFile:@"f.txt" staged:YES] >= 0;
+    });
+    MCGuiStep(@"F7 steps through the blocks across files, wrapping", ^{
+        MCChangeReviewPage *p = Review(c);
+        NSTextView *tv = p.textView;
+        const NSUInteger n = p.blockCount;
+        GCHECK(n == 4);
+        [tv scrollPoint:NSZeroPoint];
+        NSMutableArray *seen = [NSMutableArray array];
+        for (NSUInteger i = 0; i <= n; i++) {
+            [NSApp sendAction:@selector(goToNextDifference:) to:tv from:nil];
+            [seen addObject:@(tv.selectedRange.location)];
+        }
+        MCGuiNote(@"F7 went to %@", seen);
+        GCHECK([seen.firstObject isEqual:seen.lastObject]);
+        GCHECK([[NSSet setWithArray:seen] count] == n);
+    });
+    MCGuiStep(@"a click on a folded stretch opens it", ^{
+        MCChangeReviewPage *p = Review(c);
+        const NSInteger gap = RowNamed(p, @"~ 11 unchanged lines");
+        GCHECK(gap >= 0);
+        const NSUInteger before = p.rowDescriptions.count;
+        const NSRect r = [p rectOfRow:gap];
+        GCHECK([p pressAtPoint:NSMakePoint(NSMinX(r) + 120, NSMidY(r))]);
+        GCHECK(p.rowDescriptions.count == before + 10);
+        GCHECK(RowNamed(p, @"~ 11 unchanged lines") < 0 && RowNamed(p, @"  t") >= 0);
+    });
+    GitShell(@"50,000 lines, every one changed", [NSString
+        stringWithFormat:@"set -e; cd '%@'; seq 1 50000 | sed 's/^/line /' > big.txt; %@ add big.txt; "
+                          "%@ commit -qm big; seq 1 50000 | sed 's/^/LINE /' > big.txt",
+                          repo, G, G]);
+    MCGuiStep(@"read again", ^{
+        loads = Review(c).loads;
+        [Review(c) reload];
+    });
+    MCGuiWait(@"big.txt on show", 60, ^BOOL {
+        return Review(c).loads > loads && [Review(c) rowOfFile:@"big.txt" staged:NO] >= 0;
+    });
+    MCGuiStep(@"within a CPU bound on the main thread", ^{
+        MCChangeReviewPage *p = Review(c);
+        MCGuiNote(@"50,000 changed lines on show in %.0f ms of main-thread CPU",
+                  p.lastShowCpuMilliseconds);
+        GCHECK_TIME(p.lastShowCpuMilliseconds, 1500, @"the review with 50,000 changed lines shown");
+        GCHECK(p.rowDescriptions.count > 100000);
+    });
+    MCGuiStep(@"the window closes; the real Trash back", ^{
         UseScratchTrash(NO);
         [c.window close];
     });

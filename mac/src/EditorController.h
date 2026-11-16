@@ -45,6 +45,7 @@
 - (void)previousChange:(id)sender;   // Shift+Option+F5
 - (void)revertChange:(id)sender;     // the change bar on the caret's line
 - (void)stageChange:(id)sender;
+- (void)gitReviewChanges:(id)sender;   // every uncommitted change in one tab
 - (void)gitFetch:(id)sender;
 - (void)gitPull:(id)sender;
 - (void)gitPush:(id)sender;
