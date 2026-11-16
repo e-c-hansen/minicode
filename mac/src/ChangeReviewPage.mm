@@ -1156,7 +1156,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         [s addAttribute:NSForegroundColorAttributeName value:muted range:NSMakeRange(0, s.length)];
         [s addAttribute:NSFontAttributeName value:[NSFont systemFontOfSize:12.5]
                   range:NSMakeRange(0, s.length)];
-        [_text.textStorage setAttributedString:s];
+        [self setPageText:s];
         [self fitText];
         return;
     }
@@ -1202,8 +1202,18 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                   range:NSMakeRange(sp.start, sp.length)];
     }
     [s endEditing];
-    [_text.textStorage setAttributedString:s];
+    [self setPageText:s];
     [self fitText];
+}
+
+// The storage emptied first: replacing a laid-out page of 100,000 rows with
+// another in one step cost TextKit about 5 s of the main thread (measured
+// headless: 13 ms the first time, 4.8 s for each replacement after), and
+// emptying it, then setting the new page, 6 ms.
+- (void)setPageText:(NSAttributedString *)s {
+    NSTextStorage *storage = _text.textStorage;
+    if (storage.length > 100000) [storage setAttributedString:[NSAttributedString new]];
+    [storage setAttributedString:s];
 }
 
 - (void)updateSummary {
