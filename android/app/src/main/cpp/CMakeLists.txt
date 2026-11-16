@@ -33,6 +33,8 @@ add_library(minicode SHARED
     ${CORE}/LatexDoc.cpp
     ${CORE}/SyncTex.cpp
     ${CORE}/Json.cpp
+    ${CORE}/Text.cpp
+    ${CORE}/EditSpans.cpp
     ${CORE}/LspClient.cpp
     ${CORE}/LspProtocol.cpp
     ${CORE}/LspText.cpp

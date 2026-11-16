@@ -184,6 +184,18 @@ goes here first, with tests; the GUI only displays it.
   file, found through the highlighter's tokens, and the command for one
   test or the file), `RightAreaLayout` (the right
   side's panes and bars by the Mac's rules, which the GTK port lays out from).
+- The document model (SESSION-DESIGN.md's stage 1, 2026-11-16; namespace
+  `Model`): `Text` (UTF-16 in chunks of about 1,024 units with Fenwick
+  trees over lengths, LSP line starts and code points, so both a UTF-16
+  port and a code point port address it in log time; a version every
+  change moves on; `apply`, the multi-range edit in EditSpans' shape, in
+  either unit; `text:*`, an oracle against a plain string) and `Document`
+  (a file's text, saved text, stamp, encoding and mark, gone and large,
+  with the Mac's rules: dirty means differs from the saved text, a stamp
+  changed by date, inode or size, UTF-16 with its mark read exactly and
+  written back, no lone surrogate written; `document:*`). The language
+  server client's copy of each file is a `Model::Text`; the ports keep
+  their own documents until stages 3 and 4 move the session into the core.
 - Editing: `LineDiff` (Myers, split at lines unique on both sides past
   1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,
   `mapOffset`), `LineComments`,
@@ -1573,7 +1585,8 @@ kind, its method and capability entry to `LspClient.cpp`:
   references, symbols.
 - `LspEdits.cpp`: WorkspaceEdits, formatting results, prepareRename, code
   actions.
-- `LspSync.cpp`: `ChangeTracker`, ranged contentChanges, watched files.
+- `LspSync.cpp`: `ChangeTracker`, ranged contentChanges, watched files
+  (the copy of each file is `Model::Text`, `src/Text.cpp`).
 - `LspInternal.h`: `lower` and `trim`, for these files only.
 
 Every port's build list names all of them (`linux:build-lists` checks that a
@@ -1596,10 +1609,11 @@ view is disposed (on `unrealize`), or dispose loops forever.
   the Mac's flush (2026-11-08) hands `Client::didChange` the length and a
   `TextReader` over the storage: only each region's new text (and a unit
   either side) is read, positions come from the client's copy, a
-  `SyncedText` (UTF-16 in chunks of about 1,024 units, each with its own
-  line starts, lengths and line counts in Fenwick trees, so an edit
-  rewrites only the chunks it touches in log time; one flat
-  string moved its tail per edit, `lsp:sync-scale`), and
+  `Model::Text` (`SyncedText` until 2026-11-16; UTF-16 in chunks of about
+  1,024 units, each with its own line starts, lengths, line counts and
+  code points in Fenwick trees, so an edit rewrites only the chunks it
+  touches in log time; one flat string moved its tail per edit,
+  `lsp:sync-scale`), and
   contentChanges go last region first. The regions are trusted, so a pause
   costs what was typed, not the file (9 ms of main at 2.5 MB before);
   lengths that do not add up, a boundary inside a surrogate pair or
@@ -1608,8 +1622,15 @@ view is disposed (on `unrealize`), or dispose loops forever.
   repairs a copy an edit the tracker missed made wrong.
   `MINICODE_LSP_SYNC_CHECK=1` compares after every flush (`setCheckSync`,
   counted in `syncRepairs`), and `lsp:sync-oracle` checks the copy against
-  a server applying what it is sent. The UTF-8 overloads (GTK, tests) still
-  compare the outside text with `rangedChanges` first. `textFor` is the
+  a server applying what it is sent. **The GTK port counts characters**
+  (2026-11-16): its tracker's regions, length and reader are code points,
+  and `didChange(..., Model::Unit::CodePoint)` turns them into UTF-16
+  through the copy's code point tree, the new text's neighbours read from
+  the copy (so only the regions' own text is read), checked by
+  `lsp:sync-code-points`; until then a character outside the BMP made each
+  of its sends the whole text, converted and compared. The UTF-8
+  overloads (tests) still compare the outside text with `rangedChanges`
+  first. `textFor` is the
   copy as UTF-16, made on first asking and shared until the next edit.
 - **Every tab's file stays open** on its server (`syncOpenDocuments`: on show,
   server start, before rename and references, on `tabsChanged`); only a running

@@ -227,7 +227,7 @@ void Client::didOpen(const std::string& uri, const std::string& languageId,
     if (docs_.count(uri)) { didChange(uri, text); return; }
     Doc& d = docs_[uri];
     d.languageId = languageId;
-    d.text = SyncedText(toUtf16(text));
+    d.text = Model::Text(toUtf16(text));
     d.version = ++lastVersion_[uri];
     notify("textDocument/didOpen",
            Json::object({{"textDocument",
@@ -237,7 +237,7 @@ void Client::didOpen(const std::string& uri, const std::string& languageId,
 
 void Client::sendWhole(Doc& d, const std::string& uri, std::u16string text) {
     std::string utf8 = toUtf8(text);
-    d.text = SyncedText(text);
+    d.text = Model::Text(text);
     d.version = ++lastVersion_[uri];
     fullSent_++;
     notify("textDocument/didChange",
@@ -288,14 +288,19 @@ bool splits(char16_t before, char16_t after) {
 }
 }  // namespace
 
+namespace {
+Position toPosition(Model::LinePos p) { return Position{p.line, p.character}; }
+}  // namespace
+
 void Client::didChange(const std::string& uri, size_t length, const ChangeTracker& changes,
                        const TextReader& read) {
     auto it = docs_.find(uri);
     if (it == docs_.end()) return;
     Doc& d = it->second;
-    const SyncedText& old = d.text;
+    const Model::Text& old = d.text;
+    auto readWhole = [&] { return read(0, length); };
     auto whole = [&] {
-        std::u16string now = read(0, length);
+        std::u16string now = readWhole();
         if (d.text == now) return;
         sendWhole(d, uri, std::move(now));
     };
@@ -324,17 +329,11 @@ void Client::didChange(const std::string& uri, size_t length, const ChangeTracke
         whole();
         return;
     }
-    struct Placed {
-        Range range;
-        size_t oldA, oldB;
-        std::u16string text;
-    };
-    std::vector<Placed> placed;
-    placed.reserve(regions.size());
+    std::vector<Piece> pieces;
+    pieces.reserve(regions.size());
     auto oldSplits = [&](size_t at) {
         return at > 0 && at < old.size() && splits(old.at(at - 1), old.at(at));
     };
-    size_t bytes = 0;
     for (const ChangeTracker::Region& r : regions) {
         // The new text with a unit either side, for its boundaries.
         const size_t from = r.newStart > 0 ? r.newStart - 1 : 0;
@@ -353,26 +352,109 @@ void Client::didChange(const std::string& uri, size_t length, const ChangeTracke
             whole();
             return;
         }
-        Placed p;
-        p.range = Range{d.text.position(r.oldStart), d.text.position(r.oldEnd)};
-        p.oldA = r.oldStart, p.oldB = r.oldEnd;
-        p.text = around.substr(lead, n);
-        bytes += p.text.size() + 96;
-        placed.push_back(std::move(p));
+        pieces.push_back(Piece{r.oldStart, r.oldEnd, around.substr(lead, n)});
     }
-    // Each entry costs its range besides its text: when they come to the
-    // whole text's size, the whole text is as good and simpler to apply.
-    if (bytes >= length) {
+    sendPieces(d, uri, pieces, length, readWhole);
+}
+
+void Client::didChange(const std::string& uri, size_t length, const ChangeTracker& changes,
+                       const TextReader& read, Model::Unit unit) {
+    if (unit == Model::Unit::Utf16) {
+        didChange(uri, length, changes, read);
+        return;
+    }
+    auto it = docs_.find(uri);
+    if (it == docs_.end()) return;
+    Doc& d = it->second;
+    const Model::Text& old = d.text;
+    auto readWhole = [&] { return read(0, length); };
+    auto whole = [&] {
+        std::u16string now = readWhole();
+        if (d.text == now) return;
+        sendWhole(d, uri, std::move(now));
+    };
+    const std::vector<ChangeTracker::Region>& regions = changes.regions();
+    if (!changes.overflowed() && regions.empty()) {
+        if (length != old.codePoints()) whole();   // an edit the tracker never heard of
+        return;
+    }
+    if (syncKind() != 2 || changes.overflowed()) {
         whole();
         return;
     }
-    // The last region first, so each range holds once the ones before it
-    // are applied; the copy takes them in the same order.
+    // As above, in code points; and the text between two regions must not
+    // be empty, since the new text's neighbours are read from the copy.
+    size_t lastOld = 0, lastNew = 0;
+    for (size_t k = 0; k < regions.size(); k++) {
+        const ChangeTracker::Region& r = regions[k];
+        if (r.oldEnd < r.oldStart || r.newEnd < r.newStart || r.oldStart < lastOld ||
+            r.newStart < lastNew || r.oldStart - lastOld != r.newStart - lastNew ||
+            r.oldEnd > old.codePoints() || r.newEnd > length || (k > 0 && r.oldStart == lastOld)) {
+            whole();
+            return;
+        }
+        lastOld = r.oldEnd, lastNew = r.newEnd;
+    }
+    if (old.codePoints() - lastOld != length - lastNew) {
+        whole();
+        return;
+    }
+    std::vector<Piece> pieces;
+    pieces.reserve(regions.size());
+    auto oldSplits = [&](size_t at) {
+        return at > 0 && at < old.size() && splits(old.at(at - 1), old.at(at));
+    };
+    size_t newLength = old.size();
+    for (const ChangeTracker::Region& r : regions) {
+        Piece p;
+        p.oldA = old.unitOf(r.oldStart);
+        p.oldB = old.unitOf(r.oldEnd);
+        p.text = read(r.newStart, r.newEnd - r.newStart);
+        if (Model::countCodePoints(p.text) != r.newEnd - r.newStart) {
+            whole();
+            return;
+        }
+        // The units either side of the new text are the copy's: the text
+        // outside the regions is the same in both.
+        const char16_t before = p.oldA > 0 ? old.at(p.oldA - 1) : 0;
+        const char16_t after = p.oldB < old.size() ? old.at(p.oldB) : 0;
+        const char16_t first = p.text.empty() ? after : p.text.front();
+        const char16_t last = p.text.empty() ? before : p.text.back();
+        const bool newStartSplits = before && first && splits(before, first);
+        const bool newEndSplits = last && after && splits(last, after);
+        if (oldSplits(p.oldA) || oldSplits(p.oldB) || newStartSplits || newEndSplits) {
+            whole();
+            return;
+        }
+        newLength = newLength - (p.oldB - p.oldA) + p.text.size();
+        pieces.push_back(std::move(p));
+    }
+    sendPieces(d, uri, pieces, newLength, readWhole);
+}
+
+void Client::sendPieces(Doc& d, const std::string& uri, std::vector<Piece>& pieces,
+                        size_t newLength, const std::function<std::u16string()>& readWhole) {
+    // Each entry costs its range besides its text: when they come to the
+    // whole text's size, the whole text is as good and simpler to apply.
+    size_t bytes = 0;
+    for (const Piece& p : pieces) bytes += p.text.size() + 96;
+    if (bytes >= newLength) {
+        std::u16string now = readWhole();
+        if (!(d.text == now)) sendWhole(d, uri, std::move(now));
+        return;
+    }
+    // The ranges are in the copy as it is before any of them; the last
+    // region first, so each range holds once the ones before it are
+    // applied, and the copy takes them in the same order.
+    std::vector<Range> ranges;
+    ranges.reserve(pieces.size());
+    for (const Piece& p : pieces)
+        ranges.push_back(Range{toPosition(d.text.position(p.oldA)), toPosition(d.text.position(p.oldB))});
     Json list = Json::array();
-    for (size_t k = placed.size(); k-- > 0;) {
-        Placed& p = placed[k];
-        list.push(Json::object({{"range", Json::object({{"start", positionJson(p.range.start)},
-                                                         {"end", positionJson(p.range.end)}})},
+    for (size_t k = pieces.size(); k-- > 0;) {
+        Piece& p = pieces[k];
+        list.push(Json::object({{"range", Json::object({{"start", positionJson(ranges[k].start)},
+                                                         {"end", positionJson(ranges[k].end)}})},
                                 {"text", toUtf8(p.text)}}));
         d.text.replace(p.oldA, p.oldB, p.text);
     }
@@ -384,7 +466,7 @@ void Client::didChange(const std::string& uri, size_t length, const ChangeTracke
                {"contentChanges", std::move(list)},
            }));
     if (checkSync_) {
-        std::u16string now = read(0, length);
+        std::u16string now = readWhole();
         if (!(d.text == now)) {
             syncRepairs_++;
             sendWhole(d, uri, std::move(now));

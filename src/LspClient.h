@@ -15,6 +15,7 @@
 // straight across.
 #pragma once
 #include "Json.h"
+#include "Text.h"
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -652,60 +653,14 @@ bool rangedChanges(const std::string& before, const std::string& after,
 // Applies didChange's entries in order, as a server does (for tests).
 std::u16string applyContentChanges(const std::u16string& text,
                                    const std::vector<ContentChange>& changes);
-// The client's copy of a document as the server has it: UTF-16, with its
-// line starts kept as it is edited (lines end at \n, \r\n or \r, as
-// PositionIndex counts them), so a ranged change finds its positions and
-// goes in without reading or converting the rest of the text. It is kept
-// in chunks of about kChunk units, each with its own line starts, and the
-// chunks' lengths and line counts in Fenwick trees, so an edit rewrites
-// only the chunks it touches and finds its place in log time: one
-// contiguous string had the whole tail moved, and every later line start
-// shifted, per edit (0.4 ms a flush in 2.5 MB, linear in the file). Only a
-// chunk split or merged (every thousand or so units typed or deleted there)
-// rebuilds the trees, linear in the number of chunks.
-class SyncedText {
-public:
-    static constexpr size_t kChunk = 1024;   // a new chunk's size
-    SyncedText() = default;
-    explicit SyncedText(const std::u16string& text);
-    size_t size() const { return size_; }
-    size_t lines() const { return 1 + startCount_; }
-    // As PositionIndex::position.
-    Position position(size_t offset) const;
-    // [a, b) replaced by `with`; only the chunks it touches (and the one
-    // before, for a \r\n across their boundary) are looked at again.
-    void replace(size_t a, size_t b, const std::u16string& with);
-    // The unit at i (i < size()).
-    char16_t at(size_t i) const;
-    // The whole text, copied.
-    std::u16string str() const;
-    // The whole text, copied once and shared until the next replace.
-    std::shared_ptr<const std::u16string> snapshot() const;
-    bool operator==(const std::u16string& s) const;
-    size_t chunks() const { return chunks_.size(); }
-
-private:
-    struct Chunk {
-        std::u16string text;
-        // Line starts s with the unit before them in this chunk, as
-        // s - the chunk's start (1 to its length).
-        std::vector<uint32_t> starts;
-    };
-    std::vector<Chunk> chunks_;   // none for an empty text; else none empty
-    // Fenwick trees (1-based) over the chunks' lengths and start counts.
-    std::vector<size_t> units_, startsIn_;
-    size_t size_ = 0, startCount_ = 0;
-    mutable std::shared_ptr<const std::u16string> snapshot_;
-    static void add(std::vector<size_t>& tree, size_t k, long delta);
-    static size_t before(const std::vector<size_t>& tree, size_t k);   // chunks [0, k)
-    // The last chunk k with before(tree, k) <= value (at most chunks() - 1).
-    size_t find(const std::vector<size_t>& tree, size_t value) const;
-    size_t chunkAt(size_t pos) const { return find(units_, pos); }
-    void rescan(size_t k);
-    void rebuild();
-};
+// The client's copy of a document as the server has it is a Model::Text
+// (Text.h): UTF-16 in chunks with its line starts and code points kept as
+// it is edited, so a ranged change finds its positions and goes in without
+// reading or converting the rest of the text. It was SyncedText here until
+// it moved to the core's document model (SESSION-DESIGN.md, stage 1).
 // Units [start, start + length) of the editor's text as it is now (the
-// caller keeps them within the text).
+// caller keeps them within the text), as UTF-16; in the code point form of
+// didChange, start and length count code points.
 using TextReader = std::function<std::u16string(size_t start, size_t length)>;
 // MarkupContent ({kind, value}) or a plain string. False for anything else.
 bool parseMarkup(const Json& j, std::string& text, bool& isMarkdown);
@@ -1134,6 +1089,15 @@ public:
     // text. With no regions and the same length, nothing is sent.
     void didChange(const std::string& uri, size_t length, const ChangeTracker& changes,
                    const TextReader& read);
+    // The same for an editor that counts code points (the GTK port's
+    // buffer): `length`, the regions and `read`'s offsets are code points,
+    // turned into UTF-16 through the copy's own count of them, so a text
+    // with characters outside the Basic Multilingual Plane goes as ranges
+    // too. The new text's boundaries are checked against the copy (the
+    // text between regions is the same in both), so only the regions'
+    // own text is read.
+    void didChange(const std::string& uri, size_t length, const ChangeTracker& changes,
+                   const TextReader& read, Model::Unit unit);
     // A check (for debugging and the tests): after each ranged change the
     // whole text is read and compared with the client's copy, and a
     // difference is counted and repaired by sending the whole text.
@@ -1321,9 +1285,20 @@ public:
 private:
     struct Doc {
         std::string languageId;
-        SyncedText text;
+        Model::Text text;
         int version = 0;
     };
+    // A ranged change to the copy: units [oldA, oldB) of it replaced by
+    // `text`.
+    struct Piece {
+        size_t oldA = 0, oldB = 0;
+        std::u16string text;
+    };
+    // Sends the pieces (ascending, apart, in the copy's units) as one
+    // didChange of ranges and applies them to the copy, or the whole text
+    // (from `read`, UTF-16, newLength units long) when they come to as much.
+    void sendPieces(Doc& d, const std::string& uri, std::vector<Piece>& pieces,
+                    size_t newLength, const std::function<std::u16string()>& readWhole);
 
     Sender send_;
     State state_ = State::Idle;

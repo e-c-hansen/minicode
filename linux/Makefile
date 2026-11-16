@@ -25,7 +25,7 @@ BIN      := $(BUILD)/minicode
 CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEdit.cpp \
         ../src/MarkdownTasks.cpp ../src/MarkdownPage.cpp ../src/PreviewScroll.cpp ../src/MarkdownHtml.cpp ../src/MermaidDiagram.cpp ../src/MathTex.cpp ../src/Settings.cpp ../src/LineComments.cpp \
         ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
-        ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp \
+        ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp ../src/Text.cpp ../src/Document.cpp \
         ../src/LatexDoc.cpp ../src/LatexLog.cpp ../src/LatexScratch.cpp ../src/SyncTex.cpp \
         ../src/Csv.cpp ../src/JsonOutline.cpp ../src/Notebook.cpp ../src/FileSniff.cpp ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp ../src/ControlProtocol.cpp ../src/IdeLink.cpp ../src/PageCheck.cpp ../src/ClaudeHooks.cpp ../src/AttentionBoard.cpp ../src/AgentIndex.cpp ../src/AgentTranscript.cpp ../src/ProcessTable.cpp ../src/RunFile.cpp ../src/Runnables.cpp ../src/ProcFs.cpp ../src/AgentEvidence.cpp ../src/AgentView.cpp ../src/InlineAgent.cpp \
         ../src/LspProtocol.cpp ../src/LspText.cpp ../src/LspServers.cpp \

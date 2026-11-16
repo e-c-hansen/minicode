@@ -2168,9 +2168,11 @@ What later items build on:
   and 0.3 s after the last edit sends `didChange` for each document edited,
   ranged where the server takes ranges (the core decides; a change whose
   ranges cost as much as the text goes whole, so small files always do).
-  The buffer counts characters and the server UTF-16 units, the same until
-  a character outside the Basic Multilingual Plane is in the text: then
-  that document sends its whole text until one is sent without any. So a
+  The buffer counts characters and the server UTF-16 units: the tracker
+  keeps characters and the client turns them into units through its copy
+  of the text (`Model::Text`'s code points, 2026-11-16; until then a
+  character outside the Basic Multilingual Plane made that document send
+  its whole text until one was sent without any). So a
   background tab's edit (Replace in Folder, the applier) reaches the
   server too. `EditorObserver::documentSaved(Document*)` now comes for
   every tab saved (Save All, auto-save), with `didSave`.

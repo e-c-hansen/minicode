@@ -32,6 +32,10 @@ core_sources = [
   # at the caret that seeds the query (PARITY.md 1.6).
   core_dir / 'FindRules.cpp',
   core_dir / 'EditSpans.cpp',
+  # A document's text and file rules (SESSION-DESIGN.md, stage 1): the
+  # language server client's copy of each file is a Model::Text.
+  core_dir / 'Text.cpp',
+  core_dir / 'Document.cpp',
   core_dir / 'MultiCaret.cpp',
   # A snippet completion's expansion and tab stops (SnippetSession.cpp and
   # LspSessionCompletion.cpp, PARITY.md 2.5).
@@ -534,6 +538,7 @@ if xtst_dep.found() and x11_dep.found() and gtk_x11_dep.found()
   # the core's JSON and framing, found beside minicode-guitest.
   fakelsp = executable('fakelsp',
     sources : ['..' / 'tests' / 'fakelsp' / 'fakelsp.cpp', core_dir / 'Json.cpp',
+               core_dir / 'Text.cpp', core_dir / 'EditSpans.cpp',
                core_dir / 'LspClient.cpp', core_dir / 'LspProtocol.cpp',
                core_dir / 'LspText.cpp', core_dir / 'LspServers.cpp',
                core_dir / 'LspDiagnostics.cpp', core_dir / 'LspCompletion.cpp',

@@ -43,7 +43,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/LspDiagnostics.cpp src/LspCompletion.cpp src/LspSync.cpp src/LspFeatures.cpp \
             src/LspEdits.cpp \
             src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/Regex.cpp \
-            src/EditSpans.cpp src/FindRules.cpp \
+            src/EditSpans.cpp src/FindRules.cpp src/Text.cpp src/Document.cpp \
             src/MarkdownEdit.cpp src/MarkdownTasks.cpp \
             src/GitStatus.cpp src/GitGraph.cpp src/GitModel.cpp src/MathTex.cpp src/EditorTabs.cpp \
             src/Formatter.cpp src/FormatRun.cpp src/FolderTools.cpp src/InstallHints.cpp src/LineDiff.cpp src/QuickDiff.cpp \
@@ -347,7 +347,8 @@ build/guitest: $(GUI_OBJ)
 # with the tests' flags, so it builds on Linux too.
 FAKELSP     := build/fakelsp
 LSP_CORE    := $(filter src/Lsp%,$(CORE_SRC))
-FAKELSP_OBJ := $(TESTDIR)/fakelsp/fakelsp.cpp.o $(TESTDIR)/Json.cpp.o \
+FAKELSP_OBJ := $(TESTDIR)/fakelsp/fakelsp.cpp.o $(TESTDIR)/Json.cpp.o $(TESTDIR)/Text.cpp.o \
+               $(TESTDIR)/EditSpans.cpp.o \
                $(patsubst src/%,$(TESTDIR)/%.o,$(LSP_CORE))
 
 $(TESTDIR)/fakelsp/%.cpp.o: tests/fakelsp/%.cpp $(TESTDIR)/flags.txt
