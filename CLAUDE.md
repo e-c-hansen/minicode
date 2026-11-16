@@ -3076,7 +3076,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   Command and whether the press before was on the same row
   (`sameRowAsLastPress`: the window server's click count is by time alone),
   so a single click opens in the preview tab and a double-click or Cmd+click
-  keeps (`EditorTabs::treeClick`). Drag and drop moves rows into folders
+  keeps (`EditorTabs::treeClick`). It keeps the press as its row's item, not
+  the row number: the tracking runs the main queue, where a listing can
+  insert rows above it (a click on main.go once opened helper.go). Drag and drop moves rows into folders
   (`validateDrop:` retargets onto a folder; into itself, a descendant or where
   it is refused), copies files from Finder in and rows out; a clash is reported
   after the drop (Finder waits on a modal during it). `pathMovedFrom:to:` moves
@@ -3475,7 +3477,9 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   Reject per hunk, FILE_SAVED carrying `acceptedText`; closing the tab
   rejects (`closePageOf:` calls `tabClosed`); close_tab and closeAllDiffTabs
   close only comparisons the link offered. Not offered: saveDocument,
-  executeCode. A client that goes leaves its diff saying so.
+  executeCode. `selection_changed` is remembered per client (`IdeConn
+  lastSelection`), so one who joins while a selection waits on the 0.3 s
+  timer is not sent it twice. A client that goes leaves its diff saying so.
 - Checked by `make guitest SUITES=idelink` (a WebSocket client on a thread;
   `MC_GUI_NODE=/opt/homebrew/bin/node` adds node's own client) and the
   `ide:*` groups. Not run against a real Claude Code session.
