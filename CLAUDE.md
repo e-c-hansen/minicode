@@ -1452,7 +1452,23 @@ container (PanelHost, laid out by hand in layoutContainer)
   prefer-file`.
 - `format.on-save`: Cmd+S (non-nil sender) formats then saves; minicode's own
   saves and Save All never format. A Cmd+S is never lost (`_formatSaveTab`:
-  leaving the tab saves it unformatted).
+  leaving the tab saves it unformatted). **Three values** (2026-11-16,
+  JOBS C2): false, true (whatever Format Document runs, Google's style
+  included) and `project` (`Formatter::projectChose`: only a formatter the
+  project's configuration chose or format.<lang> names; never the Google
+  default or a server; `MCFormatText`'s and `FormatRun::decide`'s
+  `projectOnly`, so the GTK port follows). Edit > Format on Save
+  (`FormatOnSave.{h,mm}`, `minicode.toggleFormatOnSave`) is checked for
+  either on value and writes false or `project`. **The offer**: a Cmd+S
+  that wrote the file, with format.on-save off, asks
+  `MCFindFormatOnSaveOffer` off the main thread (`Formatter::offersOnSave`:
+  the project's own configuration, not the settings, chose a formatter, and
+  it is installed) and shows an `MCInstallBar` under the install bar
+  (`MCFormatOnSaveOffer`, one per window, `_formatOnSaveOffer` in
+  +FormatIvars; laid out by `layoutFormatOnSaveOfferIn:`): Turn On writes
+  `project`, Don't Ask Again mutes `format-on-save` in the install bar's
+  list, ×. Once per launch across windows; nothing is formatted by the
+  answer itself (`make guitest SUITES=format_on_save`).
 - `editor.organize-imports-on-save` (2026-11-06): before the formatter, Cmd+S
   runs `LspSession organizeImportsBeforeSave:` (the servers'
   `source.organizeImports`, Ruff's first, the all-or-nothing workspace edit),
@@ -3831,7 +3847,7 @@ session has a display. Check first.
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
   snippets, completion_keys, problems, servers_by_extension, server_consent, tools_consent,
-  organize_on_save, format, format_consent, format_coverage;
+  organize_on_save, format, format_consent, format_coverage, format_on_save;
   documents and viewers: markdown_preview, markdown_side,
   markdown_side_sync, markdown_width, markdown_page, markdown_math, mermaid, latex,
   previews, compare, html_page;

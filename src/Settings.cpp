@@ -1189,7 +1189,18 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.runInNewTerminal_ = w == "new";
                return true;),
-        MC_KEY("format.on-save", Word, false, return boolValue(v, s.formatOnSave_, e);),
+        MC_KEY("format.on-save", Word, false,
+               if (lower(v) == "project") {
+                   s.formatOnSave_ = FormatOnSave::Project;
+                   return true;
+               }
+               bool on = false;
+               if (!parseBool(v, on)) {
+                   e = "'" + v + "' is not true, false, or project";
+                   return false;
+               }
+               s.formatOnSave_ = on ? FormatOnSave::On : FormatOnSave::Off;
+               return true;),
         MC_KEY("develop.command", CommandLine, false, s.developCommand_ = v; return true;),
         MC_KEY("develop.source", Path, false,
                s.developSource_ = lower(v) == "auto" ? "" : v;
@@ -1922,7 +1933,10 @@ const char* Settings::defaultFileText() {
 # format.rust = rustfmt --edition 2021
 # format.shell = shfmt -i 2 -ci -bn --filename {file}
 # format.latex = latexindent -g /dev/null
-# Format the file each time Cmd+S saves it.
+# Format the file each time Cmd+S saves it: true runs what Format Document
+# runs; project only a formatter the project configures (ruff, black,
+# Prettier, a .clang-format, ...) or a format.<lang> line names, never
+# Google's style. On the Mac, Edit > Format on Save turns it on and off.
 # format.on-save = false
 # The Python the Python server analyses your code with, so it finds the
 # packages installed there. auto picks the folder's .venv, venv or env, then

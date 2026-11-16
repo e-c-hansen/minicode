@@ -292,4 +292,47 @@ static void testFormatConsent() {
                    "/w", none).candidates[0].command ==
               "prettier --prose-wrap always --stdin-filepath {file}");
     }
+
+    GROUP("format:on-save-project");
+    {
+        // format.on-save = project, and the offer after Cmd+S: only a
+        // formatter the project's configuration chose, or the settings name.
+        auto none = fakeFs({});
+        auto ruff = fakeFs({{"/w/pyproject.toml", "[tool.ruff.format]\nquote-style = 'single'\n"}});
+        Plan configured = plan("python", "", "/w/src/a.py", "/w", ruff);
+        CHECK(configured.configFile == "/w/pyproject.toml" &&
+              configured.candidates.size() == 1 && configured.candidates[0].program == "ruff");
+        CHECK(projectChose(configured) && offersOnSave(configured));
+        CHECK(onSaveQuestion("python", "ruff", configured.configFile) ==
+              "This project formats Python files with ruff, set up in pyproject.toml. "
+              "Format them each time you save?");
+        // Nothing configured: Google's style would run, which the project
+        // never chose; no offer, and project mode leaves the file alone.
+        Plan google = plan("python", "", "/w/a.py", "/w", none);
+        CHECK(!google.candidates.empty() && google.configFile.empty());
+        CHECK(!projectChose(google) && !offersOnSave(google));
+        // A command in the settings is the user's choice: formatted in
+        // project mode, but nothing to offer.
+        Plan own = plan("python", "black -q -", "/w/a.py", "/w", none);
+        CHECK(projectChose(own) && !offersOnSave(own));
+        Plan ownPrettier = plan("markdown", "prettier", "/w/a.md", "/w", none);
+        CHECK(projectChose(ownPrettier) && !offersOnSave(ownPrettier));
+        // format.<lang> = off, a language with no formatter, Markdown with
+        // nothing set up (only a server could format it): none of them.
+        CHECK(!projectChose(plan("python", "off", "/w/a.py", "/w", ruff)));
+        CHECK(!projectChose(plan("", "", "/w/a.txt", "/w", ruff)));
+        Plan md = plan("markdown", "", "/w/a.md", "/w", none);
+        CHECK(!projectChose(md) && !offersOnSave(md));
+        // A .clang-format and a .prettierrc are the project's choices too.
+        auto cf = fakeFs({{"/w/.clang-format", "BasedOnStyle: LLVM\n"}});
+        Plan c = plan("cpp", "", "/w/a.cc", "/w", cf);
+        CHECK(offersOnSave(c) && c.candidates[0].program == "clang-format");
+        CHECK(onSaveQuestion("cpp", "clang-format", c.configFile) ==
+              "This project formats C-family files with clang-format, set up in .clang-format. "
+              "Format them each time you save?");
+        auto pr = fakeFs({{"/w/.prettierrc", "{}"}});
+        CHECK(offersOnSave(plan("markdown", "", "/w/a.md", "/w", pr)));
+        CHECK(onSaveQuestion("go", "gofmt", "") ==
+              "This project formats Go files with gofmt. Format them each time you save?");
+    }
 }

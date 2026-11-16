@@ -75,9 +75,13 @@ struct Decision {
 // `setting` is format.<lang> for the file's language
 // (Formatter::languageFor), "" when unset; `consent` the folder's answer,
 // "allow", "deny" or "". firstLine..lastLine (1-based) asks for those lines
-// only, 0 and 0 for the whole file.
+// only, 0 and 0 for the whole file. `projectOnly` (format.on-save =
+// project) runs only a formatter the project configures or the settings
+// name (Formatter::projectChose): anything else is Unavailable, with no
+// language server asked.
 Decision decide(const std::string& path, const std::string& root, const std::string& setting,
-                const std::string& consent, int firstLine, int lastLine, const Env& env);
+                const std::string& consent, int firstLine, int lastLine, const Env& env,
+                bool projectOnly = false);
 
 // The question for a NeedsConsent decision: Allow, Don't Allow, Cancel.
 struct Question {

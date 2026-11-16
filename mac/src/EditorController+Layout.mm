@@ -533,6 +533,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     // its whole height.
     editorRect = [self layoutTabStripIn:editorRect editorShown:showEditor];
     editorRect = [self layoutInstallBarIn:editorRect editorShown:showEditor];
+    editorRect = [self layoutFormatOnSaveOfferIn:editorRect editorShown:showEditor];
 
     // The LaTeX preview sits in the editor's slot, in place of the text view.
     BOOL showLatex = showEditor && self.latex != nil && self.isLatex &&

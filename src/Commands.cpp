@@ -399,6 +399,8 @@ const std::vector<Command>& all() {
          "toggleItalic:", 0, 0, nullptr, "markdown"},
         {"editor.action.formatDocument", "Format Document", "Edit", "alt+shift+f", E,
          "formatDocument:", 0, 0, nullptr},
+        {"minicode.toggleFormatOnSave", "Format on Save", "Edit", "", A, "toggleFormatOnSave:", 0,
+         0, nullptr},
         {"minicode.sortLines", "Sort Lines", "Edit", "f9", E, "sortLines:", 0, 0, nullptr},
         {"minicode.sortKeepSortedBlocks", "Sort keep-sorted Blocks", "Edit", "shift+f9", E,
          "fixKeepSorted:", 0, 0, nullptr},

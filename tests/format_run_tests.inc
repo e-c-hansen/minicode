@@ -94,6 +94,28 @@ static void testFormatRun() {
         CHECK(d.kind == Kind::Run && d.tool == "yapf" && d.style == "the project's .style.yapf");
     }
 
+    GROUP("format-run:project-only");
+    {
+        // format.on-save = project: Google's default never runs, nor a
+        // language server; the project's formatter and the settings' do.
+        FakeMachine m;
+        m.runnable = {"/usr/bin/pyink", "/usr/bin/yapf", "/opt/bin/mine"};
+        m.onPath = {{"pyink", "/usr/bin/pyink"}, {"yapf", "/usr/bin/yapf"}};
+        FormatRun::Decision d =
+            FormatRun::decide("/w/a.py", "/w", "", "", 0, 0, m.env(), true);
+        CHECK(d.kind == Kind::Unavailable && !d.serverMayFormat);
+        CHECK(d.message == "Nothing in this project sets up a formatter for Python files.");
+        d = FormatRun::decide("/w/README.md", "/w", "", "", 0, 0, m.env(), true);
+        CHECK(d.kind == Kind::Unavailable && !d.serverMayFormat);
+        d = FormatRun::decide("/w/notes.txt", "/w", "", "", 0, 0, m.env(), true);
+        CHECK(d.kind == Kind::Unavailable && !d.serverMayFormat);
+        d = FormatRun::decide("/w/a.py", "/w", "/opt/bin/mine {file}", "", 0, 0, m.env(), true);
+        CHECK(d.kind == Kind::Run && d.tool == "mine");
+        m.files = {{"/w/.style.yapf", "[style]\n"}};
+        d = FormatRun::decide("/w/a.py", "/w", "", "", 0, 0, m.env(), true);
+        CHECK(d.kind == Kind::Run && d.tool == "yapf");
+    }
+
     GROUP("format-run:missing");
     {
         FakeMachine m;

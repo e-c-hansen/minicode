@@ -56,7 +56,7 @@ void Formatting::formatDocument() {
     run(false, nullptr);
 }
 
-void Formatting::run(bool quiet, std::function<void()> then) {
+void Formatting::run(bool quiet, std::function<void()> then, bool projectOnly) {
     Document* d = editor_->active();
     if (!d || !canFormat()) {
         if (then) then();
@@ -87,14 +87,15 @@ void Formatting::run(bool quiet, std::function<void()> then) {
         editor_->documentSettings().formatCommand(Formatter::languageFor(path));
     FormatRunner::format(
         original, path, root, setting, FolderConsent::answer(root), first, last, kTimeoutSeconds,
-        [this, alive, gen, id, quiet, then, original, selStart, selEnd](FormatRunner::Result r) {
+        [this, alive, gen, id, quiet, then, original, selStart, selEnd,
+         projectOnly](FormatRunner::Result r) {
             if (alive.expired()) return;
             // Another format started, or another tab is on show (which
             // saved this one as it left, if a save waited).
             Document* now = editor_->active();
             if (gen != generation_ || !now || now->id() != id) return;
             if (r.decision.kind == FormatRun::Kind::NeedsConsent) {
-                ask(r.decision, quiet, then);
+                ask(r.decision, quiet, then, projectOnly);
                 return;
             }
             // No formatter is planned for this file: a running language
@@ -121,7 +122,8 @@ void Formatting::run(bool quiet, std::function<void()> then) {
                     showNote(FormatRun::alreadyFormatted(r.decision.tool, r.decision.style), false);
             }
             if (then) then();
-        });
+        },
+        projectOnly);
 }
 
 // The formatter to run is the folder's own (its .venv or node_modules), or
@@ -130,7 +132,8 @@ void Formatting::run(bool quiet, std::function<void()> then) {
 // (one answer for both). Allow or Don't Allow formats again under the
 // answer; Cancel stores nothing and formats nothing (a save that waited
 // goes ahead).
-void Formatting::ask(const FormatRun::Decision& d, bool quiet, std::function<void()> then) {
+void Formatting::ask(const FormatRun::Decision& d, bool quiet, std::function<void()> then,
+                     bool projectOnly) {
     questions_++;
     const FormatRun::Question q = FormatRun::consentQuestion(d);
     GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", q.message.c_str());
@@ -143,13 +146,13 @@ void Formatting::ask(const FormatRun::Decision& d, bool quiet, std::function<voi
     struct Asked {
         Formatting* self;
         std::weak_ptr<int> alive;
-        bool quiet;
+        bool quiet, projectOnly;
         std::function<void()> then;
         uint64_t id;
         std::string root;
     };
     Document* on = editor_->active();
-    auto* asked = new Asked{this, alive_, quiet, std::move(then), on ? on->id() : 0,
+    auto* asked = new Asked{this, alive_, quiet, projectOnly, std::move(then), on ? on->id() : 0,
                             host_.root ? host_.root() : ""};
     gtk_alert_dialog_choose(dlg, window_, nullptr,
         [](GObject* src, GAsyncResult* res, gpointer p) {
@@ -161,7 +164,7 @@ void Formatting::ask(const FormatRun::Decision& d, bool quiet, std::function<voi
                     FolderConsent::set(a->root, choice == 0);
                     Document* now = self->editor_->active();
                     if (now && now->id() == a->id && self->canFormat()) {
-                        self->run(a->quiet, a->then);
+                        self->run(a->quiet, a->then, a->projectOnly);
                         delete a;
                         return;
                     }
@@ -174,31 +177,36 @@ void Formatting::ask(const FormatRun::Decision& d, bool quiet, std::function<voi
     g_object_unref(dlg);
 }
 
-bool Formatting::formatBeforeSaving() {
+bool Formatting::formatBeforeSaving(bool projectOnly) {
     if (!canFormat()) return false;
     // A file with no formatter of its own may still have a server that
-    // formats it (run asks it).
-    if (Formatter::languageFor(editor_->currentPath()).empty() && !lsp_->canFormatDocument())
+    // formats it (run asks it), unless only the project's formatter may.
+    if (Formatter::languageFor(editor_->currentPath()).empty() &&
+        (projectOnly || !lsp_->canFormatDocument()))
         return false;
     saveTab_ = editor_->active()->id();
     std::weak_ptr<int> alive = alive_;
-    run(true, [this, alive] {
-        if (!alive.expired()) finishSave();
-    });
+    run(
+        true,
+        [this, alive] {
+            if (!alive.expired()) finishSave();
+        },
+        projectOnly);
     return true;
 }
 
-bool Formatting::beforeSaving(bool organize, bool format) {
+bool Formatting::beforeSaving(bool organize, bool format, bool projectOnly) {
     if (organize && canFormat()) {
         const uint64_t tab = editor_->active()->id();
         std::weak_ptr<int> alive = alive_;
-        const bool started = lsp_->organizeImportsBeforeSave([this, alive, tab, format] {
+        const bool started = lsp_->organizeImportsBeforeSave([this, alive, tab, format,
+                                                              projectOnly] {
             // Dropped meanwhile: the tab left the screen and was saved then.
             if (alive.expired() || saveTab_ != tab || !editor_->active() ||
                 editor_->active()->id() != tab)
                 return;
             saveTab_ = 0;
-            if (format && formatBeforeSaving()) return;
+            if (format && formatBeforeSaving(projectOnly)) return;
             if (host_.save) host_.save(editor_->active());
         });
         if (started) {
@@ -206,7 +214,7 @@ bool Formatting::beforeSaving(bool organize, bool format) {
             return true;
         }
     }
-    return format && formatBeforeSaving();
+    return format && formatBeforeSaving(projectOnly);
 }
 
 // The formatter is done (or its result was dropped): the save Ctrl+S asked

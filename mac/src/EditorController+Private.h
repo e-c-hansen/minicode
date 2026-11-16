@@ -781,6 +781,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)showFormatNote:(NSString *)message error:(BOOL)error;
 - (void)showFormatNote:(NSString *)message error:(BOOL)error
                install:(NSArray<NSString *> *)install;
+- (void)offerFormatOnSaveAfterSaving;
+- (NSRect)layoutFormatOnSaveOfferIn:(NSRect)slot editorShown:(BOOL)shown;
 @end
 
 // EditorController+EditorView.mm: the editor: line numbers, brackets, zoom, comments, tasks and the editing hooks.

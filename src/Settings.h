@@ -457,10 +457,14 @@ public:
     // Format Document. format.<lang> (python, cpp, go, rust, shell; see
     // Formatter.h) is a whole command line like lsp.*, "" when the file
     // names none, so the project's configuration and then Google's style
-    // apply. format.on-save formats before Cmd+S writes the file (off by
-    // default).
+    // apply. format.on-save formats before Cmd+S writes the file: false
+    // (the default), true (whatever Format Document would run), or project
+    // (only a formatter the project configures or format.<lang> names,
+    // Formatter::projectChose; what the offer after Cmd+S writes).
     std::string formatCommand(const std::string& lang) const;
-    bool formatOnSave() const { return formatOnSave_; }
+    enum class FormatOnSave { Off, On, Project };
+    FormatOnSave formatOnSaveMode() const { return formatOnSave_; }
+    bool formatOnSave() const { return formatOnSave_ != FormatOnSave::Off; }
     // Request a Change to minicode (macOS). develop.command is the Claude
     // Code command line the request is handed to, a whole command line like
     // lsp.* ("claude" when unset). develop.source is minicode's source
@@ -575,7 +579,7 @@ private:
     bool runInNewTerminal_ = false;
     std::map<std::string, std::string> runCommands_;
     std::map<std::string, std::string> formatCommands_;
-    bool formatOnSave_ = false;
+    FormatOnSave formatOnSave_ = FormatOnSave::Off;
     std::string pythonInterpreter_;
     std::string developCommand_;
     std::string developSource_;

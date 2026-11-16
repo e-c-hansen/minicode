@@ -22,6 +22,14 @@
 // if the same file is still open; quietly leaves out the notes that only
 // answer a key press (no formatter for this kind of file, already formatted).
 - (void)formatSourceQuietly:(BOOL)quiet then:(void (^)(void))then {
+    [self formatSourceQuietly:quiet projectOnly:NO then:then];
+}
+
+// `projectOnly` (format.on-save = project): only a formatter the project
+// configures or the settings name runs (Formatter::projectChose); a file
+// with none is left as typed, with no note and no language server asked.
+- (void)formatSourceQuietly:(BOOL)quiet projectOnly:(BOOL)projectOnly
+                       then:(void (^)(void))then {
     NSTextView *tv = self.textView;
     NSString *original = [tv.string copy];
     NSString *path = self.currentPath;
@@ -54,14 +62,15 @@
     NSUInteger generation = ++_formatGeneration;
     __weak EditorController *weakSelf = self;
     __weak MCTab *weakTab = tab;
-    MCFormatText(original, path, self.rootPath, first, last, 10, ^(MCFormatResult *r) {
+    MCFormatText(original, path, self.rootPath, first, last, projectOnly, 10,
+                 ^(MCFormatResult *r) {
         EditorController *s = weakSelf;
         // Another format started, or the window closed, or another tab is
         // on show (which saved this one as it left, if a save waited).
         if (!s || generation != s->_formatGeneration || !weakTab || weakTab != s->_activeTab)
             return;
         if (r.needsConsent) {
-            [s askToRunFolderFormatter:r quiet:quiet then:then];
+            [s askToRunFolderFormatter:r quiet:quiet projectOnly:projectOnly then:then];
             return;
         }
         // No formatter is planned for this file: a running language server
@@ -97,7 +106,7 @@
 // Allow or Don't Allow formats again under the answer; Cancel stores
 // nothing and formats nothing (a save that waited goes ahead).
 - (void)askToRunFolderFormatter:(MCFormatResult *)r quiet:(BOOL)quiet
-                           then:(void (^)(void))then {
+                    projectOnly:(BOOL)projectOnly then:(void (^)(void))then {
     NSAlert *a = [NSAlert new];
     NSString *keep = @"The answer is kept for this folder, and also covers its Python "
                       "environment for the language servers.";
@@ -136,7 +145,7 @@
         if (answer == NSAlertFirstButtonReturn || answer == NSAlertSecondButtonReturn) {
             MCSetFolderToolsConsent(root, answer == NSAlertFirstButtonReturn);
             if (tab && tab == s->_activeTab && [s canFormatSource]) {
-                [s formatSourceQuietly:quiet then:then];
+                [s formatSourceQuietly:quiet projectOnly:projectOnly then:then];
                 return;
             }
         }
@@ -172,16 +181,21 @@
 }
 
 // format.on-save: NO when this file has no formatter, so the save goes on.
+// With format.on-save = project, only the project's own formatter (or one
+// format.<lang> names) runs: never Google's style, never a server.
 - (BOOL)formatBeforeSaving {
     if (![self canFormatSource]) return NO;
+    const BOOL projectOnly = [AppSettings shared].settings.formatOnSaveMode() ==
+                             Settings::FormatOnSave::Project;
     // A file with no formatter of its own may still have a server that
     // formats it (formatSourceQuietly: asks it).
     if (Formatter::languageFor(Utf8String(self.currentPath)).empty() &&
-        ![self.lsp canFormatDocument])
+        (projectOnly || ![self.lsp canFormatDocument]))
         return NO;
     __weak EditorController *weakSelf = self;
     _formatSaveTab = _activeTab;
-    [self formatSourceQuietly:YES then:^{ [weakSelf finishFormatSave]; }];
+    [self formatSourceQuietly:YES projectOnly:projectOnly
+                         then:^{ [weakSelf finishFormatSave]; }];
     return YES;
 }
 
@@ -267,6 +281,27 @@
             [tv scrollPoint:NSMakePoint(NSMinX(visible), MAX(0, y - (topY - NSMinY(visible))))];
     }
     return YES;
+}
+
+// ------------------------------------------------------------ format on save
+// Cmd+S saved the file on show: the bar offering format on save, if its
+// project sets up an installed formatter and format.on-save is off
+// (FormatOnSave.h decides, and shows the bar at most once a launch).
+- (void)offerFormatOnSaveAfterSaving {
+    if (![self canFormatSource]) return;
+    if (!_formatOnSaveOffer) {
+        __weak EditorController *weakSelf = self;
+        _formatOnSaveOffer = [[MCFormatOnSaveOffer alloc]
+            initInView:self.rightArea
+              relayout:^{ [weakSelf relayoutRightArea]; }
+                  note:^(NSString *message) { [weakSelf showStatusNote:message]; }];
+    }
+    [_formatOnSaveOffer offerAfterSaving:self.currentPath root:self.rootPath];
+}
+
+// The offer's bar takes the top of the editor's slot, under the install bar.
+- (NSRect)layoutFormatOnSaveOfferIn:(NSRect)slot editorShown:(BOOL)shown {
+    return _formatOnSaveOffer ? [_formatOnSaveOffer layoutIn:slot shown:shown] : slot;
 }
 
 // A note from Format Document by the caret: the formatter's complaint, what

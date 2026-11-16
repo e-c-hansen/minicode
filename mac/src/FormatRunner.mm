@@ -184,7 +184,7 @@ static void RunFormatter(NSArray<NSString *> *argv, NSString *cwd, NSData *input
 }
 
 void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firstLine,
-                  NSInteger lastLine, NSTimeInterval timeout,
+                  NSInteger lastLine, BOOL projectOnly, NSTimeInterval timeout,
                   void (^completion)(MCFormatResult *result)) {
     MCFormatResult *result = [MCFormatResult new];
     auto finish = ^{
@@ -194,7 +194,7 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
     NSString *ext = path.pathExtension.length ? path.pathExtension : path.lastPathComponent;
     if (lang.empty()) {
         result.unavailable = YES;
-        result.serverMayFormat = YES;
+        result.serverMayFormat = !projectOnly;
         result.error = NS(Formatter::unplannedMessage("", Std(ext)));
         finish();
         return;
@@ -225,6 +225,15 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
             result.error = [NSString stringWithFormat:
                 @"Formatting is off for %@ files (format.%@ = off in the settings).",
                 display, NS(lang)];
+            finish();
+            return;
+        }
+        // format.on-save = project: only a formatter the project
+        // configures, or the settings name, runs on save.
+        if (projectOnly && !Formatter::projectChose(plan)) {
+            result.unavailable = YES;
+            result.error = [NSString stringWithFormat:
+                @"Nothing in this project sets up a formatter for %@ files.", display];
             finish();
             return;
         }
@@ -414,5 +423,40 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
             }
         }
         finish();
+    });
+}
+
+void MCFindFormatOnSaveOffer(NSString *path, NSString *root,
+                             void (^completion)(NSString *question)) {
+    const std::string lang = Formatter::languageFor(Std(path));
+    if (lang.empty() || !path.length) {
+        completion(nil);
+        return;
+    }
+    const std::string setting = [AppSettings shared].settings.formatCommand(lang);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        Formatter::Fs fs;
+        fs.exists = [fm](const std::string &p) { return (bool)[fm fileExistsAtPath:NS(p)]; };
+        fs.read = [](const std::string &p) {
+            NSString *s = [NSString stringWithContentsOfFile:NS(p) encoding:NSUTF8StringEncoding
+                                                       error:nil];
+            return s ? Std(s) : std::string();
+        };
+        NSString *realPath = path.stringByResolvingSymlinksInPath;
+        NSString *realRoot = root.length ? root.stringByResolvingSymlinksInPath : @"";
+        const Formatter::Plan plan =
+            Formatter::plan(lang, setting, Std(realPath), Std(realRoot), fs);
+        NSString *question = nil;
+        if (Formatter::offersOnSave(plan)) {
+            // Only a formatter that is installed somewhere: an offer for a
+            // missing one would end in a note on every save.
+            const Formatter::Candidate &c = plan.candidates[0];
+            MCFormatterLookup found = FindFormatter(c.program, lang, realPath, realRoot);
+            if (found.local || found.outside)
+                question = NS(Formatter::onSaveQuestion(lang, Formatter::programName(c.program),
+                                                        plan.configFile));
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(question); });
     });
 }

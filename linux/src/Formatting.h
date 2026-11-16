@@ -69,13 +69,14 @@ public:
     void formatDocument();
     // Ctrl+S with format.on-save on: true when a format started, and the
     // save comes when it is done; false when the file has nothing to format
-    // it, and the caller saves at once.
-    bool formatBeforeSaving();
+    // it, and the caller saves at once. `projectOnly`: format.on-save =
+    // project, only a formatter the project configures or the settings name.
+    bool formatBeforeSaving(bool projectOnly = false);
     // Ctrl+S: imports organized first (`organize`, editor.organize-imports-
     // on-save), then formatted (`format`, format.on-save), then saved. True
     // when either started, and the save comes when they are done; false
     // when neither has anything to do, and the caller saves at once.
-    bool beforeSaving(bool organize, bool format);
+    bool beforeSaving(bool organize, bool format, bool projectOnly = false);
     // A tab whose Ctrl+S waits for its formatter (auto-save leaves it).
     bool saveWaits(const Document* d) const;
     // The tab on show is about to leave the screen (another tab, or it
@@ -94,9 +95,11 @@ public:
 private:
     // `then` runs once the result is in (applied or not) while the same tab
     // is on show; `quiet` leaves out the notes that only answer the key (no
-    // formatter for this kind of file, already formatted).
-    void run(bool quiet, std::function<void()> then);
-    void ask(const FormatRun::Decision& d, bool quiet, std::function<void()> then);
+    // formatter for this kind of file, already formatted); `projectOnly`
+    // is format.on-save = project's.
+    void run(bool quiet, std::function<void()> then, bool projectOnly = false);
+    void ask(const FormatRun::Decision& d, bool quiet, std::function<void()> then,
+             bool projectOnly);
     void finishSave();
     // The formatter's output in place of the source, as one undo step; false
     // when it is the same text.

@@ -94,6 +94,21 @@ std::string configFile(const std::string& program, const std::string& path,
 // or a default tool is merely not installed: the server would format in a
 // style the project never chose.
 bool serverMayFormat(const std::string& lang, const Plan& plan);
+// format.on-save = project: does Cmd+S format a file with this plan? Only
+// with a formatter the project's own configuration chose (a ruff section in
+// pyproject.toml, a .clang-format, a .prettierrc) or one the settings name
+// (format.<lang>); never with a language's Google-style default or a
+// language server, whose style the project never chose.
+bool projectChose(const Plan& plan);
+// Is this plan worth offering format on save for (the bar after Cmd+S
+// while format.on-save is off)? Only when the project's configuration
+// chose the formatter: the settings naming one is a choice made already.
+bool offersOnSave(const Plan& plan);
+// The offer's words: "This project formats Python files with ruff, set up
+// in pyproject.toml. Format them each time you save?". `configFile` may be
+// a whole path; only its name is shown.
+std::string onSaveQuestion(const std::string& lang, const std::string& tool,
+                           const std::string& configFile);
 // The note when nothing is planned and no server formats the file:
 // "minicode formats Markdown files only in projects set up for Prettier,
 // or when the settings say format.markdown = prettier (your own Prettier)

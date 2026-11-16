@@ -1121,6 +1121,9 @@ static const NSUInteger kMaxClosedTabs = 50;
     if ([self writeText:text toTab:_activeTab interactive:YES]) {
         self.sourceText = text;
         [self flashStatus:sortProblem];
+        // Cmd+S in a project that sets up its formatter, with format on
+        // save off: offer it (FormatOnSave.h).
+        if (sender) [self offerFormatOnSaveAfterSaving];
     }
 }
 

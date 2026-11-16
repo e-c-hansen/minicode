@@ -153,13 +153,14 @@ bool validUtf8(const std::string& s) {
 }  // namespace
 
 Decision decide(const std::string& path, const std::string& root, const std::string& setting,
-                const std::string& consent, int firstLine, int lastLine, const Env& env) {
+                const std::string& consent, int firstLine, int lastLine, const Env& env,
+                bool projectOnly) {
     Decision result;
     const std::string lang = Formatter::languageFor(path);
     const std::string ext = extensionOf(path).empty() ? lastComponent(path) : extensionOf(path);
     if (lang.empty()) {
         result.kind = Kind::Unavailable;
-        result.serverMayFormat = true;
+        result.serverMayFormat = !projectOnly;
         result.message = Formatter::unplannedMessage("", ext);
         return result;
     }
@@ -174,6 +175,13 @@ Decision decide(const std::string& path, const std::string& root, const std::str
         result.kind = Kind::Unavailable;
         result.message = "Formatting is off for " + display + " files (format." + lang +
                          " = off in the settings).";
+        return result;
+    }
+    // format.on-save = project: only a formatter the project configures, or
+    // the settings name, runs on save.
+    if (projectOnly && !Formatter::projectChose(plan)) {
+        result.kind = Kind::Unavailable;
+        result.message = "Nothing in this project sets up a formatter for " + display + " files.";
         return result;
     }
     if (Formatter::serverMayFormat(lang, plan)) {
