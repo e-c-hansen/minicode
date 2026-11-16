@@ -79,7 +79,12 @@ struct MCOverlay {
     self.textView.folds.fileName = [self largeFileFeaturesOff] ? nil : self.currentPath ?:
         [@"untitled." stringByAppendingString:self.currentExt ?: @"txt"];
     // At the top before the colors, which paint the lines on screen: the
-    // view still stood where the last text had it.
+    // view still stood where the last text had it. The caret too: a whole
+    // new text leaves NSTextView's selection at its end, so a file opened
+    // from Finder showed its first lines with the caret on its last, and
+    // the first key typed or arrow pressed went there. A tab shown again
+    // gets its own place back after this (restoreTextPlaceOf:).
+    self.textView.selectedRange = NSMakeRange(0, 0);
     [self.textView scrollToBeginningOfDocument:nil];
     [self applyHighlighting];
 }

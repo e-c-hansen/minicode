@@ -17,11 +17,15 @@
 //   - Past 50 MB no language server gets the document even with the mode
 //     turned off: VS Code's _MODEL_SYNC_LIMIT, past which extensions never
 //     see a model.
-//   - Opening a file over 50 MB by hand asks first (Open Anyway, Cancel).
-//     VS Code asks only past 1 GB locally (workbench.editorLargeFileConfirmation),
-//     but its piece tree is not one NSString in a TextKit view: here a
-//     60 MB file takes 1.3 s to read and show even in large-file mode, and
-//     the memory grows with it.
+//   - Opening a file over 1 GB by hand asks first on the Mac (Open Anyway,
+//     Cancel), VS Code's own limit (workbench.editorLargeFileConfirmation)
+//     and Zed asks nothing at all. Below it large-file mode keeps a file
+//     quick (an 82 MB log was on screen in 0.7 s, scrolled and searched
+//     without a stall), so a question there only stood in the way; it
+//     asked past 50 MB until 2026-11-16. Past 1 GB the read holds the main
+//     thread for several seconds and the window takes about six times the
+//     file's size in memory (547 MB with the 82 MB log), which is worth a
+//     question. The GTK port keeps asking past 50 MB (below).
 //   - Lines over 20,000 units are never lexed (kMaxTokenizationLineLength in
 //     SyntaxHighlighter.h, VS Code's editor.maxTokenizationLineLength).
 //
@@ -30,7 +34,8 @@
 // of its own:
 //   - A file is refused past a size of the port's choosing (openingFor): its
 //     windows share one process, and a GtkTextBuffer costs several times a
-//     file's size.
+//     file's size. For the same reason it asks past 50 MB
+//     (kAskBeforeOpeningBytes), where the Mac asks past 1 GB.
 //   - A line over 10,000 characters is shown 10,000 characters at a time
 //     (shownPart), VS Code's editor.stopRenderingLineAfter. GtkTextView lays
 //     out a line as one Pango layout: a 5 MB minified line held the main loop
@@ -50,7 +55,8 @@ namespace LargeFile {
 constexpr size_t kSizeThreshold = 20 * 1024 * 1024;     // UTF-16 units
 constexpr size_t kLineCountThreshold = 300 * 1000;
 constexpr size_t kSyncLimit = 50 * 1024 * 1024;         // UTF-16 units
-constexpr uint64_t kAskBeforeOpeningBytes = 50ull * 1024 * 1024;
+constexpr uint64_t kAskBeforeOpeningBytes = 50ull * 1024 * 1024;         // the GTK port
+constexpr uint64_t kAskBeforeOpeningBytesMac = 1024ull * 1024 * 1024;    // VS Code's 1 GB
 
 // The lines of text[0, n), counted as LineIndex counts them (a line ends
 // after '\n', a '\r' not before '\n', or U+2029; a text ending in a break
@@ -137,12 +143,13 @@ inline bool isLargeUtf8(const char* text, size_t n) {
     return countLinesUtf8(text, n, kLineCountThreshold) > kLineCountThreshold;
 }
 
-// Opening a file of `bytes` by hand: at once, after asking (over 50 MB), or
-// not at all (over `maxBytes`, the port's limit).
+// Opening a file of `bytes` by hand: at once, after asking (over `askAbove`,
+// the port's question), or not at all (over `maxBytes`, the port's limit).
 enum class Opening { Open, Ask, TooLarge };
-inline Opening openingFor(uint64_t bytes, uint64_t maxBytes) {
+inline Opening openingFor(uint64_t bytes, uint64_t maxBytes,
+                          uint64_t askAbove = kAskBeforeOpeningBytes) {
     if (bytes > maxBytes) return Opening::TooLarge;
-    if (bytes > kAskBeforeOpeningBytes) return Opening::Ask;
+    if (bytes > askAbove) return Opening::Ask;
     return Opening::Open;
 }
 

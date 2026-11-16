@@ -187,6 +187,9 @@
 - (void)openFileFromQuickOpen:(NSString *)path;
 // Keep Open: the tab on show, if it is a preview tab, becomes an ordinary one.
 - (void)keepActiveTabOpen:(id)sender;
+// The keyboard to what the tab on show shows (its text, PDF, player...).
+// A file opened from Finder, the Dock or the command line gets it.
+- (void)focusActiveDocument;
 @end
 
 // EditorController+Persistence.mm

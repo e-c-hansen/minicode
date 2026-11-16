@@ -144,7 +144,8 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
         }
     }
     EditorController *c = [self openWindowAtPath:root];
-    if (file) [c showFile:file];
+    // The file named gets the keyboard, not the tree beside it.
+    if (file && [c showFile:file]) [c focusActiveDocument];
     // A benchmark runs in the background, so it never takes the keyboard.
     if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
     MCDemoStart(c);   // no-op unless MINICODE_DEMO is set (make demos)
@@ -385,7 +386,11 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
         front = c;
         if ([declined containsObject:c]) continue;
         [c.window makeKeyAndOrderFront:nil];
-        if (![c showFile:inRoot]) [declined addObject:c];
+        // Shown, the file has the keyboard, as in VS Code and Zed: a new
+        // window put it in the tree, so Page Down and typing did nothing
+        // until a click in the text.
+        if ([c showFile:inRoot]) [c focusActiveDocument];
+        else [declined addObject:c];
     }
     [front.window makeKeyAndOrderFront:nil];
     if (web.count) [self openWebAddressesInBrowserWindow:web];

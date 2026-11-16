@@ -565,7 +565,6 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)rememberClosedTab:(MCTab *)t index:(NSUInteger)index;
 - (BOOL)canReopenClosedTab;
 - (void)showEmptyState;
-- (void)focusActiveDocument;
 - (void)selectTabAtIndex:(NSInteger)i;
 - (void)closeTabAtIndex:(NSInteger)i;
 - (void)stepTab:(int)delta;
@@ -739,7 +738,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 @end
 
 // EditorController+LargeFile.mm: large-file mode (LargeFile.h), its status
-// bar note, and the question before opening a file over 50 MB.
+// bar note, and the question before opening a file over 1 GB.
 @interface EditorController (LargeFile)
 - (void)noteLargeFileText:(NSString *)text;     // the tab on show, as read
 - (BOOL)largeFileFeaturesOff;                   // its colors, folds, wrap and server are off

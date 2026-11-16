@@ -382,7 +382,7 @@
         else [self reselectCurrentFileInTree];          // a Cmd+click may have deselected it
         return;
     }
-    if (![self confirmOpeningLargeFile:path]) return;   // over 50 MB: asked first
+    if (![self confirmOpeningLargeFile:path]) return;   // over 1 GB: asked first
     tab = [MCTab new];
     tab.currentPath = path;
     MCTab *old = inPreview ? [self previewTab] : nil;

@@ -4,7 +4,7 @@
 // folding, bracket boxes or a language server; the status bar says so, and
 // a click there turns them on for that tab. Word wrap stays as set (see
 // LargeFile.h for why it differs from VS Code there). Opening a file
-// over 50 MB by hand asks first. The other files only ask here
+// over 1 GB by hand asks first. The other files only ask here
 // (largeFileFeaturesOff, languageServerPath:) where they would otherwise
 // turn a feature on.
 #import "EditorController+Private.h"
@@ -68,14 +68,18 @@ BOOL TextIsLarge(NSString *text) {
     return [self languageServerMayRead:_activeTab] ? path : nil;
 }
 
-// Opening a file over 50 MB by hand: Open Anyway or Cancel, as VS Code asks
-// past its own limit. Only a file that would be read as text asks; images,
+// Opening a file over 1 GB by hand: Open Anyway or Cancel, as VS Code asks
+// past the same limit. Below it nothing is asked (an 82 MB log is on screen
+// in 0.7 s, and the status bar's "Large file: features off" says the rest);
+// past it the read holds the window for seconds and takes gigabytes
+// (LargeFile.h). Only a file that would be read as text asks; images,
 // PDFs, media, databases, large CSV tables and Quick Look's documents
 // open as before.
 - (BOOL)confirmOpeningLargeFile:(NSString *)path {
     struct stat st;
     if (!path || stat(path.fileSystemRepresentation, &st) != 0 || !S_ISREG(st.st_mode) ||
-        (uint64_t)st.st_size <= LargeFile::kAskBeforeOpeningBytes)
+        LargeFile::openingFor((uint64_t)st.st_size, UINT64_MAX,
+                              LargeFile::kAskBeforeOpeningBytesMac) != LargeFile::Opening::Ask)
         return YES;
     if ([EditorController isImagePath:path] || [EditorController isMediaPath:path] ||
         [path.pathExtension.lowercaseString isEqualToString:@"pdf"] ||
@@ -86,9 +90,10 @@ BOOL TextIsLarge(NSString *text) {
                      path.lastPathComponent,
                      [NSByteCountFormatter stringFromByteCount:st.st_size
                                                     countStyle:NSByteCountFormatterCountStyleFile]];
-    a.informativeText = @"A file this large takes a while to read and show. It opens "
-                        @"without syntax colors, folding or a language server, which "
-                        @"the status bar can turn on for it.";
+    a.informativeText = @"A file this large takes several seconds to read, and several "
+                        @"times its size in memory. It opens without syntax colors, "
+                        @"folding, or a language server, which the status bar can turn "
+                        @"on for it.";
     [a addButtonWithTitle:@"Open Anyway"];
     [a addButtonWithTitle:@"Cancel"];
     return [a runModal] == NSAlertFirstButtonReturn;
