@@ -2734,7 +2734,10 @@ for full-screen programs. Both can be open at once.
   unasked), with Paste and Cancel only; the preview shows controls as
   U+2400 symbols, and when the first is past the first three lines' 30
   characters a line saying where it is, with the 30 characters around it
-  (round 6's defect 4: the question showed none). Secure keyboard entry: TerminalView polls termios
+  (round 6's defect 4: the question showed none). The question is a
+  sheet on the grid's window (2026-11-16; a free dialog sat mid-screen
+  where the window had been), the paste sent from its handler;
+  `askingPaste` while it is up, when another paste beeps. Secure keyboard entry: TerminalView polls termios
   (after output, and four times a second while a command runs) and sets
   the grid's `hiddenInput` for ECHO off with ICANON on (ZLE and full-screen
   programs turn ICANON off); the grid calls Enable/DisableSecureEventInput

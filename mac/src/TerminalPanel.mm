@@ -617,16 +617,19 @@ NSAlert *MCClosingRunningAlert(NSArray<NSString *> *commands, NSString *question
                                  @"Close", self.onShowInProcesses != nil);
 }
 
-// What Show in Processes selects: the first terminal's foreground program,
-// else (a background job) its terminal's group.
+// What Show in Processes selects: the job the question named first, a
+// foreground program before a background job (the server left with
+// `disown`), else the terminal's group.
 - (void)showInProcesses:(NSArray<TerminalView *> *)terminals {
     if (!self.onShowInProcesses) return;
     TerminalView *pick = terminals.firstObject;
     for (TerminalView *t in terminals)
         if (t.foregroundJob > 0) { pick = t; break; }
     for (TerminalView *t in terminals)
+        if (pick.firstJob <= 0 && t.firstJob > 0) pick = t;
+    for (TerminalView *t in terminals)
         if (pick.runningCommands.count == 0 && t.runningCommands.count) pick = t;
-    self.onShowInProcesses(pick, pick.foregroundJob);
+    self.onShowInProcesses(pick, pick.firstJob);
 }
 
 - (BOOL)confirmClosing:(NSArray<TerminalView *> *)terminals {

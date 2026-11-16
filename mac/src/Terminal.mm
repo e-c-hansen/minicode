@@ -1270,9 +1270,11 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 // job (a pipeline is one group), named by the group's leader. zsh hangs
 // these up when it is closed. A job disowned with &! is counted too, since
 // nothing outside the shell can tell it apart; a daemon that left the
-// terminal (setsid, nohup's detach) is not.
-- (NSArray<NSString *> *)backgroundJobs {
-    if (_shellPid <= 0 || _master < 0 || (_integrated && !_seenPrompt)) return @[];
+// terminal (setsid, nohup's detach) is not. In process group order, each
+// the pid that names it and whether all of it is stopped.
+- (std::vector<std::pair<pid_t, BOOL>>)backgroundJobGroups {
+    std::vector<std::pair<pid_t, BOOL>> none;
+    if (_shellPid <= 0 || _master < 0 || (_integrated && !_seenPrompt)) return none;
     pid_t fg = tcgetpgrp(_master);
     // The pty, as the shell's controlling terminal (macOS answers nothing
     // for KERN_PROC_SESSION).
@@ -1281,13 +1283,13 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     int pmib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, _shellPid};
     if (sysctl(pmib, 4, &shell, &size, nullptr, 0) != 0 || size == 0 ||
         shell.kp_eproc.e_tdev == NODEV)
-        return @[];
+        return none;
     int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_TTY, (int)shell.kp_eproc.e_tdev};
     size = 0;
-    if (sysctl(mib, 4, nullptr, &size, nullptr, 0) != 0 || size == 0) return @[];
+    if (sysctl(mib, 4, nullptr, &size, nullptr, 0) != 0 || size == 0) return none;
     size += 16 * sizeof(struct kinfo_proc);   // room for a few more since
     std::vector<struct kinfo_proc> procs(size / sizeof(struct kinfo_proc));
-    if (sysctl(mib, 4, procs.data(), &size, nullptr, 0) != 0) return @[];
+    if (sysctl(mib, 4, procs.data(), &size, nullptr, 0) != 0) return none;
     procs.resize(size / sizeof(struct kinfo_proc));
     std::map<pid_t, std::pair<pid_t, BOOL>> groups;   // pgid -> (who names it, stopped)
     for (const struct kinfo_proc &k : procs) {
@@ -1302,17 +1304,33 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             it->second.second = it->second.second && stopped;
         }
     }
+    std::vector<std::pair<pid_t, BOOL>> out;
+    for (const auto &g : groups) out.push_back(g.second);
+    return out;
+}
+
+- (NSArray<NSString *> *)backgroundJobs {
     NSMutableArray<NSString *> *out = [NSMutableArray array];
-    for (const auto &g : groups) {
-        NSString *name = ProcessCommandLine(g.second.first);
+    for (const auto &g : [self backgroundJobGroups]) {
+        NSString *name = ProcessCommandLine(g.first);
         if (!name) {
             char n[2 * MAXCOMLEN + 1] = {0};
-            name = proc_name(g.second.first, n, sizeof n) > 0 ? @(n) : @"A job";
+            name = proc_name(g.first, n, sizeof n) > 0 ? @(n) : @"A job";
         }
-        [out addObject:[name stringByAppendingString:g.second.second ? @" (stopped)"
-                                                                     : @" (in the background)"]];
+        [out addObject:[name stringByAppendingString:g.second ? @" (stopped)"
+                                                              : @" (in the background)"]];
     }
     return out;
+}
+
+// What the close question names first (runningCommands' order): the
+// foreground program, else the first background job, by the pid that names
+// it. 0 when neither is (a command waiting to start, or nothing).
+- (pid_t)firstJob {
+    if (const pid_t fg = self.foregroundJob) return fg;
+    if (_closed) return 0;
+    const auto groups = [self backgroundJobGroups];
+    return groups.empty() ? 0 : groups.front().first;
 }
 
 // A command the shell integration says is running (133;C seen, no prompt

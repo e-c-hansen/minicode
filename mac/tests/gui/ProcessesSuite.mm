@@ -5,7 +5,8 @@
 // closed it moves to the orphans, and Stop ends it without asking. A sleep
 // in a second terminal: Reveal Origin shows its terminal, and Stop asks
 // first (Cancel keeps it). The close question is a sheet on the window,
-// whose Show in Processes selects the job and keeps the terminal; the
+// whose Show in Processes selects the job it names and keeps the terminal
+// (not an earlier job of that terminal that has exited, listed above it); the
 // orphan's row has a Stop button; Shift+Cmd+J toggles the panel. A server started outside minicode in the folder
 // is "not started here". The time a look takes is measured with at least
 // 200 processes on the machine. Every process here is one this suite
@@ -39,7 +40,7 @@
 @property(nonatomic, copy) NSString *server;   // python3, or nc
 @property(nonatomic, copy) NSString *root;     // the window's folder
 @property(nonatomic) int port, port2;
-@property(nonatomic) int serverPid, outsidePid, sleepPid;
+@property(nonatomic) int serverPid, outsidePid, sleepPid, earlyPid;
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *started;   // every pid to clean up
 @property(nonatomic, copy) NSString *openedURL;
 @property(nonatomic) double worstSample, worstMain, worstSampleCpu, worstMainCpu;
@@ -202,6 +203,13 @@ MC_GUI_SUITE(processes) {
         GCHECK(s.termA.shellPid == 0 || s.termA.shellPid > 1);
     });
     MCGuiWait(@"its prompt", 20, ^BOOL { return s.termA.atPrompt && !s.termA.busy; });
+    // An earlier job, stopped before the terminal is closed, so its exited
+    // row sits above the server's when Show in Processes looks.
+    MCGuiStep(@"an earlier job in the background", ^{
+        GCHECK(s.termA.shellPid > 1);
+        [s.termA runCommand:@"sleep 610 &"];
+    });
+    MCGuiWait(@"the shell is back at its prompt", 10, ^BOOL { return s.termA.atPrompt; });
     MCGuiStep(@"a server in the background, in the folder", ^{
         GCHECK(s.termA.shellPid > 1);
         [s.termA runCommand:[NSString stringWithFormat:@"cd '%@' && %@ </dev/null >/dev/null 2>&1 &",
@@ -240,6 +248,14 @@ MC_GUI_SUITE(processes) {
         GCHECK([s.panel.summaryText containsString:@" in "] &&
                [s.panel.summaryText containsString:@" process"]);
         GCHECK([MCProcessMonitor shared].lastListed > 10);
+    });
+    MCGuiWait(@"the earlier job under the first terminal", 15, ^BOOL {
+        return PidsNamed(s, s.termA, "sleep").size() == 1;
+    });
+    MCGuiStep(@"its pid", ^{
+        s.earlyPid = PidsNamed(s, s.termA, "sleep").front();
+        GCHECK(s.earlyPid > 1);
+        if (s.earlyPid > 1) [s.started addObject:@(s.earlyPid)];
     });
 
     // ------------------------------------------------------ minicode procs
@@ -435,6 +451,21 @@ MC_GUI_SUITE(processes) {
     });
 
     // ----------------------------------------------- disown, close: orphans
+    MCGuiStep(@"the first terminal's earlier job ends (this suite started it)", ^{
+        GCHECK(s.earlyPid > 1);
+        kill(s.earlyPid, SIGTERM);
+    });
+    MCGuiWait(@"its row says it exited, above the server's", 15, ^BOOL {
+        NSString *want = [NSString stringWithFormat:@" %d sleep ", s.earlyPid];
+        NSArray<NSString *> *rows = RowsIn(s.panel, @"G terminal");
+        NSUInteger early = NSNotFound, server = NSNotFound;
+        NSString *serverWant = [NSString stringWithFormat:@" %d ", s.serverPid];
+        for (NSUInteger i = 0; i < rows.count; i++) {
+            if ([rows[i] containsString:want] && [rows[i] hasSuffix:@" exited"]) early = i;
+            if ([rows[i] containsString:serverWant] && ![rows[i] hasSuffix:@" exited"]) server = i;
+        }
+        return early != NSNotFound && server != NSNotFound && early < server;
+    });
     MCGuiStep(@"disown, in the first terminal", ^{ [s.termA runCommand:@"disown"]; });
     MCGuiWait(@"done", 10, ^BOOL { return s.termA.atPrompt && !s.termA.busy; });
     MCGuiStep(@"closing the terminal asks in a sheet on its window; Show in Processes keeps it", ^{
@@ -453,9 +484,13 @@ MC_GUI_SUITE(processes) {
         [tp closeTerminalAsking:s.termA];
         GCHECK(MCGuiAlertsShown().count == s.alerts + 1);
     });
-    MCGuiWait(@"the Processes panel selects the server, and the terminal stays", 15, ^BOOL {
+    MCGuiWait(@"the Processes panel selects the running server, and the terminal stays", 15, ^BOOL {
         NSInteger row = s.panel.outline.selectedRow;
         return row >= 0 && row == [s.panel rowForPid:s.serverPid];
+    });
+    MCGuiStep(@"the question named the server's job", ^{
+        GCHECK(s.termA.firstJob == s.serverPid);
+        GCHECK(s.termA.foregroundJob == 0);
     });
     MCGuiStep(@"closing it again, answered Close", ^{
         MCTerminalPanel *tp = [s.c valueForKey:@"terminalPanel"];
