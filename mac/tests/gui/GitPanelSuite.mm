@@ -955,6 +955,14 @@ NSInteger FirstBlockAfter(MCChangeReviewPage *p, NSInteger header) {
         if ([p rowOfBlock:b] > header) return [p rowOfBlock:b];
     return -1;
 }
+// A file's header row in one list as the page shows it ("F f.txt  +2 -2"),
+// or nil: what the page's own data says, which a load count alone does not
+// (a read already on the queue when an action wrote lands first and counts).
+NSString *FileHeader(MCChangeReviewPage *p, NSString *rel, BOOL staged) {
+    const NSInteger at = [p rowOfFile:rel staged:staged];
+    NSArray<NSString *> *rows = p.rowDescriptions;
+    return at >= 0 && (NSUInteger)at < rows.count ? rows[(NSUInteger)at] : nil;
+}
 BOOL PressButton(MCChangeReviewPage *p, NSString *title, NSInteger row) {
     const NSRect r = [p buttonRect:title row:row];
     if (NSIsEmptyRect(r)) return NO;
@@ -1135,9 +1143,15 @@ MC_GUI_SUITE(git_review) {
         loads = p.loads;
         [menu performActionForItemAtIndex:[menu indexOfItemWithTitle:@"Stage Selected Lines"]];
     });
-    MCGuiWait(@"F staged as well", 15, ^BOOL {
+    // The page must hold a read made after the write before Unstage is
+    // pressed: Unstage checks the index entry against the one the page
+    // read, and a read already queued when Stage Selected Lines wrote lands
+    // first, counts as a load, and still has D alone staged (CI twice).
+    MCGuiWait(@"F staged as well, and the page read it", 15, ^BOOL {
         return actions == 1 && Review(c).loads > loads &&
-               [index() isEqualToString:@"a\nb\nc\nD\ne\nF\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n"];
+               [index() isEqualToString:@"a\nb\nc\nD\ne\nF\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n"] &&
+               [FileHeader(Review(c), @"f.txt", YES) isEqualToString:@"F f.txt  +2 -2"] &&
+               [FileHeader(Review(c), @"f.txt", NO) isEqualToString:@"F f.txt  +1 -1"];
     });
     MCGuiStep(@"Unstage on the staged list's first block", ^{
         MCChangeReviewPage *p = Review(c);
@@ -1151,7 +1165,13 @@ MC_GUI_SUITE(git_review) {
         return actions == 1 &&
                [index() isEqualToString:@"a\nb\nc\nd\ne\nF\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n"];
     });
-    MCGuiWait(@"read again", 15, ^BOOL { return Review(c).loads > loads; });
+    // The same: the page's data, not only its count, so the view the next
+    // step changes the index under is the one Unstage left.
+    MCGuiWait(@"read again", 15, ^BOOL {
+        return Review(c).loads > loads &&
+               [FileHeader(Review(c), @"f.txt", YES) isEqualToString:@"F f.txt  +1 -1"] &&
+               [FileHeader(Review(c), @"f.txt", NO) isEqualToString:@"F f.txt  +2 -2"];
+    });
     MCGuiStep(@"the index changed from outside since the view was drawn: Stage refuses", ^{
         MCChangeReviewPage *p = Review(c);
         // In the same step, so the page has not read it yet.
