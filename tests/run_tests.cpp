@@ -4052,8 +4052,7 @@ void testSettings() {
     // syntax.tag, syntax.attribute and syntax.tag-bracket, and html.scripts,
     // and editor.merge-current and editor.merge-incoming, and the four
     // test.<language> commands.
-    CHECK(std::count(keys.begin(), keys.end(), '
-') == 137);
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 137);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
