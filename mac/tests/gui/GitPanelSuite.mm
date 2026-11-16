@@ -1394,6 +1394,14 @@ MC_GUI_SUITE(worktree_review) {
         GCHECK([st containsString:@"UU a.txt"] && [st containsString:@" M b.txt"] &&
                [st containsString:@"?? n.txt"]);
         GCHECK_EQ_STR(GitText(repo, @[@"rev-list", @"--count", @"HEAD"]), @"3\n");
+    });
+    // The note stays while the changes are what the first read after the
+    // action showed; change the worktree only once that read is on show,
+    // or it shows the change and the note stays (CI, PR #54's first run).
+    MCGuiWait(@"the read after Apply on show", 15, ^BOOL {
+        return [[page() valueForKey:@"_messageSettled"] boolValue];
+    });
+    MCGuiStep(@"the agent changes n.txt in the worktree", ^{
         loads = page().loads;
         MCGuiWriteFile([wt stringByAppendingPathComponent:@"n.txt"], @"newer\n");
         [page() reload];

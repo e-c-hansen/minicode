@@ -126,12 +126,24 @@ static void testFolderSearchParallel() {
                 o.caseSensitive = k.matchCase;
                 if (limit) o.maxMatches = limit;
                 else o.maxMatches = 1000000;
+                // big.txt's 1 MB first line is left out (skipped, named):
+                // a backreference runs on std::regex there, a start at a
+                // time, and under the sanitizers its count of matches on
+                // that line was cut short by the 2 s limit at different
+                // places, so the answers differed by timing. The limit is
+                // checked as pieces are read, so they are shorter than it.
+                // Streamed files are compared below.
+                o.maxStreamedLine = 64 * 1024;
+                o.streamPiece = 16 * 1024;
                 o.threads = 1;
                 const FolderSearchResult one = search(root.string(), k.query, nullptr, o);
                 for (unsigned t : {2u, 8u, 0u}) {
                     o.threads = t;
                     const FolderSearchResult many = search(root.string(), k.query, nullptr, o);
                     CHECK(describe(many) == describe(one));
+                    if (describe(many) != describe(one))
+                        std::fprintf(stderr, "  %s, limit %zu, %u threads:\n%s\n-- one thread:\n%s\n", k.query,
+                                     limit, t, describe(many).c_str(), describe(one).c_str());
                     ++compared;
                 }
                 if (limit) CHECK(one.matches.size() <= limit);
