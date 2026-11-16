@@ -17,6 +17,7 @@
 - (void)openTerminalLink:(MCTermLink *)link;          // a file, at its line
 - (void)showPage:(id<MCEditorPage>)page;              // a page in a tab of its own
 - (void)showComparison:(MCComparison *)comparison preview:(BOOL)preview;
+- (void)openFileAtPath:(NSString *)path line:(NSInteger)line;   // 1-based; 0 leaves the caret
 - (TerminalView *)newTerminalForAgentIn:(NSString *)dir beside:(BOOL)beside;
 - (void)showStatusNote:(NSString *)note;
 - (void)focusEditor:(id)sender;

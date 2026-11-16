@@ -853,6 +853,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (BOOL)agentWorktreesOnShow;
 - (void)agentFolderChangedOnDisk:(NSString *)path;
 - (MCCompareView *)compareViewMade;
+- (void)openFileAtPath:(NSString *)path line:(NSInteger)line;
 @end
 
 // EditorController+Markdown.mm: the Markdown preview: switching to it, editing from it, links, math and web pictures arriving.

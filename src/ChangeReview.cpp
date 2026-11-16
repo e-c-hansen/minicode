@@ -680,7 +680,7 @@ std::vector<std::string> commitHeaderArgs(const std::string& commit) {
 
 std::vector<std::string> commitDiffArgs(const std::string& commit, const std::string& parent) {
     std::vector<std::string> a = {"-c", "core.quotePath=false", "diff-tree", "-r", "-z", "-M",
-                                  "--no-commit-id", "--no-ext-diff"};
+                                  "--no-commit-id", "--no-ext-diff", "--no-abbrev"};
     if (parent.empty()) {
         a.push_back("--root");
         a.push_back(commit);
@@ -749,6 +749,34 @@ std::string commitByline(const std::string& author, long long time, const std::s
                     (date ? date(time) : GitUi::dateText(time)) + ")  " + Git::shortHash(hash);
     if (parents > 1) s += "  (a merge: its changes against the first parent, what it brought in)";
     return s;
+}
+
+std::vector<std::string> worktreeRawArgs(const std::string& base) {
+    // --no-abbrev: `diff --raw` shortens object names, and cat-file --batch
+    // answers with the whole name, so the old sides were never found.
+    return {"-c", "core.quotePath=false", "diff", "--raw", "--no-abbrev", "-z", "-M", "--no-ext-diff",
+            base, "--"};
+}
+
+std::vector<std::string> worktreeListArgs() { return {"worktree", "list", "--porcelain"}; }
+
+std::string mainWorktreePath(const std::string& porcelain) {
+    const std::string mark = "worktree ";
+    if (porcelain.compare(0, mark.size(), mark) != 0) return "";
+    const size_t nl = porcelain.find('\n');
+    return porcelain.substr(mark.size(), (nl == std::string::npos ? porcelain.size() : nl) - mark.size());
+}
+
+std::vector<std::string> nulPaths(const std::string& out) {
+    std::vector<std::string> v;
+    size_t pos = 0;
+    while (pos < out.size()) {
+        size_t end = out.find('\0', pos);
+        if (end == std::string::npos) end = out.size();
+        if (end > pos) v.push_back(out.substr(pos, end - pos));
+        pos = end + 1;
+    }
+    return v;
 }
 
 bool looksBinary(const std::string& bytes) {
