@@ -238,6 +238,18 @@ std::vector<SyncTexHit> SyncTexIndex::hitsAtPoint(int page, double x, double y,
     return out;
 }
 
+std::vector<int> SyncTexIndex::tagsAtPoint(int page, double x, double y, int mainTag) const {
+    std::vector<int> tags;
+    auto add = [&tags](int tag) {
+        for (int t : tags)
+            if (t == tag) return;
+        tags.push_back(tag);
+    };
+    for (const SyncTexHit &h : textHitsAtPoint(page, x, y, 8)) add(h.tag);
+    if (mainTag != 0) add(mainTag);
+    return tags;
+}
+
 std::vector<SyncTexHit> SyncTexIndex::textHitsAtPoint(int page, double x,
                                                       double y,
                                                       std::size_t maxHits) const {

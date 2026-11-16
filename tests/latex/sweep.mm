@@ -1,7 +1,12 @@
 // sweep.mm — double-clicks every word of a typeset LaTeX document through the
 // preview's real click path (MCLatexSpanAtPoint in mac/src/Latex.mm) and reports
 // how often it finds the source of what was clicked. Run it with sweep.sh,
-// which typesets the document the way the app does.
+// which typesets the document the way the app does. A document that reads
+// other files (\input, \include) is clicked through the preview's
+// several-file path (MCLatexSpanAtPointInFiles): each input SyncTeX names
+// is read from its path, or from the source's folder by its file name
+// (the committed fixture's paths are "@DIR@/..."), and a click is judged
+// against the file whose span it got.
 //
 //   sweep <source.tex> <typeset-copy.tex> <out.pdf> <out.synctex.gz> [-v]
 //         [--bound <percent>]
@@ -36,6 +41,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <string>
 
 static std::string Utf8(NSString *s) {
@@ -128,13 +134,40 @@ int main(int argc, char **argv) {
             initWithURL:[NSURL fileURLWithPath:@(argv[3])]];
         if (!pdf || !sync.valid()) { fprintf(stderr, "no pdf or synctex\n"); return 2; }
 
+        // The files the document reads, by input tag: where SyncTeX says,
+        // else beside the source by name.
+        NSString *srcDir = srcPath.stringByDeletingLastPathComponent;
+        std::map<int, std::pair<std::string, LatexDoc>> inputs;
+        NSMutableString *allSources = [source mutableCopy];
+        for (const auto &kv : sync.inputs()) {
+            if (kv.first == tag) continue;
+            NSString *p = @(kv.second.c_str());
+            NSString *text = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding
+                                                          error:nil];
+            if (!text)
+                text = [NSString stringWithContentsOfFile:
+                            [srcDir stringByAppendingPathComponent:p.lastPathComponent]
+                                                 encoding:NSUTF8StringEncoding error:nil];
+            if (!text) continue;
+            const std::string s8 = Utf8(text);
+            inputs[kv.first] = {s8, LatexDoc::parseInput(s8)};
+            [allSources appendFormat:@"\n%@", text];
+        }
+        auto docFor = [&](int t) -> const LatexDoc * {
+            if (t == tag) return &doc;
+            auto it = inputs.find(t);
+            return it == inputs.end() ? nullptr : &it->second.second;
+        };
+        if (!inputs.empty()) printf("reading %lu input files besides the document\n",
+                                    (unsigned long)inputs.size());
+
         // Everything the source could show, for telling generated words apart.
         // Comments are dropped; \newcommand bodies stay, so text a macro
         // expands to counts as source (it is, just not where it appears).
         NSRegularExpression *comment = [NSRegularExpression
             regularExpressionWithPattern:@"(?<!\\\\)%[^\n]*" options:0 error:nil];
-        NSString *uncommented = [comment stringByReplacingMatchesInString:source
-            options:0 range:NSMakeRange(0, source.length) withTemplate:@""];
+        NSString *uncommented = [comment stringByReplacingMatchesInString:allSources
+            options:0 range:NSMakeRange(0, allSources.length) withTemplate:@""];
         NSString *wholeFolded = FoldTex(Utf8(uncommented));
 
         auto count = [](NSString *hay, NSString *needle) {
@@ -183,11 +216,14 @@ int main(int argc, char **argv) {
                                      boundsForPage:page];
                     NSPoint pt = NSMakePoint(NSMidX(box), NSMidY(box));
                     std::vector<SyncTexHit> hits;
-                    const LatexSpan *sp = MCLatexSpanAtPoint(doc, sync, tag, page,
-                                                             (int)p + 1, pt, &hits);
+                    int spanTag = 0;
+                    const LatexSpan *sp = MCLatexSpanAtPointInFiles(sync, tag, page, (int)p + 1,
+                                                                    pt, docFor, &spanTag, &hits);
                     NSString *clicked = [page selectionForWordAtPoint:pt].string ?: @"";
                     std::string spanText;
-                    if (sp) spanText = src.substr(sp->start, sp->end - sp->start);
+                    const std::string &spanSrc =
+                        spanTag == tag || !inputs.count(spanTag) ? src : inputs[spanTag].first;
+                    if (sp) spanText = spanSrc.substr(sp->start, sp->end - sp->start);
                     NSString *have = sp ? FoldTex(spanText) : @"";
                     // The right occurrence of a common word: the span holds it
                     // next to a neighbour from the page, or is that word alone.
@@ -213,8 +249,9 @@ int main(int argc, char **argv) {
                     if (verbose && verdict[0] != 'f') {
                         std::string lines;
                         for (const SyncTexHit &h : hits)
-                            if (tag == 0 || h.tag == tag)
-                                lines += std::to_string(h.line) + " ";
+                            if (h.tag == tag) lines += std::to_string(h.line) + " ";
+                            else if (inputs.count(h.tag))
+                                lines += std::to_string(h.tag) + ":" + std::to_string(h.line) + " ";
                         printf("%-8s p%lu word=[%s] clicked=[%s] lines=[%s]",
                                verdict, (unsigned long)p + 1, Utf8(word).c_str(),
                                Utf8(clicked).c_str(), lines.c_str());

@@ -578,6 +578,15 @@ LatexDoc LatexDoc::parse(const std::string &src) {
     return p.doc;
 }
 
+LatexDoc LatexDoc::parseInput(const std::string &src) {
+    Parser p(src);
+    p.inDocument = true;
+    p.run();
+    buildContext(p.doc);
+    buildJoins(src, p.doc);
+    return p.doc;
+}
+
 std::vector<const LatexSpan *> LatexDoc::spansOnLine(int line) const {
     std::vector<const LatexSpan *> out;
     for (const LatexSpan &sp : spans)

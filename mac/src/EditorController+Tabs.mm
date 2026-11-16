@@ -1084,6 +1084,7 @@ static const NSUInteger kMaxClosedTabs = 50;
         // didSave to every server that has the file open.
         [self.lsp documentSavedAtPath:t.currentPath text:text];
     }
+    [self latexFileSaved:t];   // previews that read it from disk typeset again
     [self updateTitle];
     return YES;
 }
@@ -1092,6 +1093,9 @@ static const NSUInteger kMaxClosedTabs = 50;
     // A message (welcome, binary file) is not the file's contents, nor is a
     // viewer's empty text view.
     if (![self tabHasTextToWrite:_activeTab]) return;
+    // Cmd+S on a LaTeX preview saves the \input files it read too, whose
+    // edits the page shows only once they are on disk.
+    if (sender) [self saveLatexInputsOfActiveTab];
     // editor.organize-imports-on-save, then format.on-save: Cmd+S (a sender)
     // has the imports organized and the file formatted first, and saves when
     // they are done; saves asked for by MiniCode itself (nil, auto-save

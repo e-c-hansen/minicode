@@ -16,7 +16,10 @@
 # torture.synctex.gz, written by tectonic 0.17.0) and fails on any wrong
 # answer or a hit rate below the bound in sweep_bound.txt, the last run's
 # (CI runs it; `make latex-sweep` is the same). After a change to the
-# matcher that raises the rate, raise the bound with it.
+# matcher that raises the rate, raise the bound with it. It then clicks the
+# committed three-file fixture (fixtures/main.tex with its \input files,
+# main.pdf and main.synctex, whose paths are "@DIR@/..." and are found
+# beside main.tex) against sweep_bound_inputs.txt the same way.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
@@ -27,8 +30,12 @@ make -C "$root" build/latex-sweep >/dev/null
 if [ "$1" = "--fixture" ]; then
     shift
     fx="$here/fixtures"
-    exec "$root/build/latex-sweep" "$here/torture.tex" "/fixture/.torture.minicode.tex" \
+    "$root/build/latex-sweep" "$here/torture.tex" "/fixture/.torture.minicode.tex" \
         "$fx/torture.pdf" "$fx/torture.synctex.gz" --bound "$(cat "$here/sweep_bound.txt")" "$@"
+    # A document of three files (fixtures/main.tex reads chapter.tex and
+    # appendix.tex): clicks on the \input files' text edit those files.
+    exec "$root/build/latex-sweep" "$fx/main.tex" "@DIR@/.main.minicode.tex" \
+        "$fx/main.pdf" "$fx/main.synctex" --bound "$(cat "$here/sweep_bound_inputs.txt")" "$@"
 fi
 
 tex=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")

@@ -19,6 +19,11 @@
 //     shows (problemsForPath:source:).
 //   * Each preview typesets from a sibling and into a folder of its own
 //     (LatexScratch::Owner), so two windows on one file never collide.
+//   * A click on text from an \input or \include file edits that file: it
+//     is parsed on its own (its tab's buffer, else the disk), and the edit
+//     goes into its tab through the controller (inputText, onInputEdited),
+//     unsaved. The typeset reads such files from disk, so the bar says
+//     which have unsaved changes until they are saved.
 #import "Latex.h"
 #import "EditorFont.h"
 #import "AppSettings.h"
@@ -34,6 +39,7 @@
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <zlib.h>
+#include <map>
 #include <string>
 
 // tectonic is pinned so the download is reproducible; any tectonic already on
@@ -386,6 +392,11 @@ static NSString *MCDescribeProblem(MCLatexProblem *p, NSString *texPath, NSStrin
     LatexScratch::Owner _owner;  // this preview's own sibling and folder
     NSArray<PDFAnnotation *> *_forwardMarks;   // what it lit up, for a moment
     PDFPage *_forwardPage;
+    // The \input files' sources, parsed, by path, with the text each was
+    // parsed from (a click parses again only when the text changed).
+    std::map<std::string, std::pair<std::string, LatexDoc>> _inputDocs;
+    NSString *_editingFile;      // the \input file the popover edits (nil: the document)
+    std::string _editingSrc;     // and its text when the box opened
 }
 
 // Enough history for a working session without holding a whole file's worth of
@@ -862,8 +873,20 @@ static const CGFloat kStatusHeight = 26;
     NSString *warnings = n == 0 ? @""
         : [NSString stringWithFormat:n == 1 ? @" · %lu warning" : @" · %lu warnings",
                                      (unsigned long)n];
-    [self setStatus:[NSString stringWithFormat:@"%@%@ · double-click text to edit it",
-                                               pages, warnings] busy:NO];
+    // Files the typeset reads from disk with unsaved changes in their
+    // tabs: the page shows them only once they are saved.
+    NSMutableArray<NSString *> *unsaved = [NSMutableArray array];
+    if (self.inputUnsaved)
+        for (NSString *f in [self inputFiles])
+            if (self.inputUnsaved(f)) [unsaved addObject:f.lastPathComponent];
+    NSString *tail = @"double-click text to edit it";
+    if (unsaved.count == 1)
+        tail = [NSString stringWithFormat:@"%@ has unsaved changes: save to see them in the PDF",
+                                          unsaved[0]];
+    else if (unsaved.count > 1)
+        tail = [NSString stringWithFormat:@"%lu files it reads have unsaved changes: save to "
+                                          @"see them in the PDF", (unsigned long)unsaved.count];
+    [self setStatus:[NSString stringWithFormat:@"%@%@ · %@", pages, warnings, tail] busy:NO];
     self.warningsButton.hidden = n == 0;
     self.warningsButton.title = _showingWarnings ? @"Show Page"
         : [NSString stringWithFormat:@"%lu Warning%@", (unsigned long)n, n == 1 ? @"" : @"s"];
@@ -997,6 +1020,67 @@ static const CGFloat kStatusHeight = 26;
 
 - (BOOL)typesetReadFile:(NSString *)path {
     return ![path isEqualToString:self.texPath] && [self inputTagForFile:path] != 0;
+}
+
+// The user's file behind SyncTeX input `tag`: a file the typeset read
+// (an \input or \include, or a .bib), as the document's folder spells it,
+// or nil for the document itself, the engine's own files (no path), and
+// anything not a plain file on disk.
+- (NSString *)inputFileForTag:(int)tag {
+    if (tag == 0 || !_synctex.valid()) return nil;
+    const std::string written = _synctex.pathForTag(tag);
+    if (written.empty()) return nil;
+    NSString *dir = self.texPath.stringByDeletingLastPathComponent;
+    NSString *path = NsStr(written);
+    if (!path.isAbsolutePath) path = [dir stringByAppendingPathComponent:path];
+    path = path.stringByStandardizingPath;
+    BOOL isDir = NO;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] || isDir)
+        return nil;
+    const std::string real = MCRealPath(Utf8(path));
+    if (real == MCRealPath(Utf8(self.texPath)) || real == MCRealPath(Utf8([self scratchTexPath])))
+        return nil;
+    // tectonic writes the kernel's spelling (/private/tmp); the tab and the
+    // tree have the document folder's (/tmp).
+    const std::string realDir = MCRealPath(Utf8(dir)) + "/";
+    if (dir.length && real.compare(0, realDir.size(), realDir) == 0)
+        return [dir stringByAppendingPathComponent:NsStr(real.substr(realDir.size()))];
+    return path;
+}
+
+- (NSArray<NSString *> *)inputFiles {
+    NSMutableOrderedSet<NSString *> *files = [NSMutableOrderedSet orderedSet];
+    if (!_synctex.valid()) return @[];
+    for (const auto &kv : _synctex.inputs())
+        if (NSString *f = [self inputFileForTag:kv.first]) [files addObject:f];
+    return files.array;
+}
+
+// The \input file's source, parsed, from its tab's buffer or the disk;
+// nullptr when it cannot be read. Parsed again only when its text changed.
+// An \input file's text as the user has it: its tab's buffer, else the disk.
+- (NSString *)textOfInputFile:(NSString *)path {
+    NSString *text = self.inputText ? self.inputText(path) : nil;
+    if (!text) text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding
+                                                   error:nil];
+    return text;
+}
+
+- (const LatexDoc *)docOfInputFile:(NSString *)path source:(std::string *)srcOut {
+    NSString *text = [self textOfInputFile:path];
+    if (!text) return nullptr;
+    const std::string src = Utf8(text);
+    auto &slot = _inputDocs[Utf8(path)];
+    if (slot.first != src || slot.second.spans.empty()) {
+        slot.first = src;
+        slot.second = LatexDoc::parseInput(src);
+    }
+    if (srcOut) *srcOut = src;
+    return &slot.second;
+}
+
+- (void)refreshStatus {
+    if (self.pdf.document && !self.pdf.isHidden && !self.compiling) [self showPagesStatus];
 }
 
 // --------------------------------------------------------------- problems
@@ -1263,6 +1347,31 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
     return doc.spanForClick(lines, Utf8(clicked), Utf8(before), Utf8(after));
 }
 
+const LatexSpan *MCLatexSpanAtPointInFiles(
+    const SyncTexIndex &sync, int mainTag, PDFPage *page, int pageNumber, NSPoint pagePoint,
+    const std::function<const LatexDoc *(int tag)> &docFor, int *tagOut,
+    std::vector<SyncTexHit> *hitsOut) {
+    const NSRect bounds = [page boundsForBox:kPDFDisplayBoxMediaBox];
+    const std::vector<int> tags =
+        sync.tagsAtPoint(pageNumber, pagePoint.x, bounds.size.height - pagePoint.y, mainTag);
+    bool first = true;
+    for (int tag : tags) {
+        const LatexDoc *doc = docFor(tag);
+        if (!doc) continue;
+        std::vector<SyncTexHit> hits;
+        const LatexSpan *span =
+            MCLatexSpanAtPoint(*doc, sync, tag, page, pageNumber, pagePoint, &hits);
+        if (hitsOut && (first || span)) *hitsOut = hits;
+        first = false;
+        if (span) {
+            if (tagOut) *tagOut = tag;
+            return span;
+        }
+    }
+    if (tagOut) *tagOut = 0;
+    return nullptr;
+}
+
 - (void)openEditorForPage:(PDFPage *)page point:(NSPoint)pagePoint {
     if (!_synctex.valid()) {
         [self setStatus:@"No SyncTeX data, so the preview cannot be edited"
@@ -1271,10 +1380,35 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
     }
     NSRect bounds = [page boundsForBox:kPDFDisplayBoxMediaBox];
     int pageNumber = (int)[self.pdf.document indexForPage:page] + 1;
-    int tag = _synctex.tagForPath(Utf8([self scratchTexPath]));
+    const int mainTag = _synctex.tagForPath(Utf8([self scratchTexPath]));
     std::vector<SyncTexHit> hits;
-    const LatexSpan *span = MCLatexSpanAtPoint(_doc, _synctex, tag, page,
-                                               pageNumber, pagePoint, &hits);
+    // The document's own text, or an \input file's: whichever the boxes
+    // under the point name first that can place the click.
+    std::map<int, std::pair<NSString *, std::string>> files;
+    int tag = 0;
+    const LatexSpan *span = MCLatexSpanAtPointInFiles(
+        _synctex, mainTag, page, pageNumber, pagePoint,
+        [&](int t) -> const LatexDoc * {
+            if (t == mainTag) return &_doc;
+            NSString *file = [self inputFileForTag:t];
+            if (!file) return nullptr;
+            std::string src;
+            const LatexDoc *d = [self docOfInputFile:file source:&src];
+            if (d) files[t] = {file, src};
+            return d;
+        },
+        &tag, &hits);
+    if (span && tag != mainTag) {
+        auto it = files.find(tag);
+        if (it == files.end()) span = nullptr;
+        else {
+            _editingFile = it->second.first;
+            _editingSrc = it->second.second;
+        }
+    } else {
+        _editingFile = nil;
+        _editingSrc.clear();
+    }
     if (!span) {
         [self setStatus:@"That is not text MiniCode can trace back to the source"
                    busy:NO];
@@ -1333,13 +1467,19 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
     _editingValid = YES;
     _addingItem = NO;
     _editingItemIndex = span.itemIndex;
+    // An \input file's span is in that file's text, and its lists.
+    const std::string &src = _editingFile ? _editingSrc : _src;
+    const LatexDoc *doc = _editingFile ? &_inputDocs[Utf8(_editingFile)].second : &_doc;
     BOOL inList = span.listIndex >= 0 &&
-                  (size_t)span.listIndex < _doc.lists.size();
-    if (inList) _editingList = _doc.lists[(size_t)span.listIndex];
+                  (size_t)span.listIndex < doc->lists.size();
+    if (inList) _editingList = doc->lists[(size_t)span.listIndex];
 
-    NSString *body = NsStr(_src.substr(span.start, span.end - span.start));
-    [self presentPopoverWithTitle:[NSString stringWithFormat:@"Editing %@",
-                                   [self describeSpan:span]]
+    const size_t a = std::min(span.start, src.size());
+    NSString *body = NsStr(src.substr(a, std::min(span.end, src.size()) - a));
+    NSString *title = [NSString stringWithFormat:@"Editing %@", [self describeSpan:span]];
+    if (_editingFile)
+        title = [title stringByAppendingFormat:@" in %@", _editingFile.lastPathComponent];
+    [self presentPopoverWithTitle:title
                              text:body
                        allowsItem:inList
                            anchor:rect
@@ -1450,6 +1590,10 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
     [self.popover performClose:nil];
     _editingValid = NO;
 
+    if (_editingFile) {
+        [self commitInputEdit:text adding:adding];
+        return;
+    }
     if (adding) {
         if (text.empty()) return;
         LatexDoc::Edit edit =
@@ -1462,6 +1606,53 @@ const LatexSpan *MCLatexSpanAtPoint(const LatexDoc &doc, const SyncTexIndex &syn
     if (text == current) return;
     LatexDoc::Edit edit = LatexDoc::replaceSpan(_src, _editing, text);
     [self applyEdit:edit];
+}
+
+// The popover's edit of an \input file: a splice of that file's text, put
+// into its tab by the controller (opened in the background when it was not
+// open), unsaved, one undo step there. Refused when the file's text
+// changed while the box was open.
+- (void)commitInputEdit:(const std::string &)text adding:(BOOL)adding {
+    NSString *file = _editingFile;
+    NSString *name = file.lastPathComponent;
+    NSString *nowText = [self textOfInputFile:file];
+    const std::string now = Utf8(nowText ?: @"");
+    if (!nowText || now != _editingSrc) {
+        [self setStatus:[NSString stringWithFormat:@"%@ changed while the box was open, "
+                                                   @"so the edit was not made", name]
+                   busy:NO];
+        return;
+    }
+    LatexDoc::Edit edit;
+    if (adding) {
+        if (text.empty()) return;
+        edit = LatexDoc::addItem(now, _editingList, _editingItemIndex, text);
+    } else {
+        const size_t a = std::min(_editing.start, now.size());
+        if (now.substr(a, std::min(_editing.end, now.size()) - a) == text) return;
+        edit = LatexDoc::replaceSpan(now, _editing, text);
+    }
+    // The splice as a range of the old text (UTF-16) and what replaces it:
+    // the common ends of the two texts, kept off a character's middle.
+    const std::string &after = edit.source;
+    size_t head = 0;
+    while (head < now.size() && head < after.size() && now[head] == after[head]) head++;
+    size_t tail = 0;
+    while (tail < now.size() - head && tail < after.size() - head &&
+           now[now.size() - 1 - tail] == after[after.size() - 1 - tail])
+        tail++;
+    auto continuation = [](char c) { return ((unsigned char)c & 0xC0) == 0x80; };
+    while (head > 0 && head < now.size() && continuation(now[head])) head--;
+    while (tail > 0 && continuation(now[now.size() - tail])) tail--;
+    NSString *before = NsStr(now.substr(0, head));
+    NSString *removed = NsStr(now.substr(head, now.size() - tail - head));
+    NSString *inserted = NsStr(after.substr(head, after.size() - tail - head));
+    const NSRange range = NSMakeRange(before.length, removed.length);
+    if (!self.onInputEdited || !self.onInputEdited(file, range, inserted)) {
+        [self setStatus:[NSString stringWithFormat:@"%@ could not be changed", name] busy:NO];
+        return;
+    }
+    [self showPagesStatus];
 }
 
 - (void)popoverDidClose:(NSNotification *)note {

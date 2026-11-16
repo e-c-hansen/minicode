@@ -122,6 +122,60 @@ static void testLatexForwardAndLog() {
         CHECK(idx.boxesForLine(5, 3).size() == 1);
         CHECK(idx.boxesForLine(1, 3).empty());
     }
+    GROUP("synctex:input-clicks");
+    {
+        // The committed two-file fixture (tests/latex/fixtures: main.tex
+        // reads chapter.tex and appendix.tex, as tectonic 0.17.0 typeset
+        // it): a click in an \input file's text names that file first, a
+        // click in the document's own text the document, and the document
+        // always comes last when nothing under the point named it.
+        const std::string fx = ReadFixture("tests/latex/fixtures/main.synctex");
+        if (fx.empty()) {
+            std::printf("    (skipped: run from the repository root for tests/latex)\n");
+        } else {
+            SyncTexIndex idx = SyncTexIndex::parse(fx);
+            const int mainTag = idx.tagForPath("@DIR@/.main.minicode.tex");
+            CHECK(mainTag == 1);
+            CHECK(idx.inputs().size() == 3);   // the engine's own files have no path
+            CHECK(idx.pathForTag(7) == "@DIR@/chapter.tex");
+            CHECK(idx.inputs().count(8) == 1 && idx.inputs().at(8) == "@DIR@/appendix.tex");
+            struct Case { int tag, line, page; };
+            for (const Case &c : {Case{7, 5, 1}, Case{7, 3, 1}, Case{8, 2, 2}, Case{1, 4, 1}}) {
+                const std::vector<SyncTexBox> b = idx.boxesForLine(c.tag, c.line);
+                CHECK(!b.empty());
+                if (b.empty()) continue;
+                CHECK(b[0].page == c.page);
+                const std::vector<int> tags = idx.tagsAtPoint(
+                    b[0].page, b[0].x + b[0].width / 4, b[0].y + b[0].height / 2, mainTag);
+                CHECK(!tags.empty() && tags.front() == c.tag);
+                CHECK(std::count(tags.begin(), tags.end(), mainTag) == 1);
+            }
+            // A page with nothing on it: the document alone, or nothing.
+            CHECK(idx.tagsAtPoint(9, 10, 10, mainTag) == std::vector<int>{mainTag});
+            CHECK(idx.tagsAtPoint(9, 10, 10, 0).empty());
+        }
+        // An \input file is body text from its first line: parsed as a
+        // document of its own (no \begin{document}) it has no spans.
+        const std::string chapter = ReadFixture("tests/latex/fixtures/chapter.tex");
+        if (!chapter.empty()) {
+            auto holds = [](const LatexDoc &d, const char *word) {
+                for (const LatexSpan &sp : d.spans)
+                    if (sp.display.find(word) != std::string::npos) return true;
+                return false;
+            };
+            CHECK(!holds(LatexDoc::parse(chapter), "marmot"));
+            const LatexDoc part = LatexDoc::parseInput(chapter);
+            CHECK(holds(part, "marmot") && holds(part, "lemur"));
+            const LatexSpan *sp = part.spanForClick({5}, "lemur");
+            CHECK(sp && chapter.substr(sp->start, sp->end - sp->start).find("lemur in the snow") !=
+                            std::string::npos);
+            // A full document read as an input keeps to its body.
+            const LatexDoc whole = LatexDoc::parseInput(
+                "\\documentclass{article}\n\\begin{document}\nBody words here.\n"
+                "\\end{document}\nafter the end\n");
+            CHECK(holds(whole, "Body words") && !holds(whole, "after the end"));
+        }
+    }
     {
         // Only a vertical box carries the line: the smallest one stands.
         SyncTexIndex v = SyncTexIndex::parse(
