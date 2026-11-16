@@ -14,6 +14,7 @@
 #import "AgentModel.h"
 #import "AgentPages.h"
 #import "AgentWindow.h"
+#import "AppSettings.h"
 #import "ChangeReviewPage.h"
 #import "AgentsPanel.h"
 #import "CompareView.h"
@@ -549,6 +550,19 @@ MC_GUI_SUITE(agents) {
         if (hw.location != NSNotFound) {
             NSColor *bg = [ts attribute:NSBackgroundColorAttributeName atIndex:hw.location effectiveRange:NULL];
             GCHECK(bg != nil && bg.alphaComponent > 0.3);
+        }
+        // In the file's syntax colors, as the review and compare pages: the
+        // string in String's color on both sides of the edit.
+        const NSRange quoted = [ts.string rangeOfString:@"'hello, world'"];
+        const NSRange old = [ts.string rangeOfString:@"- print('hi')"];   // the removed line
+        GCHECK(quoted.location != NSNotFound && old.location != NSNotFound);
+        NSColor *stringColor = [[AppSettings shared] syntax:TokenStyle::String];
+        if (quoted.location != NSNotFound && old.location != NSNotFound) {
+            NSColor *now = [ts attribute:NSForegroundColorAttributeName atIndex:quoted.location effectiveRange:NULL];
+            NSColor *was = [ts attribute:NSForegroundColorAttributeName atIndex:old.location + 8
+                                  effectiveRange:NULL];
+            MCGuiNote(@"string colors: now %@, was %@, String %@", now, was, stringColor);
+            GCHECK([now isEqual:stringColor] && [was isEqual:stringColor]);
         }
         MCComparison *cmp = [pg beforeAndNow];
         GCHECK(cmp != nil && cmp.leftText.length == 0 && [cmp.rightText containsString:@"hello, world"]);

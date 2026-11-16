@@ -1053,6 +1053,9 @@ MC_GUI_SUITE(git_review) {
     MCGuiStep(@"only it is in the index; the file untouched; the eye on f.txt still", ^{
         MCChangeReviewPage *p = Review(c);
         GCHECK_EQ_STR(p.message, @"Staged a change to f.txt.");
+        // f.txt is in both lists, and one file: two files in all.
+        MCGuiNote(@"header after staging: %@", p.headerDetail);
+        GCHECK_EQ_STR(p.headerDetail, @"2 files, +4 -4");
         GCHECK_EQ_STR(index(), @"a\nb\nc\nD\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n");
         GCHECK_EQ_STR(Read(f), edited);
         const NSInteger at = [p rowOfFile:@"f.txt" staged:NO];
@@ -1192,6 +1195,29 @@ MC_GUI_SUITE(git_review) {
         GCHECK([p pressAtPoint:NSMakePoint(NSMinX(r) + 120, NSMidY(r))]);
         GCHECK(p.rowDescriptions.count == before + 10);
         GCHECK(RowNamed(p, @"~ 11 unchanged lines") < 0 && RowNamed(p, @"  t") >= 0);
+        actions = 0;
+        loads = p.loads;
+        GCHECK(PressButton(p, @"Stage File", [p rowOfFile:@"g.py" staged:NO]));
+    });
+    MCGuiWait(@"g.py staged and read again", 15, ^BOOL {
+        return actions == 1 && Review(c).loads > loads && [Review(c) rowOfFile:@"g.py" staged:YES] >= 0;
+    });
+    MCGuiStep(@"its note stays while nothing else moves; then a commit from the panel", ^{
+        MCChangeReviewPage *p = Review(c);
+        GCHECK_EQ_STR(p.message, @"Staged g.py.");
+        loads = p.loads;
+        Git(c).messageView.string = @"both staged";
+        [Git(c) commit];
+    });
+    MCGuiWait(@"committed, and the review read again", 15, ^BOOL {
+        return Review(c).loads > loads && [Review(c) rowOfFile:@"g.py" staged:YES] < 0 &&
+               [Review(c) rowOfFile:@"f.txt" staged:YES] < 0;
+    });
+    MCGuiStep(@"the note about staging went with the staged changes", ^{
+        MCChangeReviewPage *p = Review(c);
+        MCGuiNote(@"after the commit: \"%@\", rows %@", p.message, p.rowDescriptions);
+        GCHECK(p.message.length == 0);
+        GCHECK_EQ_STR([[p valueForKey:@"messageLabel"] stringValue], @"");
     });
     GitShell(@"50,000 lines, every one changed", [NSString
         stringWithFormat:@"set -e; cd '%@'; seq 1 50000 | sed 's/^/line /' > big.txt; %@ add big.txt; "
@@ -1228,7 +1254,7 @@ MC_GUI_SUITE(git_review) {
 MC_GUI_SUITE(worktree_review) {
     __block EditorController *c = nil;
     __block NSInteger actions = 0;
-    __block NSUInteger alerts = 0;
+    __block NSUInteger alerts = 0, loads = 0;
     NSString *git = MCGitExecutable();
     NSString *repo = [MCGuiScratch() stringByAppendingPathComponent:@"wtreview"];
     NSString *wt = [repo stringByAppendingPathComponent:@".claude/worktrees/agent-x"];
@@ -1307,7 +1333,7 @@ MC_GUI_SUITE(worktree_review) {
         GCHECK([[shown subarrayWithRange:NSMakeRange(alerts, shown.count - alerts)]
             isEqualToArray:@[@"Bring these 3 files' changes into main?"]]);
         MCGuiNote(@"applied: %@", page().message);
-        GCHECK([page().message hasPrefix:@"Brought 3 files' changes into main as uncommitted changes."]);
+        GCHECK_EQ_STR(page().message, @"Brought 3 files into main as uncommitted changes.");
         GCHECK_EQ_STR(inMain(@"a.txt"), @"1\nTWO\n3\n4\n5\n");
         GCHECK_EQ_STR(inMain(@"b.txt"), @"bb\n");
         GCHECK_EQ_STR(inMain(@"n.txt"), @"new\n");
@@ -1317,6 +1343,37 @@ MC_GUI_SUITE(worktree_review) {
                [st containsString:@"?? n.txt"]);
         GCHECK_EQ_STR(GitText(repo, @[@"rev-list", @"--count", @"HEAD"]), @"2\n");
         GCHECK_EQ_STR(Read([wt stringByAppendingPathComponent:@"b.txt"]), @"bb\n");
+    });
+    MCGuiStep(@"the page says it worked: the result on a line of its own, the button done", ^{
+        MCChangeReviewPage *p = page();
+        [p.pageView layoutSubtreeIfNeeded];
+        NSButton *apply = [p valueForKey:@"applyButton"];
+        NSButton *source = [p valueForKey:@"sourceButton"];
+        NSTextField *note = [p valueForKey:@"messageLabel"];
+        MCGuiNote(@"after applying: button \"%@\" (%@), note %@ wide of %.0f",
+                  apply.title, apply.enabled ? @"enabled" : @"disabled",
+                  NSStringFromRect(note.frame), note.fittingSize.width);
+        GCHECK(p.applied);
+        GCHECK_EQ_STR(apply.title, @"Applied to Main");
+        GCHECK(!apply.enabled && !apply.hidden);
+        GCHECK(!source.hidden && NSWidth(source.frame) > 0);
+        // The whole sentence shows, whatever the title beside it takes.
+        GCHECK(NSWidth(note.frame) >= ceil(note.fittingSize.width));
+        GCHECK(NSMinX(source.frame) >= NSMaxX(note.frame));
+        MCGuiSnapshot(p.pageView, @"worktree-applied");
+        [source performClick:nil];
+    });
+    MCGuiWait(@"Source Control and main's Uncommitted Changes", 15, ^BOOL {
+        return [[c valueForKey:@"gitPanelVisible"] boolValue] && [page().pageKind isEqualToString:@"review"] &&
+               page().loaded;
+    });
+    MCGuiStep(@"the files brought in are listed there; back to the worktree's page", ^{
+        NSArray *rows = page().rowDescriptions;
+        MCGuiNote(@"main's review: %@", rows);
+        GCHECK([rows containsObject:@"F a.txt  +1 -1"] && [rows containsObject:@"F b.txt  +1 -1"]);
+        [(MCAgentWindow *)[c valueForKey:@"agents"] compareWorktreeAt:wt];
+        GCHECK_EQ_STR(page().pageKind, @"worktree-changes");
+        GCHECK(page().applied);
     });
     GitShell(@"main put back, then a.txt's second line changed there and committed",
              [NSString stringWithFormat:@"set -e; cd '%@'; %@ checkout -- .; rm n.txt; "
@@ -1337,6 +1394,20 @@ MC_GUI_SUITE(worktree_review) {
         GCHECK([st containsString:@"UU a.txt"] && [st containsString:@" M b.txt"] &&
                [st containsString:@"?? n.txt"]);
         GCHECK_EQ_STR(GitText(repo, @[@"rev-list", @"--count", @"HEAD"]), @"3\n");
+        loads = page().loads;
+        MCGuiWriteFile([wt stringByAppendingPathComponent:@"n.txt"], @"newer\n");
+        [page() reload];
+    });
+    MCGuiWait(@"the worktree read again", 15, ^BOOL { return page().loads > loads; });
+    MCGuiStep(@"the agent worked on: Apply to Main… is back, the old result gone", ^{
+        MCChangeReviewPage *p = page();
+        NSButton *apply = [p valueForKey:@"applyButton"];
+        MCGuiNote(@"after the worktree changed: \"%@\", note \"%@\"", apply.title, p.message);
+        GCHECK(!p.applied);
+        GCHECK_EQ_STR(apply.title, @"Apply to Main…");
+        GCHECK(apply.enabled);
+        GCHECK([[p valueForKey:@"sourceButton"] isHidden]);
+        GCHECK(p.message.length == 0);
     });
     MCGuiStep(@"the window closes; the real Trash back", ^{
         UseScratchTrash(NO);

@@ -73,6 +73,23 @@ struct FileDiff {
 // `ext` picks the syntax colors (none when empty or unknown, or past 2 MB).
 FileDiff diffFile(File f, const std::string& ext);
 
+// The syntax colors of each line of `text` (lines split at "\n", a "\r"
+// before it dropped, as InlineAgent::pendingDiff splits them), each span's
+// start counted from its line's start: for a page that shows lines one by
+// one, such as a session's changes to a file. Empty for an unknown `ext`
+// or a text past 2 MB.
+std::vector<std::vector<SideBySide::Span>> syntaxByLine(const std::u16string& text,
+                                                        const std::string& ext);
+
+// How many files the diffs are about: a file with staged and unstaged
+// changes is in both lists, and counted once.
+size_t fileCount(const std::vector<FileDiff>& diffs);
+
+// A fingerprint of what the diffs show (each file's list, path, status and
+// both texts): two reads that show the same give the same number, so a
+// note about the last action can go once the changes have moved on.
+size_t fingerprint(const std::vector<FileDiff>& diffs);
+
 // The texts' lines as a page shows them: without "\n" and a "\r" before it.
 std::u16string oldLine(const FileDiff& d, int line);
 std::u16string newLine(const FileDiff& d, int line);

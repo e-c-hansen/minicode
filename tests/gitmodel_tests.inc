@@ -389,11 +389,9 @@ static void testGitModel() {
         for (int i = 0; i < 8; i++) many.push_back("f" + std::to_string(i));
         CHECK(applyToMainPlan(many, clean, "main", "x").detail.rfind(
                   "f0, f1, f2, f3, f4, f5, and 2 more come", 0) == 0);
-        CHECK(applyDoneText(3, {}, "main") ==
-              "Brought 3 files' changes into main as uncommitted changes. Review and commit them "
-              "in Source Control.");
+        CHECK(applyDoneText(3, {}, "main") == "Brought 3 files into main as uncommitted changes.");
         CHECK(applyDoneText(1, {"a.txt"}, "main") ==
-              "Brought 1 file's changes into main; a.txt did not apply cleanly and came in with "
+              "Brought 1 file into main; a.txt did not apply cleanly and came in with "
               "conflict marks, listed as conflicts in Source Control.");
         CHECK(applyFailureText(1, "", "error: n.txt: already exists in working directory\n") ==
               "Nothing was brought into the main checkout: error: n.txt: already exists in working "

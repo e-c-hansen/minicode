@@ -3066,6 +3066,17 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   the short hash muted after it; the GTK and Android panels show
   `commitDoneText`). The line over the graph (`summaryText`) wraps, its
   height measured on every layout, with the whole of it as its tooltip.
+  **The page's note** (2026-11-16, G1) is the last action's words, at the
+  bar's right, or on a line of its own under the bar when they do not fit
+  or carry a button; it goes once a read started after the action shows
+  other changes (`ChangeReview::fingerprint`, computed on the read queue;
+  `noteRead:serial:`), so "Staged a change" never outlives a commit. The
+  header counts files (`ChangeReview::fileCount`), not list entries.
+  **Apply to Main** (worktree mode; A1b) puts its result on that line
+  with Show in Source Control (`onShowSourceControl`: the window's
+  `showSourceControlChanges` when it is on the main checkout, else a
+  window on it), and the button reads "Applied to Main", disabled, until
+  a read shows the worktree's changes other than those applied.
   **A worktree's page** (Compare with Main, 2026-11-15, `make guitest
   SUITES=worktree_review`): `diff --raw -z -M <merge base>` in the
   worktree (its new side read from disk) plus `ls-files --others
@@ -3572,8 +3583,9 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   the git panel: sessions newest first, subagents nested, files in the folder,
   the worktree and outside (gone ones struck through); a click on a file
   is `MCSessionFilePage` (AgentPages, kind `session-file`), what that
-  session changed there (each change an `InlineAgent::pendingDiff`, the
-  whole as an MCComparison of before and now when `analyze` rebuilt it),
+  session changed there (each change an `InlineAgent::pendingDiff`, in
+  syntax colors from `ChangeReview::syntaxByLine` of each side as written,
+  the whole as an MCComparison of before and now when `analyze` rebuilt it),
   read on its own queue and again on the model's change notification;
   the row menu keeps Open. The Evidence view lists the edits among the
   commands, each a link to that page. The Evidence view

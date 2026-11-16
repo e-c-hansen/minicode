@@ -299,6 +299,53 @@ static void testChangeReview() {
         CHECK(s.rows[rowFor(s, staged, a)].newLine == 8);
     }
 
+    GROUP("review:counts");
+    {
+        // One file with a staged change and another not: in both lists,
+        // one file.
+        FileDiff staged = diffFile(file("a\nb\n", "A\nb\n", Section::Staged), "");
+        FileDiff changed = diffFile(file("A\nb\n", "A\nB\n"), "");
+        File other = file("x\n", "y\n");
+        other.path = "g.txt";
+        FileDiff g = diffFile(other, "");
+        CHECK(fileCount({staged, changed}) == 1);
+        CHECK(fileCount({staged, changed, g}) == 2);
+        CHECK(fileCount({}) == 0);
+        // The same read twice: the same fingerprint; a commit (the staged
+        // list gone), a changed text, or a file moved between lists: not.
+        const size_t both = fingerprint({staged, changed});
+        CHECK(fingerprint({staged, changed}) == both);
+        CHECK(fingerprint({changed}) != both);
+        FileDiff edited = diffFile(file("A\nb\n", "A\nBB\n"), "");
+        CHECK(fingerprint({staged, edited}) != both);
+        FileDiff moved = diffFile(file("A\nb\n", "A\nB\n", Section::Staged), "");
+        CHECK(fingerprint({moved}) != fingerprint({changed}));
+    }
+
+    GROUP("review:syntax-by-line");
+    {
+        // Each line's colors from its own start; a "\r\n" file's lines as
+        // pendingDiff splits them; a string across the break colored on
+        // both lines.
+        auto lines = syntaxByLine(u("x = 1\r\ndef f():\n    return 'a'\n"), "py");
+        CHECK(lines.size() == 3);
+        bool defAtStart = false, stringOnThird = false;
+        for (const SideBySide::Span &sp : lines.size() > 1 ? lines[1] : std::vector<SideBySide::Span>())
+            if (sp.start == 0 && sp.length == 3 && sp.style == (int)TokenStyle::Keyword) defAtStart = true;
+        for (const SideBySide::Span &sp : lines.size() > 2 ? lines[2] : std::vector<SideBySide::Span>()) {
+            if (sp.style == (int)TokenStyle::String && sp.start == 11 && sp.length == 3) stringOnThird = true;
+            CHECK(sp.start + sp.length <= 14);
+        }
+        CHECK(defAtStart && stringOnThird);
+        for (const SideBySide::Span &sp : lines.empty() ? std::vector<SideBySide::Span>() : lines[0])
+            CHECK(sp.start + sp.length <= 5);   // never over the "\r"
+        auto doc = syntaxByLine(u("s = \"\"\"one\ntwo\"\"\"\n"), "py");
+        CHECK(doc.size() == 2 && !doc[1].empty() && doc[1][0].start == 0 &&
+              doc[1][0].style == (int)TokenStyle::String);
+        CHECK(syntaxByLine(u("plain words\n"), "").empty());
+        CHECK(syntaxByLine(u(""), "py").empty());
+    }
+
     GROUP("review:git-output");
     {
         CHECK((lsFilesArgs({"a b.txt"}) ==

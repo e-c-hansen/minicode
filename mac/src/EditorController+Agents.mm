@@ -683,6 +683,11 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 }
 
 // ------------------------------------------------------------ agent work
+- (void)showSourceControlChanges {
+    if (!self.gitPanelVisible) [self toggleSourceControl:nil];
+    [self gitReviewChanges:nil];
+}
+
 // The model's worktrees changed: the tree's Worktrees rows say so.
 - (void)agentWorktreesChanged {
     if (_worktreesItem) [self refreshTreeCells];

@@ -7,6 +7,7 @@
 #import "CompareView.h"
 
 #include "AgentEdits.h"
+#include "ChangeReview.h"
 #include "AgentEvidence.h"
 #include "AgentTranscript.h"
 #include "InlineAgent.h"
@@ -939,6 +940,13 @@ static std::u16string U16Of(NSString *s) {
 - (BOOL)rebuilt { return _before != nil; }
 
 // ------------------------------------------------------------- drawing
+// What picks a file's syntax colors: its extension in lower case, or the
+// whole name when it has none (Makefile, Dockerfile).
+static std::string SyntaxExtension(NSString *path) {
+    NSString *ext = path.pathExtension.lowercaseString;
+    return PU8(ext.length ? ext : path.lastPathComponent);
+}
+
 static NSString *CountLines(NSString *s) {
     __block NSUInteger n = 0;
     [s enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) { (void)line; (void)stop; n++; }];
@@ -1060,9 +1068,15 @@ static NSString *CountLines(NSString *s) {
             @{NSFontAttributeName: small, NSForegroundColorAttributeName: noteColor,
               NSParagraphStyleAttributeName: indented});
     // The change as a small diff: old lines red, new green, changed words
-    // marked (InlineAgent::pendingDiff, as the inline agent's bar shows one).
+    // marked (InlineAgent::pendingDiff, as the inline agent's bar shows one),
+    // in the file's syntax colors as the review and compare pages are. Each
+    // side is colored as written (an edit's text is a piece of the file, so
+    // a piece starting inside a string or comment colors as code).
     NSColor *red = Red(), *green = Green();
     const std::u16string a = U16Of(c.oldText ?: @""), b = U16Of(c.putText ?: @"");
+    const std::string ext = SyntaxExtension(_path);
+    const auto oldSyntax = ChangeReview::syntaxByLine(a, ext), newSyntax = ChangeReview::syntaxByLine(b, ext);
+    AppSettings *cfg = [AppSettings shared];
     for (const InlineAgent::DiffLine &d : InlineAgent::pendingDiff(a, b, 2, 200)) {
         NSString *lineBody = [NSString stringWithCharacters:(const unichar *)d.text.data()
                                                      length:d.text.size()];
@@ -1077,7 +1091,6 @@ static NSString *CountLines(NSString *s) {
             break;
         case InlineAgent::DiffLine::Context:
             line = [@"  " stringByAppendingString:lineBody];
-            fg = Muted();
             break;
         case InlineAgent::DiffLine::Removed:
             line = [@"- " stringByAppendingString:lineBody];
@@ -1096,6 +1109,15 @@ static NSString *CountLines(NSString *s) {
         NSMutableAttributedString *l = [[NSMutableAttributedString alloc]
             initWithString:[line stringByAppendingString:@"\n"] attributes:attrs];
         const NSUInteger at = line.length - lineBody.length;
+        const bool oldSide = d.kind == InlineAgent::DiffLine::Removed;
+        const int ln = (oldSide ? d.oldLine : d.newLine) - 1;
+        const auto &sides = oldSide ? oldSyntax : newSyntax;
+        if (d.kind != InlineAgent::DiffLine::Gap && ln >= 0 && (size_t)ln < sides.size())
+            for (const SideBySide::Span &sp : sides[(size_t)ln])
+                if (sp.start + sp.length <= lineBody.length)
+                    [l addAttribute:NSForegroundColorAttributeName
+                              value:[cfg syntax:(TokenStyle)sp.style]
+                              range:NSMakeRange(at + sp.start, sp.length)];
         for (const auto &w : d.words)
             if (d.kind != InlineAgent::DiffLine::Gap && w.first + w.second <= lineBody.length)
                 [l addAttribute:NSBackgroundColorAttributeName value:strong
