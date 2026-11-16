@@ -463,11 +463,17 @@ static void testMermaidDiagram() {
         CHECK(std::string(MermaidDiagram::kMermaidJsUrl).rfind("https://", 0) == 0);
         const std::string sha = MermaidDiagram::kMermaidJsSha256;
         CHECK(sha.size() == 64 && sha.find_first_not_of("0123456789abcdef") == std::string::npos);
-        // The drawing script: plain SVG labels, strict, the SVG sized.
+        // The drawing script: strict, Mermaid's own labels (WebKit draws
+        // them, so no plain-text fallback), fonts ready before Mermaid
+        // measures, the SVG put in the page and its place returned for the
+        // PDF.
         const std::string js = MermaidDiagram::renderScript();
-        CHECK(js.find("htmlLabels: false") != std::string::npos &&
+        CHECK(js.find("htmlLabels") == std::string::npos &&
               js.find("securityLevel: 'strict'") != std::string::npos &&
-              js.find("mermaid.render(") != std::string::npos && js.find("return ") != std::string::npos);
+              js.find("await document.fonts.ready") < js.find("mermaid.render(") &&
+              js.find("mermaid.render(") != std::string::npos &&
+              js.find("appendChild(holder)") != std::string::npos &&
+              js.find("return {x: r.left, y: r.top, width:") != std::string::npos);
         std::vector<std::string> a = MermaidDiagram::arguments("/t/in.mmd", "/t/out.png", "dark");
         const std::vector<std::string> want = {"-i", "/t/in.mmd", "-o", "/t/out.png", "-t", "dark",
                                                "-b", "transparent", "-s", "2", "-q"};

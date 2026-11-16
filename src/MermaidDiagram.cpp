@@ -4,7 +4,7 @@
 
 namespace MermaidDiagram {
 
-const int kVersion = 2;   // 2: the drawer is in the key
+const int kVersion = 3;   // 2: the drawer is in the key; 3: mermaid.js drawn by WebKit
 const int kScale = 2;
 
 const char *const kDrawerMmdc = "mmdc";
@@ -17,19 +17,28 @@ const long kMermaidJsBytes = 5537838;
 
 std::string renderScript() {
     return
-        "mermaid.initialize({startOnLoad: false, theme: theme, securityLevel: 'strict',\n"
-        "                    htmlLabels: false, flowchart: {htmlLabels: false}});\n"
+        "mermaid.initialize({startOnLoad: false, theme: theme, securityLevel: 'strict'});\n"
+        "await document.fonts.ready;\n"
+        "document.documentElement.style.background = 'transparent';\n"
+        "document.body.style.cssText = 'margin:0;background:transparent';\n"
+        "document.body.replaceChildren();\n"
         "const id = 'mc' + Math.random().toString(36).slice(2);\n"
         "const out = await mermaid.render(id, source);\n"
-        "const doc = new DOMParser().parseFromString(out.svg, 'image/svg+xml');\n"
-        "const svg = doc.documentElement;\n"
+        "const holder = document.createElement('div');\n"
+        "holder.style.cssText = 'position:absolute;left:0;top:0';\n"
+        "holder.innerHTML = out.svg;\n"
+        "document.body.appendChild(holder);\n"
+        "const svg = holder.querySelector('svg');\n"
+        "if (!svg) throw new Error('mermaid.js drew nothing');\n"
         "const box = svg.viewBox && svg.viewBox.baseVal;\n"
+        "svg.removeAttribute('style');\n"
+        "svg.style.display = 'block';\n"
         "if (box && box.width > 0 && box.height > 0) {\n"
         "  svg.setAttribute('width', String(Math.ceil(box.width)));\n"
         "  svg.setAttribute('height', String(Math.ceil(box.height)));\n"
         "}\n"
-        "svg.removeAttribute('style');\n"
-        "return new XMLSerializer().serializeToString(svg);\n";
+        "const r = svg.getBoundingClientRect();\n"
+        "return {x: r.left, y: r.top, width: Math.ceil(r.width), height: Math.ceil(r.height)};\n";
 }
 
 bool isMermaidRun(const MdRun &r) { return r.codeBlock && r.lang == "mermaid"; }

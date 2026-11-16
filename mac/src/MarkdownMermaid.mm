@@ -173,11 +173,15 @@ int MCMermaidDrawerState(void) {
 // own that keeps nothing, every load refused but the empty page it starts
 // with (by its navigation delegate, and by a content rule list for what a
 // page fetches itself), the script put in as a user script rather than
-// loaded from anywhere.
+// loaded from anywhere. It draws without a background, and a diagram comes
+// out as a PDF WebKit makes of it (vectors, so it stays sharp at any zoom):
+// NSImage's own SVG drawing ignores Mermaid's style sheet and its em
+// offsets, which put every label above its box in dark grey and filled each
+// curved edge as a black wedge (round 8, D3).
 @interface MCMermaidWeb : NSObject <WKNavigationDelegate>
 + (instancetype)shared;
 - (void)drawSource:(NSString *)source theme:(NSString *)theme
-              done:(void (^)(NSData *svg, NSString *error))done;
+              done:(void (^)(NSData *pdf, NSString *error))done;
 @property(nonatomic, readonly) NSUInteger refused;
 @end
 
@@ -234,6 +238,14 @@ int MCMermaidDrawerState(void) {
             initWithSource:script injectionTime:WKUserScriptInjectionTimeAtDocumentStart
           forMainFrameOnly:YES]];
         me->_web = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 1200, 900) configuration:config];
+        // Transparent, so the PDF has no white page under the drawing (no
+        // public switch on the Mac; Safari's own key). Without it a diagram
+        // still draws, on white.
+        @try {
+            [me->_web setValue:@NO forKey:@"drawsBackground"];
+        } @catch (NSException *e) {
+            (void)e;
+        }
         me->_web.navigationDelegate = me;
         [me->_web loadHTMLString:@"<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>"
                                  @"<body></body></html>"
@@ -278,13 +290,13 @@ int MCMermaidDrawerState(void) {
 }
 
 - (void)drawSource:(NSString *)source theme:(NSString *)theme
-              done:(void (^)(NSData *svg, NSString *error))done {
+              done:(void (^)(NSData *pdf, NSString *error))done {
     __weak MCMermaidWeb *weakSelf = self;
     __block BOOL finished = NO;
-    void (^finish)(NSData *, NSString *) = ^(NSData *svg, NSString *error) {
+    void (^finish)(NSData *, NSString *) = ^(NSData *pdf, NSString *error) {
         if (finished) return;
         finished = YES;
-        done(svg, error);
+        done(pdf, error);
     };
     // A diagram that never comes back must not hold up the rest.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
@@ -302,14 +314,30 @@ int MCMermaidDrawerState(void) {
                               inFrame:nil
                        inContentWorld:WKContentWorld.pageWorld
                     completionHandler:^(id result, NSError *jsError) {
-            if (jsError || ![result isKindOfClass:NSString.class]) {
+            NSDictionary *place = [result isKindOfClass:NSDictionary.class] ? result : nil;
+            const NSRect rect = NSMakeRect([place[@"x"] doubleValue], [place[@"y"] doubleValue],
+                                           [place[@"width"] doubleValue], [place[@"height"] doubleValue]);
+            if (jsError || !place || rect.size.width <= 0 || rect.size.height <= 0) {
                 NSString *why = jsError.userInfo[@"WKJavaScriptExceptionMessage"] ?:
                                 jsError.localizedDescription ?: @"mermaid.js drew nothing";
                 if ([why hasPrefix:@"Error: "]) why = [why substringFromIndex:7];
                 finish(nil, why);
                 return;
             }
-            finish([(NSString *)result dataUsingEncoding:NSUTF8StringEncoding], nil);
+            MCMermaidWeb *again = weakSelf;
+            if (!again) {
+                finish(nil, @"mermaid.js is not there");
+                return;
+            }
+            WKPDFConfiguration *pdf = [WKPDFConfiguration new];
+            pdf.rect = rect;
+            [again->_web createPDFWithConfiguration:pdf
+                                  completionHandler:^(NSData *data, NSError *pdfError) {
+                if (!data.length)
+                    finish(nil, pdfError.localizedDescription ?: @"WebKit made no picture of the diagram");
+                else
+                    finish(data, nil);
+            }];
         }];
     }];
 }
@@ -340,18 +368,18 @@ static void MCMermaidSetUp(void) {
     gRunQueue = dispatch_queue_create("minicode.mermaid", DISPATCH_QUEUE_SERIAL);
 }
 
-// A diagram's file: mmdc's PNG, or mermaid.js's SVG.
+// A diagram's file: mmdc's PNG, or mermaid.js's PDF.
 static NSString *MCMermaidCacheFile(NSString *key, NSString *extension) {
     return [MCMermaidCacheDirectory() stringByAppendingPathComponent:[key stringByAppendingPathExtension:extension]];
 }
 
-// The picture for `key` (PNG or SVG bytes) from memory, else from disk
+// The picture for `key` (PNG or PDF bytes) from memory, else from disk
 // (into memory); nil if none.
 static NSData *MCMermaidPicture(NSString *key) {
     MCMermaidSetUp();
     NSData *d = gPictures[key];
     if (d) return d;
-    for (NSString *ext in @[@"png", @"svg"]) {
+    for (NSString *ext in @[@"png", @"pdf"]) {
         d = [NSData dataWithContentsOfFile:MCMermaidCacheFile(key, ext)];
         if (d.length) break;
     }
@@ -359,10 +387,8 @@ static NSData *MCMermaidPicture(NSString *key) {
     return d.length ? d : nil;
 }
 
-static BOOL MCIsSvg(NSData *data) {
-    const NSUInteger n = MIN(data.length, (NSUInteger)256);
-    NSString *head = [[NSString alloc] initWithBytes:data.bytes length:n encoding:NSUTF8StringEncoding];
-    return [head containsString:@"<svg"] || [head hasPrefix:@"<?xml"];
+static BOOL MCIsPdf(NSData *data) {
+    return data.length > 5 && memcmp(data.bytes, "%PDF-", 5) == 0;
 }
 
 BOOL MCMermaidIsReady(NSString *key) {
@@ -370,11 +396,11 @@ BOOL MCMermaidIsReady(NSString *key) {
 }
 
 // A picture of the PNG at its size in points (it is drawn at kScale), or
-// of mermaid.js's SVG at its own size.
+// of mermaid.js's drawing (a PDF) at its own size.
 static NSImage *MCMermaidImage(NSData *png) {
-    if (MCIsSvg(png)) {
-        NSImage *svg = [[NSImage alloc] initWithData:png];
-        return svg.size.width > 0 && svg.size.height > 0 ? svg : nil;
+    if (MCIsPdf(png)) {
+        NSImage *pdf = [[NSImage alloc] initWithData:png];
+        return pdf.size.width > 0 && pdf.size.height > 0 ? pdf : nil;
     }
     NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:png];
     if (!rep || rep.pixelsWide <= 0 || rep.pixelsHigh <= 0) return nil;
@@ -396,8 +422,8 @@ static void MCMermaidTrimCache(void) {
     NSMutableArray<NSArray *> *files = [NSMutableArray array];
     unsigned long long total = 0;
     for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil]) {
-        if (![name.pathExtension isEqualToString:@"png"] && ![name.pathExtension isEqualToString:@"svg"])
-            continue;
+        // svg: what mermaid.js's drawings were kept as before kVersion 3.
+        if (![@[@"png", @"pdf", @"svg"] containsObject:name.pathExtension]) continue;
         NSString *path = [dir stringByAppendingPathComponent:name];
         NSDictionary *a = [fm attributesOfItemAtPath:path error:nil];
         total += a.fileSize;
@@ -554,11 +580,11 @@ static void MCMermaidRunNext(void) {
     }
     gRunning = YES;
     if (web) {
-        [[MCMermaidWeb shared] drawSource:job[1] theme:job[2] done:^(NSData *svg, NSString *error) {
-            NSImage *image = svg ? MCMermaidImage(svg) : nil;
-            if (svg && !image) error = @"mermaid.js drew a picture this Mac cannot show";
-            if (image) MCMermaidKeep(job[0], svg, @"svg");
-            MCMermaidSettle(job, image ? svg : nil, error);
+        [[MCMermaidWeb shared] drawSource:job[1] theme:job[2] done:^(NSData *pdf, NSString *error) {
+            NSImage *image = pdf ? MCMermaidImage(pdf) : nil;
+            if (pdf && !image) error = @"mermaid.js drew a picture this Mac cannot show";
+            if (image) MCMermaidKeep(job[0], pdf, @"pdf");
+            MCMermaidSettle(job, image ? pdf : nil, error);
         }];
         return;
     }
