@@ -1425,12 +1425,15 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
     NSRect inView = [self.pdf convertRect:[self.pdf convertRect:anchor fromPage:page]
                                    toView:self];
     // The box opens on the word that was clicked, found in the span's
-    // LaTeX by the text around it, never the whole span preselected.
+    // LaTeX by the text around it, never the whole span preselected. The
+    // span's offsets are in its own file's text: an \input file's, or the
+    // document's.
     NSString *before = @"", *after = @"";
     NSString *clicked = MCLatexClickedWord(page, pagePoint, &before, &after);
     NSRange selection = NSMakeRange(NSNotFound, 0);
-    if (clicked) {
-        const std::string body = _src.substr(span->start, span->end - span->start);
+    const std::string &spanSrc = _editingFile ? _editingSrc : _src;
+    if (clicked && span->start <= span->end && span->end <= spanSrc.size()) {
+        const std::string body = spanSrc.substr(span->start, span->end - span->start);
         const auto at = MarkdownEdit::sourceOffsetFor(body, Utf8(clicked), Utf8(before), Utf8(after));
         if (at.first != std::string::npos) {
             NSString *head = [[NSString alloc] initWithBytes:body.data() length:at.first

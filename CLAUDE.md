@@ -2373,7 +2373,9 @@ mermaid.js.
   `allowsContentJavaScript` off under a bar (Run Scripts, Don't Run,
   Remember for every HTML file, which writes the key through
   `AppSettings writeValue:`); an answer not remembered is kept per file
-  until quit. Another tab showing leaves the page loaded, hidden, its
+  until quit. An answer leaves the bar as a line saying what was chosen
+  (`noting`, a × to close it) until another file shows: the bar going at
+  once moved the page up under the pointer (round 8, D1). Another tab showing leaves the page loaded, hidden, its
   media paused (macOS 12; macOS 11 drops it), so it comes back scrolled
   where it was. Cmd+1 and the toggle give it the keyboard through
   `MCFileViewers focusInWindow:` (`grantKeyboard`); nothing else does.

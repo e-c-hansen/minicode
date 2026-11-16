@@ -13,7 +13,9 @@
 // holds anything that would run (FileSniff::htmlMayRunScripts) shows with
 // scripts off under a bar asking whether to run them, with a box to
 // remember the answer in the settings file; an answer not remembered
-// lasts for that file until minicode quits. The web view is an MCWebView
+// lasts for that file until minicode quits. Once answered, the bar stays
+// as a line saying what was chosen (with a close box) until another file
+// shows, so the page does not move up under the pointer. The web view is an MCWebView
 // (Browser.h), so the page never takes the keyboard by itself, and its
 // data store is not persistent: nothing it stores outlives the page.
 //
@@ -47,11 +49,14 @@
 
 // The answer to the bar's question, as its buttons give it.
 - (void)answerScripts:(BOOL)run remember:(BOOL)remember;
+// Takes the answered line away, as its close box does.
+- (void)endNote;
 
 @property(nonatomic, readonly) MCWebView *webView;   // nil until a file shows
 @property(nonatomic, readonly, copy) NSString *path;
 @property(nonatomic, readonly) BOOL runsScripts;     // the page on show runs them
-@property(nonatomic, readonly) BOOL asking;          // the scripts bar shows
+@property(nonatomic, readonly) BOOL asking;          // the scripts bar asks
+@property(nonatomic, readonly) BOOL noting;          // it says what was answered
 @property(nonatomic, readonly) NSView *questionBar;
 @property(nonatomic, readonly) NSButton *rememberBox;
 @property(nonatomic, readonly) NSUInteger loads;     // pages loaded, for checks
