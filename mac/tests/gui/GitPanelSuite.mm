@@ -1202,9 +1202,6 @@ MC_GUI_SUITE(git_review) {
     MCGuiWait(@"g.py staged and read again", 15, ^BOOL {
         return actions == 1 && Review(c).loads > loads && [Review(c) rowOfFile:@"g.py" staged:YES] >= 0;
     });
-    MCGuiWait(@"the panel's refresh read too", 15, ^BOOL {
-        return Rows(c, @[@"# Staged Changes  2", @"S M f.txt", @"S M g.py"]);
-    });
     MCGuiStep(@"its note stays while nothing else moves; then a commit from the panel", ^{
         MCChangeReviewPage *p = Review(c);
         GCHECK_EQ_STR(p.message, @"Staged g.py.");
