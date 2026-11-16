@@ -339,6 +339,12 @@ void testLargeFiles() {
         CHECK(openingFor(50ull << 20, 256ull << 20) == Opening::Open);
         CHECK(openingFor((50ull << 20) + 1, 256ull << 20) == Opening::Ask);
         CHECK(openingFor((256ull << 20) + 1, 256ull << 20) == Opening::TooLarge);
+        // The Mac: no limit, and a question only past VS Code's 1 GB, so an
+        // 82 MB log opens at once.
+        CHECK(openingFor(82ull << 20, UINT64_MAX, kAskBeforeOpeningBytesMac) == Opening::Open);
+        CHECK(openingFor(1ull << 30, UINT64_MAX, kAskBeforeOpeningBytesMac) == Opening::Open);
+        CHECK(openingFor((1ull << 30) + 1, UINT64_MAX, kAskBeforeOpeningBytesMac) ==
+              Opening::Ask);
     }
 
     GROUP("large-file:long-lines");

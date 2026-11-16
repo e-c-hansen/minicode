@@ -398,7 +398,26 @@ MC_GUI_SUITE(large_file) {
         MCGuiSetSettings(@"lsp.enabled = false\n");
     });
 
-    MCGuiStep(@"a file over 50 MB asks before it is read", ^{
+    // C3 and C4 (round 8): what Finder sends (Open With, a double-click)
+    // goes through the app delegate's open handler, as here.
+    MCGuiStep(@"a lone script from Finder: caret at 1:1, the keyboard in its text", ^{
+        NSString *lonely = [dir stringByAppendingPathComponent:@"lonely.py"];
+        NSMutableString *py = [NSMutableString string];
+        for (int i = 0; i < 33; i++) [py appendFormat:@"value_%d = %d  # line %d\n", i, i, i + 1];
+        MCGuiWriteFile(lonely, py);
+        [c.window makeFirstResponder:c.outline];   // where a new window has it
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:lonely]]];
+        GCHECK([c.currentPath.lastPathComponent isEqualToString:@"lonely.py"]);
+        MCGuiNote(@"caret %@ of %lu, first responder %@", NSStringFromRange(tv.selectedRange),
+                  (unsigned long)tv.string.length, c.window.firstResponder.className);
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(0, 0)));
+        GCHECK(c.window.firstResponder == tv);
+        GCHECK(NSMinY(tv.visibleRect) <= 1);
+        GCHECK([c closeTab:Active(c) prompt:NO]);
+    });
+
+    MCGuiStep(@"a 60 MB log from Finder opens with no question, at its start", ^{
         {
             // 60 MB of text (a sparse file of NULs would go to Quick Look).
             NSMutableData *d = [NSMutableData dataWithCapacity:(60u << 20) + 64];
@@ -407,30 +426,39 @@ MC_GUI_SUITE(large_file) {
             GCHECK([d writeToFile:huge atomically:NO]);
         }
         const NSUInteger asked = MCGuiAlertsShown().count;
-        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Cancel
-        GCHECK(![c showFile:huge]);
-        GCHECK(MCGuiAlertsShown().count == asked + 1);
-        GCHECK([MCGuiAlertsShown().lastObject containsString:@"huge60.txt"]);
-        GCHECK([MCGuiAlertsShown().lastObject containsString:@"MB"]);
-        GCHECK(![c.currentPath isEqualToString:huge]);
-        // Open Anyway opens it, in large-file mode.
-        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        [c.window makeFirstResponder:c.outline];
         const double t0 = Ms();
-        GCHECK([c showFile:huge]);
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:huge]]];
         [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, 4000)];
-        MCGuiNote(@"opening 60 MB after the question: %.0f ms", Ms() - t0);
-        GCHECK(MCGuiAlertsShown().count == asked + 2);
+        MCGuiNote(@"opening 60 MB from Finder: %.0f ms", Ms() - t0);
+        GCHECK(MCGuiAlertsShown().count == asked);
+        GCHECK([c.currentPath.lastPathComponent isEqualToString:@"huge60.txt"]);
         GCHECK(Active(c).largeFile && [c largeFileFeaturesOff]);
-        MCTab *hugeTab = Active(c);
-        // Under the limit nothing is asked, nor for a file with a tab.
-        NSString *small = [dir stringByAppendingPathComponent:@"small.txt"];
-        MCGuiWriteFile(small, @"small\n");
-        GCHECK([c showFile:small]);
-        GCHECK([c showFile:huge]);
-        GCHECK(MCGuiAlertsShown().count == asked + 2);
-        GCHECK([c closeTab:hugeTab prompt:NO]);
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(0, 0)));
+        GCHECK(c.window.firstResponder == tv);
         GCHECK([c closeTab:Active(c) prompt:NO]);
         unlink(huge.fileSystemRepresentation);
+    });
+
+    MCGuiStep(@"past 1 GB it still asks before anything is read", ^{
+        // Sparse past its first lines: 1 GB and a byte on paper, a few KB
+        // on disk, and text where the sniffer looks.
+        NSString *giant = [dir stringByAppendingPathComponent:@"giant.log"];
+        NSMutableString *head = [NSMutableString string];
+        while (head.length < 16384) [head appendString:@"a line of a giant log\n"];
+        MCGuiWriteFile(giant, head);
+        const int fd = open(giant.fileSystemRepresentation, O_WRONLY);
+        GCHECK(fd >= 0 && ftruncate(fd, (off_t)(1ull << 30) + 1) == 0);
+        if (fd >= 0) close(fd);
+        const NSUInteger asked = MCGuiAlertsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Cancel
+        GCHECK(![c showFile:giant]);
+        GCHECK(MCGuiAlertsShown().count == asked + 1);
+        GCHECK([MCGuiAlertsShown().lastObject containsString:@"giant.log"]);
+        GCHECK([MCGuiAlertsShown().lastObject containsString:@"GB"]);
+        GCHECK(![c.currentPath isEqualToString:giant]);
+        unlink(giant.fileSystemRepresentation);
     });
 
     MCGuiStep(@"a 5,000,000-character line: plain, and cheap to type in", ^{

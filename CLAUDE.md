@@ -286,7 +286,7 @@ editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,
 LanguageServers, Agents (inline agent, Request a
 Change, control channel, agent work), Processes (the Processes panel's
 hooks, its state in associated objects), LargeFile (large-file mode, its
-status bar note, the 50 MB question), Markdown and MarkdownRender. Rules, so it
+status bar note, the 1 GB question), Markdown and MarkdownRender. Rules, so it
 stays warning-free:
 
 - `EditorController+Private.h` holds the class extension (ivars in its ivar
@@ -971,8 +971,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   bracket boxes, and no language server (`languageServerPath:` for
   `documentOpened:`, nil from `bufferText`; never past VS Code's 50 MB sync
   limit either). The status bar's "Large file: features off" turns them on
-  for the tab (`largeFileFeatures`). A file over 50 MB opened by hand
-  (`openFileAtPath:`, a new tab only) asks Open Anyway or Cancel. Measured:
+  for the tab (`largeFileFeatures`). A file over 1 GB opened by hand
+  (`openFileAtPath:`, a new tab only) asks Open Anyway or Cancel
+  (`kAskBeforeOpeningBytesMac`, VS Code's limit; 50 MB until 2026-11-16,
+  when an 82 MB log from Finder stopped at the question though it then
+  opened in 0.7 s, and Zed asks nothing; the GTK port still asks past
+  50 MB). Measured:
   25 MB opens in about 0.25 s of CPU (2.2 s with the mode off) and types
   at about 5 ms a key; 60 MB in 0.7 s. **Its layout is non-contiguous**
   (2026-11-08, set in `displaySourceEditable`, cleared by
@@ -3668,6 +3672,11 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   each file to the window with the innermost root holding it, else the window
   in front (a new window only with none open); paths compared resolved and
   respelled from the window's root; `showFile:` opens hidden dotfiles too.
+  A file shown that way, or named on the command line, gets the keyboard
+  (`focusActiveDocument`; a new window had left it in the tree), and any
+  text put whole into the editor (`displaySourceEditable`) starts with the
+  caret at 1:1, since NSTextView leaves it at the end of a replaced text
+  (2026-11-16; a tab shown again gets its own place back after).
   `applicationShouldOpenUntitledFile:` returns NO.
 - Launch Services delivers the open between will- and didFinishLaunching, so
   setup is in `applicationWillFinishLaunching:`, and didFinishLaunching opens
