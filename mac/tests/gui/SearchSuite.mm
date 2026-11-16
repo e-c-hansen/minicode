@@ -64,7 +64,9 @@ MC_GUI_SUITE(search) {
                 bigFound = [[h valueForKey:@"line"] integerValue] == 2;
         GCHECK(bigFound);
         GCHECK(!p.skippedNote.hidden);
-        GCHECK_EQ_STR(p.skippedNote.stringValue, @"latin1.txt was not searched: it is not UTF-8");
+        // The path is from the folder searched: "searchsuite/latin1.txt"
+        // when the scope is the window's folder.
+        GCHECK([p.skippedNote.stringValue hasSuffix:@"latin1.txt was not searched: it is not UTF-8"]);
         GCHECK([p.skippedNote.toolTip containsString:@"latin1.txt (not UTF-8)"]);
         GCHECK(![p.skippedNote.toolTip containsString:@"big/log.txt"]);
         GCHECK(![p.skippedNote.toolTip containsString:@"pic.bin"]);
@@ -123,9 +125,10 @@ MC_GUI_SUITE(search) {
     MCGuiStep(@"no question asked; the file as it was", ^{
         SearchPanel *p = Panel(c);
         MCGuiNote(@"status: %@", p.status.stringValue);
-        GCHECK_EQ_STR(p.status.stringValue,
-                      @"Nothing replaced: the matches are in files larger than 1 MB, which "
-                       "Replace in Folder leaves alone (big/log.txt)");
+        GCHECK([p.status.stringValue
+            hasPrefix:@"Nothing replaced: the matches are in files larger than 1 MB, which "
+                       "Replace in Folder leaves alone ("]);
+        GCHECK([p.status.stringValue hasSuffix:@"big/log.txt)"]);
         GCHECK(MCGuiAlertsShown().count == alertsBefore);
         NSData *log = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"big/log.txt"]];
         GCHECK(log.length == 2 * 1024 * 1024 + 8);
