@@ -4,7 +4,9 @@
 // good if that program was itself blocked writing output the app had
 // stopped reading. Now the master is non-blocking and the rest waits in the
 // terminal's own queue, in order: the paste returns at once, the app keeps
-// running, and the program gets every byte once it reads.
+// running, and the program gets every byte once it reads. Several lines
+// into a running program ask first (a sheet, answered Paste here), and
+// the paste goes from the sheet's handler, a turn later.
 #import "Harness.h"
 #import "EditorController.h"
 #import "Terminal.h"
@@ -59,7 +61,13 @@ MC_GUI_SUITE(paste) {
         MCGuiCheck(took < 1.0, [NSString stringWithFormat:
                        @"a 244 KB paste into a program not reading returns at once (%.3f s)", took],
                    __FILE__, __LINE__);
-        const char eot = 0x04;   // after the paste, in order
+    });
+    MCGuiWait(@"the paste question answered, the paste sent", 5, ^BOOL {
+        return !Grid(term).askingPaste;
+    });
+    MCGuiStep(@"Ctrl+D, after the paste, in order", ^{
+        GCHECK(Now() - pastedAt < 1.0);   // the sheet's handler ran at once
+        const char eot = 0x04;
         Grid(term).onInput([NSData dataWithBytes:&eot length:1]);
     });
     MCGuiStep(@"the app is not held up while the program sleeps", ^{
