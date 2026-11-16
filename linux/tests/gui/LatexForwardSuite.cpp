@@ -3,7 +3,8 @@
 // Shift+J lights the lines of text the caret's line set on the PDF, scrolls
 // the page there, and clears the light after 1.5 s. The stand-in tectonic
 // copies the committed typeset of tests/latex/fixtures/main.tex (its PDF and
-// SyncTeX, the Input paths pointed at this run's files) and counts its runs.
+// SyncTeX, the Input paths pointed at this run's files), counts its runs and
+// takes half a second over each.
 #include "Harness.h"
 
 #include "Document.h"
@@ -61,7 +62,10 @@ MC_GUI_SUITE(latex_forward) {
             "file=$1; case $file in /*) ;; *) file=$PWD/$file;; esac\n"
             "sib=$(basename \"$file\"); stem=${sib%.tex}\n"
             "d=$(dirname \"$0\")\n"
-            "printf x >> \"$d/runs.txt\"\n"
+            // Half a second a run, so the key below always lands while the
+            // typeset that opening main.tex started is still running (CI hit
+            // that now and then, and the key typeset the same text again).
+            "printf x >> \"$d/runs.txt\"; sleep 0.5\n"
             "cp \"$d/main.pdf\" \"$out/$stem.pdf\"\n"
             "sed -e \"s|@DIR@/.main.minicode.tex|$file|\" -e \"s|@DIR@|$(dirname \"$file\")|\" "
             "\"$d/main.synctex\" | gzip -c > \"$out/$stem.synctex.gz\"\n");

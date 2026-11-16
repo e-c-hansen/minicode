@@ -8,11 +8,15 @@
 #include <glib/gstdio.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
+#include <fcntl.h>
 #include <map>
+#include <sys/file.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -93,6 +97,27 @@ std::string Persistence::sessionsFile() {
     std::string out = p;
     g_free(p);
     return out;
+}
+
+// Each save reads the file, puts its folder's entry and writes the file
+// back, and another minicode process may be saving at the same moment. The
+// read and the write hold a lock on a file beside it, or one process's
+// older copy could be written over an entry the other had just saved: the
+// GUI checks' second app lost its tabs to the first app's save that way,
+// now and then on CI (SessionsSuite.cpp). A lock that cannot be made (a
+// read-only folder) leaves the save as it was, unlocked.
+void Persistence::putSession(const std::string& key, const TabSessions::Session& s) {
+    const std::string path = sessionsFile();
+    gchar* dir = g_path_get_dirname(path.c_str());
+    g_mkdir_with_parents(dir, 0700);
+    g_free(dir);
+    const int lock = open((path + ".lock").c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (lock >= 0)
+        while (flock(lock, LOCK_EX) != 0 && errno == EINTR) {}
+    TabSessions::Sessions all = readSessions();
+    TabSessions::put(all, key, s, wallNow());
+    writeSessions(all);
+    if (lock >= 0) close(lock);   // which lets go of the lock
 }
 
 void Persistence::setRoot(const std::string& root) { key_ = keyFor(root); }
@@ -188,9 +213,7 @@ void Persistence::saveSession() {
     std::vector<TabSessions::Session> others;
     if (host_.sameFolder)
         for (Persistence* p : host_.sameFolder()) others.push_back(p->session());
-    TabSessions::Sessions all = readSessions();
-    TabSessions::put(all, key_, TabSessions::merged(session(), others), wallNow());
-    writeSessions(all);
+    putSession(key_, TabSessions::merged(session(), others));
 }
 
 // A window that closes while another stays open on its folder drops out of

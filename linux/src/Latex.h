@@ -221,6 +221,7 @@ private:
     // The run in progress, if any. generation_ counts runs; a result whose
     // generation is not the latest is dropped.
     GSubprocess* proc_ = nullptr;
+    std::string runSrc_;      // the text it is typesetting
     std::string runScratch_;
     std::string runRecord_;   // the output folder's sibling.record
     // The run's hidden sibling, removed through its folder rather than by
@@ -235,6 +236,9 @@ private:
     unsigned    instance_ = 0;
     unsigned generation_ = 0;
     bool queued_ = false;
+    // A run of the buffer as it is now is in progress, so its end answers
+    // anyone waiting and another run would typeset the same text again.
+    bool typesettingBuffer() const;
     bool downloading_ = false;
     bool missing_ = false;          // the last attempt found no tectonic
 

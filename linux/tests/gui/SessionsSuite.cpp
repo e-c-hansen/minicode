@@ -8,7 +8,8 @@
 // the file gone, the preview tab as one, the caret where it was and on
 // screen, and every tab but the one on show not read until it is shown. In
 // this app, two windows on one folder share its session, and the one that
-// closes while the other stays drops out of it, as on the Mac.
+// closes while the other stays drops out of it, as on the Mac. Saves made
+// at the same moment keep each other's folders.
 #include "Harness.h"
 
 #include "Document.h"
@@ -21,6 +22,8 @@
 #include <sys/stat.h>
 
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -172,6 +175,32 @@ MC_GUI_SUITE(sessions) {
         MCGuiNote("saved: %s", Names(s).c_str());
         GCHECK_EQ_STR(Names(s), "ses-p1.txt >ses-p2.txt");
         GCHECK_EQ_STR(Row(), "ses-p1.txt >ses-p2.txt");
+    });
+
+    // ---- several processes saving at once
+    // Every minicode saves into the one file, reading it and writing it
+    // back. Threads stand in for processes here (flock tells each open of
+    // the lock file apart, within one process too): each saves its own
+    // folder over and over, and no save may write over another's.
+    MCGuiStep("saves made at the same moment keep each other's folders", [] {
+        constexpr int kSavers = 6, kSaves = 15;
+        auto key = [](int i) { return "/saver-" + std::to_string(i); };
+        std::vector<std::thread> savers;
+        for (int i = 0; i < kSavers; i++)
+            savers.emplace_back([i, key] {
+                TabSessions::Session s;
+                TabSessions::Tab t;
+                t.path = key(i) + "/file.txt";
+                s.tabs.push_back(t);
+                for (int n = 0; n < kSaves; n++) Persistence::putSession(key(i), s);
+            });
+        for (std::thread& t : savers) t.join();
+        const TabSessions::Sessions all = TabSessions::decode(MCGuiReadFile(SessionsFile()));
+        int kept = 0;
+        for (int i = 0; i < kSavers; i++) kept += (int)all.count(key(i));
+        GCHECK_EQ_STR(std::to_string(kept), std::to_string(kSavers));
+        GCHECK(all.count(Persistence::keyFor(MCGuiProject())) == 1);
+        for (int i = 0; i < kSavers; i++) Persistence::putSession(key(i), TabSessions::Session());
     });
 }
 
