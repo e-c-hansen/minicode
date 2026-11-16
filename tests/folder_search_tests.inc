@@ -244,17 +244,28 @@ static void testFolderSearchParallel() {
 
     GROUP("search:skipped");
     {
-        // Larger than 1 MB, or text not in UTF-8, is named; a binary (a
-        // NUL byte early on) is left out without a word.
+        // Text not in UTF-8 is named; a binary (a NUL byte early on) is
+        // left out without a word, large or not. A text file over 1 MB is
+        // searched (until 2026-11-16 it was skipped and named), unless a
+        // line of it is longer than maxStreamedLine.
         FolderSearchOptions o;
         o.threads = 4;
         const FolderSearchResult r = search(root.string(), "return", nullptr, o);
-        CHECK(r.skippedTooLarge == 1 && r.skippedNotUtf8 == 1);
-        CHECK(r.skipped.size() == 2);
-        if (r.skipped.size() == 2) {
-            CHECK(r.skipped[0].relativePath == "big.txt" && r.skipped[0].tooLarge);
-            CHECK(r.skipped[1].relativePath == "latin1.txt" && !r.skipped[1].tooLarge);
-        }
+        CHECK(r.skippedTooLarge == 0 && r.skippedNotUtf8 == 1);
+        CHECK(r.skipped.size() == 1);
+        if (r.skipped.size() == 1)
+            CHECK(r.skipped[0].relativePath == "latin1.txt" && !r.skipped[0].tooLarge);
+        bool bigLine2 = false;
+        for (const FolderSearchMatch& m : r.matches)
+            if (m.relativePath == "big.txt") bigLine2 = m.line == 2 && m.text == "return";
+        CHECK(bigLine2);
+        o.maxStreamedLine = 512 * 1024;    // big.txt's first line is longer
+        o.streamPiece = 64 * 1024;         // and read in pieces shorter than it
+        const FolderSearchResult longLine = search(root.string(), "return", nullptr, o);
+        CHECK(longLine.skippedTooLarge == 1 && longLine.skipped.size() == 2 &&
+              longLine.skipped[0].relativePath == "big.txt" && longLine.skipped[0].tooLarge);
+        o.maxStreamedLine = FolderSearchOptions().maxStreamedLine;
+        o.streamPiece = FolderSearchOptions().streamPiece;
         // Only what the search reached: a limit of one stops before them.
         const fsys::path two = root / "two";
         writeFile(two / "a.txt", "return\n");
@@ -300,11 +311,14 @@ static void testFolderSearchParallel() {
         FolderSearchOptions o;
         o.threads = 2;
         const FolderSearchResult r = search(dir.string(), "return", nullptr, o);
-        // be.log, le.ps1, lone.txt, odd.txt in name order; big.txt named
-        // as too large (its NULs no longer hide it).
-        CHECK(r.filesSearched == 4 && r.matches.size() == 6);
-        CHECK(r.skippedTooLarge == 1 && r.skipped.size() == 1 &&
-              r.skipped[0].relativePath == "big.txt");
+        // be.log, big.txt, le.ps1, lone.txt, odd.txt in name order; big.txt
+        // (over 1 MB) read in pieces, its NULs no longer hiding it.
+        CHECK(r.filesSearched == 5 && r.matches.size() == 7);
+        CHECK(r.skippedTooLarge == 0 && r.skipped.empty());
+        bool big = false;
+        for (const FolderSearchMatch& m : r.matches)
+            if (m.relativePath == "big.txt") big = m.line == 2 && m.text == "return";
+        CHECK(big);
         for (const FolderSearchMatch& m : r.matches) {
             if (m.relativePath == "be.log" || m.relativePath == "le.ps1") {
                 // Line 2: the emoji (4 UTF-8 bytes, one code point) and " x = ".
@@ -321,8 +335,13 @@ static void testFolderSearchParallel() {
 
         // Replace in Folder counts only files it can write back exactly:
         // not the lone surrogate's, not the odd byte's.
+        // Nor big.txt, over 1 MB, which it names instead.
         const FolderReplacePlan plan = planReplace(dir.string(), "return", nullptr, o);
         CHECK(describe(plan) == "be.log 2\nle.ps1 2\ntotal 4");
+        CHECK(plan.tooLargeCount == 1 && plan.tooLarge.size() == 1 &&
+              plan.tooLarge[0] == "big.txt");
+        // A large file without a match is not named.
+        CHECK(planReplace(dir.string(), "first", nullptr, o).tooLarge.empty());
 
         // decodeUtf16 and encodeText round-trip both orders.
         std::string u8;
@@ -458,6 +477,140 @@ static void testFolderSearchParallel() {
             }
         }
         CHECK(decoded > 500 && refused > 500);
+    }
+
+    GROUP("search:stream");
+    {
+        // A file over maxFileSize is read and matched a piece at a time,
+        // each piece cut at a line break: whatever the piece's size (some
+        // smaller than a line, cutting \r\n, U+2029 and UTF-8 characters
+        // anywhere), every query finds what reading the file whole finds,
+        // in UTF-8 and in UTF-16 of both orders.
+        auto utf16 = [](const std::string& u8, bool le) {
+            std::string b = le ? std::string("\xFF\xFE", 2) : std::string("\xFE\xFF", 2);
+            for (std::size_t i = 0, len; i < u8.size(); i += len) {
+                char32_t c = static_cast<unsigned char>(u8[i]);
+                len = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+                if (len > 1) {
+                    c &= len == 2 ? 0x1F : len == 3 ? 0x0F : 0x07;
+                    for (std::size_t k = 1; k < len; ++k) c = (c << 6) | (u8[i + k] & 0x3F);
+                }
+                std::u16string us;
+                if (c >= 0x10000) {
+                    us += static_cast<char16_t>(0xD800 + ((c - 0x10000) >> 10));
+                    us += static_cast<char16_t>(0xDC00 + ((c - 0x10000) & 0x3FF));
+                } else {
+                    us += static_cast<char16_t>(c);
+                }
+                for (char16_t u : us) {
+                    b += le ? static_cast<char>(u & 0xFF) : static_cast<char>(u >> 8);
+                    b += le ? static_cast<char>(u >> 8) : static_cast<char>(u & 0xFF);
+                }
+            }
+            return b;
+        };
+        const fsys::path dir = root / "stream";
+        std::mt19937 srng(20261116);
+        for (int f = 0; f < 6; ++f) {
+            std::string text = randomText(srng, 200 + static_cast<int>(srng() % 400));
+            if (f == 0) text += std::string(3000, 'q') + " return " + std::string(500, 'r');
+            if (f == 1) text += "\r";   // ends in a lone \r
+            writeFile(dir / ("u" + std::to_string(f) + ".txt"), text);
+            if (f < 3) writeFile(dir / ("w" + std::to_string(f) + ".txt"), utf16(text, f % 2));
+        }
+        writeFile(dir / "todo.txt", randomText(srng, 300));
+        struct Case {
+            const char* query;
+            bool regex, word, matchCase;
+        };
+        const Case cases[] = {
+            {"return", false, false, false}, {"RETURN", false, false, true},
+            {"café", false, false, false},   {"re", false, true, false},
+            {"ret[a-z]+n\\b", true, false, false}, {"^\\s*\\(", true, false, false},
+            {"日本", false, false, false},   {"turn ret", false, false, false},
+        };
+        int compared = 0, differ = 0;
+        for (std::size_t piece : {std::size_t(16), std::size_t(37), std::size_t(1000)}) {
+            for (const Case& k : cases) {
+                for (std::size_t limit : {std::size_t(5), std::size_t(100000)}) {
+                    FolderSearchOptions whole;
+                    whole.regex = k.regex;
+                    whole.wholeWord = k.word;
+                    whole.caseSensitive = k.matchCase;
+                    whole.maxMatches = limit;
+                    whole.threads = 2;
+                    FolderSearchOptions pieces = whole;
+                    pieces.maxFileSize = 0;
+                    pieces.streamPiece = piece;
+                    const std::string a = describe(search(dir.string(), k.query, nullptr, whole));
+                    const std::string b = describe(search(dir.string(), k.query, nullptr, pieces));
+                    ++compared;
+                    if (a != b && ++differ < 3)
+                        std::printf("  stream mismatch for \"%s\", piece %zu:\n%s\n--\n%s\n",
+                                    k.query, piece, a.c_str(), b.c_str());
+                }
+            }
+            FolderSearchOptions whole, pieces;
+            pieces.maxFileSize = 0;
+            pieces.streamPiece = piece;
+            const std::string a = describe(findTodos(dir.string(), nullptr, whole));
+            const std::string b = describe(findTodos(dir.string(), nullptr, pieces));
+            ++compared;
+            if (a != b && ++differ < 3) std::printf("  stream TODO mismatch, piece %zu\n", piece);
+        }
+        CHECK(differ == 0);
+        std::printf("  search: %d streamed searches matched whole-file ones\n", compared);
+        // A late byte that is not UTF-8 names the file, its earlier matches
+        // dropped, as a small file's are. (Unless the search's limit came
+        // first: a file read in pieces is not read past it.)
+        writeFile(dir / "bad" / "bad.txt", randomText(srng, 300) + "\n\xE9 late\n");
+        FolderSearchOptions o;
+        o.maxFileSize = 0;
+        o.streamPiece = 64;
+        const FolderSearchResult r = search((dir / "bad").string(), "re", nullptr, o);
+        CHECK(r.skippedNotUtf8 == 1 && r.skipped.size() == 1 &&
+              r.skipped[0].relativePath == "bad.txt" && r.matches.empty());
+        // The cancel flag, raised as a file is read, stops it mid-file.
+        std::atomic<bool> stop(false);
+        o.threads = 1;
+        o.onFileRead = [&stop] { stop = true; };
+        CHECK(search(dir.string(), "return", &stop, o).cancelled);
+        fsys::remove_all(dir, ec);
+    }
+
+    GROUP("search:large-log");
+    {
+        // A 24 MB log of 260,000 lines, three of them holding the query:
+        // found on the right lines, in bounded CPU, and in pieces (the whole
+        // file is never held).
+        const fsys::path dir = root / "log";
+        std::string log;
+        log.reserve(25u << 20);
+        const int lines = 260000;
+        for (int i = 1; i <= lines; ++i) {
+            log += "2026-11-15T10:00:00.000Z INFO request id=" + std::to_string(i) +
+                   " path=/api/v1/orders status=200 time=12ms user=u" +
+                   std::to_string(i % 977) + "\n";
+            if (i == 7 || i == 130000 || i == lines - 1)
+                log += "2026-11-15T10:00:00.000Z WARN payment declined for order " +
+                       std::to_string(i) + "\n";
+        }
+        writeFile(dir / "app.log", log);
+        FolderSearchOptions o;
+        const double c0 = processCpuSeconds();
+        const FolderSearchResult r = search(dir.string(), "payment declined", nullptr, o);
+        const double cpu = processCpuSeconds() - c0;
+        CHECK(r.matches.size() == 3 && r.skipped.empty() && r.filesSearched == 1);
+        if (r.matches.size() == 3) {
+            // Each WARN line follows its request line and the WARNs before it.
+            CHECK(r.matches[0].line == 8 && r.matches[1].line == 130002 &&
+                  r.matches[2].line == lines + 2);
+            CHECK(r.matches[1].text ==
+                  "2026-11-15T10:00:00.000Z WARN payment declined for order 130000");
+        }
+        CHECK(cpu < 2.0);
+        std::printf("  search: %.0f MB log, %.0f ms CPU\n", log.size() / 1048576.0, cpu * 1000);
+        fsys::remove_all(dir, ec);
     }
 
     GROUP("search:cancel");

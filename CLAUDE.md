@@ -1349,9 +1349,15 @@ container (PanelHost, laid out by hand in layoutContainer)
 - Find in Folder uses `FolderSearch::search` (two characters, one for an
   untrimmed regex; `.git`, `node_modules`, `build`, the venvs and caches and
   what the folder's `.gitignore`/`.ignore` files ignore (from the window's
-  folder down, `search.use-ignore-files`) skipped, dotfiles searched; 1 MB and
-  UTF-8 only, the files left out counted and named (`skipped`, shown under
-  the results) unless a NUL in their first 8 KB marks them binary; UTF-16
+  folder down, `search.use-ignore-files`) skipped, dotfiles searched; UTF-8
+  only, the files left out counted and named (`skipped`, shown under the
+  results, one by name) unless a NUL in their first 8 KB marks them binary;
+  a file over 1 MB (`maxFileSize`) read and matched in 4 MB pieces cut at
+  line breaks (`Matcher::stream`, 2026-11-16, C3: an 82 MB log had been
+  skipped), the same rows as a whole read (`search:stream` compares them at
+  odd piece sizes), left out only for a line over 64 MB; Replace in Folder
+  still reads whole and leaves such a file alone, naming those with a match
+  (`FolderReplacePlan::tooLarge`) in its question and status; UTF-16
   with a byte order mark decoded as ripgrep does (`decodeUtf16`; its NULs
   had hidden it), Replace in Folder writing it back in its own encoding
   (`readTextFile` with an encoding, `encodeText`) and leaving out one with a

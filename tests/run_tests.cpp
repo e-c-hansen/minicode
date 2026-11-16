@@ -7689,14 +7689,14 @@ void testFolderSearch() {
     CHECK(!anyHitIn(r, "DerivedData"));
     CHECK(!anyHitIn(r, "binary.dat"));
     CHECK(!anyHitIn(r, "latin1.txt"));
-    CHECK(!anyHitIn(r, "big.txt"));
+    CHECK(hasHit(r, "big.txt:1:1"));                     // over 1 MB: read in pieces
     CHECK(!anyHitIn(r, "sub/loop"));                     // the loop back to root is not re-walked
     CHECK(!anyHitIn(r, "broken"));
     CHECK(!anyHitIn(r, "pipe.txt"));
     CHECK(loopMade);
     CHECK(fifoMade);
     if (linkMade) CHECK(hasHit(r, "zlink/linked.txt:1:1"));   // symlinked folders are followed
-    CHECK(r.matches.size() == (linkMade ? 12u : 11u));
+    CHECK(r.matches.size() == (linkMade ? 13u : 12u));
     CHECK(r.filesMatched == r.matches.size() - 2);       // a.txt and b.cpp have two
     CHECK(r.filesSearched >= r.filesMatched);
 

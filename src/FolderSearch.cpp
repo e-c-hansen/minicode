@@ -250,13 +250,14 @@ void lineEndAt(const char* s, std::size_t n, std::size_t pos, std::size_t* end,
 // Calls f(lineNo, start, end, hit) for every line holding the needle, hit
 // being where (or every line, with hit npos, when there is no needle),
 // until f returns false. False when halt() said to stop; it is asked every
-// 4096 lines.
+// 4096 lines. Lines are numbered from firstLine (a piece of a large file
+// starts further down).
 template <class Halt, class F>
-bool eachLine(const std::string& content, const Needle* nd, Halt halt, F f) {
+bool eachLine(std::string_view content, const Needle* nd, Halt halt, F f, int firstLine = 1) {
     const char* s = content.data();
     const std::size_t n = content.size();
     std::size_t pos = 0;
-    int lineNo = 1;
+    int lineNo = firstLine;
     while (pos < n) {
         std::size_t hit = std::string::npos;
         if (nd) {
@@ -280,8 +281,74 @@ bool eachLine(const std::string& content, const Needle* nd, Halt halt, F f) {
     return true;
 }
 
+// The line breaks in s[0, n), counted as lineEndAt splits lines (\r\n is
+// one break).
+std::size_t countBreaks(const char* s, std::size_t n) {
+    std::size_t k = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const char c = s[i];
+        if (c == '\n') {
+            ++k;
+        } else if (c == '\r') {
+            ++k;
+            if (i + 1 < n && s[i + 1] == '\n') ++i;
+        } else if (c == '\xE2' && i + 2 < n && s[i + 1] == '\x80' && s[i + 2] == '\xA9') {
+            ++k;
+            i += 2;
+        }
+    }
+    return k;
+}
+
+// Where the last line break of s ends, looking back no further than
+// `from`; 0 when there is none. A \r at the very end is no break yet: a
+// \n may follow it in what is still to be read.
+std::size_t lastBreakEnd(const std::string& s, std::size_t from) {
+    for (std::size_t i = s.size(); i > from; --i) {
+        const char c = s[i - 1];
+        if (c == '\n') return i;
+        if (c == '\r' && i < s.size()) return i;   // s[i] is not \n: seen first
+        if (c == '\xA9' && i >= 3 && s[i - 2] == '\x80' && s[i - 3] == '\xE2') return i;
+    }
+    return 0;
+}
+
+// UTF-16 units (no byte order mark) from p[0, n) to UTF-8, appended to
+// out, as decodeUtf16 does when not strict. Returns the bytes used: an odd
+// last byte and a high surrogate at the end wait for what follows, unless
+// `last`.
+std::size_t decodeUtf16Piece(const char* p, std::size_t n, bool le, bool last, std::string* out) {
+    auto unit = [&](std::size_t i) -> char32_t {
+        const unsigned a = static_cast<unsigned char>(p[i]);
+        const unsigned b = static_cast<unsigned char>(p[i + 1]);
+        return le ? (a | (b << 8)) : ((a << 8) | b);
+    };
+    std::size_t i = 0;
+    while (i + 1 < n) {
+        char32_t cp = unit(i);
+        if (cp >= 0xD800 && cp < 0xDC00 && i + 3 >= n && !last) break;   // its pair may follow
+        i += 2;
+        if (cp >= 0xD800 && cp < 0xE000) {
+            const char32_t low = cp < 0xDC00 && i + 1 < n ? unit(i) : 0;
+            if (low >= 0xDC00 && low < 0xE000) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                i += 2;
+            } else {
+                cp = 0xFFFD;   // a lone surrogate
+            }
+        }
+        appendUtf8(*out, cp);
+    }
+    if (last && i < n) {   // an odd last byte
+        appendUtf8(*out, 0xFFFD);
+        i = n;
+    }
+    return i;
+}
+
 // ------------------------------------------------------------- one file
-enum class FileKind { Silent, Searched, TooLarge, NotUtf8 };
+// Streamed: over maxFileSize and not binary, left open to be read in pieces.
+enum class FileKind { Silent, Searched, TooLarge, NotUtf8, Streamed };
 
 struct Job {
     std::string path, rel;
@@ -311,9 +378,10 @@ bool hasUtf16Bom(const std::string& s) {
 // without blocking so a pipe swapped in cannot hold the search. UTF-16
 // with its byte order mark comes back decoded to UTF-8; `strict` (Replace
 // in Folder's count) only when the decoding is exact, since that text is
-// what gets written back.
+// what gets written back. A file over maxSize that is not binary is
+// Streamed: `out` its first bytes, *streamFd open for the rest.
 FileKind readForSearch(const std::string& path, std::uintmax_t maxSize, std::string* out,
-                       std::uint64_t* dev, std::uint64_t* ino, bool strict) {
+                       std::uint64_t* dev, std::uint64_t* ino, bool strict, int* streamFd) {
     const int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) return FileKind::Silent;
     struct stat st;
@@ -335,11 +403,16 @@ FileKind readForSearch(const std::string& path, std::uintmax_t maxSize, std::str
         if (r <= 0) break;
         got += static_cast<std::size_t>(r);
     }
-    ::close(fd);
     out->resize(got);
-    if (size > maxSize || got > maxSize)
-        return looksBinary(out->data(), out->size()) && !hasUtf16Bom(*out) ? FileKind::Silent
-                                                                            : FileKind::TooLarge;
+    if (size > maxSize || got > maxSize) {   // larger, or grown since
+        if (looksBinary(out->data(), out->size()) && !hasUtf16Bom(*out)) {
+            ::close(fd);
+            return FileKind::Silent;
+        }
+        *streamFd = fd;
+        return FileKind::Streamed;
+    }
+    ::close(fd);
     if (hasUtf16Bom(*out)) {
         std::string text;
         TextEncoding encoding;
@@ -380,7 +453,19 @@ struct Matcher {
         o.rel = job.rel;
         if (stopping()) return;
         std::string content;
-        o.kind = readForSearch(job.path, opt.maxFileSize, &content, &o.dev, &o.ino, plan);
+        int fd = -1;
+        o.kind = readForSearch(job.path, opt.maxFileSize, &content, &o.dev, &o.ino, plan, &fd);
+        if (o.kind == FileKind::Streamed) {
+            o.kind = FileKind::Searched;
+            // Replace in Folder's count leaves a large file alone, and
+            // names it when it holds a match: one is enough to know.
+            stream(fd, std::move(content), o, plan ? 1 : opt.maxMatches);
+            ::close(fd);
+            if (plan && o.kind == FileKind::Searched)
+                o.kind = o.rows.empty() ? FileKind::Silent : FileKind::TooLarge;
+            if (plan) o.rows.clear();
+            return;
+        }
         if (opt.onFileRead) opt.onFileRead();
         if (o.kind != FileKind::Searched) return;
         if (useNeedle && needle.never) return;   // no line can match
@@ -391,6 +476,80 @@ struct Matcher {
         };
         if (plan) countAll(content, nd, halted, o);
         else rows(content, nd, halted, o);
+    }
+
+    // A file over maxFileSize: read a piece at a time and each piece matched up to its last line break, the
+    // rest carried into the next, so its lines, their numbers and matches
+    // are what reading it whole gives. `head` is what was read already.
+    // A piece that is not UTF-8 makes it NotUtf8, rows dropped, as a small
+    // file's would be; a line past maxStreamedLine makes it TooLarge.
+    // It stops at `limit` rows.
+    void stream(int fd, std::string head, Outcome& o, std::size_t limit) const {
+        const bool utf16 = hasUtf16Bom(head);
+        const bool le = utf16 && head[0] == '\xFF';
+        std::string raw = std::move(head);   // read, not yet text
+        std::size_t rawAt = utf16 ? 2 : 0;   // the byte order mark is no text
+        std::string text;                    // from a line's start, not yet matched
+        std::size_t scanFrom = 0;            // text before this holds no break
+        const std::size_t piece = std::max<std::size_t>(opt.streamPiece, 16);
+        const Needle* nd = useNeedle ? &needle : nullptr;
+        auto halted = [this, &o] {
+            if (cancelled(cancel)) o.cancelled = true;
+            return stopping();
+        };
+        int line = 1;
+        bool eof = false, told = false;
+        for (;;) {
+            if (halted()) return;
+            const std::size_t have = raw.size();
+            raw.resize(have + piece);
+            std::size_t got = 0;
+            while (got < piece) {
+                const ssize_t r = ::read(fd, &raw[have + got], piece - got);
+                if (r < 0 && errno == EINTR) continue;
+                if (r <= 0) {
+                    eof = true;
+                    break;
+                }
+                got += static_cast<std::size_t>(r);
+            }
+            raw.resize(have + got);
+            if (!told) {
+                told = true;
+                if (opt.onFileRead) opt.onFileRead();
+            }
+            if (utf16) {
+                rawAt += decodeUtf16Piece(raw.data() + rawAt, raw.size() - rawAt, le, eof, &text);
+                raw.erase(0, rawAt);
+                rawAt = 0;
+            } else if (text.empty()) {
+                text.swap(raw);
+            } else {
+                text += raw;
+                raw.clear();
+            }
+            const std::size_t cut = eof ? text.size() : lastBreakEnd(text, scanFrom);
+            if (cut == 0 && !eof) {   // one line so far: read on
+                if (text.size() > opt.maxStreamedLine) {
+                    o.kind = FileKind::TooLarge;
+                    o.rows.clear();
+                    return;
+                }
+                scanFrom = text.size() >= 2 ? text.size() - 2 : 0;
+                continue;
+            }
+            const std::string_view view(text.data(), cut);
+            if (!utf16 && !isValidUtf8(view)) {
+                o.kind = FileKind::NotUtf8;
+                o.rows.clear();
+                return;
+            }
+            if (!(useNeedle && needle.never)) rows(view, nd, halted, o, line, limit);
+            if (eof || o.rows.size() >= limit) return;
+            line += static_cast<int>(countBreaks(view.data(), view.size()));
+            text.erase(0, cut);
+            scanFrom = 0;
+        }
     }
 
     // Replace in Folder's count: every match.
@@ -429,23 +588,28 @@ struct Matcher {
     }
 
     // A row per matching line (a TODO's line, for the TODO list).
+    // Lines are numbered from firstLine: a piece of a large file (whose
+    // Markdown tasks are read a piece at a time). At most `limit` rows.
     template <class Halt>
-    void rows(const std::string& content, const Needle* nd, Halt halted, Outcome& o) const {
+    void rows(std::string_view content, const Needle* nd, Halt halted, Outcome& o,
+              int firstLine = 1, std::size_t limit = SIZE_MAX) const {
+        limit = std::min(limit, opt.maxMatches);
         // For the TODO list, a Markdown file's open tasks, by line.
         const bool markdown = todos && isMarkdownPath(o.path);
         std::vector<MarkdownTasks::OpenTask> tasks;
-        if (markdown) tasks = MarkdownTasks::openTasks(content);
+        if (markdown) tasks = MarkdownTasks::openTasks(std::string(content));
         std::size_t nextTask = 0;
         const std::size_t m = needle.bytes.size();
         eachLine(content, nd, halted, [&](int lineNo, std::size_t start, std::size_t end,
                                           std::size_t at) {
-            const std::string line = content.substr(start, end - start);
+            const std::string line(content.substr(start, end - start));
+            const int taskLine = lineNo - firstLine;   // 0-based, in what openTasks read
             std::size_t col = 0, len = 0, count = 1;
             bool hit;
             if (todos) {
-                while (nextTask < tasks.size() && tasks[nextTask].line < lineNo - 1) nextTask++;
+                while (nextTask < tasks.size() && tasks[nextTask].line < taskLine) nextTask++;
                 hit = findTodoInLine(line, markdown, &col, &len);
-                if (!hit && nextTask < tasks.size() && tasks[nextTask].line == lineNo - 1) {
+                if (!hit && nextTask < tasks.size() && tasks[nextTask].line == taskLine) {
                     col = tasks[nextTask].column;
                     len = 3;
                     hit = col + len <= line.size();
@@ -479,8 +643,8 @@ struct Matcher {
             r.count = count;
             o.rows.push_back(std::move(r));
             // No file gives more rows than the whole search may hold.
-            return o.rows.size() < opt.maxMatches;
-        });
+            return o.rows.size() < limit;
+        }, firstLine);
     }
 };
 
@@ -708,6 +872,10 @@ struct Walker {
             const bool large = o.kind == FileKind::TooLarge;
             ++(large ? out.skippedTooLarge : out.skippedNotUtf8);
             if (out.skipped.size() < kMaxSkipsListed) out.skipped.push_back({o.rel, large});
+            if (plan && large && files.insert({o.dev, o.ino}).second) {   // named once
+                ++plan->tooLargeCount;
+                if (plan->tooLarge.size() < kMaxSkipsListed) plan->tooLarge.push_back(o.rel);
+            }
             return true;
         }
         if (o.kind != FileKind::Searched) return true;
@@ -1125,7 +1293,7 @@ Rules rulesFor(const std::string& top, const std::string& scope, std::string* sc
 
 }  // namespace Ignore
 
-bool isValidUtf8(const std::string& s) {
+bool isValidUtf8(std::string_view s) {
     const std::size_t n = s.size();
     std::size_t i = 0;
     while (i < n) {

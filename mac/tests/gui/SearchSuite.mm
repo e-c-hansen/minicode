@@ -1,8 +1,10 @@
 // SearchSuite.mm — `make guitest SUITES=search`: Find in Folder's limits
-// and what it says about them. A file over 1 MB and one not in UTF-8 are
-// named in a line under the results (a binary is not); the results stop at
-// 20,000 lines and the status says so; a pattern left to std::regex that
-// runs past its time stops the search with a reason.
+// and what it says about them. A file over 1 MB is searched (read in
+// pieces), and Replace in Folder says plainly that it leaves one alone; a
+// file not in UTF-8 is named in a line under the results (a binary is
+// not); the results stop at 20,000 lines and the status says so; a
+// pattern left to std::regex that runs past its time stops the search
+// with a reason.
 #import "Harness.h"
 #import "EditorController.h"
 #import "Search.h"
@@ -23,6 +25,7 @@ void WriteBytes(NSString *path, NSData *data) {
 MC_GUI_SUITE(search) {
     __block EditorController *c = nil;
     __block NSString *scopeInclude = nil;   // what setScope: put in files to include
+    __block NSUInteger alertsBefore = 0;
     NSString *dir = MCGuiProjectFile(@"searchsuite");
 
     MCGuiStep(@"a small file, a 2 MB one, one in Latin-1, a binary", ^{
@@ -47,18 +50,23 @@ MC_GUI_SUITE(search) {
         p.field.stringValue = @"needle";
         [p runSearch:nil];
     });
-    MCGuiWait(@"the results", 10, ^BOOL { return !Panel(c).busy && Hits(c).count >= 1; });
-    MCGuiStep(@"one match; the 2 MB file and the Latin-1 one named under the results", ^{
+    MCGuiWait(@"the results", 10, ^BOOL { return !Panel(c).busy && Hits(c).count >= 2; });
+    MCGuiStep(@"the 2 MB file searched; the Latin-1 one named under the results", ^{
         SearchPanel *p = Panel(c);
         MCGuiNote(@"status: %@; note: %@ (%@)", p.status.stringValue, p.skippedNote.stringValue,
                   p.skippedNote.toolTip);
-        GCHECK(Hits(c).count == 1);
-        GCHECK_EQ_STR(p.status.stringValue, @"1 match in 1 file");
+        GCHECK(Hits(c).count == 2);
+        GCHECK_EQ_STR(p.status.stringValue, @"2 matches in 2 files");
+        // Until 2026-11-16 a file over 1 MB was skipped ("1 larger than 1 MB").
+        BOOL bigFound = NO;
+        for (id h in Hits(c))
+            if ([[h valueForKey:@"path"] hasSuffix:@"/big/log.txt"])
+                bigFound = [[h valueForKey:@"line"] integerValue] == 2;
+        GCHECK(bigFound);
         GCHECK(!p.skippedNote.hidden);
-        GCHECK_EQ_STR(p.skippedNote.stringValue,
-                      @"2 files skipped: 1 larger than 1 MB, 1 not UTF-8");
-        GCHECK([p.skippedNote.toolTip containsString:@"big/log.txt (larger than the limit)"]);
+        GCHECK_EQ_STR(p.skippedNote.stringValue, @"latin1.txt was not searched: it is not UTF-8");
         GCHECK([p.skippedNote.toolTip containsString:@"latin1.txt (not UTF-8)"]);
+        GCHECK(![p.skippedNote.toolTip containsString:@"big/log.txt"]);
         GCHECK(![p.skippedNote.toolTip containsString:@"pic.bin"]);
         // Laid out under the results, which make room for it.
         NSView *content = p.window.contentView;
@@ -84,6 +92,44 @@ MC_GUI_SUITE(search) {
         GCHECK(p.skippedNote.hidden);
         [p.window.contentView layoutSubtreeIfNeeded];
         GCHECK(NSMaxY(p.table.enclosingScrollView.frame) == NSHeight(p.window.contentView.bounds));
+        // Only the 2 MB file, for Replace in Folder.
+        p.includeField.stringValue = [scopeInclude.length ? [scopeInclude stringByAppendingString:@"/"] : @""
+                                         stringByAppendingString:@"big/log.txt"];
+        [p runSearch:nil];
+    });
+    MCGuiWait(@"the large file's match", 10, ^BOOL {
+        return !Panel(c).busy && Hits(c).count == 1 &&
+               [[Hits(c).firstObject valueForKey:@"path"] hasSuffix:@"/big/log.txt"];
+    });
+    MCGuiStep(@"Replace on the large file's row", ^{
+        SearchPanel *p = Panel(c);
+        p.replaceField.stringValue = @"pin";
+        [p replaceMatchAtRow:0];
+    });
+    MCGuiWait(@"it says it left the file alone", 10, ^BOOL {
+        return !Panel(c).busy && [Panel(c).status.stringValue containsString:@"leaves alone"];
+    });
+    MCGuiStep(@"named, with the limit; Replace All says the same", ^{
+        SearchPanel *p = Panel(c);
+        MCGuiNote(@"status: %@", p.status.stringValue);
+        GCHECK([p.status.stringValue
+            containsString:@"log.txt is larger than 1 MB, which Replace in Folder leaves alone"]);
+        alertsBefore = MCGuiAlertsShown().count;
+        [p replaceAll:nil];
+    });
+    MCGuiWait(@"Replace All's answer", 10, ^BOOL {
+        return !Panel(c).busy && [Panel(c).status.stringValue hasPrefix:@"Nothing replaced"];
+    });
+    MCGuiStep(@"no question asked; the file as it was", ^{
+        SearchPanel *p = Panel(c);
+        MCGuiNote(@"status: %@", p.status.stringValue);
+        GCHECK_EQ_STR(p.status.stringValue,
+                      @"Nothing replaced: the matches are in files larger than 1 MB, which "
+                       "Replace in Folder leaves alone (big/log.txt)");
+        GCHECK(MCGuiAlertsShown().count == alertsBefore);
+        NSData *log = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"big/log.txt"]];
+        GCHECK(log.length == 2 * 1024 * 1024 + 8);
+        p.replaceField.stringValue = @"";
         p.includeField.stringValue = scopeInclude ?: @"";
     });
 

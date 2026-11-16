@@ -38,26 +38,45 @@ static NSString *MCGrouped(unsigned long n) {
                                             numberStyle:NSNumberFormatterDecimalStyle];
 }
 
-// The line under the results naming the files a search left out ("12
-// files skipped: 3 larger than 1 MB, 9 not UTF-8"), the files themselves
-// in its tooltip. Nil when none were.
+// The line under the results naming the files a search left out, the
+// files themselves in its tooltip; nil when none were. One file is named
+// in the line itself ("app.log was not searched: it is not UTF-8"), more
+// are counted ("12 files not searched: 3 with a line over 64 MB, 9 not
+// UTF-8"). A large text file is searched (FolderSearch reads it in
+// pieces), so only a line past the limit leaves one out for its size.
 static NSString *MCSkippedNote(const FolderSearchResult &r, NSString **tooltip) {
     const unsigned long large = r.skippedTooLarge, other = r.skippedNotUtf8;
     if (!large && !other) return nil;
-    NSMutableArray<NSString *> *parts = [NSMutableArray array];
-    const unsigned long mb = (unsigned long)(FolderSearchOptions().maxFileSize / (1024 * 1024));
-    if (large) [parts addObject:[NSString stringWithFormat:@"%@ larger than %lu MB", MCGrouped(large), mb]];
-    if (other) [parts addObject:[NSString stringWithFormat:@"%@ not UTF-8", MCGrouped(other)]];
+    const unsigned long mb =
+        (unsigned long)(FolderSearchOptions().maxStreamedLine / (1024 * 1024));
+    NSString *lineReason = [NSString stringWithFormat:@"a line longer than %lu MB", mb];
     NSMutableString *tip = [NSMutableString string];
     for (const FolderSearchSkip &k : r.skipped)
         [tip appendFormat:@"%@%@ (%@)", tip.length ? @"\n" : @"", SNS(k.relativePath),
-                          k.tooLarge ? @"larger than the limit" : @"not UTF-8"];
+                          k.tooLarge ? lineReason : @"not UTF-8"];
     if (large + other > r.skipped.size())
         [tip appendFormat:@"\nand %@ more", MCGrouped(large + other - r.skipped.size())];
     *tooltip = tip;
-    return [NSString stringWithFormat:@"%@ %@ skipped: %@", MCGrouped(large + other),
-                                      large + other == 1 ? @"file" : @"files",
+    if (large + other == 1 && r.skipped.size() == 1)
+        return [NSString stringWithFormat:@"%@ was not searched: %@",
+                                          SNS(r.skipped[0].relativePath),
+                                          large ? [@"it has " stringByAppendingString:lineReason]
+                                                : @"it is not UTF-8"];
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    if (large)
+        [parts addObject:[NSString stringWithFormat:@"%@ with a line over %lu MB",
+                                                    MCGrouped(large), mb]];
+    if (other) [parts addObject:[NSString stringWithFormat:@"%@ not UTF-8", MCGrouped(other)]];
+    return [NSString stringWithFormat:@"%@ files not searched: %@", MCGrouped(large + other),
                                       [parts componentsJoinedByString:@", "]];
+}
+
+// Replace in Folder rewrites a file whole in memory, so it leaves a file
+// over FolderSearch's whole-read size alone (the search still finds its
+// matches): "1 MB".
+static NSString *MCReplaceSizeLimit(void) {
+    return [NSString stringWithFormat:@"%lu MB",
+                     (unsigned long)(FolderSearchOptions().maxFileSize / (1024 * 1024))];
 }
 
 // One match: file path, 1-based line number, the line's text, and where the
@@ -1197,6 +1216,11 @@ static NSString *MCSkippedNote(const FolderSearchResult &r, NSString **tooltip) 
         NSMutableArray<NSString *> *paths = [NSMutableArray array];
         NSMutableArray<NSNumber *> *counts = [NSMutableArray array];
         NSMutableSet<NSString *> *outside = [NSMutableSet set];
+        NSMutableArray<NSString *> *large = [NSMutableArray array];
+        for (const std::string &rel : plan.tooLarge) [large addObject:SNS(rel)];
+        if (plan.tooLargeCount > plan.tooLarge.size())
+            [large addObject:[NSString stringWithFormat:@"and %@ more",
+                                       MCGrouped(plan.tooLargeCount - plan.tooLarge.size())]];
         for (const FolderReplaceFile &f : plan.files) {
             [paths addObject:SNS(f.path)];
             [counts addObject:@(f.matches)];
@@ -1228,6 +1252,12 @@ static NSString *MCSkippedNote(const FolderSearchResult &r, NSString **tooltip) 
                     ? [NSString stringWithFormat:@"Nothing replaced: the matches are in tabs with "
                                                   "unsaved changes (%@)",
                                                  [held componentsJoinedByString:@", "]]
+                    : large.count
+                    ? [NSString stringWithFormat:@"Nothing replaced: the matches are in files "
+                                                  "larger than %@, which Replace in Folder "
+                                                  "leaves alone (%@)",
+                                                 MCReplaceSizeLimit(),
+                                                 [large componentsJoinedByString:@", "]]
                     : @"Nothing to replace";
                 [s setStatus:why error:error != nil];
                 return;
@@ -1247,6 +1277,9 @@ static NSString *MCSkippedNote(const FolderSearchResult &r, NSString **tooltip) 
             if (held.count)
                 [info appendFormat:@" Left alone, since their tabs have unsaved changes: %@.",
                                    [held componentsJoinedByString:@", "]];
+            if (large.count)
+                [info appendFormat:@" Left alone, since they are larger than %@: %@.",
+                                   MCReplaceSizeLimit(), [large componentsJoinedByString:@", "]];
             alert.informativeText = info;
             [alert addButtonWithTitle:@"Replace"];
             [alert addButtonWithTitle:@"Cancel"];
@@ -1358,8 +1391,14 @@ static NSString *MCSkippedNote(const FolderSearchResult &r, NSString **tooltip) 
             FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
             if (!FolderSearch::readTextFile(p, FolderSearchOptions().maxFileSize, &content,
                                             &encoding)) {
-                [failed addObject:[NSString stringWithFormat:@"%@ could not be read as text",
-                                                             path.lastPathComponent]];
+                const FolderSearch::FileStamp st = FolderSearch::stampOf(p);
+                if (st.exists && st.size > FolderSearchOptions().maxFileSize)
+                    [failed addObject:[NSString stringWithFormat:
+                                @"%@ is larger than %@, which Replace in Folder leaves alone",
+                                path.lastPathComponent, MCReplaceSizeLimit()]];
+                else
+                    [failed addObject:[NSString stringWithFormat:@"%@ could not be read as text",
+                                                                 path.lastPathComponent]];
                 continue;
             }
             size_t n = 0;
