@@ -1499,7 +1499,7 @@ MC_GUI_SUITE(git_conflicts) {
         GCHECK(x.count == 2);
         GCHECK([tv.string hasPrefix:@"1\ntwo main\n3\n"]);
         GCHECK_EQ_STR(tv.undoManager.undoActionName, @"Keep Current Change");
-        GCHECK_EQ_STR([[c valueForKey:@"statusLabel"] stringValue], @"2 conflicts left in c.txt.");
+        GCHECK_EQ_STR([[c valueForKey:@"settingsLabel"] stringValue], @"2 conflicts left in c.txt.");
     });
     MCGuiStep(@"undone: the block is back", ^{
         CodeTextView *tv = [c valueForKey:@"textView"];
@@ -1525,7 +1525,7 @@ MC_GUI_SUITE(git_conflicts) {
         GCHECK(tv.conflicts.count == 0);
         GCHECK_EQ_STR(tv.string, @"1\ntwo main\n3\n4\n5\n6\n7\neight topic\n9\n10\n11\n12\n13\n"
                                  "fourteen main\nfourteen topic\n15\n16\n17\n18\n");
-        GCHECK([[[c valueForKey:@"statusLabel"] stringValue] hasPrefix:@"No conflicts left in c.txt."]);
+        GCHECK([[[c valueForKey:@"settingsLabel"] stringValue] hasPrefix:@"No conflicts left in c.txt."]);
         GCHECK_EQ_STR(tv.undoManager.undoActionName, @"Keep Both Changes");
         [c saveCurrentFile:nil];
     });
