@@ -121,19 +121,22 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
 
 @implementation ClickOutline {
     NSTimeInterval _typedAt;   // the last letter typed to the tree, for type-select
-    NSInteger _lastPressRow;   // the row the press before this one was on
-}
-- (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super initWithFrame:frame])) _lastPressRow = -1;
-    return self;
+    __weak id _lastPressItem;  // the row's item the press before this one was on
 }
 - (void)mouseDown:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    NSInteger row = [self rowAtPoint:p];
+    const NSInteger row = [self rowAtPoint:p];
+    // The press is on an item, not a row number: the tracking below runs
+    // the main queue, and a listing arriving there (FSEvents, a file
+    // written a moment before) can insert rows above, so the row number
+    // the press was on may then hold another file (the preview_tabs flake:
+    // a click on main.go opened helper.go).
+    id item = row >= 0 ? [self itemAtRow:row] : nil;
+    const NSRect pressedRect = row >= 0 ? [self rectOfRow:row] : NSZeroRect;
     _clickCount = event.clickCount;
-    _sameRowAsLastPress = row >= 0 && row == _lastPressRow;
+    _sameRowAsLastPress = item != nil && item == _lastPressItem;
     _commandClick = (event.modifierFlags & NSEventModifierFlagCommand) != 0;
-    _lastPressRow = row;
+    _lastPressItem = item;
     // The native tracking runs first (selection, expansion, and a drag once
     // the mouse moves), and returns at the release or when a drag starts.
     // A press that became a drag opens nothing; any other is a click.
@@ -141,7 +144,13 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
     [super mouseDown:event];
     // An open Quick Look panel follows a click as it follows the arrows.
     if (!self.dragBegan) [[MCQuickLookPanel shared] followURLs:[self selectedFileURLs]];
-    if (row >= 0 && !self.dragBegan && self.onRowClick) self.onRowClick(row, p);
+    if (!item || self.dragBegan || !self.onRowClick) return;
+    // Where the pressed item is now; gone (a full rescan, a deletion), the
+    // click opens nothing.
+    const NSInteger now = [self rowForItem:item];
+    if (now < 0) return;
+    p.y += NSMinY([self rectOfRow:now]) - NSMinY(pressedRect);
+    self.onRowClick(now, p);
 }
 - (void)keyDown:(NSEvent *)event {
     // F2 (rename) and Cmd+Delete (Move to Trash) are the registry's tree

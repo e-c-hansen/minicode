@@ -100,6 +100,7 @@ struct IdeConn {
     IdeLink::FrameReader frames;
     std::unique_ptr<IdeLink::McpServer> mcp;
     std::string clientPid;
+    std::string lastSelection;   // the last selection_changed this client was sent
 };
 
 static Json MCDiagnostics(EditorController *c, const std::string &uri);
@@ -119,7 +120,6 @@ static NSUInteger MCCloseOfferedDiffs(EditorController *c, NSString *name);
     dispatch_source_t _listenSource;
     std::vector<std::shared_ptr<IdeConn>> _conns;
     NSString *_writtenFolders;
-    std::string _lastSelection;              // the last selection_changed sent
     Json _latestSelection;                   // getLatestSelection's
     NSTimer *_selectionTimer;
     // openDiff's comparisons still waiting, with the connection that asked.
@@ -473,12 +473,6 @@ static const NSUInteger kMaxConnections = 8;
     }
 }
 
-- (void)broadcast:(const std::string &)message {
-    const std::string frame = IdeLink::encodeFrame(IdeLink::Opcode::Text, message);
-    for (auto c : std::vector<std::shared_ptr<IdeConn>>(_conns))
-        if (c->mcp && c->mcp->initialized() && !c->closing) [self send:c bytes:frame];
-}
-
 // ----------------------------------------------------------------- MCP
 - (void)startMcpOn:(const std::shared_ptr<IdeConn> &)c {
     NSString *version = [NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"] ?: @"0";
@@ -508,6 +502,10 @@ static const NSUInteger kMaxConnections = 8;
 - (void)sendSelectionTo:(const std::shared_ptr<IdeConn> &)c {
     Json sel = [self currentSelectionJson];
     if (sel.isNull() || !c->mcp || !c->mcp->initialized()) return;
+    // Remembered per client: a selection made just before it joined is
+    // still waiting on the timer (selectionMoved), and sending it then would
+    // give this client the same selection twice.
+    c->lastSelection = sel.dump();
     [self send:c bytes:IdeLink::encodeFrame(IdeLink::Opcode::Text,
                                             IdeLink::McpServer::notification("selection_changed", sel))];
 }
@@ -546,10 +544,15 @@ static const NSUInteger kMaxConnections = 8;
     Json sel = [self currentSelectionJson];
     if (sel.isNull()) return;
     _latestSelection = sel;
+    // To each client whose last selection_changed was another selection.
     const std::string text = sel.dump();
-    if (text == _lastSelection) return;
-    _lastSelection = text;
-    [self broadcast:IdeLink::McpServer::notification("selection_changed", sel)];
+    const std::string frame = IdeLink::encodeFrame(
+        IdeLink::Opcode::Text, IdeLink::McpServer::notification("selection_changed", sel));
+    for (auto c : std::vector<std::shared_ptr<IdeConn>>(_conns)) {
+        if (!c->mcp || !c->mcp->initialized() || c->closing || c->lastSelection == text) continue;
+        c->lastSelection = text;
+        [self send:c bytes:frame];
+    }
 }
 
 // --------------------------------------------------------------- tools
