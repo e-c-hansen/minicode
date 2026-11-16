@@ -511,7 +511,8 @@ void LatexPreview::setActive(bool active) {
         gtk_popover_popdown(GTK_POPOVER(popover_));
         return;
     }
-    if (!pdf_->hasDocument() || bufferText() != pdfSrc_ || missing_) compileNow();
+    if ((!pdf_->hasDocument() || bufferText() != pdfSrc_ || missing_) && !typesettingBuffer())
+        compileNow();
     gtk_widget_grab_focus(root_);
 }
 
@@ -566,6 +567,7 @@ void LatexPreview::stopRun() {
         g_object_unref(proc_);
         proc_ = nullptr;
     }
+    runSrc_.clear();
     // Taken away now, not when the killed run reports back: by then a new run
     // for the same document may have written it again.
     removeScratch();
@@ -644,6 +646,7 @@ void LatexPreview::compileNow() {
         answerWaiters("tectonic did not run.");
         return;
     }
+    runSrc_ = job->src;
     runScratch_ = job->scratch;
     runDirFd_ = open(dirName(job->scratch).c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     char* name = g_path_get_basename(job->scratch.c_str());
@@ -669,6 +672,7 @@ void LatexPreview::finishCompile(Job* job, GBytes* output, bool ok) {
     removeScratch();
     g_object_unref(proc_);
     proc_ = nullptr;
+    runSrc_.clear();
 
     std::string log;
     if (output) {
@@ -941,7 +945,15 @@ void LatexPreview::pdfForBuffer(PdfCb done) {
         return;
     }
     waiters_.push_back(std::move(done));
-    compileNow();   // skip the typing pause; queues if one is running
+    // Skip the typing pause, and queue behind a run of older text. A run of
+    // this very text answers when it ends: queuing another typeset the same
+    // text twice (Show Line in PDF pressed while the preview's own typeset
+    // ran, linux/tests/gui/LatexForwardSuite.cpp).
+    if (!typesettingBuffer()) compileNow();
+}
+
+bool LatexPreview::typesettingBuffer() const {
+    return proc_ && runSrc_ == bufferText();
 }
 
 // Called when a typeset ends with nothing queued after it. The buffer may have

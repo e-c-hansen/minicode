@@ -76,6 +76,11 @@ public:
     static std::string keyFor(const std::string& root);
     // $XDG_STATE_HOME/minicode/sessions.json.
     static std::string sessionsFile();
+    // `s` as the session of the folder keyed `key` in that file (none when
+    // it has no tabs), the other folders' entries kept: read and written
+    // back under a lock, since every minicode process saves into the one
+    // file.
+    static void putSession(const std::string& key, const TabSessions::Session& s);
     const std::string& key() const { return key_; }
     // Open Folder: the old folder's session saved first, then this, then
     // restoreSession for the new one.
