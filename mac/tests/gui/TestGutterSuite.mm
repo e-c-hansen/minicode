@@ -63,10 +63,15 @@ MC_GUI_SUITE(test_gutter) {
         MCGuiSetSettings([NSString stringWithFormat:@"lsp.enabled = false\n"
                                                     @"test.python = '%@' {tests}\n", fake]);
         c = MCGuiController();
+        // A terminal of its own, at a prompt, so what earlier suites left
+        // in theirs plays no part.
+        if (!Panel(c)) [c toggleTerminal:nil];
+        term = [Panel(c) addTabInDirectory:MCGuiProject()];
         [c focusEditor:nil];
         GCHECK([c showFile:py]);
         [c.window makeFirstResponder:Text(c)];
     });
+    MCGuiWait(@"its shell at the prompt", 20, ^BOOL { return Idle(term); });
     MCGuiWait(@"a mark by each test", 10, ^BOOL {
         return [[Tests(c) testLabels] isEqualToArray:@[@"test_adds", @"TestBroken::test_fails"]] &&
                GutterOf(c).tests.size() == 2;
@@ -86,13 +91,14 @@ MC_GUI_SUITE(test_gutter) {
                                                       action:@selector(runTestAtCursor:)
                                                keyEquivalent:@""];
         GCHECK([c validateMenuItem:item]);
+        [c.window makeFirstResponder:Text(c)];
+        GCHECK(Panel(c).activeTerminal == term);
         ClickTest(c, 0);
         GCHECK(c.window.firstResponder == Text(c));
         GCHECK([Tests(c).lastCommand containsString:@"tested/test_calc.py::test_adds"]);
         MCGuiNote(@"typed: %@", Tests(c).lastCommand);
     });
     MCGuiWait(@"the test ran in the terminal and passed", 20, ^BOOL {
-        term = Panel(c).activeTerminal;
         return [[term recentText:8] containsString:@"fake-pytest ran: tested/test_calc.py::test_adds"] &&
                [States(c)[0] integerValue] == MCTestPassed;
     });
@@ -156,5 +162,6 @@ MC_GUI_SUITE(test_gutter) {
                                                       action:@selector(runTestAtCursor:)
                                                keyEquivalent:@""];
         GCHECK(![c validateMenuItem:item]);
+        GCHECK([Panel(c) closeTerminal:term]);
     });
 }
