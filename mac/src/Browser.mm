@@ -13,6 +13,7 @@
 #import <WebKit/WebKit.h>
 #include "BrowserTabs.h"
 #include "EditorTabs.h"
+#include "PageCheck.h"
 #include "WebBookmark.h"
 
 // The page's own context menu (Back, Reload, Inspect...) ends with Adjust
@@ -165,7 +166,9 @@ static const NSUInteger kMaxBrowserStates = 4 * 1024 * 1024;
 @property(nonatomic) BOOL agentPageShown;
 @property(nonatomic, strong) MCTabStrip  *strip;
 @property(nonatomic, strong) MCBrowserStripButton *plus;
-@property(nonatomic, strong) NSTextField *urlBar;
+@property(nonatomic, strong, readwrite) NSTextField *urlBar;
+@property(nonatomic, strong, readwrite) NSTextField *addressNotice;
+@property(nonatomic) NSUInteger addressNoticeGeneration;
 @property(nonatomic, strong) NSButton    *back;
 @property(nonatomic, strong) NSButton    *forward;
 @property(nonatomic, strong) NSButton    *reload;
@@ -474,7 +477,27 @@ static id MCRecordFromData(NSData *data, BOOL archived) {
     self.urlBar.delegate = self;
     self.urlBar.target = self;
     self.urlBar.action = @selector(urlEntered:);
+    // One line: a long address scrolls while typed in and shows "…" in its
+    // middle otherwise, as Safari's does. A field made with init wraps, and
+    // a long file:// address went onto a second line, cut off.
+    NSTextFieldCell *urlCell = (NSTextFieldCell *)self.urlBar.cell;
+    urlCell.usesSingleLineMode = YES;
+    urlCell.scrollable = YES;
+    urlCell.wraps = NO;
+    urlCell.lineBreakMode = NSLineBreakByTruncatingMiddle;
     [self addSubview:self.urlBar];
+
+    // What the address bar could not open, said over its right end.
+    NSTextField *notice = [NSTextField labelWithString:@""];
+    notice.font = [NSFont systemFontOfSize:11];
+    notice.textColor = [NSColor systemRedColor];
+    notice.drawsBackground = YES;
+    notice.backgroundColor = [NSColor textBackgroundColor];
+    notice.alignment = NSTextAlignmentRight;
+    notice.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    notice.hidden = YES;
+    self.addressNotice = notice;
+    [self addSubview:notice];
 
     // The zoom, over the address bar's right end for a moment after it
     // changes.
@@ -541,6 +564,7 @@ static const CGFloat kBrowserBarHeight = 36;
     self.bookmarksMenuButton.frame = NSMakeRect(right + bw + 2, by, bw, 26);
     self.urlBar.frame  = NSMakeRect(x, by, MAX(0, right - pad - x), 24);
     self.zoomLabel.frame = NSMakeRect(MAX(x, NSMaxX(self.urlBar.frame) - 50), by + 4, 46, 16);
+    [self layoutAddressNotice];
     const NSRect page = [self pageRect];
     for (MCBrowserTab *t in _tabs) t.web.frame = page;   // hidden pages keep their size
     self.agentWeb.frame = page;
@@ -552,6 +576,38 @@ static const CGFloat kBrowserBarHeight = 36;
 }
 
 - (void)focusURLBar { [self.window makeFirstResponder:self.urlBar]; }
+
+// The notice sits inside the bar's right end, as wide as its text (at
+// most the bar's width less room to see what was typed).
+- (void)layoutAddressNotice {
+    const NSRect bar = self.urlBar.frame;
+    const CGFloat w = MIN(ceil(self.addressNotice.intrinsicContentSize.width) + 4,
+                          MAX(0, bar.size.width - 80));
+    self.addressNotice.frame = NSMakeRect(NSMaxX(bar) - w - 4, bar.origin.y + 4, w, 16);
+}
+
+- (void)showAddressNotice:(NSString *)text {
+    self.addressNotice.stringValue = text;
+    self.addressNotice.toolTip = text;
+    self.addressNotice.hidden = NO;
+    [self layoutAddressNotice];
+    const NSUInteger gen = ++self.addressNoticeGeneration;
+    __weak BrowserView *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        BrowserView *s = weakSelf;
+        if (s && s.addressNoticeGeneration == gen) s.addressNotice.hidden = YES;
+    });
+}
+
+- (void)hideAddressNotice {
+    self.addressNoticeGeneration++;
+    self.addressNotice.hidden = YES;
+}
+
+- (void)controlTextDidChange:(NSNotification *)note {
+    if (note.object == self.urlBar) [self hideAddressNotice];
+}
 
 // ------------------------------------------------------------- the tabs
 - (MCBrowserTab *)makeTab {
@@ -1315,24 +1371,41 @@ static BOOL MCCommandHeld(void) {
 }
 
 - (WKNavigation *)loadString:(NSString *)raw {
-    NSString *s =[raw stringByTrimmingCharactersInSet:
-                   [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (s.length == 0) return nil;
-    NSString *urlStr = s;
-    BOOL hasScheme = [s hasPrefix:@"http://"] || [s hasPrefix:@"https://"] ||
-                     [s hasPrefix:@"file://"];
-    BOOL looksLikeDomain = [s containsString:@"."] && ![s containsString:@" "];
-    if (!hasScheme) {
-        if (looksLikeDomain)
-            urlStr = [@"https://" stringByAppendingString:s];
-        else  // treat as a web search
-            urlStr = [@"https://duckduckgo.com/?q="
-                stringByAppendingString:
-                    [s stringByAddingPercentEncodingWithAllowedCharacters:
-                        [NSCharacterSet URLQueryAllowedCharacterSet]]];
+    NSString *folder = self.folderForAddresses ? self.folderForAddresses() : nil;
+    NSFileManager *fm = NSFileManager.defaultManager;
+    const PageCheck::TypedAddress typed = PageCheck::typedAddress(
+        raw.UTF8String ?: "", folder.length ? folder.fileSystemRepresentation : "",
+        NSHomeDirectory().fileSystemRepresentation, [fm](const std::string &p) {
+            BOOL dir = NO;
+            return [fm fileExistsAtPath:@(p.c_str()) isDirectory:&dir] && !dir;
+        });
+    switch (typed.kind) {
+    case PageCheck::Typed::Nothing:
+        return nil;
+    case PageCheck::Typed::NoFile:
+        [self showAddressNotice:@(typed.message.c_str())];
+        return nil;
+    default:
+        break;
     }
-    NSURL *url = [NSURL URLWithString:urlStr];
-    return url ? [self.web loadRequest:[NSURLRequest requestWithURL:url]] : nil;
+    [self hideAddressNotice];
+    NSURL *url = [NSURL URLWithString:@(typed.url.c_str())];
+    if (!url) return nil;
+    if (url.isFileURL) return [self loadFileURL:url folder:folder];
+    return [self.web loadRequest:[NSURLRequest requestWithURL:url]];
+}
+
+// A file page may read the window's folder (its stylesheets, scripts and
+// pictures, and the pages it links to), or its own folder when it is
+// outside the window's. loadRequest gave a file:// page its own file only.
+- (WKNavigation *)loadFileURL:(NSURL *)url folder:(NSString *)folder {
+    NSString *path = url.URLByStandardizingPath.path;
+    NSString *access = path.stringByDeletingLastPathComponent;
+    NSString *root = folder.stringByStandardizingPath;
+    if (root.length && ([path hasPrefix:[root stringByAppendingString:@"/"]] ||
+                        [root isEqualToString:@"/"]))
+        access = root;
+    return [self.web loadFileURL:url allowingReadAccessToURL:[NSURL fileURLWithPath:access]];
 }
 
 // From the toolbar: an address typed there is the user's, so it loads in

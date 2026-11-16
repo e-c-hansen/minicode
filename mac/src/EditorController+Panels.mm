@@ -288,6 +288,7 @@
     self.browser = [[BrowserView alloc] initWithHomeURL:home];
     __weak EditorController *weakSelf = self;
     self.browser.onEmpty = ^{ [weakSelf browserEmptied]; };
+    self.browser.folderForAddresses = ^NSString *{ return weakSelf.rootPath; };
     [self.rightArea addSubview:self.browser];
     self.browserDivider = [[DragBar alloc] initWithFrame:NSZeroRect];
     self.browserDivider.vertical = YES;
