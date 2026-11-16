@@ -379,7 +379,13 @@ MC_GUI_SUITE(markdown_width) {
         GCHECK(NSWidth(tv.frame) > 600);
         GCHECK(fabs(TextWidth(tv) - 400) <= 1 && Centered(tv) && InsideMeasure(tv));
         const CGFloat left = tv.textContainerOrigin.x;
-        GCHECK(InkIn(tv, 0, left - 1) == 0);
+        // Left of the text only the mark of the caret's block (VS Code's
+        // markEditorSelection bar), on screen since the source opens with
+        // the caret at line 1.
+        const NSRect mark = side.markRect;
+        MCGuiNote(@"mark %@", NSStringFromRect(mark));
+        GCHECK(InkIn(tv, 0, NSIsEmptyRect(mark) ? left - 1 : NSMinX(mark) - 1) == 0);
+        if (!NSIsEmptyRect(mark)) GCHECK(InkIn(tv, NSMaxX(mark) + 1, left - 1) == 0);
         GCHECK(InkIn(tv, left + tv.textContainer.size.width + 1, NSWidth(tv.frame)) == 0);
         MCGuiSnapshot(c.window.contentView, @"markdown_width_side");
         Resize(c, 900, 900);   // a narrow pane: the least inset
