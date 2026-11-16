@@ -55,4 +55,6 @@
 @property(nonatomic, readonly) NSView *questionBar;
 @property(nonatomic, readonly) NSButton *rememberBox;
 @property(nonatomic, readonly) NSUInteger loads;     // pages loaded, for checks
+// A load keeping the place is under way, or the place is being put back.
+@property(nonatomic, readonly) BOOL restoringPlace;
 @end
