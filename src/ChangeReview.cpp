@@ -680,7 +680,7 @@ std::vector<std::string> commitHeaderArgs(const std::string& commit) {
 
 std::vector<std::string> commitDiffArgs(const std::string& commit, const std::string& parent) {
     std::vector<std::string> a = {"-c", "core.quotePath=false", "diff-tree", "-r", "-z", "-M",
-                                  "--no-commit-id", "--no-ext-diff"};
+                                  "--no-commit-id", "--no-ext-diff", "--no-abbrev"};
     if (parent.empty()) {
         a.push_back("--root");
         a.push_back(commit);
@@ -752,7 +752,10 @@ std::string commitByline(const std::string& author, long long time, const std::s
 }
 
 std::vector<std::string> worktreeRawArgs(const std::string& base) {
-    return {"-c", "core.quotePath=false", "diff", "--raw", "-z", "-M", "--no-ext-diff", base, "--"};
+    // --no-abbrev: `diff --raw` shortens object names, and cat-file --batch
+    // answers with the whole name, so the old sides were never found.
+    return {"-c", "core.quotePath=false", "diff", "--raw", "--no-abbrev", "-z", "-M", "--no-ext-diff",
+            base, "--"};
 }
 
 std::vector<std::string> worktreeListArgs() { return {"worktree", "list", "--porcelain"}; }

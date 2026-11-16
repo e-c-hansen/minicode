@@ -340,8 +340,9 @@ static void testChangeReview() {
         CHECK(parseRawDiff("").empty());
         CHECK((commitDiffArgs("abc", "") ==
                std::vector<std::string>{"-c", "core.quotePath=false", "diff-tree", "-r", "-z", "-M",
-                                        "--no-commit-id", "--no-ext-diff", "--root", "abc", "--"}));
-        CHECK(commitDiffArgs("abc", "def")[9] == "abc" && commitDiffArgs("abc", "def")[8] == "def");
+                                        "--no-commit-id", "--no-ext-diff", "--no-abbrev", "--root", "abc",
+                                        "--"}));
+        CHECK(commitDiffArgs("abc", "def")[10] == "abc" && commitDiffArgs("abc", "def")[9] == "def");
         CHECK(commitHeaderArgs("abc")[1] == "-s");
         auto day = [](long long) { return std::string("Sep 23, 2026 at 14:02"); };
         CHECK(commitByline("Ann", 1000, oid1, 1, 1000 + 3 * 86400, day) ==
@@ -350,7 +351,8 @@ static void testChangeReview() {
         CHECK(mainWorktreePath("worktree /a/b c\nHEAD 123\nbranch refs/heads/main\n\nworktree /a/b c/.claude/x\n") ==
               "/a/b c");
         CHECK(mainWorktreePath("").empty());
-        CHECK(worktreeRawArgs("abc")[7] == "abc" && worktreeRawArgs("abc")[3] == "--raw");
+        CHECK(worktreeRawArgs("abc")[8] == "abc" && worktreeRawArgs("abc")[3] == "--raw" &&
+              worktreeRawArgs("abc")[4] == "--no-abbrev");
         CHECK((nulPaths(std::string("a\0b c\0", 6)) == std::vector<std::string>{"a", "b c"}));
         // Bytes holding a newline in the middle of the header's count.
         std::string nul = oid1 + " blob 3\n" + std::string("a\0b", 3) + "\n";
