@@ -811,9 +811,13 @@ MC_GUI_SUITE(mermaid) {
             @"    f.src = 'https://pictures.minicode-test.invalid/frame';\n"
             @"    document.body.appendChild(f);\n"
             @"    if (src.includes('broken')) throw new Error('Parse error on line 2: broken');\n"
+            // Green only when drawn as asked and nothing was fetched; the
+            // color comes from the SVG's style sheet, which NSImage's own
+            // SVG drawing left out (round 8, D3).
+            @"    const good = cfg.theme === 'dark' && cfg.securityLevel === 'strict' && !leaked;\n"
             @"    return {svg: '<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 120 40\" '\n"
-            @"      + 'style=\"max-width: 120px\"><desc>theme:' + cfg.theme + ' labels:' + cfg.htmlLabels\n"
-            @"      + ' leaked:' + leaked + '</desc><rect width=\"120\" height=\"40\" fill=\"#888\"/></svg>'};\n"
+            @"      + 'style=\"max-width: 120px\"><style>.mark { fill: ' + (good ? '#00c000' : '#c00000')\n"
+            @"      + '; }</style><rect class=\"mark\" width=\"120\" height=\"40\"/></svg>'};\n"
             @"  } }; })();\n");
         NSData *bytes = [NSData dataWithContentsOfFile:standIn];
         unsigned char digest[32];
@@ -865,7 +869,7 @@ MC_GUI_SUITE(mermaid) {
                                    effectiveRange:nil];
         return tip.length > 0;
     });
-    MCGuiStep(@"an SVG at its own size in the page's theme, plain labels, nothing loaded", ^{
+    MCGuiStep(@"a PDF WebKit drew, at the SVG's size, its style sheet applied, nothing loaded", ^{
         NSTextView *tv = [MCGuiController() valueForKey:@"textView"];
         NSTextStorage *st = tv.textStorage;
         __block MCMarkdownImage *pic = nil;
@@ -877,19 +881,34 @@ MC_GUI_SUITE(mermaid) {
         GCHECK(pic != nil);
         MCGuiNote(@"picture %@", NSStringFromSize(pic.picture.size));
         GCHECK(NSEqualSizes(pic.picture.size, NSMakeSize(120, 40)));
+        // Its middle, drawn on black: the style sheet's green, not NSImage's
+        // default black fill or the stand-in's red.
+        if (pic.picture) {
+            NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
+                initWithBitmapDataPlanes:NULL pixelsWide:120 pixelsHigh:40 bitsPerSample:8
+                         samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
+                             bytesPerRow:0 bitsPerPixel:0];
+            [NSGraphicsContext saveGraphicsState];
+            NSGraphicsContext.currentContext = [NSGraphicsContext graphicsContextWithBitmapImageRep:rep];
+            [NSColor.blackColor setFill];
+            NSRectFill(NSMakeRect(0, 0, 120, 40));
+            [pic.picture drawInRect:NSMakeRect(0, 0, 120, 40)];
+            [NSGraphicsContext restoreGraphicsState];
+            NSColor *mid = [[rep colorAtX:60 y:20] colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+            MCGuiNote(@"the middle of the picture: %@", mid);
+            GCHECK(mid.greenComponent > 0.5 && mid.redComponent < 0.3 && mid.blueComponent < 0.3);
+        }
         NSRange broken = [tv.string rangeOfString:@"broken -->"];
         NSString *tip = broken.location == NSNotFound ? nil
             : [st attribute:NSToolTipAttributeName atIndex:broken.location effectiveRange:nil];
         GCHECK([tip containsString:@"Parse error on line 2: broken"]);
-        NSString *svg = nil;
+        NSData *kept = nil;
         for (NSString *name in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:MCMermaidCacheDirectory()
                                                                                    error:nil])
-            if ([name.pathExtension isEqualToString:@"svg"])
-                svg = [NSString stringWithContentsOfFile:[MCMermaidCacheDirectory() stringByAppendingPathComponent:name]
-                                                encoding:NSUTF8StringEncoding error:nil];
-        MCGuiNote(@"the kept SVG: %@", svg);
-        GCHECK([svg containsString:@"theme:dark labels:false leaked:false"]);
-        GCHECK([svg containsString:@"width=\"120\""] && ![svg containsString:@"max-width"]);
+            if ([name.pathExtension isEqualToString:@"pdf"])
+                kept = [NSData dataWithContentsOfFile:[MCMermaidCacheDirectory() stringByAppendingPathComponent:name]];
+        MCGuiNote(@"the kept PDF: %lu bytes", (unsigned long)kept.length);
+        GCHECK(kept.length > 5 && memcmp(kept.bytes, "%PDF-", 5) == 0);
         GCHECK(MCMermaidWebLoadsRefused() >= 1);   // the frame it tried to open
         unsetenv("MINICODE_MERMAID_JS");
         unsetenv("MINICODE_MMDC");

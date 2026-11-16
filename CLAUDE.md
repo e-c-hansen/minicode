@@ -2192,12 +2192,19 @@ launch. `MCMermaidWeb` draws: one WKWebView never in a window, a
 non-persistent data store, the script as a user script, a content rule list
 blocking every subresource and a navigation delegate refusing every load
 but its empty page (`MCMermaidWebLoadsRefused`), `callAsyncJavaScript` with
-`MermaidDiagram::renderScript()` (htmlLabels off, so the SVG has plain text
-NSImage draws; width and height from the viewBox). The key holds the
-drawer (`kDrawerMmdc`, `kDrawerMermaidJs`, `kVersion` 2), the SVG is cached
-as `<key>.svg`, mmdc wins when installed, and the side page's context
-holds `MCMermaidDrawerState()`. The `mermaid` suite plays a stand-in
-mermaid.js.
+`MermaidDiagram::renderScript()` (Mermaid's own labels, after
+`document.fonts.ready`; the SVG put in the page at its viewBox's size and
+its place returned), then `createPDFWithConfiguration:` of that place, the
+view drawing no background (`drawsBackground` NO by KVC). **Trap
+(2026-11-16, round 8 D3)**: the SVG was handed to NSImage until then, whose
+SVG drawing ignores the `<style>` Mermaid puts every color in and `em`
+offsets on tspans: labels sat above their boxes, text and boxes were dark
+grey, and each curved edge, its `fill: none` lost, filled as a black wedge;
+never draw Mermaid's SVG with NSImage. The key holds the drawer
+(`kDrawerMmdc`, `kDrawerMermaidJs`, `kVersion` 3), the PDF is cached as
+`<key>.pdf` (vectors, sharp at any zoom), mmdc wins when installed, and the
+side page's context holds `MCMermaidDrawerState()`. The `mermaid` suite
+plays a stand-in mermaid.js whose colors come from its style sheet.
 
 ## LaTeX preview (read before touching it)
 

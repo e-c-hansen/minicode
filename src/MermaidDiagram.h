@@ -54,11 +54,14 @@ extern const char *const kMermaidJsSha256;
 extern const long kMermaidJsBytes;
 
 // The body of the async function the WebKit view runs for one diagram,
-// given `source` and `theme`: mermaid.render with plain SVG text labels
-// (htmlLabels off, so NSImage can draw the result; HTML labels are
-// foreignObject, which it leaves out), strict security, and the SVG's
-// width and height set from its viewBox, its style (a max-width, a
-// background) dropped. It returns the SVG as text.
+// given `source` and `theme`: mermaid.render in the theme with strict
+// security and Mermaid's own labels, after the page's fonts are ready, the
+// SVG put into the empty, transparent page at its top left at the size of
+// its viewBox (its style, a max-width and a background, dropped). It returns
+// {x, y, width, height}, the drawing's place in the page, which the view
+// then makes a PDF of: WebKit draws what Mermaid measured, where NSImage's
+// own SVG drawing ignored the SVG's style sheet and em offsets (labels
+// above their boxes, dark grey text, filled edges as black wedges).
 std::string renderScript();
 
 // The pixels per point a diagram is drawn at (sharp on a Retina screen).
