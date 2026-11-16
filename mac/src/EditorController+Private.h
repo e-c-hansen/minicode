@@ -426,6 +426,12 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // Rename Terminal… and Move Terminal Left and Right can act.
 - (BOOL)validateTerminalTabCommand:(NSMenuItem *)item;
 - (BOOL)resizeTerminalDockBy:(CGFloat)delta;
+// Run File's way of running a command (see +Panels): saved first, typed
+// into a terminal that is not busy (after a cd to `dir`, when given and
+// the terminal is elsewhere), the keyboard kept. The terminal, or nil when
+// the save failed.
+- (TerminalView *)runFileCommand:(NSString *)command inDirectory:(NSString *)dir
+                        busyNote:(NSString *)busyNote;
 @end
 
 // EditorController+EditCommands.mm: Indent and Outdent Lines, Insert Line
@@ -623,6 +629,11 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (BOOL)validateGroupItem:(NSMenuItem *)item enabled:(BOOL *)enabled;
 - (NSDictionary *)editorGroupsSessionState;
 - (void)restoreEditorGroups:(NSDictionary *)state;
+@end
+
+// EditorController+Tests.mm: Run Test at Cursor's menu item.
+@interface EditorController (TestsPrivate)
+- (BOOL)validateTestItem:(NSMenuItem *)item enabled:(BOOL *)enabled;
 @end
 
 // EditorController+Persistence.mm: the tabs between runs, backups and hot exit, auto-save, files changed, moved or deleted outside.

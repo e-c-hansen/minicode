@@ -1,6 +1,7 @@
 // EditorController+Panels.mm — EditorController: the terminal dock and the browser, and moving the keyboard between panes.
 #import "EditorController+Private.h"
 #import "ProcessesPanel.h"
+#include "RunFile.h"
 
 @implementation EditorController (Panels)
 
@@ -197,9 +198,22 @@
         [self showStatusNote:problem];
         return;
     }
+    [self runFileCommand:command
+             inDirectory:nil
+                busyNote:@"The terminal was busy, so the file runs in a new one"];
+}
+
+// Run File's way of running a command for the file on show (the ▶ beside a
+// test too): the file saved first, the command typed into the terminal on
+// show, or a new one when that is busy or run.terminal = new, and the
+// keyboard left where it was. With a directory, the command runs there: a
+// `cd` goes first unless the terminal is in it already. The terminal, or
+// nil when the save failed.
+- (TerminalView *)runFileCommand:(NSString *)command inDirectory:(NSString *)dir
+                        busyNote:(NSString *)busyNote {
     if (self.dirty) {
         [self saveCurrentFile:nil];
-        if (self.dirty) return;   // the save failed and said why
+        if (self.dirty) return nil;   // the save failed and said why
     }
 
     NSResponder *keep = self.window.firstResponder;
@@ -211,12 +225,25 @@
         term = [self.terminalPanel addTab];
     } else if (!fresh && term.busy) {
         term = [self.terminalPanel addTab];
-        note = @"The terminal was busy, so the file runs in a new one";
+        note = busyNote;
+    }
+    if (dir.length) {
+        char a[PATH_MAX], b[PATH_MAX];
+        const char *here = term.directory.length ? term.directory.fileSystemRepresentation : "";
+        const BOOL there = here[0] && realpath(here, a) && realpath(dir.fileSystemRepresentation, b) &&
+                           strcmp(a, b) == 0;
+        if (!there)
+            command = [NSString
+                stringWithFormat:@"cd %@ && %@",
+                                 [NSString stringWithUTF8String:
+                                               RunFile::shellQuote(dir.fileSystemRepresentation).c_str()],
+                                 command];
     }
     [term runCommand:command];
     if (keep && keep != self.window && [self.window firstResponder] != keep)
         [self.window makeFirstResponder:keep];
     if (note) [self showStatusNote:note];
+    return term;
 }
 
 - (void)toggleTerminal:(id)sender {

@@ -1,6 +1,7 @@
 // EditorController.h — Cocoa window: file tree (left) + editor/preview (right).
 #import <Cocoa/Cocoa.h>
 #import "GitGutter.h"   // MCGitGutterHost, which the Git category adopts
+#import "TestGutter.h"  // MCTestGutterHost, which the Tests category adopts
 
 @class BrowserView, MCAgentNotes, MCComparison, MCPaletteContext, TerminalView;
 
@@ -28,6 +29,13 @@
 - (void)toggleSourceControl:(id)sender;   // Ctrl+Shift+G git panel in the sidebar
 - (void)toggleAgents:(id)sender;          // Shift+Cmd+A agent sessions in the sidebar
 - (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
+@end
+
+// EditorController+Tests.mm: the ▶ beside each test (TestGutter.h), whose
+// host it is, and Run Test at Cursor.
+@interface EditorController (Tests) <MCTestGutterHost>
+- (MCTestGutter *)ensureTestGutter;   // made with the window
+- (void)runTestAtCursor:(id)sender;   // Terminal > Run Test at Cursor
 @end
 
 // EditorController+Git.mm: pushing and pulling, staging everything,

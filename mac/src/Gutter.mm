@@ -16,6 +16,8 @@
 // is over the gutter (as VS Code does), and always for a closed fold.
 static const CGFloat kDotLane = 12;
 static const CGFloat kFoldLane = 14;
+// The test lane, leftmost, while the file is a test file.
+static const CGFloat kTestLane = 14;
 // The change bars' lane, between the dots and the numbers, while on.
 static const CGFloat kChangeLane = 5;
 static const CGFloat kChangeBarWidth = 3;
@@ -33,6 +35,7 @@ static const NSUInteger kMinDigits = 3;
     NSTrackingArea *_tracking;
     std::vector<QuickDiff::Bar> _bars;   // sorted by line
     NSColor *_barColors[3];              // added, modified, deleted
+    std::vector<MCGutterTest> _tests;    // sorted by line
 }
 
 - (instancetype)initWithTextView:(CodeTextView *)tv {
@@ -138,7 +141,8 @@ static const NSUInteger kMinDigits = 3;
     for (size_t n = _index.lineCount(); n >= 10; n /= 10) digits++;
     digits = MAX(digits, kMinDigits);
     const CGFloat width =
-        ceil(kDotLane + (_changeLane ? kChangeLane : 0) + digits * _digitWidth + kFoldLane);
+        ceil(self.testWidth + kDotLane + (_changeLane ? kChangeLane : 0) + digits * _digitWidth +
+             kFoldLane);
     if (digits == _digits && self.ruleThickness == width) return;
     _digits = digits;
     self.ruleThickness = width;   // NSRulerView asks its scroll view to tile
@@ -154,15 +158,20 @@ static const NSUInteger kMinDigits = 3;
         _index.length() + er.length - oldLen != ts.length) {
         [self reindex];   // out of step (never expected): start again
         _bars.clear();
+        _tests.clear();
     } else {
         // The change bars move with the lines (only when there are some);
         // a whole new text (another tab) has none until its own diff.
-        if (er.location == 0 && oldLen == _index.length() && er.length == ts.length)
+        if (er.location == 0 && oldLen == _index.length() && er.length == ts.length) {
             _bars.clear();
+            _tests.clear();
+        }
         size_t firstLine = 0, removed = 0;
-        if (!_bars.empty()) {
+        bool atLineStart = false;
+        if (!_bars.empty() || !_tests.empty()) {
             firstLine = _index.lineOf(er.location);
             removed = _index.lineOf(er.location + oldLen) - firstLine;
+            atLineStart = _index.lineStart(firstLine) == er.location;
         }
         std::vector<unichar> buf(er.length);
         NSString *s = ts.string;
@@ -170,9 +179,17 @@ static const NSUInteger kMinDigits = 3;
         _index.edit(er.location, oldLen, reinterpret_cast<const char16_t *>(buf.data()),
                     buf.size(), er.location ? [s characterAtIndex:er.location - 1] : 0,
                     NSMaxRange(er) < s.length ? [s characterAtIndex:NSMaxRange(er)] : 0);
-        if (!_bars.empty()) {
+        if (!_bars.empty() || !_tests.empty()) {
             const size_t added = _index.lineOf(NSMaxRange(er)) - firstLine;
-            QuickDiff::shift(_bars, firstLine, removed, added);
+            if (!_bars.empty()) QuickDiff::shift(_bars, firstLine, removed, added);
+            // A test below the edit moves with its line (its own line too
+            // when the edit begins at that line's start); one in lines the
+            // edit took stays on its first line until the next look.
+            const size_t pivot = firstLine + removed + (atLineStart ? 0 : 1);
+            for (MCGutterTest &t : _tests) {
+                if (t.line >= pivot) t.line = t.line + added - removed;
+                else if (t.line > firstLine) t.line = firstLine;
+            }
         }
     }
     [self updateThicknessLater];
@@ -241,9 +258,119 @@ static const NSUInteger kMinDigits = 3;
 }
 
 // The bars' x, in the lane left of the numbers.
-- (CGFloat)changeBarX { return kDotLane; }
+- (CGFloat)changeBarX { return self.testWidth + kDotLane; }
 
-- (CGFloat)laneWidth { return kDotLane + (_changeLane ? kChangeLane : 0) + kFoldLane; }
+- (CGFloat)testWidth { return _testLane ? kTestLane : 0; }
+
+- (CGFloat)laneWidth {
+    return self.testWidth + kDotLane + (_changeLane ? kChangeLane : 0) + kFoldLane;
+}
+
+// ---- the test lane
+- (void)setTestLane:(BOOL)on {
+    if (_testLane == on) return;
+    _testLane = on;
+    if (!on) _tests.clear();
+    [self updateThicknessLater];
+    [self updateTestTips];
+    self.needsDisplay = YES;
+}
+
+- (void)setTests:(const std::vector<MCGutterTest> &)tests {
+    _tests = tests;
+    std::stable_sort(_tests.begin(), _tests.end(),
+                     [](const MCGutterTest &a, const MCGutterTest &b) { return a.line < b.line; });
+    self.needsDisplay = YES;
+}
+
+- (const std::vector<MCGutterTest> &)tests { return _tests; }
+
+- (NSInteger)testOnLine:(size_t)line {
+    auto it = std::lower_bound(_tests.begin(), _tests.end(), line,
+                               [](const MCGutterTest &t, size_t l) { return t.line < l; });
+    return it != _tests.end() && it->line == line ? (NSInteger)(it - _tests.begin()) : -1;
+}
+
+- (NSRect)rectOfTest:(NSInteger)index {
+    if (!_testLane || index < 0 || (size_t)index >= _tests.size()) return NSZeroRect;
+    NSRect line = [self rectOfLines:_tests[(size_t)index].line count:1];
+    if (NSIsEmptyRect(line)) return NSZeroRect;
+    // The first fragment's height: a wrapped line's mark sits by its start.
+    const CGFloat h = MIN(NSHeight(line), [_tv.layoutManager defaultLineHeightForFont:_font]);
+    return NSMakeRect(0, NSMinY(line), kTestLane, MAX(h, 1));
+}
+
+// One tooltip area over the whole lane: the tip is looked up by the line
+// under the pointer, so nothing needs redoing as the text scrolls.
+- (void)updateTestTips {
+    [self removeAllToolTips];
+    if (_testLane)
+        [self addToolTipRect:NSMakeRect(0, 0, kTestLane, MAX(NSHeight(self.bounds), 1))
+                       owner:self userData:NULL];
+}
+
+- (void)setFrameSize:(NSSize)size {
+    [super setFrameSize:size];
+    if (_testLane) [self updateTestTips];
+}
+
+- (NSString *)view:(NSView *)view stringForToolTip:(NSToolTipTag)tag point:(NSPoint)point
+          userData:(void *)data {
+    (void)view; (void)tag; (void)data;
+    return [self testTipAtPoint:point] ?: @"";
+}
+
+- (NSString *)testTipAtPoint:(NSPoint)point {
+    for (size_t i = 0; i < _tests.size(); i++) {
+        const NSRect r = [self rectOfTest:(NSInteger)i];
+        if (point.y >= NSMinY(r) && point.y < NSMaxY(r)) return _tests[i].tip;
+    }
+    return nil;
+}
+
+// The mark itself, centered on the line's x-height middle.
+- (void)drawTest:(const MCGutterTest &)t midY:(CGFloat)mid {
+    const CGFloat cx = kTestLane / 2 + 1;
+    const CGFloat r = MAX(3.0, round(_font.pointSize * 0.3 * 2) / 2);
+    NSBezierPath *p = [NSBezierPath bezierPath];
+    p.lineCapStyle = NSLineCapStyleRound;
+    p.lineJoinStyle = NSLineJoinStyleRound;
+    switch (t.state) {
+        case MCTestIdle:
+            [p moveToPoint:NSMakePoint(cx - r * 0.7, mid - r)];
+            [p lineToPoint:NSMakePoint(cx + r, mid)];
+            [p lineToPoint:NSMakePoint(cx - r * 0.7, mid + r)];
+            [p closePath];
+            [(_numberColor ?: NSColor.grayColor) set];
+            [p fill];
+            return;
+        case MCTestRunning:
+            [p appendBezierPathWithOvalInRect:NSMakeRect(cx - r * 0.8, mid - r * 0.8, r * 1.6, r * 1.6)];
+            p.lineWidth = 1.5;
+            [(_activeNumberColor ?: NSColor.whiteColor) set];
+            [p stroke];
+            return;
+        case MCTestPassed:
+            // VS Code's testing.iconPassed.
+            [p moveToPoint:NSMakePoint(cx - r, mid)];
+            [p lineToPoint:NSMakePoint(cx - r * 0.25, mid + r * 0.75)];
+            [p lineToPoint:NSMakePoint(cx + r, mid - r * 0.8)];
+            p.lineWidth = 1.75;
+            [[NSColor colorWithSRGBRed:0x73 / 255.0 green:0xC9 / 255.0 blue:0x91 / 255.0 alpha:1] set];
+            [p stroke];
+            return;
+        case MCTestFailed:
+            // VS Code's testing.iconFailed.
+            [p moveToPoint:NSMakePoint(cx - r * 0.75, mid - r * 0.75)];
+            [p lineToPoint:NSMakePoint(cx + r * 0.75, mid + r * 0.75)];
+            [p moveToPoint:NSMakePoint(cx - r * 0.75, mid + r * 0.75)];
+            [p lineToPoint:NSMakePoint(cx + r * 0.75, mid - r * 0.75)];
+            p.lineWidth = 1.75;
+            [[NSColor colorWithSRGBRed:0xF1 / 255.0 green:0x4C / 255.0 blue:0x4C / 255.0 alpha:1] set];
+            [p stroke];
+            return;
+    }
+}
 
 // A line's rect in the gutter (its first fragment to its last), from the
 // layout manager; NSZeroRect when the line is past the text.
@@ -384,7 +511,11 @@ static const NSUInteger kMinDigits = 3;
             const CGFloat mid = y - self->_font.xHeight / 2;
             [MCDiagnosticColor(mark->second) set];
             [[NSBezierPath bezierPathWithOvalInRect:
-                NSMakeRect((kDotLane - d) / 2 + 1, mid - d / 2, d, d)] fill];
+                NSMakeRect(self.testWidth + (kDotLane - d) / 2 + 1, mid - d / 2, d, d)] fill];
+        }
+        if (self->_testLane && !self->_tests.empty()) {
+            const NSInteger t = [self testOnLine:line];
+            if (t >= 0) [self drawTest:self->_tests[(size_t)t] midY:y - self->_font.xHeight / 2];
         }
     };
 
@@ -494,10 +625,20 @@ static const NSUInteger kMinDigits = 3;
     if (!tv) return;
     [tv.window makeFirstResponder:tv];
     const NSUInteger line = [self lineAtEvent:event];
-    // The change lane: a click on a bar shows its change.
     const NSPoint inGutter = [self convertPoint:event.locationInWindow fromView:nil];
-    if (_changeLane && !_bars.empty() && self.onChangeBar && inGutter.x >= kDotLane - 1 &&
-        inGutter.x < kDotLane + kChangeLane + 1) {
+    // The test lane: a click on a mark runs its test.
+    if (_testLane && inGutter.x < kTestLane) {
+        const NSInteger t = [self testOnLine:line];
+        if (t >= 0 && self.onTest) {
+            _dragAnchorLine = NSNotFound;
+            self.onTest(t);
+            return;
+        }
+    }
+    // The change lane: a click on a bar shows its change.
+    const CGFloat barX = self.changeBarX;
+    if (_changeLane && !_bars.empty() && self.onChangeBar && inGutter.x >= barX - 1 &&
+        inGutter.x < barX + kChangeLane + 1) {
         const int at = QuickDiff::barAt(_bars, line);
         if (at >= 0) {
             _dragAnchorLine = NSNotFound;

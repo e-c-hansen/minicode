@@ -215,6 +215,8 @@ NSNotificationName const MCTerminalClaudeDidStartNotification =
     @"MCTerminalClaudeDidStartNotification";
 NSNotificationName const MCTerminalCommandDidFinishNotification =
     @"MCTerminalCommandDidFinish";
+NSString *const MCTerminalExitStatusKey = @"status";
+NSString *const MCTerminalCommandKey = @"command";
 
 // Flow control between the pty and the main thread. The reader (on the
 // terminal's I/O queue) counts the bytes it has handed over and not yet seen
@@ -1577,7 +1579,7 @@ static BOOL MCIsOtherShell(pid_t pid) {
     [self stopRawWatch];
     _stickyGrid = NO;
     [self titleChanged];
-    [self postCommandFinished];
+    [self postCommandFinished:nil];
     // What waited for a prompt goes in once the new shell has the terminal.
     if (_lineMode) [self updateMode];
     [self flushPendingInput];
@@ -1616,9 +1618,16 @@ static BOOL MCIsOtherShell(pid_t pid) {
     });
 }
 
-- (void)postCommandFinished {
+// What a finished command's notification carries: its exit status (133;D's)
+// and its line, read now, before the prompt mark that follows clears it.
+- (NSDictionary *)finishInfo:(int)status {
+    return @{MCTerminalExitStatusKey: @(status),
+             MCTerminalCommandKey: _runningCommand ?: @""};
+}
+
+- (void)postCommandFinished:(NSDictionary *)info {
     [[NSNotificationCenter defaultCenter]
-        postNotificationName:MCTerminalCommandDidFinishNotification object:self];
+        postNotificationName:MCTerminalCommandDidFinishNotification object:self userInfo:info];
 }
 
 - (BOOL)typeCommand:(NSString *)line {
@@ -2476,7 +2485,8 @@ static NSString *MCBrowserHelperPath(void) {
             break;
         case TermEvent::CommandEnd:
             // After this chunk, once the view is up to date.
-            [self performSelector:@selector(postCommandFinished) withObject:nil afterDelay:0];
+            [self performSelector:@selector(postCommandFinished:)
+                       withObject:[self finishInfo:e.status] afterDelay:0];
             if (_userCommand) {
                 _userCommand = NO;
                 [self ensureNewline];
@@ -2550,7 +2560,8 @@ static NSString *MCBrowserHelperPath(void) {
             break;
         }
         case TermEvent::CommandEnd:
-            [self performSelector:@selector(postCommandFinished) withObject:nil afterDelay:0];
+            [self performSelector:@selector(postCommandFinished:)
+                       withObject:[self finishInfo:e.status] afterDelay:0];
             break;
         case TermEvent::Directory:
             _cwd = [[NSFileManager defaultManager]

@@ -463,6 +463,10 @@ public:
     // The language an extension's run command is listed under: python for
     // py, sh for bash, and so on; the extension itself otherwise.
     static std::string runLanguage(const std::string& extension);
+    // The ▶ beside each test (Runnables.h): test.<language> (python, go,
+    // rust, js) as written, a command template or off; "" when the file
+    // does not set it, so the built-in one applies.
+    std::string testTemplate(const std::string& language) const;
     // Format Document. format.<lang> (python, cpp, go, rust, shell; see
     // Formatter.h) is a whole command line like lsp.*, "" when the file
     // names none, so the project's configuration and then Google's style
@@ -520,7 +524,7 @@ public:
     // Every key with one value of its own, from the key table (Settings.cpp),
     // in table order: "window.opacity", "theme", "editor.ruler", ... The
     // families matched by prefix (surfaces' .background, .text and
-    // .opacity, syntax.*, markdown.*, lsp.*, run.*, format.*) are not in it.
+    // .opacity, syntax.*, markdown.*, lsp.*, run.*, test.*, format.*) are not in it.
     static std::vector<std::string> tableKeys();
 
 private:
@@ -588,6 +592,7 @@ private:
     std::map<std::string, std::vector<std::string>> lspExtensions_;
     bool runInNewTerminal_ = false;
     std::map<std::string, std::string> runCommands_;
+    std::map<std::string, std::string> testCommands_;
     std::map<std::string, std::string> formatCommands_;
     FormatOnSave formatOnSave_ = FormatOnSave::Off;
     std::string pythonInterpreter_;
