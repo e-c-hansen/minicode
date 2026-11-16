@@ -674,6 +674,83 @@ std::map<std::string, std::string> parseBatch(const std::string& out) {
     return m;
 }
 
+std::vector<std::string> commitHeaderArgs(const std::string& commit) {
+    return {"show", "-s", "--no-color", std::string("--format=") + Git::showFormat(), commit, "--"};
+}
+
+std::vector<std::string> commitDiffArgs(const std::string& commit, const std::string& parent) {
+    std::vector<std::string> a = {"-c", "core.quotePath=false", "diff-tree", "-r", "-z", "-M",
+                                  "--no-commit-id", "--no-ext-diff"};
+    if (parent.empty()) {
+        a.push_back("--root");
+        a.push_back(commit);
+    } else {
+        a.push_back(parent);
+        a.push_back(commit);
+    }
+    a.push_back("--");
+    return a;
+}
+
+bool nullObject(const std::string& object) {
+    return !object.empty() && object.find_first_not_of('0') == std::string::npos;
+}
+
+std::vector<RawChange> parseRawDiff(const std::string& out) {
+    // ":<old mode> <new mode> <old object> <new object> <status>\0<path>\0",
+    // a rename or copy with its source path first: "R100\0<old>\0<new>\0".
+    std::vector<RawChange> v;
+    size_t pos = 0;
+    auto field = [&](std::string& into) {
+        if (pos >= out.size()) return false;
+        size_t end = out.find('\0', pos);
+        if (end == std::string::npos) end = out.size();
+        into = out.substr(pos, end - pos);
+        pos = end + 1;
+        return true;
+    };
+    std::string head;
+    while (field(head)) {
+        // A stray newline before the first record (diff-tree's commit id
+        // line when --no-commit-id was not given) is skipped.
+        while (!head.empty() && (head[0] == '\n' || head[0] == '\r')) head.erase(0, 1);
+        if (head.size() < 2 || head[0] != ':') continue;
+        std::vector<std::string> w;
+        for (size_t at = 1; at <= head.size();) {
+            size_t sp = head.find(' ', at);
+            if (sp == std::string::npos) sp = head.size();
+            w.push_back(head.substr(at, sp - at));
+            at = sp + 1;
+        }
+        if (w.size() < 5 || w[4].empty()) continue;
+        RawChange c;
+        c.oldMode = w[0];
+        c.newMode = w[1];
+        c.oldObject = w[2];
+        c.newObject = w[3];
+        c.letter = w[4][0];
+        std::string a, b;
+        if (!field(a)) break;
+        if (c.letter == 'R' || c.letter == 'C') {
+            if (!field(b)) break;
+            c.origPath = a;
+            c.path = b;
+        } else {
+            c.path = a;
+        }
+        v.push_back(c);
+    }
+    return v;
+}
+
+std::string commitByline(const std::string& author, long long time, const std::string& hash,
+                         size_t parents, long long now, GitUi::DateFormat date) {
+    std::string s = GitUi::validUtf8(author) + ", " + Git::relativeTime(time, now) + " (" +
+                    (date ? date(time) : GitUi::dateText(time)) + ")  " + Git::shortHash(hash);
+    if (parents > 1) s += "  (a merge: its changes against the first parent, what it brought in)";
+    return s;
+}
+
 bool looksBinary(const std::string& bytes) {
     if (bytes.size() >= 2) {
         const unsigned char a = (unsigned char)bytes[0], b = (unsigned char)bytes[1];

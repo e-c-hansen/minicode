@@ -198,9 +198,9 @@ static void testGitModel() {
     t.hasAheadBehind = false;
     CHECK(summaryText(t) == "The upstream origin/main is gone.");
     t.upstream.clear();
-    CHECK(summaryText(t) == "main has no upstream, so nothing here is marked as pushed or not.");
+    CHECK(summaryText(t) == "main has no upstream: nothing is marked as pushed.");
     t.detached = true;
-    CHECK(summaryText(t) == "HEAD is detached, so there is no upstream to compare with.");
+    CHECK(summaryText(t) == "HEAD is detached: there is no upstream to compare with.");
     CHECK(compareWithUpstream(s) && !compareWithUpstream(t));
 
     GROUP("git-ui:sync");
@@ -352,6 +352,24 @@ static void testGitModel() {
     CHECK(failureText(128, "", "") == "git exited with status 128.");
     CHECK(failureText(1, "", "a\n  \nb") == "a\nb");
     CHECK(firstLine("[main 1a2b3c4] Subject\n 1 file changed\n") == "[main 1a2b3c4] Subject");
+    GROUP("git-ui:commit-done");
+    {
+        CommitDone d = commitDone("[main acbd818] Keep item 1 stock from going negative\n 1 file changed\n");
+        CHECK(d.parsed && d.hash == "acbd818");
+        CHECK(d.words == "Committed \xe2\x80\x9cKeep item 1 stock from going negative\xe2\x80\x9d to main.");
+        CHECK(commitDoneText("[main acbd818] Fix\n") ==
+              "Committed \xe2\x80\x9c" "Fix\xe2\x80\x9d to main.  acbd818");
+        d = commitDone("[main (root-commit) 1a2b3c4] First\n");
+        CHECK(d.parsed && d.words == "Committed \xe2\x80\x9c" "First\xe2\x80\x9d to main, its first commit.");
+        d = commitDone("[detached HEAD 1a2b3c4] Try\n");
+        CHECK(d.parsed && d.words == "Committed \xe2\x80\x9cTry\xe2\x80\x9d on a detached HEAD.");
+        d = commitDone("[feature/x-1 9f8e7d6] A subject ] with a bracket\n");
+        CHECK(d.parsed && d.words == "Committed \xe2\x80\x9c" "A subject ] with a bracket\xe2\x80\x9d to feature/x-1.");
+        // Anything else is shown as git wrote it.
+        d = commitDone("nothing to commit\n");
+        CHECK(!d.parsed && d.words == "nothing to commit" && d.hash.empty());
+        CHECK(commitDoneText("[main notahash] x\n") == "[main notahash] x");
+    }
 
     GROUP("git-ui:utf8");
     CHECK(validUtf8("caf\xc3\xa9") == "caf\xc3\xa9");

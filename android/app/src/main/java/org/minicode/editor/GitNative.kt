@@ -25,6 +25,8 @@ object GitNative {
 
     @JvmStatic external fun failureText(status: Int, out: ByteArray, err: ByteArray): String
     @JvmStatic external fun firstLine(out: ByteArray): String
+    /** What a commit did, in words: "Committed “Subject” to main.  1a2b3c4". */
+    @JvmStatic external fun commitDoneText(out: ByteArray): String
     /** {top level, .git directory}, or null. */
     @JvmStatic external fun parseTopLevel(out: ByteArray): Array<String>?
 

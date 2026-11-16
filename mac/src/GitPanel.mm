@@ -915,6 +915,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     NSTextField *_graphHeading;
     NSButton *_allToggle;
     NSTextField *_summaryLabel;       // pushed or not, against the upstream
+    NSString *_doneWords, *_doneHash; // the last commit's words, while they show
     NSScrollView *_graphScroll;
     MCGitTable *_graphTable;
     MCGitGraph *_graph;
@@ -1090,10 +1091,13 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _allToggle.toolTip = @"Show every local and remote branch, not only this branch "
                           "and its upstream";
     [self addSubview:_allToggle];
-    _summaryLabel = [NSTextField labelWithString:@""];
+    // Wraps rather than cutting the sentence off in a narrow panel (its
+    // tooltip has it whole too).
+    _summaryLabel = [NSTextField wrappingLabelWithString:@""];
     _summaryLabel.font = [NSFont systemFontOfSize:11];
     _summaryLabel.textColor = GHex(0x9D9D9D);
-    _summaryLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    _summaryLabel.maximumNumberOfLines = 4;
+    _summaryLabel.selectable = NO;
     [self addSubview:_summaryLabel];
 
     _graphScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];
@@ -1239,6 +1243,19 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 
 - (void)updateErrorColor {
     _errorLabel.textColor = _errorIsInfo ? GHex(0x9D9D9D) : GHex(0xF48771);
+    // A commit's words in the panel's text color, its short hash muted.
+    if (_doneWords && [_errorLabel.stringValue isEqualToString:
+                           [NSString stringWithFormat:@"%@  %@", _doneWords, _doneHash]]) {
+        NSMutableAttributedString *a = [[NSMutableAttributedString alloc]
+            initWithString:_doneWords
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
+                             NSForegroundColorAttributeName: _text ?: NSColor.labelColor}];
+        [a appendAttributedString:[[NSAttributedString alloc]
+            initWithString:[@"  " stringByAppendingString:_doneHash]
+                attributes:@{NSFontAttributeName: MCMonoFont(10.5, NSFontWeightRegular),
+                             NSForegroundColorAttributeName: GHex(0x9D9D9D)}]];
+        _errorLabel.attributedStringValue = a;
+    }
 }
 
 - (void)showMessageArea:(BOOL)show {
@@ -1306,8 +1323,12 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _graphHeading.frame = NSMakeRect(pad, y + 2, MAX(0, inner - tog.width - 4), 14);
     _allToggle.frame = NSMakeRect(W - pad - tog.width, y, tog.width, 18);
     y += 20;
-    _summaryLabel.frame = NSMakeRect(pad, y, inner, 15);
-    y += 19;
+    // As tall as its words need at this width, on every layout, so the
+    // graph moves down when the sentence wraps.
+    const CGFloat sumH = MAX(15.0, ceil([_summaryLabel.cell cellSizeForBounds:
+                                              NSMakeRect(0, 0, inner, 200)].height));
+    _summaryLabel.frame = NSMakeRect(pad, y, inner, sumH);
+    y += sumH + 4;
     _graphScroll.frame = NSMakeRect(0, y, W, MAX(0, H - y));
     [_graphTable sizeLastColumnToFit];
 }
@@ -1416,6 +1437,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 - (NSString *)errorLine { return _errorLabel.hidden ? @"" : _errorLabel.stringValue; }
 
 - (void)setError:(NSString *)text info:(BOOL)info {
+    _doneWords = _doneHash = nil;
     _errorIsInfo = info;
     _errorFromStatus = NO;
     _errorLabel.stringValue = text ?: @"";
@@ -1731,8 +1753,14 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
         if (!r.ok) return;
         [self->_message setString:@""];
         [self->_message setNeedsDisplay:YES];
-        // "[main 1a2b3c4] Message"
-        [self setError:NSFromBytes(GitUi::firstLine(Bytes(r.output))) info:YES];
+        // "Committed “Message” to main.", the short hash muted after it.
+        const GitUi::CommitDone done = GitUi::commitDone(Bytes(r.output));
+        [self setError:NSFromBytes(GitUi::commitDoneText(Bytes(r.output))) info:YES];
+        if (done.parsed) {
+            self->_doneWords = NSFromBytes(done.words);
+            self->_doneHash = NSFromBytes(done.hash);
+            [self updateErrorColor];
+        }
     }];
 }
 
@@ -2670,6 +2698,11 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
     }
     const Git::Commit &c = _graph->g.commits[row];
     NSString *title = NSFromBytes(GitUi::commitTitle(c));
+    if (self.onReviewCommit) {
+        ++_diffGeneration;
+        self.onReviewCommit(NSFromBytes(c.hash), title);
+        return;
+    }
     NSArray *args = NSArgs(GitUi::showArgs(c.hash));
     NSUInteger gen = ++_diffGeneration;
     NSString *dir = _topLevel, *root = self.root;

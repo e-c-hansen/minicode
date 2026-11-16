@@ -573,7 +573,7 @@ class GitPanel @JvmOverloads constructor(
         runAction(GitNative.commitArgs(text)) { r ->
             if (!r.ok) return@runAction   // the message is kept when a commit fails
             message.setText("")
-            setError(GitNative.firstLine(r.out), true)   // "[main 1a2b3c4] Subject"
+            setError(GitNative.commitDoneText(r.out), true)   // "Committed “Subject” to main."
         }
     }
 

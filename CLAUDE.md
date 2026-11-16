@@ -3017,7 +3017,17 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   pinned to the visible right edge (a sideways scroll redraws). New,
   deleted, binary, submodule, conflicted and `add -N` files go whole
   (`wholeOnlyReason`). The GTK and Android panels can follow over the
-  same core.
+  same core. **A commit from the graph** opens the same page in commit
+  mode (`initForCommitsWithRoot:`, key `commit:<root>`, one tab that each
+  commit replaces, through the panel's `onReviewCommit`): `show -s` for
+  the header (`Git::parseShow`), `diff-tree -r -z -M` against the first
+  parent (`--root` for a first commit) for the files
+  (`ChangeReview::parseRawDiff`), their blobs in one `cat-file --batch`,
+  all `Section::Plain`, so no buttons but Side by Side. After a commit the
+  line under the button is `GitUi::commitDone` ("Committed “x” to main.",
+  the short hash muted after it; the GTK and Android panels show
+  `commitDoneText`). The line over the graph (`summaryText`) wraps, its
+  height measured on every layout, with the whole of it as its tooltip.
 - **Change bars** (Mac, `GitGutter.mm`, core `QuickDiff`): the original is
   the index entry, as VS Code's quick diff (`ls-files --stage`, then `cat-file
   blob` of its object), read again only when the file or the index file's stat

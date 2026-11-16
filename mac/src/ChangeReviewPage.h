@@ -36,6 +36,18 @@
 - (instancetype)initWithRoot:(NSString *)root panel:(MCGitPanel *)panel;
 @property(nonatomic, readonly, copy) NSString *root;
 
+// A commit from the graph, the same way and without buttons: a header with
+// its subject, author and date in words, and the rest of its message, then
+// each file it changed against its first parent (what a merge brought in),
+// colored, changed words marked, in one scroll. One such page per window,
+// which each commit shown replaces (its key is the window's, not the
+// commit's), as the diff tab was.
+- (instancetype)initForCommitsWithRoot:(NSString *)root panel:(MCGitPanel *)panel;
+- (void)showCommit:(NSString *)hash title:(NSString *)title;
+@property(nonatomic, readonly, copy) NSString *commit;       // nil for uncommitted changes
+@property(nonatomic, readonly, copy) NSString *headerTitle;  // the bar's words, for checks
+@property(nonatomic, readonly, copy) NSString *headerDetail;
+
 // The window's hooks: open a file at a 1-based line (0: wherever it was),
 // show two versions side by side, and whether a tab holds unsaved text
 // for a path (a discard then leaves the file alone).

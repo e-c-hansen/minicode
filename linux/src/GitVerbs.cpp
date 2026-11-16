@@ -111,7 +111,7 @@ void GitPanel::commit() {
     runAction(GitUi::commitArgs(message()), topLevel_, [this](const GitResult& r) {
         if (!r.ok()) return;   // the message is kept when a commit fails
         setMessage("");
-        setError(GitUi::firstLine(r.out), true);   // "[main 1a2b3c4] Subject"
+        setError(GitUi::commitDoneText(r.out), true);   // "Committed “Subject” to main.  1a2b3c4"
     });
 }
 

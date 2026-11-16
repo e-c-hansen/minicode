@@ -195,6 +195,32 @@ std::map<std::string, Entry> parseLsTree(const std::string& out);
 // left out.
 std::map<std::string, std::string> parseBatch(const std::string& out);
 
+// A commit as the review shows it (Section::Plain, no buttons): its header
+// (`show -s`, read by Git::parseShow) and what it changed against its first
+// parent, or against nothing for a root commit, as diff-tree's raw records,
+// whose object names the blobs come from.
+std::vector<std::string> commitHeaderArgs(const std::string& commit);
+std::vector<std::string> commitDiffArgs(const std::string& commit, const std::string& parent);
+
+// One raw record of `diff-tree -r -z -M` (or `diff --raw -z -M`): modes
+// "000000" where a side has no file, object names all zeros for the work
+// tree's side of a `git diff <commit>`.
+struct RawChange {
+    std::string oldMode, newMode, oldObject, newObject;
+    char letter = 'M';        // M, A, D, R, C, T
+    std::string path;         // the new path
+    std::string origPath;     // a rename's or copy's source
+};
+std::vector<RawChange> parseRawDiff(const std::string& out);
+// Whether an object name is the all-zeros one (no object: the work tree).
+bool nullObject(const std::string& object);
+
+// The line under a commit's subject: "Ann, 3 days ago (Sep 23, 2026 at
+// 14:02)  a1b2c3d", and for a merge that the changes are against its first
+// parent, which is what the merge brought in.
+std::string commitByline(const std::string& author, long long time, const std::string& hash,
+                         size_t parents, long long now, GitUi::DateFormat date = GitUi::dateText);
+
 // Whether bytes read from git or the disk hold a NUL in their first 8 KB
 // (and are not UTF-16 with its byte order mark): a binary file.
 bool looksBinary(const std::string& bytes);

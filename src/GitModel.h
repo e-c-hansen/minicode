@@ -77,6 +77,19 @@ std::string failureText(int status, const std::string& out, const std::string& e
 // The first line of a successful commit's stdout: "[main 1a2b3c4] Subject".
 std::string firstLine(const std::string& out);
 
+// What a commit did, in words, from that first line: "Committed “Subject”
+// to main." (", its first commit." for a root commit, "on a detached
+// HEAD." without a branch), and the short hash apart, for a port to show
+// muted after it. `parsed` is false for anything else, and the words are
+// then the first line as git wrote it.
+struct CommitDone {
+    bool parsed = false;
+    std::string words, hash;
+};
+CommitDone commitDone(const std::string& out);
+// The same as one line: the words, two spaces, the hash.
+std::string commitDoneText(const std::string& out);
+
 // The next file row from `from` going `step` (+1 or -1), skipping headings;
 // -1 when there is none. `from` may be -1 (nothing selected): then Down
 // starts at the top and Up at the bottom.
