@@ -22,12 +22,23 @@
 //   and ripgrep leave it out: every such file from the window's folder
 //   (ignoreTop) down, and .git/info/exclude at its top. See Ignore below.
 //   (Until 2026-11-06 every dotfile was skipped and no ignore file read.)
-// - Files over 1 MB are skipped, and so is any file that is not valid UTF-8,
-//   which is how binaries fall out (the Mac drops them the same way, when
-//   NSString refuses to decode them). The result names the ones a reader
-//   would have expected searched: those larger than the limit and those
-//   not UTF-8, unless a NUL byte in their first 8 KB marks them binary
-//   (FileSniff's rule), since every picture and object file would be named.
+// - A file over 1 MB (maxFileSize) is read and matched a piece at a time
+//   (streamPiece, 4 MB), each piece ending at a line break, so a large log
+//   is searched as a small file is: the same lines, line numbers and
+//   matches, in memory of a piece or so (until 2026-11-16 every file over
+//   1 MB was skipped). Only a line longer than maxStreamedLine (64 MB)
+//   leaves such a file out. A byte that is not UTF-8 late in one still
+//   leaves it out, unless the search's limit was reached before it. Replace in Folder's count (planReplace) still
+//   leaves files over 1 MB out, and names those holding a match
+//   (FolderReplacePlan::tooLarge), since a replacement rewrites the file
+//   whole in memory.
+// - A file that is not valid UTF-8 is skipped, which is how binaries fall
+//   out (the Mac drops them the same way, when NSString refuses to decode
+//   them). The result names the ones a reader would have expected
+//   searched: those too large (above) and those not UTF-8, unless a NUL
+//   byte in their first 8 KB marks them binary (FileSniff's rule), since
+//   every picture and object file would be named. A large file is read
+//   for its first 8 KB first, so a large binary costs no more than that.
 //   UTF-16 with a byte order mark is decoded and searched as ripgrep does
 //   (decodeUtf16; every such file has NULs, so until 2026-11-08 it fell
 //   out without a word): its matches' lines, columns and bytes are of the
@@ -66,6 +77,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "TextFind.h"
@@ -87,7 +99,13 @@ struct FolderSearchMatch {
 
 struct FolderSearchOptions {
     std::size_t   maxMatches   = 2000;
-    std::uintmax_t maxFileSize = 1024 * 1024;   // bytes; larger files are skipped
+    // Bytes read whole; a larger file is read and matched in pieces of
+    // streamPiece bytes, each cut at its last line break (Replace in
+    // Folder's count leaves it out instead), and one with a line over
+    // maxStreamedLine bytes is left out (FolderSearchSkip::tooLarge).
+    std::uintmax_t maxFileSize = 1024 * 1024;
+    std::size_t   streamPiece = 4 * 1024 * 1024;
+    std::size_t   maxStreamedLine = 64 * 1024 * 1024;
     std::size_t   maxLineChars = 200;           // display text cap, in characters
     bool          caseSensitive = false;        // the Mac panel is insensitive
     // VS Code's other two options (TextFind.h has the rules). With either
@@ -118,7 +136,9 @@ struct FolderSearchOptions {
 // A file left out of a search that a reader would expect searched.
 struct FolderSearchSkip {
     std::string relativePath;
-    bool tooLarge = false;   // over maxFileSize; else text that is not UTF-8
+    // A line over maxStreamedLine (or, for Replace in Folder, over
+    // maxFileSize); else text that is not UTF-8.
+    bool tooLarge = false;
 };
 
 struct FolderSearchResult {
@@ -155,6 +175,12 @@ struct FolderReplaceFile {
 struct FolderReplacePlan {
     std::vector<FolderReplaceFile> files;   // only files with matches, in search order
     std::size_t matches = 0;                // in all of them
+    // Text files over maxFileSize holding a match, left alone (relative
+    // paths, the first kMaxSkipsListed of them; all counted in
+    // tooLargeCount): the search finds their matches, but a replacement
+    // is made in memory, the file whole.
+    std::vector<std::string> tooLarge;
+    std::size_t tooLargeCount = 0;
     bool cancelled = false;
     std::string error;                      // the regex did not compile: why
 };
@@ -250,7 +276,7 @@ Rules rulesFor(const std::string& top, const std::string& scope, std::string* sc
 
 // Strict UTF-8 validation: no overlong forms, surrogates or values past
 // U+10FFFF.
-bool isValidUtf8(const std::string& s);
+bool isValidUtf8(std::string_view s);
 
 // Remove ANSI escape sequences (ESC, a byte in @-_, parameters, intermediates,
 // a final byte) and then every remaining control or invisible format
