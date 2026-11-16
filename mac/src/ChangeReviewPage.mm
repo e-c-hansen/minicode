@@ -877,6 +877,10 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             MCChangeReviewPage *s = weakSelf;
             if (!s) return;
             s->_loading = NO;
+            // Its window closed or its tab went while git was read: a page
+            // nobody sees is not built (100,000 rows cost seconds of the
+            // main thread, laid out in idle time, after every suite since).
+            if (s->_closed) return;
             [s show:d];
             if (s->_again) {
                 s->_again = NO;
@@ -942,6 +946,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 // A read on show, keeping the place the eye was on: the same line of the
 // same file, at the same height.
 - (void)show:(std::shared_ptr<ReviewData>)d {
+    if (_closed) return;
     const double c0 = ThreadCpuMs();
     ChangeReview::Anchor anchor;
     CGFloat offset = 0;
