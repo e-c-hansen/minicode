@@ -609,6 +609,7 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
           "editor.gutter-background", "editor.line-number-color",
           "editor.line-number-active-color", "editor.bracket-match",
           "editor.inlay-hint-color", "editor.inlay-hint-background",
+          "editor.merge-current", "editor.merge-incoming",
           "editor.git-added", "editor.git-modified", "editor.git-deleted",
           "syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
@@ -1085,6 +1086,10 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return colorValue(v, s.inlayHintColor_, e);),
         MC_KEY("editor.inlay-hint-background", Word, true,
                return colorValue(v, s.inlayHintBackground_, e);),
+        MC_KEY("editor.merge-current", Word, true,
+               return colorValue(v, s.mergeCurrent_, e);),
+        MC_KEY("editor.merge-incoming", Word, true,
+               return colorValue(v, s.mergeIncoming_, e);),
         MC_KEY("editor.semantic-highlighting", Word, false,
                const std::string w = lower(v);
                bool on = true;
@@ -1469,6 +1474,16 @@ Rgba Settings::gitGutterColor(int kind) const {
     return Rgba::hex(theme_->dark ? dark[kind] : light[kind]);
 }
 
+// VS Code's merge colors (editorColorRegistry's mergeConflict section): the
+// header colors at half, the content colors at four tenths of that, the
+// same in every theme.
+Rgba Settings::mergeCurrentColor() const {
+    return mergeCurrent_ ? *mergeCurrent_ : Rgba::hex(0x40C8AE, 0x33 / 255.0);
+}
+Rgba Settings::mergeIncomingColor() const {
+    return mergeIncoming_ ? *mergeIncoming_ : Rgba::hex(0x40A6FF, 0x33 / 255.0);
+}
+
 Rgba Settings::inlayHintBackground() const {
     if (inlayHintBackground_) return *inlayHintBackground_;
     // VS Code's: badge.background at a tenth, the Modern themes' own badge
@@ -1706,6 +1721,12 @@ const char* Settings::defaultFileText() {
 # editor.inlay-hints = on
 # editor.inlay-hint-color = #969696
 # editor.inlay-hint-background = #6161611A
+# A merge conflict's two sides when git stops on one: the current side's
+# lines (ours, after <<<<<<<) and the incoming side's (theirs, before
+# >>>>>>>), with Keep Current, Keep Incoming, and Keep Both over each
+# conflict (macOS). The markers' lines take the color more strongly.
+# editor.merge-current = #40C8AE33
+# editor.merge-incoming = #40A6FF33
 # editor.inlay-hint-parameter-names = false
 # Sort the lines between "keep-sorted start" and "keep-sorted end" comments
 # every time a file is saved, as Google's keep-sorted tool would.

@@ -1,5 +1,6 @@
 // EditorController+Layout.mm — EditorController: window setup, layout and look, the splits and what fills the sidebar, the title.
 #import "EditorController+Private.h"
+#import "EditorConflicts.h"
 #import "EditorController+LayoutIvars.h"
 #import "PageZoom.h"
 #import "ProcessesPanel.h"
@@ -377,6 +378,9 @@
     for (int column : st.rulers()) [rulers addObject:@(column)];
     self.textView.rulerColumns = rulers;
     self.textView.rulerColor = MCColor(st.rulerColor());
+    self.textView.conflicts.currentColor = MCColor(st.mergeCurrentColor());
+    self.textView.conflicts.incomingColor = MCColor(st.mergeIncomingColor());
+    [self.textView setNeedsDisplay:YES];
     [self applyGutterSettings];   // and the font, which recolorEditor sets in the text
     [self recolorEditor];
     [self sidePreviewApplySettings];   // the page beside the source, in the new colors

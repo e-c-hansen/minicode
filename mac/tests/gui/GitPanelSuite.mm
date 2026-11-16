@@ -10,7 +10,9 @@
 #import "AgentWindow.h"
 #import "AppSettings.h"
 #import "ChangeReviewPage.h"
+#import "EditorConflicts.h"
 #import "GitPanel.h"
+#import "Lsp.h"
 #import "PalettePanel.h"
 #include <objc/runtime.h>
 #include <vector>
@@ -1421,5 +1423,185 @@ MC_GUI_SUITE(worktree_review) {
         UseScratchTrash(NO);
         [c.window close];
     });
+    MCGuiWait(@"gone", 5, ^BOOL { return ![MCGuiControllers() containsObject:c]; });
+}
+
+// `make guitest SUITES=git_conflicts`: a real merge conflict in a scratch
+// repository (diff3 style, so each block has its common ancestor). In the
+// editor, c.txt's three blocks are found with their labels; a press on
+// Keep Current resolves the first as one undo step ("Keep Current
+// Change", undone and done again), Keep Incoming the next, Next Change
+// goes to the last, and Keep Both leaves none, saying so in the status
+// bar. On the review page, r.txt's two blocks show whole with their
+// markers, the ancestor and both sides, with Keep Current, Keep Incoming
+// and Keep Both on each and Side by Side on the file; Keep Incoming and
+// Keep Both write the file, and with none left Mark Resolved stages it,
+// after which git lists no conflict.
+MC_GUI_SUITE(git_conflicts) {
+    __block EditorController *c = nil;
+    NSString *git = MCGitExecutable();
+    NSString *repo = [MCGuiScratch() stringByAppendingPathComponent:@"gitconflicts"];
+    NSString *G = git ? [NSString stringWithFormat:@"'%@'", git] : @"git";
+    NSString *cf = [repo stringByAppendingPathComponent:@"c.txt"];
+    NSString *rf = [repo stringByAppendingPathComponent:@"r.txt"];
+    __block NSInteger actions = 0;
+    __block NSUInteger loads = 0;
+    if (!git) {
+        MCGuiStep(@"no git", ^{ MCGuiNote(@"no git here: the conflict checks are skipped"); });
+        return;
+    }
+    // Eighteen lines; main and topic each change lines 2, 8 and 14 (r.txt:
+    // 2 and 8), so the merge stops with three blocks in c.txt, two in r.txt.
+    NSString *lines = @"1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n9\\n10\\n11\\n12\\n13\\n14\\n15\\n16\\n17\\n18\\n";
+    GitShell(@"a repository whose merge of topic stops on conflicts in c.txt and r.txt", [NSString
+        stringWithFormat:@"set -e; mkdir -p '%@'; cd '%@'; %@ init -q -b main; "
+                          "%@ config merge.conflictStyle diff3; "
+                          "printf '%@' > c.txt; printf '%@' > r.txt; %@ add -A; %@ commit -qm base; "
+                          "%@ checkout -qb topic; "
+                          "sed -i.bak -e 's/^2$/two topic/' -e 's/^8$/eight topic/' -e 's/^14$/fourteen topic/' c.txt; "
+                          "sed -i.bak -e 's/^2$/two topic/' -e 's/^8$/eight topic/' r.txt; rm -f *.bak; "
+                          "%@ commit -qam topic; %@ checkout -q main; "
+                          "sed -i.bak -e 's/^2$/two main/' -e 's/^8$/eight main/' -e 's/^14$/fourteen main/' c.txt; "
+                          "sed -i.bak -e 's/^2$/two main/' -e 's/^8$/eight main/' r.txt; rm -f *.bak; "
+                          "%@ commit -qam main; %@ merge -q topic >/dev/null 2>&1 || true; "
+                          "grep -q '^<<<<<<< HEAD' c.txt; grep -q '^||||||| ' r.txt",
+                          repo, repo, G, G, lines, lines, G, G, G, G, G, G, G]);
+    MCGuiStep(@"a window on it; c.txt open", ^{
+        NSUInteger before = MCGuiControllers().count;
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:repo]]];
+        GCHECK(MCGuiControllers().count == before + 1);
+        c = MCGuiController();
+        GCHECK([c showFile:cf]);
+    });
+    MCGuiWait(@"three blocks found in the editor", 10, ^BOOL {
+        CodeTextView *tv = [c valueForKey:@"textView"];
+        return tv.conflicts.count == 3;
+    });
+    MCGuiStep(@"labelled; Keep Current pressed on the first", ^{
+        CodeTextView *tv = [c valueForKey:@"textView"];
+        MCEditorConflicts *x = tv.conflicts;
+        MCGuiNote(@"blocks: %@", x.blockDescriptions);
+        GCHECK_EQ_STR(x.blockDescriptions.firstObject, @"current HEAD 1, incoming topic 1, base");
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, tv.string.length)];
+        [tv scrollRangeToVisible:NSMakeRange(0, 0)];
+        const NSRect current = [x buttonRectForKeep:0 block:0];
+        const NSRect incoming = [x buttonRectForKeep:1 block:0];
+        const NSRect both = [x buttonRectForKeep:2 block:0];
+        GCHECK(!NSIsEmptyRect(current) && !NSIsEmptyRect(incoming) && !NSIsEmptyRect(both));
+        // In a row on the "<<<<<<<" line, after its text.
+        GCHECK(NSMinX(incoming) > NSMaxX(current) && NSMinX(both) > NSMaxX(incoming));
+        GCHECK(fabs(NSMidY(current) - NSMidY(MCGuiLineTextRect(tv, [tv.string rangeOfString:@"<<<<<<< HEAD"].location))) < 4);
+        MCGuiSnapshot(c.window.contentView, @"git-conflicts-editor");
+        MCGuiUndoGroup(tv.undoManager, ^{
+            GCHECK([x pressAtPoint:NSMakePoint(NSMidX(current), NSMidY(current))]);
+        });
+        GCHECK(x.count == 2);
+        GCHECK([tv.string hasPrefix:@"1\ntwo main\n3\n"]);
+        GCHECK_EQ_STR(tv.undoManager.undoActionName, @"Keep Current Change");
+        GCHECK_EQ_STR([[c valueForKey:@"statusLabel"] stringValue], @"2 conflicts left in c.txt.");
+    });
+    MCGuiStep(@"undone: the block is back", ^{
+        CodeTextView *tv = [c valueForKey:@"textView"];
+        [tv.undoManager undo];
+        [tv.conflicts rescanNow];
+        GCHECK(tv.conflicts.count == 3);
+        GCHECK([tv.string hasPrefix:@"1\n<<<<<<< HEAD\ntwo main\n||||||| "]);
+    });
+    MCGuiStep(@"Keep Current again, then Keep Incoming on the next", ^{
+        CodeTextView *tv = [c valueForKey:@"textView"];
+        MCGuiUndoGroup(tv.undoManager, ^{ GCHECK([tv.conflicts keep:0 block:0]); });
+        MCGuiUndoGroup(tv.undoManager, ^{ GCHECK([tv.conflicts keep:1 block:0]); });
+        GCHECK(tv.conflicts.count == 1);
+        GCHECK([tv.string hasPrefix:@"1\ntwo main\n3\n4\n5\n6\n7\neight topic\n9\n"]);
+        GCHECK_EQ_STR(tv.undoManager.undoActionName, @"Keep Incoming Change");
+    });
+    MCGuiStep(@"Next Change goes to the last block; Keep Both there", ^{
+        CodeTextView *tv = [c valueForKey:@"textView"];
+        tv.selectedRange = NSMakeRange(0, 0);
+        [c nextChange:nil];
+        GCHECK([[tv.string substringFromIndex:tv.selectedRange.location] hasPrefix:@"<<<<<<< HEAD\nfourteen main"]);
+        MCGuiUndoGroup(tv.undoManager, ^{ GCHECK([tv.conflicts keep:2 block:0]); });
+        GCHECK(tv.conflicts.count == 0);
+        GCHECK_EQ_STR(tv.string, @"1\ntwo main\n3\n4\n5\n6\n7\neight topic\n9\n10\n11\n12\n13\n"
+                                 "fourteen main\nfourteen topic\n15\n16\n17\n18\n");
+        GCHECK([[[c valueForKey:@"statusLabel"] stringValue] hasPrefix:@"No conflicts left in c.txt."]);
+        GCHECK_EQ_STR(tv.undoManager.undoActionName, @"Keep Both Changes");
+        [c saveCurrentFile:nil];
+    });
+    MCGuiWait(@"saved", 10, ^BOOL { return [Read(cf) hasPrefix:@"1\ntwo main\n"]; });
+    MCGuiStep(@"the review page", ^{ [c gitReviewChanges:nil]; });
+    MCGuiWait(@"read, both files listed", 15, ^BOOL {
+        return Review(c).loaded && [Review(c) rowOfFile:@"r.txt" staged:NO] >= 0 &&
+               [Review(c) rowOfFile:@"c.txt" staged:NO] >= 0;
+    });
+    MCGuiStep(@"r.txt's blocks whole, with the three choices; c.txt has Mark Resolved", ^{
+        MCChangeReviewPage *p = Review(c);
+        p.onActionDone = ^{ actions++; };
+        NSArray<NSString *> *rows = p.rowDescriptions;
+        MCGuiNote(@"conflict rows: %@", rows);
+        GCHECK([rows containsObject:@"F r.txt  2 conflicts left"]);
+        GCHECK([rows containsObject:@"F c.txt  no conflicts left"]);
+        const NSInteger header = [p rowOfFile:@"r.txt" staged:NO];
+        const NSInteger block = FirstBlockAfter(p, header);
+        GCHECK(block > header);
+        NSArray *want = @[@"< <<<<<<< HEAD", @"< two main", @"| ||||||| ", @"| 2", @"= =======",
+                          @"> two topic", @"> >>>>>>> topic"];
+        if (block > 0 && (NSUInteger)block + want.count <= rows.count) {
+            NSArray *got = [rows subarrayWithRange:NSMakeRange((NSUInteger)block, want.count)];
+            for (NSUInteger i = 0; i < want.count; i++)
+                GCHECK([got[i] hasPrefix:want[i]]);
+        }
+        for (NSString *t in @[@"Keep Current", @"Keep Incoming", @"Keep Both"])
+            GCHECK(!NSIsEmptyRect([p buttonRect:t row:block]));
+        GCHECK(NSIsEmptyRect([p buttonRect:@"Stage" row:block]));
+        GCHECK(!NSIsEmptyRect([p buttonRect:@"Side by Side" row:header]));
+        GCHECK(NSIsEmptyRect([p buttonRect:@"Mark Resolved" row:header]));
+        GCHECK(!NSIsEmptyRect([p buttonRect:@"Mark Resolved" row:[p rowOfFile:@"c.txt" staged:NO]]));
+        MCGuiSnapshot(p.pageView, @"git-conflicts-review");
+        actions = 0;
+        loads = p.loads;
+        GCHECK(PressButton(p, @"Keep Incoming", block));
+    });
+    MCGuiWait(@"the first block resolved and read again", 15, ^BOOL {
+        return actions == 1 && Review(c).loads > loads &&
+               [Review(c).rowDescriptions containsObject:@"F r.txt  1 conflict left"];
+    });
+    MCGuiStep(@"written; Keep Both on the other", ^{
+        MCChangeReviewPage *p = Review(c);
+        MCGuiNote(@"after Keep Incoming: %@", p.message);
+        GCHECK_EQ_STR(p.message, @"1 conflict left in r.txt.");
+        GCHECK([Read(rf) hasPrefix:@"1\ntwo topic\n3\n"]);
+        actions = 0;
+        loads = p.loads;
+        GCHECK(PressButton(p, @"Keep Both", FirstBlockAfter(p, [p rowOfFile:@"r.txt" staged:NO])));
+    });
+    MCGuiWait(@"none left in r.txt", 15, ^BOOL {
+        return actions == 1 && Review(c).loads > loads &&
+               [Review(c).rowDescriptions containsObject:@"F r.txt  no conflicts left"];
+    });
+    MCGuiStep(@"Mark Resolved stages r.txt", ^{
+        MCChangeReviewPage *p = Review(c);
+        GCHECK_EQ_STR(Read(rf), @"1\ntwo topic\n3\n4\n5\n6\n7\neight main\neight topic\n9\n10\n11\n12\n"
+                                @"13\n14\n15\n16\n17\n18\n");
+        GCHECK([p.message hasPrefix:@"No conflicts left in r.txt."]);
+        actions = 0;
+        loads = p.loads;
+        GCHECK(PressButton(p, @"Mark Resolved", [p rowOfFile:@"r.txt" staged:NO]));
+    });
+    MCGuiWait(@"staged", 15, ^BOOL {
+        return actions == 1 && [GitText(repo, @[@"ls-files", @"-u", @"--", @"r.txt"]) length] == 0;
+    });
+    MCGuiStep(@"said so; then c.txt marked resolved too", ^{
+        MCChangeReviewPage *p = Review(c);
+        GCHECK_EQ_STR(p.message, @"Marked r.txt resolved.");
+        actions = 0;
+        GCHECK(PressButton(p, @"Mark Resolved", [p rowOfFile:@"c.txt" staged:NO]));
+    });
+    MCGuiWait(@"no conflicts left in git", 15, ^BOOL {
+        return actions == 1 && [GitText(repo, @[@"ls-files", @"-u"]) length] == 0 &&
+               [GitText(repo, @[@"diff", @"--cached", @"--name-only"]) containsString:@"c.txt"];
+    });
+    MCGuiStep(@"the window closes", ^{ [c.window close]; });
     MCGuiWait(@"gone", 5, ^BOOL { return ![MCGuiControllers() containsObject:c]; });
 }

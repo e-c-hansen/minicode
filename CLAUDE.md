@@ -208,7 +208,8 @@ goes here first, with tests; the GUI only displays it.
   `GitModel` (what every port's Source Control panel shows and runs),
   `QuickDiff` (the editor's change bars against the index), `ChangeReview`
   (the review view's rows, and what staging, unstaging or discarding one
-  block or a few lines makes of the file).
+  block or a few lines makes of the file), `MergeConflicts` (git's
+  conflict blocks, and what keeping a side or both makes of the text).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
@@ -256,7 +257,8 @@ goes here first, with tests; the GUI only displays it.
 - `Browser` (with `MCKeyboardWindow`), `Bookmarks` (the bookmark folder,
   reading and writing bookmark files), `TabStrip`, `Search` (Find in Folder and
   TODOs window), `GitPanel`, `ChangeReviewPage` (every uncommitted change in
-  one tab), `GitGutter` (change bars), `TreeDetails`,
+  one tab), `GitGutter` (change bars), `EditorConflicts` (merge conflicts
+  in the editor), `TreeDetails`,
   `FormatRunner`, `BackupStore`,
   `PalettePanel`, `Navigation`.
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
@@ -3113,6 +3115,38 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `QuickDiff::readOriginal` reads it unit for unit without its mark and
   `stagedBlob` writes Stage Change's text back so. Option+F5 and
   Shift+Option+F5 (`nextChange:`) are Editor commands the key monitor runs.
+- **Merge conflicts** (Mac, 2026-11-16, the owner's G2; core
+  `MergeConflicts.{h,cpp}`, `conflicts:*`; `EditorConflicts.{h,mm}`;
+  `make guitest SUITES=git_conflicts`, a real diff3 merge): VS Code's and
+  Zed's choices over each `<<<<<<<` block. The core reads the blocks (a
+  marker is seven characters at a line's start then the end or a blank and
+  a label; eight or more, or indented, is text; a block without its
+  separator or end is left alone, a second `<<<<<<<` starts again; CRLF as
+  LF) and gives each choice as one splice. In the editor `CodeTextView`
+  owns an `MCEditorConflicts` (`tv.conflicts`): tints behind the text
+  (`editor.merge-current`, `editor.merge-incoming`, VS Code's
+  merge.*ContentBackground, markers' lines at 2.5 times the alpha, the
+  diff3 ancestor gray), Keep Current, Keep Incoming and Keep Both drawn
+  over the text after the `<<<<<<<` line's label (pinned left of the
+  visible right edge when that is too far), then "Conflict 2 of 3"; a press
+  is taken first in `mouseDown:` and is one `replaceRanges:` step ("Keep
+  Current Change"), the status bar saying how many are left
+  (`resolvedNote`). Blocks follow edits at once (`followEdit`: an edit
+  touching one, or ending at its start, drops it) and are parsed again 0.2
+  s after a pause, at once when the whole text is replaced or editable
+  flips; only while `wanted` (the change bars' `gitGutterPath`: source text,
+  not a preview, a diff or large-file mode). The change bars skip a
+  conflicted file, so Next and Previous Change step between conflicts when
+  a file has them. On the review page an unmerged file in Changes is read
+  from the work tree and laid out by `ChangeReview::conflictFile`: one row
+  per line, each block a `RowKind::Conflict` run with its `ConflictPart`
+  (markers kept), one number column, Keep buttons on its first row and in
+  the right click, Side by Side showing every current side against every
+  incoming one (`resolvedAll`); a choice writes the file through the
+  atomic writer after checking its bytes are as read (no Trash copy; a
+  dirty tab refuses), and with none left (`canMarkResolved`) the header's
+  Mark Resolved runs the panel's stage arguments without the conflict
+  question. A binary, missing or too-large conflict keeps the old note.
 - **Tool guard trap**: in a worktree-isolated agent session, git commands in
   compound or unusual forms are refused (even a filename containing "git"); use
   plain `cd x && git ...` lines or a script file.
@@ -3884,7 +3918,7 @@ session has a display. Check first.
   terminal: terminal_draw, terminal_links, terminal_marks, terminal_paste,
   terminal_pty, terminal_reflow, terminal_splits, terminal_vt,
   terminal_exec, terminal_keys, terminal_zoom, run_file;
-  git: git_panel, git_actions, git_hunks, git_verbs, git_review, worktree_review, git_sync,
+  git: git_panel, git_actions, git_hunks, git_verbs, git_review, worktree_review, git_conflicts, git_sync,
   git_gutter;
   agents and control: agents, agent_panel, agent_places, agentcommands,
   agent_autosave, attention, control, browserpages, browser_tabs, browser_find, bookmarks,
@@ -3893,7 +3927,7 @@ session has a display. Check first.
   A suite's file is usually its name in CamelCase; the exceptions are
   mermaid (IdeLinkSuite.mm), foldperf (FoldingSuite.mm), the format_*
   suites (FormatSuite.mm), git_actions, git_hunks, git_review,
-  git_verbs and worktree_review (GitPanelSuite.mm), markdown_side_sync (MarkdownSideSuite.mm), and
+  git_verbs, worktree_review and git_conflicts (GitPanelSuite.mm), markdown_side_sync (MarkdownSideSuite.mm), and
   LooseEndsSuite.mm (terminal_exec, terminal_keys, terminal_zoom,
   agent_autosave, multicaret_rows), and PageMeasureSuite.mm (hints_panel,
   markdown_width, swatch_escape).

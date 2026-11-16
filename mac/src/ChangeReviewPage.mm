@@ -202,6 +202,41 @@ std::shared_ptr<ReviewData> ReadReview(NSString *root, const ChangeReview::Opene
         }
         auto inHead = head.find(row.origPath.empty() ? row.path : row.origPath);
         if (inHead != head.end() && inHead->second.mode == "120000") f.symlink = true;
+        if (f.conflict && !f.submodule && !f.symlink) {
+            // A conflict: the work tree's text, whose blocks the page shows
+            // with Keep Current, Keep Incoming and Keep Both.
+            std::string bytes;
+            FolderSearch::FileStamp stamp;
+            const FolderSearch::ReadStatus rs =
+                FolderSearch::readFileStable(top + "/" + row.path, kMaxSideBytes, &bytes, &stamp);
+            f.newExists = rs != FolderSearch::ReadStatus::Missing;
+            if (rs == FolderSearch::ReadStatus::TooLarge) f.tooLarge = true;
+            x.workRead = rs == FolderSearch::ReadStatus::Ok;
+            x.workBytes = bytes;
+            total += bytes.size();
+            if (total > kMaxTotalBytes) f.tooLarge = true;
+            if (x.workRead && !f.tooLarge) {
+                if (ChangeReview::looksBinary(bytes)) {
+                    f.binary = true;
+                } else {
+                    FolderSearch::TextEncoding enc = FolderSearch::TextEncoding::Utf8;
+                    bool bom = false;
+                    std::string work = bytes;
+                    if (FolderSearch::decodeFileText(&work, &enc, &bom)) {
+                        x.workEnc = enc;
+                        x.workBom = bom;
+                        f.newText = QuickDiff::fromUtf8(work);
+                    } else {
+                        f.binary = true;
+                    }
+                }
+            } else if (!x.workRead && f.newExists && !f.tooLarge) {
+                f.binary = true;   // unreadable: left whole, as a binary file
+            }
+            data->extras.push_back(x);
+            data->diffs.push_back(ChangeReview::conflictFile(f, ExtOf(f.path)));
+            continue;
+        }
         if (f.conflict || f.submodule || f.symlink) {
             data->extras.push_back(x);
             data->diffs.push_back(ChangeReview::diffFile(f, ""));
@@ -489,7 +524,13 @@ const CGFloat kReviewGutter = 80;   // two columns of line numbers
 const CGFloat kTopBarHeight = 34;
 
 enum Act { ActStage, ActUnstage, ActDiscard, ActSide, ActOpen, ActDiscardFile, ActStageFile,
-           ActUnstageFile };
+           ActUnstageFile, ActKeepCurrent, ActKeepIncoming, ActKeepBoth, ActMarkResolved };
+
+MergeConflicts::Keep KeepOf(Act a) {
+    return a == ActKeepIncoming ? MergeConflicts::Keep::Incoming
+         : a == ActKeepBoth     ? MergeConflicts::Keep::Both
+                                : MergeConflicts::Keep::Current;
+}
 
 struct Button {
     NSString *title;
@@ -507,8 +548,34 @@ NSString *TitleOf(Act a) {
     case ActDiscardFile: return @"Discard File";
     case ActStageFile: return @"Stage File";
     case ActUnstageFile: return @"Unstage File";
+    case ActKeepCurrent:
+    case ActKeepIncoming:
+    case ActKeepBoth: return NS8(MergeConflicts::buttonTitle(KeepOf(a)));
+    case ActMarkResolved: return @"Mark Resolved";
     }
     return @"";
+}
+
+// A conflict's markers and the Keep buttons: its side's color more
+// strongly, as the editor draws them (EditorConflicts.mm).
+NSColor *ConflictHeader(NSColor *c) {
+    return [c colorWithAlphaComponent:MIN(1.0, MAX(0.25, c.alphaComponent * 2.5))];
+}
+
+NSColor *ConflictTint(ChangeReview::ConflictPart part, NSColor *current, NSColor *incoming,
+                      NSColor *base) {
+    using ChangeReview::ConflictPart;
+    switch (part) {
+    case ConflictPart::CurrentMarker: return ConflictHeader(current);
+    case ConflictPart::Current: return current;
+    case ConflictPart::BaseMarker: return ConflictHeader(base);
+    case ConflictPart::Base: return base;
+    case ConflictPart::Incoming: return incoming;
+    case ConflictPart::IncomingMarker: return ConflictHeader(incoming);
+    case ConflictPart::Separator:
+    case ConflictPart::None: break;
+    }
+    return nil;
 }
 
 NSDictionary *ButtonAttrs(NSColor *color) {
@@ -568,7 +635,21 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     if (pr.file >= d->diffs.size()) return out;
     const ChangeReview::File &f = d->diffs[pr.file].file;
     std::vector<Act> acts;
-    if (pr.kind == RowKind::File) {
+    const FileDiff &fd = d->diffs[pr.file];
+    if (pr.kind == RowKind::File && f.conflict && f.section == Section::Changes &&
+        (ChangeReview::canMarkResolved(fd) || !fd.conflicts.empty())) {
+        // A conflict read as text: its blocks have the choices, and once
+        // none is left, Mark Resolved stages it.
+        if (!fd.conflicts.empty()) acts.push_back(ActSide);
+        acts.push_back(ActOpen);
+        if (ChangeReview::canMarkResolved(fd)) acts.push_back(ActMarkResolved);
+    } else if (pr.kind == RowKind::Conflict) {
+        if (pr.blockStart && f.section == Section::Changes) {
+            acts.push_back(ActKeepCurrent);
+            acts.push_back(ActKeepIncoming);
+            acts.push_back(ActKeepBoth);
+        }
+    } else if (pr.kind == RowKind::File) {
         const bool shows = !f.binary && !f.submodule && !f.conflict && !f.symlink;
         if (shows) acts.push_back(ActSide);
         // A commit's page (Plain) acts on nothing: only Side by Side, a way
@@ -623,6 +704,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     NSColor *gap = [NSColor colorWithWhite:0.5 alpha:0.08];
     NSColor *rule = RHex(0x333333, 1);
     NSColor *bar = RHex(0x4EA1F7, 0.9);
+    const Settings &st = [cfg settings];
+    NSColor *current = MCColor(st.mergeCurrentColor()), *incoming = MCColor(st.mergeIncomingColor());
+    NSColor *base = [NSColor colorWithWhite:0x60 / 255.0 alpha:0x29 / 255.0];
     NSDictionary *num = @{
         NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10.5 weight:NSFontWeightRegular],
         NSForegroundColorAttributeName: self.numberColor ?: NSColor.grayColor};
@@ -638,6 +722,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         case RowKind::Added: tint = added; break;
         case RowKind::File: tint = header; break;
         case RowKind::Gap: tint = gap; break;
+        case RowKind::Conflict: tint = ConflictTint(pr.part, current, incoming, base); break;
         default: break;
         }
         if (tint) {
@@ -661,8 +746,12 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             [s drawAtPoint:NSMakePoint(right - sz.width, NSMinY(line) + (h - sz.height) / 2)
             withAttributes:num];
         };
-        if (pr.kind == RowKind::Context || pr.kind == RowKind::Removed ||
-            pr.kind == RowKind::Added) {
+        if (pr.kind == RowKind::Context && d->diffs[pr.file].file.conflict) {
+            number(pr.newLine, 72);   // one text: one number
+        } else if (pr.kind == RowKind::Conflict) {
+            number(pr.newLine, 72);
+        } else if (pr.kind == RowKind::Context || pr.kind == RowKind::Removed ||
+                   pr.kind == RowKind::Added) {
             number(pr.oldLine, 38);
             number(pr.newLine, 72);
         }
@@ -694,6 +783,8 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                              ? [bg blendedColorWithFraction:0.16 ofColor:RHex(0xF14C4C, 1)]
                          : pr.kind == RowKind::Added
                              ? [bg blendedColorWithFraction:0.16 ofColor:RHex(0x73C991, 1)]
+                         : pr.kind == RowKind::Conflict
+                             ? [bg blendedColorWithFraction:0.4 ofColor:MCColor([[AppSettings shared] settings].mergeCurrentColor())]
                              : bg;
         [under set];
         NSRectFill(group);
@@ -704,6 +795,15 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             case ActStageFile: fill = RHex(0x2E7D4F, 1); ink = NSColor.whiteColor; break;
             case ActDiscard:
             case ActDiscardFile: fill = RHex(0xB3363A, 1); ink = NSColor.whiteColor; break;
+            case ActMarkResolved: fill = RHex(0x2E7D4F, 1); ink = NSColor.whiteColor; break;
+            case ActKeepCurrent:
+                fill = ConflictHeader(MCColor([cfg settings].mergeCurrentColor()));
+                ink = text;
+                break;
+            case ActKeepIncoming:
+                fill = ConflictHeader(MCColor([cfg settings].mergeIncomingColor()));
+                ink = text;
+                break;
             default:
                 fill = [bg blendedColorWithFraction:0.25 ofColor:NSColor.grayColor];
                 ink = text;
@@ -726,6 +826,17 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             case ActDiscardFile: tip = @"Discard every change to this file (asks first)"; break;
             case ActStageFile: tip = @"Stage the whole file"; break;
             case ActUnstageFile: tip = @"Unstage the whole file"; break;
+            case ActKeepCurrent:
+            case ActKeepIncoming:
+            case ActKeepBoth: {
+                const ChangeReview::FileDiff &cd = d->diffs[pr.file];
+                const size_t bi = pr.block >= 0 ? (size_t)pr.block : 0;
+                tip = bi < cd.conflicts.size()
+                          ? NS8(MergeConflicts::tooltip(KeepOf(b.act), cd.conflicts[bi]))
+                          : b.title;
+                break;
+            }
+            case ActMarkResolved: tip = @"Stage the file, which tells git its conflicts are resolved"; break;
             }
             [self addToolTipRect:b.rect owner:tip userData:NULL];
         }
@@ -1551,6 +1662,16 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         case RowKind::Gap: mark = @"~ "; break;
         case RowKind::Note: mark = @"! "; break;
         case RowKind::Context: break;
+        case RowKind::Conflict:
+            switch (p.rows[r].part) {
+            case ChangeReview::ConflictPart::BaseMarker:
+            case ChangeReview::ConflictPart::Base: mark = @"| "; break;
+            case ChangeReview::ConflictPart::Separator: mark = @"= "; break;
+            case ChangeReview::ConflictPart::Incoming:
+            case ChangeReview::ConflictPart::IncomingMarker: mark = @"> "; break;
+            default: mark = @"< "; break;
+            }
+            break;
         }
         [out addObject:[mark stringByAppendingString:t]];
     }
@@ -1629,6 +1750,10 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     case ActDiscardFile: [self discardFile:fi]; break;
     case ActStageFile:
     case ActUnstageFile: [self stageFile:fi]; break;
+    case ActKeepCurrent:
+    case ActKeepIncoming:
+    case ActKeepBoth: [self keep:KeepOf(act) file:fi block:pr.block data:_data]; break;
+    case ActMarkResolved: [self markResolved:fi]; break;
     }
 }
 
@@ -1655,10 +1780,26 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         c.leftLabel = [(staged ? @"HEAD: " : @"Staged or HEAD: ") stringByAppendingString:oldPath];
         c.rightLabel = [(staged ? @"Staged: " : @"") stringByAppendingString:path];
     }
-    c.leftText = NS16(f.oldText);
-    c.rightText = NS16(f.newText);
+    const FileDiff &fd = data->diffs[fi];
+    if (f.conflict && !fd.conflicts.empty()) {
+        // A conflict's two sides: every block as the current side keeps it
+        // against every block as the incoming side does.
+        const MergeConflicts::Block &b0 = fd.conflicts[0];
+        c.title = [path.lastPathComponent stringByAppendingString:@" (current and incoming)"];
+        c.leftLabel = [NSString stringWithFormat:@"Current%@: %@",
+                       b0.currentLabel.empty() ? @"" : [NSString stringWithFormat:@" (%@)", NS8(b0.currentLabel)], path];
+        c.rightLabel = [NSString stringWithFormat:@"Incoming%@: %@",
+                        b0.incomingLabel.empty() ? @"" : [NSString stringWithFormat:@" (%@)", NS8(b0.incomingLabel)], path];
+        c.leftText = NS16(MergeConflicts::resolvedAll(f.newText, fd.conflicts, MergeConflicts::Keep::Current));
+        c.rightText = NS16(MergeConflicts::resolvedAll(f.newText, fd.conflicts, MergeConflicts::Keep::Incoming));
+    } else {
+        c.leftText = NS16(f.oldText);
+        c.rightText = NS16(f.newText);
+    }
     c.fileName = path;
-    if (f.section == Section::Changes || (f.section == Section::Plain && _worktree && f.newExists))
+    // (Neither side of a conflict's comparison is the file on disk.)
+    if ((f.section == Section::Changes && !(f.conflict && !fd.conflicts.empty())) ||
+        (f.section == Section::Plain && _worktree && f.newExists))
         c.path = [NS8(data->top) stringByAppendingPathComponent:path];
     if (self.onShowComparison) self.onShowComparison(c);
 }
@@ -1678,6 +1819,74 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 }
 
 - (void)stageFile:(size_t)fi {
+    [self stageFile:fi done:nil];
+}
+
+// Mark Resolved: a conflicted file with no blocks left staged as it is,
+// which is what tells git its conflict is resolved (the panel's question
+// about conflict marks is not needed: none are left).
+- (void)markResolved:(size_t)fi {
+    if (!_data || fi >= _data->diffs.size() || !ChangeReview::canMarkResolved(_data->diffs[fi])) {
+        NSBeep();
+        return;
+    }
+    NSString *name = NS8(_data->diffs[fi].file.path).lastPathComponent;
+    [self stageFile:fi done:[NSString stringWithFormat:@"Marked %@ resolved.", name]];
+}
+
+// Keep Current, Keep Incoming or Keep Both on a conflict: the work tree's
+// file with that block replaced, written through the atomic writer once it
+// is checked to be as read (a tab open on it follows the disk as one undo
+// step). A tab with unsaved text for it is left alone.
+- (void)keep:(MergeConflicts::Keep)keep file:(size_t)fi block:(long)block
+        data:(std::shared_ptr<ReviewData>)data {
+    if (!data || fi >= data->diffs.size()) return;
+    const FileDiff &d = data->diffs[fi];
+    if (block < 0 || (size_t)block >= d.conflicts.size()) {
+        NSBeep();
+        return;
+    }
+    const Extra x = data->extras[fi];
+    const std::string rel = x.row.path;
+    NSString *top = NS8(data->top);
+    NSString *path = [top stringByAppendingPathComponent:NS8(rel)];
+    if (self.hasUnsavedText && self.hasUnsavedText(path)) {
+        [self finish:[NSString stringWithFormat:@"%@ has unsaved changes in a tab: resolve the "
+                                                @"conflict there, or save the tab first.",
+                                                path.lastPathComponent]
+                  ok:NO];
+        return;
+    }
+    const std::u16string text = ChangeReview::conflictResult(d, (size_t)block, keep);
+    const std::string bytes =
+        FolderSearch::encodeFileText(QuickDiff::toUtf8(text), x.workEnc, x.workBom);
+    const size_t left = d.conflicts.size() - 1;
+    NSString *done = NS8(MergeConflicts::resolvedNote(Std(path.lastPathComponent), left));
+    if (left == 0)
+        done = [NSString stringWithFormat:@"No conflicts left in %@. Mark Resolved stages it.",
+                                          path.lastPathComponent];
+    __weak MCChangeReviewPage *weakSelf = self;
+    dispatch_async(_queue, ^{
+        NSString *failure = nil;
+        std::string now;
+        FolderSearch::FileStamp stamp;
+        if (FolderSearch::readFileStable(Std(path), kMaxSideBytes, &now, &stamp) !=
+                FolderSearch::ReadStatus::Ok ||
+            now != x.workBytes) {
+            failure = NS8(ChangeReview::staleText(rel, false));
+        } else {
+            std::string error;
+            if (!FolderSearch::writeFileAtomically(Std(path), bytes, &error))
+                failure = [NSString stringWithFormat:@"%@ could not be written (%@).",
+                                                     path.lastPathComponent, NS8(error)];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakSelf finish:failure ?: done ok:failure == nil];
+        });
+    });
+}
+
+- (void)stageFile:(size_t)fi done:(NSString *)doneText {
     auto data = _data;
     const Extra x = data->extras[fi];
     const std::vector<std::string> args = GitUi::stageArgs(x.row, data->initial);
@@ -1687,7 +1896,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     dispatch_async(_queue, ^{
         MCGitResult *r = MCGitRunSync(top, Args(args));
         dispatch_async(dispatch_get_main_queue(), ^{
-            NSString *done = [NSString stringWithFormat:x.row.staged ? @"Unstaged %@." : @"Staged %@.", name];
+            NSString *done = doneText ?: [NSString stringWithFormat:x.row.staged ? @"Unstaged %@." : @"Staged %@.", name];
             [weakSelf finish:r.ok ? done : (r.errorText.length ? r.errorText : @"git failed.") ok:r.ok];
         });
     });
@@ -2037,6 +2246,18 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             });
         }
     }
+    if (row >= 0 && (size_t)row < p.rows.size() && p.rows[(size_t)row].kind == RowKind::Conflict &&
+        data->diffs[p.rows[(size_t)row].file].file.section == Section::Changes) {
+        const PageRow &pr = p.rows[(size_t)row];
+        const size_t fi = pr.file;
+        const long block = pr.block;
+        if (menu.numberOfItems) [menu addItem:[NSMenuItem separatorItem]];
+        for (MergeConflicts::Keep k : {MergeConflicts::Keep::Current, MergeConflicts::Keep::Incoming,
+                                       MergeConflicts::Keep::Both})
+            add(NS8(MergeConflicts::actionName(k)), ^{
+                [weakSelf keep:k file:fi block:block data:data];
+            });
+    }
     if (row >= 0 && (size_t)row < p.rows.size() && p.rows[(size_t)row].kind != RowKind::Section) {
         const PageRow &pr = p.rows[(size_t)row];
         const size_t fi = pr.file;
@@ -2057,7 +2278,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             MCChangeReviewPage *me = weakSelf;
             if (me.onOpenFile) me.onOpenFile(path, line < 0 ? 0 : line + 1);
         });
-        if (!f.binary && !f.submodule && !f.conflict)
+        if (!f.binary && !f.submodule && (!f.conflict || !data->diffs[fi].conflicts.empty()))
             add(@"Show Side by Side", ^{ [weakSelf sideBySide:fi data:data]; });
     }
     return menu;

@@ -51,7 +51,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp \
             src/ChangeRequest.cpp src/MultiCaret.cpp src/AutoClose.cpp src/CommandPalette.cpp src/Backups.cpp src/TabSessions.cpp \
             src/InlineAgent.cpp src/LineIndex.cpp src/BracketMatch.cpp src/BracketPairs.cpp \
-            src/ControlProtocol.cpp src/SideBySide.cpp src/ChangeReview.cpp src/PreviewScroll.cpp \
+            src/ControlProtocol.cpp src/SideBySide.cpp src/ChangeReview.cpp src/MergeConflicts.cpp src/PreviewScroll.cpp \
             src/AgentTranscript.cpp src/AgentIndex.cpp src/AgentEvidence.cpp src/AgentView.cpp src/AgentEdits.cpp \
             src/SymbolOutline.cpp src/NavHistory.cpp src/NavRecorder.cpp src/ViewZoom.cpp \
             src/Folding.cpp \

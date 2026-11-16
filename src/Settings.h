@@ -347,6 +347,15 @@ public:
     Rgba gitGutterColor(int kind) const;
     Rgba inlayHintColor() const;
     Rgba inlayHintBackground() const;
+    // editor.merge-current and editor.merge-incoming: the lines of a merge
+    // conflict's current side (ours, after "<<<<<<<") and incoming side
+    // (theirs, before ">>>>>>>"), in the editor and on the review page,
+    // VS Code's merge.currentContentBackground and
+    // merge.incomingContentBackground in every theme unless set. The
+    // markers' lines and the Keep buttons take the same color more
+    // strongly, as VS Code's merge.*HeaderBackground.
+    Rgba mergeCurrentColor() const;
+    Rgba mergeIncomingColor() const;
     // editor.semantic-highlighting: a language server that names what each
     // word is (semantic tokens) colors it so, over the lexer's colors (on,
     // the default, as VS Code's editor.semanticHighlighting.enabled with a
@@ -556,6 +565,7 @@ private:
     InlayHints inlayHints_ = InlayHints::On;
     bool inlayHintParameterNames_ = false;
     std::optional<Rgba> inlayHintColor_, inlayHintBackground_;
+    std::optional<Rgba> mergeCurrent_, mergeIncoming_;
     bool gitGutter_ = true;
     std::optional<Rgba> gitGutterColor_[3];
     bool largeFileOptimizations_ = true;
