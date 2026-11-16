@@ -128,10 +128,13 @@ static void testFolderSearchParallel() {
                 else o.maxMatches = 1000000;
                 // big.txt's 1 MB first line is left out (skipped, named):
                 // a backreference runs on std::regex there, a start at a
-                // time, and under the sanitizers it met the 2 s limit on
-                // some runs and not others, so the answers differed by
-                // timing. Streamed files are compared below.
+                // time, and under the sanitizers its count of matches on
+                // that line was cut short by the 2 s limit at different
+                // places, so the answers differed by timing. The limit is
+                // checked as pieces are read, so they are shorter than it.
+                // Streamed files are compared below.
                 o.maxStreamedLine = 64 * 1024;
+                o.streamPiece = 16 * 1024;
                 o.threads = 1;
                 const FolderSearchResult one = search(root.string(), k.query, nullptr, o);
                 for (unsigned t : {2u, 8u, 0u}) {
