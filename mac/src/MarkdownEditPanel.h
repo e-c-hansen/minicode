@@ -18,16 +18,24 @@
 // was double-clicked; a location of NSNotFound puts the caret at the end,
 // nothing selected), the box `width` points wide (0 for the default; a
 // paragraph's width on the page, so its lines wrap as they did there) and
-// as tall as the text needs, set in `font` (nil for the code font).
+// as tall as the text needs, set in `font` (nil for the code font). With
+// `left` (an x in `view`, NAN for none) the box's text starts where the
+// page's lines start, kept within the part of `view` on show, rather than
+// centered on `rect`, which ran a wide box past a page's left edge for a
+// word near it; its arrow then points into the paragraph, at rect's line.
 - (void)showText:(NSString *)text
            title:(NSString *)title
           inView:(NSView *)view
             rect:(NSRect)rect
        selection:(NSRange)selection
            width:(CGFloat)width
+            left:(CGFloat)left
             font:(NSFont *)font
           commit:(void (^)(NSString *text))commit
          addItem:(void (^)(NSString *text))addItem;
 - (void)close;
 @property(nonatomic, readonly) BOOL shown;
+// Where the box last pointed, in its view, and how wide its content is.
+@property(nonatomic, readonly) NSRect anchor;
+@property(nonatomic, readonly) CGFloat boxWidth;
 @end

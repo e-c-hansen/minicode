@@ -112,11 +112,21 @@ MC_GUI_SUITE(html_page) {
                 done();
             });
     });
-    MCGuiStep(@"Run Scripts, not remembered: the page loads again with them", ^{
+    MCGuiStep(@"Run Scripts, not remembered: the page loads again with them, in the same place", ^{
         GCHECK(!KeyboardInPage(c));
+        const NSRect pageFrame = Web(c).frame;
         [Page(c) answerScripts:YES remember:NO];
-        GCHECK(!Page(c).asking && Page(c).questionBar.hidden);
-        GCHECK(Page(c).runsScripts);
+        GCHECK(!Page(c).asking && Page(c).runsScripts);
+        // The bar keeps its place as a line saying what was chosen, so the
+        // page does not jump up under the pointer.
+        GCHECK(Page(c).noting && !Page(c).questionBar.hidden);
+        GCHECK(NSEqualRects(Web(c).frame, pageFrame));
+        GCHECK([[Page(c).questionBar viewWithTag:1] isHidden]);
+        NSString *line = nil;
+        for (NSView *v in Page(c).questionBar.subviews)
+            if ([v isKindOfClass:NSTextField.class] && !v.hidden) line = ((NSTextField *)v).stringValue;
+        MCGuiNote(@"the bar now says: %@", line);
+        GCHECK([line hasPrefix:@"This page's scripts run"]);
         GCHECK(![[AppSettings shared].fileText containsString:@"\nhtml.scripts"]);
     });
     MCGuiWait(@"the page runs its scripts", 20, ^BOOL {
@@ -217,9 +227,9 @@ MC_GUI_SUITE(html_page) {
     MCGuiWait(@"opens that file in a tab of its own, as a page", 20, ^BOOL {
         return [c.currentPath hasSuffix:@"/other.html"] && Loaded(c, @"other.html", 1);
     });
-    MCGuiStep(@"a page with no scripts is not asked about", ^{
+    MCGuiStep(@"a page with no scripts is not asked about; the answered line went with the open", ^{
         GCHECK(c.viewerKind == MCViewerHtml && c.previewMode);
-        GCHECK(!Page(c).asking && Page(c).questionBar.hidden);
+        GCHECK(!Page(c).asking && !Page(c).noting && Page(c).questionBar.hidden);
     });
 
     // ------------------------------------------------- remembered answers
@@ -230,6 +240,11 @@ MC_GUI_SUITE(html_page) {
         GCHECK([[AppSettings shared].fileText containsString:@"html.scripts = on"]);
         GCHECK([AppSettings shared].settings.htmlScripts() == Settings::HtmlScripts::On);
         GCHECK(!Page(c).asking && Page(c).runsScripts);
+        GCHECK(Page(c).noting && !Page(c).questionBar.hidden);
+        // Its close box takes the line away, and the page has the room.
+        [Page(c) endNote];
+        GCHECK(!Page(c).noting && Page(c).questionBar.hidden);
+        GCHECK(NSMaxY(Web(c).frame) == NSMaxY(Page(c).bounds));
     });
     MCGuiStep(@"from then on pages run their scripts unasked", ^{
         GCHECK([c showFile:F(@"third.html")]);

@@ -22,6 +22,8 @@
 @end
 
 @interface MCMarkdownEditPanel () <NSPopoverDelegate>
+@property(nonatomic, readwrite) NSRect anchor;
+@property(nonatomic, readwrite) CGFloat boxWidth;
 @end
 
 @implementation MCMarkdownEditPanel {
@@ -33,6 +35,7 @@
     __weak NSView *_view;
     NSRect _rect;
     CGFloat _width;
+    CGFloat _left;
     NSFont *_font;
 }
 
@@ -49,7 +52,8 @@
           commit:(void (^)(NSString *))commit
          addItem:(void (^)(NSString *))addItem {
     [self showText:text title:title inView:view rect:rect
-         selection:NSMakeRange(NSNotFound, 0) width:0 font:nil commit:commit addItem:addItem];
+         selection:NSMakeRange(NSNotFound, 0) width:0 left:NAN font:nil commit:commit
+           addItem:addItem];
 }
 
 - (void)showText:(NSString *)text
@@ -58,6 +62,7 @@
             rect:(NSRect)rect
        selection:(NSRange)selection
            width:(CGFloat)width
+            left:(CGFloat)left
             font:(NSFont *)font
           commit:(void (^)(NSString *))commit
          addItem:(void (^)(NSString *))addItem {
@@ -67,6 +72,7 @@
     _view = view;
     _rect = rect;
     _width = width;
+    _left = left;
     _font = font;
     [self presentText:text title:title allowsItem:addItem != nil selection:selection];
 }
@@ -153,7 +159,9 @@
     _popover.delegate = self;
     NSView *view = _view;
     if (!view) return;
-    [_popover showRelativeToRect:_rect ofView:view preferredEdge:NSRectEdgeMaxY];
+    _anchor = [self anchorForWidth:width inView:view];
+    _boxWidth = width;
+    [_popover showRelativeToRect:_anchor ofView:view preferredEdge:NSRectEdgeMaxY];
     [editor.window makeFirstResponder:editor];
     // The word that was double-clicked, as a double-click selects one
     // anywhere else; never the whole block, which one key would replace.
@@ -162,6 +170,24 @@
     else
         [editor setSelectedRange:NSMakeRange(editor.string.length, 0)];
     [editor scrollRangeToVisible:editor.selectedRange];
+}
+
+// Where the popover points. A popover is centered on what it points at, so
+// with a left edge asked for the point moves along rect's line to where a
+// box `width` wide starts with its text at `_left` (the editor's text is
+// kTextInset in from the box's edge), and the box stays within the view's
+// part on show, its left edge first when it is wider than that.
+static const CGFloat kTextInset = 12 + 1 + 2 + 5;   // margin, bezel, inset, padding
+static const CGFloat kEdgeGap = 4;
+
+- (NSRect)anchorForWidth:(CGFloat)width inView:(NSView *)view {
+    if (isnan(_left)) return _rect;
+    const NSRect shown = view.visibleRect;
+    CGFloat boxLeft = _left - kTextInset;
+    boxLeft = MIN(boxLeft, NSMaxX(shown) - kEdgeGap - width);
+    boxLeft = MAX(boxLeft, NSMinX(shown) + kEdgeGap);
+    const CGFloat mid = round(boxLeft + width / 2);
+    return NSMakeRect(mid - 1, NSMinY(_rect), 2, MAX(1, NSHeight(_rect)));
 }
 
 - (void)startAddItem:(id)sender {

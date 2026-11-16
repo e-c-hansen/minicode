@@ -487,6 +487,28 @@ MC_GUI_SUITE(markdown_preview) {
         GCHECK(NSHeight([editor.layoutManager usedRectForTextContainer:editor.textContainer]) <=
                NSHeight(scroll.contentView.bounds));
         [panel close];
+        // The first word, at the page's left edge: the box keeps within the
+        // page, its text where the page's lines start, rather than centered
+        // on the word and running past the edge over the tree.
+        const NSUInteger first = At(c, @"The quick");
+        GCHECK(first != NSNotFound);
+        if (first == NSNotFound) return;
+        r = [c textRectForCharacter:first];
+        GCHECK([c editMarkdownAtCharacter:first point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        GCHECK(NSEqualRanges([[panel valueForKey:@"_editor"] selectedRange], NSMakeRange(0, 3)));
+        const NSRect shown = Text(c).visibleRect;
+        const CGFloat lineLeft = Text(c).textContainerOrigin.x + box.lineFragmentPadding;
+        const CGFloat boxLeft = NSMidX(panel.anchor) - panel.boxWidth / 2;
+        MCGuiNote(@"box from x %.1f, %.0f wide; page shown from %.1f to %.1f, lines from %.1f",
+                  boxLeft, panel.boxWidth, NSMinX(shown), NSMaxX(shown), lineLeft);
+        GCHECK(NSMidY(panel.anchor) >= NSMinY(r) && NSMidY(panel.anchor) <= NSMaxY(r));
+        GCHECK(boxLeft >= NSMinX(shown) + 3);
+        if (panel.boxWidth + 8 <= NSWidth(shown)) {
+            GCHECK(boxLeft + panel.boxWidth <= NSMaxX(shown) - 3);
+            GCHECK(boxLeft + 20 >= lineLeft - 1 || boxLeft <= NSMinX(shown) + 5);
+        }
+        GCHECK(boxLeft + 20 <= lineLeft + 1 || boxLeft + panel.boxWidth >= NSMaxX(shown) - 5);
+        [panel close];
         GCHECK([c showFile:corpus]);
     });
 

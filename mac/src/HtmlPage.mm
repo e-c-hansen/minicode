@@ -34,6 +34,7 @@ static NSURL *WithoutFragment(NSURL *url) {
 @property(nonatomic, copy, readwrite) NSString *path;
 @property(nonatomic, readwrite) BOOL runsScripts;
 @property(nonatomic, readwrite) BOOL asking;
+@property(nonatomic, readwrite) BOOL noting;
 @property(nonatomic, strong, readwrite) NSView *questionBar;
 @property(nonatomic, strong, readwrite) NSButton *rememberBox;
 @property(nonatomic, readwrite) NSUInteger loads;
@@ -94,6 +95,13 @@ static NSURL *WithoutFragment(NSURL *url) {
     remember.controlSize = NSControlSizeSmall;
     remember.toolTip = @"Writes html.scripts = on or off in the settings file";
     [bar addSubview:remember];
+    NSButton *close = [NSButton buttonWithTitle:@"\u00D7" target:self
+                                         action:@selector(closeNotePressed:)];
+    close.bordered = NO;
+    close.font = [NSFont systemFontOfSize:14];
+    close.tag = 3;
+    close.toolTip = @"Hide this line";
+    [bar addSubview:close];
     self.rememberBox = remember;
     self.questionBar = bar;
     [self addSubview:bar];
@@ -107,6 +115,8 @@ static NSURL *WithoutFragment(NSURL *url) {
     NSColor *mix = [bg blendedColorWithFraction:0.08 ofColor:text] ?: bg;
     self.questionBar.layer.backgroundColor = mix.CGColor;
     _question.textColor = text;
+    NSButton *close = [self.questionBar viewWithTag:3];
+    close.contentTintColor = text;
 }
 
 - (void)runPressed:(id)sender {
@@ -119,8 +129,24 @@ static NSURL *WithoutFragment(NSURL *url) {
     [self answerScripts:NO remember:self.rememberBox.state == NSControlStateValueOn];
 }
 
+- (void)closeNotePressed:(id)sender {
+    (void)sender;
+    [self endNote];
+}
+
+- (void)endNote {
+    if (!self.noting) return;
+    self.noting = NO;
+    [self layoutPage];
+}
+
 - (void)answerScripts:(BOOL)run remember:(BOOL)remember {
     if (self.path) ScriptAnswers()[self.path] = @(run);
+    // The bar's space stays, as a line saying what was chosen, until
+    // another file shows or the line is closed: the bar going at once
+    // moved the page up under the pointer, and the next click landed on
+    // something else.
+    if (self.asking) self.noting = YES;
     self.rememberBox.state = NSControlStateValueOff;
     // A settings write that is refused (the file has unsaved changes in a
     // tab) says why in the status bar; the answer still holds until quit.
@@ -182,7 +208,10 @@ static NSURL *WithoutFragment(NSURL *url) {
         [self followScriptsRule];   // the rule may have changed meanwhile
         return;
     }
-    if (!same) _restoreScroll = NO;
+    if (!same) {
+        _restoreScroll = NO;
+        self.noting = NO;
+    }
     self.path = path;
     [self loadKeepingScroll:same];
 }
@@ -389,6 +418,7 @@ static NSURL *WithoutFragment(NSURL *url) {
     self.path = nil;
     _stamp = nil;
     self.asking = NO;
+    self.noting = NO;
     self.runsScripts = NO;
     [self layoutPage];
 }
@@ -409,17 +439,24 @@ static NSURL *WithoutFragment(NSURL *url) {
 
 - (void)layoutPage {
     const NSRect b = self.bounds;
-    const CGFloat barH = self.asking ? MIN(kQuestionBarHeight, NSHeight(b)) : 0;
-    self.questionBar.hidden = !self.asking;
+    // Asking, or saying what was answered: the note keeps the bar's place.
+    const BOOL noting = self.noting && !self.asking;
+    const BOOL barShown = self.asking || noting;
+    const CGFloat barH = barShown ? MIN(kQuestionBarHeight, NSHeight(b)) : 0;
+    self.questionBar.hidden = !barShown;
     self.questionBar.frame = NSMakeRect(0, NSHeight(b) - barH, NSWidth(b), barH);
+    NSButton *run = [self.questionBar viewWithTag:1];
+    NSButton *dont = [self.questionBar viewWithTag:2];
+    NSButton *close = [self.questionBar viewWithTag:3];
+    run.hidden = dont.hidden = self.rememberBox.hidden = !self.asking;
+    close.hidden = !noting;
+    const CGFloat pad = 10, h = NSHeight(self.questionBar.bounds);
+    CGFloat x = NSWidth(b) - pad;
     if (self.asking) {
-        const CGFloat pad = 10, h = NSHeight(self.questionBar.bounds);
-        NSButton *run = [self.questionBar viewWithTag:1];
-        NSButton *dont = [self.questionBar viewWithTag:2];
+        _question.stringValue = @"This page has scripts. Run them?";
         [run sizeToFit];
         [dont sizeToFit];
         [self.rememberBox sizeToFit];
-        CGFloat x = NSWidth(b) - pad;
         x -= NSWidth(self.rememberBox.frame);
         self.rememberBox.frame = NSMakeRect(x, round((h - NSHeight(self.rememberBox.frame)) / 2),
                                             NSWidth(self.rememberBox.frame),
@@ -430,6 +467,19 @@ static NSURL *WithoutFragment(NSURL *url) {
         x -= 4 + NSWidth(run.frame);
         run.frame = NSMakeRect(x, round((h - NSHeight(run.frame)) / 2), NSWidth(run.frame),
                                NSHeight(run.frame));
+    } else if (noting) {
+        _question.stringValue = self.runsScripts
+            ? @"This page's scripts run, until minicode quits."
+            : @"This page's scripts stay off, until minicode quits.";
+        if ([AppSettings shared].settings.htmlScripts() != Settings::HtmlScripts::Ask)
+            _question.stringValue = self.runsScripts ? @"This page's scripts run."
+                                                     : @"This page's scripts stay off.";
+        [close sizeToFit];
+        x -= NSWidth(close.frame);
+        close.frame = NSMakeRect(x, round((h - NSHeight(close.frame)) / 2), NSWidth(close.frame),
+                                 NSHeight(close.frame));
+    }
+    if (barShown) {
         const CGFloat labelH = ceil(_question.intrinsicContentSize.height);
         _question.frame = NSMakeRect(pad, round((h - labelH) / 2), MAX(0, x - 2 * pad), labelH);
     }

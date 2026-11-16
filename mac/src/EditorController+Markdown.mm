@@ -429,12 +429,16 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
     }
     NSTextContainer *box = page.textContainer;
     const CGFloat lineWidth = box.size.width - 2 * box.lineFragmentPadding;
+    // Its text starts where the page's lines do, so it covers the page and
+    // not the tree beside it (centered on the word, a word near the left
+    // ran it past the page's edge).
+    const CGFloat lineLeft = page.textContainerOrigin.x + box.lineFragmentPadding;
     const BOOL prose = block.kind != MarkdownEdit::Block::Code &&
                        block.kind != MarkdownEdit::Block::Math &&
                        block.kind != MarkdownEdit::Block::Html;
     NSFont *font = prose ? [NSFont systemFontOfSize:MCZoomed(15)] : nil;
     [self.markdownEditPanel showText:text title:title inView:page rect:anchor
-        selection:selection width:lineWidth font:font
+        selection:selection width:lineWidth left:lineLeft font:font
         commit:^(NSString *newText) {
             EditorController *me = weakSelf;
             if (!me) return;

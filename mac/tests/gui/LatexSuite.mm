@@ -818,6 +818,10 @@ MC_GUI_SUITE(latex) {
         MCGuiNote(@"the span: \"%@\"", span);
         GCHECK([span containsString:@"lemur in the snow"]);
         GCHECK([chapterBefore rangeOfString:span].location != NSNotFound);
+        // It opens on the clicked word, as in the document's own text.
+        MCGuiNote(@"selected: %@", NSStringFromRange(edit.selectedRange));
+        GCHECK(NSMaxRange(edit.selectedRange) <= span.length &&
+               [[span substringWithRange:edit.selectedRange] isEqualToString:@"lemur"]);
         NSString *title = nil;
         for (NSView *sub in ((NSView *)[v valueForKeyPath:@"popover.contentViewController.view"]).subviews)
             if ([sub isKindOfClass:[NSTextField class]] &&
