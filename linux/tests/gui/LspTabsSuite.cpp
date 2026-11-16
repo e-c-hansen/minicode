@@ -45,6 +45,7 @@ const std::string kC = "GAMMA = 3\n" + filler("c");
 const std::string kX = "package main\n";
 
 std::string gSettings, gPython, gPython2, gGo;
+int gRangedBeforeEmoji = 0;   // a.py's ranged didChanges before the emoji line
 
 // A server taking ranged changes (textDocumentSync.change 2).
 std::string script() {
@@ -165,6 +166,7 @@ MC_GUI_SUITE(lsp_tabs) {
         GCHECK(lsp()->rangedChangesSent() >= 2);
         GCHECK_EQ_STR(MCGuiReadFile(F("a.py")), kA);
         GCHECK_EQ_STR(MCGuiReadFile(F("b.py")), kB);
+        gRangedBeforeEmoji = MCGuiFakeLspRangedChanges(kServer, "a.py");
         MCGuiType("s = '😀'\n");
     });
     MCGuiWait("the emoji line typed", 10, [] {
@@ -172,6 +174,12 @@ MC_GUI_SUITE(lsp_tabs) {
     });
     MCGuiWait("and on the server, two units for one character", 10, [] {
         return serverHasTab(kServer, "a.py");
+    });
+    // The client turns the buffer's characters into UTF-16 units through
+    // its copy (Model::Text): until then a character outside the BMP made
+    // every later send the whole text.
+    MCGuiStep("as a range, the emoji and all", [] {
+        GCHECK(MCGuiFakeLspRangedChanges(kServer, "a.py") > gRangedBeforeEmoji);
     });
     MCGuiStep("an edit to c.py in the background, as Replace in Folder makes", [] {
         GCHECK(onShow("a.py"));

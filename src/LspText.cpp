@@ -72,68 +72,10 @@ Position PositionIndex::position(size_t offset) const {
     return Position{(int)line, (int)(offset - starts_[line])};
 }
 
-std::u16string toUtf16(const std::string& s) {
-    std::u16string out;
-    out.reserve(s.size());
-    size_t i = 0;
-    while (i < s.size()) {
-        unsigned char c = (unsigned char)s[i];
-        uint32_t cp;
-        size_t n;
-        if (c < 0x80) { cp = c; n = 1; }
-        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; n = 2; }
-        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; n = 3; }
-        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; n = 4; }
-        else { out += (char16_t)0xFFFD; i++; continue; }
-        if (i + n > s.size()) { out += (char16_t)0xFFFD; break; }
-        bool bad = false;
-        for (size_t k = 1; k < n; k++) {
-            unsigned char cc = (unsigned char)s[i + k];
-            if ((cc & 0xC0) != 0x80) { bad = true; break; }
-            cp = (cp << 6) | (cc & 0x3F);
-        }
-        if (bad) { out += (char16_t)0xFFFD; i++; continue; }
-        i += n;
-        if (cp >= 0x10000) {
-            cp -= 0x10000;
-            out += (char16_t)(0xD800 + (cp >> 10));
-            out += (char16_t)(0xDC00 + (cp & 0x3FF));
-        } else {
-            out += (char16_t)cp;
-        }
-    }
-    return out;
-}
+// The core's converters (Text.h), which these were until stage 1.
+std::u16string toUtf16(const std::string& s) { return Model::utf16FromUtf8(s); }
 
-std::string toUtf8(const std::u16string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (size_t i = 0; i < s.size(); i++) {
-        uint32_t cp = s[i];
-        if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < s.size() &&
-            s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF) {
-            cp = 0x10000 + ((cp - 0xD800) << 10) + (s[i + 1] - 0xDC00);
-            i++;
-        } else if (cp >= 0xD800 && cp <= 0xDFFF) {
-            cp = 0xFFFD;
-        }
-        if (cp < 0x80) out += (char)cp;
-        else if (cp < 0x800) {
-            out += (char)(0xC0 | (cp >> 6));
-            out += (char)(0x80 | (cp & 0x3F));
-        } else if (cp < 0x10000) {
-            out += (char)(0xE0 | (cp >> 12));
-            out += (char)(0x80 | ((cp >> 6) & 0x3F));
-            out += (char)(0x80 | (cp & 0x3F));
-        } else {
-            out += (char)(0xF0 | (cp >> 18));
-            out += (char)(0x80 | ((cp >> 12) & 0x3F));
-            out += (char)(0x80 | ((cp >> 6) & 0x3F));
-            out += (char)(0x80 | (cp & 0x3F));
-        }
-    }
-    return out;
-}
+std::string toUtf8(const std::u16string& s) { return Model::utf8FromUtf16(s); }
 
 std::string uriFromPath(const std::string& path) {
     static const char* hex = "0123456789ABCDEF";

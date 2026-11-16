@@ -95,14 +95,6 @@ inline void afterMs(guint ms, std::function<void()> fn) {
     }, f, [](gpointer p) { delete static_cast<std::function<void()>*>(p); });
 }
 
-// Whether UTF-8 text holds a character outside the Basic Multilingual Plane,
-// which takes two UTF-16 units and one GtkTextIter character.
-inline bool hasAstral(const char* text, size_t len) {
-    for (size_t i = 0; i < len; i++)
-        if ((unsigned char)text[i] >= 0xF0) return true;
-    return false;
-}
-
 }  // namespace lspui
 
 // ---- documents (LspSessionSync.cpp)
@@ -114,13 +106,12 @@ struct LspSession::SyncState {
         std::string path, uri;
         std::shared_ptr<lspgtk::Server> server;
         GtkTextBuffer* buffer = nullptr;   // the document's own, held
-        // Its edits since the text was last sent, in UTF-16 units, as the
-        // Mac's ChangeTracker follows its text storage. The buffer counts
-        // characters, which are UTF-16 units until a character outside the
-        // Basic Multilingual Plane is in it; then (`astral`) the next send is
-        // the whole text, and the flag is looked at again from that text.
+        // Its edits since the text was last sent, in characters (code
+        // points), as the buffer counts them; the client turns them into
+        // the server's UTF-16 through its copy of the text (Model::Text),
+        // so a character outside the Basic Multilingual Plane no longer
+        // makes the next send the whole text.
         Lsp::ChangeTracker changes;
-        bool astral = false;
         bool pending = false;              // edited since the last flush
     };
     std::map<std::pair<uint64_t, std::string>, Entry> entries;

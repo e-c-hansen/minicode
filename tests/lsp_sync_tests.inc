@@ -1,9 +1,12 @@
 // lsp_sync_tests.inc — the `lsp:synced-text` and `lsp:sync-oracle` groups
 // of run_tests.cpp: the client's UTF-16 copy of each document with its
-// line starts (SyncedText), and ranged didChange read from the editor only
+// line starts (Model::Text, SyncedText until the core's document model),
+// and ranged didChange read from the editor only
 // where it changed (Client::didChange with a TextReader), checked against
 // a server that applies what it is sent. Included there, after the fake
 // server and reply().
+
+static Lsp::Position lspPos(Model::LinePos p) { return Lsp::Position{p.line, p.character}; }
 
 static void testLspSync() {
     GROUP("lsp:synced-text");
@@ -20,7 +23,7 @@ static void testLspSync() {
         };
         bool same = true;
         for (int round = 0; round < 2000 && same; round++) {
-            Lsp::SyncedText t(randomText((int)(rng() % 20)));
+            Model::Text t(randomText((int)(rng() % 20)));
             std::u16string mirror = t.str();
             for (int step = 0; step < 8 && same; step++) {
                 const size_t a = rng() % (mirror.size() + 1);
@@ -31,17 +34,17 @@ static void testLspSync() {
                 const Lsp::PositionIndex index(mirror);
                 same = t == mirror;
                 for (size_t k = 0; k <= mirror.size() && same; k++)
-                    same = t.position(k) == index.position(k);
+                    same = lspPos(t.position(k)) == index.position(k);
             }
         }
         CHECK(same);
-        Lsp::SyncedText crlf(u"a\r\nb\rc\n");
-        CHECK(crlf.lines() == 4 && crlf.position(2) == (Lsp::Position{0, 2}) &&
-              crlf.position(3) == (Lsp::Position{1, 0}) && crlf.position(5) == (Lsp::Position{2, 0}));
+        Model::Text crlf(u"a\r\nb\rc\n");
+        CHECK(crlf.lines() == 4 && crlf.position(2) == (Model::LinePos{0, 2}) &&
+              crlf.position(3) == (Model::LinePos{1, 0}) && crlf.position(5) == (Model::LinePos{2, 0}));
         crlf.replace(2, 2, u"x");   // a\rx\nb...: the \r now ends a line of its own
-        CHECK(crlf.position(2) == (Lsp::Position{1, 0}) && crlf.lines() == 5);
+        CHECK(crlf.position(2) == (Model::LinePos{1, 0}) && crlf.lines() == 5);
         crlf.replace(2, 3, u"");    // a\r\nb again
-        CHECK(crlf.position(3) == (Lsp::Position{1, 0}) && crlf.lines() == 4);
+        CHECK(crlf.position(3) == (Model::LinePos{1, 0}) && crlf.lines() == 4);
     }
     {
         // The same across chunks (SyncedText::kChunk units each): texts of
@@ -61,7 +64,7 @@ static void testLspSync() {
         size_t maxChunks = 0;
         for (int round = 0; round < 40 && same; round++) {
             std::u16string mirror = randomText(1 + rng() % 40000);
-            Lsp::SyncedText t(mirror);
+            Model::Text t(mirror);
             for (int step = 0; step < 60 && same; step++) {
                 const size_t a = rng() % (mirror.size() + 1);
                 const size_t span = rng() % 4 == 0 ? 20000 : 12;
@@ -84,29 +87,29 @@ static void testLspSync() {
                 same = same && t.lines() == (size_t)index.position(mirror.size()).line + 1;
                 std::vector<size_t> at;
                 for (int k = 0; k < 200; k++) at.push_back(rng() % (mirror.size() + 1));
-                for (size_t e = 0; e <= mirror.size(); e += Lsp::SyncedText::kChunk / 4)
+                for (size_t e = 0; e <= mirror.size(); e += Model::Text::kChunk / 4)
                     for (size_t d = 0; d < 3; d++)
                         if (e + d >= 1) at.push_back(std::min(mirror.size(), e + d - 1));
-                for (size_t k : at) same = same && t.position(k) == index.position(k);
+                for (size_t k : at) same = same && lspPos(t.position(k)) == index.position(k);
                 for (size_t k = 0; k < mirror.size() && same && k < 64; k++)
                     same = t.at(k) == mirror[k];
                 maxChunks = std::max(maxChunks, t.chunks());
                 bounded = bounded &&
-                          t.chunks() <= mirror.size() / (Lsp::SyncedText::kChunk / 4) + 1;
+                          t.chunks() <= mirror.size() / (Model::Text::kChunk / 4) + 1;
             }
         }
         CHECK(same && bounded);
         if (!bounded) std::printf("  as many as %zu chunks\n", maxChunks);
         // A \r ending one chunk and a \n starting the next are one break.
-        std::u16string edge(Lsp::SyncedText::kChunk - 1, u'a');
+        std::u16string edge(Model::Text::kChunk - 1, u'a');
         edge += u"\r\nb";
-        Lsp::SyncedText e(edge);
+        Model::Text e(edge);
         CHECK(e.chunks() == 2 && e.lines() == 2 &&
-              e.position(edge.size() - 1) == (Lsp::Position{1, 0}));
-        e.replace(Lsp::SyncedText::kChunk, Lsp::SyncedText::kChunk + 1, u"c");   // \rcb
-        CHECK(e.lines() == 2 && e.position(Lsp::SyncedText::kChunk) == (Lsp::Position{1, 0}));
-        e.replace(Lsp::SyncedText::kChunk, Lsp::SyncedText::kChunk, u"\n");      // \r\ncb
-        CHECK(e.lines() == 2 && e.position(Lsp::SyncedText::kChunk + 1) == (Lsp::Position{1, 0}));
+              e.position(edge.size() - 1) == (Model::LinePos{1, 0}));
+        e.replace(Model::Text::kChunk, Model::Text::kChunk + 1, u"c");   // \rcb
+        CHECK(e.lines() == 2 && e.position(Model::Text::kChunk) == (Model::LinePos{1, 0}));
+        e.replace(Model::Text::kChunk, Model::Text::kChunk, u"\n");      // \r\ncb
+        CHECK(e.lines() == 2 && e.position(Model::Text::kChunk + 1) == (Model::LinePos{1, 0}));
     }
 
     GROUP("lsp:sync-oracle");

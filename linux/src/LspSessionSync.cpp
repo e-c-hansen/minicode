@@ -3,7 +3,8 @@
 // open on its language's running server (PARITY.md item 2.0), with its own
 // buffer's text. Each buffer's edits are followed as they are made
 // (Lsp::ChangeTracker, in UTF-16 units) and sent a moment after typing
-// pauses, as ranges where the server takes them; a file whose tab closes is
+// pauses, as ranges where the server takes them (in characters, which the
+// client turns into UTF-16 units through its copy of the text); a file whose tab closes is
 // closed on its server; a save sends didSave for the file written, on show
 // or not.
 #include "LspSessionPrivate.h"
@@ -196,9 +197,7 @@ void LspSession::syncOpenDocuments() {
         e.uri = w.uri;
         e.server = w.server;
         e.buffer = w.doc->buffer();
-        const std::string text = w.doc->text();
-        e.astral = lspui::hasAstral(text.data(), text.size());
-        w.server->client().didOpen(w.uri, w.languageId, text);
+        w.server->client().didOpen(w.uri, w.languageId, w.doc->text());
         sync_->opened++;
         entries.emplace(key, std::move(e));
     }
@@ -284,22 +283,18 @@ void LspSession::onSyncDelete(GtkTextBuffer*, GtkTextIter* a, GtkTextIter* z, gp
     if (to > from) w->self->noteEdit(w->docId, (size_t)from, (size_t)(to - from), nullptr, 0);
 }
 
-// The buffer counts characters and the server UTF-16 units: the same while
-// no character outside the Basic Multilingual Plane is in the text. One
-// that is makes the next send the whole text (ChangeTracker::invalidate).
+// In characters, as the buffer counts them; the client turns them into
+// the server's UTF-16 units (Client::didChange with Model::Unit::CodePoint).
 void LspSession::noteEdit(uint64_t docId, size_t start, size_t removed, const char* inserted,
                           int len) {
     sync_->edits[docId]++;
-    const bool astral = inserted && len > 0 && lspui::hasAstral(inserted, (size_t)len);
-    const size_t units = inserted && len > 0 ? (size_t)g_utf8_strlen(inserted, len) : 0;
+    const size_t chars = inserted && len > 0 ? (size_t)g_utf8_strlen(inserted, len) : 0;
     bool any = false;
     for (auto& [key, e] : sync_->entries) {
         if (e.docId != docId) continue;
         any = true;
         e.pending = true;
-        if (astral) e.astral = true;
-        if (e.astral) e.changes.invalidate();
-        else e.changes.edit(start, removed, units);
+        e.changes.edit(start, removed, chars);
     }
     if (any) scheduleChange();
 }
@@ -307,7 +302,7 @@ void LspSession::noteEdit(uint64_t docId, size_t start, size_t removed, const ch
 // didChange, a moment after typing pauses, for every file edited since: the
 // edits as ranges for a server that takes them (and when they come to less
 // than the text), else the whole text. Only the changed pieces are read
-// (Client::didChange's TextReader). Anything that asks a server about the
+// (Client::didChange's TextReader), in characters. Anything that asks a server about the
 // text flushes first, so with no edits this costs nothing.
 void LspSession::flushChanges() {
     if (sync_->changeTimer) g_source_remove(sync_->changeTimer);
@@ -319,15 +314,11 @@ void LspSession::flushChanges() {
             e.changes.reset();
             continue;
         }
-        Lsp::Client& c = e.server->client();
-        if (e.astral) {
-            const std::string text = lspui::bufferText(e.buffer);
-            c.didChange(e.uri, text);
-            e.astral = lspui::hasAstral(text.data(), text.size());
-        } else {
-            GtkTextBuffer* b = e.buffer;
-            const size_t length = (size_t)gtk_text_buffer_get_char_count(b);
-            c.didChange(e.uri, length, e.changes, [b, length](size_t start, size_t n) {
+        GtkTextBuffer* b = e.buffer;
+        const size_t length = (size_t)gtk_text_buffer_get_char_count(b);
+        e.server->client().didChange(
+            e.uri, length, e.changes,
+            [b, length](size_t start, size_t n) {
                 start = std::min(start, length);
                 n = std::min(n, length - start);
                 GtkTextIter x, y;
@@ -337,8 +328,8 @@ void LspSession::flushChanges() {
                 std::u16string out = utf16::fromUtf8(s ? s : "");
                 g_free(s);
                 return out;
-            });
-        }
+            },
+            Model::Unit::CodePoint);
         e.changes.reset();
     }
 }
