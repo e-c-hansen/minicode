@@ -184,6 +184,15 @@ void MCGuiSendKeyToApp(NSWindow *window, unsigned short keyCode, NSEventModifier
 // Runs `block` as one undo group of its own, as a key press would be.
 void MCGuiUndoGroup(NSUndoManager *undo, void (^block)(void));
 
+// ---- text geometry
+// Where the text of the line holding character `index` is drawn, in the
+// text view: its line fragment's used rect, laid out first, which leaves
+// out room kept above the line (an agent's note sits there).
+NSRect MCGuiLineTextRect(NSTextView *tv, NSUInteger index);
+// How many line fragments' text a rect in the text view covers (by their
+// used rects, so room above a line is not text).
+NSUInteger MCGuiLinesUnder(NSTextView *tv, NSRect rect);
+
 // ---- processes
 // Runs a program (the environment is this process's, plus `env`) without
 // blocking the main thread; `done` gets its exit status, stdout and stderr

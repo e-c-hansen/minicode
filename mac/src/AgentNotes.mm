@@ -1,6 +1,7 @@
 // AgentNotes.mm — see AgentNotes.h.
 #import "AgentNotes.h"
 #import "AppSettings.h"
+#import "SourceStorage.h"
 
 static NSColor *NHex(unsigned rgb, CGFloat alpha) {
     return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
@@ -10,6 +11,8 @@ static NSColor *NHex(unsigned rgb, CGFloat alpha) {
 }
 
 static const unsigned kAccent = 0x4EA1F7;
+// Between the box and the lines above and below it, in its room.
+static const CGFloat kRoomMargin = 5;
 
 @implementation MCTourStop
 @end
@@ -134,6 +137,7 @@ static const CGFloat kPadX = 12, kPadTop = 6, kHeaderH = 16, kGap = 3, kPadBotto
     NSArray<MCTourStop *> *_tour;
     NSInteger _tourIndex;
     NSString *_tourFrom;
+    BOOL _roomSoon;                          // a room change waits for the next turn
 }
 
 - (instancetype)initWithHost:(id<MCAgentNotesHost>)host {
@@ -249,6 +253,7 @@ static NSRange MCNoteRange(NSString *s, int line, int column, int toLine, int to
         _tour = nil;
         dispatch_async(dispatch_get_main_queue(), ^{
             [self removeHighlight:NSUnionRange(old, edited)];
+            [self updateRoom];
         });
     } else {
         dispatch_async(dispatch_get_main_queue(), ^{ [self placeView]; });
@@ -298,9 +303,11 @@ static NSRange MCBand(NSString *s, NSRange range) {
     [self removeHighlight:_shown.range];
     [_view removeFromSuperview];
     _shown = nil;
+    [self updateRoom];
 }
 
-// After an edit inside the note: it is gone, from its tab too.
+// After an edit inside the note: it is gone, from its tab too. Its room
+// goes after the edit (the caller's block), never inside it.
 - (void)forgetShownKeepingHighlight {
     id tab = [_host notesActiveTab];
     if (tab && [_notes objectForKey:tab] == _shown) [_notes removeObjectForKey:tab];
@@ -348,19 +355,106 @@ static NSRange MCBand(NSString *s, NSRange range) {
     } else {
         [_view removeFromSuperview];
     }
+    [self updateRoom];
     [self placeView];
     if (scroll) [self scrollToShown];
 }
 
-// The note over the first line of its range, or under the last when the
-// range starts at the top of the text.
+// ------------------------------------------------------------------ room
+// The box sits in room of its own above the first line of its range: that
+// line's fragment is made taller at its top by the editor's layout manager,
+// so the lines above stay in view and the box covers no code.
+- (MCGapLayoutManager *)gapOf:(NSTextView *)tv {
+    return [tv.layoutManager isKindOfClass:MCGapLayoutManager.class]
+               ? (MCGapLayoutManager *)tv.layoutManager : nil;
+}
+
+// Where the box goes across the pane: its x and width.
+- (NSRect)boxColumnIn:(NSTextView *)tv {
+    const CGFloat x = tv.textContainerOrigin.x + tv.textContainer.lineFragmentPadding + 24;
+    const CGFloat width = MAX(220, MIN(640, NSWidth(tv.bounds) - x - 24));
+    return NSMakeRect(x, 0, width, 0);
+}
+
+// The room the box on show wants: above the line its range starts on, as
+// tall as the box with a margin either side. None without a box, or for
+// the empty line after the last break (which has no line of its own to
+// make taller).
+- (NSUInteger)wantedRoomIn:(NSTextView *)tv height:(CGFloat *)height {
+    *height = 0;
+    if (!_shown || !tv || _view.superview != tv) return NSNotFound;
+    NSString *s = tv.string;
+    const NSUInteger at = _shown.range.location;
+    if (at >= s.length) return NSNotFound;
+    *height = [_view heightForWidth:NSWidth([self boxColumnIn:tv])] + 2 * kRoomMargin;
+    return [s paragraphRangeForRange:NSMakeRange(at, 0)].location;
+}
+
+// The layout manager's room set to what the box wants. Never from inside a
+// storage edit (the layout manager is in the middle of it).
+- (void)updateRoom {
+    _roomSoon = NO;
+    NSTextView *tv = _observed;
+    MCGapLayoutManager *lm = [self gapOf:tv];
+    if (!lm) return;
+    CGFloat h = 0;
+    const NSUInteger at = [self wantedRoomIn:tv height:&h];
+    if (at == lm.roomLocation && h == lm.roomHeight) return;
+    [lm setRoom:h aboveCharacter:at];
+    [tv setNeedsDisplayInRect:tv.visibleRect];
+    tv.enclosingScrollView.verticalRulerView.needsDisplay = YES;
+}
+
+// The same on the next turn: from a frame change, which can come in the
+// middle of laying out.
+- (void)updateRoomSoon {
+    if (_roomSoon) return;
+    _roomSoon = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!self->_roomSoon) return;
+        [self updateRoom];
+        [self placeView];
+    });
+}
+
+// The room above the box's line when the layout has made it (its fragment
+// is that much taller), with that line's first character; else 0.
+- (CGFloat)roomLaidOutIn:(NSTextView *)tv at:(NSUInteger *)where {
+    MCGapLayoutManager *lm = [self gapOf:tv];
+    if (!lm || !_shown || lm.roomLocation == NSNotFound || lm.roomHeight <= 0) return 0;
+    NSString *s = tv.string;
+    const NSUInteger at = _shown.range.location;
+    if (at >= s.length || [s paragraphRangeForRange:NSMakeRange(at, 0)].location != lm.roomLocation)
+        return 0;
+    const NSRect line = [self lineRectAt:lm.roomLocation in:tv];
+    const CGFloat plain = [lm defaultLineHeightForFont:tv.font ?: [NSFont userFixedPitchFontOfSize:0]];
+    if (NSHeight(line) < lm.roomHeight + plain / 2) return 0;
+    if (where) *where = lm.roomLocation;
+    return lm.roomHeight;
+}
+
+// The note in its room above the first line of its range. Until the room
+// is laid out (a turn after a new width, say), or where there is none,
+// over the lines above, or under the last when the range starts at the
+// top of the text.
 - (void)placeView {
     NSTextView *tv = _observed;
     if (!_shown || !tv || !_view.superview) return;
-    const NSRect first = [self lineRectAt:_shown.range.location in:tv];
-    const CGFloat x = tv.textContainerOrigin.x + tv.textContainer.lineFragmentPadding + 24;
-    const CGFloat width = MAX(220, MIN(640, NSWidth(tv.bounds) - x - 24));
+    const NSRect col = [self boxColumnIn:tv];
+    const CGFloat x = NSMinX(col), width = NSWidth(col);
     const CGFloat h = [_view heightForWidth:width];
+    if (MCGapLayoutManager *lm = [self gapOf:tv]) {
+        CGFloat wantH = 0;
+        const NSUInteger wantAt = [self wantedRoomIn:tv height:&wantH];
+        if (wantAt != lm.roomLocation || wantH != lm.roomHeight) [self updateRoomSoon];
+    }
+    NSUInteger roomAt = NSNotFound;
+    if ([self roomLaidOutIn:tv at:&roomAt] > 0) {
+        _view.frame = NSMakeRect(x, NSMinY([self lineRectAt:roomAt in:tv]) + kRoomMargin, width, h);
+        _view.needsDisplay = YES;
+        return;
+    }
+    const NSRect first = [self lineRectAt:_shown.range.location in:tv];
     CGFloat y = NSMinY(first) - h - 3;
     if (y < 0) {
         const NSUInteger last = NSMaxRange(_shown.range) > _shown.range.location
@@ -410,6 +504,14 @@ static NSRange MCBand(NSString *s, NSRange range) {
     NSScrollView *scroll = tv.enclosingScrollView;
     if (!_shown || !scroll) return;
     const CGFloat H = NSHeight(scroll.contentView.bounds);
+    NSUInteger roomAt = NSNotFound;
+    const CGFloat room = [self roomLaidOutIn:tv at:&roomAt];
+    if (room > 0) {
+        // The room's top, so that the lines land a third of the way down.
+        [self scrollToCharacter:roomAt above:MAX(8, round(H / 3) - room) in:tv];
+        [self placeView];
+        return;
+    }
     const CGFloat noteH = _view.superview ? NSHeight(_view.frame) + 12 : 0;
     [self scrollToCharacter:_shown.range.location above:MAX(round(H / 3), noteH) in:tv];
     // The box goes over the line where it is now laid out.
@@ -446,6 +548,7 @@ static NSRange MCBand(NSString *s, NSRange range) {
         // Not on show: the note waits with its tab.
         note.pending = YES;
         [_notes setObject:note forKey:target];
+        [_host notesWaitingChanged];
         return YES;
     }
     // The text as it is on disk now, if the agent has just written it.
@@ -502,6 +605,19 @@ static NSRange MCBand(NSString *s, NSRange range) {
     if (tab) [_notes removeObjectForKey:tab];
     [self hideShown];
     _tour = nil;
+}
+
+- (BOOL)tabHasWaitingNote:(id)tab {
+    MCNoteState *note = tab ? [_notes objectForKey:tab] : nil;
+    return note.pending && !note.revealOnly;
+}
+
+- (NSString *)waitingNoteSummaryForTab:(id)tab {
+    MCNoteState *note = tab ? [_notes objectForKey:tab] : nil;
+    if (!note.pending || note.revealOnly) return nil;
+    NSString *who = note.from.length ? note.from : @"Claude";
+    return note.count ? [NSString stringWithFormat:@"A tour from %@ is waiting here (%@)", who, note.count]
+                      : [NSString stringWithFormat:@"A note from %@ is waiting here", who];
 }
 
 - (BOOL)noteShown { return _shown != nil; }
@@ -576,6 +692,7 @@ static NSRange MCBand(NSString *s, NSRange range) {
         return;
     }
     [self place:note in:tv tab:tab];
+    [_host notesWaitingChanged];   // seen: its tab's dot goes
 }
 
 - (BOOL)handleCommand:(SEL)selector {

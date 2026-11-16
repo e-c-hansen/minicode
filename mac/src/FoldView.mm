@@ -2,6 +2,7 @@
 #import "FoldView.h"
 #import "EditorFont.h"
 #import "MultiCaretView.h"
+#import "SourceStorage.h"
 #include "Folding.h"
 #include "LineIndex.h"
 #include <algorithm>
@@ -659,6 +660,16 @@ static dispatch_queue_t FoldQueue(void) {
     if (!f) return action;
     return f->start == index ? NSControlCharacterActionWhitespace
                              : NSControlCharacterActionZeroAdvancement;
+}
+
+// ---- NSLayoutManagerDelegate: room above a line for a box over the text
+// (an agent's note), kept by the editor's layout manager.
+- (CGFloat)layoutManager:(NSLayoutManager *)lm
+    paragraphSpacingBeforeGlyphAtIndex:(NSUInteger)glyphIndex
+          withProposedLineFragmentRect:(NSRect)rect {
+    (void)rect;
+    if (![lm isKindOfClass:MCGapLayoutManager.class]) return 0;
+    return [(MCGapLayoutManager *)lm roomBeforeGlyphAtIndex:glyphIndex];
 }
 
 - (NSRect)layoutManager:(NSLayoutManager *)lm

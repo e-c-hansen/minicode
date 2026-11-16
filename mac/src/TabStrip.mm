@@ -148,6 +148,7 @@ static const CGFloat kDragThreshold = 4;
 // lines: both read on the dark and the light themes.
 + (NSColor *)waitingColor { return TabHex(0xF0A030, 1); }
 + (NSColor *)doneColor { return TabHex(0x4CC38A, 1); }
++ (NSColor *)noteColor { return TabHex(0x4EA1F7, 1); }   // the note box's accent
 
 - (NSInteger)tabAtPoint:(NSPoint)p {
     for (NSInteger i = 0; i < (NSInteger)_x.size(); i++)
@@ -196,6 +197,7 @@ static const CGFloat kDragThreshold = 4;
         NSRect dot = [self attentionRectForTab:i];
         if (!NSIsEmptyRect(dot)) {
             [(item.attention == MCTabAttentionWaiting ? MCTabStrip.waitingColor
+              : item.attention == MCTabAttentionNote  ? MCTabStrip.noteColor
                                                        : MCTabStrip.doneColor) set];
             [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
             left = NSMaxX(dot) + kDotGap;

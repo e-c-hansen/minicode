@@ -3366,7 +3366,16 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   waits with its tab (`MCNoteState.pending`) and is placed when it is shown.
   The user's own steps (Option+], a click) always show.
 - **Notes** (`AgentNotes.mm`): a layout-manager highlight and a box over the
-  text view, never in the file or its undo; upper third (in large-file mode
+  text view, never in the file or its undo. The box sits in room of its own
+  above its first line (2026-11-16, the walk's A5: it hid the `def` it was
+  about): `MCGapLayoutManager setRoom:aboveCharacter:` keeps the room, MCFolds
+  (the layout manager's delegate) answers it as paragraph spacing before that
+  line, the room follows edits in `processEditingForTextStorage:` and is never
+  changed inside one (a frame change waits a turn, `updateRoomSoon`); the
+  fragment is taller but its used rect is the text's, and its baseline lower
+  (the gutter numbers it so). A note left in a tab not on show
+  (`pending`) gives the tab a blue dot (`MCTabAttentionNote`) and a tooltip
+  line until shown (`notesWaitingChanged`); upper third (in large-file mode
   the line's place is an estimate, so it is read again after laying out
   there until it stays put, as `scrollEditorToCharacter:offset:` does);
   closed by Escape, ×,

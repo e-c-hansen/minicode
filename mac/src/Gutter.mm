@@ -4,6 +4,7 @@
 #import "MultiCaretView.h"
 #import "EditorFont.h"
 #import "FoldView.h"
+#import "SourceStorage.h"
 #include "LineIndex.h"
 #include <algorithm>
 #include <map>
@@ -397,6 +398,12 @@ static const NSUInteger kMinDigits = 3;
         const size_t lastLine = _index.lineOf(NSMaxRange(chars));
         [self drawChangeBarsFrom:firstLine ? firstLine - 1 : 0 to:lastLine + 1];
     }
+    // A line with room above it for an agent's note (MCGapLayoutManager):
+    // its fragment is taller at the top, and its baseline lower by as much.
+    MCGapLayoutManager *gap = [lm isKindOfClass:MCGapLayoutManager.class]
+                                  ? (MCGapLayoutManager *)lm : nil;
+    const NSUInteger roomAt = gap && gap.roomHeight > 0 ? gap.roomLocation : NSNotFound;
+    __block CGFloat plainHeight = [lm defaultLineHeightForFont:_font];
     [lm enumerateLineFragmentsForGlyphRange:glyphs
                                  usingBlock:^(NSRect rect, NSRect used, NSTextContainer *c,
                                               NSRange range, BOOL *stop) {
@@ -404,8 +411,15 @@ static const NSUInteger kMinDigits = 3;
         const NSUInteger ch = [lm characterIndexForGlyphAtIndex:range.location];
         if (!index.isLineStart(ch)) return;   // a wrapped line's continuation
         const unichar first = ch < text.length ? [text characterAtIndex:ch] : '\n';
-        if (first != '\n' && first != '\r')
-            textBaseline = [lm locationForGlyphAtIndex:range.location].y;
+        const BOOL hasText = first != '\n' && first != '\r';
+        if (ch == roomAt) {
+            const CGFloat baseline = hasText ? [lm locationForGlyphAtIndex:range.location].y
+                                             : textBaseline + MAX(0, NSHeight(rect) - plainHeight);
+            drawLine(index.lineOf(ch), origin.y + NSMinY(rect) + baseline);
+            return;
+        }
+        if (hasText) textBaseline = [lm locationForGlyphAtIndex:range.location].y;
+        plainHeight = NSHeight(rect);
         drawLine(index.lineOf(ch), origin.y + NSMinY(rect) + textBaseline);
     }];
     // The empty line after a final newline (or of an empty text).

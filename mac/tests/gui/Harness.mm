@@ -521,6 +521,35 @@ static NSEvent *MenuKeyEvent(unsigned short keyCode, NSEventModifierFlags flags,
     return e;
 }
 
+NSRect MCGuiLineTextRect(NSTextView *tv, NSUInteger index) {
+    NSLayoutManager *lm = tv.layoutManager;
+    const NSUInteger n = tv.string.length;
+    if (n == 0) return NSZeroRect;
+    index = MIN(index, n - 1);
+    [lm ensureLayoutForCharacterRange:lm.allowsNonContiguousLayout ? NSMakeRange(index, 1)
+                                                                   : NSMakeRange(0, index + 1)];
+    const NSRect r = [lm lineFragmentUsedRectForGlyphAtIndex:[lm glyphIndexForCharacterAtIndex:index]
+                                              effectiveRange:nil];
+    const NSPoint o = tv.textContainerOrigin;
+    return NSOffsetRect(r, o.x, o.y);
+}
+
+NSUInteger MCGuiLinesUnder(NSTextView *tv, NSRect rect) {
+    NSLayoutManager *lm = tv.layoutManager;
+    const NSPoint o = tv.textContainerOrigin;
+    const NSRect in = NSOffsetRect(rect, -o.x, -o.y);
+    // A little above and below, so a line just past an edge is looked at.
+    const NSRect around = NSInsetRect(in, 0, -40);
+    [lm ensureLayoutForBoundingRect:around inTextContainer:tv.textContainer];
+    const NSRange glyphs = [lm glyphRangeForBoundingRect:around inTextContainer:tv.textContainer];
+    __block NSUInteger covered = 0;
+    [lm enumerateLineFragmentsForGlyphRange:glyphs
+                                 usingBlock:^(NSRect, NSRect used, NSTextContainer *, NSRange, BOOL *) {
+        if (NSMinY(used) < NSMaxY(in) - 0.5 && NSMaxY(used) > NSMinY(in) + 0.5) covered++;
+    }];
+    return covered;
+}
+
 BOOL MCGuiPerformMenuKey(NSWindow *window, unsigned short keyCode, NSEventModifierFlags flags,
                          NSString *chars, NSString *charsIgnoringModifiers) {
     NSEvent *e = MenuKeyEvent(keyCode, flags, chars, NO);

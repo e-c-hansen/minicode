@@ -589,9 +589,40 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
     BOOL _tableRowsKnown;
 }
 
+- (instancetype)init {
+    if ((self = [super init])) _roomLocation = NSNotFound;
+    return self;
+}
+
 - (void)setHoldsPage:(BOOL)holdsPage {
     _holdsPage = holdsPage;
     _tableRowsKnown = NO;
+}
+
+// The line holding character `index` laid out again (and the text below
+// moved), when there is such a line. Only that line: anything reaching to
+// the end would make the glyphs of all of a large text.
+- (void)relayLineAt:(NSUInteger)index {
+    if (index == NSNotFound || index >= self.textStorage.length) return;
+    NSRange line = [self.textStorage.string paragraphRangeForRange:NSMakeRange(index, 0)];
+    [self invalidateLayoutForCharacterRange:line actualCharacterRange:NULL];
+    [self invalidateDisplayForCharacterRange:line];
+}
+
+- (void)setRoom:(CGFloat)height aboveCharacter:(NSUInteger)index {
+    if (height <= 0) index = NSNotFound;
+    if (index == NSNotFound) height = 0;
+    if (index == _roomLocation && height == _roomHeight) return;
+    const NSUInteger old = _roomLocation;
+    _roomLocation = index;
+    _roomHeight = height;
+    [self relayLineAt:old];
+    if (index != old) [self relayLineAt:index];
+}
+
+- (CGFloat)roomBeforeGlyphAtIndex:(NSUInteger)glyphIndex {
+    if (_roomLocation == NSNotFound || _roomHeight <= 0) return 0;
+    return [self characterIndexForGlyphAtIndex:glyphIndex] == _roomLocation ? _roomHeight : 0;
 }
 
 - (void)processEditingForTextStorage:(NSTextStorage *)textStorage
@@ -600,6 +631,18 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
                       changeInLength:(NSInteger)delta
                     invalidatedRange:(NSRange)invalidatedCharRange {
     if (editMask & NSTextStorageEditedCharacters) _tableRowsKnown = NO;
+    // The room follows an edit before its line; one reaching past the
+    // line's start takes it (its owner puts it back where it belongs).
+    if ((editMask & NSTextStorageEditedCharacters) && _roomLocation != NSNotFound) {
+        const NSInteger oldLength = (NSInteger)newCharRange.length - delta;
+        const NSUInteger oldEnd = newCharRange.location + (NSUInteger)MAX((NSInteger)0, oldLength);
+        if (oldEnd <= _roomLocation)
+            _roomLocation = (NSUInteger)((NSInteger)_roomLocation + delta);
+        else if (newCharRange.location <= _roomLocation) {
+            _roomLocation = NSNotFound;
+            _roomHeight = 0;
+        }
+    }
     [super processEditingForTextStorage:textStorage edited:editMask range:newCharRange
                          changeInLength:delta invalidatedRange:invalidatedCharRange];
 }

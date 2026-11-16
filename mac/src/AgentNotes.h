@@ -13,11 +13,17 @@
 // across restarts. One MCAgentNotes per window (EditorController's
 // agentNotes).
 //
+// The box sits in room of its own above its lines (the first line's
+// fragment made taller by the editor's layout manager, MCGapLayoutManager),
+// so it covers no code, as VS Code's comment box pushes the lines below it
+// down. The room goes with the box.
+//
 // The user's keyboard is never moved into the agent's file: while they are
 // typing in the editor, an agent's file opens in a tab beside theirs
 // without being shown, and its note waits there, placed (and scrolled to)
-// when they switch to that tab. A note moves the caret only in the agent
-// preview tab, never in a tab of the user's.
+// when they switch to that tab; meanwhile the tab carries a blue dot
+// (MCTabAttentionNote) and its tooltip says who left a note. A note moves
+// the caret only in the agent preview tab, never in a tab of the user's.
 #import <Cocoa/Cocoa.h>
 
 // What the notes need of the window.
@@ -40,6 +46,8 @@
 // changed on disk (by the agent, a moment ago) takes the disk's text now,
 // so the reload that would follow cannot close the note.
 - (void)notesCatchUpWithDisk;
+// A note began or stopped waiting in a tab not on show (the strip's dot).
+- (void)notesWaitingChanged;
 @end
 
 @interface MCTourStop : NSObject
@@ -77,6 +85,11 @@
 @property(nonatomic, readonly) BOOL tourActive;
 @property(nonatomic, readonly) NSInteger tourIndex;   // 0-based
 @property(nonatomic, readonly) NSInteger tourCount;
+
+// Whether `tab` holds a note not yet seen (opened while another tab was
+// on show), and a line saying so for its tooltip.
+- (BOOL)tabHasWaitingNote:(id)tab;
+- (NSString *)waitingNoteSummaryForTab:(id)tab;
 
 // Closes the note on show (and the tour), as its × does.
 - (void)closeNote;
