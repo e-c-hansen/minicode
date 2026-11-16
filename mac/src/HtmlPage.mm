@@ -37,6 +37,7 @@ static NSURL *WithoutFragment(NSURL *url) {
 @property(nonatomic, strong, readwrite) NSView *questionBar;
 @property(nonatomic, strong, readwrite) NSButton *rememberBox;
 @property(nonatomic, readwrite) NSUInteger loads;
+@property(nonatomic, readwrite) BOOL restoringPlace;
 @end
 
 @implementation MCHtmlPage {
@@ -210,6 +211,7 @@ static NSURL *WithoutFragment(NSURL *url) {
     [self layoutPage];
     const NSUInteger generation = ++_generation;
     if (!keep || self.webView.URL == nil) {
+        self.restoringPlace = NO;
         [self startLoad:generation];
         return;
     }
@@ -217,25 +219,33 @@ static NSURL *WithoutFragment(NSURL *url) {
     // then the disk follow): the page on show is not where the user left
     // it, so the place read before that load is the one to put back.
     if (_restoreScroll || self.webView.isLoading) {
+        self.restoringPlace = _restoreScroll;
         [self startLoad:generation];
         return;
     }
+    self.restoringPlace = YES;
     __weak MCHtmlPage *weakSelf = self;
-    [self.webView evaluateJavaScript:@"[window.scrollX, window.scrollY]"
-                             inFrame:nil
-                      inContentWorld:WKContentWorld.defaultClientWorld
-                   completionHandler:^(id value, NSError *error) {
-        (void)error;
+    // Read on the next turn, once the page that was hidden behind the
+    // source (a toggle back) is laid out on show again.
+    dispatch_async(dispatch_get_main_queue(), ^{
         MCHtmlPage *me = weakSelf;
-        if (!me || me->_generation != generation) return;
-        NSArray *xy = [value isKindOfClass:NSArray.class] ? value : nil;
-        if (xy.count == 2) {
-            me->_scrollX = [xy[0] doubleValue];
-            me->_scrollY = [xy[1] doubleValue];
-            me->_restoreScroll = YES;
-        }
-        [me startLoad:generation];
-    }];
+        if (!me || me->_generation != generation || !me.webView) return;
+        [me.webView evaluateJavaScript:@"[window.scrollX, window.scrollY]"
+                               inFrame:nil
+                        inContentWorld:WKContentWorld.defaultClientWorld
+                     completionHandler:^(id value, NSError *error) {
+            (void)error;
+            MCHtmlPage *page = weakSelf;
+            if (!page || page->_generation != generation) return;
+            NSArray *xy = [value isKindOfClass:NSArray.class] ? value : nil;
+            if (xy.count == 2) {
+                page->_scrollX = [xy[0] doubleValue];
+                page->_scrollY = [xy[1] doubleValue];
+                page->_restoreScroll = YES;
+            }
+            [page startLoad:generation];
+        }];
+    });
 }
 
 - (void)startLoad:(NSUInteger)generation {
@@ -256,12 +266,63 @@ static NSURL *WithoutFragment(NSURL *url) {
 }
 
 - (void)webView:(WKWebView *)wv didFinishNavigation:(WKNavigation *)nav {
-    (void)nav;
-    if (!_restoreScroll) return;
+    (void)wv; (void)nav;
+    if (!_restoreScroll) {
+        self.restoringPlace = NO;
+        return;
+    }
     _restoreScroll = NO;
-    NSString *js = [NSString stringWithFormat:@"window.scrollTo(%f, %f)", _scrollX, _scrollY];
-    [wv evaluateJavaScript:js inFrame:nil inContentWorld:WKContentWorld.defaultClientWorld
-         completionHandler:nil];
+    [self putBackPlace:_generation tries:0 held:0];
+}
+
+// A load that failed with nothing after it: no place is coming back (one
+// cancelled for a newer load leaves that load to say).
+- (void)webView:(WKWebView *)wv didFailNavigation:(WKNavigation *)nav withError:(NSError *)error {
+    (void)nav; (void)error;
+    if (!wv.isLoading) self.restoringPlace = NO;
+}
+- (void)webView:(WKWebView *)wv didFailProvisionalNavigation:(WKNavigation *)nav
+      withError:(NSError *)error {
+    (void)nav; (void)error;
+    if (!wv.isLoading) self.restoringPlace = NO;
+}
+
+// The place goes back, and is looked at again every 100 ms until it has
+// held for three looks in a row, at least half a second after the load
+// (3 seconds at most): a scrollTo made once at didFinish was sometimes
+// lost, to layout not yet done or to WebKit's own restore on a reload,
+// and the page came back at the top. A page now shorter than the place
+// stops at its end.
+- (void)putBackPlace:(NSUInteger)generation tries:(int)tries held:(int)held {
+    if (generation != _generation || !self.webView) return;
+    NSString *js = [NSString stringWithFormat:
+        @"(function () {"
+         "  var x = %f, y = %f;"
+         "  var e = document.scrollingElement || document.documentElement;"
+         "  var maxY = Math.max(0, e.scrollHeight - window.innerHeight);"
+         "  var want = Math.min(y, maxY);"
+         "  if (Math.abs(window.scrollY - want) > 1 || Math.abs(window.scrollX - x) > 1)"
+         "    window.scrollTo(x, y);"
+         "  return [window.scrollY, want];"
+         "})()", _scrollX, _scrollY];
+    __weak MCHtmlPage *weakSelf = self;
+    [self.webView evaluateJavaScript:js inFrame:nil inContentWorld:WKContentWorld.defaultClientWorld
+                   completionHandler:^(id value, NSError *error) {
+        (void)error;
+        MCHtmlPage *me = weakSelf;
+        if (!me || me->_generation != generation) return;
+        NSArray *a = [value isKindOfClass:NSArray.class] ? value : nil;
+        const BOOL there = a.count == 2 && fabs([a[0] doubleValue] - [a[1] doubleValue]) <= 1;
+        const int nowHeld = there ? held + 1 : 0;
+        if ((nowHeld >= 3 && tries >= 5) || tries >= 30) {
+            me.restoringPlace = NO;
+            return;
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            [weakSelf putBackPlace:generation tries:tries + 1 held:nowHeld];
+        });
+    }];
 }
 
 // Scripts on or off for every navigation of the page. The page on show
@@ -321,6 +382,7 @@ static NSURL *WithoutFragment(NSURL *url) {
 - (void)dropPage {
     _generation++;
     _restoreScroll = NO;
+    self.restoringPlace = NO;
     [self.webView stopLoading];
     [self.webView removeFromSuperview];
     self.webView = nil;
