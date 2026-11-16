@@ -9,13 +9,13 @@
 // Two sorts of viewer:
 //   - without text (Quick Look, a CSV too large to edit): the tab holds no
 //     text and nothing is saved from it, as for an image;
-//   - over the tab's text (a CSV table): the tab's text is the document,
+//   - over the tab's text (a CSV table, an HTML file's page): the tab's text is the document,
 //     the viewer shows it in place of the text view while the tab is in
 //     preview mode (Shift+Cmd+V flips to the text), and an edit made in the
 //     viewer comes back through onTextEdited as the file's whole new text.
 #import <Cocoa/Cocoa.h>
 
-@class MCQuickLookSlot, MCCsvTableView, MCJsonOutlinePane, MCSqliteView;
+@class MCQuickLookSlot, MCCsvTableView, MCJsonOutlinePane, MCSqliteView, MCHtmlPage;
 
 typedef NS_ENUM(NSInteger, MCViewerKind) {
     MCViewerNone = 0,      // the text view, as before
@@ -26,6 +26,7 @@ typedef NS_ENUM(NSInteger, MCViewerKind) {
     MCViewerJson,          // beside the text: an outline of a JSON file
     MCViewerNotebook,      // over the text: a Jupyter notebook, rendered
     MCViewerSqlite,        // without text: a SQLite database, read-only
+    MCViewerHtml,          // over the text: an .html file's page, from the saved file
 };
 
 // Files over this many bytes open read-only in the table (MCViewerCsvLarge).
@@ -58,6 +59,14 @@ NSString *MCNotebookMarkdown(NSString *json);
 @property(nonatomic, readonly) MCCsvTableView *csv;          // nil until used
 @property(nonatomic, readonly) MCJsonOutlinePane *json;      // nil until used
 @property(nonatomic, readonly) MCSqliteView *sqlite;         // nil until used
+@property(nonatomic, readonly) MCHtmlPage *html;             // nil until used
+// An HTML page's folder it may read from (the window's), and a link
+// clicked in it (HtmlPage.h).
+@property(nonatomic, copy) NSString * (^htmlFolder)(void);
+@property(nonatomic, copy) void (^onOpenLink)(NSURL *url);
+// The HTML page on show loads its file again, keeping its scroll, when the
+// file changed on disk since it was loaded (a save, a write from outside).
+- (void)htmlFileMayHaveChanged;
 // Whether a viewer beside the text shows (Shift+Cmd+V), for the window.
 @property(nonatomic, assign) BOOL besideTextShown;
 
@@ -84,4 +93,7 @@ NSString *MCNotebookMarkdown(NSString *json);
 - (NSRect)layoutInRect:(NSRect)rect editorShown:(BOOL)shown coversText:(BOOL *)coversText;
 // The view that should get the keyboard (Cmd+1), or nil.
 - (NSView *)focusView;
+// Gives that view the keyboard, as the user asked (a page's web view
+// takes it only so); NO when there is none.
+- (BOOL)focusInWindow:(NSWindow *)window;
 @end

@@ -11,6 +11,18 @@
 @interface MCKeyboardWindow : NSWindow
 @end
 
+// A web view that never takes the keyboard by itself (Browser.mm's opening
+// comment has the rule): only for a click in it, Tab from the toolbar
+// (`chrome`, the view around it), a page loaded from the toolbar while the
+// keyboard is still there, or while `grantKeyboard` is set around a
+// makeFirstResponder: the user's own step asked for. The browser's pages
+// and an HTML file's page (HtmlPage.h) are these.
+@interface MCWebView : WKWebView
+@property(nonatomic, weak) NSView *chrome;          // the view around it, with its toolbar
+@property(nonatomic) BOOL toolbarNavigation;        // the last load came from the toolbar
+@property(nonatomic) BOOL grantKeyboard;            // the user's own step hands it over
+@end
+
 @class MCPageProbe;
 @class MCTerminalFindBar;
 

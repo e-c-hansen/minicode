@@ -927,6 +927,16 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return false;),
         MC_KEY("markdown.web-images", Word, false, return boolValue(v, s.webImages_, e);),
         MC_KEY("markdown.math", Word, false, return boolValue(v, s.math_, e);),
+        MC_KEY("html.scripts", Word, false,
+               const std::string w = lower(v);
+               if (w == "ask") s.htmlScripts_ = HtmlScripts::Ask;
+               else if (w == "on" || w == "true") s.htmlScripts_ = HtmlScripts::On;
+               else if (w == "off" || w == "false") s.htmlScripts_ = HtmlScripts::Off;
+               else {
+                   e = "'" + v + "' is not ask, on or off";
+                   return false;
+               }
+               return true;),
         MC_KEY("markdown.mermaid", Word, false, return boolValue(v, s.mermaid_, e);),
         MC_KEY("markdown.max-width", Word, false,
                const std::string w = lower(v);
@@ -1815,6 +1825,13 @@ const char* Settings::defaultFileText() {
 # page is centered in a wider pane and the width grows with the zoom. off
 # lets lines run the whole width of the pane.
 # markdown.max-width = 840
+
+# An .html file opens as its page, its stylesheets and pictures loaded from
+# its folder (macOS only for now). Its scripts run only once you say so:
+# ask shows the page with them off and asks, and remembering the answer
+# writes on or off here. on runs every page's scripts, as Safari does; off
+# never runs them.
+# html.scripts = ask
 
 # Language servers, for completion, go to definition and error underlines
 # (macOS only for now). MiniCode only talks to them, so install the ones you

@@ -1,5 +1,6 @@
 // FileSniff.cpp — see FileSniff.h.
 #include "FileSniff.h"
+#include <string>
 
 #include <cstring>
 #include <set>
@@ -83,6 +84,7 @@ Kind classify(const std::string &path, const char *head, size_t len) {
         ext == "webmanifest")
         return Kind::Json;
     if (ext == "ipynb") return Kind::Notebook;
+    if (ext == "html" || ext == "htm" || ext == "xhtml") return Kind::Html;
     // An empty database file has no header yet; by its name it is still one.
     if ((ext == "sqlite" || ext == "sqlite3" || ext == "db3") && len == 0) return Kind::Sqlite;
     return Kind::Text;
@@ -97,8 +99,53 @@ const char *kindName(Kind k) {
     case Kind::Notebook: return "notebook";
     case Kind::Sqlite: return "sqlite";
     case Kind::QuickLook: return "quicklook";
+    case Kind::Html: return "html";
     }
     return "text";
+}
+
+bool htmlMayRunScripts(const std::string &text) {
+    auto low = [](char c) { return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c; };
+    auto at = [&](size_t i, const char *word) {
+        for (size_t k = 0; word[k]; k++)
+            if (i + k >= text.size() || low(text[i + k]) != word[k]) return false;
+        return true;
+    };
+    auto isName = [&](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+               c == '-' || c == '_' || c == ':';
+    };
+    bool inTag = false;
+    for (size_t i = 0; i < text.size(); i++) {
+        const char c = text[i];
+        if (c == '<') {
+            // An element that runs or loads code, by its name.
+            for (const char *w : {"script", "iframe", "frame", "object", "embed"}) {
+                const size_t n = std::char_traits<char>::length(w);
+                if (at(i + 1, w) && (i + 1 + n >= text.size() || !isName(text[i + 1 + n])))
+                    return true;
+            }
+            inTag = true;
+            continue;
+        }
+        if (c == '>') {
+            inTag = false;
+            continue;
+        }
+        if (at(i, "javascript:")) return true;
+        // on<name>= inside a tag, the attribute's name standing alone.
+        if (inTag && low(c) == 'o' && i + 2 < text.size() && low(text[i + 1]) == 'n' &&
+            i > 0 && !isName(text[i - 1])) {
+            size_t j = i + 2;
+            while (j < text.size() && isName(text[j])) j++;
+            if (j == i + 2) continue;
+            while (j < text.size() && (text[j] == ' ' || text[j] == '\t' || text[j] == '\n' ||
+                                       text[j] == '\r'))
+                j++;
+            if (j < text.size() && text[j] == '=') return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace FileSniff

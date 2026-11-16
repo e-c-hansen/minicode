@@ -36,6 +36,7 @@ enum class Kind {
     Notebook,    // a Jupyter notebook, rendered read-only
     Sqlite,      // a database, read-only
     QuickLook,   // binary, or a document only Quick Look shows (Office, iWork)
+    Html,        // a web page (.html, .htm, .xhtml), shown as the page; source a toggle away
 };
 
 // The extension in lower case, without the dot ("" for none).
@@ -54,5 +55,13 @@ inline Kind classify(const std::string &path, const std::string &head) {
 }
 
 const char *kindName(Kind k);   // "text", "csv", ... for logs and tests
+
+// Whether a page's text holds anything that would run as a script when it
+// is shown: a <script> element, an on...= event attribute in a tag, a
+// javascript: address, or a frame or object (which load pages that may).
+// Read loosely, as markup is often broken: a false alarm only asks a
+// question that was not needed, a miss would run a script unasked, so
+// anything that might be one counts.
+bool htmlMayRunScripts(const std::string &text);
 
 }  // namespace FileSniff

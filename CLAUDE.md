@@ -249,7 +249,7 @@ goes here first, with tests; the GUI only displays it.
   `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
 - Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownMedia`, `MarkdownEditPanel`,
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
-  `CompareView`.
+  `HtmlPage`, `CompareView`.
 - `EditorMirror` (the split editor's group without the keyboard).
 - `Browser` (with `MCKeyboardWindow`), `Bookmarks` (the bookmark folder,
   reading and writing bookmark files), `TabStrip`, `Search` (Find in Folder and
@@ -2347,11 +2347,34 @@ mermaid.js.
   text, unless the head is UTF-16 with its BOM (`isUtf16Text`); SQLite's
   header means a database; Office, iWork, OpenDocument, ePub,
   archives and fonts go to Quick Look, and so does a file that is not UTF-8;
-  .csv, .tsv, .json and .ipynb get viewers. `MCFileViewers` per window; a tab's
+  .csv, .tsv, .json, .ipynb and .html (.htm, .xhtml) get viewers. `MCFileViewers` per window; a tab's
   `viewerKind` is without text (Quick Look, big CSV, SQLite), over text (the
   CSV table, whose edits go through `setViewerText:actionName:reshow:` so
   dirty, undo, backups and saving work as for text) or beside text (the JSON
   outline, `besideTextShown`). Shift+Cmd+V flips them (`canTogglePreview`).
+- **HTML pages** (2026-11-15, `HtmlPage.{h,mm}`, `MCViewerHtml`, over
+  the text like the CSV table; `FileSniff::Kind::Html`, `sniff:html`, `make
+  guitest SUITES=html_page`): the page is the saved file, loaded with
+  `loadFileURL:allowingReadAccessToURL:` scoped to the window's folder (the
+  file's own when outside it), in an `MCWebView` (declared in Browser.h
+  now) with a non-persistent data store. It loads again, the scroll read
+  and put back in `WKContentWorld.defaultClientWorld`, when the file's
+  stamp moved: from `showText:` (a toggle back, a clean tab following the
+  disk) and from `recordStamp:ofTab:` (a save, Keep Mine) through
+  `htmlFileMayHaveChanged`. Every main-frame navigation away from the
+  tab's own file (a link, a script, a drop) is cancelled and handed to
+  `openMarkdownLink:`; a target=_blank too. **Scripts** (the owner's call,
+  2026-11-15, against "nothing runs because a file was opened"):
+  `html.scripts` (ask, on, off); with ask, a page whose text
+  `FileSniff::htmlMayRunScripts` flags shows with
+  `allowsContentJavaScript` off under a bar (Run Scripts, Don't Run,
+  Remember for every HTML file, which writes the key through
+  `AppSettings writeValue:`); an answer not remembered is kept per file
+  until quit. Another tab showing leaves the page loaded, hidden, its
+  media paused (macOS 12; macOS 11 drops it), so it comes back scrolled
+  where it was. Cmd+1 and the toggle give it the keyboard through
+  `MCFileViewers focusInWindow:` (`grantKeyboard`); nothing else does.
+  Linux keeps .html as source for now (its switch has a default).
 - **Images** (not SVG, which is source): `NSImageView`, scaled down never up,
   `animates`, size set to pixels (a 144 dpi screenshot drew at half size); one
   that fails to decode falls through to the text path's "Cannot display".
@@ -3727,7 +3750,7 @@ session has a display. Check first.
   organize_on_save, format, format_consent, format_coverage;
   documents and viewers: markdown_preview, markdown_side,
   markdown_side_sync, markdown_width, markdown_page, markdown_math, mermaid, latex,
-  previews, compare;
+  previews, compare, html_page;
   terminal: terminal_draw, terminal_links, terminal_marks, terminal_paste,
   terminal_pty, terminal_reflow, terminal_splits, terminal_vt,
   terminal_exec, terminal_keys, terminal_zoom, run_file;

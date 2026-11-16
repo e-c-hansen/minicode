@@ -4046,8 +4046,8 @@ void testSettings() {
     // workbench.enable-preview keys, markdown.max-width, and
     // browser.bookmarks.
     // control.page-input, and editor.inlay-hint-parameter-names, and
-    // syntax.tag, syntax.attribute and syntax.tag-bracket.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 130);
+    // syntax.tag, syntax.attribute and syntax.tag-bracket, and html.scripts.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 131);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4716,6 +4716,19 @@ void testSettings() {
     std::vector<SettingsError> e6;
     CHECK(parseSettings("").webImages());
     CHECK(!parseSettings("markdown.web-images = false\n").webImages());
+    CHECK(parseSettings("").htmlScripts() == Settings::HtmlScripts::Ask);
+    CHECK(parseSettings("html.scripts = on\n").htmlScripts() == Settings::HtmlScripts::On);
+    CHECK(parseSettings("html.scripts = OFF\n").htmlScripts() == Settings::HtmlScripts::Off);
+    {
+        std::vector<SettingsError> eh;
+        parseSettings("html.scripts = maybe\n", &eh);
+        CHECK(eh.size() == 1 && eh[0].message.find("not ask, on or off") != std::string::npos);
+        // Remembering an answer writes the line, uncommenting the default's.
+        const std::string written =
+            Settings::withValue(Settings::defaultFileText(), "html.scripts", "on");
+        CHECK(written.find("\nhtml.scripts = on\n") != std::string::npos);
+        CHECK(parseSettings(written).htmlScripts() == Settings::HtmlScripts::On);
+    }
     CHECK(!parseSettings("Markdown.Web-Images = off\n").webImages());
     Settings wi = parseSettings("markdown.web-images = maybe\n", &e6);
     CHECK(wi.webImages() && e6.size() == 1 && e6[0].line == 1);

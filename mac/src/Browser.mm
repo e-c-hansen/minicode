@@ -28,11 +28,7 @@
 // back, forward, reload) while the keyboard is still in the toolbar. Never
 // while hidden. Switching tabs hands the keyboard from the page on show to
 // the next one (grantKeyboard), since the user's key or click did it.
-@interface MCWebView : WKWebView
-@property(nonatomic, weak) NSView *chrome;          // the BrowserView around it
-@property(nonatomic) BOOL toolbarNavigation;        // the last load came from the toolbar
-@property(nonatomic) BOOL grantKeyboard;            // the user's tab switch hands it over
-@end
+// (MCWebView is declared in Browser.h, for HtmlPage.mm's page too.)
 @implementation MCWebView
 - (void)willOpenMenu:(NSMenu *)menu withEvent:(NSEvent *)event {
     [super willOpenMenu:menu withEvent:event];
