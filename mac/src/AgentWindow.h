@@ -22,6 +22,9 @@
 - (void)showStatusNote:(NSString *)note;
 - (void)focusEditor:(id)sender;
 - (void)agentWorktreesChanged;                        // the tree's labels again
+// Source Control in the sidebar and the Uncommitted Changes page (after
+// Apply to Main brought a worktree's changes into this window's checkout).
+- (void)showSourceControlChanges;
 // The tree's Worktrees node is open, so its ahead and modified marks are on
 // show and worth asking git for as files change.
 @property(nonatomic, readonly) BOOL agentWorktreesOnShow;

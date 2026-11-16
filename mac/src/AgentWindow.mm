@@ -19,6 +19,14 @@ static NSString *WNS(const std::string &s) {
                                   encoding:NSUTF8StringEncoding] ?: @"";
 }
 
+// A folder with its links resolved (realpath: /tmp and /private/tmp are
+// one), or as given when it cannot be.
+static NSString *Resolved(NSString *path) {
+    if (!path.length) return path;
+    char buf[PATH_MAX];
+    return realpath(path.fileSystemRepresentation, buf) ? @(buf) : path;
+}
+
 @implementation MCAgentWindow {
     __weak id<MCAgentWorkHost> _host;
     NSString *_root;
@@ -191,6 +199,21 @@ static NSString *WNS(const std::string &s) {
     page.onOpenFile = ^(NSString *file, NSInteger line) {
         MCAgentWindow *s = weakSelf;
         if (s) [s->_host openFileAtPath:file line:line];
+    };
+    // After Apply to Main: the main checkout's changes, here when this
+    // window is on it, else in a window of its own.
+    NSString *worktree = w.path;
+    page.onShowSourceControl = ^(NSString *mainPath) {
+        MCAgentWindow *s = weakSelf;
+        if (!s) return;
+        NSString *root = Resolved(s->_host.rootPath), *main = Resolved(mainPath);
+        NSString *wt = Resolved(worktree);
+        const BOOL inMain = root.length && main.length &&
+                            ([root isEqualToString:main] || [root hasPrefix:[main stringByAppendingString:@"/"]]);
+        const BOOL inWorktree = wt.length && ([root isEqualToString:wt] ||
+                                              [root hasPrefix:[wt stringByAppendingString:@"/"]]);
+        if (inMain && !inWorktree) [s->_host showSourceControlChanges];
+        else [s openFolderInNewWindow:mainPath];
     };
     [_host showPage:page];
     [page reload];

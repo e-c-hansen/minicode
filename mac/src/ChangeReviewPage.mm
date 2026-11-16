@@ -91,6 +91,7 @@ struct ReviewData {
     std::vector<FileDiff> diffs;
     std::vector<Extra> extras;
     Page page;
+    size_t fingerprint = 0;           // ChangeReview::fingerprint of the diffs
 };
 
 std::string ExtOf(const std::string &path) {
@@ -885,7 +886,18 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     BOOL _commitMode;         // a commit's page, not the uncommitted changes
     NSString *_worktreeLabel, *_worktreeBranch, *_mainRef;   // a worktree's page
     NSButton *_applyButton;   // its Apply to Main…
+    NSButton *_sourceButton;  // after applying: Show in Source Control
     BOOL _applying;
+    BOOL _applied;            // the changes on show were brought into main
+    size_t _appliedPrint;     // ...as this read showed them
+    NSString *_appliedMain;   // the main checkout they went into
+    // The note at the top is about the last action: it goes once a read
+    // started after it shows something else (a commit, an edit, git in a
+    // terminal), so "Staged a change" never outlives the staged change.
+    NSUInteger _reads;        // reads started so far
+    NSUInteger _messageAfter; // the note is about reads started after this many
+    BOOL _messageSettled;     // ...one of which is on show
+    size_t _messagePrint;     // what that read showed
     size_t _lastConflicts;
     NSString *_commitTitle;   // "a1b2c3d Subject", the tab's title
     NSTextField *_bodyLabel;  // the rest of a commit's message
@@ -938,6 +950,14 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         _applyButton.toolTip = @"Bring these changes into the main checkout as uncommitted changes";
         _applyButton.hidden = YES;
         [_view addSubview:_applyButton];
+        _sourceButton = [NSButton buttonWithTitle:@"Show in Source Control" target:self
+                                           action:@selector(showSourceControl:)];
+        _sourceButton.bezelStyle = NSBezelStyleRounded;
+        _sourceButton.controlSize = NSControlSizeSmall;
+        _sourceButton.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+        _sourceButton.toolTip = @"The main checkout's uncommitted changes, with Source Control beside them";
+        _sourceButton.hidden = YES;
+        [_view addSubview:_sourceButton];
     }
     return self;
 }
@@ -1086,7 +1106,28 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         const CGFloat sumW = MIN(ceil(_summaryLabel.fittingSize.width), MAX(0, right - sumX));
         _summaryLabel.frame = NSMakeRect(sumX, 10, sumW, 16);
         const CGFloat msgX = sumX + sumW + 12;
-        _messageLabel.frame = NSMakeRect(msgX, 10, MAX(0, right - msgX), 16);
+        const CGFloat need = _message.length ? ceil(_messageLabel.fittingSize.width) : 0;
+        const BOOL sourceShown = _sourceButton && !_sourceButton.hidden;
+        if (need > 0 && (need > right - msgX || sourceShown)) {
+            // No room beside the title (a worktree's long one), or a button
+            // to go with it: the note gets a line of its own under the bar,
+            // so what an action did is always there to read.
+            CGFloat lineRight = W - 10;
+            if (sourceShown) {
+                [_sourceButton sizeToFit];
+                const NSSize sz = _sourceButton.frame.size;
+                _sourceButton.frame = NSMakeRect(MIN(12 + need + 10, lineRight - sz.width),
+                                                 kTopBarHeight - 4 + floor((24 - sz.height) / 2),
+                                                 sz.width, sz.height);
+                lineRight = NSMinX(_sourceButton.frame) - 10;
+            }
+            _messageLabel.alignment = NSTextAlignmentLeft;
+            _messageLabel.frame = NSMakeRect(12, kTopBarHeight, MAX(0, lineRight - 12), 16);
+            barH = kTopBarHeight + 24;
+        } else {
+            _messageLabel.alignment = NSTextAlignmentRight;
+            _messageLabel.frame = NSMakeRect(msgX, 10, MAX(0, right - msgX), 16);
+        }
     }
     _scroll.frame = NSMakeRect(0, barH, W, MAX(0, NSHeight(b) - barH));
     [self fitText];
@@ -1179,11 +1220,13 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const BOOL commitMode = _commitMode;
     NSString *worktree = _worktree, *mainRef = _mainRef;
     const ChangeReview::Opened opened = _opened;
+    const NSUInteger serial = ++_reads;
     __weak MCChangeReviewPage *weakSelf = self;
     dispatch_async(_queue, ^{
         std::shared_ptr<ReviewData> d = worktree ? ReadWorktree(worktree, mainRef, opened)
                                         : commitMode ? ReadCommit(root, commit, opened)
                                                      : ReadReview(root, opened);
+        d->fingerprint = ChangeReview::fingerprint(d->diffs);
         dispatch_async(dispatch_get_main_queue(), ^{
             MCChangeReviewPage *s = weakSelf;
             if (!s) return;
@@ -1197,6 +1240,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                 [s reload];
                 return;
             }
+            [s noteRead:d serial:serial];
             [s show:d];
             if (s->_again) {
                 s->_again = NO;
@@ -1376,7 +1420,8 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 }
 
 - (void)updateSummary {
-    size_t files = _data ? _data->diffs.size() : 0, added = 0, removed = 0;
+    // Files, not lists: one with staged and unstaged changes is one file.
+    size_t files = _data ? ChangeReview::fileCount(_data->diffs) : 0, added = 0, removed = 0;
     if (_data)
         for (const FileDiff &d : _data->diffs) {
             added += d.added;
@@ -1409,6 +1454,16 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         if (counts.length) [parts addObject:counts];
         _summaryLabel.stringValue = [parts componentsJoinedByString:@"  ·  "];
         _applyButton.hidden = !_data || _data->diffs.empty() || _data->mainPath.empty();
+        // Once applied, the button says so until the worktree's changes
+        // are other than those brought in (the agent worked on).
+        if (_applied && _data && _data->fingerprint != _appliedPrint) _applied = NO;
+        _applyButton.title = _applied ? @"Applied to Main" : @"Apply to Main…";
+        _applyButton.enabled = !_applied && !_applying;
+        _applyButton.toolTip = _applied
+            ? @"These changes are in the main checkout now, uncommitted. The button comes back "
+              @"when the worktree's changes differ from what was brought in."
+            : @"Bring these changes into the main checkout as uncommitted changes";
+        _sourceButton.hidden = !_applied || !self.onShowSourceControl;
         _undoButton.hidden = YES;
         [self layoutView];
         return;
@@ -1423,6 +1478,8 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 
 - (void)say:(NSString *)text ok:(BOOL)ok {
     _message = [text copy];
+    _messageAfter = _reads;
+    _messageSettled = NO;
     _messageLabel.stringValue = text ?: @"";
     _messageLabel.toolTip = text;
     AppSettings *cfg = [AppSettings shared];
@@ -1430,6 +1487,25 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                                  : RHex(0xF14C4C, 1);
     [_panel showActionMessage:text ok:ok];
     [self updateSummary];
+}
+
+// A read about to go on show: the note at the top stays while the changes
+// are what the first read after its action showed, and goes when they are
+// not (a commit made in the panel or a terminal, an edit, a refresh after
+// something else changed them).
+- (void)noteRead:(const std::shared_ptr<ReviewData> &)d serial:(NSUInteger)serial {
+    if (!_message.length || _commitMode) return;
+    if (!_messageSettled) {
+        // A read started before the action shows what was there before it.
+        if (serial <= _messageAfter) return;
+        _messageSettled = YES;
+        _messagePrint = d->fingerprint;
+        return;
+    }
+    if (d->fingerprint == _messagePrint) return;
+    _message = nil;
+    _messageLabel.stringValue = @"";
+    _messageLabel.toolTip = nil;
 }
 
 // ------------------------------------------------------------ queries
@@ -1789,6 +1865,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const std::string mainName = Std(_mainRef.length ? _mainRef : @"main");
     const std::string wtName = Std(_worktree.lastPathComponent);
     _applying = YES;
+    _applyButton.enabled = NO;
     __weak MCChangeReviewPage *weakSelf = self;
     dispatch_async(_queue, ^{
         MCGitResult *st = MCGitRunSync(mainPath, Args(GitUi::statusArgs()));
@@ -1807,7 +1884,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                 then:^{ [weakSelf runApply:data paths:paths untracked:untracked main:mainName]; }
            otherwise:^{
                MCChangeReviewPage *me = weakSelf;
-               if (me) me->_applying = NO;
+               if (!me) return;
+               me->_applying = NO;
+               [me updateSummary];
            }];
         });
     });
@@ -1862,10 +1941,28 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             if (!s) return;
             s->_applying = NO;
             s->_lastConflicts = conflicts.size();
+            if (!failure) {
+                s->_applied = YES;
+                s->_appliedPrint = data->fingerprint;
+                s->_appliedMain = mainPath;
+            }
             [s finish:failure ?: NS8(GitUi::applyDoneText(files, conflicts, mainName)) ok:failure == nil];
         });
     });
 }
+
+// The main checkout's changes, which Apply to Main just brought in, in
+// the window's Source Control and its Uncommitted Changes page.
+- (void)showSourceControl:(id)sender {
+    (void)sender;
+    if (!self.onShowSourceControl || !_appliedMain.length) {
+        NSBeep();
+        return;
+    }
+    self.onShowSourceControl(_appliedMain);
+}
+
+- (BOOL)applied { return _applied; }
 
 - (void)undoDiscard:(id)sender {
     (void)sender;

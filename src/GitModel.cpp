@@ -736,10 +736,8 @@ ApplyPlan applyToMainPlan(const std::vector<std::string>& paths, const Git::Stat
 
 std::string applyDoneText(size_t files, const std::vector<std::string>& conflicts,
                           const std::string& mainName) {
-    const std::string what = files == 1 ? "1 file's changes" : std::to_string(files) + " files' changes";
-    if (conflicts.empty())
-        return "Brought " + what + " into " + mainName +
-               " as uncommitted changes. Review and commit them in Source Control.";
+    const std::string what = files == 1 ? "1 file" : std::to_string(files) + " files";
+    if (conflicts.empty()) return "Brought " + what + " into " + mainName + " as uncommitted changes.";
     return "Brought " + what + " into " + mainName + "; " + nameList(conflicts) +
            " did not apply cleanly and came in with conflict marks, listed as conflicts in Source "
            "Control.";

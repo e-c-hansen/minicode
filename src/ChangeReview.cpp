@@ -124,6 +124,49 @@ FileDiff diffFile(File f, const std::string& ext) {
     return d;
 }
 
+std::vector<std::vector<SideBySide::Span>> syntaxByLine(const std::u16string& text,
+                                                        const std::string& ext) {
+    std::vector<std::vector<SideBySide::Span>> out;
+    const std::vector<SideBySide::Span> spans = syntaxSpans(text, ext);
+    if (spans.empty()) return out;
+    const std::vector<size_t> starts = lineStarts(text);
+    const size_t lines = lineCountOf(starts);
+    out.resize(lines);
+    size_t si = 0;
+    for (size_t line = 0; line < lines; line++) {
+        const size_t from = starts[line], to = contentEnd(text, from, starts[line + 1]);
+        while (si < spans.size() && spans[si].start + spans[si].length <= from) si++;
+        for (size_t k = si; k < spans.size() && spans[k].start < to; k++) {
+            const size_t a = std::max(spans[k].start, from),
+                         b = std::min(spans[k].start + spans[k].length, to);
+            if (b > a) out[line].push_back({a - from, b - a, spans[k].style});
+        }
+    }
+    return out;
+}
+
+size_t fileCount(const std::vector<FileDiff>& diffs) {
+    std::set<std::string> paths;
+    for (const FileDiff& d : diffs) paths.insert(d.file.path);
+    return paths.size();
+}
+
+size_t fingerprint(const std::vector<FileDiff>& diffs) {
+    size_t h = diffs.size();
+    auto mix = [&h](size_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
+    for (const FileDiff& d : diffs) {
+        const File& f = d.file;
+        mix(std::hash<std::string>()(f.key()));
+        mix(std::hash<std::string>()(f.origPath));
+        mix((size_t)(unsigned char)f.letter);
+        mix((size_t)f.untracked | (size_t)f.conflict << 1 | (size_t)f.oldExists << 2 |
+            (size_t)f.newExists << 3);
+        mix(std::hash<std::u16string>()(f.oldText));
+        mix(std::hash<std::u16string>()(f.newText));
+    }
+    return h;
+}
+
 static std::u16string lineText(const std::u16string& text, const std::vector<size_t>& starts,
                                int line) {
     if (line < 0 || (size_t)line + 1 >= starts.size()) return u"";

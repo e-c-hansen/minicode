@@ -52,9 +52,15 @@
 // into the main checkout as uncommitted changes (GitUi::applyToMainPlan):
 // refused, naming them, when main has changes of its own in those files;
 // a file that does not apply cleanly comes in with conflict marks.
+// Once applied, the result has a line of its own under the bar with Show
+// in Source Control (onShowSourceControl, the main checkout's path), and
+// the button reads "Applied to Main", unavailable, until the worktree's
+// changes differ from those brought in.
 - (instancetype)initForWorktree:(NSString *)path label:(NSString *)label
                          branch:(NSString *)branch mainRef:(NSString *)mainRef;
 - (void)applyToMain;
+@property(nonatomic, readonly) BOOL applied;
+@property(nonatomic, copy) void (^onShowSourceControl)(NSString *mainPath);
 @property(nonatomic, readonly, copy) NSString *worktree;     // nil unless a worktree's page
 @property(nonatomic, readonly, copy) NSString *commit;       // nil for uncommitted changes
 @property(nonatomic, readonly, copy) NSString *headerTitle;  // the bar's words, for checks
@@ -78,7 +84,10 @@
 @property(nonatomic, readonly) NSUInteger loads;       // reads put on show so far
 @property(nonatomic, copy) void (^onLoaded)(void);     // after each
 @property(nonatomic, copy) void (^onActionDone)(void); // after each action, done or refused
-@property(nonatomic, readonly, copy) NSString *message;   // the last action's words
+// The last action's words, at the top right, or on a line of their own
+// under the bar when they do not fit there; gone once a later read shows
+// the changes moved on (a commit, an edit, git in a terminal).
+@property(nonatomic, readonly, copy) NSString *message;
 @property(nonatomic, readonly) NSTextView *textView;
 @property(nonatomic, readonly) NSScrollView *scrollView;
 @property(nonatomic, readonly) NSUInteger blockCount;
