@@ -8,7 +8,9 @@
 //     Line takes the breaks out, Paste sends them; a command with one
 //     trailing break goes in without it; terminal.multiline-paste-warning
 //     = never and always. One line holding a control character (Ctrl+O,
-//     ESC) asks too, with Paste and Cancel only; a Tab does not.
+//     ESC) asks too, with Paste and Cancel only; a Tab does not. The
+//     question is a sheet on the terminal's window, and a paste while it
+//     is up only beeps.
 //   - Secure keyboard entry while `read -s` reads with echo off and the grid
 //     has the keyboard, off when the keyboard leaves and when echo returns.
 // The nonce after `exec bash` is checked in terminal_exec (LooseEndsSuite).
@@ -32,6 +34,11 @@ void Clip(NSString *text) {
 // Edit > Paste with the grid as its target, as the menu sends it.
 void Paste(TerminalView *t) { [NSApp sendAction:@selector(paste:) to:Grid(t) from:nil]; }
 
+// The paste question was asked once more, as a sheet on `window`.
+BOOL AskedOnSheet(NSUInteger sheetsBefore, NSWindow *window) {
+    return MCGuiSheetsShown().count == sheetsBefore + 1 && MCGuiLastSheetWindow() == window;
+}
+
 NSString *Str(NSData *d) {
     return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"(not UTF-8)";
 }
@@ -42,7 +49,7 @@ NSString *Str(NSData *d) {
 @property(nonatomic, strong) EditorController *c;
 @property(nonatomic, strong) TerminalView *term;
 @property(nonatomic, strong) NSMutableData *sent;
-@property(nonatomic) NSUInteger alerts;
+@property(nonatomic) NSUInteger alerts, sheets;
 @end
 @implementation MCPasteState
 @end
@@ -104,29 +111,38 @@ MC_GUI_SUITE(terminal_paste) {
     MCGuiWait(@"cat runs, bracketed paste off", 10, ^BOOL {
         return s.term.busy && !Grid(s.term).screen->bracketedPaste();
     });
-    MCGuiStep(@"three lines, Cancel: nothing sent", ^{
+    MCGuiStep(@"three lines, Cancel: asked in a sheet on the window", ^{
         s.alerts = MCGuiAlertsShown().count;
+        s.sheets = MCGuiSheetsShown().count;
         [s.sent setLength:0];
         Clip(@"one\ntwo\nthree");
         MCGuiAnswerAlerts(@[@(NSAlertThirdButtonReturn)]);
         Paste(s.term);
         GCHECK(MCGuiAlertsShown().count == s.alerts + 1);
-        GCHECK_EQ_STR(MCGuiAlertsShown().lastObject, @"Paste 3 lines into the terminal?");
-        GCHECK(s.sent.length == 0);
+        GCHECK(AskedOnSheet(s.sheets, s.c.window));
+        GCHECK_EQ_STR(MCGuiSheetsShown().lastObject, @"Paste 3 lines into the terminal?");
+        GCHECK(Grid(s.term).askingPaste);
+        // A second paste while the sheet is up asks nothing more.
+        Paste(s.term);
+        GCHECK(MCGuiAlertsShown().count == s.alerts + 1);
     });
+    MCGuiWait(@"answered", 5, ^BOOL { return !Grid(s.term).askingPaste; });
+    MCGuiStep(@"nothing sent", ^{ GCHECK(s.sent.length == 0); });
     MCGuiStep(@"Paste as One Line", ^{
         [s.sent setLength:0];
+        s.sheets = MCGuiSheetsShown().count;
         MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);
         Paste(s.term);
-        GCHECK_EQ_STR(Str(s.sent), @"onetwothree");
+        GCHECK(AskedOnSheet(s.sheets, s.c.window));
     });
+    MCGuiWait(@"the lines go as one", 5, ^BOOL { return [Str(s.sent) isEqualToString:@"onetwothree"]; });
     MCGuiStep(@"Paste", ^{
         [s.sent setLength:0];
         MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
         Clip(@"alpha\r\nbeta");
         Paste(s.term);
-        GCHECK_EQ_STR(Str(s.sent), @"alpha\rbeta");
     });
+    MCGuiWait(@"the lines go as they are", 5, ^BOOL { return [Str(s.sent) isEqualToString:@"alpha\rbeta"]; });
     // One line with a control character asks too (Ctrl+O at zsh's prompt
     // runs the line): Paste or Cancel, no Paste as One Line.
     MCGuiStep(@"one line with Ctrl+O, Cancel (the second of two buttons): nothing sent", ^{
@@ -138,15 +154,16 @@ MC_GUI_SUITE(terminal_paste) {
         GCHECK(MCGuiAlertsShown().count == s.alerts + 1);
         GCHECK_EQ_STR(MCGuiAlertsShown().lastObject,
                       @"Paste text that contains control characters into the terminal?");
-        GCHECK(s.sent.length == 0);
     });
-    MCGuiStep(@"one line with ESC, Paste: sent as it was", ^{
+    MCGuiWait(@"answered", 5, ^BOOL { return !Grid(s.term).askingPaste; });
+    MCGuiStep(@"nothing sent", ^{ GCHECK(s.sent.length == 0); });
+    MCGuiStep(@"one line with ESC, Paste", ^{
         [s.sent setLength:0];
         Clip(@"x\x1b");
         MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
         Paste(s.term);
-        GCHECK_EQ_STR(Str(s.sent), @"x\x1b");
     });
+    MCGuiWait(@"sent as it was", 5, ^BOOL { return [Str(s.sent) isEqualToString:@"x\x1b"]; });
     MCGuiStep(@"one line with a Tab: unasked", ^{
         s.alerts = MCGuiAlertsShown().count;
         [s.sent setLength:0];
@@ -192,6 +209,9 @@ MC_GUI_SUITE(terminal_paste) {
         MCGuiAnswerAlerts(@[@(NSAlertThirdButtonReturn)]);
         Paste(s.term);
         GCHECK(MCGuiAlertsShown().count == s.alerts + 1);
+    });
+    MCGuiWait(@"answered", 5, ^BOOL { return !Grid(s.term).askingPaste; });
+    MCGuiStep(@"nothing sent", ^{
         GCHECK(s.sent.length == 0);
         MCGuiSetSettings(@"lsp.enabled = false\n");
     });

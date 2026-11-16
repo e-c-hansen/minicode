@@ -572,10 +572,15 @@ static const CGFloat kStopWidth = 40;
             if (g.kind != Procs::GroupKind::Terminal || g.terminal != _revealTerminal) continue;
             if (!g.children.count) break;
             if (![_outline isItemExpanded:g]) [_outline expandItem:g];
-            // A job the foreground named but not yet seen: wait for a look
-            // that has it, then fall back to the group's first process.
+            // A job the question named but not yet seen: wait for a look
+            // that has it, then fall back to the group's first process
+            // still running (an earlier server that exited sits above the
+            // one running, by start), else its first.
             if (_revealJob > 0 && _revealUntil.timeIntervalSinceNow > 12) return;
-            row = [_outline rowForItem:g.children.firstObject];
+            MCProcItem *first = g.children.firstObject;
+            for (MCProcItem *p in g.children)
+                if (p.alive) { first = p; break; }
+            row = [_outline rowForItem:first];
         }
     }
     if (row < 0) return;

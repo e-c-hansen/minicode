@@ -114,9 +114,12 @@ extern NSNotificationName const MCTerminalClaudeDidStartNotification;
 // The first of them, or nil.
 @property(nonatomic, readonly, copy) NSString *runningCommand;
 // The process group holding the terminal's foreground when it is not the
-// shell's (a program running), else 0: what the close question's Show in
-// Processes selects.
+// shell's (a program running), else 0.
 @property(nonatomic, readonly) pid_t foregroundJob;
+// The process the first of runningCommands names: foregroundJob, else the
+// first background job's leader (the server left with `&` or `disown`);
+// 0 when neither runs. What the close question's Show in Processes selects.
+@property(nonatomic, readonly) pid_t firstJob;
 // A runCommand: line still waiting for the shell's prompt, or nil.
 @property(nonatomic, readonly, copy) NSString *pendingCommand;
 // What a tab shows: the running program's own title (OSC 0 or 2), else

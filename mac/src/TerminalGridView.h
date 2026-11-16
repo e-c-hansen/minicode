@@ -46,6 +46,9 @@ NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
 @property(nonatomic) BOOL hiddenInput;
 @property(nonatomic, readonly) BOOL secureInputOn;
 + (NSInteger)secureInputViews;   // grids with it on now, in this process
+// The paste question (several lines into a program, or control characters)
+// is up as a sheet on the window; a paste meanwhile beeps.
+@property(nonatomic, readonly) BOOL askingPaste;
 // Lines the view is scrolled back from the live screen (0: following the
 // output). Set to 0 by typing and pasting.
 @property(nonatomic, readonly) int scrollOffset;

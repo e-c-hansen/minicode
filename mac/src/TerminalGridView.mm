@@ -117,6 +117,7 @@ static bool MCSameCells(const std::vector<TermCell> &a, const std::vector<TermCe
 
 @implementation TerminalGridView {
     BOOL _selecting, _hasSelection;
+    BOOL _askingPaste;             // the paste question's sheet is up
     long long _anchorId, _endId;   // selection ends, as line numbers
     int _anchorCol, _endCol;
     int _unit;                     // what a drag extends by: 1 cell, 2 word, 3 line
@@ -2354,21 +2355,28 @@ static BOOL IsWordCell(const TermCell &cell) {
                      stringForType:NSPasteboardTypeString];
     const char *utf8 = str.UTF8String;
     if (!utf8 || !self.screen) return;
+    if (_askingPaste) { NSBeep(); return; }   // its question is still up
     const bool bracketed = self.screen->bracketedPaste();
     TerminalScreen::PasteCheck check = TerminalScreen::checkPaste(
         utf8, bracketed, [AppSettings shared].settings.terminalPasteWarning());
-    std::string text = check.text;
-    if (check.ask) {
-        switch ([self askBeforePasting:check]) {
-        case NSAlertFirstButtonReturn: break;
-        case NSAlertSecondButtonReturn: text = TerminalScreen::pasteAsOneLine(text); break;
-        default: return;
-        }
-        // The screen may have gone, or the program changed, while asking.
-        if (!self.screen) return;
+    if (!check.ask) {
+        [self sendTyped:TerminalScreen::encodePaste(check.text, bracketed)];
+        return;
     }
-    [self sendTyped:TerminalScreen::encodePaste(text, self.screen->bracketedPaste())];
+    const std::string text = check.text;
+    __weak TerminalGridView *weakSelf = self;
+    [self askBeforePasting:check then:^(NSModalResponse r) {
+        TerminalGridView *s = weakSelf;
+        // The screen may have gone, or the program changed, while asking.
+        if (!s || !s.screen) return;
+        std::string out = text;
+        if (r == NSAlertSecondButtonReturn) out = TerminalScreen::pasteAsOneLine(out);
+        else if (r != NSAlertFirstButtonReturn) return;
+        [s sendTyped:TerminalScreen::encodePaste(out, s.screen->bracketedPaste())];
+    }];
 }
+
+- (BOOL)askingPaste { return _askingPaste; }
 
 // VS Code's question (terminal.integrated.enableMultiLinePasteWarning):
 // Paste, Paste as One Line, or Cancel, with a preview of the first lines.
@@ -2376,7 +2384,11 @@ static BOOL IsWordCell(const TermCell &cell) {
 // then offers Paste or Cancel; the answer comes back as Cancel's
 // (NSAlertThirdButtonReturn) either way, as for several lines.
 // "Do not ask again" writes terminal.multiline-paste-warning = never.
-- (NSModalResponse)askBeforePasting:(const TerminalScreen::PasteCheck &)check {
+// A sheet on the terminal's window, so it stays with the window and says
+// which one it is about (a free dialog sat mid-screen where the window had
+// been); `then` runs once it is answered. Without a window, it asks modally.
+- (void)askBeforePasting:(const TerminalScreen::PasteCheck &)check
+                    then:(void (^)(NSModalResponse))then {
     NSAlert *alert = [[NSAlert alloc] init];
     alert.alertStyle = NSAlertStyleWarning;
     const BOOL oneLine = check.lines < 2;
@@ -2399,12 +2411,27 @@ static BOOL IsWordCell(const TermCell &cell) {
     [alert addButtonWithTitle:@"Cancel"];
     alert.showsSuppressionButton = YES;
     alert.suppressionButton.title = @"Do not ask again";
-    NSModalResponse r = [alert runModal];
-    if (oneLine && r == NSAlertSecondButtonReturn) r = NSAlertThirdButtonReturn;   // Cancel
-    if ((r == NSAlertFirstButtonReturn || r == NSAlertSecondButtonReturn) &&
-        alert.suppressionButton.state == NSControlStateValueOn)
-        [[AppSettings shared] writeValue:@"never" forKey:@"terminal.multiline-paste-warning"];
-    return r;
+    NSButton *suppress = alert.suppressionButton;   // not the alert: it holds the handler
+    void (^answered)(NSModalResponse) = ^(NSModalResponse r) {
+        if (oneLine && r == NSAlertSecondButtonReturn) r = NSAlertThirdButtonReturn;   // Cancel
+        if ((r == NSAlertFirstButtonReturn || r == NSAlertSecondButtonReturn) &&
+            suppress.state == NSControlStateValueOn)
+            [[AppSettings shared] writeValue:@"never" forKey:@"terminal.multiline-paste-warning"];
+        then(r);
+    };
+    NSWindow *window = self.window;
+    if (!window) {
+        answered([alert runModal]);
+        return;
+    }
+    if (window.attachedSheet) { NSBeep(); return; }   // another question is up
+    _askingPaste = YES;
+    __weak TerminalGridView *weakSelf = self;
+    [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse r) {
+        TerminalGridView *s = weakSelf;
+        if (s) s->_askingPaste = NO;
+        answered(r);
+    }];
 }
 
 // Everything: the scrollback and the screen.

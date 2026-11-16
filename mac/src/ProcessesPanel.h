@@ -32,8 +32,9 @@
 - (void)focusList;
 - (void)reload;
 // Selects terminal `terminal`'s process `job` (its process group's leader),
-// or with none the first process under that terminal's group, once a look
-// has it on show (within 15 s), and gives the list the keyboard.
+// or with none the first process still running under that terminal's group
+// (else its first), once a look has it on show (within 15 s), and gives
+// the list the keyboard.
 - (void)revealTerminal:(NSInteger)terminal job:(int)job;
 
 // For the GUI checks.
