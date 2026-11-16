@@ -213,6 +213,13 @@ static NSURL *WithoutFragment(NSURL *url) {
         [self startLoad:generation];
         return;
     }
+    // A load still on its way (two writes in quick succession, a save and
+    // then the disk follow): the page on show is not where the user left
+    // it, so the place read before that load is the one to put back.
+    if (_restoreScroll || self.webView.isLoading) {
+        [self startLoad:generation];
+        return;
+    }
     __weak MCHtmlPage *weakSelf = self;
     [self.webView evaluateJavaScript:@"[window.scrollX, window.scrollY]"
                              inFrame:nil

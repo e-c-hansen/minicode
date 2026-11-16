@@ -161,14 +161,18 @@ MC_GUI_SUITE(html_page) {
         return Loaded(c, @"index.html", loadsBefore + 1);
     });
     MCGuiWaitQuiet(@"the page settles", 0.3, 5, ^NSInteger { return (NSInteger)Page(c).loads; });
-    MCGuiAsync(@"its new text, scrolled where it was", 10, ^(MCGuiDone done) {
-        Ask(c, @"[document.getElementById('marker').textContent, window.scrollY]", ^(id v) {
-            NSArray *a = [v isKindOfClass:NSArray.class] ? v : nil;
-            GCHECK_EQ_STR(a.firstObject, @"Edited");
-            MCGuiNote(@"scroll after the save: %@", a.lastObject);
-            GCHECK(fabs([a.lastObject doubleValue] - 600) < 2);
-            done();
-        });
+    // The page's text and scroll, read again until they are as expected:
+    // the scroll is put back once the load has finished, a moment after it.
+    __block NSArray *seen = nil;
+    MCGuiWait(@"its new text, scrolled where it was", 10, ^BOOL {
+        Ask(c, @"[document.getElementById('marker').textContent, window.scrollY]",
+            ^(id v) { seen = [v isKindOfClass:NSArray.class] ? v : nil; });
+        return seen.count == 2 && [seen[0] isEqual:@"Edited"] &&
+               fabs([seen[1] doubleValue] - 600) < 2;
+    });
+    MCGuiStep(@"the scroll after the save", ^{
+        MCGuiNote(@"scroll after the save: %@", seen.lastObject);
+        GCHECK_EQ_STR(seen.firstObject, @"Edited");
     });
     MCGuiStep(@"a write from outside", ^{
         loadsBefore = Page(c).loads;
@@ -178,16 +182,17 @@ MC_GUI_SUITE(html_page) {
         return Loaded(c, @"index.html", loadsBefore + 1);
     });
     MCGuiWaitQuiet(@"the page settles", 0.3, 5, ^NSInteger { return (NSInteger)Page(c).loads; });
-    MCGuiAsync(@"the new text, the scroll kept", 10, ^(MCGuiDone done) {
+    MCGuiWait(@"the new text, the scroll kept", 10, ^BOOL {
         Ask(c, @"[document.getElementById('marker').textContent, window.scrollY,"
-               @" document.body.dataset.ran || 'no']", ^(id v) {
-            NSArray *a = [v isKindOfClass:NSArray.class] ? v : nil;
-            GCHECK(a.count == 3);
-            GCHECK_EQ_STR(a[0], @"Outside");
-            GCHECK(fabs([a[1] doubleValue] - 600) < 2);
-            GCHECK_EQ_STR(a[2], @"yes");   // the answer holds for the file
-            done();
-        });
+               @" document.body.dataset.ran || 'no']",
+            ^(id v) { seen = [v isKindOfClass:NSArray.class] ? v : nil; });
+        return seen.count == 3 && [seen[0] isEqual:@"Outside"] &&
+               fabs([seen[1] doubleValue] - 600) < 2;
+    });
+    MCGuiStep(@"the answer holds for the file", ^{
+        MCGuiNote(@"scroll after the write from outside: %@", seen.count == 3 ? seen[1] : @"?");
+        GCHECK(seen.count == 3);
+        if (seen.count == 3) GCHECK_EQ_STR(seen[2], @"yes");
     });
     MCGuiAsync(@"a link to a place in the page scrolls there", 10, ^(MCGuiDone done) {
         Ask(c, @"document.getElementById('top').click(); true", ^(id v) {
