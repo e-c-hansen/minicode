@@ -52,6 +52,7 @@ double now() { return (double)g_get_monotonic_time() / 1e6; }
 struct Job {
     std::string text, path, root, setting, consent;
     int firstLine = 0, lastLine = 0;
+    bool projectOnly = false;
     double timeout = 10;
     // Read on the main thread: where programs are looked for, the home
     // folder, $VIRTUAL_ENV, and the environment the program gets.
@@ -263,7 +264,7 @@ void work(Job* job) {
 
     Result& r = job->result;
     r.decision = FormatRun::decide(job->path, job->root, job->setting, job->consent,
-                                   job->firstLine, job->lastLine, env);
+                                   job->firstLine, job->lastLine, env, job->projectOnly);
     if (r.decision.kind != FormatRun::Kind::Run) {
         r.message = r.decision.message;
         return;
@@ -305,8 +306,10 @@ void work(Job* job) {
 
 void format(const std::string& text, const std::string& path, const std::string& root,
             const std::string& setting, const std::string& consent, int firstLine,
-            int lastLine, double timeoutSeconds, std::function<void(Result)> done) {
+            int lastLine, double timeoutSeconds, std::function<void(Result)> done,
+            bool projectOnly) {
     Job* job = new Job;
+    job->projectOnly = projectOnly;
     job->text = text;
     job->path = path;
     job->root = root;

@@ -906,6 +906,25 @@ bool serverMayFormat(const std::string& lang, const Plan& plan) {
     return plan.candidates.empty();
 }
 
+bool projectChose(const Plan& plan) {
+    if (plan.off || plan.candidates.empty()) return false;
+    return plan.fromSettings || (!plan.configFile.empty() && plan.candidates[0].projectStyle);
+}
+
+bool offersOnSave(const Plan& plan) {
+    return !plan.fromSettings && projectChose(plan);
+}
+
+std::string onSaveQuestion(const std::string& lang, const std::string& tool,
+                           const std::string& configFile) {
+    std::string name = configFile;
+    const size_t slash = name.find_last_of('/');
+    if (slash != std::string::npos) name = name.substr(slash + 1);
+    std::string q = "This project formats " + displayName(lang) + " files with " + tool;
+    if (!name.empty()) q += ", set up in " + name;
+    return q + ". Format them each time you save?";
+}
+
 bool hasDefault(const std::string& lang) {
     return !defaultCommand(lang).empty();
 }

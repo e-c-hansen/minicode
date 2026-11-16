@@ -4,9 +4,11 @@
 // block in EditorController+Private.h.
 #pragma once
 #import "EditorController+Private.h"
+#import "FormatOnSave.h"
 
 @interface EditorController () {
     NSUInteger _formatGeneration;          // a format result for an older one is dropped
     NSPopover *_formatNote;                // what Format Document has to say
+    MCFormatOnSaveOffer *_formatOnSaveOffer;   // the bar offering format on save
 }
 @end

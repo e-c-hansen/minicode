@@ -4150,6 +4150,16 @@ void testSettings() {
     CHECK(!d.formatOnSave());
     CHECK(!parseSettings(std::string(Settings::defaultFileText()) +
                          "format.on-save = false\n").formatOnSave());
+    CHECK(d.formatOnSaveMode() == Settings::FormatOnSave::Off);
+    CHECK(parseSettings("format.on-save = project\n").formatOnSaveMode() ==
+          Settings::FormatOnSave::Project);
+    CHECK(parseSettings("format.on-save = Project\n").formatOnSave());
+    CHECK(parseSettings("format.on-save = true\n").formatOnSaveMode() ==
+          Settings::FormatOnSave::On);
+    // What the menu item and the offer write (Settings::withValue) reads back.
+    CHECK(parseSettings(Settings::withValue(Settings::defaultFileText(), "format.on-save",
+                                            "project")).formatOnSaveMode() ==
+          Settings::FormatOnSave::Project);
 
     GROUP("settings:themes");
     {
@@ -4698,6 +4708,7 @@ void testSettings() {
     CHECK(fm.formatOnSave());
     CHECK(e8.size() == 3 && e8[0].line == 4 && e8[1].line == 5 && e8[2].line == 7);
     CHECK(!e8.empty() && e8[0].message.find("format.cobol") != std::string::npos);
+    CHECK(e8.size() == 3 && e8[2].message.find("true, false, or project") != std::string::npos);
 
     GROUP("settings:python");
     std::vector<SettingsError> py7;

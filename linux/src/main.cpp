@@ -982,7 +982,9 @@ static void act_save(GSimpleAction*, GVariant*, gpointer userp) {
     // and formats first and saves when that is done (Save All, auto-save and
     // the close question's Save do neither).
     const Settings& st = g.settings->settings();
-    if (app->format && app->format->beforeSaving(st.organizeImportsOnSave(), st.formatOnSave()))
+    if (app->format &&
+        app->format->beforeSaving(st.organizeImportsOnSave(), st.formatOnSave(),
+                                  st.formatOnSaveMode() == Settings::FormatOnSave::Project))
         return;
     saveCurrent(app);
 }

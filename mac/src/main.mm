@@ -16,6 +16,7 @@
 #import "EditorFont.h"
 #import "IdeLinkServer.h"
 #import "LspInlayHints.h"
+#import "FormatOnSave.h"
 #import "ControlServer.h"
 #import "Keymap.h"
 #import "TerminalAttention.h"
@@ -1176,6 +1177,9 @@ static void BuildMenu(void) {
                                              keyEquivalent:@"f"];
     format.keyEquivalentModifierMask = NSEventModifierFlagOption | NSEventModifierFlagShift;
     [editMenu addItem:format];
+    // format.on-save on or off, checked while on (FormatOnSave.h). No key,
+    // as in VS Code.
+    [editMenu addItem:MCFormatOnSaveMenuItem()];
     // F9 as in Sublime Text (fn+F9 on a laptop keyboard): the selected
     // lines, or the keep-sorted block around the caret.
     NSString *f9 = [NSString stringWithFormat:@"%C", (unichar)NSF9FunctionKey];

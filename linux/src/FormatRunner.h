@@ -28,10 +28,12 @@ struct Result {
 // `setting` is format.<lang> for the file's language, `consent` the
 // folder's answer (FolderConsent::answer), both read by the caller on the
 // main thread. firstLine..lastLine (1-based) formats those lines only where
-// the formatter can; 0 and 0 for the whole file.
+// the formatter can; 0 and 0 for the whole file. `projectOnly` is
+// format.on-save = project (FormatRun::decide).
 void format(const std::string& text, const std::string& path, const std::string& root,
             const std::string& setting, const std::string& consent, int firstLine,
-            int lastLine, double timeoutSeconds, std::function<void(Result)> done);
+            int lastLine, double timeoutSeconds, std::function<void(Result)> done,
+            bool projectOnly = false);
 
 // Runs started and not yet ended, and the process id of the last one
 // started (checks: a formatter killed at the limit is gone).

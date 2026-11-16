@@ -49,7 +49,17 @@
 // configuration, and is stopped after `timeout` seconds. A formatter in the
 // project's own .venv or node_modules runs only once the folder's own
 // programs are allowed (Formatter::chooseProgram); before that the result
-// says needsConsent.
+// says needsConsent. `projectOnly` (format.on-save = project) runs only a
+// formatter the project configures or the settings name
+// (Formatter::projectChose); otherwise the result is `unavailable`, with no
+// language server asked.
 void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firstLine,
-                  NSInteger lastLine, NSTimeInterval timeout,
+                  NSInteger lastLine, BOOL projectOnly, NSTimeInterval timeout,
                   void (^completion)(MCFormatResult *result));
+
+// The offer of format on save for `path` (FormatOnSave.h): the question to
+// ask when the project's own configuration chose its formatter and that
+// formatter is installed (Formatter::offersOnSave), else nil. Planned off
+// the main thread; the completion runs on the main queue.
+void MCFindFormatOnSaveOffer(NSString *path, NSString *root,
+                             void (^completion)(NSString *question));
