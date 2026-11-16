@@ -3,6 +3,8 @@
 #import "EditorFont.h"
 #import "Lsp.h"
 #import "InstallPanel.h"
+#import "AppSettings.h"
+#include "FolderTools.h"
 
 static NSColor *PHex(unsigned int rgb) {
     return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
@@ -318,6 +320,39 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
         [line.widthAnchor constraintEqualToConstant:kPanelWidth - 24].active = YES;
         [stack addArrangedSubview:line];
     }
+    // No answer yet for the folder's own environment: what the answer would
+    // change, and the choice itself. The bar over the file asks only when
+    // something there waits on it; a server that reads the packages itself
+    // (basedpyright and a root .venv) leaves the question here.
+    NSString *env = answer ? nil : session.folderEnvironmentAwaitingConsent;
+    if (env.length) {
+        NSBox *rule = [NSBox new];
+        rule.boxType = NSBoxSeparator;
+        [stack addArrangedSubview:rule];
+        [rule.widthAnchor constraintEqualToConstant:kPanelWidth - 24].active = YES;
+        NSString *server = session.folderEnvironmentServer ?: @"";
+        const std::string words = FolderTools::environmentPopoverText(
+            env.UTF8String ?: "", server.UTF8String ?: "",
+            [AppSettings shared].settings.terminalActivateVenv());
+        NSTextField *l = Label([NSString stringWithUTF8String:words.c_str()] ?: @"", Small(),
+                               PHex(0xC8C8C8), YES, NO);
+        l.preferredMaxLayoutWidth = kPanelWidth - 24;
+        [stack addArrangedSubview:l];
+        NSButton *allow = [self button:@"Allow" action:@selector(allowFolderTools:)
+                                   key:@"tools-allow"];
+        allow.toolTip = [NSString stringWithFormat:@"Let the servers, Format Document and new "
+                                                   @"terminals use %@'s programs", env];
+        NSButton *deny = [self button:@"Don't Allow" action:@selector(denyFolderTools:)
+                                  key:@"tools-deny"];
+        NSView *gap = [NSView new];
+        [gap setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
+        NSStackView *line = [NSStackView stackViewWithViews:@[gap, deny, allow]];
+        line.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        line.distribution = NSStackViewDistributionFill;
+        line.spacing = 6;
+        [line.widthAnchor constraintEqualToConstant:kPanelWidth - 24].active = YES;
+        [stack addArrangedSubview:line];
+    }
     NSTextField *note = Label(@"Commands come from the lsp lines in the settings file "
                               @"(lsp.python.also for a second Python server), and "
                               @"python.interpreter sets the default Python. MiniCode never "
@@ -357,6 +392,17 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
 // install bar's question comes back as it does from the menu.
 - (void)forgetToolsAnswer:(id)sender {
     [NSApp sendAction:@selector(forgetFolderToolsAnswer:) to:nil from:sender];
+}
+
+// The folder's answer from the popover, as the bar's Use It and Don't Use
+// It give it.
+- (void)allowFolderTools:(id)sender {
+    (void)sender;
+    [_session setFolderEnvironmentAllowed:YES];
+}
+- (void)denyFolderTools:(id)sender {
+    (void)sender;
+    [_session setFolderEnvironmentAllowed:NO];
 }
 @end
 

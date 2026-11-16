@@ -32,6 +32,27 @@ std::string environmentToAsk(const PythonEnvs::Context& ctx, const std::string& 
 std::string environmentQuestion(const std::string& env);
 std::string environmentTooltip(const std::string& env, const std::string& askAgainMenu);
 
+// Whether the Python server `server` (Lsp::pythonServerName: "basedpyright",
+// "pyright", "pylsp", "jedi-language-server") reads the packages of the
+// folder's environment `env` by itself, running nothing from it:
+// basedpyright finds a .venv at the project's root on its own and reads its
+// site-packages as files. Completions and checks then see those packages
+// before any answer, and the answer gates only what runs the environment's
+// Python (the servers' exact search paths, a new terminal's activation).
+bool serverReadsEnvironment(const std::string& server, const std::string& env);
+
+// The bar over a Python file, when something a person would notice waits
+// on the answer: "" when the server reads the packages itself (the choice
+// is then in the Language Servers popover only); for a server that does
+// not, what it is missing; for one not known yet (`server` "": none found,
+// and one may be in the environment), environmentQuestion.
+std::string environmentBarQuestion(const std::string& env, const std::string& server);
+// The Language Servers popover's words beside its Allow and Don't Allow
+// while the folder has no answer: what the answer changes. `terminal`:
+// terminal.activate-venv is on.
+std::string environmentPopoverText(const std::string& env, const std::string& server,
+                                   bool terminal);
+
 // The bar's words for a server that would run the folder's own code
 // (`key` "rust" or "typescript"): it waits (Lsp::ProjectCode::Waits),
 // because of `file` as the folder names it, or runs without that part.

@@ -1,6 +1,12 @@
 // EditorController+LanguageServers.mm — EditorController: the language servers' commands, problems, and installing a server.
 #import "EditorController+Private.h"
 #import "EditorController+LanguageServersIvars.h"
+#include "FolderTools.h"
+
+static std::string MCStdOf(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
+static NSString *MCStringOf(const std::string &s) {
+    return [NSString stringWithUTF8String:s.c_str()] ?: @"";
+}
 
 @implementation EditorController (LanguageServers)
 
@@ -180,10 +186,19 @@ static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
     // until it is answered the servers run without it, and a server
     // missing from PATH may be in it.
     NSString *ask = [self environmentToAsk];
+    // Only when something a person would notice waits on the answer: a
+    // server that reads the environment's packages by itself (basedpyright
+    // and a root .venv) already completes from them, and the choice stays
+    // in the Language Servers popover.
+    NSString *question = ask ? MCStringOf(FolderTools::environmentBarQuestion(
+                                   MCStdOf(ask), MCStdOf(self.lsp.folderEnvironmentServer)))
+                             : nil;
+    if (!question.length) ask = nil;
     if (ask) {
         [self ensureInstallBar];
-        if (![self.installBar.consentEnvironment isEqualToString:ask])
-            self.installBar.consentEnvironment = ask;
+        if (![self.installBar.consentEnvironment isEqualToString:ask] ||
+            ![self.installBar.text isEqualToString:question])
+            [self.installBar askAboutEnvironment:ask question:question];
         if (self.installBar.hidden) {
             self.installBar.hidden = NO;
             [self relayoutRightArea];
@@ -246,7 +261,10 @@ static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
     if (!bar) return slot;
     BOOL show = shown && !bar.hidden &&
                 (bar.consentEnvironment
-                     ? [bar.consentEnvironment isEqualToString:[self environmentToAsk]]
+                     ? [bar.consentEnvironment isEqualToString:[self environmentToAsk]] &&
+                           FolderTools::environmentBarQuestion(
+                               MCStdOf(bar.consentEnvironment),
+                               MCStdOf(self.lsp.folderEnvironmentServer)).size() > 0
                  : bar.consentServer
                      ? [bar.consentServer isEqualToString:[self serverToAsk]]
                      : _installBarKey && [_installBarKey isEqualToString:self.lsp.missingServer]);

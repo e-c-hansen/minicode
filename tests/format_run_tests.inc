@@ -360,6 +360,32 @@ static void testFolderTools() {
 
     GROUP("folder-tools:words");
     {
+        // basedpyright reads a root .venv's packages by itself: nothing a
+        // person would notice waits on the answer, so the bar does not ask
+        // and the popover says what the answer still changes.
+        CHECK(FolderTools::serverReadsEnvironment("basedpyright", ".venv"));
+        CHECK(!FolderTools::serverReadsEnvironment("basedpyright", "sub/.venv"));
+        CHECK(!FolderTools::serverReadsEnvironment("basedpyright", "env"));
+        CHECK(!FolderTools::serverReadsEnvironment("pyright", ".venv"));
+        CHECK(!FolderTools::serverReadsEnvironment("pylsp", ".venv"));
+        CHECK(FolderTools::environmentBarQuestion(".venv", "basedpyright").empty());
+        CHECK(FolderTools::environmentBarQuestion(".venv", "pylsp") ==
+              "Completions and checks do not see the packages in .venv until you allow "
+              "minicode to run its Python.");
+        CHECK(FolderTools::environmentBarQuestion("env", "basedpyright").find("do not see") !=
+              std::string::npos);
+        CHECK(FolderTools::environmentBarQuestion(".venv", "") ==
+              FolderTools::environmentQuestion(".venv"));
+        CHECK(FolderTools::environmentBarQuestion(".venv", "other") ==
+              FolderTools::environmentQuestion(".venv"));
+        const std::string reads = FolderTools::environmentPopoverText(".venv", "basedpyright", true);
+        CHECK(reads.find("basedpyright already reads the packages in .venv.") == 0);
+        CHECK(reads.find("new terminals start with it active") != std::string::npos);
+        CHECK(FolderTools::environmentPopoverText(".venv", "basedpyright", false)
+                  .find("terminal") == std::string::npos);
+        CHECK(FolderTools::environmentPopoverText(".venv", "jedi-language-server", false) ==
+              FolderTools::environmentBarQuestion(".venv", "jedi-language-server"));
+
         CHECK(FolderTools::environmentQuestion(".venv") ==
               "This folder has its own Python environment, .venv. The language servers run "
               "programs from it only if you allow it.");

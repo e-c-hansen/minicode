@@ -542,6 +542,12 @@ void MCForgetFolderToolsConsent(NSString *root);
 // open Python file would use it but the user has not been asked for this
 // folder yet; nil otherwise. Nothing runs from it until they say yes.
 @property(nonatomic, readonly, copy) NSString *folderEnvironmentAwaitingConsent;
+// The Python server the open file has ("basedpyright", "pylsp", ...,
+// Lsp::pythonServerName), "" when none runs (not installed: it may be in
+// the environment), nil before one is tried. Some read the environment's
+// packages by themselves (FolderTools::serverReadsEnvironment), and then
+// the bar does not ask about it.
+@property(nonatomic, readonly, copy) NSString *folderEnvironmentServer;
 // The open file's server ("rust", "typescript") when it would run the
 // folder's own code and the user has not been asked for this folder yet
 // (it runs without that part, or waits: Lsp::checkProjectCode), and the

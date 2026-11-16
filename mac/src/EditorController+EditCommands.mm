@@ -293,7 +293,7 @@ NSString *NSOf(const std::string &s) { return [NSString stringWithUTF8String:s.c
         _venvNoteShown = YES;
         dispatch_async(dispatch_get_main_queue(), ^{
             [self showStatusNote:@"The folder's .venv is activated in new terminals once you "
-                                  "allow it (the bar over a Python file asks)"];
+                                  "allow it: the language server's item in the status bar asks"];
         });
     }
     RunFile::Activation act;

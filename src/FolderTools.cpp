@@ -37,6 +37,29 @@ std::string environmentTooltip(const std::string& env, const std::string& askAga
            askAgainMenu + " menu takes it back.";
 }
 
+bool serverReadsEnvironment(const std::string& server, const std::string& env) {
+    return server == "basedpyright" && env == ".venv";
+}
+
+std::string environmentBarQuestion(const std::string& env, const std::string& server) {
+    if (serverReadsEnvironment(server, env)) return "";
+    if (server.empty() || server == "other") return environmentQuestion(env);
+    return "Completions and checks do not see the packages in " + env +
+           " until you allow minicode to run its Python.";
+}
+
+std::string environmentPopoverText(const std::string& env, const std::string& server,
+                                   bool terminal) {
+    if (serverReadsEnvironment(server, env))
+        return server + " already reads the packages in " + env + ". minicode runs " + env +
+               "'s own Python only if you allow it: the servers then get its exact import "
+               "paths" +
+               (terminal ? ", and new terminals start with it active." : ".");
+    std::string text = environmentBarQuestion(env, server);
+    if (terminal) text += " New terminals start with it active once you do.";
+    return text;
+}
+
 std::string projectCodeQuestion(const std::string& key, bool waits, const std::string& file) {
     if (key == "rust")
         return waits ? "This folder's " + file +
