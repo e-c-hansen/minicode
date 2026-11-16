@@ -45,6 +45,7 @@
 #include "PageCheck.h"
 #include "SideBySide.h"
 #include "ChangeReview.h"
+#include "MergeConflicts.h"
 #include "QuickDiff.h"
 #include "PreviewScroll.h"
 #include "MarkdownHtml.h"
@@ -4048,8 +4049,9 @@ void testSettings() {
     // workbench.enable-preview keys, markdown.max-width, and
     // browser.bookmarks.
     // control.page-input, and editor.inlay-hint-parameter-names, and
-    // syntax.tag, syntax.attribute and syntax.tag-bracket, and html.scripts.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 131);
+    // syntax.tag, syntax.attribute and syntax.tag-bracket, and html.scripts,
+    // and editor.merge-current and editor.merge-incoming.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 133);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4266,6 +4268,8 @@ void testSettings() {
             same(none.bracketMatchColor(), named.bracketMatchColor(), "bracket match");
             same(none.inlayHintColor(), named.inlayHintColor(), "inlay hint");
             same(none.inlayHintBackground(), named.inlayHintBackground(), "inlay hint background");
+            same(none.mergeCurrentColor(), named.mergeCurrentColor(), "merge current");
+            same(none.mergeIncomingColor(), named.mergeIncomingColor(), "merge incoming");
             for (uint32_t c : {0x000000u, 0x808080u, 0xFFFFFFu, 0x4DAAFCu})
                 same(none.contrastText(Rgba::hex(c)), named.contrastText(Rgba::hex(c)), "contrast");
             CHECK(differ == 0);
@@ -4274,6 +4278,8 @@ void testSettings() {
             CHECK(&documented.theme() == &named.theme());
             CHECK(documented.inlayHintBackground() == named.inlayHintBackground());
             CHECK(documented.inlayHintColor() == named.inlayHintColor());
+            CHECK(documented.mergeCurrentColor() == named.mergeCurrentColor());
+            CHECK(documented.mergeIncomingColor() == named.mergeIncomingColor());
             for (int i = 0; i < kTreeGitColorCount; i++)
                 CHECK(documented.treeGitColor((TreeGitColor)i) ==
                       named.treeGitColor((TreeGitColor)i));
@@ -11101,6 +11107,7 @@ static void testMultiCaretOccurrences() {
 #include "find_rules_tests.inc"
 #include "side_by_side_tests.inc"
 #include "change_review_tests.inc"
+#include "merge_conflicts_tests.inc"
 #include "lsp_inlay_tests.inc"
 #include "lsp_semantic_tests.inc"
 #include "preview_scroll_tests.inc"
@@ -11232,6 +11239,7 @@ int main() {
     testSideBySide();
     testSideBySideReview();
     testChangeReview();
+    testMergeConflicts();
     testPreviewScroll();
     testAgentTranscript();
     testAgentIndex();

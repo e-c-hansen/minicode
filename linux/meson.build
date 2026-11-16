@@ -103,6 +103,9 @@ core_sources = [
   core_dir / 'QuickDiff.cpp',
   core_dir / 'SideBySide.cpp',
   core_dir / 'LineDiff.cpp',
+  # Merge conflict blocks and what keeping a side makes of them (the Mac's
+  # editor and review page use them; the GTK port can follow).
+  core_dir / 'MergeConflicts.cpp',
   # The palette's matching, modes and Quick Open's walk, and the outline
   # Go to Symbol lists without a server (PalettePanel.cpp shows them).
   core_dir / 'CommandPalette.cpp',

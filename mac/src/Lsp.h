@@ -28,6 +28,7 @@
 @class MCFolds;
 @class MCInlayHints;
 @class MCSnippetSession;
+@class MCEditorConflicts;
 
 // The color a diagnostic's severity is drawn in (1 error ... 4 hint): the
 // squiggles, the hover box's messages and the gutter's dots.
@@ -84,6 +85,9 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 // A snippet completion's tab stops (SnippetSession.h): while one runs, Tab,
 // Shift+Tab and Esc are its own, before the carets and AutoIndent.
 @property(nonatomic, readonly) MCSnippetSession *snippets;
+// Merge conflicts in the text (EditorConflicts.h): tinted, with Keep
+// Current, Keep Incoming and Keep Both over each block.
+@property(nonatomic, readonly) MCEditorConflicts *conflicts;
 // The key press being interpreted (during keyDown:), else nil: a command a
 // key sent can tell Shift+Return from Return by it.
 @property(nonatomic, readonly) NSEvent *currentKeyEvent;

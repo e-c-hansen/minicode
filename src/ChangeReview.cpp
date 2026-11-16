@@ -2,6 +2,7 @@
 #include "ChangeReview.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 
 #include "QuickDiff.h"
@@ -122,6 +123,63 @@ FileDiff diffFile(File f, const std::string& ext) {
     d.oldSyntax = syntaxSpans(a, ext);
     d.newSyntax = syntaxSpans(b, ext);
     return d;
+}
+
+// A conflicted file read as text: its blocks can be shown and resolved.
+static bool conflictReadable(const File& f) {
+    return f.conflict && f.newExists && !f.binary && !f.tooLarge && !f.submodule && !f.symlink;
+}
+
+FileDiff conflictFile(File f, const std::string& ext) {
+    FileDiff d;
+    f.conflict = true;
+    f.oldText = f.newText;   // one text: a row's two line numbers are the same line
+    d.file = std::move(f);
+    const File& file = d.file;
+    if (!conflictReadable(file)) return d;
+    const std::u16string& t = file.newText;
+    d.newStarts = lineStarts(t);
+    d.oldStarts = d.newStarts;
+    d.conflicts = MergeConflicts::parse(t);
+    const size_t lines = lineCountOf(d.newStarts);
+    auto lineOf = [&](size_t offset) {
+        return (size_t)(std::upper_bound(d.newStarts.begin(), d.newStarts.end(), offset) -
+                        d.newStarts.begin()) - 1;
+    };
+    d.rows.reserve(lines);
+    d.parts.assign(lines, ConflictPart::None);
+    for (size_t i = 0; i < lines; i++) d.rows.push_back({SideBySide::Kind::Same, (int)i, (int)i});
+    for (const MergeConflicts::Block& b : d.conflicts) {
+        const size_t first = lineOf(b.start), last = lineOf(b.endMarker);
+        for (size_t i = first; i <= last && i < lines; i++) {
+            const size_t at = d.newStarts[i];
+            ConflictPart part;
+            if (i == first) part = ConflictPart::CurrentMarker;
+            else if (at == b.endMarker) part = ConflictPart::IncomingMarker;
+            else if (at == b.separator) part = ConflictPart::Separator;
+            else if (b.hasBase() && at == b.baseMarker) part = ConflictPart::BaseMarker;
+            else if (at < (b.hasBase() ? b.baseMarker : b.separator)) part = ConflictPart::Current;
+            else if (at < b.separator) part = ConflictPart::Base;
+            else part = ConflictPart::Incoming;
+            d.parts[i] = part;
+            d.rows[i].kind = SideBySide::Kind::Changed;
+            if (part == ConflictPart::Current) d.removed++;
+            if (part == ConflictPart::Incoming) d.added++;
+        }
+        d.blocks.push_back({first, std::min(last + 1, lines)});
+    }
+    d.newSyntax = syntaxSpans(t, ext);
+    d.oldSyntax = d.newSyntax;
+    return d;
+}
+
+std::u16string conflictResult(const FileDiff& d, size_t block, MergeConflicts::Keep keep) {
+    if (block >= d.conflicts.size()) return d.file.newText;
+    return MergeConflicts::resolved(d.file.newText, d.conflicts[block], keep);
+}
+
+bool canMarkResolved(const FileDiff& d) {
+    return conflictReadable(d.file) && d.conflicts.empty();
 }
 
 std::vector<std::vector<SideBySide::Span>> syntaxByLine(const std::u16string& text,
@@ -351,6 +409,12 @@ std::string staleText(const std::string& path, bool index) {
 std::u16string fileHeaderText(const FileDiff& d) {
     const File& f = d.file;
     std::string s = f.path;
+    if (f.conflict) {
+        if (!conflictReadable(f)) return toU16(s + "  (conflict)");
+        std::string left = MergeConflicts::leftText(d.conflicts.size());
+        left[0] = (char)tolower((unsigned char)left[0]);
+        return toU16(s + "  " + left);
+    }
     if (!f.origPath.empty()) s += "  (renamed from " + f.origPath + ")";
     else if (f.untracked || (!f.oldExists && f.newExists)) s += "  (new)";
     else if (!f.newExists && f.oldExists) s += "  (deleted)";
@@ -374,7 +438,11 @@ std::string gapText(size_t hidden) {
 
 static std::string noteFor(const FileDiff& d) {
     const File& f = d.file;
-    if (f.conflict) return "This file has conflicts. Open it to resolve them, then stage it.";
+    if (f.conflict && canMarkResolved(d))
+        return "No conflict marks are left in it. Mark Resolved stages it, which tells git the "
+               "conflict is resolved.";
+    if (f.conflict && !conflictReadable(f))
+        return "This file has conflicts. Open it to resolve them, then stage it.";
     if (f.submodule) return "A submodule: its commit changed, or it has changes inside.";
     if (f.symlink) return "A symbolic link: its target changed.";
     if (f.binary) return "A binary file: its bytes are not shown.";
@@ -487,6 +555,26 @@ Page layout(const std::vector<FileDiff>& files, const Opened& opened, size_t con
                 }
                 addContext(row);
                 r++;
+                continue;
+            }
+            // A conflict block: its lines as they are, markers too, each
+            // tinted by its part.
+            if (f.conflict) {
+                const size_t e = blockIndex < d.blocks.size() ? d.blocks[blockIndex].end : r + 1;
+                const int block = (int)blockIndex++;
+                for (size_t k = r; k < e; k++) {
+                    PageRow x;
+                    x.kind = RowKind::Conflict;
+                    x.file = fi;
+                    x.block = block;
+                    x.oldLine = x.newLine = d.rows[k].right;
+                    x.part = k < d.parts.size() ? d.parts[k] : ConflictPart::None;
+                    x.blockStart = k == r;
+                    if (k == r) p.blockRows.push_back(p.rows.size());
+                    const size_t at = addRow(x, newLine(d, x.newLine));
+                    addSyntax(d.newSyntax, d.newStarts, f.newText, x.newLine, p.starts[at]);
+                }
+                r = e;
                 continue;
             }
             // A block: its old lines, then its new ones.

@@ -4,6 +4,7 @@
 #import "LspInlayHints.h"
 #import "SourceStorage.h"
 #import "SnippetSession.h"
+#import "EditorConflicts.h"
 #import "LayoutCatchUp.h"
 #include <os/log.h>
 
@@ -51,6 +52,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
     MCFolds *_folds;
     MCInlayHints *_inlays;
     MCSnippetSession *_snippets;
+    MCEditorConflicts *_conflicts;
     NSEvent *_keyEvent;   // the key being interpreted, during keyDown:
     // The caret moved left of a hint's room (placeCaretBesideHints): by
     // how much, and the x it was given.
@@ -61,6 +63,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
 - (MCFolds *)folds { return _folds; }
 - (MCInlayHints *)inlayHints { return _inlays; }
 - (MCSnippetSession *)snippets { return _snippets; }
+- (MCEditorConflicts *)conflicts { return _conflicts; }
 - (NSEvent *)currentKeyEvent { return _keyEvent; }
 - (BOOL)multiCaretActive { return _multi.active; }
 
@@ -73,6 +76,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
         _folds = [[MCFolds alloc] initWithTextView:self];
         _inlays = [[MCInlayHints alloc] initWithTextView:self];
         _snippets = [[MCSnippetSession alloc] initWithTextView:self];
+        _conflicts = [[MCEditorConflicts alloc] initWithTextView:self];
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(storageEdited:)
                    name:NSTextStorageDidProcessEditingNotification
@@ -206,6 +210,7 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
 
 - (void)drawRect:(NSRect)dirty {
     [super drawRect:dirty];
+    [_conflicts drawOverInRect:dirty];
     if (_folds.hasFolds && self.editable)
         [_folds drawPlaceholdersInRect:dirty color:_bracketMatchColor ?: [NSColor grayColor]];
     [_inlays drawInRect:dirty];
@@ -758,6 +763,7 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
 
 - (void)drawViewBackgroundInRect:(NSRect)rect {
     [super drawViewBackgroundInRect:rect];
+    [_conflicts drawBehindInRect:rect];
     if (_drawBehindText) _drawBehindText(rect);
     if (self.editable) [self drawBracketBoxesInRect:rect];
     if (self.editable) [_snippets drawInRect:rect];
@@ -833,7 +839,18 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
     return ok;
 }
 
+- (void)setEditable:(BOOL)editable {
+    const BOOL was = self.editable;
+    [super setEditable:editable];
+    if (was == editable) return;
+    // Shown as source (or no longer): the conflicts are read once the
+    // text that goes with it is in.
+    __weak MCEditorConflicts *conflicts = _conflicts;
+    dispatch_async(dispatch_get_main_queue(), ^{ [conflicts rescanNow]; });
+}
+
 - (void)mouseDown:(NSEvent *)event {
+    if (self.editable && [_conflicts mouseDown:event]) return;   // Keep Current, ...
     if (self.editable && [_folds mouseDown:event]) return;   // a fold's placeholder
     if ([_multi mouseDown:event]) return;
     NSEventModifierFlags mods = event.modifierFlags &

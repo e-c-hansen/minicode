@@ -9,7 +9,11 @@
 // they hide, which a click opens. Each block has Stage and Discard beside
 // its first line (Unstage in the staged list); a selection's right click
 // offers the same for the changed lines it covers. F7 and Shift+F7 step
-// through the blocks across files.
+// through the blocks across files. A file with merge conflicts shows each
+// conflict block whole instead, markers and all, with Keep Current, Keep
+// Incoming and Keep Both (which write the file), Side by Side of every
+// current side against every incoming one, and once none are left, Mark
+// Resolved, which stages it (ChangeReview::conflictFile).
 //
 // What the core works out (ChangeReview.h): the rows, and the index text
 // or file text a block's action makes. Staging and unstaging write that

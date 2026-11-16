@@ -11,9 +11,11 @@
 #import "EditorController+GitIvars.h"
 #import "ChangeReviewPage.h"
 #import "CompareView.h"
+#import "EditorConflicts.h"
 #import "GitGutter.h"
 #import "GitPanel.h"
 #import "PalettePanel.h"
+#include "MergeConflicts.h"
 
 @implementation EditorController (Git)
 
@@ -29,6 +31,15 @@
                                                      name:MCGitPanelDidRefreshNotification
                                                    object:self.gitPanel];
     }
+    // The editor's merge conflicts (EditorConflicts.h): only in a file shown
+    // as source text, as the change bars; a choice says what is left.
+    MCEditorConflicts *conflicts = self.textView.conflicts;
+    conflicts.wanted = ^BOOL { return [weakSelf gitGutterPath] != nil; };
+    conflicts.onResolved = ^(NSUInteger left) {
+        EditorController *s = weakSelf;
+        NSString *name = s.currentPath.lastPathComponent ?: @"the file";
+        [s showStatusNote:[NSString stringWithUTF8String:MergeConflicts::resolvedNote(name.UTF8String, left).c_str()]];
+    };
     self.gitPanel.onShowDiff = ^(NSString *name, NSString *path, NSData *diff) {
         [weakSelf showDiffNamed:name path:path data:diff];
     };
@@ -161,9 +172,18 @@
 
 // Option+F5 and Shift+Option+F5 (VS Code's workbench.action.editor.
 // nextChange and previousChange): the caret to the next or previous change
-// bar, wrapping.
-- (void)nextChange:(id)sender { (void)sender; [_gitGutter goToNextChange:YES]; }
-- (void)previousChange:(id)sender { (void)sender; [_gitGutter goToNextChange:NO]; }
+// bar, wrapping; in a file with merge conflicts (which has no bars), to
+// the next or previous conflict.
+- (void)nextChange:(id)sender {
+    (void)sender;
+    if (self.textView.conflicts.count > 0) [self.textView.conflicts goToNext:YES];
+    else [_gitGutter goToNextChange:YES];
+}
+- (void)previousChange:(id)sender {
+    (void)sender;
+    if (self.textView.conflicts.count > 0) [self.textView.conflicts goToNext:NO];
+    else [_gitGutter goToNextChange:NO];
+}
 // The change on the caret's line (VS Code's revertChange and stageChange,
 // which its change widget offers).
 - (void)revertChange:(id)sender { (void)sender; [_gitGutter revertChange:[_gitGutter barAtCaret]]; }
@@ -228,7 +248,8 @@
 // Discard Changes needs a file.
 - (BOOL)validateGitItem:(NSMenuItem *)item enabled:(BOOL *)enabled {
     if (item.action == @selector(nextChange:) || item.action == @selector(previousChange:)) {
-        *enabled = _gitGutter.barCount > 0 && self.gitGutterPath != nil;
+        *enabled = (_gitGutter.barCount > 0 || self.textView.conflicts.count > 0) &&
+                   self.gitGutterPath != nil;
         return YES;
     }
     if (item.action == @selector(revertChange:) || item.action == @selector(stageChange:)) {

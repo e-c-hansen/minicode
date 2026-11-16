@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "GitModel.h"
+#include "MergeConflicts.h"
 #include "SideBySide.h"
 
 namespace ChangeReview {
@@ -55,8 +56,13 @@ struct File {
 // Why a file's changes go only whole (the header's Stage File, Discard
 // File), "" when its blocks can be taken one by one. Files git cannot
 // stage by part: new and deleted ones, binary files, submodules,
-// conflicts, and one too large to show.
+// conflicts (whose blocks have Keep buttons instead), and one too large
+// to show.
 std::string wholeOnlyReason(const File& f);
+
+// Which part of a conflict block a line of a conflicted file is.
+enum class ConflictPart { None, CurrentMarker, Current, BaseMarker, Base, Separator, Incoming,
+                          IncomingMarker };
 
 // One file's changes, worked out once (aligning and coloring are the
 // costly part; laying the page out again from them is not).
@@ -68,10 +74,26 @@ struct FileDiff {
     std::vector<SideBySide::Span> oldSyntax, newSyntax;   // style: a TokenStyle
     size_t added = 0, removed = 0;         // lines
     bool lastNewlineChanged = false;       // only one side ends in "\n"
+    // A conflicted file (conflictFile): its blocks, one per entry of
+    // `blocks`, and each row's part of one (None outside them).
+    std::vector<MergeConflicts::Block> conflicts;
+    std::vector<ConflictPart> parts;
 };
 
 // `ext` picks the syntax colors (none when empty or unknown, or past 2 MB).
 FileDiff diffFile(File f, const std::string& ext);
+
+// A conflicted file in the Changes list, `f.newText` its text in the work
+// tree: one row per line (both sides the same line), each conflict block a
+// block of its own, shown whole with its markers, the rest folded as
+// unchanged lines are. A file that cannot be read as text (binary, too
+// large, gone from the work tree) keeps only its note.
+FileDiff conflictFile(File f, const std::string& ext);
+// The work tree's text with conflict `block` resolved by keeping `keep`.
+std::u16string conflictResult(const FileDiff& d, size_t block, MergeConflicts::Keep keep);
+// A conflicted file that is text and has no conflict blocks left: staging
+// it marks it resolved, and nothing needs asking.
+bool canMarkResolved(const FileDiff& d);
 
 // The syntax colors of each line of `text` (lines split at "\n", a "\r"
 // before it dropped, as InlineAgent::pendingDiff splits them), each span's
@@ -138,6 +160,7 @@ enum class RowKind {
     Added,     // a new line
     Gap,       // "14 unchanged lines", opened by a click
     Note,      // a line about the file: binary, a conflict, too large, ...
+    Conflict,  // a line of a conflicted file's block: its `part` says which
 };
 
 struct PageRow {
@@ -148,6 +171,7 @@ struct PageRow {
     int oldLine = -1, newLine = -1;   // 0-based, -1 where that side has none
     int gap = -1;             // Gap: its id (opened.count(id) shows it)
     size_t hidden = 0;        // Gap: how many lines
+    ConflictPart part = ConflictPart::None;   // Conflict: which part of the block
 };
 
 struct Page {
