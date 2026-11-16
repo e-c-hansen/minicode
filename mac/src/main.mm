@@ -515,6 +515,7 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 static BOOL MCEditorOnlyAction(SEL a) {
     return a == @selector(formatDocument:) || a == @selector(sortLines:) ||
            a == @selector(fixKeepSorted:) || a == @selector(runCurrentFile:) ||
+           a == @selector(runTestAtCursor:) ||
            a == @selector(toggleComment:) || a == @selector(toggleTask:) ||
            a == @selector(triggerCompletion:) || a == @selector(goToDefinition:) ||
            a == @selector(showHoverInfo:) || a == @selector(renameSymbol:) ||
@@ -733,6 +734,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)closeTerminal:(id)sender   { [[self current] closeTerminal:sender]; }
 - (void)nextWaitingTerminal:(id)sender { MCJumpToNextWaitingTerminal(); }
 - (void)runCurrentFile:(id)sender  { [[self current] runCurrentFile:sender]; }
+- (void)runTestAtCursor:(id)sender { [[self current] runTestAtCursor:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)openBrowserTab:(id)sender  { [[self current] openBrowserTab:sender]; }
 - (void)toggleSidebarVisibility:(id)sender   { [[self current] toggleSidebarVisibility:sender]; }
@@ -1795,6 +1797,9 @@ static void BuildMenu(void) {
     runFile.keyEquivalentModifierMask =
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [termMenu addItem:runFile];
+    // The ▶ beside a test runs that one; this, the one the cursor is in.
+    [termMenu addItemWithTitle:@"Run Test at Cursor"
+                        action:@selector(runTestAtCursor:) keyEquivalent:@""];
     // Shift+Return in a Python file, which the key monitor runs (Keymap.h):
     // a menu key without Command would take Shift+Return from every field.
     [termMenu addItemWithTitle:@"Run Selection or Line in Python REPL"

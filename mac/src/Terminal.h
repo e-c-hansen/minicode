@@ -36,7 +36,13 @@
 // Posted (object: the TerminalView) when a command typed or run in a
 // terminal finishes, per the shell integration's marks. Something it
 // installed may now be found (LspSession looks again for a missing server).
+// Its userInfo, from the shell's end-of-command mark, holds the exit status
+// (MCTerminalExitStatusKey, an NSNumber; 0 when the shell sent none) and
+// the command's line as the shell reported it (MCTerminalCommandKey, ""
+// when it did not); none when the shell was replaced by another (exec).
 extern NSNotificationName const MCTerminalCommandDidFinishNotification;
+extern NSString *const MCTerminalExitStatusKey;
+extern NSString *const MCTerminalCommandKey;
 // Posted (object: the TerminalView) when the user types or pastes into a
 // terminal (keys, not the app's own runCommand:), and when one closes for
 // good. A "waiting" or "done" mark on its tab goes (TerminalAttention.h).

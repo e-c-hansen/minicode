@@ -180,7 +180,9 @@ goes here first, with tests; the GUI only displays it.
   command registry and keys.conf; the GTK port's keys are a table of their
   own in `CommandsLinux.cpp`, the Mac's rows untouched), `EditorTabs` (tab rules), `Backups` (backups
   of unsaved tabs, with a POSIX `Fs`), `FileDetails` (tree sorts, ages, folder
-  totals), `RunFile` (Run File's quoting), `RightAreaLayout` (the right
+  totals), `RunFile` (Run File's quoting), `Runnables` (the tests in a
+  file, found through the highlighter's tokens, and the command for one
+  test or the file), `RightAreaLayout` (the right
   side's panes and bars by the Mac's rules, which the GTK port lays out from).
 - Editing: `LineDiff` (Myers, split at lines unique on both sides past
   1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,
@@ -232,7 +234,7 @@ goes here first, with tests; the GUI only displays it.
   `FoldView`, `EditorFont`, `EditorFind`, `FindWidget` (the find bar's and
   Find in Folder's colors, icon buttons and inputs), `MultiCaretView`, `EditingCommands`
   (AutoIndent and KeepSorted on an NSTextView), `MarkdownCode` (code colors in
-  previews).
+  previews), `TestGutter` (the ▶ beside each test).
 - Language servers: `Lsp.mm` (`LspSession`, one per window, split into
   categories as EditorController is: `Lsp+Servers`, `Lsp+Python`, `Lsp+Sync`
   (documents and watched files), `Lsp+Diagnostics`, `Lsp+Completion`,
@@ -288,7 +290,8 @@ editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,
 LanguageServers, Agents (inline agent, Request a
 Change, control channel, agent work), Processes (the Processes panel's
 hooks, its state in associated objects), LargeFile (large-file mode, its
-status bar note, the 1 GB question), Markdown and MarkdownRender. Rules, so it
+status bar note, the 1 GB question), Tests (the ▶ beside each test, Run
+Test at Cursor), Markdown and MarkdownRender. Rules, so it
 stays warning-free:
 
 - `EditorController+Private.h` holds the class extension (ivars in its ivar
@@ -379,7 +382,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   muted #9D9D9D (Dark Modern's descriptionForeground; #9CA3AF, Tailwind's gray-400,
   until 2026-11-14, and still in linux/src and Android), dividers #333333,
   the hints overlay, terminal panel messages,
-  the git panel, the developer amber #E8A33D, the ANSI
+  the git panel, the developer amber #E8A33D, the test lane's pass
+  #73C991 and failure #F14C4C (VS Code's testing.iconPassed and
+  iconFailed), the ANSI
   palette in `TermColor::rgb()`; `linux/src/Palette.h` mirrors the defaults.
   The find bar and Find in Folder take a palette per theme
   (`FindWidget.mm`, `PaletteFor`), not keys of their own.
@@ -909,7 +914,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   for errors and warnings, the change lane (`kChangeLane`, while
   `editor.git-gutter` is on: `GitGutter`'s bars, moved by `QuickDiff::shift`
   in `storageEdited:` and cleared by a whole new text), the fold lane
-  (`kFoldLane`). Only fragments on
+  (`kFoldLane`), and leftmost the test lane (`kTestLane`, while
+  `testLane`: `TestGutter`'s marks, moved with their lines the same way).
+  Only fragments on
   screen are visited and numbers come from a `LineIndex` fed by storage edits
   (with the characters either side, since a line ends after '\n', U+2029 or
   a '\r' not before '\n', as in TextFind; the folds count lines the same way).
@@ -2851,7 +2858,33 @@ for full-screen programs. Both can be open at once.
   `RunFile::expand` (`shellQuote`, or `quoteInside` when the template quotes
   the placeholder); `{python}` is the LSP session's interpreter. It saves
   first, goes through `runCommand:` (so into history), never types into a busy
-  terminal (a new tab instead), and leaves the keyboard alone.
+  terminal (a new tab instead), and leaves the keyboard alone
+  (`runFileCommand:inDirectory:busyNote:` in +Panels).
+- **Running one test** (2026-11-16, C5; `Runnables.{h,cpp}`, `runnables:*`,
+  `TestGutter.{h,mm}`, `EditorController+Tests.mm`, `make guitest
+  SUITES=test_gutter`): Zed's runnables and VS Code's Testing icons. The
+  core finds tests without a server (pytest in test_*.py, *_test.py and
+  tests.py, go test in *_test.go, cargo's #[test] and #[...::test] in .rs
+  with their `mod`s, Jest and Vitest test( and it( with a quoted name in
+  *.test.*, *.spec.* and __tests__, inside their describe( blocks), reading
+  the text with comments and strings blanked by
+  `SyntaxHighlighter::highlight`'s tokens, and builds the command:
+  `test.<language>` (python, go, rust, js) or the built-in template, with
+  Run File's placeholders and {project}, {path}, {tests}, {pattern},
+  {package}, {target}, {runner} and {filter} (lists of words, an empty one
+  dropped with its space). The command runs in {project} (go.mod,
+  Cargo.toml, package.json or a Python project file up from the file):
+  `runFileCommand:` puts `cd` first unless the terminal's OSC 7 folder is
+  already it. `MCTestGutter` (one per window, made in showWindow) finds the
+  tests off the main thread 0.3 s after typing and gives the gutter's test
+  lane a mark per test; a click (or Run Test at Cursor, `testing.runAtCursor`,
+  no key: VS Code's is a chord) runs it as Run File does, and the run is
+  matched to the terminal's `MCTerminalCommandDidFinishNotification`, whose
+  userInfo now carries 133;D's exit status and the command's line
+  (`MCTerminalExitStatusKey`, `MCTerminalCommandKey`, read before the prompt
+  mark clears it): 0 is a check, anything else a cross. Results are kept
+  per file and test until an edit that is not a whole new text (a tab
+  switch). GTK and Android have none yet.
 - **Links** (Cmd+click; `TermLinks`): resolved against the shell's cwd (OSC 7),
   the window folder, its worktrees and the sessions' scratchpads
   (`AgentIndex::resolveTarget`): one match opens, several get a picker, none
@@ -3917,7 +3950,7 @@ session has a display. Check first.
   previews, compare, html_page;
   terminal: terminal_draw, terminal_links, terminal_marks, terminal_paste,
   terminal_pty, terminal_reflow, terminal_splits, terminal_vt,
-  terminal_exec, terminal_keys, terminal_zoom, run_file;
+  terminal_exec, terminal_keys, terminal_zoom, run_file, test_gutter;
   git: git_panel, git_actions, git_hunks, git_verbs, git_review, worktree_review, git_conflicts, git_sync,
   git_gutter;
   agents and control: agents, agent_panel, agent_places, agentcommands,

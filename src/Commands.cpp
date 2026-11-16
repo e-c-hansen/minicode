@@ -657,6 +657,11 @@ const std::vector<Command>& all() {
          "ctrl+cmd+down", T, "resizeTerminalPane:", 4, 0, nullptr},
         {"minicode.runFile", "Run File", "Terminal", "shift+cmd+enter", A, "runCurrentFile:", 0, 0,
          nullptr},
+        // VS Code's Run Test at Cursor is a chord (Cmd+; C), which minicode
+        // has none of: no key. The ▶ beside each test is the same command
+        // for one test (TestGutter.h).
+        {"testing.runAtCursor", "Run Test at Cursor", "Terminal", "", E, "runTestAtCursor:", 0, 0,
+         nullptr},
         // The Python extension's Shift+Return: the selection, or the line,
         // to a Python REPL in a terminal tab of its own.
         {"python.execSelectionInTerminal", "Run Selection or Line in Python REPL", "Terminal",

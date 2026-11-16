@@ -270,6 +270,7 @@
 
     [self startWatching:_root.path];   // live tree updates
     [self ensureGitPanel];             // autofetch, before the panel is shown
+    [self ensureTestGutter];           // the ▶ beside each test
     [self restoreSession];             // the files open here last time
     [self restoreBrowserFromSession];  // and the browser, where it was
     [[NSNotificationCenter defaultCenter] addObserver:self

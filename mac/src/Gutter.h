@@ -17,12 +17,28 @@
 // plain layer color, painted once (see PanelScrollView), so it is right at
 // any opacity. Its right side is the fold lane (FoldView.h): a chevron by
 // each line a region starts on while the pointer is over the gutter, and
-// always by a closed fold; a click there folds or unfolds.
+// always by a closed fold; a click there folds or unfolds. While the file
+// is a test file its left side is the test lane: a ▶ beside each test
+// (TestGutter.h), or how its last run went.
 #import <Cocoa/Cocoa.h>
 #include "QuickDiff.h"
 #include <vector>
 
 @class CodeTextView;
+
+// A test's mark in the test lane: a ▶ to run it, a ring while it runs, a
+// green check or a red cross after.
+typedef NS_ENUM(NSInteger, MCTestState) {
+    MCTestIdle,
+    MCTestRunning,
+    MCTestPassed,
+    MCTestFailed,
+};
+struct MCGutterTest {
+    NSUInteger line = 0;            // 0-based
+    MCTestState state = MCTestIdle;
+    NSString *tip;                  // the tooltip: "Run test_parse"
+};
 
 typedef NS_ENUM(NSInteger, MCLineNumbers) {
     MCLineNumbersOff,
@@ -65,4 +81,17 @@ typedef NS_ENUM(NSInteger, MCLineNumbers) {
 // The rect a bar is drawn in (or for a deletion, the boundary it marks),
 // in the gutter's coordinates; NSZeroRect when its lines are not laid out.
 - (NSRect)rectOfChangeBar:(NSInteger)index;
+
+// The test lane (TestGutter.h): left of everything else while testLane is
+// on, a mark beside each test's line, which move with each edit until the
+// next set. A click on one calls onTest with its index, instead of
+// selecting lines; the pointer resting on one shows its tip.
+@property(nonatomic, assign) BOOL testLane;
+- (void)setTests:(const std::vector<MCGutterTest> &)tests;
+- (const std::vector<MCGutterTest> &)tests;
+@property(nonatomic, copy) void (^onTest)(NSInteger index);
+// The rect a test's mark is drawn in, in the gutter's coordinates;
+// NSZeroRect when its line is not laid out. The tip at a point in the lane.
+- (NSRect)rectOfTest:(NSInteger)index;
+- (NSString *)testTipAtPoint:(NSPoint)point;
 @end

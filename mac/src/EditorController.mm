@@ -15,6 +15,7 @@
 #import "EditorController+MarkdownIvars.h"
 #import "EditorController+PersistenceIvars.h"
 #import "EditorController+TabsIvars.h"
+#import "EditorController+TestsIvars.h"
 #import "EditorController+TreeIvars.h"
 #import "EditorController+TreeDetailsIvars.h"
 #import "IdeLinkServer.h"
@@ -142,6 +143,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if ([self validateActiveTabAction:item.action enabled:&enabled]) return enabled;
     if ([self validateZoomFitItem:item enabled:&enabled]) return enabled;
     if ([self validateGitItem:item enabled:&enabled]) return enabled;
+    if ([self validateTestItem:item enabled:&enabled]) return enabled;
     if ([self validateGroupItem:item enabled:&enabled]) return enabled;
     if (item.action == @selector(sortTreeBy:)) {
         item.state = item.tag == (NSInteger)_treeSort.key ? NSControlStateValueOn

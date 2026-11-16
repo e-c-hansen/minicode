@@ -785,7 +785,7 @@ Settings Settings::parse(const std::string& text,
         const ValueKind kind =
             rule ? rule->value
                  : (key.rfind("lsp.", 0) == 0 || key.rfind("run.", 0) == 0 ||
-                    key.rfind("format.", 0) == 0)
+                    key.rfind("test.", 0) == 0 || key.rfind("format.", 0) == 0)
                        ? ValueKind::CommandLine
                        : ValueKind::Word;
         if (kind == ValueKind::Path) {
@@ -1270,6 +1270,16 @@ bool Settings::apply(const std::string& key, const std::string& value,
         runCommands_[language] = value;
         return true;
     }
+    if (key.rfind("test.", 0) == 0) {
+        // The ▶ beside each test (Runnables.h): a template per language.
+        std::string language = key.substr(5);
+        if (language != "python" && language != "go" && language != "rust" && language != "js") {
+            error = "'" + key + "' is not test.python, test.go, test.rust or test.js";
+            return false;
+        }
+        testCommands_[language] = value;
+        return true;
+    }
     if (key.rfind("lsp.", 0) == 0) {
         std::string server = key.substr(4);
         // lsp.<server>.extensions: the files a server is for.
@@ -1573,6 +1583,11 @@ std::string Settings::runTemplate(const std::string& extension) const {
     std::string v = lower(command);
     if (v == "off" || v == "none" || v == "false") return "";
     return command;
+}
+
+std::string Settings::testTemplate(const std::string& language) const {
+    auto it = testCommands_.find(lower(language));
+    return it == testCommands_.end() ? "" : it->second;
 }
 
 const std::vector<std::string>& Settings::formatLanguages() {
@@ -1924,6 +1939,23 @@ const char* Settings::defaultFileText() {
 # run.go = go run {file}
 # run.js = node {file}
 # run.rb = ruby {file}
+# A test file shows a run button beside each test (macOS only for now):
+# pytest's test_*.py, *_test.py and tests.py, go test's *_test.go, cargo
+# test's #[test] functions, and Jest's and Vitest's *.test.* and *.spec.*
+# files. A click saves the file and types the command for that one test
+# into the terminal, as Run File does; Run Test at Cursor in the Terminal
+# menu runs the test the cursor is in, or the whole file above its first
+# test. test.<language> (python, go, rust, or js, which covers TypeScript)
+# changes the command, or turns it off. Besides Run File's placeholders it
+# takes {project} (the folder holding pyproject.toml, go.mod, Cargo.toml or
+# package.json, where the command runs), {path} (the file from there),
+# {tests} (pytest's node ids, cargo's test paths), {pattern} and {package}
+# (go test's -run and package), {target} (cargo's --test or --bin), {runner}
+# (the project's vitest or jest) and {filter} (-t and the test's name).
+# test.python = {python} -m pytest {tests}
+# test.go = go test -run {pattern} {package}
+# test.rust = cargo test {target} -- --exact {tests}
+# test.js = {runner} {path} {filter}
 # Format Document (Shift+Option+F) runs an external formatter on the file
 # (macOS only for now). Install the ones you want. When a project configures
 # its formatter (.clang-format, [tool.pyink] or [tool.black] in
