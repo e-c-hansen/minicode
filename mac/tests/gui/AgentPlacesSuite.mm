@@ -31,13 +31,13 @@ NSString *BigText() {
 
 // Where line `line` (1-based) is now laid out, in the text view, laid out
 // at the line itself first, so the answer is TextKit's real place and not
-// its estimate.
+// its estimate. Its text: the used rect, without a note's room above it.
 NSRect LaidOutLine(NSTextView *tv, NSUInteger line) {
     NSLayoutManager *lm = tv.layoutManager;
     const NSUInteger at = (line - 1) * kLineLength;
     [lm ensureLayoutForCharacterRange:NSMakeRange(at, 1)];
-    NSRect r = [lm lineFragmentRectForGlyphAtIndex:[lm glyphIndexForCharacterAtIndex:at]
-                                    effectiveRange:nil];
+    NSRect r = [lm lineFragmentUsedRectForGlyphAtIndex:[lm glyphIndexForCharacterAtIndex:at]
+                                        effectiveRange:nil];
     return NSOffsetRect(r, tv.textContainerOrigin.x, tv.textContainerOrigin.y);
 }
 
@@ -80,9 +80,12 @@ MC_GUI_SUITE(agent_places) {
         const CGFloat place = PlaceInPane(tv, 250000);
         MCGuiNote(@"line 250,000 is %.2f of the way down the pane", place);
         GCHECK(place > 0.2 && place < 0.5);
+        // The box in its room just above the line, over no line's text.
         NSView *box = notes.noteView;
-        const NSRect line = LaidOutLine(tv, 250000);
-        GCHECK(box && NSMaxY(box.frame) <= NSMinY(line) + 0.5 && NSMaxY(box.frame) > NSMinY(line) - 12);
+        const NSRect line = MCGuiLineTextRect(tv, 249999 * kLineLength);
+        if (!GCHECK(box && NSMaxY(box.frame) <= NSMinY(line) + 0.5 && NSMaxY(box.frame) > NSMinY(line) - 12))
+            MCGuiNote(@"box %@, the line's text %@", NSStringFromRect(box.frame), NSStringFromRect(line));
+        GCHECK(box && MCGuiLinesUnder(tv, box.frame) == 0);
         NSClipView *clip = tv.enclosingScrollView.contentView;
         GCHECK(NSMinY(box.frame) >= NSMinY(clip.bounds) - 0.5);
         [notes closeNote];

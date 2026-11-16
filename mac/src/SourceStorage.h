@@ -147,6 +147,21 @@ BOOL MCIsGapParagraphStyle(NSParagraphStyle *style, NSParagraphStyle **stored);
 // (each strip that scrolls in) found no glyphs and drew blank bands. And
 // the background of a run that wraps: AppKit fills to the end of the line
 // fragment and from its start, so inline code ran to the page's edges.
+//
+// And it keeps room above one line for a box drawn over the text (an
+// agent's note, AgentNotes.h): that line's first fragment is `roomHeight`
+// taller at its top, so the box covers no text. The room is paragraph
+// spacing before the line, which the layout manager's delegate (MCFolds)
+// answers from here; it follows edits before it, and goes when an edit
+// takes the line's start.
 @interface MCGapLayoutManager : NSLayoutManager
 @property(nonatomic) BOOL holdsPage;
+// The character the room is above (a line's first), NSNotFound for none.
+@property(nonatomic, readonly) NSUInteger roomLocation;
+@property(nonatomic, readonly) CGFloat roomHeight;
+// Sets the room (0 or NSNotFound for none) and lays out the lines it left
+// and joined again. Never from inside a storage edit.
+- (void)setRoom:(CGFloat)height aboveCharacter:(NSUInteger)index;
+// The room before the paragraph starting at a glyph, for the delegate.
+- (CGFloat)roomBeforeGlyphAtIndex:(NSUInteger)glyphIndex;
 @end

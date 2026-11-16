@@ -475,10 +475,18 @@ MC_GUI_SUITE(control) {
         GCHECK_EQ_STR(notes.noteLabel, @"Claude");
         NSRange want = LinesRange(tv.string, 5, 6);
         GCHECK(NSEqualRanges(notes.noteRange, want));
-        // Above its lines, inside the text view, and never the keyboard's.
+        // Just above its lines, in room of its own: no line's text under
+        // it (it once hid the lines above, the `def` it was about), inside
+        // the text view, and never the keyboard's.
         NSView *v = notes.noteView;
         GCHECK(v != nil && v.superview == tv);
-        GCHECK(NSMaxY(v.frame) <= NSMinY(LineRect(tv, want.location)) + 0.5);
+        const NSRect text = MCGuiLineTextRect(tv, want.location);
+        if (!GCHECK(NSMaxY(v.frame) <= NSMinY(text) + 0.5 && NSMaxY(v.frame) > NSMinY(text) - 12))
+            MCGuiNote(@"box %@, line 5's text %@", NSStringFromRect(v.frame), NSStringFromRect(text));
+        if (!GCHECK(MCGuiLinesUnder(tv, v.frame) == 0))
+            MCGuiNote(@"the box covers %lu lines", (unsigned long)MCGuiLinesUnder(tv, v.frame));
+        // The line above stays where it was, wholly in view above the box.
+        GCHECK(NSMaxY(MCGuiLineTextRect(tv, LinesRange(tv.string, 4, 4).location)) <= NSMinY(v.frame) + 0.5);
         GCHECK(!v.acceptsFirstResponder);
         GCHECK(c.window.firstResponder == keyboard);
         // The highlight is a layout-manager attribute, not in the text.
@@ -502,12 +510,14 @@ MC_GUI_SUITE(control) {
         NSRange want = LinesRange(tv.string, 300, 310);
         GCHECK(NSEqualRanges(notes.noteRange, want));
         NSClipView *clip = tv.enclosingScrollView.contentView;
-        const CGFloat top = NSMinY(LineRect(tv, want.location)) - NSMinY(clip.bounds);
+        const CGFloat top = NSMinY(MCGuiLineTextRect(tv, want.location)) - NSMinY(clip.bounds);
         const CGFloat H = NSHeight(clip.bounds);
         if (!GCHECK(top > H * 0.25 && top < H * 0.45))
             MCGuiNote(@"line 300 is %.0f points down a pane %.0f tall", top, H);
         NSView *v = notes.noteView;
-        GCHECK(v && NSMinY(v.frame) >= NSMinY(clip.bounds) && NSMaxY(v.frame) <= NSMinY(LineRect(tv, want.location)) + 0.5);
+        GCHECK(v && NSMinY(v.frame) >= NSMinY(clip.bounds) &&
+               NSMaxY(v.frame) <= NSMinY(MCGuiLineTextRect(tv, want.location)) + 0.5);
+        GCHECK(v && MCGuiLinesUnder(tv, v.frame) == 0);
         MCGuiSnapshot(c.window.contentView, @"control-note");
     });
     MCGuiStep(@"a file of its own for the preview tab", ^{
@@ -551,15 +561,19 @@ MC_GUI_SUITE(control) {
         GCHECK(s == 0);
         GCHECK(CountTabsWithPath(c, @"b.py") == 1 && CountTabsWithPath(c, @"README.md") == 1);
         GCHECK([ActiveTab(c)[@"preview"] isEqual:@YES]);
-        // A Markdown file shows its source for a note, which sits under the
-        // first line when there is no room above it.
+        // A Markdown file shows its source for a note; on the first line
+        // the box's room is at the top of the text, pushing line 1 down.
         GCHECK(tv.editable && [tv.string hasPrefix:@"# Project"]);
         NSView *v = notes.noteView;
-        GCHECK(v && NSMinY(v.frame) >= NSMaxY(LineRect(tv, 0)) - 0.5);
+        GCHECK(v && NSMinY(v.frame) >= 0 && NSMaxY(v.frame) <= NSMinY(MCGuiLineTextRect(tv, 0)) + 0.5);
+        GCHECK(v && MCGuiLinesUnder(tv, v.frame) == 0);
     });
-    MCGuiStep(@"Escape closes the note", ^{
+    MCGuiStep(@"Escape closes the note, and its room goes with it", ^{
         [tv doCommandBySelector:@selector(cancelOperation:)];
         GCHECK(!notes.noteShown);
+        NSLayoutManager *lm = tv.layoutManager;
+        GCHECK([[lm valueForKey:@"roomLocation"] unsignedIntegerValue] == NSNotFound);
+        GCHECK(NSMinY(MCGuiLineTextRect(tv, 0)) - tv.textContainerOrigin.y < 1);
     });
     CLI(@"note again", @[@"open", @"README.md:3", @"--note", @"Again"], ^(int s, NSString *, NSString *) {
         GCHECK(s == 0 && notes.noteShown);

@@ -512,6 +512,11 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     if (disk && ![disk isEqualToDate:self.fileModDate]) [self reloadCleanTab:t];
 }
 
+// A note began or stopped waiting in a tab: the strip's dot follows.
+- (void)notesWaitingChanged {
+    [self reloadTabStrip];
+}
+
 // Whether the user is at work in the document on show: its window is key
 // and the keyboard is in the editor's slot (the text, a table, a preview,
 // the find bar), not in a terminal, the browser or one of the bars. An

@@ -301,6 +301,13 @@
         item.toolTip = t.currentPath ?: item.title;
         item.dirty = t.dirty;
         item.preview = t.agentPreview || t.preview;
+        // An agent's note waiting here, opened while the user typed in
+        // another tab: a dot until the tab is shown.
+        if ([_notes tabHasWaitingNote:t]) {
+            item.attention = MCTabAttentionNote;
+            item.toolTip = [item.toolTip stringByAppendingFormat:@"\n%@",
+                            [_notes waitingNoteSummaryForTab:t]];
+        }
         [items addObject:item];
     }
     return items;

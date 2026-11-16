@@ -25,6 +25,7 @@
 #import "ControlCommands.h"
 #import "ControlServer.h"
 #import "EditorTab.h"
+#import "TabStrip.h"
 #import "FileTree.h"
 #import "GitPanel.h"
 #include <signal.h>
@@ -60,6 +61,14 @@ void CLI(NSString *name, NSArray<NSString *> *args, void (^check)(int, NSString 
 }
 
 NSString *F(NSString *name) { return [gDir stringByAppendingPathComponent:name]; }
+
+// The editor strip's tab titled `title`, or nil.
+MCTabStripItem *StripItem(EditorController *c, NSString *title) {
+    MCTabStrip *strip = [c valueForKey:@"tabStrip"];
+    for (MCTabStripItem *item in strip.items)
+        if ([item.title isEqualToString:title]) return item;
+    return nil;
+}
 
 NSString *Lines(int n, NSString *prefix) {
     NSMutableString *s = [NSMutableString string];
@@ -209,9 +218,16 @@ MC_GUI_SUITE(agentcommands) {
         GCHECK_EQ_STR(ActiveName(c), @"mine.txt");
         GCHECK(c.window.firstResponder == tv);
         GCHECK(!notes.noteShown);
-        // The agent's file waits in the preview tab beside it.
+        // The agent's file waits in the preview tab beside it, with a dot
+        // until it is looked at (once only its italic title said so).
         NSInteger i = TabIndex(c, @"theirs.py", nil);
         GCHECK(i >= 0 && [[c controlTabs][(NSUInteger)i][@"preview"] boolValue]);
+        MCTabStripItem *theirs = StripItem(c, @"theirs.py");
+        GCHECK(theirs.attention == MCTabAttentionNote);
+        GCHECK([theirs.toolTip containsString:@"A note from Claude is waiting here"]);
+        GCHECK(StripItem(c, @"mine.txt").attention == MCTabAttentionNone);
+        MCTabStrip *strip = [c valueForKey:@"tabStrip"];
+        GCHECK(!NSIsEmptyRect([strip attentionRectForTab:(NSInteger)[strip.items indexOfObject:theirs]]));
     });
     MCGuiStep(@"the next keystroke lands in mine.txt, and theirs.py is untouched", ^{
         Type(c, @"b");
@@ -227,6 +243,8 @@ MC_GUI_SUITE(agentcommands) {
         GCHECK(notes.noteShown);
         GCHECK_EQ_STR(notes.noteText, @"Look here");
         GCHECK(NSEqualRanges(notes.noteRange, LinesRange(tv.string, 5, 6)));
+        // Seen: the dot goes.
+        GCHECK(StripItem(c, @"theirs.py").attention == MCTabAttentionNone);
         // In the agent's own preview tab the caret goes to the lines.
         GCHECK(tv.selectedRange.location == LinesRange(tv.string, 5, 5).location);
     });
@@ -307,6 +325,8 @@ MC_GUI_SUITE(agentcommands) {
         GCHECK_EQ_STR(ActiveName(c), @"mine.txt");
         GCHECK(c.window.firstResponder == tv);
         GCHECK(notes.tourActive && !notes.noteShown);
+        MCTabStripItem *theirs = StripItem(c, @"theirs.py");
+        GCHECK(theirs.attention == MCTabAttentionNote && [theirs.toolTip containsString:@"1 of 2"]);
     });
     MCGuiStep(@"and shows when its tab is chosen", ^{
         [c selectTabAtIndex:TabIndex(c, @"theirs.py", @"text")];
