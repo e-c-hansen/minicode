@@ -7,6 +7,7 @@
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorFont.h"
+#import "AgentWindow.h"
 #import "AppSettings.h"
 #import "ChangeReviewPage.h"
 #import "GitPanel.h"
@@ -1209,6 +1210,133 @@ MC_GUI_SUITE(git_review) {
                   p.lastShowCpuMilliseconds);
         GCHECK_TIME(p.lastShowCpuMilliseconds, 1500, @"the review with 50,000 changed lines shown");
         GCHECK(p.rowDescriptions.count > 100000);
+    });
+    MCGuiStep(@"the window closes; the real Trash back", ^{
+        UseScratchTrash(NO);
+        [c.window close];
+    });
+    MCGuiWait(@"gone", 5, ^BOOL { return ![MCGuiControllers() containsObject:c]; });
+}
+
+// `make guitest SUITES=worktree_review`: Compare with Main on a worktree is
+// the review page: every file the agent changed against where its branch
+// left main (main's later commit left out), in one scroll. Apply to Main is
+// refused, naming the file, while main has a change of its own in it; then
+// asks and brings every change in as unstaged changes, the untracked file
+// too, with nothing committed; and a change that no longer applies comes in
+// with conflict marks, listed as a conflict, in words.
+MC_GUI_SUITE(worktree_review) {
+    __block EditorController *c = nil;
+    __block NSInteger actions = 0;
+    __block NSUInteger alerts = 0;
+    NSString *git = MCGitExecutable();
+    NSString *repo = [MCGuiScratch() stringByAppendingPathComponent:@"wtreview"];
+    NSString *wt = [repo stringByAppendingPathComponent:@".claude/worktrees/agent-x"];
+    NSString *G = git ? [NSString stringWithFormat:@"'%@'", git] : @"git";
+    if (!git) {
+        MCGuiStep(@"no git", ^{ MCGuiNote(@"no git here: the worktree checks are skipped"); });
+        return;
+    }
+    MCChangeReviewPage *(^page)(void) = ^MCChangeReviewPage * {
+        id p = [[c valueForKey:@"activeTab"] valueForKey:@"page"];
+        return [p isKindOfClass:MCChangeReviewPage.class] ? p : nil;
+    };
+    NSString *(^inMain)(NSString *) = ^NSString *(NSString *name) {
+        return Read([repo stringByAppendingPathComponent:name]);
+    };
+    GitShell(@"main and a worktree that changed a.txt (committed), b.txt and an untracked n.txt",
+             [NSString stringWithFormat:
+                  @"set -e; mkdir -p '%@'; cd '%@'; %@ init -q -b main; "
+                   "printf '1\\n2\\n3\\n4\\n5\\n' > a.txt; echo b > b.txt; echo .claude/ > .gitignore; "
+                   "%@ add -A; %@ commit -qm first; %@ worktree add -q -b wt .claude/worktrees/agent-x; "
+                   "cd .claude/worktrees/agent-x; printf '1\\nTWO\\n3\\n4\\n5\\n' > a.txt; "
+                   "%@ commit -qam agent; echo bb > b.txt; echo new > n.txt; "
+                   "cd '%@'; echo c > c.txt; %@ add c.txt; %@ commit -qm 'main moved on'",
+                  repo, repo, G, G, G, G, G, repo, G, G]);
+    MCGuiStep(@"a window on main; the agents' model asked", ^{
+        UseScratchTrash(YES);
+        NSUInteger before = MCGuiControllers().count;
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:repo]]];
+        GCHECK(MCGuiControllers().count == before + 1);
+        c = MCGuiController();
+        [c toggleAgents:nil];
+    });
+    MCGuiWait(@"git lists the worktree", 20, ^BOOL {
+        return [(MCAgentWindow *)[c valueForKey:@"agents"] worktreeAtPath:wt] != nil;
+    });
+    MCGuiStep(@"Compare with Main", ^{
+        [c toggleAgents:nil];
+        [(MCAgentWindow *)[c valueForKey:@"agents"] compareWorktreeAt:wt];
+    });
+    MCGuiWait(@"the review of the worktree", 15, ^BOOL { return page().loaded; });
+    MCGuiStep(@"every file in one scroll; main's later commit left out", ^{
+        MCChangeReviewPage *p = page();
+        p.onActionDone = ^{ actions++; };
+        NSArray *rows = p.rowDescriptions;
+        MCGuiNote(@"worktree rows: %@", rows);
+        GCHECK_EQ_STR(p.pageKind, @"worktree-changes");
+        GCHECK([rows containsObject:@"F a.txt  +1 -1"]);
+        GCHECK([rows containsObject:@"F b.txt  +1 -1"]);
+        GCHECK([rows containsObject:@"F n.txt  (new)  +1"]);
+        for (NSString *r in rows) GCHECK(![r containsString:@"c.txt"]);
+        GCHECK(![[p valueForKey:@"applyButton"] isHidden]);
+        // Main busy in b.txt.
+        MCGuiWriteFile([repo stringByAppendingPathComponent:@"b.txt"], @"main's own edit\n");
+        actions = 0;
+        alerts = MCGuiAlertsShown().count;
+        [p applyToMain];
+    });
+    MCGuiWait(@"refused", 15, ^BOOL { return actions == 1; });
+    MCGuiStep(@"it names b.txt; nothing asked, nothing changed in main", ^{
+        MCGuiNote(@"refusal: %@", page().message);
+        GCHECK([page().message hasPrefix:@"The main checkout has uncommitted changes of its own in b.txt"]);
+        GCHECK(MCGuiAlertsShown().count == alerts);
+        GCHECK_EQ_STR(inMain(@"a.txt"), @"1\n2\n3\n4\n5\n");
+    });
+    GitShell(@"main's own edit put back", [NSString stringWithFormat:@"cd '%@' && %@ checkout -- b.txt", repo, G]);
+    MCGuiStep(@"Apply to Main asks; yes", ^{
+        actions = 0;
+        alerts = MCGuiAlertsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        [page() applyToMain];
+    });
+    MCGuiWait(@"applied", 20, ^BOOL { return actions == 1; });
+    MCGuiStep(@"the changes are in main, unstaged and uncommitted; the worktree as it was", ^{
+        NSArray *shown = MCGuiAlertsShown();
+        GCHECK([[shown subarrayWithRange:NSMakeRange(alerts, shown.count - alerts)]
+            isEqualToArray:@[@"Bring these 3 files' changes into main?"]]);
+        MCGuiNote(@"applied: %@", page().message);
+        GCHECK([page().message hasPrefix:@"Brought 3 files' changes into main as uncommitted changes."]);
+        GCHECK_EQ_STR(inMain(@"a.txt"), @"1\nTWO\n3\n4\n5\n");
+        GCHECK_EQ_STR(inMain(@"b.txt"), @"bb\n");
+        GCHECK_EQ_STR(inMain(@"n.txt"), @"new\n");
+        NSString *st = GitText(repo, @[@"status", @"--porcelain"]);
+        MCGuiNote(@"main's status: %@", st);
+        GCHECK([st containsString:@" M a.txt"] && [st containsString:@" M b.txt"] &&
+               [st containsString:@"?? n.txt"]);
+        GCHECK_EQ_STR(GitText(repo, @[@"rev-list", @"--count", @"HEAD"]), @"2\n");
+        GCHECK_EQ_STR(Read([wt stringByAppendingPathComponent:@"b.txt"]), @"bb\n");
+    });
+    GitShell(@"main put back, then a.txt's second line changed there and committed",
+             [NSString stringWithFormat:@"set -e; cd '%@'; %@ checkout -- .; rm n.txt; "
+                                         "printf '1\\nDOS\\n3\\n4\\n5\\n' > a.txt; %@ commit -qam clash",
+                                        repo, G, G]);
+    MCGuiStep(@"Apply to Main again", ^{
+        actions = 0;
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        [page() applyToMain];
+    });
+    MCGuiWait(@"applied, with a conflict", 20, ^BOOL { return actions == 1; });
+    MCGuiStep(@"a.txt came in with conflict marks, said in words; b.txt and n.txt cleanly", ^{
+        MCGuiNote(@"conflict: %@", page().message);
+        GCHECK([page().message containsString:@"a.txt did not apply cleanly"]);
+        GCHECK([inMain(@"a.txt") containsString:@"<<<<<<<"]);
+        NSString *st = GitText(repo, @[@"status", @"--porcelain"]);
+        MCGuiNote(@"main's status: %@", st);
+        GCHECK([st containsString:@"UU a.txt"] && [st containsString:@" M b.txt"] &&
+               [st containsString:@"?? n.txt"]);
+        GCHECK_EQ_STR(GitText(repo, @[@"rev-list", @"--count", @"HEAD"]), @"3\n");
     });
     MCGuiStep(@"the window closes; the real Trash back", ^{
         UseScratchTrash(NO);

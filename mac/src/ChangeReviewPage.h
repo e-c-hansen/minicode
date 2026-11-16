@@ -44,6 +44,18 @@
 // commit's), as the diff tab was.
 - (instancetype)initForCommitsWithRoot:(NSString *)root panel:(MCGitPanel *)panel;
 - (void)showCommit:(NSString *)hash title:(NSString *)title;
+// Compare with Main for a worktree (R2.9), the same way: every file the
+// agent changed (committed or not, untracked ones too) against where its
+// branch left main (the merge base, so main's later work is left out), in
+// one scroll, with Side by Side and Open on each file and, at the top,
+// Apply to Main…, which asks, naming the files, then brings the changes
+// into the main checkout as uncommitted changes (GitUi::applyToMainPlan):
+// refused, naming them, when main has changes of its own in those files;
+// a file that does not apply cleanly comes in with conflict marks.
+- (instancetype)initForWorktree:(NSString *)path label:(NSString *)label
+                         branch:(NSString *)branch mainRef:(NSString *)mainRef;
+- (void)applyToMain;
+@property(nonatomic, readonly, copy) NSString *worktree;     // nil unless a worktree's page
 @property(nonatomic, readonly, copy) NSString *commit;       // nil for uncommitted changes
 @property(nonatomic, readonly, copy) NSString *headerTitle;  // the bar's words, for checks
 @property(nonatomic, readonly, copy) NSString *headerDetail;

@@ -25,8 +25,9 @@ double timeoutFor(const std::vector<std::string>& args) {
     // post-checkout hook run, as on add and restore; stash push and pop
     // write it too, and the change bars' Stage Change runs the clean
     // filters (hash-object) and waits on index.lock (update-index).
+    // apply writes the work tree (and with --3way the index), filters run.
     if (cmd == "add" || cmd == "restore" || cmd == "rm" || cmd == "switch" ||
-        cmd == "stash" || cmd == "hash-object" || cmd == "update-index")
+        cmd == "stash" || cmd == "hash-object" || cmd == "update-index" || cmd == "apply")
         return 120;
     return 30;
 }

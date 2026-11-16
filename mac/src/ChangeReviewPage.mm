@@ -11,7 +11,9 @@
 #include "GitGraph.h"
 #include "GitStatus.h"
 #include "QuickDiff.h"
+#include "AgentView.h"
 #include "SyntaxHighlighter.h"
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <time.h>
@@ -84,6 +86,8 @@ struct ReviewData {
     bool initial = false;
     std::string error;
     Git::CommitDetail commit;      // a commit's page: its header
+    std::string baseRef, baseLabel;   // a worktree's page: what it is compared with
+    std::string mainPath;             // ...and the main checkout
     std::vector<FileDiff> diffs;
     std::vector<Extra> extras;
     Page page;
@@ -358,6 +362,116 @@ std::shared_ptr<ReviewData> ReadCommit(NSString *root, NSString *hash,
     return data;
 }
 
+// A worktree against where its branch left main, read off the main
+// thread: the merge base, `diff --raw` against it (the new side read from
+// the worktree's disk), its untracked files, and the old blobs in one
+// cat-file --batch.
+std::shared_ptr<ReviewData> ReadWorktree(NSString *path, NSString *mainRef,
+                                         const ChangeReview::Opened &opened) {
+    auto data = std::make_shared<ReviewData>();
+    if (!MCGitExecutable()) {
+        data->error = "git was not found, so the worktree cannot be compared.";
+        return data;
+    }
+    MCGitResult *r = MCGitRunSync(path, Args(GitUi::topLevelArgs()));
+    std::string top, gitDir;
+    if (!r.ok || !GitUi::parseTopLevel(Bytes(r.output), top, gitDir)) {
+        data->error = "This worktree is not a git checkout any more.";
+        return data;
+    }
+    data->top = top;
+    NSString *topNS = NS8(top);
+    if (!mainRef.length) {
+        data->error = "There is no main branch to compare with.";
+        return data;
+    }
+    MCGitResult *mb = MCGitRunSync(topNS, @[@"merge-base", mainRef, @"HEAD"]);
+    const AgentView::CompareBase base =
+        AgentView::compareBase(Std(mainRef), mb.ok ? Bytes(mb.output) : std::string());
+    data->baseRef = base.ref;
+    data->baseLabel = base.label;
+    MCGitResult *wl = MCGitRunSync(topNS, Args(ChangeReview::worktreeListArgs()));
+    if (wl.ok) data->mainPath = ChangeReview::mainWorktreePath(Bytes(wl.output));
+    MCGitResult *dr = MCGitRunSync(topNS, Args(ChangeReview::worktreeRawArgs(base.ref)));
+    if (!dr.ok) {
+        data->error = Std(dr.errorText.length ? dr.errorText : @"git diff failed.");
+        return data;
+    }
+    std::vector<ChangeReview::RawChange> changes = ChangeReview::parseRawDiff(Bytes(dr.output));
+    MCGitResult *un = MCGitRunSync(topNS, Args(GitUi::untrackedArgs()));
+    if (un.ok)
+        for (const std::string &p : ChangeReview::nulPaths(Bytes(un.output))) {
+            ChangeReview::RawChange c;
+            c.letter = '?';
+            c.oldMode = "000000";
+            c.newMode = "100644";
+            c.path = p;
+            changes.push_back(c);
+        }
+    std::sort(changes.begin(), changes.end(),
+              [](const ChangeReview::RawChange &a, const ChangeReview::RawChange &b) { return a.path < b.path; });
+    std::string want;
+    for (const ChangeReview::RawChange &c : changes)
+        if (c.oldMode != "000000" && c.oldMode != "160000" && !ChangeReview::nullObject(c.oldObject))
+            want += c.oldObject + "\n";
+    std::map<std::string, std::string> blobs;
+    if (!want.empty()) {
+        MCGitResult *b = MCGitRunSyncWithInput(topNS, Args(ChangeReview::batchArgs()),
+                                               [NSData dataWithBytes:want.data() length:want.size()]);
+        if (b.ok) blobs = ChangeReview::parseBatch(Bytes(b.output));
+    }
+    size_t total = 0;
+    for (const ChangeReview::RawChange &c : changes) {
+        ChangeReview::File f;
+        Extra x;
+        f.path = c.path;
+        f.origPath = c.origPath;
+        f.section = Section::Plain;
+        f.letter = c.letter;
+        f.untracked = c.letter == '?';
+        f.oldExists = c.oldMode != "000000";
+        f.submodule = c.oldMode == "160000" || c.newMode == "160000";
+        f.symlink = c.oldMode == "120000" || c.newMode == "120000";
+        x.row.path = c.path;
+        x.row.origPath = c.origPath;
+        x.row.letter = c.letter;
+        x.row.untracked = f.untracked;
+        std::string newBytes;
+        f.newExists = false;
+        if (c.newMode != "000000" && !f.submodule) {
+            FolderSearch::FileStamp stamp;
+            const FolderSearch::ReadStatus rs =
+                FolderSearch::readFileStable(top + "/" + c.path, kMaxSideBytes, &newBytes, &stamp);
+            f.newExists = rs != FolderSearch::ReadStatus::Missing;
+            if (rs == FolderSearch::ReadStatus::TooLarge) f.tooLarge = true;
+            else if (rs != FolderSearch::ReadStatus::Ok) newBytes.clear();
+        }
+        if (!f.submodule && !f.symlink) {
+            auto it = blobs.find(c.oldObject);
+            const std::string oldBytes = f.oldExists && it != blobs.end() ? it->second : std::string();
+            total += oldBytes.size() + newBytes.size();
+            if (oldBytes.size() > kMaxSideBytes || total > kMaxTotalBytes) f.tooLarge = true;
+            else if (ChangeReview::looksBinary(oldBytes) || ChangeReview::looksBinary(newBytes))
+                f.binary = true;
+            if (!f.tooLarge && !f.binary) {
+                FolderSearch::TextEncoding enc = FolderSearch::TextEncoding::Utf8;
+                bool bom = false;
+                std::string work = newBytes;
+                if (FolderSearch::decodeFileText(&work, &enc, &bom)) {
+                    f.newText = QuickDiff::fromUtf8(work);
+                    f.oldText = QuickDiff::readOriginal(oldBytes, enc, bom).text;
+                } else {
+                    f.binary = true;
+                }
+            }
+        }
+        data->extras.push_back(x);
+        data->diffs.push_back(ChangeReview::diffFile(f, ExtOf(f.path)));
+    }
+    data->page = ChangeReview::layout(data->diffs, opened);
+    return data;
+}
+
 // The rows' font and height: one height for every row, so the page's size
 // and a row's place are arithmetic.
 NSFont *ReviewFont() { return MCMonoFont(12.5, NSFontWeightRegular); }
@@ -412,6 +526,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 - (NSMenu *)menuForRow:(long)row;
 - (void)stepBlock:(BOOL)forward;
 - (std::shared_ptr<ReviewData>)data;
+- (BOOL)plainFilesOpen;   // a worktree's files are on disk: Open is offered
 @end
 
 // ------------------------------------------------------------- the text
@@ -457,7 +572,8 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         if (shows) acts.push_back(ActSide);
         // A commit's page (Plain) acts on nothing: only Side by Side, a way
         // of looking.
-        if (f.section == Section::Changes || (f.section == Section::Staged && f.newExists))
+        if (f.section == Section::Changes || (f.section == Section::Staged && f.newExists) ||
+            (f.section == Section::Plain && f.newExists && [self.owner plainFilesOpen]))
             acts.push_back(ActOpen);
         if (f.section == Section::Changes) {
             if (!f.conflict && !f.submodule) acts.push_back(ActDiscardFile);
@@ -767,6 +883,10 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     BOOL _closed;             // its tab closed
     size_t _columns;          // the longest row, a tab as 8
     BOOL _commitMode;         // a commit's page, not the uncommitted changes
+    NSString *_worktreeLabel, *_worktreeBranch, *_mainRef;   // a worktree's page
+    NSButton *_applyButton;   // its Apply to Main…
+    BOOL _applying;
+    size_t _lastConflicts;
     NSString *_commitTitle;   // "a1b2c3d Subject", the tab's title
     NSTextField *_bodyLabel;  // the rest of a commit's message
 }
@@ -799,6 +919,30 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     }
     return self;
 }
+
+- (instancetype)initForWorktree:(NSString *)path label:(NSString *)label
+                         branch:(NSString *)branch mainRef:(NSString *)mainRef {
+    if ((self = [self initWithRoot:path panel:nil])) {
+        _worktree = [path copy];
+        _worktreeLabel = [label copy];
+        _worktreeBranch = [branch copy];
+        _mainRef = [mainRef copy];
+        _titleLabel.stringValue = [NSString stringWithFormat:@"%@ compared with %@",
+                                   label.length ? label : path.lastPathComponent, mainRef ?: @"main"];
+        _titleLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+        _applyButton = [NSButton buttonWithTitle:@"Apply to Main…" target:self
+                                          action:@selector(applyFromButton:)];
+        _applyButton.bezelStyle = NSBezelStyleRounded;
+        _applyButton.controlSize = NSControlSizeSmall;
+        _applyButton.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+        _applyButton.toolTip = @"Bring these changes into the main checkout as uncommitted changes";
+        _applyButton.hidden = YES;
+        [_view addSubview:_applyButton];
+    }
+    return self;
+}
+
+- (BOOL)plainFilesOpen { return _worktree != nil; }
 
 - (void)showCommit:(NSString *)hash title:(NSString *)title {
     if (!_commitMode || !hash.length) return;
@@ -907,6 +1051,13 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const CGFloat W = NSWidth(b);
     [_undoButton sizeToFit];
     CGFloat right = W - 10;
+    if (_applyButton && !_applyButton.hidden) {
+        [_applyButton sizeToFit];
+        const NSSize sz = _applyButton.frame.size;
+        right -= sz.width;
+        _applyButton.frame = NSMakeRect(right, floor((kTopBarHeight - sz.height) / 2), sz.width, sz.height);
+        right -= 8;
+    }
     if (!_undoButton.hidden) {
         const NSSize sz = _undoButton.frame.size;
         right -= sz.width;
@@ -929,7 +1080,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         _messageLabel.frame = NSZeroRect;
         barH = y + 4;
     } else {
-        const CGFloat titleW = ceil(_titleLabel.fittingSize.width);
+        const CGFloat titleW = MIN(ceil(_titleLabel.fittingSize.width), MAX(0, (right - 12) * 0.6));
         _titleLabel.frame = NSMakeRect(12, 9, titleW, 17);
         const CGFloat sumX = 12 + titleW + 10;
         const CGFloat sumW = MIN(ceil(_summaryLabel.fittingSize.width), MAX(0, right - sumX));
@@ -955,10 +1106,15 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 
 // ------------------------------------------------------- EditorPage
 - (NSString *)pageTitle {
+    if (_worktree)
+        return [NSString stringWithFormat:@"%@ vs %@", _worktree.lastPathComponent, _mainRef ?: @"main"];
     return _commitMode ? (_commitTitle ?: @"Commit") : @"Uncommitted Changes";
 }
-- (NSString *)pageKind { return _commitMode ? @"commit" : @"review"; }
+- (NSString *)pageKind {
+    return _worktree ? @"worktree-changes" : _commitMode ? @"commit" : @"review";
+}
 - (NSString *)pageKey {
+    if (_worktree) return [@"worktree:" stringByAppendingString:_worktree];
     return [(_commitMode ? @"commit:" : @"review:") stringByAppendingString:_root ?: @""];
 }
 - (NSString *)headerTitle { return _titleLabel.stringValue; }
@@ -1021,11 +1177,13 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     _loading = YES;
     NSString *root = _root, *commit = _commit;
     const BOOL commitMode = _commitMode;
+    NSString *worktree = _worktree, *mainRef = _mainRef;
     const ChangeReview::Opened opened = _opened;
     __weak MCChangeReviewPage *weakSelf = self;
     dispatch_async(_queue, ^{
-        std::shared_ptr<ReviewData> d = commitMode ? ReadCommit(root, commit, opened)
-                                                   : ReadReview(root, opened);
+        std::shared_ptr<ReviewData> d = worktree ? ReadWorktree(worktree, mainRef, opened)
+                                        : commitMode ? ReadCommit(root, commit, opened)
+                                                     : ReadReview(root, opened);
         dispatch_async(dispatch_get_main_queue(), ^{
             MCChangeReviewPage *s = weakSelf;
             if (!s) return;
@@ -1150,6 +1308,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     NSMutableAttributedString *s;
     if (!_data->error.empty() || _data->diffs.empty()) {
         NSString *why = !_data->error.empty() ? NS8(_data->error)
+                        : _worktree           ? @"No changes against the main branch."
                         : _commitMode         ? @"This commit changes no files."
                                               : @"No uncommitted changes.";
         s = [[NSMutableAttributedString alloc] initWithString:why attributes:base];
@@ -1239,6 +1398,17 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                                                       (long long)NSDate.date.timeIntervalSince1970));
         _summaryLabel.stringValue = counts.length ? [NSString stringWithFormat:@"%@  ·  %@", by, counts] : by;
         _summaryLabel.toolTip = c.committer.empty() ? nil : NS8("Committed by " + c.committer);
+        _undoButton.hidden = YES;
+        [self layoutView];
+        return;
+    }
+    if (_worktree) {
+        NSMutableArray *parts = [NSMutableArray array];
+        if (_data && !_data->baseLabel.empty()) [parts addObject:[@"against " stringByAppendingString:NS8(_data->baseLabel)]];
+        if (_worktreeBranch.length) [parts addObject:_worktreeBranch];
+        if (counts.length) [parts addObject:counts];
+        _summaryLabel.stringValue = [parts componentsJoinedByString:@"  ·  "];
+        _applyButton.hidden = !_data || _data->diffs.empty() || _data->mainPath.empty();
         _undoButton.hidden = YES;
         [self layoutView];
         return;
@@ -1396,12 +1566,24 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     NSString *path = NS8(f.path);
     const BOOL staged = f.section == Section::Staged;
     c.title = [path.lastPathComponent stringByAppendingString:@" (side by side)"];
-    c.leftLabel = [(staged ? @"HEAD: " : @"Staged or HEAD: ") stringByAppendingString:NS8(f.origPath.empty() ? f.path : f.origPath)];
-    c.rightLabel = [(staged ? @"Staged: " : @"") stringByAppendingString:path];
+    NSString *oldPath = NS8(f.origPath.empty() ? f.path : f.origPath);
+    if (f.section == Section::Plain && _worktree) {
+        c.leftLabel = [NSString stringWithFormat:@"%@: %@", NS8(data->baseLabel), oldPath];
+        c.rightLabel = [NSString stringWithFormat:@"%@: %@", _worktreeBranch ?: @"worktree", path];
+    } else if (f.section == Section::Plain) {
+        const Git::CommitDetail &cd = data->commit;
+        c.leftLabel = [NSString stringWithFormat:@"%@: %@",
+                       cd.parents.empty() ? @"(nothing before)" : NS8(Git::shortHash(cd.parents[0])), oldPath];
+        c.rightLabel = [NSString stringWithFormat:@"%@: %@", NS8(Git::shortHash(cd.hash)), path];
+    } else {
+        c.leftLabel = [(staged ? @"HEAD: " : @"Staged or HEAD: ") stringByAppendingString:oldPath];
+        c.rightLabel = [(staged ? @"Staged: " : @"") stringByAppendingString:path];
+    }
     c.leftText = NS16(f.oldText);
     c.rightText = NS16(f.newText);
     c.fileName = path;
-    if (!staged) c.path = [NS8(data->top) stringByAppendingPathComponent:path];
+    if (f.section == Section::Changes || (f.section == Section::Plain && _worktree && f.newExists))
+        c.path = [NS8(data->top) stringByAppendingPathComponent:path];
     if (self.onShowComparison) self.onShowComparison(c);
 }
 
@@ -1478,9 +1660,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                   ok:NO];
         return;
     }
-    MCGitPanel *panel = _panel;
-    if (!panel) { go(); return; }
-    [panel askQuestion:NS8(plan.question) detail:NS8(plan.detail) button:NS8(plan.button) then:go];
+    [self ask:NS8(plan.question) detail:NS8(plan.detail) button:NS8(plan.button) then:go otherwise:nil];
 }
 
 // The index's new text, written as the change bars' Stage Change writes
@@ -1559,6 +1739,130 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (trashed) [panel rememberDiscardAt:path rel:NS8(rel) trashed:trashed];
             [weakSelf finish:failure ?: NS8(plan.doneText) ok:failure == nil];
+        });
+    });
+}
+
+// A question as the panel asks one, over this page's window when there is
+// no panel (a worktree's page belongs to the Agents side).
+- (void)ask:(NSString *)question detail:(NSString *)detail button:(NSString *)button
+       then:(void (^)(void))go otherwise:(void (^)(void))no {
+    MCGitPanel *panel = _panel;
+    if (panel && !no) {
+        [panel askQuestion:question detail:detail button:button then:go];
+        return;
+    }
+    NSAlert *a = [NSAlert new];
+    a.alertStyle = NSAlertStyleWarning;
+    a.messageText = question ?: @"";
+    a.informativeText = detail ?: @"";
+    [a addButtonWithTitle:button ?: @"OK"];
+    [a addButtonWithTitle:@"Cancel"];
+    void (^answer)(NSModalResponse) = ^(NSModalResponse r) {
+        if (r == NSAlertFirstButtonReturn) go();
+        else if (no) no();
+    };
+    NSWindow *w = _view.window;
+    if (w) [a beginSheetModalForWindow:w completionHandler:answer];
+    else answer([a runModal]);
+}
+
+// --------------------------------------------------------- Apply to Main
+- (void)applyFromButton:(id)sender {
+    (void)sender;
+    [self applyToMain];
+}
+
+- (void)applyToMain {
+    auto data = _data;
+    if (!_worktree || !data || data->mainPath.empty() || data->diffs.empty() || _applying) {
+        NSBeep();
+        return;
+    }
+    std::vector<std::string> paths, untracked;
+    for (const FileDiff &d : data->diffs) {
+        paths.push_back(d.file.path);
+        if (!d.file.origPath.empty()) paths.push_back(d.file.origPath);
+        if (d.file.untracked) untracked.push_back(d.file.path);
+    }
+    NSString *mainPath = NS8(data->mainPath);
+    const std::string mainName = Std(_mainRef.length ? _mainRef : @"main");
+    const std::string wtName = Std(_worktree.lastPathComponent);
+    _applying = YES;
+    __weak MCChangeReviewPage *weakSelf = self;
+    dispatch_async(_queue, ^{
+        MCGitResult *st = MCGitRunSync(mainPath, Args(GitUi::statusArgs()));
+        GitUi::ApplyPlan plan;
+        if (st.ok) plan = GitUi::applyToMainPlan(paths, Git::parseStatus(Bytes(st.output)), mainName, wtName);
+        else plan.refusal = GitUi::applyFailureText(st.status, Bytes(st.output), Std(st.errorText));
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MCChangeReviewPage *s = weakSelf;
+            if (!s) return;
+            if (!plan.refusal.empty()) {
+                s->_applying = NO;
+                [s finish:NS8(plan.refusal) ok:NO];
+                return;
+            }
+            [s ask:NS8(plan.question) detail:NS8(plan.detail) button:NS8(plan.button)
+                then:^{ [weakSelf runApply:data paths:paths untracked:untracked main:mainName]; }
+           otherwise:^{
+               MCChangeReviewPage *me = weakSelf;
+               if (me) me->_applying = NO;
+           }];
+        });
+    });
+}
+
+// The worktree's patch against the merge base, and one for each untracked
+// file, applied to main: plainly first (all or nothing), else three-way,
+// whose cleanly applied files are then unstaged so everything arrives
+// unstaged; never a commit.
+- (void)runApply:(std::shared_ptr<ReviewData>)data paths:(std::vector<std::string>)paths
+       untracked:(std::vector<std::string>)untracked main:(std::string)mainName {
+    NSString *top = NS8(data->top), *mainPath = NS8(data->mainPath);
+    const std::string base = data->baseRef;
+    const size_t files = data->diffs.size();
+    __weak MCChangeReviewPage *weakSelf = self;
+    dispatch_async(_queue, ^{
+        NSString *failure = nil;
+        std::vector<std::string> conflicts;
+        std::string patch;
+        MCGitResult *d = MCGitRunSync(top, Args(GitUi::worktreeDiffArgs(base)));
+        if (!d.ok) failure = NS8(GitUi::applyFailureText(d.status, Bytes(d.output), Std(d.errorText)));
+        else patch = Bytes(d.output);
+        for (size_t i = 0; !failure && i < untracked.size(); i++) {
+            MCGitResult *n = MCGitRunSync(top, Args(GitUi::newFilePatchArgs(untracked[i])));
+            if (n.status == 0 || n.status == 1) patch += Bytes(n.output);
+            else failure = NS8(GitUi::applyFailureText(n.status, Bytes(n.output), Std(n.errorText)));
+        }
+        if (!failure && patch.empty()) failure = @"There was nothing to bring into the main checkout.";
+        if (!failure) {
+            NSData *input = [NSData dataWithBytes:patch.data() length:patch.size()];
+            MCGitResult *plain = MCGitRunSyncWithInput(mainPath, Args(GitUi::applyToMainArgs(false)), input);
+            if (!plain.ok) {
+                MCGitResult *three = MCGitRunSyncWithInput(mainPath, Args(GitUi::applyToMainArgs(true)), input);
+                MCGitResult *st = MCGitRunSync(mainPath, Args(GitUi::statusArgs()));
+                std::vector<std::string> staged;
+                if (st.ok)
+                    for (const Git::Entry &e : Git::parseStatus(Bytes(st.output)).entries) {
+                        if (std::find(paths.begin(), paths.end(), e.path) == paths.end()) continue;
+                        if (e.unmerged) conflicts.push_back(e.path);
+                        else if (e.staged != '.') staged.push_back(e.path);
+                    }
+                if (!three.ok && conflicts.empty()) {
+                    failure = NS8(GitUi::applyFailureText(three.status, Bytes(three.output),
+                                                          Std(three.errorText)));
+                } else if (!staged.empty()) {
+                    MCGitRunSync(mainPath, Args(GitUi::unstageArgs(staged)));
+                }
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MCChangeReviewPage *s = weakSelf;
+            if (!s) return;
+            s->_applying = NO;
+            s->_lastConflicts = conflicts.size();
+            [s finish:failure ?: NS8(GitUi::applyDoneText(files, conflicts, mainName)) ok:failure == nil];
         });
     });
 }

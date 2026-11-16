@@ -326,6 +326,40 @@ std::vector<std::string> hashObjectArgs(const std::string& rel);
 std::vector<std::string> updateIndexArgs(const IndexEntry& e, const std::string& object,
                                          const std::string& rel);
 
+// ---------------------------------------------- a worktree's work into main
+// Compare with Main's Apply to Main… (the review page of a worktree): what
+// the worktree changed since it left main, committed or not, comes into the
+// main checkout as uncommitted changes, never committed, merged or switched
+// for the user. The patch is the worktree's `diff --binary` against the
+// merge base, and a `diff --no-index` from /dev/null for each untracked
+// file (never `add -N` in the worktree's own index); main takes it with a
+// plain `apply` first, which changes nothing unless all of it applies, and
+// when that fails `apply --3way`, which leaves the files that clash with
+// conflict marks (git lists them as conflicts) and stages the rest, which
+// the page then unstages (`restore --staged`), so everything arrives as
+// unstaged changes.
+std::vector<std::string> worktreeDiffArgs(const std::string& base);
+std::vector<std::string> untrackedArgs();   // ls-files --others --exclude-standard -z
+std::vector<std::string> newFilePatchArgs(const std::string& path);   // exit 1: it differs
+std::vector<std::string> applyToMainArgs(bool threeWay);
+std::vector<std::string> unstageArgs(const std::vector<std::string>& paths);
+
+struct ApplyPlan : ActionPlan {
+    std::vector<std::string> paths;   // what the worktree changed (renames' sources too)
+};
+// `paths` are the worktree's changed files; `mainStatus` is main's status
+// read just now. Refused, naming them, when main has changes of its own in
+// any of those files, or when there is nothing to bring; else asks, naming
+// the files (up to six, then how many more).
+ApplyPlan applyToMainPlan(const std::vector<std::string>& paths, const Git::Status& mainStatus,
+                          const std::string& mainName, const std::string& worktreeName);
+// What happened, in words: every file in cleanly; or which came in with
+// conflict marks (`conflicts`, from main's status afterwards); or why
+// nothing could be applied.
+std::string applyDoneText(size_t files, const std::vector<std::string>& conflicts,
+                          const std::string& mainName);
+std::string applyFailureText(int status, const std::string& out, const std::string& err);
+
 // ------------------------------------------------------ the branch picker
 // VS Code's git.checkout: the local branches, most recently committed to
 // first, then the remote branches that have no local branch of their name;

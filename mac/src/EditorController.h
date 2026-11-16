@@ -37,6 +37,9 @@
 @class MCGitPanel;
 @interface EditorController (Git) <MCGitGutterHost>
 - (MCGitPanel *)ensureGitPanel;   // made with the window, for autofetch
+// A path as git names it (links resolved: /private/tmp) spelled from the
+// window's folder (/tmp), as the tree and the tabs spell it.
+- (NSString *)gitPathInRoot:(NSString *)path;
 - (void)gitCommitAmend:(id)sender;   // Commit and Amend
 - (void)gitUndoCommit:(id)sender;    // Undo Last Commit
 - (void)gitStash:(id)sender;         // Stash, with untracked files
