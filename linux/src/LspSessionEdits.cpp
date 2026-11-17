@@ -203,7 +203,7 @@ int LspSession::applyEdit(const Lsp::WorkspaceEdit& we, Server* server,
     if (!ok) {
         for (auto k = applied.rbegin(); k != applied.rend(); ++k) {
             Document* d = documentForPath(files[*k].path);
-            if (d && gtk_text_buffer_get_can_undo(d->buffer())) gtk_text_buffer_undo(d->buffer());
+            if (d) d->undo();
             if (!d || d->text() != files[*k].text) {
                 g_printerr("MiniCode: could not put %s back after a failed edit\n",
                            files[*k].path.c_str());

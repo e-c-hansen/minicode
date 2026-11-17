@@ -185,6 +185,9 @@ void AutoCloseInput::apply(const MultiCaret::Edit& e) {
     GtkTextBuffer* b = buffer_;
     applying_ = true;
     if (!e.changes.empty()) {
+        // A step of its own (the Mac's replaceRanges:), never joined to the
+        // typing before it: one Ctrl+Z takes the pair back.
+        Document::nameStep(b, "Typing");
         gtk_text_buffer_begin_user_action(b);
         for (auto it = e.changes.rbegin(); it != e.changes.rend(); ++it) {
             GtkTextIter a;

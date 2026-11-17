@@ -131,6 +131,7 @@ void Editor::setLineOpacity(int line, double value) {
     const int curLine = gtk_text_iter_get_line(&cur);
     const int curCol = gtk_text_iter_get_line_offset(&cur);
 
+    Document::nameStep(buffer_, "Change Opacity");
     gtk_text_buffer_begin_user_action(buffer_);
     gtk_text_buffer_delete(buffer_, &ls, &le);
     gtk_text_buffer_insert(buffer_, &ls, out.c_str(), (int)out.size());

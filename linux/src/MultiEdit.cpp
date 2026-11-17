@@ -1,6 +1,7 @@
 // MultiEdit.cpp — see MultiEdit.h.
 #include "MultiEdit.h"
 
+#include "Document.h"
 #include "EditSpans.h"
 
 namespace MultiEdit {
@@ -15,7 +16,8 @@ bool applying() { return gDepth > 0; }
 GtkTextBuffer* applyingTo() { return gBuffer; }
 const std::vector<Change>* applyingChanges() { return gChanges; }
 
-bool apply(GtkTextBuffer* buffer, const std::vector<Change>& changes, bool keepCaret) {
+bool apply(GtkTextBuffer* buffer, const std::vector<Change>& changes, bool keepCaret,
+           const char* stepName) {
     if (!buffer || changes.empty()) return false;
     const std::size_t size = (std::size_t)gtk_text_buffer_get_char_count(buffer);
     std::vector<EditSpans::Span> spans;
@@ -38,6 +40,7 @@ bool apply(GtkTextBuffer* buffer, const std::vector<Change>& changes, bool keepC
     const std::vector<Change>* outerChanges = gChanges;
     gBuffer = buffer;
     gChanges = &changes;
+    Document::nameStep(buffer, stepName ? stepName : "Edit");
     gtk_text_buffer_begin_user_action(buffer);
     // No selection while the changes go in: with one, every delete offers
     // it to the primary clipboard again (update_selection_clipboards),

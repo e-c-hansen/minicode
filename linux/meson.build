@@ -36,6 +36,9 @@ core_sources = [
   # language server client's copy of each file is a Model::Text.
   core_dir / 'Text.cpp',
   core_dir / 'Document.cpp',
+  # Each document's undo and redo (SESSION-DESIGN.md, stage 2), in place of
+  # GtkTextBuffer's own (Document.cpp records every buffer edit into it).
+  core_dir / 'UndoHistory.cpp',
   core_dir / 'MultiCaret.cpp',
   # A snippet completion's expansion and tab stops (SnippetSession.cpp and
   # LspSessionCompletion.cpp, PARITY.md 2.5).

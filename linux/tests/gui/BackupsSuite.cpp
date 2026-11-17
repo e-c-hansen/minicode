@@ -242,7 +242,7 @@ MC_GUI_SUITE(_backups_restore) {
     MCGuiStep("a.txt: the unsaved text, nothing to undo, and the note", [] {
         GCHECK_EQ_STR(ViewText(), "unsaved a.txt alpha\n");
         GCHECK(ed()->dirty());
-        GCHECK(!gtk_text_buffer_get_can_undo(ed()->buffer()));
+        GCHECK(ed()->active() && !ed()->active()->canUndo());
         GCHECK_EQ_STR(Status(), "Restored unsaved changes to a.txt");
     });
     MCGuiStep("the restored words deleted by hand", [] {

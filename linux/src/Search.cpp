@@ -864,7 +864,7 @@ void SearchPanel::replaceInPaths(const std::vector<std::string>& paths,
         changes.reserve(edits.size());
         for (std::size_t i = 0; i < edits.size(); i++)
             changes.push_back({cp[2 * i], cp[2 * i + 1] - cp[2 * i], utf16::toUtf8(edits[i].text)});
-        if (MultiEdit::apply(here->buffer(), changes, true)) {
+        if (MultiEdit::apply(here->buffer(), changes, true, "Replace in Folder")) {
             job->tabFiles++;
             job->tabMatches += edits.size();
         } else {

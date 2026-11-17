@@ -239,7 +239,7 @@ MC_GUI_SUITE(folding) {
     });
     MCGuiStep("nothing to undo: folding is not an edit", [] {
         GCHECK(caret() == L(4) - 1);
-        GCHECK(!gtk_text_buffer_get_can_undo(buf()));
+        GCHECK(ed()->active() && !ed()->active()->canUndo());
         GCHECK_EQ_STR(MCGuiEditorText(), kPy);
     });
     MCGuiWaitQuiet("the gutter drawn", 0.3, 5, [] { return (long)gut()->drawCount(); });

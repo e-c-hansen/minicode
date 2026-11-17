@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <dirent.h>
 
+#include "Document.h"
 #include "LatexScratch.h"
 
 namespace {
@@ -1400,8 +1401,8 @@ gboolean LatexPreview::onEditKey(GtkEventControllerKey*, guint keyval, guint,
 
 gboolean LatexPreview::onUndo(GtkWidget*, GVariant*, gpointer selfp) {
     LatexPreview* self = static_cast<LatexPreview*>(selfp);
-    if (!gtk_text_buffer_get_can_undo(self->buffer_)) return TRUE;
-    gtk_text_buffer_undo(self->buffer_);
+    Document* d = Document::of(self->buffer_);
+    if (!d || d->undo() != Document::UndoResult::Done) return TRUE;
     self->setStatus("Undid an edit", true);
     self->compileNow();
     return TRUE;
@@ -1409,8 +1410,8 @@ gboolean LatexPreview::onUndo(GtkWidget*, GVariant*, gpointer selfp) {
 
 gboolean LatexPreview::onRedo(GtkWidget*, GVariant*, gpointer selfp) {
     LatexPreview* self = static_cast<LatexPreview*>(selfp);
-    if (!gtk_text_buffer_get_can_redo(self->buffer_)) return TRUE;
-    gtk_text_buffer_redo(self->buffer_);
+    Document* d = Document::of(self->buffer_);
+    if (!d || d->redo() != Document::UndoResult::Done) return TRUE;
     self->setStatus("Redid an edit", true);
     self->compileNow();
     return TRUE;

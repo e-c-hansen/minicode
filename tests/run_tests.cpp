@@ -11101,6 +11101,7 @@ static void testMultiCaretOccurrences() {
 #include "lsp_threading_tests.inc"
 #include "lsp_sync_tests.inc"
 #include "text_model_tests.inc"
+#include "undo_history_tests.inc"
 #include "lsp_trust_tests.inc"
 #include "multiedit_tests.inc"
 #include "edit_batch_tests.inc"
@@ -11279,6 +11280,7 @@ int main() {
     testLspThreading();
     testLspSync();
     testTextModel();
+    testUndoHistory();
     testLspProjectCode();
     testMultiEdit();
     testEditBatch();

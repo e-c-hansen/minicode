@@ -189,8 +189,9 @@ MC_GUI_SUITE(harness) {
         return MCGuiEditorText() == "caf\xC3\xA9 \xE2\x86\x92 \xCE\xBB ?!\n";
     });
     MCGuiStep("undo, through Ctrl+Z", [] { MCGuiKey("ctrl+z"); });
-    // GTK undoes a run of typing a piece at a time, so only part of it goes.
-    MCGuiWait("the last of the typing goes", 10, [] {
+    // A run of typing is one step (Document's undo, as NSTextView's), so it
+    // all goes; the check allows a part, as GTK's own undo took it.
+    MCGuiWait("the typing goes", 10, [] {
         const std::string now = MCGuiEditorText();
         return now.size() < strlen("caf\xC3\xA9 \xE2\x86\x92 \xCE\xBB ?!\n") &&
                std::string("caf\xC3\xA9 \xE2\x86\x92 \xCE\xBB ?!\n").rfind(now, 0) == 0;

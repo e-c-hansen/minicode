@@ -11,7 +11,9 @@
 //     Anything else is refused whole and nothing changes.
 //   - They go in as one user action (gtk_text_buffer_begin_user_action), so
 //     one Ctrl+Z takes all of them back, and the dirty mark, the Markdown
-//     task count and the LaTeX preview look once, at its end.
+//     task count and the LaTeX preview look once, at its end. The step is
+//     named `stepName` ("Edit" when none, Document::nameStep) and never
+//     joins typing; inside a user action someone else named, theirs stands.
 //   - Last range first, so every earlier offset is still true, and each
 //     range is its own buffer edit (a delete and an insert), never one
 //     replacement from the first range to the last: the highlighter, the
@@ -51,7 +53,8 @@ struct Change {
 
 // The changes in `buffer` as one user action, last first. False, changing
 // nothing, when they are not ascending and apart or reach past the end.
-bool apply(GtkTextBuffer* buffer, const std::vector<Change>& changes, bool keepCaret = true);
+bool apply(GtkTextBuffer* buffer, const std::vector<Change>& changes, bool keepCaret = true,
+           const char* stepName = nullptr);
 
 // True while apply() is putting changes in.
 bool applying();

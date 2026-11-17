@@ -1014,7 +1014,7 @@ void FindBar::replaceOne() {
             utf16::fromUtf8(gtk_editable_get_text(GTK_EDITABLE(replaceText_)));
         if (!FindRules::replaceOne(foundText_->units(), found_, (std::size_t)i, query_, with, &c))
             return;
-        if (!MultiEdit::apply(buf_, {{c.start, c.length, std::move(c.text)}}, false)) {
+        if (!MultiEdit::apply(buf_, {{c.start, c.length, std::move(c.text)}}, false, "Replace")) {
             gtk_widget_error_bell(view_);
             return;
         }
@@ -1073,7 +1073,7 @@ void FindBar::replaced(Job* job) {
     std::vector<MultiEdit::Change> changes;
     changes.reserve(job->changes.size());
     for (FindRules::Change& c : job->changes) changes.push_back({c.start, c.length, std::move(c.text)});
-    const bool ok = MultiEdit::apply(buf_, changes, true);
+    const bool ok = MultiEdit::apply(buf_, changes, true, "Replace All");
     lastReplaceAllMs_ = threadCpuMs() - t0;
     if (!ok) {
         gtk_widget_error_bell(view_);

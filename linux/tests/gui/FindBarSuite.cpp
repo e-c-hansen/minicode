@@ -481,8 +481,8 @@ MC_GUI_SUITE(find_bar) {
         int s = 0, e = 0;
         GCHECK(bar()->scope(&s, &e));
         GCHECK(s == at("5 alpha") && e == at("10 alpha") - 1);
-        // GTK may take typing back a piece at a time; nothing else is left
-        // to undo, so a second press is harmless.
+        // The typing is one step; nothing else is left to undo, so a second
+        // press is harmless.
         MCGuiKey("ctrl+z");
         MCGuiKey("ctrl+z");
         MCGuiKey("escape");

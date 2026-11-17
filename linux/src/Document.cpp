@@ -40,6 +40,12 @@ namespace {
 // thread (Document::beginLoading), so none of this holds the main loop.
 constexpr off_t kMaxTextBytes = (off_t)LargeFileView::kMaxTextBytes;
 
+// The buffer's document (Document::of), and how long a name given for the
+// next step waits for it: a paste's text comes from the clipboard a moment
+// after the key, and a name nothing took must not land on later typing.
+const char kDocumentKey[] = "minicode-document";
+constexpr gint64 kPendingNameUs = 2 * G_USEC_PER_SEC;
+
 // Writes `text` into the existing file at `path`, keeping its inode (so hard
 // links, owner, ACLs and extended attributes stay). Space is reserved before
 // anything is overwritten, so a full disk fails with the old contents
@@ -132,7 +138,9 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     static uint64_t next = 0;
     id_ = ++next;
     buffer_ = gtk_text_buffer_new(tags_->table);
+    // GTK's undo stays off: every edit goes into history_ (undo()).
     gtk_text_buffer_set_enable_undo(buffer_, FALSE);
+    g_object_set_data(G_OBJECT(buffer_), kDocumentKey, this);
     // Where its lines start, for the gutter; the buffer keeps it. Then its
     // folds (Folds.h), whose handlers come first of all after an edit: they
     // fix the fold tag before the host's own (an electric dedent) edit again.
@@ -149,15 +157,8 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     g_signal_connect(buffer_, "begin-user-action", G_CALLBACK(onBeginUserAction), this);
     g_signal_connect(buffer_, "end-user-action", G_CALLBACK(onEndUserAction), this);
     g_signal_connect(buffer_, "changed", G_CALLBACK(onChanged), this);
-    // GTK replays an undo or redo step edit by edit with no user action
-    // around it, so the highlighter followed each of the 80,000 edits of a
-    // Replace All's undo (40,000 matches, 19 s; PARITY.md 1.6). Taken as one
-    // action here, as the edit itself was. Only this object's flags: a
-    // user action on the buffer itself would clear GTK's redo queue.
-    g_signal_connect(buffer_, "undo", G_CALLBACK(onBeginUserAction), this);
-    g_signal_connect_after(buffer_, "undo", G_CALLBACK(onEndUserAction), this);
-    g_signal_connect(buffer_, "redo", G_CALLBACK(onBeginUserAction), this);
-    g_signal_connect_after(buffer_, "redo", G_CALLBACK(onEndUserAction), this);
+    // The caret moved by anything but an edit: typing starts a new step.
+    g_signal_connect(buffer_, "mark-set", G_CALLBACK(onMarkSet), this);
     // Its long lines shown a part at a time (LargeFileView.h); the buffer
     // keeps them.
     LongLines::attach(buffer_);
@@ -179,7 +180,10 @@ Document::~Document() {
     delete latexPreview_;
 #endif
     latexPreview_ = nullptr;
+    if (outsideIdle_) g_source_remove(outsideIdle_);
+    outsideIdle_ = 0;
     g_signal_handlers_disconnect_by_data(buffer_, this);
+    g_object_set_data(G_OBJECT(buffer_), kDocumentKey, nullptr);
     g_object_unref(buffer_);
     if (pageBuffer_) g_object_unref(pageBuffer_);
 }
@@ -219,13 +223,14 @@ void Document::clearSource() {
     page_ = Markdown::Page();
 }
 
-// gtk_text_buffer_set_text is irreversible (never undone into), and while it
+// Set whole: never undone into (the history starts over), and while it
 // runs no handler counts it as an edit.
 void Document::fill(const std::string& text) {
     ++edits_;
     filling_ = true;
     gtk_text_buffer_set_text(buffer_, text.c_str(), (int)text.size());
     filling_ = false;
+    resetHistory();
 }
 
 void Document::loadText(const std::string& path, const std::string& content) {
@@ -240,7 +245,6 @@ void Document::loadText(const std::string& path, const std::string& content) {
     sniffCsv(content);
     rememberDisk(content);
     noteLargeFile(content);
-    gtk_text_buffer_set_enable_undo(buffer_, TRUE);
     fill(content);
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(buffer_, &start);
@@ -275,7 +279,6 @@ void Document::setMessage(const std::string& path, const std::string& message) {
     kind_ = Kind::Message;
     path_ = path;
     ext_.clear();
-    gtk_text_buffer_set_enable_undo(buffer_, FALSE);
     fill(message);
     GtkTextIter a, b;
     gtk_text_buffer_get_bounds(buffer_, &a, &b);
@@ -287,7 +290,6 @@ void Document::setMedia(const std::string& path) {
     kind_ = Kind::Media;
     path_ = path;
     ext_ = extensionOf(path);
-    gtk_text_buffer_set_enable_undo(buffer_, FALSE);
     fill("");
 }
 
@@ -296,14 +298,12 @@ void Document::setDatabase(const std::string& path) {
     kind_ = Kind::Database;
     path_ = path;
     ext_ = extensionOf(path);
-    gtk_text_buffer_set_enable_undo(buffer_, FALSE);
     fill("");
 }
 
 void Document::setDiff(const std::string& title, const std::string& bytes, bool commit) {
     if (kind_ != Kind::Diff) {
         clearSource();
-        gtk_text_buffer_set_enable_undo(buffer_, FALSE);
         fill("");
     }
     kind_ = Kind::Diff;
@@ -331,7 +331,6 @@ void Document::setUnread(const std::string& path) {
     kind_ = Kind::Message;
     path_ = path;
     ext_ = extensionOf(path);
-    gtk_text_buffer_set_enable_undo(buffer_, FALSE);
     fill("");
     unread_ = true;
 }
@@ -355,7 +354,6 @@ void Document::restoreText(const std::string& path, const std::string& text,
     // so the next backup still says so.
     if (!disk || changed) diskStamp_ = base;
     noteLargeFile(text);
-    gtk_text_buffer_set_enable_undo(buffer_, TRUE);
     fill(text);
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(buffer_, &start);
@@ -410,6 +408,7 @@ void Document::spliceText(const std::string& to) {
     if (p + q >= old.size() && p + q >= to.size()) return;   // the same text
     const long from = g_utf8_strlen(old.data(), (gssize)p);
     const long end = g_utf8_strlen(old.data(), (gssize)(old.size() - q));
+    nameStep("Preview Edit");
     gtk_text_buffer_begin_user_action(buffer_);
     GtkTextIter a, b;
     gtk_text_buffer_get_iter_at_offset(buffer_, &a, (int)from);
@@ -468,6 +467,168 @@ void Document::onChanged(GtkTextBuffer*, gpointer selfp) {
     if (self->inAction_) self->dirtyCheckPending_ = true;
     else self->checkDirty();
     if (self->markdown_) self->scheduleTaskCount();
+}
+
+// ---------------------------------------------------------------- undo
+//
+// The core's UndoHistory (src/UndoHistory.h) in place of GtkTextHistory,
+// in characters as GtkTextIter counts. Every insert and delete of the
+// source is recorded from the buffer's signals, before the buffer changes
+// (the deleted text is read then). A user action is one step: typing when
+// no one named it (it joins the step before while the caret stays where
+// that left it, as NSTextView's typing does), else a step of its own. An
+// undo is the history's plan put in through MultiEdit::apply, one user
+// action that is not recorded, so the highlighter, the folds, the change
+// bars and the language server follow it as they follow any edit.
+
+Document* Document::of(GtkTextBuffer* buffer) {
+    return buffer ? static_cast<Document*>(g_object_get_data(G_OBJECT(buffer), kDocumentKey))
+                  : nullptr;
+}
+
+bool Document::recording() const {
+    return kind_ == Kind::Text && !filling_ && !replaying_ && !load_;
+}
+
+Model::UndoHistory::Selection Document::selection() const {
+    GtkTextIter ins, bound;
+    gtk_text_buffer_get_iter_at_mark(buffer_, &ins, gtk_text_buffer_get_insert(buffer_));
+    gtk_text_buffer_get_iter_at_mark(buffer_, &bound, gtk_text_buffer_get_selection_bound(buffer_));
+    return {Model::UndoHistory::Range{(std::size_t)gtk_text_iter_get_offset(&bound),
+                                      (std::size_t)gtk_text_iter_get_offset(&ins)}};
+}
+
+std::u16string Document::slice(std::size_t from, std::size_t length) const {
+    GtkTextIter a, b;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &a, (int)from);
+    gtk_text_buffer_get_iter_at_offset(buffer_, &b, (int)(from + length));
+    char* raw = gtk_text_buffer_get_slice(buffer_, &a, &b, TRUE);
+    std::u16string out = Model::utf16FromUtf8(raw ? raw : "");
+    g_free(raw);
+    return out;
+}
+
+// Edits outside a user action (code calling gtk_text_buffer_insert, a
+// test's set_text) are one step a turn of the main loop, as the Mac's
+// NSUndoManager groups by event.
+void Document::recordEdit(std::size_t at, std::u16string removed, std::u16string inserted) {
+    if (!stepOpen_ && !outsideOpen_) {
+        Model::UndoHistory::StepInfo info{"Edit", false};
+        if (pendingAt_ && g_get_monotonic_time() - pendingAt_ < kPendingNameUs) info = pendingStep_;
+        pendingAt_ = 0;
+        history_.open(info, selection());
+        outsideOpen_ = true;
+        outsideIdle_ = g_idle_add_full(G_PRIORITY_HIGH_IDLE, [](gpointer p) -> gboolean {
+            Document* d = static_cast<Document*>(p);
+            d->outsideIdle_ = 0;
+            d->closeOutside();
+            return G_SOURCE_REMOVE;
+        }, this, nullptr);
+    }
+    history_.record({at, std::move(removed), std::move(inserted)});
+}
+
+void Document::closeOutside() {
+    if (!outsideOpen_) return;
+    outsideOpen_ = false;
+    if (outsideIdle_) g_source_remove(outsideIdle_);
+    outsideIdle_ = 0;
+    history_.close(selection());
+}
+
+// The text was set whole (a file read, a message): nothing to undo.
+void Document::resetHistory() {
+    if (outsideIdle_) g_source_remove(outsideIdle_);
+    outsideIdle_ = 0;
+    outsideOpen_ = false;
+    pendingAt_ = 0;
+    history_ = Model::UndoHistory(Model::Unit::CodePoint);
+    if (stepOpen_) history_.open({"Typing", false}, selection());
+}
+
+void Document::nameStep(const char* name, bool coalesce) {
+    if (replaying_ || !name) return;
+    if (stepOpen_) {
+        if (!stepNamed_) history_.rename({name, coalesce});
+        stepNamed_ = true;
+        return;
+    }
+    closeOutside();
+    pendingStep_ = {name, coalesce};
+    pendingAt_ = g_get_monotonic_time();
+}
+
+void Document::nameStep(GtkTextBuffer* buffer, const char* name, bool coalesce) {
+    if (Document* d = of(buffer)) d->nameStep(name, coalesce);
+}
+
+bool Document::canUndo() {
+    closeOutside();
+    return kind_ == Kind::Text && history_.canUndo();
+}
+
+bool Document::canRedo() {
+    closeOutside();
+    return kind_ == Kind::Text && history_.canRedo();
+}
+
+std::string Document::undoName() {
+    return canUndo() ? history_.undoName() : std::string();
+}
+
+std::string Document::redoName() {
+    return canRedo() ? history_.redoName() : std::string();
+}
+
+Document::UndoResult Document::undo() { return takeStep(true); }
+Document::UndoResult Document::redo() { return takeStep(false); }
+
+Document::UndoResult Document::takeStep(bool undoing) {
+    if (kind_ != Kind::Text || loading() || stepOpen_) return UndoResult::Nothing;
+    closeOutside();
+    Model::UndoHistory::Plan plan;
+    const auto read = [this](std::size_t from, std::size_t length) { return slice(from, length); };
+    const Model::UndoHistory::Outcome o = undoing ? history_.undo(read, &plan) : history_.redo(read, &plan);
+    if (o == Model::UndoHistory::Outcome::Nothing) return UndoResult::Nothing;
+    if (o == Model::UndoHistory::Outcome::Refused) {
+        g_printerr("MiniCode: %s in %s refused: the text it would change is not what it left "
+                   "there, so the history was forgotten\n",
+                   undoing ? "undo" : "redo", path_.empty() ? "a new file" : path_.c_str());
+        return UndoResult::Refused;
+    }
+    // Snippet sessions, a completion waiting for its import: they listen
+    // for the buffer's own signals, as they did for GTK's undo.
+    g_signal_emit_by_name(buffer_, undoing ? "undo" : "redo");
+    std::vector<MultiEdit::Change> changes;
+    changes.reserve(plan.changes.size());
+    for (const Model::UndoHistory::Change& c : plan.changes)
+        changes.push_back({c.start, Model::countCodePoints(c.removed), Model::utf8FromUtf16(c.inserted)});
+    replaying_ = true;
+    const bool ok = MultiEdit::apply(buffer_, changes, false);
+    replaying_ = false;
+    if (!ok) {
+        history_.clear();
+        return UndoResult::Refused;
+    }
+    if (!plan.select.empty()) {
+        const int chars = gtk_text_buffer_get_char_count(buffer_);
+        const Model::UndoHistory::Range& r = plan.select[0];
+        GtkTextIter ins, bound;
+        gtk_text_buffer_get_iter_at_offset(buffer_, &ins, std::min((int)r.caret, chars));
+        gtk_text_buffer_get_iter_at_offset(buffer_, &bound, std::min((int)r.anchor, chars));
+        replaying_ = true;   // the marks move: not the user moving the caret
+        gtk_text_buffer_select_range(buffer_, &ins, &bound);
+        replaying_ = false;
+    }
+    return UndoResult::Done;
+}
+
+void Document::onMarkSet(GtkTextBuffer* buf, GtkTextIter*, GtkTextMark* mark, gpointer selfp) {
+    Document* self = static_cast<Document*>(selfp);
+    if (mark != gtk_text_buffer_get_insert(buf) && mark != gtk_text_buffer_get_selection_bound(buf))
+        return;
+    if (self->stepOpen_ || !self->recording()) return;
+    self->history_.noteSelection(self->selection());
 }
 
 // ---------------------------------------------------------------- saving
@@ -657,7 +818,8 @@ bool Document::reloadFromDisk() {
 
 // The disk's text replaces the buffer's in place: only the bytes between the
 // common start and end of the two are replaced, as one user action, so the
-// highlighter and the language server see one edit, undo can take it back,
+// highlighter and the language server see one edit, one undo step ("Reload
+// from Disk") takes it back and keeps the steps before it,
 // and the caret stays where it was (a caret inside the replaced part keeps
 // its line and column). The editor keeps the scroll position of one on show.
 void Document::applyDiskText(const std::string& content) {
@@ -676,6 +838,10 @@ void Document::applyDiskText(const std::string& content) {
         const int curLine = gtk_text_iter_get_line(&cur);
         const int curCol = gtk_text_iter_get_line_offset(&cur);
 
+        // A step of its own that keeps the steps before it, as the Mac's
+        // clean tab following the disk; Reload chosen in the question is
+        // the same step here, so it too can be taken back.
+        nameStep("Reload from Disk");
         gtk_text_buffer_begin_user_action(buffer_);
         GtkTextIter a, b;
         gtk_text_buffer_get_iter_at_offset(buffer_, &a, (int)from);
@@ -1334,6 +1500,9 @@ void Document::decorateColors(int firstLine, int endLine) {
 void Document::onInsertText(GtkTextBuffer*, GtkTextIter* loc, char* text, int len,
                             gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
+    if (len > 0 && self->recording())
+        self->recordEdit((std::size_t)gtk_text_iter_get_offset(loc), std::u16string(),
+                         Model::utf16FromUtf8(std::string(text, (std::size_t)len)));
     // A server's tokens are for the text before any character edit.
     if (len > 0) self->semantic_->edited();
     if (self->batching_) {
@@ -1353,6 +1522,12 @@ void Document::onInsertText(GtkTextBuffer*, GtkTextIter* loc, char* text, int le
 void Document::onDeleteRange(GtkTextBuffer*, GtkTextIter* start, GtkTextIter* end,
                              gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
+    if (!gtk_text_iter_equal(start, end) && self->recording()) {
+        const int a = std::min(gtk_text_iter_get_offset(start), gtk_text_iter_get_offset(end));
+        const int b = std::max(gtk_text_iter_get_offset(start), gtk_text_iter_get_offset(end));
+        self->recordEdit((std::size_t)a, self->slice((std::size_t)a, (std::size_t)(b - a)),
+                         std::u16string());
+    }
     if (!gtk_text_iter_equal(start, end)) self->semantic_->edited();
     if (self->batching_) {
         if (!gtk_text_iter_equal(start, end)) self->batchEdits_++;
@@ -1393,6 +1568,16 @@ void Document::onDeleteRangeAfter(GtkTextBuffer*, GtkTextIter* a, GtkTextIter*, 
 // GtkTextBuffer emits these for the outermost begin/end pair only.
 void Document::onBeginUserAction(GtkTextBuffer*, gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
+    // One step for the action: named (nameStep, a MultiEdit) or typing.
+    self->closeOutside();
+    if (self->recording()) {
+        Model::UndoHistory::StepInfo info{"Typing", true};
+        self->stepNamed_ = self->pendingAt_ && g_get_monotonic_time() - self->pendingAt_ < kPendingNameUs;
+        if (self->stepNamed_) info = self->pendingStep_;
+        self->pendingAt_ = 0;
+        self->history_.open(info, self->selection());
+        self->stepOpen_ = true;
+    }
     self->inAction_ = true;
     self->actionEdits_ = 0;
     self->startBatch();
@@ -1400,6 +1585,10 @@ void Document::onBeginUserAction(GtkTextBuffer*, gpointer selfp) {
 
 void Document::onEndUserAction(GtkTextBuffer*, gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
+    if (self->stepOpen_) {
+        self->stepOpen_ = false;
+        self->history_.close(self->selection());
+    }
     self->inAction_ = false;
     if (self->batching_) self->finishBatch();
     else if (self->bulk_) self->resyncAfterBulk();

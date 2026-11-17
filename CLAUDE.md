@@ -196,6 +196,21 @@ goes here first, with tests; the GUI only displays it.
   written back, no lone surrogate written; `document:*`). The language
   server client's copy of each file is a `Model::Text`; the ports keep
   their own documents until stages 3 and 4 move the session into the core.
+  `UndoHistory` (stage 2, 2026-11-16): a document's undo and redo as the
+  Mac's rules give them (named steps; typing joined while the caret stays
+  where the last step left it, until `breakCoalescing`, a moved selection
+  or an undo; a multi-range edit as one step; Reload from Disk a step that
+  keeps the ones before it; an undo refused, the history cleared, when a
+  range no longer holds what the step put there; `foreign` moves the steps
+  through a change made outside it and drops only those it touches). It
+  never holds the text: steps keep what they removed and inserted, as
+  ascending, apart pieces composed from the edits as they come (a batch
+  recorded last first, as every port applies one, in one pass), and
+  `undo()` hands back a plan for the port to apply; in UTF-16 units or
+  code points. `undo:*`, with a fuzz against a plain string. The GTK
+  port's `Document` records every buffer edit into one and GTK's undo is
+  off (`linux/HANDOFF.md` item 72); the Mac's editor moves onto it next,
+  its NSUndoManager rules being the ones above.
 - Editing: `LineDiff` (Myers, split at lines unique on both sides past
   1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,
   `mapOffset`), `LineComments`,
