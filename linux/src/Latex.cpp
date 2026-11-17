@@ -51,6 +51,13 @@ bool isExecutable(const std::string& p) {
            !g_file_test(p.c_str(), G_FILE_TEST_IS_DIR);
 }
 
+std::string baseNameOf(const std::string& p) {
+    char* b = g_path_get_basename(p.c_str());
+    std::string out = b ? b : p;
+    g_free(b);
+    return out;
+}
+
 std::string dirName(const std::string& p) {
     char* d = g_path_get_dirname(p.c_str());
     std::string out = d ? d : ".";
@@ -537,6 +544,8 @@ void LatexPreview::close() {
     sync_ = SyncTexIndex();
     syncScratch_.clear();
     doc_ = LatexDoc();
+    inputDocs_.clear();
+    editFile_.clear();
     path_.clear();
     gtk_stack_set_visible_child_name(GTK_STACK(stack_), "pdf");
     setStatus("", false);
@@ -730,9 +739,27 @@ void LatexPreview::finishCompile(Job* job, GBytes* output, bool ok) {
 void LatexPreview::showDocument() {
     const int n = pdf_->pageCount();
     gtk_stack_set_visible_child_name(GTK_STACK(stack_), "pdf");
-    std::string text = n == 1 ? "1 page" : std::to_string(n) + " pages";
-    setStatus(text + " · double-click text to edit it", false);
     setButton("Recompile", true);
+    showPagesStatus();
+}
+
+// The page count and what to do, or which files the typeset read have
+// unsaved changes: it read them from disk, so the page shows them only once
+// they are saved (the Mac's showPagesStatus).
+void LatexPreview::showPagesStatus() {
+    const int n = pdf_->pageCount();
+    std::string text = n == 1 ? "1 page" : std::to_string(n) + " pages";
+    std::vector<std::string> unsaved;
+    if (inputs_.unsaved)
+        for (const std::string& f : inputFiles())
+            if (inputs_.unsaved(f)) unsaved.push_back(baseNameOf(f));
+    std::string tail = "double-click text to edit it";
+    if (unsaved.size() == 1)
+        tail = unsaved[0] + " has unsaved changes: save to see them in the PDF";
+    else if (unsaved.size() > 1)
+        tail = std::to_string(unsaved.size()) +
+               " files it reads have unsaved changes: save to see them in the PDF";
+    setStatus(text + " · " + tail, false);
 }
 
 // ---------------------------------------------------------------- problems
@@ -1230,6 +1257,54 @@ void LatexPreview::onPdfClick(void* selfp, int page, double x, double y, int nPr
     if (nPress == 2) self->doubleClick(page, x, y);
 }
 
+std::string LatexPreview::inputFileForTag(int tag) const {
+    if (tag == 0 || !sync_.valid() || path_.empty()) return "";
+    const std::string written = sync_.pathForTag(tag);
+    if (written.empty()) return "";
+    const std::string dir = dirName(path_);
+    std::string p = written[0] == '/' ? written : dir + "/" + written;
+    if (!g_file_test(p.c_str(), G_FILE_TEST_IS_REGULAR)) return "";
+    const std::string real = realPathOf(p);
+    if (real == realPathOf(path_) || real == realPathOf(syncScratch_)) return "";
+    // tectonic writes the kernel's spelling of the folder; the tab and the
+    // tree have the window's.
+    const std::string realDir = realPathOf(dir) + "/";
+    if (real.compare(0, realDir.size(), realDir) == 0) return dir + "/" + real.substr(realDir.size());
+    return p;
+}
+
+std::vector<std::string> LatexPreview::inputFiles() const {
+    std::vector<std::string> files;
+    if (!sync_.valid()) return files;
+    for (const auto& kv : sync_.inputs()) {
+        const std::string f = inputFileForTag(kv.first);
+        if (!f.empty() && std::find(files.begin(), files.end(), f) == files.end()) files.push_back(f);
+    }
+    return files;
+}
+
+// The \input file's source, parsed, from its tab's buffer or the disk; null
+// when it cannot be read. Parsed again only when its text changed.
+const LatexDoc* LatexPreview::docOfInputFile(const std::string& file, std::string* source) {
+    std::string src;
+    bool have = inputs_.text && inputs_.text(file, &src);
+    if (!have) {
+        gchar* data = nullptr;
+        gsize n = 0;
+        if (!g_file_get_contents(file.c_str(), &data, &n, nullptr)) return nullptr;
+        src.assign(data, n);
+        g_free(data);
+        if (!g_utf8_validate(src.data(), (gssize)src.size(), nullptr)) return nullptr;
+    }
+    auto& slot = inputDocs_[file];
+    if (slot.first != src || slot.second.spans.empty()) {
+        slot.first = src;
+        slot.second = LatexDoc::parseInput(src);
+    }
+    if (source) *source = src;
+    return &slot.second;
+}
+
 void LatexPreview::doubleClick(int page, double x, double y) {
     if (!sync_.valid()) {
         setStatus("No SyncTeX data, so the preview cannot be edited", false);
@@ -1246,13 +1321,44 @@ void LatexPreview::doubleClick(int page, double x, double y) {
     if (!pp) return;
     const PageText text = pageTextOf(pp);
     g_object_unref(pp);
-    const int tag = sync_.tagForPath(syncScratch_);
+    const int mainTag = sync_.tagForPath(syncScratch_);
+    // The document's own text, or an \input file's: whichever the boxes
+    // under the point name first that can place the click (the Mac's
+    // MCLatexSpanAtPointInFiles).
     std::vector<SyncTexHit> hits;
-    const LatexSpan* span = latexSpanAtPoint(doc_, sync_, tag, text, page + 1, x, y, &hits);
+    const LatexSpan* span = nullptr;
+    std::string file, fileSrc;
+    bool first = true;
+    for (int tag : sync_.tagsAtPoint(page + 1, x, y, mainTag)) {
+        const LatexDoc* doc = nullptr;
+        std::string f, src;
+        if (tag == mainTag) {
+            doc = &doc_;
+        } else {
+            f = inputFileForTag(tag);
+            if (f.empty()) continue;
+            doc = docOfInputFile(f, &src);
+        }
+        if (!doc) continue;
+        std::vector<SyncTexHit> h;
+        const LatexSpan* s = latexSpanAtPoint(*doc, sync_, tag, text, page + 1, x, y, &h);
+        if (first || s) hits = h;
+        first = false;
+        if (s) {
+            span = s;
+            file = f;
+            fileSrc = src;
+            break;
+        }
+    }
     if (!span) {
         setStatus("That is not text MiniCode can trace back to the source", false);
         return;
     }
+    editFile_ = file;
+    editInputSrc_ = fileSrc;
+    const std::string& src = file.empty() ? pdfSrc_ : editInputSrc_;
+    const LatexDoc& spanDoc = file.empty() ? doc_ : inputDocs_[file].second;
 
     // Anchor the popover on the box the click landed in.
     double ax = x - 2, ay = y - 2, aw = 4, ah = 4;
@@ -1279,15 +1385,18 @@ void LatexPreview::doubleClick(int page, double x, double y) {
     }
 
     editSpan_ = *span;
-    editSrc_ = pdfSrc_;
+    editSrc_ = src;
     editValid_ = true;
     addingItem_ = false;
     editItem_ = span->itemIndex;
-    const bool inList = span->listIndex >= 0 && (size_t)span->listIndex < doc_.lists.size();
-    if (inList) editList_ = doc_.lists[(size_t)span->listIndex];
+    // An \input file's span is in that file's text, and its lists.
+    const bool inList = span->listIndex >= 0 && (size_t)span->listIndex < spanDoc.lists.size();
+    if (inList) editList_ = spanDoc.lists[(size_t)span->listIndex];
     editAnchor_ = rect;
-    showPopover("Editing " + describeSpan(*span),
-                pdfSrc_.substr(span->start, span->end - span->start), inList, rect);
+    const std::size_t a = std::min(span->start, src.size());
+    std::string title = "Editing " + describeSpan(*span);
+    if (!file.empty()) title += " in " + baseNameOf(file);
+    showPopover(title, src.substr(a, std::min(span->end, src.size()) - a), inList, rect);
 }
 
 // ---------------------------------------------------------------- the popover
@@ -1320,6 +1429,8 @@ std::string LatexPreview::editText() const {
     return out;
 }
 
+std::string LatexPreview::editTitle() const { return gtk_label_get_text(GTK_LABEL(popLabel_)); }
+
 void LatexPreview::setEditText(const std::string& text) {
     gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(popText_)),
                              text.c_str(), (int)text.size());
@@ -1342,6 +1453,10 @@ void LatexPreview::commitEdit() {
     const bool adding = addingItem_;
     editValid_ = false;
     gtk_popover_popdown(GTK_POPOVER(popover_));
+    if (!editFile_.empty()) {
+        commitInputEdit(text, adding);
+        return;
+    }
 
     // The span's bytes index editSrc_. If the buffer changed while the
     // popover was open, they may no longer be the same text: refuse.
@@ -1367,7 +1482,7 @@ void LatexPreview::commitEdit() {
 // Turn `from` into `to` in the buffer by replacing only the bytes that differ,
 // as one user action: one step for Ctrl+Z, and an ordinary edit for the
 // highlighter and the unsaved-changes mark.
-void LatexPreview::spliceBuffer(const std::string& from, const std::string& to) {
+void LatexPreview::spliceInto(GtkTextBuffer* buffer, const std::string& from, const std::string& to) {
     std::size_t p = 0;
     const std::size_t limit = std::min(from.size(), to.size());
     while (p < limit && from[p] == to[p]) ++p;
@@ -1382,13 +1497,57 @@ void LatexPreview::spliceBuffer(const std::string& from, const std::string& to) 
     const glong a = g_utf8_pointer_to_offset(from.data(), from.data() + p);
     const glong b = a + g_utf8_pointer_to_offset(from.data() + p, from.data() + fromEnd);
     GtkTextIter ia, ib;
-    gtk_text_buffer_get_iter_at_offset(buffer_, &ia, (int)a);
-    gtk_text_buffer_get_iter_at_offset(buffer_, &ib, (int)b);
-    gtk_text_buffer_begin_user_action(buffer_);
-    gtk_text_buffer_delete(buffer_, &ia, &ib);
+    gtk_text_buffer_get_iter_at_offset(buffer, &ia, (int)a);
+    gtk_text_buffer_get_iter_at_offset(buffer, &ib, (int)b);
+    gtk_text_buffer_begin_user_action(buffer);
+    Document::nameStep(buffer, "Edit in Preview");
+    gtk_text_buffer_delete(buffer, &ia, &ib);
     const std::string ins = to.substr(p, toEnd - p);
-    if (!ins.empty()) gtk_text_buffer_insert(buffer_, &ia, ins.c_str(), (int)ins.size());
-    gtk_text_buffer_end_user_action(buffer_);
+    if (!ins.empty()) gtk_text_buffer_insert(buffer, &ia, ins.c_str(), (int)ins.size());
+    gtk_text_buffer_end_user_action(buffer);
+}
+
+void LatexPreview::spliceBuffer(const std::string& from, const std::string& to) {
+    spliceInto(buffer_, from, to);
+}
+
+// The popover's edit of an \\input file: a splice of that file's text, put
+// into its tab by the host (made behind the preview when there was none),
+// unsaved, one undo step there. Refused when the file's text changed while
+// the box was open.
+void LatexPreview::commitInputEdit(const std::string& text, bool adding) {
+    const std::string file = editFile_;
+    const std::string name = baseNameOf(file);
+    std::string now;
+    const bool read = inputs_.text && inputs_.text(file, &now);
+    if (!read) {
+        gchar* data = nullptr;
+        gsize n = 0;
+        if (g_file_get_contents(file.c_str(), &data, &n, nullptr)) {
+            now.assign(data, n);
+            g_free(data);
+        } else {
+            now = "\x01";   // unreadable: never the text the box opened on
+        }
+    }
+    if (now != editInputSrc_) {
+        setStatus(name + " changed while the box was open, so the edit was not made", false);
+        return;
+    }
+    LatexDoc::Edit edit;
+    if (adding) {
+        if (text.empty()) return;
+        edit = LatexDoc::addItem(now, editList_, editItem_, text);
+    } else {
+        const std::size_t a = std::min(editSpan_.start, now.size());
+        if (now.substr(a, std::min(editSpan_.end, now.size()) - a) == text) return;
+        edit = LatexDoc::replaceSpan(now, editSpan_, text);
+    }
+    if (!inputs_.edit || !inputs_.edit(file, now, edit.source)) {
+        setStatus(name + " could not be changed", false);
+        return;
+    }
+    showPagesStatus();
 }
 
 gboolean LatexPreview::onEditKey(GtkEventControllerKey*, guint keyval, guint,

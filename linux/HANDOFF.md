@@ -5345,3 +5345,29 @@ write job cannot read a file. `replace_in_folder` writes a file just over
 1 MB with a match at its end: Find in Folder lists it, Replace All names it
 as above, and it is byte for byte as it was. Checked: that suite (20 passed;
 3 fail with the fix taken out).
+
+### 79. A double-click in the LaTeX preview on text from an \input file edits that file (done, November 2026)
+
+The Mac's change (30eddf9, aec3869, 03ce0c5) in the GTK preview. The core
+had the pieces (`SyncTexIndex::tagsAtPoint`, `inputs()`,
+`LatexDoc::parseInput`); `LatexPreview::doubleClick` now tries the inputs
+the boxes under the point name, likeliest first, then the document, each
+parsed on its own from its tab's buffer or else the disk
+(`docOfInputFile`, parsed again only when the text changed). The box is
+titled "Editing text in chapter.tex"; its text and lists are that file's.
+Save is a splice of that file's text, made by the editor
+(`LatexPreview::InputHost`, `Editor::editLatexInput`): into the file's tab,
+or a tab made beside the active one and not shown (`openForAgent` quiet,
+then read), unsaved, one "Edit in Preview" step; nothing is written. It is
+refused with "chapter.tex changed while the box was open, so the edit was
+not made" when the file's text moved, and "chapter.tex could not be
+changed" when its tab cannot take it. The bar says "chapter.tex has
+unsaved changes: save to see them in the PDF" (or "N files it reads have
+unsaved changes: save to see them in the PDF"), since tectonic reads the
+disk; Ctrl+S with the preview on show saves those files too
+(`Editor::saveLatexInputs`, from `act_save`), and any save of a file a
+preview read typesets that preview again (`Editor::latexFileSaved`). The
+document's own edit is now named "Edit in Preview" as well. The Mac's
+"clicked word selected" fix (03ce0c5) has no counterpart: the GTK box
+selects the whole span for every click. Checked by `latex_inputs`, over the
+committed three-file fixture and a stand-in tectonic.

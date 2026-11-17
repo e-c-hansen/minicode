@@ -278,6 +278,14 @@ public:
     // save (no tab, a picture, a message, a diff) writes nothing and is true.
     bool save(std::string* error = nullptr);
     bool saveDocument(Document* d, std::string* error);
+    // The files a LaTeX preview reads (Latex.h, InputHost): a tab of the
+    // file for an edit (made beside the active one when there is none), the
+    // edit, what a save of a file does to the previews that read it, and
+    // Ctrl+S's saving of the ones with unsaved changes.
+    Document* latexInputTab(const std::string& path);
+    bool editLatexInput(const std::string& path, const std::string& from, const std::string& to);
+    void latexFileSaved(Document* saved);
+    void saveLatexInputs(const std::function<bool(Document*)>& save);
     bool canSave() const { return active_ && active_->canSave(); }
 
     // Changes made to the open files by something else (the Mac's
