@@ -1,8 +1,9 @@
 // Document.h — one open file of a window's editor (linux/PARITY.md, D2 and
 // D3): what belongs to the file rather than to the view, so that a tab keeps
 // it while another tab is on show. The window's one GtkTextView shows a
-// document with gtk_text_view_set_buffer; the editor keeps its documents in
-// tab order (Editor.h, Tabs.cpp). The Mac's counterpart is MCTab
+// document with gtk_text_view_set_buffer; the editor's tabs, their order and
+// groups are a Model::Window of the core's (Editor.h, Tabs.cpp), which names
+// documents by id(). The Mac's counterpart is MCTab
 // (src/EditorTab.h).
 //
 // A document holds:
@@ -97,6 +98,10 @@ public:
         (void)result;
         (void)blank;
     }
+    // Whether its tab is a preview tab, and when it was last on show: the
+    // window's tabs (a Model::Window, Editor.h) keep both.
+    virtual Model::Preview documentPreview(const Document*) const { return Model::Preview::None; }
+    virtual uint64_t documentLastUsed(const Document*) const { return 0; }
 };
 
 class Document {
@@ -208,14 +213,13 @@ public:
     bool sideWanted() const { return sideWanted_; }
     void setSideWanted(bool on) { sideWanted_ = on; }
     // The window's preview tab (EditorTabs.h): its title in italics, and
-    // the next file opened in preview replaces it.
-    bool isPreviewTab() const { return previewTab_; }
-    void setPreviewTab(bool on) { previewTab_ = on; }
+    // the next file opened in preview replaces it. The window's tabs keep
+    // it (Editor::setPreview changes it).
+    bool isPreviewTab() const { return host_->documentPreview(this) == Model::Preview::User; }
     // The agent's own preview tab (`minicode open --note`, AgentNotes.h):
     // italic like the preview tab, replaced by the next such open, kept by
     // an edit, a save or a double-click on its title.
-    bool isAgentPreview() const { return agentPreview_; }
-    void setAgentPreview(bool on) { agentPreview_ = on; }
+    bool isAgentPreview() const { return host_->documentPreview(this) == Model::Preview::Agent; }
 
     // The source (Text) or the message (Message). Media and Diff have an
     // empty one, which is what the view holds while they are shown.
@@ -376,8 +380,9 @@ public:
     };
     Place& place() { return place_; }
 
-    // A stamp of when it was last on show (EditorTabs::activeAfterClose).
-    uint64_t lastUsed = 0;
+    // A stamp of when it was last on show (EditorTabs::activeAfterClose),
+    // larger for later, kept by the window's tabs.
+    uint64_t lastUsed() const { return host_->documentLastUsed(this); }
     // Its id, for the tab's right click menu (unique in the process).
     uint64_t id() const { return id_; }
 
@@ -499,8 +504,6 @@ private:
     bool          showsTable_ = false;
     bool          json_ = false, notebook_ = false, showsOutline_ = true;
     void          sniffCsv(const std::string& text);
-    bool          previewTab_ = false;
-    bool          agentPreview_ = false;
     bool          unread_ = false;
 
     GtkTextBuffer* buffer_ = nullptr;

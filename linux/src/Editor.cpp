@@ -56,6 +56,9 @@
 // ---------------------------------------------------------------- construction
 
 Editor::Editor() {
+    // The window's tabs, in the process's session (EditorTabs.h).
+    winId_ = session().addWindow();
+    win_ = session().window(winId_);
     // One tag table for every document's buffers (PARITY.md, D2), so a tag's
     // color, set once, is every tab's.
     tags_.table = gtk_text_tag_table_new();
@@ -233,6 +236,11 @@ Editor::Editor() {
     strip_->onDoubleClick = [this](int i) {
         if (Document* d = document(i)) keepPreviewTab(d);
     };
+    // A tab dragged along the row goes where it is let go (the window's
+    // order, EditorTabs::dropIndex).
+    strip_->onMove = [this](int from, int to) {
+        if (win_->move(from, to)) refreshStrip();
+    };
     strip_->menuFor = [this](int i) { return menuForTab(i); };
     tabActions_ = g_simple_action_group_new();
     for (const char* name : {"keep", "close", "closeothers", "closeright", "closeall", "copypath",
@@ -338,9 +346,8 @@ Editor::~Editor() {
     if (mirrorView_) CodeView::setViewBuffer(GTK_TEXT_VIEW(mirrorView_), mirrorEmpty_);
     dropMirrorMarks();
     for (Document* d : documents()) destroy(d);
-    other_.clear();
+    win_->clear();
     otherActive_ = nullptr;
-    tabs_.clear();
     delete large_;
     large_ = nullptr;
     g_signal_handlers_disconnect_by_data(view_, this);
@@ -374,6 +381,8 @@ Editor::~Editor() {
     delete compare_;
     g_object_unref(welcome_);
     g_object_unref(tags_.table);
+    session().removeWindow(winId_);
+    win_ = nullptr;
 }
 
 std::vector<void*> Editor::handlerOwners() const {

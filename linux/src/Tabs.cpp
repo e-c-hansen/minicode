@@ -1,7 +1,9 @@
 // Tabs.cpp — the editor's tabs: opening a file in its tab or a new one, the
 // preview tab, switching, closing, reopening a closed tab, and the strip.
 // The counterpart of the Mac's EditorController+Tabs.mm, by the same rules,
-// which are the core's (../src/EditorTabs.h). Questions about unsaved
+// which are the core's (../src/EditorTabs.h): the tabs themselves are its
+// Model::Window, which names documents by id; the editor makes and deletes
+// the documents and shows what the window says. Questions about unsaved
 // changes are the shell's (main.cpp): nothing here asks, and nothing here
 // drops unsaved changes without being told to.
 #include "AgentNotes.h"
@@ -47,15 +49,50 @@ bool isRegularFile(const std::string& path) {
 
 // ---------------------------------------------------------------- lookups
 
-Document* Editor::document(int index) const {
-    return index >= 0 && index < (int)tabs_.size() ? tabs_[(size_t)index] : nullptr;
+Model::Session& Editor::session() {
+    static Model::Session s;
+    return s;
 }
 
-int Editor::indexOf(const Document* d) const {
-    for (size_t i = 0; i < tabs_.size(); i++)
-        if (tabs_[i] == d) return (int)i;
-    return -1;
+Document* Editor::newDocument() {
+    Document* d = new Document(this, &tags_);
+    docs_[d->id()] = d;
+    return d;
 }
+
+std::vector<Document*> Editor::documentsOf(const std::vector<Model::DocId>& ids) const {
+    std::vector<Document*> out;
+    for (Model::DocId id : ids)
+        if (Document* d = documentById(id)) out.push_back(d);
+    return out;
+}
+
+std::string Editor::fileOf(const Document* d) {
+    return !d || d->kind() == Document::Kind::Diff ? std::string() : d->path();
+}
+
+void Editor::syncPaths() const {
+    for (const auto& [id, d] : docs_)
+        if (win_->isOpen(id) && win_->path(id) != fileOf(d)) win_->setPath(id, fileOf(d));
+}
+
+void Editor::setPreview(Document* d, Model::Preview p) {
+    if (!d) return;
+    win_->setPreview(d->id(), p);
+    refreshStrip();
+}
+
+Model::Preview Editor::documentPreview(const Document* d) const {
+    return d && win_ ? win_->preview(d->id()) : Model::Preview::None;
+}
+
+uint64_t Editor::documentLastUsed(const Document* d) const {
+    return d && win_ ? win_->lastUsed(d->id()) : 0;
+}
+
+Document* Editor::document(int index) const { return documentById(win_->at(index)); }
+
+int Editor::indexOf(const Document* d) const { return d ? win_->indexOf(d->id()) : -1; }
 
 int Editor::activeIndex() const { return indexOf(active_); }
 
@@ -67,15 +104,12 @@ Document* Editor::documentFor(const std::string& path) const {
 }
 
 Document* Editor::documentById(uint64_t id) const {
-    for (Document* d : documents())
-        if (d->id() == id) return d;
-    return nullptr;
+    const auto it = docs_.find(id);
+    return it == docs_.end() ? nullptr : it->second;
 }
 
 Document* Editor::previewTab() const {
-    for (Document* d : tabs_)
-        if (d->isPreviewTab()) return d;
-    return nullptr;
+    return documentById(win_->previewTab(Model::Preview::User));
 }
 
 std::vector<Document*> Editor::dirtyDocuments() const {
@@ -87,11 +121,15 @@ std::vector<Document*> Editor::dirtyDocuments() const {
 
 // ---------------------------------------------------------------- opening
 
-bool Editor::opensInPreview(EditorTabs::OpenFrom from) const {
+EditorTabs::PreviewSettings Editor::previewSettings() const {
     EditorTabs::PreviewSettings s;
     s.enabled = settings_.enablePreview();
     s.fromQuickOpen = settings_.enablePreviewFromQuickOpen();
-    return EditorTabs::opensInPreview(from, s);
+    return s;
+}
+
+bool Editor::opensInPreview(EditorTabs::OpenFrom from) const {
+    return EditorTabs::opensInPreview(from, previewSettings());
 }
 
 // The file as text, or a message saying why not. Markdown and LaTeX open in
@@ -180,17 +218,15 @@ bool Editor::loadInto(Document* d, const std::string& path) {
 }
 
 bool Editor::openFile(const std::string& path, EditorTabs::OpenFrom from) {
-    const bool inPreview = opensInPreview(from);
-    // VS Code's workbench.editor.enablePreviewFromCodeNavigation, off by
-    // default: a preview tab a navigation starts from is kept, so the
-    // target does not replace the file it was reached from.
-    if (from == EditorTabs::OpenFrom::CodeNavigation && inPreview && active_ &&
-        active_->isPreviewTab() && documentFor(path) != active_)
-        keepPreviewTab(active_);
-    if (Document* d = documentFor(path)) {
-        // A kept open of the preview tab's file keeps it; an open in preview
-        // never makes a kept tab a preview.
-        if (d->isPreviewTab() && !EditorTabs::staysPreview(true, inPreview)) keepPreviewTab(d);
+    // The window's rules first (Model::Window::prepareOpen): in preview or
+    // not; a code navigation keeps the preview tab it starts from (VS
+    // Code's enablePreviewFromCodeNavigation, off); a kept open of the
+    // preview tab's file keeps it, and an open in preview never makes a
+    // kept tab a preview.
+    syncPaths();
+    const Model::Window::Open open = win_->prepareOpen(path, from, previewSettings());
+    const bool inPreview = open.inPreview;
+    if (Document* d = documentById(open.existing)) {
         // Only a message ("Could not open", "Cannot display") is tried again;
         // a tab not read yet is read as it is shown.
         if (d->kind() == Document::Kind::Message && !d->unread()) {
@@ -204,39 +240,46 @@ bool Editor::openFile(const std::string& path, EditorTabs::OpenFrom from) {
         return d->kind() != Document::Kind::Message;
     }
     // A file over 50 MB asks first (LargeFileView.h); Open Anyway opens it then.
-    if (!large_->mayOpen(path, from)) return false;
-    Document* d = new Document(this, &tags_);
+    if (!large_->mayOpen(path, from)) {
+        refreshStrip();   // a preview tab prepareOpen kept shows it
+        return false;
+    }
+    Document* d = newDocument();
     const bool ok = loadInto(d, path);
-    Document* old = inPreview ? previewTab() : nullptr;
-    // An old preview tab with unsaved changes is never dropped.
-    if (old && old->dirty()) {
-        keepPreviewTab(old);
-        old = nullptr;
-    }
-    int at;
-    if (inPreview) {
-        const EditorTabs::PreviewPlace place =
-            EditorTabs::placePreview(activeIndex(), old ? indexOf(old) : -1, tabCount());
-        // `index` counts without the old tab, which is still in the row.
-        at = place.index;
-        if (place.replace >= 0 && place.index >= place.replace) at++;
-        d->setPreviewTab(true);
-    } else {
-        at = EditorTabs::insertionIndex(activeIndex(), tabCount());
-    }
-    tabs_.insert(tabs_.begin() + at, d);
+    // In preview, it replaces the old preview tab in VS Code's place, unless
+    // that one has unsaved changes (it is kept instead); else it goes just
+    // right of the tab on show. The replaced tab: no question (it has no
+    // unsaved changes) and no place in Reopen Closed Tab, as VS Code leaves
+    // a replaced preview editor out of its recently closed list.
+    const Model::DocId old =
+        win_->add(d->id(), fileOf(d), inPreview ? Model::Preview::User : Model::Preview::None,
+                  [this](Model::DocId id) {
+                      Document* o = documentById(id);
+                      return o && o->dirty();
+                  });
     activate(d);
-    // The preview tab a newer one replaced: no question (it has no unsaved
-    // changes) and no place in Reopen Closed Tab, as VS Code leaves a
-    // replaced preview editor out of its recently closed list.
-    if (old && old->isPreviewTab() && !old->dirty()) dropTab(old, false);
+    if (Document* o = documentById(old)) letGo(o);
     return ok;
 }
 
 Document* Editor::agentPreviewTab() const {
-    for (Document* d : tabs_)
-        if (d->isAgentPreview()) return d;
-    return nullptr;
+    return documentById(win_->previewTab(Model::Preview::Agent));
+}
+
+// Out of the window already (Model::Window::add replaced it): what showed it
+// lets go, and it is deleted.
+void Editor::letGo(Document* d) {
+    if (!d || win_->isOpen(d->id())) return;
+    if (d == active_) {
+        // Not expected (the new tab is on show first), but never left shown.
+        stash();
+        active_ = documentById(win_->active());
+        showActive();
+    }
+    syncMirror();
+    if (d == diffDoc_) diffDoc_ = nullptr;
+    destroy(d);
+    refreshStrip();
 }
 
 Document* Editor::openForAgent(const std::string& path, bool preview, bool quiet) {
@@ -245,27 +288,28 @@ Document* Editor::openForAgent(const std::string& path, bool preview, bool quiet
         return have;
     }
     if (!quiet && !large_->mayOpen(path, EditorTabs::OpenFrom::Other)) return nullptr;
-    Document* old = preview ? agentPreviewTab() : nullptr;
-    // Never one with unsaved changes, nor the tab the user is typing in.
-    if (old && (old->dirty() || (quiet && old == active_))) {
-        keepPreviewTab(old);
-        old = nullptr;
-    }
-    Document* d = new Document(this, &tags_);
+    Document* d = newDocument();
     if (quiet) d->setUnread(path);
     else loadInto(d, path);   // a message says why; a note waits for text
-    d->setAgentPreview(preview);
-    tabs_.insert(tabs_.begin() + EditorTabs::insertionIndex(activeIndex(), tabCount()), d);
+    // In the agents' preview tab, replacing the last one, but never one with
+    // unsaved changes, nor the tab the user is typing in; replaced, it is
+    // not asked about and not remembered.
+    const Model::DocId old =
+        win_->add(d->id(), fileOf(d), preview ? Model::Preview::Agent : Model::Preview::None,
+                  [this, quiet](Model::DocId id) {
+                      Document* o = documentById(id);
+                      return o && (o->dirty() || (quiet && o == active_));
+                  });
     if (quiet) refreshStrip();
     else activate(d);
-    if (old && !old->dirty()) dropTab(old, false);   // replaced, no question, not remembered
+    if (Document* o = documentById(old)) letGo(o);
     return d;
 }
 
 Document* Editor::addTab(const std::string& path) {
-    Document* d = new Document(this, &tags_);
+    Document* d = newDocument();
     d->setUnread(path);
-    tabs_.push_back(d);
+    win_->append(d->id(), path);
     refreshStrip();
     return d;
 }
@@ -273,8 +317,8 @@ Document* Editor::addTab(const std::string& path) {
 void Editor::showDiff(const std::string& title, const std::string& bytes, bool commit) {
     Document* d = diffDoc_;
     if (!d) {
-        d = new Document(this, &tags_);
-        tabs_.insert(tabs_.begin() + EditorTabs::insertionIndex(activeIndex(), tabCount()), d);
+        d = newDocument();
+        win_->add(d->id(), "");
         diffDoc_ = d;
     }
     d->setDiff(title, bytes, commit);
@@ -302,10 +346,8 @@ void Editor::showComparison(const CompareSpec& spec, std::function<void(Document
                 std::unique_ptr<Job> j(static_cast<Job*>(p));
                 if (!*j->alive) return G_SOURCE_REMOVE;
                 Editor* e = j->editor;
-                Document* d = new Document(e, &e->tags_);
-                e->tabs_.insert(e->tabs_.begin() +
-                                    EditorTabs::insertionIndex(e->activeIndex(), e->tabCount()),
-                                d);
+                Document* d = e->newDocument();
+                e->win_->add(d->id(), "");
                 d->setCompare(j->data->spec.title, j->data);
                 const CompareSpec& sp = j->data->spec;
                 if (!sp.decisionPrompt.empty())
@@ -323,13 +365,13 @@ void Editor::showComparison(const CompareSpec& spec, std::function<void(Document
 // A page in a tab of its own (EditorPage.h), reused by its key: a second
 // open shows the tab that has it and drops the new page.
 Document* Editor::showPage(std::shared_ptr<EditorPage> page) {
-    for (Document* t : tabs_)
+    for (Document* t : documentsOf(win_->tabs()))
         if (t->editorPage() && t->editorPage()->key() == page->key()) {
             activate(t);
             return t;
         }
-    Document* d = new Document(this, &tags_);
-    tabs_.insert(tabs_.begin() + EditorTabs::insertionIndex(activeIndex(), tabCount()), d);
+    Document* d = newDocument();
+    win_->add(d->id(), "");
     d->setEditorPage(page->title(), page);
     activate(d);
     return d;
@@ -343,13 +385,10 @@ EditorPage* Editor::currentPage() const { return active_ ? active_->editorPage()
 // changes, undo and place; the one shown is checked against the disk, and
 // asked about if it changed there while it had unsaved changes.
 void Editor::activate(Document* d) {
-    if (!d) return;
     // A file the other group has opens in this one too, as VS Code opens a
-    // file in the group you are in: one document, a tab in each.
-    if (indexOf(d) < 0 && inOther(d))
-        tabs_.insert(tabs_.begin() + EditorTabs::insertionIndex(activeIndex(), tabCount()), d);
-    if (indexOf(d) < 0) return;
-    d->lastUsed = ++stamp_;
+    // file in the group you are in: one document, a tab in each. The window
+    // stamps it as used.
+    if (!d || !win_->activate(d->id())) return;
     if (d == active_) {
         refreshStrip();
         return;
@@ -371,7 +410,7 @@ void Editor::selectTab(int index) {
 
 // Ctrl+PageDown and Ctrl+PageUp (Ctrl+Tab and Ctrl+Shift+Tab), wrapping.
 void Editor::stepTab(int delta) {
-    if (tabs_.empty()) {
+    if (tabCount() == 0) {
         gtk_widget_error_bell(view_);
         return;
     }
@@ -426,29 +465,22 @@ void Editor::dropTab(Document* d, bool remember) {
     const bool wasActive = d == active_;
     if (wasActive) { if (notes_) notes_->activeWillChange(); if (onActiveWillChange) onActiveWillChange(); }
     if (wasActive) stash();
-    // Still open in the other group: not closed, so not one to reopen.
-    if (remember && d->kind() != Document::Kind::Diff && !d->path().empty() && !inOther(d)) {
-        EditorTabs::ClosedTab c = closedTabOf(d);
-        c.index = index;
-        closed_.remember(c);
-    }
-    std::vector<uint64_t> stamps;
-    for (Document* t : tabs_) stamps.push_back(t->lastUsed);
-    const int next = EditorTabs::activeAfterClose(stamps, activeIndex(), index);
-    tabs_.erase(tabs_.begin() + index);
-    if (d == diffDoc_ && !inOther(d)) diffDoc_ = nullptr;
-    if (wasActive && split_ && tabs_.empty()) {
-        // The group's last tab: the group closes and the other has the editor.
+    // The window remembers a file's tab, unless the other group still has
+    // it (not closed, so not one to reopen), and puts the tab used most
+    // recently on show; the group closes with its last tab.
+    EditorTabs::ClosedTab place;
+    const bool keepPlace = remember && !fileOf(d).empty();
+    if (keepPlace) place = closedTabOf(d);
+    const Model::Window::Closed c = win_->close(d->id(), win_->focused(), keepPlace ? &place : nullptr);
+    if (d == diffDoc_ && !win_->isOpen(d->id())) diffDoc_ = nullptr;
+    if (wasActive && c.groupClosed) {
+        // The group's last tab: the other has the editor.
         active_ = nullptr;
         closeFocusedGroup();
     } else if (wasActive) {
         // The next tab on show first, so the language server lets go of this
         // one's buffer before it goes.
-        active_ = nullptr;
-        if (next >= 0) {
-            active_ = tabs_[(size_t)next];
-            active_->lastUsed = ++stamp_;
-        }
+        active_ = documentById(win_->active());
         showActive();
         if (active_) active_->checkExternalChange();
         { if (onActiveChanged) onActiveChanged(); if (notes_) notes_->activeChanged(); }
@@ -459,6 +491,7 @@ void Editor::dropTab(Document* d, bool remember) {
 
 // Gone for good: what the slot held for it comes off first.
 void Editor::destroy(Document* d) {
+    docs_.erase(d->id());
     if (notes_) notes_->forget(d);
     if (d->decision()) d->decision()->tabClosed();   // closing answers it
     if (d == colorDoc_) {
@@ -483,11 +516,8 @@ void Editor::closeAllTabs() {
     active_ = nullptr;
     diffDoc_ = nullptr;
     const std::vector<Document*> all = documents();
-    tabs_.clear();
-    other_.clear();
+    win_->clear();
     otherActive_ = nullptr;
-    split_ = false;
-    focused_ = 0;
     dropMirrorMarks();
     refreshMirror();
     showActive();   // the empty editor, with no buffer of theirs on show
@@ -496,10 +526,7 @@ void Editor::closeAllTabs() {
 }
 
 void Editor::keepPreviewTab(Document* d) {
-    if (!d || !(d->isPreviewTab() || d->isAgentPreview())) return;
-    d->setPreviewTab(false);
-    d->setAgentPreview(false);
-    refreshStrip();
+    if (d && win_->keep(d->id())) refreshStrip();
 }
 
 // ---------------------------------------------------------------- places
@@ -574,16 +601,16 @@ void Editor::placeTab(Document* d, const EditorTabs::ClosedTab& c) {
 
 bool Editor::reopenClosedTab() {
     EditorTabs::ClosedTab c;
-    while (closed_.take(&c, isRegularFile)) {
+    while (win_->takeClosed(&c, isRegularFile)) {
         if (Document* open = documentFor(c.path)) {
             activate(open);   // the other group's joins this one
             focusActiveDocument();
             return true;
         }
-        Document* d = new Document(this, &tags_);
+        Document* d = newDocument();
         loadInto(d, c.path);
         placeTab(d, c);
-        tabs_.insert(tabs_.begin() + EditorTabs::ClosedTabs::indexIn(c, tabCount()), d);
+        win_->insert(d->id(), fileOf(d), EditorTabs::ClosedTabs::indexIn(c, tabCount()));
         activate(d);
         focusActiveDocument();
         return true;
@@ -634,23 +661,22 @@ void Editor::pathTrashed(const std::string& path) {
 // it from another of the same name (EditorTabs::labels), a diff's title, the
 // dot for unsaved changes, and italics for the preview tab.
 void Editor::refreshStrip() {
-    std::vector<std::string> paths;
-    for (Document* d : tabs_)
-        paths.push_back(d->kind() == Document::Kind::Diff ? std::string() : d->path());
-    const std::vector<std::string> names = EditorTabs::labels(paths);
+    syncPaths();
+    const std::vector<Document*> tabs = documentsOf(win_->tabs());
+    const std::vector<std::string> names = win_->labels(win_->focused());
     std::vector<TabStrip::Item> items;
-    for (size_t i = 0; i < tabs_.size(); i++) {
-        const Document* d = tabs_[i];
+    for (size_t i = 0; i < tabs.size() && i < names.size(); i++) {
+        const Document* d = tabs[i];
         TabStrip::Item it;
         it.title = d->kind() == Document::Kind::Diff ? d->diffTitle() : names[i];
         if (it.title.empty()) it.title = baseName(d->path());
         it.tooltip = d->path().empty() ? it.title : d->path();
         it.dirty = d->dirty();
-        it.preview = d->isPreviewTab() || d->isAgentPreview();
+        it.preview = win_->isPreview(d->id());
         items.push_back(it);
     }
     strip_->setItems(items, activeIndex());
-    gtk_widget_set_visible(strip_->widget(), !tabs_.empty());
+    gtk_widget_set_visible(strip_->widget(), !tabs.empty());
     refreshMirror();   // the other group's strip and view (Groups.cpp)
     if (onDocumentsChanged) onDocumentsChanged(nullptr);
     if (observer_) observer_->tabsChanged();   // every tab's file on its server

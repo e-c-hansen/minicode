@@ -504,6 +504,10 @@ const std::vector<Command>& all() {
          0, 0, nullptr},
         {"editor.action.toggleWordWrap", "Word Wrap", "View", "alt+z", E, "toggleWordWrap:", 0, 0,
          nullptr},
+        // VS Code's git blame decoration toggle, which has no key either;
+        // minicode's knows Claude Code's sessions (EditorLineHistory.h).
+        {"git.blame.toggleEditorDecoration", "Show Line History", "View", "", E,
+         "toggleLineHistory:", 0, 0, nullptr},
         {"editor.fold", "Fold", "View > Folding", "ctrl+cmd+[", E, "foldRegion:", 0, 0, nullptr},
         {"editor.unfold", "Unfold", "View > Folding", "ctrl+cmd+]", E, "unfoldRegion:", 0, 0,
          nullptr},
