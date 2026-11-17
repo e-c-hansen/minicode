@@ -691,12 +691,13 @@ container (PanelHost, laid out by hand in layoutContainer)
   item 73; the Mac since stage 3c: `_win`, one of a process-wide
   `Model::Session` made in EditorController.mm, with `_docs` the MCTabs
   by `docId`). A rule changed here is changed in the window, with its
-  `session:*` check. The Mac keeps three of its own rules where the
-  window's differ, by using `insert`, `setPreview` and `close` rather
-  than `add`: a replaced preview tab the other group also shows stays
-  there; the user's preview tab replaced is the focused group's only;
-  and the agents have two preview tabs, one for notes and one for
-  comparisons.
+  `session:*` check. Since stage 3d (2026-11-17) both ports run the
+  same rules, the Mac's: a new tab goes in through `add`
+  (`groupAddTab:preview:passOver:` on the Mac, then
+  `letGoOfReplacedTab:` once the new one shows), each group has its own
+  preview tab and a replaced one the other group also shows stays there,
+  and the agents have two preview tabs (`Preview::Agent` for notes,
+  `AgentDiff` for comparisons), a new one in the old one's place.
 - **One text view, many documents.** `MCTab` holds a document's path, text,
   `savedText`, mode flags, `dirty`, its own `NSUndoManager` (from
   `undoManagerForTextView:`), its own `LatexView`, folds, viewer kind,
@@ -718,19 +719,23 @@ container (PanelHost, laid out by hand in layoutContainer)
   the palette finds them.
 - **The preview tab** (2026-11-08, VS Code's enablePreview,
   `workbench.enable-preview`): `Model::Preview::User` (`MCTab preview`),
-  italic like `agentPreview`.
+  italic like `agentPreview`, one per editor group (VS Code's).
   Every open goes through `openFileAtPath:from:` (`openFileAtPath:` is
   `OpenFrom::Other`, kept) and the rules are the core's
   (`EditorTabs::opensInPreview`, `treeClick`, `staysPreview`,
-  `placePreview`, `tabs:*`): a tree click, a search result's single click
+  `placePreview`, `tabs:*`, and `Model::Window::prepareOpen` and `add`,
+  `session:preview`): a tree click, a search result's single click
   (`SearchPanel previewHandler`) and a code navigation
-  (`lsp.openFileForNavigation`, which first keeps the preview tab it starts
-  from: enablePreviewFromCodeNavigation off) open in preview; Quick Open only
-  with `workbench.enable-preview-from-quick-open`. A kept open of a preview
-  tab's file keeps it; so do an edit (`noteEdited`), a save (`writeText:`), a
-  double-click on its title and Keep Open (tab menu, File menu). The replaced
-  tab is dropped unasked and never in Reopen Closed Tab; a dirty one is kept
-  instead. Agent previews stay their own (neither replaces the other). The
+  (`lsp.openFileForNavigation`; `prepareOpen` keeps the preview tab it
+  starts from: enablePreviewFromCodeNavigation off) open in preview; Quick
+  Open only with `workbench.enable-preview-from-quick-open`. A kept open of
+  a preview tab's file (the user's or the agents') keeps it; so do an edit
+  (`noteEdited`), a save (`writeText:`), a double-click on its title and
+  Keep Open (tab menu, File menu). The replaced tab is dropped unasked and
+  never in Reopen Closed Tab; a dirty one is kept instead. Agent previews
+  stay their own (neither replaces the other; a note's and a diff's are
+  apart too), and while the user types the agents' preview tab they are in
+  is passed over (`add`'s `passOver`), never replaced. The
   workspace edit applier opens kept (`lsp.openFile`): it opens every file
   before editing any, so previews would replace each other. No
   `workbench.editor.limit` (off by default in VS Code too).

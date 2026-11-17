@@ -337,7 +337,7 @@ void Window::setPreview(DocId id, Preview p) {
 
 DocId Window::previewTab(Preview kind) const {
     if (kind == Preview::None) return 0;
-    for (DocId id : documents())
+    for (DocId id : kind == Preview::User ? tabs() : documents())
         if (preview(id) == kind) return id;
     return 0;
 }
@@ -401,7 +401,7 @@ Window::Open Window::prepareOpen(const std::string &path, EditorTabs::OpenFrom f
         preview(on) == Preview::User && have != on)
         keep(on);
     if (have) {
-        if (preview(have) == Preview::User && !EditorTabs::staysPreview(true, o.inPreview))
+        if (isPreview(have) && !EditorTabs::staysPreview(true, o.inPreview))
             keep(have);
         o.existing = have;
     }
@@ -409,22 +409,32 @@ Window::Open Window::prepareOpen(const std::string &path, EditorTabs::OpenFrom f
 }
 
 DocId Window::add(DocId id, const std::string &path, Preview kind,
-                  const std::function<bool(DocId)> &keepOld) {
+                  const std::function<bool(DocId)> &keepOld,
+                  const std::function<bool(DocId)> &passOver) {
     if (!id || isOpen(id)) return 0;
-    DocId old = previewTab(kind);
+    const int f = focused_;
+    DocId old = 0;
+    if (kind != Preview::None)
+        for (DocId t : kind == Preview::User ? tabs(f) : documents())
+            if (preview(t) == kind && !(passOver && passOver(t))) {
+                old = t;
+                break;
+            }
     if (old && keepOld && keepOld(old)) {
         keep(old);
         old = 0;
     }
-    const int f = focused_;
     const int on = indexOf(groups_[f].active, f);
     const int n = (int)groups_[f].tabs.size();
+    const int oldAt = indexOf(old, f);
     int at;
     if (kind == Preview::User) {
-        const EditorTabs::PreviewPlace place = EditorTabs::placePreview(on, indexOf(old, f), n);
+        const EditorTabs::PreviewPlace place = EditorTabs::placePreview(on, oldAt, n);
         // `index` counts without the old tab, which is still in the row.
         at = place.index;
         if (place.replace >= 0 && at >= place.replace) at++;
+    } else if (old && oldAt >= 0) {
+        at = oldAt;   // the agents' new preview where the old one was
     } else {
         at = EditorTabs::insertionIndex(on, n);
     }
@@ -432,7 +442,10 @@ DocId Window::add(DocId id, const std::string &path, Preview kind,
     insertAt(f, at, id);
     if (old) {
         if (groups_[f].active == old) groups_[f].active = id;
-        remove(old);
+        // A group's own preview tab leaves that group only; the agents'
+        // leaves the window.
+        if (kind == Preview::User) close(old, f, nullptr);
+        else remove(old);
     }
     return old;
 }

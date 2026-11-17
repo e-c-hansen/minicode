@@ -217,14 +217,15 @@ public:
     // it shows while the source does, not beside the full preview.
     bool sideWanted() const { return sideWanted_; }
     void setSideWanted(bool on) { sideWanted_ = on; }
-    // The window's preview tab (EditorTabs.h): its title in italics, and
-    // the next file opened in preview replaces it. The window's tabs keep
+    // Its group's preview tab (EditorTabs.h): its title in italics, and
+    // the next file opened in preview in that group replaces it. The window's tabs keep
     // it (Editor::setPreview changes it).
     bool isPreviewTab() const { return host_->documentPreview(this) == Model::Preview::User; }
-    // The agent's own preview tab (`minicode open --note`, AgentNotes.h):
-    // italic like the preview tab, replaced by the next such open, kept by
-    // an edit, a save or a double-click on its title.
-    bool isAgentPreview() const { return host_->documentPreview(this) == Model::Preview::Agent; }
+    // One of the agents' two preview tabs, a file's (`minicode open --note`,
+    // AgentNotes.h) or a diff's (`minicode diff`): italic like the preview
+    // tab, replaced by the next such open of its kind, kept by an edit, a
+    // save or a double-click on its title.
+    bool isAgentPreview() const { return Model::isAgentPreview(host_->documentPreview(this)); }
 
     // The source (Text) or the message (Message). Media and Diff have an
     // empty one, which is what the view holds while they are shown.

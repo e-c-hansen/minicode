@@ -80,28 +80,62 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 }
 
 - (void)groupInsertTab:(MCTab *)t atIndex:(NSUInteger)i {
-    [self groupInsertTab:t atIndex:i preview:Model::Preview::None];
-}
-
-- (void)groupInsertTab:(MCTab *)t atIndex:(NSUInteger)i preview:(Model::Preview)kind {
     if (!t || _win->isOpen(t.docId)) return;
     [self adoptTab:t];
     _win->insert(t.docId, t.currentPath ? Utf8String(t.currentPath) : "",
                  (int)MIN(i, (NSUInteger)_win->count()));
-    if (kind != Model::Preview::None) _win->setPreview(t.docId, kind);
+}
+
+// A new tab by the window's rules (Model::Window::add): where it goes, and
+// which preview tab of its kind it replaces. An old preview with unsaved
+// changes (from a backup) is kept instead; `passOver`, the tab the user is
+// in while they type, is left alone. The replaced tab is returned for
+// letGoOfReplacedTab: once the new one is on show.
+- (MCTab *)groupAddTab:(MCTab *)t preview:(Model::Preview)kind passOver:(MCTab *)passOver {
+    if (!t || _win->isOpen(t.docId)) return nil;
+    [self adoptTab:t];
+    const BOOL wasSplit = _win->split();
+    MCTab *otherShown = [self parkedActive];
+    const Model::DocId skip = passOver ? passOver.docId : 0;
+    __weak EditorController *weakSelf = self;
+    const Model::DocId old = _win->add(
+        t.docId, t.currentPath ? Utf8String(t.currentPath) : "", kind,
+        [weakSelf](Model::DocId id) { return (bool)[weakSelf tabWithId:id].dirty; },
+        [skip](Model::DocId id) { return skip && id == skip; });
+    // The agents' replaced tab leaves the other group too.
+    if (wasSplit && !_win->split()) {
+        [self editorGroupsJoined];
+    } else if (_win->split()) {
+        if (otherShown != [self parkedActive]) {
+            _mirrorTab = nil;   // shown afresh
+            [self syncEditorMirror];
+        }
+        [self reloadParkedStrip];
+    }
+    return [self tabWithId:old];
+}
+
+// The preview tab a newer one replaced (groupAddTab:): no question (it has
+// no unsaved changes, since an edit keeps it) and no place in Reopen Closed
+// Tab, as VS Code leaves a replaced preview editor out of its recently
+// closed list. A user's preview tab the other group still shows stays
+// there.
+- (void)letGoOfReplacedTab:(MCTab *)t {
+    if (!t) return;
+    if (![self holdsTab:t] && t != _activeTab) {
+        [self discardBackupOf:t];
+        [t.latex removeFromSuperview];
+        [self forgetClosedTabs];
+    }
+    [self.lsp tabsChanged];
+    [self reloadTabStrip];
+    [self saveSession];
 }
 
 - (void)groupAppendTab:(MCTab *)t preview:(Model::Preview)kind {
     if (!t || _win->isOpen(t.docId)) return;
     [self adoptTab:t];
     _win->append(t.docId, t.currentPath ? Utf8String(t.currentPath) : "", kind);
-}
-
-- (void)groupRemoveTab:(MCTab *)t {
-    if (!t || !_win->inGroup(t.docId, _win->focused())) return;
-    const Model::Window::Closed c = _win->close(t.docId, _win->focused(), nullptr);
-    [self forgetClosedTabs];
-    if (c.groupClosed) [self editorGroupClosed];
 }
 
 // The other group's tab `t` goes (closed there, or moved): the group shows
@@ -124,7 +158,7 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 
 // ---------------------------------------------- what MCTab asks (MCTabOwner)
 - (BOOL)tabIsPreview:(MCTab *)t { return _win->preview(t.docId) == Model::Preview::User; }
-- (BOOL)tabIsAgentPreview:(MCTab *)t { return _win->preview(t.docId) == Model::Preview::Agent; }
+- (BOOL)tabIsAgentPreview:(MCTab *)t { return Model::isAgentPreview(_win->preview(t.docId)); }
 - (uint64_t)tabLastUsed:(MCTab *)t { return _win->lastUsed(t.docId); }
 - (void)tabPathChanged:(MCTab *)t {
     if ([self holdsTab:t]) _win->setPath(t.docId, t.currentPath ? Utf8String(t.currentPath) : "");
