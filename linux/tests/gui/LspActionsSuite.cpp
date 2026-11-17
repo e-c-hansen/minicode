@@ -383,6 +383,10 @@ MC_GUI_SUITE(lsp_actions) {
         GCHECK_EQ_STR(textOf("c.py"), "import a\na.assist()\n");
         Document* c = ed()->documentFor(F("c.py"));
         GCHECK(c && c->dirty() && !c->isPreviewTab());
+        // Each file's edit is one undo step, named as the Mac's.
+        GCHECK_EQ_STR(c ? c->undoName() : "?", "Rename");
+        GCHECK_EQ_STR(ed()->documentFor(F("a.py")) ? ed()->documentFor(F("a.py"))->undoName() : "?",
+                      "Rename");
         for (const char* n : {"a.py", "b.py", "c.py", "docs.txt"})
             GCHECK_EQ_STR(MCGuiReadFile(F(n)), gBefore[std::string("disk ") + n]);
         GCHECK(!lsp()->renameBoxVisible());

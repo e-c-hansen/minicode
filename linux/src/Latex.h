@@ -34,6 +34,7 @@
 #include <gtk/gtk.h>
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -86,12 +87,34 @@ public:
     // line); `done` runs on the main loop, with "" or the problem.
     static void downloadTectonicThen(std::function<void(const std::string& problem)> done);
 
+    // The files the document reads (\\input, \\include), as the Mac's
+    // LatexView: a double-click on text from one edits that file. The host
+    // (the editor) answers for a file's tab: its text when it holds the file
+    // as text (false: the preview reads the disk), an edit of it, which goes
+    // into the tab unsaved as one "Edit in Preview" step (a tab is made
+    // behind the preview when there is none), and whether the tab has
+    // unsaved changes, which the typeset, reading the disk, does not show.
+    struct InputHost {
+        std::function<bool(const std::string& path, std::string* text)> text;
+        std::function<bool(const std::string& path, const std::string& from,
+                           const std::string& to)> edit;
+        std::function<bool(const std::string& path)> unsaved;
+    };
+    void setInputHost(InputHost host) { inputs_ = std::move(host); }
+    // The files the last typeset read (not the document itself), in the
+    // document's folder's spelling, and its status line as the bar shows it.
+    std::vector<std::string> inputFiles() const;
+    // `from` turned into `to` in `buffer` by replacing only the bytes that
+    // differ, as one user action named "Edit in Preview".
+    static void spliceInto(GtkTextBuffer* buffer, const std::string& from, const std::string& to);
     // What the click path and the popover do, reachable for tests: the
     // double-click PdfView reports (0-based page, points from the page's
     // top-left), the popover's text, and its Save and Cancel.
     void doubleClick(int page, double x, double y);
     bool editing() const;
     std::string editText() const;
+    // The box's title ("Editing text in chapter.tex"), for tests.
+    std::string editTitle() const;
     void setEditText(const std::string& text);
     void commitEdit();
     void startAddItem();
@@ -172,6 +195,14 @@ private:
     void showPopover(const std::string& title, const std::string& text, bool allowsItem,
                      const GdkRectangle& anchor);
     void spliceBuffer(const std::string& from, const std::string& to);
+    // The user's file behind SyncTeX input `tag` ("" for the document, the
+    // engine's own files and anything not a plain file), the \\input file's
+    // source parsed from its tab or the disk (null when unreadable), and the
+    // edit of such a file when the box commits.
+    std::string inputFileForTag(int tag) const;
+    const LatexDoc* docOfInputFile(const std::string& file, std::string* source);
+    void commitInputEdit(const std::string& text, bool adding);
+    void showPagesStatus();
 
     static void onBufferChanged(GtkTextBuffer* buf, gpointer self);
     static void onPdfClick(void* self, int page, double x, double y, int nPress);
@@ -258,6 +289,12 @@ private:
     bool        editValid_ = false;
     bool        addingItem_ = false;
     LatexList   editList_;
+    // An \\input file's edit: the file ("" for the document's own) and its
+    // text when the box opened; and each file's source parsed, with the text
+    // it was parsed from.
+    std::string editFile_, editInputSrc_;
+    std::map<std::string, std::pair<std::string, LatexDoc>> inputDocs_;
+    InputHost inputs_;
     int         editItem_ = -1;
     GdkRectangle editAnchor_{0, 0, 1, 1};
 

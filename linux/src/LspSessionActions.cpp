@@ -346,7 +346,7 @@ void LspSession::commitRename(const std::string& name, int gen) {
                     return;
                 }
                 std::string failure;
-                const int files = applyEdit(we, s.get(), asked.get(), &failure);
+                const int files = applyEdit(we, s.get(), asked.get(), &failure, "Rename");
                 if (files < 0) {
                     gtk_widget_error_bell(view_);
                     note(failure);
@@ -606,7 +606,7 @@ void LspSession::performCodeAction(const Lsp::CodeAction& action, std::shared_pt
     if (action.hasEdit()) {
         std::string failure;
         const int n = applyEdit(Lsp::parseWorkspaceEdit(action.edit, lspui::canonicalUri),
-                                server.get(), action.asked.get(), &failure);
+                                server.get(), action.asked.get(), &failure, action.title);
         if (n < 0) {
             gtk_widget_error_bell(view_);
             note(failure);
@@ -643,7 +643,9 @@ void LspSession::serverAppliesEdit(const std::weak_ptr<Server>& weak, const Json
         }
         std::string failure;
         const int n = applyEdit(Lsp::parseWorkspaceEdit(params["edit"], lspui::canonicalUri),
-                                s.get(), nullptr, &failure);
+                                s.get(), nullptr, &failure,
+                                params["label"].asString().empty() ? std::string("Edit")
+                                                                    : params["label"].asString());
         if (n < 0) note(failure);
         reply(n >= 0, n < 0 ? failure : "");
     });
