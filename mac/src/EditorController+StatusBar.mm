@@ -388,8 +388,11 @@ static const CGFloat kHintsPad = 16;
                     key2:[self hk:@"workbench.action.findInFiles"] label2:@"Find in folder" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.startFindReplaceAction"] label:@"Replace in file"
                     key2:[self hk:@"workbench.action.replaceInFiles"] label2:@"Replace in folder" state:nil];
-    [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"editor.action.nextMatchFindAction"], [self hk:@"editor.action.previousMatchFindAction"]] label:@"Next, previous match"
-                    key2:[self hk:@"actions.findWithSelection"] label2:@"Use selection for find" state:nil];
+    // Shift+Cmd+G is Source Control's outside a find bar (Commands.cpp).
+    [self appendHintsRow:s key:[self hk:@"editor.action.nextMatchFindAction"] label:@"Next match"
+                    key2:@"⇧⌘G" label2:@"Previous match (in the bar)" state:nil];
+    [self appendHintsRow:s key:[self hk:@"actions.findWithSelection"] label:@"Use selection for find"
+                    key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"toggleFindCaseSensitive"], [self hk:@"toggleFindWholeWord"]] label:@"Match case, whole word"
                     key2:[self hk:@"toggleFindRegex"] label2:@"Regular expression" state:nil];
     [self appendHintsRow:s key:@"⇧⌘1" label:@"Replace (in the find bar)"

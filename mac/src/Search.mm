@@ -104,6 +104,8 @@ static NSString *MCReplaceSizeLimit(void) {
 // The content view, laid out by hand (flipped, top down).
 @interface MCSearchContent : NSView
 @property(nonatomic, copy) void (^onLayout)(void);
+// Cmd+G and Shift+Cmd+G anywhere in the window: the next or previous result.
+@property(nonatomic, copy) void (^onStep)(BOOL forward);
 @property(nonatomic, strong) NSColor *background;
 @end
 @implementation MCSearchContent
@@ -111,6 +113,22 @@ static NSString *MCReplaceSizeLimit(void) {
 - (void)layout {
     [super layout];
     if (self.onLayout) self.onLayout();
+}
+// The window offers key equivalents to its views before the menu, so the
+// keys stay here whatever in the window has the keyboard: Shift+Cmd+G is
+// Find Previous in this window and Toggle Source Control's menu key
+// everywhere else (Commands.cpp).
+- (BOOL)performKeyEquivalent:(NSEvent *)e {
+    const NSEventModifierFlags mods =
+        e.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagShift |
+                           NSEventModifierFlagOption | NSEventModifierFlagControl);
+    if (self.onStep && e.keyCode == 5 /* kVK_ANSI_G */ &&
+        (mods == NSEventModifierFlagCommand ||
+         mods == (NSEventModifierFlagCommand | NSEventModifierFlagShift))) {
+        self.onStep(!(mods & NSEventModifierFlagShift));
+        return YES;
+    }
+    return [super performKeyEquivalent:e];
 }
 - (void)drawRect:(NSRect)dirty {
     [(self.background ?: NSColor.windowBackgroundColor) setFill];
@@ -362,6 +380,7 @@ static NSString *MCReplaceSizeLimit(void) {
     _content = [[MCSearchContent alloc] initWithFrame:frame];
     __weak SearchPanel *weakSelf = self;
     _content.onLayout = ^{ [weakSelf layoutContent]; };
+    _content.onStep = ^(BOOL forward) { [weakSelf stepResult:forward]; };
     self.window.contentView = _content;
 
     // The title bar's actions, as the view's title bar has them in VS Code.
@@ -1162,6 +1181,44 @@ static NSString *MCReplaceSizeLimit(void) {
     else
         return;
     [self setResults:left];
+}
+
+// Cmd+G and Shift+Cmd+G: the next or previous line in the results, in the
+// tree's order and wrapping, selected and shown in the editor's preview tab
+// as a single click shows it, the keyboard left where it is.
+- (void)stepResult:(BOOL)forward {
+    NSMutableArray<SearchHit *> *order = [NSMutableArray array];
+    for (SearchFile *f in _files) [order addObjectsFromArray:f.hits];
+    if (!order.count) {
+        NSBeep();
+        return;
+    }
+    const NSInteger n = (NSInteger)order.count;
+    id item = [self.outline itemAtRow:self.outline.selectedRow];
+    NSInteger i;
+    if ([item isKindOfClass:[SearchHit class]]) {
+        const NSUInteger at = [order indexOfObjectIdenticalTo:item];
+        i = at == NSNotFound ? (forward ? 0 : n - 1) : (NSInteger)at + (forward ? 1 : -1);
+    } else if ([item isKindOfClass:[SearchFile class]] && ((SearchFile *)item).hits.count) {
+        const NSUInteger first =
+            [order indexOfObjectIdenticalTo:((SearchFile *)item).hits.firstObject];
+        i = first == NSNotFound ? 0 : (NSInteger)first - (forward ? 0 : 1);
+    } else {
+        i = forward ? 0 : n - 1;
+    }
+    i = (i % n + n) % n;
+    SearchHit *h = order[(NSUInteger)i];
+    for (SearchFile *f in _files)
+        if ([f.hits indexOfObjectIdenticalTo:h] != NSNotFound) {
+            [self.outline expandItem:f];
+            break;
+        }
+    const NSInteger row = [self.outline rowForItem:h];
+    if (row < 0) return;
+    [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
+              byExtendingSelection:NO];
+    [self.outline scrollRowToVisible:row];
+    if (self.previewHandler) self.previewHandler(h.path, h.line);
 }
 
 // A click on a file's row folds or unfolds it, as in VS Code; a line opens

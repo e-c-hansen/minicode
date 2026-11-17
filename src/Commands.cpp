@@ -421,7 +421,11 @@ const std::vector<Command>& all() {
          "performTextFinderAction:", kFindShowReplace, 0, nullptr},
         {"editor.action.nextMatchFindAction", "Find Next", "Edit", "cmd+g", A,
          "performTextFinderAction:", kFindNext, 0, nullptr},
-        {"editor.action.previousMatchFindAction", "Find Previous", "Edit", "shift+cmd+g", A,
+        // Shift+Cmd+G is Toggle Source Control's (the owner's call,
+        // 2026-11-16); a find bar takes it while one of its fields has the
+        // keyboard (EditorFind.h, TerminalFindBar.h), and Find in Folder's
+        // window while it is key (Search.mm), as Find in Selection's key.
+        {"editor.action.previousMatchFindAction", "Find Previous", "Edit", "", A,
          "performTextFinderAction:", kFindPrevious, 0, nullptr},
         {"actions.findWithSelection", "Use Selection for Find", "Edit", "cmd+e", A,
          "performTextFinderAction:", kFindSetSearchString, 0, nullptr},
@@ -517,7 +521,9 @@ const std::vector<Command>& all() {
          0, nullptr},
         {"workbench.action.toggleSidebarVisibility", "Toggle Sidebar", "View", "cmd+b", A,
          "toggleSidebarVisibility:", 0, 0, nullptr},
-        {"workbench.view.scm", "Toggle Source Control", "View", "ctrl+shift+g", A,
+        // Shift+Cmd+G from every pane but a find bar (see Find Previous),
+        // and VS Code's Ctrl+Shift+G.
+        {"workbench.view.scm", "Toggle Source Control", "View", "shift+cmd+g ctrl+shift+g", A,
          "toggleSourceControl:", 0, 0, nullptr},
         // VS Code has these without keys.
         {"minicode.git.reviewChanges", "Review Changes", "View > Source Control", "", A,

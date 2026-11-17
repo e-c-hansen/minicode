@@ -856,7 +856,7 @@ static const CGFloat kDividerGrabSlop = 5;
     if (self.hintsVisible) [self updateHints];
 }
 
-// Ctrl+Shift+G: the Source Control panel takes the file tree's place in the
+// Shift+Cmd+G or Ctrl+Shift+G: the Source Control panel takes the file tree's place in the
 // split view, and gives it back when toggled again. The sidebar's width is
 // kept, and a collapsed sidebar opens for it.
 - (void)toggleSourceControl:(id)sender {

@@ -51,6 +51,32 @@ MC_GUI_SUITE(search) {
         [p runSearch:nil];
     });
     MCGuiWait(@"the results", 10, ^BOOL { return !Panel(c).busy && Hits(c).count >= 2; });
+    MCGuiStep(@"Shift+Cmd+G and Cmd+G step through the results, not Source Control", ^{
+        // Find Previous's key in this window (Search.mm), Toggle Source
+        // Control's menu key everywhere else (Commands.cpp).
+        SearchPanel *p = Panel(c);
+        NSMutableArray<NSString *> *shown = [NSMutableArray array];
+        void (^was)(NSString *, NSInteger) = p.previewHandler;
+        p.previewHandler = ^(NSString *path, NSInteger line) {
+            (void)line;
+            [shown addObject:path.lastPathComponent];
+        };
+        const BOOL git = [[c valueForKey:@"gitPanelVisible"] boolValue];
+        const NSEventModifierFlags shiftCmd = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+        [p.window makeFirstResponder:p.field];
+        GCHECK(MCGuiPerformMenuKey(p.window, 5 /* g */, shiftCmd, nil, nil));
+        GCHECK(MCGuiPerformMenuKey(p.window, 5, shiftCmd, nil, nil));
+        GCHECK(MCGuiPerformMenuKey(p.window, 5, NSEventModifierFlagCommand, nil, nil));
+        MCGuiNote(@"shown: %@", shown);
+        GCHECK(shown.count == 3);
+        if (shown.count == 3) {
+            GCHECK(![shown[0] isEqualToString:shown[1]]);   // the last result, then the one before
+            GCHECK_EQ_STR(shown[2], shown[0]);             // and forward again
+        }
+        GCHECK(p.table.selectedRow >= 0);
+        GCHECK([[c valueForKey:@"gitPanelVisible"] boolValue] == git);
+        p.previewHandler = was;
+    });
     MCGuiStep(@"the 2 MB file searched; the Latin-1 one named under the results", ^{
         SearchPanel *p = Panel(c);
         MCGuiNote(@"status: %@; note: %@ (%@)", p.status.stringValue, p.skippedNote.stringValue,

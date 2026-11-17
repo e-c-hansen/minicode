@@ -10,6 +10,9 @@
 #import "PalettePanel.h"
 #import "TerminalPanel.h"
 #import "EditorFont.h"
+#import "EditorFind.h"
+#import "Terminal.h"
+#import <Carbon/Carbon.h>
 #include "Commands.h"
 
 namespace {
@@ -66,6 +69,31 @@ unichar F(int n) { return (unichar)(NSF1FunctionKey + n - 1); }
 NSString *FKey(int n) { return [NSString stringWithFormat:@"%C", F(n)]; }
 const NSEventModifierFlags kCtrlAltCmd =
     NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagCommand;
+const NSEventModifierFlags kShiftCmd = NSEventModifierFlagShift | NSEventModifierFlagCommand;
+
+// A key press the way the app takes one: the key monitor first, then the
+// window's views' key equivalents, then the main menu. YES when one took it.
+BOOL PressKey(NSWindow *w, unsigned short code, NSEventModifierFlags flags) {
+    CGEventRef ce = CGEventCreateKeyboardEvent(NULL, code, true);
+    CGEventFlags g = 0;
+    if (flags & NSEventModifierFlagCommand) g |= kCGEventFlagMaskCommand;
+    if (flags & NSEventModifierFlagShift) g |= kCGEventFlagMaskShift;
+    if (flags & NSEventModifierFlagOption) g |= kCGEventFlagMaskAlternate;
+    if (flags & NSEventModifierFlagControl) g |= kCGEventFlagMaskControl;
+    CGEventSetFlags(ce, g);
+    NSEvent *made = [NSEvent eventWithCGEvent:ce];
+    CFRelease(ce);
+    // The same press, addressed to the window, for the monitor's question
+    // of what has the keyboard.
+    NSEvent *e = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                             modifierFlags:made.modifierFlags timestamp:0
+                              windowNumber:w.windowNumber context:nil
+                                characters:made.characters
+               charactersIgnoringModifiers:made.charactersIgnoringModifiers
+                                 isARepeat:NO keyCode:code];
+    if (MCKeymapHandleKeyDown(e)) return YES;
+    return MCGuiPerformMenuKey(w, code, flags, nil, nil);
+}
 
 }  // namespace
 
@@ -253,5 +281,74 @@ MC_GUI_SUITE(keymap) {
                           @"~", @"~");
         GCHECK(TerminalCount(c) == before + 1);
         [[NSFileManager defaultManager] removeItemAtPath:[MCKeymap shared].path error:nil];
+    });
+
+    // Shift+Cmd+G (the owner's call, 2026-11-16): Toggle Source Control from
+    // every pane, and Find Previous only while a find bar has the keyboard.
+    NSString *words = MCGuiProjectFile(@"keys/words.txt");
+    __block BOOL gitWas = NO;
+    MCGuiStep(@"Shift+Cmd+G in the editor toggles Source Control, as Ctrl+Shift+G does", ^{
+        GCHECK([[MCKeymap shared].errors count] == 0);
+        GCHECK_EQ_STR(MCKeymapGlyphs(@"workbench.view.scm"), @"⇧⌘G");
+        GCHECK_EQ_STR(Item(@selector(toggleSourceControl:)).keyEquivalent, @"g");
+        GCHECK(Item(@selector(toggleSourceControl:)).keyEquivalentModifierMask ==
+               (NSEventModifierFlagCommand | NSEventModifierFlagShift));
+        NSMenuItem *prev = FindItem(NSApp.mainMenu, @selector(performTextFinderAction:),
+                                    NSTextFinderActionPreviousMatch, NO);
+        GCHECK(prev != nil && prev.keyEquivalent.length == 0);
+        MCGuiWriteFile(words, @"one alpha\ntwo alpha\nthree alpha\n");
+        GCHECK([c showFile:words]);
+        [c.window makeFirstResponder:Text(c)];
+        gitWas = [[c valueForKey:@"gitPanelVisible"] boolValue];
+        GCHECK(PressKey(c.window, kVK_ANSI_G, kShiftCmd));
+        GCHECK([[c valueForKey:@"gitPanelVisible"] boolValue] == !gitWas);
+        [c.window makeFirstResponder:Text(c)];
+        GCHECK(PressKey(c.window, kVK_ANSI_G, NSEventModifierFlagControl | NSEventModifierFlagShift));
+        GCHECK([[c valueForKey:@"gitPanelVisible"] boolValue] == gitWas);
+    });
+    MCGuiStep(@"and in a terminal", ^{
+        [c focusTerminal:nil];
+        MCTerminalPanel *panel = [c valueForKey:@"terminalPanel"];
+        TerminalView *t = panel.activeTerminal;
+        GCHECK(t != nil);
+        NSView *grid = [t valueForKey:@"grid"];
+        if (grid && !grid.hidden) [c.window makeFirstResponder:grid];
+        NSResponder *fr = c.window.firstResponder;
+        GCHECK([fr isKindOfClass:[NSView class]] && [(NSView *)fr isDescendantOf:t]);
+        GCHECK(PressKey(c.window, kVK_ANSI_G, kShiftCmd));
+        GCHECK([[c valueForKey:@"gitPanelVisible"] boolValue] == !gitWas);
+        GCHECK(PressKey(c.window, kVK_ANSI_G, kShiftCmd));
+        GCHECK([[c valueForKey:@"gitPanelVisible"] boolValue] == gitWas);
+    });
+    MCGuiStep(@"the editor's find field: Cmd+F, alpha", ^{
+        GCHECK([c showFile:words]);
+        [c.window makeFirstResponder:Text(c)];
+        Text(c).selectedRange = NSMakeRange(0, 0);
+        GCHECK(MCGuiPerformMenuKey(c.window, kVK_ANSI_F, NSEventModifierFlagCommand, nil, nil));
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        GCHECK(find.shown);
+        NSTextView *ed = (NSTextView *)find.bar.findField.currentEditor;
+        GCHECK(ed != nil && c.window.firstResponder == ed);
+        [ed insertText:@"alpha" replacementRange:ed.selectedRange];
+    });
+    MCGuiWait(@"three matches, the first selected", 5, ^BOOL {
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        return find.resultsCurrent && find.matchRanges.count == 3 && find.currentIndex == 0;
+    });
+    MCGuiStep(@"Shift+Cmd+G there is Find Previous, and Source Control stays as it was", ^{
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        GCHECK(c.window.firstResponder == find.bar.findField.currentEditor);
+        GCHECK(PressKey(c.window, kVK_ANSI_G, kShiftCmd));
+        GCHECK([[c valueForKey:@"gitPanelVisible"] boolValue] == gitWas);
+    });
+    MCGuiWait(@"the previous match: the last, wrapping", 5, ^BOOL {
+        return ((MCEditorFind *)[c valueForKey:@"editorFind"]).currentIndex == 2;
+    });
+    MCGuiStep(@"the bar closes", ^{
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        NSString *text = Text(c).string;
+        GCHECK(Text(c).selectedRange.location == [text rangeOfString:@"three alpha"].location + 6);
+        [(NSTextView *)find.bar.findField.currentEditor doCommandBySelector:@selector(cancelOperation:)];
+        GCHECK(!find.shown);
     });
 }
