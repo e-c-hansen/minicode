@@ -322,6 +322,72 @@ static void testChangeReview() {
         CHECK(fingerprint({moved}) != fingerprint({changed}));
     }
 
+    GROUP("review:action-note");
+    {
+        // "Staged g.py." over a page with g.py and f.txt changed.
+        File gs = file("def f():\n    return 1\n", "def f():\n    return 2\n", Section::Staged);
+        gs.path = "g.py";
+        File gc = gs;
+        gc.section = Section::Changes;
+        FileDiff gStaged = diffFile(gs, ""), gChanged = diffFile(gc, "");
+        FileDiff f = diffFile(file("a\n", "b\n"), "");
+        FileDiff fEdited = diffFile(file("a\n", "bb\n"), "");
+        CHECK(fingerprintOf({gStaged, f}, {"g.py"}) == fingerprintOf({gStaged, fEdited}, {"g.py"}));
+        CHECK(fingerprintOf({gStaged, f}, {"g.py"}) != fingerprintOf({gChanged, f}, {"g.py"}));
+        CHECK(fingerprintOf({gStaged, f}, {}) == fingerprint({gStaged, f}));
+        File renamed = gs;
+        renamed.path = "h.py";
+        renamed.origPath = "g.py";
+        CHECK(fingerprintOf({diffFile(renamed, "")}, {"g.py"}) != fingerprintOf({}, {"g.py"}));
+        auto note = [](bool headKnown, const std::string& head) {
+            ActionNote n;
+            n.paths = {"g.py"};
+            n.headKnown = headKnown;
+            n.head = head;
+            return n;
+        };
+        // The first read after the action is its result; it stays while
+        // g.py shows so, whatever else moves.
+        ActionNote n = note(true, "H1");
+        CHECK(!n.goesWith({gStaged, f}, true, "H1"));
+        CHECK(!n.goesWith({gStaged, f}, true, "H1"));
+        CHECK(!n.goesWith({gStaged, fEdited}, true, "H1"));
+        // Unstaged, discarded or edited from outside: gone.
+        CHECK(n.goesWith({gChanged, f}, true, "H1"));
+        n = note(true, "H1");
+        CHECK(!n.goesWith({gStaged, f}, true, "H1"));
+        CHECK(n.goesWith({f}, true, "H1"));
+        // A commit, in a terminal or the panel, after the first read:
+        // HEAD moved (and the staged change is gone).
+        n = note(true, "H1");
+        CHECK(!n.goesWith({gStaged, f}, true, "H1"));
+        CHECK(n.goesWith({f}, true, "H2"));
+        // The order CI met (main, 69ff43b): the commit lands before the
+        // first read after the action, so that read already shows g.py
+        // committed. HEAD as the action ran says so.
+        n = note(true, "H1");
+        CHECK(n.goesWith({f}, true, "H2"));
+        // A first commit: HEAD unborn ("") as the action ran.
+        n = note(true, "");
+        CHECK(n.goesWith({}, true, "H1"));
+        // HEAD unknown (a worktree's page): the files alone decide.
+        n = note(false, "");
+        CHECK(!n.goesWith({gStaged}, false, ""));
+        CHECK(!n.goesWith({gStaged}, true, "H9"));
+        CHECK(n.goesWith({gChanged}, false, ""));
+        // A refusal changed nothing: settled on the page at once, so the
+        // next read that shows g.py otherwise takes it away.
+        n = note(true, "H1");
+        n.settle({gChanged, f});
+        CHECK(!n.goesWith({gChanged, fEdited}, true, "H1"));
+        CHECK(n.goesWith({gStaged, f}, true, "H1"));
+        // Every file when no path is named (Apply to Main).
+        n = ActionNote();
+        n.settle({gStaged, f});
+        CHECK(!n.goesWith({gStaged, f}, false, ""));
+        CHECK(n.goesWith({gStaged, fEdited}, false, ""));
+    }
+
     GROUP("review:syntax-by-line");
     {
         // Each line's colors from its own start; a "\r\n" file's lines as
