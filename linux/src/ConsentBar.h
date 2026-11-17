@@ -74,6 +74,8 @@ public:
     // Don't Show Again, per server key, as kept on disk (read each time).
     static bool installMuted(const std::string& key);
     static void setInstallMuted(const std::string& key, bool muted);
+    // The bar's CSS (the class minicode-consent-bar), for other bars of its look.
+    static void ensureCss();
     // For checks: every language may be offered again this launch.
     static void forgetInstallOffers();
 

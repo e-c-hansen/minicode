@@ -541,7 +541,8 @@ private:
     // when it was asked for (null: not known), to refuse a file that moved
     // on since.
     int applyEdit(const Lsp::WorkspaceEdit& we, lspgtk::Server* server,
-                  const Lsp::DocVersions* asked, std::string* failure);
+                  const Lsp::DocVersions* asked, std::string* failure,
+                  const std::string& actionName = "Edit");
     std::string treePathForUri(const std::string& uri) const;
     Document* documentForPath(const std::string& path) const;
     std::shared_ptr<const std::u16string> serverTextOf(const std::string& uri) const;

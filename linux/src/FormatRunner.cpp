@@ -222,14 +222,10 @@ void runProcess(const std::vector<std::string>& argv, const std::string& cwd,
                                      : -1;
 }
 
-void work(Job* job) {
-    // write() to a formatter that stopped reading says EPIPE here; the
-    // signal is never the app's.
-    sigset_t pipe;
-    sigemptyset(&pipe);
-    sigaddset(&pipe, SIGPIPE);
-    pthread_sigmask(SIG_BLOCK, &pipe, nullptr);
-
+// What the decisions may look at on this machine: the project's files, the
+// program search over the usual folders, and the activated environment.
+FormatRun::Env makeEnv(const std::vector<std::string>& searchDirs, const std::string& home,
+                       const std::string& venv) {
     FormatRun::Env env;
     env.fs.exists = [](const std::string& p) {
         return g_file_test(p.c_str(), G_FILE_TEST_EXISTS) != 0;
@@ -243,12 +239,12 @@ void work(Job* job) {
         return out;
     };
     env.executable = runnable;
-    const std::vector<std::string> dirs = job->searchDirs;
-    const std::string home = job->home;
-    env.find = [dirs, home](const std::string& name) -> std::string {
+    const std::vector<std::string> dirs = searchDirs;
+    const std::string homeDir = home;
+    env.find = [dirs, homeDir](const std::string& name) -> std::string {
         if (name.find('/') != std::string::npos) {
             std::string p = name;
-            if (p.rfind("~/", 0) == 0) p = home + p.substr(1);
+            if (p.rfind("~/", 0) == 0) p = homeDir + p.substr(1);
             return runnable(p) ? p : "";
         }
         for (const std::string& d : dirs) {
@@ -258,9 +254,23 @@ void work(Job* job) {
         return "";
     };
     env.realPath = realPathOf;
-    env.virtualEnv = job->virtualEnv;
-    env.home = home;
+    env.virtualEnv = venv;
+    env.home = homeDir;
     env.askAgainMenu = "Edit";
+    return env;
+}
+
+void work(Job* job) {
+    // write() to a formatter that stopped reading says EPIPE here; the
+    // signal is never the app's.
+    sigset_t pipe;
+    sigemptyset(&pipe);
+    sigaddset(&pipe, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &pipe, nullptr);
+
+    const FormatRun::Env env = makeEnv(job->searchDirs, job->home, job->virtualEnv);
+    const std::string home = job->home;
+    const std::vector<std::string> dirs = job->searchDirs;
 
     Result& r = job->result;
     r.decision = FormatRun::decide(job->path, job->root, job->setting, job->consent,
@@ -336,6 +346,29 @@ void format(const std::string& text, const std::string& path, const std::string&
             delete job;
             return G_SOURCE_REMOVE;
         }, job);
+    }).detach();
+}
+
+void offerOnSave(const std::string& path, const std::string& root, const std::string& setting,
+                 std::function<void(std::string)> done) {
+    struct Look {
+        std::string path, root, setting, question;
+        std::function<void(std::string)> done;
+    };
+    Look* look = new Look{path, root, setting, "", std::move(done)};
+    const std::vector<std::string> dirs = LspSearchDirs();
+    const std::string home = g_get_home_dir();
+    const char* venvEnv = g_getenv("VIRTUAL_ENV");
+    const std::string venv = venvEnv ? venvEnv : "";
+    std::thread([look, dirs, home, venv] {
+        look->question = FormatRun::onSaveOffer(look->path, look->root, look->setting,
+                                                makeEnv(dirs, home, venv));
+        g_idle_add([](gpointer p) -> gboolean {
+            Look* look = static_cast<Look*>(p);
+            if (look->done) look->done(std::move(look->question));
+            delete look;
+            return G_SOURCE_REMOVE;
+        }, look);
     }).detach();
 }
 

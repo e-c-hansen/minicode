@@ -5346,7 +5346,42 @@ write job cannot read a file. `replace_in_folder` writes a file just over
 as above, and it is byte for byte as it was. Checked: that suite (20 passed;
 3 fail with the fix taken out).
 
-### 79. A double-click in the LaTeX preview on text from an \input file edits that file (done, November 2026)
+### 79. The workspace-edit applier's and the inline agent's undo steps are named (done, November 2026)
+
+`LspSession::applyEdit` takes the step's name and gives it to
+`MultiEdit::apply`: "Rename" for F2, the code action's title for a quick fix,
+the server's `label` (else "Edit") for workspace/applyEdit, and "Format
+Document" for the server fallback, as the Mac's `applyWorkspaceEdit:...
+actionName:`. The inline agent's Keep names its step "Inline Agent", as the
+Mac's `applyText`. Checks: `lsp_actions` reads `undoName()` of the renamed
+files (c.py, a.py) and `agent_panel` that of the kept edit; all three new
+checks fail ("Edit") with the src change taken out. The "Not done" note in
+item 72 about these two is now done.
+
+### 80. The offer of format on save and Edit > Format on Save (done, November 2026)
+
+The Mac's offer bar (`FormatOnSave.mm`) and menu item. After Ctrl+S saves a
+file whose project's own configuration chose its formatter and that
+formatter is installed (`FormatRun::onSaveOffer`, over
+`Formatter::offersOnSave` and the same formatter lookup Format Document
+uses, with a core check `format-run:on-save-offer`), while format.on-save is
+off and the offer is not muted, a bar under the tabs (`FormatOffer.{h,cpp}`,
+the consent bar's look) asks "This project formats Python files with ruff,
+set up in pyproject.toml. Format them each time you save?": Turn On writes
+`format.on-save = project` (through `AppSettings::writeValue`, so the same
+refusal while the settings file has unsaved changes) and says "Format on
+save is on for formatters a project sets up. Edit > Format on Save turns it
+off." in the status bar; Don't Ask Again is kept in install-hints.json under
+"format-on-save", with the install bar's; × closes it until minicode starts
+again. Once per launch across windows; the look runs off the main thread
+(`FormatRunner::offerOnSave`) and Save All and auto-save never offer. The
+settings turning format on some other way closes the bar. Edit > Format on
+Save (`minicode.toggleFormatOnSave`, no key, `app.formatonsave`) is checked
+while format.on-save is on and writes `false` or `project`. Not offered
+after a Ctrl+S that went through organize imports first, which saves
+through Formatting's own path. Checked by the `format_offer` suite.
+
+### 81. A double-click in the LaTeX preview on text from an \input file edits that file (done, November 2026)
 
 The Mac's change (30eddf9, aec3869, 03ce0c5) in the GTK preview. The core
 had the pieces (`SyncTexIndex::tagsAtPoint`, `inputs()`,

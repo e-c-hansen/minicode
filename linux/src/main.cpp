@@ -52,6 +52,7 @@
 #include "WebBookmark.h"
 #include "Carets.h"
 #include "ConsentBar.h"
+#include "FormatOffer.h"
 #include "Detach.h"
 #include "Document.h"
 #include "Editor.h"
@@ -158,6 +159,8 @@ struct App {
     // folder's answer's listener (Ask Again's enabled state).
     Formatting* format = nullptr;
     ConsentBar* consentBar = nullptr;
+    // The offer of format on save after Ctrl+S (FormatOffer.h).
+    FormatOffer* formatOffer = nullptr;
     int consentListener = 0;
     // The Problems list above the terminal and its counts in the status bar
     // (ProblemsPanel.h, PARITY.md 2.2).
@@ -996,7 +999,10 @@ static void act_save(GSimpleAction*, GVariant*, gpointer userp) {
         app->format->beforeSaving(st.organizeImportsOnSave(), st.formatOnSave(),
                                   st.formatOnSaveMode() == Settings::FormatOnSave::Project))
         return;
-    saveCurrent(app);
+    // Ctrl+S in a project that sets up its formatter, with format on save
+    // off: offer it (FormatOffer.h).
+    if (saveCurrent(app) && app->formatOffer && app->format && app->format->canFormat())
+        app->formatOffer->offerAfterSaving(app->editor->currentPath());
 }
 
 // Format Document (PARITY.md 2.4), and with lines selected those lines.
@@ -3398,13 +3404,20 @@ static void applyStylesheet() {
 
 // The settings file changed on disk: every window follows.
 static GSimpleAction* gIdeLinkAction = nullptr;
+static GSimpleAction* gFormatOnSaveAction = nullptr;
 
 static void onSettingsChanged(void*) {
     if (gIdeLinkAction)
         g_simple_action_set_state(gIdeLinkAction,
                                   g_variant_new_boolean(g.settings->settings().ideLink()));
+    if (gFormatOnSaveAction)
+        g_simple_action_set_state(gFormatOnSaveAction,
+                                  g_variant_new_boolean(g.settings->settings().formatOnSave()));
     applyStylesheet();
-    for (App* a : g.windows) applyWindowSettings(a);
+    for (App* a : g.windows) {
+        applyWindowSettings(a);
+        if (!a->dead && a->formatOffer) a->formatOffer->settingsChanged();
+    }
     scheduleBookmarkRefresh();
     refreshDockMenu();   // window.dock-menu
 }
@@ -3621,6 +3634,23 @@ static void initShared() {
     g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(gIdeLinkAction));
     g_object_unref(gIdeLinkAction);
 
+    // Edit > Format on Save: writes false or project (the Mac's
+    // MCFormatOnSaveMenuTarget), checked while format.on-save is on.
+    gFormatOnSaveAction = g_simple_action_new_stateful(
+        "formatonsave", nullptr, g_variant_new_boolean(g.settings->settings().formatOnSave()));
+    g_signal_connect(gFormatOnSaveAction, "change-state",
+                     G_CALLBACK(+[](GSimpleAction*, GVariant* value, gpointer) {
+                         std::string why;
+                         if (!g.settings->writeValue("format.on-save",
+                                                     g_variant_get_boolean(value) ? "project" : "false",
+                                                     &why) &&
+                             !g.windows.empty())
+                             flashStatus(g.windows.back(), why);
+                     }),
+                     nullptr);
+    g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(gFormatOnSaveAction));
+    g_object_unref(gFormatOnSaveAction);
+
     Zoom::applySettings(g.settings->settings());   // the zoom from last time, before any view
     Keys::init(g.gapp, onKeysChanged);
     // minicode's own writes to the settings file (a theme) wait while any
@@ -3783,6 +3813,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->format = nullptr;
     delete app->problems;  // before the session it lists
     app->problems = nullptr;
+    delete app->formatOffer;
+    app->formatOffer = nullptr;
     delete app->consentBar;
     app->consentBar = nullptr;
     delete app->lsp;
@@ -4210,6 +4242,19 @@ static App* newWindow(const std::string& root, const std::string& file,
 #endif
         }});
     app->editor->addBar(app->consentBar->widget());
+    app->formatOffer = new FormatOffer(FormatOffer::Host{
+        [app] { return app->rootDir; },
+        [](const std::string& lang) {
+            return g.settings ? g.settings->settings().formatCommand(lang) : std::string();
+        },
+        [] { return g.settings && g.settings->settings().formatOnSave(); },
+        [](std::string* why) {
+            return g.settings && g.settings->writeValue("format.on-save", "project", why);
+        },
+        [app](const std::string& message) {
+            if (!app->dead) flashStatus(app, message);
+        }});
+    app->editor->addBar(app->formatOffer->widget());
     app->format = new Formatting(GTK_WINDOW(app->window), app->editor, app->lsp, Formatting::Host{
         [app] { return app->rootDir; },
         [app](Document* d) {
