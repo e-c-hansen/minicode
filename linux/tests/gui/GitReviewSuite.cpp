@@ -123,10 +123,9 @@ MC_GUI_SUITE(git_review) {
     });
 
     // ------------------------------------------ Discard asks, then restores
-    Press("Discard", [] {
-        // The first block of f.txt, now the only one in the Changes list.
-        return Page()->rowOfFile("f.txt", false) + 1;
-    });
+    // The first block of f.txt, now the only one of it in the Changes list:
+    // g.txt's, f.txt's staged one, then this.
+    Press("Discard", [] { return Page()->rowOfBlock(2); });
     MCGuiWait("it asks", 10, QuestionUp);
     MCGuiStep("naming the change; Cancel", [] {
         GCHECK(QuestionText().find("Discard this change to f.txt?") != std::string::npos);
@@ -139,7 +138,7 @@ MC_GUI_SUITE(git_review) {
         GCHECK(TrashedTexts().empty());
         GCHECK(Page()->undoButton() && !gtk_widget_get_visible(Page()->undoButton()));
     });
-    Press("Discard", [] { return Page()->rowOfFile("f.txt", false) + 1; });
+    Press("Discard", [] { return Page()->rowOfBlock(2); });
     MCGuiWait("it asks", 10, QuestionUp);
     MCGuiStep("Discard Change", [] { Answer("Discard Change"); });
     MCGuiWait("that block is gone from the page", 15, [] {

@@ -288,6 +288,11 @@ void ChangeReviewPage::fill() {
     tints_.clear();
     GtkTextIter s, e;
     gtk_text_buffer_get_bounds(buffer_, &s, &e);
+    // The caret to the start first: a button leaving as its anchor is
+    // deleted asks the buffer for its selection, and the marks still sat in
+    // the text that was going (a crash in gtk_text_buffer_get_selection_bounds).
+    gtk_text_buffer_place_cursor(buffer_, &s);
+    gtk_text_buffer_get_bounds(buffer_, &s, &e);
     gtk_text_buffer_delete(buffer_, &s, &e);   // the anchors go with it
     std::string error = data_->read.error;
     if (!error.empty() || p.rows.empty()) {

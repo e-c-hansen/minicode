@@ -603,7 +603,7 @@ void GitPanel::layout(int W, int H) {
         int minW = 0, natW = 0;
         gtk_widget_measure(reviewButton_, GTK_ORIENTATION_HORIZONTAL, -1, &minW, &natW, nullptr,
                            nullptr);
-        reviewW = std::min(natW, inner / 2);
+        reviewW = std::max(minW, std::min(natW, inner / 2));
         const int bh = natHeight(reviewButton_, reviewW);
         place(reviewButton_, pad + inner - reviewW, y - 2, reviewW, bh);
         reviewW += 6;
