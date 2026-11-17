@@ -96,6 +96,8 @@ public:
     // A program other than the shell has the terminal (its foreground
     // process group is not the shell's).
     bool busy() const;
+    // That foreground process group (its leader's pid), 0 when not busy.
+    int foregroundJob() const;
     // `minicode term --run` and Run File (PARITY.md 3.1): `line` (one line)
     // typed at the shell's prompt as a paste and entered with Return, so it
     // runs visibly and goes through the shell's history. Nothing is typed

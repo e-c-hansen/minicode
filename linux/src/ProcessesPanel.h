@@ -38,6 +38,14 @@ public:
     void setActive(bool active);
     void focus();
     void refresh();                    // rebuild from the monitor's last look
+    // The terminal's close question's Show in Processes (the Mac's
+    // revealTerminal:job:): selects process `job` (a foreground process
+    // group's leader; 0 for none), else the first process still running in
+    // terminal `terminal`'s group, else its first, and scrolls to it. A job
+    // not yet seen waits for a look that has it, up to 3 s, then falls back.
+    void revealTerminal(int terminal, int job);
+    // The pid of the selected process row, 0 when none (for the checks).
+    int selectedPid() const;
 
     // What the rows say, for the checks.
     struct RowInfo {
@@ -69,9 +77,13 @@ private:
     bool active_ = false;
     unsigned timer_ = 0;
     unsigned seen_ = 0;
+    int revealTerminal_ = 0, revealJob_ = 0;
+    gint64 revealUntil_ = 0;          // monotonic microseconds; 0 when none waits
+    gint64 revealFallbackAt_ = 0;     // from then the group's first process will do
     std::string menuLabels_;
 
     void rebuild();
+    void applyReveal();
     void stopPid(int pid);
     void revealOrigin(int pid);
     void popup(GMenu* menu, double x, double y);

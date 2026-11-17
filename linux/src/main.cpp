@@ -1178,14 +1178,26 @@ static Terminal* makeTerminal(App* app) {
 }
 
 // The question before a terminal with a program running closes.
+static void act_toggle_processes(GSimpleAction*, GVariant*, gpointer userp);
+
+// The close question's Show in Processes (the Mac's showProcessesForTerminal:):
+// the panel shown and `t`'s job selected, nothing closed. `id` and `job` are
+// read when the question was asked, since the terminal may be gone by now.
+static void showProcessesForTerminal(App* app, int id, int job) {
+    if (app->dead) return;
+    if (!app->procsShown) act_toggle_processes(nullptr, nullptr, app);
+    app->procs->revealTerminal(id, job);
+}
+
 static void askCloseBusyTerminal(App* app, Terminal* t, std::function<void()> proceed) {
     GtkAlertDialog* dlg = gtk_alert_dialog_new("Close this terminal?");
     gtk_alert_dialog_set_detail(dlg, "A program is still running in it, and closing the terminal ends it.");
-    const char* buttons[] = {"Close Terminal", "Cancel", nullptr};
+    // 2: what is running, in the Processes panel, the terminal kept.
+    const char* buttons[] = {"Close Terminal", "Cancel", "Show in Processes", nullptr};
     gtk_alert_dialog_set_buttons(dlg, buttons);
     gtk_alert_dialog_set_cancel_button(dlg, 1);
     gtk_alert_dialog_set_default_button(dlg, 1);
-    struct Ask { App* app; std::function<void()> proceed; };
+    struct Ask { App* app; std::function<void()> proceed; int id, job; };
     gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr,
         [](GObject* src, GAsyncResult* res, gpointer up) {
             Ask* a = static_cast<Ask*>(up);
@@ -1193,10 +1205,10 @@ static void askCloseBusyTerminal(App* app, Terminal* t, std::function<void()> pr
             const int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, &err);
             if (err) g_error_free(err);
             else if (choice == 0 && !a->app->dead) a->proceed();
+            else if (choice == 2) showProcessesForTerminal(a->app, a->id, a->job);
             delete a;
-        }, new Ask{app, std::move(proceed)});
+        }, new Ask{app, std::move(proceed), t->controlId(), t->foregroundJob()});
     g_object_unref(dlg);
-    (void)t;
 }
 
 // New Terminal: a tab right of the active one, shown, with the keyboard.
