@@ -5421,3 +5421,22 @@ closed. `processes` closes the busy terminal, presses the button and checks
 the panel, the selected row (`selectedPid`) and that the terminal is still
 there. The question's wording is Linux's own ("Close this terminal?"); the Mac
 names the command, which the GTK terminal does not know.
+
+### 83. The Claude Code hooks offer (done, November 2026)
+
+The Mac's `ClaudeHooksOffer` on GTK: when Claude Code starts in a terminal a
+bar between the terminal tabs and the terminals (`TerminalDock::setNotice`)
+offers Turn On…, Not Now and ×, once per launch across windows, unless the
+hooks are in already or Not Now was pressed (kept as `claude-hooks` in the
+install bar's muted list, `ConsentBar::installMuted`, in
+`$XDG_STATE_HOME/minicode/install-hints.json`). The rule is the core's
+`ClaudeHooks::shouldOffer` (`hooks:offer`). "Started" is
+`Terminal::onClaudeStarted`: on the shell integration's mark that a command
+began, `ClaudeHooks::startsClaude` on its text at once, else one second later
+`isClaudeProgramPath` on `/proc/<foreground group>/exe`; a shell without the
+integration (fish, sh) offers nothing, as on the Mac without 633;E.
+Turn On… (`linux/src/ClaudeHooksOffer.{h,cpp}`) asks with the JSON that would
+be added in the alert's detail (Add the Hooks, Cancel), writes through
+`ClaudeHooks::install` (backup first) and says where. Not ported: minicode >
+Install Claude Code Hooks… and the Agents panel's header line.
+`claude_hooks_offer` checks it against the scratch `CLAUDE_CONFIG_DIR`.

@@ -38,6 +38,10 @@ public:
     GtkWidget* widget() const { return root_; }
     TabStrip* strip() const { return strip_; }
     GtkWidget* newTabButton() const { return plus_; }
+    // A bar between the tab strip and the terminals (the Mac's noticeBar:
+    // the Claude Code hooks offer); nullptr takes it out. Only one at a time.
+    void setNotice(GtkWidget* bar);
+    GtkWidget* notice() const { return notice_; }
 
     // Tabs. A tab's terminal (`at`) is the pane of it last used.
     int count() const { return (int)groups_.size(); }
@@ -102,6 +106,7 @@ private:
     std::function<Terminal*()> make_;
     GtkWidget* root_ = nullptr;
     GtkWidget* stack_ = nullptr;
+    GtkWidget* notice_ = nullptr;
     GtkWidget* plus_ = nullptr;
     GtkWidget* rename_ = nullptr;   // the rename popover while it is up
     TabStrip* strip_ = nullptr;

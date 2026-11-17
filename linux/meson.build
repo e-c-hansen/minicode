@@ -230,6 +230,7 @@ gui_sources = [
   'src/FolderConsent.cpp',
   'src/ConsentBar.cpp',
   'src/FormatOffer.cpp',
+  'src/ClaudeHooksOffer.cpp',
   'src/InstallView.cpp',
   # Format Document (PARITY.md 2.4): the window's side (Formatting.cpp),
   # the formatter's process (FormatRunner.cpp), and a server's formatting
