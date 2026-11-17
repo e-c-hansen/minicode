@@ -99,6 +99,17 @@ void saveWithOffer(const std::string& line) {
     MCGuiWait("saved", 10, [] { return !dirty(); });
 }
 
+// The bar shows and its buttons are laid out: shown() turns true when the
+// bar is revealed, a frame or so before its buttons have a size, and a click
+// on a 0x0 button finds nothing to point at (CI, 13a1a88).
+bool barReady() {
+    if (!offer()->shown()) return false;
+    for (GtkWidget* b : {offer()->turnOnButton(), offer()->muteButton(), offer()->closeButton()})
+        if (!gtk_widget_get_mapped(b) || gtk_widget_get_width(b) <= 0 || gtk_widget_get_height(b) <= 0)
+            return false;
+    return true;
+}
+
 }  // namespace
 
 MC_GUI_SUITE(format_offer) {
@@ -127,7 +138,7 @@ MC_GUI_SUITE(format_offer) {
         GCHECK(!offer()->checking());
     });
     saveWithOffer("z = 3\n");
-    MCGuiWait("the bar shows", 15, [] { return offer()->shown(); });
+    MCGuiWait("the bar shows", 15, [] { return barReady(); });
     MCGuiStep("its words and buttons are the Mac's", [] {
         GCHECK(offer()->text() == kQuestion);
         GCHECK(std::string(gtk_button_get_label(GTK_BUTTON(offer()->turnOnButton()))) == "Turn On");
@@ -149,7 +160,7 @@ MC_GUI_SUITE(format_offer) {
 
     // ---- Turn On
     saveWithOffer("v = 5\n");
-    MCGuiWait("the bar shows again", 15, [] { return offer()->shown(); });
+    MCGuiWait("the bar shows again", 15, [] { return barReady(); });
     MCGuiStep("Turn On", [] { MCGuiClick(offer()->turnOnButton()); });
     MCGuiWait("the bar goes and the settings say project", 10, [] {
         return !offer()->shown() && settingsFile().find("format.on-save = project") != std::string::npos;
@@ -191,7 +202,7 @@ MC_GUI_SUITE(format_offer) {
     MCGuiStep("format.on-save off in the file", [] { MCGuiSetSettings("lsp.enabled = false\n"); });
     MCGuiWait("off", 10, [] { return !actionOn(); });
     saveWithOffer("t = 7\n");
-    MCGuiWait("the bar shows", 15, [] { return offer()->shown(); });
+    MCGuiWait("the bar shows", 15, [] { return barReady(); });
     MCGuiStep("format.on-save = true written in the file by hand", [] {
         MCGuiSetSettings("lsp.enabled = false\nformat.on-save = true\n");
     });
@@ -201,7 +212,7 @@ MC_GUI_SUITE(format_offer) {
     MCGuiStep("format.on-save off again", [] { MCGuiSetSettings("lsp.enabled = false\n"); });
     MCGuiWait("off", 10, [] { return !actionOn(); });
     saveWithOffer("s = 8\n");
-    MCGuiWait("the bar shows", 15, [] { return offer()->shown(); });
+    MCGuiWait("the bar shows", 15, [] { return barReady(); });
     MCGuiStep("Don't Ask Again", [] { MCGuiClick(offer()->muteButton()); });
     MCGuiWait("the bar goes and the key is kept", 10, [] {
         return !offer()->shown() && ConsentBar::installMuted(FormatOffer::key());
