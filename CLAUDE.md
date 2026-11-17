@@ -277,7 +277,9 @@ goes here first, with tests; the GUI only displays it.
   GTK port's documents are mirrors of a host in the same process
   (`linux/src/SessionLink.{h,cpp}`, `linux/HANDOFF.md` item 87): undo
   asks the host, the language server sync reads its text, and the GTK
-  harness checks every buffer against the host as each suite ends. The
+  harness checks every buffer against the host as each suite ends; CI's
+  GTK job runs a named set of suites again with every message through
+  the wire format (`MINICODE_HOST=loopback`). The
   Mac (4b) is next, behind a setting for one release.
 - Editing: `LineDiff` (Myers, split at lines unique on both sides past
   1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,

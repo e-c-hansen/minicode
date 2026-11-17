@@ -5613,7 +5613,10 @@ every edit, undo and language server sync.
   reported nothing wrong (`checkSessionMirrors`). `MINICODE_HOST=loopback`
   puts every message through the protocol's encoding and back;
   `MINICODE_HOST_DELAY_US` delays each one on the host's thread (the GUI
-  harness's wrapper passes both through). The core's
+  harness's wrapper passes both through). CI's GTK job runs a named set of
+  editing suites that way after the two halves ("GUI checks over the
+  session host's wire format", `GUI_LOOPBACK` in ci.yml, 200 us a
+  message). The core's
   `ot:*` and `host:*` groups hold the transform and the host to a fuzz of
   renderers in both units.
 - **Not moved yet** (stage 7): saving, the disk and its stamps, dirty,
