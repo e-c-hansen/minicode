@@ -1,4 +1,4 @@
-// Document.h — one open file of a window's editor (linux/PARITY.md, D2 and
+// DocumentView.h — one open file of a window's editor (linux/PARITY.md, D2 and
 // D3): what belongs to the file rather than to the view, so that a tab keeps
 // it while another tab is on show. The window's one GtkTextView shows a
 // document with gtk_text_view_set_buffer; the editor's tabs, their order and

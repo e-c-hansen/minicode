@@ -2,7 +2,7 @@
 #include "Persistence.h"
 
 #include "BackupStore.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 
 #include <glib/gstdio.h>

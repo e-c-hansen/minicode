@@ -13,7 +13,7 @@
 // leaves no backup and writes nothing.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "TabStrip.h"
 

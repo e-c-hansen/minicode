@@ -7,7 +7,7 @@
 #include "Harness.h"
 
 #include "CsvTable.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 
 #include <string>

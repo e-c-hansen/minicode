@@ -20,7 +20,7 @@
 //     tab's text, and the edit goes into that tab.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Latex.h"
 #include "LatexClick.h"

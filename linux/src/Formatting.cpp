@@ -3,7 +3,7 @@
 #include "Formatting.h"
 #include "InstallView.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "FolderConsent.h"
 #include "FormatRunner.h"

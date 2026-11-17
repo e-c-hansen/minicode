@@ -25,7 +25,7 @@
 #include "ControlPaths.h"
 #include "ControlServer.h"
 #include "CompareView.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "GitRun.h"
 #include "FileTree.h"

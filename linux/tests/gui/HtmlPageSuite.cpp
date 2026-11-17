@@ -14,7 +14,7 @@
 #include "Harness.h"
 
 #include "AppSettings.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "WindowLayout.h"
 #include "HtmlView.h"

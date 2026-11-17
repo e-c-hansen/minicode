@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "EditorPage.h"
 #include "EditorTabs.h"
 #include "Markdown.h"

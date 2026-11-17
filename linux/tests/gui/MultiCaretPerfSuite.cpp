@@ -19,7 +19,7 @@
 // reading the text back costs as much as a key (3.5 MB a poll).
 #include "CaretSuites.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Palette.h"
 #include "SyntaxHighlighter.h"
 

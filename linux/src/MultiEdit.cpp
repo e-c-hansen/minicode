@@ -1,7 +1,7 @@
 // MultiEdit.cpp — see MultiEdit.h.
 #include "MultiEdit.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "EditSpans.h"
 
 namespace MultiEdit {

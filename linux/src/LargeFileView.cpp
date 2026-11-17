@@ -5,7 +5,7 @@
 #include "LargeFileView.h"
 
 #include "CodeView.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Folds.h"
 #include "LargeFile.h"   // the core's thresholds and rules

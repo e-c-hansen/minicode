@@ -16,7 +16,7 @@
 #include "AgentsPanel.h"
 #include "AgentWorktrees.h"
 #include "CompareDecision.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "EvidencePage.h"
 #include "FileTree.h"
 #include "Terminal.h"

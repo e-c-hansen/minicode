@@ -13,7 +13,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Browser.h"
 #include "BrowserPages.h"
 #include "Keys.h"

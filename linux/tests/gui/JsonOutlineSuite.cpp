@@ -8,7 +8,7 @@
 // notebook shown read-only as its cells and outputs, with its JSON a toggle away.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "JsonOutlineView.h"
 #include "Markdown.h"

@@ -4,7 +4,7 @@
 #include "BracketMatch.h"
 #include "BufferText.h"
 #include "CodeView.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Settings.h"
 

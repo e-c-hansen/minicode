@@ -37,7 +37,7 @@ core_sources = [
   core_dir / 'Text.cpp',
   core_dir / 'Document.cpp',
   # Each document's undo and redo (SESSION-DESIGN.md, stage 2), in place of
-  # GtkTextBuffer's own (Document.cpp records every buffer edit into it).
+  # GtkTextBuffer's own (DocumentView.cpp records every buffer edit into it).
   core_dir / 'UndoHistory.cpp',
   # The session's host on its own thread, the editor's client of it, their
   # messages, and the transform that makes crossed edits agree
@@ -164,12 +164,12 @@ main_source = 'src/main.cpp'
 gui_sources = [
   'src/FileTree.cpp',
   'src/ClickCount.cpp',
-  # The editor: the view (Editor.cpp), each open file (Document.cpp), the
+  # The editor: the view (Editor.cpp), each open file (DocumentView.cpp), the
   # tabs (Tabs.cpp) and their strip (TabStrip.cpp).
   'src/Editor.cpp',
   # The settings file's opacity values open a slider (PARITY.md 2.11).
   'src/OpacityPicker.cpp',
-  'src/Document.cpp',
+  'src/DocumentView.cpp',
   'src/Tabs.cpp',
   'src/Groups.cpp',
   'src/TabStrip.cpp',

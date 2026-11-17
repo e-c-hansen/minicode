@@ -10,7 +10,7 @@
 // closes it. The Mac's swatch_escape suite.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 
 #include <cmath>

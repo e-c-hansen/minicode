@@ -8,7 +8,7 @@
 // lines (D8) is the folds' own, whoever found the regions.
 #include "LspSessionPrivate.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Folds.h"
 
 using lspgtk::Server;

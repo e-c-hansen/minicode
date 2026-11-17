@@ -1,7 +1,7 @@
-// Document.cpp — see Document.h. The highlighting, the disk and the save
+// DocumentView.cpp — see DocumentView.h. The highlighting, the disk and the save
 // were the single-buffer Editor's until tabs (PARITY.md 1.1); they are the
 // same code, now per document.
-#include "Document.h"
+#include "DocumentView.h"
 #include "CsvTable.h"
 #include "FileSniff.h"
 #include "JsonOutline.h"

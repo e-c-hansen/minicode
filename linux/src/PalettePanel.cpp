@@ -6,7 +6,7 @@
 #include "PalettePanel.h"
 
 #include "Commands.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Json.h"
 #include "Keys.h"

@@ -16,7 +16,7 @@
 #include "Harness.h"
 
 #include "AgentNotes.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "FileTree.h"
 

@@ -3,7 +3,7 @@
 
 #include <algorithm>
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 
 namespace {

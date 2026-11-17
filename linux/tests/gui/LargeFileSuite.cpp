@@ -24,7 +24,7 @@
 
 #include "BufferLines.h"
 #include "CodeView.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "FakeLsp.h"
 #include "FindBar.h"
