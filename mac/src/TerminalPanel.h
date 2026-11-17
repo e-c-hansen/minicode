@@ -128,6 +128,20 @@ typedef NS_ENUM(NSInteger, MCPaneDirection) {
 - (void)setDirectory:(NSString *)dir;
 @end
 
+#ifdef __cplusplus
+#include "TabSessions.h"
+// The dock between runs (EditorController+Persistence.mm): each tab's panes
+// with their folders, names and shares, and bringing them back as fresh
+// shells in those folders. A running program is not brought back.
+@interface MCTerminalPanel (Session)
+- (std::vector<TabSessions::TerminalTab>)sessionTabs;
+// On a panel just made (its one terminal is the first tab's first pane):
+// the rest of the panes and tabs, then `selected` shown.
+- (void)restoreSessionTabs:(const std::vector<TabSessions::TerminalTab> &)tabs
+                  selected:(NSInteger)selected;
+@end
+#endif
+
 // The commands running in these terminals, for a question before they close.
 NSArray<NSString *> *MCRunningCommands(NSArray<TerminalView *> *terminals);
 // The question ("Close the terminal?"), then "“vim” is still running." (or a

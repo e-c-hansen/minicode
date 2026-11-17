@@ -761,6 +761,35 @@ container (PanelHost, laid out by hand in layoutContainer)
   lists the saving window's files then the others'. Agent preview tabs are left
   out (they were saved until 2026-11-08); the user's preview tab is saved as
   `preview` and comes back as one unless a backup made it dirty.
+- **Every window comes back** (2026-11-16, W1; VS Code's
+  window.restoreWindows "all"; `TabSessions::Window`, `tab-sessions:windows`,
+  `make guitest SUITES=window_restore`): a launch with no path argument
+  (the Dock, Finder, `open -a`, a `brew upgrade` reopening, ↻ Restart's
+  relaunch) reopens every window open at the last quit, front first. Before
+  this, a Dock launch opened a window on `/` (its cwd) with nothing in it,
+  and the ↻ restart brought folders and tabs back but no frames, carets,
+  panels or tree. The record is the core's (`encodeWindows`, a JSON string
+  in the defaults' `MCOpenWindows` until stage 3 moves the session into the
+  core): per window its frame (`fitFrame` onto today's screens), full
+  screen, folder, its own tabs as a `TabSessions::Session` (each tab's
+  selection, top character and offset, page or source, side preview, the
+  groups), the sidebar's panel, width and Cmd+B state, editor hidden,
+  Problems, the terminal dock (shown, height, each tab's panes' folders,
+  names and `TerminalLayout` shares; fresh shells, nothing reattached),
+  and the tree's expanded folders, selected row and scroll. Written by
+  `applicationWillTerminate`, by `windowWillClose:` (`noteWindowClosing`,
+  `TabSessions::afterClosing`: the last window is kept, since closing it
+  quits) and 3 s after a tab switch (saveSession), never empty. A restored
+  window takes its tabs from the record, not the folder's `MCTabSessions`
+  (two windows on one folder each get theirs); showWindow puts back the
+  frame first (`placeRestoredWindow`), then the sidebar, terminals and
+  Problems before the tabs, so text is laid out at its width
+  (`restoreWindowLayout`), and the tree, a hidden editor and the keyboard
+  last (`finishRestoringWindow`); a tab's place goes back when it is first
+  read (`MCTab placeFromSession`, `applySessionPlaceOf:` from
+  `loadActiveTab`). A path argument or a Finder open at launch opens only
+  that, as before. The Mac's selection offsets are UTF-16 and GTK's code
+  points: each reads only what it wrote, which stage 3 must settle.
 - AppDelegate's `current` maps a window an editor made (`ownsWindow:`, Find in
   Folder and TODOs) to that editor; items that edit the file on show are
   disabled while another window is key, so keys reach that window's field.
@@ -3519,7 +3548,8 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `applicationWillTerminate` writes `MCRestart` and `MCLaunchAfterExit` spawns
   a detached `/bin/sh` that waits for our pid and runs `open -n
   <source>/MiniCode.app`; the new process takes a record under two minutes old
-  (`reopenAfterRestart:`) and runs `develop.command --continue` in the
+  (`reopenAfterRestart:`), brings every window back from `MCOpenWindows`
+  (written by that same quit; see "Every window comes back") and runs `develop.command --continue` in the
   resuming window (never the record's command, and only in a folder that
   looks like the source). After a restart the user runs the repo's build until the next `brew
   upgrade`. Restart minicode (minicode menu, the status bar's ↻,
@@ -3973,7 +4003,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
 - Launch Services delivers the open between will- and didFinishLaunching, so
   setup is in `applicationWillFinishLaunching:`, and didFinishLaunching opens
   no window of its own when one exists and argv is empty (a Finder launch has /
-  as cwd). `main()` registers `NSTreatUnknownArgumentsAsOpen` NO, so argv goes
+  as cwd); with none and argv empty it brings back the last run's windows
+  (`restoreOpenWindows`), else opens the cwd. `main()` registers `NSTreatUnknownArgumentsAsOpen` NO, so argv goes
   through the argv code only.
 - **The Dock icon's menu** (2026-11-14, RecentFolders.mm): the recent
   folders go to `NSDocumentController noteNewRecentDocumentURL:` as well as
@@ -4144,7 +4175,7 @@ session has a display. Check first.
   folding, foldperf, multicaretclick, multicaret_rows, find_bar,
   large_file, save, paste, zoomfit;
   files and windows: tree, tree_hidden, folder_picker, preview_tabs, split_editor, search,
-  replace_in_folder, backups, palette, symbols, keymap, config_writes,
+  replace_in_folder, backups, window_restore, palette, symbols, keymap, config_writes,
   daily_work, structure, utf16, hints_panel, swatch_escape;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
@@ -4161,7 +4192,8 @@ session has a display. Check first.
   agents and control: agents, agent_panel, agent_places, agentcommands,
   agent_autosave, attention, control, browserpages, browser_tabs, browser_find, bookmarks,
   idelink, processes;
-  run only when named: _backups_writer, _backups_restore.
+  run only when named: _backups_writer, _backups_restore, _restore_writer,
+  _restore_reader.
   A suite's file is usually its name in CamelCase; the exceptions are
   mermaid (IdeLinkSuite.mm), foldperf (FoldingSuite.mm), the format_*
   suites (FormatSuite.mm), git_actions, git_hunks, git_review,

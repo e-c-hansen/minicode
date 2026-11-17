@@ -224,6 +224,21 @@
 - (BOOL)keepUnsavedTabsForRestart;
 // Writes this window's session (tabs, browser) now; quitting calls it.
 - (void)saveSession;
+// Every window as it is, for the next launch that is asked to open nothing
+// (VS Code's window.restoreWindows "all"): frames, folders, tabs with their
+// carets and scroll, both editor groups, the panels and their sizes, the
+// terminals' folders and splits, the tree's open folders and selected row
+// (TabSessions::Window). Written as minicode quits, as a window closes (the
+// last one is kept, since closing it quits), and a moment after a tab
+// switch, so a crash loses little.
++ (void)saveOpenWindows;
+// The windows to bring back, front first: @{@"root": folder, @"record":
+// what restoreWindowRecord: takes}, for folders still there. None for the
+// demos and the benchmark, which start the same way every time.
++ (NSArray<NSDictionary *> *)windowsToRestore;
+// Before showWindow: the window comes back as `record` says, its tabs from
+// it rather than from the folder's session.
+- (void)restoreWindowRecord:(NSString *)record;
 @end
 
 // EditorController+Rendering.mm

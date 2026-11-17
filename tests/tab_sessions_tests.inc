@@ -200,4 +200,166 @@ static void testTabSessions() {
         CHECK(bad.at("/q").groups.focused == 0 && bad.at("/q").groups.fraction == 0.5);
         CHECK(!bad.at("/r").split);
     }
+
+    GROUP("tab-sessions:windows");
+    {
+        // Two windows, front first, with all a window brings back.
+        Window a;
+        a.root = "/p";
+        a.haveFrame = true;
+        a.frame = Frame{120.5, 80, 1400, 900};
+        a.tabs.tabs = {tab("/p/a.txt", 3, 7, true, 120, 4), tab("/p/b.md", 0, 0, false, 0, 0, true)};
+        a.tabs.tabs[1].side = true;
+        a.tabs.active = 1;
+        a.tabs.preview = 0;
+        a.tabs.split = true;
+        a.tabs.groups.groups[0] = {"/p/a.txt"};
+        a.tabs.groups.groups[1] = {"/p/b.md"};
+        a.tabs.groups.active[0] = "/p/a.txt";
+        a.tabs.groups.active[1] = "/p/b.md";
+        a.tabs.groups.focused = 1;
+        a.tabs.groups.fraction = 0.4;
+        a.sidebar = "git";
+        a.sidebarWidth = 310;
+        a.problems = true;
+        a.terminal = true;
+        a.terminalHeight = 260;
+        TerminalTab t;
+        t.columns = {{{"/p", ""}, {"/p/src", "server"}}, {{"/tmp", ""}}};
+        t.layout.columns = {0.6, 0.4};
+        t.layout.rows = {{0.5, 0.5}, {1.0}};
+        t.activeColumn = 0;
+        t.activeRow = 1;
+        a.terminals = {t, TerminalTab()};
+        a.terminals[1].columns = {{{"/p/docs", ""}}};
+        a.terminalTab = 1;
+        a.expanded = {"/p/src", "/p/src/x"};
+        a.selected = "/p/src/x/y.c";
+        a.treeScroll = 42;
+        Window b;
+        b.root = "/q";
+        b.sidebarHidden = true;
+        b.editorHidden = true;
+        b.fullScreen = true;
+        const std::vector<Window> back = decodeWindows(encodeWindows({a, b}));
+        CHECK(back.size() == 2);
+        const Window &w = back[0];
+        CHECK(w.root == "/p" && w.haveFrame && w.frame.x == 120.5 && w.frame.y == 80 &&
+              w.frame.w == 1400 && w.frame.h == 900 && !w.fullScreen);
+        CHECK(w.tabs.tabs.size() == 2 && w.tabs.active == 1 && w.tabs.preview == 0);
+        CHECK(w.tabs.tabs[0].selStart == 3 && w.tabs.tabs[0].selEnd == 7 &&
+              w.tabs.tabs[0].haveView && w.tabs.tabs[0].top == 120 && w.tabs.tabs[0].into == 4);
+        CHECK(!w.tabs.tabs[0].side && w.tabs.tabs[1].side && w.tabs.tabs[1].page);
+        CHECK(w.tabs.split && w.tabs.groups.groups[1].size() == 1 && w.tabs.groups.focused == 1 &&
+              w.tabs.groups.fraction == 0.4 && w.tabs.groups.active[1] == "/p/b.md");
+        CHECK(w.sidebar == "git" && w.sidebarWidth == 310 && !w.sidebarHidden);
+        CHECK(w.problems && !w.editorHidden);
+        CHECK(w.terminal && w.terminalHeight == 260 && w.terminalTab == 1);
+        CHECK(w.terminals.size() == 2);
+        CHECK(w.terminals[0].columns.size() == 2 && w.terminals[0].columns[0].size() == 2);
+        CHECK(w.terminals[0].columns[0][1].cwd == "/p/src" &&
+              w.terminals[0].columns[0][1].title == "server");
+        CHECK(w.terminals[0].layout.columns.size() == 2 &&
+              std::fabs(w.terminals[0].layout.columns[0] - 0.6) < 1e-9);
+        CHECK(w.terminals[0].layout.rows[0].size() == 2 && w.terminals[0].layout.rows[1].size() == 1);
+        CHECK(w.terminals[0].activeColumn == 0 && w.terminals[0].activeRow == 1);
+        CHECK(w.terminals[1].columns[0][0].cwd == "/p/docs");
+        CHECK(w.expanded.size() == 2 && w.expanded[1] == "/p/src/x");
+        CHECK(w.selected == "/p/src/x/y.c" && w.treeScroll == 42);
+        CHECK(back[1].root == "/q" && !back[1].haveFrame && back[1].sidebar == "tree");
+        CHECK(back[1].sidebarHidden && back[1].editorHidden && back[1].fullScreen);
+        CHECK(back[1].tabs.tabs.empty() && back[1].terminals.empty() && !back[1].terminal);
+
+        // Damaged: none, never a half-read list; a bad part is left out.
+        CHECK(decodeWindows("").empty());
+        CHECK(decodeWindows("[1,2]").empty());
+        CHECK(decodeWindows("{\"windows\": [").empty());
+        const std::vector<Window> odd = decodeWindows(
+            "{\"windows\":[{\"root\":\"\"},7,{\"root\":\"/r\",\"frame\":[1,2,-3,4],"
+            "\"sidebar\":\"nonsense\",\"sidebarWidth\":-5,\"terminal\":true,"
+            "\"terminals\":[{\"columns\":[[{\"cwd\":\"/r\"}],[]],\"columnShares\":[0.9,0.9],"
+            "\"activeColumn\":5}],\"terminalTab\":9,\"expanded\":[\"/r/a\",3],"
+            "\"tabs\":\"x\"}]}");
+        CHECK(odd.size() == 1);
+        CHECK(odd[0].root == "/r" && !odd[0].haveFrame && odd[0].sidebar == "tree");
+        CHECK(odd[0].sidebarWidth == 0 && odd[0].tabs.tabs.empty());
+        CHECK(odd[0].terminals.size() == 1 && odd[0].terminalTab == 0 && odd[0].terminal);
+        CHECK(odd[0].terminals[0].columns.size() == 1 &&
+              odd[0].terminals[0].layout.columns.size() == 1 &&
+              odd[0].terminals[0].activeColumn == 0);
+        CHECK(odd[0].expanded.size() == 1);
+    }
+
+    GROUP("tab-sessions:terminal-tab");
+    {
+        // Shares that do not match the panes are made even; empty columns go.
+        TerminalTab t;
+        t.columns = {{{"/a", ""}}, {}, {{"/b", ""}, {"/c", ""}}};
+        t.layout.columns = {0.2, 0.3, 0.5};
+        t.layout.rows = {{1.0}, {1.0}, {0.5, 0.5}};
+        t.activeColumn = 2;
+        t.activeRow = 7;
+        const TerminalTab s = sanitize(t);
+        CHECK(s.columns.size() == 2 && s.layout.columns.size() == 2);
+        CHECK(std::fabs(s.layout.columns[0] - 0.5) < 1e-9);
+        CHECK(s.layout.rows[1].size() == 2);
+        CHECK(s.activeColumn == 0 && s.activeRow == 0);
+        // Nothing at all: one pane in the window's folder ("").
+        const TerminalTab none = sanitize(TerminalTab());
+        CHECK(none.columns.size() == 1 && none.columns[0].size() == 1 &&
+              none.columns[0][0].cwd.empty());
+        // Shares as written are kept when they match.
+        TerminalTab ok;
+        ok.columns = {{{"/a", ""}, {"/b", ""}}};
+        ok.layout.columns = {1.0};
+        ok.layout.rows = {{0.7, 0.3}};
+        CHECK(sanitize(ok).layout.rows[0][0] == 0.7);
+    }
+
+    GROUP("tab-sessions:after-closing");
+    {
+        Window a, b;
+        a.root = "/a";
+        b.root = "/b";
+        // A window closing while another stays: dropped.
+        std::vector<Window> left = afterClosing({a, b}, 0);
+        CHECK(left.size() == 1 && left[0].root == "/b");
+        // The last one: kept, so the next launch brings it back.
+        left = afterClosing({b}, 0);
+        CHECK(left.size() == 1 && left[0].root == "/b");
+        CHECK(afterClosing({a, b}, 5).size() == 2);
+        CHECK(afterClosing({}, 0).empty());
+    }
+
+    GROUP("tab-sessions:fit-frame");
+    {
+        const std::vector<Frame> one = {Frame{0, 0, 1440, 875}};
+        // On the screen: where it was.
+        Frame f = fitFrame(Frame{100, 50, 1100, 720}, one, 640, 400);
+        CHECK(f.x == 100 && f.y == 50 && f.w == 1100 && f.h == 720);
+        // Hanging off the right edge: moved on, same size.
+        f = fitFrame(Frame{1000, 50, 1100, 720}, one, 640, 400);
+        CHECK(f.x == 340 && f.y == 50 && f.w == 1100 && f.h == 720);
+        // Taller than the screen: shrunk to it.
+        f = fitFrame(Frame{0, -100, 800, 2000}, one, 640, 400);
+        CHECK(f.h == 875 && f.y == 0 && f.w == 800);
+        // Under the minimum size: grown to it.
+        f = fitFrame(Frame{10, 10, 100, 100}, one, 640, 400);
+        CHECK(f.w == 640 && f.h == 400 && f.x == 10 && f.y == 10);
+        // A second screen to the right, where the window was.
+        const std::vector<Frame> two = {Frame{0, 0, 1440, 875}, Frame{1440, -200, 2560, 1415}};
+        f = fitFrame(Frame{2000, 100, 1600, 1000}, two, 640, 400);
+        CHECK(f.x == 2000 && f.y == 100 && f.w == 1600 && f.h == 1000);
+        // That screen unplugged: in the middle of the main one, fitted.
+        f = fitFrame(Frame{2000, 100, 1600, 1000}, one, 640, 400);
+        CHECK(f.w == 1440 && f.h == 875 && f.x == 0 && f.y == 0);
+        f = fitFrame(Frame{3000, 100, 1000, 600}, one, 640, 400);
+        CHECK(f.w == 1000 && f.h == 600 && f.x == 220 && f.y == 137.5);
+        // Mostly on the second screen: onto it, not the main one.
+        f = fitFrame(Frame{1300, 100, 1000, 600}, two, 640, 400);
+        CHECK(f.x == 1440 && f.y == 100);
+        // No screens known: as saved.
+        f = fitFrame(Frame{5, 6, 7, 8}, {}, 640, 400);
+        CHECK(f.x == 5 && f.w == 7);
+    }
 }

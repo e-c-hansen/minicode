@@ -499,6 +499,24 @@
     [self.textView redrawWholePane];
 }
 
+- (BOOL)liveTextPlace:(NSRange *)selection top:(NSUInteger *)top offset:(CGFloat *)offset {
+    MCTab *t = _activeTab;
+    NSTextView *tv = self.textView;
+    *selection = tv.selectedRange;
+    *top = 0;
+    *offset = 0;
+    const NSUInteger n = tv.string.length;
+    if (!t || n == 0 || t.showingMessage || (t.isLatex && t.previewMode)) return NO;
+    const NSRect visible = tv.visibleRect;
+    NSUInteger first = [tv characterIndexForInsertionAtPoint:
+        NSMakePoint(NSMinX(visible) + 20, NSMinY(visible) + 1)];
+    if (first >= n) first = n - 1;
+    const NSRect r = [self textRectForCharacter:first];
+    *top = first;
+    *offset = NSIsEmptyRect(r) ? 0 : NSMinY(r) - NSMinY(visible);
+    return YES;
+}
+
 // The active tab is about to leave the screen: remember where its view
 // was, and let go of what the shared views hold for it (a playing video
 // stops).
@@ -523,20 +541,15 @@
     [self flushHighlighting];
     if (tv.editable && !t.showingMessage) t.sourceText = tv.string;
     if (tv.editable && !t.showingMessage) t.folds = [self.textView.folds snapshot];
-    t.selection = tv.selectedRange;
-    t.topCharacter = 0;
-    t.topOffset = 0;
-    const NSUInteger n = tv.string.length;
-    if (n > 0 && !t.showingMessage && !(t.isLatex && t.previewMode)) {
-        const NSRect visible = tv.visibleRect;
-        NSUInteger top = [tv characterIndexForInsertionAtPoint:
-            NSMakePoint(NSMinX(visible) + 20, NSMinY(visible) + 1)];
-        if (top >= n) top = n - 1;
-        const NSRect r = [self textRectForCharacter:top];
-        t.topCharacter = top;
-        t.topOffset = NSIsEmptyRect(r) ? 0 : NSMinY(r) - NSMinY(visible);
-    }
+    NSRange sel = tv.selectedRange;
+    NSUInteger top = 0;
+    CGFloat offset = 0;
+    [self liveTextPlace:&sel top:&top offset:&offset];
+    t.selection = sel;
+    t.topCharacter = top;
+    t.topOffset = offset;
     t.haveView = YES;
+    t.placeFromSession = NO;
     if (t.isDiff && self.diffScroll) t.diffScroll = self.diffScroll.contentView.bounds.origin;
     if (t.isDiff && t.comparison && self.compareView) t.diffScroll = self.compareView.scrollOrigin;
     t.sourceSelection = _sourceSelection;

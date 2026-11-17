@@ -324,6 +324,10 @@ static const NSInteger kBookmarkFileMenuTag = 7703;
 // EditorController+Layout.mm: window setup, layout and look, the splits and what fills the sidebar, the title.
 @interface EditorController (Layout)
 - (CGFloat)titlebarHeight;
+// The sidebar's width when shown (the width it comes back at while Cmd+B
+// hides it), and setting it, hidden or not (a window brought back).
+- (CGFloat)sidebarWidthToShow;
+- (void)setSidebarWidth:(CGFloat)width hidden:(BOOL)hidden;
 - (void)layoutContainer;
 - (void)buildTitlebarInContainer:(NSView *)container;
 - (void)applySettings;
@@ -541,6 +545,10 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 
 // EditorController+Tabs.mm: tabs, closed tabs, a tab's menu, saving.
 @interface EditorController (Tabs)
+// The text view's selection, first character in view and its distance
+// below the pane's top, as stashActiveTab keeps them; NO when the slot
+// shows no text of the tab's.
+- (BOOL)liveTextPlace:(NSRange *)selection top:(NSUInteger *)top offset:(CGFloat *)offset;
 - (NSMenu *)menuForTabAtIndex:(NSInteger)i;
 - (MCTab *)tabOfMenuItem:(id)sender;
 - (void)closeTabFromMenu:(id)sender;
@@ -654,6 +662,18 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSDictionary *)browserSessionState;
 - (void)restoreBrowserFromSession;
 - (void)restoreSession;
+// A window brought back (restoreWindowRecord:), as showWindow makes it: its
+// frame before it is shown, its sidebar, terminals and Problems before its
+// tabs come back, and its tree, hidden editor and keyboard after.
+- (void)placeRestoredWindow;
+- (void)restoreWindowLayout;
+- (void)finishRestoringWindow;
+// A tab brought back with its window, read for the first time
+// (loadActiveTab): its page or source, its selection and scroll.
+- (void)applySessionPlaceOf:(MCTab *)t;
+// The window is closing: the windows to bring back without it, or with it
+// when it is the last (windowWillClose:, before the terminals go).
+- (void)noteWindowClosing;
 - (BOOL)tabTakesBackup:(MCTab *)t;
 - (BOOL)tabNeedsBackup:(MCTab *)t;
 - (void)scheduleBackups;

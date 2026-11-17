@@ -92,6 +92,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     return [self confirmCloseAllTabs];
 }
 - (void)windowWillClose:(NSNotification *)note {
+    [self noteWindowClosing];   // before the terminals go: the windows to bring back
     [_agent close];
     // Asked already (windowShouldClose:): what is still unsaved was let go.
     for (MCTab *t in _tabs) [self discardBackupOf:t];
