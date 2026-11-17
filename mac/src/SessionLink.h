@@ -85,6 +85,8 @@ BOOL MCSessionLoopback(void);
 - (BOOL)canUndo:(BOOL)redo name:(NSString **)name;
 // An undo (1) or redo (2) of the host's is going into the text, else 0.
 @property(nonatomic, readonly) int undoing;
+// How many undos and redos the host has made of this document.
+@property(nonatomic, readonly) NSUInteger undoCount;
 // The host takes its last step back (or puts it back); the edit is in the
 // view before this returns. NO when there was nothing to do or it was
 // refused.

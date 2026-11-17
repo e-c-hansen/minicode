@@ -80,11 +80,18 @@ before the setting changed keeps the way it was opened until it closes.
   process a round trip through the host's queue), with the selection the
   step started with. A refused undo (the text it would change is not what
   it left) beeps and is logged; the host forgets the history.
+- **A completion's late import** (`pendingAccept:resolved:`): the host
+  cannot add to a closed step, so when nothing was typed since the accept,
+  the word's "Completion" step is taken back on the host and the import
+  and the word go in as one new step (the import is all before the word);
+  an undo or redo on the host since the accept (`MCSessionDoc undoCount`)
+  means the word was taken back, and the import is left out, as
+  `MCAcceptUndo undone` said before.
 - Known differences from NSUndoManager: a paste or cut is an "Edit" step
-  (NSTextView named them); a completion's late import (resolve) after its
-  word was undone still goes in (MCAcceptUndo knew it was undone);
-  `registerReloadUndoForTab:`'s whole-text step is the host's ordinary
-  step of the difference.
+  (NSTextView named them); `registerReloadUndoForTab:`'s whole-text step
+  is the host's ordinary step of the difference; text an input method is
+  composing is in the storage, so it is on the host too (the design sends
+  it only when committed; it matters once a second screen exists).
 
 ## The host's edits
 

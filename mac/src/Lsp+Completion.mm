@@ -6,6 +6,7 @@
 // routed from the text view while a list or popup shows, and the
 // signature hint.
 #import "Lsp+Private.h"
+#import "SessionLink.h"
 #import "Lsp+CompletionIvars.h"
 #import "SnippetSession.h"
 #import "SourceStorage.h"
@@ -92,6 +93,13 @@ static NSAttributedString *MCSignatureText(const Lsp::SignatureHelp &help) {
 @interface MCAcceptUndo : NSObject
 @property(nonatomic) NSRange selection;   // before the accept
 @property(nonatomic) BOOL undone;
+// With the session's host owning the history (SessionLink.h), where this
+// undo object registers nothing: the accept's own replacements (in the
+// text before it), and how many undos and redos the host had made then
+// (an undo since means the word was taken back).
+@property(nonatomic, copy) NSArray<NSValue *> *hostRanges;
+@property(nonatomic, copy) NSArray<NSString *> *hostStrings;
+@property(nonatomic) NSUInteger hostUndos;
 - (void)addStepAfter:(NSArray<NSValue *> *)after olds:(NSArray<NSString *> *)olds;
 - (void)undoIn:(CodeTextView *)tv;
 @end
@@ -470,6 +478,11 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
     }
     MCAcceptUndo *undo = [MCAcceptUndo new];
     undo.selection = _tv.selectedRange;
+    if (MCSessionDoc *doc = _tv.sessionDoc) {
+        undo.hostRanges = ranges;
+        undo.hostStrings = strings;
+        undo.hostUndos = doc.undoCount;
+    }
     if (![self applyAcceptEdits:ranges strings:strings into:undo]) return;
     NSUndoManager *um = _tv.undoManager;
     if (um && um.isUndoRegistrationEnabled && _tv.allowsUndo) {
@@ -684,6 +697,10 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
     if (!p || ![_pendingAccepts containsObject:p]) return;
     [self finishPendingAccept:p];
     // Taken back before the answer came: its import is not wanted either.
+    // With the session's host the undo object never runs: an undo on the
+    // host since the accept says it.
+    MCSessionDoc *host = _tv.sessionDoc;
+    if (host && p.undo.hostRanges && host.undoCount != p.undo.hostUndos) p.undo.undone = YES;
     if (item.additionalEdits.empty() || p.undo.undone) return;
     if (![_servers containsObject:p.server] || ![_uri isEqualToString:p.uri]) return;
     std::vector<Lsp::OffsetEdit> edits;
@@ -725,7 +742,23 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
     }
     _applyingEdit = YES;
     BOOL ok;
-    if (_edits == p.edits && !p.undo.undone) {
+    NSString *hostStep = nil;
+    if (host && p.undo.hostRanges && _edits == p.edits && [host canUndo:NO name:&hostStep] &&
+        [hostStep isEqualToString:@"Completion"] &&
+        edits.back().start + edits.back().length <= p.undo.hostRanges.firstObject.rangeValue.location) {
+        // The same step on the host, which cannot add to a closed step:
+        // the word's step taken back, then the import and the word as one
+        // step (the import is all before the word, in text the word's
+        // step did not touch, so its places hold in the text before it).
+        ok = NO;
+        if ([host undo:NO inView:_tv]) {
+            NSMutableArray<NSValue *> *all = [ranges mutableCopy];
+            NSMutableArray<NSString *> *texts = [strings mutableCopy];
+            [all addObjectsFromArray:p.undo.hostRanges];
+            [texts addObjectsFromArray:p.undo.hostStrings];
+            ok = [_tv replaceRanges:all withStrings:texts actionName:@"Completion"];
+        }
+    } else if (_edits == p.edits && !p.undo.undone) {
         // Nothing has changed since the word went in: the same undo step.
         ok = [self applyAcceptEdits:ranges strings:strings into:p.undo];
     } else {

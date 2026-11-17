@@ -480,6 +480,7 @@ static BOOL StorageBusy(CodeTextView *view) {
     _undoing = redo ? 2 : 1;
     const Shared::Outcome o = MCSessionClient().undo(_docId, redo);
     _undoing = 0;
+    if (o != Shared::Outcome::Nothing) _undoCount++;
     if (o == Shared::Outcome::Refused) {
         os_log_error(SessionLog(),
                      "%{public}s in %{public}@ refused: the text it would change is not what it left there, "
