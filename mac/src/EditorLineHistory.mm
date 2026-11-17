@@ -663,6 +663,11 @@ const NSTimeInterval kTypingPause = 0.6;
     const long want = [self answerLineForEditorLine:line];
     if (want < 0) return NSZeroRect;
     CodeTextView *tv = _host.lineHistoryTextView;
+    // Asked before anything was drawn (checks, offscreen): lay out what is
+    // on show first, never more.
+    const NSPoint origin = tv.textContainerOrigin;
+    [tv.layoutManager ensureLayoutForBoundingRect:NSOffsetRect(tv.visibleRect, -origin.x, -origin.y)
+                                  inTextContainer:tv.textContainer];
     __block NSRect found = NSZeroRect;
     [self forEachLineEndIn:tv.visibleRect block:^(NSRect frag, NSRect used, long k, NSUInteger start) {
         (void)start;
