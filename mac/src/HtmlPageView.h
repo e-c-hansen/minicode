@@ -1,4 +1,4 @@
-// HtmlPage.h — an .html file shown as its page in the editor's slot, the
+// HtmlPageView.h — an .html file shown as its page in the editor's slot, the
 // viewer over the tab's text that FileViewers makes for MCViewerHtml
 // (Shift+Cmd+V flips to the source and back, as for a CSV table).
 //
