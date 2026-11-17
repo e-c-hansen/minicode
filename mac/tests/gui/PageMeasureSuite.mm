@@ -338,7 +338,7 @@ MC_GUI_SUITE(hints_panel) {
         TypeInBox(box, @"tab");
         GCHECK(Found([c valueForKey:@"hintsTextView"]).count > 0);
         GCHECK(MCGuiPerformMenuKey(c.window, kVK_ANSI_H,
-                                   NSEventModifierFlagShift | NSEventModifierFlagCommand, @"H", @"h"));
+                                   NSEventModifierFlagShift | NSEventModifierFlagCommand, nil, nil));
         GCHECK(!c.hintsVisible);
         GCHECK(box.query.length == 0);
         GCHECK(c.window.firstResponder == [c valueForKey:@"textView"]);
