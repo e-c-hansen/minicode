@@ -7,7 +7,7 @@
 // main thread's CPU for a one-letter re-render at 1,200 and 20,000 lines.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "MarkdownSide.h"
 

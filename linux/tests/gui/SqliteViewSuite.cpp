@@ -9,7 +9,7 @@
 // reopen of the file keeping the query on show.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "SqliteView.h"
 

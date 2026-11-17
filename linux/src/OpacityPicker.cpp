@@ -8,7 +8,7 @@
 // shares the picker's popover slot (colorPop_), so one is up at a time.
 #include "Editor.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Utf8Offsets.h"
 
 #include <algorithm>

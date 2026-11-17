@@ -2,7 +2,7 @@
 #include "BufferText.h"
 
 #include "BufferLines.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "SyntaxHighlighter.h"
 
 #include <algorithm>

@@ -6,7 +6,7 @@
 // commits sharing one tab, as on the Mac.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "GitPanel.h"
 #include "Latex.h"

@@ -20,7 +20,7 @@
 
 #include "BufferLines.h"
 #include "CodeView.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "GitGutter.h"
 #include "Gutter.h"
 

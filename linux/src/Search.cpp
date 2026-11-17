@@ -4,7 +4,7 @@
 // window, the worker threads, the list, and the tabs.
 #include "Search.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "EditSpans.h"
 #include "Editor.h"
 #include "Keys.h"

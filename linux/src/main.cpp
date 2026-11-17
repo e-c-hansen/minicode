@@ -55,7 +55,7 @@
 #include "ConsentBar.h"
 #include "FormatOffer.h"
 #include "Detach.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "FileTree.h"
 #include "Folds.h"

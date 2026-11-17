@@ -2,7 +2,7 @@
 #include "Appearance.h"
 
 #include "AppSettings.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Utf8Offsets.h"
 

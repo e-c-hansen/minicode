@@ -10,7 +10,7 @@
 // narrow the search; and Alt+C works in the window.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Search.h"
 

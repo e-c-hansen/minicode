@@ -7,7 +7,7 @@
 #include "BufferLines.h"
 #include "CaretText.h"
 #include "CodeView.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "ThemeCss.h"
 

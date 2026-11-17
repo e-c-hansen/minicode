@@ -17,7 +17,7 @@
 #include <map>
 
 #include "ControlProtocol.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "AgentNotes.h"
 #include "Editor.h"
 #include "IdeLink.h"

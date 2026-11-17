@@ -18,7 +18,7 @@
 // gets both windows back with their own tabs, caret, size and sidebar.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Persistence.h"
 #include "TabSessions.h"

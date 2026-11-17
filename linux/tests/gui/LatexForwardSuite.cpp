@@ -7,7 +7,7 @@
 // takes half a second over each.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Latex.h"
 #include "PdfView.h"

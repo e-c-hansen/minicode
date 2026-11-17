@@ -11,7 +11,7 @@
 // 1.11 here.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "PalettePanel.h"
 

@@ -16,7 +16,7 @@
 #include "Harness.h"
 
 #include "AppSeam.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Markdown.h"
 #include "MarkdownSide.h"
