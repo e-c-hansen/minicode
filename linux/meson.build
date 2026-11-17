@@ -39,6 +39,14 @@ core_sources = [
   # Each document's undo and redo (SESSION-DESIGN.md, stage 2), in place of
   # GtkTextBuffer's own (Document.cpp records every buffer edit into it).
   core_dir / 'UndoHistory.cpp',
+  # The session's host on its own thread, the editor's client of it, their
+  # messages, and the transform that makes crossed edits agree
+  # (SESSION-DESIGN.md, stage 4: the host owns each document's text and
+  # undo, and the editor's buffer is its mirror).
+  core_dir / 'Ot.cpp',
+  core_dir / 'SessionProtocol.cpp',
+  core_dir / 'SessionHost.cpp',
+  core_dir / 'SessionClient.cpp',
   core_dir / 'MultiCaret.cpp',
   # A snippet completion's expansion and tab stops (SnippetSession.cpp and
   # LspSessionCompletion.cpp, PARITY.md 2.5).
