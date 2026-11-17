@@ -1141,6 +1141,11 @@ bool Terminal::busy() const {
     return group > 0 && group != shellPid_;
 }
 
+int Terminal::foregroundJob() const {
+    if (!busy()) return 0;
+    return (int)tcgetpgrp(vte_pty_get_fd(vte_terminal_get_pty(VTE_TERMINAL(vte_))));
+}
+
 bool Terminal::typeText(const std::string& text) {
     makeTerminal();
     if (busy()) return false;

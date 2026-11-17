@@ -5406,3 +5406,18 @@ document's own edit is now named "Edit in Preview" as well. The Mac's
 "clicked word selected" fix (03ce0c5) has no counterpart: the GTK box
 selects the whole span for every click. Checked by `latex_inputs`, over the
 committed three-file fixture and a stand-in tectonic.
+
+### 82. Show in Processes in the terminal's close question (done, November 2026)
+
+The close question of a terminal with a program running (`askCloseBusyTerminal`
+in main.cpp, still an async `GtkAlertDialog` answered in one callback) has the
+Mac's third button, Show in Processes. It shows the Processes panel (View >
+Toggle Processes when hidden) and calls `ProcessesPanel::revealTerminal(id,
+job)`, the Mac's `revealTerminal:job:`: the row of the foreground process
+group's leader (`Terminal::foregroundJob`, read when the question is asked)
+is selected and scrolled to; a job not seen yet waits up to 3 s for a look,
+then the terminal's first running process stands in (15 s in all). Nothing is
+closed. `processes` closes the busy terminal, presses the button and checks
+the panel, the selected row (`selectedPid`) and that the terminal is still
+there. The question's wording is Linux's own ("Close this terminal?"); the Mac
+names the command, which the GTK terminal does not know.

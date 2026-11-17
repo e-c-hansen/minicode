@@ -204,6 +204,48 @@ void ProcessesPanel::rebuild() {
         if (!r.header && r.pid == selectedPid) reselect = GTK_LIST_BOX_ROW(row);
     }
     if (reselect) gtk_list_box_select_row(GTK_LIST_BOX(list_), reselect);
+    applyReveal();
+}
+
+int ProcessesPanel::selectedPid() const {
+    GtkListBoxRow* sel = gtk_list_box_get_selected_row(GTK_LIST_BOX(list_));
+    const int i = sel ? gtk_list_box_row_get_index(sel) : -1;
+    return i >= 0 && i < (int)rows_.size() && !rows_[(size_t)i].header ? rows_[(size_t)i].pid : 0;
+}
+
+void ProcessesPanel::revealTerminal(int terminal, int job) {
+    revealTerminal_ = terminal;
+    revealJob_ = job;
+    revealUntil_ = g_get_monotonic_time() + 15 * G_USEC_PER_SEC;
+    revealFallbackAt_ = job > 0 ? g_get_monotonic_time() + 3 * G_USEC_PER_SEC : 0;
+    applyReveal();
+}
+
+void ProcessesPanel::applyReveal() {
+    if (!revealUntil_) return;
+    const gint64 now = g_get_monotonic_time();
+    if (now > revealUntil_) { revealUntil_ = 0; return; }
+    int row = -1;
+    if (revealJob_ > 0)
+        for (size_t i = 0; i < rows_.size() && row < 0; i++)
+            if (!rows_[i].header && rows_[i].pid == revealJob_) row = (int)i;
+    if (row < 0 && (revealJob_ <= 0 || now >= revealFallbackAt_)) {
+        int first = -1;
+        for (size_t i = 0; i < rows_.size() && row < 0; i++) {
+            if (rows_[i].header || rows_[i].terminal != revealTerminal_ || rows_[i].orphan ||
+                rows_[i].outside)
+                continue;
+            if (first < 0) first = (int)i;
+            if (rows_[i].alive) row = (int)i;
+        }
+        if (row < 0) row = first;
+    }
+    if (row < 0) return;
+    revealUntil_ = 0;
+    GtkListBoxRow* r = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list_), row);
+    if (!r) return;
+    gtk_list_box_select_row(GTK_LIST_BOX(list_), r);
+    gtk_widget_grab_focus(GTK_WIDGET(r));    // scrolls it into view
 }
 
 void ProcessesPanel::popup(GMenu* menu, double x, double y) {

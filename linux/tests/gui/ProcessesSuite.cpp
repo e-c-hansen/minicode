@@ -22,6 +22,7 @@
 #include "ProcessesPanel.h"
 #include "Terminal.h"
 #include "TerminalAttention.h"
+#include "TerminalDock.h"
 
 #include <gio/gio.h>
 #include <vte/vte.h>
@@ -153,6 +154,8 @@ double threadCpuMs() {
     return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
 }
 
+Terminal* gTerminal = nullptr;   // the busy terminal the close question names
+int gTerminals = 0;
 MCGuiAppWindow gFirst;       // the window with the panel
 int gOrphanPid = 0;
 GtkWindow* gSecond = nullptr;
@@ -336,6 +339,38 @@ MC_GUI_SUITE(processes) {
         GCHECK(note.find("was not started in minicode") != std::string::npos);
         pp->onRevealTerminal = keepT;
         pp->onNote = keepN;
+    });
+    // The close question of a terminal with a program running (the Mac's
+    // Show in Processes): the panel shown and the program's row selected,
+    // the terminal kept.
+    MCGuiStep("the panel is hidden, and the busy terminal is asked to close", [] {
+        g_action_group_activate_action(G_ACTION_GROUP(gFirst.window), "toggleprocesses", nullptr);
+        GCHECK(!MCGuiApp().procsShown);
+        gTerminals = MCGuiApp().termDock->count();
+        gTerminal = MCGuiApp().terminal;
+        GCHECK(gTerminal != nullptr && gTerminal->busy());
+        MCGuiApp().termDock->closePane(gTerminal, true);
+    });
+    MCGuiWait("the question offers Close Terminal, Cancel and Show in Processes", 10, [] {
+        GtkWindow* top = MCGuiTopWindow();
+        if (!top || top == MCGuiApp().window) return false;
+        GtkWidget* b = MCGuiFindButton(GTK_WIDGET(top), "Show in Processes");
+        return b && gtk_widget_get_width(b) > 0 &&
+               MCGuiFindButton(GTK_WIDGET(top), "Close Terminal") &&
+               MCGuiFindButton(GTK_WIDGET(top), "Cancel");
+    });
+    MCGuiStep("Show in Processes is pressed", [] {
+        MCGuiClick(MCGuiFindButton(GTK_WIDGET(MCGuiTopWindow()), "Show in Processes"));
+    });
+    MCGuiWait("the panel shows with the server's row selected", 30, [] {
+        return MCGuiApp().procsShown && MCGuiApp().procs && MCGuiApp().procs->selectedPid() == gServerPid;
+    });
+    MCGuiStep("the question is gone, and nothing was closed", [] {
+        GCHECK(MCGuiTopWindow() == MCGuiApp().window);
+        GCHECK(MCGuiApp().termDock->count() == gTerminals);
+        GCHECK(MCGuiApp().terminal == gTerminal && gTerminal->busy());
+        GCHECK(alive(gServerPid));
+        gFirst = MCGuiApp();
     });
     MCGuiStep("a picture of the panel, for looking at", [] {
         MCGuiSnapshot(GTK_WIDGET(gFirst.window), "processes");
