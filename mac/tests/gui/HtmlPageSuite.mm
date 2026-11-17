@@ -1,5 +1,5 @@
 // HtmlPageSuite.mm — `make guitest SUITES=html_page`: an .html file opens
-// as its page (HtmlPage.h, FileViewers.h's MCViewerHtml): its stylesheet
+// as its page (HtmlPageView.h, FileViewers.h's MCViewerHtml): its stylesheet
 // and picture load from its folder; with html.scripts unset the page shows
 // with its scripts off under a question, and Run Scripts runs them (for
 // that file until quit, or for every file once remembered, which writes
@@ -19,7 +19,7 @@
 #import "Browser.h"
 #import "ControlServer.h"
 #import "FileViewers.h"
-#import "HtmlPage.h"
+#import "HtmlPageView.h"
 #import <WebKit/WebKit.h>
 
 namespace {

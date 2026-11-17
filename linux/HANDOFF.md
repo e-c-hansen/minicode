@@ -16,7 +16,8 @@ Read these first:
   needs a person at the desktop.
 - `dev/README.md`: the Docker container with a virtual display for driving
   the app from a Mac.
-- `../CLAUDE.md`, especially "LaTeX preview", "LSP", "Images" and "Gotchas".
+- `../CLAUDE.md` and its area notes in `../docs/notes/`, especially
+  `latex.md`, `lsp.md` and `viewers.md` ("Images"), with each file's "Traps".
   The design decisions there apply here too.
 - `../android/README.md`: the Android port solved the same problems more
   recently, without AppKit, so it is often the closer model.
@@ -268,7 +269,7 @@ core's 14,000-edit test, so the GTK side needs no new unit tests.
 ### 4. Images and PDFs (done, September 2026)
 
 Mac: `showImageAtPath:` and `showPDFAtPath:` in `EditorController.mm`, and the
-"Images" section of `../CLAUDE.md`. Linux shows "cannot display" (the
+"Images" bullet of `../docs/notes/viewers.md`. Linux shows "cannot display" (the
 `g_utf8_validate` branch in `Editor.cpp`).
 
 - Images: `GtkPicture` with `gtk_picture_set_can_shrink` and content fit
@@ -449,7 +450,7 @@ continuation, after the open.
 ### 6. Language servers (done, September 2026)
 
 Mac: `mac/src/Lsp.mm` over `../src/LspClient.cpp`, described in the "LSP"
-section of `../CLAUDE.md`. The GTK side is `src/Lsp.{h,cpp}` over the same
+notes, `../docs/notes/lsp.md`. The GTK side is `src/Lsp.{h,cpp}` over the same
 `LspClient` and `Json`, now in `meson.build` and the Makefile. It follows the
 Mac's behaviour; what differs is how.
 
@@ -540,7 +541,7 @@ a row), since the hook called the same functions directly.
 
 ### 7. The LaTeX preview (done, September 2026)
 
-Mac: `mac/src/Latex.mm`; read the whole "LaTeX preview" section of `../CLAUDE.md`
+Mac: `mac/src/Latex.mm`; read the whole of `../docs/notes/latex.md`
 before starting. Android: `LatexPreview.kt` and `latex_jni.cpp`.
 
 - tectonic comes from `MINICODE_TECTONIC`, then
@@ -860,7 +861,7 @@ have them either.
 
 ### 10. The Source Control panel (done, September 2026)
 
-Mac: `mac/src/GitPanel.mm` and "Git panel" in `../CLAUDE.md`. GTK:
+Mac: `mac/src/GitPanel.mm` and "Git panel" in `../docs/notes/git.md`. GTK:
 `src/GitPanel.{h,cpp}`. Both, and Android, over the core's
 `../src/GitModel.{h,cpp}` (it lived here until 2026-11-06), which is plain
 C++ and holds everything that can be decided without a GUI (rows, keys, the
@@ -2629,7 +2630,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   letter, the old one staying up until the answer. A request goes only to
   a server that offers completion, or one still starting. Tab and Return
   take the selected item whenever the list shows
-  (`Lsp::completionKeyAccepts`, VS Code's defaults; `../CLAUDE.md`'s LSP
+  (`Lsp::completionKeyAccepts`, VS Code's defaults; `../docs/notes/lsp.md`'s
   bullet still describes the rule before 2026-11-08, when Return took an
   item only in some cases); Shift+Tab and Shift+Return close it and are
   the editor's; a key pressed before the list was filtered for the last
@@ -4692,7 +4693,7 @@ New Window makes a window.
   run keeps those pictures and Meson's log as its `gui-checks` artifact
   (`gh run download <id> -n gui-checks`).
 
-Two ways to run the app by hand, both described in `../CLAUDE.md`
+Two ways to run the app by hand, both described in `../docs/notes/verification.md`
 ("Verification reality"):
 
 - **From the Mac:** `linux/dev/gtk-dev.sh` builds a Docker image with Xvfb
@@ -5250,7 +5251,7 @@ window in stage 3c; sessions.json and the backup planner follow in 3b.
   group also showed it left both groups here; item 84 put back the Mac's
   rule, under which it stays in the other.)
 - **Checks**: the core's `session:*` (each rule of "Tabs, sessions and
-  the disk", "The preview tab" and "Two editor groups" in CLAUDE.md, and
+  the disk", "The preview tab" and "Two editor groups" in docs/notes/sessions.md, and
   a random walk holding the window's bookkeeping), the `tabs` suite (the
   strip checked against the window, a tab dragged to the end and back)
   and `split_editor` (the groups checked against the window after each
@@ -5261,6 +5262,381 @@ window in stage 3c; sessions.json and the backup planner follow in 3b.
 A file row's icon follows `FileIcon::kindOf` (what a click on the file opens), as the Mac's does: `fileIconName` in `linux/src/FileTree.cpp` maps each kind to a symbolic name that Adwaita has (checked against `/usr/share/icons/Adwaita/symbolic`, since GTK draws the missing-icon picture for a name the theme lacks): image, video and audio `*-x-generic`, `x-office-document` for a PDF, `x-office-spreadsheet` for a table, `accessories-dictionary` for a notebook, `drive-harddisk` for a database, `package-x-generic` for an archive, `web-browser` for a web page, `user-bookmarks` for a bookmark, `utilities-terminal` for source code (Adwaita has no script icon), `text-x-generic` for the rest. Folders keep `folder-symbolic`. The `tree_icons` suite writes one file of each kind and reads the names off the rows. Other themes may draw these names differently; the look needs the owner's eyes.
 
 ### 75. A notebook's In and Out prompts (done, November 2026)
+
+A fenced block with a `MdRun::label` (the core's Notebook gives a run cell "In [n]" and its result "Out [n]") gets that text on a line of its own above the block, at the block's first run only, in the new `md_codelabel` tag: monospace 11 points in the Markdown quote color, as the Mac's `markdownLabelFor:`. The tag is made with the others in `Editor.cpp` and recolored in `applySettings`. The notebook check in `json_outline` now reads "In [3]" and "Out [3]" from the shown text, in order before their blocks, and the tag at the label. The Mac's extra indent for a block inside a list is not copied, since notebook cells are never in lists. The look needs the owner's eyes.
+
+### 76. Sessions and the save planner in the core (done, November 2026; SESSION-DESIGN.md stage 3b)
+
+What a window keeps between runs is one core record, and when its unsaved
+tabs are written is decided by the core.
+- **The record.** `TabSessions::Window` (W1's, `src/TabSessions.h`: folder,
+  frame, its own tabs with both groups, the tab on show, carets and
+  scroll, the sidebar, the editor, Problems, the terminal dock, the tree)
+  is what the Mac keeps in `MCOpenWindows` and now what sessions.json
+  keeps under the key `"windows"`, beside the folders' sessions
+  (`TabSessions::Store`, `encodeStore`/`decodeStore`). Folder keys are
+  absolute paths, so the key never clashes; a sessions.json from before
+  has no windows and reads as before, and a minicode from before skips the
+  key and keeps the folders (it drops the windows when it writes).
+  `Persistence::putSession` and `putWindows` both go through
+  `changeStore`, under the one lock.
+- **Windows back on a desktop launch.** `Persistence::windowRecord()` is
+  the window's folder and own tabs plus what `Host::windowState` adds:
+  its size (`gtk_window_get_default_size`; Wayland gives no place, so the
+  frame's x and y stay 0), and whether the sidebar, the editor, Problems
+  and the terminal showed. `saveOpenWindows()` (main.cpp) writes every
+  window, front first, with each session save (`Host::windowsChanged`)
+  and at Quit; `onWindowRemoved` writes the others, or the closing window
+  alone when it was the last (`TabSessions::afterClosing`'s rule). A
+  launch with no path, from the home folder or `/` (the dock, the desktop
+  entry), with no window open yet, runs `restoreOpenWindows()`: each
+  window whose folder is still there, back to front, through
+  `newWindow(root, "", &record)`, which sets its size, restores its own
+  tabs (`restoreSession(&record.tabs)`, backups included) and, on the
+  next idle, hides its sidebar, shows its terminal and Problems. Not yet:
+  the tree's open folders and selection, the terminal's tabs and splits
+  (a single fresh shell comes back), the sidebar's width, a hidden editor
+  (recorded, not restored), maximized. `minicode` typed in a project
+  folder still opens that folder.
+- **The planner.** `SavePlan::Planner` (`src/SavePlan.{h,cpp}`) holds the
+  Mac's timing rules: a dirty tab's backup 1 s after typing stops and at
+  most 5 s after the first change not yet written, a clean tab's backup
+  removed at once, after-delay auto-save restarted by every edit, a
+  focus-change save due at once and never cancelled by an edit. The port
+  gives it the tabs (`SavePlan::Tab`: id, dirty, generation, path, and
+  what the backup holds, from `Document::Backup`) and the monotonic time;
+  `nextDue()` says when to tick and `tick(now)` what to write.
+  Persistence's three timers (backup, auto-save delay, focus idle) are one,
+  `planTimer_`, set by `arm()`; due now is a `G_PRIORITY_HIGH` idle as the
+  focus save was. The Mac's EditorController+Persistence.mm keeps its own
+  timers until 3c; `saveplan:*` pins its rules.
+- **Checks**: the core's `saveplan:*` and `tab-sessions:store`; the
+  `sessions` suite's new windows part (a child opens two windows on two
+  folders, places a caret, notes a size, hides one sidebar and quits; a
+  child launched with no path from the home folder gets both back, each
+  with its own tabs, caret, size and sidebar; `MCGuiRunChild` takes an
+  empty folder for that); the `backups` suite's new timing part (no backup
+  the moment after a key, one once typing pauses, one within 5 s of
+  typing that never pauses, removed at once on save).
+
+### 77. The session save on the planner, flushed before another window reads (done, November 2026; SESSION-DESIGN.md stage 3c)
+
+A window's tabs changing wrote its session a second later on a timer of
+its own (`sessionTimer_`), so a second window opened on the same folder
+within that second read the folder's session as it had been (the
+`split_editor` flake, #81). The second is now the planner's
+(`SavePlan::Planner::sessionChanged`, due 1 s after the first change not
+yet written; `Plan::saveSession` from `tick`), on the one `planTimer_`.
+`restoreSession` for a folder (a new window, Open Folder) first has every
+other window on it write a pending save (`Persistence::flushSession`,
+`Planner::takeSession`), and any save takes the pending one, so it is not
+written twice. Core checks: `saveplan:session` and
+`saveplan:session-before-another-window-reads`. The Mac moved onto the
+planner for backups and auto-save in the same stage; it writes its
+session at once, to the same sessions.json format in its own folder.
+
+### 78. Replace in Folder names files over 1 MB as too large (done, November 2026)
+
+The core's `planReplace` leaves files over `FolderSearchOptions::maxFileSize`
+alone and reports them in `FolderReplacePlan::tooLarge` and `tooLargeCount`;
+`SearchPanel::planned` now says what the Mac's does: "Nothing replaced: the
+matches are in files larger than 1 MB, which Replace in Folder leaves alone
+(big.txt)" when nothing else is left, " Left alone, since they are larger
+than 1 MB: big.txt." in the question, "and N more" past the listed names, and
+"big.txt is larger than 1 MB, which Replace in Folder leaves alone" where the
+write job cannot read a file. `replace_in_folder` writes a file just over
+1 MB with a match at its end: Find in Folder lists it, Replace All names it
+as above, and it is byte for byte as it was. Checked: that suite (20 passed;
+3 fail with the fix taken out).
+
+### 79. The workspace-edit applier's and the inline agent's undo steps are named (done, November 2026)
+
+`LspSession::applyEdit` takes the step's name and gives it to
+`MultiEdit::apply`: "Rename" for F2, the code action's title for a quick fix,
+the server's `label` (else "Edit") for workspace/applyEdit, and "Format
+Document" for the server fallback, as the Mac's `applyWorkspaceEdit:...
+actionName:`. The inline agent's Keep names its step "Inline Agent", as the
+Mac's `applyText`. Checks: `lsp_actions` reads `undoName()` of the renamed
+files (c.py, a.py) and `agent_panel` that of the kept edit; all three new
+checks fail ("Edit") with the src change taken out. The "Not done" note in
+item 72 about these two is now done.
+
+### 80. The offer of format on save and Edit > Format on Save (done, November 2026)
+
+The Mac's offer bar (`FormatOnSave.mm`) and menu item. After Ctrl+S saves a
+file whose project's own configuration chose its formatter and that
+formatter is installed (`FormatRun::onSaveOffer`, over
+`Formatter::offersOnSave` and the same formatter lookup Format Document
+uses, with a core check `format-run:on-save-offer`), while format.on-save is
+off and the offer is not muted, a bar under the tabs (`FormatOffer.{h,cpp}`,
+the consent bar's look) asks "This project formats Python files with ruff,
+set up in pyproject.toml. Format them each time you save?": Turn On writes
+`format.on-save = project` (through `AppSettings::writeValue`, so the same
+refusal while the settings file has unsaved changes) and says "Format on
+save is on for formatters a project sets up. Edit > Format on Save turns it
+off." in the status bar; Don't Ask Again is kept in install-hints.json under
+"format-on-save", with the install bar's; × closes it until minicode starts
+again. Once per launch across windows; the look runs off the main thread
+(`FormatRunner::offerOnSave`) and Save All and auto-save never offer. The
+settings turning format on some other way closes the bar. Edit > Format on
+Save (`minicode.toggleFormatOnSave`, no key, `app.formatonsave`) is checked
+while format.on-save is on and writes `false` or `project`. Not offered
+after a Ctrl+S that went through organize imports first, which saves
+through Formatting's own path. Checked by the `format_offer` suite.
+
+### 81. A double-click in the LaTeX preview on text from an \input file edits that file (done, November 2026)
+
+The Mac's change (30eddf9, aec3869, 03ce0c5) in the GTK preview. The core
+had the pieces (`SyncTexIndex::tagsAtPoint`, `inputs()`,
+`LatexDoc::parseInput`); `LatexPreview::doubleClick` now tries the inputs
+the boxes under the point name, likeliest first, then the document, each
+parsed on its own from its tab's buffer or else the disk
+(`docOfInputFile`, parsed again only when the text changed). The box is
+titled "Editing text in chapter.tex"; its text and lists are that file's.
+Save is a splice of that file's text, made by the editor
+(`LatexPreview::InputHost`, `Editor::editLatexInput`): into the file's tab,
+or a tab made beside the active one and not shown (`openForAgent` quiet,
+then read), unsaved, one "Edit in Preview" step; nothing is written. It is
+refused with "chapter.tex changed while the box was open, so the edit was
+not made" when the file's text moved, and "chapter.tex could not be
+changed" when its tab cannot take it. The bar says "chapter.tex has
+unsaved changes: save to see them in the PDF" (or "N files it reads have
+unsaved changes: save to see them in the PDF"), since tectonic reads the
+disk; Ctrl+S with the preview on show saves those files too
+(`Editor::saveLatexInputs`, from `act_save`), and any save of a file a
+preview read typesets that preview again (`Editor::latexFileSaved`). The
+document's own edit is now named "Edit in Preview" as well. The Mac's
+"clicked word selected" fix (03ce0c5) has no counterpart: the GTK box
+selects the whole span for every click. Checked by `latex_inputs`, over the
+committed three-file fixture and a stand-in tectonic.
+
+### 82. Show in Processes in the terminal's close question (done, November 2026)
+
+The close question of a terminal with a program running (`askCloseBusyTerminal`
+in main.cpp, still an async `GtkAlertDialog` answered in one callback) has the
+Mac's third button, Show in Processes. It shows the Processes panel (View >
+Toggle Processes when hidden) and calls `ProcessesPanel::revealTerminal(id,
+job)`, the Mac's `revealTerminal:job:`: the row of the foreground process
+group's leader (`Terminal::foregroundJob`, read when the question is asked)
+is selected and scrolled to; a job not seen yet waits up to 3 s for a look,
+then the terminal's first running process stands in (15 s in all). Nothing is
+closed. `processes` closes the busy terminal, presses the button and checks
+the panel, the selected row (`selectedPid`) and that the terminal is still
+there. The question's wording is Linux's own ("Close this terminal?"); the Mac
+names the command, which the GTK terminal does not know.
+
+### 83. The Claude Code hooks offer (done, November 2026)
+
+The Mac's `ClaudeHooksOffer` on GTK: when Claude Code starts in a terminal a
+bar between the terminal tabs and the terminals (`TerminalDock::setNotice`)
+offers Turn On…, Not Now and ×, once per launch across windows, unless the
+hooks are in already or Not Now was pressed (kept as `claude-hooks` in the
+install bar's muted list, `ConsentBar::installMuted`, in
+`$XDG_STATE_HOME/minicode/install-hints.json`). The rule is the core's
+`ClaudeHooks::shouldOffer` (`hooks:offer`). "Started" is
+`Terminal::onClaudeStarted`: on the shell integration's mark that a command
+began, `ClaudeHooks::startsClaude` on its text at once, else one second later
+`isClaudeProgramPath` on `/proc/<foreground group>/exe`; a shell without the
+integration (fish, sh) offers nothing, as on the Mac without 633;E.
+Turn On… (`linux/src/ClaudeHooksOffer.{h,cpp}`) asks with the JSON that would
+be added in the alert's detail (Add the Hooks, Cancel), writes through
+`ClaudeHooks::install` (backup first) and says where. Not ported: minicode >
+Install Claude Code Hooks… and the Agents panel's header line.
+`claude_hooks_offer` checks it against the scratch `CLAUDE_CONFIG_DIR`.
+
+### 84. One set of tab rules with the Mac (done, November 2026; SESSION-DESIGN.md stage 3d)
+
+Stage 3c left the Mac on its own rules where `Model::Window`'s differed;
+the window now follows the Mac's (docs/notes/sessions.md, "The preview tab" and "Two
+editor groups") and the Mac's copies are gone, so both ports run the same
+code. What changes on Linux:
+- **A preview tab per group.** A tree click (or a search result's) replaces
+  the focused group's preview tab only; one the other group has is left
+  alone (before, the window's one preview tab was replaced wherever it
+  was).
+- **A replaced preview tab the other group also shows stays there**, still
+  a preview; only the focused group's tab of it closes (before, it left
+  both groups).
+- **The agents have two preview tabs**: `minicode open --note` replaces
+  the files' one, `minicode diff` (without `--keep`) the comparisons'
+  (`Model::Preview::AgentDiff`), so a diff after a note leaves the note's
+  tab. Before, every `diff` opened a kept tab of its own.
+- **The agents' new preview tab takes the old one's place** in the row,
+  not a place beside the tab on show.
+- **While the user types**, an agent's open never replaces the agents'
+  preview tab they are in, and that tab stays a preview (`passOver`);
+  before, it was made an ordinary tab.
+- **A kept open of a file in the agents' preview tab keeps it** (a
+  double-click in the tree, Return, a menu), as the user's preview tab is
+  kept; before, only the user's was.
+- **An agent's open of a file already in a tab shows that tab as it is**
+  (`Editor::openForAgent`): a preview stays a preview. Before, it went
+  through `openFile` as a kept open, which kept it.
+
+The rules are `Window::add` (its new `passOver`, the agents' place, a
+User preview closed in the focused group only), `previewTab` (the focused
+group's for User) and `prepareOpen` (any preview kept by a kept open).
+Checked by the core's `session:preview` and `session:groups` groups. The
+GTK files changed: `linux/src/Tabs.cpp`, `Editor.h`, `Document.h`,
+`ComparePanes.h` and `ControlCommands.cpp`; no GTK suite needed changing.
+
+### 85. The review page of uncommitted changes (done, November 2026)
+
+The Mac's change review (A1, `mac/src/ChangeReviewPage.mm`) in a tab:
+`ChangeReviewPage` (`linux/src/ChangeReviewPage.{h,cpp}`, an `EditorPage`
+with the key `review:<folder>`, one a window, shown again when open). Every
+rule is the core's. `ChangeReview` (rows, folding, what a block makes of the
+file) was already tested but not built on Linux; `ChangeReview.cpp` and the
+new `ChangeReviewRead.{h,cpp}` are in both build lists. `ChangeReviewRead`
+holds what the Mac kept in its `ReadReview`, `writeIndex` and `discardText`,
+over a `GitRunner` the caller gives (`review-read:git` runs it against a real
+git): one status, ls-files, ls-tree and cat-file --batch, then the work
+tree's files; `stageText` (hash-object and update-index after checking the
+entry is still the object read) and `discardText` (checks the file and the
+entry, has the caller put a copy in the Trash, writes atomically). The Mac's
+file still has its own copy; moving it onto the core is a Mac change left
+for someone who can run the Mac's suite.
+
+The page is a read-only `GtkTextView`: a row a line, a tint a paragraph
+background (red, green, grey for headers, folded stretches), the changed words
+and the syntax colors tags over them (`syntaxColor` from the settings), and
+each row's buttons a `GtkBox` in a child anchor at its end. A click on a
+folded row opens it (`Opened`, laid out again with no git). Reading and each
+action run on the Source Control panel's git thread (`GitPanel::runOnGitThread`),
+so they stay in order with the panel's commands; Discard asks through the
+panel's question (`askQuestion`), copies to the Trash with `GitTrash::trashCopy`
+and tells the panel (`rememberDiscard`), so the panel's Undo Discard and the
+page's button are one list. The panel reads while the page is open
+(`setReviewOpen`: `refresh()` no longer needs the panel showing, and main.cpp's
+three `gitShown` tests are the panel's own now) and calls
+`onReviewRefresh` after each status, which is how a change made elsewhere
+reaches the page; a read whose fingerprint and text are the last one's
+changes nothing on screen, so the eye and a selection stay. Not done:
+F7 and Shift+F7, the right click on selected lines, a conflict's Keep
+buttons (a conflicted file shows its blocks and has Open), the commit and
+worktree pages, and a click on a file in the panel still shows its diff.
+Wording is the Mac's (`ChangeReview::plan`'s questions and done texts, the
+buttons' titles). `git_review` (after `git_verbs` in suites.txt) presses
+the panel's button, a block's Stage, Discard with Cancel and with the answer,
+Undo Discard, Stage File, and a change made with the panel hidden.
+
+### 86. An .html file opens as its page (done, November 2026)
+
+The Mac's HTML page (mac/src/HtmlPage.mm, 1.5.27 and the fixes after it) on
+GTK: an .html, .htm or .xhtml file (FileSniff::Kind::Html, `Document::isHtml`,
+browser builds only) opens as its page in the editor's slot, a viewer over
+the tab's text like the CSV table (`Editor::showHtml`, beside `showTable`),
+and Ctrl+Shift+V flips to the source and back, giving the keyboard to the
+page when it is asked for (`togglePreview`). An empty file opens in its
+source. The rules are the core's (`src/HtmlPage.{h,cpp}`, `htmlpage:*`):
+what `html.scripts` and the file's answer make of a page (`scripts`), the
+bar's and the answered line's wording, the folder a page may read, which
+navigations load and which go to the link handler or are dropped as stale
+(`decide`: a reload, a back or forward, or a load this page asked for
+earlier arrives after the tab moved on and is never taken for a link). The
+Mac keeps its own copy of those rules in the .mm; it was not changed here.
+The view is `HtmlView.{h,cpp}`: a box with the bar (the consent bar's look,
+`minicode-consent-bar`) over a WebKitWebView on an ephemeral network
+session, JavaScript off in its settings until allowed (`html.scripts` on, or
+Run Scripts, or an answer held for the file until quit; the setting is the
+page's and takes effect on the load that follows, so an answer loads the page
+again). The bar says "This page has scripts. Run them?" with Run Scripts,
+Don't Run and "Remember for every HTML file", which writes `html.scripts =
+on` or `off` through `Editor::htmlRemember` (main.cpp's `writeValue`); an
+answer leaves a line in the bar's place ("This page's scripts run, until
+minicode quits.") with an ×, so the page does not move. A save, or a write
+from outside, loads the page again (its own `GFileMonitor`, 200 ms after the
+last event, and a stamp of mtime, size and inode), reading the scroll first
+and putting it back every 100 ms until it holds (the Mac's), with a
+generation count so an older answer is dropped. A link or `window.open`
+leaving the page goes to `Editor::openMarkdownLink` (a local file in a tab, a
+web address in the browser pane). The web view is not focusable until a click
+or the toggle key, so an autofocus field cannot take the keyboard.
+Differences: WebKitGTK has no read-access folder for a file page (the Mac's
+`loadFileURL:allowingReadAccessToURL:`), so subresources load from wherever
+the page names them (scripts still cannot read other files, as file access
+from file URLs is off). The frame's name is not used to tell a frame from the
+main frame (most iframes have none): `decide` lets a navigation leave the page
+only when the user made it (a clicked link, a submitted form, a gesture), so
+an iframe loads; and a script's navigation of the main frame (`location =`) is
+caught at `WEBKIT_LOAD_COMMITTED` (at STARTED the view still names the old
+address), where `HtmlPage::started` stops the load, the page is loaded again in
+its place and the address goes to the link handler (or only the restore, for a
+stale load). `html_page` checks the page's text and style, the
+script not running and then running after Run Scripts, the keyboard, the
+toggle, a write from outside keeping the scroll, a link to another file, the
+remembered answer's setting and `off`, an unnamed iframe to a local file
+(its text shows, nothing opens), and a script's `location =` (opened as a
+link, the page kept).
+### 87. The session's host owns each document's text and undo (done, November 2026; SESSION-DESIGN.md stage 4a)
+
+What a user meets: nothing, by design. Who owns the text changed under
+every edit, undo and language server sync.
+- **The host.** One `Shared::SessionHost` for the process, on a thread of
+  its own, and one `Shared::Client` in code points
+  (`linux/src/SessionLink.{h,cpp}`; the core's `SessionHost.h`,
+  `SessionClient.h`, `SessionProtocol.h`, `Ot.h`). The host owns every
+  open document's `Model::Document` (text, version) and its
+  `Model::UndoHistory`; the client's messages from the host are
+  dispatched in a main-loop idle as they arrive.
+- **The buffer is a mirror.** A `Document` opens on the host when it is
+  made (an empty text), `fill` and `finishLoading` reset the host's copy
+  (its history gone), a kind other than Text closes it, and so does the
+  destructor. Each buffer edit is reported from `onInsertText` and
+  `onDeleteRange` as before (no longer reading the deleted text) with
+  `Client::record`, inside the step the user action (or a main-loop turn's
+  edits outside one) opened, and sent when the step closes; one edit is in
+  flight at a time, the rest wait and join while they are one step.
+  Coalescing is decided here, as before: a moved caret (`mark-set`) or
+  `breakUndoCoalescing()` marks the next step fresh.
+- **Undo goes to the host.** `Document::undo`/`redo` ask and wait for the
+  answer (in one process a round trip through the host's queue); the edit
+  comes back through `Document::hostEdited`, which emits the buffer's
+  "undo" or "redo" signal first, puts it in as one `MultiEdit::apply` that
+  is not reported back (one operation at a time for any other shape), and
+  selects what the host says. `canUndo`, `undoName` and the rest settle
+  with the host first.
+- **The language server sync reads the host's text**
+  (`LspSessionSync.cpp`): each document a server has is watched through
+  the client (`Client::watch`, a copy of the host's text kept from the
+  host's own edits, in UTF-16), `didOpen` sends the copy, the host's edits
+  feed the `ChangeTracker`, and `flushChanges` settles first, so the copy
+  holds every edit made so far. The buffer's insert-text and delete-range
+  handlers there are gone.
+- **Tabs.** `refreshStrip` reports the window's tabs
+  (`Shared::windowJson`, sent when they changed); the host keeps them and
+  answers `session.state` with them. The rules stay `Model::Window`'s in
+  the editor: with one screen per window there is nothing to decide
+  between, and stage 6 makes the host the one that decides.
+- **Checks.** At every suite's end the harness settles with the host and
+  fails the suite unless the host's text of every document a window has
+  read is its buffer's, the host's tabs are the window's, and the host
+  reported nothing wrong (`checkSessionMirrors`). `MINICODE_HOST=loopback`
+  puts every message through the protocol's encoding and back;
+  `MINICODE_HOST_DELAY_US` delays each one on the host's thread (the GUI
+  harness's wrapper passes both through). CI's GTK job runs a named set of
+  editing suites that way after the two halves ("GUI checks over the
+  session host's wire format", `GUI_LOOPBACK` in ci.yml, 200 us a
+  message). The core's
+  `ot:*` and `host:*` groups hold the transform and the host to a fuzz of
+  renderers in both units.
+- **Not moved yet** (stage 7): saving, the disk and its stamps, dirty,
+  backups, auto-save, the file watch and git stay in GTK and read the
+  buffer. The host's own saved text is set at open, reset and `doc.saved`,
+  so its dirty flag is wrong for a tab restored from a backup; nothing
+  reads it yet. A large file costs the host a UTF-16 copy and its saved
+  text (about 100 MB for 25 MB).
+- **Trap for stage 6**: a wait (undo, `canUndo`, a flush) dispatches every
+  message in order, so another screen's edit could reach the buffer
+  inside the signal handler that asked. With one screen nothing but an
+  undo's own edit arrives during a wait.
+
+GTK files changed: `SessionLink.{h,cpp}` (new), `Document.{h,cpp}`,
+`LargeFileView.cpp`, `Editor.{h,cpp}`, `Tabs.cpp`, `Lsp.{h,cpp}`,
+`LspSessionPrivate.h`, `LspSessionSync.cpp`, `meson.build`, `Makefile`,
+`tests/gui/Harness.cpp` and `tests/gui/Wrapper.cpp`.
+
+### 88. A notebook's In and Out prompts (done, November 2026)
 
 A fenced block with a `MdRun::label` (the core's Notebook gives a run cell "In [n]" and its result "Out [n]") gets that text on a line of its own above the block, at the block's first run only, in the new `md_codelabel` tag: monospace 11 points in the Markdown quote color, as the Mac's `markdownLabelFor:`. The tag is made with the others in `Editor.cpp` and recolored in `applySettings`. The notebook check in `json_outline` now reads "In [3]" and "Out [3]" from the shown text, in order before their blocks, and the tag at the label. The Mac's extra indent for a block inside a list is not copied, since notebook cells are never in lists. The look needs the owner's eyes.
 

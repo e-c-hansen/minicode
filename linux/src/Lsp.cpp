@@ -6,6 +6,7 @@
 #include "LspSessionPrivate.h"
 
 #include "Palette.h"
+#include "SessionLink.h"
 #include "SnippetSession.h"
 #include "StartupLog.h"
 #include "WhenDrawn.h"
@@ -138,6 +139,7 @@ LspSession::~LspSession() {
     useBuffer(nullptr);
     if (sync_->syncIdle) g_source_remove(sync_->syncIdle);
     if (sync_->changeTimer) g_source_remove(sync_->changeTimer);
+    for (uint64_t id : sync_->watched) SessionLink::client().unwatch(id, this);
     if (flashId_) g_source_remove(flashId_);
     if (probs_->reportTimer) g_source_remove(probs_->reportTimer);
     if (sem_->timer) g_source_remove(sem_->timer);

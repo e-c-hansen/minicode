@@ -5,7 +5,7 @@
 // tooltips, the commit graph, and the diff and commit text with a style per
 // run. The panels run git and draw: the Mac's mac/src/GitPanel.mm, the GTK
 // port's linux/src/GitPanel.cpp and Android's git_jni.cpp. Tested in
-// tests/gitmodel_tests.inc (`git-ui:*`). See "Git panel" in CLAUDE.md.
+// tests/gitmodel_tests.inc (`git-ui:*`). See docs/notes/git.md.
 #pragma once
 
 #include "GitGraph.h"

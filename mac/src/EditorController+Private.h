@@ -748,6 +748,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 + (BOOL)isImagePath:(NSString *)path;
 - (BOOL)showImageAtPath:(NSString *)path;
 - (BOOL)showPDFAtPath:(NSString *)path;
+- (void)pdfKeepsPlaceGiven;   // a tab shown again puts back its own place
 + (BOOL)isMediaPath:(NSString *)path;
 - (void)observeMediaItem:(AVPlayerItem *)item;
 - (void)stopMedia;

@@ -1,5 +1,6 @@
 // Math.h — the Markdown preview's math typeset by tectonic, as the Mac's
-// MarkdownMath.mm does (CLAUDE.md, "Math in the Markdown preview"). The TeX
+// MarkdownMath.mm does (docs/notes/markdown.md, "Math in the Markdown
+// preview"). The TeX
 // side (which formulas may go in a batch, the document, the nonce, the log's
 // boxes) is the core's MathTex; this is the running of tectonic and the
 // keeping and drawing of the pictures.

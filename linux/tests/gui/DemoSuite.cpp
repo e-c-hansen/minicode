@@ -210,7 +210,9 @@ MC_GUI_SUITE(_demo_tour) {
     key("ctrl+shift+v", 1.2);
     openFile("hello.py");
     clickText("c.area():.2f}\")", true);
-    type("\n    print(\"Diameter:\", 2 * c.radius)");
+    // Typed as a person types it: Return indents the line and ( and " close
+    // themselves, so no spaces here (I1: four more made eight).
+    type("\nprint(\"Diameter:\", 2 * c.radius)");
     key("ctrl+s", 1.0);
     key("ctrl+p", 0.5);
     type("vec", 0.8);
