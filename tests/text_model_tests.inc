@@ -195,21 +195,29 @@ static void testTextModel() {
     {
         // Code points cost what a lookup costs, not the file: 10,000 of
         // each way in a 16 MB text with a character outside the BMP on every
-        // line (so no chunk takes the short way of a chunk without pairs).
-        std::u16string big;
-        while (big.size() < (16u << 20)) big += u"    let \U0001F600 = é(42);\n";
-        Model::Text t(big);
-        std::mt19937 rng(7);
-        const double t0 = cpuMs();
+        // line (so no chunk takes the short way of a chunk without pairs),
+        // against the same lookups in a 64 KB text of the same lines, timed
+        // in the same run, so a loaded machine slows both alike. A cost that
+        // grew with the file would be about 256 times the small one.
+        auto lookups = [](size_t units, size_t* sum) {
+            std::u16string text;
+            while (text.size() < units) text += u"    let \U0001F600 = é(42);\n";
+            Model::Text t(text);
+            std::mt19937 rng(7);
+            const double t0 = cpuMs();
+            for (int i = 0; i < 10000; i++) {
+                *sum += t.unitOf(rng() % t.codePoints());
+                *sum += t.codePointOf(rng() % t.size());
+            }
+            return cpuMs() - t0;
+        };
         size_t sum = 0;
-        for (int i = 0; i < 10000; i++) {
-            sum += t.unitOf(rng() % t.codePoints());
-            sum += t.codePointOf(rng() % t.size());
-        }
-        const double spent = cpuMs() - t0;
-        std::printf("  text: 20,000 lookups in 16 MB, %.2f ms of CPU\n", spent);
+        const double small = lookups(64u << 10, &sum);
+        const double spent = lookups(16u << 20, &sum);
+        std::printf("  text: 20,000 lookups in 16 MB, %.2f ms of CPU (%.2f in 64 KB)\n", spent,
+                    small);
         CHECK(sum > 0);
-        CHECK_TIME(spent, 400);
+        CHECK_TIME(spent, std::max(400.0, 8 * small));
     }
 
     GROUP("document:dirty");
