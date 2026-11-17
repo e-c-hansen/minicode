@@ -11,6 +11,7 @@
 #include <limits.h>
 #include <signal.h>
 #include <sys/prctl.h>
+#include <sys/syscall.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -823,11 +824,17 @@ void watchdog() {
     }
 }
 
+// The main thread's id, so a crash can say whether it was elsewhere.
+long gMainTid = 0;
+
 // A crash says where it was, before the signal does its usual work.
 void reportCrash(int sig) {
     char head[512];
-    int n = snprintf(head, sizeof head, "\nFATAL signal %d in [%s] (step: %s)\n", sig,
-                     gSuiteName.load(), gItemName.load());
+    // Which thread: a heap check's abort can come on any of them.
+    const long tid = (long)syscall(SYS_gettid);
+    int n = snprintf(head, sizeof head, "\nFATAL signal %d in [%s] (step: %s) on %s thread %ld\n", sig,
+                     gSuiteName.load(), gItemName.load(), tid == gMainTid ? "the main" : "another",
+                     tid);
     if (n > 0 && write(1, head, (size_t)n) < 0) {}
     void* frames[64];
     const int count = backtrace(frames, 64);
@@ -961,6 +968,13 @@ int main(int argc, char** argv) {
                 why.c_str());
         return 2;
     }
+    // backtrace() loads libgcc's unwinder on its first call, which allocates;
+    // in the handler, after glibc's heap checks abort while holding an
+    // arena's lock, that first call can wait for the lock for ever and print
+    // nothing (CI, linux/HANDOFF.md item 88). Called once here, it does not.
+    void* warm[1];
+    if (backtrace(warm, 1) < 0) {}
+    gMainTid = (long)syscall(SYS_gettid);
     for (int s : {SIGSEGV, SIGBUS, SIGABRT, SIGFPE, SIGILL}) signal(s, reportCrash);
 
     // minicode_main's main loop picks this up; it polls until the window it

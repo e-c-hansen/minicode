@@ -5640,8 +5640,9 @@ GTK files changed: `SessionLink.{h,cpp}` (new), `Document.{h,cpp}`,
 CI's GTK job on PR #108 (Mac files only) aborted once in the second half
 with `realloc(): invalid next size` just as `recent_folders` began, on a
 thread other than the main one (the main thread went on through ten more
-steps, then hung opening a window), and printed no backtrace: the crash
-handler's `backtrace()` waited on the malloc lock the aborting thread held.
+steps, then hung opening a window), and printed no backtrace, most likely
+because the crash handler's first `backtrace()` allocates and the aborting
+thread held the malloc lock.
 No such abort is in any failed run from November 16 on.
 
 What was tried, on this machine (`linux/build-asan`, `linux/build-tsan`,
@@ -5652,17 +5653,21 @@ neither committed):
   MC_SKIP_TIMING=1 MC_GUI_ROOT=/tmp MC_GUI_SUITES="..."`): the sixteen
   loopback suites with `recent_folders`, plain and with
   `MINICODE_HOST=loopback MINICODE_HOST_DELAY_US=200`, and every suite the
-  second half ran up to the crash, in CI's order. Clean but for one read
+  second half ran up to the crash, in CI's order, and 27 of them again
+  beside other agents' builds. Clean but for one read
   in a check's own helper (`GitText` in `tests/gui/GitChecks.h` passed a
   dead temporary's `c_str()` as git's path; fixed).
 - **TSan on the session's host** (`src/SessionHost.*`, `SessionClient.*`,
   `Ot.*`): a stand-alone hammer of the GTK pattern (host thread, one client
   dispatched from a "main loop", documents opened, edited, undone, reset,
-  watched and closed at random, 20,000 rounds; 5,000 more over the wire
-  format with a 200 us delay) reported nothing, and every text matched.
+  watched and closed at random: 150,000 rounds, and 30,000 more over the
+  wire format with a delay of 50 us a message) reported nothing, and
+  every text matched.
 - **TSan on the GTK app** (clang, `-Dbrowser=disabled`; the browser suites
-  do not compile without it, so the guitest was linked without them): no
-  report has a frame of `SessionLink`, `Shared::` or `Document::hostEdited`.
+  do not compile without it, so the guitest was linked without them),
+  save, tabs, preview_tabs, sessions, backups and the apps they start: of
+  250 reports none has a frame of `SessionLink`, `Shared::` or
+  `Document::hostEdited`.
   GLib's GMutex and GCond are futexes TSan does not see, so every hand-off
   through a GTask, a GThreadPool or `g_idle_add` shows as a race (the
   tree's listing, Find in Folder, the tree's git colors); those reports
@@ -5672,9 +5677,12 @@ neither committed):
   values, and no GLib call is made from the host thread but
   `g_idle_add_full`.
 
-Still open: which thread aborted and what wrote past its block. A rerun
-of CI's two halves at once (CI's load) under ASan, and a backtrace that
-does not need malloc (the handler could write the frames with
-`backtrace_symbols_fd` from a buffer filled at startup, or call
-`backtrace()` once at startup so libgcc is loaded before any crash), are
-the next steps.
+The harness's crash handler now calls `backtrace()` once at startup, so
+the unwinder is loaded before any crash and the handler allocates nothing,
+and its FATAL line says whether the main thread crashed and the thread's
+id: the next occurrence prints its frames. Still open: which thread
+aborted and what wrote past its block; a rerun of CI's two halves at once
+(CI's load) under ASan is the next step. Seen once under ASan with the
+wire format and a 200 us delay on a loaded machine: two of preview_tabs'
+waits timed out at 30 s, and in the loaded second pass control failed
+11 checks (no memory error either time); neither was seen otherwise.
