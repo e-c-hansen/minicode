@@ -161,6 +161,33 @@ public:
     // first; takeErrors() empties the list.
     std::vector<std::string> takeErrors();
 
+    // ---- terminals (stage 5): the host owns the pty; the renderer's
+    // emulator is fed what it forwards and sends back what the user types.
+    // Sent at once, never behind an edit waiting for its acknowledgement.
+    class TermListener {
+    public:
+        virtual ~TermListener() = default;
+        virtual void termOpened(TermId, int /*pid*/) {}
+        // Output to feed the emulator, in order; `replay` for the bytes that
+        // rebuild a terminal attached to. `cursorLine` is the host screen's
+        // cursor line after these bytes (TermMark's count), `alt` whether a
+        // program has the alternate screen. Acknowledge with ackTerminal
+        // once the emulator has taken them.
+        virtual void termOutput(TermId, const std::string& bytes, long long cursorLine, bool alt,
+                                bool replay) = 0;
+        virtual void termShell(TermId, const TermShell&) {}
+        virtual void termMarks(TermId, const std::vector<TermMark>&) {}
+        // The shell's wait status (-1 unknown), or why it never started.
+        virtual void termExited(TermId, int /*status*/, const std::string& /*error*/) {}
+    };
+    void openTerminal(TermId t, const TermSpec& spec, TermListener* l);
+    void attachTerminal(TermId t, TermListener* l);
+    void terminalInput(TermId t, std::string bytes);
+    void resizeTerminal(TermId t, int cols, int rows);
+    void ackTerminal(TermId t, std::size_t bytes);
+    // Hangs the shell up; the listener hears nothing more.
+    void closeTerminal(TermId t);
+
     // ---- windows
     void windowTabs(std::uint64_t window, Json tabs);
     void windowClosed(std::uint64_t window);
@@ -197,6 +224,9 @@ private:
     Message head_;   // the edit in flight
     std::uint64_t seq_ = 0, nextStep_ = 0, nextReq_ = 0;
     std::map<std::uint64_t, Message> replies_;
+    std::map<TermId, TermListener*> terms_;
+    void sendNow(Message&& m);
+    void onTerminal(Message& m);
     // Requests whose wait timed out: their answers are dropped on arrival.
     std::set<std::uint64_t> abandoned_;
     std::vector<std::string> errors_;

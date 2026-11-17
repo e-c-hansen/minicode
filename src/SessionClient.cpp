@@ -301,6 +301,91 @@ void Client::process(Message&& m) {
         break;
     }
     case Kind::Error: errors_.push_back(m.name); break;
+    case Kind::TermOpened:
+    case Kind::TermOutput:
+    case Kind::TermReplay:
+    case Kind::TermShell:
+    case Kind::TermMarks:
+    case Kind::TermExited: onTerminal(m); break;
+    default: break;
+    }
+}
+
+// ---------------------------------------------------------------- terminals
+
+void Client::sendNow(Message&& m) {
+    if (send_) send_(std::move(m));
+}
+
+void Client::openTerminal(TermId t, const TermSpec& spec, TermListener* l) {
+    terms_[t] = l;
+    Message m;
+    m.kind = Kind::TermOpen;
+    m.term = t;
+    m.json = termSpecJson(spec);
+    sendNow(std::move(m));
+}
+
+void Client::attachTerminal(TermId t, TermListener* l) {
+    terms_[t] = l;
+    Message m;
+    m.kind = Kind::TermAttach;
+    m.term = t;
+    sendNow(std::move(m));
+}
+
+void Client::terminalInput(TermId t, std::string bytes) {
+    if (bytes.empty() || !terms_.count(t)) return;
+    Message m;
+    m.kind = Kind::TermInput;
+    m.term = t;
+    m.bytes = std::move(bytes);
+    sendNow(std::move(m));
+}
+
+void Client::resizeTerminal(TermId t, int cols, int rows) {
+    if (!terms_.count(t)) return;
+    Message m;
+    m.kind = Kind::TermResize;
+    m.term = t;
+    m.cols = cols;
+    m.rows = rows;
+    sendNow(std::move(m));
+}
+
+void Client::ackTerminal(TermId t, std::size_t bytes) {
+    if (!bytes || !terms_.count(t)) return;
+    Message m;
+    m.kind = Kind::TermAck;
+    m.term = t;
+    m.v = bytes;
+    sendNow(std::move(m));
+}
+
+void Client::closeTerminal(TermId t) {
+    if (!terms_.erase(t)) return;
+    Message m;
+    m.kind = Kind::TermClose;
+    m.term = t;
+    sendNow(std::move(m));
+}
+
+void Client::onTerminal(Message& m) {
+    auto it = terms_.find(m.term);
+    if (it == terms_.end() || !it->second) return;
+    TermListener* l = it->second;
+    switch (m.kind) {
+    case Kind::TermOpened: l->termOpened(m.term, (int)m.v); break;
+    case Kind::TermOutput:
+    case Kind::TermReplay:
+        l->termOutput(m.term, m.bytes, (long long)m.v, m.flag & 1, m.kind == Kind::TermReplay);
+        break;
+    case Kind::TermShell: l->termShell(m.term, termShellFrom(m.json)); break;
+    case Kind::TermMarks: l->termMarks(m.term, termMarksFrom(m.json)); break;
+    case Kind::TermExited:
+        terms_.erase(it);   // nothing more comes
+        l->termExited(m.term, m.flag, m.name);
+        break;
     default: break;
     }
 }

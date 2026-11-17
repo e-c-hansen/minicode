@@ -5782,7 +5782,31 @@ needs the spawns moved to `g_spawn_async_with_pipes_and_fds` with an
 explicit envp and `G_SPAWN_SEARCH_PATH_FROM_ENVP`, because
 `GSubprocessLauncher`'s init copies `environ` itself.
 
-### 91. The palette lists View > Theme (done, November 2026)
+### 91. The note's box placed by the overlay (done, November 2026)
+
+`notes` failed in full runs (and in `install_hints processes notes`, where the
+terminal dock leaves the editor's view 418 px tall). The cause: the box was
+placed by `halign START` and a 56 px `margin_start`, and `reposition` set its
+`margin_top` from a measurement. GTK allocated the box less than its own
+minimum width (its warning "Trying to measure GtkBox ... for width of 127, but
+it needs at least 201": the minimum included the 56 px margin the overlay did
+not leave), so the wrapping body label measured 89 to 279 tall at that width,
+`margin_top` changed the layout, the next layout measured again, and the box
+flipped between two places every frame (top 24 and 39); when a measure came
+out tall, `top < 2` put the box below the last line. The fix: no margins or
+alignment on the box; `AgentNotes::childPosition` answers the overlay's
+`get-child-position` with the whole rectangle (x 56; the natural width held
+between the minimum and what the overlay has past the indent; the height
+measured at that very width; above the first line, else below the last), so
+nothing the box does feeds back into what it is measured at. `reposition`
+only asks for a new allocation. The `notes` suite now opens the terminal dock
+first, then checks the box is above the first line by its bounds, holds one
+place over a quiet half second, and is allocated at least its minimum width;
+without the fix it fails 3 of 3 alone, with it 3 of 3 pass, alone and in
+`install_hints processes notes`. (The earlier step here, measuring at the
+natural width, stays: it is what childPosition does.)
+
+### 92. The palette lists View > Theme (done, November 2026)
 
 The palette's rows come from `Keys::actions()` (the registry's commands), and
 View > Theme's items are not registry commands: they are `app.theme` with a

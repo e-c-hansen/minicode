@@ -2320,3 +2320,425 @@ std::string TerminalScreen::pasteAsOneLine(const std::string& text) {
         if (c != '\r' && c != '\n') out += c;
     return out;
 }
+
+// ---------------------------------------------------------------- replay
+// Whether a wrapped row's last cell is the blank a wide character that did
+// not fit left there (a space in the background it was erased in, nothing
+// else), as opposed to text written over it since.
+static bool wideWrapBlank(const TermCell& c) {
+    TermStyle bgOnly;
+    bgOnly.bg = c.style.bg;
+    return c.ch == " " && c.width == 1 && c.style == bgOnly;
+}
+
+// The writer behind replay(): the bytes, and what the receiver's style, link
+// and character sets are as they stand, so each changes only when it must.
+struct TerminalScreen::Replay {
+    const TerminalScreen& s;
+    std::string nonce;
+    std::string out;
+    TermStyle cur;          // the receiver's SGR state, in this screen's ids
+    uint32_t link = 0;      // the receiver's open link, in this screen's ids
+    bool charsets = false;  // the receiver's character sets are not ASCII
+    bool prompt = false;    // the receiver's promptActive_ (the last A or C)
+
+    void cup(int row, int col) {
+        out += "\x1b[" + std::to_string(row + 1) + ";" + std::to_string(col + 1) + "H";
+    }
+    static std::string color(int base, const TermColor& c) {
+        if (c.kind == TermColor::Indexed)
+            return ";" + std::to_string(base) + ";5;" + std::to_string(c.index);
+        if (c.kind == TermColor::RGB)
+            return ";" + std::to_string(base) + ";2;" + std::to_string(c.r) + ";" +
+                   std::to_string(c.g) + ";" + std::to_string(c.b);
+        return "";
+    }
+    void style(const TermStyle& want) {
+        TermStyle a = want, b = cur;
+        a.link = b.link = 0;
+        if (a == b) return;
+        std::string sgr = "\x1b[0";
+        if (want.bold) sgr += ";1";
+        if (want.dim) sgr += ";2";
+        if (want.italic) sgr += ";3";
+        if (want.underline == TermUnderlineSingle) sgr += ";4";
+        else if (want.underline) sgr += ";4:" + std::to_string((int)want.underline);
+        if (want.inverse) sgr += ";7";
+        if (want.hidden) sgr += ";8";
+        if (want.strike) sgr += ";9";
+        if (want.overline) sgr += ";53";
+        sgr += color(38, want.fg) + color(48, want.bg);
+        if (want.underlineColor) sgr += color(58, s.underlineColors_.color(want.underlineColor));
+        out += sgr + "m";
+        cur = want;
+        cur.link = link;
+    }
+    void setLink(uint32_t id) {
+        if (id == link) return;
+        if (id == 0 || id > s.links_.size() || s.links_[id - 1].empty()) {
+            if (link) out += "\x1b]8;;\x1b\\";
+            link = 0;
+            return;
+        }
+        const std::string& key = s.linkKeys_[id - 1];
+        const std::string named = key.substr(0, key.find('\x1f'));
+        out += "\x1b]8;" + (named.empty() ? std::string() : "id=" + named) + ";" + s.links_[id - 1] +
+               "\x1b\\";
+        link = id;
+    }
+    void mark(const Mark& m, int at) {
+        std::string body = std::string("133;") + m.kind;
+        if (m.kind == 'D') body += ";" + std::to_string(m.status);
+        if (!nonce.empty()) body += ";mc=" + nonce;
+        out += "\x1b]" + body + "\a";
+        if (m.kind != 'D') prompt = m.kind == 'A';
+        // A prompt mark makes the next wrap zsh's PROMPT_SP (promptSp_);
+        // here the wraps are the text's own, so a carriage return ends that
+        // at once, and the cursor goes back where it was.
+        if (m.kind == 'A' && at < s.cols_) {
+            out += "\r";
+            if (at > 0) out += "\x1b[" + std::to_string(at) + "C";
+        }
+    }
+    void cell(const TermCell& c) {
+        setLink(c.style.link);
+        style(c.style);
+        out += c.ch.empty() ? " " : c.ch;
+    }
+    void resetCharsets() {
+        if (charsets) out += "\x1b(B\x1b)B\x0f";
+        charsets = false;
+    }
+    // The cursor as `v` holds it, with what DECSC saves beside it. A cursor
+    // waiting to wrap (after the last column) is made by writing the cell
+    // under it again.
+    void cursor(const Saved& v, const Grid& g) {
+        out += v.originMode ? "\x1b[?6h" : "\x1b[?6l";
+        const int base = v.originMode ? s.top_ : 0;
+        if (v.wrapPending && v.autowrap && v.y >= 0 && v.y < (int)g.size()) {
+            int x = v.x;
+            if (x > 0 && x < (int)g[v.y].size() && g[v.y][x].width == 0) x--;
+            if (x >= 0 && x < (int)g[v.y].size()) {
+                cup(v.y - base, x);
+                cell(g[v.y][x]);
+            }
+        } else {
+            cup(v.y - base, v.x);
+        }
+        setLink(0);
+        style(v.style);
+        if (!v.autowrap) out += "\x1b[?7l";
+        if (v.g0 == 1) out += "\x1b(0";
+        if (v.g1 == 1) out += "\x1b)0";
+        if (v.gl == 1) out += "\x0e";
+        charsets = v.g0 || v.g1 || v.gl;
+    }
+    // Back to what the writing needs after a saved cursor was made.
+    void plain(const Saved& v) {
+        if (!v.autowrap) out += "\x1b[?7h";
+        resetCharsets();
+    }
+    // Whether zsh's line editor has the screen (a prompt mark and no
+    // command mark since) comes from marks, some of which a screen does not
+    // keep (one on the alternate screen, one on a line erased since): a
+    // mark the receiver reads but keeps nowhere sets it, written while the
+    // alternate screen shows.
+    void promptState(bool active, bool onAlt) {
+        if (active == prompt) return;
+        if (!onAlt) out += "\x1b[?47h";
+        out += std::string("\x1b]133;") + (active ? "A" : "C") +
+               (nonce.empty() ? std::string() : ";mc=" + nonce) + "\a\r";
+        if (!onAlt) out += "\x1b[?47l";
+        prompt = active;
+    }
+    void keyboard(int screen) {
+        const std::vector<int>& stack = s.keyboardStack_[screen];
+        const int flags = s.keyboardFlags_[screen];
+        if (stack.empty()) {
+            if (flags) out += "\x1b[=" + std::to_string(flags) + ";1u";
+            return;
+        }
+        out += "\x1b[=" + std::to_string(stack[0]) + ";1u";
+        for (size_t i = 1; i < stack.size(); i++) out += "\x1b[>" + std::to_string(stack[i]) + "u";
+        out += "\x1b[>" + std::to_string(flags) + "u";
+    }
+};
+
+std::string TerminalScreen::replay(const std::string& nonce) const {
+    Replay w{*this, nonce, std::string()};
+    std::string& out = w.out;
+    if (graphemes_ >= 0) out += graphemes_ ? "\x1b[?2027h" : "\x1b[?2027l";
+
+    // (A bottom row that a wrap continued onto and that wrapped again, its
+    // own continuation gone, comes back without its wrap, as does a wrapped
+    // bottom row on a screen of two rows: only a scroll could make it, and
+    // that would move every line.)
+    // The scrollback and the main screen, top to bottom: each line written
+    // at the bottom and ended with CR LF, unless it wrapped, when the next
+    // line's first character wraps it in the receiver too. The scrollback's
+    // lines go up into the receiver's as the screen's are written under them.
+    const int H = historySize();
+    auto m = marks_.begin();
+    const long long firstId = historyBase_ - H;
+    while (m != marks_.end() && m->id < firstId) ++m;
+    bool prevWrapped = false;
+    uint8_t prevWrap = 0;
+    TermStyle prevLastStyle;
+    for (int line = -H; line < rows_; line++) {
+        const Row row = line < 0 ? unpack(history_[H + line]) : main_[line];
+        const long long id = historyBase_ + line;
+        int n = (int)row.size();
+        // The blank a wide character left (written over since, insert mode
+        // moving text into it, the line wraps as an ordinary one).
+        uint8_t wrap = row.wrap;
+        // The bottom row wrapped onto itself (the cursor below the scroll
+        // region, as in the screen's own lineFeed): a scroll region that
+        // leaves it out makes the receiver's wrap do the same, once the row
+        // is written.
+        const bool selfWrap = line == rows_ - 1 && row.wrap != 0 && rows_ >= 3 && !prevWrapped;
+        bool dropped = false;
+        if (wrap == 2 && n > 0) {
+            // On a bottom row no wrap can follow, the blank stays as written.
+            if (wideWrapBlank(row[n - 1]) && (line < rows_ - 1 || selfWrap)) {
+                n--;
+                dropped = true;
+            } else {
+                wrap = 1;
+            }
+        }
+        if (row.wrap == 0) {
+            const TermCell none;
+            while (n > 0 && row[n - 1].ch == none.ch && row[n - 1].width == 1 &&
+                   row[n - 1].style == none.style)
+                n--;
+        }
+        // A line that a wrap continues onto has a character, or the wrap
+        // would end with the carriage return.
+        if (prevWrapped && n == 0) n = 1;
+        // After a wide character's wrap (2), the line above ends in a blank
+        // only a wide character that does not fit leaves: when this line no
+        // longer starts with one, one is written and then written over.
+        const bool forceWide = prevWrap == 2 && (row.empty() || row[0].width != 2 ||
+                                                 !(row[0].style.bg == prevLastStyle.bg));
+        if (forceWide) n = std::max(n, std::min(2, (int)cols_));
+        if (selfWrap) {
+            out += "\x1b[1;" + std::to_string(rows_ - 1) + "r";
+            w.cup(rows_ - 1, 0);
+        }
+        int pos = 0;
+        bool backToWide = false;
+        auto marksUpTo = [&](int col) {
+            for (; m != marks_.end() && m->id == id && m->col <= col; ++m) {
+                if (dropped && pos == cols_ - 1 && m->col >= cols_) {
+                    // After the blank a wide character's wrap leaves: the
+                    // blank is written, the mark placed, and the cursor
+                    // taken back to it, where the wrap needs it.
+                    w.cell(row.back());
+                    pos = cols_;
+                    backToWide = true;
+                }
+                if (m->col > pos && pos < cols_) {
+                    // Past the line's text, where the cells are blank: blanks
+                    // written to it, so a mark after the last column (the
+                    // cursor waiting to wrap) is placed there too.
+                    w.setLink(0);
+                    w.style(TermStyle());
+                    const int to = std::min(m->col, cols_);
+                    out.append((size_t)(to - pos), ' ');
+                    pos = to;
+                }
+                w.mark(*m, pos);
+            }
+        };
+        for (int c = 0; c < n; c++) {
+            const TermCell blankCell;
+            const TermCell& cell = c < (int)row.size() ? row[c] : blankCell;
+            if (cell.width == 0) continue;
+            if (c == 0 && prevWrapped) {
+                // The line a wrap continues: its marks at the start go in
+                // once the first character has wrapped it (before, the
+                // cursor still waits at the end of the line above).
+                if (forceWide) {
+                    w.setLink(0);
+                    w.style(prevLastStyle);
+                    out += "\xe6\xbc\xa2\r";   // 漢
+                }
+                w.cell(cell);
+                pos = cell.width;
+                for (; m != marks_.end() && m->id == id && m->col < pos; ++m) {
+                    const int back = pos - m->col;
+                    out += "\x1b[" + std::to_string(back) + "D";
+                    w.mark(*m, m->col);
+                    out += "\x1b[" + std::to_string(back) + "C";
+                }
+                continue;
+            }
+            marksUpTo(c);
+            // A mark on a wide character's right half: placed with the
+            // cursor there, before the character is written over it.
+            if (cell.width == 2 && m != marks_.end() && m->id == id && m->col == c + 1) {
+                out += "\x1b[C";
+                for (; m != marks_.end() && m->id == id && m->col == c + 1; ++m) w.mark(*m, c + 1);
+                out += "\x1b[D";
+            }
+            w.cell(cell);
+            pos = c + cell.width;
+        }
+        marksUpTo(INT_MAX);
+        while (m != marks_.end() && m->id <= id) ++m;   // a mark past the screen's edge
+        if (backToWide) {
+            out += "\x1b[D\x1b[C";
+            pos = cols_ - 1;
+        }
+        if (selfWrap) {
+            w.setLink(0);
+            w.style(row.back().style);
+            out += wrap == 2 ? "\xe6\xbc\xa2\r" : " \r";
+            for (int c = 0; c < 2 && c < (int)row.size(); c++)
+                if (row[c].width != 0) w.cell(row[c]);
+            w.setLink(0);
+            out += "\x1b[r";
+        }
+        // A line a wrap brought in was erased in the colors the wrap was
+        // written in; the blanks after its text are the default ones.
+        if (prevWrapped && wrap == 0 && pos < cols_) {
+            w.setLink(0);
+            w.style(TermStyle());
+            out += "\x1b[K";
+        }
+        prevWrapped = wrap != 0;
+        prevWrap = wrap;
+        if (!row.empty()) prevLastStyle = row.back().style;
+        if (line < rows_ - 1 && !prevWrapped) {
+            // The rows a line feed brings up are erased in the current
+            // colors: the default ones, as the screen's were.
+            w.setLink(0);
+            w.style(TermStyle());
+            out += "\r\n";
+        }
+    }
+    w.setLink(0);
+
+    // Tab stops other than every eighth column.
+    std::vector<bool> stops(cols_, false);
+    for (int i = 8; i < cols_; i += 8) stops[i] = true;
+    if (stops != tabs_) {
+        out += "\x1b[3g";
+        for (int c = 0; c < cols_ && c < (int)tabs_.size(); c++)
+            if (tabs_[c]) {
+                w.cup(rows_ - 1, c);
+                out += "\x1bH";
+            }
+    }
+    w.keyboard(0);
+
+    const Saved none;
+    auto same = [](const Saved& a, const Saved& b) {
+        return a.x == b.x && a.y == b.y && a.style == b.style && a.originMode == b.originMode &&
+               a.autowrap == b.autowrap && a.wrapPending == b.wrapPending && a.g0 == b.g0 &&
+               a.g1 == b.g1 && a.gl == b.gl;
+    };
+    const Saved now{x_, y_, style_, originMode_, autowrap_, wrapPending_, g0_, g1_, gl_};
+    auto region = [&] {
+        if (top_ != 0 || bottom_ != rows_ - 1)
+            out += "\x1b[" + std::to_string(top_ + 1) + ";" + std::to_string(bottom_ + 1) + "r";
+    };
+    if (!onAlt_) {
+        w.promptState(promptActive_, false);
+        region();
+        if (!same(savedMain_, none)) {
+            w.cursor(savedMain_, main_);
+            out += "\x1b" "7";
+            w.plain(savedMain_);
+        }
+        w.cursor(now, main_);
+    } else {
+        // The main screen's cursor as the switch saved it, then the
+        // alternate screen, written whole.
+        w.cursor(savedMain_, main_);
+        out += "\x1b[?1049h";
+        w.plain(savedMain_);
+        w.promptState(promptActive_, true);
+        for (int r = 0; r < rows_; r++) {
+            const Row& row = alt_[r];
+            const bool continues = r > 0 && alt_[r - 1].wrap != 0;
+            const bool selfWrap = r == rows_ - 1 && row.wrap != 0 && rows_ >= 3 && !continues;
+            if (selfWrap) out += "\x1b[1;" + std::to_string(rows_ - 1) + "r";
+            if (!continues) {
+                w.setLink(0);
+                w.cup(r, 0);
+            }
+            int n = (int)row.size();
+            if (row.wrap == 2 && n > 0 && wideWrapBlank(row[n - 1]) && (r < rows_ - 1 || selfWrap)) n--;
+            if (continues && alt_[r - 1].wrap == 2 && wideWrapBlank(alt_[r - 1].back()) &&
+                (row.empty() || row[0].width != 2 || !(row[0].style.bg == alt_[r - 1].back().style.bg))) {
+                w.setLink(0);
+                w.style(alt_[r - 1].back().style);
+                out += "\xe6\xbc\xa2\r";
+                n = std::max(n, std::min(2, (int)cols_));
+            }
+            for (int c = 0; c < n; c++)
+                if (c >= (int)row.size()) {
+                    w.setLink(0);
+                    w.style(TermStyle());
+                    out += " ";
+                } else if (row[c].width != 0) {
+                    w.cell(row[c]);
+                }
+            if (selfWrap) {
+                w.setLink(0);
+                w.style(row.back().style);
+                out += row.wrap == 2 ? "\xe6\xbc\xa2\r" : " \r";
+                for (int c = 0; c < 2 && c < (int)row.size(); c++)
+                    if (row[c].width != 0) w.cell(row[c]);
+                w.setLink(0);
+                out += "\x1b[r";
+            }
+        }
+        w.setLink(0);
+        region();
+        if (!same(savedAlt_, none)) {
+            w.cursor(savedAlt_, alt_);
+            out += "\x1b" "7";
+            w.plain(savedAlt_);
+        }
+        w.cursor(now, alt_);
+        w.keyboard(1);
+    }
+
+    // Modes, set once nothing more is written.
+    if (insertMode_) out += "\x1b[4h";
+    if (!cursorVisible_) out += "\x1b[?25l";
+    if (appCursor_) out += "\x1b[?1h";
+    if (appKeypad_) out += "\x1b=";
+    if (bracketedPaste_) out += "\x1b[?2004h";
+    if (mouseTracking_) out += "\x1b[?" + std::to_string(mouseTracking_) + "h";
+    if (mouseEncoding_) out += "\x1b[?" + std::to_string(mouseEncoding_) + "h";
+    if (focusEvents_) out += "\x1b[?1004h";
+    if (cursorShape_ != TermCursorShape::Default) {
+        int ps = cursorShape_ == TermCursorShape::Block ? 1
+               : cursorShape_ == TermCursorShape::Underline ? 3 : 5;
+        if (!cursorBlink_) ps++;
+        out += "\x1b[" + std::to_string(ps) + " q";
+    } else if (cursorBlink_) {
+        out += "\x1b[?12h";
+    }
+    if (!title_.empty()) out += "\x1b]2;" + title_ + "\a";
+    if (!directory_.empty()) {
+        std::string path;
+        static const char hex[] = "0123456789ABCDEF";
+        for (unsigned char c : directory_) {
+            if (c == '%' || c == ';' || c < 0x20 || c == 0x7F) {
+                path += '%';
+                path += hex[c >> 4];
+                path += hex[c & 15];
+            } else {
+                path += (char)c;
+            }
+        }
+        out += "\x1b]7;file://localhost" + path + (nonce.empty() ? "" : ";mc=" + nonce) + "\a";
+    }
+    w.setLink(link_);
+    if (syncOutput_) out += "\x1b[?2026h";
+    return out;
+}
