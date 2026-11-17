@@ -31,6 +31,7 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.nav = a->nav;
     w.consentBar = a->consentBar;
     w.format = a->format;
+    w.formatOffer = a->formatOffer;
     w.problems = a->problems;
     w.changeBars = a->gitGutter;
     w.treeColors = a->treeColors;
