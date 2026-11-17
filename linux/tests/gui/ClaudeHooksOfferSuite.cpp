@@ -55,6 +55,18 @@ bool bar() { return dock() && dock()->notice() != nullptr; }
 
 GtkWidget* button(GtkWidget* root, const char* text) { return MCGuiFindButton(root, text); }
 
+// The bar is up with its buttons laid out: the notice exists a frame or so
+// before its buttons can be found and pointed at, and a click then finds no
+// widget (CI, d5ea332: "× takes it away" found none).
+bool barReady() {
+    if (!bar()) return false;
+    for (const char* text : {"Turn On…", "Not Now", "×"}) {
+        GtkWidget* b = button(dock()->notice(), text);
+        if (!b || !gtk_widget_get_mapped(b) || gtk_widget_get_width(b) <= 0) return false;
+    }
+    return true;
+}
+
 // An alert is up with this button showing.
 bool questionWith(const char* text) {
     GtkWindow* top = MCGuiTopWindow();
@@ -112,7 +124,7 @@ MC_GUI_SUITE(claude_hooks_offer) {
     MCGuiWait("sleep is done", 10, [] { return atPrompt() && gT->shellState().prompts > gPrompts; });
 
     MCGuiStep("the claude script runs", [] { run(MCGuiProjectFile("fakebin/claude")); });
-    MCGuiWait("the bar is over the terminals", 10, [] { return bar(); });
+    MCGuiWait("the bar is over the terminals", 10, [] { return barReady(); });
     MCGuiStep("it offers Turn On…, Not Now and ×; nothing is written yet", [] {
         GtkWidget* b = dock()->notice();
         GCHECK(button(b, "Turn On…") != nullptr && button(b, "Not Now") != nullptr && button(b, "×") != nullptr);
@@ -154,7 +166,7 @@ MC_GUI_SUITE(claude_hooks_offer) {
         ClaudeHooksOffer::forgetOffer();
         run(MCGuiProjectFile("fakebin/claude"));
     });
-    MCGuiWait("the bar", 10, [] { return bar(); });
+    MCGuiWait("the bar", 10, [] { return barReady(); });
     MCGuiStep("Not Now", [] { MCGuiClick(button(dock()->notice(), "Not Now")); });
     MCGuiWait("the bar is gone", 10, [] { return !bar(); });
     MCGuiStep("it is kept, on disk, and nothing was written", [] {
@@ -175,7 +187,7 @@ MC_GUI_SUITE(claude_hooks_offer) {
         GCHECK(!bar());
         run("'" + MCGuiProjectFile("exe/ab") + "' -c 'sleep 4; :'");
     });
-    MCGuiWait("the bar, from the foreground program", 15, [] { return bar(); });
+    MCGuiWait("the bar, from the foreground program", 15, [] { return barReady(); });
     MCGuiStep("× takes it away and writes nothing", [] {
         GCHECK(!MCGuiFileExists(gSettings));
         MCGuiClick(button(dock()->notice(), "×"));
