@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 
 #include "FolderSearch.h"
+#import "BackupStore.h"
 
 namespace {
 
@@ -36,6 +37,7 @@ dispatch_queue_t Queue() {
 // windows.
 std::map<std::string, std::pair<TabSessions::Session, double>> gFolders;
 std::optional<std::vector<TabSessions::Window>> gWindows;
+double gWindowsSaved = 0;   // when they were handed over
 bool gWriteQueued = false;
 bool gChecked = false;
 
@@ -60,7 +62,11 @@ void WriteFile(const TabSessions::Store &store) {
 void Apply(TabSessions::Store &store) {
     for (auto &kv : gFolders)
         TabSessions::put(store.folders, kv.first, kv.second.first, kv.second.second);
-    if (gWindows) store.windows = *gWindows;
+    // This process's windows over its own and the last run's; another
+    // minicode's, running or quit since this one started, stay.
+    if (gWindows)
+        store.windows = TabSessions::mergeWindows(*gWindows, store.windows, MCSessionsThisProcess(),
+                                                  gWindowsSaved, MCSessionsIsRunning, nullptr);
 }
 
 // The first time: a minicode with no file yet takes the user defaults'
@@ -109,6 +115,22 @@ int IndexIn(id n, NSUInteger count) {
 
 }  // namespace
 
+TabSessions::Process MCSessionsThisProcess(void) {
+    static const TabSessions::Process me = {(long)getpid(), MCProcessStart(getpid())};
+    return me;
+}
+
+bool MCSessionsIsRunning(long pid, double start, void *) {
+    if (pid <= 0) return false;
+    const double now = MCProcessStart((pid_t)pid);
+    return now > 0 && fabs(now - start) < 1.0;
+}
+
+std::vector<TabSessions::Window> MCSessionsWindowsToRestore(void) {
+    return TabSessions::toRestore(MCSessionsRead().windows, MCSessionsThisProcess(),
+                                  MCSessionsIsRunning, nullptr);
+}
+
 NSString *MCSessionsFilePath(void) {
     NSString *env = NSProcessInfo.processInfo.environment[@"MINICODE_SESSIONS_FILE"];
     if (env.length) return env.stringByStandardizingPath;
@@ -140,8 +162,10 @@ void MCSessionsPutFolder(const std::string &key, const TabSessions::Session &s) 
 
 void MCSessionsPutWindows(const std::vector<TabSessions::Window> &windows) {
     const std::vector<TabSessions::Window> copy = windows;
+    const double now = WallNow();
     dispatch_async(Queue(), ^{
         gWindows = copy;
+        gWindowsSaved = now;
         QueueWrite();
     });
 }

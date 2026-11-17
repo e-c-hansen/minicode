@@ -3,8 +3,7 @@
 #include <sys/sysctl.h>
 #include <unistd.h>
 
-// When a process started (Unix seconds), or 0 when there is no such process.
-static double MCProcessStart(pid_t pid) {
+double MCProcessStart(pid_t pid) {
     struct kinfo_proc info;
     size_t size = sizeof info;
     int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};

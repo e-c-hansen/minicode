@@ -165,6 +165,13 @@ struct Window {
     std::vector<std::string> expanded;
     std::string selected;
     double treeScroll = 0;
+    // Which minicode wrote it down (its pid and start time, Unix seconds),
+    // and when (Unix seconds). Several minicodes running at once share the
+    // record, each keeping the others' windows (mergeWindows); 0 in a
+    // record from before, which counts as the last run's.
+    long ownerPid = 0;
+    double ownerStart = 0;
+    double saved = 0;
 };
 
 // Front window first. A window, or a part of one, that does not read is left
@@ -187,6 +194,37 @@ Store decodeStore(const std::string &text);
 // alone when it was the last (closing it quits minicode, and the next
 // launch brings it back, as quitting would have).
 std::vector<Window> afterClosing(const std::vector<Window> &open, size_t closing);
+
+// A running minicode, as the record names one: its pid and start time.
+struct Process {
+    long pid = 0;
+    double start = 0;
+};
+// Whether a process (pid, start time) is running now; the Mac asks the
+// kernel. Same pid and a start within a second (rounding) is the same
+// process; a reused pid started later is not.
+using IsRunning = bool (*)(long pid, double start, void *context);
+bool sameProcess(long pid, double start, const Process &p);
+
+// What a minicode writes as the windows to bring back: its own (`mine`,
+// front first, stamped as `me`'s at `now`), then the windows another
+// minicode wrote down that are still its to keep: one that is running
+// (its windows are open there), or one that wrote since `me` started (it
+// quit while `me` ran, and its windows are what it left). The windows of a
+// minicode gone before `me` started are the last run's, which `me`'s
+// replace, as one minicode's always have. Untagged windows (written by
+// minicode 1.5.31 and before) count as the last run's. Without this, two
+// minicodes at once (a build beside the Homebrew copy, `minicode -n`)
+// each wrote its own windows over the other's: quitting one with four
+// windows and the other three seconds later left a record of one.
+std::vector<Window> mergeWindows(const std::vector<Window> &mine, const std::vector<Window> &stored,
+                                 const Process &me, double now, IsRunning running, void *context);
+
+// The stored windows a launch with nothing to open brings back: all but
+// those another running minicode holds open (opening them twice would
+// give two windows on one folder, each writing over the other).
+std::vector<Window> toRestore(const std::vector<Window> &stored, const Process &me,
+                              IsRunning running, void *context);
 
 // Where a saved frame goes on the screens there are now (their visible
 // frames, the main screen first): where it was when it lies on a screen,
