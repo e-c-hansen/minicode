@@ -50,7 +50,10 @@ found through that list.
 - **Images** (not SVG, which is source): `NSImageView`, scaled down never up,
   `animates`, size set to pixels (a 144 dpi screenshot drew at half size); one
   that fails to decode falls through to the text path's "Cannot display".
-  **PDFs**: `PDFView`, reload keeping page, point and scale.
+  **PDFs**: `PDFView`, reload keeping page, point and scale; a new one
+  opens at the top of its first page (`MCPDFShowFirstPageTop`, PageZoom.mm,
+  the LaTeX preview's too; until 2026-11-17 a tall page opened scrolled to
+  its foot, which read as a blank page), and a tab shown again its own place.
 - **Video and audio** (`+isMediaPath:`): `AVPlayerView`, paused on the first
   frame; `stopMedia` (from `resetViewMode`, window close, dealloc) drops the
   player so sound stops; size (rotation applied) and length arrive by KVO;

@@ -566,6 +566,7 @@
         if (![self showPDFAtPath:path]) { [self loadActiveTab]; return; }
         PDFDocument *doc = self.pdfView.document;
         if (t.haveView && t.pdfPage < doc.pageCount) {
+            [self pdfKeepsPlaceGiven];
             if (!t.pdfAutoScales) self.pdfView.scaleFactor = t.pdfScale;
             [self.pdfView goToDestination:[[PDFDestination alloc]
                 initWithPage:[doc pageAtIndex:t.pdfPage] atPoint:t.pdfPoint]];
