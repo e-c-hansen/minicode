@@ -209,7 +209,7 @@ static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *an
 
 // Where character `i` of the editor is drawn, in the text view's coordinates;
 // the end of the text counts as the last character. Empty when it cannot be
-// known. The editor runs TextKit 1 (see CLAUDE.md), so this asks the layout
+// known. The editor runs TextKit 1 (see docs/notes/editor.md), so this asks the layout
 // manager, and it never touches one under TextKit 2, where asking would
 // switch the view over.
 - (NSRect)textRectForCharacter:(NSUInteger)i {

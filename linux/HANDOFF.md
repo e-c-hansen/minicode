@@ -16,7 +16,8 @@ Read these first:
   needs a person at the desktop.
 - `dev/README.md`: the Docker container with a virtual display for driving
   the app from a Mac.
-- `../CLAUDE.md`, especially "LaTeX preview", "LSP", "Images" and "Gotchas".
+- `../CLAUDE.md` and its area notes in `../docs/notes/`, especially
+  `latex.md`, `lsp.md` and `viewers.md` ("Images"), with each file's "Traps".
   The design decisions there apply here too.
 - `../android/README.md`: the Android port solved the same problems more
   recently, without AppKit, so it is often the closer model.
@@ -268,7 +269,7 @@ core's 14,000-edit test, so the GTK side needs no new unit tests.
 ### 4. Images and PDFs (done, September 2026)
 
 Mac: `showImageAtPath:` and `showPDFAtPath:` in `EditorController.mm`, and the
-"Images" section of `../CLAUDE.md`. Linux shows "cannot display" (the
+"Images" bullet of `../docs/notes/viewers.md`. Linux shows "cannot display" (the
 `g_utf8_validate` branch in `Editor.cpp`).
 
 - Images: `GtkPicture` with `gtk_picture_set_can_shrink` and content fit
@@ -449,7 +450,7 @@ continuation, after the open.
 ### 6. Language servers (done, September 2026)
 
 Mac: `mac/src/Lsp.mm` over `../src/LspClient.cpp`, described in the "LSP"
-section of `../CLAUDE.md`. The GTK side is `src/Lsp.{h,cpp}` over the same
+notes, `../docs/notes/lsp.md`. The GTK side is `src/Lsp.{h,cpp}` over the same
 `LspClient` and `Json`, now in `meson.build` and the Makefile. It follows the
 Mac's behaviour; what differs is how.
 
@@ -540,7 +541,7 @@ a row), since the hook called the same functions directly.
 
 ### 7. The LaTeX preview (done, September 2026)
 
-Mac: `mac/src/Latex.mm`; read the whole "LaTeX preview" section of `../CLAUDE.md`
+Mac: `mac/src/Latex.mm`; read the whole of `../docs/notes/latex.md`
 before starting. Android: `LatexPreview.kt` and `latex_jni.cpp`.
 
 - tectonic comes from `MINICODE_TECTONIC`, then
@@ -860,7 +861,7 @@ have them either.
 
 ### 10. The Source Control panel (done, September 2026)
 
-Mac: `mac/src/GitPanel.mm` and "Git panel" in `../CLAUDE.md`. GTK:
+Mac: `mac/src/GitPanel.mm` and "Git panel" in `../docs/notes/git.md`. GTK:
 `src/GitPanel.{h,cpp}`. Both, and Android, over the core's
 `../src/GitModel.{h,cpp}` (it lived here until 2026-11-06), which is plain
 C++ and holds everything that can be decided without a GUI (rows, keys, the
@@ -2629,7 +2630,7 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   letter, the old one staying up until the answer. A request goes only to
   a server that offers completion, or one still starting. Tab and Return
   take the selected item whenever the list shows
-  (`Lsp::completionKeyAccepts`, VS Code's defaults; `../CLAUDE.md`'s LSP
+  (`Lsp::completionKeyAccepts`, VS Code's defaults; `../docs/notes/lsp.md`'s
   bullet still describes the rule before 2026-11-08, when Return took an
   item only in some cases); Shift+Tab and Shift+Return close it and are
   the editor's; a key pressed before the list was filtered for the last
@@ -4692,7 +4693,7 @@ New Window makes a window.
   run keeps those pictures and Meson's log as its `gui-checks` artifact
   (`gh run download <id> -n gui-checks`).
 
-Two ways to run the app by hand, both described in `../CLAUDE.md`
+Two ways to run the app by hand, both described in `../docs/notes/verification.md`
 ("Verification reality"):
 
 - **From the Mac:** `linux/dev/gtk-dev.sh` builds a Docker image with Xvfb
@@ -5085,9 +5086,10 @@ GUI checks (`tests/gui`):
   (`FileTree.cpp` `ListJob`). Worktree rows are named and badged in
   `FileTree::decorate`, which returns before the git colors. A right click on
   one pops its own two-item menu (`win.compareworktree`,
-  `win.worktreewindow`). Compare with Main is `WorktreeChangesPage`: the
-  changed files against the merge base (`AgentView::compareBase`), a click
-  opening the file in the compare view through `Editor::showComparison`.
+  `win.worktreewindow`). Compare with Main was a list page here
+  (`WorktreeChangesPage`, gone: item 88) and is the review page in its
+  worktree mode, the changed files against the merge base
+  (`AgentView::compareBase`).
 - **Left**: Show Terminal for a session waiting in a terminal (the attention
   board knows the session; the Agents panel does not read it yet); the node
   does not appear until the top folder is listed again after
@@ -5250,7 +5252,7 @@ window in stage 3c; sessions.json and the backup planner follow in 3b.
   group also showed it left both groups here; item 84 put back the Mac's
   rule, under which it stays in the other.)
 - **Checks**: the core's `session:*` (each rule of "Tabs, sessions and
-  the disk", "The preview tab" and "Two editor groups" in CLAUDE.md, and
+  the disk", "The preview tab" and "Two editor groups" in docs/notes/sessions.md, and
   a random walk holding the window's bookkeeping), the `tabs` suite (the
   strip checked against the window, a tab dragged to the end and back)
   and `split_editor` (the groups checked against the window after each
@@ -5446,7 +5448,7 @@ Install Claude Code Hooks… and the Agents panel's header line.
 ### 84. One set of tab rules with the Mac (done, November 2026; SESSION-DESIGN.md stage 3d)
 
 Stage 3c left the Mac on its own rules where `Model::Window`'s differed;
-the window now follows the Mac's (CLAUDE.md, "The preview tab" and "Two
+the window now follows the Mac's (docs/notes/sessions.md, "The preview tab" and "Two
 editor groups") and the Mac's copies are gone, so both ports run the same
 code. What changes on Linux:
 - **A preview tab per group.** A tree click (or a search result's) replaces
@@ -5634,3 +5636,55 @@ GTK files changed: `SessionLink.{h,cpp}` (new), `Document.{h,cpp}`,
 `LargeFileView.cpp`, `Editor.{h,cpp}`, `Tabs.cpp`, `Lsp.{h,cpp}`,
 `LspSessionPrivate.h`, `LspSessionSync.cpp`, `meson.build`, `Makefile`,
 `tests/gui/Harness.cpp` and `tests/gui/Wrapper.cpp`.
+
+
+### 88. Compare with Main in one scroll, and Apply to Main (done, November 2026)
+
+The Mac's worktree page (`ae95033`, `f714354`) on the review page of item 85.
+The tree's Worktrees node menu, `win.compareworktree`, opens a
+`ChangeReviewPage` made with its second constructor (the worktree's folder,
+its name, its branch, the main branch): the same page over what the worktree
+changed since its branch left main, committed or not, plus its untracked
+files, against main at the merge base (`AgentView::compareBase`, so main's
+later work is never shown as the agent deleting it), every file plain (Side
+by Side and Open, no Stage), the header "against main at the branch point
+(1a2b3c4)  .  branch  .  3 files, +4 -1". Key `worktree:<folder>`, title "agent-wt
+vs main", one page a worktree, shown again (and read again) when open.
+`WorktreeChangesPage` is gone; `AgentWorktrees::changes` and `comparison` have
+no caller now and can go with the next change there.
+
+The rules are the core's, in `ChangeReviewRead.{h,cpp}` beside the review's:
+`readWorktree` (merge base, `diff --raw`, untracked files, the old blobs in one
+cat-file --batch), `planApplyToMain` (main's status, then
+`GitUi::applyToMainPlan`: refused naming the files when main has changes of
+its own in them, else the question), and `applyToMain` (the worktree's
+`diff --binary` against the merge base plus a `--no-index` patch for each
+untracked file, main's `apply`, and when it fails `apply --3way`, whose
+cleanly applied files are unstaged; conflicts listed; never a commit). All run
+over the `GitRunner` the caller gives, which now may report the exit status
+(`GitOut::status`: `diff --no-index` exits 1 when files differ). The Mac's
+own copy in `ChangeReviewPage.mm` is untouched; moving it onto these is a Mac
+change. `review-worktree:git` (tests/change_review_read_tests.inc) runs them on
+a scratch repository with a main and a `git worktree add`: committed and
+uncommitted changes, main's later work left out, an untracked file, the refusal
+while main is dirty in a file, the apply (files in main, nothing staged or
+committed), the three-way clash, and a worktree with no changes.
+
+The page's Apply to Main... runs on the Source Control panel's git thread
+(`runOnGitThread`, so in order with its commands) and asks through the panel's
+question (`askQuestion`: Apply to Main, Cancel). Afterwards the result is on a
+line of its own under the bar with Show in Source Control beside it
+(`onShowSourceControl`: main.cpp shows the Source Control panel and the
+uncommitted review when this window is on the main checkout and not on the
+worktree, else opens a window on the main checkout), and the button reads
+"Applied to Main", unavailable, until the worktree's fingerprint differs from
+the one brought in. Wording is the Mac's (`applyDoneText`, `applyFailureText`).
+The worktree page does not follow the panel's reads (the Mac's does not
+either): it reads when opened, on Compare with Main again, and after an apply.
+Not done: a refresh while the agent works (the Mac's watches the folder), and
+the commit page. The `agents` suite's Worktrees part presses it: the page
+shows the agent's three files and none of main's later work, Side by Side on
+base.txt, Apply to Main with Cancel (nothing changes) and with the answer
+(files in main's checkout, nothing staged or committed, "Brought 3 files into
+main as uncommitted changes."), Show in Source Control, and the button coming
+back when the agent adds a file.

@@ -68,7 +68,6 @@
 #include "AgentsPanel.h"
 #include "EvidencePage.h"
 #include "AgentWorktrees.h"
-#include "WorktreeChangesPage.h"
 #include "ChangeReviewPage.h"
 #include "RunFile.h"
 #include "ProcessesPanel.h"
@@ -2502,7 +2501,8 @@ static void showDiffInEditor(App* app, const std::string& title, const std::stri
 static ChangeReviewPage* reviewPageOf(App* app) {
     for (Document* d : app->editor->documents())
         if (d->editorPage())
-            if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get())) return r;
+            if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get()))
+                if (!r->isWorktree()) return r;
     return nullptr;
 }
 
@@ -2721,20 +2721,62 @@ static void ensureAgents(App* app) {
 
 // The tree's Worktrees node (PARITY.md 3.5): each worktree named for its
 // agent with its ahead count and changes; a right click offers Compare with
-// Main (a page of the changed files, each opening side by side with main at
-// the branch point) and Open in New Window.
+// Main (the review page in its worktree mode: every file the agent changed
+// against main at the branch point in one scroll, with Apply to Main) and
+// Open in New Window.
 static void compareWorktree(App* app) {
-    if (app->dead || !app->worktrees) return;
+    if (app->dead || !app->worktrees || !app->git) return;
     const WorktreeInfo* w = app->worktrees->find(app->tree->selectedPath());
     if (!w) {
         flashStatus(app, "git has not listed that folder as a worktree yet");
         app->worktrees->refresh();
         return;
     }
-    auto page = std::make_shared<WorktreeChangesPage>(app->worktrees, *w);
+    const std::string path = w->path;
+    // Shown again when this worktree's page is open, read again.
+    for (Document* d : app->editor->documents())
+        if (d->editorPage())
+            if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get()))
+                if (r->isWorktree() && r->worktree() == path) {
+                    app->editor->showPage(std::shared_ptr<EditorPage>(std::shared_ptr<EditorPage>(), r));
+                    r->reload();
+                    return;
+                }
+    auto page = std::make_shared<ChangeReviewPage>(app->git, path, w->label, w->branch,
+                                                   app->worktrees->mainBranch());
+    page->onOpenFile = [app](const std::string& file, int line) {
+        openFileThen(app, file, EditorTabs::OpenFrom::Other, [app, file, line] {
+            if (app->editor->currentPath() != file || app->editor->isMedia()) return;
+            if (line > 0) app->editor->revealLineColumn(line, 0);
+        });
+    };
     page->onShowComparison = [app](const CompareSpec& spec) {
         if (!app->dead) app->editor->showComparison(spec);
     };
+    page->hasUnsavedText = [app](const std::string& file) {
+        for (Document* d : app->editor->dirtyDocuments())
+            if (d->path() == file) return true;
+        return false;
+    };
+    page->syntaxColor = [](int style) { return g.settings->settings().syntax((TokenStyle)style); };
+    // After Apply to Main: the main checkout's changes, here when this
+    // window is on it (and not on the worktree), else in a window of its own.
+    page->onShowSourceControl = [app, path](const std::string& mainPath) {
+        if (app->dead) return;
+        auto inside = [](const std::string& root, const std::string& folder) {
+            char a[PATH_MAX], b[PATH_MAX];
+            if (!realpath(root.c_str(), a) || !realpath(folder.c_str(), b)) return false;
+            const std::string r = a, f = b;
+            return r == f || r.compare(0, f.size() + 1, f + "/") == 0;
+        };
+        if (inside(app->rootDir, mainPath) && !inside(app->rootDir, path)) {
+            if (!app->gitShown) act_toggle_git(nullptr, nullptr, app);
+            showChangeReview(app);
+        } else {
+            newWindow(mainPath, "");
+        }
+    };
+    page->applySettings();
     app->editor->showPage(page);
 }
 
@@ -3389,7 +3431,9 @@ static void applyWindowSettings(App* app) {
     if (app->ide) app->ide->setEnabled(st.ideLink());
     if (app->persist) app->persist->scheduleAutoSave();   // editor.auto-save may have changed
     if (app->git) app->git->applySettings(st);
-    if (ChangeReviewPage* r = reviewPageOf(app)) r->applySettings();
+    for (Document* d : app->editor->documents())   // every review page, a worktree's too
+        if (d->editorPage())
+            if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get())) r->applySettings();
     if (app->gitGutter) app->gitGutter->applySettings(st);
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->termDock)

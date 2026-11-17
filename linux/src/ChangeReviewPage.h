@@ -20,10 +20,21 @@
 // window coming to the front, files changing: the panel keeps reading while
 // the page is open) and keeps the place the eye was on.
 //
+// A worktree's page (the second constructor, the Mac's initForWorktree:,
+// the tree's Compare with Main) is the same page over what the worktree
+// changed since its branch left main: every file committed or not and the
+// untracked ones, plain (Side by Side and Open on each, no Stage), against
+// main at the merge base (ChangeReviewRead.h's readWorktree), with Apply to
+// Main... at the top. It asks, naming the files, and refuses, naming them,
+// when main has changes of its own in those; it brings the changes into the
+// main checkout as uncommitted changes and says so on a line of its own with
+// Show in Source Control beside it; the button then reads "Applied to Main"
+// until the worktree's changes differ from those brought in.
+//
 // Left to the Mac for now: the Keep Current, Keep Incoming and Keep Both
 // choices of a conflict's blocks (a conflicted file shows its blocks and has
-// Open), the right click on a selection's lines, F7 and Shift+F7, a worktree's
-// and a commit's pages.
+// Open), the right click on a selection's lines, F7 and Shift+F7, a commit's
+// page.
 #pragma once
 #include <gtk/gtk.h>
 
@@ -43,11 +54,17 @@ class GitPanel;
 class ChangeReviewPage : public EditorPage {
 public:
     ChangeReviewPage(GitPanel* panel, const std::string& root);
+    // A worktree against main (Compare with Main): its folder, its name for
+    // the title, its branch, and the main branch (or commit) to compare with.
+    ChangeReviewPage(GitPanel* panel, const std::string& worktree, const std::string& label,
+                     const std::string& branch, const std::string& mainRef);
     ~ChangeReviewPage() override;
     GtkWidget* widget() override { return root_; }
     GtkWidget* focusWidget() override { return view_; }
-    std::string key() const override { return "review:" + root_s_; }
-    std::string title() const override { return "Uncommitted Changes"; }
+    std::string key() const override {
+        return worktree_.empty() ? "review:" + root_s_ : "worktree:" + worktree_;
+    }
+    std::string title() const override;
 
     // The window's hooks: open a file at a 1-based line (0: wherever it
     // was), show two versions side by side, whether a tab holds unsaved text
@@ -56,6 +73,9 @@ public:
     std::function<void(const CompareSpec&)> onShowComparison;
     std::function<bool(const std::string& path)> hasUnsavedText;
     std::function<Rgba(int style)> syntaxColor;
+    // After Apply to Main: show the main checkout's changes (the path of the
+    // main checkout).
+    std::function<void(const std::string& mainPath)> onShowSourceControl;
     // The colors after a settings change.
     void applySettings();
 
@@ -63,6 +83,22 @@ public:
     void reload();
     // The changes' own: Undo Discard.
     void undoDiscard();
+
+    // A worktree's page: Apply to Main..., as the button does (asks first).
+    void applyToMain();
+    bool isWorktree() const { return !worktree_.empty(); }
+    const std::string& worktree() const { return worktree_; }
+    bool applied() const { return applied_; }
+    bool applying() const { return applying_; }
+    // The title of the Apply button, and the Show in Source Control one.
+    std::string applyTitle() const;
+    bool applyEnabled() const;
+    bool sourceButtonShown() const;
+    GtkWidget* applyButton() const { return apply_; }
+    GtkWidget* sourceButton() const { return source_; }
+    void pressSourceButton();
+    // The files the page shows, as "A agent.txt" (letter, path).
+    std::vector<std::string> fileLines() const;
 
     // ---- for the checks
     bool loaded() const { return reads_ > 0 && !loading_; }
@@ -119,6 +155,7 @@ private:
     void stageFile(size_t fi);
     void sideBySide(size_t fi);
     void openFile(size_t fi);
+    void runApply(std::shared_ptr<Data> d, const std::string& mainName);
     void say(const std::string& text, bool ok);
     void finish(const std::string& text, bool ok);
     // From the git thread back to the main loop, if the page still lives.
@@ -134,6 +171,10 @@ private:
     std::shared_ptr<bool> panelAlive_;
     std::shared_ptr<Data> data_;
     ChangeReview::Opened opened_;
+    std::string worktree_, label_, branch_, mainRef_;   // a worktree's page
+    bool applying_ = false, applied_ = false;
+    size_t appliedPrint_ = 0;
+    std::string appliedMain_;
     bool loading_ = false, again_ = false;
     int reads_ = 0;
     std::string message_;
@@ -144,6 +185,7 @@ private:
     std::vector<std::string> tints_;
 
     GtkWidget *root_ = nullptr, *title_ = nullptr, *summary_ = nullptr, *messageLabel_ = nullptr,
-              *undo_ = nullptr, *scroll_ = nullptr, *view_ = nullptr;
+              *undo_ = nullptr, *scroll_ = nullptr, *view_ = nullptr, *apply_ = nullptr,
+              *source_ = nullptr, *noteRow_ = nullptr;
     GtkTextBuffer* buffer_ = nullptr;
 };

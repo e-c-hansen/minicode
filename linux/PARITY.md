@@ -9,8 +9,9 @@ only this file and what it points to.
 ## Picking up an item
 
 1. Read this file, then `linux/HANDOFF.md` ("How to work on it" and "Traps
-   already known"). Read the sections of `../CLAUDE.md` for the feature you
-   are taking: it describes the Mac, and the Mac is the specification.
+   already known"). Read the notes in `../docs/notes/` for the feature you
+   are taking (`../CLAUDE.md` lists them): they describe the Mac, and the
+   Mac is the specification.
 2. Take the first open item of the earliest unfinished stage. Items in a
    stage may run in parallel only where the stage says so.
 3. Mark it `[~]` with your branch name, in the branch.
@@ -1018,7 +1019,7 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   terminal below both, full width, as on the Mac; today the browser takes
   the editor's place. Closing the editor, the browser, and the terminal
   leaves an empty window, as on the Mac; today the port reopens the first
-  one closed. Mac: "Editor, browser and terminal" in `../CLAUDE.md`'s UI
+  one closed. Mac: "Editor, browser and terminal" in `../docs/notes/ui.md`'s UI
   map (`editorRect` and `browserRect`, `browserFraction`, 150 a side, a bar
   dragged within 16 points of an edge hides that side, the smallest top,
   `editorHidden`, `collapseRightAreaIfEmpty`, `revealEditor`), and
@@ -1126,7 +1127,7 @@ its server comes first here (2.0).
   on Wayland.
 - [x] **2.3 Server and tool consent.** A folder's own `.venv`, `node_modules`,
   and project configuration are never run unasked. Mac: "Servers that run the
-  folder's code" and "needs the user's yes" in `CLAUDE.md`. This goes in with
+  folder's code" and "needs the user's yes" in `docs/notes/lsp.md`. This goes in with
   or before 2.4.
   *Verified in Xvfb, 2026-11-10:* `folder-tools:*` hold the servers'
   question, its words and the answers file
@@ -1254,7 +1255,9 @@ its server comes first here (2.0).
   (Unstage), whole files with Stage File, Unstage File, Discard File, Side by
   Side and Open, Undo Discard at its top; `git_review` presses them. Left to
   do: F7, the right click on selected lines, conflicts' Keep buttons, the
-  commit page and a worktree's page with Apply to Main.
+  commit page. A worktree's page with Apply to Main is done (`HANDOFF.md`
+  item 85): the tree's Compare with Main opens the review page in its
+  worktree mode.
 - [x] **2.10 Change bars and the tree's git colors.** `QuickDiff`,
   `GitStatus`. Done (`HANDOFF.md` item 34): the `git_gutter` and
   `tree_git_colors` suites, real keys and clicks over scratch repositories
@@ -1361,7 +1364,8 @@ its server comes first here (2.0).
   and Shift+F7. Part two done (HANDOFF item 39): a comparison with a
   decision (`CompareDecision`: a check and a cross per hunk in a gutter, the
   bar, `lastChoiceGrace` with Send Now, `acceptedText`) and `minicode diff`.
-  Compare with Main is done (3.5, HANDOFF item 44);
+  Compare with Main is done (3.5, HANDOFF items 44 and 85: one scroll, with
+  Apply to Main);
   the IDE link's openDiff is done (3.9). Also the Mac's diff preview tab that each `diff` replaces (every
   call opens a tab of its own here), choice tints on the rows, and keeping a
   tab's place.
@@ -1510,7 +1514,7 @@ These may run in parallel.
 - [x] **4.8 Web bookmarks and the browser window.** `WebBookmark` (core,
   `bookmarks:*`; not yet in `meson.build` or the Makefile). Added to the
   Mac in 1.5.20 and 1.5.22, after this file was written. Mac: "Bookmarks
-  and the browser window" in `../CLAUDE.md`, `src/Bookmarks.{h,mm}`,
+  and the browser window" in `../docs/notes/browser.md`, `src/Bookmarks.{h,mm}`,
   `mac/src/EditorController+Bookmarks.mm`, the toolbar in `mac/src/Browser.mm`,
   the Bookmarks menu in `mac/src/main.mm`, and the `bookmarks` GUI suite.
   What it needs:

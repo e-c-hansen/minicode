@@ -11360,6 +11360,7 @@ int main() {
     testSideBySideReview();
     testChangeReview();
     testChangeReviewRead();
+    testWorktreeReview();
     testMergeConflicts();
     testPreviewScroll();
     testAgentTranscript();

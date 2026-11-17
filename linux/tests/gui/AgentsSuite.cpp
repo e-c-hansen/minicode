@@ -23,7 +23,9 @@
 #include "TerminalAttention.h"
 #include "WindowLayout.h"
 #include "Json.h"
-#include "WorktreeChangesPage.h"
+#include "ChangeReviewPage.h"
+#include "GitChecks.h"
+#include "GitModel.h"
 #include <vte/vte.h>
 #include "AppSeam.h"
 #include "Editor.h"
@@ -139,9 +141,12 @@ void clickRow(int i) {
 
 std::string gFixturesBefore, gWt;
 EvidencePage* evidence() { return dynamic_cast<EvidencePage*>(MCGuiApp().editor->currentPage()); }
-WorktreeChangesPage* changesPage() {
-    return dynamic_cast<WorktreeChangesPage*>(MCGuiApp().editor->currentPage());
+// Compare with Main's page: the review page in its worktree mode.
+ChangeReviewPage* changesPage() {
+    ChangeReviewPage* p = dynamic_cast<ChangeReviewPage*>(MCGuiApp().editor->currentPage());
+    return p && p->isWorktree() ? p : nullptr;
 }
+std::string gPageBefore;
 
 std::string fixturesDir() { return MCGuiBuildDir() + "/../../tests/fixtures/claude"; }
 
@@ -186,6 +191,19 @@ void git(const std::string& dir, const std::string& args) {
     const std::string cmd = "git -C '" + dir + "' -c user.name=t -c user.email=t@t -c commit.gpgsign=false " +
                             args + " >/dev/null 2>&1";
     GCHECK(system(cmd.c_str()) == 0);
+}
+
+// What git printed in `dir` (a check's own read).
+std::string gitText(const std::string& dir, const std::string& args) {
+    const std::string cmd = "git -C '" + dir + "' " + args + " 2>&1";
+    std::string out;
+    if (FILE* f = popen(cmd.c_str(), "r")) {
+        char buf[512];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof buf, f)) > 0) out.append(buf, n);
+        pclose(f);
+    }
+    return out;
 }
 
 }  // namespace
@@ -462,29 +480,38 @@ MC_GUI_SUITE(agents) {
     MCGuiStep("Compare with Main", [] {
         g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "compareworktree", nullptr);
     });
-    MCGuiWait("a page lists the changes", 20, [] { return changesPage() && changesPage()->loaded(); });
-    MCGuiStep("the agent's files, none of main's later work", [] {
-        // The wait above may have timed out with no page (a full run once
-        // did, then this step read through a null page and the run died).
-        WorktreeChangesPage* page = changesPage();
+    MCGuiWait("a page reads the changes", 20, [] { return changesPage() && changesPage()->loaded(); });
+    MCGuiStep("the agent's files, none of main's later work, in one scroll", [] {
+        // The wait above may have timed out with no page: check it, then return.
+        ChangeReviewPage* page = changesPage();
         GCHECK(page != nullptr);
         if (!page) return;
-        auto rows = page->rowDescriptions();
-        GCHECK(((int)rows.size()) == (3));
-        bool agent = false, base = false, untracked = false, later = false;
-        for (const std::string& r : rows) {
-            agent |= r == "A agent.txt";
-            base |= r == "M base.txt";
-            untracked |= r == "? untracked.txt";
-            later |= has(r, "later.txt");
-        }
-        GCHECK(agent && base && untracked && !later);
-        for (size_t i = 0; i < rows.size(); i++)
-            if (rows[i] == "M base.txt") page->openChangeAtRow((int)i);
+        GCHECK((page->fileLines() == std::vector<std::string>{"A agent.txt", "M base.txt", "? untracked.txt"}));
+        const std::string text = page->pageText();
+        GCHECK(has(text, "agent.txt") && has(text, "base.txt") && has(text, "untracked.txt"));
+        GCHECK(has(text, "two changed") && has(text, "agent"));
+        // main's later work is neither a file of the page nor a line of it
+        GCHECK(!has(text, "later.txt") && !has(text, "main later"));
+        GCHECK(has(page->headerDetail(), "against main at the branch point"));
+        GCHECK(has(page->headerDetail(), "3 files"));
+        GCHECK(page->title() == "agent-wt vs main");
+        // plain files: Side by Side and Open, no Stage or Discard
+        GCHECK(page->rowOfFile("base.txt", false) >= 0);
+        GCHECK((page->buttonsOfRow((size_t)page->rowOfFile("base.txt", false)) ==
+                std::vector<std::string>{"Side by Side", "Open"}));
+        GCHECK(page->applyTitle() == "Apply to Main…" && page->applyEnabled());
+        GCHECK(MCGuiOnScreen(page->applyButton()));
+    });
+    MCGuiStep("Side by Side on base.txt, by its button", [] {
+        ChangeReviewPage* page = changesPage();
+        GCHECK(page != nullptr);
+        if (!page) return;
+        const long row = page->rowOfFile("base.txt", false);
+        GCHECK(row >= 0);
+        if (row >= 0) GCHECK(page->press("Side by Side", (size_t)row));
     });
     MCGuiWait("the compare view opens that file", 20, [] { return MCGuiApp().editor->isComparison(); });
     MCGuiStep("main at the branch point on the left: its later line is not taken out", [] {
-        // As above: after a timed-out wait there may be no comparison.
         Document* doc = MCGuiApp().editor->active();
         GCHECK(doc && doc->compare());
         if (!doc || !doc->compare()) return;
@@ -492,8 +519,98 @@ MC_GUI_SUITE(agents) {
         GCHECK_EQ_STR(sp.leftText, "one\ntwo\nthree\n");
         GCHECK_EQ_STR(sp.rightText, "one\ntwo changed\nthree\n");
         GCHECK(has(sp.leftLabel, "main at the branch point"));
+        GCHECK(has(sp.rightLabel, "agent-branch: base.txt"));
         GCHECK(has(sp.title, "base.txt"));
         GCHECK_EQ_STR(listingOf(fixturesDir()), gFixturesBefore);
+    });
+    MCGuiStep("Compare with Main again shows the same page", [] {
+        g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "compareworktree", nullptr);
+    });
+    MCGuiWait("the page is back, with Apply to Main on screen", 20, [] {
+        return changesPage() && changesPage()->loaded() && MCGuiOnScreen(changesPage()->applyButton());
+    });
+    // ---- Apply to Main: Cancel changes nothing, Apply brings the work in
+    MCGuiStep("a click on Apply to Main", [] {
+        ChangeReviewPage* page = changesPage();
+        GCHECK(page != nullptr);
+        if (!page) return;
+        MCGuiClick(page->applyButton());
+    });
+    MCGuiWait("it asks", 15, gitchecks::QuestionUp);
+    MCGuiStep("naming the files; Cancel", [] {
+        const std::string q = gitchecks::QuestionText();
+        GCHECK(has(q, "Bring these 3 files' changes into main?"));
+        GCHECK(has(q, "agent.txt") && has(q, "base.txt") && has(q, "untracked.txt"));
+        gitchecks::Answer("Cancel");
+    });
+    MCGuiWait("the question goes", 10, gitchecks::QuestionGone);
+    MCGuiStep("main's checkout is as it was", [] {
+        struct stat st;
+        GCHECK(stat((gProj + "/agent.txt").c_str(), &st) != 0);
+        GCHECK(stat((gProj + "/untracked.txt").c_str(), &st) != 0);
+        GCHECK_EQ_STR(MCGuiReadFile(gProj + "/base.txt"), "one\ntwo\nthree\nmain later\n");
+        ChangeReviewPage* page = changesPage();
+        GCHECK(page && page->applyEnabled() && !page->applied());
+        if (page) {
+            GCHECK(page->messageText().empty());
+            gPageBefore = page->pageText();
+            MCGuiClick(page->applyButton());
+        }
+    });
+    MCGuiWait("it asks again", 15, gitchecks::QuestionUp);
+    MCGuiStep("Apply to Main", [] { gitchecks::Answer("Apply to Main"); });
+    MCGuiWait("the page says it was applied", 30, [] {
+        return changesPage() && changesPage()->applied() && !changesPage()->messageText().empty();
+    });
+    MCGuiStep("the work is in main's checkout, uncommitted, and the page says so in the Mac's words", [] {
+        ChangeReviewPage* page = changesPage();
+        GCHECK(page != nullptr);
+        GCHECK_EQ_STR(MCGuiReadFile(gProj + "/agent.txt"), "agent\n");
+        GCHECK_EQ_STR(MCGuiReadFile(gProj + "/untracked.txt"), "u\n");
+        const std::string base = MCGuiReadFile(gProj + "/base.txt");
+        GCHECK(has(base, "two changed") && has(base, "main later") && !has(base, "<<<<<<<"));
+        GCHECK_EQ_STR(MCGuiReadFile(gProj + "/later.txt"), "later\n");
+        GCHECK(gitText(gProj, "log --format=%s").find("agent") == std::string::npos);
+        GCHECK_EQ_STR(gitText(gProj, "diff --cached --name-only"), "");
+        if (!page) return;
+        GCHECK_EQ_STR(page->messageText(), GitUi::applyDoneText(3, {}, "main"));
+        GCHECK(page->messageOk());
+        // the button says so and is unavailable; Show in Source Control is offered
+        GCHECK(page->applyTitle() == "Applied to Main" && !page->applyEnabled());
+        GCHECK(!gtk_widget_get_sensitive(page->applyButton()));
+        GCHECK(page->sourceButtonShown());
+        GCHECK(MCGuiOnScreen(page->sourceButton()));
+    });
+    MCGuiStep("Show in Source Control hands over the main checkout", [] {
+        ChangeReviewPage* page = changesPage();
+        GCHECK(page != nullptr);
+        if (!page) return;
+        auto keep = page->onShowSourceControl;
+        std::string got;
+        page->onShowSourceControl = [&got](const std::string& main) { got = main; };
+        page->pressSourceButton();
+        page->onShowSourceControl = keep;
+        GCHECK_EQ_STR(got, gProj);
+    });
+    MCGuiStep("the agent works on: the button comes back", [] {
+        MCGuiWriteFile(gWt + "/more.txt", "more\n");
+        ChangeReviewPage* page = changesPage();
+        GCHECK(page != nullptr);
+        if (page) page->reload();
+    });
+    MCGuiWait("the page differs from what was brought in", 20, [] {
+        return changesPage() && changesPage()->fileCount() == 4 && changesPage()->applyEnabled();
+    });
+    MCGuiStep("Apply to Main… again", [] {
+        ChangeReviewPage* page = changesPage();
+        GCHECK(page != nullptr);
+        if (page) GCHECK(page->applyTitle() == "Apply to Main…" && !page->sourceButtonShown());
+    });
+    MCGuiStep("(cleanup: main's checkout and the worktree as they were)", [] {
+        unlink((gWt + "/more.txt").c_str());
+        unlink((gProj + "/agent.txt").c_str());
+        unlink((gProj + "/untracked.txt").c_str());
+        git(gProj, "checkout base.txt");
     });
     // ---- Part three: Open Worktree in New Window and Reveal Scratchpad
     MCGuiStep("a session working in the agent's worktree, with a scratchpad", [] {

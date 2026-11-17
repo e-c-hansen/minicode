@@ -345,7 +345,6 @@ gui_sources = [
   'src/AgentsPanel.cpp',
   'src/EvidencePage.cpp',
   'src/AgentWorktrees.cpp',
-  'src/WorktreeChangesPage.cpp',
   'src/ChangeReviewPage.cpp',
   '..' / 'tools' / 'minicode-cli.cpp',
   'src/NavHistoryUi.cpp',
