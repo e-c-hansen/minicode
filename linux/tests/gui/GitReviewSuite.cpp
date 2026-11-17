@@ -135,7 +135,7 @@ MC_GUI_SUITE(git_review) {
     MCGuiStep("nothing changed", [] {
         MCGuiSetKeyWindow(nullptr);
         GCHECK_EQ_STR(MCGuiReadFile(In("f.txt")), "a\nB\nc\nd\ne\nf\ng\nh\ni\nj\nk\nL\nm\n");
-        GCHECK(TrashedTexts().empty());
+        GCHECK(!Trashed("a\nB\nc\nd\ne\nf\ng\nh\ni\nj\nk\nL\nm\n"));   // (other suites' copies stay)
         GCHECK(Page()->undoButton() && !gtk_widget_get_visible(Page()->undoButton()));
     });
     Press("Discard", [] { return Page()->rowOfBlock(2); });
