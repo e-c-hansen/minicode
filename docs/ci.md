@@ -30,8 +30,11 @@ minutes, build 1.9, GUI checks 10.3) and the GTK job (core tests 3.5, build
   builds the app, the tests and the GUI checks, then
   `scripts/ci-together.sh` runs `build/run_tests` and the two halves of
   the GUI checks at once, each into its own log (`core-tests`,
-  `gui-checks-1`, `gui-checks-2` in ci-logs, which the summary reads), and
-  fails if any of them failed. The GTK job runs no plain core tests: the
+  `gui-checks-1`, `gui-checks-2` in ci-logs, which the summary reads), then
+  the suites with tight CPU-time bounds (`GUI_ALONE`: keystroke, large_file,
+  foldperf, terminal_draw, lsp_progress, processes) alone (`gui-checks-alone`,
+  since beside other processes a thread's CPU time rises too: keystroke
+  failed at 1.23 ms against 1 on 2026-11-17), and fails if any failed. The GTK job runs no plain core tests: the
   sanitizers job builds the same tests with the same g++ and libstdc++
   and runs every group, timing bounds included, and the macOS job runs
   them plainly with clang.

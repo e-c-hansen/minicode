@@ -136,7 +136,10 @@ opening comment says what it does in more detail than the lines below.
   checks as two harness processes at once (`scripts/ci-together.sh`, one
   log each: core-tests, gui-checks-1, gui-checks-2): the step's
   `GUI_SECOND_HALF` names the second half's suites, and the first half
-  skips them (`MC_GUI_SKIP_SUITES`, both harnesses), so a new suite runs
+  skips them and the macOS job's `GUI_ALONE` (the tight CPU-time bounds:
+  keystroke, large_file, foldperf, terminal_draw, lsp_progress, processes),
+  which run alone afterwards, log gui-checks-alone (`MC_GUI_SKIP_SUITES`,
+  both harnesses), so a new suite runs
   in the first unlisted; a name no suite has fails the run. Rebalance
   the list from a run's "Suite x" timestamps when one half grows well
   past the other. The GTK job runs no plain `make test` (the sanitizers
