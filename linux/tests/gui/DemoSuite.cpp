@@ -351,7 +351,9 @@ MC_GUI_SUITE(_demo_tour) {
     label("Open a Python file and add a line", 0.2);
     openFile("hello.py");
     clickText("c.area():.2f}\")", true);
-    type("\n    print(\"Diameter:\", 2 * c.radius)");
+    // Typed as a person types it: Return indents the line and ( and " close
+    // themselves, so no spaces here (I1: four more made eight).
+    type("\nprint(\"Diameter:\", 2 * c.radius)");
     still("tour-3-typed");
     key("ctrl+s", 1.0, "Save the file");
     key("ctrl+p", 0.5, "Go to a file by name");

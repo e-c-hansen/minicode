@@ -7,6 +7,7 @@
 // changes are the shell's (main.cpp): nothing here asks, and nothing here
 // drops unsaved changes without being told to.
 #include "AgentNotes.h"
+#include "SessionLink.h"
 #include "Appearance.h"
 #include "Editor.h"
 
@@ -690,6 +691,8 @@ void Editor::refreshStrip() {
     strip_->setItems(items, activeIndex());
     gtk_widget_set_visible(strip_->widget(), !tabs.empty());
     refreshMirror();   // the other group's strip and view (Groups.cpp)
+    // The session's host keeps the window's tabs as drawn (SessionLink.h).
+    SessionLink::windowTabs(winId_, *win_);
     if (onDocumentsChanged) onDocumentsChanged(nullptr);
     if (observer_) observer_->tabsChanged();   // every tab's file on its server
 }
