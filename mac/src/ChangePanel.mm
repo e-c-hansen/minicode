@@ -28,7 +28,7 @@ static NSColor *CHex(unsigned int rgb) {
 // Every mode of the bar is about changing minicode itself, which nobody does
 // in passing, so it looks the part: an amber stripe along its top, an amber
 // tint over the sidebar color, and a DEV pill. The amber is inline hex like
-// the other accents (see the UI map in CLAUDE.md), not a setting.
+// the other accents (see the UI map in docs/notes/ui.md), not a setting.
 static const unsigned kDevAmber = 0xE8A33D;
 static const CGFloat kStripe = 2;      // the amber line along the top
 static const CGFloat kRowH = 32;       // a one-line bar's row, under the stripe

@@ -1,7 +1,7 @@
 // Latex.h — the LaTeX preview: the document typeset by tectonic, every page
 // shown in a PdfView in the editor's slot, and a double-click on the text
 // opening the LaTeX behind it for editing. The GTK form of LatexView in the
-// macOS build (mac/src/Latex.mm); read "LaTeX preview" in CLAUDE.md first.
+// macOS build (mac/src/Latex.mm); read docs/notes/latex.md first.
 //
 // How it differs from the Mac, and why:
 //   * The preview has no copy of the source. The editor's GtkTextBuffer keeps
@@ -120,7 +120,7 @@ public:
     void startAddItem();
     void cancelEdit();
 
-    // Problems and warnings (CLAUDE.md, "Problems on lines"). A failed
+    // Problems and warnings (docs/notes/latex.md, "Problems on lines"). A failed
     // typeset lists tectonic's problems above its log, each a row that calls
     // `open` with the file it is about and its line; a typeset that worked
     // lists its warnings behind the bar's "N warnings" button. While the
@@ -144,7 +144,7 @@ public:
     std::string siblingPathForTest() const { return scratchPath(); }
     std::string outDirForTest() const { return outDir(); }
 
-    // Forward search (CLAUDE.md, "Forward search"): light the lines of text
+    // Forward search (docs/notes/latex.md, "Forward search"): light the lines of text
     // that `line` of `file` (the buffer's own file, or one it \\input) set,
     // on the first page they reached (else the nearest line below or above
     // within 40), scroll the page there and clear the light after 1.5 s.

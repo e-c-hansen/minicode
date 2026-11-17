@@ -4,7 +4,9 @@ CI is `.github/workflows/ci.yml`: six jobs (macOS app, GTK4 port, the core
 tests under ASan and UBSan, under ThreadSanitizer, the Android debug APK with
 the Kotlin checks, and the Android release APK) and a seventh, **CI passed**,
 which is green only when all six are. CLAUDE.md ("Build, test, run,
-release" and "Verification reality") has what each job checks.
+release" and "Verification reality", with the rest in
+`docs/notes/build.md` and `docs/notes/verification.md`) has what each job
+checks.
 
 ## What makes a run quick (2026-11-17)
 
@@ -49,7 +51,7 @@ minutes, build 1.9, GUI checks 10.3) and the GTK job (core tests 3.5, build
   Each half's failure pictures go in a folder of their own in the
   artifact, and the summary's NEAR list is the closest ten across both.
 
-What the two harness processes could share, and why they do not (CLAUDE.md,
+What the two harness processes could share, and why they do not (`docs/notes/verification.md`,
 "Two harnesses at once"): each makes its own scratch world (mkdtemp), with
 its own home, TMPDIR (and so its control sockets), defaults suite and
 pasteboard named by its pid, and on GTK its own Xvfb (the server picks the
@@ -72,7 +74,7 @@ PR's four runs with the source steady at line 9,356 rather than about
 pane and its agent page showing (`browse`), which narrowed the source until
 its lines wrapped. Control now closes what it opened, markdown_side_sync
 works in a window of its own, and the harness says when a suite leaves a
-browser pane changed (a `LEFT` line for now, see CLAUDE.md).
+browser pane changed (a `LEFT` line for now, see `docs/notes/verification.md`).
 
 ## Before pushing
 
@@ -144,7 +146,7 @@ what now guards against each:
   a failure; it never hides one.
 - **The runner's environment** (1x screens, scroll bars that take room, no
   reverse DNS for 127.0.0.1, a prompt wider than the terminal). These are
-  real bugs in the checks; CLAUDE.md lists them under "CI's macOS runner
+  real bugs in the checks; `docs/notes/verification.md` lists them under "CI's macOS runner
   differs".
 
 There are no blanket retries, and none should be added: a check that fails

@@ -1,7 +1,7 @@
 // BackupStore.h — the Mac's side of Backups.h: where backups live, the
 // background queue that writes them, and which processes still hold theirs.
 // EditorController decides what to back up and when (see "Backups and hot
-// exit" in CLAUDE.md).
+// exit" in docs/notes/sessions.md).
 #import <Foundation/Foundation.h>
 #include "Backups.h"
 

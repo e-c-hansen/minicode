@@ -1,7 +1,7 @@
 // IdeLink.h — pure C++. The protocol of the Claude Code IDE link, with no
 // I/O: what Claude Code's `/ide` speaks to VS Code and JetBrains, read from
 // Claude Code 2.1.319 and its VS Code extension 2.1.318 (see "The Claude
-// Code IDE link" in CLAUDE.md for what was read where).
+// Code IDE link" in docs/notes/agents.md for what was read where).
 //
 // An IDE announces itself with a lock file, ~/.claude/ide/<port>.lock
 // ($CLAUDE_CONFIG_DIR/ide when that is set), mode 0600, holding JSON: pid,

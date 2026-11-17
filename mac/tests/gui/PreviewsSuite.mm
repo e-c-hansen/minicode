@@ -81,6 +81,29 @@ BOOL WritePDF(NSString *path) {
     return [doc writeToFile:path];
 }
 
+// One letter-size page, taller than the pane once fit to its width.
+BOOL WriteTallPDF(NSString *path) {
+    CGImageRef cg = MakePicture(612, 792);
+    NSImage *img = [[NSImage alloc] initWithCGImage:cg size:NSMakeSize(612, 792)];
+    CGImageRelease(cg);
+    PDFDocument *doc = [PDFDocument new];
+    [doc insertPage:[[PDFPage alloc] initWithImage:img] atIndex:0];
+    return [doc writeToFile:path];
+}
+
+// Whether the first page's top edge is inside the editor's PDF view: a PDF
+// opens at its top, not scrolled to the foot of a tall page.
+BOOL PdfTopInView(EditorController *c, NSString **why) {
+    PDFView *pdf = [c valueForKey:@"pdfView"];
+    PDFPage *page = [pdf.document pageAtIndex:0];
+    if (!page) return NO;
+    const NSRect r = [pdf convertRect:[page boundsForBox:kPDFDisplayBoxCropBox] fromPage:page];
+    const CGFloat top = pdf.isFlipped ? NSMinY(r) : NSMaxY(r);
+    const NSRect seen = pdf.bounds;
+    if (why) *why = [NSString stringWithFormat:@"page top at %.1f, view %@", top, NSStringFromRect(seen)];
+    return top >= NSMinY(seen) - 0.5 && top <= NSMaxY(seen) + 0.5;
+}
+
 // A zip with stored (uncompressed) entries, enough for a .docx.
 void PutLE(NSMutableData *d, uint32_t v, int bytes) {
     for (int i = 0; i < bytes; i++) {
@@ -258,6 +281,7 @@ MC_GUI_SUITE(previews) {
         haveHeic = WriteImage(Fixture(@"photo.heic"), CFSTR("public.heic"));
         if (!haveHeic) MCGuiNote(@"no HEIC encoder here: the .heic check is skipped");
         GCHECK(WritePDF(Fixture(@"paper.pdf")));
+        GCHECK(WriteTallPDF(Fixture(@"tall.pdf")));
         GCHECK(WriteDocx(Fixture(@"letter.docx")));
         const char elf[] = "\x7f" "ELF\x02\x01\x01\0\0\0\0\0int main() { return 0; }\n";
         WriteBytes(Fixture(@"program.c"), elf, sizeof elf - 1);
@@ -339,6 +363,21 @@ MC_GUI_SUITE(previews) {
         GCHECK_EQ_STR(ActiveName(c), @"paper.pdf");
         GCHECK_EQ_STR(ActiveKind(c), @"pdf");
         GCHECK(Viewers(c).quickLook.hidden);
+    });
+    MCGuiStep(@"a letter-size PDF opens", ^{
+        EditorController *c = MCGuiController();
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:Fixture(@"tall.pdf")]]];
+        GCHECK_EQ_STR(ActiveName(c), @"tall.pdf");
+        GCHECK_EQ_STR(ActiveKind(c), @"pdf");
+    });
+    MCGuiWait(@"at the top of its page, not scrolled to its foot", 5, ^BOOL {
+        return PdfTopInView(MCGuiController(), nil);
+    });
+    MCGuiStep(@"(where the page top is)", ^{
+        NSString *why = nil;
+        GCHECK(PdfTopInView(MCGuiController(), &why));
+        MCGuiNote(@"%@", why);
     });
     MCGuiStep(@"a .heic from Finder opens as a preview tab", ^{
         if (!haveHeic) return;

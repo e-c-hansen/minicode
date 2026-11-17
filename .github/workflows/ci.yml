@@ -330,11 +330,37 @@ jobs:
             gui-checks-1 'MC_GUI_SKIP_SUITES="$GUI_SECOND_HALF" MC_GUI_SNAPSHOTS="$PICTURES/first-half" meson test -C build --suite gui --no-rebuild --logbase gui-first-half -v --print-errorlogs' \
             gui-checks-2 'MC_GUI_SUITES="$GUI_SECOND_HALF" MC_GUI_SNAPSHOTS="$PICTURES/second-half" meson test -C build --suite gui --no-rebuild --logbase gui-second-half -v --print-errorlogs'
 
+      # The same app with every message between the editor and the session's
+      # host (linux/src/SessionLink.h, SESSION-DESIGN.md stage 4a) put through
+      # the protocol's encoding and back, each a little late: the wire format
+      # and the edit loop's waits exercised before any network carries them.
+      # A named set of suites that edit, undo, save and switch tabs; each
+      # ends with the harness's check that every buffer is the host's text.
+      - name: GUI checks over the session host's wire format
+        id: loopback
+        working-directory: linux
+        timeout-minutes: 12
+        env:
+          MINICODE_HOST: loopback
+          MINICODE_HOST_DELAY_US: '200'
+          MC_GUI_TOTAL_SECONDS: '600'
+          MC_GUI_WAIT_SCALE: '1.5'
+          MC_TIMING_SCALE: '1.5'
+          PICTURES: ${{ runner.temp }}/gui-pictures
+          GUI_LOOPBACK: >-
+            undo_history save tabs preview_tabs split_editor sessions backups
+            auto_close snippets line_commands multicaret completion_edits
+            lsp_tabs lsp_actions markdown_side_edit csv_table
+        run: |
+          MC_GUI_SUITES="$GUI_LOOPBACK" MC_GUI_SNAPSHOTS="$PICTURES/loopback" \
+            meson test -C build --suite gui --no-rebuild --logbase gui-loopback -v --print-errorlogs \
+            2>&1 | tee "$RUNNER_TEMP/ci-logs/gui-loopback.log"
+
       # A picture of the window on top at each failed check (the first ten
       # of each half), and Meson's logs of the runs, only when the checks
       # failed.
       - name: Keep the GUI checks' pictures
-        if: failure() && steps.gui.outcome == 'failure'
+        if: failure() && (steps.gui.outcome == 'failure' || steps.loopback.outcome == 'failure')
         uses: actions/upload-artifact@v7
         with:
           name: gui-checks

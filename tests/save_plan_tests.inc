@@ -1,6 +1,6 @@
 // save_plan_tests.inc — the `saveplan:*` group of run_tests.cpp
 // (SavePlan.h), kept in its own file and included there. Each case is one of
-// the Mac's rules from CLAUDE.md's "Backups, hot exit and auto-save" (its
+// the Mac's rules from docs/notes/sessions.md's "Backups, hot exit and auto-save" (its
 // scheduleBackups, writeBackups, scheduleAutoSave and autoSaveOnFocusChange
 // in EditorController+Persistence.mm), so the Mac can move onto the planner
 // (stage 3c) with its behaviour pinned.

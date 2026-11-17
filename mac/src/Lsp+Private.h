@@ -2,7 +2,7 @@
 // letting go of a session, the status line) and its categories,
 // Lsp+<Concern>.mm. Only they import it.
 //
-// The rules are EditorController's (CLAUDE.md, "EditorController and its
+// The rules are EditorController's (docs/notes/code-map.md, "EditorController and its
 // categories"). The ivar block below holds only what two or more
 // categories use; a variable of one category's goes in that category's
 // own class extension, Lsp+<Concern>Ivars.h, imported by the category and
