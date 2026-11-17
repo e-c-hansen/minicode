@@ -104,6 +104,7 @@ core_sources = [
   # (BackupStore.cpp and Persistence.cpp keep them).
   core_dir / 'Backups.cpp',
   core_dir / 'TabSessions.cpp',
+  core_dir / 'SavePlan.cpp',
   core_dir / 'BrowserTabs.cpp',
   core_dir / 'WebBookmark.cpp',
   # The gutter's line index, and the change bars it moves with the lines.

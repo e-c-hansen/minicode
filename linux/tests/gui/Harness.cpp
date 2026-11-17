@@ -435,10 +435,11 @@ std::string bytesText(GBytes* b) {
 
 void MCGuiRunProcess(const std::vector<std::string>& argv,
                      const std::map<std::string, std::string>& env,
-                     std::function<void(int, std::string, std::string)> done) {
+                     std::function<void(int, std::string, std::string)> done,
+                     const std::string& cwd) {
     GSubprocessLauncher* launcher = g_subprocess_launcher_new(
         (GSubprocessFlags)(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE));
-    g_subprocess_launcher_set_cwd(launcher, MCGuiProject().c_str());
+    g_subprocess_launcher_set_cwd(launcher, cwd.empty() ? MCGuiProject().c_str() : cwd.c_str());
     for (const auto& kv : env) g_subprocess_launcher_setenv(launcher, kv.first.c_str(), kv.second.c_str(), TRUE);
     std::vector<const char*> c;
     for (const std::string& a : argv) c.push_back(a.c_str());
@@ -478,10 +479,15 @@ void MCGuiRunChild(const std::string& suite, const std::string& folder,
     g_free(dbusRun);
     const std::string config = "--config-file=" + MCGuiScratch() + "/dbus.conf";
     const std::string daemon = "--dbus-daemon=" + selfPath();
-    MCGuiRunProcess({runner, config, daemon, "--", selfPath(), folder}, {{"MC_GUI_SUITES", suite}},
+    // No folder: launched as the dock launches it, with no path and the
+    // home folder as its working folder.
+    std::vector<std::string> argv = {runner, config, daemon, "--", selfPath()};
+    if (!folder.empty()) argv.push_back(folder);
+    MCGuiRunProcess(argv, {{"MC_GUI_SUITES", suite}},
                     [done](int status, std::string out, std::string err) {
                         done(status, out + err);
-                    });
+                    },
+                    folder.empty() ? std::string(g_get_home_dir()) : std::string());
 }
 
 // ---------------------------------------------------------------- runner

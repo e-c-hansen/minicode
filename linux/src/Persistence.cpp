@@ -10,9 +10,11 @@
 #include <algorithm>
 #include <cerrno>
 #include <climits>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
+#include <functional>
 #include <map>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -20,9 +22,6 @@
 
 namespace {
 
-// A changed buffer is written a second after typing stops, and at least
-// every five seconds while it goes on, as on the Mac.
-constexpr double kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 // The largest file put on show at launch: the most the editor opens as text.
 constexpr off_t kMaxShownBytes = 16 * 1024 * 1024;
 
@@ -32,6 +31,8 @@ std::string baseName(const std::string& p) {
 }
 
 double wallNow() { return (double)g_get_real_time() / 1e6; }
+// The planner's clock (SavePlan.h): seconds that only go forward.
+double monoNow() { return (double)g_get_monotonic_time() / 1e6; }
 
 bool existsNotFolder(const std::string& path) {
     struct stat st;
@@ -44,22 +45,26 @@ bool quickToShow(const std::string& path) {
     return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) && st.st_size <= kMaxShownBytes;
 }
 
-TabSessions::Sessions readSessions() {
+// The whole file (TabSessions::Store): every folder's session and the
+// windows to bring back. One from before has folders only.
+TabSessions::Store readStore() {
     gchar* text = nullptr;
     gsize len = 0;
-    TabSessions::Sessions all;
+    TabSessions::Store all;
     if (g_file_get_contents(Persistence::sessionsFile().c_str(), &text, &len, nullptr))
-        all = TabSessions::decode(std::string(text, len));
+        all = TabSessions::decodeStore(std::string(text, len));
     g_free(text);
     return all;
 }
 
-void writeSessions(const TabSessions::Sessions& all) {
+TabSessions::Sessions readSessions() { return readStore().folders; }
+
+void writeStore(const TabSessions::Store& all) {
     const std::string path = Persistence::sessionsFile();
     gchar* dir = g_path_get_dirname(path.c_str());
     g_mkdir_with_parents(dir, 0700);
     g_free(dir);
-    const std::string text = TabSessions::encode(all);
+    const std::string text = TabSessions::encodeStore(all);
     GError* err = nullptr;
     // A temporary renamed over the old file, so a crash midway leaves the
     // old sessions whole; the file names the user's files, so it is theirs
@@ -72,6 +77,27 @@ void writeSessions(const TabSessions::Sessions& all) {
     }
 }
 
+// Each save reads the file, changes its part and writes the file back, and
+// another minicode process may be saving at the same moment. The read and
+// the write hold a lock on a file beside it, or one process's older copy
+// could be written over an entry the other had just saved: the GUI checks'
+// second app lost its tabs to the first app's save that way, now and then
+// on CI (SessionsSuite.cpp). A lock that cannot be made (a read-only folder)
+// leaves the save as it was, unlocked.
+void changeStore(const std::function<void(TabSessions::Store&)>& change) {
+    const std::string path = Persistence::sessionsFile();
+    gchar* dir = g_path_get_dirname(path.c_str());
+    g_mkdir_with_parents(dir, 0700);
+    g_free(dir);
+    const int lock = open((path + ".lock").c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (lock >= 0)
+        while (flock(lock, LOCK_EX) != 0 && errno == EINTR) {}
+    TabSessions::Store all = readStore();
+    change(all);
+    writeStore(all);
+    if (lock >= 0) close(lock);   // which lets go of the lock
+}
+
 }  // namespace
 
 Persistence::Persistence(Editor* editor, const std::string& root, Host host)
@@ -81,7 +107,7 @@ Persistence::Persistence(Editor* editor, const std::string& root, Host host)
 
 Persistence::~Persistence() {
     closing_ = true;
-    for (guint* t : {&sessionTimer_, &backupTimer_, &autoSaveTimer_, &focusSaveIdle_})
+    for (guint* t : {&sessionTimer_, &planTimer_})
         if (*t) {
             g_source_remove(*t);
             *t = 0;
@@ -101,25 +127,14 @@ std::string Persistence::sessionsFile() {
     return out;
 }
 
-// Each save reads the file, puts its folder's entry and writes the file
-// back, and another minicode process may be saving at the same moment. The
-// read and the write hold a lock on a file beside it, or one process's
-// older copy could be written over an entry the other had just saved: the
-// GUI checks' second app lost its tabs to the first app's save that way,
-// now and then on CI (SessionsSuite.cpp). A lock that cannot be made (a
-// read-only folder) leaves the save as it was, unlocked.
 void Persistence::putSession(const std::string& key, const TabSessions::Session& s) {
-    const std::string path = sessionsFile();
-    gchar* dir = g_path_get_dirname(path.c_str());
-    g_mkdir_with_parents(dir, 0700);
-    g_free(dir);
-    const int lock = open((path + ".lock").c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-    if (lock >= 0)
-        while (flock(lock, LOCK_EX) != 0 && errno == EINTR) {}
-    TabSessions::Sessions all = readSessions();
-    TabSessions::put(all, key, s, wallNow());
-    writeSessions(all);
-    if (lock >= 0) close(lock);   // which lets go of the lock
+    changeStore([&](TabSessions::Store& all) { TabSessions::put(all.folders, key, s, wallNow()); });
+}
+
+std::vector<TabSessions::Window> Persistence::savedWindows() { return readStore().windows; }
+
+void Persistence::putWindows(const std::vector<TabSessions::Window>& windows) {
+    changeStore([&](TabSessions::Store& all) { all.windows = windows; });
 }
 
 void Persistence::setRoot(const std::string& root) {
@@ -131,8 +146,10 @@ void Persistence::setRoot(const std::string& root) {
 
 void Persistence::changed(Document* d) {
     if (closing_) return;
-    scheduleBackups();
-    scheduleAutoSave();
+    // The backups and auto-save planned again from now (SavePlan.h).
+    plan_.setAutoSave(autoSaveMode(), editor_->documentSettings().autoSaveDelay());
+    apply(plan_.changed(planTabs(), monoNow()));
+    arm();
     // The tabs changed: remembered a second later, once whatever changed
     // them has settled (an edit alone changes nothing remembered).
     if (!d && !sessionTimer_)
@@ -219,6 +236,19 @@ void Persistence::saveSession() {
     if (host_.sameFolder)
         for (Persistence* p : host_.sameFolder()) others.push_back(p->session());
     putSession(key_, TabSessions::merged(session(), others));
+    // And the windows open now, for a launch that opens nothing, so a crash
+    // or a SIGKILL loses little of them.
+    if (host_.windowsChanged) host_.windowsChanged();
+}
+
+// This window as a launch brings it back (TabSessions::Window): its folder
+// and its own tabs here, its size and panels from the window.
+TabSessions::Window Persistence::windowRecord() {
+    TabSessions::Window w;
+    w.root = key_;
+    w.tabs = session();
+    if (host_.windowState) host_.windowState(&w);
+    return w;
 }
 
 // A window that closes while another stays open on its folder drops out of
@@ -229,13 +259,18 @@ void Persistence::saveSessionClosing() {
     if (!others.empty()) others.front()->saveSession();
     else saveSession();
     closing_ = true;
+    plan_.cancel();
 }
 
-void Persistence::restoreSession() {
-    const TabSessions::Sessions all = readSessions();
+void Persistence::restoreSession(const TabSessions::Session* own) {
     TabSessions::Session saved;
-    const auto found = all.find(key_);
-    if (found != all.end()) saved = found->second;
+    if (own) {
+        saved = *own;   // a window brought back has its own tabs
+    } else {
+        const TabSessions::Sessions all = readSessions();
+        const auto found = all.find(key_);
+        if (found != all.end()) saved = found->second;
+    }
     const EditorTabs::Session plain = TabSessions::files(saved);
 
     // Unsaved buffers kept from a crash, a SIGKILL or a power loss: a file of
@@ -314,65 +349,117 @@ bool Persistence::takesBackup(Document* d) const {
     return d->kind() == Document::Kind::Text && !d->path().empty();
 }
 
-bool Persistence::needsBackup(Document* d) const {
+bool Persistence::needsBackup(Document* d) const { return SavePlan::needsBackup(planTab(d)); }
+
+// What the planner knows of a tab: its counts and what its backup holds.
+SavePlan::Tab Persistence::planTab(Document* d) const {
+    SavePlan::Tab t;
+    t.id = d->id();
+    t.dirty = d->dirty();
+    t.keepsText = takesBackup(d);
+    t.generation = d->edits();
+    t.path = d->path();
     const Document::Backup& b = d->backup();
-    return d->dirty() && takesBackup(d) &&
-           (!b.written || b.writtenEdits != d->edits() || b.writtenPath != d->path());
+    t.backupWritten = b.written;
+    t.backupGeneration = b.writtenEdits;
+    t.backupPath = b.writtenPath;
+    return t;
+}
+
+std::vector<SavePlan::Tab> Persistence::planTabs() const {
+    std::vector<SavePlan::Tab> out;
+    for (Document* d : editor_->documents()) out.push_back(planTab(d));
+    return out;
+}
+
+Document* Persistence::documentWithId(uint64_t id) const {
+    for (Document* d : editor_->documents())
+        if (d->id() == id) return d;
+    return nullptr;
+}
+
+// What the planner says to do now: backups removed, written, and the
+// auto-save run.
+void Persistence::apply(const SavePlan::Plan& plan) {
+    for (uint64_t id : plan.discardBackups)
+        if (Document* d = documentWithId(id)) discardBackup(d);
+    for (uint64_t id : plan.writeBackups)
+        if (Document* d = documentWithId(id)) writeBackup(d);
+    if (plan.autoSave) autoSaveNow();
+}
+
+// One timer for the planner, set for when it next has something to do. Due
+// now (a focus-change save, a backup past its longest wait) runs on the next
+// turn of the main loop, ahead of the input events waiting then: at the
+// default idle priority every key already queued went first, so a key typed
+// right after Ctrl+PageUp was written with the tab it went into, as if that
+// tab had lost the keyboard too (auto_save, under load).
+void Persistence::arm() {
+    if (planTimer_) {
+        g_source_remove(planTimer_);
+        planTimer_ = 0;
+    }
+    if (closing_) return;
+    const double due = plan_.nextDue();
+    if (due == SavePlan::kNever) return;
+    auto fire = [](gpointer p) -> gboolean {
+        Persistence* self = static_cast<Persistence*>(p);
+        self->planTimer_ = 0;
+        self->tick();
+        return G_SOURCE_REMOVE;
+    };
+    const double wait = due - monoNow();
+    if (wait <= 0) {
+        planTimer_ = g_idle_add_full(G_PRIORITY_HIGH, fire, this, nullptr);
+    } else {
+        // Rounded up, so the tick is never early; one that is finds nothing
+        // due and is set again.
+        const guint ms = (guint)std::min(std::ceil(wait * 1000.0), 3.6e6);
+        planTimer_ = g_timeout_add(ms, fire, this);
+    }
+}
+
+void Persistence::tick() {
+    if (closing_) return;
+    apply(plan_.tick(planTabs(), monoNow()));
+    arm();
 }
 
 // After every edit and every change to the tabs: a clean tab's backup goes
-// now, and a changed buffer is written when typing pauses. A comparison of
-// counts per tab, no text copied, so it can run on every key.
+// now, and a changed buffer is written when typing pauses (SavePlan.h). A
+// comparison of counts per tab, no text copied, so it can run on every key.
 void Persistence::scheduleBackups() {
     if (closing_) return;
-    bool pending = false;
-    for (Document* d : editor_->documents()) {
-        if (d->dirty() && takesBackup(d)) pending = pending || needsBackup(d);
-        else if (d->backup().written) discardBackup(d);
-    }
-    if (backupTimer_) {
-        g_source_remove(backupTimer_);
-        backupTimer_ = 0;
-    }
-    if (!pending) {
-        backupFirstPending_ = 0;
-        return;
-    }
-    const gint64 now = g_get_monotonic_time();
-    if (!backupFirstPending_) backupFirstPending_ = now;
-    const double waited = (double)(now - backupFirstPending_) / 1e6;
-    const double delay = std::max(0.0, std::min(kBackupDelay, kBackupMaxWait - waited));
-    backupTimer_ = g_timeout_add((guint)(delay * 1000), [](gpointer p) -> gboolean {
-        Persistence* self = static_cast<Persistence*>(p);
-        self->backupTimer_ = 0;
-        self->writeBackups();
-        return G_SOURCE_REMOVE;
-    }, this);
+    apply(plan_.backupsChanged(planTabs(), monoNow()));
+    arm();
 }
 
-// Every changed buffer to the store's thread; the main thread only copies
-// the text out of the document.
+// Every changed buffer to the store's thread now.
 void Persistence::writeBackups() {
-    backupFirstPending_ = 0;
     if (closing_) return;
+    for (Document* d : editor_->documents())
+        if (needsBackup(d)) writeBackup(d);
+}
+
+// One buffer to the store's thread; the main thread only copies the text
+// out of the document.
+void Persistence::writeBackup(Document* d) {
+    if (closing_ || !needsBackup(d)) return;
     BackupStore& store = BackupStore::shared();
-    for (Document* d : editor_->documents()) {
-        if (!needsBackup(d)) continue;
-        Document::Backup& b = d->backup();
-        if (b.id.empty()) b.id = store.newId();
-        const Document::DiskStamp& disk = d->diskStamp();
-        Backups::Entry e;
-        e.id = b.id;
-        e.path = d->path();
-        e.root = key_;
-        e.diskExisted = disk.exists;
-        e.diskMtime = disk.mtime;
-        e.diskInode = disk.inode;
-        store.write(e, d->text());
-        b.written = true;
-        b.writtenEdits = d->edits();
-        b.writtenPath = d->path();
-    }
+    Document::Backup& b = d->backup();
+    if (b.id.empty()) b.id = store.newId();
+    const Document::DiskStamp& disk = d->diskStamp();
+    Backups::Entry e;
+    e.id = b.id;
+    e.path = d->path();
+    e.root = key_;
+    e.diskExisted = disk.exists;
+    e.diskMtime = disk.mtime;
+    e.diskInode = disk.inode;
+    store.write(e, d->text());
+    b.written = true;
+    b.writtenEdits = d->edits();
+    b.writtenPath = d->path();
 }
 
 void Persistence::discardBackup(Document* d) {
@@ -418,40 +505,24 @@ Settings::AutoSave Persistence::autoSaveMode() const {
     return editor_->documentSettings().autoSave();
 }
 
-bool Persistence::takesAutoSave(Document* d) const { return d->dirty() && takesBackup(d); }
+bool Persistence::takesAutoSave(Document* d) const { return SavePlan::autoSaves(planTab(d)); }
 
-// After every edit and every change to the tabs, beside scheduleBackups.
+// After the setting changed, and with every edit and change to the tabs:
+// after-delay planned again from now.
 void Persistence::scheduleAutoSave() {
-    if (autoSaveTimer_) {
-        g_source_remove(autoSaveTimer_);
-        autoSaveTimer_ = 0;
-    }
-    if (closing_ || autoSaveMode() != Settings::AutoSave::AfterDelay) return;
-    bool any = false;
-    for (Document* d : editor_->documents()) any = any || takesAutoSave(d);
-    if (!any) return;
-    const int ms = std::max(0, editor_->documentSettings().autoSaveDelay());
-    autoSaveTimer_ = g_timeout_add((guint)ms, [](gpointer p) -> gboolean {
-        Persistence* self = static_cast<Persistence*>(p);
-        self->autoSaveTimer_ = 0;
-        self->autoSaveNow();
-        return G_SOURCE_REMOVE;
-    }, this);
+    if (closing_) return;
+    plan_.setAutoSave(autoSaveMode(), editor_->documentSettings().autoSaveDelay());
+    plan_.autoSaveChanged(planTabs(), monoNow());
+    arm();
 }
 
 // Saved on the next turn of the main loop, not inside the focus change, and
-// never cancelled by the delay's timer. Ahead of the input events waiting
-// then: at the default idle priority every key already queued went first,
-// so a key typed right after Ctrl+PageUp was written with the tab it went
-// into, as if that tab had lost the keyboard too (auto_save, under load).
+// never cancelled by an edit's planning (SavePlan.h).
 void Persistence::autoSaveOnFocusChange() {
-    if (closing_ || autoSaveMode() != Settings::AutoSave::FocusChange || focusSaveIdle_) return;
-    focusSaveIdle_ = g_idle_add_full(G_PRIORITY_HIGH, [](gpointer p) -> gboolean {
-        Persistence* self = static_cast<Persistence*>(p);
-        self->focusSaveIdle_ = 0;
-        self->autoSaveNow();
-        return G_SOURCE_REMOVE;
-    }, this, nullptr);
+    if (closing_) return;
+    plan_.setAutoSave(autoSaveMode(), editor_->documentSettings().autoSaveDelay());
+    plan_.focusChanged(monoNow());
+    arm();
 }
 
 void Persistence::autoSaveNow() {

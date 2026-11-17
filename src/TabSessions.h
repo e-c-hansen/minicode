@@ -21,8 +21,13 @@
 // frame, folder, tabs (a Session as above, carets and scroll included), its
 // panels and their sizes, its terminals' folders and splits, and the tree's
 // open folders and selected row: VS Code's window.restoreWindows "all".
-// The Mac keeps it in its user defaults (MCOpenWindows) until the session
-// moves into the core (SESSION-DESIGN.md, stage 3).
+// The Mac keeps it in its user defaults (MCOpenWindows); the GTK port keeps
+// the same list in sessions.json, under the key "windows" beside the
+// folders (encodeStore), until the session moves into the core
+// (SESSION-DESIGN.md, stages 3c and 4). Folder keys are absolute paths, so
+// "windows" is never one; a sessions.json from before has no windows, and a
+// minicode from before skips the key (it is no session) and keeps the
+// folders.
 #pragma once
 
 #include <cstddef>
@@ -158,6 +163,17 @@ struct Window {
 // out; text that is not JSON gives none.
 std::string encodeWindows(const std::vector<Window> &windows);
 std::vector<Window> decodeWindows(const std::string &text);
+
+// The whole of sessions.json: every folder's session and the windows to
+// bring back. Text that is not JSON gives neither; a file of folders only
+// (as every sessions.json was before) gives its folders and no window.
+constexpr const char *kWindowsKey = "windows";
+struct Store {
+    Sessions folders;
+    std::vector<Window> windows;
+};
+std::string encodeStore(const Store &store);
+Store decodeStore(const std::string &text);
 
 // The windows to keep as a window closes: the others, or the closing one
 // alone when it was the last (closing it quits minicode, and the next
