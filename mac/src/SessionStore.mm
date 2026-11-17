@@ -127,10 +127,13 @@ TabSessions::Store MCSessionsRead(void) {
 }
 
 void MCSessionsPutFolder(const std::string &key, const TabSessions::Session &s) {
+    // Copies the block holds: a block captures a C++ reference as the
+    // reference, which the caller's temporary outlives only until it returns.
+    const std::string folder = key;
     const TabSessions::Session copy = s;
     const double now = WallNow();
     dispatch_async(Queue(), ^{
-        gFolders[key] = {copy, now};
+        gFolders[folder] = {copy, now};
         QueueWrite();
     });
 }
