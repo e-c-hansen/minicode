@@ -5253,3 +5253,7 @@ window in stage 3c; sessions.json and the backup planner follow in 3b.
   strip checked against the window, a tab dragged to the end and back)
   and `split_editor` (the groups checked against the window after each
   move, a drag in the left group's row, kept by a new window's session).
+
+### 74. File tree icons by kind (done, November 2026)
+
+A file row's icon follows `FileIcon::kindOf` (what a click on the file opens), as the Mac's does: `fileIconName` in `linux/src/FileTree.cpp` maps each kind to a symbolic name that Adwaita has (checked against `/usr/share/icons/Adwaita/symbolic`, since GTK draws the missing-icon picture for a name the theme lacks): image, video and audio `*-x-generic`, `x-office-document` for a PDF, `x-office-spreadsheet` for a table, `accessories-dictionary` for a notebook, `drive-harddisk` for a database, `package-x-generic` for an archive, `web-browser` for a web page, `user-bookmarks` for a bookmark, `utilities-terminal` for source code (Adwaita has no script icon), `text-x-generic` for the rest. Folders keep `folder-symbolic`. The `tree_icons` suite writes one file of each kind and reads the names off the rows. Other themes may draw these names differently; the look needs the owner's eyes.

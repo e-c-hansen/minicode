@@ -103,3 +103,4 @@ BookmarkMenuSuite.cpp
 RecentFoldersSuite.cpp
 DemoSuite.cpp
 UndoHistorySuite.cpp
+TreeIconsSuite.cpp
