@@ -460,6 +460,10 @@ static void After(double seconds, dispatch_block_t block) {
 - (void)label:(NSString *)text {
     [self add:^(MCDemo *d, MCDone done) {
         d->_overlay.label = text;
+        // A key caption from the step before would sit under the new label
+        // as if it belonged to it.
+        ++d->_captionToken;
+        d->_overlay.caption = nil;
         d->_overlay.needsDisplay = YES;
         done();
     }];
@@ -712,11 +716,39 @@ static BOOL KeyFor(unichar c, unsigned short *code, BOOL *shift) {
     [NSApp postEvent:e atStart:NO];
 }
 
+// Shift+Command keys made the way a keyboard makes them: a CGEvent turned
+// into an NSEvent. One built from characters matched no menu item ("v")
+// or the unshifted one ("s" was Save), so Shift+Command+V never showed
+// the source and Shift+Command+A never opened the Agents panel. Its
+// timestamp is the one the event comes with, let through like ours.
+- (void)postCGKey:(unsigned short)code flags:(NSEventModifierFlags)flags {
+    CGEventFlags cgFlags = 0;
+    if (flags & NSEventModifierFlagShift) cgFlags |= kCGEventFlagMaskShift;
+    if (flags & NSEventModifierFlagControl) cgFlags |= kCGEventFlagMaskControl;
+    if (flags & NSEventModifierFlagOption) cgFlags |= kCGEventFlagMaskAlternate;
+    if (flags & NSEventModifierFlagCommand) cgFlags |= kCGEventFlagMaskCommand;
+    for (bool down : {true, false}) {
+        CGEventRef cg = CGEventCreateKeyboardEvent(NULL, code, down);
+        CGEventSetFlags(cg, cgFlags);
+        NSEvent *e = [NSEvent eventWithCGEvent:cg];
+        CFRelease(cg);
+        if (!e) continue;
+        [_ours addObject:@(llround(e.timestamp * 1e6))];
+        [NSApp postEvent:e atStart:NO];
+    }
+}
+
 - (void)postKey:(NSString *)chars ignoring:(NSString *)ign code:(unsigned short)code
           flags:(NSEventModifierFlags)flags {
     const NSEventModifierFlags held = flags & (NSEventModifierFlagShift |
         NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagCommand);
     if (held) [self postFlags:held];
+    const NSEventModifierFlags shiftCmd = NSEventModifierFlagShift | NSEventModifierFlagCommand;
+    if ((held & shiftCmd) == shiftCmd && !(flags & NSEventModifierFlagFunction)) {
+        [self postCGKey:code flags:held];
+        [self postFlags:0];
+        return;
+    }
     for (NSEventType t : {NSEventTypeKeyDown, NSEventTypeKeyUp}) {
         NSEvent *e = [NSEvent keyEventWithType:t
                                       location:NSZeroPoint
@@ -1122,11 +1154,13 @@ static void SceneLatex(MCDemo *d) {
     [d pause:1.8];
     [d label:@"The edit landed in the LaTeX source"];
     [d key:@"shift+cmd+v" caption:@"⇧⌘V  The source"];
+    [d waitFor:^BOOL(MCDemo *m) {
+        NSTextView *tv = [m ui:@"textView"];
+        return tv.isEditable && [tv.string containsString:@"Ask for a second opinion"];
+    } timeout:10 recorded:YES];
     [d run:^(MCDemo *m) {
         NSTextView *tv = [m ui:@"textView"];
-        NSRange r = [tv.string rangeOfString:@"Ask for a second opinion"];
-        if (r.location == NSNotFound) [m fail:@"the edit is not in the source"];
-        [tv setSelectedRange:r];
+        [tv setSelectedRange:[tv.string rangeOfString:@"Ask for a second opinion"]];
     }];
     [d pause:2.4];
 }

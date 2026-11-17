@@ -2739,7 +2739,10 @@ plays a stand-in mermaid.js whose colors come from its style sheet.
 - **Images** (not SVG, which is source): `NSImageView`, scaled down never up,
   `animates`, size set to pixels (a 144 dpi screenshot drew at half size); one
   that fails to decode falls through to the text path's "Cannot display".
-  **PDFs**: `PDFView`, reload keeping page, point and scale.
+  **PDFs**: `PDFView`, reload keeping page, point and scale; a new one
+  opens at the top of its first page (`MCPDFShowFirstPageTop`, PageZoom.mm,
+  the LaTeX preview's too; until 2026-11-17 a tall page opened scrolled to
+  its foot, which read as a blank page), and a tab shown again its own place.
 - **Video and audio** (`+isMediaPath:`): `AVPlayerView`, paused on the first
   frame; `stopMedia` (from `resetViewMode`, window close, dealloc) drops the
   player so sound stops; size (rotation applied) and length arrive by KVO;
@@ -4221,8 +4224,11 @@ it left unsaved never holds it on the quit question.
 - A scene is a function in `mac/src/Demo.mm` of queued builder steps (`clickFile:`,
   `type:`, `key:caption:`, `waitFor:timeout:recorded:`, ...), points resolved
   lazily (`pointForText:` through `firstRectForCharacterRange:`). Input is real
-  posted `NSEvent`s; the pointer and key captions are an overlay view. The
-  user's own input is swallowed meanwhile (only events whose timestamp, in
+  posted `NSEvent`s; the pointer and key captions are an overlay view. Every
+  scene says what each step is for with `label:` (2026-11-17, the owner's
+  review: a first-time viewer could not tell): blue, right-aligned in the
+  tab strip's row, kept until the next label; key captions (the keys
+  pressed) stay at the bottom center. The user's own input is swallowed meanwhile (only events whose timestamp, in
   whole microseconds, the demo posted pass), since a stray key once dirtied a
   file and hung the scene on "Save changes?".
 - Capture is `screencapture -x -o -l<wid>` every 100 ms; a popover grows the
