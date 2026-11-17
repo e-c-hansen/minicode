@@ -107,9 +107,9 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(VARIANT)' > $(OBJDIR)/variant.txt)
 endif
 
-.PHONY: all app run test test-asan test-tsan guitest fakelsp latex-sweep install dmg dist-zip clean demos membench-mac membench-linux icon
+.PHONY: all app run test test-asan test-tsan guitest fakelsp latex-sweep install dmg dist-zip clean demos membench-mac membench-linux icon compdb FORCE
 
-all: app
+all: app compile_commands.json
 
 $(BIN): $(APP_OBJ) $(OBJDIR)/variant.txt
 	$(CXX) $(CXXFLAGS) $(APP_OBJ) $(LDFLAGS) -o $(BIN)
@@ -425,6 +425,32 @@ dist-zip: app
 
 clean:
 	rm -rf build $(BUNDLE) $(APP).dmg $(APP).zip
+
+# compile_commands.json at the top, for clangd (and any editor using it):
+# one entry per source file with the command this Makefile compiles it
+# with, made from the same variables the rules above use, so the two
+# cannot differ. Without it clangd guesses each file's flags (no -Isrc, no
+# -fobjc-arc) and reports headers in src/ as not found, with a cascade of
+# errors after. `make` writes it, and `make compdb` alone; it is rewritten
+# only when its text changes, and git ignores it. The core's files get the
+# app's flags (as `make` builds them; `make test` adds nothing a header
+# needs), mac/src's the same with -fobjc-arc, the tests' TESTFLAGS, and the
+# GUI suites -Imac/tests/gui. Files run_tests.cpp includes (the *.inc
+# groups, *Tests.cpp) have no entry: clangd takes them from it.
+COMPDB_APP_SRC  = $(SRC) tools/minicode-cli.cpp tests/latex/sweep.mm
+COMPDB_TEST_SRC = tests/run_tests.cpp tests/fakelsp/fakelsp.cpp
+compdb_entry = '  {"directory": "$(CURDIR)", "file": "$(2)", "command": "$(1) -c $(2)"},'
+COMPDB_LINES = $(foreach f,$(COMPDB_APP_SRC),$(call compdb_entry,$(APPCMD),$(f))) \
+               $(foreach f,$(GUI_SRC),$(call compdb_entry,$(APPCMD) -Imac/tests/gui,$(f))) \
+               $(foreach f,$(COMPDB_TEST_SRC),$(call compdb_entry,$(TESTCMD),$(f)))
+
+compdb: compile_commands.json
+
+compile_commands.json: FORCE
+	@{ echo '['; printf '%s\n' $(COMPDB_LINES) | sed '$$ s/,$$//'; echo ']'; } > $@.tmp
+	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv $@.tmp $@ && echo "Wrote $@"; fi
+
+FORCE:
 
 # Memory used by MiniCode for a day-to-day workload, against VS Code plus
 # Chrome plus Preview doing the same work; see scripts/membench-mac.sh. Windows

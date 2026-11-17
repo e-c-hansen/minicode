@@ -73,6 +73,10 @@ std::vector<DiagnosticSpan> diagnosticSpans(const std::u16string* base,
     return out;
 }
 
+bool drawsOnText(const Diagnostic& d) {
+    return d.code != "fatal_too_many_errors";
+}
+
 // ------------------------------------------------------- DiagnosticStore
 bool DiagnosticStore::publish(const std::string& uri, const std::string& server,
                               std::vector<Diagnostic> list,

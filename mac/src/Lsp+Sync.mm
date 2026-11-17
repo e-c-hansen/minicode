@@ -98,6 +98,7 @@ static double MCThreadCpuMs() {
         }
         BOOL wasRunning = _entries[_langKey].server != nil;
         [self attachDocument];
+        [self noteMissingCompileFlags];
         [self scheduleFoldingRanges:0.1];
         [self scheduleSemanticTokens:0];
         // In automatic mode another file may sit in another environment.

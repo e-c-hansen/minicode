@@ -189,7 +189,7 @@
     // The marks drawn now (they follow typing), hints left out as in the list.
     NSArray<MCDiagnosticMark *> *all = _tv.diagnostics;
     NSMutableArray<MCDiagnosticMark *> *marks = [NSMutableArray array];
-    for (MCDiagnosticMark *m in all) if (m.severity != 4) [marks addObject:m];
+    for (MCDiagnosticMark *m in all) if (m.severity != 4 && !m.quiet) [marks addObject:m];
     if (!_uri || marks.count == 0) {
         NSBeep();
         [self flash:@"No problems in this file"];
@@ -241,6 +241,7 @@
         m.severity = (NSInteger)d.severity;
         m.unnecessary = d.unnecessary;
         m.deprecated = d.deprecated;
+        m.quiet = !Lsp::drawsOnText(d);
         NSString *kind = d.severity == Lsp::Severity::Error ? @"Error"
                        : d.severity == Lsp::Severity::Warning ? @"Warning"
                        : d.severity == Lsp::Severity::Information ? @"Info" : @"Hint";

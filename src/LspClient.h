@@ -485,6 +485,12 @@ struct DiagnosticSpan {
 std::vector<DiagnosticSpan> diagnosticSpans(const std::u16string* base,
                                             const std::u16string& current,
                                             const std::vector<Diagnostic>& diags);
+// Whether a diagnostic is drawn on the text (a squiggle, a gutter dot, a
+// stop for F8). Not clang's "too many errors emitted, stopping now"
+// (fatal_too_many_errors), which is about the compile as a whole and which
+// clang places at the file's first character, so it sat on line 1's
+// comment; it is still counted in the status bar and listed in Problems.
+bool drawsOnText(const Diagnostic& d);
 
 // What several servers have published, kept per file and per server, so
 // one server publishing for a file never replaces another's list (Ruff's
@@ -1033,6 +1039,30 @@ ProjectCodeCheck checkProjectCode(const std::string& server, bool allowed,
                                   const std::string& fileDir, const std::string& root,
                                   const std::string& home, const std::string& ownTs,
                                   const ProjectFs& fs);
+
+// ------------------------------------------------------ clangd's compile flags
+// clangd compiles a file with the flags a compilation database gives it.
+// With none it guesses (the file alone: no -I, no -D), so a project whose
+// headers are in another folder gets "file not found" for them and a
+// cascade of errors after, none of them real. It looks in the file's
+// folder and every folder above it, and in a build/ folder of each, for a
+// compile_commands.json or a compile_flags.txt; a .clangd file on the way
+// can add flags itself (a CompileFlags section), and
+// --compile-commands-dir on its command line names the folder.
+// A server program that is clangd ("clangd", "clangd-18", by its name).
+bool isClangd(const std::string& program);
+// Whether clangd finds compile flags for a file in `fileDir` (absolute),
+// run as `command` (its words, the program first). `exists` says whether a
+// path is there; `readSmallFile` gives a .clangd file's text ("" when
+// unreadable). `found` gets the file that decided, or the option.
+bool clangdHasCompileFlags(const std::string& fileDir, const std::vector<std::string>& command,
+                           const std::function<bool(const std::string& path)>& exists,
+                           const std::function<std::string(const std::string& path)>& readSmallFile,
+                           std::string* found = nullptr);
+// The words the Language Servers popover shows on clangd's card when it
+// has no flags for the file, and the status bar's shorter note.
+extern const char* const kClangdNoFlagsText;
+extern const char* const kClangdNoFlagsNote;
 
 // ------------------------------------------------------------------- client
 class Client {

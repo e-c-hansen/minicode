@@ -215,6 +215,8 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
 - (BOOL)alsoWantsPath:(NSString *)path key:(NSString *)key;
 - (void)forgetRuffConfiguration;
 - (MCLspServer *)ensureServer:(NSString *)key;
+- (NSString *)compileFlagsNoteForProgram:(NSString *)program command:(NSString *)command;
+- (void)noteMissingCompileFlags;
 - (void)stopAllServers;
 - (void)settingsChanged:(NSNotification *)note;
 @end

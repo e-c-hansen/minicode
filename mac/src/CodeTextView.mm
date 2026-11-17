@@ -41,6 +41,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
         n.message = m.message;
         n.unnecessary = m.unnecessary;
         n.deprecated = m.deprecated;
+        n.quiet = m.quiet;
         [kept addObject:n];
     }
     return kept;
@@ -171,8 +172,8 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
 - (NSString *)diagnosticMessageAtIndex:(NSUInteger)index {
     NSMutableArray *msgs = [NSMutableArray array];
     for (MCDiagnosticMark *m in _diagnostics)
-        if (NSLocationInRange(index, m.range) ||
-            (m.range.length == 0 && index == m.range.location))
+        if (!m.quiet && (NSLocationInRange(index, m.range) ||
+            (m.range.length == 0 && index == m.range.location)))
             [msgs addObject:m.message];
     return msgs.count ? [msgs componentsJoinedByString:@"\n"] : nil;
 }
@@ -257,6 +258,7 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
                  : a.severity < b.severity ? NSOrderedDescending : NSOrderedSame;
         }];
     for (MCDiagnosticMark *m in ordered) {
+        if (m.quiet) continue;
         NSRange r = m.range;
         if (NSMaxRange(r) < visible.location || r.location > NSMaxRange(visible)) continue;
         if ([_folds rangeIsHidden:r]) continue;   // folded away

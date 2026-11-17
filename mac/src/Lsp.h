@@ -22,6 +22,10 @@
 // The diagnostic's tags: code never used, drawn faded (with no squiggle when
 // it is only a hint), and a deprecated name, struck through.
 @property(nonatomic, assign) BOOL unnecessary, deprecated;
+// Counted in the status bar but not drawn: no squiggle, gutter dot, hover
+// or F8 stop (Lsp::drawsOnText: clang's "too many errors emitted", which
+// clang puts on the file's first character, whatever is there).
+@property(nonatomic, assign) BOOL quiet;
 @end
 
 @class MCMultiCarets;
@@ -176,6 +180,10 @@ typedef NS_ENUM(NSInteger, MCLspState) {
 // A second server the built-in rule does not want for this project (no
 // Ruff configuration): the popover says when it would run, with no Start.
 @property(nonatomic, assign) BOOL notUsedHere;
+// clangd, for the open file, with no compilation database to read its
+// flags from (Lsp::clangdHasCompileFlags): what that means and what to do
+// (Lsp::kClangdNoFlagsText). Nil otherwise.
+@property(nonatomic, copy) NSString *compileFlagsNote;
 @end
 
 // One interpreter offered by Select Python Interpreter.
