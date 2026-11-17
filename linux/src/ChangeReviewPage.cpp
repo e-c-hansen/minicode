@@ -32,6 +32,7 @@ ChangeReview::GitOut runner(const std::string& dir, const std::vector<std::strin
     GitResult r = runGit(dir, args, wantsInput ? &input : nullptr);
     ChangeReview::GitOut o;
     o.ok = r.ok();
+    o.status = r.status;
     o.out = r.out;
     o.err = r.ok() ? std::string() : gitFailure(r);
     return o;
@@ -59,6 +60,8 @@ struct ChangeReviewPage::Data {
     ChangeReview::Read read;
     ChangeReview::Page page;
     size_t fingerprint = 0;
+    // A worktree's page: what it is compared with, and the main checkout.
+    std::string baseRef, baseLabel, mainPath;
 };
 
 const char* ChangeReviewPage::titleOf(Act a) {
@@ -84,9 +87,26 @@ ChangeReviewPage::ChangeReviewPage(GitPanel* panel, const std::string& root)
     reload();
 }
 
+ChangeReviewPage::ChangeReviewPage(GitPanel* panel, const std::string& worktree,
+                                   const std::string& label, const std::string& branch,
+                                   const std::string& mainRef)
+    : panel_(panel), root_s_(worktree), worktree_(worktree), label_(label), branch_(branch),
+      mainRef_(mainRef) {
+    panelAlive_ = panel->aliveFlag();
+    build();
+    // A worktree's page belongs to the tree's Worktrees node: the panel's
+    // reads are not its own, so it neither asks for them nor follows them.
+    reload();
+}
+
+std::string ChangeReviewPage::title() const {
+    if (worktree_.empty()) return "Uncommitted Changes";
+    return (label_.empty() ? nameOf(worktree_) : label_) + " vs " + (mainRef_.empty() ? "main" : mainRef_);
+}
+
 ChangeReviewPage::~ChangeReviewPage() {
     *alive_ = false;
-    if (panelAlive_ && *panelAlive_) {
+    if (worktree_.empty() && panelAlive_ && *panelAlive_) {
         panel_->onReviewRefresh = nullptr;
         panel_->setReviewOpen(false);
     }
@@ -101,7 +121,7 @@ void ChangeReviewPage::build() {
     gtk_widget_set_margin_end(bar, 12);
     gtk_widget_set_margin_top(bar, 8);
     gtk_widget_set_margin_bottom(bar, 6);
-    title_ = gtk_label_new("Uncommitted Changes");
+    title_ = gtk_label_new(title().c_str());
     gtk_widget_add_css_class(title_, "title-4");
     summary_ = gtk_label_new("");
     gtk_widget_add_css_class(summary_, "dim-label");
@@ -116,9 +136,40 @@ void ChangeReviewPage::build() {
     }), this);
     gtk_box_append(GTK_BOX(bar), title_);
     gtk_box_append(GTK_BOX(bar), summary_);
-    gtk_box_append(GTK_BOX(bar), messageLabel_);
-    gtk_box_append(GTK_BOX(bar), undo_);
-    gtk_box_append(GTK_BOX(root_), bar);
+    if (worktree_.empty()) {
+        gtk_box_append(GTK_BOX(bar), messageLabel_);
+        gtk_box_append(GTK_BOX(bar), undo_);
+        gtk_box_append(GTK_BOX(root_), bar);
+    } else {
+        // Apply to Main... at the bar's right; what it did on a line of its
+        // own under the bar (a worktree's long title leaves no room beside
+        // it), with Show in Source Control.
+        GtkWidget* gap = gtk_label_new("");
+        gtk_widget_set_hexpand(gap, TRUE);
+        gtk_box_append(GTK_BOX(bar), gap);
+        apply_ = gtk_button_new_with_label("Apply to Main…");
+        gtk_widget_set_visible(apply_, FALSE);
+        gtk_widget_set_tooltip_text(apply_, "Bring these changes into the main checkout as uncommitted changes");
+        g_signal_connect_swapped(apply_, "clicked", G_CALLBACK(+[](ChangeReviewPage* self) {
+            self->applyToMain();
+        }), this);
+        gtk_box_append(GTK_BOX(bar), apply_);
+        gtk_box_append(GTK_BOX(root_), bar);
+        noteRow_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        gtk_widget_set_margin_start(noteRow_, 12);
+        gtk_widget_set_margin_end(noteRow_, 12);
+        gtk_widget_set_margin_bottom(noteRow_, 6);
+        gtk_widget_set_visible(noteRow_, FALSE);
+        gtk_box_append(GTK_BOX(noteRow_), messageLabel_);
+        source_ = gtk_button_new_with_label("Show in Source Control");
+        gtk_widget_set_visible(source_, FALSE);
+        gtk_widget_set_tooltip_text(source_, "The main checkout's uncommitted changes, with Source Control beside them");
+        g_signal_connect_swapped(source_, "clicked", G_CALLBACK(+[](ChangeReviewPage* self) {
+            self->pressSourceButton();
+        }), this);
+        gtk_box_append(GTK_BOX(noteRow_), source_);
+        gtk_box_append(GTK_BOX(root_), noteRow_);
+    }
 
     buffer_ = gtk_text_buffer_new(nullptr);
     view_ = gtk_text_view_new_with_buffer(buffer_);
@@ -197,9 +248,18 @@ void ChangeReviewPage::reload() {
     loading_ = true;
     const std::string root = root_s_;
     const ChangeReview::Opened opened = opened_;
-    panel_->runOnGitThread([this, root, opened, alive = alive_] {
+    const std::string worktree = worktree_, mainRef = mainRef_;
+    panel_->runOnGitThread([this, root, opened, worktree, mainRef, alive = alive_] {
         auto d = std::make_shared<Data>();
-        d->read = ChangeReview::readUncommitted(root, runner);
+        if (!worktree.empty()) {
+            ChangeReview::WorktreeRead w = ChangeReview::readWorktree(worktree, mainRef, runner);
+            d->read = std::move(w.read);
+            d->baseRef = w.baseRef;
+            d->baseLabel = w.baseLabel;
+            d->mainPath = w.mainPath;
+        } else {
+            d->read = ChangeReview::readUncommitted(root, runner);
+        }
         d->page = ChangeReview::layout(d->read.diffs, opened);
         d->fingerprint = ChangeReview::fingerprint(d->read.diffs);
         if (!*alive) return;
@@ -297,7 +357,9 @@ void ChangeReviewPage::fill() {
     std::string error = data_->read.error;
     if (!error.empty() || p.rows.empty()) {
         rowChar_.clear();
-        gtk_text_buffer_set_text(buffer_, error.empty() ? "No changes." : error.c_str(), -1);
+        gtk_text_buffer_set_text(buffer_, !error.empty() ? error.c_str()
+                                          : worktree_.empty() ? "No changes."
+                                                              : "No changes against the main branch.", -1);
         gtk_text_buffer_get_bounds(buffer_, &s, &e);
         gtk_text_buffer_apply_tag_by_name(buffer_, "dim", &s, &e);
         return;
@@ -417,6 +479,31 @@ void ChangeReviewPage::updateSummary() {
     if (files)
         counts = std::to_string(files) + (files == 1 ? " file" : " files") + ", +" +
                  std::to_string(added) + " -" + std::to_string(removed);
+    if (!worktree_.empty()) {
+        std::string parts;
+        auto add = [&](const std::string& t) {
+            if (t.empty()) return;
+            parts += (parts.empty() ? "" : "  ·  ") + t;
+        };
+        if (data_ && !data_->baseLabel.empty()) add("against " + data_->baseLabel);
+        add(branch_);
+        add(counts);
+        gtk_label_set_text(GTK_LABEL(summary_), parts.c_str());
+        // Once applied, the button says so until the worktree's changes are
+        // other than those brought in (the agent worked on).
+        if (applied_ && data_ && data_->fingerprint != appliedPrint_) applied_ = false;
+        gtk_widget_set_visible(apply_, data_ && !data_->read.diffs.empty() && !data_->mainPath.empty());
+        gtk_button_set_label(GTK_BUTTON(apply_), applyTitle().c_str());
+        gtk_widget_set_sensitive(apply_, applyEnabled());
+        gtk_widget_set_tooltip_text(apply_, applied_
+            ? "These changes are in the main checkout now, uncommitted. The button comes back "
+              "when the worktree's changes differ from what was brought in."
+            : "Bring these changes into the main checkout as uncommitted changes");
+        gtk_widget_set_visible(source_, sourceButtonShown());
+        gtk_widget_set_visible(noteRow_, !message_.empty() || sourceButtonShown());
+        gtk_widget_set_visible(undo_, FALSE);
+        return;
+    }
     gtk_label_set_text(GTK_LABEL(summary_), counts.c_str());
     const std::string undo = panel_->undoDiscardTitle();
     gtk_widget_set_visible(undo_, !undo.empty());
@@ -439,7 +526,8 @@ std::vector<ChangeReviewPage::Act> ChangeReviewPage::actsFor(size_t row) const {
         }
         const bool shows = !f.binary && !f.submodule && !f.symlink;
         if (shows) out.push_back(Act::Side);
-        if (f.section == Section::Changes || (f.section == Section::Staged && f.newExists))
+        if (f.section == Section::Changes || (f.section == Section::Staged && f.newExists) ||
+            (f.section == Section::Plain && f.newExists))
             out.push_back(Act::Open);
         if (f.section == Section::Changes) {
             if (!f.submodule) out.push_back(Act::DiscardFile);
@@ -538,6 +626,81 @@ void ChangeReviewPage::finish(const std::string& text, bool ok) {
     if (!ok) gtk_widget_error_bell(root_);
     panel_->refresh();
     reload();
+}
+
+// ------------------------------------------------------------ Apply to Main
+std::string ChangeReviewPage::applyTitle() const { return applied_ ? "Applied to Main" : "Apply to Main…"; }
+bool ChangeReviewPage::applyEnabled() const { return !applied_ && !applying_; }
+bool ChangeReviewPage::sourceButtonShown() const { return applied_ && onShowSourceControl != nullptr; }
+
+void ChangeReviewPage::pressSourceButton() {
+    if (!onShowSourceControl || appliedMain_.empty()) {
+        gtk_widget_error_bell(root_);
+        return;
+    }
+    onShowSourceControl(appliedMain_);
+}
+
+std::vector<std::string> ChangeReviewPage::fileLines() const {
+    std::vector<std::string> out;
+    if (data_)
+        for (const FileDiff& d : data_->read.diffs)
+            out.push_back(std::string(1, d.file.letter) + " " + d.file.path);
+    return out;
+}
+
+// Reads main's status, then asks (naming the files) or says why not.
+void ChangeReviewPage::applyToMain() {
+    auto d = data_;
+    if (worktree_.empty() || !d || d->mainPath.empty() || d->read.diffs.empty() || applying_) {
+        gtk_widget_error_bell(root_);
+        return;
+    }
+    const std::string mainName = mainRef_.empty() ? "main" : mainRef_, wtName = nameOf(worktree_);
+    panel_->runOnGitThread([this, d, mainName, wtName, alive = alive_] {
+        ChangeReview::WorktreeRead w;
+        w.read = d->read;
+        w.baseRef = d->baseRef;
+        w.baseLabel = d->baseLabel;
+        w.mainPath = d->mainPath;
+        const GitUi::ApplyPlan plan = ChangeReview::planApplyToMain(w, mainName, wtName, runner);
+        if (!*alive) return;
+        onMain(alive, this, [d, plan, mainName](ChangeReviewPage* p) {
+            if (!plan.refusal.empty()) {
+                p->finish(plan.refusal, false);
+                return;
+            }
+            p->panel_->askQuestion(plan, [p, alive = p->alive_, d, mainName] {
+                if (*alive) p->runApply(d, mainName);
+            });
+        });
+    });
+}
+
+// The worktree's patch against the merge base, and one for each untracked
+// file, applied to main: plainly first (all or nothing), else three-way,
+// whose cleanly applied files are then unstaged; never a commit.
+void ChangeReviewPage::runApply(std::shared_ptr<Data> d, const std::string& mainName) {
+    applying_ = true;
+    updateSummary();
+    panel_->runOnGitThread([this, d, mainName, alive = alive_] {
+        ChangeReview::WorktreeRead w;
+        w.read = d->read;
+        w.baseRef = d->baseRef;
+        w.baseLabel = d->baseLabel;
+        w.mainPath = d->mainPath;
+        const ChangeReview::ApplyResult r = ChangeReview::applyToMain(w, mainName, runner);
+        if (!*alive) return;
+        onMain(alive, this, [d, r](ChangeReviewPage* p) {
+            p->applying_ = false;
+            if (r.ok) {
+                p->applied_ = true;
+                p->appliedPrint_ = d->fingerprint;
+                p->appliedMain_ = d->mainPath;
+            }
+            p->finish(r.text, r.ok);
+        });
+    });
 }
 
 void ChangeReviewPage::runOp(Op op, size_t fi, long block) {
@@ -653,12 +816,18 @@ void ChangeReviewPage::sideBySide(size_t fi) {
     CompareSpec c;
     c.title = nameOf(f.path) + " (side by side)";
     const std::string oldPath = f.origPath.empty() ? f.path : f.origPath;
-    c.leftLabel = (staged ? "HEAD: " : "Staged or HEAD: ") + oldPath;
-    c.rightLabel = (staged ? "Staged: " : "") + f.path;
+    if (f.section == Section::Plain) {
+        c.leftLabel = data_->baseLabel + ": " + oldPath;
+        c.rightLabel = (branch_.empty() ? std::string("worktree") : branch_) + ": " + f.path;
+    } else {
+        c.leftLabel = (staged ? "HEAD: " : "Staged or HEAD: ") + oldPath;
+        c.rightLabel = (staged ? "Staged: " : "") + f.path;
+    }
     c.leftText = utf8(f.oldText);
     c.rightText = utf8(f.newText);
     c.fileName = f.path;
-    if (f.section == Section::Changes) c.path = data_->read.top + "/" + f.path;
+    if (f.section == Section::Changes || (f.section == Section::Plain && f.newExists))
+        c.path = data_->read.top + "/" + f.path;
     onShowComparison(c);
 }
 
