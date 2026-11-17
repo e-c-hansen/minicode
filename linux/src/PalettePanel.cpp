@@ -10,6 +10,7 @@
 #include "Editor.h"
 #include "Json.h"
 #include "Keys.h"
+#include "Settings.h"
 #include "SymbolOutline.h"
 #include "ThemeCss.h"
 #include "Utf8Offsets.h"
@@ -544,6 +545,26 @@ void PalettePanel::collectCommands() {
         e.id = id;
         entries_.push_back(std::move(e));
         commands_.push_back(std::move(cmd));
+    }
+    // The themes, as the Mac's palette reads them from View > Theme: the
+    // same rows ("View > Theme > Light Modern"), each choosing it as the
+    // menu's item does (the app.theme action, which asks about colors the
+    // settings file sets).
+    if (app && g_action_group_has_action(app, "theme") && g_action_group_get_action_enabled(app, "theme")) {
+        for (const Theme& t : Settings::themes()) {
+            Cmd cmd;
+            cmd.id = std::string("theme:") + t.id;
+            cmd.action = "app.theme";
+            cmd.target = t.id;
+            cmd.title = t.title;
+            cmd.label = std::string("View > Theme > ") + t.title;
+            CommandPalette::Entry e;
+            e.label = Lsp::toUtf16(cmd.label);
+            e.title = Lsp::toUtf16(cmd.title);
+            e.id = cmd.id;
+            entries_.push_back(std::move(e));
+            commands_.push_back(std::move(cmd));
+        }
     }
     // The bookmarks, each a row that loads it in the browser.
     if (ctx_.bookmarks && g_action_group_has_action(win, "openbookmark")) {

@@ -5860,3 +5860,16 @@ the user types reaches the shell, not with any key pressed in the terminal
   script's marks read by a TerminalStream and `applyTermEvent`). Not run on
   the ThinkPad yet: the outline's look, Ctrl+Up with a real keyboard, and a
   resize by dragging.
+
+### 93. The palette lists View > Theme (done, November 2026)
+
+The palette's rows come from `Keys::actions()` (the registry's commands), and
+View > Theme's items are not registry commands: they are `app.theme` with a
+string target, built from `Settings::themes()` in `Appearance.cpp`. So typing
+"theme" found nothing. `PalettePanel::collectCommands` now adds one row per
+core theme, "View > Theme > Light Modern" as the Mac's palette reads its menu,
+which runs `app.theme` with the id: the same action as the menu item, so the
+same `chooseTheme` (unsaved-settings refusal, the question about colors the
+file sets, `Settings::withTheme`, the config writer). Checked by the palette
+suite's last block. The rows do not mark the current theme (the palette has
+no checked rows on either port).
