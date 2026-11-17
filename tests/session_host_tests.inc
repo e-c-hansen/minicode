@@ -495,6 +495,42 @@ static void testSessionHost() {
         CHECK(a.client->hostCopy(4) == nullptr);
     }
 
+    GROUP("host:watch-timeout");
+    {
+        // A watch the host does not answer in time keeps no watcher: once
+        // another owner's watch makes the copy, the stalled one's owner
+        // (which may have gone, as an LspSession of a closed window does)
+        // is never called. Its late answer is dropped.
+        Net net(false, false);
+        std::mt19937 rng(5);
+        Net::Link& a = net.add(Unit::Utf16, "mac");
+        Net::Link& b = net.add(Unit::Utf16, "other");
+        net.open(a, 6, u"abc");
+        TestMirror& mb = net.open(b, 6, u"");
+        net.quiesce(rng);
+        int stalledCalls = 0, liveCalls = 0;
+        const int stalledOwner = 0, liveOwner = 0;
+        const Model::Text* none = a.client->watch(
+            6, &stalledOwner, [&](Shared::DocId, const Ot::Ops&) { stalledCalls++; }, 20);
+        CHECK(none == nullptr);
+        CHECK(!a.client->watching(6, &stalledOwner));
+        CHECK(a.client->hostCopy(6) == nullptr);
+        // The host takes its messages late: the watch, then the unwatch.
+        net.quiesce(rng);
+        net.immediate = true;
+        const Model::Text* copy =
+            a.client->watch(6, &liveOwner, [&](Shared::DocId, const Ot::Ops&) { liveCalls++; });
+        net.immediate = false;
+        CHECK(copy && copy->str() == u"abc");
+        CHECK(a.client->watching(6, &liveOwner) && !a.client->watching(6, &stalledOwner));
+        mb.caret = 3;
+        mb.type(u"d");
+        net.quiesce(rng);
+        CHECK(liveCalls == 1 && stalledCalls == 0);
+        CHECK(copy->str() == u"abcd" && net.host.text(6) == u"abcd");
+        CHECK(a.client->takeErrors().empty());
+    }
+
     GROUP("host:fuzz");
     {
         // Renderers in both units type, edit in named steps, move their

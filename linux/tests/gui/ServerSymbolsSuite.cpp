@@ -14,7 +14,7 @@
 #include "FakeLsp.h"
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Lsp.h"
 #include "PalettePanel.h"

@@ -9,7 +9,7 @@
 // file kept.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "FileTree.h"
 #include "Search.h"

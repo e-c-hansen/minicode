@@ -1,5 +1,6 @@
 // EditorController+Tabs.mm — EditorController: tabs, closed tabs, a tab's menu, saving.
 #import "EditorController+Private.h"
+#import "SessionLink.h"
 #import "MarkdownMedia.h"
 #import "EditorController+TabsIvars.h"
 #import "TextKit2.h"
@@ -1074,6 +1075,7 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
     t.savedText = text;
     t.gone = NO;
     t.dirty = NO;
+    if (t.session && [text isEqualToString:t.currentText ?: @""]) [t.session saved];   // the host's too
     if (t.preview) [self keepPreviewTab:t];   // saved: kept, as in VS Code
     // So our own save never looks like a change made outside.
     [self recordStamp:MCDiskStampFromFileStamp(written) ofTab:t];

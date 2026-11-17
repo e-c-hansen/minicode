@@ -4,6 +4,7 @@
 #pragma once
 #import "Lsp+Private.h"
 #import "LspWatcher.h"
+#import "SessionLink.h"
 
 @interface LspSession () {
     NSString *_languageId;    // the file on show's, as didOpen names it
@@ -24,5 +25,8 @@
     double _watchedMainCpuMs;        // the last batch's main-thread CPU time
     NSUInteger _watchedMatchedHere;  // servers matched on main, not the queue
     BOOL _stoppingAll;   // stopAllServers is going: the watcher just goes
+    // With editor.session-host on, the document on the host whose text the
+    // sync reads (SessionLink.h: a copy kept from the host's edits).
+    __weak MCSessionDoc *_hostTextDoc;
 }
 @end

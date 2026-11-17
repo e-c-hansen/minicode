@@ -4056,8 +4056,9 @@ void testSettings() {
     // control.page-input, and editor.inlay-hint-parameter-names, and
     // syntax.tag, syntax.attribute and syntax.tag-bracket, and html.scripts,
     // and editor.merge-current and editor.merge-incoming, and the four
-    // test.<language> commands, and editor.spell-check with its color.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 139);
+    // test.<language> commands, and editor.spell-check with its color, and
+    // editor.session-host.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 140);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4419,6 +4420,9 @@ void testSettings() {
               we[0].message.find("on or off") != std::string::npos);
         // Auto-closing pairs: on by default, as in VS Code.
         CHECK(parseSettings("").autoClose());
+        CHECK(!parseSettings("").sessionHost());
+        CHECK(parseSettings("editor.session-host = on\n").sessionHost());
+        CHECK(!parseSettings("editor.session-host = off\n").sessionHost());
         CHECK(!parseSettings("editor.auto-close = off\n").autoClose());
         CHECK(!parseSettings("editor.auto-close = false\n").autoClose());
         CHECK(parseSettings("editor.auto-close = On\n").autoClose());
@@ -10005,6 +10009,37 @@ static void testCategoryIvars() {
     checkCategoryIvars("Lsp+", "Lsp.mm", "@interface LspSession () {", 8, 6, 4);
 }
 
+// A header in src/ must not share its file name with one in an app's
+// folders or their GUI checks. Files outside an app's folder are built with
+// -Isrc first, so a header there of the same name is shadowed, or shadows:
+// src/HtmlPage.h (#100) hid mac/src/HtmlPage.h from the Mac's other files,
+// and CI's ccache hid the broken build until main (#108). Reads only the
+// tree, so it runs on every system.
+static void testHeaderNames() {
+    GROUP("structure:header-names");
+    auto headers = [](const std::string &folder) {
+        std::map<std::string, std::string> out;   // file name -> its path
+        if (DIR *dir = opendir(folder.c_str())) {
+            while (dirent *e = readdir(dir)) {
+                const std::string n = e->d_name;
+                if (n.size() > 2 && n.compare(n.size() - 2, 2, ".h") == 0)
+                    out[n] = folder + "/" + n;
+            }
+            closedir(dir);
+        }
+        return out;
+    };
+    const std::map<std::string, std::string> core = headers("src");
+    if (core.empty()) return;   // not run from the repository's root
+    for (const char *folder : {"mac/src", "linux/src", "mac/tests/gui", "linux/tests/gui"})
+        for (const auto &[name, path] : headers(folder)) {
+            const auto hit = core.find(name);
+            if (hit != core.end())
+                std::printf("  %s has the name of %s\n", path.c_str(), hit->second.c_str());
+            CHECK(hit == core.end());
+        }
+}
+
 static void testLinuxGuiSuiteList() {
     GROUP("linux:gui-suites");
     // The GTK port's GUI checks build the files linux/tests/gui/suites.txt
@@ -11295,6 +11330,7 @@ int main() {
     testLinuxGuiSuiteList();
     testGuiSuiteList();
     testCategoryIvars();
+    testHeaderNames();
     testLineDiff();
     testAutoIndent();
     testKeepSorted();
@@ -11328,6 +11364,7 @@ int main() {
     testSideBySideReview();
     testChangeReview();
     testChangeReviewRead();
+    testWorktreeReview();
     testMergeConflicts();
     testPreviewScroll();
     testAgentTranscript();

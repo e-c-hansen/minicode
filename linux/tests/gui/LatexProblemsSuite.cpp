@@ -10,7 +10,7 @@
 // (LatexScratch), and only a copy still exactly the bytes its record names.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Latex.h"
 #include "LatexScratch.h"

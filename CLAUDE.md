@@ -269,6 +269,9 @@ traps already paid for there.
   edits, line numbers, zoom, word wrap, large-file mode), folding, several
   carets and line commands, indentation and sorting, the palette and Go
   Back: `docs/notes/editor.md` (traps inside).
+- The session's host on the Mac (editor.session-host: who owns a tab's
+  text, the storage's edits recorded, the host's edits put back):
+  `docs/notes/session-host.md` (traps inside).
 - Highlighting (the lexers, markup, semantic tokens, bracket-pair colors):
   `docs/notes/highlighting.md` (traps inside).
 - Find and replace, the regex engine and Find in Folder:

@@ -147,8 +147,9 @@ Verified by running it:
   two: a click on a session opens its Evidence page with the final message,
   the last test's summary, Show all and Open in Terminal typing without
   running; a real git repository with a worktree shows in the tree's
-  Worktrees node with its ahead count, and Compare with Main lists its files
-  and opens the compare view with main at the branch point; the fixtures are
+  Worktrees node with its ahead count, and Compare with Main shows its files
+  in one scroll, opens one in the compare view with main at the branch point,
+  and Apply to Main brings them into main's checkout; the fixtures are
   listed before and after). Part one: the `agents` GUI suite copies
   `tests/fixtures/claude` into a scratch transcripts folder
   (`MINICODE_CLAUDE_PROJECTS`, `MINICODE_CLAUDE_TMP`), presses Ctrl+Shift+A for

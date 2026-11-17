@@ -13,7 +13,7 @@
 // Ctrl+P, Ctrl+G and F1 are the program's and Ctrl+Shift+P opens the palette.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "FileTree.h"
 #include "FindBar.h"

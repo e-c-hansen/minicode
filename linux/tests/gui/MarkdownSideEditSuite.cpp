@@ -7,7 +7,7 @@
 // page renders first); the full preview's double-click still works.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "MarkdownSide.h"
 

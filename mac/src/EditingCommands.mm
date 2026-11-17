@@ -1,6 +1,7 @@
 // EditingCommands.mm — see EditingCommands.h.
 #import "EditingCommands.h"
 #import <objc/runtime.h>
+#import "Lsp.h"
 #include "AutoIndent.h"
 #include "KeepSorted.h"
 #include "MarkdownTasks.h"
@@ -157,8 +158,7 @@ BOOL MCIndentCommand(NSTextView *tv, SEL command, NSString *path, BOOL markdown)
 }
 
 void MCIndentWillChange(NSTextView *tv, NSRange range, NSString *replacement) {
-    if (gApplying || !tv.editable || replacement.length != 1 || tv.undoManager.isUndoing ||
-        tv.undoManager.isRedoing)
+    if (gApplying || !tv.editable || replacement.length != 1 || MCTextViewUndoing(tv))
         return;
     unichar c = [replacement characterAtIndex:0];
     if (c != ':' && c != ')' && c != ']' && c != '}') return;

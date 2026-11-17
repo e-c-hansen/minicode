@@ -9,7 +9,7 @@
 // file. View > Theme's own write through a link is the themes suite's.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Keys.h"
 #include "PalettePanel.h"

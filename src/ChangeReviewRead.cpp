@@ -4,6 +4,9 @@
 #include <cctype>
 #include <map>
 
+#include <algorithm>
+
+#include "AgentView.h"
 #include "GitStatus.h"
 
 namespace ChangeReview {
@@ -264,6 +267,169 @@ std::string discardText(const Read& r, size_t fi, const std::u16string& text, co
     }
     if (trashed) *trashed = where;
     return "";
+}
+
+// ------------------------------------------------ a worktree against main
+WorktreeRead readWorktree(const std::string& path, const std::string& mainRef,
+                          const GitRunner& run) {
+    WorktreeRead w;
+    Read& data = w.read;
+    GitOut r = run(path, GitUi::topLevelArgs(), "");
+    std::string top, gitDir;
+    if (!r.ok || !GitUi::parseTopLevel(r.out, top, gitDir)) {
+        data.error = "This worktree is not a git checkout any more.";
+        return w;
+    }
+    data.top = top;
+    if (mainRef.empty()) {
+        data.error = "There is no main branch to compare with.";
+        return w;
+    }
+    GitOut mb = run(top, {"merge-base", mainRef, "HEAD"}, "");
+    const AgentView::CompareBase base = AgentView::compareBase(mainRef, mb.ok ? mb.out : std::string());
+    w.baseRef = base.ref;
+    w.baseLabel = base.label;
+    GitOut wl = run(top, worktreeListArgs(), "");
+    if (wl.ok) w.mainPath = mainWorktreePath(wl.out);
+    GitOut dr = run(top, worktreeRawArgs(base.ref), "");
+    if (!dr.ok) {
+        data.error = dr.err.empty() ? "git diff failed." : dr.err;
+        return w;
+    }
+    std::vector<RawChange> changes = parseRawDiff(dr.out);
+    GitOut un = run(top, GitUi::untrackedArgs(), "");
+    if (un.ok)
+        for (const std::string& p : nulPaths(un.out)) {
+            RawChange c;
+            c.letter = '?';
+            c.oldMode = "000000";
+            c.newMode = "100644";
+            c.path = p;
+            changes.push_back(c);
+        }
+    std::sort(changes.begin(), changes.end(),
+              [](const RawChange& a, const RawChange& b) { return a.path < b.path; });
+    std::string want;
+    for (const RawChange& c : changes)
+        if (c.oldMode != "000000" && c.oldMode != "160000" && !nullObject(c.oldObject))
+            want += c.oldObject + "\n";
+    std::map<std::string, std::string> blobs;
+    if (!want.empty()) {
+        GitOut b = run(top, batchArgs(), want);
+        if (b.ok) blobs = parseBatch(b.out);
+    }
+    size_t total = 0;
+    for (const RawChange& c : changes) {
+        File f;
+        Extra x;
+        f.path = c.path;
+        f.origPath = c.origPath;
+        f.section = Section::Plain;
+        f.letter = c.letter;
+        f.untracked = c.letter == '?';
+        f.oldExists = c.oldMode != "000000";
+        f.submodule = c.oldMode == "160000" || c.newMode == "160000";
+        f.symlink = c.oldMode == "120000" || c.newMode == "120000";
+        x.row.path = c.path;
+        x.row.origPath = c.origPath;
+        x.row.letter = c.letter;
+        x.row.untracked = f.untracked;
+        std::string newBytes;
+        f.newExists = false;
+        if (c.newMode != "000000" && !f.submodule) {
+            FolderSearch::FileStamp stamp;
+            const FolderSearch::ReadStatus rs =
+                FolderSearch::readFileStable(top + "/" + c.path, kMaxSideBytes, &newBytes, &stamp);
+            f.newExists = rs != FolderSearch::ReadStatus::Missing;
+            if (rs == FolderSearch::ReadStatus::TooLarge) f.tooLarge = true;
+            else if (rs != FolderSearch::ReadStatus::Ok) newBytes.clear();
+        }
+        if (!f.submodule && !f.symlink) {
+            auto it = blobs.find(c.oldObject);
+            const std::string oldBytes = f.oldExists && it != blobs.end() ? it->second : std::string();
+            total += oldBytes.size() + newBytes.size();
+            if (oldBytes.size() > kMaxSideBytes || total > kMaxTotalBytes) f.tooLarge = true;
+            else if (looksBinary(oldBytes) || looksBinary(newBytes)) f.binary = true;
+            if (!f.tooLarge && !f.binary) {
+                FolderSearch::TextEncoding enc = FolderSearch::TextEncoding::Utf8;
+                bool bom = false;
+                std::string work = newBytes;
+                if (FolderSearch::decodeFileText(&work, &enc, &bom)) {
+                    f.newText = QuickDiff::fromUtf8(work);
+                    f.oldText = QuickDiff::readOriginal(oldBytes, enc, bom).text;
+                } else {
+                    f.binary = true;
+                }
+            }
+        }
+        data.extras.push_back(x);
+        data.diffs.push_back(diffFile(f, extensionOf(f.path)));
+    }
+    return w;
+}
+
+ApplyFiles applyFiles(const WorktreeRead& w) {
+    ApplyFiles out;
+    for (const FileDiff& d : w.read.diffs) {
+        out.paths.push_back(d.file.path);
+        if (!d.file.origPath.empty()) out.paths.push_back(d.file.origPath);
+        if (d.file.untracked) out.untracked.push_back(d.file.path);
+    }
+    return out;
+}
+
+GitUi::ApplyPlan planApplyToMain(const WorktreeRead& w, const std::string& mainName,
+                                 const std::string& worktreeName, const GitRunner& run) {
+    GitUi::ApplyPlan plan;
+    if (w.mainPath.empty() || w.read.diffs.empty()) {
+        plan.refusal = "There is nothing to bring into the main checkout.";
+        return plan;
+    }
+    const ApplyFiles files = applyFiles(w);
+    GitOut st = run(w.mainPath, GitUi::statusArgs(), "");
+    if (!st.ok)
+        plan.refusal = GitUi::applyFailureText(st.status < 0 ? 1 : st.status, st.out, st.err);
+    else
+        plan = GitUi::applyToMainPlan(files.paths, Git::parseStatus(st.out), mainName, worktreeName);
+    return plan;
+}
+
+ApplyResult applyToMain(const WorktreeRead& w, const std::string& mainName, const GitRunner& run) {
+    ApplyResult res;
+    const ApplyFiles files = applyFiles(w);
+    auto failed = [&](const GitOut& o) {
+        return GitUi::applyFailureText(o.status < 0 ? 1 : o.status, o.out, o.err);
+    };
+    std::string failure, patch;
+    GitOut d = run(w.read.top, GitUi::worktreeDiffArgs(w.baseRef), "");
+    if (!d.ok) failure = failed(d);
+    else patch = d.out;
+    for (size_t i = 0; failure.empty() && i < files.untracked.size(); i++) {
+        GitOut n = run(w.read.top, GitUi::newFilePatchArgs(files.untracked[i]), "");
+        if (n.ok || n.status == 1) patch += n.out;
+        else failure = failed(n);
+    }
+    if (failure.empty() && patch.empty()) failure = "There was nothing to bring into the main checkout.";
+    if (failure.empty()) {
+        GitOut plain = run(w.mainPath, GitUi::applyToMainArgs(false), patch);
+        if (!plain.ok) {
+            GitOut three = run(w.mainPath, GitUi::applyToMainArgs(true), patch);
+            GitOut st = run(w.mainPath, GitUi::statusArgs(), "");
+            std::vector<std::string> staged;
+            if (st.ok)
+                for (const Git::Entry& e : Git::parseStatus(st.out).entries) {
+                    if (std::find(files.paths.begin(), files.paths.end(), e.path) == files.paths.end())
+                        continue;
+                    if (e.unmerged) res.conflicts.push_back(e.path);
+                    else if (e.staged != '.') staged.push_back(e.path);
+                }
+            if (!three.ok && res.conflicts.empty()) failure = failed(three);
+            else if (!staged.empty()) run(w.mainPath, GitUi::unstageArgs(staged), "");
+        }
+    }
+    res.ok = failure.empty();
+    res.text = res.ok ? GitUi::applyDoneText(w.read.diffs.size(), res.conflicts, mainName) : failure;
+    return res;
 }
 
 }  // namespace ChangeReview

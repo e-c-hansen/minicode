@@ -3,7 +3,7 @@
 
 #include "BufferText.h"
 #include "Carets.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 
 #include <string>

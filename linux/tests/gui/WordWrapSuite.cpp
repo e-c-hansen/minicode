@@ -10,7 +10,7 @@
 // wrapped or not.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "LargeFileView.h"
 #include "Zoom.h"

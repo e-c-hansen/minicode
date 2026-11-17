@@ -11,7 +11,7 @@
 // step and takes it back; and Ctrl+Z with nothing left changes nothing.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "MultiEdit.h"
 

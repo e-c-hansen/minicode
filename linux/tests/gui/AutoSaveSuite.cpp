@@ -9,7 +9,7 @@
 // composing waits; and with the setting off nothing is written.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 
 #include <glib/gstdio.h>

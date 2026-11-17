@@ -1255,7 +1255,9 @@ its server comes first here (2.0).
   (Unstage), whole files with Stage File, Unstage File, Discard File, Side by
   Side and Open, Undo Discard at its top; `git_review` presses them. Left to
   do: F7, the right click on selected lines, conflicts' Keep buttons, the
-  commit page and a worktree's page with Apply to Main.
+  commit page. A worktree's page with Apply to Main is done (`HANDOFF.md`
+  item 85): the tree's Compare with Main opens the review page in its
+  worktree mode.
 - [x] **2.10 Change bars and the tree's git colors.** `QuickDiff`,
   `GitStatus`. Done (`HANDOFF.md` item 34): the `git_gutter` and
   `tree_git_colors` suites, real keys and clicks over scratch repositories
@@ -1362,7 +1364,8 @@ its server comes first here (2.0).
   and Shift+F7. Part two done (HANDOFF item 39): a comparison with a
   decision (`CompareDecision`: a check and a cross per hunk in a gutter, the
   bar, `lastChoiceGrace` with Send Now, `acceptedText`) and `minicode diff`.
-  Compare with Main is done (3.5, HANDOFF item 44);
+  Compare with Main is done (3.5, HANDOFF items 44 and 85: one scroll, with
+  Apply to Main);
   the IDE link's openDiff is done (3.9). Also the Mac's diff preview tab that each `diff` replaces (every
   call opens a tab of its own here), choice tints on the rows, and keeping a
   tab's place.
