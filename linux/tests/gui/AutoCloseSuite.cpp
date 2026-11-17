@@ -282,6 +282,26 @@ MC_GUI_SUITE(auto_close) {
     });
     MCGuiStep("what it committed", [] { MCGuiNote("after the dead key and space: %s", lastLine().c_str()); });
 
+    // ---- the tour GIF's keys (I1): Return at the end of demo/hello.py, then
+    // the line as a person types it. Return indents it into the if block and
+    // the closers are typed over, so the line comes out as on the Mac.
+    MCGuiStep("hello.py, the caret after its last line", [] {
+        MCGuiWriteFile(F("tour_hello.py"),
+                       "if __name__ == \"__main__\":\n    c = Circle(3.5)\n"
+                       "    print(f\"Area is {c.area():.2f}\")");   // no final newline: the caret ends the last line
+        MCGuiOpenFileKept(F("tour_hello.py"));
+        gtk_widget_grab_focus(ed()->textView());
+        MCGuiKey("ctrl+end");
+    });
+    MCGuiWait("there", 5, [] {
+        return ed()->currentPath() == F("tour_hello.py") && lastLine() == "    print(f\"Area is {c.area():.2f}\")|";
+    });
+    MCGuiStep("the tour's keys", [] { MCGuiType("\nprint(\"Diameter:\", 2 * c.radius)"); });
+    MCGuiWait("one level in, each closer once", 5, [] {
+        return endsWith(text(), "2f}\")\n    print(\"Diameter:\", 2 * c.radius)") &&
+               lastLine() == "    print(\"Diameter:\", 2 * c.radius)|";
+    });
+
     // ---- Markdown
     MCGuiStep("Markdown", [] {
         MCGuiOpenFileKept(F("auto_close.md"));

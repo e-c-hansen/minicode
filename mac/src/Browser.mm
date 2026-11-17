@@ -28,7 +28,7 @@
 // back, forward, reload) while the keyboard is still in the toolbar. Never
 // while hidden. Switching tabs hands the keyboard from the page on show to
 // the next one (grantKeyboard), since the user's key or click did it.
-// (MCWebView is declared in Browser.h, for HtmlPage.mm's page too.)
+// (MCWebView is declared in Browser.h, for HtmlPageView.mm's page too.)
 @implementation MCWebView
 - (void)willOpenMenu:(NSMenu *)menu withEvent:(NSEvent *)event {
     [super willOpenMenu:menu withEvent:event];

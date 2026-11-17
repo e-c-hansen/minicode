@@ -690,6 +690,25 @@ void testAutoIndentScanCache() {
                 st.size(), cold, warm);
 }
 
+// The demo scenes' Return (I1, 2026-11-17): the tour GIFs press Return at
+// the end of demo/hello.py and the lsp GIF after a statement in
+// demo/vec/main.cpp. The editor gives the new line its block's indentation
+// on every port, so a scene types the line's text after Return, never spaces.
+void testAutoIndentDemoScenes() {
+    GROUP("indent:demo-scenes");
+    const std::string hello =
+        "class Circle:\n    def area(self):\n        return 1\n\n"
+        "if __name__ == \"__main__\":\n    c = Circle(3.5)\n"
+        "    print(f\"Area is {c.area():.2f}\")";
+    AI_EQ(aiRet("hello.py", hello + "|"), hello + "\n    |");
+    const std::string mainCpp =
+        "int main() {\n    Vec2 p{3, 4};\n    Vec2 q = p + Vec2{1, 1}.scaled(2);";
+    AI_EQ(aiRet("main.cpp", mainCpp + "|\n    return 0;\n}"),
+          mainCpp + "\n    |\n    return 0;\n}");
+    AI_EQ(aiRet("main.cpp", mainCpp + "\n    double d = p.lengthSquared();|\n}"),
+          mainCpp + "\n    double d = p.lengthSquared();\n    |\n}");
+}
+
 void testAutoIndent() {
     testAutoIndentLanguages();
     testAutoIndentDetect();
@@ -700,6 +719,7 @@ void testAutoIndent() {
     testAutoIndentKeys();
     testAutoIndentFuzz();
     testAutoIndentScanCache();
+    testAutoIndentDemoScenes();
 }
 
 }  // namespace

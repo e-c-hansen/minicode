@@ -5567,3 +5567,70 @@ toggle, a write from outside keeping the scroll, a link to another file, the
 remembered answer's setting and `off`, an unnamed iframe to a local file
 (its text shows, nothing opens), and a script's `location =` (opened as a
 link, the page kept).
+### 87. The session's host owns each document's text and undo (done, November 2026; SESSION-DESIGN.md stage 4a)
+
+What a user meets: nothing, by design. Who owns the text changed under
+every edit, undo and language server sync.
+- **The host.** One `Shared::SessionHost` for the process, on a thread of
+  its own, and one `Shared::Client` in code points
+  (`linux/src/SessionLink.{h,cpp}`; the core's `SessionHost.h`,
+  `SessionClient.h`, `SessionProtocol.h`, `Ot.h`). The host owns every
+  open document's `Model::Document` (text, version) and its
+  `Model::UndoHistory`; the client's messages from the host are
+  dispatched in a main-loop idle as they arrive.
+- **The buffer is a mirror.** A `Document` opens on the host when it is
+  made (an empty text), `fill` and `finishLoading` reset the host's copy
+  (its history gone), a kind other than Text closes it, and so does the
+  destructor. Each buffer edit is reported from `onInsertText` and
+  `onDeleteRange` as before (no longer reading the deleted text) with
+  `Client::record`, inside the step the user action (or a main-loop turn's
+  edits outside one) opened, and sent when the step closes; one edit is in
+  flight at a time, the rest wait and join while they are one step.
+  Coalescing is decided here, as before: a moved caret (`mark-set`) or
+  `breakUndoCoalescing()` marks the next step fresh.
+- **Undo goes to the host.** `Document::undo`/`redo` ask and wait for the
+  answer (in one process a round trip through the host's queue); the edit
+  comes back through `Document::hostEdited`, which emits the buffer's
+  "undo" or "redo" signal first, puts it in as one `MultiEdit::apply` that
+  is not reported back (one operation at a time for any other shape), and
+  selects what the host says. `canUndo`, `undoName` and the rest settle
+  with the host first.
+- **The language server sync reads the host's text**
+  (`LspSessionSync.cpp`): each document a server has is watched through
+  the client (`Client::watch`, a copy of the host's text kept from the
+  host's own edits, in UTF-16), `didOpen` sends the copy, the host's edits
+  feed the `ChangeTracker`, and `flushChanges` settles first, so the copy
+  holds every edit made so far. The buffer's insert-text and delete-range
+  handlers there are gone.
+- **Tabs.** `refreshStrip` reports the window's tabs
+  (`Shared::windowJson`, sent when they changed); the host keeps them and
+  answers `session.state` with them. The rules stay `Model::Window`'s in
+  the editor: with one screen per window there is nothing to decide
+  between, and stage 6 makes the host the one that decides.
+- **Checks.** At every suite's end the harness settles with the host and
+  fails the suite unless the host's text of every document a window has
+  read is its buffer's, the host's tabs are the window's, and the host
+  reported nothing wrong (`checkSessionMirrors`). `MINICODE_HOST=loopback`
+  puts every message through the protocol's encoding and back;
+  `MINICODE_HOST_DELAY_US` delays each one on the host's thread (the GUI
+  harness's wrapper passes both through). CI's GTK job runs a named set of
+  editing suites that way after the two halves ("GUI checks over the
+  session host's wire format", `GUI_LOOPBACK` in ci.yml, 200 us a
+  message). The core's
+  `ot:*` and `host:*` groups hold the transform and the host to a fuzz of
+  renderers in both units.
+- **Not moved yet** (stage 7): saving, the disk and its stamps, dirty,
+  backups, auto-save, the file watch and git stay in GTK and read the
+  buffer. The host's own saved text is set at open, reset and `doc.saved`,
+  so its dirty flag is wrong for a tab restored from a backup; nothing
+  reads it yet. A large file costs the host a UTF-16 copy and its saved
+  text (about 100 MB for 25 MB).
+- **Trap for stage 6**: a wait (undo, `canUndo`, a flush) dispatches every
+  message in order, so another screen's edit could reach the buffer
+  inside the signal handler that asked. With one screen nothing but an
+  undo's own edit arrives during a wait.
+
+GTK files changed: `SessionLink.{h,cpp}` (new), `Document.{h,cpp}`,
+`LargeFileView.cpp`, `Editor.{h,cpp}`, `Tabs.cpp`, `Lsp.{h,cpp}`,
+`LspSessionPrivate.h`, `LspSessionSync.cpp`, `meson.build`, `Makefile`,
+`tests/gui/Harness.cpp` and `tests/gui/Wrapper.cpp`.

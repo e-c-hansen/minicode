@@ -60,6 +60,10 @@ setup)
         echo "CCACHE_DIR=$RUNNER_TEMP/ccache"
         echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
         echo "CCACHE_COMPILERCHECK=%compiler% --version"
+        # Preprocessor mode: direct mode keys on the headers a file used
+        # last time, so a new header earlier on the include path (src/HtmlPage.h
+        # shadowing mac/src/HtmlPage.h, 2026-11-17) reused a stale object.
+        echo "CCACHE_NODIRECT=1"
         echo "CCACHE_MAXSIZE=1G"
         echo "CI_CCACHE_STARTED=$(date +%s)"
     } >>"$GITHUB_ENV"

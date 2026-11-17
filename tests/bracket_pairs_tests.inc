@@ -329,15 +329,20 @@ static void testBracketPairs() {
         CHECK(refused > 0);   // the any-order rounds were split into batches
         // A letter typed over 10,000 and 40,000 selections, last first:
         // linear (moving the spans at each edit was quadratic).
-        double ms[2];
+        // The best of three runs each: a 1 ms run beside other processes
+        // on CI's few cores (the GUI checks run alongside) once read 1.4 ms
+        // and its 40,000 partner 18 ms, a ratio that said nothing.
+        double ms[2] = {1e9, 1e9};
         for (int r = 0; r < 2; ++r) {
             const size_t n = r ? 40000 : 10000;
-            const double t0 = cpuMs();
-            PaintedEdits big;
-            for (size_t k = n; k-- > 0;) CHECK(big.add(k * 20, 5, 1, false));
-            const Spans after = big.apply({{0, n * 20}});
-            ms[r] = cpuMs() - t0;
-            CHECK(after.size() == n && after[1].first == 17 && after[1].second == 32);
+            for (int attempt = 0; attempt < 3; ++attempt) {
+                const double t0 = cpuMs();
+                PaintedEdits big;
+                for (size_t k = n; k-- > 0;) CHECK(big.add(k * 20, 5, 1, false));
+                const Spans after = big.apply({{0, n * 20}});
+                ms[r] = std::min(ms[r], cpuMs() - t0);
+                CHECK(after.size() == n && after[1].first == 17 && after[1].second == 32);
+            }
         }
         std::printf("  painted spans through 10,000 edits %.2f ms, 40,000 %.2f ms of CPU\n",
                     ms[0], ms[1]);

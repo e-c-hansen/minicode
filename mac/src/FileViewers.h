@@ -61,7 +61,7 @@ NSString *MCNotebookMarkdown(NSString *json);
 @property(nonatomic, readonly) MCSqliteView *sqlite;         // nil until used
 @property(nonatomic, readonly) MCHtmlPage *html;             // nil until used
 // An HTML page's folder it may read from (the window's), and a link
-// clicked in it (HtmlPage.h).
+// clicked in it (HtmlPageView.h).
 @property(nonatomic, copy) NSString * (^htmlFolder)(void);
 @property(nonatomic, copy) void (^onOpenLink)(NSURL *url);
 // The HTML page on show loads its file again, keeping its scroll, when the
