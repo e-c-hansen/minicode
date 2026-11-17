@@ -25,6 +25,7 @@
 //     unsaved. The typeset reads such files from disk, so the bar says
 //     which have unsaved changes until they are saved.
 #import "Latex.h"
+#import "PageZoom.h"
 #import "EditorFont.h"
 #import "AppSettings.h"
 #import "Lsp.h"   // MCDiagnosticColor
@@ -840,27 +841,10 @@ static const CGFloat kStatusHeight = 26;
     if (_forwardLine > 0 && !self.compiling && _pdfSrc == _src) [self runForwardSearch];
 }
 
-// Scrolls the PDF to the top of its document (the first page's top edge with
-// the page-break margin above it), with no automatic content insets: the
-// view is never under the title bar, and an inset made the top unreachable.
+// Scrolls the PDF to the top of its document; the view is never under the
+// title bar, and an automatic inset made the top unreachable.
 - (void)showFirstPageTop {
-    MCPdfView *v = self.pdf;
-    if (!v.document.pageCount) return;
-    [v layoutDocumentView];
-    NSView *docView = v.documentView;
-    NSScrollView *sv = docView.enclosingScrollView;
-    if (!sv) {
-        [v goToPage:[v.document pageAtIndex:0]];
-        return;
-    }
-    sv.automaticallyAdjustsContentInsets = NO;
-    sv.contentInsets = NSEdgeInsetsZero;
-    NSClipView *clip = sv.contentView;
-    const NSRect doc = [clip convertRect:docView.bounds fromView:docView];
-    NSRect want = clip.bounds;
-    want.origin.y = clip.isFlipped ? NSMinY(doc) : NSMaxY(doc) - NSHeight(want);
-    [clip scrollToPoint:[clip constrainBoundsRect:want].origin];
-    [sv reflectScrolledClipView:clip];
+    MCPDFShowFirstPageTop(self.pdf);
 }
 
 // "2 pages · 3 warnings · double-click text to edit it", and the Warnings

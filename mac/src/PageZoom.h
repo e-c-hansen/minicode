@@ -42,3 +42,9 @@ void MCPDFFitPage(PDFView *view);
 // edge went under it. Called again on every layout, since AppKit puts
 // back the system's style when that setting changes.
 void MCPDFUseOverlayScrollers(PDFView *view);
+// Scroll to the top of the document (the first page's top edge with the
+// page-break margin above it), with no automatic content insets, as
+// Preview opens a PDF. PDFView alone left a new document where its scroll
+// view's insets and the first rescale to the pane's width put it: part way
+// down a tall page, which showed only its foot.
+void MCPDFShowFirstPageTop(PDFView *view);
