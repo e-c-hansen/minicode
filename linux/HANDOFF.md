@@ -3425,6 +3425,8 @@ Toggle Sidebar, or opening a file brings things back). The Mac's rule
 
 ### 48. The shell integration (done, November 2026; D10, `PARITY.md` item 3.1)
 
+(The termprop route below was replaced by the host's reading of OSC 133 from the pty, item 90.)
+
 - **What it does**: the app's terminal knows when its shell is at a prompt,
   when a command runs and its text, and the last command's status, so part
   two (`term`, `term-output`, Run File's busy check) can stop guessing from
@@ -5806,7 +5808,60 @@ without the fix it fails 3 of 3 alone, with it 3 of 3 pass, alone and in
 `install_hints processes notes`. (The earlier step here, measuring at the
 natural width, stays: it is what childPosition does.)
 
-### 92. The palette lists View > Theme (done, November 2026)
+### 92. The session's host owns the terminals' ptys (done, November 2026; SESSION-DESIGN.md stage 5)
+
+What a user meets: the terminal's commands are marked, as on the Mac.
+Ctrl+Up and Ctrl+Down (VS Code's Linux keys) move to the previous or next
+command that ran, its prompt at the top of the view and the command
+outlined; past the newest, back to the end. The waiting dot goes when a key
+the user types reaches the shell, not with any key pressed in the terminal
+(Ctrl+Shift+C copied and cleared it).
+- **The pty is the host's.** `Terminal::spawnShell` builds a
+  `Shared::TermSpec` (the shell, the environment as before plus TERM,
+  COLORTERM and VTE_VERSION, which VTE's own spawn added, the folder, the
+  size VTE has, its 10,000 lines of scrollback, the integration's nonce)
+  and opens it through `SessionLink::client()`; VTE has no pty. What the
+  shell writes comes back as `termOutput`, fed to VTE with
+  `vte_terminal_feed` and acknowledged at low priority once the main loop
+  is idle (the host stops reading a pty past 1 MB unacknowledged, so
+  `yes` cannot fill the main loop's queue). Everything VTE would write to a
+  pty (keys, pastes, `feed_child`, `paste_text`, its answers to DA and
+  DSR) comes through its "commit" signal, which VTE emits with no pty too
+  (VTE issue 222), and goes to the host's pty in order. VTE's rows and
+  columns go to the host when they change (`sendSize`, from the underline
+  drawing area's "resize" and VTE's "char-size-changed"). The shell's end
+  is the host's `termExited` (the restart rules are as before), the
+  destructor closes the terminal on the host, which hangs it up and reaps
+  it.
+- **The marks are the host's.** VTE never parsed OSC 133, so D10's
+  termprop (`vte.ext.minicode.mark`, `parseVteMark`) is gone: the bash
+  script and the zsh script (the Mac's, its VTE branch removed) print OSC
+  133 A, C and D, 633;E and 7 with the nonce, which the host reads from the
+  pty's bytes before VTE sees them (`TermShell`, the core's
+  `applyTermEvent`) and `termShell` copies into `ShellState`, firing
+  `onShellStateChanged`, `onCommandFinished` and the Claude look as the
+  termprop did. `busy()` and `foregroundJob()` read the host's
+  `TermShell::foreground` (tcgetpgrp after each read and every 200 ms),
+  `shellDirectory()` its believed OSC 7 first (VTE takes the nonce for
+  part of a marked OSC 7's address).
+- **Moving between commands** (`moveToCommand`, `rowOfLine`): the host
+  sends every marked command as lines counted from the first that went
+  into its scrollback, and with each output its cursor's line; VTE counts
+  its rows the same way, so a command's row is its line plus VTE's cursor
+  row minus the host's cursor line. The outline is drawn on the underline
+  drawing area. Shift's selection (the Mac's Select to the Previous
+  Command) is left out: VTE takes no selection from an app.
+- **Checked by** `terminal_marks` (new: marks and statuses, real Ctrl+Up
+  and Ctrl+Down, the outline forgotten on typing, the alternate screen
+  keeping the keys, `stty size` after the font grows, the waiting dot with
+  Ctrl+Shift+C and a typed key; also in the wire-format run) and
+  `shell_integration` (forged marks printed by a command, without the
+  nonce or with another), and `make test`'s `bash:integration` (the
+  script's marks read by a TerminalStream and `applyTermEvent`). Not run on
+  the ThinkPad yet: the outline's look, Ctrl+Up with a real keyboard, and a
+  resize by dragging.
+
+### 93. The palette lists View > Theme (done, November 2026)
 
 The palette's rows come from `Keys::actions()` (the registry's commands), and
 View > Theme's items are not registry commands: they are `app.theme` with a

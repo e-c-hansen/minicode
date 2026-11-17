@@ -109,3 +109,4 @@ TreeIconsSuite.cpp
 LatexInputsSuite.cpp
 FormatOfferSuite.cpp
 HtmlPageSuite.cpp
+TerminalMarksSuite.cpp

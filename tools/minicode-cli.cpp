@@ -22,6 +22,7 @@
 #include "ControlPaths.h"
 #include "ControlProtocol.h"
 #include "ClaudeHooks.h"
+#include "SessionServer.h"
 #ifdef __APPLE__
 #include "ProcessTable.h"
 #endif
@@ -37,6 +38,7 @@
 #include <libproc.h>
 #include <mach-o/dyld.h>
 #endif
+#include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sstream>
@@ -45,6 +47,7 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <thread>
 #include <time.h>
 #include <unistd.h>
 #include <vector>
@@ -57,45 +60,8 @@ namespace {
 
 const int kExitOK = 0, kExitFailed = 1, kExitUsage = 2, kExitNoApp = 3;
 
-[[maybe_unused]] std::string trimmed(std::string dir) {
-    while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
-    return dir;
-}
-
-// The folders a minicode's socket may be in, in the order looked at. The
-// app makes its socket in $TMPDIR/MiniCode, and Launch Services starts it
-// with TMPDIR set to the user's own temporary folder, which confstr gives
-// whatever the shell's TMPDIR says (a nix shell, a dotfile's TMPDIR=/tmp).
-// So that folder is always looked in, after the shell's TMPDIR when that
-// is another one. MINICODE_CONTROL_DIR names the one folder to use
-// instead (tests).
-#ifndef __APPLE__
-std::vector<std::string> socketDirs() {
-    return {socketFolder(getenv("MINICODE_CONTROL_DIR"), getenv("XDG_RUNTIME_DIR"),
-                         getenv("TMPDIR"), (unsigned)getuid())};
-}
-#else
-std::vector<std::string> socketDirs() {
-    const char *forced = getenv("MINICODE_CONTROL_DIR");
-    if (forced && *forced) return {trimmed(forced)};
-    std::vector<std::string> out;
-    const char *t = getenv("TMPDIR");
-    if (t && *t) out.push_back(trimmed(t) + "/MiniCode");
-    char buf[PATH_MAX];
-    size_t n = confstr(_CS_DARWIN_USER_TEMP_DIR, buf, sizeof buf);
-    std::string user = n > 0 && n <= sizeof buf ? trimmed(buf) + "/MiniCode" : "";
-    if (!user.empty()) {
-        char a[PATH_MAX], b[PATH_MAX];
-        bool same = false;
-        for (const std::string &o : out)
-            same = same || o == user ||
-                   (realpath(o.c_str(), a) && realpath(user.c_str(), b) && strcmp(a, b) == 0);
-        if (!same) out.push_back(user);
-    }
-    if (out.empty()) out.push_back("/tmp/MiniCode");
-    return out;
-}
-#endif
+// The folders a minicode's socket may be in (ControlPaths.h).
+std::vector<std::string> socketDirs() { return socketFolders(); }
 
 // A folder the app made: a real folder (not a link) of this user's that
 // nobody else can enter. Another user's socket in a shared folder could
@@ -395,6 +361,107 @@ int openInDefaultBrowser(const std::string &url) {
     return kExitFailed;
 }
 
+// `minicode host --folder DIR`: the session's host for one folder, with no
+// window (SessionServer.h), in the foreground until its lifetime ends or a
+// signal stops it.
+std::mutex gHostMu;
+Shared::HostServer *gHost = nullptr;
+
+int runHost(const Json &args) {
+    const std::string asked = args["folder"].asString();
+    const std::string folder = Shared::resolveFolder(asked);
+    if (folder.empty()) {
+        std::fprintf(stderr, "minicode: %s is not a folder\n", asked.c_str());
+        return kExitFailed;
+    }
+    Shared::HostOptions o;
+    o.folder = folder;
+    o.socketDir = socketDirs()[0];
+    if (args.has("idle_minutes")) o.idleMs = (long long)(args["idle_minutes"].asNumber() * 60000.0);
+    // SIGINT, SIGTERM and SIGHUP end the host as its lifetime would: taken by
+    // a thread of their own, so they are blocked before any other starts
+    // (shells get a clean mask: HostPty.cpp).
+    signal(SIGPIPE, SIG_IGN);
+    sigset_t stops;
+    sigemptyset(&stops);
+    sigaddset(&stops, SIGINT);
+    sigaddset(&stops, SIGTERM);
+    sigaddset(&stops, SIGHUP);
+    pthread_sigmask(SIG_BLOCK, &stops, nullptr);
+    std::thread([stops] {
+        int sig = 0;
+        sigwait(&stops, &sig);
+        std::lock_guard<std::mutex> lk(gHostMu);
+        if (gHost) gHost->stop();
+    }).detach();
+    int code = kExitOK;
+    {
+        Shared::HostServer server;
+        std::string error;
+        switch (server.start(o, &error)) {
+        case Shared::HostServer::Start::Running:
+            std::fprintf(stderr, "minicode: a host for %s is running already (%s)\n", folder.c_str(),
+                         error.c_str());
+            return kExitOK;
+        case Shared::HostServer::Start::Failed:
+            std::fprintf(stderr, "minicode: %s\n", error.c_str());
+            return kExitFailed;
+        case Shared::HostServer::Start::Ok: break;
+        }
+        {
+            std::lock_guard<std::mutex> lk(gHostMu);
+            gHost = &server;
+        }
+        std::fprintf(stderr, "minicode: hosting %s at %s\n", folder.c_str(),
+                     server.socketPath().c_str());
+        if (server.run())
+            std::fprintf(stderr, "minicode: the host for %s had no renderer and nothing unsaved or "
+                                 "running, so it stopped\n", folder.c_str());
+        std::lock_guard<std::mutex> lk(gHostMu);
+        gHost = nullptr;
+    }
+    return code;
+}
+
+// `minicode attach --folder DIR --dump`: the folder's session as text, then
+// detach (SessionServer.h's dumpSession).
+int runAttach(const Json &args) {
+    const std::string asked = args["folder"].asString();
+    const std::string folder = Shared::resolveFolder(asked);
+    if (folder.empty()) {
+        std::fprintf(stderr, "minicode: %s is not a folder\n", asked.c_str());
+        return kExitFailed;
+    }
+    signal(SIGPIPE, SIG_IGN);
+    const std::string path = Shared::findHostSocket(folder, socketDirs());
+    std::string error;
+    bool refused = false;
+    std::unique_ptr<Shared::HostLink> link;
+    if (!path.empty()) link = Shared::HostLink::open(path, &error, &refused);
+    if (!link) {
+        if (path.empty() || refused)
+            std::fprintf(stderr, "minicode: no host serves %s (start one with `minicode host "
+                                 "--folder %s`)\n", folder.c_str(), shellQuote(folder).c_str());
+        else
+            std::fprintf(stderr, "minicode: %s\n", error.c_str());
+        return kExitNoApp;
+    }
+    Shared::Client client(Model::Unit::Utf16, "minicode attach");
+    link->connect(client);
+    const std::string text = Shared::dumpSession(client);
+    link->close();
+    if (text.empty()) {
+        std::fprintf(stderr, "minicode: the host at %s did not answer\n", path.c_str());
+        return kExitFailed;
+    }
+    if (text.compare(0, 8 + folder.size() + 1, "== host " + folder + "\n") != 0) {
+        std::fprintf(stderr, "minicode: the host at %s serves another folder\n", path.c_str());
+        return kExitFailed;
+    }
+    std::fwrite(text.data(), 1, text.size(), stdout);
+    return kExitOK;
+}
+
 int usageError(const std::string &message) {
     std::fprintf(stderr, "minicode: %s\nTry 'minicode help'.\n", message.c_str());
     return kExitUsage;
@@ -516,6 +583,8 @@ int minicodeCliMain(int argc, char **argv) {
         return usageError(c.error);
     }
     if (!c.hooksAction.empty()) return runHooks(c.hooksAction);
+    if (c.cmd == "host") return runHost(c.args);
+    if (c.cmd == "attach") return runAttach(c.args);
 #ifndef __APPLE__
     // What the Linux app has so far (PARITY.md 3.1, 3.6, 3.8); the app answers
     // the rest of the table the same way, for a client that is not this one.

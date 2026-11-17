@@ -222,6 +222,20 @@ void testTerminalMarks() {
         }
     }
 
+    GROUP("screen:marks-wrapped-command");
+    {
+        // bash: the prompt mark at a line's start, then a prompt and a typed
+        // command that wrap past the width. The mark stays on the prompt's
+        // first row (the wrap is the text's own, not zsh's PROMPT_SP).
+        TerminalScreen s(10, 5);
+        s.setMarkNonce("n0");
+        s.feed(mark("A") + "user@host$ echo one" + "\r\n" + mark("C") + "one\r\n" + mark("D;0") +
+               mark("A") + "$ ");
+        auto cmds = s.commands();
+        CHECK(cmds.size() == 2);
+        if (!cmds.empty()) CHECK(cmds[0].promptLine == 0 && cmds[0].promptCol == 0);
+    }
+
     GROUP("screen:marks-reflow");
     {
         // A resize carries the marks with their text, through rewrapped

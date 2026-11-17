@@ -189,3 +189,104 @@ top of a turn, never inside a text system callback.
 - The host keeps a UTF-16 copy and its saved text, and the language server
   sync a third copy: about 150 MB more for a 25 MB file. Large-file mode
   has no server, so two.
+
+## The headless host (stage 6, core and CLI)
+
+`minicode host --folder DIR` runs the session's host for one folder with no
+window, and `minicode attach --folder DIR --dump` is the first renderer that
+reaches it over a socket. Both are in `minicode-cli` (the Mac's
+`Contents/MacOS/minicode-cli`, and the GTK binary, which hands the control
+channel's subcommands to the same `minicodeCliMain`), built from the core
+alone: `src/SessionServer.{h,cpp}` over `SessionHost`. Neither app attaches
+yet; GTK is next, after the Linux session's GTK terminals (#128).
+
+- **The socket.** `host-<FNV-1a of the resolved folder, 16 hex>.sock` in the
+  first of `ControlChannel::socketFolders()` (ControlPaths.h, now shared by
+  the CLI: `$MINICODE_CONTROL_DIR`, else `$XDG_RUNTIME_DIR/minicode` or
+  `/tmp/minicode-<uid>` on Linux, `$TMPDIR/MiniCode` and the user's own
+  temporary folder on the Mac). The folder is made 0700 and used only when
+  it is a real folder of the user's that nobody else can enter; the socket
+  is 0600; the server refuses a peer of another uid (`getpeereid`,
+  `SO_PEERCRED`), and the renderer refuses a host of another uid. The app's
+  sweep of `<pid>.sock` files never touches `host-*` names
+  (`pidFromSocketName` gives 0). `attach` checks that the host's state names
+  the folder it asked for.
+- **One host per folder.** A `host-<hash>.lock` beside the socket is
+  `flock`ed for the host's life; a second host fails to take it and exits 0
+  naming the first's socket. Holding the lock, any socket already there is a
+  dead host's and is removed before `bind`. The lock file is never removed:
+  unlinking it would let a host starting at that moment lock a fresh file
+  while another still holds the old inode.
+- **The wire.** One message a line, `encode()`/`decode()` of
+  SessionProtocol (terminal bytes base64), the same as `MINICODE_HOST=loopback`.
+  The server's own thread polls the listening socket, a wake pipe and every
+  connection, non-blocking; the host's Sink (on the host's thread) only
+  appends to a connection's buffer under a lock and wakes it. A connection
+  whose buffer passes 512 MB, or that sends a line that is not a message,
+  is dropped. `HostLink` is the renderer's side: blocking writes under a
+  lock, a reader thread delivering to `Client::deliver`; `close()` shuts the
+  socket down, joins the reader, then closes. No SIGPIPE either way
+  (`MSG_NOSIGNAL`, `SO_NOSIGPIPE`).
+- **Attaching** is what the protocol already had: Hello, `StateQuery`
+  (the folder, windows, documents, and now terminals: id, size, pid, the
+  shell's state, how many renderers show it), `DocOpen` with an empty text
+  for each document wanted (the host answers with its text, which the
+  client hands the listener as one insertion), `TermAttach` for each
+  terminal (a `replay()`, then live output). **Terminals have several
+  renderers now**: the one that opened it and every one that attached
+  since all get its output, shell state and marks; the pty is read while
+  every one of them has credit; `TermClose` from any ends it and tells the
+  others (`TermExited`); a renderer that goes is dropped from each, and a
+  terminal nobody shows keeps running, its output going only into the
+  host's screen. Detaching (the connection closing) is `Host::disconnect`:
+  documents, windows and terminals stay.
+- **Lifetime** (the owner's answer): `run()` returns once there has been no
+  connection for `idleMs` (10 minutes; `--idle-minutes`, fractions allowed,
+  for checks) and `Host::busyReason()` is empty: no document dirty, no
+  terminal whose integration marks a command running, and none whose
+  foreground process group is not the shell's. While something is unsaved
+  or running it lives on, looking every second (a quarter of the idle time
+  when shorter), and ends at the first look after that clears. The count
+  starts at launch and again whenever the last renderer goes. Ending
+  destroys the `SessionHost`, which hangs every shell up (SIGKILL for one
+  that stays), removes the socket and keeps the lock file.
+- **Signals.** `minicode host` blocks SIGINT, SIGTERM and SIGHUP before any
+  thread starts and takes them on a thread of its own with `sigwait`, which
+  stops the server as the lifetime would; the shells get a clean mask
+  (HostPty.cpp resets it after the fork). It runs in the foreground; detach
+  it with `&` or `nohup`.
+- **`attach --dump`** (`Shared::dumpSession`): `== host DIR`, then for each
+  document `== document ID PATH (version N, saved|unsaved)` and its text,
+  then for each terminal `== terminal ID (COLSxROWS, shell PID[, running
+  CMD][, in CWD])` and its screen as a fresh `TerminalScreen` draws the
+  host's replay (trailing blanks dropped). It attaches to the terminals to
+  get the replay, then closes the link, which detaches.
+
+### Checks
+
+`make test`'s `hostserver:*` groups (`tests/session_server_tests.inc`): a
+host on a scratch socket in the test process, renderers as `Client` plus
+`HostLink`. One per folder (a second start is Running, a stale socket is
+replaced, an open socket folder refused); two renderers typing at once
+converge with the host, one detaches, the other edits on, it attaches again
+to the same text and undoes the other's step; a terminal's output while
+nobody is attached reaches the host's screen and the next renderer's
+replay, two renderers hear the same output, and closing it ends the shell;
+the lifetime with a 150 ms timer (no renderer, an unsaved document kept and
+then saved, a running command by the marks, a foreground `sleep` in `sh -i`);
+the command line's parsing. Real sockets and shells, under TSan in CI.
+
+### For the GTK and Mac attach steps
+
+- A renderer needs ids that do not clash with the host's: today each app
+  numbers its documents, windows and terminals from 1, which is fine for
+  one renderer in process but not for two on one host. Either the host
+  hands out ids (`doc.open` without one), or each renderer takes a range
+  from its Welcome.
+- Tabs are still reported, not decided (4a's note): a second renderer reads
+  `windows` from the state but cannot change them through the host until
+  `Model::Window`'s callbacks are data.
+- The renderer that last typed into a terminal should set its size (the
+  design's tmux `window-size latest`); today any `TermResize` wins.
+- Saving, dirty, backups and the disk are still the app's (stage 7): a
+  headless host's unsaved document is only as safe as the host process.

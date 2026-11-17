@@ -291,10 +291,12 @@ static void testLinuxTerminalKeys() {
     // The terminals' own zoom keeps its keys there (PARITY.md 1.11), the
     // inline agent's Ctrl+I is Global (an idle terminal asks for a command,
     // PARITY.md 3.3), and Ctrl+2 focuses the editor's second group from
-    // there as Ctrl+1 the first (PARITY.md 4.6).
+    // there as Ctrl+1 the first (PARITY.md 4.6). Ctrl+Up and Ctrl+Down move
+    // between the commands the host marked (a terminal command of its own,
+    // SESSION-DESIGN.md stage 5).
     CHECK((plain == std::set<std::string>{"ctrl+`", "ctrl+0", "ctrl+1", "ctrl+2", "ctrl+tab",
                                            "ctrl+pagedown", "ctrl+pageup", "ctrl+=", "ctrl+-",
-                                           "ctrl+numpad0", "ctrl+i"}));
+                                           "ctrl+numpad0", "ctrl+i", "ctrl+up", "ctrl+down"}));
     // Alt with a letter alone is Meta to the program: the find bar's
     // options leave it its word keys; Alt with a digit (the tabs) and with
     // Ctrl stays the app's.

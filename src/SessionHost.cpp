@@ -16,13 +16,9 @@ ClientId Host::connect() { return ++nextClient_; }
 
 void Host::disconnect(ClientId c) {
     renderers_.erase(c);
-    // Its terminals stay (stage 6 keeps them for the next renderer); their
-    // output goes nowhere meanwhile, unthrottled.
-    for (auto& [id, t] : terms_)
-        if (t.owner == c) {
-            t.owner = 0;
-            t.unacked = 0;
-        }
+    // Its terminals stay for the next renderer; one nobody shows keeps
+    // running, its output going only into the host's screen, unthrottled.
+    for (auto& [id, t] : terms_) t.viewers.erase(c);
     for (auto& [id, d] : docs_) {
         if (d.stepOpen && d.stepBy == c) closeStep(d);
         d.seats.erase(c);
@@ -95,11 +91,13 @@ void Host::handle(ClientId from, Message&& m) {
     }
     case Kind::TermAck: {
         auto it = terms_.find(m.term);
-        if (it != terms_.end()) it->second.unacked = std::max(0LL, it->second.unacked - (long long)m.v);
+        if (it == terms_.end()) break;
+        auto v = it->second.viewers.find(from);
+        if (v != it->second.viewers.end()) v->second = std::max(0LL, v->second - (long long)m.v);
         break;
     }
     case Kind::TermClose:
-        if (terms_.count(m.term)) endTerminal(m.term, 0);
+        if (terms_.count(m.term)) endTerminal(m.term, false, from);
         break;
     default: error(from, m.doc, std::string("the host takes no ") + kindName(m.kind)); break;
     }
@@ -113,6 +111,7 @@ void Host::onHello(ClientId c, Message& m) {
     Message w;
     w.kind = Kind::Welcome;
     w.client = c;
+    w.name = folder_;
     send(c, std::move(w));
 }
 
@@ -511,7 +510,35 @@ Json Host::state() const {
         docs.push(std::move(j));
     }
     s.set("documents", std::move(docs));
+    Json terms = Json::array();
+    for (const auto& [id, t] : terms_) {
+        Json j = Json::object();
+        j.set("term", Json((int64_t)id));
+        j.set("cols", Json((int64_t)t.screen.cols()));
+        j.set("rows", Json((int64_t)t.screen.rows()));
+        j.set("pid", Json((int64_t)(t.pty ? t.pty->pid() : 0)));
+        j.set("shell", termShellJson(t.shell));
+        j.set("renderers", Json((int64_t)t.viewers.size()));
+        terms.push(std::move(j));
+    }
+    s.set("terminals", std::move(terms));
+    if (!folder_.empty()) s.set("folder", Json(folder_));
     return s;
+}
+
+std::string Host::busyReason() const {
+    for (const auto& [id, d] : docs_)
+        if (d.doc.dirty())
+            return (d.path.empty() ? "a document" : d.path) + " has unsaved changes";
+    for (const auto& [id, t] : terms_) {
+        if (!t.pty) continue;
+        if (t.shell.busy)
+            return "terminal " + std::to_string(id) + " is running " +
+                   (t.shell.command.empty() ? std::string("a command") : t.shell.command);
+        if (t.shell.foreground > 0 && t.shell.foreground != t.pty->pid())
+            return "terminal " + std::to_string(id) + " is running a program";
+    }
+    return "";
 }
 
 // ---------------------------------------------------------------- terminals
@@ -569,7 +596,7 @@ bool Host::openPty(ClientId c, TermId id, const TermSpec& spec, std::string* err
     std::unique_ptr<Pty> pty = Pty::spawn(p, error);
     if (!pty) return false;
     Term& t = terms_[id];
-    t.owner = c;
+    if (c) t.viewers[c] = 0;
     t.pty = std::move(pty);
     t.screen = TerminalScreen(p.cols, p.rows);
     t.screen.setScrollbackLimit(std::max(0, spec.scrollback));
@@ -614,8 +641,7 @@ void Host::onTermAttach(ClientId c, Message& m) {
         return;
     }
     Term& t = it->second;
-    t.owner = c;
-    t.unacked = 0;
+    t.viewers[c] = 0;   // a renderer attaching again starts afresh
     Message r;
     r.kind = Kind::TermReplay;
     r.term = m.term;
@@ -631,16 +657,24 @@ void Host::sendShell(TermId id, Term& t, bool always) {
     if (!always && t.told && t.shell == t.sent) return;
     t.sent = t.shell;
     t.told = true;
-    if (!t.owner) return;
+    if (t.viewers.empty()) return;
     Message r;
     r.kind = Kind::TermShell;
     r.term = id;
     r.json = termShellJson(t.shell);
-    send(t.owner, std::move(r));
+    sendToViewers(t, r);
+}
+
+void Host::sendToViewers(const Term& t, const Message& m) {
+    for (const auto& [c, unacked] : t.viewers) {
+        (void)unacked;
+        Message copy = m;
+        send(c, std::move(copy));
+    }
 }
 
 void Host::sendMarks(TermId id, Term& t) {
-    if (!t.owner) return;
+    if (t.viewers.empty()) return;
     const long long base = t.screen.historyBase();
     std::vector<TermMark> marks;
     for (const TermCommand& c : t.screen.commands()) {
@@ -655,7 +689,7 @@ void Host::sendMarks(TermId id, Term& t) {
     r.kind = Kind::TermMarks;
     r.term = id;
     r.json = termMarksJson(marks);
-    send(t.owner, std::move(r));
+    sendToViewers(t, r);
 }
 
 void Host::look(Term& t) {
@@ -674,15 +708,18 @@ void Host::output(TermId id, Term& t, std::string&& bytes) {
     for (const TermEvent& e : t.stream.feed(bytes)) applyTermEvent(t.shell, e);
     const bool marks = t.screen.takeDirty().marks;
     look(t);
-    if (t.owner) {
+    // And again shortly: a shell prints a command's start mark before the
+    // command takes the foreground.
+    t.nextLook = std::chrono::steady_clock::now() + std::chrono::milliseconds(30);
+    if (!t.viewers.empty()) {
         Message r;
         r.kind = Kind::TermOutput;
         r.term = id;
         r.v = (std::uint64_t)(t.screen.historyBase() + t.screen.cursorRow());
         r.flag = t.screen.altScreen() ? 1 : 0;
-        t.unacked += (long long)bytes.size();
+        for (auto& [c, unacked] : t.viewers) unacked += (long long)bytes.size();
         r.bytes = std::move(bytes);
-        send(t.owner, std::move(r));
+        sendToViewers(t, r);
     }
     // After the output, so a renderer has fed the bytes the marks are in.
     if (marks) sendMarks(id, t);
@@ -695,7 +732,8 @@ void Host::pollSet(std::vector<PollFd>* out) const {
         PollFd p;
         p.fd = t.pty->fd();
         p.term = id;
-        p.read = !t.owner || t.unacked < kTermCredit;
+        p.read = true;
+        for (const auto& [c, unacked] : t.viewers) p.read = p.read && unacked < kTermCredit;
         p.write = t.pty->wantsWrite();
         if (p.read || p.write) out->push_back(p);
     }
@@ -708,7 +746,7 @@ void Host::readable(TermId id) {
     std::string bytes;
     const bool more = t.pty->read(bytes);
     output(id, t, std::move(bytes));
-    if (!more) endTerminal(id, t.owner);
+    if (!more) endTerminal(id, true);
 }
 
 void Host::writable(TermId id) {
@@ -716,11 +754,11 @@ void Host::writable(TermId id) {
     if (it != terms_.end() && it->second.pty) it->second.pty->flush();
 }
 
-void Host::endTerminal(TermId id, ClientId tell) {
+void Host::endTerminal(TermId id, bool drain, ClientId closer) {
     auto it = terms_.find(id);
     if (it == terms_.end()) return;
     Term& t = it->second;
-    if (tell && t.pty) {
+    if (drain && t.pty) {
         // What the shell wrote before it went comes first.
         for (int i = 0; i < 64; i++) {
             std::string bytes;
@@ -734,7 +772,8 @@ void Host::endTerminal(TermId id, ClientId tell) {
         t.pty->hangUp();
         Dying d;
         d.term = id;
-        d.tell = tell;
+        for (const auto& [c, unacked] : t.viewers)
+            if (c != closer) d.tell.push_back(c);
         d.pty = std::move(t.pty);
         dying_.push_back(std::move(d));
     }
@@ -749,12 +788,13 @@ int Host::tick() {
             i++;
             continue;
         }
-        if (dying_[i].tell && renderers_.count(dying_[i].tell)) {
+        for (ClientId c : dying_[i].tell) {
+            if (!renderers_.count(c)) continue;
             Message r;
             r.kind = Kind::TermExited;
             r.term = dying_[i].term;
             r.flag = status;
-            send(dying_[i].tell, std::move(r));
+            send(c, std::move(r));
         }
         dying_.erase(dying_.begin() + (long)i);
     }
@@ -772,9 +812,15 @@ int Host::tick() {
             sendShell(id, t);
         }
     }
-    for (TermId id : exited) endTerminal(id, terms_[id].owner);
+    for (TermId id : exited) endTerminal(id, true);
     if (!dying_.empty()) return 50;
-    return terms_.empty() ? -1 : 200;
+    if (terms_.empty()) return -1;
+    long long wait = 200;
+    for (const auto& [id, t] : terms_) {
+        const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(t.nextLook - now).count();
+        wait = std::max(1LL, std::min(wait, ms));
+    }
+    return (int)wait;
 }
 
 const TerminalScreen* Host::screen(TermId t) const {
@@ -865,6 +911,14 @@ void SessionHost::disconnect(ClientId c) {
     {
         std::lock_guard<std::mutex> lk(mu_);
         queue_.push_back(Item{0, Message(), [this, c] { host_.disconnect(c); }});
+    }
+    wake();
+}
+
+void SessionHost::setFolder(std::string folder) {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        queue_.push_back(Item{0, Message(), [this, f = std::move(folder)] { host_.setFolder(f); }});
     }
     wake();
 }
