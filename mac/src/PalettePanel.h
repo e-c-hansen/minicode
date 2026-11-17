@@ -32,10 +32,31 @@
 @property(nonatomic, copy) NSString *emptyText;   // when nothing matches
 @end
 
+// minicode's own folder picker (Open Folder…, the Dock's Open Folder…), in
+// place of the system's open panel; its rules are the core's FolderPicker.h.
+// It lists the recent folders, then the base folder's subfolders; a typed
+// path ("~/Code/", "/Users/", "../") lists that folder's subfolders as it is
+// typed, read off the main thread, the reading of a folder no longer typed
+// cancelled. Tab, or '/' typed after a name, completes the selected folder
+// and goes into it; Return opens the selected row; Cmd+Return (or the "Open
+// This Folder" row) opens the folder the text names; Esc closes. The last
+// row is Choose in Finder…, which runs chooseInFinder.
+@interface MCFolderPick : NSObject
+@property(nonatomic, copy) NSArray<NSString *> *recentFolders;   // most recent first
+@property(nonatomic, copy) NSString *baseFolder;   // listed under them; relative paths start here
+@property(nonatomic, copy) void (^choose)(NSString *path);   // after the palette has closed
+@property(nonatomic, copy) void (^chooseInFinder)(void);
+@end
+
+// Shows the folder picker over window (it must have a content view).
+void MCShowFolderPicker(NSWindow *window, MCFolderPick *pick);
+
 // What the window offers the palette beyond the menu.
 @interface MCPaletteContext : NSObject
 // A pick list instead of the modes (see MCPalettePick); nil for the palette.
 @property(nonatomic, strong) MCPalettePick *pick;
+// The folder picker instead of the modes (see MCFolderPick).
+@property(nonatomic, strong) MCFolderPick *folderPick;
 // The folder Quick Open lists, nil for none. Paths are joined to it as
 // spelled, so they match the tree's.
 @property(nonatomic, copy) NSString *root;

@@ -33,6 +33,7 @@
 #include "MultiCaret.h"
 #include "AutoClose.h"
 #include "CommandPalette.h"
+#include "FolderPicker.h"
 #include "Backups.h"
 #include "TabSessions.h"
 #include "InlineAgent.h"
@@ -11140,6 +11141,7 @@ static void testMultiCaretOccurrences() {
 #include "agent_view_tests.inc"
 #include "fold_tests.inc"
 #include "previews_tests.inc"
+#include "folder_picker_tests.inc"
 #include "commands_tests.inc"
 #include "commands_linux_tests.inc"
 #include "procs_tests.inc"
@@ -11289,6 +11291,7 @@ int main() {
     testChangeRequest();
     testMultiCaret();
     testCommandPalette();
+    testFolderPicker();
     testMultiCaretOccurrences();
     testBackups();
     testTabSessions();

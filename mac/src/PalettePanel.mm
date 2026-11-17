@@ -10,8 +10,10 @@
 #import "TreeDetails.h"   // MCAppDefaults
 #import "Keymap.h"
 #include "CommandPalette.h"
+#include "FolderPicker.h"
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -44,6 +46,8 @@ static NSString *PNS(const std::u16string &s) {
 @implementation MCPaletteContext
 @end
 @implementation MCPalettePick
+@end
+@implementation MCFolderPick
 @end
 
 // ------------------------------------------------------------ the commands
@@ -148,6 +152,8 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
 @property(nonatomic, copy) void (^run)(void);   // nil: nothing to run
 @property(nonatomic, copy) void (^preview)(void);   // when the list comes to it
 @property(nonatomic) BOOL heading;   // a kind's heading in "@:": never selected
+@property(nonatomic, copy) NSString *folderPath;   // the folder picker: a folder row's
+@property(nonatomic) BOOL opensTyped;   // the folder picker: Open This Folder
 @end
 @implementation MCPaletteItem
 @end
@@ -239,6 +245,12 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
     std::shared_ptr<std::atomic<bool>> _cancelListing;
     std::vector<Lsp::Symbol> _symbolKeys, _workspaceKeys;   // names and kinds, for ranking
     NSInteger _preselect;   // the row "@" selects first
+    // The folder picker: folders read so far (by absolute path), the one
+    // being read and its cancel flag, and the text the list was made for.
+    std::map<std::string, FolderPicker::Listing> _folderListings;
+    std::string _folderListingDir;
+    std::shared_ptr<std::atomic<bool>> _cancelFolders;
+    NSString *_folderShownText;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame commands:(NSArray<MCPaletteCommand *> *)commands
@@ -291,7 +303,9 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
     f.usesSingleLineMode = YES;
     f.cell.scrollable = YES;
     f.placeholderAttributedString = [[NSAttributedString alloc]
-        initWithString:context.pick.placeholder ?:
+        initWithString:context.folderPick
+                           ? @"Open a folder: type its name, or a path such as ~/Code/ or ../"
+                           : context.pick.placeholder ?:
                            @"Search files by name (> commands, : a line, @ a symbol, # in the workspace)"
             attributes:@{NSForegroundColorAttributeName: self.mutedColor,
                          NSFontAttributeName: f.font}];
@@ -340,7 +354,7 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
 // they arrive (or never, if the palette closed first, which stops the walk).
 - (void)listFiles {
     NSString *root = self.context.root;
-    if (!root.length || self.context.pick) {
+    if (!root.length || self.context.pick || self.context.folderPick) {
         self.files = @[];
         return;
     }
@@ -428,11 +442,14 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
 - (void)refilter {
     using namespace CommandPalette;
     Parsed p = parse(PU16(self.field.stringValue ?: @""));
-    if (self.context.pick) p.mode = Mode::Files;   // a pick list has no prefixes
+    // A pick list and the folder picker have no prefixes.
+    if (self.context.pick || self.context.folderPick) p.mode = Mode::Files;
     NSMutableArray<MCPaletteItem *> *items = [NSMutableArray array];
     NSString *empty = @"";
     __weak MCPaletteOverlay *weakSelf = self;
-    if (self.context.pick) {
+    if (self.context.folderPick) {
+        empty = [self folderItems:items];
+    } else if (self.context.pick) {
         empty = [self pickItems:items];
     } else if (p.mode == Mode::Commands) {
         std::vector<std::string> recent;
@@ -603,6 +620,196 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
         [items addObject:it];
     }
     return pick.emptyText ?: @"Nothing matches";
+}
+
+// ------------------------------------------------------------- folders
+static std::string PUtf8(NSString *s) { return s.UTF8String ?: ""; }
+static std::string PHome(void) { return PUtf8(NSHomeDirectory()); }
+
+- (std::string)folderBase {
+    NSString *b = self.context.folderPick.baseFolder;
+    return PUtf8(b.length ? b : NSHomeDirectory());
+}
+
+// The folder's listing when it has been read; otherwise it is read now on a
+// background queue (the reading of a folder asked for before is cancelled:
+// the text has moved on) and the list fills in when it arrives.
+- (const FolderPicker::Listing *)folderListing:(const std::string &)dir {
+    static const FolderPicker::Listing waiting;
+    auto found = _folderListings.find(dir);
+    if (found != _folderListings.end()) return &found->second;
+    if (_folderListingDir == dir) return &waiting;
+    if (_cancelFolders) _cancelFolders->store(true);
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    _cancelFolders = cancel;
+    _folderListingDir = dir;
+    __weak MCPaletteOverlay *weakSelf = self;
+    const std::string d = dir;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        auto listing = std::make_shared<FolderPicker::Listing>();
+        listing->names = FolderPicker::listSubfolders(d, cancel.get(), &listing->ok);
+        listing->done = true;
+        if (cancel->load()) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MCPaletteOverlay *me = weakSelf;
+            if (!me || me.closing || cancel->load()) return;
+            [me folderListed:d listing:*listing];
+        });
+    });
+    return &waiting;
+}
+
+- (void)folderListed:(const std::string &)dir listing:(const FolderPicker::Listing &)listing {
+    _folderListings[dir] = listing;
+    if (_folderListingDir == dir) _folderListingDir.clear();
+    FolderPicker::Input in =
+        FolderPicker::parse(PUtf8(self.field.stringValue ?: @""), PHome(), [self folderBase]);
+    if (in.dir == dir) [self refilter];
+}
+
+// A folder's row: its name, then the folder it is in, muted, the matched
+// characters of either in the accent color.
+- (NSAttributedString *)folderText:(const FolderPicker::Row &)r {
+    NSString *label = PNS(r.label);
+    const NSUInteger nameAt = MIN((NSUInteger)r.nameAt, label.length);
+    NSString *name = [label substringFromIndex:nameAt];
+    NSUInteger parentLen = nameAt;
+    if (parentLen > 1 && [label characterAtIndex:parentLen - 1] == '/') parentLen--;
+    NSString *parent = [label substringToIndex:parentLen];
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.lineBreakMode = NSLineBreakByTruncatingTail;
+    NSFont *font = [NSFont systemFontOfSize:13];
+    NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
+        initWithString:name
+            attributes:@{NSFontAttributeName: font,
+                         NSForegroundColorAttributeName: self.textColor,
+                         NSParagraphStyleAttributeName: ps}];
+    const NSUInteger parentAt = name.length + 3;
+    if (parent.length)
+        [s appendAttributedString:[[NSAttributedString alloc]
+            initWithString:[@"   " stringByAppendingString:parent]
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12],
+                             NSForegroundColorAttributeName: self.mutedColor,
+                             NSParagraphStyleAttributeName: ps}]];
+    NSFont *bold = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
+    for (size_t p : r.positions) {
+        NSUInteger at = NSNotFound;
+        if (p >= nameAt && p - nameAt < name.length) at = p - nameAt;
+        else if (p < parent.length) at = parentAt + p;
+        if (at == NSNotFound || at >= s.length) continue;
+        [s addAttributes:@{NSFontAttributeName: bold, NSForegroundColorAttributeName: PAccent()}
+                   range:NSMakeRange(at, 1)];
+    }
+    return s;
+}
+
+// The folder picker's rows (FolderPicker::rows): a muted line saying what
+// is happening when no folder is listed, the folders, Open This Folder and
+// Choose in Finder….
+- (NSString *)folderItems:(NSMutableArray<MCPaletteItem *> *)items {
+    MCFolderPick *pick = self.context.folderPick;
+    const std::string home = PHome();
+    NSString *text = self.field.stringValue ?: @"";
+    _folderShownText = [text copy];
+    FolderPicker::Input in = FolderPicker::parse(PUtf8(text), home, [self folderBase]);
+    const FolderPicker::Listing *listing = [self folderListing:in.dir];
+    std::vector<std::string> recent;
+    for (NSString *r in pick.recentFolders) recent.push_back(PUtf8(r));
+    std::vector<FolderPicker::Row> rows = FolderPicker::rows(in, recent, *listing, home);
+    bool anyFolder = false;
+    for (const FolderPicker::Row &r : rows) anyFolder |= r.kind == FolderPicker::RowKind::Folder;
+    if (!anyFolder) {
+        MCPaletteItem *note = [MCPaletteItem new];
+        note.heading = YES;
+        note.label = @(FolderPicker::emptyText(in, *listing, home).c_str()) ?: @"";
+        note.text = [[NSAttributedString alloc]
+            initWithString:note.label
+                attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12],
+                             NSForegroundColorAttributeName: self.mutedColor}];
+        [items addObject:note];
+    }
+    __weak MCPaletteOverlay *weakSelf = self;
+    void (^choose)(NSString *) = pick.choose;
+    for (const FolderPicker::Row &r : rows) {
+        MCPaletteItem *it = [MCPaletteItem new];
+        NSString *path = r.path.empty() ? nil : [NSString stringWithUTF8String:r.path.c_str()];
+        if (r.kind == FolderPicker::RowKind::ChooseInFinder) {
+            it.label = PNS(r.label);
+            it.text = [[NSAttributedString alloc]
+                initWithString:it.label
+                    attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:13],
+                                 NSForegroundColorAttributeName: self.mutedColor}];
+            void (^finder)(void) = pick.chooseInFinder;
+            it.run = ^{
+                [weakSelf closeRestoringFocus:YES];
+                if (finder) dispatch_async(dispatch_get_main_queue(), finder);
+            };
+            [items addObject:it];
+            continue;
+        }
+        if (!path) continue;   // a name that is not UTF-8
+        if (r.kind == FolderPicker::RowKind::OpenTyped) {
+            it.label = @"Open This Folder";
+            it.opensTyped = YES;
+            it.keys = @"\u2318\u23CE";
+            NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
+                initWithString:it.label
+                    attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:13],
+                                 NSForegroundColorAttributeName: self.textColor}];
+            [s appendAttributedString:[[NSAttributedString alloc]
+                initWithString:[@"   " stringByAppendingString:PNS(r.label)]
+                    attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12],
+                                 NSForegroundColorAttributeName: self.mutedColor}]];
+            it.text = s;
+        } else {
+            it.label = PNS(r.label);
+            it.folderPath = path;
+            it.text = [self folderText:r];
+            if (r.recent) it.keys = @"recent";
+        }
+        it.run = ^{
+            [weakSelf closeRestoringFocus:YES];
+            if (choose) dispatch_async(dispatch_get_main_queue(), ^{ choose(path); });
+        };
+        [items addObject:it];
+    }
+    return @"";
+}
+
+// Tab: the selected folder's path in the field, with a '/', listing its
+// subfolders. NO when the selected row is not a folder.
+- (BOOL)completeSelectedFolder {
+    if (self.selected < 0 || self.selected >= (NSInteger)self.items.count) return NO;
+    NSString *path = self.items[(NSUInteger)self.selected].folderPath;
+    if (!path) return NO;
+    const std::string t = FolderPicker::complete(PUtf8(self.field.stringValue ?: @""),
+                                                 PUtf8(path), PHome());
+    [self takeText:[NSString stringWithUTF8String:t.c_str()] ?: @""];
+    return YES;
+}
+
+// Cmd+Return: the folder the text names, when it is one.
+- (void)openTypedFolder {
+    for (MCPaletteItem *it in self.items)
+        if (it.opensTyped && it.run) {
+            it.run();
+            return;
+        }
+    NSBeep();
+}
+
+// Cmd+Return reaches the window's views before the menu (whose Insert Line
+// Below has it).
+- (BOOL)performKeyEquivalent:(NSEvent *)e {
+    const NSEventModifierFlags mods =
+        e.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask &
+        ~(NSEventModifierFlagNumericPad | NSEventModifierFlagFunction | NSEventModifierFlagCapsLock);
+    if (self.context.folderPick && !self.closing && e.type == NSEventTypeKeyDown &&
+        (e.keyCode == 36 || e.keyCode == 76) && mods == NSEventModifierFlagCommand) {
+        [self openTypedFolder];
+        return YES;
+    }
+    return [super performKeyEquivalent:e];
 }
 
 // ------------------------------------------------------------- symbols
@@ -899,6 +1106,12 @@ static NSString *POneLine(NSString *s) {
         return YES;
     }
     if (sel == @selector(insertNewline:) || sel == @selector(insertLineBreak:)) {
+        if (self.context.folderPick &&
+            (NSApp.currentEvent.modifierFlags & NSEventModifierFlagCommand) &&
+            NSApp.currentEvent.type == NSEventTypeKeyDown) {
+            [self openTypedFolder];
+            return YES;
+        }
         [self runRow:self.selected];
         return YES;
     }
@@ -907,12 +1120,31 @@ static NSString *POneLine(NSString *s) {
         return YES;
     }
     // Tab would end editing and leave the palette open without the keyboard.
+    // In the folder picker it completes the selected folder.
+    if (sel == @selector(insertTab:) && self.context.folderPick) {
+        if (![self completeSelectedFolder]) NSBeep();
+        return YES;
+    }
     if (sel == @selector(insertTab:) || sel == @selector(insertBacktab:)) return YES;
     return NO;
 }
 
 - (void)controlTextDidChange:(NSNotification *)n {
     (void)n;
+    // The folder picker: a '/' typed after a name goes into the folder
+    // selected for it, as Tab does ("~/Co" and '/' is "~/Code/").
+    NSString *now = self.field.stringValue ?: @"";
+    NSString *was = _folderShownText;
+    if (self.context.folderPick && was &&
+        [now isEqualToString:[was stringByAppendingString:@"/"]] &&
+        FolderPicker::slashCompletes(PUtf8(was)) && self.selected >= 0 &&
+        self.selected < (NSInteger)self.items.count &&
+        self.items[(NSUInteger)self.selected].folderPath) {
+        const std::string t = FolderPicker::complete(
+            PUtf8(was), PUtf8(self.items[(NSUInteger)self.selected].folderPath), PHome());
+        [self takeText:[NSString stringWithUTF8String:t.c_str()] ?: now];
+        return;
+    }
     [self refilter];
 }
 
@@ -972,6 +1204,7 @@ static NSString *POneLine(NSString *s) {
     if (self.closing) return;
     self.closing = YES;
     if (_cancelListing) _cancelListing->store(true);
+    if (_cancelFolders) _cancelFolders->store(true);
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(askWorkspace:)
                                                object:nil];
     if (self.workspaceAsked && self.context.cancelWorkspaceSymbols)
@@ -1021,7 +1254,8 @@ void MCShowPalette(NSWindow *window, NSString *text, MCPaletteContext *context) 
     if (!content) return;
     MCPaletteOverlay *open = (MCPaletteOverlay *)MCCommandPaletteIn(window);
     // A pick list is its own palette: one never takes over the other.
-    if (open && (open.context.pick || context.pick)) {
+    if (open && (open.context.pick || open.context.folderPick || context.pick ||
+                 context.folderPick)) {
         [open closeRestoringFocus:YES];
         open = nil;
     }
@@ -1032,8 +1266,10 @@ void MCShowPalette(NSWindow *window, NSString *text, MCPaletteContext *context) 
     }
     // Read before the keyboard moves, so validation sees what had it.
     NSMutableArray<MCPaletteCommand *> *commands = [NSMutableArray array];
-    PCollect(NSApp.mainMenu, nil, commands);
-    PCollectUnmenued(commands);
+    if (!context.folderPick) {
+        PCollect(NSApp.mainMenu, nil, commands);
+        PCollectUnmenued(commands);
+    }
 
     MCPaletteOverlay *p = [[MCPaletteOverlay alloc] initWithFrame:content.bounds
                                                          commands:commands
@@ -1052,6 +1288,12 @@ void MCShowPalette(NSWindow *window, NSString *text, MCPaletteContext *context) 
     [window makeFirstResponder:p.field];
     [p takeText:text];
     [p listFiles];
+}
+
+void MCShowFolderPicker(NSWindow *window, MCFolderPick *pick) {
+    MCPaletteContext *ctx = [MCPaletteContext new];
+    ctx.folderPick = pick;
+    MCShowPalette(window, @"", ctx);
 }
 
 NSTextField *MCCommandPaletteField(NSView *palette) {
