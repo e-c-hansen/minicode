@@ -6,7 +6,7 @@
 // total CPU of the open.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "MarkdownSide.h"
 

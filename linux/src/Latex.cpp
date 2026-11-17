@@ -20,7 +20,7 @@
 #include <cstdlib>
 #include <dirent.h>
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "LatexScratch.h"
 
 namespace {

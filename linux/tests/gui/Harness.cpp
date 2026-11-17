@@ -2,7 +2,7 @@
 // real input is Input.cpp, and the app's parts come from AppSeam.inc.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "SessionLink.h"
 #include "TerminalDock.h"

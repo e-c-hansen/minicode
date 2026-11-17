@@ -16,7 +16,7 @@
 // option keys going to the program as Meta.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "FindBar.h"
 #include "Keys.h"

@@ -171,7 +171,15 @@ void button(int b, bool down) {
 
 }  // namespace
 
-void MCGuiSetKeyWindow(GtkWindow* window) { gKeyWindow = window; }
+// Held weakly: a pinned window a suite closes (or the app closes for it)
+// becomes null rather than a freed pointer that MCGuiPinnedKeyWindow reads
+// (CI on #104: SIGSEGV in MCGuiPinnedKeyWindow between agents and
+// agent_panel).
+void MCGuiSetKeyWindow(GtkWindow* window) {
+    if (gKeyWindow) g_object_remove_weak_pointer(G_OBJECT(gKeyWindow), (gpointer*)&gKeyWindow);
+    gKeyWindow = window;
+    if (gKeyWindow) g_object_add_weak_pointer(G_OBJECT(gKeyWindow), (gpointer*)&gKeyWindow);
+}
 
 GtkWindow* MCGuiPinnedKeyWindow() {
     if (gKeyWindow && GTK_IS_WINDOW(gKeyWindow) && gtk_widget_get_mapped(GTK_WIDGET(gKeyWindow)))

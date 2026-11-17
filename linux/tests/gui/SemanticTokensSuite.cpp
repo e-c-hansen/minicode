@@ -13,7 +13,7 @@
 // color goes and nothing more is asked.
 #include "CompletionChecks.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "SemanticColors.h"
 #include "Settings.h"
 

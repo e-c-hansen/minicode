@@ -20,7 +20,7 @@
 
 #include "Appearance.h"
 #include "CodeView.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "FileTree.h"
 #include "FindBar.h"

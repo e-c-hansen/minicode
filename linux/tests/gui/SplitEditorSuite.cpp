@@ -14,7 +14,7 @@
 #include "WindowLayout.h"
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Persistence.h"
 #include "TabSessions.h"

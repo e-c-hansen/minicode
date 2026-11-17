@@ -1,7 +1,7 @@
 // NavHistoryUi.cpp — see NavHistoryUi.h.
 #include "NavHistoryUi.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 
 #include <algorithm>

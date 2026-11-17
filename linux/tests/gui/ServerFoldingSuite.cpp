@@ -10,7 +10,7 @@
 #include "FakeLsp.h"
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Folds.h"
 #include "Lsp.h"

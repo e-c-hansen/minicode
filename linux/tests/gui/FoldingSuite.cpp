@@ -16,7 +16,7 @@
 
 #include "BufferLines.h"
 #include "CodeView.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "FindBar.h"
 #include "Folds.h"

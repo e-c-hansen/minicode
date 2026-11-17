@@ -3,7 +3,7 @@
 #include "Folds.h"
 
 #include "CodeView.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Settings.h"
 #include "Utf8Offsets.h"

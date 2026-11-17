@@ -17,7 +17,7 @@
 #include "Harness.h"
 
 #include "Appearance.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "FileTree.h"
 #include "GitPanel.h"

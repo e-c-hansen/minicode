@@ -15,7 +15,7 @@
 #include "Harness.h"
 
 #include "BracketColors.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Settings.h"
 

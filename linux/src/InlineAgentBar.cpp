@@ -18,7 +18,7 @@
 #include <set>
 #include <thread>
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "FormatRun.h"
 #include "Lsp.h"

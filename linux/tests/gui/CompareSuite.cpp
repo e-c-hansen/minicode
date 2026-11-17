@@ -12,7 +12,7 @@
 #include "Harness.h"
 
 #include "CompareView.h"
-#include "Document.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "TabStrip.h"
 

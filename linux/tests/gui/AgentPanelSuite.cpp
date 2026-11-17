@@ -25,7 +25,7 @@
 // of a tinted line redraws the tint.
 #include "Harness.h"
 
-#include "Document.h"
+#include "DocumentView.h"
 #include "AppSeam.h"
 #include "Editor.h"
 #include "FileTree.h"
