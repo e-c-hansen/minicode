@@ -500,7 +500,12 @@ MC_GUI_SUITE(agents) {
         GCHECK((page->buttonsOfRow((size_t)page->rowOfFile("base.txt", false)) ==
                 std::vector<std::string>{"Side by Side", "Open"}));
         GCHECK(page->applyTitle() == "Apply to Main…" && page->applyEnabled());
-        GCHECK(MCGuiOnScreen(page->applyButton()));
+    });
+    // The page's bar is laid out a frame or so after its text: on CI the
+    // button was not on screen yet in the step above (#113's run).
+    MCGuiWait("Apply to Main on screen", 10, [] {
+        ChangeReviewPage* page = changesPage();
+        return page && MCGuiOnScreen(page->applyButton());
     });
     MCGuiStep("Side by Side on base.txt, by its button", [] {
         ChangeReviewPage* page = changesPage();
