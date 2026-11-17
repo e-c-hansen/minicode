@@ -27,11 +27,18 @@
 // Terminals (stage 5): the host owns each terminal's pty (HostPty.h) and a
 // headless TerminalScreen with scrollback, fed every byte the shell writes,
 // with the shell integration's events read from the same bytes
-// (TerminalStream) into a TermShell. The bytes go on to the renderer that
-// opened the terminal, whose own emulator (VTE on GTK) draws them; its
-// input comes back as bytes. The host's screen answers no queries (DA, DSR):
-// the renderer's emulator does, through its input. A renderer that attaches
-// gets the screen as replay() bytes, then the live output.
+// (TerminalStream) into a TermShell. The bytes go on to every renderer
+// showing the terminal (the one that opened it, and each that attached
+// since), whose own emulator (VTE on GTK) draws them; input comes back as
+// bytes. The host's screen answers no queries (DA, DSR): the renderer's
+// emulator does, through its input. A renderer that attaches gets the
+// screen as replay() bytes, then the live output.
+//
+// Stage 6: renderers come and go (a headless host, SessionServer.h).
+// Detaching leaves documents, windows and terminals as they are; a
+// terminal nobody shows keeps running, its output going only into the
+// host's screen. busyReason() says whether anything would be lost if the
+// host went now.
 //
 // Pure C++17 and POSIX: SessionHost's thread polls the ptys (poll(2)) and a
 // pipe that wakes it for messages; Host does the I/O only when the loop
@@ -75,8 +82,8 @@ public:
     // A renderer joins: its id, to be named in every handle(). Nothing is
     // sent until its Hello.
     ClientId connect();
-    // It goes: its documents and windows stay with the host (stage 6 keeps
-    // them for the next renderer); it hears nothing more.
+    // It goes: its documents, windows and terminals stay with the host for
+    // the next renderer; it hears nothing more.
     void disconnect(ClientId c);
     void handle(ClientId from, Message&& m);
 
@@ -88,11 +95,23 @@ public:
     bool dirty(DocId d) const;
     UndoInfo undoInfo(DocId d) const;
     std::size_t logSize(DocId d) const;
+    // The session as StateQuery answers it: the folder, windows, documents
+    // (id, path, version, length, dirty) and terminals (id, size, pid, the
+    // shell's state, how many renderers show it).
     Json state() const;
+    // The folder a headless host serves ("" in an app's own host), named in
+    // state() and Welcome.
+    void setFolder(std::string folder) { folder_ = std::move(folder); }
+    const std::string& folder() const { return folder_; }
+    // Why the session must not end now, "" when nothing would be lost: a
+    // document with unsaved changes, or a terminal running a program (a
+    // command the integration marked running, or a foreground process group
+    // other than the shell's).
+    std::string busyReason() const;
 
     // ---- terminals: what the loop polls, and what it calls when a pty is
-    // ready. A terminal's renderer is the one that opened (or last
-    // attached to) it; it alone hears of it.
+    // ready. A terminal's renderers are the one that opened it and every
+    // one that attached to it since; all of them hear of it.
     struct PollFd {
         int fd = -1;
         bool read = false, write = false;
@@ -155,21 +174,23 @@ private:
     };
 
     struct Term {
-        ClientId owner = 0;
+        // Renderers showing it, each with its output not yet acknowledged:
+        // the pty is read while every one of them has credit left.
+        std::map<ClientId, long long> viewers;
         std::unique_ptr<Pty> pty;
         TerminalScreen screen;
         TerminalStream stream;
         std::string nonce;
         TermShell shell, sent;
         bool told = false;            // TermShell was sent once
-        long long unacked = 0;        // output not yet acknowledged
         std::chrono::steady_clock::time_point nextLook;
     };
-    // Shells hung up and not yet reaped; `tell` gets TermExited once
-    // reaped (a shell that ended by itself), 0 for one its renderer closed.
+    // Shells hung up and not yet reaped; `tell` get TermExited once reaped
+    // (every renderer of a shell that ended by itself; those but the one
+    // that closed it otherwise).
     struct Dying {
         TermId term = 0;
-        ClientId tell = 0;
+        std::vector<ClientId> tell;
         std::unique_ptr<Pty> pty;
     };
     std::map<TermId, Term> terms_;
@@ -179,14 +200,17 @@ private:
     void sendShell(TermId id, Term& t, bool always = false);
     void sendMarks(TermId id, Term& t);
     void look(Term& t);   // foreground group and modes
-    // The terminal's shell is gone or going: what is left is read, the pty
-    // hung up, and the shell reaped later (tick), telling `tell`.
-    void endTerminal(TermId id, ClientId tell);
+    // The terminal's shell is gone or going: what is left is read (when
+    // `drain`), the pty hung up, and the shell reaped later (tick), telling
+    // its renderers but `closer`.
+    void endTerminal(TermId id, bool drain, ClientId closer = 0);
+    void sendToViewers(const Term& t, const Message& m);
     // Output read from a terminal's pty: into the screen and the stream,
     // then to its renderer.
     void output(TermId id, Term& t, std::string&& bytes);
 
     Sink sink_;
+    std::string folder_;
     std::map<ClientId, Renderer> renderers_;
     ClientId nextClient_ = 0;
     std::map<DocId, Doc> docs_;
@@ -242,6 +266,8 @@ public:
     ClientId connect();
     void post(ClientId from, Message&& m);
     void disconnect(ClientId c);
+    // The folder a headless host serves (Host::setFolder), on its thread.
+    void setFolder(std::string folder);
     // Runs `f` on the host's thread with the Host, after everything posted
     // before it, and waits for it (checks only).
     void inspect(const std::function<void(const Host&)>& f);

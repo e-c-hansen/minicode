@@ -44,7 +44,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/LspEdits.cpp \
             src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/Regex.cpp \
             src/EditSpans.cpp src/FindRules.cpp src/Text.cpp src/Document.cpp src/UndoHistory.cpp \
-            src/Ot.cpp src/SessionProtocol.cpp src/SessionHost.cpp src/SessionClient.cpp src/HostPty.cpp \
+            src/Ot.cpp src/SessionProtocol.cpp src/SessionHost.cpp src/SessionClient.cpp src/SessionServer.cpp src/HostPty.cpp \
             src/MarkdownEdit.cpp src/MarkdownTasks.cpp \
             src/GitStatus.cpp src/GitGraph.cpp src/GitModel.cpp src/MathTex.cpp src/EditorTabs.cpp \
             src/Formatter.cpp src/FormatRun.cpp src/FolderTools.cpp src/InstallHints.cpp src/LineDiff.cpp src/QuickDiff.cpp \
@@ -69,6 +69,13 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
 # one file rebuilds that file and relinks. A change to the compiler or the
 # flags rebuilds everything (build/obj/flags.txt keeps the last command).
 OBJDIR   := build/obj
+# What `minicode host` and `minicode attach` (the headless session host,
+# SessionServer.h) need of the core, linked into the command line's client.
+SESSION_HOST_SRC := src/SessionServer.cpp src/SessionHost.cpp src/SessionClient.cpp \
+            src/SessionProtocol.cpp src/Ot.cpp src/HostPty.cpp src/TerminalScreen.cpp \
+            src/TerminalStream.cpp src/Document.cpp src/UndoHistory.cpp src/Text.cpp \
+            src/EditSpans.cpp src/FolderSearch.cpp src/EditorTabs.cpp src/TextFind.cpp \
+            src/Regex.cpp src/MarkdownTasks.cpp src/MarkdownParser.cpp
 OBJ      := $(patsubst mac/src/%,$(OBJDIR)/%.o,$(patsubst src/%,$(OBJDIR)/%.o,$(SRC)))
 
 # A release build (`make dist-zip RELEASE=1`, as scripts/release.sh runs it)
@@ -120,7 +127,8 @@ $(BIN): $(APP_OBJ) $(OBJDIR)/variant.txt
 CLI     := build/minicode-cli
 CLI_OBJ := $(OBJDIR)/tools/minicode-cli.cpp.o $(OBJDIR)/ControlProtocol.cpp.o $(OBJDIR)/Json.cpp.o \
            $(OBJDIR)/ProcessTable.cpp.o $(OBJDIR)/ClaudeHooks.cpp.o \
-           $(OBJDIR)/PageCheck.cpp.o $(OBJDIR)/TermLinks.cpp.o
+           $(OBJDIR)/PageCheck.cpp.o $(OBJDIR)/TermLinks.cpp.o \
+           $(patsubst src/%,$(OBJDIR)/%.o,$(SESSION_HOST_SRC))
 
 $(OBJDIR)/tools/%.cpp.o: tools/%.cpp $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)
