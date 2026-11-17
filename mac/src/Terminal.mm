@@ -604,7 +604,10 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     BOOL _seenPrompt;            // this shell has reached its first prompt
     NSString *_runningCommand;   // what was entered, until the next prompt
     NSString *_programTitle;     // OSC 0 or 2 from the running program, until the prompt
-    NSString *_pendingCommand;   // runCommand: waiting for the prompt
+    // runCommand: lines waiting for the prompt, first to start first. A
+    // list, not one line: a second command while the first still waited
+    // replaced it, and the first never ran.
+    NSMutableArray<NSString *> *_pendingCommands;
     BOOL _closed;                // close was called: never start a shell again
     BOOL _lineMode;              // terminal.mode = line when this one opened
     NSDictionary<NSString *, NSString *> *_extraEnvironment;   // added to the shell's
@@ -1192,7 +1195,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 - (NSString *)directory { return _cwd; }
 
 - (BOOL)busy {
-    if (_pendingCommand) return YES;
+    if (_pendingCommands.count) return YES;
     if (_shellPid <= 0) return NO;
     if (_integrated && _seenPrompt && !_atPrompt) return YES;
     return [self foregroundIsOther];
@@ -1219,14 +1222,20 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 // still be stale, and a program the marks missed would get the keys. With
 // no B (a plugin replaced the hook at the first prompt, before ours was put
 // back), a prompt counts as ready once ZLE has the terminal in raw mode,
-// 0.3 s after 133;A. Without the integration (after `exec bash`), the
-// foreground alone decides.
+// 0.3 s after 133;A. Either way the tty must be raw, as ZLE leaves it while
+// it reads: a B from a background job (the marks believed while a program
+// held the foreground) is still set when that program ends and the shell
+// gets the terminal back before its prompt, and a line typed then would go
+// to the cooked tty, echoed as `^[[9999~` before ZLE read it, as would one
+// typed into a builtin reading a line (`read`). Without the integration
+// (after `exec bash`), the foreground alone decides.
 - (BOOL)canTypeNow {
     if (_closed || ![self shellOwnsTerminal]) return NO;
     if (!_integrated) return YES;
     if (_screen.altScreen()) return NO;
-    if (_zleReady) return YES;
-    if (!_atPrompt || _commandStarted || CACurrentMediaTime() - _promptTime < 0.3) return NO;
+    if (!_zleReady &&
+        (!_atPrompt || _commandStarted || CACurrentMediaTime() - _promptTime < 0.3))
+        return NO;
     struct termios t;
     if (tcgetattr(_master, &t) != 0 || (t.c_lflag & ICANON)) return NO;
     _zleReady = YES;
@@ -1240,7 +1249,21 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     return !_integrated || (_atPrompt && !_gridMode);
 }
 
-- (NSString *)pendingCommand { return _closed ? nil : _pendingCommand; }
+- (NSString *)pendingCommand { return _closed ? nil : _pendingCommands.firstObject; }
+- (NSArray<NSString *> *)pendingCommands { return _closed ? @[] : [_pendingCommands copy] ?: @[]; }
+
+// Joins the queue behind any command already waiting, so they start in the
+// order they were asked for.
+- (void)queueCommand:(NSString *)line {
+    if (!_pendingCommands) _pendingCommands = [NSMutableArray array];
+    [_pendingCommands addObject:line];
+}
+
+- (NSString *)takePendingCommand {
+    NSString *line = _pendingCommands.firstObject;
+    if (line) [_pendingCommands removeObjectAtIndex:0];
+    return line;
+}
 
 // Everything closing this terminal would end or drop: the command in the
 // foreground, a command waiting for the first prompt, and the shell's
@@ -1251,8 +1274,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     if (_closed) return out;
     NSString *fg = [self foregroundCommand];
     if (fg) [out addObject:fg];
-    if (_pendingCommand)
-        [out addObject:[_pendingCommand stringByAppendingString:@" (waiting to start)"]];
+    for (NSString *c in _pendingCommands)
+        [out addObject:[c stringByAppendingString:@" (waiting to start)"]];
     [out addObjectsFromArray:[self backgroundJobs]];
     return out;
 }
@@ -1429,12 +1452,12 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 - (void)runCommand:(NSString *)line {
     if (_closed || !line.length) return;
     if (_shellPid <= 0) {
-        _pendingCommand = line;
+        [self queueCommand:line];
         [self startShell];
         return;
     }
     if (!_lineMode) {
-        if ([self canTypeNow]) {
+        if (!_pendingCommands.count && [self canTypeNow]) {
             // The prompt is used up: until the command's own marks arrive,
             // a second command must wait (or go to a new tab), not be typed
             // into the first one's program.
@@ -1442,16 +1465,16 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
             if (_integrated) _atPrompt = NO;
             [self typeLine:line run:YES];
         } else {
-            _pendingCommand = line;
+            [self queueCommand:line];
             [self schedulePendingRetry];
         }
         return;
     }
-    if ([self canSubmitNow]) {
+    if (!_pendingCommands.count && [self canSubmitNow]) {
         if (_integrated) _atPrompt = NO;
         [self submitCommand:line];
     } else {
-        _pendingCommand = line;
+        [self queueCommand:line];
         [self schedulePendingRetry];
     }
 }
@@ -1460,18 +1483,18 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 // can take it; until then this looks again every 0.1 s, since the foreground
 // or the raw tty that canTypeNow waits on sends no event of its own.
 - (void)flushPendingInput {
-    if (_closed || (!_pendingCommand && !_pendingTyped)) return;
+    if (_closed || (!_pendingCommands.count && !_pendingTyped)) return;
     if (_lineMode) {
-        if (_pendingCommand && [self canSubmitNow]) {
-            NSString *line = _pendingCommand;
-            _pendingCommand = nil;
+        if (_pendingCommands.count && [self canSubmitNow]) {
+            NSString *line = [self takePendingCommand];
             if (_integrated) _atPrompt = NO;
             [self submitCommand:line];
         }
     } else if ([self canTypeNow]) {
-        if (_pendingCommand) {
-            NSString *line = _pendingCommand;
-            _pendingCommand = nil;
+        if (_pendingCommands.count) {
+            // One at a time: typing uses the prompt up, so the next waits
+            // for the prompt after this one.
+            NSString *line = [self takePendingCommand];
             _zleReady = NO;
             if (_integrated) _atPrompt = NO;
             [self typeLine:line run:YES];
@@ -1485,7 +1508,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 }
 
 - (void)schedulePendingRetry {
-    if (_retryScheduled || _closed || _shellPid <= 0 || (!_pendingCommand && !_pendingTyped))
+    if (_retryScheduled || _closed || _shellPid <= 0 || (!_pendingCommands.count && !_pendingTyped))
         return;
     _retryScheduled = YES;
     __weak TerminalView *weakSelf = self;
@@ -1668,7 +1691,7 @@ static BOOL MCIsOtherShell(pid_t pid) {
         [[NSNotificationCenter defaultCenter] postNotificationName:MCTerminalDidCloseNotification
                                                             object:self];
     _closed = YES;
-    _pendingCommand = nil;
+    [_pendingCommands removeAllObjects];
     _pendingTyped = nil;
     if (_flagsMonitor) { [NSEvent removeMonitor:_flagsMonitor]; _flagsMonitor = nil; }
     [self stopShell];
@@ -2517,7 +2540,7 @@ static NSString *MCBrowserHelperPath(void) {
     if (_gridMode) [self.grid screenChanged];
     else [self scrollToEnd];
     [self updateSecureInput];
-    if (_pendingCommand) [self flushPendingInput];
+    if (_pendingCommands.count) [self flushPendingInput];
 }
 
 // Grid mode: the bytes are already on the screen; the stream's events say
@@ -2581,7 +2604,7 @@ static NSString *MCBrowserHelperPath(void) {
     [self updateGridHiddenInput];
     // What waited for the prompt goes in once ZLE reads input, unless a
     // program has the screen or the terminal.
-    if (_pendingCommand || _pendingTyped) [self flushPendingInput];
+    if (_pendingCommands.count || _pendingTyped) [self flushPendingInput];
 }
 
 // A line from the panel itself: in the log (line mode), or written on the
