@@ -44,7 +44,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/LspEdits.cpp \
             src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/Regex.cpp \
             src/EditSpans.cpp src/FindRules.cpp src/Text.cpp src/Document.cpp src/UndoHistory.cpp \
-            src/Ot.cpp src/SessionProtocol.cpp src/SessionHost.cpp src/SessionClient.cpp \
+            src/Ot.cpp src/SessionProtocol.cpp src/SessionHost.cpp src/SessionClient.cpp src/HostPty.cpp \
             src/MarkdownEdit.cpp src/MarkdownTasks.cpp \
             src/GitStatus.cpp src/GitGraph.cpp src/GitModel.cpp src/MathTex.cpp src/EditorTabs.cpp \
             src/Formatter.cpp src/FormatRun.cpp src/FolderTools.cpp src/InstallHints.cpp src/LineDiff.cpp src/QuickDiff.cpp \

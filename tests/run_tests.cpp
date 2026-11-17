@@ -11213,6 +11213,7 @@ static void testMultiCaretOccurrences() {
 #include "undo_history_tests.inc"
 #include "session_model_tests.inc"
 #include "session_host_tests.inc"
+#include "session_terminal_tests.inc"
 #include "lsp_trust_tests.inc"
 #include "lsp_clangd_tests.inc"
 #include "multiedit_tests.inc"
@@ -11405,6 +11406,7 @@ int main() {
     testTextModel();
     testUndoHistory();
     testSessionHost();
+    testSessionTerminals();
     testLspProjectCode();
     testLspClangdFlags();
     testMultiEdit();

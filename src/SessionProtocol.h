@@ -16,6 +16,23 @@
 // Undo: DocUndo goes to the host, whose answer is an ordinary DocEdited
 // (with the selection to show) followed by DocUndone with the outcome.
 //
+// Terminals (stage 5): the host owns each terminal's pty and a headless
+// TerminalScreen fed from it, and forwards the pty's bytes to the renderer
+// whose emulator draws them; what the user types comes back as bytes.
+//   renderer → host  TermOpen {term, json: the shell (TermSpec)}, then
+//                    TermInput {term, bytes}, TermResize {term, cols, rows},
+//                    TermAck {term, v: bytes taken}, TermClose {term};
+//                    TermAttach {term}: the terminal as it is now (replay)
+//   host → renderer  TermOpened {term, v: the shell's pid}, TermOutput
+//                    {term, bytes, v: the cursor's line, flag 1: on the
+//                    alternate screen}, TermShell {term, json: TermShell},
+//                    TermMarks {term, json: the commands}, TermExited
+//                    {term, flag: wait status, name: why it never started},
+//                    TermReplay {term, bytes, v}.
+// Output past kTermCredit bytes not yet acknowledged stops the host reading
+// the pty until the renderer catches up (the program blocks), as the Mac's
+// reader stops past 1 MB.
+//
 // Offsets are in the receiving renderer's unit, named in its Hello (code
 // points for GTK, UTF-16 for the Mac); `ops16` is the same edit in UTF-16
 // for a renderer keeping a copy of the host's text (DocWatch: the GTK
@@ -55,6 +72,12 @@ enum class Kind {
     WindowClose, // window
     StateQuery,  // req: the whole session, answered by State
     Ping,        // req: answered by Pong once everything sent before it is done
+    TermOpen,    // term, json (TermSpec's fields)
+    TermInput,   // term, bytes
+    TermResize,  // term, cols, rows
+    TermAck,     // term, v: bytes of output taken
+    TermClose,   // term
+    TermAttach,  // term: answered by TermReplay, TermShell and TermMarks
     // host → renderer
     Welcome,     // client: the renderer's id
     DocOpened,   // doc, v (and text16 when it was open already: another renderer's)
@@ -65,6 +88,12 @@ enum class Kind {
     State,       // req, json
     Pong,        // req
     Error,       // doc, name (what went wrong)
+    TermOpened,  // term, v: the shell's pid
+    TermOutput,  // term, bytes, v: the cursor's line (TermMark's count), flag 1: alternate screen
+    TermShell,   // term, json (TermShell's fields)
+    TermMarks,   // term, json: {"commands": [[prompt, output, end, status], ...]}
+    TermExited,  // term, flag: the shell's wait status (-1 unknown), name: why it never started
+    TermReplay,  // term, bytes, v: as TermOutput
 };
 
 const char* kindName(Kind k);
@@ -96,6 +125,57 @@ struct UndoInfo {
 
 enum class Outcome { Done = 0, Nothing = 1, Refused = 2 };
 
+using TermId = std::uint64_t;
+// Unacknowledged output at which the host stops reading a pty, and below
+// which it reads again.
+constexpr long long kTermCredit = 1 << 20;
+constexpr long long kTermCreditLow = 256 << 10;
+
+// The shell a terminal runs (TermOpen's json).
+struct TermSpec {
+    std::string program;              // a path, or a name in PATH
+    std::vector<std::string> argv;    // argv[0] included
+    std::vector<std::string> env;     // the whole environment, NAME=value
+    std::string cwd;
+    int cols = 80, rows = 24;
+    int scrollback = 10000;           // the host's screen's, as the renderer's
+    std::string nonce;                // the integration's marks carry it
+};
+Json termSpecJson(const TermSpec& s);
+TermSpec termSpecFrom(const Json& j);
+
+// What the host knows of a terminal's shell, from the shell integration's
+// marks (OSC 133 A, B, C and D, 633;E and 7, with the nonce) and the pty.
+struct TermShell {
+    bool known = false;       // a mark with the nonce came
+    bool busy = false;        // a command started (C) and has not finished (D)
+    bool atPrompt = false;    // a prompt (A) and no command since
+    bool inputReady = false;  // zsh's line editor reads (B) since the prompt
+    long long prompts = 0, started = 0, done = 0;
+    int status = -1;          // the last finished command's, -1 before one
+    std::string command;      // the running command's text (633;E)
+    std::string cwd;          // the last OSC 7
+    std::string title;        // the last OSC 0 or 2
+    int foreground = 0;       // the pty's foreground process group, 0 unknown
+    bool raw = false;         // the pty is out of canonical mode
+    bool echoOff = false;     // echo off in canonical mode: a password
+    bool operator==(const TermShell& o) const;
+    bool operator!=(const TermShell& o) const { return !(*this == o); }
+};
+Json termShellJson(const TermShell& s);
+TermShell termShellFrom(const Json& j);
+
+// A command the marks place (TerminalScreen's TermCommand), by line: lines
+// counted from the first that ever went into the scrollback (the screen's
+// historyBase() + line), so a renderer maps them through the cursor's line
+// in TermOutput. -1 for an output or end not reached.
+struct TermMark {
+    long long prompt = 0, output = -1, end = -1;
+    int status = 0;
+};
+Json termMarksJson(const std::vector<TermMark>& marks);
+std::vector<TermMark> termMarksFrom(const Json& j);
+
 struct Message {
     Kind kind = Kind::Ping;
     ClientId client = 0;        // Welcome: the renderer's id; DocEdited: who made it (0 the host)
@@ -115,6 +195,9 @@ struct Message {
     Outcome outcome = Outcome::Done;
     UndoInfo undo;
     Json json;
+    TermId term = 0;
+    std::string bytes;          // terminal bytes, any (base64 on the wire)
+    int cols = 0, rows = 0;
 };
 
 // One line of JSON (no newline), and back. Texts with a surrogate missing
