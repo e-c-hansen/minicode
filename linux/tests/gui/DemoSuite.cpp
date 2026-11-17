@@ -39,12 +39,18 @@ GPid gRecorder = 0;
 Editor* ed() { return MCGuiApp().editor; }
 GtkWidget* win() { return GTK_WIDGET(MCGuiApp().window); }
 
+std::string envOr(const char* name, const std::string& otherwise = "") {
+    const char* v = getenv(name);
+    return v && *v ? v : otherwise;
+}
+
 // ------------------------------------------------------------ captions
 GtkWidget* gCaption = nullptr;       // the pill, a child of the window's overlay
 GtkWidget* gCaptionKeys = nullptr;
 GtkWidget* gCaptionText = nullptr;
 GtkCssProvider* gCaptionCss = nullptr;
 bool gCaptions = false;
+bool gCaptionTop = false;   // at the top, for a scene whose popovers fill the middle
 
 // "ctrl+shift+p" as "Ctrl+Shift+P"; "enter" as "Enter".
 std::string chordName(const std::string& chord) {
@@ -57,17 +63,27 @@ std::string chordName(const std::string& chord) {
     return out;
 }
 
+// The window's outermost GtkOverlay (the one over the panes, above the
+// status bar), found from the window down.
+GtkWidget* findOverlay(GtkWidget* root) {
+    if (!root) return nullptr;
+    if (GTK_IS_OVERLAY(root)) return root;
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* hit = findOverlay(c)) return hit;
+    return nullptr;
+}
+
 void showCaption(const std::string& keys, const std::string& text) {
     if (!gCaptions) return;
-    GtkWidget* overlay = gtk_window_get_child(MCGuiApp().window);
-    if (!GTK_IS_OVERLAY(overlay)) return;
+    GtkWidget* overlay = findOverlay(win());
+    if (!overlay) return;
     if (!gCaption) {
         gCaptionCss = gtk_css_provider_new();
         gtk_css_provider_load_from_string(gCaptionCss,
-            ".demo-caption { background: rgba(24,24,24,0.92); border-radius: 12px;"
-            " padding: 8px 18px; border: 1px solid rgba(255,255,255,0.18); }"
+            ".demo-caption { background: #101010; border-radius: 12px;"
+            " padding: 8px 18px; border: 1px solid #5a5a5a; }"
             ".demo-keys { color: #ffffff; font-size: 22px; font-weight: bold;"
-            " font-family: monospace; background: rgba(255,255,255,0.16);"
+            " font-family: monospace; background: #3c3c3c;"
             " border-radius: 7px; padding: 2px 12px; }"
             ".demo-text { color: #f0f0f0; font-size: 21px; }");
 G_GNUC_BEGIN_IGNORE_DEPRECATIONS
@@ -77,8 +93,9 @@ G_GNUC_END_IGNORE_DEPRECATIONS
         gCaption = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
         gtk_widget_add_css_class(gCaption, "demo-caption");
         gtk_widget_set_halign(gCaption, GTK_ALIGN_CENTER);
-        gtk_widget_set_valign(gCaption, GTK_ALIGN_END);
-        gtk_widget_set_margin_bottom(gCaption, 40);
+        gtk_widget_set_valign(gCaption, gCaptionTop ? GTK_ALIGN_START : GTK_ALIGN_END);
+        if (gCaptionTop) gtk_widget_set_margin_top(gCaption, 64);
+        else gtk_widget_set_margin_bottom(gCaption, 40);
         gtk_widget_set_can_target(gCaption, FALSE);   // never takes a click or the pointer
         gtk_widget_set_can_focus(gCaption, FALSE);
         gCaptionKeys = gtk_label_new("");
@@ -98,7 +115,7 @@ G_GNUC_END_IGNORE_DEPRECATIONS
 
 void removeCaption() {
     if (gCaption) {
-        GtkWidget* overlay = gtk_window_get_child(MCGuiApp().window);
+        GtkWidget* overlay = gtk_widget_get_parent(gCaption);
         if (GTK_IS_OVERLAY(overlay)) gtk_overlay_remove_overlay(GTK_OVERLAY(overlay), gCaption);
         gCaption = gCaptionKeys = gCaptionText = nullptr;
     }
@@ -114,7 +131,10 @@ G_GNUC_END_IGNORE_DEPRECATIONS
 
 // Turns the scene's captions on (at queueing, so the pauses know); the pill
 // goes with the scene (stopRecording).
-void captionsOn() { gCaptions = true; }
+void captionsOn(bool top = false) {
+    gCaptions = true;
+    gCaptionTop = top;
+}
 
 // A step's label alone, held until the next caption, for about `hold` seconds.
 void label(const std::string& text, double hold = 1.6) {
@@ -142,11 +162,6 @@ void still(const std::string& name) {
                      &status, nullptr);
         g_free(out);
     });
-}
-
-std::string envOr(const char* name, const std::string& otherwise = "") {
-    const char* v = getenv(name);
-    return v && *v ? v : otherwise;
 }
 
 // The demo folder copied over the scratch project, committed in a few
@@ -456,7 +471,7 @@ GtkWidget* menuShowing(GtkWidget* root, const std::string& text) {
 
 MC_GUI_SUITE(_demo_settings) {
     prepareProject();
-    captionsOn();
+    captionsOn(true);
     startRecording("settings");
     openFile("sample.cpp");
     still("settings-1-start");
