@@ -641,6 +641,15 @@ void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, N
 - (void)finish;
 @end
 
+// The words of a list of suite names (MC_GUI_SUITES, MC_GUI_SKIP_SUITES).
+static NSArray<NSString *> *SuiteNames(NSString *list) {
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    NSCharacterSet *blanks = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+    for (NSString *w in [list ?: @"" componentsSeparatedByCharactersInSet:blanks])
+        if (w.length) [out addObject:w];
+    return out;
+}
+
 @implementation MCGuiRunner {
     NSUInteger _index;
     MCGuiItem *_waiting;
@@ -659,12 +668,24 @@ void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, N
 - (void)start {
     _started = [NSDate date];
     NSString *only = Env(@"MC_GUI_SUITES");
-    NSArray<NSString *> *wanted = only.length
-        ? [only componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet] : @[];
+    NSArray<NSString *> *wanted = SuiteNames(only);
+    // MC_GUI_SKIP_SUITES leaves suites out: CI runs the list as two
+    // processes at once, one naming its half and the other skipping it, so
+    // a new suite lands in the second without anyone listing it.
+    NSArray<NSString *> *skipped = SuiteNames(Env(@"MC_GUI_SKIP_SUITES"));
+    // A name in either list that no suite has is a failure, not a silent
+    // skip: a suite renamed after CI's list named it would otherwise run in
+    // neither half.
+    NSMutableSet<NSString *> *known = [NSMutableSet set];
+    for (const Suite &s : suites()) [known addObject:[NSString stringWithUTF8String:s.name.c_str()]];
+    for (NSString *w in [wanted arrayByAddingObjectsFromArray:skipped])
+        if (![known containsObject:w])
+            MCGuiCheck(NO, [NSString stringWithFormat:@"no suite is named \"%@\"", w], __FILE__, __LINE__);
     int ran = 0;
     for (const Suite &s : suites()) {
         NSString *name = [NSString stringWithUTF8String:s.name.c_str()];
         if (wanted.count && ![wanted containsObject:name]) continue;
+        if ([skipped containsObject:name]) continue;
         // A suite named with a leading underscore is a part another suite
         // runs in a process of its own (BackupsSuite): only when named.
         if (!wanted.count && [name hasPrefix:@"_"]) continue;

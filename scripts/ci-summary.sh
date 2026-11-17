@@ -42,9 +42,16 @@ fails="$(grab '^  FAIL \[|^FATAL|SUMMARY: (Address|Undefined|Thread|Leak)Sanitiz
 leaks="$(grab '^  LEAK \[')"
 left="$(grab '^  LEFT \[')"
 slow="$(grab '^  SLOW \[')"
-near="$(grab '^  NEAR \[' | head -10)"
+# Closest first, across every log: the GUI checks run as two processes, each
+# listing its own ten.
+near="$(grab '^  NEAR \[' | awk '{ p = $0; sub(/.*: /, "", p); sub(/%.*/, "", p); print p "\t" $0 }' |
+        sort -t "$(printf '\t')" -k1,1 -rn | cut -f2- | head -10)"
 builds="$(grab '(: error: |^FAILED: |^make(\[[0-9]+\])?: \*\*\* |^ninja: build stopped|^error: )' | head -15)"
-totals="$(grab '^(GUI checks: )?[0-9]+ passed, [0-9]+ failed|^Also: ')"
+# Each log's own totals, named for the log (core-tests, gui-checks-1, ...).
+totals="$(for l in "${logs[@]}"; do
+              clean <"$l" | grep -E '^(GUI checks: )?[0-9]+ passed, [0-9]+ failed|^Also: ' |
+                  sed "s|^|$(basename "$l" .log): |"
+          done)"
 
 count() { [ -z "$1" ] && echo 0 || printf '%s\n' "$1" | wc -l | tr -d ' '; }
 nf=$(count "$fails"); nl=$(count "$leaks"); ns=$(count "$slow")

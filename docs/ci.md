@@ -6,6 +6,63 @@ the Kotlin checks, and the Android release APK) and a seventh, **CI passed**,
 which is green only when all six are. CLAUDE.md ("Build, test, run,
 release" and "Verification reality") has what each job checks.
 
+## What makes a run quick (2026-11-17)
+
+Before, a run took about 21 minutes, set by the macOS job (core tests 4.4
+minutes, build 1.9, GUI checks 10.3) and the GTK job (core tests 3.5, build
+4.8, GUI checks 7.6). Three changes, none costing anything:
+
+- **ccache, kept between runs with actions/cache**, in the macOS, GTK4,
+  sanitizers and tsan jobs (`scripts/ci-ccache.sh`). Links named clang++,
+  g++ or clang++-22 go first on PATH, so make runs the same command lines
+  and `build/obj/flags.txt` is the same; Meson puts ccache in front of g++
+  by itself. Each run starts from the newest cache for its job and
+  compiler (its own branch's, else main's) and saves one trimmed to what
+  it used. A stale object cannot pass: ccache keys every compile on the
+  compiler's `--version` output (so a new Xcode behind the same
+  /usr/bin/clang++ misses), the whole command line, and the contents of
+  every file the compile read, SDK and system headers included, and no
+  build folder is cached, so make's dates and Meson's rules decide what to
+  build as on a fresh checkout. The cache key (OS, job, compiler, a hash of
+  the build files) only chooses where to start. The Android jobs build
+  through Gradle and are not on the critical path, so they have none.
+- **The core tests beside the GUI checks** in the macOS job: one make
+  builds the app, the tests and the GUI checks, then
+  `scripts/ci-together.sh` runs `build/run_tests` and the two halves of
+  the GUI checks at once, each into its own log (`core-tests`,
+  `gui-checks-1`, `gui-checks-2` in ci-logs, which the summary reads), and
+  fails if any of them failed. The GTK job runs no plain core tests: the
+  sanitizers job builds the same tests with the same g++ and libstdc++
+  and runs every group, timing bounds included, and the macOS job runs
+  them plainly with clang.
+- **The GUI checks as two processes on one runner**, in both GUI jobs.
+  The step's `GUI_SECOND_HALF` names the second half's suites and the
+  first half runs every other suite (`MC_GUI_SKIP_SUITES`), so a new suite
+  runs in the first unlisted; a name in the list that no suite has fails
+  the run, so a rename cannot drop a suite from both. The halves were
+  split by each suite's time on CI (from a run's "Suite x" timestamps):
+  about 290 s each on the Mac, 240 s on GTK. On GTK they are two
+  `meson test --no-rebuild --logbase gui-first-half|gui-second-half` runs.
+  Each half's failure pictures go in a folder of their own in the
+  artifact, and the summary's NEAR list is the closest ten across both.
+
+What the two harness processes could share, and why they do not (CLAUDE.md,
+"Two harnesses at once"): each makes its own scratch world (mkdtemp), with
+its own home, TMPDIR (and so its control sockets), defaults suite and
+pasteboard named by its pid, and on GTK its own Xvfb (the server picks the
+display) and session bus. The Python interpreter choice was the one piece
+of app state still in the standard defaults, shared by every process
+called guitest; it now goes through the scratch suite like the rest.
+Servers in the checks bind port 0, or take a free port and hand it to
+`serve.py`; macOS hands out TCP ephemeral ports in turn, so a port one
+process released is not given to the other before the range wraps. Launch
+Services is never asked anything (openURL: is swizzled), and the recent
+folders the app notes go to a system list no check reads.
+
+A check that fails only when the halves run together is a sharing bug:
+fix the sharing, or move the suite so it never overlaps the suite it
+collides with, and say so here. Never retry it.
+
 ## Before pushing
 
 `scripts/ci-local.sh` runs on the Mac what CI runs, without Docker:
@@ -29,7 +86,8 @@ the pull request: `FAIL [suite] file:line what (in: step)`, a crash
 It also says which suites failed and how often ("Failed in: git_panel (19),
 git_actions (18)"), so a cascade from one suite reads at once. A failed GUI
 run keeps a picture of the test window at each of its first ten failures
-(the `mac-gui-checks` and `gui-checks` artifacts).
+in each half (the `mac-gui-checks` and `gui-checks` artifacts, a folder per
+half).
 
 Three more kinds of line warn before anything fails:
 
@@ -124,8 +182,9 @@ from a commit whose CI already passed. A pull request with no run (one the
 Demos workflow opened before `scripts/demos-propose.sh` started CI itself)
 gets one by hand: `gh workflow run CI --ref <branch>`.
 
-A run takes about 25 minutes (the GTK job), so a merge waits that long
-after the last push to its branch.
+A run took about 21 minutes until 2026-11-17 (see "What makes a run
+quick" for now), and a merge waits that long after the last push to its
+branch.
 
 ## Measuring a flake rate
 

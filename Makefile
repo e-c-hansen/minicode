@@ -107,7 +107,7 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(VARIANT)' > $(OBJDIR)/variant.txt)
 endif
 
-.PHONY: all app run test test-asan test-tsan guitest fakelsp latex-sweep install dmg dist-zip clean demos membench-mac membench-linux icon compdb FORCE
+.PHONY: all app run test test-asan test-tsan guitest guitest-build fakelsp latex-sweep install dmg dist-zip clean demos membench-mac membench-linux icon compdb FORCE
 
 all: app compile_commands.json
 
@@ -360,7 +360,12 @@ $(FAKELSP): $(FAKELSP_OBJ)
 
 fakelsp: $(FAKELSP)
 
-guitest: build/guitest $(CLI) $(FAKELSP) $(BROWSER_HELPER) $(ZSH_INTEGRATION)
+# guitest-build builds what the checks need without running them: CI builds
+# it with the app and the core tests in one make, then runs build/guitest
+# as two processes at once (.github/workflows/ci.yml).
+guitest-build: build/guitest $(CLI) $(FAKELSP) $(BROWSER_HELPER) $(ZSH_INTEGRATION)
+
+guitest: guitest-build
 	@./build/guitest $(SUITES)
 
 # The LaTeX preview's click-to-source sweep (tests/latex/sweep.mm): every

@@ -35,18 +35,35 @@ jobs:
     # Every job has a limit well past its usual length (the slowest of the Linux
     # jobs, ASan, takes about 7 minutes), so a hang fails the job instead of
     # holding a runner and main's status for the six hours GitHub allows. This
-    # one takes about 13 minutes; the GUI harness has a 25-minute backstop too.
+    # one took about 18 minutes before the compiler cache and the GUI checks in
+    # two halves (2026-11-17); the GUI harness has a 25-minute backstop too.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
 
-      - name: Run core unit tests
+      # ccache in front of clang++ (scripts/ci-ccache.sh says why a cached
+      # object can never stand in for a changed one), restored from the
+      # newest cache for this compiler: this branch's, else main's. A pull
+      # request then compiles only the files it changed.
+      - name: Put ccache in front of the compiler
+        id: ccache
+        run: scripts/ci-ccache.sh setup clang++ clang++
+
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-macos-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-macos-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-
+            ccache-macos-${{ steps.ccache.outputs.compiler }}-
+
+      # The app, the core tests and the GUI checks in one make, so its jobs
+      # are shared across all three.
+      - name: Build the app, the core tests and the GUI checks
         run: |
           mkdir -p "$RUNNER_TEMP/ci-logs"
-          make test 2>&1 | tee "$RUNNER_TEMP/ci-logs/core-tests.log"
-
-      - name: Build the app
-        run: make app 2>&1 | tee "$RUNNER_TEMP/ci-logs/build.log"
+          make app build/run_tests guitest-build 2>&1 | tee "$RUNNER_TEMP/ci-logs/build.log"
 
       # Every binary built for Info.plist's LSMinimumSystemVersion, and the
       # cask saying the same.
@@ -64,11 +81,21 @@ jobs:
         timeout-minutes: 10
         run: make latex-sweep 2>&1 | tee "$RUNNER_TEMP/ci-logs/latex-sweep.log"
 
-      # The app driven offscreen (mac/tests/gui/Harness.h): no window ever
-      # reaches the screen, and the run has its own home, settings and
-      # temporary folder. The language server checks talk to a scripted
-      # server (tests/fakelsp) that make guitest builds, so none of them
-      # needs a real server installed on the runner.
+      # Three processes at once (scripts/ci-together.sh), each with its own
+      # log in ci-logs for the summary: the core tests (`make test`'s
+      # binary), and the GUI checks as two halves. The halves are split by
+      # the time each suite took on CI (November 2026, about 290 s each):
+      # the second runs the suites named in GUI_SECOND_HALF, the first
+      # every other suite, so a new suite runs in the first without being
+      # listed. A name here that no suite has fails the run (Harness.mm).
+      # Each harness process has a scratch world of its own (Harness.h:
+      # /tmp/mcgui-*, its own home, defaults suite, pasteboard, TMPDIR and
+      # control sockets; docs/ci.md lists what was checked for sharing).
+      #
+      # The GUI checks are the whole app driven offscreen
+      # (mac/tests/gui/Harness.h): no window ever reaches the screen. The
+      # language server checks talk to a scripted server (tests/fakelsp),
+      # so none of them needs a real server installed on the runner.
       #
       # The runner is a shared virtual Mac, slower than the Macs the bounds
       # were set on and uneven from run to run (a full terminal draw took
@@ -79,18 +106,34 @@ jobs:
       # passing with a SLOW line in the summary. Of the timing failures on
       # CI from November 6 to 14, all that passed on a rerun were under 1.45
       # times their bound; the real regressions were 1.8 times or more.
+      # The bounds are on the CPU time of the thread doing the work, so the
+      # processes sharing the runner's cores slow the waits, not the bounds.
       # What a suite leaves for the next (a pinned key window, a window, an
       # alert answer) fails that suite by name, a LEAK line (Harness.h).
-      - name: Run the GUI checks
+      - name: Run the core tests and the GUI checks
         id: gui
         env:
           MC_GUI_WAIT_SCALE: '1.5'
           MC_TIMING_SCALE: '1.5'
-          MC_GUI_SNAPSHOTS: ${{ runner.temp }}/gui-pictures
-        run: make guitest 2>&1 | tee "$RUNNER_TEMP/ci-logs/gui-checks.log"
+          PICTURES: ${{ runner.temp }}/gui-pictures
+          GUI_SECOND_HALF: >-
+            agent_autosave agent_panel agents auto_close bookmarks browser_find
+            browser_tabs browserpages config_writes folding format_consent
+            git_actions git_gutter git_panel git_review git_verbs idelink keymap
+            keystroke language latex lsp_fixes lsp_open_tabs lsp_watch
+            markdown_preview markdown_side markdown_width multicaret_rows palette
+            paste previews problems processes server_consent split_editor
+            structure swatch_escape terminal_draw terminal_exec terminal_links
+            terminal_marks terminal_paste terminal_pty terminal_reflow
+            terminal_zoom tools_consent tree worktree_review
+        run: |
+          scripts/ci-together.sh "$RUNNER_TEMP/ci-logs" \
+            core-tests './build/run_tests' \
+            gui-checks-1 'MC_GUI_SKIP_SUITES="$GUI_SECOND_HALF" MC_GUI_SNAPSHOTS="$PICTURES/first-half" ./build/guitest' \
+            gui-checks-2 'MC_GUI_SNAPSHOTS="$PICTURES/second-half" ./build/guitest $GUI_SECOND_HALF'
 
-      # A picture of the test window at each of the first ten failed checks,
-      # and the logs, only when the GUI checks failed.
+      # A picture of the test window at each of the first ten failed checks
+      # of each half, and the logs, only when the tests failed.
       - name: Keep the GUI checks' pictures
         if: failure() && steps.gui.outcome == 'failure'
         uses: actions/upload-artifact@v7
@@ -119,6 +162,19 @@ jobs:
           unzip -l MiniCode.zip | grep -q ' MiniCode.app/Contents/MacOS/minicode-cli$'
           scripts/check-minos.sh MiniCode.app
 
+      # The cache saved even when a check failed (what it holds is right
+      # either way), trimmed to what this run used when the job passed.
+      - name: Trim the compiler cache
+        if: ${{ !cancelled() && steps.ccache.outcome == 'success' }}
+        run: scripts/ci-ccache.sh finish ${{ job.status }}
+
+      - name: Save the compiler cache
+        if: ${{ !cancelled() && steps.ccache.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-macos-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: Summary
         if: always()
         run: scripts/ci-summary.sh "macOS app" "$RUNNER_TEMP/ci-logs"
@@ -126,9 +182,9 @@ jobs:
   linux:
     name: GTK4 port
     runs-on: ubuntu-26.04
-    # About 25 minutes with Stage 4's GUI suites (2026-11-12); the package
-    # install alone once took 13 (Ubuntu's mirror, 2026-11-10) and the job
-    # was cancelled mid-build at 20.
+    # About 21 minutes before the compiler cache and the GUI checks in two
+    # halves (2026-11-17); the package install alone once took 13 (Ubuntu's
+    # mirror, 2026-11-10) and the job was cancelled mid-build at 20.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
@@ -144,7 +200,7 @@ jobs:
             meson ninja-build build-essential pkg-config \
             libgtk-4-dev libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev \
             libpoppler-glib-dev libsqlite3-dev \
-            xvfb libxtst-dev dbus-daemon
+            xvfb libxtst-dev dbus-daemon ccache
 
       # apt will happily install a runtime library and leave the -dev package
       # out, and Meson would then just report the panel as disabled and build a
@@ -156,19 +212,39 @@ jobs:
           pkg-config --modversion gtk4 vte-2.91-gtk4 webkitgtk-6.0 poppler-glib xtst
           command -v Xvfb dbus-run-session
 
-      # The shared core in ../src, the same tests the macOS job runs, built
-      # here with g++ (the top-level Makefile picks clang++ only on the Mac).
-      - name: Run core unit tests
+      # No plain `make test` here: the core tests job under ASan and UBSan
+      # builds the same tests with the same g++ and libstdc++ and runs every
+      # group, the timing bounds included (on a slower build, so a stricter
+      # test of them), and the macOS job runs them plainly with clang and
+      # libc++. Run here too, they cost five minutes of the longest job.
+      #
+      # ccache for the build (scripts/ci-ccache.sh): Meson puts ccache in
+      # front of g++ by itself when it finds it at `meson setup`, so no
+      # compiler is wrapped here. The key holds a hash of the build files.
+      - name: Set up ccache
+        id: ccache
         run: |
           mkdir -p "$RUNNER_TEMP/ci-logs"
-          make test 2>&1 | tee "$RUNNER_TEMP/ci-logs/core-tests.log"
+          scripts/ci-ccache.sh setup c++
+
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-gtk-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('linux/meson.build', 'linux/Makefile') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-gtk-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('linux/meson.build', 'linux/Makefile') }}-
+            ccache-gtk-${{ steps.ccache.outputs.compiler }}-
 
       # -Denabled rather than the default auto-detection: this job exists to
       # compile Terminal.cpp, Browser.cpp and PdfView.cpp, so a missing library
       # has to be a failure and not a silent skip.
       - name: Configure with every panel enabled
         working-directory: linux
-        run: meson setup build -Dterminal=enabled -Dbrowser=enabled -Dpdf=enabled
+        run: |
+          meson setup build -Dterminal=enabled -Dbrowser=enabled -Dpdf=enabled | tee meson-setup.txt
+          # Say so if Meson did not take ccache: the build still works, only slower.
+          grep -q 'ccache' meson-setup.txt || echo "::warning title=GTK4 port::Meson did not put ccache in front of the compiler"
 
       - name: Build
         working-directory: linux
@@ -192,6 +268,17 @@ jobs:
       # a run that overruns still ends with its summary and the pictures
       # below are kept.
       #
+      # Two halves at once (scripts/ci-together.sh), each a `meson test` of
+      # its own with its own log base (--no-rebuild, so neither runs ninja
+      # while the other reads the build). Each harness process starts its
+      # own Xvfb on a display the server picks (-displayfd), its own
+      # dbus-run-session, scratch home, XDG folders and TMPDIR (Wrapper.cpp),
+      # so the two share nothing but the runner. The second half runs the
+      # suites in GUI_SECOND_HALF, the first every other suite (a new suite
+      # lands there unlisted); a name no suite has fails the run. The split
+      # is by the time each suite took on CI (November 2026, about 240 s a
+      # half).
+      #
       # Every window makes a web view, whose page WebKit runs inside
       # bubblewrap, and the harness suite fails unless that page answers
       # from inside the sandbox. The runner restricts unprivileged user
@@ -203,9 +290,7 @@ jobs:
       - name: GUI checks
         id: gui
         working-directory: linux
-        # The whole list ran about 7 minutes here before Stage 4 and passed
-        # 420 s at terminal_tabs with fifteen suites to go after it
-        # (2026-11-12); about 10 minutes on a ThinkPad core pair.
+        # The whole list ran about 8 minutes in one process (2026-11-17).
         #
         # The same room as the macOS job's GUI checks (see there and
         # linux/tests/gui/Harness.h): waits and CPU-time bounds half again,
@@ -214,13 +299,28 @@ jobs:
         timeout-minutes: 20
         env:
           MC_GUI_TOTAL_SECONDS: '1080'
-          MC_GUI_SNAPSHOTS: ${{ runner.temp }}/gui-pictures
           MC_GUI_WAIT_SCALE: '1.5'
           MC_TIMING_SCALE: '1.5'
-        run: meson test -C build --suite gui -v --print-errorlogs 2>&1 | tee "$RUNNER_TEMP/ci-logs/gui-checks.log"
+          PICTURES: ${{ runner.temp }}/gui-pictures
+          GUI_SECOND_HALF: >-
+            auto_close backups bookmark_menu bookmarks compare completion_edits
+            control detach export_html find_bar fold_budget format
+            format_coverage git_actions git_gutter go_back harness idelink
+            install_hints keys latex_problems layout lsp_actions markdown_math
+            markdown_side_sync maximize mermaid multicaret_perf notes
+            organize_imports owner_reports palette problems processes
+            recent_folders ruler second_server server_consent server_folding
+            server_symbols sessions split_editor sqlite_view startup swatches
+            terminal_find terminal_ids terminal_splits terminal_tabs themes
+            tree_stall zoom
+        run: |
+          ../scripts/ci-together.sh "$RUNNER_TEMP/ci-logs" \
+            gui-checks-1 'MC_GUI_SKIP_SUITES="$GUI_SECOND_HALF" MC_GUI_SNAPSHOTS="$PICTURES/first-half" meson test -C build --suite gui --no-rebuild --logbase gui-first-half -v --print-errorlogs' \
+            gui-checks-2 'MC_GUI_SUITES="$GUI_SECOND_HALF" MC_GUI_SNAPSHOTS="$PICTURES/second-half" meson test -C build --suite gui --no-rebuild --logbase gui-second-half -v --print-errorlogs'
 
-      # A picture of the window on top at each failed check (the first ten),
-      # and Meson's log of the run, only when the checks failed.
+      # A picture of the window on top at each failed check (the first ten
+      # of each half), and Meson's logs of the runs, only when the checks
+      # failed.
       - name: Keep the GUI checks' pictures
         if: failure() && steps.gui.outcome == 'failure'
         uses: actions/upload-artifact@v7
@@ -228,9 +328,20 @@ jobs:
           name: gui-checks
           path: |
             ${{ runner.temp }}/gui-pictures
-            linux/build/meson-logs/testlog.txt
+            linux/build/meson-logs/gui-*.txt
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Trim the compiler cache
+        if: ${{ !cancelled() && steps.ccache.outcome == 'success' }}
+        run: scripts/ci-ccache.sh finish ${{ job.status }}
+
+      - name: Save the compiler cache
+        if: ${{ !cancelled() && steps.ccache.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-gtk-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('linux/meson.build', 'linux/Makefile') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Summary
         if: always()
@@ -248,6 +359,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # ccache in front of g++ (scripts/ci-ccache.sh), as in the macOS job.
+      - name: Put ccache in front of the compiler
+        id: ccache
+        run: scripts/ci-ccache.sh setup g++ g++
+
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-asan-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-asan-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-
+            ccache-asan-${{ steps.ccache.outputs.compiler }}-
+
       - name: Run core unit tests with sanitizers
         env:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1:detect_stack_use_after_return=1
@@ -255,6 +380,17 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/ci-logs"
           make test-asan 2>&1 | tee "$RUNNER_TEMP/ci-logs/core-tests-asan.log"
+
+      - name: Trim the compiler cache
+        if: ${{ !cancelled() && steps.ccache.outcome == 'success' }}
+        run: scripts/ci-ccache.sh finish ${{ job.status }}
+
+      - name: Save the compiler cache
+        if: ${{ !cancelled() && steps.ccache.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-asan-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Summary
         if: always()
@@ -286,8 +422,22 @@ jobs:
       - name: Install clang and its sanitizer runtimes
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends clang-22 libclang-rt-22-dev gdb
+          sudo apt-get install -y -q --no-install-recommends clang-22 libclang-rt-22-dev gdb ccache
           clang++-22 --version
+
+      # ccache in front of clang++-22 (scripts/ci-ccache.sh), as in the macOS job.
+      - name: Put ccache in front of the compiler
+        id: ccache
+        run: scripts/ci-ccache.sh setup clang++-22 clang++-22
+
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-tsan-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-tsan-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-
+            ccache-tsan-${{ steps.ccache.outputs.compiler }}-
 
       # A narrower mmap randomization than the runner's 32 bits, as TSan's
       # shadow layout expects (newer runtimes re-exec without ASLR
@@ -320,6 +470,17 @@ jobs:
             timeout 12m gdb -q -batch -ex 'handle SIGPIPE nostop noprint pass' \
                 -ex run -ex 'bt 40' -ex 'info sharedlibrary' \
                 -ex 'x/6i $pc' build/test-tsan/run_tests
+
+      - name: Trim the compiler cache
+        if: ${{ !cancelled() && steps.ccache.outcome == 'success' }}
+        run: scripts/ci-ccache.sh finish ${{ job.status }}
+
+      - name: Save the compiler cache
+        if: ${{ !cancelled() && steps.ccache.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-tsan-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Summary
         if: always()

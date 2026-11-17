@@ -714,15 +714,33 @@ gboolean tick(gpointer) {
     return G_SOURCE_REMOVE;
 }
 
+std::set<std::string> suiteNames(const std::string& list) {
+    std::set<std::string> out;
+    std::istringstream in(list);
+    for (std::string w; in >> w;) out.insert(w);
+    return out;
+}
+
 void selectSuites() {
-    std::set<std::string> wanted;
-    std::istringstream in(envOr("MC_GUI_SUITES"));
-    for (std::string w; in >> w;) wanted.insert(w);
+    const std::set<std::string> wanted = suiteNames(envOr("MC_GUI_SUITES"));
+    // MC_GUI_SKIP_SUITES leaves suites out: CI runs the list as two
+    // processes at once, one naming its half and the other skipping it, so
+    // a new suite lands in the second without anyone listing it.
+    const std::set<std::string> skipped = suiteNames(envOr("MC_GUI_SKIP_SUITES"));
+    // A name in either list that no suite has is a failure, not a silent
+    // skip: a suite renamed after CI's list named it would otherwise run in
+    // neither half.
+    std::set<std::string> known;
+    for (const Suite& s : suites()) known.insert(s.name);
+    for (const std::set<std::string>* list : {&wanted, &skipped})
+        for (const std::string& w : *list)
+            if (!known.count(w)) MCGuiCheck(false, "no suite is named \"" + w + "\"", __FILE__, __LINE__);
     int ran = 0;
     for (const Suite& s : suites()) {
         // A suite named with a leading underscore is a part another suite
         // runs in a process of its own: only when named.
         if (wanted.empty() ? s.name[0] == '_' : !wanted.count(s.name)) continue;
+        if (skipped.count(s.name)) continue;
         enqueue(Kind::Suite, s.name, 0);
         s.body();
         ran++;
