@@ -61,7 +61,10 @@ inline void Shell(const std::string& what, const std::string& line) {
 
 // What git prints, run synchronously in the repository (a check's read).
 inline std::string GitText(const std::vector<std::string>& args) {
-    std::vector<const char*> argv = {GitPath().c_str()};
+    // Kept for the spawn: argv[0] from GitPath()'s temporary pointed at
+    // freed stack once the line ended (ASan, stack-use-after-scope).
+    const std::string git = GitPath();
+    std::vector<const char*> argv = {git.c_str()};
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
     GSubprocessLauncher* l = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE);
