@@ -66,7 +66,7 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 }
 
 // The line fragment holding character `index`, in the text view's
-// coordinates (the editor is TextKit 1; see LSP in CLAUDE.md). Only the
+// coordinates (the editor is TextKit 1; see docs/notes/lsp.md). Only the
 // layout up to that character is asked for: the whole text's took 1.9 s
 // in a 100,000-line file the first time the bar opened, before background
 // layout had got there.

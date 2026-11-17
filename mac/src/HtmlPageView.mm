@@ -1,5 +1,5 @@
-// HtmlPage.mm — see HtmlPage.h.
-#import "HtmlPage.h"
+// HtmlPageView.mm — see HtmlPageView.h.
+#import "HtmlPageView.h"
 #import "AppSettings.h"
 #import "Browser.h"
 #import "EditorTab.h"   // MCStampOfFile

@@ -787,7 +787,7 @@ returning to the files, and a Drive folder getting its message.
 
 Opening a `.tex`, `.ltx` or `.latex` file shows it typeset, as Markdown opens
 rendered, and the leader's P flips to the source and back. The design is the
-Mac's (the "LaTeX preview" section of `../CLAUDE.md`); what differs is where
+Mac's (the "LaTeX preview" section of `../docs/notes/latex.md`); what differs is where
 things run and live.
 
 - **tectonic runs in Termux** (`pkg install tectonic`), through `Termux.kt`.

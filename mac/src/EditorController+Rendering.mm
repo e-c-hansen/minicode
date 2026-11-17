@@ -4,6 +4,7 @@
 #import "EditorFont.h"
 #import "PageZoom.h"
 #include "FileDetails.h"
+#include <objc/runtime.h>
 #include "LatexLog.h"
 
 @implementation EditorController (Rendering)
@@ -202,6 +203,9 @@ static void *kMediaItemContext = &kMediaItemContext;
     return YES;
 }
 
+// Marks a PDF document that still owes its open-at-the-top scroll.
+static char kPdfOpensAtTop;
+
 // Show a PDF in the editor's slot with PDFKit, the same way an image is shown.
 // A reload (the file changed on disk, say tectonic run in the terminal) keeps
 // the page and the zoom. Returns NO if PDFKit can't read it, and the caller
@@ -239,9 +243,28 @@ static void *kMediaItemContext = &kMediaItemContext;
     self.currentExt = @"pdf";
     [self setPlainMessage:@""];   // nothing in the text view to save
     [self relayoutRightArea];
+    if (!reload) {
+        // A new document opens at the top of its first page, now and again
+        // after the layout this turn brings (PDFView left a tall page
+        // scrolled to its foot). A tab shown again puts back its own place
+        // right after this returns, which cancels the second scroll.
+        PDFView *v = self.pdfView;
+        MCPDFShowFirstPageTop(v);
+        objc_setAssociatedObject(doc, &kPdfOpensAtTop, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (v.document == doc && [objc_getAssociatedObject(doc, &kPdfOpensAtTop) boolValue])
+                MCPDFShowFirstPageTop(v);
+            objc_setAssociatedObject(doc, &kPdfOpensAtTop, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        });
+    }
     [self.lsp documentOpened:nil];
     [self updateTitle];
     return YES;
+}
+
+- (void)pdfKeepsPlaceGiven {
+    PDFDocument *doc = self.pdfView.document;
+    if (doc) objc_setAssociatedObject(doc, &kPdfOpensAtTop, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 // Video and audio that AVFoundation plays on this Mac. WebM, Matroska, Ogg

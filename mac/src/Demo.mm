@@ -4,9 +4,12 @@
 // type, press a shortcut, wait) played in the live app. Clicks and keys are
 // posted as real NSEvents, so they travel the same path a person's do: the
 // tree's mouseDown, the text input system, the local key monitor for Ctrl+`,
-// and the menu's key equivalents. The pointer and the key captions are drawn
-// by an overlay view inside the window, because a window capture shows
-// neither the real cursor nor the keyboard.
+// and the menu's key equivalents. The pointer, the key captions (bottom
+// center: the keys pressed) and the step label (top right, in the tab
+// strip's row: what the scene is doing now) are drawn by an overlay view
+// inside the window, because a window capture shows neither the real cursor
+// nor the keyboard, and a first-time viewer cannot tell a step's purpose
+// from the pixels alone.
 //
 // While a scene plays, a background thread runs `screencapture -l` on the
 // window about ten times a second, plus any of the app's windows in front of
@@ -18,6 +21,7 @@
 #import "Demo.h"
 #import "AgentWindow.h"
 #import "AgentsPanel.h"
+#import "ChangeReviewPage.h"
 #import "EditorController.h"
 #import "GitPanel.h"
 #import "Latex.h"
@@ -42,6 +46,7 @@ extern char **environ;
 @property(nonatomic, assign) BOOL pointerVisible;
 @property(nonatomic, assign) CGFloat ripple;        // 0 = none, else 0..1
 @property(nonatomic, copy) NSString *caption;
+@property(nonatomic, copy) NSString *label;
 @end
 
 @implementation MCDemoOverlay
@@ -50,8 +55,30 @@ extern char **environ;
 
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
+    if (self.label.length) [self drawLabel];
     if (self.caption.length) [self drawCaption];
     if (self.pointerVisible) [self drawPointer];
+}
+
+// The step label: right-aligned in the row under the title bar (the tab
+// strip's, whose right end is empty in every scene), in the accent blue so
+// it never reads as a tab or a key caption. It stays until the next label.
+- (void)drawLabel {
+    NSDictionary *a = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: [NSColor whiteColor],
+    };
+    NSSize s = [self.label sizeWithAttributes:a];
+    CGFloat padX = 12, padY = 5;
+    NSRect layout = [self convertRect:self.window.contentLayoutRect fromView:nil];
+    CGFloat top = NSIsEmptyRect(layout) ? NSMaxY(self.bounds) - 28 : NSMaxY(layout);
+    CGFloat w = ceil(s.width + 2 * padX), h = ceil(s.height + 2 * padY);
+    NSRect box = NSMakeRect(NSMaxX(self.bounds) - 10 - w, top - 2 - h, w, h);
+    NSBezierPath *bg = [NSBezierPath bezierPathWithRoundedRect:box xRadius:6 yRadius:6];
+    [[NSColor colorWithSRGBRed:0.0 green:0.47 blue:0.83 alpha:0.96] setFill];
+    [bg fill];
+    [self.label drawAtPoint:NSMakePoint(box.origin.x + padX, box.origin.y + padY)
+             withAttributes:a];
 }
 
 - (void)drawCaption {
@@ -429,6 +456,19 @@ static void After(double seconds, dispatch_block_t block) {
     [self add:^(MCDemo *d, MCDone done) { [d showCaption:text for:2.2]; done(); }];
 }
 
+// What the scene does next, in words, until the next label (nil clears it).
+- (void)label:(NSString *)text {
+    [self add:^(MCDemo *d, MCDone done) {
+        d->_overlay.label = text;
+        // A key caption from the step before would sit under the new label
+        // as if it belonged to it.
+        ++d->_captionToken;
+        d->_overlay.caption = nil;
+        d->_overlay.needsDisplay = YES;
+        done();
+    }];
+}
+
 // Wait until cond holds. With `recorded` NO the wait is cut from the GIF
 // (after a short lead-in, so a spinner still shows that something happened).
 - (void)waitFor:(BOOL (^)(MCDemo *d))cond timeout:(double)timeout
@@ -676,11 +716,39 @@ static BOOL KeyFor(unichar c, unsigned short *code, BOOL *shift) {
     [NSApp postEvent:e atStart:NO];
 }
 
+// Shift+Command keys made the way a keyboard makes them: a CGEvent turned
+// into an NSEvent. One built from characters matched no menu item ("v")
+// or the unshifted one ("s" was Save), so Shift+Command+V never showed
+// the source and Shift+Command+A never opened the Agents panel. Its
+// timestamp is the one the event comes with, let through like ours.
+- (void)postCGKey:(unsigned short)code flags:(NSEventModifierFlags)flags {
+    CGEventFlags cgFlags = 0;
+    if (flags & NSEventModifierFlagShift) cgFlags |= kCGEventFlagMaskShift;
+    if (flags & NSEventModifierFlagControl) cgFlags |= kCGEventFlagMaskControl;
+    if (flags & NSEventModifierFlagOption) cgFlags |= kCGEventFlagMaskAlternate;
+    if (flags & NSEventModifierFlagCommand) cgFlags |= kCGEventFlagMaskCommand;
+    for (bool down : {true, false}) {
+        CGEventRef cg = CGEventCreateKeyboardEvent(NULL, code, down);
+        CGEventSetFlags(cg, cgFlags);
+        NSEvent *e = [NSEvent eventWithCGEvent:cg];
+        CFRelease(cg);
+        if (!e) continue;
+        [_ours addObject:@(llround(e.timestamp * 1e6))];
+        [NSApp postEvent:e atStart:NO];
+    }
+}
+
 - (void)postKey:(NSString *)chars ignoring:(NSString *)ign code:(unsigned short)code
           flags:(NSEventModifierFlags)flags {
     const NSEventModifierFlags held = flags & (NSEventModifierFlagShift |
         NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagCommand);
     if (held) [self postFlags:held];
+    const NSEventModifierFlags shiftCmd = NSEventModifierFlagShift | NSEventModifierFlagCommand;
+    if ((held & shiftCmd) == shiftCmd && !(flags & NSEventModifierFlagFunction)) {
+        [self postCGKey:code flags:held];
+        [self postFlags:0];
+        return;
+    }
     for (NSEventType t : {NSEventTypeKeyDown, NSEventTypeKeyUp}) {
         NSEvent *e = [NSEvent keyEventWithType:t
                                       location:NSZeroPoint
@@ -822,25 +890,31 @@ static BOOL KeyFor(unichar c, unsigned short *code, BOOL *shift) {
 
 static void SceneTour(MCDemo *d) {
     [d pause:0.8];
+    [d label:@"A Markdown file opens as a page"];
     [d clickFile:@"README.md"];
     [d pause:1.8];
+    [d label:@"Switch between the page and its source"];
     [d key:@"shift+cmd+v" caption:@"⇧⌘V  Markdown source"];
     [d pause:1.8];
-    [d key:@"shift+cmd+v" caption:@"⇧⌘V  Back to the preview"];
+    [d key:@"shift+cmd+v" caption:@"⇧⌘V  Back to the page"];
     [d pause:1.4];
+    [d label:@"Code opens with syntax colors"];
     [d clickFile:@"hello.py"];
     [d hidePointer];
     [d pause:1.0];
     [d poster];
+    [d label:@"Type a line: Return keeps the indentation"];
     [d clickAt:^NSPoint { return [d pointForText:@"c.area():.2f}\")" after:nil atEnd:YES]; }];
     [d hidePointer];
     // Return keeps the line's indentation, as it does in the editor.
     [d type:@"\nprint(\"Diameter:\", 2 * c.radius)"];
     [d pause:0.5];
+    [d label:@"Save"];
     [d key:@"cmd+s" caption:@"⌘S  Save"];
     [d pause:1.2];
     // Not Cmd+P: on the CI runner the posted key opened the command
     // palette rather than Go to File, which no hand has seen.
+    [d label:@"Every language in the same window"];
     [d clickFile:@"sample.cpp"];
     [d pause:1.8];
 }
@@ -852,12 +926,14 @@ static void SceneTerminal(MCDemo *d) {
     [d hidePointer];
     // Room for the log, so git shows it without its pager.
     [d run:^(MCDemo *m) { [m.controller setValue:@330 forKey:@"terminalHeight"]; }];
+    [d label:@"Open the terminal under the code"];
     [d key:@"ctrl+`" caption:@"⌃`  Terminal"];
     // Wait for zsh's first prompt; nobody needs to watch a shell start.
     [d waitFor:^BOOL(MCDemo *m) {
         return [[[m ui:@"terminal"] valueForKey:@"atPrompt"] boolValue];
     } timeout:15 recorded:NO];
     [d pause:0.6];
+    [d label:@"Your own shell, in the project's folder"];
     [d type:@"ls -G\n"];
     [d pause:1.2];
     [d type:@"git log --oneline\n"];
@@ -865,6 +941,7 @@ static void SceneTerminal(MCDemo *d) {
     [d type:@"python3 hello.py\n"];
     [d pause:1.4];
     [d poster];
+    [d label:@"Split it to run two things at once"];
     [d key:@"cmd+\\" caption:@"⌘\\  Split the terminal"];
     [d waitFor:^BOOL(MCDemo *m) {
         return [[[m ui:@"terminal"] valueForKey:@"atPrompt"] boolValue];
@@ -919,10 +996,11 @@ static void SceneLinks(MCDemo *d) {
         return [[[m ui:@"terminal"] valueForKey:@"atPrompt"] boolValue];
     } timeout:15 recorded:NO];
     [d pause:0.4];
+    [d label:@"Search the code from the terminal"];
     [d type:@"grep -Hn \"def area\" *.py\n"];
     [d pause:1.0];
+    [d label:@"⌘-click a file:line to open it there"];
     [d moveTo:^NSPoint { return TermPoint(d, @"hello.py:9"); }];
-    [d caption:@"⌘-click a file:line in the output"];
     [d pause:0.9];
     [d cmdClickAt:^NSPoint { return TermPoint(d, @"hello.py:9"); }];
     [d waitFor:^BOOL(MCDemo *m) {
@@ -935,17 +1013,26 @@ static void SceneLinks(MCDemo *d) {
     // brings it back, as it would for a person.
     [d clickAt:^NSPoint { return TermInside(d); }];
     [d hidePointer];
-    [d type:@"echo \"docs: https://docs.python.org/3/library/math.html\"\n"];
+    // pip comes with every Python the runner has (Xcode's and Homebrew's),
+    // and its own entry names its documentation, so nothing is installed.
+    [d label:@"Where are a package's docs? Ask pip"];
+    [d type:@"python3 -m pip show pip | grep -i home\n"];
+    [d waitFor:^BOOL(MCDemo *m) {
+        TerminalScreen *s = TermGrid(m).screen;
+        for (int row = 0; row < s->rows(); row++)
+            if (s->lineText(row).find("pip.pypa.io") != std::string::npos) return YES;
+        return NO;
+    } timeout:20 recorded:YES];
     [d pause:0.8];
-    [d moveTo:^NSPoint { return TermPoint(d, @"docs.python.org"); }];
-    [d caption:@"URLs open in the browser panel"];
-    [d pause:0.8];
-    [d cmdClickAt:^NSPoint { return TermPoint(d, @"docs.python.org"); }];
+    [d label:@"⌘-click the address: the docs open beside the code"];
+    [d moveTo:^NSPoint { return TermPoint(d, @"pip.pypa.io"); }];
+    [d pause:0.9];
+    [d cmdClickAt:^NSPoint { return TermPoint(d, @"pip.pypa.io"); }];
     [d hidePointer];
     [d waitFor:^BOOL(MCDemo *m) {
         return [[m.controller valueForKey:@"browserVisible"] boolValue];
     } timeout:10 recorded:YES];
-    [d pause:3.0];
+    [d pause:4.0];
 }
 
 // Pick a new color for `key` the way a person does: click its swatch, then
@@ -999,18 +1086,21 @@ static void SceneSettings(MCDemo *d) {
     [d hidePointer];
     // Themes first: once the file sets colors of its own, picking a theme
     // asks whether to comment them out.
-    Palette(d, @"theme light modern", @"⇧⌘P  Pick a theme by name");
+    [d label:@"Pick a theme by name"];
+    Palette(d, @"theme light modern", @"⇧⌘P  Command palette");
     [d pause:1.8];
     Palette(d, @"theme solarized dark", nil);
     [d pause:1.8];
     Palette(d, @"theme dark+", nil);
     [d pause:1.0];
+    [d label:@"Settings are one plain file"];
     [d key:@"cmd+," caption:@"⌘,  Settings"];
     [d pause:1.0];
     [d scrollEditorTo:@"# The file tree."];
     [d pause:0.6];
     // GitHub Dark's surfaces, and a quiet status bar: colors someone might
     // keep, rather than a showcase of loud ones.
+    [d label:@"Click a color to change it, live"];
     PickColor(d, @"sidebar.background", @"#181818", 0x1F2428, 7);
     PickColor(d, @"editor.background", @"#1F1F1F", 0x24292E, 7);
     PickColor(d, @"statusbar.background", @"#181818", 0x3A3F46, 7);
@@ -1031,12 +1121,13 @@ static void SceneLatex(MCDemo *d) {
         return [[m ui:@"latex"] valueForKey:@"pdf"];
     };
     [d pause:0.6];
+    [d label:@"A LaTeX file opens as its typeset PDF"];
     [d clickFile:@"paper/notes.tex"];
     [d waitFor:^BOOL(MCDemo *m) { return [pdfView(m) document] != nil; }
        timeout:60 recorded:NO];
     [d pause:1.2];
     [d poster];
-    [d caption:@"Double-click the PDF to edit the LaTeX behind it"];
+    [d label:@"Double-click a word in the PDF to edit it"];
     [d doubleClickAt:^NSPoint {
         PDFView *pdf = pdfView(d);
         PDFSelection *sel = [pdf.document findString:@"Ask for a review" withOptions:0].firstObject;
@@ -1049,19 +1140,27 @@ static void SceneLatex(MCDemo *d) {
         return [pdf convertPoint:inView toView:nil];
     }];
     [d hidePointer];
-    [d pause:1.2];
+    // The box opens on the LaTeX behind the line with the clicked word
+    // selected, so typing replaces just that word.
+    [d label:@"The clicked word is selected: type over it"];
+    [d pause:1.6];
     [d run:^(MCDemo *m) { before = [pdfView(m) document]; }];
-    [d type:@"Ask two friends for a review"];
-    [d pause:0.5];
+    [d type:@"second opinion"];
+    [d pause:0.6];
+    [d label:@"Save, and the page typesets again"];
     [d key:@"return" caption:@"⏎  Save the edit"];
     [d waitFor:^BOOL(MCDemo *m) { return [pdfView(m) document] != before; }
        timeout:60 recorded:YES];
     [d pause:1.8];
-    [d key:@"shift+cmd+v" caption:@"⇧⌘V  The source, edited in place"];
+    [d label:@"The edit landed in the LaTeX source"];
+    [d key:@"shift+cmd+v" caption:@"⇧⌘V  The source"];
+    [d waitFor:^BOOL(MCDemo *m) {
+        NSTextView *tv = [m ui:@"textView"];
+        return tv.isEditable && [tv.string containsString:@"Ask for a second opinion"];
+    } timeout:10 recorded:YES];
     [d run:^(MCDemo *m) {
         NSTextView *tv = [m ui:@"textView"];
-        NSRange r = [tv.string rangeOfString:@"Ask two friends for a review"];
-        if (r.location != NSNotFound) [tv setSelectedRange:r];
+        [tv setSelectedRange:[tv.string rangeOfString:@"Ask for a second opinion"]];
     }];
     [d pause:2.4];
 }
@@ -1082,6 +1181,7 @@ static void SceneLsp(MCDemo *d) {
         return [LspStatus(m) hasSuffix:@"no problems"];
     } timeout:40 recorded:NO];
     [d pause:0.5];
+    [d label:@"Completions from clangd as you type"];
     [d clickAt:^NSPoint { return [d pointForText:@"scaled(2);" after:nil atEnd:YES]; }];
     [d hidePointer];
     // Return indents the line itself, so no spaces (I1: four more made eight).
@@ -1097,42 +1197,50 @@ static void SceneLsp(MCDemo *d) {
     [d type:@";"];
     [d pause:0.6];
     // A mistake, which clangd reports as you type.
+    [d label:@"A mistake is underlined as you type"];
     [d type:@"\nint n = q + 1;"];
     [d waitFor:^BOOL(MCDemo *m) { return [LspStatus(m) hasSuffix:@"1 error"]; }
        timeout:15 recorded:YES];
     [d poster];
     [d pause:1.2];
+    [d label:@"Ask what is wrong"];
     [d clickAt:^NSPoint { return [d pointForText:@"q + 1" after:@"int n" atEnd:NO]; }];
     [d hidePointer];
     [d pause:0.1];
-    [d key:@"opt+cmd+i" caption:@"⌥⌘I  What is wrong here"];
+    [d key:@"opt+cmd+i" caption:@"⌥⌘I  Show hover"];
     [d pause:2.4];
     [d run:^(MCDemo *m) { [[[m ui:@"lsp"] valueForKey:@"hover"] close]; }];
-    [d key:@"ctrl+shift+k" caption:@"⌃⇧K  Delete the line"];
+    [d label:@"Delete the line: the error goes"];
+    [d key:@"ctrl+shift+k" caption:@"⌃⇧K  Delete line"];
     [d waitFor:^BOOL(MCDemo *m) { return [LspStatus(m) hasSuffix:@"no problems"]; }
        timeout:15 recorded:YES];
     [d pause:0.5];
+    [d label:@"What does this function do?"];
     [d clickAt:^NSPoint { return [d pointForText:@"scaled" after:nil atEnd:NO]; }];
     [d hidePointer];
-    [d key:@"opt+cmd+i" caption:@"⌥⌘I  Hover info"];
+    [d key:@"opt+cmd+i" caption:@"⌥⌘I  Show hover"];
     [d pause:2.0];
     [d run:^(MCDemo *m) { [[[m ui:@"lsp"] valueForKey:@"hover"] close]; }];
     // Saved first, or leaving the file asks about the unsaved edit.
+    [d label:@"Save, then go to its definition"];
     [d key:@"cmd+s" caption:@"⌘S  Save"];
     [d pause:0.4];
     [d key:@"f12" caption:@"F12  Go to definition"];
     [d waitFor:^BOOL(MCDemo *m) {
         return [[[m ui:@"textView"] string] hasPrefix:@"#pragma once"];
     } timeout:10 recorded:YES];
-    [d pause:1.6];
+    [d label:@"The definition, in vec.h"];
+    [d pause:1.8];
 }
 
 static void SceneVim(MCDemo *d) {
     [d pause:0.6];
-    [d clickFile:@"README.md"];
+    [d label:@"hello.py, open in the editor"];
+    [d clickFile:@"hello.py"];
     [d hidePointer];
-    // A taller panel than the default, as if the divider had been dragged up.
-    [d run:^(MCDemo *m) { [m.controller setValue:@370 forKey:@"terminalHeight"]; }];
+    [d pause:1.0];
+    // Room for vim below and the whole file above.
+    [d run:^(MCDemo *m) { [m.controller setValue:@300 forKey:@"terminalHeight"]; }];
     [d key:@"ctrl+`" caption:@"⌃`  Terminal"];
     [d waitFor:^BOOL(MCDemo *m) {
         return [[[m ui:@"terminal"] valueForKey:@"atPrompt"] boolValue];
@@ -1145,29 +1253,34 @@ static void SceneVim(MCDemo *d) {
         return ![[[m ui:@"terminal"] valueForKey:@"gridMode"] boolValue] &&
                [[[m ui:@"terminal"] valueForKey:@"atPrompt"] boolValue];
     };
-    [d type:@"vim todo.md\n"];
+    [d label:@"Edit the same file with vim in the terminal"];
+    [d type:@"vim hello.py\n"];
     [d waitFor:grid timeout:10 recorded:YES];
-    [d pause:0.5];
-    [d type:@"i# Today\n\n- Try the LSP demo\n- Read the git log"];
+    [d pause:0.8];
+    // A: append to the first line, where the cursor starts.
+    [d type:@"A, edited in vim"];
     [d pause:0.4];
-    [d poster];
-    [d key:@"esc" caption:nil];
-    [d type:@":wq"];
+    [d key:@"esc" caption:@"Esc"];
     [d pause:0.3];
-    [d key:@"return" caption:nil];
-    [d waitFor:log timeout:10 recorded:YES];
-    [d pause:0.4];
-    [d type:@"cat todo.md\n"];
-    [d pause:1.2];
-    // git's pager runs with LESS=FRX, so it keeps the main screen: wait for
-    // it to hold the terminal rather than for the alternate screen.
-    [d type:@"git log\n"];
-    [d waitFor:^BOOL(MCDemo *m) { return [[[m ui:@"terminal"] valueForKey:@"busy"] boolValue]; }
-       timeout:10 recorded:YES];
-    [d pause:1.4];
-    [d key:@"space" caption:@"Space  Next page"];
-    [d pause:1.2];
-    [d key:@"q" caption:@"q  Quit the pager"];
+    [d label:@"Save in vim: the editor's tab follows the disk"];
+    [d type:@":w"];
+    [d pause:0.3];
+    [d key:@"return" caption:@":w  Save"];
+    // A clean tab takes the disk's text by itself (FSEvents), no question.
+    [d waitFor:^BOOL(MCDemo *m) {
+        return [[[m ui:@"textView"] string] containsString:@"edited in vim"];
+    } timeout:15 recorded:YES];
+    [d run:^(MCDemo *m) {
+        NSTextView *tv = [m ui:@"textView"];
+        NSRange r = [tv.string rangeOfString:@", edited in vim"];
+        if (r.location != NSNotFound) [tv setSelectedRange:r];
+    }];
+    [d poster];
+    [d pause:2.6];
+    [d label:@"Quit vim"];
+    [d type:@":q"];
+    [d pause:0.3];
+    [d key:@"return" caption:@":q  Quit"];
     [d waitFor:log timeout:10 recorded:YES];
     [d pause:1.2];
 }
@@ -1175,20 +1288,21 @@ static void SceneVim(MCDemo *d) {
 // Images and PDFs open where the editor sits.
 static void SceneFiles(MCDemo *d) {
     [d pause:0.6];
+    [d label:@"Images open in the editor pane, never enlarged"];
     [d clickFile:@"images/icon.png"];
-    [d caption:@"Images open in the editor pane, never enlarged"];
     [d hidePointer];
     [d pause:2.4];
     [d poster];
+    [d label:@"PDFs too, from the top of the first page"];
     [d clickFile:@"paper/notes.pdf"];
-    [d caption:@"PDFs too, with the page count in the title"];
     [d hidePointer];
     [d pause:2.6];
+    [d label:@"A CSV file opens as a table you can edit"];
     [d clickFile:@"data/cities.csv"];
-    [d caption:@"A CSV file opens as a table you can edit"];
     [d hidePointer];
     [d pause:2.4];
-    [d key:@"shift+cmd+v" caption:@"⇧⌘V  The text behind it"];
+    [d label:@"The same file as text"];
+    [d key:@"shift+cmd+v" caption:@"⇧⌘V  Toggle the table"];
     [d pause:1.8];
 }
 
@@ -1212,10 +1326,25 @@ static NSPoint GitRowPoint(MCDemo *m, NSString *text) {
     return [list convertPoint:NSMakePoint(NSMinX(r) + 70, NSMidY(r)) toView:nil];
 }
 
-// Edit a file, see its change bar, stage the hunk from the diff, commit,
-// and see the commit at the top of the graph.
+// The review page a file row opens (Uncommitted Changes), once read.
+static MCChangeReviewPage *ReviewPage(MCDemo *m) {
+    id page = [[m.controller valueForKey:@"activeTab"] valueForKey:@"page"];
+    return [page isKindOfClass:MCChangeReviewPage.class] ? page : nil;
+}
+
+// The first block's Stage button, in window coordinates; NSZeroRect if none.
+static NSRect StageButton(MCDemo *m) {
+    MCChangeReviewPage *p = ReviewPage(m);
+    if (!p.loaded || p.blockCount == 0) return NSZeroRect;
+    NSRect r = [p buttonRect:@"Stage" row:[p rowOfBlock:0]];
+    return NSIsEmptyRect(r) ? NSZeroRect : [p.textView convertRect:r toView:nil];
+}
+
+// Edit a file, see its change bar, stage the change from the review page,
+// commit, and see the commit at the top of the graph.
 static void SceneGit(MCDemo *d) {
     [d pause:0.6];
+    [d label:@"Edit a file and save it"];
     [d clickFile:@"hello.py"];
     [d clickAt:^NSPoint { return [d pointForText:@"# A sample Python file" after:nil atEnd:YES]; }];
     [d hidePointer];
@@ -1223,26 +1352,42 @@ static void SceneGit(MCDemo *d) {
     [d pause:0.4];
     [d clickAt:^NSPoint { return [d pointForText:@"Circle(3.5)" after:nil atEnd:NO]; }];
     [d hidePointer];
-    [d key:@"cmd+s" caption:@"Change bars mark the lines that changed"];
+    [d key:@"cmd+s" caption:@"⌘S  Save"];
+    [d label:@"Change bars mark the lines that changed"];
     [d pause:1.8];
+    [d label:@"Open source control"];
     [d key:@"ctrl+shift+g" caption:@"⌃⇧G  Source control"];
     [d waitFor:^BOOL(MCDemo *m) { return GitRow(m, @"W M hello.py") >= 0; }
        timeout:10 recorded:YES];
     [d pause:1.2];
+    [d label:@"Click a file to review its changes"];
     [d clickAt:^NSPoint { return GitRowPoint(d, @"W M hello.py"); }];
-    [d waitFor:^BOOL(MCDemo *m) {
-        return [[[m ui:@"diffView"] string] containsString:@"Stage Hunk"];
-    } timeout:10 recorded:YES];
+    [d waitFor:^BOOL(MCDemo *m) { return !NSIsEmptyRect(StageButton(m)); }
+       timeout:10 recorded:YES];
     [d poster];
     [d pause:1.2];
-    [d caption:@"Stage one hunk from the diff"];
+    [d label:@"Stage just this change"];
+    __block NSUInteger loadsAtClick = 0;
     [d clickAt:^NSPoint {
-        return [d pointForText:@"Stage Hunk" inView:[d ui:@"diffView"] after:nil atEnd:NO];
+        loadsAtClick = ReviewPage(d).loads;
+        NSRect r = StageButton(d);
+        return NSMakePoint(NSMidX(r), NSMidY(r));
     }];
     [d hidePointer];
+    // The page's buttons are drawn and pressed through its text view; if
+    // the posted click went elsewhere, press it the way the checks do.
+    [d pause:0.8];
+    [d run:^(MCDemo *m) {
+        MCChangeReviewPage *p = ReviewPage(m);
+        // Staged already, or the page read again after an action.
+        if (GitRow(m, @"S M hello.py") >= 0 || p.loads != loadsAtClick) return;
+        NSRect r = [p buttonRect:@"Stage" row:[p rowOfBlock:0]];
+        if (!NSIsEmptyRect(r)) [p pressAtPoint:NSMakePoint(NSMidX(r), NSMidY(r))];
+    }];
     [d waitFor:^BOOL(MCDemo *m) { return GitRow(m, @"S M hello.py") >= 0; }
        timeout:10 recorded:YES];
     [d pause:1.4];
+    [d label:@"Write a message and commit"];
     [d clickAt:^NSPoint {
         NSTextView *box = GitPanel(d).messageView;
         return [box convertPoint:NSMakePoint(30, NSMidY(box.bounds)) toView:nil];
@@ -1252,6 +1397,7 @@ static void SceneGit(MCDemo *d) {
     [d pause:0.4];
     [d key:@"cmd+return" caption:@"⌘⏎  Commit"];
     [d waitFor:^BOOL(MCDemo *m) { return GitRow(m, @"hello.py") < 0; } timeout:10 recorded:YES];
+    [d label:@"The commit tops the graph"];
     [d pause:2.4];
 }
 
@@ -1259,16 +1405,19 @@ static void SceneGit(MCDemo *d) {
 
 static void SceneMarkdown(MCDemo *d) {
     [d pause:0.6];
+    [d label:@"A Markdown file opens as a page"];
     [d clickFile:@"README.md"];
     [d hidePointer];
     [d pause:1.6];
+    [d label:@"Its source, with the page beside it"];
     [d key:@"shift+cmd+v" caption:@"⇧⌘V  The source"];
     [d pause:1.0];
-    [d key:@"ctrl+cmd+v" caption:@"⌃⌘V  The page beside it"];
+    [d key:@"ctrl+cmd+v" caption:@"⌃⌘V  Preview to the side"];
     [d waitFor:^BOOL(MCDemo *m) {
         return [[[m ui:@"sidePreview"] textView].string containsString:@"Field notes"];
     } timeout:10 recorded:YES];
     [d pause:1.0];
+    [d label:@"Type in the source: the page follows"];
     [d clickAt:^NSPoint {
         return [d pointForText:@"Add a perimeter to the circle" after:nil atEnd:YES];
     }];
@@ -1279,7 +1428,7 @@ static void SceneMarkdown(MCDemo *d) {
     } timeout:10 recorded:YES];
     [d poster];
     [d pause:1.2];
-    [d caption:@"Double-click the page to edit its Markdown"];
+    [d label:@"Double-click the page to edit its Markdown"];
     [d doubleClickAt:^NSPoint {
         return [d pointForText:@"Double-click a block"
                         inView:[[d ui:@"sidePreview"] textView] after:nil atEnd:NO];
@@ -1288,10 +1437,11 @@ static void SceneMarkdown(MCDemo *d) {
     [d pause:1.0];
     [d type:@"> Edits made on the page go back into the source."];
     [d pause:0.4];
-    [d key:@"return" caption:nil];
+    [d key:@"return" caption:@"⏎  Save the edit"];
     [d waitFor:^BOOL(MCDemo *m) {
         return [[[m ui:@"textView"] string] containsString:@"go back into the source"];
     } timeout:10 recorded:YES];
+    [d label:@"The edit is in the source"];
     [d pause:2.4];
 }
 
@@ -1313,7 +1463,8 @@ static void SceneAgents(MCDemo *d) {
     [d clickFile:@"hello.py"];
     [d hidePointer];
     [d pause:0.8];
-    [d key:@"shift+cmd+a" caption:@"⇧⌘A  What agents did in this folder"];
+    [d label:@"Which Claude Code sessions worked here?"];
+    [d key:@"shift+cmd+a" caption:@"⇧⌘A  Agents"];
     [d pause:0.6];
     // On the runner the key once never reached the menu (the Services
     // menu's own Shift+Command+A, perhaps); the menu's action then.
@@ -1325,17 +1476,35 @@ static void SceneAgents(MCDemo *d) {
         return AgentsPanel(m) && AgentRow(m, @"perimeter") >= 0;
     } timeout:15 recorded:YES];
     [d pause:1.4];
+    [d label:@"Open a session: the files it touched"];
     [d run:^(MCDemo *m) { [AgentsPanel(m) toggleRow:AgentRow(m, @"perimeter")]; }];
-    [d pause:1.6];
+    [d pause:0.6];
+    [d run:^(MCDemo *m) {
+        if (AgentRow(m, @"/hello.py") < 0) {   // its files' group shut
+            NSInteger g = AgentRow(m, @"G In the folder");
+            if (g >= 0) [AgentsPanel(m) toggleRow:g];
+        }
+    }];
+    [d pause:1.4];
+    [d label:@"Did its tests pass? Its evidence"];
     [d clickAt:^NSPoint {
         NSOutlineView *o = AgentsPanel(d).outline;
         NSRect r = [o rectOfRow:AgentRow(d, @"perimeter")];
         return [o convertPoint:NSMakePoint(NSMinX(r) + 60, NSMidY(r)) toView:nil];
     }];
-    [d caption:@"Its last message beside its last test run"];
     [d hidePointer];
     [d poster];
     [d pause:3.2];
+    [d label:@"What did it change in hello.py?"];
+    [d clickAt:^NSPoint {
+        NSInteger row = AgentRow(d, @"/hello.py");
+        if (row < 0) [d fail:@"no hello.py under the session"];
+        NSOutlineView *o = AgentsPanel(d).outline;
+        NSRect r = [o rectOfRow:row];
+        return [o convertPoint:NSMakePoint(NSMinX(r) + 70, NSMidY(r)) toView:nil];
+    }];
+    [d hidePointer];
+    [d pause:3.4];
 }
 
 typedef void (*MCSceneBuilder)(MCDemo *d);
