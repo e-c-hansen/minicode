@@ -88,7 +88,11 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
             if (![e.window performKeyEquivalent:e]) [fr keyDown:e];
             return nil;
         }
-        if (![self controllerForWindow:e.window]) return e;
+        EditorController *owner = [self controllerForWindow:e.window];
+        if (!owner) return e;
+        // The shortcut hints' search box takes typing while they show,
+        // before any command or view sees it (HintsSearchBox.h).
+        if ([owner hintsPanelTakesKeyDown:e]) return nil;
         return MCKeymapHandleKeyDown(e) ? nil : e;
     }];
 

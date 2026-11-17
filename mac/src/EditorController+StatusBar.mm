@@ -1,7 +1,13 @@
 // EditorController+StatusBar.mm — EditorController: the status bar, its notes and "Saved ...", and the shortcut hints.
 #import "EditorController+Private.h"
 #import "EditorFont.h"
+#import "PalettePanel.h"
 #include "PageMeasure.h"
+#include "HintsSearch.h"
+
+#include <string>
+#include <utility>
+#include <vector>
 
 @implementation EditorController (StatusBar)
 
@@ -103,9 +109,10 @@
     [self layoutLargeFileNoteEndingAt:left - 16];
 }
 
-// The hints panel: a scroll view over a text view, at the top right of the
-// window, as tall as its text or the window's room (then it scrolls). The
-// text view neither edits nor selects; the panel keeps out of the way.
+// The hints panel: a search box over a scroll view over a text view, at
+// the top right of the window, as tall as its text or the window's room
+// (then it scrolls). The text view neither edits nor selects; the box
+// (MCHintsSearchBox) takes the keys typed while the panel shows.
 - (void)buildHintsPanelInContainer:(NSView *)container {
     const CGFloat pw = 360, ph = 240, margin = 18;
     NSRect r = NSMakeRect(container.bounds.size.width - pw - margin,
@@ -120,6 +127,8 @@
     self.hintsPanel.layer.masksToBounds = YES;
     self.hintsPanel.autoresizingMask = NSViewMinXMargin | NSViewMinYMargin;
     self.hintsPanel.hidden = YES;
+    // The panel is dark in every theme, so its box is too.
+    self.hintsPanel.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
 
     NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSInsetRect(self.hintsPanel.bounds, 1, 1)];
     scroll.drawsBackground = NO;
@@ -146,7 +155,42 @@
     [self.hintsPanel addSubview:scroll];
     self.hintsScroll = scroll;
     self.hintsTextView = tv;
+
+    MCHintsSearchBox *box = [MCHintsSearchBox new];
+    __weak EditorController *weakSelf = self;
+    box.onChange = ^(NSString *) { [weakSelf hintsQueryChanged]; };
+    box.onClose = ^{
+        EditorController *me = weakSelf;
+        if (me.hintsVisible) [me toggleHints:nil];
+    };
+    [self.hintsPanel addSubview:box.field];
+    self.hintsSearchBox = box;
     [container addSubview:self.hintsPanel];
+}
+
+// The box's query changed: the rows again, the first hit scrolled to.
+- (void)hintsQueryChanged {
+    if (!self.hintsVisible) return;
+    [self updateHints];
+    NSTextView *tv = self.hintsTextView;
+    NSTextStorage *ts = tv.textStorage;
+    __block NSRange first = NSMakeRange(NSNotFound, 0);
+    [ts enumerateAttribute:MCHintsMatchAttribute inRange:NSMakeRange(0, ts.length) options:0
+                usingBlock:^(id value, NSRange r, BOOL *stop) {
+        if (value) { first = r; *stop = YES; }
+    }];
+    if (first.location != NSNotFound) {
+        [tv scrollRangeToVisible:first];
+    } else {
+        [tv scrollPoint:NSZeroPoint];
+    }
+}
+
+- (BOOL)hintsPanelTakesKeyDown:(NSEvent *)event {
+    if (!self.hintsVisible || self.hintsPanel.hidden) return NO;
+    // The palette open over the panel keeps its own typing.
+    if (MCCommandPaletteIn(self.window)) return NO;
+    return [self.hintsSearchBox takeKeyDown:event];
 }
 
 // Fill the panel for the room the window has: two columns when they fit
@@ -167,19 +211,26 @@
                                      scrollerStyle:NSScrollerStyleLegacy]
         : 0;
     NSArray *rows = [self hintsRows];
+    // The search box over the text, its font at the editor's zoom.
+    MCHintsSearchBox *box = self.hintsSearchBox;
+    [box setFontSize:round(12 * MCZoomScale() * 2) / 2];
+    const CGFloat boxH = box ? [box height] : 0;
+    const CGFloat boxTop = round(inset * 0.75);
+    const CGFloat header = box ? boxTop + boxH : 0;   // the text's own inset is the gap
     PageMeasure::HintsLayout layout;
     NSAttributedString *text = [self hintsTextForRows:rows room:roomW layout:&layout];
     CGFloat textH = [self hintsHeightOf:text width:layout.textWidth];
-    const BOOL scrolls = textH + 2 * inset > roomH;
+    const BOOL scrolls = textH + 2 * inset + header > roomH;
     if (scrolls && bar > 0) {
         text = [self hintsTextForRows:rows room:roomW - bar layout:&layout];
         textH = [self hintsHeightOf:text width:layout.textWidth];
     }
     self.hintsColumns = layout.columns;
     const CGFloat pw = ceil(layout.textWidth + 2 * inset + (scrolls ? bar : 0));
-    const CGFloat ph = ceil(MIN(textH + 2 * inset, roomH));
+    const CGFloat ph = ceil(MIN(textH + 2 * inset + header, roomH));
     self.hintsPanel.frame = NSMakeRect(W - pw - margin, top - ph, pw, ph);
-    self.hintsScroll.frame = NSInsetRect(self.hintsPanel.bounds, 1, 1);
+    box.field.frame = NSMakeRect(inset, ph - boxTop - boxH, MAX(40, pw - 2 * inset), boxH);
+    self.hintsScroll.frame = NSMakeRect(1, 1, pw - 2, MAX(0, ph - 2 - header));
     tv.textContainer.size = NSMakeSize(layout.textWidth, CGFLOAT_MAX);
     [tv.textStorage setAttributedString:text];
     [tv sizeToFit];
@@ -208,6 +259,27 @@
 // row breaks in the middle; a window too narrow for two columns gets one,
 // a shortcut a row.
 static const CGFloat kHintsPad = 16;
+
+static std::u16string MCU16(NSString *s) {
+    std::u16string out(s.length, u'\0');
+    if (s.length) [s getCharacters:(unichar *)out.data() range:NSMakeRange(0, s.length)];
+    return out;
+}
+
+// A shortcut of a row (1: key1, label1 and a state; 2: key2 and label2)
+// as fields the core searches, in the order the row shows them.
+static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int which) {
+    std::vector<HintsSearch::Field> f;
+    if (which == 1) {
+        f.push_back({MCU16(row[@"key1"] ?: @""), true});
+        f.push_back({MCU16(row[@"label1"] ?: @""), false});
+        if (row[@"state"] && !row[@"key2"]) f.push_back({MCU16(row[@"state"]), false});
+    } else {
+        f.push_back({MCU16(row[@"key2"] ?: @""), true});
+        f.push_back({MCU16(row[@"label2"] ?: @""), false});
+    }
+    return f;
+}
 
 - (void)appendHintsHeading:(NSString *)title to:(NSMutableArray *)s {
     [s addObject:@{@"heading": title.uppercaseString}];
@@ -297,38 +369,103 @@ static const CGFloat kHintsPad = 16;
     void (^add)(NSString *, NSDictionary *) = ^(NSString *t, NSDictionary *a) {
         [s appendAttributedString:[[NSAttributedString alloc] initWithString:t attributes:a]];
     };
+
+    // The search box's query (HintsSearch.h): each shortcut found or not,
+    // and where. A heading dims when nothing under it is found.
+    const std::vector<HintsSearch::Word> words =
+        HintsSearch::parse(MCU16(self.hintsSearchBox.query ?: @""));
+    const bool searching = !words.empty();
+    std::vector<std::pair<HintsSearch::Match, HintsSearch::Match>> found(rows.count);
+    std::vector<bool> headingLit(rows.count, true);
+    if (searching) {
+        for (NSUInteger i = 0; i < rows.count; i++) {
+            NSDictionary *row = rows[i];
+            if (row[@"heading"] || row[@"gap"]) continue;
+            found[i].first = HintsSearch::match(words, MCHintsFields(row, 1));
+            if (row[@"key2"]) found[i].second = HintsSearch::match(words, MCHintsFields(row, 2));
+            else found[i].second.matches = false;
+        }
+        for (NSUInteger i = 0; i < rows.count; i++) {
+            if (!rows[i][@"heading"]) continue;
+            bool lit = false;
+            for (NSUInteger j = i + 1; j < rows.count && !rows[j][@"heading"]; j++)
+                if (!rows[j][@"gap"] && (found[j].first.matches || found[j].second.matches))
+                    lit = true;
+            headingLit[i] = lit;
+        }
+    }
+    NSColor *hitColor = [NSColor colorWithSRGBRed:0.918 green:0.361 blue:0 alpha:0.5];
+    // Adds one field of a shortcut: dimmed when the shortcut was not found,
+    // the stretches found marked.
+    void (^addField)(NSString *, NSDictionary *, const HintsSearch::Match &, size_t) =
+        ^(NSString *t, NSDictionary *a, const HintsSearch::Match &m, size_t field) {
+            const NSUInteger start = s.length;
+            if (searching && !m.matches) {
+                NSMutableDictionary *dim = [a mutableCopy];
+                dim[NSForegroundColorAttributeName] =
+                    [a[NSForegroundColorAttributeName] colorWithAlphaComponent:0.3];
+                dim[MCHintsDimmedAttribute] = @YES;
+                add(t, dim);
+                return;
+            }
+            add(t, a);
+            for (const HintsSearch::Span &sp : m.spans) {
+                if (sp.field != field || sp.start + sp.length > t.length) continue;
+                const NSRange r = NSMakeRange(start + sp.start, sp.length);
+                [s addAttribute:NSBackgroundColorAttributeName value:hitColor range:r];
+                [s addAttribute:MCHintsMatchAttribute value:@YES range:r];
+            }
+        };
+
     BOOL first = YES;
+    NSUInteger index = 0;
     for (NSDictionary *row in rows) {
+        const HintsSearch::Match &m1 = found[index].first;
+        const HintsSearch::Match &m2 = found[index].second;
+        const bool lit = headingLit[index];
+        index++;
         if (row[@"heading"]) {
             NSMutableParagraphStyle *hp = [NSMutableParagraphStyle new];
             hp.paragraphSpacingBefore = first ? 0 : round(10 * z);
             hp.paragraphSpacing = round(4 * z);
-            add([row[@"heading"] stringByAppendingString:@"\n"], @{
+            NSMutableDictionary *ha = [@{
                 NSFontAttributeName: headingFont,
                 NSForegroundColorAttributeName: Hex(0x9D9D9D),
                 NSKernAttributeName: @(0.6 * z),
                 NSParagraphStyleAttributeName: hp,
-            });
+            } mutableCopy];
+            if (!lit) {
+                ha[NSForegroundColorAttributeName] = [Hex(0x9D9D9D) colorWithAlphaComponent:0.3];
+                ha[MCHintsDimmedAttribute] = @YES;
+            }
+            add([row[@"heading"] stringByAppendingString:@"\n"], ha);
         } else if (row[@"gap"]) {
             add(@"\n", @{NSFontAttributeName: [NSFont systemFontOfSize:round(6 * z)]});
         } else if (layout.columns == 2 || !row[@"key2"]) {
-            add(row[@"key1"], keyAttr);
-            add([@"\t" stringByAppendingString:row[@"label1"]], labelAttr);
+            addField(row[@"key1"], keyAttr, m1, 0);
+            add(@"\t", labelAttr);
+            addField(row[@"label1"], labelAttr, m1, 1);
             if (row[@"key2"]) {
-                add([@"\t" stringByAppendingString:row[@"key2"]], keyAttr);
-                add([@"\t" stringByAppendingString:row[@"label2"]], labelAttr);
+                add(@"\t", labelAttr);
+                addField(row[@"key2"], keyAttr, m2, 0);
+                add(@"\t", labelAttr);
+                addField(row[@"label2"], labelAttr, m2, 1);
             } else if (row[@"state"]) {
                 // At its stop; when even one column wraps, after its label.
-                add([(layout.wraps ? @" " : @"\t") stringByAppendingString:row[@"state"]],
-                    stateAttr);
+                add(layout.wraps ? @" " : @"\t", stateAttr);
+                addField(row[@"state"], stateAttr, m1, 2);
             }
             add(@"\n", labelAttr);
         } else {
             // One column: the pair's shortcuts on rows of their own.
-            add(row[@"key1"], keyAttr);
-            add([NSString stringWithFormat:@"\t%@\n", row[@"label1"]], labelAttr);
-            add(row[@"key2"], keyAttr);
-            add([NSString stringWithFormat:@"\t%@\n", row[@"label2"]], labelAttr);
+            addField(row[@"key1"], keyAttr, m1, 0);
+            add(@"\t", labelAttr);
+            addField(row[@"label1"], labelAttr, m1, 1);
+            add(@"\n", labelAttr);
+            addField(row[@"key2"], keyAttr, m2, 0);
+            add(@"\t", labelAttr);
+            addField(row[@"label2"], labelAttr, m2, 1);
+            add(@"\n", labelAttr);
         }
         first = NO;
     }
@@ -623,6 +760,13 @@ static const CGFloat kHintsPad = 16;
 
 - (void)toggleHints:(id)sender {
     self.hintsVisible = !self.hintsVisible;
+    if (!self.hintsVisible) {
+        // The keyboard goes back where the box took it from, and the panel
+        // opens empty next time.
+        // A click put it there: the document on show gets it, as Cmd+1.
+        if (![self.hintsSearchBox giveBackKeyboard]) [self focusActiveDocument];
+        [self.hintsSearchBox clear];
+    }
     if (self.hintsVisible) [self updateHints];
     self.hintsPanel.hidden = !self.hintsVisible;
     self.statusLabel.stringValue =

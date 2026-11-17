@@ -34,6 +34,7 @@
 #import "AgentPanel.h"
 #import "EditorFind.h"
 #import "ProblemsPanel.h"
+#import "HintsSearchBox.h"
 #import "PalettePanel.h"
 #import "Navigation.h"
 #import "Gutter.h"
@@ -247,6 +248,7 @@ static const NSInteger kBookmarkFileMenuTag = 7703;
 @property(nonatomic, strong) NSTextView *hintsTextView;
 @property(nonatomic, assign) NSInteger hintsColumns;   // 1 or 2, as last laid out
 @property(nonatomic, assign) BOOL hintsVisible;
+@property(nonatomic, strong) MCHintsSearchBox *hintsSearchBox;   // the panel's search box
 @property(nonatomic, strong) PanelHost *rightArea;
 @property(nonatomic, strong) PanelScrollView *editorScroll;
 @property(nonatomic, strong) MCLineGutter *gutter;   // the editor's line numbers
