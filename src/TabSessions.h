@@ -11,8 +11,18 @@
 //     "tabs": [{"path": "/home/me/proj/a.txt", "page": false,
 //               "sel": [3, 3], "top": 120, "into": 4}, ...]}}
 //
-// "sel" is the selection in characters; "top" and "into" are there only when
-// where the tab's view was is known.
+// "sel" is the selection in characters (code points on Linux, UTF-16 units
+// on the Mac, each reading back only what it wrote); "top" and "into" are
+// there only when where the tab's view was is known; "side" only when the
+// page shows beside the source (the Mac's preview to the side).
+//
+// Below the sessions, the windows a launch brings back (encodeWindows):
+// every window open at the end of the last run, front first, each with its
+// frame, folder, tabs (a Session as above, carets and scroll included), its
+// panels and their sizes, its terminals' folders and splits, and the tree's
+// open folders and selected row: VS Code's window.restoreWindows "all".
+// The Mac keeps it in its user defaults (MCOpenWindows) until the session
+// moves into the core (SESSION-DESIGN.md, stage 3).
 #pragma once
 
 #include <cstddef>
@@ -21,12 +31,14 @@
 #include <vector>
 
 #include "EditorTabs.h"
+#include "TerminalLayout.h"
 
 namespace TabSessions {
 
 struct Tab {
     std::string path;
     bool page = false;          // it showed its rendered page (Markdown, LaTeX)
+    bool side = false;          // its page showed beside its source
     long selStart = 0, selEnd = 0;   // the selection, in characters
     // Where its view was, when that is known: the first character on show,
     // and how far below its line's top the view started (pixels), as
@@ -91,5 +103,76 @@ EditorTabs::Session files(const Session &s);
 // Where a tab's view was, as Reopen Closed Tab keeps it (path, selection,
 // first character on show and the page flag; the index is left at 0).
 EditorTabs::ClosedTab place(const Tab &t);
+
+// ------------------------------------------------- the windows, next launch
+
+// A window's frame in screen points, AppKit's way (y up from the bottom of
+// the main screen).
+struct Frame {
+    double x = 0, y = 0, w = 0, h = 0;
+};
+
+// One terminal of a terminal tab: the folder its shell was in, where a
+// fresh shell starts (a running program is not brought back), and the name
+// the user gave it ("" for none).
+struct TerminalPane {
+    std::string cwd;
+    std::string title;
+};
+
+// One tab of the terminal dock: its panes column by column, each top to
+// bottom, with their shares (TerminalLayout.h) and the active pane.
+struct TerminalTab {
+    std::vector<std::vector<TerminalPane>> columns;
+    TerminalLayout::Layout layout;
+    int activeColumn = 0, activeRow = 0;
+};
+
+struct Window {
+    std::string root;   // its folder
+    bool haveFrame = false;
+    Frame frame;        // as it was out of full screen
+    bool fullScreen = false;
+    Session tabs;       // its own tabs, by the rules of a folder's session
+    // The sidebar: what fills it ("tree", "git", "agents" or "processes"),
+    // its width, and whether Cmd+B hid it.
+    std::string sidebar = "tree";
+    double sidebarWidth = 0;
+    bool sidebarHidden = false;
+    bool editorHidden = false;
+    bool problems = false;      // the Problems list above the terminal
+    // The terminal dock: shown or not, its height, and its tabs (none when
+    // the window had no terminal).
+    bool terminal = false;
+    double terminalHeight = 0;
+    std::vector<TerminalTab> terminals;
+    int terminalTab = -1;
+    // The tree: the folders open in it, the selected row and how far it was
+    // scrolled.
+    std::vector<std::string> expanded;
+    std::string selected;
+    double treeScroll = 0;
+};
+
+// Front window first. A window, or a part of one, that does not read is left
+// out; text that is not JSON gives none.
+std::string encodeWindows(const std::vector<Window> &windows);
+std::vector<Window> decodeWindows(const std::string &text);
+
+// The windows to keep as a window closes: the others, or the closing one
+// alone when it was the last (closing it quits minicode, and the next
+// launch brings it back, as quitting would have).
+std::vector<Window> afterClosing(const std::vector<Window> &open, size_t closing);
+
+// Where a saved frame goes on the screens there are now (their visible
+// frames, the main screen first): where it was when it lies on a screen,
+// else onto the screen it overlapped most, or the main one when it
+// overlaps none (a screen unplugged since), shrunk to fit and never under
+// the window's minimum size. No screens: as saved.
+Frame fitFrame(const Frame &saved, const std::vector<Frame> &screens, double minW, double minH);
+
+// A terminal tab as it reads back: at least one pane, and shares that
+// match the panes (even ones when the saved shares do not).
+TerminalTab sanitize(TerminalTab t);
 
 }  // namespace TabSessions

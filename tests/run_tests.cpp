@@ -11138,6 +11138,7 @@ static void testMultiCaretOccurrences() {
 #include "agent_index_tests.inc"
 #include "agent_evidence_tests.inc"
 #include "agent_edits_tests.inc"
+#include "line_history_tests.inc"
 #include "agent_view_tests.inc"
 #include "fold_tests.inc"
 #include "previews_tests.inc"
@@ -11171,6 +11172,7 @@ static void testMultiCaretOccurrences() {
 #include "lsp_sync_tests.inc"
 #include "text_model_tests.inc"
 #include "undo_history_tests.inc"
+#include "session_model_tests.inc"
 #include "lsp_trust_tests.inc"
 #include "lsp_clangd_tests.inc"
 #include "multiedit_tests.inc"
@@ -11273,6 +11275,7 @@ int main() {
     testRunnables();
     testSnippetCompletionItems();
     testEditorTabs();
+    testSessionModel();
     testFormatter();
     testFormatConsent();
     testFormatCoverage();
@@ -11321,6 +11324,7 @@ int main() {
     testAgentIndex();
     testAgentEvidence();
     testAgentEdits();
+    testLineHistory();
     testAgentView();
     testFolding();
     testFileSniff();

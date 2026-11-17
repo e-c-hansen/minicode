@@ -203,5 +203,6 @@ void MCGuiRunProcess(NSArray<NSString *> *argv, NSDictionary<NSString *, NSStrin
 // settings, backups, temporary folder), opening `folder`, with only the
 // suite named `suite` (a "_" one). Children share a defaults suite of their
 // own, so one sees the tab sessions an earlier one left. `done` gets the
-// exit status (a signal's number when one killed it) and the output.
+// exit status (a signal's number when one killed it) and the output. A nil
+// `folder` opens nothing, as a launch from the Dock does (WindowRestoreSuite).
 void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, NSString *out));

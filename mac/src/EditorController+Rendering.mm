@@ -563,6 +563,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     // does a file in large-file mode.
     [self.lsp documentOpened:self.previewMode ? nil : [self languageServerPath:path]];
     [self updateTitle];
+    [self applySessionPlaceOf:_activeTab];   // brought back with its window: where it was
 }
 
 // The on-disk modification time of a file (a symlink's target's), or nil.
