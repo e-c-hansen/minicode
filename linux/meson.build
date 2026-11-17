@@ -115,6 +115,9 @@ core_sources = [
   # Merge conflict blocks and what keeping a side makes of them (the Mac's
   # editor and review page use them; the GTK port can follow).
   core_dir / 'MergeConflicts.cpp',
+  # The review of uncommitted changes (ChangeReviewPage.cpp shows it).
+  core_dir / 'ChangeReview.cpp',
+  core_dir / 'ChangeReviewRead.cpp',
   # The palette's matching, modes and Quick Open's walk, and the outline
   # Go to Symbol lists without a server (PalettePanel.cpp shows them).
   core_dir / 'CommandPalette.cpp',
@@ -330,6 +333,7 @@ gui_sources = [
   'src/EvidencePage.cpp',
   'src/AgentWorktrees.cpp',
   'src/WorktreeChangesPage.cpp',
+  'src/ChangeReviewPage.cpp',
   '..' / 'tools' / 'minicode-cli.cpp',
   'src/NavHistoryUi.cpp',
   # The command line's options, and a terminal given back at once: the

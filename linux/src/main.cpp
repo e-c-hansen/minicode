@@ -69,6 +69,7 @@
 #include "EvidencePage.h"
 #include "AgentWorktrees.h"
 #include "WorktreeChangesPage.h"
+#include "ChangeReviewPage.h"
 #include "RunFile.h"
 #include "ProcessesPanel.h"
 #include "IdeLinkServer.h"
@@ -396,7 +397,7 @@ static bool saveDocument(App* app, Document* d) {
     std::string err;
     const bool ok = app->editor->saveDocument(d, &err);
     updateTitle(app);
-    if (ok && app->git && app->gitShown) app->git->refresh();
+    if (ok && app->git) app->git->refresh();   // (refresh() does nothing unless the panel or the review shows)
     // The tree watches only the folders it listed (TreeGitColors.h).
     if (ok && app->treeColors) app->treeColors->changedOnDisk(d->path());
     if (!ok)
@@ -2496,6 +2497,43 @@ static void showDiffInEditor(App* app, const std::string& title, const std::stri
     refreshHints(app);
 }
 
+// The review of every uncommitted change (ChangeReviewPage.h), one tab per
+// window (the Mac's showChangeReviewAt:): shown again when it is open.
+static ChangeReviewPage* reviewPageOf(App* app) {
+    for (Document* d : app->editor->documents())
+        if (d->editorPage())
+            if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get())) return r;
+    return nullptr;
+}
+
+static void showChangeReview(App* app) {
+    if (app->dead || !app->git) return;
+    if (ChangeReviewPage* open = reviewPageOf(app)) {
+        app->editor->showPage(std::shared_ptr<EditorPage>(
+            std::shared_ptr<EditorPage>(), open));   // found by its key, the same page
+        open->reload();
+        return;
+    }
+    auto page = std::make_shared<ChangeReviewPage>(app->git, app->rootDir);
+    page->onOpenFile = [app](const std::string& path, int line) {
+        openFileThen(app, path, EditorTabs::OpenFrom::Other, [app, path, line] {
+            if (app->editor->currentPath() != path || app->editor->isMedia()) return;
+            if (line > 0) app->editor->revealLineColumn(line, 0);
+        });
+    };
+    page->onShowComparison = [app](const CompareSpec& spec) {
+        if (!app->dead) app->editor->showComparison(spec);
+    };
+    page->hasUnsavedText = [app](const std::string& path) {
+        for (Document* d : app->editor->dirtyDocuments())
+            if (d->path() == path) return true;
+        return false;
+    };
+    page->syntaxColor = [](int style) { return g.settings->settings().syntax((TokenStyle)style); };
+    page->applySettings();
+    app->editor->showPage(page);
+}
+
 // The Source Control panel's object, made with the window as the Mac's is
 // (EditorController+Git.mm's ensureGitPanel), so autofetch and View > Source
 // Control's commands (GitPanel.h) work before it is first shown; its widget
@@ -2529,6 +2567,7 @@ static void makeGitPanel(App* app) {
     app->git->fileOnShow = [app] {
         return app->dead || app->editor->isDiff() ? std::string() : app->editor->currentPath();
     };
+    app->git->onReview = [app] { showChangeReview(app); };
     app->git->installActions(G_ACTION_MAP(app->window));
     app->editor->onDiffViewMade = [app](GitDiffView* view) {
         if (!app->dead && app->git) app->git->attachDiffView(view);
@@ -3350,6 +3389,7 @@ static void applyWindowSettings(App* app) {
     if (app->ide) app->ide->setEnabled(st.ideLink());
     if (app->persist) app->persist->scheduleAutoSave();   // editor.auto-save may have changed
     if (app->git) app->git->applySettings(st);
+    if (ChangeReviewPage* r = reviewPageOf(app)) r->applySettings();
     if (app->gitGutter) app->gitGutter->applySettings(st);
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->termDock)
@@ -3562,7 +3602,7 @@ static void onIsActive(GObject* w, GParamSpec*, gpointer userp) {
     if (!app->dead && gtk_window_is_active(GTK_WINDOW(w))) {
         app->editor->checkExternalChange();
         if (app->lsp) app->lsp->lookAgainForMissingServer();   // installed elsewhere
-        if (app->git && app->gitShown) app->git->refresh();   // commits made elsewhere
+        if (app->git) app->git->refresh();   // commits made elsewhere
         if (app->gitGutter) app->gitGutter->refreshSoon();     // the index, staged elsewhere
         if (app->treeColors) app->treeColors->lookSoon();      // files the tree has not listed
     } else if (!app->dead && app->persist) {
@@ -3936,7 +3976,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     // Control panel looks again when it is showing.
     app->tree->setActivityCallback([app](const std::string& path) {
         if (app->dead) return;
-        if (app->git && app->gitShown) app->git->refresh();
+        if (app->git) app->git->refresh();
         if (app->treeColors) app->treeColors->changedOnDisk(path);
     });
     // The rows' git colors (TreeGitColors.h).

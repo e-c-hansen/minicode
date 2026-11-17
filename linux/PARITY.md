@@ -1248,6 +1248,13 @@ its server comes first here (2.0).
   text menu too, and a part with nothing of its own on the Mac (the change
   list off a file row, the graph, the panel outside a repository) shows it
   alone.
+  **The review page** (`HANDOFF.md` item 83, the Mac's A1): Review Changes
+  (a button beside the branch, View > Source Control, the palette) opens one
+  tab of every uncommitted change, each block with Stage and Discard
+  (Unstage), whole files with Stage File, Unstage File, Discard File, Side by
+  Side and Open, Undo Discard at its top; `git_review` presses them. Left to
+  do: F7, the right click on selected lines, conflicts' Keep buttons, the
+  commit page and a worktree's page with Apply to Main.
 - [x] **2.10 Change bars and the tree's git colors.** `QuickDiff`,
   `GitStatus`. Done (`HANDOFF.md` item 34): the `git_gutter` and
   `tree_git_colors` suites, real keys and clicks over scratch repositories
