@@ -385,7 +385,7 @@ MC_GUI_SUITE(terminal_ids) {
         gHadShellEnv = old != nullptr;
         gOldShellEnv = old ? old : "";
         GCHECK(std::string(g_get_home_dir()).find(MCGuiScratch()) == 0);   // never the user's own
-        g_setenv("SHELL", "/bin/bash", TRUE);
+        EnvLock::envSet("SHELL", "/bin/bash", TRUE);
         MCGuiWriteFile(std::string(g_get_home_dir()) + "/.bashrc", "\n");
         d->confirmClose = nullptr;
         d->newTerminal();
@@ -521,7 +521,7 @@ MC_GUI_SUITE(terminal_ids) {
     MCGuiWait("notify for the closed one answered", 15, [] { return gRun->done; });
     MCGuiStep("a closed terminal's id is refused; the settings are put back", [] {
         GCHECK(gRun->exitCode != 0);
-        if (gHadShellEnv) g_setenv("SHELL", gOldShellEnv.c_str(), TRUE);
-        else g_unsetenv("SHELL");
+        if (gHadShellEnv) EnvLock::envSet("SHELL", gOldShellEnv.c_str(), TRUE);
+        else EnvLock::envUnset("SHELL");
     });
 }

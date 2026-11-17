@@ -49,9 +49,9 @@ std::string gPath;
 void standInsOnPath() {
     const char* p = g_getenv("PATH");
     gPath = p ? p : "";
-    g_setenv("PATH", (bin() + ":" + gPath).c_str(), TRUE);
+    EnvLock::envSet("PATH", (bin() + ":" + gPath).c_str(), TRUE);
 }
-void pathBack() { g_setenv("PATH", gPath.c_str(), TRUE); }
+void pathBack() { EnvLock::envSet("PATH", gPath.c_str(), TRUE); }
 
 std::string sourceText() {
     GtkTextBuffer* b = ed()->sourceBuffer();

@@ -119,7 +119,7 @@ MC_GUI_SUITE(terminal_tabs) {
         gOldShell = old ? old : "";
         gHome = g_get_home_dir();
         GCHECK(gHome.find(MCGuiScratch()) == 0);   // never the user's own
-        g_setenv("SHELL", "/bin/bash", TRUE);
+        EnvLock::envSet("SHELL", "/bin/bash", TRUE);
         MCGuiWriteFile(gHome + "/.bashrc", "\n");
         gOldConfirm = dock()->confirmClose;
         // Other suites in the same run leave tabs behind: start from one.
@@ -346,7 +346,7 @@ MC_GUI_SUITE(terminal_tabs) {
     MCGuiStep("the shell is not the old one; the settings are put back", [] {
         GCHECK(dock()->at(0)->shellPid() != gPidA);
         dock()->confirmClose = gOldConfirm;
-        if (gHadShell) g_setenv("SHELL", gOldShell.c_str(), TRUE);
-        else g_unsetenv("SHELL");
+        if (gHadShell) EnvLock::envSet("SHELL", gOldShell.c_str(), TRUE);
+        else EnvLock::envUnset("SHELL");
     });
 }

@@ -1,4 +1,5 @@
 // ClaudeHooksOffer.cpp — see ClaudeHooksOffer.h.
+#include "EnvLock.h"
 #include "ClaudeHooksOffer.h"
 
 #include <ctime>
@@ -71,7 +72,11 @@ std::string settingsPath() {
 }
 
 std::string command() {
-    gchar* found = g_find_program_in_path("minicode");
+    gchar* found;
+    {
+        EnvLock::EnvRead env;
+        found = g_find_program_in_path("minicode");
+    }
     if (found) {
         g_free(found);
         return ClaudeHooks::kCommand;

@@ -70,7 +70,7 @@ MC_GUI_SUITE(latex_forward) {
             "sed -e \"s|@DIR@/.main.minicode.tex|$file|\" -e \"s|@DIR@|$(dirname \"$file\")|\" "
             "\"$d/main.synctex\" | gzip -c > \"$out/$stem.synctex.gz\"\n");
         g_chmod((D() + "/tectonic").c_str(), 0755);
-        g_setenv("MINICODE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);
+        EnvLock::envSet("MINICODE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);
         MCGuiOpenFileKept(F("main.tex"));
     });
     MCGuiWait("main.tex shows", 10, [] { return ed()->currentPath() == F("main.tex"); });

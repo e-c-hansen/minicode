@@ -123,8 +123,8 @@ MC_GUI_SUITE(markdown_math) {
             "grep -o '\\\\mcship{[0-9]*}' \"$tex\" | wc -l | tr -d ' ' >> '" + P("batches.log") + "'\n";
         MCGuiWriteFile(P("fake-tectonic"), script);
         g_chmod(P("fake-tectonic").c_str(), 0755);
-        g_setenv("MINICODE_TECTONIC", P("fake-tectonic").c_str(), TRUE);
-        g_setenv("MINICODE_MATH_CACHE", P("math-cache").c_str(), TRUE);
+        EnvLock::envSet("MINICODE_TECTONIC", P("fake-tectonic").c_str(), TRUE);
+        EnvLock::envSet("MINICODE_MATH_CACHE", P("math-cache").c_str(), TRUE);
         MCGuiWriteFile(P("tectonic.log"), "");
         MCGuiWriteFile(P("batches.log"), "");
         MCGuiWriteFile(P("plain.md"), "# Plain\n\nNo formula here, only a price of 5 and 10 dollars.\n");
@@ -258,7 +258,7 @@ MC_GUI_SUITE(markdown_math) {
         GCHECK(ed()->sidePane()->pageText().find("stands.") != std::string::npos);
         MCGuiKey("ctrl+alt+v");
         ed()->closeAllTabs();
-        g_setenv("MINICODE_TECTONIC", P("no-such-tectonic").c_str(), TRUE);
+        EnvLock::envSet("MINICODE_TECTONIC", P("no-such-tectonic").c_str(), TRUE);
     });
 
     openPage("none.md");

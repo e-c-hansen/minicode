@@ -120,7 +120,7 @@ MC_GUI_SUITE(format_coverage) {
                                         "'\nexec /usr/bin/sed -E 's/^#  /# /'\n");
         const char* p = g_getenv("PATH");
         gPath = p ? p : "";
-        g_setenv("PATH", (bin() + ":" + gPath).c_str(), TRUE);
+        EnvLock::envSet("PATH", (bin() + ":" + gPath).c_str(), TRUE);
         gMd = MCGuiFakeLsp("fmtmd", server(edit(0, 1, 2, "")));
         gNotesServer = MCGuiFakeLsp("fmtnotes", server(edit(0, 1, 1, " ")));
         MCGuiFakeLspClearLog("fmtmd");
@@ -213,6 +213,6 @@ MC_GUI_SUITE(format_coverage) {
         MCGuiSetSettings("lsp.enabled = false\n");
         for (const char* name : {"a.notes", "README.md"})
             if (Document* d = ed()->documentFor(F(name))) ed()->closeTab(d);
-        g_setenv("PATH", gPath.c_str(), TRUE);
+        EnvLock::envSet("PATH", gPath.c_str(), TRUE);
     });
 }

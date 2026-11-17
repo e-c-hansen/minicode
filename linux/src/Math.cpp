@@ -1,4 +1,5 @@
 // Math.cpp — see Math.h.
+#include "EnvLock.h"
 #include "Math.h"
 
 #ifdef MINICODE_ENABLE_PDF
@@ -82,6 +83,7 @@ int g_nextListener = 1;
 std::atomic<int> g_runs{0};
 
 std::string cacheDir() {
+    EnvLock::EnvRead env;
     if (const char* e = g_getenv("MINICODE_MATH_CACHE"); e && *e) return e;
     return std::string(g_get_user_cache_dir()) + "/minicode/math";
 }
@@ -190,10 +192,15 @@ Once runOnce(const std::string& tool, const std::vector<Item>& items, const std:
     GPid pid = 0;
     gint outFd = -1, errFd = -1;
     GError* err = nullptr;
-    if (!g_spawn_async_with_pipes(
+    gboolean spawned;
+    {
+        EnvLock::EnvRead env;   // a NULL envp: the child takes ours (EnvLock.h)
+        spawned = g_spawn_async_with_pipes(
             dir.c_str(), argv.data(), nullptr,
             (GSpawnFlags)(G_SPAWN_DO_NOT_REAP_CHILD | G_SPAWN_STDIN_FROM_DEV_NULL),
-            [](gpointer) { setsid(); }, nullptr, &pid, nullptr, &outFd, &errFd, &err)) {
+            [](gpointer) { setsid(); }, nullptr, &pid, nullptr, &outFd, &errFd, &err);
+    }
+    if (!spawned) {
         run.whole = std::string("tectonic did not start: ") + (err ? err->message : "unknown");
         g_clear_error(&err);
         removeTree(dir);

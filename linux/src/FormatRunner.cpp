@@ -1,4 +1,5 @@
 // FormatRunner.cpp — see FormatRunner.h.
+#include "EnvLock.h"
 #include "FormatRunner.h"
 
 #include "Lsp.h"   // LspSearchDirs
@@ -332,7 +333,11 @@ void format(const std::string& text, const std::string& path, const std::string&
     job->home = g_get_home_dir();
     const char* venv = g_getenv("VIRTUAL_ENV");
     job->virtualEnv = venv ? venv : "";
-    gchar** envp = g_get_environ();
+    gchar** envp;
+    {
+        EnvLock::EnvRead env;
+        envp = g_get_environ();
+    }
     for (gchar** e = envp; e && *e; e++) job->environ.push_back(*e);
     g_strfreev(envp);
     job->done = std::move(done);
