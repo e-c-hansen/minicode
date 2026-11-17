@@ -1004,15 +1004,14 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     BOOL _applied;            // the changes on show were brought into main
     size_t _appliedPrint;     // ...as this read showed them
     NSString *_appliedMain;   // the main checkout they went into
-    // The note at the top is about the last action: it goes once a read
-    // started after it shows something else (a commit, an edit, git in a
-    // terminal), so "Staged a change" never outlives the staged change.
-    NSUInteger _reads;        // reads started so far
-    NSUInteger _messageAfter; // the note is about reads started after this many
-    BOOL _messageSettled;     // ...one of which is on show
-    size_t _messagePrint;     // what that read showed
-    std::string _messageHead; // HEAD as the page last read it before the note
-    BOOL _messageHeadKnown;
+    // The note at the top is about the last action and the files it
+    // touched: it goes once the page shows those files otherwise than the
+    // action left them, or HEAD moved (ChangeReview::ActionNote), so
+    // "Staged a change" never outlives the staged change.
+    ChangeReview::ActionNote _note;
+    BOOL _messageSettled;     // _note.settled, for the checks
+    std::string _actionHead;  // HEAD as the last action ran, read on the queue
+    BOOL _actionHeadKnown;
     size_t _lastConflicts;
     NSString *_commitTitle;   // "a1b2c3d Subject", the tab's title
     NSTextField *_bodyLabel;  // the rest of a commit's message
@@ -1335,7 +1334,6 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const BOOL commitMode = _commitMode;
     NSString *worktree = _worktree, *mainRef = _mainRef;
     const ChangeReview::Opened opened = _opened;
-    const NSUInteger serial = ++_reads;
     __weak MCChangeReviewPage *weakSelf = self;
     dispatch_async(_queue, ^{
         std::shared_ptr<ReviewData> d = worktree ? ReadWorktree(worktree, mainRef, opened)
@@ -1355,7 +1353,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                 [s reload];
                 return;
             }
-            [s noteRead:d serial:serial];
+            [s noteRead:d];
             [s show:d];
             if (s->_again) {
                 s->_again = NO;
@@ -1591,12 +1589,32 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     [self layoutView];
 }
 
-- (void)say:(NSString *)text ok:(BOOL)ok {
+// Whether a read says which commit HEAD is: only the page of uncommitted
+// changes reads it ("" for a repository with no commit yet).
+- (BOOL)readKnowsHead:(const std::shared_ptr<ReviewData> &)d {
+    return d && d->error.empty() && !_worktree && !_commitMode;
+}
+
+// `paths`: the files the note speaks of (every file when empty). `ran`: the
+// action went through the page's queue, so the next read shown is its
+// result; else nothing changed (a refusal) and the page as it is now is.
+- (void)say:(NSString *)text ok:(BOOL)ok about:(const std::vector<std::string> &)paths ran:(BOOL)ran {
     _message = [text copy];
-    _messageAfter = _reads;
-    _messageSettled = NO;
-    _messageHeadKnown = _data && _data->error.empty();
-    _messageHead = _messageHeadKnown ? _data->head : std::string();
+    _note = ChangeReview::ActionNote();
+    for (const std::string &p : paths)
+        if (!p.empty()) _note.paths.push_back(p);
+    if (ran && _actionHeadKnown) {
+        _note.headKnown = true;
+        _note.head = _actionHead;
+    } else if ([self readKnowsHead:_data]) {
+        _note.headKnown = true;
+        _note.head = _data->head;
+    }
+    _actionHeadKnown = NO;
+    // A worktree's page is what it compares, which no action of its own
+    // changes: the result is on show already.
+    if ((!ran || _worktree) && _data && _data->error.empty()) _note.settle(_data->diffs);
+    _messageSettled = _note.settled;
     _messageLabel.stringValue = text ?: @"";
     _messageLabel.toolTip = text;
     AppSettings *cfg = [AppSettings shared];
@@ -1606,26 +1624,18 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     [self updateSummary];
 }
 
-// A read about to go on show: the note at the top stays while the changes
-// are what the first read after its action showed, and goes when they are
-// not (a commit made in the panel or a terminal, an edit, a refresh after
-// something else changed them).
-- (void)noteRead:(const std::shared_ptr<ReviewData> &)d serial:(NSUInteger)serial {
-    if (!_message.length || _commitMode) return;
-    if (!_messageSettled) {
-        // A read started before the action shows what was there before it.
-        if (serial <= _messageAfter) return;
-        _messageSettled = YES;
-        _messagePrint = d->fingerprint;
-        // A commit landed between the action and this read (the panel's
-        // Commit pressed at once, a terminal): what the note spoke of is
-        // committed, and this read is already the state after it, so the
-        // fingerprint alone would keep the note for good (CI, 6ea9d0f).
-        // No action of the page's moves HEAD.
-        if (!_messageHeadKnown || !d->error.empty() || d->head == _messageHead) return;
-    } else if (d->fingerprint == _messagePrint) {
-        return;
-    }
+// A read about to go on show: the note at the top stays while the files it
+// speaks of are as its action left them, and goes when they are not (a
+// commit made in the panel or a terminal, even one landing before the
+// first read after the action; an unstage, a discard, an edit or git from
+// outside). Reads are delivered in the order started, and an action runs
+// on the same queue, so every read shown after the note is its result or
+// later.
+- (void)noteRead:(const std::shared_ptr<ReviewData> &)d {
+    if (!_message.length || _commitMode || !d->error.empty()) return;
+    const BOOL goes = _note.goesWith(d->diffs, [self readKnowsHead:d], d->head);
+    _messageSettled = _note.settled;
+    if (!goes) return;
     _message = nil;
     _messageLabel.stringValue = @"";
     _messageLabel.toolTip = nil;
@@ -1739,8 +1749,34 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     return [NS8(_data->top) stringByAppendingPathComponent:NS8(f.path)];
 }
 
-- (void)finish:(NSString *)text ok:(BOOL)ok {
-    [self say:text ok:ok];
+// An action's work on the page's queue, HEAD read there first: a note about
+// the action speaks of changes on that commit, whatever the page last read.
+- (void)act:(dispatch_block_t)work {
+    NSString *top = [self readKnowsHead:_data] ? NS8(_data->top) : nil;
+    __weak MCChangeReviewPage *weakSelf = self;
+    dispatch_async(_queue, ^{
+        if (top) {
+            MCGitResult *r = MCGitRunSync(top, @[@"rev-parse", @"-q", @"--verify", @"HEAD"]);
+            // 1 with nothing written: no commit yet, which status reads as "".
+            const BOOL known = r.status == 0 || (r.status == 1 && r.output.length == 0);
+            NSString *out = [[NSString alloc] initWithData:r.output ?: [NSData data] encoding:NSUTF8StringEncoding];
+            const std::string head = r.status == 0 ? Std([out ?: @"" stringByTrimmingCharactersInSet:
+                                                                         NSCharacterSet.whitespaceAndNewlineCharacterSet])
+                                                   : std::string();
+            dispatch_async(dispatch_get_main_queue(), ^{
+                MCChangeReviewPage *s = weakSelf;
+                if (!s) return;
+                s->_actionHead = head;
+                s->_actionHeadKnown = known;
+            });
+        }
+        work();
+    });
+}
+
+// After an action that ran on the queue (`ran`), or one refused at once.
+- (void)finish:(NSString *)text ok:(BOOL)ok about:(const std::vector<std::string> &)paths ran:(BOOL)ran {
+    [self say:text ok:ok about:paths ran:ran];
     if (!ok) NSBeep();
     [_panel refresh];
     [self reload];
@@ -1866,7 +1902,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         [self finish:[NSString stringWithFormat:@"%@ has unsaved changes in a tab: resolve the "
                                                 @"conflict there, or save the tab first.",
                                                 path.lastPathComponent]
-                  ok:NO];
+                  ok:NO
+               about:{rel}
+                 ran:NO];
         return;
     }
     const std::u16string text = ChangeReview::conflictResult(d, (size_t)block, keep);
@@ -1878,7 +1916,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         done = [NSString stringWithFormat:@"No conflicts left in %@. Mark Resolved stages it.",
                                           path.lastPathComponent];
     __weak MCChangeReviewPage *weakSelf = self;
-    dispatch_async(_queue, ^{
+    [self act:^{
         NSString *failure = nil;
         std::string now;
         FolderSearch::FileStamp stamp;
@@ -1893,9 +1931,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                                                      path.lastPathComponent, NS8(error)];
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-            [weakSelf finish:failure ?: done ok:failure == nil];
+            [weakSelf finish:failure ?: done ok:failure == nil about:{rel} ran:YES];
         });
-    });
+    }];
 }
 
 - (void)stageFile:(size_t)fi done:(NSString *)doneText {
@@ -1905,13 +1943,16 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     NSString *name = NS8(x.row.path).lastPathComponent;
     NSString *top = NS8(data->top);
     __weak MCChangeReviewPage *weakSelf = self;
-    dispatch_async(_queue, ^{
+    [self act:^{
         MCGitResult *r = MCGitRunSync(top, Args(args));
         dispatch_async(dispatch_get_main_queue(), ^{
             NSString *done = doneText ?: [NSString stringWithFormat:x.row.staged ? @"Unstaged %@." : @"Staged %@.", name];
-            [weakSelf finish:r.ok ? done : (r.errorText.length ? r.errorText : @"git failed.") ok:r.ok];
+            [weakSelf finish:r.ok ? done : (r.errorText.length ? r.errorText : @"git failed.")
+                          ok:r.ok
+                       about:{x.row.path, x.row.origPath}
+                         ran:YES];
         });
-    });
+    }];
 }
 
 // Stage, Unstage or Discard a block (`block` >= 0) or the changed lines
@@ -1930,11 +1971,11 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const bool lines = block < 0;
     const GitUi::ActionPlan plan = ChangeReview::plan(d, op, lines);
     if (!plan.refusal.empty()) {
-        [self finish:NS8(plan.refusal) ok:NO];
+        [self finish:NS8(plan.refusal) ok:NO about:{d.file.path, d.file.origPath} ran:NO];
         return;
     }
     if (lines && !ChangeReview::anyChanged(d, oldLines, newLines)) {
-        [self finish:@"No changed line is selected." ok:NO];
+        [self finish:@"No changed line is selected." ok:NO about:{d.file.path, d.file.origPath} ran:NO];
         return;
     }
     const std::u16string result = lines ? ChangeReview::linesResult(d, oldLines, newLines, op)
@@ -1954,7 +1995,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         [self finish:[NSString stringWithFormat:@"%@ has unsaved changes in a tab: save or revert "
                                                 @"them first, so the discard does not cross them.",
                                                 path.lastPathComponent]
-                  ok:NO];
+                  ok:NO
+               about:{d.file.path, d.file.origPath}
+                 ran:NO];
         return;
     }
     [self ask:NS8(plan.question) detail:NS8(plan.detail) button:NS8(plan.button) then:go otherwise:nil];
@@ -1969,7 +2012,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const std::string blob = QuickDiff::stagedBlob(text, x.indexHow);
     NSString *top = NS8(data->top);
     __weak MCChangeReviewPage *weakSelf = self;
-    dispatch_async(_queue, ^{
+    [self act:^{
         NSString *failure = nil;
         MCGitResult *ls = MCGitRunSync(top, Args(GitUi::indexEntryArgs(rel)));
         const GitUi::IndexEntry now = GitUi::parseIndexEntry(Bytes(ls.output));
@@ -1986,9 +2029,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             }
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-            [weakSelf finish:failure ?: NS8(plan.doneText) ok:failure == nil];
+            [weakSelf finish:failure ?: NS8(plan.doneText) ok:failure == nil about:{rel, x.row.origPath} ran:YES];
         });
-    });
+    }];
 }
 
 // The work tree's new text: the file as it is goes to the Trash first, then
@@ -2004,7 +2047,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         FolderSearch::encodeFileText(QuickDiff::toUtf8(text), x.workEnc, x.workBom);
     __weak MCChangeReviewPage *weakSelf = self;
     MCGitPanel *panel = _panel;
-    dispatch_async(_queue, ^{
+    [self act:^{
         NSString *failure = nil;
         NSURL *trashed = nil;
         std::string now;
@@ -2035,9 +2078,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (trashed) [panel rememberDiscardAt:path rel:NS8(rel) trashed:trashed];
-            [weakSelf finish:failure ?: NS8(plan.doneText) ok:failure == nil];
+            [weakSelf finish:failure ?: NS8(plan.doneText) ok:failure == nil about:{rel, x.row.origPath} ran:YES];
         });
-    });
+    }];
 }
 
 // A question as the panel asks one, over this page's window when there is
@@ -2088,7 +2131,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     _applying = YES;
     _applyButton.enabled = NO;
     __weak MCChangeReviewPage *weakSelf = self;
-    dispatch_async(_queue, ^{
+    [self act:^{
         MCGitResult *st = MCGitRunSync(mainPath, Args(GitUi::statusArgs()));
         GitUi::ApplyPlan plan;
         if (st.ok) plan = GitUi::applyToMainPlan(paths, Git::parseStatus(Bytes(st.output)), mainName, wtName);
@@ -2098,7 +2141,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             if (!s) return;
             if (!plan.refusal.empty()) {
                 s->_applying = NO;
-                [s finish:NS8(plan.refusal) ok:NO];
+                [s finish:NS8(plan.refusal) ok:NO about:{} ran:YES];
                 return;
             }
             [s ask:NS8(plan.question) detail:NS8(plan.detail) button:NS8(plan.button)
@@ -2110,7 +2153,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                [me updateSummary];
            }];
         });
-    });
+    }];
 }
 
 // The worktree's patch against the merge base, and one for each untracked
@@ -2123,7 +2166,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const std::string base = data->baseRef;
     const size_t files = data->diffs.size();
     __weak MCChangeReviewPage *weakSelf = self;
-    dispatch_async(_queue, ^{
+    [self act:^{
         NSString *failure = nil;
         std::vector<std::string> conflicts;
         std::string patch;
@@ -2167,9 +2210,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                 s->_appliedPrint = data->fingerprint;
                 s->_appliedMain = mainPath;
             }
-            [s finish:failure ?: NS8(GitUi::applyDoneText(files, conflicts, mainName)) ok:failure == nil];
+            [s finish:failure ?: NS8(GitUi::applyDoneText(files, conflicts, mainName)) ok:failure == nil about:{} ran:YES];
         });
-    });
+    }];
 }
 
 // The main checkout's changes, which Apply to Main just brought in, in

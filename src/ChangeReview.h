@@ -112,6 +112,32 @@ size_t fileCount(const std::vector<FileDiff>& diffs);
 // note about the last action can go once the changes have moved on.
 size_t fingerprint(const std::vector<FileDiff>& diffs);
 
+// The same over only the diffs about `paths` (a file's path or a rename's
+// source); every diff when `paths` is empty.
+size_t fingerprintOf(const std::vector<FileDiff>& diffs, const std::vector<std::string>& paths);
+
+// The note at the top of the page about the last action ("Staged g.py."):
+// it speaks of `paths` (every file when empty) on the commit HEAD named as
+// the action ran. It stays while the page shows those files as the
+// action left them, and goes once they show otherwise (a commit, a
+// discard, an unstage, an edit or git from outside) or HEAD has moved (no
+// action of the page's moves HEAD). The page delivers reads in the order
+// they were started, after any action queued before them, so every read
+// shown after the note is the action's result or later: the first one
+// settles what the action left, unless that was known at once (a refusal
+// changed nothing: `settle` with the page as it is).
+struct ActionNote {
+    std::vector<std::string> paths;
+    bool headKnown = false;
+    std::string head;
+    bool settled = false;
+    size_t print = 0;
+    void settle(const std::vector<FileDiff>& diffs);
+    // A read going on show (one that failed is not asked about): true when
+    // the note goes with it.
+    bool goesWith(const std::vector<FileDiff>& diffs, bool readHeadKnown, const std::string& readHead);
+};
+
 // The texts' lines as a page shows them: without "\n" and a "\r" before it.
 std::u16string oldLine(const FileDiff& d, int line);
 std::u16string newLine(const FileDiff& d, int line);

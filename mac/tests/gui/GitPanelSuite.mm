@@ -1283,6 +1283,91 @@ MC_GUI_SUITE(git_review) {
         GCHECK(p.message.length == 0);
         GCHECK_EQ_STR([[p valueForKey:@"messageLabel"] stringValue], @"");
     });
+    // The order CI met next (main, 69ff43b): a read started after the
+    // action was queued and before its note was said (a refresh after an
+    // edit, say), run after the commit. It is the first read on show after
+    // the note and already shows g.py committed; the note was kept for the
+    // read after it, so the page showed no staged g.py under "Staged g.py.".
+    GitShell(@"g.py changed once more", [NSString stringWithFormat:@"cd '%@' && printf 'def f():\\n    return 4\\n' > g.py", repo]);
+    MCGuiStep(@"read again for it", ^{
+        loads = Review(c).loads;
+        [Review(c) reload];
+    });
+    MCGuiWait(@"g.py among the changes again", 15, ^BOOL {
+        return Review(c).loads > loads && [Review(c) rowOfFile:@"g.py" staged:NO] >= 0;
+    });
+    MCGuiStep(@"Stage File on g.py held, and a read asked for behind it", ^{
+        MCChangeReviewPage *p = Review(c);
+        actions = 0;
+        GCHECK(PressButton(p, @"Stage File", [p rowOfFile:@"g.py" staged:NO]));
+        dispatch_semaphore_t s = dispatch_semaphore_create(0);
+        hold = s;
+        dispatch_async((dispatch_queue_t)[p valueForKey:@"_queue"], ^{
+            dispatch_semaphore_wait(s, dispatch_time(DISPATCH_TIME_NOW, 30 * (int64_t)NSEC_PER_SEC));
+        });
+        [p reload];
+        GCHECK([[p valueForKey:@"_loading"] boolValue]);
+    });
+    MCGuiWait(@"staged and said, the read still waiting", 15, ^BOOL { return actions == 1; });
+    MCGuiStep(@"a commit; then the read that was asked for first", ^{
+        GCHECK_EQ_STR(Review(c).message, @"Staged g.py.");
+        GCHECK(MCGitRunSync(repo, @[@"commit", @"-qm", @"meanwhile again"]).ok);
+        loads = Review(c).loads;
+        dispatch_semaphore_signal(hold);
+    });
+    MCGuiWait(@"the first read after the note on show", 15, ^BOOL { return Review(c).loads > loads; });
+    MCGuiStep(@"it shows g.py committed, and the note is gone with it", ^{
+        MCChangeReviewPage *p = Review(c);
+        MCGuiNote(@"first read after the note: \"%@\", g.py rows %ld %ld", p.message,
+                  (long)[p rowOfFile:@"g.py" staged:YES], (long)[p rowOfFile:@"g.py" staged:NO]);
+        GCHECK([p rowOfFile:@"g.py" staged:YES] < 0 && [p rowOfFile:@"g.py" staged:NO] < 0);
+        GCHECK(p.message.length == 0);
+        GCHECK_EQ_STR([[p valueForKey:@"messageLabel"] stringValue], @"");
+    });
+    // The note speaks of g.py: another file moving leaves it; g.py
+    // unstaged from a terminal takes it away.
+    GitShell(@"g.py changed for the last time", [NSString stringWithFormat:@"cd '%@' && printf 'def f():\\n    return 5\\n' > g.py", repo]);
+    MCGuiStep(@"read again for it", ^{
+        loads = Review(c).loads;
+        [Review(c) reload];
+    });
+    MCGuiWait(@"g.py among the changes once more", 15, ^BOOL {
+        return Review(c).loads > loads && [Review(c) rowOfFile:@"g.py" staged:NO] >= 0;
+    });
+    MCGuiStep(@"Stage File on g.py", ^{
+        MCChangeReviewPage *p = Review(c);
+        actions = 0;
+        loads = p.loads;
+        GCHECK(PressButton(p, @"Stage File", [p rowOfFile:@"g.py" staged:NO]));
+    });
+    MCGuiWait(@"g.py staged and on show", 15, ^BOOL {
+        return actions == 1 && Review(c).loads > loads && [Review(c) rowOfFile:@"g.py" staged:YES] >= 0;
+    });
+    GitShell(@"another file appears", [NSString stringWithFormat:@"cd '%@' && printf 'x\\n' > other.txt", repo]);
+    MCGuiStep(@"read again for it", ^{
+        GCHECK_EQ_STR(Review(c).message, @"Staged g.py.");
+        loads = Review(c).loads;
+        [Review(c) reload];
+    });
+    MCGuiWait(@"other.txt on show", 15, ^BOOL {
+        return Review(c).loads > loads && [Review(c) rowOfFile:@"other.txt" staged:NO] >= 0;
+    });
+    MCGuiStep(@"the note about g.py stays; then g.py unstaged in a terminal", ^{
+        MCChangeReviewPage *p = Review(c);
+        GCHECK_EQ_STR(p.message, @"Staged g.py.");
+        GCHECK(MCGitRunSync(repo, @[@"restore", @"--staged", @"g.py"]).ok);
+        loads = p.loads;
+        [p reload];
+    });
+    MCGuiWait(@"g.py back among the changes", 15, ^BOOL {
+        return Review(c).loads > loads && [Review(c) rowOfFile:@"g.py" staged:YES] < 0;
+    });
+    MCGuiStep(@"the note went with the staged g.py", ^{
+        MCChangeReviewPage *p = Review(c);
+        MCGuiNote(@"after the unstage: \"%@\"", p.message);
+        GCHECK(p.message.length == 0);
+    });
+    GitShell(@"g.py and other.txt as committed", [NSString stringWithFormat:@"cd '%@' && %@ checkout -q -- g.py && rm other.txt", repo, G]);
     GitShell(@"50,000 lines, every one changed", [NSString
         stringWithFormat:@"set -e; cd '%@'; seq 1 50000 | sed 's/^/line /' > big.txt; %@ add big.txt; "
                           "%@ commit -qm big; seq 1 50000 | sed 's/^/LINE /' > big.txt",

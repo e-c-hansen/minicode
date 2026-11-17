@@ -162,11 +162,16 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `writeFileAtomically`, so a clean tab follows the disk ("Reload from
   Disk"); a dirty tab's file is refused. Every action, and every panel
   refresh (`MCGitPanelDidRefreshNotification`), reads again and keeps the
-  place by `ChangeReview::anchorAt`/`rowFor`. An action's note stays
-  while the reads show what the first read after it showed
-  (`noteRead:serial:`), and goes at that first read when HEAD moved
-  since the page's last read before it: a commit landing between the
-  action and its read (2026-11-17, a flake on main). Rows are one height
+  place by `ChangeReview::anchorAt`/`rowFor`. An action's note
+  (`ChangeReview::ActionNote`, `noteRead:`) speaks of the files the action
+  touched on the HEAD read on the queue as it ran (`act:`): it stays while
+  the page shows those files as the first read shown after it did (or, for
+  a refusal, as the page showed them then), and goes at any read that
+  shows them otherwise or another HEAD. No serial numbers: reads and
+  actions share the queue and reach the main thread in order, so every
+  read shown after the note is its action's result or later (2026-11-17,
+  two flakes on main: a commit landing before the first read, and a read
+  asked for between the action and its note). Rows are one height
   (`ReviewRowHeight`), so places are arithmetic and layout is
   non-contiguous; tints, numbers and the buttons are drawn, the buttons
   pinned to the visible right edge (a sideways scroll redraws). New,
@@ -185,9 +190,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   height measured on every layout, with the whole of it as its tooltip.
   **The page's note** (2026-11-16, G1) is the last action's words, at the
   bar's right, or on a line of its own under the bar when they do not fit
-  or carry a button; it goes once a read started after the action shows
-  other changes (`ChangeReview::fingerprint`, computed on the read queue;
-  `noteRead:serial:`), so "Staged a change" never outlives a commit. The
+  or carry a button; it goes once a read shows the files it speaks of
+  otherwise (`ChangeReview::fingerprintOf`, see above), so "Staged a
+  change" never outlives a commit, an unstage or a discard. The
   header counts files (`ChangeReview::fileCount`), not list entries.
   **Apply to Main** (worktree mode; A1b) puts its result on that line
   with Show in Source Control (`onShowSourceControl`: the window's
