@@ -51,6 +51,7 @@ GitSyncSuite.cpp
 GitActionsSuite.cpp
 GitHunksSuite.cpp
 GitVerbsSuite.cpp
+GitReviewSuite.cpp
 AdjustSettingsSuite.cpp
 ThemesSuite.cpp
 SwatchesSuite.cpp
@@ -74,6 +75,7 @@ CompareSuite.cpp
 ProcessesSuite.cpp
 NotesSuite.cpp
 AttentionSuite.cpp
+ClaudeHooksOfferSuite.cpp
 IdeLinkSuite.cpp
 BrowserPagesSuite.cpp
 AgentsSuite.cpp

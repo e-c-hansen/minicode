@@ -115,6 +115,7 @@ const std::vector<Action>& actions() {
         {"minicode.toggleProcesses", "win.toggleprocesses", false},
         {"minicode.toggleIdeLink", "app.idelink", false},
         {"minicode.toggleAgents", "win.toggleagents", false},
+        {"minicode.git.reviewChanges", "win.gitreview", false},
         {"git.fetch", "win.gitfetch", false},
         {"git.pull", "win.gitpull", false},
         {"git.push", "win.gitpush", false},

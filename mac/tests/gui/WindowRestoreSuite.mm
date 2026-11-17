@@ -7,6 +7,16 @@
 // one pane named, Problems, a file selected deep in the tree) and quits as
 // Cmd+Q does; the second (_restore_reader) is launched with no folder, as
 // the Dock launches it, and finds every one of those back.
+//
+// The suite's own process is a third minicode on the same sessions.json,
+// with windows of its own, and it writes them down as every minicode does
+// (three seconds after a tab or window changes). Until 2026-11-17 each
+// minicode wrote its windows over the whole record, so a write of the
+// parent's landing between the children's (CI, 44044357638: utf16 closed
+// its window three seconds before the reader ran) left the parent's window
+// where the restored folder's should be: the same loss a user running two
+// minicodes at once met. The parent now writes at every point between the
+// children on purpose, and each time the children's windows must stay.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -18,6 +28,27 @@ NSString *In(NSString *name) { return [Folder() stringByAppendingPathComponent:n
 NSString *Expect() { return [MCGuiScratch() stringByAppendingPathComponent:@"restore-expect.plist"]; }
 NSTextView *Text(EditorController *c) { return [c valueForKey:@"textView"]; }
 NSString *Real(NSString *p) { return p.stringByResolvingSymlinksInPath; }
+
+// This process's windows written down now, as its three-second timer, a
+// window closing or quitting writes them, and in the file.
+void ParentWritesItsWindows() {
+    [EditorController saveOpenWindows];
+    MCSessionsFlush();
+}
+
+// The stored windows on `root`, and those this process owns.
+size_t WindowsOn(const TabSessions::Store &store, NSString *root) {
+    size_t n = 0;
+    for (const TabSessions::Window &w : store.windows) n += w.root == Real(root).UTF8String;
+    return n;
+}
+size_t ParentWindows(const TabSessions::Store &store) {
+    size_t n = 0;
+    for (const TabSessions::Window &w : store.windows) n += w.ownerPid == (long)getpid();
+    return n;
+}
+// Whether this process has a window the record would list.
+bool ParentHasWindows() { return [EditorController openWindowsFrontFirst].count > 0; }
 
 // The line a character is on, from 0.
 NSUInteger LineOf(NSString *s, NSUInteger at) {
@@ -53,6 +84,13 @@ MC_GUI_SUITE(window_restore) {
         MCGuiWriteFile(In(@"src/deep/x.c"), @"int x;\n");
         [[NSFileManager defaultManager] removeItemAtPath:Expect() error:nil];
     });
+    MCGuiStep(@"this process writes its own windows down before the first app starts", ^{
+        ParentWritesItsWindows();
+        const TabSessions::Store store = MCSessionsRead();
+        MCGuiNote(@"parent's windows: %zu of %zu", ParentWindows(store), store.windows.size());
+        GCHECK(ParentWindows(store) == [EditorController openWindowsFrontFirst].count);
+        GCHECK(WindowsOn(store, Folder()) == 0);
+    });
     MCGuiAsync(@"a first app arranges its window and quits", 90, ^(MCGuiDone done) {
         MCGuiRunChild(@"_restore_writer", Folder(), ^(int status, NSString *out) {
             GCHECK(status == 0);
@@ -63,6 +101,21 @@ MC_GUI_SUITE(window_restore) {
     });
     MCGuiStep(@"it wrote down what to check", ^{
         GCHECK([[NSFileManager defaultManager] fileExistsAtPath:Expect()]);
+    });
+    MCGuiStep(@"its quit kept this process's windows beside its own", ^{
+        const TabSessions::Store store = MCSessionsRead();
+        GCHECK(WindowsOn(store, Folder()) == 1);
+        if (ParentHasWindows()) GCHECK(ParentWindows(store) > 0);
+    });
+    MCGuiStep(@"this process writes again before the second app starts: the first's stay", ^{
+        // The race CI lost, made certain: before the fix this left only the
+        // parent's window, and the second app brought that one back.
+        ParentWritesItsWindows();
+        const TabSessions::Store store = MCSessionsRead();
+        GCHECK(WindowsOn(store, Folder()) == 1);
+        // This process's own first, then the first app's.
+        if (ParentHasWindows())
+            GCHECK(!store.windows.empty() && store.windows[0].ownerPid == (long)getpid());
     });
     MCGuiAsync(@"a second app, launched with nothing to open, brings it back", 90,
                ^(MCGuiDone done) {
@@ -76,9 +129,18 @@ MC_GUI_SUITE(window_restore) {
     MCGuiStep(@"the windows and the folder's tabs are in sessions.json", ^{
         GCHECK([[NSFileManager defaultManager] fileExistsAtPath:MCSessionsFilePath()]);
         const TabSessions::Store store = MCSessionsRead();
-        GCHECK(!store.windows.empty());
-        GCHECK(!store.windows.empty() && store.windows[0].root == Real(Folder()).UTF8String);
+        GCHECK(WindowsOn(store, Folder()) == 1);
         GCHECK(store.folders.count(Real(Folder()).UTF8String) == 1);
+    });
+    MCGuiStep(@"this process writes once more after the second app quit: its window stays", ^{
+        ParentWritesItsWindows();
+        const TabSessions::Store store = MCSessionsRead();
+        GCHECK(WindowsOn(store, Folder()) == 1);
+        if (ParentHasWindows()) GCHECK(ParentWindows(store) > 0);
+        // The folder's window is the second app's, written as it went
+        // (closing the last window keeps it), not the parent's.
+        for (const TabSessions::Window &w : store.windows)
+            if (w.root == Real(Folder()).UTF8String) GCHECK(w.ownerPid != (long)getpid());
     });
     MCGuiStep(@"an older minicode's user defaults are carried over as they were", ^{
         NSString *root = @"/old/proj";

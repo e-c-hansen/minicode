@@ -120,17 +120,29 @@ jobs:
             agent_autosave agent_panel agents auto_close bookmarks browser_find
             browser_tabs browserpages config_writes folding format_consent
             git_actions git_gutter git_panel git_review git_verbs idelink keymap
-            keystroke language latex lsp_fixes lsp_open_tabs lsp_watch
+            language latex lsp_fixes lsp_open_tabs lsp_watch
             markdown_preview markdown_side markdown_width multicaret_rows palette
-            paste previews problems processes server_consent split_editor
-            structure swatch_escape terminal_draw terminal_exec terminal_links
+            paste previews problems server_consent split_editor
+            structure swatch_escape terminal_exec terminal_links
             terminal_marks terminal_paste terminal_pty terminal_reflow
             terminal_zoom tools_consent tree worktree_review
+          # The suites whose CPU-time bounds are tight run alone after the
+          # two halves: beside other processes on the runner's few cores a
+          # thread's CPU time rises too (shared caches, the virtual cores'
+          # siblings), and keystroke failed at 1.23 ms against 1 on
+          # 2026-11-17 with both halves running.
+          GUI_ALONE: >-
+            keystroke large_file foldperf terminal_draw lsp_progress processes
         run: |
+          together=0
           scripts/ci-together.sh "$RUNNER_TEMP/ci-logs" \
             core-tests './build/run_tests' \
-            gui-checks-1 'MC_GUI_SKIP_SUITES="$GUI_SECOND_HALF" MC_GUI_SNAPSHOTS="$PICTURES/first-half" ./build/guitest' \
-            gui-checks-2 'MC_GUI_SNAPSHOTS="$PICTURES/second-half" ./build/guitest $GUI_SECOND_HALF'
+            gui-checks-1 'MC_GUI_SKIP_SUITES="$GUI_SECOND_HALF $GUI_ALONE" MC_GUI_SNAPSHOTS="$PICTURES/first-half" ./build/guitest' \
+            gui-checks-2 'MC_GUI_SNAPSHOTS="$PICTURES/second-half" ./build/guitest $GUI_SECOND_HALF' || together=$?
+          alone=0
+          scripts/ci-together.sh "$RUNNER_TEMP/ci-logs" \
+            gui-checks-alone 'MC_GUI_SNAPSHOTS="$PICTURES/alone" ./build/guitest $GUI_ALONE' || alone=$?
+          [ "$together" -eq 0 ] && [ "$alone" -eq 0 ]
 
       # A picture of the test window at each of the first ten failed checks
       # of each half, and the logs, only when the tests failed.

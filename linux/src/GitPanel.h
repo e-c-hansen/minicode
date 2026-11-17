@@ -115,6 +115,35 @@ public:
     // Places the children; called by the panel's layout manager.
     void layout(int width, int height);
 
+    // ---- the review page (ChangeReviewPage.h)
+    // Review Changes: the button, View > Source Control and the palette. The
+    // window shows the page (every uncommitted change in one tab).
+    std::function<void()> onReview;
+    void reviewChanges();
+    // The page open (any window's tab for this panel): the panel keeps
+    // reading the repository while it is hidden, and tells the page after
+    // each status (`onReviewRefresh`), so the page follows a change made
+    // elsewhere.
+    void setReviewOpen(bool open);
+    bool reviewOpen() const { return reviewOpen_; }
+    std::function<void()> onReviewRefresh;
+    // What the page does through the panel, so its actions run in order with
+    // the panel's own on the git thread and share its Trash and its Undo
+    // Discard: a job on the git thread; the plan's question over the window;
+    // a discard to remember; a word under the Commit button (the status bar
+    // while hidden).
+    void runOnGitThread(std::function<void()> job) { post(std::move(job)); }
+    void askQuestion(const GitUi::ActionPlan& plan, std::function<void()> go) {
+        ask(plan, std::move(go));
+    }
+    void rememberDiscard(const std::string& path, const std::string& rel,
+                         const std::string& trashed);
+    void note(const std::string& text, bool info) { say(text, info); }
+    std::shared_ptr<bool> aliveFlag() const { return alive_; }
+    // Whether the Review Changes button shows (files have changes).
+    bool reviewButtonShown() const;
+    GtkWidget* reviewButton() const { return reviewButton_; }
+
     // ---- the commands (GitVerbs.cpp)
     void fetch();
     void pull();
@@ -279,6 +308,7 @@ private:
 
     std::string rootDir_;
     bool active_ = false;
+    bool reviewOpen_ = false;            // the review page is open
     std::shared_ptr<bool> alive_;        // false once the panel is gone
     std::shared_ptr<GitPanel*> ref_;     // the rows' draw functions hold this
     bool focusPending_ = false;          // focus() came before the first answer
@@ -338,6 +368,7 @@ private:
     GtkWidget* placeholder_ = nullptr;
     GtkWidget* commitButton_ = nullptr;
     GtkWidget* syncButton_ = nullptr;    // "Sync Changes ↓ 1 ↑ 2", "Publish Branch"
+    GtkWidget* reviewButton_ = nullptr;  // "Review Changes", while there are some
     GtkWidget* errorLabel_ = nullptr;
     GtkWidget* notice_ = nullptr;
     GtkWidget* listScroll_ = nullptr;

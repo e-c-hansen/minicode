@@ -230,11 +230,16 @@
 // terminals' folders and splits, the tree's open folders and selected row
 // (TabSessions::Window). Written as minicode quits, as a window closes (the
 // last one is kept, since closing it quits), and a moment after a tab
-// switch, so a crash loses little.
+// switch, so a crash loses little. Another minicode running at once keeps
+// its own windows in the record (SessionStore's MCSessionsPutWindows).
 + (void)saveOpenWindows;
+// The windows saveOpenWindows writes down: the app's open windows on a
+// folder, the one in front first.
++ (NSArray<EditorController *> *)openWindowsFrontFirst;
 // The windows to bring back, front first: @{@"root": folder, @"record":
-// what restoreWindowRecord: takes}, for folders still there. None for the
-// demos and the benchmark, which start the same way every time.
+// what restoreWindowRecord: takes}, for folders still there, but those
+// another running minicode holds open. None for the demos and the
+// benchmark, which start the same way every time.
 + (NSArray<NSDictionary *> *)windowsToRestore;
 // Before showWindow: the window comes back as `record` says, its tabs from
 // it rather than from the folder's session.

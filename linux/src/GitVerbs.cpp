@@ -700,7 +700,7 @@ void GitPanel::finishSync(GitUi::SyncOp op, const GitUi::SyncPlan& plan, const G
     else if (ok && errorText_.rfind("Autofetch: ", 0) == 0) setError("", false);
     updateSyncButton();
     // The counts, the graph and the lists as they are now.
-    if (ran && active_) runRefresh();
+    if (ran && (active_ || reviewOpen_)) runRefresh();
 }
 
 // git.autofetch: called every 30 seconds by the panel's timer (and by the

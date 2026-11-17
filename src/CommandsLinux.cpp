@@ -222,6 +222,7 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.view.scm", "ctrl+shift+g", 0, nullptr, nullptr},
         // View > Source Control (PARITY.md 2.9). VS Code has these without
         // keys on Linux too.
+        {"minicode.git.reviewChanges", "", 0, nullptr, nullptr},
         {"git.fetch", "", 0, nullptr, nullptr},
         {"git.pull", "", 0, nullptr, nullptr},
         {"git.push", "", 0, nullptr, nullptr},

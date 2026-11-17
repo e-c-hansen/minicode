@@ -35,7 +35,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/FileDetails.cpp ../src/Commands.cpp ../src/CommandsLinux.cpp \
         ../src/EditorTabs.cpp ../src/Backups.cpp ../src/TabSessions.cpp ../src/SavePlan.cpp ../src/BrowserTabs.cpp ../src/WebBookmark.cpp \
         ../src/LineIndex.cpp ../src/QuickDiff.cpp ../src/SideBySide.cpp ../src/LineDiff.cpp \
-        ../src/MergeConflicts.cpp \
+        ../src/MergeConflicts.cpp ../src/ChangeReview.cpp ../src/ChangeReviewRead.cpp \
         ../src/RightAreaLayout.cpp ../src/TerminalLayout.cpp \
         ../src/NavHistory.cpp ../src/NavRecorder.cpp ../src/ViewZoom.cpp \
         ../src/CommandPalette.cpp ../src/SymbolOutline.cpp \
@@ -60,7 +60,7 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/Opaci
        src/LspSessionDiagnostics.cpp src/LspSessionCompletion.cpp src/LspSessionSignature.cpp \
        src/LspSessionNavigation.cpp \
        src/LspSessionActions.cpp src/LspSessionEdits.cpp src/LspPicker.cpp \
-       src/LspSessionFolderTools.cpp src/FolderConsent.cpp src/ConsentBar.cpp src/FormatOffer.cpp src/InstallView.cpp \
+       src/LspSessionFolderTools.cpp src/FolderConsent.cpp src/ConsentBar.cpp src/FormatOffer.cpp src/ClaudeHooksOffer.cpp src/InstallView.cpp \
        src/Formatting.cpp src/FormatRunner.cpp src/LspSessionFormatting.cpp \
        src/LspSessionProblems.cpp src/ProblemsPanel.cpp src/LspSessionAlso.cpp \
        src/LspSessionWatch.cpp src/LspWatcher.cpp src/LspSessionImports.cpp \
@@ -74,7 +74,7 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/Opaci
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \
        src/Bench.cpp src/StartupLog.cpp src/WhenDrawn.cpp \
        src/Zoom.cpp src/NavHistoryUi.cpp \
-       src/ControlServer.cpp src/IdeLinkServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp src/ProcessesPanel.cpp ../tools/minicode-cli.cpp src/AgentModel.cpp src/AgentsPanel.cpp src/EvidencePage.cpp src/AgentWorktrees.cpp src/WorktreeChangesPage.cpp
+       src/ControlServer.cpp src/IdeLinkServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp src/ProcessesPanel.cpp ../tools/minicode-cli.cpp src/AgentModel.cpp src/AgentsPanel.cpp src/EvidencePage.cpp src/AgentWorktrees.cpp src/WorktreeChangesPage.cpp src/ChangeReviewPage.cpp
 
 SRCS := $(GUI) $(CORE)
 

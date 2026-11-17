@@ -151,4 +151,9 @@ bool startsClaude(const std::string &commandLine);
 // where the native installer keeps each version under its number.
 bool isClaudeProgramPath(const std::string &path);
 
+// The offer (a bar over the terminals when Claude Code starts in one): shown
+// unless Not Now was pressed once (`muted`, kept between launches), the
+// hooks are in already, it was offered earlier this launch, or a bar is up.
+bool shouldOffer(bool muted, bool installed, bool offeredThisLaunch, bool barShown);
+
 }  // namespace ClaudeHooks
