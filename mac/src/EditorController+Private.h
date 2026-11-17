@@ -638,6 +638,13 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (BOOL)validateTestItem:(NSMenuItem *)item enabled:(BOOL *)enabled;
 @end
 
+// EditorController+LineHistory.mm: Show Line History's menu item, and
+// letting it go with the window.
+@interface EditorController (LineHistoryPrivate)
+- (BOOL)validateLineHistoryItem:(NSMenuItem *)item enabled:(BOOL *)enabled;
+- (void)stopLineHistory;
+@end
+
 // EditorController+Persistence.mm: the tabs between runs, backups and hot exit, auto-save, files changed, moved or deleted outside.
 @interface EditorController (Persistence)
 - (NSUserDefaults *)sessionDefaults;

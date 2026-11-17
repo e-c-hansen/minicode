@@ -16,6 +16,7 @@
 #import "EditorController+PersistenceIvars.h"
 #import "EditorController+TabsIvars.h"
 #import "EditorController+TestsIvars.h"
+#import "EditorController+LineHistoryIvars.h"
 #import "EditorController+TreeIvars.h"
 #import "EditorController+TreeDetailsIvars.h"
 #import "IdeLinkServer.h"
@@ -115,6 +116,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self.lsp shutdown];   // never leave a server running for a closed window
     [_change stop];        // no build watched for a closed window
     [_agents stop];        // no transcripts watched for a closed window
+    [self stopLineHistory];   // no git blame or box for a closed window
     [self.gitPanel stop];  // no autofetch for a closed window
     [self stopWatching];   // no file events for a closed window (the stream holds an unretained self)
 }
@@ -144,6 +146,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if ([self validateZoomFitItem:item enabled:&enabled]) return enabled;
     if ([self validateGitItem:item enabled:&enabled]) return enabled;
     if ([self validateTestItem:item enabled:&enabled]) return enabled;
+    if ([self validateLineHistoryItem:item enabled:&enabled]) return enabled;
     if ([self validateGroupItem:item enabled:&enabled]) return enabled;
     if (item.action == @selector(sortTreeBy:)) {
         item.state = item.tag == (NSInteger)_treeSort.key ? NSControlStateValueOn

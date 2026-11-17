@@ -7,8 +7,10 @@
 // Closed Tab with its place, passing over a file gone; Save All; folder
 // names on tabs whose files share a name; the Markdown preview toggled
 // without touching the source's undo (D3); a tab's right click menu; the
-// close button and a middle click; and closing a window with unsaved tabs
-// asking once for them all. The Mac has these in EditorController+Tabs.mm.
+// close button and a middle click; a tab dragged along the row; and closing
+// a window with unsaved tabs asking once for them all. The tabs are the
+// core's Model::Window (EditorTabs.h), which the strip is checked against.
+// The Mac has these in EditorController+Tabs.mm.
 #include "Harness.h"
 
 #include "Document.h"
@@ -18,6 +20,7 @@
 
 #include <glib/gstdio.h>
 
+#include <algorithm>
 #include <string>
 
 namespace {
@@ -51,18 +54,38 @@ std::string row() {
     return out;
 }
 
-// The strip agrees with the editor's own tabs.
+// The strip agrees with the editor's own tabs, which are its window's.
 bool stripAgrees() {
     if (strip()->count() != ed()->tabCount() || strip()->activeIndex() != ed()->activeIndex())
         return false;
+    const Model::Window& w = ed()->window();
+    if ((int)w.tabs().size() != ed()->tabCount()) return false;
+    if (ed()->active() && w.active() != ed()->active()->id()) return false;
     for (int i = 0; i < ed()->tabCount(); i++) {
         const Document* d = ed()->document(i);
+        if (!d || w.tabs()[(size_t)i] != d->id()) return false;
         const TabStrip::Item& it = strip()->item(i);
         if (it.dirty != d->dirty() || it.preview != d->isPreviewTab()) return false;
         const char* mark = gtk_label_get_text(GTK_LABEL(strip()->closeWidget(i)));
         if ((std::string(mark) == "●") != d->dirty()) return false;
     }
     return true;
+}
+
+// A real drag of tab `from` to tab `to`'s near edge (its far edge when
+// moving right), in the window's coordinates: a negative x would mean a
+// widget's middle to MCGuiDrag, and the tab dragged to may be scrolled past
+// the strip's left edge.
+void DragTab(TabStrip* st, int from, int to) {
+    GtkWidget* win = GTK_WIDGET(MCGuiApp().window);
+    GtkWidget* a = st->tabWidget(from);
+    GtkWidget* b = st->tabWidget(to);
+    const double h = gtk_widget_get_height(a) / 2.0;
+    graphene_point_t p0 = GRAPHENE_POINT_INIT(15, (float)h), p1, q0, q1;
+    q0 = GRAPHENE_POINT_INIT(to > from ? (float)gtk_widget_get_width(b) - 4 : 4.0f, (float)h);
+    if (!gtk_widget_compute_point(a, win, &p0, &p1)) p1 = p0;
+    if (!gtk_widget_compute_point(b, win, &q0, &q1)) q1 = q0;
+    MCGuiDrag(win, p1.x, p1.y, std::max(1.0f, q1.x), p1.y);
 }
 
 bool tabsOnScreen() {
@@ -504,6 +527,25 @@ MC_GUI_SUITE(tabs) {
         ed()->closeTab(ed()->document(1));
     });
     MCGuiWait("only the name", 10, [] { return row() == "tab-a.txt README.md >tab-b.py tab-c.txt"; });
+
+    // ---- dragging a tab along the row
+    MCGuiWait("the tabs on screen", 10, tabsOnScreen);
+    MCGuiStep("a drag of a's tab past the last", [] { DragTab(strip(), 0, strip()->count() - 1); });
+    MCGuiWait("a is the last tab now, on show (the press chose it)", 10, [] {
+        return row() == "README.md tab-b.py tab-c.txt >tab-a.txt";
+    });
+    MCGuiStep("the editor's tabs moved with it", [] {
+        GCHECK(stripAgrees());
+        GCHECK_EQ_STR(ed()->document(3)->path(), F("tab-a.txt"));
+        GCHECK_EQ_STR(ed()->currentPath(), F("tab-a.txt"));
+    });
+    MCGuiStep("and dragged back to the front", [] { DragTab(strip(), strip()->count() - 1, 0); });
+    MCGuiWait("a at the front again", 10, [] { return row() == ">tab-a.txt README.md tab-b.py tab-c.txt"; });
+    MCGuiStep("the strip and the window agree; then b's tab", [] {
+        GCHECK(stripAgrees());
+        MCGuiClick(strip()->titleWidget(2));
+    });
+    MCGuiWait("the row as it was", 10, [] { return row() == "tab-a.txt README.md >tab-b.py tab-c.txt"; });
 
     // ---- a tab's right click menu
     MCGuiWait("the tabs on screen", 10, tabsOnScreen);

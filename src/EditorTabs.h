@@ -1,13 +1,19 @@
 // EditorTabs.h — the rules behind a window's row of open files: where a new
 // tab goes, which tab a key selects, which one shows after a close, what of
-// a remembered session can be reopened, and what each tab is called. Plain
-// C++ with no I/O, so it is unit-tested; the Mac's EditorController keeps
-// the tabs themselves.
+// a remembered session can be reopened, and what each tab is called; and,
+// at the end, Model::Window and Model::Session, which hold the tabs
+// themselves by those rules (SESSION-DESIGN.md, stage 3a): a session's
+// windows, each window's one or two editor groups, each group's tabs in
+// order with the one on show, the preview tabs, and the closed tabs. Plain
+// C++ with no I/O, so it is unit-tested. The GTK port keeps its tabs in a
+// Model::Window; the Mac's EditorController still keeps its own (stage 3c
+// moves it over), by the same rules.
 #pragma once
 
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -189,3 +195,249 @@ struct GroupLayout {
 GroupLayout restoreGroups(const GroupsSession &saved, const std::vector<std::string> &open);
 
 }  // namespace EditorTabs
+
+namespace Model {
+
+// A document as the window's port knows it (the GTK Document's id, the
+// Mac's MCTab): one per file in a window, however many groups show it.
+// 0 is no document.
+using DocId = std::uint64_t;
+
+// Whether a tab is a preview tab, and whose (EditorTabs' preview rules).
+enum class Preview : std::uint8_t {
+    None,    // an ordinary ("kept") tab
+    User,    // the window's preview tab: a tree click, a search result
+    Agent,   // the agents' preview tab: `minicode open --note`, a diff
+};
+
+// One window's tabs. Group 0 is the left one; there is a group 1 only while
+// the editor is split, and closing a group's last tab leaves the other as
+// group 0. The focused group is the one the keyboard, the tab keys and the
+// strip under the window's title act on; everything a port asks without
+// naming a group means it. A document in both groups is one document: its
+// path, preview state and last use are kept once.
+//
+// The window holds what a port needs to draw its strips and decide what
+// shows; it reads no files and shows nothing. A port changes it, then shows
+// what it says: the focused group's active() in its editor, the other
+// group's in its mirror.
+class Window {
+public:
+    explicit Window(std::size_t closedLimit = 50) : closed_(closedLimit) {}
+
+    // The folder the window is on ("" for none), as its session is keyed.
+    const std::string &root() const { return root_; }
+    void setRoot(const std::string &root) { root_ = root; }
+
+    // ---- the groups
+    bool split() const { return groups_[1].tabs.size() > 0; }
+    int groupCount() const { return split() ? 2 : 1; }
+    int focused() const { return focused_; }
+    int other() const { return split() ? 1 - focused_ : -1; }
+    // A group's tabs in order (empty for no such group), and its tab on
+    // show (0 for none).
+    const std::vector<DocId> &tabs(int group) const;
+    DocId active(int group) const;
+    // The focused group's.
+    const std::vector<DocId> &tabs() const { return tabs(focused_); }
+    DocId active() const { return active(focused_); }
+    int count() const { return (int)tabs().size(); }
+    int activeIndex() const { return indexOf(active()); }
+    DocId at(int index) const;   // the focused group's, 0 for none
+    int indexOf(DocId id) const { return indexOf(id, focused_); }
+    int indexOf(DocId id, int group) const;
+    bool inGroup(DocId id, int group) const { return indexOf(id, group) >= 0; }
+    bool isOpen(DocId id) const { return inGroup(id, 0) || inGroup(id, 1); }
+    bool inBothGroups(DocId id) const { return inGroup(id, 0) && inGroup(id, 1); }
+    // The group showing `id`'s tab: the focused one when both do, -1 when
+    // neither does.
+    int groupOf(DocId id) const;
+    // Every document of the window once: the focused group's in tab order,
+    // then the other's (backups, sessions, auto-save, the disk, the
+    // language servers).
+    std::vector<DocId> documents() const;
+    // The left group's share of the width, 0 to 1.
+    double fraction() const { return fraction_; }
+    void setFraction(double f);
+
+    // ---- what the window knows of each document
+    // Its file, "" for a tab that holds none (a diff, a comparison, a
+    // page), which never takes part in labels, Reopen Closed Tab or find.
+    const std::string &path(DocId id) const;
+    void setPath(DocId id, const std::string &path);
+    // A file's tab, 0 for none.
+    DocId find(const std::string &path) const;
+    Preview preview(DocId id) const;
+    bool isPreview(DocId id) const { return preview(id) != Preview::None; }
+    void setPreview(DocId id, Preview p);
+    // The window's preview tab of that kind, 0 for none.
+    DocId previewTab(Preview kind = Preview::User) const;
+    // An ordinary tab now (an edit, a save, a double-click on its title,
+    // Keep Open, a kept open of its file). True when it was a preview.
+    bool keep(DocId id);
+    // A stamp of when it last came on show, larger for later (0: never).
+    std::uint64_t lastUsed(DocId id) const;
+    // The labels of a group's tabs (EditorTabs::labels over their paths).
+    std::vector<std::string> labels(int group) const;
+
+    // ---- opening
+    // What an open of `path` from `from` does before anything is read: it
+    // goes in the preview tab or not (EditorTabs::opensInPreview); a code
+    // navigation in preview keeps the preview tab it starts from, unless
+    // that is the file (VS Code's enablePreviewFromCodeNavigation, off);
+    // and a file already in a tab gives that tab, which a kept open keeps
+    // (EditorTabs::staysPreview). The tab is not put on show: activate()
+    // does that.
+    struct Open {
+        DocId existing = 0;
+        bool inPreview = false;
+    };
+    Open prepareOpen(const std::string &path, EditorTabs::OpenFrom from,
+                     const EditorTabs::PreviewSettings &settings);
+    // A new tab for `id` in the focused group. An ordinary one goes just
+    // right of the tab on show. A User preview goes in VS Code's place
+    // (EditorTabs::placePreview) and replaces the window's preview tab; an
+    // Agent preview goes right of the tab on show and replaces the agents'
+    // preview tab; but an old preview tab `keepOld` holds back (unsaved
+    // changes; the tab being typed in) is kept instead, and stays. The
+    // replaced tab leaves every group, is not remembered for Reopen Closed
+    // Tab (VS Code leaves a replaced preview out of its recently closed),
+    // and is returned for the port to let go of (0: none). The tab on show
+    // stays as it was, unless it was the one replaced: then the new tab is.
+    DocId add(DocId id, const std::string &path, Preview kind = Preview::None,
+              const std::function<bool(DocId)> &keepOld = nullptr);
+    // A tab at the end of the focused group, not on show (a session coming
+    // back), or at `index` (clamped; Reopen Closed Tab's
+    // ClosedTabs::indexIn).
+    void append(DocId id, const std::string &path, Preview kind = Preview::None);
+    void insert(DocId id, const std::string &path, int index);
+
+    // ---- on show
+    // `id` comes on show in the focused group and is stamped as used. A tab
+    // only the other group has joins the focused group first, just right of
+    // its tab on show (VS Code opens a file in the group you are in). False
+    // when the window has no such tab.
+    bool activate(DocId id);
+    // By index, by step (wrapping, EditorTabs::step) and by number
+    // (EditorTabs::indexForNumber): the tab put on show, 0 for none.
+    DocId select(int index);
+    DocId step(int delta);
+    DocId selectNumber(int n);
+    // A tab dragged along a group's row (-1: the focused group's), from
+    // `from` to `to` (EditorTabs::dropIndex's answer). False when either is
+    // out of range.
+    bool move(int from, int to, int group = -1);
+
+    // ---- closing
+    struct Closed {
+        bool closed = false;        // `id` had a tab in that group
+        bool stillOpen = false;     // the other group still has it
+        bool groupClosed = false;   // it was its group's last: the other is the only group now
+        bool activeChanged = false; // the focused group's tab on show is another now
+    };
+    // `id`'s tab in `group` (-1: the focused group) closes. The group's tab
+    // used most recently comes on show if it was on show
+    // (EditorTabs::activeAfterClose); a split group left empty closes, and
+    // the other group, now group 0, has the keyboard. With `remember`, a
+    // file's tab the other group does not still have is kept for Reopen
+    // Closed Tab, with the place the port gives (its view) and its index.
+    Closed close(DocId id, int group, const EditorTabs::ClosedTab *remember);
+    // `id` out of every group, nothing remembered (its file went to the
+    // Trash, a preview replaced).
+    void remove(DocId id);
+    // Every tab, the split gone, nothing remembered (Open Folder). The
+    // closed tabs stay.
+    void clear();
+    // The tabs Close Other Tabs and Close Tabs to the Right close, in the
+    // focused group, in order.
+    std::vector<DocId> othersThan(DocId id) const;
+    std::vector<DocId> rightOf(DocId id) const;
+
+    // ---- Reopen Closed Tab
+    bool canReopen() const { return !closed_.empty(); }
+    std::size_t closedCount() const { return closed_.size(); }
+    // The newest closed tab `reopenable` accepts (EditorTabs::ClosedTabs).
+    // The port opens it: activate() when the file is open again meanwhile,
+    // else insert() at ClosedTabs::indexIn(c, count()).
+    bool takeClosed(EditorTabs::ClosedTab *out,
+                    const std::function<bool(const std::string &)> &reopenable);
+    EditorTabs::ClosedTabs &closedTabs() { return closed_; }
+
+    // ---- the split editor (two groups at most)
+    // The focused group's tab on show goes into the other group too (one
+    // made on the right when not split), just right of that group's tab on
+    // show unless it has it already, and comes on show there. The focus
+    // stays: focus() moves it, as Split Editor then does. False with no tab
+    // on show.
+    bool putInOther(DocId id);
+    // The keyboard to `group`, whose tab on show is stamped as used. False
+    // when there is no such group.
+    bool focus(int group);
+    // Split Editor: putInOther(active()) and the focus to that group.
+    bool splitEditor();
+    // Move Editor into Next (1) or Previous (-1) Group: the tab on show
+    // leaves this group for the other (EditorTabs::moveTarget), which takes
+    // the keyboard; the group it left closes if it was its last. Refused
+    // (false) when there is no group that way, or it is the only tab of the
+    // only group.
+    bool canMove(int direction) const;
+    bool moveActive(int direction);
+    // For a session: each group's files and file on show, the focused
+    // group and the share (files only, as EditorTabs::GroupsSession). And
+    // back, over the tabs as they are now (EditorTabs::restoreGroups gives
+    // `layout`, indices into documents()), with each group's tab on show.
+    EditorTabs::GroupsSession groupsSession() const;
+    bool restoreGroups(const EditorTabs::GroupLayout &layout);
+
+private:
+    struct Group {
+        std::vector<DocId> tabs;
+        DocId active = 0;
+    };
+    struct Info {
+        std::string path;
+        Preview preview = Preview::None;
+        std::uint64_t lastUsed = 0;
+    };
+    std::string root_;
+    Group groups_[2];
+    int focused_ = 0;
+    double fraction_ = 0.5;
+    std::vector<std::pair<DocId, Info>> info_;   // the window's documents, few
+    std::uint64_t stamp_ = 0;
+    EditorTabs::ClosedTabs closed_;
+
+    Info *infoOf(DocId id);
+    const Info *infoOf(DocId id) const;
+    void ensure(DocId id, const std::string &path, Preview kind);
+    void forgetIfClosed(DocId id);
+    void touch(DocId id);
+    void insertAt(int group, int index, DocId id);
+    void dropGroup(int group);
+    DocId nextAfterClose(int group, int index) const;
+};
+
+// Every window of the app, each with its tabs. A window is made when it
+// opens and goes when it closes; its Window stays where it is meanwhile, so
+// a port may keep a pointer to it.
+class Session {
+public:
+    using WindowId = std::uint64_t;
+    WindowId addWindow();
+    void removeWindow(WindowId id);
+    Window *window(WindowId id);
+    const Window *window(WindowId id) const;
+    std::vector<WindowId> windows() const;   // in the order they opened
+    // The first window with a tab of `path`, 0 for none (an open from the
+    // file manager goes to the window that has the file).
+    WindowId windowWith(const std::string &path) const;
+    // The windows on a folder, in the order they opened (windows on one
+    // folder share its remembered session).
+    std::vector<WindowId> windowsOn(const std::string &root) const;
+
+private:
+    std::vector<std::pair<WindowId, std::unique_ptr<Window>>> windows_;
+    WindowId next_ = 0;
+};
+
+}  // namespace Model
