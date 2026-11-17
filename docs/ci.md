@@ -160,7 +160,13 @@ None retried. Checks seen failing on CI and passing on a rerun, with no
 fix yet, are listed here with the run that showed them, and removed when
 fixed.
 
-- (none open as of 2026-11-14)
+- GTK `agents`, "the same key closes the panel": in one local full run
+  on the ThinkPad (2026-11-17, main at b0ce717 plus a test-only change),
+  Ctrl+Shift+A did not close the Agents panel within 8 s, the keyboard
+  in a GtkScrolledWindow of the editor's tab strip; the rest of the
+  suite's Worktrees steps then timed out. Not seen on CI. The suite
+  passed alone, after `browser_pages`, after `terminal_ids`, `idelink`
+  and `browser_pages` (three times), and in a full rerun.
 
 Found while checking this: `search` failed twice on PR #8 once the leak
 check closed a window `previews` had left open. The suite had searched
