@@ -6,6 +6,10 @@ MiniCode.app/
 # macOS
 .DS_Store
 
+# clangd: the compilation database `make` writes, and clangd's index
+compile_commands.json
+.cache/
+
 # Temp
 *.o
 *.tmp

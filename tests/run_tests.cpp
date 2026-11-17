@@ -11103,6 +11103,7 @@ static void testMultiCaretOccurrences() {
 #include "text_model_tests.inc"
 #include "undo_history_tests.inc"
 #include "lsp_trust_tests.inc"
+#include "lsp_clangd_tests.inc"
 #include "multiedit_tests.inc"
 #include "edit_batch_tests.inc"
 #include "folder_search_tests.inc"
@@ -11282,6 +11283,7 @@ int main() {
     testTextModel();
     testUndoHistory();
     testLspProjectCode();
+    testLspClangdFlags();
     testMultiEdit();
     testEditBatch();
     testFolderSearchParallel();

@@ -57,6 +57,18 @@ opening comment says what it does in more detail than the lines below.
   whether `-j` was given, so the top-level make adds `-j$(JOBS)` itself (one
   job per core, never with `clean` among the goals); `make JOBS=1` builds
   serially.
+- **compile_commands.json** (2026-11-16): `make` (and `make compdb` alone)
+  writes it at the repo root for clangd, one entry per source file from
+  the Makefile's own variables (`APPCMD` for `src/`, `mac/src`, the CLI
+  and the sweep, plus `-Imac/tests/gui` for the GUI suites; `TESTCMD` for
+  run_tests.cpp and fakelsp), rewritten only when its text changes,
+  git-ignored with clangd's `.cache/`. Without it clangd guessed (no
+  `-Isrc`, no `-fobjc-arc`): 21 false errors on mac/src/AgentModel.mm,
+  none with it (`clangd --check=`, the command line tools' clangd, never
+  /usr/bin's shim). The `*.inc` groups and `*Tests.cpp` have no entry;
+  clangd takes them from run_tests.cpp. A new compile rule with new flags
+  needs its line in `COMPDB_LINES`. Linux's Meson build writes its own in
+  its build folder.
 - `make test` builds and runs the core's tests (`tests/run_tests.cpp` with the
   `tests/*.inc` groups and the `*Tests.cpp` files) in `build/test-obj`, without
   -O2, and exits non-zero on failure. Groups are named `area:case`. Counts grow
@@ -1843,7 +1855,21 @@ view is disposed (on `unrealize`), or dispose loops forever.
   carry the server's document versions from when they were asked
   (`Client::versions`, `staleEditFile`) and are refused for a file that moved
   on. Files no tab has open are kept apart (`_otherDiags`) for
-  Problems.
+  Problems. A diagnostic `Lsp::drawsOnText` refuses (clang's
+  `fatal_too_many_errors`, which clang places at the file's first
+  character, so it sat on a line-1 comment) is an `MCDiagnosticMark
+  quiet`: counted in the status bar and listed in Problems, but no
+  squiggle, gutter dot, hover or F8 stop.
+- **clangd without compile flags** (2026-11-16, `Lsp::clangdHasCompileFlags`,
+  `lsp:clangd-flags`, `make guitest SUITES=clangd_flags`): no
+  compile_commands.json or compile_flags.txt from the file's folder up
+  (each folder and its `build/`, as clangd looks), no `.clangd` with a
+  CompileFlags section, no `--compile-commands-dir`, so clangd guesses and
+  missing-header errors may be false. clangd's card in the Language
+  Servers popover says so (`MCLspServerInfo compileFlagsNote`,
+  `Lsp::kClangdNoFlagsText`) while it holds, and the status bar once per
+  folder a launch (`noteMissingCompileFlags`, from `documentOpened:`);
+  never a bar. Checked with stats, not clangd's log.
 - **Inlay hints** (2026-11-07, `Lsp+InlayHints.mm`, `LspInlayHints.mm`,
   core `InlayHints.{h,cpp}`, `lsp:inlay-*`, `make guitest
   SUITES=inlay_hints`): VS Code's editor.inlayHints. Asked for the lines on
@@ -3979,7 +4005,7 @@ session has a display. Check first.
   daily_work, structure, utf16, hints_panel, swatch_escape;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
-  snippets, completion_keys, problems, servers_by_extension, server_consent, tools_consent,
+  snippets, completion_keys, problems, clangd_flags, servers_by_extension, server_consent, tools_consent,
   organize_on_save, format, format_consent, format_coverage, format_on_save;
   documents and viewers: markdown_preview, markdown_side,
   markdown_side_sync, markdown_width, markdown_page, markdown_math, mermaid, latex,
