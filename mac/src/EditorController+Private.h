@@ -622,6 +622,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // document there, and the text view asks which document it shows.
 @interface EditorController (Session)
 - (void)installSessionHooks;
+- (void)sessionStorageShowsActiveTab;
 - (void)sessionForgetHistoryOf:(MCTab *)t;
 - (CodeTextView *)textViewShowingSourceOf:(MCTab *)t;
 - (void)tabTextChangedByHost:(MCTab *)t;

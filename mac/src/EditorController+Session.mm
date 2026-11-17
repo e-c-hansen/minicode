@@ -1,9 +1,10 @@
 // EditorController+Session.mm — EditorController: the session's host
 // (SessionLink.h, editor.session-host). The window's hooks only: the
 // editor's storage reports each edit of the tab on show to the tab's
-// document on the host, the text view asks which document it shows, and
-// the host's edits to a tab not in the storage reach its title and
-// backups. The rest is MCSessionDoc's.
+// document on the host, the text view asks which document it shows (for
+// Undo and Redo), NSTextView's own undo is off for such a tab, and the
+// host's edits to a tab not in the storage reach its title and backups.
+// The rest is MCSessionDoc's.
 #import "EditorController+Private.h"
 #import "SessionLink.h"
 #import "SourceStorage.h"
@@ -36,6 +37,14 @@
         if (!c || !c->_liveHighlight) return nil;
         return c->_activeTab.session;
     };
+}
+
+// The storage holds the active tab's source again (applyHighlighting): its
+// undo is the host's when the host owns it (NSTextView registers nothing,
+// and the tab's undo manager asks the host), NSTextView's otherwise.
+- (void)sessionStorageShowsActiveTab {
+    const BOOL own = _activeTab.session == nil;
+    if (self.textView.allowsUndo != own) self.textView.allowsUndo = own;
 }
 
 // A tab's text read afresh: the host's history goes too.

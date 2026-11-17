@@ -63,17 +63,104 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
     return YES;
 }
 
-// A tab's undo manager: a name given to its step (Toggle Comment, Change
-// Color, ...) names the session host's step too while the host owns the
-// tab's history.
+// A tab's undo manager. While the session's host owns the tab's history
+// (MCTab session, editor.session-host) it is the host's front: undo, redo
+// and what they would do are the host's, a name given to a step (Toggle
+// Comment, Change Color, ...) names the host's step, and registrations go
+// nowhere, since every change of the text is a step on the host already
+// (the storage's edits, a text set whole). Everything that asks the tab's
+// undo manager (the menu, a viewer's table, the GUI checks) then undoes on
+// the host. Without a session it is NSUndoManager, untouched.
 @interface MCTabUndoManager : NSUndoManager
 @property(nonatomic, weak) MCTab *tab;
 @end
 
 @implementation MCTabUndoManager
+- (MCSessionDoc *)host { return self.tab.session; }
+
 - (void)setActionName:(NSString *)name {
     [super setActionName:name];
-    [self.tab.session nameStep:name];
+    [self.host nameStep:name];
+}
+
+- (void)registerUndoWithTarget:(id)target selector:(SEL)selector object:(id)object {
+    if (!self.host) [super registerUndoWithTarget:target selector:selector object:object];
+}
+
+- (void)registerUndoWithTarget:(id)target handler:(void (^)(id))handler {
+    if (!self.host) [super registerUndoWithTarget:target handler:handler];
+}
+
+// A top-level group is a step of its own on the host, as it is an undo
+// action of its own here: the turn's step closes as it opens and again as
+// it ends, and its typing joins nothing before it (the workspace edit
+// applier's group per file, the GUI checks' group per simulated key).
+- (void)beginUndoGrouping {
+    MCSessionDoc *h = self.host;
+    if (h && self.groupingLevel == 0) {
+        [h closeStep];
+        [h breakCoalescing];
+    }
+    [super beginUndoGrouping];
+}
+
+- (void)endUndoGrouping {
+    [super endUndoGrouping];
+    MCSessionDoc *h = self.host;
+    if (h && self.groupingLevel == 0) [h closeStep];
+}
+
+- (BOOL)canUndo {
+    MCSessionDoc *h = self.host;
+    return h ? [h canUndo:NO name:NULL] : [super canUndo];
+}
+
+- (BOOL)canRedo {
+    MCSessionDoc *h = self.host;
+    return h ? [h canUndo:YES name:NULL] : [super canRedo];
+}
+
+- (void)undo {
+    MCSessionDoc *h = self.host;
+    if (h) [h undo:NO inView:nil];
+    else [super undo];
+}
+
+- (void)redo {
+    MCSessionDoc *h = self.host;
+    if (h) [h undo:YES inView:nil];
+    else [super redo];
+}
+
+- (void)undoNestedGroup {
+    MCSessionDoc *h = self.host;
+    if (h) [h undo:NO inView:nil];
+    else [super undoNestedGroup];
+}
+
+- (BOOL)isUndoing { return self.host.undoing == 1 || [super isUndoing]; }
+- (BOOL)isRedoing { return self.host.undoing == 2 || [super isRedoing]; }
+
+- (NSString *)undoActionName {
+    MCSessionDoc *h = self.host;
+    if (!h) return [super undoActionName];
+    NSString *name = nil;
+    return [h canUndo:NO name:&name] ? name ?: @"" : @"";
+}
+
+- (NSString *)redoActionName {
+    MCSessionDoc *h = self.host;
+    if (!h) return [super redoActionName];
+    NSString *name = nil;
+    return [h canUndo:YES name:&name] ? name ?: @"" : @"";
+}
+
+- (NSString *)undoMenuItemTitle {
+    return self.host ? [self undoMenuTitleForUndoActionName:self.undoActionName] : [super undoMenuItemTitle];
+}
+
+- (NSString *)redoMenuItemTitle {
+    return self.host ? [self redoMenuTitleForUndoActionName:self.redoActionName] : [super redoMenuItemTitle];
 }
 @end
 

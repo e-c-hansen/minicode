@@ -150,6 +150,11 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
     std::unique_ptr<DocListener> _listener;
     BOOL _open;
     BOOL _stepOpen, _named;
+    // The step is replaceRanges:'s own (an explicit undo group of its own
+    // under NSUndoManager), how deep its calls are, and whether it ended:
+    // a later edit of the turn then starts a new step, as a new group did.
+    BOOL _explicit, _sealed;
+    NSInteger _namedDepth;
     BOOL _forgetting;     // read afresh this turn: a whole set resets
     BOOL _flushQueued;
     // The host's edits not in the mirror yet, in the mirror's text as it
@@ -205,6 +210,7 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
 
 - (void)openStepWithName:(NSString *)name view:(CodeTextView *)view {
     if (_stepOpen || !_open) return;
+    _explicit = _sealed = NO;
     Model::UndoHistory::StepInfo info{"Edit", false};
     if (name) info = {name.UTF8String ?: "Edit", false};
     else if (view.sessionTyping > 0) info = {"Typing", true};
@@ -222,6 +228,7 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
 - (void)closeStep {
     if (!_stepOpen) return;
     _stepOpen = NO;
+    _explicit = _sealed = NO;
     CodeTextView *view = _view;
     if (view && view != [self mirrorView]) view = nil;
     MCSessionClient().closeStep(_docId, [self selectionNow:view]);
@@ -235,9 +242,27 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
     _named = YES;
 }
 
+// replaceRanges:withStrings:actionName: begins (endNamed when it ends). It
+// made an explicit undo group of its own under NSUndoManager, nested in
+// whatever group was open: inside a group (the tab's undo manager's, or
+// another replaceRanges:'s), or after this turn's typing, it is part of
+// that step; otherwise it is a step of its own, which a later edit of the
+// turn does not join.
 - (void)beginNamed:(NSString *)name view:(CodeTextView *)view {
-    if (_stepOpen) [self nameStep:name];
-    else [self openStepWithName:name view:view];
+    if (!_open) return;
+    const BOOL nested = _namedDepth > 0 || view.undoManager.groupingLevel > 0;
+    _namedDepth++;
+    if (_stepOpen && !_sealed && (nested || !_explicit)) {
+        [self nameStep:name];
+        return;
+    }
+    [self closeStep];
+    [self openStepWithName:name view:view];
+    _explicit = !nested;
+}
+
+- (void)endNamed {
+    if (_namedDepth > 0 && --_namedDepth == 0 && _stepOpen && _explicit) _sealed = YES;
 }
 
 - (void)breakCoalescing {
@@ -273,6 +298,7 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
 
 - (void)storageWillReplace:(NSRange)range with:(NSString *)string view:(CodeTextView *)view {
     if (!_open || _applying) return;
+    if (_sealed) [self closeStep];
     if (!_stepOpen) [self openStepWithName:nil view:view];
     NSString *text = view.textStorage.string;
     [self record:WholePoints(text, Ot::Op{range.location, range.length, U16(string ?: @"")})];
@@ -295,12 +321,14 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
     size_t suf = 0;
     while (suf < a - pre && suf < b - pre && x[a - 1 - suf] == y[b - 1 - suf]) suf++;
     NSString *ins = [now substringWithRange:NSMakeRange(pre, b - pre - suf)];
+    if (_sealed) [self closeStep];
     if (!_stepOpen) [self openStepWithName:nil view:nil];
     [self record:WholePoints(old, Ot::Op{pre, a - pre - suf, U16(ins)})];
 }
 
 - (void)resetTo:(NSString *)text {
     _stepOpen = NO;
+    _explicit = _sealed = NO;
     _deferred.clear();
     _deferredHasSelect = NO;
     MCSessionClient().reset(_docId, Utf8(text));
@@ -446,10 +474,12 @@ static BOOL StorageBusy(CodeTextView *view) {
 
 - (BOOL)undo:(BOOL)redo inView:(CodeTextView *)view {
     (void)view;
-    if (!_open || _applying) return NO;
+    if (!_open || _applying || _undoing) return NO;
     [self closeStep];
     [self flushDeferred];
+    _undoing = redo ? 2 : 1;
     const Shared::Outcome o = MCSessionClient().undo(_docId, redo);
+    _undoing = 0;
     if (o == Shared::Outcome::Refused) {
         os_log_error(SessionLog(),
                      "%{public}s in %{public}@ refused: the text it would change is not what it left there, "
@@ -464,7 +494,9 @@ static BOOL StorageBusy(CodeTextView *view) {
 
 - (const Model::Text *)hostTextFor:(const void *)owner {
     if (!_open) return nullptr;
-    [self closeStep];
+    // The step stays open: what it has recorded goes ahead of the settle's
+    // ping (the outbox is sent in order), and closing it here, inside a
+    // storage notification as completion asks, would split typing.
     Shared::Client &c = MCSessionClient();
     const Model::Text *copy = c.watch(_docId, owner, [](Shared::DocId, const Ot::Ops &) {}, 2000);
     if (!copy || !c.settle(2000)) return nullptr;

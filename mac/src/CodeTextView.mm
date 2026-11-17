@@ -91,6 +91,46 @@ struct Counting {
 };
 }  // namespace
 
+// ---- undo by the session's host (SessionLink.h)
+// NSTextView answers no undo: of its own (the window's goes to the undo
+// manager), so the view takes Undo and Redo only while the host owns what
+// it shows; otherwise it does not answer them at all and they go where they
+// always went.
+- (BOOL)respondsToSelector:(SEL)selector {
+    if (selector == @selector(undo:) || selector == @selector(redo:)) return self.sessionDoc != nil;
+    return [super respondsToSelector:selector];
+}
+
+- (void)undo:(id)sender {
+    MCSessionDoc *doc = self.sessionDoc;
+    if (!doc || ![doc undo:NO inView:self]) NSBeep();
+}
+
+- (void)redo:(id)sender {
+    MCSessionDoc *doc = self.sessionDoc;
+    if (!doc || ![doc undo:YES inView:self]) NSBeep();
+}
+
+- (BOOL)validateSessionUndo:(NSMenuItem *)item redo:(BOOL)redo {
+    MCSessionDoc *doc = self.sessionDoc;
+    NSString *name = nil;
+    const BOOL can = doc && self.editable && [doc canUndo:redo name:&name];
+    NSString *verb = redo ? @"Redo" : @"Undo";
+    item.title = can && name.length ? [NSString stringWithFormat:@"%@ %@", verb, name] : verb;
+    return can;
+}
+
+// The tab's undo manager, the host's front (MCTabUndoManager), even while
+// NSTextView's own undo is off for such a tab (allowsUndo NO, so it
+// registers nothing): what asks the view's undo manager undoes on the host.
+- (NSUndoManager *)undoManager {
+    NSUndoManager *um = [super undoManager];
+    if (um || self.allowsUndo) return um;
+    id<NSTextViewDelegate> d = self.delegate;
+    if ([d respondsToSelector:@selector(undoManagerForTextView:)]) return [d undoManagerForTextView:self];
+    return um;
+}
+
 - (void)breakUndoCoalescing {
     [super breakUndoCoalescing];
     [self.sessionDoc breakCoalescing];
@@ -626,6 +666,7 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
         [um endUndoGrouping];
     }
     [self breakUndoCoalescing];
+    if (session && !session.applying) [session endNamed];
     return ok;
 }
 
@@ -806,6 +847,8 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
 
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     SEL a = item.action;
+    if (a == @selector(undo:) || a == @selector(redo:))
+        return [self validateSessionUndo:item redo:a == @selector(redo:)];
     if (a == @selector(foldRegion:) || a == @selector(unfoldRegion:) ||
         a == @selector(toggleFold:) || a == @selector(foldRecursively:) ||
         a == @selector(unfoldRecursively:) || a == @selector(foldAll:) ||

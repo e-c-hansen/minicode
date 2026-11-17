@@ -617,7 +617,8 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
     NSUndoManager *um = _tv.undoManager;
     const BOOL registering = um && um.isUndoRegistrationEnabled;
     if (registering) [um disableUndoRegistration];
-    const BOOL ok = [_tv replaceRanges:ranges withStrings:strings actionName:nil];
+    // The name is the session host's step's (nothing registers here).
+    const BOOL ok = [_tv replaceRanges:ranges withStrings:strings actionName:@"Completion"];
     if (registering) [um enableUndoRegistration];
     if (ok) [undo addStepAfter:after olds:olds];
     return ok;

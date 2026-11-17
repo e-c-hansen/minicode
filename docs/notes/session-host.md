@@ -12,7 +12,7 @@ pass), every tab whose text is set after the setting is on gets a document
 on the session's host: the core's `Shared::SessionHost` on a thread of its
 own in the app's process, one `Shared::Client` in UTF-16 units for the
 whole process (`mac/src/SessionLink.{h,mm}`). The host owns that
-document's text and version; the tab's text is its mirror. A tab opened
+document's text, version and undo history; the tab's text is its mirror. A tab opened
 before the setting changed keeps the way it was opened until it closes.
 
 - `MCTab session` (an `MCSessionDoc`) is made by `MCTab setSourceText:`
@@ -55,11 +55,41 @@ before the setting changed keeps the way it was opened until it closes.
   the tab's; dirty, the disk, backups and auto-save stay the Mac's (stage
   7 moves them).
 
+## Undo is the host's
+
+- `MCTabUndoManager` (EditorTab.mm), every tab's undo manager, is the
+  host's front while the tab has a document: `undo`, `redo`,
+  `undoNestedGroup`, `canUndo`, `canRedo`, the action names and menu
+  titles ask the host, `isUndoing`/`isRedoing` say when its answer is going
+  in, `setActionName:` names the host's step, and registrations go nowhere
+  (every change of the text is already a step on the host). So everything
+  that undoes through the tab's manager (the menu, the CSV table, the
+  workspace edit applier's put-back, the GUI checks) undoes on the host.
+- NSTextView's own undo is off while the storage shows such a tab
+  (`sessionStorageShowsActiveTab`, from `applyHighlighting`: `allowsUndo`
+  NO), so it registers nothing; `CodeTextView undoManager` still answers
+  the tab's manager, and `undo:`/`redo:` (answered only while the view
+  shows a document on the host: `respondsToSelector:`) go to the host
+  directly, with the menu item titled by the host's step.
+- `replaceRanges:withStrings:actionName:` registers nothing then (it
+  checks `allowsUndo`), nor does completion's `MCAcceptUndo`; their edits
+  are host steps named by the action name ("Completion" for an accepted
+  item).
+- An undo closes the turn's step first, then the host takes its last step
+  back and the edit comes back before `undo:inView:` returns (in one
+  process a round trip through the host's queue), with the selection the
+  step started with. A refused undo (the text it would change is not what
+  it left) beeps and is logged; the host forgets the history.
+- Known differences from NSUndoManager: a paste or cut is an "Edit" step
+  (NSTextView named them); a completion's late import (resolve) after its
+  word was undone still goes in (MCAcceptUndo knew it was undone);
+  `registerReloadUndoForTab:`'s whole-text step is the host's ordinary
+  step of the difference.
+
 ## The host's edits
 
 They come back through `MCSessionDoc hostEdited:` (the client's listener):
-an undo's or redo's (once the host owns undo) and, with a second screen,
-anyone else's. Into the storage through `replaceRanges:withStrings:
+an undo's or redo's and, with a second screen, anyone else's. Into the storage through `replaceRanges:withStrings:
 actionName:` as one multi-range edit when the operations are replacements
 apart in the text (`Ot::asReplacements`), else one operation at a time,
 with `applying` set so nothing is recorded; into a tab not in the storage
@@ -81,6 +111,12 @@ top of a turn, never inside a text system callback.
 - `make test`: `host:*`, `ot:*` (the core), `host:watch-timeout` (a watch
   the host does not answer in time keeps no watcher, and its late answer
   is dropped), `settings:*` for the key.
+- CI's macOS job runs the editing suites a second time with the setting on
+  (`MINICODE_SESSION_HOST=on`, `MINICODE_HOST=loopback`,
+  `MINICODE_HOST_DELAY_US=200`), a step of its own after the halves ("GUI
+  checks with the session's host"): keystroke, multiedit, editor_keys,
+  auto_close, save, backups, lsp_sync, snippets, format, git_conflicts and
+  test_gutter.
 - `make guitest`: at every suite's end the harness settles with the host
   and fails the suite (`FAIL [suite] the session's host and the window it
   renders differ`) unless every tab with a document has the host's text,

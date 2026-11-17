@@ -1728,10 +1728,10 @@ const char* Settings::defaultFileText() {
 # LaTeX, and plain text. Typing a bracket or quote over a selection wraps it
 # either way.
 # editor.auto-close = on
-# Each file's text is kept by minicode's session host, a part of the app on
-# a thread of its own that will later let two screens edit one session
-# (macOS; on Linux it always is). Off, the editor keeps it itself, as
-# before. Files opened after a change follow it.
+# Each file's text and undo history are kept by minicode's session host, a
+# part of the app on a thread of its own that will later let two screens
+# edit one session (macOS; on Linux they always are). Off, the editor keeps
+# them itself, as before. Files opened after a change follow it.
 # editor.session-host = off
 # A file over 20 MB or 300,000 lines opens in large-file mode, as in VS Code:
 # no syntax colors, folding, bracket boxes or language server. The status
