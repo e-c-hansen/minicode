@@ -46,18 +46,21 @@ namespace Commands {
 // page's Actual Size there and Focus File Tree anywhere else.
 // NotPageOrTerminal is everywhere but a page and the terminal, so Cmd+= can
 // zoom a page in a page, the terminals in a terminal, and the editor's text
-// anywhere else.
-enum class When { Any, Editor, Terminal, Tree, Page, NotPage, NotPageOrTerminal };
+// anywhere else. NotTree is everywhere but the file tree, so Shift+Cmd+N
+// can be New Folder in the tree and New Window anywhere else.
+enum class When { Any, Editor, Terminal, Tree, Page, NotPage, NotPageOrTerminal, NotTree };
 // "anywhere", "the editor", "the terminal", "the file tree", "a web page or
 // a PDF", "anywhere but a web page or a PDF", "anywhere but a web page, a
-// PDF, or the terminal"
+// PDF, or the terminal", "anywhere but the file tree"
 const char* whenName(When w);
 // Can one key press be meant for both? Any meets everything, NotPage
-// everything but Page, NotPageOrTerminal everything but Page and Terminal.
+// everything but Page, NotPageOrTerminal everything but Page and Terminal,
+// NotTree everything but Tree.
 bool overlaps(When a, When b);
 // Does a command for `w` apply where `where` has the keyboard? Any does
 // everywhere, NotPage everywhere but in a page, NotPageOrTerminal
-// everywhere but in a page or the terminal.
+// everywhere but in a page or the terminal, NotTree everywhere but in the
+// file tree.
 bool appliesIn(When w, When where);
 
 enum Mod : unsigned { Ctrl = 1, Alt = 2, Shift = 4, Cmd = 8 };

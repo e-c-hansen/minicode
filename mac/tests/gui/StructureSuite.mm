@@ -8,6 +8,8 @@
 //     moveFileToTrash: they act in the tree only, never from the editor,
 //     and keys.conf moves them (F2 used to stay the tree's whatever
 //     keys.conf said).
+//   - Shift+Cmd+N is New Folder while the tree has the keyboard (a tree
+//     command, off its menu item) and VS Code's New Window everywhere else.
 //   - `minicode install-skill` copies the skill into ~/.claude/skills.
 #import <objc/runtime.h>
 #import <Carbon/Carbon.h>
@@ -28,6 +30,10 @@ void *FsStream(EditorController *c) {
 NSString *F2() { return [NSString stringWithFormat:@"%C", (unichar)NSF2FunctionKey]; }
 void PressF2(EditorController *c) {
     MCGuiSendKeyToApp(c.window, kVK_F2, NSEventModifierFlagFunction, F2(), F2());
+}
+void PressShiftCmdN(EditorController *c) {
+    MCGuiSendKeyToApp(c.window, kVK_ANSI_N, NSEventModifierFlagCommand | NSEventModifierFlagShift,
+                      @"N", @"n");
 }
 void PressCmdDelete(EditorController *c) {
     MCGuiSendKeyToApp(c.window, kVK_Delete, NSEventModifierFlagCommand, @"\x7f", @"\x7f");
@@ -98,6 +104,50 @@ MC_GUI_SUITE(structure) {
         NSArray *shown = AlertsSince(alerts);
         GCHECK(![shown containsObject:@"Rename to:"]);
         for (NSString *s in shown) GCHECK(![s containsString:@"Trash"]);
+    });
+    __block NSUInteger windowsBefore = 0;
+    __block EditorController *opened = nil;
+    MCGuiStep(@"Shift+Cmd+N in the tree asks for a new folder and opens no window", ^{
+        [c revealPath:file.stringByResolvingSymlinksInPath andOpen:NO];
+        NSOutlineView *tree = [c valueForKey:@"outline"];
+        [c.window makeFirstResponder:tree];
+        windowsBefore = MCGuiControllers().count;
+        alerts = MCGuiAlertsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);
+        PressShiftCmdN(c);
+        NSArray *shown = AlertsSince(alerts);
+        MCGuiNote(@"alerts: %@", shown);
+        GCHECK([shown containsObject:@"New folder name:"]);
+        GCHECK(MCGuiControllers().count == windowsBefore);
+        // New Folder's item has no key (it would act from every pane); New
+        // Window's has Shift+Cmd+N, VS Code's.
+        GCHECK_EQ_STR(FindItem(NSApp.mainMenu, @selector(newFolder:)).keyEquivalent, @"");
+        NSMenuItem *nw = FindItem(NSApp.mainMenu, @selector(newWindow:));
+        GCHECK_EQ_STR(nw.keyEquivalent, @"n");
+        GCHECK(nw.keyEquivalentModifierMask ==
+               (NSEventModifierFlagCommand | NSEventModifierFlagShift));
+    });
+    MCGuiStep(@"Shift+Cmd+N in the editor opens a new window, asking nothing", ^{
+        GCHECK([c showFile:file]);
+        [c.window makeFirstResponder:[c valueForKey:@"textView"]];
+        windowsBefore = MCGuiControllers().count;
+        alerts = MCGuiAlertsShown().count;
+        PressShiftCmdN(c);
+        GCHECK(![AlertsSince(alerts) containsObject:@"New folder name:"]);
+        GCHECK(MCGuiControllers().count == windowsBefore + 1);
+        for (EditorController *o in MCGuiControllers())
+            if (o != c && ![o.window isEqual:c.window]) opened = o;
+        GCHECK(opened != nil);
+        GCHECK_EQ_STR(opened.rootPath, c.rootPath);
+        [opened.window close];
+    });
+    MCGuiWait(@"the new window gone", 5, ^BOOL {
+        return opened == nil || ![MCGuiControllers() containsObject:opened];
+    });
+    MCGuiStep(@"done with the new window", ^{
+        opened = nil;
+        MCGuiSetKeyWindow(nil);
+        GCHECK(MCGuiController() == c);
     });
     MCGuiStep(@"keys.conf moves the tree's rename off F2", ^{
         WriteKeys(@"f2 = -renameFile\nctrl+alt+cmd+r = renameFile\n");

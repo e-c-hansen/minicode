@@ -16,6 +16,7 @@ const char* whenName(When w) {
         case When::Page: return "a web page or a PDF";
         case When::NotPage: return "anywhere but a web page or a PDF";
         case When::NotPageOrTerminal: return "anywhere but a web page, a PDF, or the terminal";
+        case When::NotTree: return "anywhere but the file tree";
         case When::Any: break;
     }
     return "anywhere";
@@ -34,6 +35,7 @@ unsigned placesOf(When w) {
         case When::Page: return kPage;
         case When::NotPage: return kOther | kEditor | kTerminal | kTree;
         case When::NotPageOrTerminal: return kOther | kEditor | kTree;
+        case When::NotTree: return kOther | kEditor | kTerminal | kPage;
         case When::Any: break;
     }
     return kOther | kEditor | kTerminal | kTree | kPage;
@@ -52,7 +54,8 @@ bool overlaps(When a, When b) { return (placesOf(a) & placesOf(b)) != 0; }
 bool appliesIn(When w, When where) {
     if (w == When::Any || w == where) return true;
     // `where` is what has the keyboard; Any there is "none of the others".
-    if (where == When::Any) return w == When::NotPage || w == When::NotPageOrTerminal;
+    if (where == When::Any)
+        return w == When::NotPage || w == When::NotPageOrTerminal || w == When::NotTree;
     return (placesOf(w) & placesOf(where)) == placesOf(where);
 }
 
@@ -255,7 +258,8 @@ enum {
 enum { kColumnSize = 1, kColumnSaved = 2, kColumnCreated = 4 };
 
 const When A = When::Any, E = When::Editor, T = When::Terminal, R = When::Tree,
-           P = When::Page, NP = When::NotPage, NPT = When::NotPageOrTerminal;
+           P = When::Page, NP = When::NotPage, NPT = When::NotPageOrTerminal,
+           NT = When::NotTree;
 
 const std::vector<Command>& all() {
     static const std::vector<Command> table = {
@@ -286,8 +290,11 @@ const std::vector<Command>& all() {
 
         // ---- File
         {"explorer.newFile", "New File…", "File", "cmd+n", A, "newFile:", 0, 0, nullptr},
-        {"workbench.action.newWindow", "New Window", "File", "alt+cmd+n", A, "newWindow:", 0, 0,
-         nullptr},
+        // VS Code's Mac key, Shift+Cmd+N, anywhere but the file tree, where it
+        // is New Folder (the owner's call, 2026-11-16); Option+Cmd+N, its key
+        // before that, too.
+        {"workbench.action.newWindow", "New Window", "File", "shift+cmd+n alt+cmd+n", NT,
+         "newWindow:", 0, 0, nullptr},
         {"workbench.action.files.openFolder", "Open Folder…", "File", "cmd+o", A, "openFolder:",
          0, 0, nullptr},
         {"workbench.action.files.save", "Save", "File", "cmd+s", A, "saveCurrentFile:", 0, 0,
@@ -316,12 +323,19 @@ const std::vector<Command>& all() {
          "saveBrowserTabsAsBookmarks:", 0, 0, nullptr},
         {"minicode.browser.openBookmarks", "Open All in Browser Tabs", "File", "", A,
          "openBookmarksInTabs:", 0, 0, nullptr},
-        {"explorer.newFolder", "New Folder…", "File", "shift+cmd+n", A, "newFolder:", 0, 0,
-         nullptr},
+        // From anywhere through the menu, with no key on the Mac: its
+        // Shift+Cmd+N is minicode.tree.newFolder's, the tree's alone.
+        {"explorer.newFolder", "New Folder…", "File", "", A, "newFolder:", 0, 0, nullptr},
         // Keys only while the tree has the keyboard, as in Finder and VS Code:
         // a tree command's key is never put on its menu item, which would run
         // it from the editor too (Cmd+Delete trashed the tree's selection
         // from the editor once). The key monitor runs them (Keymap.mm).
+        // Shift+Cmd+N, Finder's New Folder, is New Window anywhere else.
+        // The menu item is explorer.newFolder's above, with no key on the
+        // Mac; on Linux that one keeps Ctrl+Alt+N everywhere, since there
+        // no other command has it. Tag 1 only tells the two rows apart.
+        {"minicode.tree.newFolder", "New Folder…", "File", "shift+cmd+n", R, "newFolder:", 1, 0,
+         "the file tree (File > New Folder… from anywhere)"},
         {"renameFile", "Rename…", "File", "f2", R, "renameSelected:", 0, 0, nullptr},
         {"moveFileToTrash", "Move to Trash", "File", "cmd+backspace cmd+delete", R,
          "deleteSelected:", 0, 0, nullptr},
@@ -1174,6 +1188,10 @@ std::string defaultFileText(Platform platform) {
                             : c.when == When::NotPage ? ", but not in a web page or a PDF"
                             : c.when == When::NotPageOrTerminal
                                 ? ", but not in a web page, a PDF, or the terminal"
+                            // The GTK port keeps such a command's key in the
+                            // tree when no tree command has it (Keys.cpp).
+                            : c.when == When::NotTree
+                                ? (onLinux ? "" : ", but not in the file tree")
                                 : std::string(", in ") + placeName(c);
         std::string comment =
             std::string(menuOf(c, platform)) + " > " + titleOf(c, platform) + where;

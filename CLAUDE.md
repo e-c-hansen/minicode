@@ -483,6 +483,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   Shift+Cmd+T Toggle Terminal, Shift+Cmd+D TODOs, Shift+Cmd+E, Shift+Cmd+B,
   Shift+Cmd+H, ...); only a Command-only key yields when VS Code binds it to
   something else (Cmd+N New File, Cmd+L Select Line, Cmd+I the inline agent).
+  The one exception, the owner's call (2026-11-16): Shift+Cmd+N, New Folder
+  by Finder's convention, is VS Code's New Window (`When::NotTree`, keeping
+  Option+Cmd+N) and New Folder only while the tree has the keyboard
+  (`minicode.tree.newFolder`, a Mac-only `Tree` row sending `newFolder:`
+  with tag 1; `explorer.newFolder` keeps the menu item, keyless on the Mac
+  and Ctrl+Alt+N everywhere on Linux).
   Dump every menu key equivalent before adding one; no key is bound twice (the
   `keymap` suite and `commands:*` check it).
 - **A new shortcut**: a row in `src/Commands.cpp` (id in VS Code's spelling
@@ -619,8 +625,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   the text view as typing before the menu (in another field or the grid it
   types); when two commands share a key in different places; and for keys a
   menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation);
-  and for a `Tree` command (renameFile on F2, moveFileToTrash on Cmd+Delete)
-  while the tree has the keyboard; and for a function key whose `Any`
+  and for a `Tree` command (renameFile on F2, moveFileToTrash on Cmd+Delete,
+  minicode.tree.newFolder on Shift+Cmd+N, which is New Window elsewhere) while the tree has the keyboard; and for a function key whose `Any`
   command something in the responder chain takes (F7 in the compare view's
   panes, plain text views that would beep at it). A `Tree` command's keys are never put on
   its menu item, since a menu key acts from every pane (Cmd+Delete once
@@ -702,8 +708,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   tab, or the terminal, the browser's tab (the browser with its last) or
   Problems list with the keyboard; a repeat
   (`isARepeat`) is ignored, so a held Cmd+W closes one thing. Shift+Cmd+W
-  closes the window. Cmd+N New File (with no window, opens one), Option+Cmd+N
-  New Window. Reopen Closed Tab (Option+Shift+Cmd+T): the newest of the
+  closes the window. Cmd+N New File (with no window, opens one), Shift+Cmd+N
+  (outside the tree) and Option+Cmd+N New Window. Reopen Closed Tab (Option+Shift+Cmd+T): the newest of the
   window's last 50 (`_closedTabs`, with place, selection, scroll, mode),
   skipping files gone.
 - **Unsaved tabs are never dropped**: a dirty tab asks Save / Don't Save /
