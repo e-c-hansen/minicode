@@ -137,6 +137,13 @@ void TerminalDock::step(int by) {
         if (v[i] == active()) at = i;
     focusPane(v[(at + v.size() + (size_t)(by < 0 ? v.size() - 1 : 1)) % v.size()]);
 }
+void TerminalDock::setNotice(GtkWidget* bar) {
+    if (notice_ == bar) return;
+    if (notice_ && gtk_widget_get_parent(notice_) == root_) gtk_box_remove(GTK_BOX(root_), notice_);
+    notice_ = bar;
+    if (bar) gtk_box_insert_child_after(GTK_BOX(root_), bar, gtk_widget_get_first_child(root_));
+}
+
 void TerminalDock::next() { step(1); }
 void TerminalDock::previous() { step(-1); }
 

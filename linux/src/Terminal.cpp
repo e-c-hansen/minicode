@@ -9,6 +9,7 @@
 
 #include "Appearance.h"
 #include "BackupStore.h"
+#include "ClaudeHooks.h"
 #include "Palette.h"
 #include "StartupLog.h"
 #include "TerminalAttention.h"
@@ -256,11 +257,38 @@ void Terminal::onTermpropChanged(VteTerminal* term, const char* name, gpointer s
     // Counters, not the busy flag: a short command's start and finish can
     // arrive in one read, of which VTE keeps only the last value.
     const bool ended = self->shell_.known && m.done > self->shell_.done;
+    const bool began = m.started > m.done && (!self->shell_.known || m.started > self->shell_.started);
     self->shell_.apply(m);
+    if (began && self->onClaudeStarted) self->lookForClaude();
     if (self->onShellStateChanged) self->onShellStateChanged();
     // The finishing mark ends the command: no polling for an integrated shell.
     self->giveLineBack();
     if (ended && !self->shell_.busy && self->onCommandFinished) self->onCommandFinished();
+}
+
+// Claude Code starting here: the typed command names it, or a second later,
+// with the command still running, the foreground process is its binary.
+void Terminal::lookForClaude() {
+    if (claudeTimer_) { g_source_remove(claudeTimer_); claudeTimer_ = 0; }
+    if (ClaudeHooks::startsClaude(shell_.command)) {
+        onClaudeStarted();
+        return;
+    }
+    claudeLookFor_ = shell_.started;
+    claudeTimer_ = g_timeout_add(1000, [](gpointer p) -> gboolean {
+        Terminal* self = static_cast<Terminal*>(p);
+        self->claudeTimer_ = 0;
+        if (!self->onClaudeStarted || !self->shell_.busy || self->shell_.started != self->claudeLookFor_ ||
+            !self->busy())
+            return G_SOURCE_REMOVE;
+        const int fg = (int)tcgetpgrp(vte_pty_get_fd(vte_terminal_get_pty(VTE_TERMINAL(self->vte_))));
+        if (fg <= 0) return G_SOURCE_REMOVE;
+        char* exe = g_file_read_link(("/proc/" + std::to_string(fg) + "/exe").c_str(), nullptr);
+        const bool is = exe && ClaudeHooks::isClaudeProgramPath(exe);
+        g_free(exe);
+        if (is) self->onClaudeStarted();
+        return G_SOURCE_REMOVE;
+    }, this);
 }
 
 void Terminal::makeTerminal() {
@@ -478,6 +506,7 @@ Terminal::~Terminal() {
     }
     if (cursorIdle_) g_source_remove(cursorIdle_);
     if (typeTimer_) g_source_remove(typeTimer_);
+    if (claudeTimer_) g_source_remove(claudeTimer_);
     if (finishTimer_) g_source_remove(finishTimer_);
     if (runTimer_) {
         g_source_remove(runTimer_);
