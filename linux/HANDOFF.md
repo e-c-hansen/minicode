@@ -5315,3 +5315,19 @@ tabs are written is decided by the core.
   empty folder for that); the `backups` suite's new timing part (no backup
   the moment after a key, one once typing pauses, one within 5 s of
   typing that never pauses, removed at once on save).
+
+### 77. The session save on the planner, flushed before another window reads (done, November 2026; SESSION-DESIGN.md stage 3c)
+
+A window's tabs changing wrote its session a second later on a timer of
+its own (`sessionTimer_`), so a second window opened on the same folder
+within that second read the folder's session as it had been (the
+`split_editor` flake, #81). The second is now the planner's
+(`SavePlan::Planner::sessionChanged`, due 1 s after the first change not
+yet written; `Plan::saveSession` from `tick`), on the one `planTimer_`.
+`restoreSession` for a folder (a new window, Open Folder) first has every
+other window on it write a pending save (`Persistence::flushSession`,
+`Planner::takeSession`), and any save takes the pending one, so it is not
+written twice. Core checks: `saveplan:session` and
+`saveplan:session-before-another-window-reads`. The Mac moved onto the
+planner for backups and auto-save in the same stage; it writes its
+session at once, to the same sessions.json format in its own folder.

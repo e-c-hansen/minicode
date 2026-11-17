@@ -212,8 +212,8 @@ goes here first, with tests; the GUI only displays it.
   "Tabs, sessions and the disk"), `Backups` (backups
   of unsaved tabs, with a POSIX `Fs`), `TabSessions` (what a folder and a
   window keep between runs: sessions.json's `Store`, the window record),
-  `SavePlan` (when backups and auto-saves are written, from a clock the
-  port ticks), `FileDetails` (tree sorts, ages, folder
+  `SavePlan` (when backups, auto-saves and GTK's session are written,
+  from a clock the port ticks), `FileDetails` (tree sorts, ages, folder
   totals), `RunFile` (Run File's quoting), `Runnables` (the tests in a
   file, found through the highlighter's tokens, and the command for one
   test or the file), `RightAreaLayout` (the right
@@ -328,7 +328,7 @@ goes here first, with tests; the GUI only displays it.
   TODOs window), `GitPanel`, `ChangeReviewPage` (every uncommitted change in
   one tab), `GitGutter` (change bars), `EditorConflicts` (merge conflicts
   in the editor), `TreeDetails`,
-  `FormatRunner`, `BackupStore`,
+  `FormatRunner`, `BackupStore`, `SessionStore` (sessions.json),
   `PalettePanel`, `Navigation`, `HintsSearchBox` (the hints panel's search box).
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
@@ -786,10 +786,23 @@ container (PanelHost, laid out by hand in layoutContainer)
   show as text an undo action of its own, `registerReloadUndoForTab:`; an
   NSTextView registration made during an undo redid onto the wrong range).
   A read that fails moves no date.
-- **Sessions**: `MCTabSessions` (NSUserDefaults, by resolved folder, 50
-  folders) reopens a folder's tabs and its browser page, else a read-only empty
-  editor. Off under `MINICODE_DEMO` and `MINICODE_BENCH`;
-  `MINICODE_DEFAULTS_SUITE` points it at a scratch suite. A tab over 16 MB or
+- **Sessions** (since stage 3c, 2026-11-17, `SessionStore.{h,mm}`): a
+  folder's `TabSessions::Session` in sessions.json
+  (`~/Library/Application Support/MiniCode/sessions.json`, NSHomeDirectory,
+  or `$MINICODE_SESSIONS_FILE`; the GTK port's format, by resolved folder,
+  50 folders) reopens its tabs and its browser pane (each tab's
+  `interactionState` as base64, `archived` for NSKeyedArchiver's form,
+  `browserShown`, `browserFraction`), else a read-only empty editor. Every
+  read and write runs on one serial queue: a save is handed over at once
+  and written in that turn over the file as it is then (another
+  minicode's folders stay); a read waits for the writes queued before it;
+  `applicationWillTerminate` waits for all (`MCSessionsFlush`). The user
+  defaults' `MCTabSessions` and `MCOpenWindows` are carried over once,
+  by the first minicode with no file (`MCSessionsFromDefaults`, checked in
+  window_restore; `MCSessionsMovedToFile` marks it, and the old keys stay
+  for an older minicode). Off under `MINICODE_DEMO` and `MINICODE_BENCH`;
+  the harness's scratch home holds the file, and `MINICODE_DEFAULTS_SUITE`
+  the old keys. The checks read it through `storedSession`. A tab over 16 MB or
   not a plain file waits for a click. Windows on one folder share it: each save
   lists the saving window's files then the others'. Agent preview tabs are left
   out (they were saved until 2026-11-08); the user's preview tab is saved as
@@ -801,9 +814,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   relaunch) reopens every window open at the last quit, front first. Before
   this, a Dock launch opened a window on `/` (its cwd) with nothing in it,
   and the ↻ restart brought folders and tabs back but no frames, carets,
-  panels or tree. The record is the core's (`encodeWindows`, a JSON string
-  in the defaults' `MCOpenWindows` until stage 3 moves the session into the
-  core): per window its frame (`fitFrame` onto today's screens), full
+  panels or tree. The record is the core's (`encodeWindows`, sessions.json's
+  `"windows"` since stage 3c, the defaults' `MCOpenWindows` before): per window its frame (`fitFrame` onto today's screens), full
   screen, folder, its own tabs as a `TabSessions::Session` (each tab's
   selection, top character and offset, page or source, side preview, the
   groups), the sidebar's panel, width and Cmd+B state, editor hidden,
@@ -813,7 +825,7 @@ container (PanelHost, laid out by hand in layoutContainer)
   `applicationWillTerminate`, by `windowWillClose:` (`noteWindowClosing`,
   `TabSessions::afterClosing`: the last window is kept, since closing it
   quits) and 3 s after a tab switch (saveSession), never empty. A restored
-  window takes its tabs from the record, not the folder's `MCTabSessions`
+  window takes its tabs from the record, not the folder's session
   (two windows on one folder each get theirs); showWindow puts back the
   frame first (`placeRestoredWindow`), then the sidebar, terminals and
   Problems before the tabs, so text is laid out at its width
@@ -830,10 +842,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   as folders only and an older minicode skips the key. The GTK app
   reopens those windows on a launch with no path from the home folder or
   `/` (its size, own tabs, sidebar, terminal, Problems; linux/HANDOFF.md
-  item 76). The Mac is unchanged: `MCOpenWindows` was already this
-  record, and its per-folder `MCTabSessions` stays a dictionary of its own
-  (the browser's `interactionState` data in it) until 3c moves it to the
-  shared file.
+  item 76). The Mac keeps the same file since 3c (see "Sessions").
+  GTK writes a window's session 1 s after its tabs change
+  (`Planner::sessionChanged`), so a window opening on a folder first has
+  every other window on it write a pending save (`takeSession`,
+  `Persistence::flushSession`, `saveplan:session-before-another-window-reads`;
+  GTK split_editor's flake, #81); the Mac writes at once.
 - AppDelegate's `current` maps a window an editor made (`ownsWindow:`, Find in
   Folder and TODOs) to that editor; items that edit the file on show are
   disabled while another window is key, so keys reach that window's field.
@@ -894,12 +908,14 @@ container (PanelHost, laid out by hand in layoutContainer)
 - **The planner** (2026-11-16, stage 3b): these timing rules, auto-save's
   below included, are the core's `SavePlan::Planner` (`changed`,
   `focusChanged`, `tick(now)`, `nextDue()`; `saveplan:*` holds it to each
-  rule here, with a random walk). The GTK port runs on it with one timer;
-  the Mac still runs `scheduleBackups`/`scheduleAutoSave` on its own
-  performSelector timers and moves onto the planner in 3c (MCTab's
-  `textGeneration`, `backedUpGeneration`, `backedUpPath` and `hasBackup`
-  are `SavePlan::Tab`'s fields one for one). A rule changed here changes
-  there.
+  rule here, with a random walk). Both ports run on it with one timer:
+  the Mac since 3c, `_plan` and `_planTimer` (an NSTimer, re-armed for
+  `nextDue()` by `armSavePlan`, which never loses a planned save: it is
+  only when), fed by `scheduleBackups`, `scheduleAutoSave` and
+  `autoSaveOnFocusChange` (`planTabOf:`: MCTab's `textGeneration`,
+  `backedUpGeneration`, `backedUpPath` and `hasBackup` one for one,
+  `tabTakesAutoSave`'s other conditions as `mayAutoSave`), stopped by
+  `stopSavePlan` as the window closes. A rule changed here changes there.
 - Restore: `planForRoot:` takes the folder's backups no live process holds (pid
   and start time); `takeBackup:intoTab:` makes the tab dirty with the backup's
   base date and inode, and on first show (`showRestoredText:`) the backup is
@@ -3639,7 +3655,7 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `applicationWillTerminate` writes `MCRestart` and `MCLaunchAfterExit` spawns
   a detached `/bin/sh` that waits for our pid and runs `open -n
   <source>/MiniCode.app`; the new process takes a record under two minutes old
-  (`reopenAfterRestart:`), brings every window back from `MCOpenWindows`
+  (`reopenAfterRestart:`), brings every window back from sessions.json
   (written by that same quit; see "Every window comes back") and runs `develop.command --continue` in the
   resuming window (never the record's command, and only in a folder that
   looks like the source). After a restart the user runs the repo's build until the next `brew

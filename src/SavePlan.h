@@ -2,10 +2,10 @@
 // backup (Backups.h) and auto-save (editor.auto-save, Settings.h), decided
 // from a clock the port ticks. Pure C++17, no I/O and no timers: the port
 // tells the planner what changed and when, asks nextDue() when to tick, and
-// tick(now) says what to write then. Stage 3b of SESSION-DESIGN.md: the GTK
-// port runs on it (linux/src/Persistence.cpp); the Mac keeps its own timers
-// (EditorController+Persistence.mm) until 3c, and the rules here are its
-// rules, which tests/save_plan_tests.inc holds them to:
+// tick(now) says what to write then. Stage 3b of SESSION-DESIGN.md: both
+// ports run on it (linux/src/Persistence.cpp, the Mac's
+// EditorController+Persistence.mm since 3c), and the rules here are the
+// Mac's, which tests/save_plan_tests.inc holds them to:
 //
 // - Backups. After every edit and every change of a dirty flag or the tabs,
 //   a tab that is clean again (or holds nothing to keep) has its backup
@@ -20,6 +20,12 @@
 //   losing focus or another tab showing writes on the next turn; nothing an
 //   edit does cancels that write.
 // - A tick with auto-save turned off since writes nothing for it.
+// - The session (which files the window has open, TabSessions.h), for a
+//   port that writes it once its tabs settle: 1 s after the first change
+//   not yet written. A window opening on a folder another window has open
+//   takes that window's pending save first (takeSession), so it reads the
+//   folder's session as it is, not as it was a second ago (GTK's
+//   split_editor flake, #81). The Mac writes its session at once.
 //
 // Times are seconds on any clock that only goes forward (the port's
 // monotonic clock); tabs are named by the port's own ids.
@@ -36,6 +42,7 @@ namespace SavePlan {
 
 constexpr double kBackupDelay = 1.0;     // after typing stops
 constexpr double kBackupMaxWait = 5.0;   // after the first change not yet written
+constexpr double kSessionDelay = 1.0;    // after the first change to the tabs not yet written
 constexpr double kNever = std::numeric_limits<double>::infinity();
 
 // A tab as the port sees it now.
@@ -68,7 +75,10 @@ struct Plan {
     std::vector<uint64_t> writeBackups;     // write these tabs' backups
     std::vector<uint64_t> discardBackups;   // remove these tabs' backups
     bool autoSave = false;                  // run the auto-save over every tab
-    bool empty() const { return writeBackups.empty() && discardBackups.empty() && !autoSave; }
+    bool saveSession = false;               // write the window's session
+    bool empty() const {
+        return writeBackups.empty() && discardBackups.empty() && !autoSave && !saveSession;
+    }
 };
 
 class Planner {
@@ -86,6 +96,15 @@ public:
     // The editor lost the keyboard, the window its focus, or another tab is
     // shown: in focus-change mode, an auto-save due now.
     void focusChanged(double now);
+    // The tabs changed (opened, closed, moved, shown): the session written
+    // kSessionDelay after the first such change not yet written; later
+    // changes do not put it off.
+    void sessionChanged(double now);
+    // Whether a session save was planned, which is no longer planned: the
+    // port writes the session now. Before a window on the same folder reads
+    // the folder's session, and whenever the port writes it for another
+    // reason (a window closing, quitting).
+    bool takeSession();
 
     // What is due at `now`, given the tabs as they are now; what it returns
     // is no longer planned. The port writes each backup it names and records
@@ -100,6 +119,7 @@ public:
     double backupDue() const { return backupDue_; }
     double autoSaveDue() const { return autoSaveDue_; }
     double focusSaveDue() const { return focusDue_; }
+    double sessionDue() const { return sessionDue_; }
 
 private:
     Settings::AutoSave mode_ = Settings::AutoSave::Off;
@@ -108,6 +128,7 @@ private:
     double backupDue_ = kNever;
     double autoSaveDue_ = kNever;
     double focusDue_ = kNever;
+    double sessionDue_ = kNever;
 };
 
 }  // namespace SavePlan

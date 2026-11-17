@@ -53,6 +53,14 @@ void Planner::focusChanged(double now) {
     if (mode_ == Settings::AutoSave::FocusChange) focusDue_ = std::min(focusDue_, now);
 }
 
+void Planner::sessionChanged(double now) { sessionDue_ = std::min(sessionDue_, now + kSessionDelay); }
+
+bool Planner::takeSession() {
+    const bool planned = sessionDue_ != kNever;
+    sessionDue_ = kNever;
+    return planned;
+}
+
 Plan Planner::tick(const std::vector<Tab> &tabs, double now) {
     Plan p;
     if (backupDue_ <= now) {
@@ -66,13 +74,19 @@ Plan Planner::tick(const std::vector<Tab> &tabs, double now) {
         focusDue_ = kNever;
         p.autoSave = mode_ != Settings::AutoSave::Off;
     }
+    if (sessionDue_ <= now) {
+        sessionDue_ = kNever;
+        p.saveSession = true;
+    }
     return p;
 }
 
-double Planner::nextDue() const { return std::min({backupDue_, autoSaveDue_, focusDue_}); }
+double Planner::nextDue() const {
+    return std::min({backupDue_, autoSaveDue_, focusDue_, sessionDue_});
+}
 
 void Planner::cancel() {
-    firstPending_ = backupDue_ = autoSaveDue_ = focusDue_ = kNever;
+    firstPending_ = backupDue_ = autoSaveDue_ = focusDue_ = sessionDue_ = kNever;
 }
 
 }  // namespace SavePlan
