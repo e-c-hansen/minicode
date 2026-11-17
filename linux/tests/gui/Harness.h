@@ -46,7 +46,10 @@
 // suite file is not listed). A suite whose name starts with "_" runs only
 // when named: it is a part another suite starts with MCGuiRunChild.
 //
-// Environment: SUITES or MC_GUI_SUITES, as arguments do; MC_GUI_KEEP=1 keeps
+// Environment: SUITES or MC_GUI_SUITES, as arguments do; MC_GUI_SKIP_SUITES
+// leaves suites out (CI runs the list as two processes at once, one naming
+// its half, the other skipping it), and a name in either list that no suite
+// has fails the run; MC_GUI_KEEP=1 keeps
 // the scratch folders; MC_GUI_VERBOSE=1 names each step; MC_GUI_SNAPSHOTS=dir
 // is where MCGuiSnapshot writes, and where a failed check leaves a picture of
 // the window on top (fail-<n>-<suite>.png, the first ten); MC_SKIP_TIMING=1

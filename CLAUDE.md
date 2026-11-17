@@ -75,8 +75,9 @@ opening comment says what it does in more detail than the lines below.
   with every feature; do not quote them (8,490 at the end of 2026-11-05). Run
   it from the repo root: corpus and docs checks read files there and skip
   themselves when missing. clang++ on the Mac, make's default (g++) elsewhere,
-  so CI runs it on Linux; `make test CXX=g++-16` reproduces CI's libstdc++ job
-  on the Mac. Checks that read the docs: `commands:readme` (every default key
+  so CI runs it on Linux (the sanitizers job's g++ build; since 2026-11-17
+  the GTK job runs no plain copy); `make test CXX=g++-16` reproduces CI's
+  libstdc++ build on the Mac. Checks that read the docs: `commands:readme` (every default key
   is in `docs/REFERENCE.md`'s macOS column), `commands:linux-readme` (its
   Linux column against the Linux table, both ways), `install:readme` (every
   install command is in `docs/REFERENCE.md` in backticks), `linux:build-lists` (linux/Makefile and
@@ -110,7 +111,7 @@ opening comment says what it does in more detail than the lines below.
   release.sh does (`nm`, the zip's contents, check-minos); the Android
   release job signs with a key made in the job (`keytool`, random
   password), never the owner's release key. Every job has a
-  `timeout-minutes` (macOS 40, tsan 45, the rest 20; `ci:timeouts` checks
+  `timeout-minutes` (macOS 40, GTK 45, tsan 45, the rest 20; `ci:timeouts` checks
   a new job has one), so a hang never holds a runner for six hours.
   **Since 2026-11-14** (`docs/ci.md`, the failure history and the branch
   protection): a seventh job, **CI passed**, is green only when the six
@@ -123,7 +124,23 @@ opening comment says what it does in more detail than the lines below.
   (FAIL, FATAL, sanitizer reports, compiler errors) plus SLOW, NEAR and
   LEAK lines at the top of the run's page and on the PR; the runner
   images are named (`macos-26`, `ubuntu-26.04`), never `latest`; a newer
-  push cancels a PR's older run. `scripts/ci-local.sh` runs on the Mac
+  push cancels a PR's older run. **Speed** (2026-11-17, docs/ci.md's
+  "What makes a run quick"): the macOS, GTK4, sanitizers and tsan jobs
+  compile through ccache, restored and saved with actions/cache
+  (`scripts/ci-ccache.sh`: links named clang++, g++ or clang++-22 in front
+  of PATH, so make's command lines and `build/obj/flags.txt` are
+  unchanged; Meson adds ccache itself; ccache's compiler check is the
+  compiler's `--version`, and no build folder is cached, so make and
+  Meson decide what to build as on a fresh checkout). The macOS job runs
+  `build/run_tests` beside the GUI checks, and both GUI jobs run their
+  checks as two harness processes at once (`scripts/ci-together.sh`, one
+  log each: core-tests, gui-checks-1, gui-checks-2): the step's
+  `GUI_SECOND_HALF` names the second half's suites, and the first half
+  skips them (`MC_GUI_SKIP_SUITES`, both harnesses), so a new suite runs
+  in the first unlisted; a name no suite has fails the run. Rebalance
+  the list from a run's "Suite x" timestamps when one half grows well
+  past the other. The GTK job runs no plain `make test` (the sanitizers
+  job's g++ build runs the same groups). `scripts/ci-local.sh` runs on the Mac
   what CI runs, without Docker (`--quick` before a push: core tests,
   build, check-minos, the sweep; the full run adds g++, the sanitizers,
   `make guitest`, which takes the keyboard, and the release zip). No
@@ -4266,10 +4283,33 @@ session has a display. Check first.
   back what it can (the pin, the answers). The two files are the
   harness's to put back between suites and an extra terminal is only
   noted: `LEFT [suite]`, a warning, so a suite needs no step to undo its
-  settings. `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
+  settings. A browser pane or agent page shown or hidden in any window is
+  a LEFT line too (2026-11-17, after control's agent page narrowed
+  markdown_side_sync's editor), until the suites that leave one close
+  it; then it can be a LEAK. `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
   are skipped. A failed check with `MC_GUI_SNAPSHOTS` set leaves a
   picture of the test window (the first ten); CI keeps them as an
-  artifact.
+  artifact, a folder per half.
+- **Two harnesses at once** (2026-11-17, CI's halves): each process makes
+  its own world, so nothing a suite touches is shared. Mac: `/tmp/mcgui-*`
+  by mkdtemp, home, TMPDIR (so control sockets; `MINICODE_CONTROL_DIR`
+  is only set by suites, inside their scratch), the defaults suite and
+  pasteboard named by pid, `CLAUDE_CONFIG_DIR`; the Python interpreter
+  choice was the one app state in the standard defaults (the `guitest`
+  domain, shared by every process of that name) and now goes through
+  `MCAppDefaults()` like the rest. Ports: servers bind port 0 and keep
+  the socket, or take one from `FreePort()` and hand it to `serve.py`;
+  macOS gives TCP ephemeral ports out in turn
+  (`net.inet.tcp.randomize_ports` 0), so a released port is not handed to
+  the other process before the range wraps. Launch Services is never
+  touched (openURL: swizzled, BROWSER's fallback a recorder); the recent
+  folders the app notes go to the system's list for the `guitest`
+  identity, which no check reads. GTK: Xvfb picks its own display
+  (`-displayfd`), each run has its own dbus-run-session, scratch, XDG
+  folders, TMPDIR and `GSETTINGS_BACKEND=memory`, and processes are
+  found by walking this run's descendants or a token, never by name. A
+  suite that fails only beside the other half is a sharing bug to fix
+  here, never a retry.
 - **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
   window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
   through the window then the main menu (`MCGuiPerformMenuKey`, built from the

@@ -50,14 +50,13 @@ void MCForgetFolderToolsConsent(NSString *root) {
 - (NSString *)rootKey { return RealPath(_root) ?: @""; }
 
 - (NSString *)chosenPythonInterpreter {
-    NSDictionary *all = [[NSUserDefaults standardUserDefaults]
-                            dictionaryForKey:kInterpretersDefaultsKey];
+    NSDictionary *all = [MCAppDefaults() dictionaryForKey:kInterpretersDefaultsKey];
     id p = all[[self rootKey]];
     return [p isKindOfClass:[NSString class]] && [p length] ? p : nil;
 }
 
 - (void)choosePythonInterpreter:(NSString *)path {
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    NSUserDefaults *d = MCAppDefaults();
     NSMutableDictionary *all = [[d dictionaryForKey:kInterpretersDefaultsKey] mutableCopy]
                                    ?: [NSMutableDictionary dictionary];
     if (path.length) all[[self rootKey]] = path;
