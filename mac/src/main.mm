@@ -1263,10 +1263,10 @@ static void BuildMenu(void) {
     findNext.tag = NSTextFinderActionNextMatch;
     NSMenuItem *findPrev = [editMenu addItemWithTitle:@"Find Previous"
                                                action:@selector(performTextFinderAction:)
-                                        keyEquivalent:@"g"];
+                                        keyEquivalent:@""];
+    // Its Shift+Cmd+G is a find bar's own (Commands.cpp): as a menu key it
+    // would take Toggle Source Control's from every pane.
     findPrev.tag = NSTextFinderActionPreviousMatch;
-    findPrev.keyEquivalentModifierMask =
-        NSEventModifierFlagCommand | NSEventModifierFlagShift;
     NSMenuItem *useSelection = [editMenu addItemWithTitle:@"Use Selection for Find"
                                                    action:@selector(performTextFinderAction:)
                                             keyEquivalent:@"e"];
@@ -1474,13 +1474,14 @@ static void BuildMenu(void) {
     sidebar.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [viewMenu addItem:sidebar];
 
-    // Ctrl+Shift+G as in VS Code (Shift+Cmd+G is Find Previous).
+    // Shift+Cmd+G, and Ctrl+Shift+G as in VS Code (on a hidden item the
+    // keymap adds); a find bar's field takes Shift+Cmd+G as Find Previous.
     NSMenuItem *git =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Source Control"
                                    action:@selector(toggleSourceControl:)
                             keyEquivalent:@"g"];
     git.keyEquivalentModifierMask =
-        NSEventModifierFlagControl | NSEventModifierFlagShift;
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:git];
     // Pushing and pulling (git.fetch, git.pull, git.push, git.sync), staging
     // everything, discarding and switching branches, with no keys, as in VS

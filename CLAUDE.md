@@ -375,7 +375,7 @@ container (PanelHost, laid out by hand in layoutContainer)
 ├── titlebarView + titleLabel                     with a custom title bar
 ├── NSSplitView (vertical)                        sidebar | right pane
 │   ├── treeScroll → ClickOutline                 file tree, MCTreeCell rows,
-│   │   a Worktrees node first; or MCGitPanel (Ctrl+Shift+G), the Agents
+│   │   a Worktrees node first; or MCGitPanel (Shift+Cmd+G), the Agents
 │   │   panel (Shift+Cmd+A) or MCProcessesPanel (View > Toggle Processes)
 │   │   swapped in with replaceSubview:
 │   └── rightArea (PanelHost, relayoutRightArea)
@@ -1394,7 +1394,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   lines, applied `whenCurrent:`), over a copy of the text made once per
   edit of it (`MCFindText`: an NSString copy on main, UTF-16 on the
   queue), never once per keystroke in the query, and draws through `drawBehindText`. Cmd+G /
-  Shift+Cmd+G, Return / Shift+Return; Option+Cmd+C, W, R; Return in the replace
+  Shift+Cmd+G, Return / Shift+Return (Shift+Cmd+G is Toggle Source
+  Control's menu key since 2026-11-16, the owner's call: Find Previous has
+  no registry key, and the bar, the terminal's and browser's
+  `MCTerminalFindBar`, and Find in Folder's window, whose
+  `MCSearchContent` steps through the results with Cmd+G and Shift+Cmd+G,
+  take it in `performKeyEquivalent:` before the menu); Option+Cmd+C, W, R; Return in the replace
   field replaces and moves on; Shift+Cmd+1 replaces only while the bar has the
   keyboard (Go to Tab 1 elsewhere); Up and Down in either field walk its
   history (2026-11-14, `FindHistory.h`, VS Code's: newest last, a text
@@ -3011,6 +3016,7 @@ for full-screen programs. Both can be open at once.
 
 ## Git panel (all three ports)
 
+Shift+Cmd+G (the Mac's, outside a find bar; see "Find and replace") or
 Ctrl+Shift+G swaps the tree for `MCGitPanel` (`replaceSubview:with:`, same
 frame). All three panels draw from the core's `src/GitModel.{h,cpp}`
 (`GitUi`: rows, the selection after a refresh, every argument vector, the

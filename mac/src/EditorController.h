@@ -26,7 +26,7 @@
 @interface EditorController (Layout)
 - (void)showWindow;
 - (void)toggleSidebarVisibility:(id)sender;     // Cmd+B collapse/restore file tree
-- (void)toggleSourceControl:(id)sender;   // Ctrl+Shift+G git panel in the sidebar
+- (void)toggleSourceControl:(id)sender;   // Shift+Cmd+G / Ctrl+Shift+G: git panel in the sidebar
 - (void)toggleAgents:(id)sender;          // Shift+Cmd+A agent sessions in the sidebar
 - (void)toggleEditor:(id)sender;      // Shift+Cmd+E hide/restore the file editor
 @end

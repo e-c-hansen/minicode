@@ -9,7 +9,8 @@
 // Cmd+G and Shift+Cmd+G the same, Cmd+F selects the field's text, Esc
 // closes. Window key equivalents reach the bar before the menu, so Cmd+G
 // and Cmd+F are taken in performKeyEquivalent: (the field editor, a text
-// view, would otherwise answer the menu's Find items itself).
+// view, would otherwise answer the menu's Find items itself), and so is
+// Shift+Cmd+G, which is Toggle Source Control's menu key everywhere else.
 #import <Cocoa/Cocoa.h>
 
 @interface MCTerminalFindBar : NSView <NSTextFieldDelegate>

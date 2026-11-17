@@ -39,8 +39,9 @@
 // (or Cmd+Return in the replace field) Replace All, Cmd+F and Option+Cmd+F
 // the two fields, Tab between them, Esc closes. The window offers key
 // equivalents to the bar before the menu, which is how those reach it while
-// its field editor has the keyboard. From the editor the menu's items do the
-// same (Edit > Find…, Replace…, Find Next, Use Selection for Find, Find
+// its field editor has the keyboard; Shift+Cmd+G, Toggle Source Control's
+// elsewhere, is Find Previous only here. From the editor the menu's items do
+// the same (Edit > Find…, Replace…, Find Next, Use Selection for Find, Find
 // Options), and Esc closes the bar when nothing else (a completion list)
 // wanted it.
 //
