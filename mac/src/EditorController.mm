@@ -108,6 +108,7 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     for (MCTab *t in [self tabs]) [self discardBackupOf:t];
     for (MCTab *t in [self tabs]) [t.latex stopPreview];   // no typeset or output folder outlives it
     _closing = YES;
+    [self stopSavePlan];   // nothing more written for it on a timer
     // The shells go with the window (hung up and reaped), and the dock with
     // them, so nothing of the window outlives it.
     if (self.terminalPanel) {

@@ -5,7 +5,10 @@
 // C++17 with no I/O: the port reads and writes the file, and this says what
 // is in it, by the Mac's rules.
 //
-// The file is one JSON object keyed by the folder's resolved path:
+// The file is one JSON object keyed by the folder's resolved path (the
+// Mac's is ~/Library/Application Support/MiniCode/sessions.json since stage
+// 3c, which carried its user defaults' MCTabSessions and MCOpenWindows over
+// once):
 //
 //   {"/home/me/proj": {"used": 1762700000.5, "active": 1, "preview": -1,
 //     "tabs": [{"path": "/home/me/proj/a.txt", "page": false,
@@ -21,10 +24,8 @@
 // frame, folder, tabs (a Session as above, carets and scroll included), its
 // panels and their sizes, its terminals' folders and splits, and the tree's
 // open folders and selected row: VS Code's window.restoreWindows "all".
-// The Mac keeps it in its user defaults (MCOpenWindows); the GTK port keeps
-// the same list in sessions.json, under the key "windows" beside the
-// folders (encodeStore), until the session moves into the core
-// (SESSION-DESIGN.md, stages 3c and 4). Folder keys are absolute paths, so
+// Both ports keep the list in sessions.json, under the key "windows" beside
+// the folders (encodeStore). Folder keys are absolute paths, so
 // "windows" is never one; a sessions.json from before has no windows, and a
 // minicode from before skips the key (it is no session) and keeps the
 // folders.
@@ -60,6 +61,9 @@ struct BrowserTab {
     std::string url;
     std::string title;
     std::string state;
+    // The Mac's record in NSKeyedArchiver's form rather than WebKit's own
+    // (Browser.mm MCRecordData), written only when set.
+    bool archived = false;
 };
 
 // One folder's tabs, in tab order, with the one on show and the preview tab
@@ -73,6 +77,10 @@ struct Session {
     // written before the pane had tabs has none.
     std::vector<BrowserTab> browser;
     int browserActive = -1;
+    // Whether the pane showed, and its share of the width (0: unknown), with
+    // the browser's tabs (the Mac's; GTK keeps them in its window record).
+    bool browserShown = false;
+    double browserFraction = 0;
     // The split editor's groups (EditorTabs::GroupsSession), when the
     // editor was split; a session from before the split editor has none and
     // comes back as one group.

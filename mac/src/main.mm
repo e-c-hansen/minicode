@@ -1,6 +1,7 @@
 // main.mm — application bootstrap and menu bar. Objective-C++.
 #import <Cocoa/Cocoa.h>
 #import "EditorController.h"
+#import "SessionStore.h"
 #import "Lsp.h"
 #import "Demo.h"
 #import "Bench.h"
@@ -242,6 +243,7 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     for (EditorController *c in self.controllers) [c saveSession];
     // And every window as it is, for the next launch to bring back.
     [EditorController saveOpenWindows];
+    MCSessionsFlush();   // sessions.json written before the process goes
     MCControlServerStop();
     MCLspTerminateAllServers();
     if (self.restartApp) {

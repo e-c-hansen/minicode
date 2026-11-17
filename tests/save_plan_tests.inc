@@ -221,6 +221,45 @@ static void testSavePlan() {
         CHECK(p.tick(tabs, 100).empty());
     }
 
+    GROUP("saveplan:session");
+    {
+        // The tabs change: the session is written a second after the first
+        // change, however many follow.
+        Planner p;
+        const std::vector<Tab> none;
+        CHECK(!p.takeSession());           // nothing planned
+        p.sessionChanged(10);
+        CHECK(p.sessionDue() == 11.0 && p.nextDue() == 11.0);
+        p.sessionChanged(10.6);            // not put off
+        CHECK(p.sessionDue() == 11.0);
+        CHECK(!p.tick(none, 10.9).saveSession);
+        Plan due = p.tick(none, 11.0);
+        CHECK(due.saveSession && !due.empty());
+        CHECK(p.nextDue() == kNever && !p.tick(none, 20).saveSession);
+    }
+
+    GROUP("saveplan:session-before-another-window-reads");
+    {
+        // GTK's split_editor flake (#81): a window changes its tabs, and a
+        // second window opens on the same folder within the second. The
+        // first window's pending save is taken (and written by the port)
+        // before the second reads the folder's session, and is not written
+        // a second time when its tick comes.
+        Planner first;
+        const std::vector<Tab> none;
+        first.sessionChanged(5);
+        CHECK(first.takeSession());        // the new window asks: written now
+        CHECK(!first.takeSession());       // once
+        CHECK(first.nextDue() == kNever);
+        CHECK(!first.tick(none, 6).saveSession);
+        // A change after it is planned again as before.
+        first.sessionChanged(7);
+        CHECK(first.sessionDue() == 8.0);
+        // Cancel (the window closing) drops it with the rest.
+        first.cancel();
+        CHECK(!first.takeSession());
+    }
+
     GROUP("saveplan:walk");
     {
         // A random walk of edits, saves, focus changes and ticks: a dirty

@@ -676,7 +676,10 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 
 // EditorController+Persistence.mm: the tabs between runs, backups and hot exit, auto-save, files changed, moved or deleted outside.
 @interface EditorController (Persistence)
-- (NSUserDefaults *)sessionDefaults;
+// The folder's session as sessions.json holds it, in the shape the user
+// defaults held it (files, active, preview, sidePreview, groups, browser),
+// for the checks; nil for none.
+- (NSDictionary *)storedSession;
 - (BOOL)sessionsEnabled;
 - (NSString *)sessionKey;
 - (NSArray<NSString *> *)sessionFilePaths;
@@ -699,6 +702,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (BOOL)tabNeedsBackup:(MCTab *)t;
 - (void)scheduleBackups;
 - (void)writeBackups;
+- (void)writeBackupsOf:(NSArray<MCTab *> *)tabs;
+// The window is closing: no backup or auto-save is planned for it any more.
+- (void)stopSavePlan;
 - (void)discardBackupOf:(MCTab *)t;
 - (void)backupsAppWillTerminate:(NSNotification *)note;
 - (BOOL)takeBackup:(NSString *)bid intoTab:(MCTab *)t;
@@ -706,7 +712,6 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (Settings::AutoSave)autoSaveMode;
 - (BOOL)tabTakesAutoSave:(MCTab *)t;
 - (void)scheduleAutoSave;
-- (void)autoSaveAfterDelay;
 - (void)autoSaveOnFocusChange;
 - (void)autoSaveNow;
 - (BOOL)writeTabForAutoSave:(MCTab *)t;

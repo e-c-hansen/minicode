@@ -84,10 +84,13 @@ Json encodeSession(const Session &s) {
             o.set("url", b.url);
             o.set("title", b.title);
             if (!b.state.empty()) o.set("state", b.state);
+            if (b.archived) o.set("archived", true);
             bt.push(o);
         }
         e.set("browser", bt);
         e.set("browserActive", s.browserActive);
+        if (s.browserShown) e.set("browserShown", true);
+        if (s.browserFraction > 0) e.set("browserFraction", s.browserFraction);
     }
     if (s.split) {
         Json g = Json::object();
@@ -121,11 +124,15 @@ bool decodeSession(const Json &e, Session *out) {
             b.url = j["url"].asString();
             b.title = j["title"].isString() ? j["title"].asString() : "";
             b.state = j["state"].isString() ? j["state"].asString() : "";
+            b.archived = j["archived"].asBool(false);
             keptBrowser.push_back((int)s.browser.size());
             s.browser.push_back(b);
         }
         const int ba = readIndex(e["browserActive"], keptBrowser.size());
         s.browserActive = ba >= 0 ? keptBrowser[(size_t)ba] : (s.browser.empty() ? -1 : 0);
+        s.browserShown = e["browserShown"].asBool(false);
+        const double fr = e["browserFraction"].asNumber(0);
+        s.browserFraction = fr > 0 && fr < 1 ? fr : 0;
     }
     // Indices count the tabs as written, so a tab that does not read
     // moves the ones after it: they are mapped to what is kept.
