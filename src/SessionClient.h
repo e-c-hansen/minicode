@@ -108,6 +108,15 @@ public:
     // One operation, in the text as the operations before it left it. With
     // no step open it is a step of its own ("Edit").
     void record(DocId doc, Ot::Op op);
+    // One operation the mirror made outside its undo history (an edit
+    // nothing registered for undo, as a storage edit outside the text
+    // view's): the host applies it in no step and moves its history past
+    // it, dropping the steps it touched and those older (UndoHistory's
+    // foreign). Made between steps, never inside one.
+    void recordOutside(DocId doc, Ot::Op op);
+    // The undo history forgotten, the text kept (NSUndoManager's
+    // removeAllActions).
+    void forgetHistory(DocId doc);
     void breakCoalescing(DocId doc);
     // The selection now, outside a step: moved, typing starts a new step.
     void noteSelection(DocId doc, const Selection& now);

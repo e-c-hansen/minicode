@@ -144,10 +144,34 @@ jobs:
             gui-checks-alone 'MC_GUI_SNAPSHOTS="$PICTURES/alone" ./build/guitest $GUI_ALONE' || alone=$?
           [ "$together" -eq 0 ] && [ "$alone" -eq 0 ]
 
+      # The editing suites again with the session's host owning every tab's
+      # text and undo (editor.session-host, docs/notes/session-host.md;
+      # SESSION-DESIGN.md stage 4b), every message through the protocol's
+      # encoding and back and 200 us late on the host's thread, as the GTK
+      # job's loopback step runs its own. A step of its own after the
+      # halves, so their timing is undisturbed. Each suite ends with the
+      # harness's check that every tab's text is the host's.
+      - name: GUI checks with the session's host
+        id: session
+        timeout-minutes: 12
+        env:
+          MINICODE_SESSION_HOST: 'on'
+          MINICODE_HOST: loopback
+          MINICODE_HOST_DELAY_US: '200'
+          MC_GUI_WAIT_SCALE: '1.5'
+          MC_TIMING_SCALE: '1.5'
+          PICTURES: ${{ runner.temp }}/gui-pictures
+          GUI_SESSION_HOST: >-
+            keystroke multiedit editor_keys auto_close save backups lsp_sync
+            snippets format git_conflicts test_gutter
+        run: |
+          scripts/ci-together.sh "$RUNNER_TEMP/ci-logs" \
+            gui-session-host 'MC_GUI_SNAPSHOTS="$PICTURES/session-host" ./build/guitest $GUI_SESSION_HOST'
+
       # A picture of the test window at each of the first ten failed checks
       # of each half, and the logs, only when the tests failed.
       - name: Keep the GUI checks' pictures
-        if: failure() && steps.gui.outcome == 'failure'
+        if: failure() && (steps.gui.outcome == 'failure' || steps.session.outcome == 'failure')
         uses: actions/upload-artifact@v7
         with:
           name: mac-gui-checks

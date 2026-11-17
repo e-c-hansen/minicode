@@ -94,7 +94,7 @@ MC_GUI_SUITE(markdown_math) {
         tectonicBefore = was ? @(was) : nil;
         MCGuiWriteFile(fake, [NSString stringWithFormat:@"#!/bin/sh\n/usr/bin/touch '%@'\nexit 1\n", ran]);
         chmod(fake.fileSystemRepresentation, 0755);
-        setenv("MINICODE_TECTONIC", fake.fileSystemRepresentation, 1);
+        MCSetEnv("MINICODE_TECTONIC", fake.fileSystemRepresentation);
         MCGuiSetSettings(@"lsp.enabled = false\n");
 
         NSString *dir = MCMathCacheDirectory();
@@ -153,7 +153,7 @@ MC_GUI_SUITE(markdown_math) {
     if (NSString *tectonic = NSProcessInfo.processInfo.environment[@"MC_GUI_REAL_TECTONIC"]) {
         NSString *attack = Fixture(@"attack.md");
         MCGuiStep(@"with a real tectonic: a formula that tries to change the next ones", ^{
-            setenv("MINICODE_TECTONIC", tectonic.fileSystemRepresentation, 1);
+            MCSetEnv("MINICODE_TECTONIC", tectonic.fileSystemRepresentation);
             MCGuiWriteFile(attack, @"A $\\alpha$ B\n\n"
                                    @"$$\n{$}\\def\\alpha{\\beta}{$}\n$$\n\n"
                                    @"C $\\alpha$ D $\\beta$ E $\\typeout{MC:3:1:99pt:9pt:0pt}y$\n");
@@ -227,11 +227,11 @@ MC_GUI_SUITE(markdown_math) {
         [script appendString:@"/bin/sleep 3\nexit 1\n"];   // time to look before it ends
         MCGuiWriteFile(slow, script);
         chmod(slow.fileSystemRepresentation, 0755);
-        setenv("MINICODE_TECTONIC", slow.fileSystemRepresentation, 1);
+        MCSetEnv("MINICODE_TECTONIC", slow.fileSystemRepresentation);
         [fm createDirectoryAtPath:emptyCache withIntermediateDirectories:YES attributes:nil error:nil];
         const char *was = getenv("TECTONIC_CACHE_DIR");
         cacheBefore = was ? @(was) : nil;
-        setenv("TECTONIC_CACHE_DIR", emptyCache.fileSystemRepresentation, 1);
+        MCSetEnv("TECTONIC_CACHE_DIR", emptyCache.fileSystemRepresentation);
         GCHECK(MCTectonicCacheIsEmpty());
         NSString *first = Fixture(@"first-run.md");
         MCGuiWriteFile(first, @"A formula never typeset before: $z^3 + 1$.\n");
@@ -252,15 +252,15 @@ MC_GUI_SUITE(markdown_math) {
     });
     MCGuiWait(@"the run to end", 10, ^BOOL { return MCMathFilesFetched() == 0; });
     MCGuiStep(@"back to the stand-in that never runs", ^{
-        setenv("MINICODE_TECTONIC", fake.fileSystemRepresentation, 1);
-        if (cacheBefore) setenv("TECTONIC_CACHE_DIR", cacheBefore.fileSystemRepresentation, 1);
-        else unsetenv("TECTONIC_CACHE_DIR");
+        MCSetEnv("MINICODE_TECTONIC", fake.fileSystemRepresentation);
+        if (cacheBefore) MCSetEnv("TECTONIC_CACHE_DIR", cacheBefore.fileSystemRepresentation);
+        else MCSetEnv("TECTONIC_CACHE_DIR", nullptr);
         GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
     });
 
     MCGuiStep(@"put everything back", ^{
-        if (tectonicBefore) setenv("MINICODE_TECTONIC", tectonicBefore.fileSystemRepresentation, 1);
-        else unsetenv("MINICODE_TECTONIC");
+        if (tectonicBefore) MCSetEnv("MINICODE_TECTONIC", tectonicBefore.fileSystemRepresentation);
+        else MCSetEnv("MINICODE_TECTONIC", nullptr);
         GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
         [fm removeItemAtPath:Fixture(@"") error:nil];
         MCMathReloadCache();

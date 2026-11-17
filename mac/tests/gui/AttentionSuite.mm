@@ -111,8 +111,8 @@ void BuildWorld() {
     MCGuiWriteFile([gPad stringByAppendingPathComponent:@"notes/r.md"], @"one\ntwo\nthree\n");
     MCGuiWriteFile([gDir stringByAppendingPathComponent:@".claude/worktrees/agent-zz/notes/r.md"],
                    @"another agent's\n");
-    setenv("MINICODE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation, 1);
-    setenv("MINICODE_CLAUDE_TMP", gTmp.fileSystemRepresentation, 1);
+    MCSetEnv("MINICODE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation);
+    MCSetEnv("MINICODE_CLAUDE_TMP", gTmp.fileSystemRepresentation);
 }
 
 NSString *ReadTrimmed(NSString *path) {
@@ -527,7 +527,7 @@ MC_GUI_SUITE(attention) {
         savedCfg = NSProcessInfo.processInfo.environment[@"CLAUDE_CONFIG_DIR"];
         offerCfg = [MCGuiScratch() stringByAppendingPathComponent:@"attention-offer-config"];
         GCHECK([offerCfg hasPrefix:MCGuiScratch()]);   // never the real ~/.claude
-        setenv("CLAUDE_CONFIG_DIR", offerCfg.fileSystemRepresentation, 1);
+        MCSetEnv("CLAUDE_CONFIG_DIR", offerCfg.fileSystemRepresentation);
         offerSettings = [offerCfg stringByAppendingPathComponent:@"settings.json"];
         GCHECK_EQ_STR(MCClaudeSettingsPath(), offerSettings);
         offerOriginal = @"{\n  \"model\": \"sonnet\"\n}\n";
@@ -619,8 +619,8 @@ MC_GUI_SUITE(attention) {
         [p reload];
         GCHECK(p.hooksButton.hidden);
         [c toggleAgents:nil];
-        if (savedCfg) setenv("CLAUDE_CONFIG_DIR", savedCfg.fileSystemRepresentation, 1);
-        else unsetenv("CLAUDE_CONFIG_DIR");
+        if (savedCfg) MCSetEnv("CLAUDE_CONFIG_DIR", savedCfg.fileSystemRepresentation);
+        else MCSetEnv("CLAUDE_CONFIG_DIR", nullptr);
     });
     MCGuiWait(@"the stand-in claude has exited", 10, ^BOOL { return t1.atPrompt; });
 
@@ -629,8 +629,8 @@ MC_GUI_SUITE(attention) {
         c = nil;
         t1 = t2 = t3 = nil;
         MCGuiSetKeyWindow(nil);
-        unsetenv("MINICODE_CLAUDE_PROJECTS");
-        unsetenv("MINICODE_CLAUDE_TMP");
+        MCSetEnv("MINICODE_CLAUDE_PROJECTS", nullptr);
+        MCSetEnv("MINICODE_CLAUDE_TMP", nullptr);
         GCHECK(Win(gDir) == nil);
         GCHECK_EQ_STR(Badge(), @"");
     });

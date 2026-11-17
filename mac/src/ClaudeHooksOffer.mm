@@ -1,5 +1,6 @@
 // ClaudeHooksOffer.mm — see ClaudeHooksOffer.h.
 #import "ClaudeHooksOffer.h"
+#import "Environment.h"
 #import "AppSettings.h"
 #import "EditorFont.h"
 #import "InstallPanel.h"
@@ -22,7 +23,7 @@ static NSString *HNS(const std::string &s) {
 static std::string HU8(NSString *s) { return s.UTF8String ? std::string(s.UTF8String) : ""; }
 
 NSString *MCClaudeSettingsPath(void) {
-    const std::string home = HU8(NSProcessInfo.processInfo.environment[@"HOME"] ?: NSHomeDirectory());
+    const std::string home = HU8(MCEnvironment()[@"HOME"] ?: NSHomeDirectory());
     return HNS(ClaudeHooks::settingsPath(getenv("CLAUDE_CONFIG_DIR"), home.c_str()));
 }
 

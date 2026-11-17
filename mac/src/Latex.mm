@@ -25,6 +25,7 @@
 //     unsaved. The typeset reads such files from disk, so the bar says
 //     which have unsaved changes until they are saved.
 #import "Latex.h"
+#import "Environment.h"
 #import "PageZoom.h"
 #import "EditorFont.h"
 #import "AppSettings.h"
@@ -74,10 +75,10 @@ static NSString *MCManagedTectonic(void) {
 NSString *MCTectonicPath(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSMutableArray<NSString *> *candidates = [NSMutableArray array];
-    NSString *override = NSProcessInfo.processInfo.environment[@"MINICODE_TECTONIC"];
+    NSString *override = MCEnvironment()[@"MINICODE_TECTONIC"];
     if (override.length) [candidates addObject:override];
     [candidates addObject:MCManagedTectonic()];
-    NSString *path = NSProcessInfo.processInfo.environment[@"PATH"] ?: @"";
+    NSString *path = MCEnvironment()[@"PATH"] ?: @"";
     for (NSString *dir in [path componentsSeparatedByString:@":"])
         if (dir.length) [candidates addObject:[dir stringByAppendingPathComponent:@"tectonic"]];
     // A GUI app launched from Finder inherits a short PATH, so look in the
@@ -169,7 +170,7 @@ static double ProcessStart(pid_t pid) {
 static NSString *const kSiblingRecordName = @"sibling.record";
 
 NSString *MCLatexWorkRoot(void) {
-    NSString *override = NSProcessInfo.processInfo.environment[@"MINICODE_LATEX_WORK"];
+    NSString *override = MCEnvironment()[@"MINICODE_LATEX_WORK"];
     if (override.length) return override;
     return [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-latex"];
 }
@@ -702,6 +703,8 @@ static const CGFloat kStatusHeight = 26;
     NSString *texPath = self.texPath;
     NSString *cwd = texPath.stringByDeletingLastPathComponent;
     if (cwd.length) task.currentDirectoryURL = [NSURL fileURLWithPath:cwd];
+    // Given, so NSTask never copies environ on the queue (Environment.h).
+    task.environment = MCEnvironment();
     NSPipe *pipe = [NSPipe pipe];
     task.standardOutput = pipe;
     task.standardError = pipe;
@@ -1677,6 +1680,7 @@ static NSString *InstallTectonicArchive(NSString *archive, NSString *dest) {
     NSTask *untar = [[NSTask alloc] init];
     untar.executableURL = [NSURL fileURLWithPath:@"/usr/bin/tar"];
     untar.arguments = @[@"-xzf", archive, @"-C", staging, @"tectonic"];
+    untar.environment = MCEnvironment();   // never environ off the main thread
     untar.standardOutput = [NSFileHandle fileHandleWithNullDevice];
     untar.standardError = [NSFileHandle fileHandleWithNullDevice];
     NSError *tarErr = nil;
@@ -1711,7 +1715,7 @@ void MCDownloadTectonic(void (^done)(NSString *problem)) {
         @"tectonic%%40%@/%@", kTectonicVersion, file];
     // The GUI checks fetch a file:// stand-in, which is held to the same
     // checksum.
-    NSString *override = NSProcessInfo.processInfo.environment[@"MINICODE_TECTONIC_DOWNLOAD"];
+    NSString *override = MCEnvironment()[@"MINICODE_TECTONIC_DOWNLOAD"];
     if (override.length) urlText = override;
     NSURL *url = [NSURL URLWithString:urlText];
     if (!url) {

@@ -154,12 +154,12 @@ void SetEnv(const char* name, const std::string& value, std::string* old, bool* 
     const char* v = g_getenv(name);
     *had = v != nullptr;
     *old = v ? v : "";
-    g_setenv(name, value.c_str(), TRUE);
+    EnvLock::envSet(name, value.c_str(), TRUE);
 }
 
 void PutBack(const char* name, const std::string& old, bool had) {
-    if (had) g_setenv(name, old.c_str(), TRUE);
-    else g_unsetenv(name);
+    if (had) EnvLock::envSet(name, old.c_str(), TRUE);
+    else EnvLock::envUnset(name);
 }
 
 }  // namespace

@@ -150,6 +150,11 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
     std::unique_ptr<DocListener> _listener;
     BOOL _open;
     BOOL _stepOpen, _named;
+    // The step is replaceRanges:'s own (an explicit undo group of its own
+    // under NSUndoManager), how deep its calls are, and whether it ended:
+    // a later edit of the turn then starts a new step, as a new group did.
+    BOOL _explicit, _sealed;
+    NSInteger _namedDepth;
     BOOL _forgetting;     // read afresh this turn: a whole set resets
     BOOL _flushQueued;
     // The host's edits not in the mirror yet, in the mirror's text as it
@@ -205,6 +210,7 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
 
 - (void)openStepWithName:(NSString *)name view:(CodeTextView *)view {
     if (_stepOpen || !_open) return;
+    _explicit = _sealed = NO;
     Model::UndoHistory::StepInfo info{"Edit", false};
     if (name) info = {name.UTF8String ?: "Edit", false};
     else if (view.sessionTyping > 0) info = {"Typing", true};
@@ -222,6 +228,7 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
 - (void)closeStep {
     if (!_stepOpen) return;
     _stepOpen = NO;
+    _explicit = _sealed = NO;
     CodeTextView *view = _view;
     if (view && view != [self mirrorView]) view = nil;
     MCSessionClient().closeStep(_docId, [self selectionNow:view]);
@@ -235,9 +242,27 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
     _named = YES;
 }
 
+// replaceRanges:withStrings:actionName: begins (endNamed when it ends). It
+// made an explicit undo group of its own under NSUndoManager, nested in
+// whatever group was open: inside a group (the tab's undo manager's, or
+// another replaceRanges:'s), or after this turn's typing, it is part of
+// that step; otherwise it is a step of its own, which a later edit of the
+// turn does not join.
 - (void)beginNamed:(NSString *)name view:(CodeTextView *)view {
-    if (_stepOpen) [self nameStep:name];
-    else [self openStepWithName:name view:view];
+    if (!_open) return;
+    const BOOL nested = _namedDepth > 0 || view.undoManager.groupingLevel > 0;
+    _namedDepth++;
+    if (_stepOpen && !_sealed && (nested || !_explicit)) {
+        [self nameStep:name];
+        return;
+    }
+    [self closeStep];
+    [self openStepWithName:name view:view];
+    _explicit = !nested;
+}
+
+- (void)endNamed {
+    if (_namedDepth > 0 && --_namedDepth == 0 && _stepOpen && _explicit) _sealed = YES;
 }
 
 - (void)breakCoalescing {
@@ -246,6 +271,12 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
 
 - (void)noteSelection:(NSArray<NSValue *> *)ranges {
     if (_open && !_stepOpen && !_applying) MCSessionClient().noteSelection(_docId, SelectionOf(ranges));
+}
+
+- (void)forgetHistory {
+    if (!_open) return;
+    [self closeStep];
+    MCSessionClient().forgetHistory(_docId);
 }
 
 - (void)saved {
@@ -257,22 +288,42 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
 
 // ---- recording
 
-- (void)record:(Ot::Op)op {
+// `outside`: the edit is in no undo step (recordOutside).
+- (void)record:(Ot::Op)op outside:(BOOL)outside {
     Shared::Client &c = MCSessionClient();
-    if (_deferred.empty()) {
-        c.record(_docId, std::move(op));
-        return;
+    Ot::Ops mine{std::move(op)};
+    if (!_deferred.empty()) {
+        // The host's edits not in the mirror yet came first, as the client
+        // sees it: the mirror's edit is moved past them, and they past it.
+        Ot::Ops moved, theirs;
+        Ot::transform(mine, _deferred, Model::Unit::Utf16, &moved, &theirs);
+        _deferred = std::move(theirs);
+        mine = std::move(moved);
     }
-    // The host's edits not in the mirror yet came first, as the client
-    // sees it: the mirror's edit is moved past them, and they past it.
-    Ot::Ops mine, theirs;
-    Ot::transform(Ot::Ops{op}, _deferred, Model::Unit::Utf16, &mine, &theirs);
-    _deferred = std::move(theirs);
-    for (Ot::Op &o : mine) c.record(_docId, std::move(o));
+    for (Ot::Op &o : mine) {
+        if (outside) c.recordOutside(_docId, std::move(o));
+        else c.record(_docId, std::move(o));
+    }
+}
+
+- (void)record:(Ot::Op)op {
+    [self record:std::move(op) outside:NO];
 }
 
 - (void)storageWillReplace:(NSRange)range with:(NSString *)string view:(CodeTextView *)view {
     if (!_open || _applying) return;
+    // The storage edited outside a change of the view's (directly, as
+    // nothing in the app does but a check may): NSUndoManager had no step
+    // for it, and later undos moved past it. The host keeps it so: the
+    // turn's step ends before it, and it is in none.
+    if (!view.sessionChanging) {
+        [self closeStep];
+        [self record:WholePoints(view.textStorage.string, Ot::Op{range.location, range.length,
+                                                                  U16(string ?: @"")})
+             outside:YES];
+        return;
+    }
+    if (_sealed) [self closeStep];
     if (!_stepOpen) [self openStepWithName:nil view:view];
     NSString *text = view.textStorage.string;
     [self record:WholePoints(text, Ot::Op{range.location, range.length, U16(string ?: @"")})];
@@ -295,12 +346,14 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
     size_t suf = 0;
     while (suf < a - pre && suf < b - pre && x[a - 1 - suf] == y[b - 1 - suf]) suf++;
     NSString *ins = [now substringWithRange:NSMakeRange(pre, b - pre - suf)];
+    if (_sealed) [self closeStep];
     if (!_stepOpen) [self openStepWithName:nil view:nil];
     [self record:WholePoints(old, Ot::Op{pre, a - pre - suf, U16(ins)})];
 }
 
 - (void)resetTo:(NSString *)text {
     _stepOpen = NO;
+    _explicit = _sealed = NO;
     _deferred.clear();
     _deferredHasSelect = NO;
     MCSessionClient().reset(_docId, Utf8(text));
@@ -378,6 +431,11 @@ static BOOL StorageBusy(CodeTextView *view) {
     MCTab *tab = _tab;
     if (!tab) return;
     _applying = YES;
+    // The host's edit is a step of the host's already: nothing of it goes
+    // on NSUndoManager's stacks (NSTextView's or replaceRanges:'s).
+    NSUndoManager *um = tab.undoManager;
+    const BOOL registering = um.isUndoRegistrationEnabled;
+    if (registering) [um disableUndoRegistration];
     if (view) {
         const BOOL editable = view.editable;
         view.editable = YES;   // the mirror follows the host even while read-only
@@ -406,11 +464,20 @@ static BOOL StorageBusy(CodeTextView *view) {
                     os_log_error(SessionLog(), "the host's edit at %lu did not go into the editor",
                                  (unsigned long)o.pos);
         if (select && !select->empty()) {
+            // Every piece the step started with selected again (as
+            // replaceRanges:'s own undo did): the selected ones, else the
+            // first caret.
             const NSUInteger n = view.textStorage.length;
-            const Model::UndoHistory::Range &r = (*select)[0];
-            const NSUInteger a = MIN(MIN(r.anchor, r.caret), n), b = MIN(MAX(r.anchor, r.caret), n);
-            [view setSelectedRange:NSMakeRange(a, b - a)];
-            [view scrollRangeToVisible:NSMakeRange(a, b - a)];
+            NSMutableArray<NSValue *> *sel = [NSMutableArray arrayWithCapacity:select->size()];
+            NSRange first = NSMakeRange(NSNotFound, 0);
+            for (const Model::UndoHistory::Range &r : *select) {
+                const NSUInteger a = MIN(MIN(r.anchor, r.caret), n), b = MIN(MAX(r.anchor, r.caret), n);
+                if (first.location == NSNotFound) first = NSMakeRange(a, b - a);
+                if (b > a) [sel addObject:[NSValue valueWithRange:NSMakeRange(a, b - a)]];
+            }
+            if (!sel.count) [sel addObject:[NSValue valueWithRange:first]];
+            [view setSelectedRanges:sel affinity:NSSelectionAffinityDownstream stillSelecting:NO];
+            [view scrollRangeToVisible:sel.firstObject.rangeValue];
         }
         view.sessionUndoing = NO;
         view.editable = editable;
@@ -430,6 +497,7 @@ static BOOL StorageBusy(CodeTextView *view) {
         id owner = tab.owner;
         if ([owner respondsToSelector:@selector(tabTextChangedByHost:)]) [owner tabTextChangedByHost:tab];
     }
+    if (registering) [um enableUndoRegistration];
     _applying = NO;
 }
 
@@ -446,10 +514,13 @@ static BOOL StorageBusy(CodeTextView *view) {
 
 - (BOOL)undo:(BOOL)redo inView:(CodeTextView *)view {
     (void)view;
-    if (!_open || _applying) return NO;
+    if (!_open || _applying || _undoing) return NO;
     [self closeStep];
     [self flushDeferred];
+    _undoing = redo ? 2 : 1;
     const Shared::Outcome o = MCSessionClient().undo(_docId, redo);
+    _undoing = 0;
+    if (o != Shared::Outcome::Nothing) _undoCount++;
     if (o == Shared::Outcome::Refused) {
         os_log_error(SessionLog(),
                      "%{public}s in %{public}@ refused: the text it would change is not what it left there, "
@@ -464,7 +535,9 @@ static BOOL StorageBusy(CodeTextView *view) {
 
 - (const Model::Text *)hostTextFor:(const void *)owner {
     if (!_open) return nullptr;
-    [self closeStep];
+    // The step stays open: what it has recorded goes ahead of the settle's
+    // ping (the outbox is sent in order), and closing it here, inside a
+    // storage notification as completion asks, would split typing.
     Shared::Client &c = MCSessionClient();
     const Model::Text *copy = c.watch(_docId, owner, [](Shared::DocId, const Ot::Ops &) {}, 2000);
     if (!copy || !c.settle(2000)) return nullptr;

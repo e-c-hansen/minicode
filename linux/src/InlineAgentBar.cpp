@@ -1,4 +1,5 @@
 // InlineAgentBar.cpp — see InlineAgentBar.h.
+#include "EnvLock.h"
 #include "InlineAgentBar.h"
 
 #include <fcntl.h>
@@ -440,7 +441,11 @@ void InlineAgentBar::start(const std::string& prompt) {
     std::string path;
     for (const std::string& d : LspSearchDirs()) path += d + ":";
     path += g_getenv("PATH") ? g_getenv("PATH") : "/usr/bin:/bin";
-    gchar** env = g_environ_setenv(g_get_environ(), "NO_COLOR", "1", TRUE);
+    gchar** env;
+    {
+        EnvLock::EnvRead lock;
+        env = g_environ_setenv(g_get_environ(), "NO_COLOR", "1", TRUE);
+    }
     env = g_environ_setenv(env, "PATH", path.c_str(), TRUE);
     std::vector<std::string> environ;
     for (gchar** e = env; e && *e; e++) environ.push_back(*e);

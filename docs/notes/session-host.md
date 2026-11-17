@@ -12,7 +12,7 @@ pass), every tab whose text is set after the setting is on gets a document
 on the session's host: the core's `Shared::SessionHost` on a thread of its
 own in the app's process, one `Shared::Client` in UTF-16 units for the
 whole process (`mac/src/SessionLink.{h,mm}`). The host owns that
-document's text and version; the tab's text is its mirror. A tab opened
+document's text, version and undo history; the tab's text is its mirror. A tab opened
 before the setting changed keeps the way it was opened until it closes.
 
 - `MCTab session` (an `MCSessionDoc`) is made by `MCTab setSourceText:`
@@ -27,6 +27,24 @@ before the setting changed keeps the way it was opened until it closes.
   points so a surrogate pair is never split, and the tab is made to follow
   the storage at once (`followStorage:`), so its `currentText` is never a
   copy from before the edit.
+- **Edits outside the history.** A storage edit made outside a change of
+  the text view's (no `shouldChangeText...` before it: the storage edited
+  directly, which NSUndoManager kept no step for) goes as the host's edit
+  outside the history (`Client::recordOutside`, `doc.edit` with flag 1):
+  the turn's step closes first, the host applies it in no step and moves
+  its history past it (`UndoHistory::foreign`), so the step before is
+  undone where it moved to, and a step whose text it touched goes with
+  everything older. `CodeTextView sessionChanging` says whether a change
+  of the view's is going on (set by `shouldChangeTextInRange(s):`, cleared
+  in `didChangeText`). The tab's undo manager's `removeAllActions`
+  forgets the host's history too (`doc.forget`), the text kept.
+- **Putting a tab away** (`stashActiveTab`): while the storage held its
+  source it was the mirror, so its text goes into the tab without telling
+  the host (`MCTab takeTextFromStorage:`). The tab's own copy can be older:
+  a storage replaced whole outside the text view leaves the tab the text
+  from before (`willReplaceAllCharacters`), and sending that difference
+  again applied it twice on the host (CI, 2026-11-17: the host 4 units
+  short of the tab in multiedit).
 - **Texts set whole** (a CSV table's edit, a preview's, a background tab
   following the disk, a pending sort): `MCTab setSourceText:` sends the
   one range in which the old and new texts differ.
@@ -55,11 +73,60 @@ before the setting changed keeps the way it was opened until it closes.
   the tab's; dirty, the disk, backups and auto-save stay the Mac's (stage
   7 moves them).
 
+## Undo is the host's
+
+- `MCTabUndoManager` (EditorTab.mm), every tab's undo manager, is the
+  host's front while the tab has a document: `undo`, `redo`,
+  `undoNestedGroup`, `canUndo`, `canRedo`, the action names and menu
+  titles ask the host, `isUndoing`/`isRedoing` say when its answer is going
+  in, and `setActionName:` names the host's step. So everything that
+  undoes through the tab's manager (the menu, the CSV table, the workspace
+  edit applier's put-back, the GUI checks) undoes on the host. A group
+  begun with event grouping off (the GUI checks' group around a simulated
+  key) is a host step of its own, as it is an undo action of its own.
+- NSTextView, `replaceRanges:` and completion's `MCAcceptUndo` still
+  register on the tab's NSUndoManager stacks, which are never undone while
+  the host owns the history (memory only, as before). **Trap (CI,
+  2026-11-17):** turning NSTextView's `allowsUndo` off and answering its
+  `undoManager` anyway made it register twice in every `replaceRanges:`
+  (which turns `allowsUndo` off around `shouldChangeTextInRanges:`): it
+  decides by the manager `undoManager` returns, not by the flag. Leave
+  both alone. The host's own edit goes in with the tab's undo registration
+  off.
+- `undo:`/`redo:` on `CodeTextView` (answered only while the view shows a
+  document on the host: `respondsToSelector:`) go to the host directly,
+  with the menu item titled by the host's step. Edits are host steps named
+  by `replaceRanges:`'s action name ("Completion" for an accepted item).
+- An undo closes the turn's step first, then the host takes its last step
+  back and the edit comes back before `undo:inView:` returns (in one
+  process a round trip through the host's queue), with the selection the
+  step started with: every selected piece of it (10,000 after typing over
+  Select All Occurrences), else its first caret, as `replaceRanges:`'s own
+  undo selected them. A step of several pieces (typing at two carets) is
+  undone as one multi-range edit (`host:undo-multi-range`). A refused undo (the text it would change is not what
+  it left) beeps and is logged; the host forgets the history.
+- **A completion's late import** (`pendingAccept:resolved:`): the host
+  cannot add to a closed step, so when nothing was typed since the accept,
+  the word's "Completion" step is taken back on the host and the import
+  and the word go in as one new step (the import is all before the word);
+  an undo or redo on the host since the accept (`MCSessionDoc undoCount`)
+  means the word was taken back, and the import is left out, as
+  `MCAcceptUndo undone` said before.
+- Known differences from NSUndoManager: a paste or cut is an "Edit" step
+  (NSTextView named them); `registerReloadUndoForTab:`'s whole-text step
+  is the host's ordinary step of the difference.
+- **Follow-up: composing text.** Text an input method is composing
+  (marked text) is in the storage, so it reaches the host as it is
+  typed, and the commit replaces it there. The design sends only
+  committed text; doing so means keeping the marked range out of every
+  operation's offsets (the host's edits moved past it, the mirror's
+  shifted by it) until the commit, which is a change of its own. It
+  matters once a second screen shows the document.
+
 ## The host's edits
 
 They come back through `MCSessionDoc hostEdited:` (the client's listener):
-an undo's or redo's (once the host owns undo) and, with a second screen,
-anyone else's. Into the storage through `replaceRanges:withStrings:
+an undo's or redo's and, with a second screen, anyone else's. Into the storage through `replaceRanges:withStrings:
 actionName:` as one multi-range edit when the operations are replacements
 apart in the text (`Ot::asReplacements`), else one operation at a time,
 with `applying` set so nothing is recorded; into a tab not in the storage
@@ -78,9 +145,18 @@ top of a turn, never inside a text system callback.
 
 ## Checks
 
-- `make test`: `host:*`, `ot:*` (the core), `host:watch-timeout` (a watch
+- `make test`: `host:*`, `ot:*` (the core), `host:undo-multi-range` (a
+  two-caret step undone and redone whole), `host:outside-history` (edits
+  outside the history move the steps, or drop the ones they touch;
+  `doc.forget`), `host:watch-timeout` (a watch
   the host does not answer in time keeps no watcher, and its late answer
   is dropped), `settings:*` for the key.
+- CI's macOS job runs the editing suites a second time with the setting on
+  (`MINICODE_SESSION_HOST=on`, `MINICODE_HOST=loopback`,
+  `MINICODE_HOST_DELAY_US=200`), a step of its own after the halves ("GUI
+  checks with the session's host"): keystroke, multiedit, editor_keys,
+  auto_close, save, backups, lsp_sync, snippets, format, git_conflicts and
+  test_gutter.
 - `make guitest`: at every suite's end the harness settles with the host
   and fails the suite (`FAIL [suite] the session's host and the window it
   renders differ`) unless every tab with a document has the host's text,

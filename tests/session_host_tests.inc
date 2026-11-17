@@ -645,6 +645,124 @@ static void testSessionHost() {
         CHECK(!a.client->hostDocument(3).open);
     }
 
+    GROUP("host:undo-multi-range");
+    {
+        // "zz" typed at two carets is one step of two pieces, recorded as
+        // the Mac's replaceRanges: makes it (last first): one undo takes
+        // both back, the plan reaches the mirror as both replacements, and
+        // the selection it gives back is both carets.
+        Net net(true, true);
+        Net::Link& a = net.add(Unit::Utf16, "mac");
+        const std::u16string start = u"name = 1\nprint(name)\n";
+        TestMirror& m = net.open(a, 4, start);
+        int edits = 0;
+        Ot::Ops seen;
+        Shared::Selection back;
+        struct Spy : Shared::Client::Listener {
+            TestMirror* m = nullptr;
+            int* edits = nullptr;
+            Ot::Ops* seen = nullptr;
+            Shared::Selection* back = nullptr;
+            void hostEdited(Shared::DocId d, const Ot::Ops& ops, int flag, const Shared::Selection* sel) override {
+                (*edits)++;
+                *seen = ops;
+                if (sel) *back = *sel;
+                m->hostEdited(d, ops, flag, sel);
+            }
+        } spy;
+        spy.m = &m, spy.edits = &edits, spy.seen = &seen, spy.back = &back;
+        a.client->close(4);
+        a.client->open(4, "/tmp/two.py", u8(start), &spy);
+        const std::size_t last = start.find(u"print(name)") + 6;
+        const Shared::Selection carets{{0, 0}, {last, last}};
+        a.client->openStep(4, {"Typing", true}, carets);
+        a.client->record(4, Ot::Op{last, 0, u"zz"});
+        m.text.insert(last, u"zz");
+        a.client->record(4, Ot::Op{0, 0, u"zz"});
+        m.text.insert(0, u"zz");
+        a.client->closeStep(4, {{2, 2}, {last + 4, last + 4}});
+        CHECK(a.client->hostDocument(4).text == m.text);
+        CHECK(m.text == u"zzname = 1\nprint(zzname)\n");
+        CHECK(a.client->undo(4, false) == Shared::Outcome::Done);
+        CHECK(m.text == start && a.client->hostDocument(4).text == start);
+        CHECK(edits == 1);
+        std::vector<Ot::Replacement> reps;
+        CHECK(Ot::asReplacements(seen, Unit::Utf16, &reps) && reps.size() == 2);
+        CHECK(back == carets);
+        // Redo puts both back, as one step too.
+        CHECK(a.client->undo(4, true) == Shared::Outcome::Done);
+        CHECK(m.text == u"zzname = 1\nprint(zzname)\n" && edits == 2);
+        CHECK(a.client->hostDocument(4).text == m.text);
+        CHECK(a.client->undo(4, false) == Shared::Outcome::Done && m.text == start);
+        CHECK(!a.client->undoInfo(4).canUndo);
+    }
+
+    GROUP("host:outside-history");
+    {
+        // An edit made outside the undo history (the Mac's storage edited
+        // outside its text view's change) is the host's too, in no step:
+        // the step before is undone where that edit moved it, and a step
+        // whose text it touched is gone, so an undo then changes nothing.
+        // NSUndoManager's removeAllActions forgets the host's history.
+        Net net(true, true);
+        Net::Link& a = net.add(Unit::Utf16, "mac");
+        const std::u16string start = u"name = 1\nprint(name)\n";
+        TestMirror& m = net.open(a, 5, start);
+        const std::size_t last = start.find(u"print(name)") + 6;
+        auto typeAtTwo = [&] {
+            a.client->openStep(5, {"Edit", false}, {{0, 0}});
+            a.client->record(5, Ot::Op{last, 0, u"zz"});
+            m.text.insert(last, u"zz");
+            a.client->record(5, Ot::Op{0, 0, u"zz"});
+            m.text.insert(0, u"zz");
+            a.client->closeStep(5, {{2, 2}});
+        };
+        auto outside = [&](Ot::Op o) {
+            Ot::apply(m.text, Ot::Ops{o}, Unit::Utf16);
+            a.client->recordOutside(5, o);
+        };
+        typeAtTwo();
+        outside(Ot::Op{0, 0, u"# top\n"});
+        CHECK(a.client->hostDocument(5).text == m.text);
+        CHECK(a.client->undoInfo(5).undoName == "Edit");
+        CHECK(a.client->undo(5, false) == Shared::Outcome::Done);
+        CHECK(m.text == u"# top\n" + start && a.client->hostDocument(5).text == m.text);
+        // Between the pieces.
+        outside(Ot::Op{0, 6, u""});
+        typeAtTwo();
+        outside(Ot::Op{12, 0, u"X"});
+        CHECK(a.client->undo(5, false) == Shared::Outcome::Done);
+        CHECK(m.text == u"name = 1\npXrint(name)\n" && a.client->hostDocument(5).text == m.text);
+        // Redo puts both pieces back where they are now.
+        CHECK(a.client->undo(5, true) == Shared::Outcome::Done);
+        CHECK(m.text == u"zzname = 1\npXrint(zzname)\n" && a.client->hostDocument(5).text == m.text);
+        // A whole replacement takes the step with it: nothing to undo.
+        outside(Ot::Op{0, m.text.size(), u"something else"});
+        CHECK(!a.client->undoInfo(5).canUndo);
+        CHECK(a.client->undo(5, false) == Shared::Outcome::Nothing);
+        CHECK(m.text == u"something else" && a.client->hostDocument(5).text == m.text);
+        // Outside edits are no step of their own, and forgetting keeps the text.
+        outside(Ot::Op{0, m.text.size(), start});
+        typeAtTwo();
+        CHECK(a.client->undoInfo(5).canUndo);
+        a.client->forgetHistory(5);
+        CHECK(!a.client->undoInfo(5).canUndo && !a.client->undoInfo(5).canRedo);
+        CHECK(a.client->hostDocument(5).text == m.text);
+        CHECK(a.client->takeErrors().empty());
+        // Through the wire: the flag survives encoding.
+        Message e;
+        e.kind = Shared::Kind::DocEdit;
+        e.doc = 5;
+        e.flag = 1;
+        e.ops = {Ot::Op{1, 2, u"ab"}};
+        const Message back = Shared::roundTrip(e);
+        CHECK(back.flag == 1 && back.ops == e.ops);
+        Message f;
+        f.kind = Shared::Kind::DocForget;
+        f.doc = 5;
+        CHECK(Shared::roundTrip(f).kind == Shared::Kind::DocForget);
+    }
+
     GROUP("host:threaded");
     {
         // The host on its own thread, two renderers on this one, as the GTK

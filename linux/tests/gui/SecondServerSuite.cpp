@@ -147,7 +147,7 @@ MC_GUI_SUITE(second_server) {
         chmod(ruff.c_str(), 0755);
         const char* p = g_getenv("PATH");
         gPath = p ? p : "";
-        g_setenv("PATH", (bin() + ":" + gPath).c_str(), TRUE);
+        EnvLock::envSet("PATH", (bin() + ":" + gPath).c_str(), TRUE);
         gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
         MCGuiSetSettings("lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kMain, mainScript()) +
                          "\n");
@@ -227,7 +227,7 @@ MC_GUI_SUITE(second_server) {
     });
 
     MCGuiStep("PATH and the settings as they were; the tabs closed unasked", [] {
-        g_setenv("PATH", gPath.c_str(), TRUE);
+        EnvLock::envSet("PATH", gPath.c_str(), TRUE);
         MCGuiSetSettings(gSettings);
         ed()->closeAllTabs();
     });

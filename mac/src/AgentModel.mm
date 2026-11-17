@@ -1,5 +1,6 @@
 // AgentModel.mm — see AgentModel.h.
 #import "AgentModel.h"
+#import "Environment.h"
 #import "CompareView.h"
 #import "GitPanel.h"
 
@@ -130,13 +131,13 @@ static void MCAgentFSCallback(ConstFSEventStreamRef stream, void *info, size_t n
 }
 
 + (NSString *)defaultProjectsDir {
-    NSString *env = NSProcessInfo.processInfo.environment[@"MINICODE_CLAUDE_PROJECTS"];
+    NSString *env = MCEnvironment()[@"MINICODE_CLAUDE_PROJECTS"];
     if (env.length) return env.stringByExpandingTildeInPath;
     return [NSHomeDirectory() stringByAppendingPathComponent:@".claude/projects"];
 }
 
 + (NSString *)defaultTmpRoot {
-    NSString *env = NSProcessInfo.processInfo.environment[@"MINICODE_CLAUDE_TMP"];
+    NSString *env = MCEnvironment()[@"MINICODE_CLAUDE_TMP"];
     if (env.length) return env.stringByExpandingTildeInPath;
     return [NSString stringWithFormat:@"/private/tmp/claude-%u", getuid()];
 }
