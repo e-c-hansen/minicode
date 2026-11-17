@@ -350,7 +350,7 @@ goes here first, with tests; the GUI only displays it.
 `validateMenuItem:`, undo and redo, and the forwarding accessors of the active
 tab. The rest is in `EditorController+<Concern>.mm`: Layout, StatusBar, Panels
 (terminal dock, browser, keyboard between panes), Search, Tree, TreeDetails,
-Tabs (tabs, closed tabs, saving), Groups (the split editor), Persistence (sessions, backups, auto-save,
+Tabs (tabs, closed tabs, saving), Groups (the split editor, and the window's Model::Window behind both), Persistence (sessions, backups, auto-save,
 files changed outside), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,
@@ -684,15 +684,24 @@ container (PanelHost, laid out by hand in layoutContainer)
   window reads nothing and shows nothing: a port changes it
   (`prepareOpen`, `add`, `activate`, `close`, `putInOther`, `focus`,
   `move`, ...) and shows what it says. `Model::Session` is the app's
-  windows. The GTK editor keeps its tabs in one (linux/HANDOFF.md item
-  73); the Mac still keeps its own in EditorController by the same rules,
-  until stage 3c moves it over, and sessions.json and the backup planner
-  join the core in 3b. A rule changed here is changed in the window, with
-  its `session:*` check.
+  windows. Both editors keep their tabs in one (GTK: linux/HANDOFF.md
+  item 73; the Mac since stage 3c: `_win`, one of a process-wide
+  `Model::Session` made in EditorController.mm, with `_docs` the MCTabs
+  by `docId`). A rule changed here is changed in the window, with its
+  `session:*` check. The Mac keeps three of its own rules where the
+  window's differ, by using `insert`, `setPreview` and `close` rather
+  than `add`: a replaced preview tab the other group also shows stays
+  there; the user's preview tab replaced is the focused group's only;
+  and the agents have two preview tabs, one for notes and one for
+  comparisons.
 - **One text view, many documents.** `MCTab` holds a document's path, text,
   `savedText`, mode flags, `dirty`, its own `NSUndoManager` (from
   `undoManagerForTextView:`), its own `LatexView`, folds, viewer kind,
-  `agentPreview`, `comparison` and where its view was. The controller's
+  `comparison` and where its view was. Its place among the tabs is the
+  window's: `preview`, `agentPreview` and `lastActive` are read-only and
+  ask its `owner` (`MCTabOwner`, EditorController+Groups.mm), which
+  answers from `_win`; `setCurrentPath:` tells it the new path. The
+  controller's
   document properties are forwarding accessors to `_activeTab`
   (`MC_TAB_PROPERTY`), nil/NO with no tab. Shared viewers are let go by
   `stashActiveTab` (a playing sound stops) and rebuilt by `showActiveTab`. A
@@ -705,7 +714,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   reveal, rename and trash; the File menu repeats them for the active tab so
   the palette finds them.
 - **The preview tab** (2026-11-08, VS Code's enablePreview,
-  `workbench.enable-preview`): `MCTab preview`, italic like `agentPreview`.
+  `workbench.enable-preview`): `Model::Preview::User` (`MCTab preview`),
+  italic like `agentPreview`.
   Every open goes through `openFileAtPath:from:` (`openFileAtPath:` is
   `OpenFrom::Other`, kept) and the rules are the core's
   (`EditorTabs::opensInPreview`, `treeClick`, `staysPreview`,
@@ -753,7 +763,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   (`isARepeat`) is ignored, so a held Cmd+W closes one thing. Shift+Cmd+W
   closes the window. Cmd+N New File (with no window, opens one), Shift+Cmd+N
   (outside the tree) and Option+Cmd+N New Window. Reopen Closed Tab (Option+Shift+Cmd+T): the newest of the
-  window's last 50 (`_closedTabs`, with place, selection, scroll, mode),
+  window's last 50 (`Model::Window`'s closed tabs, each with
+  `closedPlaceOf:`'s place, selection, scroll, mode and side page),
   skipping files gone.
 - **Unsaved tabs are never dropped**: a dirty tab asks Save / Don't Save /
   Cancel; window close, Open Folder and quit ask once for all. Trash closes
@@ -836,13 +847,18 @@ container (PanelHost, laid out by hand in layoutContainer)
   several layout managers, one storage), else a copy of that tab's
   attributed text, else a picture (`cacheDisplayInRect:`) of what the
   editor showed. Focusing a group (a press in the mirror or its strip,
-  Cmd+1, Cmd+2) copies what the editor shows into the mirror, swaps the
-  group lists and strips (`self.tabStrip` is always the focused group's)
-  and activates the other tab at the mirror's place; a press goes on to
-  the same character. `_tabs` stays every document of either group
-  (backups, sessions, auto-save, disk checks, the servers' open files
-  untouched); the strip, tab keys and closing use `groupTabs`, and inserts
-  and removals go through `groupInsertTab:`/`groupRemoveTab:`. One MCTab per
+  Cmd+1, Cmd+2) copies what the editor shows into the mirror, focuses the
+  window's other group (`_win->focus`), swaps the strips (`self.tabStrip`
+  is always the focused group's) and activates the other tab at the
+  mirror's place; a press goes on to the same character. The groups are
+  `_win`'s; `tabs` is every document of either group
+  (`Model::Window::documents`: backups, sessions, auto-save, disk checks,
+  the servers' open files untouched); the strip, tab keys and closing use
+  `groupTabs`, and new tabs go in through `groupInsertTab:` (or
+  `groupAppendTab:`, a session). A close that empties a group drops it in
+  the window at once (`Model::Window::close`), and the views follow:
+  `editorGroupsJoined`, or `editorGroupClosed` when the focused group
+  went (the other takes the editor at the mirror's place). One MCTab per
   file even in both groups (one text, undo, backup). **Traps**: never move
   the mirror's layout manager with `replaceTextStorage:`, which carries
   every layout manager of the storage, the editor's too

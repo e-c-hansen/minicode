@@ -7,7 +7,7 @@
 @implementation EditorController (Tabs)
 
 - (NSArray<NSString *> *)recentTabPaths {
-    NSArray<MCTab *> *byUse = [_tabs sortedArrayUsingComparator:^NSComparisonResult(MCTab *a, MCTab *b) {
+    NSArray<MCTab *> *byUse = [[self tabs] sortedArrayUsingComparator:^NSComparisonResult(MCTab *a, MCTab *b) {
         return a.lastActive == b.lastActive ? NSOrderedSame
              : a.lastActive > b.lastActive  ? NSOrderedAscending : NSOrderedDescending;
     }];
@@ -21,7 +21,7 @@
 // A right click on a tab: closing it and its neighbours, and the file
 // commands the tree offers for its file. Each item carries its tab.
 - (NSMenu *)menuForTabAtIndex:(NSInteger)i {
-    NSMutableArray<MCTab *> *group = [self groupTabs];
+    NSArray<MCTab *> *group = [self groupTabs];
     if (i < 0 || i >= (NSInteger)group.count) return nil;
     MCTab *t = group[(NSUInteger)i];
     NSMenu *m = [[NSMenu alloc] init];
@@ -61,7 +61,7 @@
 - (MCTab *)tabOfMenuItem:(id)sender {
     id t = [sender respondsToSelector:@selector(representedObject)]
                ? [sender representedObject] : nil;
-    return [t isKindOfClass:MCTab.class] && [_tabs containsObject:t] ? t : nil;
+    return [t isKindOfClass:MCTab.class] && [self holdsTab:t] ? t : nil;
 }
 
 - (void)closeTabFromMenu:(id)sender {
@@ -86,7 +86,7 @@
 - (void)closeTabsToTheRightFromMenu:(id)sender {
     MCTab *t = [self tabOfMenuItem:sender];
     if (!t) return;
-    NSMutableArray<MCTab *> *group = [self groupTabs];
+    NSArray<MCTab *> *group = [self groupTabs];
     const NSUInteger i = [group indexOfObject:t];
     if (i == NSNotFound) return;
     [self closeTabsInList:[group subarrayWithRange:NSMakeRange(i + 1, group.count - i - 1)]];
@@ -161,7 +161,7 @@
 // decides it; NO for an action that is not one of them.
 - (BOOL)validateActiveTabAction:(SEL)a enabled:(BOOL *)enabled {
     MCTab *t = _activeTab;
-    NSMutableArray<MCTab *> *group = [self groupTabs];
+    NSArray<MCTab *> *group = [self groupTabs];
     const NSInteger count = (NSInteger)group.count;
     const NSInteger i = t ? (NSInteger)[group indexOfObject:t] : -1;
     NSString *path = t.currentPath;
@@ -196,7 +196,7 @@
 }
 
 - (BOOL)hasUnsavedChanges {
-    for (MCTab *t in _tabs) if (t.dirty) return YES;
+    for (MCTab *t in [self tabs]) if (t.dirty) return YES;
     return NO;
 }
 
@@ -255,7 +255,7 @@
 // top while any tab is open, and the empty line sits in it while none is.
 // Returns what is left for the editor.
 - (NSRect)layoutTabStripIn:(NSRect)slot editorShown:(BOOL)shown {
-    const NSUInteger count = [self groupTabs].count;
+    const NSUInteger count = (NSUInteger)_win->count();
     const BOOL strip = shown && count > 0;
     const BOOL empty = shown && count == 0;
     self.tabStrip.hidden = !strip;
@@ -269,24 +269,25 @@
     return NSMakeRect(NSMinX(slot), NSMinY(slot), NSWidth(slot), NSHeight(slot) - h);
 }
 
-// The strip again from the tabs: titles, dots for unsaved changes, the
-// active one. The editor's slot is laid out again when the strip comes or goes.
+// The strip again from the window's tabs (Model::Window): titles, dots for
+// unsaved changes, the one on show. The editor's slot is laid out again
+// when the strip comes or goes.
 - (void)reloadTabStrip {
-    NSMutableArray<MCTab *> *group = [self groupTabs];
     const BOOL wasShown = !self.tabStrip.hidden;
-    self.tabStrip.items = [self stripItemsForTabs:group];
-    self.tabStrip.activeIndex = _activeTab ? (NSInteger)[group indexOfObject:_activeTab] : -1;
+    self.tabStrip.items = [self stripItemsForGroup:_win->focused()];
+    self.tabStrip.activeIndex = _win->activeIndex();
     [self reloadParkedStrip];
-    if (wasShown != (group.count > 0)) [self relayoutRightArea];
+    if (wasShown != (_win->count() > 0)) [self relayoutRightArea];
 }
 
-- (NSArray<MCTabStripItem *> *)stripItemsForTabs:(NSArray<MCTab *> *)tabs {
-    std::vector<std::string> paths;
-    for (MCTab *t in tabs) paths.push_back(t.currentPath ? Utf8String(t.currentPath) : "");
-    std::vector<std::string> names = EditorTabs::labels(paths);
+// A group's strip items, from the window's tabs and labels.
+- (NSArray<MCTabStripItem *> *)stripItemsForGroup:(int)group {
+    const std::vector<Model::DocId> &ids = _win->tabs(group);
+    const std::vector<std::string> names = _win->labels(group);
     NSMutableArray<MCTabStripItem *> *items = [NSMutableArray array];
-    for (NSUInteger i = 0; i < tabs.count; i++) {
-        MCTab *t = tabs[i];
+    for (size_t i = 0; i < ids.size(); i++) {
+        MCTab *t = _docs[@(ids[i])];
+        if (!t) continue;
         MCTabStripItem *item = [MCTabStripItem new];
         if (t.page)
             item.title = t.page.pageTitle ?: @"";
@@ -314,10 +315,11 @@
 }
 
 - (MCTab *)tabForPath:(NSString *)path {
-    for (MCTab *t in _tabs) if ([t.currentPath isEqualToString:path]) return t;
+    NSArray<MCTab *> *tabs = [self tabs];
+    for (MCTab *t in tabs) if ([t.currentPath isEqualToString:path]) return t;
     // The same file spelled another way (/tmp and /private/tmp).
     NSString *real = path.stringByResolvingSymlinksInPath;
-    for (MCTab *t in _tabs)
+    for (MCTab *t in tabs)
         if (t.currentPath && [t.currentPath.stringByResolvingSymlinksInPath isEqualToString:real])
             return t;
     return nil;
@@ -350,15 +352,14 @@
 
 - (void)keepPreviewTab:(MCTab *)t {
     if (!t || !(t.preview || t.agentPreview)) return;
-    t.preview = NO;
-    t.agentPreview = NO;
+    _win->keep(t.docId);
     [self reloadTabStrip];
     [self saveSession];
 }
 
 // A double-click on a tab's title keeps it, as in VS Code.
 - (void)keepTabAtIndex:(NSInteger)i {
-    NSMutableArray<MCTab *> *group = [self groupTabs];
+    NSArray<MCTab *> *group = [self groupTabs];
     if (i < 0 || i >= (NSInteger)group.count) return;
     [self keepPreviewTab:group[(NSUInteger)i]];
 }
@@ -403,7 +404,7 @@
         [self activateTab:tab];
         return;
     }
-    NSMutableArray<MCTab *> *group = [self groupTabs];
+    NSArray<MCTab *> *group = [self groupTabs];
     const NSInteger active = _activeTab ? (NSInteger)[group indexOfObject:_activeTab] : -1;
     const NSInteger oldAt = old ? (NSInteger)[group indexOfObject:old] : -1;
     const EditorTabs::PreviewPlace place =
@@ -411,8 +412,7 @@
     // `index` counts without the old tab, which is still in the list.
     NSUInteger at = (NSUInteger)place.index;
     if (place.replace >= 0 && place.index >= place.replace) at++;
-    tab.preview = YES;
-    [self groupInsertTab:tab atIndex:at];
+    [self groupInsertTab:tab atIndex:at preview:Model::Preview::User];
     [self activateTab:tab];
     // Leaving it can have saved it (a Cmd+S waiting for its formatter),
     // which keeps it.
@@ -461,7 +461,7 @@
 }
 
 - (void)insertTab:(MCTab *)tab {
-    NSMutableArray<MCTab *> *group = [self groupTabs];
+    NSArray<MCTab *> *group = [self groupTabs];
     NSInteger active = _activeTab ? (NSInteger)[group indexOfObject:_activeTab] : -1;
     [self groupInsertTab:tab
                  atIndex:(NSUInteger)EditorTabs::insertionIndex((int)active, (int)group.count)];
@@ -473,8 +473,8 @@
 - (void)activateTab:(MCTab *)tab {
     if (!tab) return;
     [self revealEditor];
-    [self ensureTabInFocusedGroup:tab];   // a tab of the other group's joins this one
-    tab.lastActive = ++_tabStamp;
+    if (![self holdsTab:tab]) [self insertTab:tab];
+    _win->activate(tab.docId);   // stamped as used; a tab of the other group's joins this one
     if (tab == _activeTab) { [self reloadTabStrip]; return; }
     [self editorWillShowTab:tab];     // the other group lets go of the text that goes
     [self.navigator tabWillSwitch];   // Go Back returns to the tab left
@@ -711,63 +711,69 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
 // the last tab closed in this window comes back where it was in the strip,
 // with its selection, scroll and preview as it left them. A file already
 // open again is just shown; one no longer on disk is passed over.
-static const NSUInteger kMaxClosedTabs = 50;
+// The closed tabs are the window's (Model::Window, 50 at most); each keeps
+// the view its tab had (closedPlaceOf:).
 
-- (void)rememberClosedTab:(MCTab *)t index:(NSUInteger)index {
-    if (!t.currentPath || t.isDiff) return;
-    if (!_closedTabs) _closedTabs = [NSMutableArray array];
-    NSMutableDictionary *c = [@{@"path": t.currentPath, @"index": @(index),
-                                @"preview": @(t.previewMode),
-                                @"sidePreview": @(t.sidePreview)} mutableCopy];
+// What a closing tab leaves for Reopen Closed Tab, besides its file and
+// index, which the window takes itself.
+- (EditorTabs::ClosedTab)closedPlaceOf:(MCTab *)t {
+    EditorTabs::ClosedTab c;
+    c.preview = t.previewMode;
+    c.side = t.sidePreview;
     if (t.haveView) {
-        c[@"selection"] = [NSValue valueWithRange:t.selection];
-        c[@"top"] = @(t.topCharacter);
-        c[@"topOffset"] = @(t.topOffset);
+        c.haveView = true;
+        c.selStart = (long)t.selection.location;
+        c.selEnd = (long)NSMaxRange(t.selection);
+        c.top = (long)t.topCharacter;
+        c.topOffset = t.topOffset;
     }
-    [_closedTabs addObject:c];
-    if (_closedTabs.count > kMaxClosedTabs) [_closedTabs removeObjectAtIndex:0];
+    return c;
 }
 
-- (BOOL)canReopenClosedTab { return _closedTabs.count > 0; }
+- (BOOL)canReopenClosedTab { return _win->canReopen(); }
 
 - (void)reopenClosedTab:(id)sender {
     NSFileManager *fm = [NSFileManager defaultManager];
-    while (_closedTabs.count) {
-        NSDictionary *c = _closedTabs.lastObject;
-        [_closedTabs removeLastObject];
-        NSString *path = c[@"path"];
-        if (MCTab *open = [self tabForPath:path]) {
-            [self activateTab:open];
-            [self focusActiveDocument];
-            return;
-        }
+    EditorTabs::ClosedTab c;
+    const bool found = _win->takeClosed(&c, [&](const std::string &file) {
+        NSString *path = [NSString stringWithUTF8String:file.c_str()];
+        if (!path) return false;
+        if ([self tabForPath:path]) return true;
         BOOL dir = NO;
-        if (![fm fileExistsAtPath:path isDirectory:&dir] || dir) continue;
-        MCTab *t = [MCTab new];
-        t.currentPath = path;
-        t.sidePreview = [c[@"sidePreview"] boolValue];
-        [self groupInsertTab:t atIndex:[c[@"index"] unsignedIntegerValue]];
-        [self activateTab:t];   // reads the file
-        if (_activeTab != t) return;
-        const BOOL preview = [c[@"preview"] boolValue];
-        if (self.canTogglePreview && self.previewMode != preview) {
-            if (self.textView.editable) self.sourceText = self.textView.string;
-            self.previewMode = preview;
-            [self refreshDisplay];
-            [self.lsp documentOpened:preview ? nil : [self languageServerPath:path]];
-            [self updateTitle];
-        }
-        if (c[@"selection"]) {
-            t.haveView = YES;
-            t.selection = [c[@"selection"] rangeValue];
-            t.topCharacter = [c[@"top"] unsignedIntegerValue];
-            t.topOffset = [c[@"topOffset"] doubleValue];
-            [self restoreTextPlaceOf:t];
-        }
+        return [fm fileExistsAtPath:path isDirectory:&dir] && !dir;
+    });
+    if (!found) {
+        NSBeep();
+        return;
+    }
+    NSString *path = [NSString stringWithUTF8String:c.path.c_str()];
+    if (MCTab *open = [self tabForPath:path]) {
+        [self activateTab:open];
         [self focusActiveDocument];
         return;
     }
-    NSBeep();
+    MCTab *t = [MCTab new];
+    t.currentPath = path;
+    t.sidePreview = c.side;
+    [self groupInsertTab:t atIndex:(NSUInteger)EditorTabs::ClosedTabs::indexIn(c, _win->count())];
+    [self activateTab:t];   // reads the file
+    if (_activeTab != t) return;
+    const BOOL preview = c.preview;
+    if (self.canTogglePreview && self.previewMode != preview) {
+        if (self.textView.editable) self.sourceText = self.textView.string;
+        self.previewMode = preview;
+        [self refreshDisplay];
+        [self.lsp documentOpened:preview ? nil : [self languageServerPath:path]];
+        [self updateTitle];
+    }
+    if (c.haveView) {
+        t.haveView = YES;
+        t.selection = NSMakeRange((NSUInteger)c.selStart, (NSUInteger)(c.selEnd - c.selStart));
+        t.topCharacter = (NSUInteger)c.top;
+        t.topOffset = c.topOffset;
+        [self restoreTextPlaceOf:t];
+    }
+    [self focusActiveDocument];
 }
 
 // The editor's slot with no tab open: nothing to edit, one muted line.
@@ -801,14 +807,14 @@ static const NSUInteger kMaxClosedTabs = 50;
 }
 
 - (void)selectTabAtIndex:(NSInteger)i {
-    NSMutableArray<MCTab *> *group = [self groupTabs];
+    NSArray<MCTab *> *group = [self groupTabs];
     if (i < 0 || i >= (NSInteger)group.count) return;
     [self activateTab:group[(NSUInteger)i]];
     [self focusActiveDocument];
 }
 
 - (void)closeTabAtIndex:(NSInteger)i {
-    NSMutableArray<MCTab *> *group = [self groupTabs];
+    NSArray<MCTab *> *group = [self groupTabs];
     if (i < 0 || i >= (NSInteger)group.count) return;
     [self closeTab:group[(NSUInteger)i] prompt:YES];
 }
@@ -817,7 +823,7 @@ static const NSUInteger kMaxClosedTabs = 50;
 - (void)selectNextTab:(id)sender { [self stepTab:1]; }
 - (void)selectPreviousTab:(id)sender { [self stepTab:-1]; }
 - (void)stepTab:(int)delta {
-    NSMutableArray<MCTab *> *group = [self groupTabs];
+    NSArray<MCTab *> *group = [self groupTabs];
     if (group.count == 0) { NSBeep(); return; }
     NSInteger active = _activeTab ? (NSInteger)[group indexOfObject:_activeTab] : -1;
     [self selectTabAtIndex:EditorTabs::step((int)active, (int)group.count, delta)];
@@ -856,7 +862,7 @@ static const NSUInteger kMaxClosedTabs = 50;
     [self saveBeforeLeavingFormatSave];   // a Cmd+S still waiting for its formatter
     [self autoSaveNow];   // auto-save's writes first, so only what it skips is asked about
     NSMutableArray<MCTab *> *dirty = [NSMutableArray array];
-    for (MCTab *t in _tabs) if (t.dirty) [dirty addObject:t];
+    for (MCTab *t in [self tabs]) if (t.dirty) [dirty addObject:t];
     if (dirty.count == 0) return YES;
     if (dirty.count == 1) {
         [self activateTab:dirty[0]];   // so the file asked about is the one on show
@@ -932,7 +938,7 @@ static const NSUInteger kMaxClosedTabs = 50;
     if (![[self groupTabs] containsObject:t] && [self otherGroupHoldsTab:t]) {
         if (!t.dirty || !prompt) {
             [self removeTabFromOtherGroup:t];
-            if (![_tabs containsObject:t]) {
+            if (![self holdsTab:t]) {
                 [self discardBackupOf:t];
                 [t.latex removeFromSuperview];
                 [self closePageOf:t];
@@ -943,35 +949,39 @@ static const NSUInteger kMaxClosedTabs = 50;
         }
         [self focusEditorGroup:1 - [self focusedGroup]];
     }
-    NSMutableArray<MCTab *> *group = [self groupTabs];
-    const NSUInteger index = [group indexOfObject:t];
-    if (index == NSNotFound) return YES;
+    if (!t || _win->indexOf(t.docId) < 0 || _docs[@(t.docId)] != t) return YES;
     // Open in the other group too: only this group's tab goes, unasked, and
     // the document stays as it is there.
     const BOOL elsewhere = [self otherGroupHoldsTab:t];
     if (t == _activeTab) [self saveBeforeLeavingFormatSave];   // saved, so not asked about
     if (!elsewhere && prompt && ![self confirmCloseTab:t]) return NO;
     if (!elsewhere) [self discardBackupOf:t];   // saved, or let go
-    std::vector<uint64_t> stamps;
-    for (MCTab *each in group) stamps.push_back(each.lastActive);
-    const NSInteger active = _activeTab ? (NSInteger)[group indexOfObject:_activeTab] : -1;
-    const int next = EditorTabs::activeAfterClose(stamps, (int)active, (int)index);
     const BOOL wasActive = t == _activeTab;
     if (wasActive) {
         [self editorWillShowTab:nil];
         [self stashActiveTab];
         _activeTab = nil;
     }
+    // Remembered for Reopen Closed Tab with its place as it left it.
+    EditorTabs::ClosedTab place;
+    const EditorTabs::ClosedTab *remember = nullptr;
     if (!elsewhere) {
-        [self rememberClosedTab:t index:index];
+        if (t.currentPath && !t.isDiff) {
+            place = [self closedPlaceOf:t];
+            remember = &place;
+        }
         [t.latex removeFromSuperview];
         [self closePageOf:t];
     }
-    [self groupRemoveTab:t];
-    if (wasActive && next >= 0) {
-        [self activateTab:group[(NSUInteger)next]];
-    } else if (group.count == 0 && [self editorSplit]) {
-        [self closeEmptyEditorGroup];   // its last tab: the other group is the only one
+    // The window shows the tab used most recently next, and closes a split
+    // group left without tabs (Model::Window::close).
+    const Model::Window::Closed c = _win->close(t.docId, _win->focused(), remember);
+    [self forgetClosedTabs];
+    MCTab *next = wasActive && !c.groupClosed ? [self tabWithId:_win->active()] : nil;
+    if (next) {
+        [self activateTab:next];
+    } else if (c.groupClosed) {
+        [self editorGroupClosed];   // its last tab: the other group is the only one
         [self.lsp tabsChanged];
     } else {
         if (wasActive) [self showEmptyState];
@@ -995,12 +1005,13 @@ static const NSUInteger kMaxClosedTabs = 50;
     [self joinEditorGroupsQuietly];
     [self stashActiveTab];
     _activeTab = nil;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         [t.latex removeFromSuperview];
         [self closePageOf:t];
         [self discardBackupOf:t];
     }
-    [_tabs removeAllObjects];
+    _win->clear();   // the closed tabs stay
+    [self forgetClosedTabs];
     [self showEmptyState];
 }
 

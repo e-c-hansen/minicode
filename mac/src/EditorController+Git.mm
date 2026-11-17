@@ -75,7 +75,7 @@
     MCGitPanel *panel = [self ensureGitPanel];
     NSString *key = [@"review:" stringByAppendingString:_root.path ?: @""];
     MCChangeReviewPage *page = nil;
-    for (MCTab *t in _tabs)
+    for (MCTab *t in [self tabs])
         if ([t.page isKindOfClass:MCChangeReviewPage.class] && [t.page.pageKey isEqualToString:key])
             page = (MCChangeReviewPage *)t.page;
     if (!page) {
@@ -91,7 +91,7 @@
         page.hasUnsavedText = ^BOOL(NSString *path) {
             EditorController *s = weakSelf;
             NSString *mine = [s gitPathInRoot:path];
-            for (MCTab *t in s->_tabs)
+            for (MCTab *t in [s tabs])
                 if (t.dirty && ([t.currentPath isEqualToString:mine] || [t.currentPath isEqualToString:path]))
                     return YES;
             return NO;
@@ -108,7 +108,7 @@
     NSString *key = [@"commit:" stringByAppendingString:_root.path ?: @""];
     MCChangeReviewPage *page = nil;
     MCTab *tab = nil;
-    for (MCTab *t in _tabs)
+    for (MCTab *t in [self tabs])
         if ([t.page isKindOfClass:MCChangeReviewPage.class] && [t.page.pageKey isEqualToString:key]) {
             page = (MCChangeReviewPage *)t.page;
             tab = t;

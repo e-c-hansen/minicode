@@ -70,6 +70,8 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 
 - (instancetype)init {
     if ((self = [super init])) {
+        static uint64_t lastId = 0;   // made on the main thread only
+        _docId = ++lastId;
         _undoManager = [NSUndoManager new];
         _mediaSeconds = -1;
         _pdfAutoScales = YES;
@@ -78,6 +80,15 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
     }
     return self;
 }
+
+- (void)setCurrentPath:(NSString *)path {
+    _currentPath = [path copy];
+    [_owner tabPathChanged:self];
+}
+
+- (BOOL)preview { return [_owner tabIsPreview:self]; }
+- (BOOL)agentPreview { return [_owner tabIsAgentPreview:self]; }
+- (uint64_t)lastActive { return _owner ? [_owner tabLastUsed:self] : 0; }
 
 - (NSString *)sourceText {
     if (_live) {
