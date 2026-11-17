@@ -55,6 +55,11 @@ BOOL MCTextViewUndoing(NSTextView *tv);
 // Typing is going on (insertText:, Backspace and the like): an edit then
 // opens a "Typing" step, which joins the one before it.
 @property(nonatomic, readonly) NSInteger sessionTyping;
+// A change of the text view's is going on (from a shouldChangeText... that
+// allowed it to its didChangeText): a storage edit then is in the undo
+// history. One made outside it (the storage edited directly) is the
+// host's edit outside the history, in no step.
+@property(nonatomic, readonly) BOOL sessionChanging;
 // The host's undo or redo is going into the text (as NSUndoManager's
 // isUndoing): what ends on an undo (a snippet's stops) ends.
 @property(nonatomic, assign) BOOL sessionUndoing;

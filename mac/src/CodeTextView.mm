@@ -63,6 +63,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
     CGFloat _caretShift, _caretShiftedX;
     BOOL _paneRedrawScheduled;   // redrawWholePane's second mark, once a turn
     NSInteger _sessionTyping;
+    BOOL _sessionChanging;
 }
 
 - (MCMultiCarets *)multiCarets { return _multi; }
@@ -74,6 +75,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
 - (NSEvent *)currentKeyEvent { return _keyEvent; }
 - (BOOL)multiCaretActive { return _multi.active; }
 - (NSInteger)sessionTyping { return _sessionTyping; }
+- (BOOL)sessionChanging { return _sessionChanging; }
 - (MCSessionDoc *)sessionDoc { return _sessionDocProvider ? _sessionDocProvider() : nil; }
 
 BOOL MCTextViewUndoing(NSTextView *tv) {
@@ -118,6 +120,27 @@ struct Counting {
     NSString *verb = redo ? @"Redo" : @"Undo";
     item.title = can && name.length ? [NSString stringWithFormat:@"%@ %@", verb, name] : verb;
     return can;
+}
+
+// What a change of the view's edits is in the undo history; a storage edit
+// outside one (nothing registered it) is not (sessionChanging). Cleared
+// before the notification, so a change made from it counts on its own.
+- (BOOL)shouldChangeTextInRanges:(NSArray<NSValue *> *)ranges
+              replacementStrings:(NSArray<NSString *> *)strings {
+    const BOOL ok = [super shouldChangeTextInRanges:ranges replacementStrings:strings];
+    if (ok) _sessionChanging = YES;
+    return ok;
+}
+
+- (BOOL)shouldChangeTextInRange:(NSRange)range replacementString:(NSString *)string {
+    const BOOL ok = [super shouldChangeTextInRange:range replacementString:string];
+    if (ok) _sessionChanging = YES;
+    return ok;
+}
+
+- (void)didChangeText {
+    _sessionChanging = NO;
+    [super didChangeText];
 }
 
 - (void)breakUndoCoalescing {

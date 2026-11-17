@@ -273,6 +273,12 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
     if (_open && !_stepOpen && !_applying) MCSessionClient().noteSelection(_docId, SelectionOf(ranges));
 }
 
+- (void)forgetHistory {
+    if (!_open) return;
+    [self closeStep];
+    MCSessionClient().forgetHistory(_docId);
+}
+
 - (void)saved {
     if (_open) {
         [self closeStep];
@@ -282,22 +288,41 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
 
 // ---- recording
 
-- (void)record:(Ot::Op)op {
+// `outside`: the edit is in no undo step (recordOutside).
+- (void)record:(Ot::Op)op outside:(BOOL)outside {
     Shared::Client &c = MCSessionClient();
-    if (_deferred.empty()) {
-        c.record(_docId, std::move(op));
-        return;
+    Ot::Ops mine{std::move(op)};
+    if (!_deferred.empty()) {
+        // The host's edits not in the mirror yet came first, as the client
+        // sees it: the mirror's edit is moved past them, and they past it.
+        Ot::Ops moved, theirs;
+        Ot::transform(mine, _deferred, Model::Unit::Utf16, &moved, &theirs);
+        _deferred = std::move(theirs);
+        mine = std::move(moved);
     }
-    // The host's edits not in the mirror yet came first, as the client
-    // sees it: the mirror's edit is moved past them, and they past it.
-    Ot::Ops mine, theirs;
-    Ot::transform(Ot::Ops{op}, _deferred, Model::Unit::Utf16, &mine, &theirs);
-    _deferred = std::move(theirs);
-    for (Ot::Op &o : mine) c.record(_docId, std::move(o));
+    for (Ot::Op &o : mine) {
+        if (outside) c.recordOutside(_docId, std::move(o));
+        else c.record(_docId, std::move(o));
+    }
+}
+
+- (void)record:(Ot::Op)op {
+    [self record:std::move(op) outside:NO];
 }
 
 - (void)storageWillReplace:(NSRange)range with:(NSString *)string view:(CodeTextView *)view {
     if (!_open || _applying) return;
+    // The storage edited outside a change of the view's (directly, as
+    // nothing in the app does but a check may): NSUndoManager had no step
+    // for it, and later undos moved past it. The host keeps it so: the
+    // turn's step ends before it, and it is in none.
+    if (!view.sessionChanging) {
+        [self closeStep];
+        [self record:WholePoints(view.textStorage.string, Ot::Op{range.location, range.length,
+                                                                  U16(string ?: @"")})
+             outside:YES];
+        return;
+    }
     if (_sealed) [self closeStep];
     if (!_stepOpen) [self openStepWithName:nil view:view];
     NSString *text = view.textStorage.string;
@@ -439,11 +464,20 @@ static BOOL StorageBusy(CodeTextView *view) {
                     os_log_error(SessionLog(), "the host's edit at %lu did not go into the editor",
                                  (unsigned long)o.pos);
         if (select && !select->empty()) {
+            // Every piece the step started with selected again (as
+            // replaceRanges:'s own undo did): the selected ones, else the
+            // first caret.
             const NSUInteger n = view.textStorage.length;
-            const Model::UndoHistory::Range &r = (*select)[0];
-            const NSUInteger a = MIN(MIN(r.anchor, r.caret), n), b = MIN(MAX(r.anchor, r.caret), n);
-            [view setSelectedRange:NSMakeRange(a, b - a)];
-            [view scrollRangeToVisible:NSMakeRange(a, b - a)];
+            NSMutableArray<NSValue *> *sel = [NSMutableArray arrayWithCapacity:select->size()];
+            NSRange first = NSMakeRange(NSNotFound, 0);
+            for (const Model::UndoHistory::Range &r : *select) {
+                const NSUInteger a = MIN(MIN(r.anchor, r.caret), n), b = MIN(MAX(r.anchor, r.caret), n);
+                if (first.location == NSNotFound) first = NSMakeRange(a, b - a);
+                if (b > a) [sel addObject:[NSValue valueWithRange:NSMakeRange(a, b - a)]];
+            }
+            if (!sel.count) [sel addObject:[NSValue valueWithRange:first]];
+            [view setSelectedRanges:sel affinity:NSSelectionAffinityDownstream stillSelecting:NO];
+            [view scrollRangeToVisible:sel.firstObject.rangeValue];
         }
         view.sessionUndoing = NO;
         view.editable = editable;

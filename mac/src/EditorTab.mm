@@ -107,6 +107,12 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
     if (h && _ownGroups > 0 && --_ownGroups == 0) [h closeStep];
 }
 
+// The steps NSUndoManager had go, and so does the host's history.
+- (void)removeAllActions {
+    [super removeAllActions];
+    [self.host forgetHistory];
+}
+
 - (BOOL)canUndo {
     MCSessionDoc *h = self.host;
     return h ? [h canUndo:NO name:NULL] : [super canUndo];
@@ -207,6 +213,18 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
     } else if (copy && MCSessionHostEnabled()) {
         _session = [[MCSessionDoc alloc] initWithTab:self text:copy];
     }
+    const BOOL same = !_live && copy == _sourceText;
+    _live = nil;
+    _sourceText = copy;
+    if (!same) _textGeneration++;
+}
+
+- (void)takeTextFromStorage:(NSString *)text {
+    if (!_session) {
+        self.sourceText = text;
+        return;
+    }
+    NSString *copy = [text copy];
     const BOOL same = !_live && copy == _sourceText;
     _live = nil;
     _sourceText = copy;

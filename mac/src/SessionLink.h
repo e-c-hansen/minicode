@@ -9,7 +9,9 @@
 //     storage (MCSourceStorage willReplaceCharacters, before the store
 //     changes, so a surrogate pair is never split) or, for a text set
 //     whole (a viewer's edit, a preview's, a reload), as the one range in
-//     which the two differ (MCTab setSourceText:);
+//     which the two differ (MCTab setSourceText:); a storage edit outside
+//     a change of the text view's (CodeTextView sessionChanging) is in no
+//     undo step, and the host's history moves past it;
 //   - the edits of one run-loop turn are one undo step, as NSUndoManager's
 //     grouping by event made them, named by the first name given
 //     (replaceRanges:withStrings:actionName:, setActionName:), else
@@ -79,6 +81,9 @@ BOOL MCSessionLoopback(void);
 - (void)forgetHistoryWithText:(NSString *)text;
 // The step of this turn, closed now (before an undo, or asking about one).
 - (void)closeStep;
+// The undo history forgotten, the text kept (the tab's undo manager's
+// removeAllActions).
+- (void)forgetHistory;
 // The tab's text was written to its file.
 - (void)saved;
 

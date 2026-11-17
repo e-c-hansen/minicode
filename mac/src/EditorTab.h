@@ -185,6 +185,13 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 // goes to it as an edit, and the editor's storage edits too while the tab
 // is on show (EditorController+Session.mm).
 @property(nonatomic, readonly) MCSessionDoc *session;
+// sourceText set to the text of the storage that showed it (the window
+// putting the tab away): the host has had every edit of that storage, so
+// nothing goes to it. The tab's own copy may be older (a storage replaced
+// whole outside the text view leaves the tab its text before), and its
+// difference sent again would be applied twice. Without a document on the
+// host, the same as setting sourceText.
+- (void)takeTextFromStorage:(NSString *)text;
 // When it last came on show in its window (Model::Window::lastUsed), larger
 // for later: the tab shown after a close, the files Quick Open lists first.
 @property(nonatomic, readonly) uint64_t lastActive;
