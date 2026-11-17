@@ -12,9 +12,19 @@
 // top left) into <scene>.mkv, without the X pointer. The workflow turns that
 // into a GIF. Nothing is recorded without MC_DEMO_OUT, so a scene can be
 // played and watched through its checks alone.
+//
+// Captions (the Mac's key:caption: and caption:): a scene that calls
+// captionsOn() has a pill drawn inside the window, over its content, for the
+// scene's duration (a GtkOverlay child added here, never part of the app):
+// each key chord pressed through key() shows its keys in Linux's names
+// ("Ctrl+Shift+P") with an optional label saying what the step is for, and
+// label() shows a label alone. The caption stays until the next one.
+// MC_DEMO_STILLS=<folder> also saves a PNG of the harness's own Xvfb at each
+// still("name") step, to look at a scene without ffmpeg.
 #include "Harness.h"
 
 #include <signal.h>
+#include <algorithm>
 #include <sys/wait.h>
 
 #include "Editor.h"
@@ -28,6 +38,111 @@ GPid gRecorder = 0;
 
 Editor* ed() { return MCGuiApp().editor; }
 GtkWidget* win() { return GTK_WIDGET(MCGuiApp().window); }
+
+// ------------------------------------------------------------ captions
+GtkWidget* gCaption = nullptr;       // the pill, a child of the window's overlay
+GtkWidget* gCaptionKeys = nullptr;
+GtkWidget* gCaptionText = nullptr;
+GtkCssProvider* gCaptionCss = nullptr;
+bool gCaptions = false;
+
+// "ctrl+shift+p" as "Ctrl+Shift+P"; "enter" as "Enter".
+std::string chordName(const std::string& chord) {
+    std::string out;
+    bool start = true;
+    for (char c : chord) {
+        out += start ? (char)toupper((unsigned char)c) : c;
+        start = c == '+';
+    }
+    return out;
+}
+
+void showCaption(const std::string& keys, const std::string& text) {
+    if (!gCaptions) return;
+    GtkWidget* overlay = gtk_window_get_child(MCGuiApp().window);
+    if (!GTK_IS_OVERLAY(overlay)) return;
+    if (!gCaption) {
+        gCaptionCss = gtk_css_provider_new();
+        gtk_css_provider_load_from_string(gCaptionCss,
+            ".demo-caption { background: rgba(24,24,24,0.92); border-radius: 12px;"
+            " padding: 8px 18px; border: 1px solid rgba(255,255,255,0.18); }"
+            ".demo-keys { color: #ffffff; font-size: 22px; font-weight: bold;"
+            " font-family: monospace; background: rgba(255,255,255,0.16);"
+            " border-radius: 7px; padding: 2px 12px; }"
+            ".demo-text { color: #f0f0f0; font-size: 21px; }");
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+        gtk_style_context_add_provider_for_display(gdk_display_get_default(),
+            GTK_STYLE_PROVIDER(gCaptionCss), GTK_STYLE_PROVIDER_PRIORITY_USER + 10);
+G_GNUC_END_IGNORE_DEPRECATIONS
+        gCaption = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
+        gtk_widget_add_css_class(gCaption, "demo-caption");
+        gtk_widget_set_halign(gCaption, GTK_ALIGN_CENTER);
+        gtk_widget_set_valign(gCaption, GTK_ALIGN_END);
+        gtk_widget_set_margin_bottom(gCaption, 40);
+        gtk_widget_set_can_target(gCaption, FALSE);   // never takes a click or the pointer
+        gtk_widget_set_can_focus(gCaption, FALSE);
+        gCaptionKeys = gtk_label_new("");
+        gtk_widget_add_css_class(gCaptionKeys, "demo-keys");
+        gCaptionText = gtk_label_new("");
+        gtk_widget_add_css_class(gCaptionText, "demo-text");
+        gtk_box_append(GTK_BOX(gCaption), gCaptionKeys);
+        gtk_box_append(GTK_BOX(gCaption), gCaptionText);
+        gtk_overlay_add_overlay(GTK_OVERLAY(overlay), gCaption);
+    }
+    gtk_label_set_text(GTK_LABEL(gCaptionKeys), keys.c_str());
+    gtk_widget_set_visible(gCaptionKeys, !keys.empty());
+    gtk_label_set_text(GTK_LABEL(gCaptionText), text.c_str());
+    gtk_widget_set_visible(gCaptionText, !text.empty());
+    gtk_widget_set_visible(gCaption, !keys.empty() || !text.empty());
+}
+
+void removeCaption() {
+    if (gCaption) {
+        GtkWidget* overlay = gtk_window_get_child(MCGuiApp().window);
+        if (GTK_IS_OVERLAY(overlay)) gtk_overlay_remove_overlay(GTK_OVERLAY(overlay), gCaption);
+        gCaption = gCaptionKeys = gCaptionText = nullptr;
+    }
+    if (gCaptionCss) {
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+        gtk_style_context_remove_provider_for_display(gdk_display_get_default(),
+                                                      GTK_STYLE_PROVIDER(gCaptionCss));
+G_GNUC_END_IGNORE_DEPRECATIONS
+        g_object_unref(gCaptionCss);
+        gCaptionCss = nullptr;
+    }
+}
+
+// Turns the scene's captions on (at queueing, so the pauses know); the pill
+// goes with the scene (stopRecording).
+void captionsOn() { gCaptions = true; }
+
+// A step's label alone, held until the next caption, for about `hold` seconds.
+void label(const std::string& text, double hold = 1.6) {
+    MCGuiStep("label: " + text, [text] { showCaption("", text); });
+    if (hold > 0) MCGuiPause(hold);   // time is the condition: a person reads it
+}
+
+// A PNG of the harness's own Xvfb, cropped to the window, when
+// MC_DEMO_STILLS names a folder.
+void still(const std::string& name) {
+    MCGuiStep("still " + name, [name] {
+        const std::string dir = envOr("MC_DEMO_STILLS");
+        const std::string display = envOr("DISPLAY");
+        if (dir.empty() || display.empty()) return;
+        g_mkdir_with_parents(dir.c_str(), 0755);
+        const std::string geometry = std::to_string(gtk_widget_get_width(win())) + "x" +
+                                     std::to_string(gtk_widget_get_height(win())) + "+0+0";
+        const std::string file = dir + "/" + name + ".png";
+        gchar* out = nullptr;
+        gint status = 0;
+        gchar* argv[] = {(gchar*)"import", (gchar*)"-display", (gchar*)display.c_str(),
+                         (gchar*)"-window", (gchar*)"root", (gchar*)"-crop",
+                         (gchar*)geometry.c_str(), (gchar*)"+repage", (gchar*)file.c_str(), nullptr};
+        g_spawn_sync(nullptr, argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr, &out, nullptr,
+                     &status, nullptr);
+        g_free(out);
+    });
+}
 
 std::string envOr(const char* name, const std::string& otherwise = "") {
     const char* v = getenv(name);
@@ -102,6 +217,7 @@ void startRecording(const std::string& scene) {
 void stopRecording(const std::string& scene) {
     MCGuiPause(1.0);   // time is the condition: the last frame stays a moment
     MCGuiStep("stop recording", [scene] {
+        removeCaption();
         MCGuiSnapshot(win(), "demo-" + scene);
         if (!gRecorder) return;
         kill(gRecorder, SIGINT);
@@ -161,9 +277,14 @@ void clickText(const std::string& needle, bool atEnd) {
     MCGuiPause(0.3);   // time is the condition: the caret lands
 }
 
-void key(const std::string& chord, double after = 0.8) {
-    MCGuiStep("press " + chord, [chord] { MCGuiKey(chord); });
-    MCGuiPause(after);   // time is the condition: what the key does, on show
+// A key chord. With captions on, its keys show beside `caption` (what the
+// step is for) and stay up long enough to read.
+void key(const std::string& chord, double after = 0.8, const std::string& caption = "") {
+    MCGuiStep("press " + chord, [chord, caption] {
+        showCaption(chordName(chord), caption);
+        MCGuiKey(chord);
+    });
+    MCGuiPause(gCaptions ? std::max(after, caption.empty() ? 0.9 : 1.5) : after);   // time is the condition: what the key does, on show
 }
 
 // Typed at about a person's pace, a few characters a step.
@@ -203,18 +324,26 @@ void run(const std::string& command, double after) {
 
 MC_GUI_SUITE(_demo_tour) {
     prepareProject();
+    captionsOn();
     startRecording("tour");
+    label("Open a Markdown file from the tree", 0.2);
     openFile("README.md");
     MCGuiPause(1.2);
-    key("ctrl+shift+v", 1.6);
-    key("ctrl+shift+v", 1.2);
+    still("tour-1-readme");
+    key("ctrl+shift+v", 1.6, "Show the rendered page");
+    still("tour-2-preview");
+    key("ctrl+shift+v", 1.2, "Back to the source");
+    label("Open a Python file and add a line", 0.2);
     openFile("hello.py");
     clickText("c.area():.2f}\")", true);
     type("\n    print(\"Diameter:\", 2 * c.radius)");
-    key("ctrl+s", 1.0);
-    key("ctrl+p", 0.5);
+    still("tour-3-typed");
+    key("ctrl+s", 1.0, "Save the file");
+    key("ctrl+p", 0.5, "Go to a file by name");
     type("vec", 0.8);
-    key("enter", 1.8);
+    still("tour-4-quick-open");
+    key("enter", 1.8, "Open it");
+    still("tour-5-vec");
     stopRecording("tour");
 }
 
@@ -231,24 +360,34 @@ MC_GUI_SUITE(_demo_terminal) {
 
 MC_GUI_SUITE(_demo_markdown) {
     prepareProject();
+    captionsOn();
     startRecording("markdown");
+    label("Open a Markdown file from the tree", 0.2);
     openFile("README.md");
     MCGuiPause(1.4);
-    key("ctrl+shift+v", 1.0);
-    key("ctrl+alt+v", 1.6);
+    still("markdown-1-source");
+    key("ctrl+shift+v", 1.0, "Show the rendered page");
+    still("markdown-2-page");
+    key("ctrl+alt+v", 1.6, "Show the page beside the source");
+    still("markdown-3-side");
     clickText("Add a perimeter to the circle", true);
+    label("Edit the source and the page follows", 0.2);
     type("\nTry the page beside the source", 2.0);
+    still("markdown-4-typed");
     stopRecording("markdown");
 }
 
 MC_GUI_SUITE(_demo_git) {
     prepareProject();
+    captionsOn();
     startRecording("git");
+    label("Open a file and make a change", 0.2);
     openFile("hello.py");
     clickText("# A sample Python file", true);
     type(", with a circle");
-    key("ctrl+s", 1.8);
-    key("ctrl+shift+g", 0.2);
+    key("ctrl+s", 1.8, "Save the file");
+    still("git-1-saved");
+    key("ctrl+shift+g", 0.2, "Open Source Control");
     MCGuiWait("the panel lists hello.py", 15, [] {
         GitPanel* g = MCGuiApp().git;
         if (!g) return false;
@@ -257,6 +396,8 @@ MC_GUI_SUITE(_demo_git) {
         return false;
     });
     MCGuiPause(1.0);   // time is the condition: a person looks
+    still("git-2-panel");
+    label("Click a changed file to see its diff", 0.2);
     MCGuiStep("click hello.py in the panel", [] {
         // The rows are drawn, not labels: the row's own drawing area.
         GitPanel* g = MCGuiApp().git;
@@ -269,10 +410,14 @@ MC_GUI_SUITE(_demo_git) {
         GCHECK(false);
     });
     MCGuiPause(1.6);   // time is the condition: the diff, on show
-    key("space", 1.4);
+    still("git-3-diff");
+    key("space", 1.4, "Stage the file");
+    still("git-4-staged");
+    label("Write a commit message", 0.2);
     MCGuiStep("click the message box", [] { MCGuiClick(MCGuiApp().git->messageView()); });
     type("Say what the sample shows");
-    key("ctrl+enter", 2.4);
+    key("ctrl+enter", 2.4, "Commit");
+    still("git-5-committed");
     stopRecording("git");
 }
 
@@ -288,20 +433,84 @@ MC_GUI_SUITE(_demo_files) {
     stopRecording("files");
 }
 
+// The settings scene's helpers: the color chooser's popover and what is in it.
+GtkWidget* pickerPopover() { return ed()->pickerPopover(); }
+
+GtkWidget* findIn(GtkWidget* root, bool (*is)(GtkWidget*)) {
+    if (!root) return nullptr;
+    if (is(root)) return root;
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* hit = findIn(c, is)) return hit;
+    return nullptr;
+}
+bool isEntryShown(GtkWidget* w) { return GTK_IS_ENTRY(w) && gtk_widget_get_mapped(w); }
+
+// A mapped popover menu under the window that shows `text`.
+GtkWidget* menuShowing(GtkWidget* root, const std::string& text) {
+    if (!root || !gtk_widget_get_mapped(root)) return nullptr;
+    if (GTK_IS_POPOVER_MENU(root) && MCGuiFindLabel(root, text)) return root;
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* hit = menuShowing(c, text)) return hit;
+    return nullptr;
+}
+
 MC_GUI_SUITE(_demo_settings) {
     prepareProject();
+    captionsOn();
     startRecording("settings");
     openFile("sample.cpp");
-    // The palette here lists no themes; the settings file's theme line,
-    // written and saved, as a person does it.
-    key("ctrl+,", 1.2);
-    key("ctrl+End", 0.3);
-    type("\ntheme = light-modern", 0.3);
-    key("ctrl+s", 2.0);
-    key("ctrl+shift+k", 0.3);
-    type("theme = solarized-dark", 0.3);
-    key("ctrl+s", 2.0);
-    key("ctrl+shift+k", 0.3);
-    key("ctrl+s", 1.6);
+    still("settings-1-start");
+    label("Right-click the file tree", 0.2);
+    MCGuiStep("right click on the tree", [] {
+        MCGuiClick(MCGuiFindLabel(MCGuiApp().tree->widget(), "vec"), -1, -1, 3);
+    });
+    MCGuiWait("the tree's menu", 10, [] {
+        return menuShowing(win(), "Adjust Settings…") != nullptr;
+    });
+    MCGuiPause(1.2);   // time is the condition: a person reads the menu
+    still("settings-2-menu");
+    label("Choose Adjust Settings", 0.2);
+    MCGuiStep("choose Adjust Settings…", [] {
+        GtkWidget* menu = menuShowing(win(), "Adjust Settings…");
+        GCHECK(menu != nullptr);
+        if (menu) MCGuiClick(MCGuiFindLabel(menu, "Adjust Settings…"));
+    });
+    MCGuiWait("the settings file at the tree's keys", 15, [] {
+        double x, y;
+        return ed()->active() && ed()->active()->isSettingsFile() && ed()->isSource() &&
+               textPoint("sidebar.background = #181818", true, &x, &y);
+    });
+    MCGuiPause(0.6);   // time is the condition: the lines' tint
+    label("minicode opens the settings at the keys that color the tree", 2.2);
+    still("settings-3-file");
+    label("Click the color's swatch", 0.2);
+    MCGuiStep("click the sidebar color's swatch", [] {
+        double x = 0, y = 0;
+        // On its last character, where a swatch ends.
+        GCHECK(textPoint("sidebar.background = #181818", true, &x, &y));
+        MCGuiClick(ed()->textView(), x - 4, y);
+    });
+    MCGuiWait("the color chooser", 10, [] {
+        GtkWidget* p = pickerPopover();
+        return p && gtk_widget_get_mapped(p) && findIn(p, isEntryShown);
+    });
+    MCGuiPause(1.2);   // time is the condition: a person looks at the picker
+    still("settings-4-picker");
+    label("Pick a new color", 0.2);
+    MCGuiStep("click the hex field", [] { MCGuiClick(findIn(pickerPopover(), isEntryShown)); });
+    MCGuiPause(0.4);   // time is the condition: the field takes the keyboard
+    MCGuiStep("a dark blue", [] {
+        MCGuiKey("ctrl+a");
+        MCGuiType("#1B3A5C");
+    });
+    MCGuiPause(1.0);   // time is the condition: the hex shows
+    still("settings-5-typed");
+    MCGuiStep("Return", [] { MCGuiType("\n"); });
+    MCGuiPause(2.2);   // time is the condition: the sidebar recolors, the file saves
+    still("settings-6-recolored");
+    MCGuiStep("Escape", [] { MCGuiKey("escape"); });
+    MCGuiPause(0.8);   // time is the condition: the chooser closes
+    label("The sidebar has the new color, and the file is saved", 2.4);
+    still("settings-7-done");
     stopRecording("settings");
 }
