@@ -21,6 +21,7 @@
 #import "Demo.h"
 #import "AgentWindow.h"
 #import "AgentsPanel.h"
+#import "ChangeReviewPage.h"
 #import "EditorController.h"
 #import "GitPanel.h"
 #import "Latex.h"
@@ -1290,8 +1291,22 @@ static NSPoint GitRowPoint(MCDemo *m, NSString *text) {
     return [list convertPoint:NSMakePoint(NSMinX(r) + 70, NSMidY(r)) toView:nil];
 }
 
-// Edit a file, see its change bar, stage the hunk from the diff, commit,
-// and see the commit at the top of the graph.
+// The review page a file row opens (Uncommitted Changes), once read.
+static MCChangeReviewPage *ReviewPage(MCDemo *m) {
+    id page = [[m.controller valueForKey:@"activeTab"] valueForKey:@"page"];
+    return [page isKindOfClass:MCChangeReviewPage.class] ? page : nil;
+}
+
+// The first block's Stage button, in window coordinates; NSZeroRect if none.
+static NSRect StageButton(MCDemo *m) {
+    MCChangeReviewPage *p = ReviewPage(m);
+    if (!p.loaded || p.blockCount == 0) return NSZeroRect;
+    NSRect r = [p buttonRect:@"Stage" row:[p rowOfBlock:0]];
+    return NSIsEmptyRect(r) ? NSZeroRect : [p.textView convertRect:r toView:nil];
+}
+
+// Edit a file, see its change bar, stage the change from the review page,
+// commit, and see the commit at the top of the graph.
 static void SceneGit(MCDemo *d) {
     [d pause:0.6];
     [d label:@"Edit a file and save it"];
@@ -1310,18 +1325,30 @@ static void SceneGit(MCDemo *d) {
     [d waitFor:^BOOL(MCDemo *m) { return GitRow(m, @"W M hello.py") >= 0; }
        timeout:10 recorded:YES];
     [d pause:1.2];
-    [d label:@"Click a file to see its diff"];
+    [d label:@"Click a file to review its changes"];
     [d clickAt:^NSPoint { return GitRowPoint(d, @"W M hello.py"); }];
-    [d waitFor:^BOOL(MCDemo *m) {
-        return [[[m ui:@"diffView"] string] containsString:@"Stage Hunk"];
-    } timeout:10 recorded:YES];
+    [d waitFor:^BOOL(MCDemo *m) { return !NSIsEmptyRect(StageButton(m)); }
+       timeout:10 recorded:YES];
     [d poster];
     [d pause:1.2];
-    [d label:@"Stage one hunk from the diff"];
+    [d label:@"Stage just this change"];
+    __block NSUInteger loadsAtClick = 0;
     [d clickAt:^NSPoint {
-        return [d pointForText:@"Stage Hunk" inView:[d ui:@"diffView"] after:nil atEnd:NO];
+        loadsAtClick = ReviewPage(d).loads;
+        NSRect r = StageButton(d);
+        return NSMakePoint(NSMidX(r), NSMidY(r));
     }];
     [d hidePointer];
+    // The page's buttons are drawn and pressed through its text view; if
+    // the posted click went elsewhere, press it the way the checks do.
+    [d pause:0.8];
+    [d run:^(MCDemo *m) {
+        MCChangeReviewPage *p = ReviewPage(m);
+        // Staged already, or the page read again after an action.
+        if (GitRow(m, @"S M hello.py") >= 0 || p.loads != loadsAtClick) return;
+        NSRect r = [p buttonRect:@"Stage" row:[p rowOfBlock:0]];
+        if (!NSIsEmptyRect(r)) [p pressAtPoint:NSMakePoint(NSMidX(r), NSMidY(r))];
+    }];
     [d waitFor:^BOOL(MCDemo *m) { return GitRow(m, @"S M hello.py") >= 0; }
        timeout:10 recorded:YES];
     [d pause:1.4];
