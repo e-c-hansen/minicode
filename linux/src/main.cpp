@@ -988,6 +988,9 @@ static void act_open(GSimpleAction*, GVariant*, gpointer userp) {
 
 static void act_save(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
+    // With the LaTeX preview on show, the files it read that have unsaved
+    // changes are saved with the document, so the page shows them.
+    app->editor->saveLatexInputs([app](Document* d) { return saveDocument(app, d); });
     // editor.organize-imports-on-save, then format.on-save: Ctrl+S organizes
     // and formats first and saves when that is done (Save All, auto-save and
     // the close question's Save do neither).
