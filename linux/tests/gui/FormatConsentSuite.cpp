@@ -68,7 +68,7 @@ std::string gPath;
 void standInsOnPath() {
     const char* p = g_getenv("PATH");
     gPath = p ? p : "";
-    g_setenv("PATH", (bin() + ":" + gPath).c_str(), TRUE);
+    EnvLock::envSet("PATH", (bin() + ":" + gPath).c_str(), TRUE);
 }
 
 std::string sourceText() {
@@ -449,7 +449,7 @@ MC_GUI_SUITE(format_consent) {
         MCGuiKey("ctrl+z");
         MCGuiSetSettings("lsp.enabled = false\n");
         if (Document* d = ed()->documentFor(U("README.md"))) ed()->closeTab(d);
-        g_setenv("PATH", gPath.c_str(), TRUE);
+        EnvLock::envSet("PATH", gPath.c_str(), TRUE);
         forget();
     });
 }

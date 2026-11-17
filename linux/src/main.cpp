@@ -42,6 +42,7 @@
 // window is taken apart in onWindowRemoved while its widgets still exist.
 #include <gtk/gtk.h>
 
+#include "EnvLock.h"
 #include "AppSettings.h"
 #include "Appearance.h"
 #include "Bookmarks.h"
@@ -1866,11 +1867,21 @@ static void openContainingFolder(App* app, const std::string& path) {
 // $MINICODE_FILE_MANAGER names a program that gets the folder as its one
 // argument instead, which is how the checks record it.
 static void revealFolder(App* app, const std::string& folder) {
-    if (const char* fm = g_getenv("MINICODE_FILE_MANAGER"); fm && *fm) {
+    std::string fmText;
+    {
+        EnvLock::EnvRead env;
+        if (const char* v = g_getenv("MINICODE_FILE_MANAGER")) fmText = v;
+    }
+    if (const char* fm = fmText.c_str(); *fm) {
         const char* argv[] = {fm, folder.c_str(), nullptr};
         GError* err = nullptr;
-        if (!g_spawn_async(nullptr, const_cast<char**>(argv), nullptr, G_SPAWN_SEARCH_PATH,
-                           nullptr, nullptr, nullptr, &err))
+        gboolean started;
+        {
+            EnvLock::EnvRead env;
+            started = g_spawn_async(nullptr, const_cast<char**>(argv), nullptr,
+                                    G_SPAWN_SEARCH_PATH, nullptr, nullptr, nullptr, &err);
+        }
+        if (!started)
             showError(app, "Could not open the folder", err ? err->message : "");
         g_clear_error(&err);
         return;
@@ -5027,10 +5038,10 @@ int main(int argc, char** argv) {
     // A run with the startup log stays in the terminal it was asked from: a
     // detached app gives that terminal up, and the log with it (Detach.h).
     const bool logStays = StartupLog::wanted() && !g_getenv("MINICODE_FOREGROUND");
-    if (logStays) g_setenv("MINICODE_FOREGROUND", "1", TRUE);
+    if (logStays) EnvLock::envSet("MINICODE_FOREGROUND", "1");
     // The options, and a terminal given back at once (Detach.h, PARITY.md R2).
     if (const int status = Detach::start(&argc, &argv); status >= 0) return status;
-    if (logStays) g_unsetenv("MINICODE_FOREGROUND");   // not for the shells it starts
+    if (logStays) EnvLock::envUnset("MINICODE_FOREGROUND");   // not for the shells it starts
 #endif
     // MINICODE_STARTUP_LOG=1: each phase's time on stderr. After the fork,
     // so its clock is this process's main thread's.

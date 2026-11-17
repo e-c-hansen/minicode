@@ -1,6 +1,7 @@
 // Latex.cpp — see Latex.h.
 #ifdef MINICODE_ENABLE_PDF
 
+#include "EnvLock.h"
 #include "Latex.h"
 
 #include "LatexClick.h"
@@ -79,7 +80,11 @@ std::string baseStem(const std::string& p) {
 void dieWithParent(gpointer) { prctl(PR_SET_PDEATHSIG, SIGTERM); }
 
 GSubprocessLauncher* newLauncher(GSubprocessFlags flags) {
-    GSubprocessLauncher* l = g_subprocess_launcher_new(flags);
+    GSubprocessLauncher* l;
+    {
+        EnvLock::EnvRead env;   // the launcher copies the environment (EnvLock.h)
+        l = g_subprocess_launcher_new(flags);
+    }
     g_subprocess_launcher_set_child_setup(l, dieWithParent, nullptr, nullptr);
     return l;
 }
@@ -347,6 +352,7 @@ std::string LatexPreview::managedTectonicPath() {
 }
 
 std::string LatexPreview::tectonicPath() {
+    EnvLock::EnvRead lock;
     if (const char* env = g_getenv("MINICODE_TECTONIC"))
         if (isExecutable(env)) return env;
     const std::string managed = managedTectonicPath();
@@ -1150,10 +1156,17 @@ static void fetchTectonicBlocking(std::string* problemOutP) {
         // GLib has no HTTPS client of its own, so the download goes through
         // curl or wget, one of which every desktop distribution has.
         std::vector<std::string> fetch;
-        if (char* curl = g_find_program_in_path("curl")) {
+        char* curl = nullptr;
+        char* wget = nullptr;
+        {
+            EnvLock::EnvRead env;
+            curl = g_find_program_in_path("curl");
+            if (!curl) wget = g_find_program_in_path("wget");
+        }
+        if (curl) {
             fetch = {curl, "-fsSL", "--proto", "=https", "--retry", "2", "-o", archive, url};
             g_free(curl);
-        } else if (char* wget = g_find_program_in_path("wget")) {
+        } else if (wget) {
             fetch = {wget, "-q", "--https-only", "-O", archive, url};
             g_free(wget);
         } else {

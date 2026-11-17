@@ -80,8 +80,8 @@ MC_GUI_SUITE(mermaid) {
             "echo '" + kPng + "' | base64 -d > \"$out\"\n";
         MCGuiWriteFile(P("fake-mmdc"), script);
         g_chmod(P("fake-mmdc").c_str(), 0755);
-        g_setenv("MINICODE_MMDC", P("fake-mmdc").c_str(), TRUE);
-        g_setenv("MINICODE_MERMAID_CACHE", P("mermaid-cache").c_str(), TRUE);
+        EnvLock::envSet("MINICODE_MMDC", P("fake-mmdc").c_str(), TRUE);
+        EnvLock::envSet("MINICODE_MERMAID_CACHE", P("mermaid-cache").c_str(), TRUE);
         MCGuiWriteFile(P("plain.md"), "# Plain\n\nNo diagram here.\n");
         MCGuiWriteFile(P("one.md"), diagram("One", "graph TD\n  A-->B"));
         MCGuiWriteFile(P("bad.md"), diagram("Bad", "graph LR\n  X-->"));
@@ -193,7 +193,7 @@ MC_GUI_SUITE(export_html) {
         MCGuiWriteFile(P("doc.md"),
                        "# Hello World\n\nSome *text* with [a link](https://example.com) and "
                        "[bad](javascript:alert(1)).\n\n- one\n- [x] two\n\n```python\nprint('<hi>')\n```\n");
-        g_setenv("MINICODE_HTML_EXPORT_PATH", P("doc-out.html").c_str(), TRUE);
+        EnvLock::envSet("MINICODE_HTML_EXPORT_PATH", P("doc-out.html").c_str(), TRUE);
         MCGuiOpenFileKept(P("doc.md"));
     });
     MCGuiWait("the page", 20, [] { return ed()->active() && ed()->active()->path() == P("doc.md") && ed()->inPreview(); });
@@ -234,7 +234,7 @@ MC_GUI_SUITE(export_html) {
         MCGuiPause(0.3);   // the title update runs from an idle
         GAction* a = g_action_map_lookup_action(G_ACTION_MAP(MCGuiApp().window), "exporthtml");
         GCHECK(a && !g_action_get_enabled(a));
-        g_unsetenv("MINICODE_HTML_EXPORT_PATH");
+        EnvLock::envUnset("MINICODE_HTML_EXPORT_PATH");
         ed()->closeAllTabs();
     });
 }
