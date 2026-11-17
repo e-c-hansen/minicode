@@ -54,7 +54,7 @@ void append(GMenu* section, const std::string& label, const char* action) {
 const char* const kWindowActions[] = {
     "gitfetch",  "gitpull",       "gitpush",     "gitsync",  "gitstageall",
     "gitunstageall", "gitclean",  "gitundodiscard", "gitcheckout", "gitamend",
-    "gitundocommit", "gitstash",  "gitstashpop",
+    "gitundocommit", "gitstash",  "gitstashpop", "gitreview",
 };
 
 const char* const kMenuActions[] = {
@@ -151,6 +151,7 @@ void GitPanel::onWindowAction(GSimpleAction* a, GVariant*, gpointer selfp) {
     else if (name == "gitundocommit") self->undoLastCommit();
     else if (name == "gitstash") self->stash();
     else if (name == "gitstashpop") self->popStash();
+    else if (name == "gitreview") self->reviewChanges();
 }
 
 void GitPanel::updateActions() {

@@ -228,7 +228,7 @@ GitPanel::~GitPanel() {
     unwatch();
     g_object_set_data(G_OBJECT(root_), "minicode-git", nullptr);
     for (GtkWidget* w : {root_, list_, graphList_, message_, commitButton_, syncButton_,
-                         allToggle_, branchLabel_}) {
+                         reviewButton_, allToggle_, branchLabel_}) {
         g_signal_handlers_disconnect_by_data(w, this);
         GListModel* ctrls = gtk_widget_observe_controllers(w);
         for (guint i = 0; i < g_list_model_get_n_items(ctrls); ++i) {
@@ -342,6 +342,18 @@ void GitPanel::build() {
     }), this);
     gtk_widget_set_visible(syncButton_, FALSE);
     gtk_box_append(GTK_BOX(root_), syncButton_);
+
+    // Every uncommitted change in one tab (ChangeReviewPage.h), as the
+    // Mac's panel offers it beside the branch while there are changes.
+    reviewButton_ = gtk_button_new_with_label("Review Changes");
+    gtk_widget_add_css_class(reviewButton_, "flat");
+    gtk_widget_set_tooltip_text(reviewButton_,
+                                "Every uncommitted change in one tab, each with Stage and Discard");
+    g_signal_connect_swapped(reviewButton_, "clicked", G_CALLBACK(+[](GitPanel* self) {
+        self->reviewChanges();
+    }), this);
+    gtk_widget_set_visible(reviewButton_, FALSE);
+    gtk_box_append(GTK_BOX(root_), reviewButton_);
 
     errorLabel_ = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(errorLabel_), 0);
@@ -586,7 +598,18 @@ void GitPanel::layout(int W, int H) {
     // a widget placing its children by hand presents its popovers.
     if (menu_ && gtk_widget_get_visible(menu_)) gtk_popover_present(GTK_POPOVER(menu_));
     int y = 8;
-    y += std::max(18, place(branchLabel_, pad, y, inner, natHeight(branchLabel_, inner))) + 6;
+    int reviewW = 0;
+    if (gtk_widget_get_visible(reviewButton_)) {
+        int minW = 0, natW = 0;
+        gtk_widget_measure(reviewButton_, GTK_ORIENTATION_HORIZONTAL, -1, &minW, &natW, nullptr,
+                           nullptr);
+        reviewW = std::min(natW, inner / 2);
+        const int bh = natHeight(reviewButton_, reviewW);
+        place(reviewButton_, pad + inner - reviewW, y - 2, reviewW, bh);
+        reviewW += 6;
+    }
+    y += std::max(18, place(branchLabel_, pad, y, std::max(0, inner - reviewW),
+                            natHeight(branchLabel_, std::max(0, inner - reviewW)))) + 6;
     if (gtk_widget_get_visible(messageFrame_)) {
         place(messageFrame_, pad, y, inner, 60);
         y += 66;
@@ -655,7 +678,7 @@ void GitPanel::setActive(bool active) {
 }
 
 void GitPanel::refresh() {
-    if (!active_ || refreshTimer_) return;
+    if ((!active_ && !reviewOpen_) || refreshTimer_) return;
     // A short wait gathers a burst of requests (file monitors, focus, an
     // action) into one status.
     refreshTimer_ = g_timeout_add(50, [](gpointer p) -> gboolean {
@@ -781,6 +804,11 @@ void GitPanel::applySnapshot(const GitUi::Snapshot& s) {
     gtk_widget_set_tooltip_text(summaryLabel_, graphSummary_.empty() ? nullptr
                                                                      : graphSummary_.c_str());
     updateSyncButton();
+    {
+        bool any = false;
+        for (const GitUi::Row& r : rows_) any = any || !r.header;
+        gtk_widget_set_visible(reviewButton_, s.inRepository && any);
+    }
     if (!graph && graph_) {
         graph_.reset();
         reloadGraph();
@@ -818,6 +846,33 @@ void GitPanel::applySnapshot(const GitUi::Snapshot& s) {
     // The editor's change bars look again (GitGutter.h), as the Mac's
     // MCGitPanelDidRefreshNotification has them.
     if (onRefreshed) onRefreshed();
+    if (onReviewRefresh) onReviewRefresh();
+}
+
+// ----------------------------------------------------------- the review
+void GitPanel::reviewChanges() {
+    if (onReview) onReview();
+}
+
+void GitPanel::setReviewOpen(bool open) {
+    if (reviewOpen_ == open) return;
+    reviewOpen_ = open;
+    if (open) refresh();
+}
+
+bool GitPanel::reviewButtonShown() const { return gtk_widget_get_visible(reviewButton_); }
+
+// A discard made in the review page, for Undo Discard (the same 20).
+void GitPanel::rememberDiscard(const std::string& path, const std::string& rel,
+                               const std::string& trashed) {
+    Discard u;
+    u.path = path;
+    u.rel = rel;
+    u.trashed = trashed;
+    u.kept = true;
+    discards_.push_back(u);
+    if (discards_.size() > 20) discards_.erase(discards_.begin());
+    updateActions();
 }
 
 void GitPanel::applyGraph(std::shared_ptr<const GitUi::Graph> g) {

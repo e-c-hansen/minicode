@@ -5421,3 +5421,43 @@ closed. `processes` closes the busy terminal, presses the button and checks
 the panel, the selected row (`selectedPid`) and that the terminal is still
 there. The question's wording is Linux's own ("Close this terminal?"); the Mac
 names the command, which the GTK terminal does not know.
+
+### 83. The review page of uncommitted changes (done, November 2026)
+
+The Mac's change review (A1, `mac/src/ChangeReviewPage.mm`) in a tab:
+`ChangeReviewPage` (`linux/src/ChangeReviewPage.{h,cpp}`, an `EditorPage`
+with the key `review:<folder>`, one a window, shown again when open). Every
+rule is the core's. `ChangeReview` (rows, folding, what a block makes of the
+file) was already tested but not built on Linux; `ChangeReview.cpp` and the
+new `ChangeReviewRead.{h,cpp}` are in both build lists. `ChangeReviewRead`
+holds what the Mac kept in its `ReadReview`, `writeIndex` and `discardText`,
+over a `GitRunner` the caller gives (`review-read:git` runs it against a real
+git): one status, ls-files, ls-tree and cat-file --batch, then the work
+tree's files; `stageText` (hash-object and update-index after checking the
+entry is still the object read) and `discardText` (checks the file and the
+entry, has the caller put a copy in the Trash, writes atomically). The Mac's
+file still has its own copy; moving it onto the core is a Mac change left
+for someone who can run the Mac's suite.
+
+The page is a read-only `GtkTextView`: a row a line, a tint a paragraph
+background (red, green, grey for headers, folded stretches), the changed words
+and the syntax colors tags over them (`syntaxColor` from the settings), and
+each row's buttons a `GtkBox` in a child anchor at its end. A click on a
+folded row opens it (`Opened`, laid out again with no git). Reading and each
+action run on the Source Control panel's git thread (`GitPanel::runOnGitThread`),
+so they stay in order with the panel's commands; Discard asks through the
+panel's question (`askQuestion`), copies to the Trash with `GitTrash::trashCopy`
+and tells the panel (`rememberDiscard`), so the panel's Undo Discard and the
+page's button are one list. The panel reads while the page is open
+(`setReviewOpen`: `refresh()` no longer needs the panel showing, and main.cpp's
+three `gitShown` tests are the panel's own now) and calls
+`onReviewRefresh` after each status, which is how a change made elsewhere
+reaches the page; a read whose fingerprint and text are the last one's
+changes nothing on screen, so the eye and a selection stay. Not done:
+F7 and Shift+F7, the right click on selected lines, a conflict's Keep
+buttons (a conflicted file shows its blocks and has Open), the commit and
+worktree pages, and a click on a file in the panel still shows its diff.
+Wording is the Mac's (`ChangeReview::plan`'s questions and done texts, the
+buttons' titles). `git_review` (after `git_verbs` in suites.txt) presses
+the panel's button, a block's Stage, Discard with Cancel and with the answer,
+Undo Discard, Stage File, and a change made with the panel hidden.
