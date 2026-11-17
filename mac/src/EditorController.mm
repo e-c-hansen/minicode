@@ -21,6 +21,12 @@
 #import "EditorController+TreeDetailsIvars.h"
 #import "IdeLinkServer.h"
 
+// Every window's tabs (Model::Window), one of each per editor window.
+static Model::Session &MCTabWindows() {
+    static Model::Session session;
+    return session;
+}
+
 @implementation EditorController
 
 - (instancetype)initWithRootPath:(NSString *)path {
@@ -30,7 +36,9 @@
         [_root loadChildren];
         _terminalHeight = 220;
         _browserFraction = 0.5;
-        _tabs = [NSMutableArray array];
+        _winId = MCTabWindows().addWindow();
+        _win = MCTabWindows().window(_winId);
+        _docs = [NSMutableDictionary dictionary];
         _noTabUndo = [NSUndoManager new];
         [self setUpTreeDetails];
         _agents = [[MCAgentWindow alloc] initWithHost:self];
@@ -45,6 +53,8 @@
     [self stopMedia];
     [self stopWatching];
     [self.window removeObserver:self forKeyPath:@"title"];
+    MCTabWindows().removeWindow(_winId);
+    _win = nullptr;
 }
 
 - (TerminalView *)terminal { return self.terminalPanel.activeTerminal; }
@@ -95,8 +105,8 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self noteWindowClosing];   // before the terminals go: the windows to bring back
     [_agent close];
     // Asked already (windowShouldClose:): what is still unsaved was let go.
-    for (MCTab *t in _tabs) [self discardBackupOf:t];
-    for (MCTab *t in _tabs) [t.latex stopPreview];   // no typeset or output folder outlives it
+    for (MCTab *t in [self tabs]) [self discardBackupOf:t];
+    for (MCTab *t in [self tabs]) [t.latex stopPreview];   // no typeset or output folder outlives it
     _closing = YES;
     // The shells go with the window (hung up and reaped), and the dock with
     // them, so nothing of the window outlives it.

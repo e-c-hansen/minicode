@@ -53,7 +53,7 @@ NSString *NSOf(const std::string &s) { return [NSString stringWithUTF8String:s.c
         return [self editorTakesEdits] && [[self keymapLanguage] isEqualToString:@"python"];
     if (a == @selector(saveFileAs:)) return [self tabHasTextToWrite:_activeTab];
     if (a == @selector(saveAllFiles:)) {
-        for (MCTab *t in _tabs)
+        for (MCTab *t in [self tabs])
             if (t.dirty) return YES;
         return NO;
     }
@@ -264,7 +264,7 @@ NSString *NSOf(const std::string &s) { return [NSString stringWithUTF8String:s.c
         return NO;
     }
     if (![self showFile:path]) return NO;
-    if (_activeTab != old && [_tabs containsObject:old]) {
+    if (_activeTab != old && [self holdsTab:old]) {
         old.dirty = NO;   // what it held is in the new file
         [self closeTab:old prompt:NO];
     }
@@ -275,7 +275,7 @@ NSString *NSOf(const std::string &s) { return [NSString stringWithUTF8String:s.c
 // Every tab with unsaved changes, by Save's rules (the disk is checked for
 // each first); format.on-save stays with Cmd+S, as for Save All on closing.
 - (void)saveAllFiles:(id)sender {
-    for (MCTab *t in [_tabs copy])
+    for (MCTab *t in [self tabs])
         if (t.dirty && ![self saveTab:t]) break;
 }
 

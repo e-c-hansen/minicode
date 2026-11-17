@@ -7,20 +7,12 @@
 #import "EditorMirror.h"
 
 @interface EditorController () {
-    // Two editor groups side by side (Split Editor). The editor is always in
-    // the focused one (0 is the left); the other shows its tab in _mirror.
-    // While split, _shownTabs and _parkedTabs are the two groups' tabs in
-    // strip order and _tabs every document of either; unsplit both are nil
-    // and _tabs is the one group.
-    BOOL _split;
-    NSInteger _focusedGroup;
-    NSMutableArray<MCTab *> *_shownTabs;
-    NSMutableArray<MCTab *> *_parkedTabs;
-    MCTab *_parkedActive;                  // the tab the other group shows
+    // Two editor groups side by side (Split Editor), whose tabs are the
+    // window's Model::Window (_win). The editor is always in the focused
+    // group; the other shows its tab in _mirror, under _parkedStrip.
     MCTabStrip *_parkedStrip;              // the other group's strip
     MCEditorMirror *_mirror;
     DragBar *_groupDivider;
-    CGFloat _groupFraction;                // the left group's share of the width
     NSRect _groupSlot;                     // both groups, as last laid out
     NSRect _liveSlot;                      // the focused group's, below its strip
     // What the mirror shows: the tab, and the text that tab had when the

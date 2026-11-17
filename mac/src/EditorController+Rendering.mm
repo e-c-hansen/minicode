@@ -54,7 +54,7 @@ static void *kMediaItemContext = &kMediaItemContext;
     // Diffs and commits share one tab, which each new one replaces, so
     // stepping through the changed files does not leave a tab for each.
     MCTab *tab = nil;
-    for (MCTab *t in _tabs) if (t.isDiff && !t.comparison && !t.page) { tab = t; break; }
+    for (MCTab *t in [self tabs]) if (t.isDiff && !t.comparison && !t.page) { tab = t; break; }
     if (!tab) {
         tab = [MCTab new];
         tab.loaded = YES;
@@ -786,7 +786,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     if ([text rangeOfString:@"\\documentclass"].location != NSNotFound ||
         [text rangeOfString:@"\\begin{document}"].location != NSNotFound)
         return nil;
-    for (MCTab *t in _tabs)
+    for (MCTab *t in [self tabs])
         if (t != _activeTab && t.latex && t.currentPath && [t.latex typesetReadFile:path])
             return t.currentPath;
     return nil;

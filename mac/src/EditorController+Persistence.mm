@@ -36,7 +36,7 @@ static BOOL MCSessionsEnabled(void) {
 // The files this window would reopen, in tab order.
 - (NSArray<NSString *> *)sessionFilePaths {
     NSMutableArray<NSString *> *files = [NSMutableArray array];
-    for (MCTab *t in _tabs)
+    for (MCTab *t in [self tabs])
         if (t.currentPath && !t.agentPreview) [files addObject:t.currentPath];
     return files;
 }
@@ -46,7 +46,7 @@ static BOOL MCSessionsEnabled(void) {
     // The file on show, or with a diff on show the file shown last.
     // An agent's preview tab is left out, so it is never the one on show.
     MCTab *shown = _activeTab.currentPath && !_activeTab.agentPreview ? _activeTab : nil;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (!t.currentPath || t.agentPreview) continue;
         if (!shown) shown = t;
         else if (shown != _activeTab && t.lastActive > shown.lastActive) shown = t;
@@ -55,7 +55,7 @@ static BOOL MCSessionsEnabled(void) {
     NSMutableArray<NSString *> *besides = [NSMutableArray array];   // with the page to the side
     NSInteger active = 0;
     NSString *preview = nil;   // the user's preview tab comes back as one
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         // A diff is not reopened, nor an agent's preview tab (its note is gone).
         if (!t.currentPath || t.agentPreview) continue;
         if (t == shown) active = (NSInteger)files.count;
@@ -222,7 +222,7 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g);
             continue;   // nothing to show: the backup does not read and the file is gone
         // The preview tab comes back as one, unless unsaved changes came
         // back into it from a backup (an edit keeps a tab).
-        t.preview = !previewFile.empty() && f == previewFile && !t.dirty;
+        const bool preview = !previewFile.empty() && f == previewFile && !t.dirty;
         // Its page or source, selection and scroll, put back when it is
         // first read (applySessionPlaceOf:).
         auto p = places.find(f);
@@ -237,10 +237,11 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g);
             t.topCharacter = (NSUInteger)at.top;
             t.topOffset = (CGFloat)at.into;
         }
-        [_tabs addObject:t];
+        [self groupAppendTab:t preview:preview ? Model::Preview::User : Model::Preview::None];
     }
-    if (_tabs.count == 0) return;
-    if (r.active >= (int)_tabs.count) r.active = (int)_tabs.count - 1;
+    NSArray<MCTab *> *tabs = [self tabs];
+    if (tabs.count == 0) return;
+    if (r.active >= (int)tabs.count) r.active = (int)tabs.count - 1;
     // The tab on show is read now, while the window opens. One holding a
     // file too big for that (it held up every launch) or no plain file at
     // all waits for a click instead, and the nearest other tab is shown.
@@ -250,16 +251,16 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g);
                a.fileSize <= kMaxRestoredFileBytes;
     };
     NSInteger active = -1;
-    for (NSInteger d = 0; active < 0 && d < (NSInteger)_tabs.count; d++)
+    for (NSInteger d = 0; active < 0 && d < (NSInteger)tabs.count; d++)
         for (NSInteger i : {(NSInteger)r.active - d, (NSInteger)r.active + d})
-            if (active < 0 && i >= 0 && i < (NSInteger)_tabs.count && quick(_tabs[(NSUInteger)i].currentPath))
+            if (active < 0 && i >= 0 && i < (NSInteger)tabs.count && quick(tabs[(NSUInteger)i].currentPath))
                 active = i;
     if (active < 0) {
         [self reloadTabStrip];
         [self updateTitle];
         return;
     }
-    [self activateTab:_tabs[(NSUInteger)active]];
+    [self activateTab:tabs[(NSUInteger)active]];
     if (groups) [self restoreEditorGroups:groups];
 }
 
@@ -384,12 +385,12 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
     // Its tabs, as saveSession lists them, each with where it was.
     TabSessions::Session &s = w.tabs;
     MCTab *shown = _activeTab.currentPath && !_activeTab.agentPreview ? _activeTab : nil;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (!t.currentPath || t.agentPreview) continue;
         if (!shown) shown = t;
         else if (shown != _activeTab && t.lastActive > shown.lastActive) shown = t;
     }
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (!t.currentPath || t.agentPreview) continue;
         TabSessions::Tab tab;
         tab.path = Utf8String(t.currentPath);
@@ -582,7 +583,7 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
 - (void)scheduleBackups {
     if (_closing || ![MCBackupStore shared]) return;
     BOOL pending = NO;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (t.dirty && [self tabTakesBackup:t]) pending = pending || [self tabNeedsBackup:t];
         else if (t.hasBackup) [self discardBackupOf:t];
     }
@@ -610,7 +611,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
     _backupFirstPending = nil;
     MCBackupStore *store = [MCBackupStore shared];
     if (_closing || !store) return;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (![self tabNeedsBackup:t]) continue;
         if (!t.backupID) t.backupID = [store newID];
         [store writeID:t.backupID path:t.currentPath root:[self sessionKey]
@@ -638,7 +639,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
     [self saveBeforeLeavingFormatSave];
     if (self.textView.editable && _activeTab && !_activeTab.showingMessage)
         self.sourceText = self.textView.string;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (!t.dirty || ![self tabTakesBackup:t]) continue;
         if (!t.backupID) t.backupID = [store newID];
         if (![store writeNowID:t.backupID path:t.currentPath root:[self sessionKey]
@@ -665,7 +666,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(writeBackups)
                                                object:nil];
     if (!restarting)
-        for (MCTab *t in _tabs) [self discardBackupOf:t];
+        for (MCTab *t in [self tabs]) [self discardBackupOf:t];
     [store flush];
 }
 
@@ -760,7 +761,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
                                                object:nil];
     if (_closing || [self autoSaveMode] != Settings::AutoSave::AfterDelay) return;
     BOOL any = NO;
-    for (MCTab *t in _tabs) any = any || [self tabTakesAutoSave:t];
+    for (MCTab *t in [self tabs]) any = any || [self tabTakesAutoSave:t];
     if (!any) return;
     const int ms = [AppSettings shared].settings.autoSaveDelay();
     [self performSelector:@selector(autoSaveAfterDelay) withObject:nil afterDelay:ms / 1000.0];
@@ -784,7 +785,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
     if (_activeTab && self.textView.editable && !_activeTab.showingMessage)
         self.sourceText = self.textView.string;
     NSMutableArray<NSString *> *changed = [NSMutableArray array];
-    for (MCTab *t in [_tabs copy]) {
+    for (MCTab *t in [self tabs]) {
         if (![self tabTakesAutoSave:t]) continue;
         // Text an input method is still composing is not written; the edit
         // that ends the composition schedules the next auto-save.
@@ -857,7 +858,7 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
             EditorController *s = weakSelf;
             if (!s || s->_closing || t.diskReadGeneration != generation ||
                 ![t.currentPath isEqualToString:path] || t.dirty || !t.loaded ||
-                ![t.savedText ?: @"" isEqualToString:saved] || ![s->_tabs containsObject:t])
+                ![t.savedText ?: @"" isEqualToString:saved] || ![s holdsTab:t])
                 return;
             if (d.tooLarge) {
                 if (!t.tooLargeToFollow)
@@ -1085,7 +1086,7 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
 // until it is saved (Cmd+S asks, an auto-save skips it), shown again, or
 // the window comes forward.
 - (void)checkTabsOnDisk {
-    for (MCTab *t in [_tabs copy]) {
+    for (MCTab *t in [self tabs]) {
         if (!t.currentPath || !t.fileModDate) continue;
         MCDiskStamp *disk = MCStampOfFile(t.currentPath);
         if (!disk) {

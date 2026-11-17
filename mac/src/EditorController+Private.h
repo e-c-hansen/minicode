@@ -190,8 +190,14 @@ static const NSInteger kBookmarkFileMenuTag = 7703;
 // The `structure:ivars` core test holds this block to that rule.
 @interface EditorController () <NSTextStorageDelegate> {
     FileItem *_root;
-    // The open files, in the order the strip shows them, and the one shown.
-    NSMutableArray<MCTab *> *_tabs;
+    // The open files: the window's tabs are the core's Model::Window (its
+    // groups, their order, the tab each shows, the preview tabs, the closed
+    // tabs), one of the app's Model::Session, which names each document by
+    // its MCTab's docId; _docs is those MCTabs by id, every document of
+    // either group. _activeTab is the tab the editor shows: the focused
+    // group's tab on show, except while a tab is closing or being shown.
+    Model::Window *_win;
+    NSMutableDictionary<NSNumber *, MCTab *> *_docs;
     MCTab *_activeTab;
     // The viewers of FileViewers.h, made on first use (-viewers).
     MCFileViewers *_viewers;
@@ -568,7 +574,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)buildTabStrip;
 // A strip's clicks, closes and menus, for either group's strip.
 - (void)wireTabStrip:(MCTabStrip *)strip;
-- (NSArray<MCTabStripItem *> *)stripItemsForTabs:(NSArray<MCTab *> *)tabs;
+- (NSArray<MCTabStripItem *> *)stripItemsForGroup:(int)group;
 - (void)applyTabSettings;
 - (NSRect)layoutTabStripIn:(NSRect)slot editorShown:(BOOL)shown;
 - (void)reloadTabStrip;
@@ -578,7 +584,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)stashActiveTab;
 - (void)showActiveTab;
 - (void)restoreTextPlaceOf:(MCTab *)t;
-- (void)rememberClosedTab:(MCTab *)t index:(NSUInteger)index;
+- (EditorTabs::ClosedTab)closedPlaceOf:(MCTab *)t;
 - (BOOL)canReopenClosedTab;
 - (void)showEmptyState;
 - (void)selectTabAtIndex:(NSInteger)i;
@@ -611,19 +617,34 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (BOOL)openFileForLanguageServer:(NSString *)p from:(EditorTabs::OpenFrom)from;
 @end
 
-// EditorController+Groups.mm: two editor groups side by side (Split Editor).
-@interface EditorController (Groups)
+// EditorController+Groups.mm: two editor groups side by side (Split Editor),
+// and the window's tabs (Model::Window), which each MCTab asks about itself.
+@interface EditorController (Groups) <MCTabOwner>
 - (BOOL)editorSplit;
+- (BOOL)isSplit;   // the same, for key-value coding ("split")
 - (NSInteger)focusedGroup;
-// The focused group's tabs in strip order: _tabs itself unless split.
-- (NSMutableArray<MCTab *> *)groupTabs;
+// Every document of either group once (Model::Window::documents): the
+// focused group's in tab order, then the other's. Backups, auto-save,
+// sessions, the disk checks and the servers' open files go by it.
+- (NSArray<MCTab *> *)tabs;
+- (BOOL)holdsTab:(MCTab *)t;
+// The focused group's tabs in strip order, and the other group's (empty
+// unless split) with the tab it shows.
+- (NSArray<MCTab *> *)groupTabs;
+- (NSArray<MCTab *> *)parkedTabs;
+- (MCTab *)parkedActive;
 - (BOOL)otherGroupHoldsTab:(MCTab *)t;
-// Into and out of the focused group (and _tabs, which every document of
-// either group is in).
+// A new tab (one the window does not have yet) into the focused group, at
+// `i`, or at the end (a session coming back); `kind` its preview state.
 - (void)groupInsertTab:(MCTab *)t atIndex:(NSUInteger)i;
+- (void)groupInsertTab:(MCTab *)t atIndex:(NSUInteger)i preview:(Model::Preview)kind;
+- (void)groupAppendTab:(MCTab *)t preview:(Model::Preview)kind;
+// Out of the focused group (a tab not on show there).
 - (void)groupRemoveTab:(MCTab *)t;
-- (void)ensureTabInFocusedGroup:(MCTab *)t;
 - (void)removeTabFromOtherGroup:(MCTab *)t;
+- (MCTab *)tabWithId:(Model::DocId)i;
+// The MCTabs neither group holds any more are let go (after a close).
+- (void)forgetClosedTabs;
 - (NSRect)layoutEditorGroupsIn:(NSRect)slot editorShown:(BOOL)shown;
 - (NSView *)groupDivider;
 - (void)applyGroupSettings;
@@ -633,9 +654,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)focusEditorGroup:(NSInteger)g;
 - (void)syncEditorMirror;
 - (void)editorWillShowTab:(MCTab *)tab;
-- (void)joinEditorGroups;
+- (void)editorGroupsJoined;
 - (void)joinEditorGroupsQuietly;
-- (void)closeEmptyEditorGroup;
+- (void)editorGroupClosed;
 - (BOOL)validateGroupItem:(NSMenuItem *)item enabled:(BOOL *)enabled;
 - (NSDictionary *)editorGroupsSessionState;
 - (void)restoreEditorGroups:(NSDictionary *)state;

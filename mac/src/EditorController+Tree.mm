@@ -224,7 +224,7 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
         return nil;
     };
     BOOL any = NO, activeMoved = NO;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         NSString *moved = t.currentPath ? follow(t.currentPath) : nil;
         if (!moved) continue;
         t.currentPath = moved;
@@ -852,7 +852,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     // Tabs of what went away close, a folder's too, unless they hold unsaved
     // changes: those stay open, and saving writes the file again.
     NSString *prefix = [path stringByAppendingString:@"/"];
-    for (MCTab *t in [_tabs copy]) {
+    for (MCTab *t in [self tabs]) {
         if (t.dirty || !t.currentPath) continue;
         if ([t.currentPath isEqualToString:path] || [t.currentPath hasPrefix:prefix])
             [self closeTabEverywhere:t prompt:NO];   // in both editor groups
