@@ -28,8 +28,19 @@ TabSessions::Store MCSessionsRead(void);
 // A folder's session, written now (TabSessions::put: removed when it holds
 // no tab and no browser tab; the 50 folders used last are kept).
 void MCSessionsPutFolder(const std::string &key, const TabSessions::Session &s);
-// The windows a launch brings back, front first.
+// This process's windows, front first, as the ones a launch brings back.
+// Written over this process's own and the last run's; the windows another
+// minicode running now (or quit since this one started) wrote stay
+// (TabSessions::mergeWindows), so two at once never write each other's
+// windows away.
 void MCSessionsPutWindows(const std::vector<TabSessions::Window> &windows);
+// The windows a launch with nothing to open brings back: the stored ones
+// but those another running minicode holds open (TabSessions::toRestore).
+std::vector<TabSessions::Window> MCSessionsWindowsToRestore(void);
+// This process as the windows record names it, and whether a process it
+// names runs now (pid and start time, as the backups' owners).
+TabSessions::Process MCSessionsThisProcess(void);
+bool MCSessionsIsRunning(long pid, double start, void *context);
 // Waits until every change handed over is in the file (quitting).
 void MCSessionsFlush(void);
 

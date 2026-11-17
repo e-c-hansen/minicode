@@ -824,7 +824,18 @@ container (PanelHost, laid out by hand in layoutContainer)
   and the tree's expanded folders, selected row and scroll. Written by
   `applicationWillTerminate`, by `windowWillClose:` (`noteWindowClosing`,
   `TabSessions::afterClosing`: the last window is kept, since closing it
-  quits) and 3 s after a tab switch (saveSession), never empty. A restored
+  quits) and 3 s after a tab switch (saveSession), never empty. **Several
+  minicodes at once** (2026-11-17, `TabSessions::mergeWindows`,
+  `toRestore`, `tab-sessions:windows-of-several`): each window carries its
+  writer's pid, start time and save time, and a process writes its own
+  windows over its own and the last run's only, keeping those of one still
+  running or one that wrote since it started (it quit meanwhile); a launch
+  skips windows a running minicode holds open. Before, each wrote its list
+  over the whole record, so a build beside the Homebrew copy, `minicode
+  -n`, or the GUI harness's parent beside its child apps wrote each
+  other's windows away (main's CI 44044357638: the parent's 3 s save
+  landed between window_restore's children; the suite now writes the
+  parent's windows at every point between them). A restored
   window takes its tabs from the record, not the folder's session
   (two windows on one folder each get theirs); showWindow puts back the
   frame first (`placeRestoredWindow`), then the sidebar, terminals and
