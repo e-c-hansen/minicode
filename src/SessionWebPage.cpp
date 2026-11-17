@@ -3,7 +3,9 @@
 // only what the server describes (tabs, lines with the highlighter's spans,
 // a Markdown page, terminal rows of styled runs) and sends only which
 // document and terminal it shows. A Markdown page goes into a sandboxed
-// frame with no scripts. "{{NONCE}}" is the response's script nonce.
+// frame with no scripts. "{{NONCE}}" is the response's script nonce. Every
+// color and the font sizes come from the host's settings (paletteJson), and a
+// "palette" message recolors the page as it is.
 #include "SessionWeb.h"
 
 namespace Shared {
@@ -17,14 +19,18 @@ const std::string& pageHtml() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>minicode</title>
+<style id="theme"></style>
 <style>
 :root { --bg: #1f1f1f; --fg: #cccccc; --tbg: #181818; --tfg: #cccccc; --muted: #9d9d9d;
-        --line: #2b2b2b; --accent: #4ea1f7; --lh: 1.4em; }
+        --line: #2b2b2b; --accent: #4ea1f7; --lh: 1.4em; --hbg: #181818; --hfg: #cccccc;
+        --gutter: #1f1f1f; --ln: #6e7681; --lnact: #cccccc; --efs: 13px; --tfs: 12px;
+        --sfs: 13px; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--fg); display: flex; flex-direction: column;
-       font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, sans-serif; }
+       font: var(--sfs) -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, sans-serif; }
 header { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px;
+         background: var(--hbg); color: var(--hfg);
          border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; }
 #machine { font-weight: 600; }
 #folder { color: var(--muted); overflow: hidden; text-overflow: ellipsis; direction: rtl;
@@ -32,11 +38,11 @@ header { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px;
 #status { color: var(--muted); font-size: 12px; }
 #status.live::before { content: "\25CF "; color: #3fb950; }
 .strip { display: flex; overflow-x: auto; border-bottom: 1px solid var(--line);
-         scrollbar-width: none; flex: none; }
+         scrollbar-width: none; flex: none; background: var(--hbg); }
 .strip button { background: none; border: 0; border-right: 1px solid var(--line);
                 color: var(--muted); font: inherit; padding: 6px 12px; white-space: nowrap;
                 cursor: pointer; }
-.strip button.shown { color: var(--fg); background: var(--tbg);
+.strip button.shown { color: var(--fg); background: var(--bg);
                       box-shadow: inset 0 1px 0 var(--accent); }
 .strip button.onshow::after { content: " \2022"; color: var(--accent); }
 .strip button.dirty::before { content: "\25CF "; font-size: 9px; vertical-align: middle; }
@@ -50,13 +56,19 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #docpath { color: var(--muted); font-size: 12px; padding: 3px 10px; white-space: nowrap;
            overflow: hidden; text-overflow: ellipsis; flex: none; }
 #code, #term { flex: 1; overflow: auto; min-height: 0;
-               font: 12px/var(--lh) ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace; }
+               font: var(--efs)/var(--lh) ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace; }
+#term { font-size: var(--tfs); }
+#termsec .strip { background: var(--tbg); }
+#termsec .strip button.shown { background: var(--tbg); color: var(--tfg); }
 #code { counter-reset: line; padding-bottom: 2em; }
 #code .l { white-space: pre; min-height: var(--lh); padding-right: 1em; }
 #code .l::before { counter-increment: line; content: counter(line); display: inline-block;
-                   width: 4.5em; padding-right: 1.2em; text-align: right; color: var(--muted);
-                   opacity: .6; user-select: none; }
-#md { flex: 1; border: 0; width: 100%; background: #fff; min-height: 0; }
+                   width: 4.5em; padding-right: 1.2em; text-align: right; color: var(--ln);
+                   background: var(--gutter); user-select: none; }
+#code.wrap .l { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 4.5em;
+                text-indent: -4.5em; }
+#code.wrap .l::before { text-indent: 0; }
+#md { flex: 1; border: 0; width: 100%; background: var(--bg); min-height: 0; }
 #note { padding: 2em 1em; color: var(--muted); }
 #termnote { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px;
             border-top: 1px solid #333333; }
@@ -69,7 +81,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #banner { padding: 6px 10px; background: #5a1d1d; color: #fff; }
 @media (max-width: 700px) {
   body { font-size: 14px; }
-  #code, #term { font-size: 11px; }
+  #code, #term { font-size: calc(var(--efs) - 1px); }
   #code .l { white-space: pre-wrap; word-break: break-all; padding-left: 3.4em;
              text-indent: -3.4em; }
   #code .l::before { width: 3.4em; padding-right: .6em; text-indent: 0; }
@@ -109,16 +121,56 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   function inFolder(p) { return folder && p.startsWith(folder + "/") ? p.slice(folder.length + 1) : p; }
   function color(n) { return "#" + (n >>> 0).toString(16).padStart(6, "0"); }
 
+  // The host's colors and sizes (paletteJson): CSS variables for the page,
+  // a rule per syntax style, and the Markdown frame's colors.
   function applyPalette(p) {
     palette = p;
     const root = document.documentElement.style;
-    root.setProperty("--bg", p.background); root.setProperty("--fg", p.text);
-    root.setProperty("--tbg", p.terminalBackground); root.setProperty("--tfg", p.terminalText);
+    const set = (k, v) => { if (v !== undefined && v !== null && v !== "") root.setProperty(k, v); };
+    const sf = p.surfaces || {};
+    const title = sf.titlebar || {};
+    set("--bg", p.background); set("--fg", p.text);
+    set("--tbg", p.terminalBackground); set("--tfg", p.terminalText);
+    set("--hbg", title.background); set("--hfg", title.text);
+    set("--gutter", p.gutter); set("--ln", p.lineNumber); set("--lnact", p.lineNumberActive);
+    set("--muted", p.dark ? "#9d9d9d" : "#616161");
+    set("--line", p.dark ? "#2b2b2b" : "#e5e5e5");
+    if (p.editorFontSize) set("--efs", p.editorFontSize + "px");
+    if (p.terminalFontSize) set("--tfs", p.terminalFontSize + "px");
+    if (p.tabsFontSize) set("--sfs", p.tabsFontSize + "px");
+    root.colorScheme = p.dark ? "dark" : "light";
     let css = "";
-    p.syntax.forEach((c, i) => { if (i) css += "#code .s" + i + "{color:" + c + "}"; });
-    const style = document.createElement("style");
-    style.textContent = css;
-    document.head.appendChild(style);
+    (p.syntax || []).forEach((c, i) => { if (i) css += "#code .s" + i + "{color:" + c + "}\n"; });
+    // The ruler's columns, past the line numbers' 4.5em.
+    const rulers = (p.rulers || []).map((n) => {
+      const x = "calc(4.5em + " + n + "ch)";
+      return "linear-gradient(to right, transparent " + x + ", " + p.ruler + " " + x + ", " +
+             p.ruler + " calc(" + x + " + 1px), transparent calc(" + x + " + 1px))";
+    });
+    if (rulers.length) css += "#code .l{background-image:" + rulers.join(",") + "}\n";
+    $("theme").textContent = css;
+    $("code").classList.toggle("wrap", !!p.wordWrap);
+    if (mdHtml !== null) setMarkdown(mdHtml);
+  }
+  // A Markdown page in the frame, in the host's colors.
+  let mdHtml = null;
+  function markdownCss(p) {
+    const m = (p && p.markdown) || {};
+    let css = "body{background:" + p.background + ";color:" + p.text + ";color-scheme:" +
+              (p.dark ? "dark" : "light") + "}";
+    if (m.heading) css += "h1,h2,h3,h4,h5,h6{color:" + m.heading + "}";
+    if (m.link) css += "a{color:" + m.link + "}";
+    if (m.code) css += "code{color:" + m.code + "}";
+    if (m.codeBackground) css += "code,pre,th{background:" + m.codeBackground + "}pre code{background:none}";
+    if (m.quote) css += "blockquote{color:" + m.quote + ";border-left-color:" + m.quote + "}";
+    if (m.maxWidth) css += ".markdown-body{max-width:" + m.maxWidth + "px}";
+    return css;
+  }
+  function setMarkdown(html) {
+    mdHtml = html;
+    const style = palette ? "<style>" + markdownCss(palette) + "</style>" : "";
+    const at = html.lastIndexOf("</head>");
+    $("md").srcdoc = at < 0 ? style + html : html.slice(0, at) + style + html.slice(at);
   }
 
   // Says what this page shows, when that changed since it last said.
@@ -203,7 +255,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
   // ---- documents
   function showNote(text) {
-    $("code").classList.add("hidden"); $("md").classList.add("hidden");
+    $("code").classList.add("hidden"); $("md").classList.add("hidden"); mdHtml = null;
     const n = $("note"); n.textContent = text; n.classList.remove("hidden");
     $("docpath").textContent = "";
     docKind = "";
@@ -231,7 +283,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
     $("note").classList.add("hidden");
     const code = $("code"), md = $("md");
     if (m.kind === "code") {
-      md.classList.add("hidden"); md.removeAttribute("srcdoc");
+      md.classList.add("hidden"); md.removeAttribute("srcdoc"); mdHtml = null;
       const top = code.scrollTop;
       const f = document.createDocumentFragment();
       for (const l of m.lines) f.appendChild(lineEl(l));
@@ -242,7 +294,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
       code.dataset.version = m.version;
     } else if (m.kind === "markdown") {
       code.classList.add("hidden"); code.textContent = "";
-      md.srcdoc = m.html;
+      setMarkdown(m.html);
       md.classList.remove("hidden");
     } else {
       showNote(m.note);
@@ -344,8 +396,9 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
           // that cuts from the left.
           $("folder").textContent = "\u200e" + m.folder + "\u200e";
           document.title = (m.machine ? m.machine + ": " : "") + base(m.folder) + " (minicode)";
-          if (!palette) applyPalette(m.palette);
+          applyPalette(m.palette);
           break;
+        case "palette": applyPalette(m.palette); break;
         case "state": onState(m); break;
         case "doc": onDoc(m); break;
         case "lines": onLines(m); break;
@@ -363,7 +416,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
       setTimeout(connect, 2000);
     };
   }
-  window.mcSessionView = { want: want, state: () => state };
+  window.mcSessionView = { want: want, state: () => state, palette: () => palette };
   connect();
 })();
 </script>

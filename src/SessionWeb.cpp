@@ -391,14 +391,51 @@ Json termLineJson(const std::vector<TermCell>& cells) {
 
 Json paletteJson(const Settings& s) {
     Json p = Json::object();
+    p.set("theme", Json(std::string(s.theme().id)));
+    p.set("dark", Json(s.isDark()));
     Json syntax = Json::array();
     for (int i = 0; i < kTokenStyleCount; i++) syntax.push(Json(hexColor(s.syntax((TokenStyle)i))));
     p.set("syntax", std::move(syntax));
+    // Each surface's background and text, by its settings name.
+    Json surfaces = Json::object();
+    for (int i = 0; i < kSurfaceCount; i++) {
+        const Surface f = (Surface)i;
+        Json o = Json::object();
+        o.set("background", Json(hexColor(s.background(f))));
+        o.set("text", Json(hexColor(s.text(f))));
+        surfaces.set(Settings::surfaceName(f), std::move(o));
+    }
+    p.set("surfaces", std::move(surfaces));
     p.set("background", Json(hexColor(s.background(Surface::Editor))));
     p.set("text", Json(hexColor(s.text(Surface::Editor))));
     p.set("terminalBackground", Json(hexColor(s.background(Surface::Terminal))));
     p.set("terminalText", Json(hexColor(s.text(Surface::Terminal))));
-    p.set("dark", Json(s.isDark()));
+    p.set("terminalInput", Json(hexColor(s.terminalInputText())));
+    p.set("gutter", Json(hexColor(s.gutterBackground())));
+    p.set("lineNumber", Json(hexColor(s.lineNumberColor())));
+    p.set("lineNumberActive", Json(hexColor(s.lineNumberActiveColor())));
+    p.set("bracketMatch", Json(hexColor(s.bracketMatchColor())));
+    p.set("ruler", Json(hexColor(s.rulerColor())));
+    Json rulers = Json::array();
+    for (int c : s.rulers()) rulers.push(Json(c));
+    p.set("rulers", std::move(rulers));
+    Json brackets = Json::array();
+    for (int i = 0; i < 4; i++) brackets.push(Json(hexColor(s.bracketColor(i))));
+    p.set("brackets", std::move(brackets));
+    static const char* const kMarkdownNames[kMarkdownColorCount] = {"heading", "link", "code",
+                                                                    "quote", "done"};
+    Json md = Json::object();
+    for (int i = 0; i < kMarkdownColorCount; i++)
+        md.set(kMarkdownNames[i], Json(hexColor(s.markdown((MarkdownColor)i))));
+    md.set("codeBackground", Json(hexColor(s.markdownCodeBackground())));
+    md.set("maxWidth", Json(s.markdownMaxWidth()));
+    p.set("markdown", std::move(md));
+    // Points on the host are CSS pixels in the page (a point is a pixel at
+    // 1x on the Mac).
+    p.set("editorFontSize", Json(s.editorFontSize()));
+    p.set("terminalFontSize", Json(s.terminalFontSize()));
+    if (s.tabsFontSizeSet()) p.set("tabsFontSize", Json(s.tabsFontSize()));
+    p.set("wordWrap", Json(s.wordWrap()));
     return p;
 }
 
@@ -726,26 +763,60 @@ bool Server::start(const Options& o, std::string* error) {
     port_ = ntohs(addr.sin_port);
     setNonBlocking(listen_);
     // The host machine's theme when its settings file says one.
-    Settings settings = Settings::parse("");
-    std::string path;
-    if (const char* s = std::getenv("MINICODE_SETTINGS")) path = s;
-    else if (const char* home = std::getenv("HOME")) path = std::string(home) + "/.config/minicode/settings.conf";
-    if (!path.empty()) {
-        std::ifstream f(path);
+    settingsPath_ = o.settingsPath;
+    if (settingsPath_.empty()) {
+        if (const char* s = std::getenv("MINICODE_SETTINGS")) settingsPath_ = s;
+        else if (const char* home = std::getenv("HOME"))
+            settingsPath_ = std::string(home) + "/.config/minicode/settings.conf";
+    }
+    lookAtSettings(true);
+    return true;
+}
+
+bool Server::lookAtSettings(bool force) {
+    lastSettingsLook_ = Clock::now();
+    // What the file is now: its stamp, so an unchanged file is not read.
+    std::string stamp = "none";
+    struct stat st;
+    if (!settingsPath_.empty() && ::stat(settingsPath_.c_str(), &st) == 0) {
+#ifdef __APPLE__
+        const long long ns = (long long)st.st_mtimespec.tv_sec * 1000000000LL + st.st_mtimespec.tv_nsec;
+#else
+        const long long ns = (long long)st.st_mtim.tv_sec * 1000000000LL + st.st_mtim.tv_nsec;
+#endif
+        stamp = std::to_string(ns) + ":" + std::to_string((long long)st.st_size) + ":" +
+                std::to_string((long long)st.st_ino);
+    }
+    if (!force && stamp == settingsStamp_) return false;
+    settingsStamp_ = stamp;
+    std::string text;
+    if (stamp != "none") {
+        std::ifstream f(settingsPath_);
         if (f) {
             std::stringstream ss;
             ss << f.rdbuf();
-            settings = Settings::parse(ss.str());
+            text = ss.str();
         }
     }
+    Json p = paletteJson(Settings::parse(text));
+    if (p == palette_) return false;
+    palette_ = std::move(p);
+    return true;
+}
+
+std::string Server::helloText() const {
     Json hello = Json::object();
     hello.set("t", Json("hello"));
     hello.set("machine", Json(opt_.machine));
     hello.set("folder", Json(opt_.folder));
-    hello.set("palette", paletteJson(settings));
+    hello.set("palette", palette_);
     hello.set("termNote", Json(opt_.termNote));
-    helloText_ = hello.dump();
-    return true;
+    return hello.dump();
+}
+
+void Server::reloadSettings() {
+    reload_ = true;
+    wake();
 }
 
 std::string Server::url() const {
@@ -844,7 +915,7 @@ void Server::handleHttp(Conn& c) {
         c.closeAfterWrite = true;
         return;
     }
-    sendText(c, helloText_);
+    sendText(c, helloText());
     if (!session_->sentState.empty()) sendText(c, session_->sentState);
     c.welcomed = true;
 }
@@ -1120,6 +1191,16 @@ bool Server::run() {
         char buf[64];
         while (read(wake_[0], buf, sizeof buf) > 0) {}
         if (stop_) return false;
+        if (reload_.exchange(false) || msSince(lastSettingsLook_) >= 1000) {
+            if (lookAtSettings(false)) {
+                Json m = Json::object();
+                m.set("t", Json("palette"));
+                m.set("palette", palette_);
+                const std::string text = m.dump();
+                for (auto& c : conns_)
+                    if (c->welcomed) sendText(*c, text);
+            }
+        }
         if (n > 0) {
             if (polls[1].revents) acceptAll();
             for (std::size_t i = 2; i < polls.size(); i++) {
