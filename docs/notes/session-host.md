@@ -224,7 +224,12 @@ release. With the setting off nothing changes, MCPty included.
   and `TermShell`'s marks are not used.
 - **Input.** `sendBytes` is `terminalInput`: keys, pastes, `typeLine:`,
   the private ZLE keys, and the screen's own replies (DA, DSR, OSC
-  colors), which the host's screen never answers. `updateWindowSize` is
+  colors), which the host's screen never answers. What one run-loop turn
+  sends goes as one write (4 KB or more at once), as MCPty's queue wrote
+  it back to back. **Trap (CI, 2026-11-17):** sent as two messages,
+  terminal_paste's Ctrl+D then Ctrl+C reached the shell apart: the D
+  ended cat, and the C came during zsh's precmd and cut its prompt mark
+  off, so the terminal stayed "running cat". `updateWindowSize` is
   `resizeTerminal` (no pixel size: `TermResize` has none).
 - **The tty.** What read the master reads the host's `TermShell` (the
   host looks after every read, 30 ms later, and every 200 ms):

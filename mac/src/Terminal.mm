@@ -612,6 +612,8 @@ struct MCHostTermListener : Shared::Client::TermListener {
     Shared::TermId _hostTerm;    // the shell's terminal on the host, 0 when none
     Shared::TermShell _hostShell;   // the host's last word on it
     std::unique_ptr<struct MCHostTermListener> _hostListener;
+    std::string _hostInput;      // this run-loop turn's input, sent as one write
+    BOOL _hostInputQueued;
     pid_t _shellPid;             // 0 when no shell
     int _generation;             // bumps per shell, so stale output is ignored
     NSDate *_shellStarted;
@@ -2150,6 +2152,7 @@ static BOOL MCIsOtherShell(pid_t pid) {
     _backlog = nil;
     _backlogStart = 0;
     if (_hostTerm) {
+        [self flushHostInput];
         // The host hangs it up (the master closed, SIGHUP) and reaps it,
         // with SIGKILL 2 s on for a shell that stays (HostPty.h).
         MCSessionClient().closeTerminal(_hostTerm);
@@ -2360,6 +2363,7 @@ static NSString *MCBrowserHelperPath(void) {
         static Shared::TermId lastTerm;   // ids on the host: the main thread's only
         _hostTerm = ++lastTerm;
         _hostShell = Shared::TermShell();
+        _hostInput.clear();
         _shellStarted = [NSDate date];
         ++_generation;
         _backlog = [NSMutableData data];
@@ -2493,11 +2497,30 @@ static NSString *MCBrowserHelperPath(void) {
 // pty takes them, in order (see MCPty).
 - (void)sendBytes:(const char *)bytes length:(size_t)length {
     if (_onHost) {   // written on the host's thread, in order, never blocking
-        if (_hostTerm && length) MCSessionClient().terminalInput(_hostTerm, std::string(bytes, length));
+        if (!_hostTerm || !length) return;
+        // One write per run-loop turn, as MCPty's queue wrote what one turn
+        // sent back to back: Ctrl+D then Ctrl+C sent together must reach the
+        // line discipline together (the C interrupts the program the D
+        // ended), not the C a moment later at the shell's precmd, where it
+        // cut the prompt mark off (CI, terminal_paste). A paste goes at once.
+        _hostInput.append(bytes, length);
+        if (_hostInput.size() >= 4096) {
+            [self flushHostInput];
+        } else if (!_hostInputQueued) {
+            _hostInputQueued = YES;
+            __weak TerminalView *weakSelf = self;
+            dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf flushHostInput]; });
+        }
         return;
     }
     if (!_pty || _master < 0 || length == 0) return;
     [_pty send:[NSData dataWithBytes:bytes length:length]];
+}
+
+- (void)flushHostInput {
+    _hostInputQueued = NO;
+    if (_hostTerm && !_hostInput.empty()) MCSessionClient().terminalInput(_hostTerm, std::move(_hostInput));
+    _hostInput.clear();
 }
 
 - (BOOL)programHasTerminal { return [self foregroundIsOther]; }
