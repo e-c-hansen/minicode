@@ -26,11 +26,6 @@ on:
           does.
         default: ''
         type: string
-  # TEMPORARY: a run of this branch's soak, with 2 rounds, before the file
-  # is on main (workflow_dispatch needs it on the default branch). Removed
-  # before the pull request merges.
-  push:
-    branches: [ci-soak-retry]
 
 # Reading the code, nothing else, except the report job's issue.
 permissions:
@@ -76,7 +71,7 @@ jobs:
 
       - name: Run the rounds
         env:
-          ROUNDS: ${{ inputs.rounds || (github.event_name == 'push' && '2') || '3' }}
+          ROUNDS: ${{ inputs.rounds || '3' }}
           SUITES: ${{ inputs.suites || '' }}
         run: scripts/soak.sh mac "$RUNNER_TEMP/soak" "$ROUNDS" "$SUITES"
 
@@ -136,7 +131,7 @@ jobs:
 
       - name: Run the rounds
         env:
-          ROUNDS: ${{ inputs.rounds || (github.event_name == 'push' && '2') || '3' }}
+          ROUNDS: ${{ inputs.rounds || '3' }}
           SUITES: ${{ inputs.suites || '' }}
         run: scripts/soak.sh linux "$RUNNER_TEMP/soak" "$ROUNDS" "$SUITES"
 

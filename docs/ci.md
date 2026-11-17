@@ -231,6 +231,15 @@ line), with no fix yet, are listed here with the run that showed them,
 and removed when fixed. The soak's issue lists what the nightly rounds
 find.
 
+The first soak (2026-11-17, two rounds each, run 44116695149, issue #127)
+found mostly suites that pass only in their usual place in the order:
+on GTK `save`, `tabs` and `keys` failed in both shuffled rounds (waits on
+the editor or its keyboard that time out), and `processes`, `mermaid`,
+`latex_forward`, `agent_panel`, `attention`, `palette`, `harness` and
+`tree_stall` in one; on the Mac `control` in both (`controlTerminals`
+not empty where it expects none). Each is a suite that depends on what
+an earlier one did or left, to be made to stand alone.
+
 - GTK `agents`, "the same key closes the panel": in one local full run
   on the ThinkPad (2026-11-17, main at b0ce717 plus a test-only change),
   Ctrl+Shift+A did not close the Agents panel within 8 s, the keyboard
