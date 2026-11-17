@@ -257,7 +257,7 @@ terminal.text = #E0E0E0
 
 Every color in the file shows as a swatch, and clicking one opens the color picker, with an opacity slider for see-through colors; the window follows along as you drag. An opacity value is underlined (with dots on the Mac), and clicking it opens a slider. Either way the line is switched on for you if it was still commented out. A line with a mistake is ignored, and the status bar says which one and why.
 
-The colors start from a theme, one of VS Code's built-in ones: Dark Modern (VS Code's own default, and minicode's when none is set), Dark+, Monokai, Solarized Dark, Tomorrow Night Blue, Light Modern, Light+, Quiet Light and Solarized Light. View > Theme switches between them, and on the Mac so does typing the theme's name into the command palette; either way it is one line in the settings file, which you can also write yourself:
+The colors start from a theme, one of VS Code's built-in ones: Dark Modern (VS Code's own default, and minicode's when none is set), Dark+, Monokai, Solarized Dark, Tomorrow Night Blue, Light Modern, Light+, Quiet Light and Solarized Light. View > Theme switches between them, and so does typing the theme's name into the command palette; either way it is one line in the settings file, which you can also write yourself:
 
 ```
 theme = light-modern

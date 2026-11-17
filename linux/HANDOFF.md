@@ -5781,3 +5781,16 @@ rebuilt under the lock when the environment changes. On GTK that also
 needs the spawns moved to `g_spawn_async_with_pipes_and_fds` with an
 explicit envp and `G_SPAWN_SEARCH_PATH_FROM_ENVP`, because
 `GSubprocessLauncher`'s init copies `environ` itself.
+
+### 91. The palette lists View > Theme (done, November 2026)
+
+The palette's rows come from `Keys::actions()` (the registry's commands), and
+View > Theme's items are not registry commands: they are `app.theme` with a
+string target, built from `Settings::themes()` in `Appearance.cpp`. So typing
+"theme" found nothing. `PalettePanel::collectCommands` now adds one row per
+core theme, "View > Theme > Light Modern" as the Mac's palette reads its menu,
+which runs `app.theme` with the id: the same action as the menu item, so the
+same `chooseTheme` (unsaved-settings refusal, the question about colors the
+file sets, `Settings::withTheme`, the config writer). Checked by the palette
+suite's last block. The rows do not mark the current theme (the palette has
+no checked rows on either port).

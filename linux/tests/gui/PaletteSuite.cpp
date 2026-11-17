@@ -19,6 +19,7 @@
 #include "FindBar.h"
 #include "Json.h"
 #include "PalettePanel.h"
+#include "Settings.h"
 
 #ifdef MINICODE_ENABLE_TERMINAL
 #include "Terminal.h"
@@ -167,6 +168,14 @@ bool gTerminalWas = false;
 
 bool gHiddenWas = false;
 size_t gWindows = 0;
+
+// The theme View > Theme checks.
+std::string themeChecked() {
+    GVariant* v = g_action_group_get_action_state(G_ACTION_GROUP(MCGuiApplication()), "theme");
+    std::string out = v ? g_variant_get_string(v, nullptr) : "";
+    if (v) g_variant_unref(v);
+    return out;
+}
 
 }  // namespace
 
@@ -541,4 +550,47 @@ MC_GUI_SUITE(palette) {
     });
     MCGuiWait("as it was", 10, [] { return terminalShown() == gTerminalWas; });
 #endif
+
+    // ---------------------------------------------------------- themes
+    // View > Theme's items are commands, as on the Mac ("View > Theme >
+    // Light Modern"): typed by name, Return chooses one as the menu does.
+    MCGuiStep("the plain settings, the keyboard in the editor, the palette on \"theme\"", [] {
+        MCGuiSetSettings("lsp.enabled = false\n");
+        MCGuiFocusKeyWindow();
+        MCGuiClick(ed()->textView());
+    });
+    MCGuiWait("the editor has the keyboard", 10, editorHasKeyboard);
+    MCGuiStep("Ctrl+Shift+P and \"theme\"", [] {
+        MCGuiKey("ctrl+shift+p");
+    });
+    MCGuiWait("open", 10, [] { return pal()->isOpen() && fieldHasKeyboard(); });
+    MCGuiStep("type it", [] { MCGuiType("theme"); });
+    MCGuiWait("ranked", 10, [] { return pal()->text() == ">theme"; });
+    MCGuiStep("the nine themes, with the Mac's titles", [] {
+        const char* titles[] = {"Dark Modern", "Dark+", "Monokai", "Solarized Dark",
+                                "Tomorrow Night Blue", "Light Modern", "Light+", "Quiet Light",
+                                "Solarized Light"};
+        for (const char* t : titles) GCHECK(timesListed(std::string("View > Theme > ") + t) == 1);
+    });
+    MCGuiStep("\"light mod\" and Return", [] {
+        MCGuiType(" light mod");
+    });
+    MCGuiWait("ranked", 10, [] {
+        return pal()->text() == ">theme light mod" && selectedLabel() == "View > Theme > Light Modern";
+    });
+    MCGuiStep("Return", [] { MCGuiKey("enter"); });
+    MCGuiWait("the file says so and the window follows", 10, [] {
+        return !pal()->isOpen() &&
+               MCGuiReadFile(g_getenv("MINICODE_SETTINGS")).find("theme = light-modern\n") != std::string::npos &&
+               themeChecked() == "light-modern" && !Settings::parse(MCGuiReadFile(g_getenv("MINICODE_SETTINGS"))).isDark();
+    });
+    MCGuiStep("back to Dark Modern by the palette", [] { MCGuiKey("ctrl+shift+p"); });
+    MCGuiWait("open", 10, [] { return pal()->isOpen() && fieldHasKeyboard(); });
+    MCGuiStep("type it", [] { MCGuiType("theme dark mod"); });
+    MCGuiWait("ranked", 10, [] { return selectedLabel() == "View > Theme > Dark Modern"; });
+    MCGuiStep("Return", [] { MCGuiKey("enter"); });
+    MCGuiWait("dark again", 10, [] {
+        return !pal()->isOpen() && themeChecked() == "dark-modern";
+    });
+    MCGuiStep("the plain settings", [] { MCGuiSetSettings("lsp.enabled = false\n"); });
 }
