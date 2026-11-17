@@ -19,6 +19,7 @@
 #include "DocumentView.h"
 #include "Editor.h"
 #include "FileTree.h"
+#include "WindowLayout.h"
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
@@ -126,6 +127,8 @@ void focusEditor() {
 
 }  // namespace
 
+static bool gDockWasShown = false;
+
 MC_GUI_SUITE(notes) {
     MCGuiStep("makes the files", [] {
         g_mkdir_with_parents(F("").c_str(), 0755);
@@ -139,6 +142,19 @@ MC_GUI_SUITE(notes) {
             "[{\"path\":\"" + F("t1.txt") + "\",\"line\":3,\"note\":\"first stop\"},"
             "{\"path\":\"" + F("t2.txt") + "\",\"line\":5,\"to\":7,\"note\":\"second stop\"},"
             "{\"path\":\"" + F("t3.txt") + "\",\"line\":9,\"note\":\"third stop\"}]");
+    });
+
+    // The terminal dock open, as other suites leave it: the editor's view is
+    // short, and a note must still sit above its first line at a width it can
+    // have (the box was once given less than its minimum and flipped between
+    // two places every frame).
+    MCGuiStep("the terminal dock shows", [] {
+        gDockWasShown = MCGuiApp().layout->terminalShown();
+        if (!gDockWasShown) MCGuiApp().layout->toggleTerminal();
+    });
+    MCGuiWait("the editor's view is short", 5, [] {
+        const int h = gtk_widget_get_height(GTK_WIDGET(ed()->textView()));
+        return h > 0 && h < 500;
     });
 
     // Earlier suites may leave the keyboard in the editor, where a note
@@ -185,7 +201,27 @@ MC_GUI_SUITE(notes) {
         int x, y;
         gtk_text_view_buffer_to_window_coords(v, GTK_TEXT_WINDOW_WIDGET, r.x, r.y, &x, &y);
         const int h = gtk_widget_get_height(GTK_WIDGET(v));
-        return h > 0 && y >= 0 && y < h && gtk_widget_get_margin_top(notes()->box()) <= y;
+        graphene_rect_t b;
+        if (!gtk_widget_compute_bounds(notes()->box(), GTK_WIDGET(v), &b)) return false;
+        return h > 0 && y >= 0 && y < h && b.origin.y + b.size.height <= y;
+    });
+    // Stable: its place read over several frames does not move, and it has
+    // at least the width it needs.
+    static float gTop = -1;
+    MCGuiWaitQuiet("the box's place stops changing", 0.5, 5, [] {
+        graphene_rect_t b;
+        gtk_widget_compute_bounds(notes()->box(), GTK_WIDGET(ed()->textView()), &b);
+        gTop = b.origin.y;
+        return (long)(b.origin.y * 10) * 100000 + (long)b.size.height;
+    });
+    MCGuiStep("the box keeps one place and has its minimum width", [] {
+        graphene_rect_t b;
+        GCHECK(gtk_widget_compute_bounds(notes()->box(), GTK_WIDGET(ed()->textView()), &b));
+        GCHECK(b.origin.y == gTop);
+        int minW = 0;
+        gtk_widget_measure(notes()->box(), GTK_ORIENTATION_HORIZONTAL, -1, &minW, nullptr, nullptr, nullptr);
+        GCHECK(gtk_widget_get_allocated_width(notes()->box()) >= minW);
+        GCHECK(b.origin.y >= 0);
     });
     MCGuiStep("snapshot", [] {
         MCGuiSnapshot(GTK_WIDGET(MCGuiApp().window), "note");
@@ -381,4 +417,7 @@ MC_GUI_SUITE(notes) {
         GCHECK(gRun->out.find("in state") != std::string::npos);
     });
     MCGuiStep("closes it", [] { notes()->close(); });
+    MCGuiStep("the dock goes back as it was", [] {
+        if (!gDockWasShown && MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
+    });
 }

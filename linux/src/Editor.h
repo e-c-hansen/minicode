@@ -91,6 +91,7 @@ public:
     GtkWidget* widget() const { return groups_; }
     // A widget over the slot (under the tabs), placed by its own alignment
     // and margins: the find bar (FindBar.h).
+    GtkWidget* overlay() const { return slotOverlay_; }
     void addOverlay(GtkWidget* w) { gtk_overlay_add_overlay(GTK_OVERLAY(slotOverlay_), w); }
     // A bar across the slot's top, under the tabs, as the Mac's install bar
     // (ConsentBar.h).

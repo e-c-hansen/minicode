@@ -96,6 +96,8 @@ private:
     void endTour();
     bool openStop(int index, bool quiet, std::string* error);
     void reposition();
+    // The overlay's answer for the box: its rect, at a width it can have.
+    bool childPosition(GdkRectangle* out, int overlayWidth);
     void updateActions();
     void buildBox();
     bool touches(long from, long to) const;
