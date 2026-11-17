@@ -239,7 +239,8 @@ goes here first, with tests; the GUI only displays it.
   (the review view's rows, and what staging, unstaging or discarding one
   block or a few lines makes of the file), `MergeConflicts` (git's
   conflict blocks, and what keeping a side or both makes of the text).
-- `CommandPalette` (matching, modes, Quick Open, symbol rows), `HintsSearch.h`
+- `CommandPalette` (matching, modes, Quick Open, symbol rows), `FolderPicker`
+  (the folder picker's paths, rows and completion), `HintsSearch.h`
   (the shortcut hints' search, header only), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
@@ -1581,6 +1582,29 @@ container (PanelHost, laid out by hand in layoutContainer)
   without taking the keyboard; Esc puts selection and scroll back.
   `workspace/symbol` goes to every running server that offers it, older
   requests cancelled, answers merged.
+- **The folder picker** (2026-11-16, the owner's ask: Finder's open
+  panel "always sucks"; `FolderPicker.{h,cpp}`, `folderpick:*`, `make
+  guitest SUITES=folder_picker`): Open Folder… (`openFolder:`, Cmd+O) and
+  the Dock's Open Folder… (`openFolderInNewWindow:`) show the palette with
+  an `MCFolderPick` (`MCShowFolderPicker`, `MCPaletteContext folderPick`),
+  never NSOpenPanel, except Choose in Finder…, its last row, and the
+  Dock's with no editor window. Rows are the core's: a name is matched
+  (`rankFiles` on the paths spelled with ~) against the recent folders
+  then the base folder's (the window's, else home) subfolders; text with
+  a '/' or starting with "~" is a path whose folder's subfolders are
+  matched by name, Open This Folder first when the text ends in '/'
+  (Return opens it), else after the matches when the text names a folder
+  the listing has. Hidden folders only after a typed dot. Folders are read
+  with `FolderPicker::listSubfolders` (readdir, stat only for links) on a
+  global queue, kept per palette by path, the reading of a folder no longer
+  typed cancelled. Tab (`completeSelectedFolder`) and '/' typed after a name
+  (`controlTextDidChange:`, `slashCompletes`) put the selected folder in
+  the field (`FolderPicker::complete`, keeping the text's own spelling of
+  the folder before it); Cmd+Return reaches the overlay's
+  `performKeyEquivalent:` ahead of Insert Line Below's menu key. Open
+  Folder… now asks about unsaved tabs after the choice (`switchToFolder:`),
+  so a cancelled pick asks nothing. A pick or the folder picker skips the
+  menu walk the palette makes for commands.
 - Go Back and Forward (Ctrl+-, Ctrl+Shift+-): `MCNavigator` over `NavHistory`
   (places within ten lines are one entry; a new jump drops what lay ahead; 50
   entries; entries follow renames and leave with deleted files). Recorded: tab
@@ -3852,8 +3876,9 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   folder URL is taken because Info.plist claims public.folder; checked in
   the real bundle). A pick arrives as an odoc at `application:openURLs:`.
   `applicationDockMenu:` adds New Window and Open Folder…
-  (`openFolderInNewWindow:`, a folder picker, then `openURLs:`; the window
-  in front keeps its folder). The first launch seeds the Dock's list from
+  (`openFolderInNewWindow:`, minicode's folder picker over the window in
+  front, then `openURLs:`; the window in front keeps its folder; see "The
+  palette, symbols and Go Back"). The first launch seeds the Dock's list from
   the stored folders when it is empty; Clear Recently Opened clears both.
   How the Dock shows it needs the owner's eyes.
 - The launcher (`scripts/minicode-launcher`, `Contents/Resources/minicode`):
@@ -4013,7 +4038,7 @@ session has a display. Check first.
   editing: keystroke, multiedit, editor_keys, auto_close, bracket_pairs,
   folding, foldperf, multicaretclick, multicaret_rows, find_bar,
   large_file, save, paste, zoomfit;
-  files and windows: tree, tree_hidden, preview_tabs, split_editor, search,
+  files and windows: tree, tree_hidden, folder_picker, preview_tabs, split_editor, search,
   replace_in_folder, backups, palette, symbols, keymap, config_writes,
   daily_work, structure, utf16, hints_panel, swatch_escape;
   language servers and formatting: language, lsp_fixes, lsp_sync,

@@ -609,25 +609,44 @@ static BOOL MCWindowTabAction(SEL a) {
     (void)sender;
     return MCDockMenu(self);
 }
-// The Dock's Open Folder…: a folder picker, then the window on that folder
-// comes forward or a new one opens on it, as for a folder dropped on the
-// Dock icon. The window in front keeps its own folder.
+// The Dock's Open Folder…: minicode's folder picker over the window in
+// front (PalettePanel.h, MCFolderPick), then the window on that folder comes
+// forward or a new one opens on it, as for a folder dropped on the Dock
+// icon. The window in front keeps its own folder. With no window open, and
+// from the picker's Choose in Finder…, the system's open panel.
 - (void)openFolderInNewWindow:(id)sender {
     (void)sender;
-    NSURL *url = nil;
     if (MCDockFolderChooser) {
-        url = MCDockFolderChooser();
-    } else {
-        [NSApp activateIgnoringOtherApps:YES];
-        NSOpenPanel *panel = [NSOpenPanel openPanel];
-        panel.canChooseDirectories = YES;
-        panel.canChooseFiles = NO;
-        panel.allowsMultipleSelection = NO;
-        panel.prompt = @"Open";
-        panel.message = @"Choose a folder to open in a minicode window.";
-        if ([panel runModal] == NSModalResponseOK) url = panel.URL;
+        NSURL *url = MCDockFolderChooser();
+        if (url) [self application:NSApp openURLs:@[ url ]];
+        return;
     }
-    if (url) [self application:NSApp openURLs:@[ url ]];
+    [NSApp activateIgnoringOtherApps:YES];
+    EditorController *c = [self current];
+    if (!c.window) {
+        [self chooseFolderInFinderForNewWindow];
+        return;
+    }
+    [c.window makeKeyAndOrderFront:nil];
+    MCFolderPick *pick = [MCFolderPick new];
+    pick.recentFolders = MCRecentFolders();
+    pick.baseFolder = c.rootPath;
+    __weak AppDelegate *weakSelf = self;
+    pick.choose = ^(NSString *path) {
+        [weakSelf application:NSApp openURLs:@[ [NSURL fileURLWithPath:path isDirectory:YES] ]];
+    };
+    pick.chooseInFinder = ^{ [weakSelf chooseFolderInFinderForNewWindow]; };
+    MCShowFolderPicker(c.window, pick);
+}
+- (void)chooseFolderInFinderForNewWindow {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseDirectories = YES;
+    panel.canChooseFiles = NO;
+    panel.allowsMultipleSelection = NO;
+    panel.prompt = @"Open";
+    panel.message = @"Choose a folder to open in a minicode window.";
+    if ([panel runModal] == NSModalResponseOK && panel.URL)
+        [self application:NSApp openURLs:@[ panel.URL ]];
 }
 - (void)togglePreview:(id)sender   { [[self current] togglePreview:sender]; }
 - (void)toggleSidePreview:(id)sender { [[self current] toggleSidePreview:sender]; }

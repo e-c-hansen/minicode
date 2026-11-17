@@ -2,6 +2,8 @@
 #import "EditorController+Private.h"
 #import "EditorController+TreeIvars.h"
 #import "ControlServer.h"
+#import "PalettePanel.h"
+#import "RecentFolders.h"
 
 @implementation EditorController (Tree)
 
@@ -972,14 +974,29 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 
 // ------------------------------------------------------------- open folder
+// minicode's own folder picker (PalettePanel.h, MCFolderPick): the recent
+// folders, then this folder's subfolders, and any path typed. The window
+// moves to the folder chosen, asking about unsaved tabs first (after the
+// choice, so a cancelled pick asks nothing). Choose in Finder… is the
+// system's open panel, as before.
 - (void)openFolder:(id)sender {
-    if (![self confirmCloseAllTabs]) return;
+    (void)sender;
+    MCFolderPick *pick = [MCFolderPick new];
+    pick.recentFolders = MCRecentFolders();
+    pick.baseFolder = self.rootPath;
+    __weak EditorController *weakSelf = self;
+    pick.choose = ^(NSString *path) { [weakSelf switchToFolder:path]; };
+    pick.chooseInFinder = ^{ [weakSelf openFolderInFinder]; };
+    MCShowFolderPicker(self.window, pick);
+}
+
+- (void)openFolderInFinder {
     NSOpenPanel *panel = [NSOpenPanel openPanel];
     panel.canChooseDirectories = YES;
     panel.canChooseFiles = NO;
     panel.allowsMultipleSelection = NO;
-    if ([panel runModal] == NSModalResponseOK)
-        [self changeRootTo:panel.URLs.firstObject.path];
+    if ([panel runModal] == NSModalResponseOK && panel.URLs.firstObject.path)
+        [self switchToFolder:panel.URLs.firstObject.path];
 }
 
 // `minicode -r folder`: this window moves to the folder, asking about
