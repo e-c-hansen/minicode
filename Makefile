@@ -61,7 +61,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/LatexLog.cpp \
             src/MarkdownHtml.cpp src/MarkdownPage.cpp src/TerminalLayout.cpp src/RightAreaLayout.cpp \
             src/Snippet.cpp src/EditBatch.cpp \
-            src/BrowserTabs.cpp src/WebBookmark.cpp
+            src/BrowserTabs.cpp src/WebBookmark.cpp src/SpellCheck.cpp
 
 # Each source file compiles to its own object in build/obj (build/test-obj for
 # the tests), with a dependency file listing the headers it read, so touching

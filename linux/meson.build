@@ -128,6 +128,8 @@ core_sources = [
   # A MultiEdit's ranges given to the highlighter one at a time (Document's
   # batches: typing at many carets, Replace All).
   core_dir / 'EditBatch.cpp',
+  # Which words of a file are prose for a spell checker (the Mac's for now).
+  core_dir / 'SpellCheck.cpp',
   # The regions a file folds into, the folds that are closed, and the limit
   # on what they hide (Folds.cpp shows them).
   core_dir / 'Folding.cpp',

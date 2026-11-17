@@ -220,7 +220,8 @@ goes here first, with tests; the GUI only displays it.
   buffer), `BracketMatch`, `Folding`, `TextFind` (find and replace, UTF-16 and
   UTF-8), `Regex` (its linear-time engine), `Formatter` (Format Document's
   plan), `InstallHints`, `LargeFile.h` (VS Code's large-file thresholds,
-  header only).
+  header only), `SpellCheck` (which words of a file are prose for the
+  spell checker).
 - Language servers: `LspClient.h` over nine files (see "LSP": protocol,
   results, WorkspaceEdits, diagnostics with versions, completion edits,
   symbols, folding ranges, the second server's routing and
@@ -259,7 +260,8 @@ goes here first, with tests; the GUI only displays it.
   `EditorPanes` (`PanelHost`, `DragBar`, `PanelScrollView`), `FileTree`
   (`FileItem`, `ClickOutline`, `gShowHidden`), `EditorPage.h`.
 - The editor: `SourceStorage` (`MCSourceStorage`), `CodeTextView.mm`, `Gutter`,
-  `FoldView`, `EditorFont`, `EditorFind`, `FindWidget` (the find bar's and
+  `FoldView`, `SpellMarks` (spell checking's marks and menu items),
+  `EditorFont`, `EditorFind`, `FindWidget` (the find bar's and
   Find in Folder's colors, icon buttons and inputs), `MultiCaretView`, `EditingCommands`
   (AutoIndent and KeepSorted on an NSTextView), `MarkdownCode` (code colors in
   previews), `TestGutter` (the ▶ beside each test).
@@ -1169,6 +1171,32 @@ container (PanelHost, laid out by hand in layoutContainer)
   edits through `BracketPairs::PaintedEdits`, applied once at the flush:
   moving it per edit was quadratic in a multi-range edit. Off with no
   highlighter (large files, plain text) and in the settings file.
+- **Spell checking** (Mac, 2026-11-16, `editor.spell-check`: on, off,
+  prose-only by default; `editor.spell-check-color`; core
+  `SpellCheck.{h,cpp}`, `spell:*`; Mac `SpellMarks.{h,mm}`, an
+  `MCSpellMarks` per CodeTextView like the folds; `make guitest
+  SUITES=spell_check`). The core picks the words: Markdown's prose by
+  `MarkdownParser::lines` (from the text's top, since a fence above
+  decides) less code spans, `$` math, links' addresses and tags; LaTeX's
+  and code's from the highlighter's tokens (LaTeX: everything but
+  commands, their `[...]` options, the groups of naming commands such as
+  `\label`, `\cite`, `\usepackage`, math and verbatim; code: comments, and
+  strings that read as sentences); then only words of letters (no digit,
+  `_`, `/`, inner dot, camelCase or two capitals). Only those go to
+  NSSpellChecker, copied into a string of spaces as long as the lines on
+  screen, so the answer's ranges are the text's
+  (`requestCheckingOfString:`, off the main thread, the words picked on a
+  queue of their own). Checked 0.5 s after typing stops (one pending
+  perform, not one a key) and as lines scroll in; an edit only moves the
+  marks after it and drops those it touches. The +Highlighting hook
+  (`updateSpellCheck`, from applyHighlighting) gives the kind and the
+  lines' tokens (`spellLinesFor:tokens:`). Ignore is per document tag (one
+  per path, for the text view's life). **NSTextView's continuous checking
+  never runs in the editor**: CodeTextView's setters keep it off and its
+  menu drops AppKit's Spelling and Grammar submenu (a copy of the menu,
+  so a menu AppKit keeps never gathers items); it would mark code and lay
+  out the whole text. The commit box uses the system's own continuous
+  checking (small, all prose), off with `editor.spell-check = off`.
 - Linux retags in idle slices over a UTF-8 mirror; Android's `Highlighter.kt`
   uses the core over a native mirror.
 
@@ -4012,7 +4040,7 @@ session has a display. Check first.
   core's `docs:gui-suites` holds this list to them, both ways):
   editing: keystroke, multiedit, editor_keys, auto_close, bracket_pairs,
   folding, foldperf, multicaretclick, multicaret_rows, find_bar,
-  large_file, save, paste, zoomfit;
+  large_file, save, paste, zoomfit, spell_check;
   files and windows: tree, tree_hidden, preview_tabs, split_editor, search,
   replace_in_folder, backups, palette, symbols, keymap, config_writes,
   daily_work, structure, utf16, hints_panel, swatch_escape;

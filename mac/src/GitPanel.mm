@@ -1230,6 +1230,11 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _branchLabel.textColor = _text;
     _message.textColor = _text;
     _message.insertionPointColor = _text;
+    // The commit message is prose: the system's own spell checking marks it
+    // unless editor.spell-check is off (the box is small, so its checking
+    // costs nothing; the editor checks its prose by itself, SpellMarks.h).
+    _message.continuousSpellCheckingEnabled =
+        cfg.settings.spellCheck() != Settings::SpellCheck::Off;
     _messageScroll.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
     _allToggle.contentTintColor = _text;
     _allToggle.attributedTitle = [[NSAttributedString alloc]
