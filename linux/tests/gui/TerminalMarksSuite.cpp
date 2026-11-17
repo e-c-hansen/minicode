@@ -15,6 +15,7 @@
 //     Ctrl+Shift+C, which sends the shell nothing.
 #include "Harness.h"
 #include "AppSeam.h"
+#include "EnvLock.h"
 #include "Json.h"
 #include "Terminal.h"
 #include "TerminalAttention.h"
@@ -128,7 +129,7 @@ MC_GUI_SUITE(terminal_marks) {
         const char* old = g_getenv("SHELL");
         gHadShell = old != nullptr;
         gOldShell = old ? old : "";
-        g_setenv("SHELL", "/bin/bash", TRUE);
+        EnvLock::envSet("SHELL", "/bin/bash");
         if (!MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
         gOldTerm = term()->made() ? term()->hostTerminal() : 0;
         if (gOldTerm) typeLine("exit");   // restarted as bash, with no commands of earlier suites
@@ -256,7 +257,7 @@ MC_GUI_SUITE(terminal_marks) {
         vte_terminal_set_font_scale(VTE_TERMINAL(term()->vteWidget()), gScale);
     });
     MCGuiStep("SHELL as it was", [] {
-        if (gHadShell) g_setenv("SHELL", gOldShell.c_str(), TRUE);
-        else g_unsetenv("SHELL");
+        if (gHadShell) EnvLock::envSet("SHELL", gOldShell.c_str());
+        else EnvLock::envUnset("SHELL");
     });
 }
