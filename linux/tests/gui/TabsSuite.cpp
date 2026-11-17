@@ -20,6 +20,7 @@
 
 #include <glib/gstdio.h>
 
+#include <algorithm>
 #include <string>
 
 namespace {
@@ -69,6 +70,22 @@ bool stripAgrees() {
         if ((std::string(mark) == "●") != d->dirty()) return false;
     }
     return true;
+}
+
+// A real drag of tab `from` to tab `to`'s near edge (its far edge when
+// moving right), in the window's coordinates: a negative x would mean a
+// widget's middle to MCGuiDrag, and the tab dragged to may be scrolled past
+// the strip's left edge.
+void DragTab(TabStrip* st, int from, int to) {
+    GtkWidget* win = GTK_WIDGET(MCGuiApp().window);
+    GtkWidget* a = st->tabWidget(from);
+    GtkWidget* b = st->tabWidget(to);
+    const double h = gtk_widget_get_height(a) / 2.0;
+    graphene_point_t p0 = GRAPHENE_POINT_INIT(15, (float)h), p1, q0, q1;
+    q0 = GRAPHENE_POINT_INIT(to > from ? (float)gtk_widget_get_width(b) - 4 : 4.0f, (float)h);
+    if (!gtk_widget_compute_point(a, win, &p0, &p1)) p1 = p0;
+    if (!gtk_widget_compute_point(b, win, &q0, &q1)) q1 = q0;
+    MCGuiDrag(win, p1.x, p1.y, std::max(1.0f, q1.x), p1.y);
 }
 
 bool tabsOnScreen() {
@@ -513,14 +530,7 @@ MC_GUI_SUITE(tabs) {
 
     // ---- dragging a tab along the row
     MCGuiWait("the tabs on screen", 10, tabsOnScreen);
-    MCGuiStep("a drag of a's tab past the last", [] {
-        GtkWidget* first = strip()->tabWidget(0);
-        GtkWidget* last = strip()->tabWidget(strip()->count() - 1);
-        graphene_point_t in = GRAPHENE_POINT_INIT(0, 0), out;
-        if (!gtk_widget_compute_point(last, first, &in, &out)) out = in;
-        const double h = gtk_widget_get_height(first) / 2.0;
-        MCGuiDrag(first, 15, h, out.x + gtk_widget_get_width(last) - 4, h);
-    });
+    MCGuiStep("a drag of a's tab past the last", [] { DragTab(strip(), 0, strip()->count() - 1); });
     MCGuiWait("a is the last tab now, on show (the press chose it)", 10, [] {
         return row() == "README.md tab-b.py tab-c.txt >tab-a.txt";
     });
@@ -529,14 +539,7 @@ MC_GUI_SUITE(tabs) {
         GCHECK_EQ_STR(ed()->document(3)->path(), F("tab-a.txt"));
         GCHECK_EQ_STR(ed()->currentPath(), F("tab-a.txt"));
     });
-    MCGuiStep("and dragged back to the front", [] {
-        GtkWidget* from = strip()->tabWidget(strip()->count() - 1);
-        GtkWidget* first = strip()->tabWidget(0);
-        graphene_point_t in = GRAPHENE_POINT_INIT(0, 0), out;
-        if (!gtk_widget_compute_point(first, from, &in, &out)) out = in;
-        const double h = gtk_widget_get_height(from) / 2.0;
-        MCGuiDrag(from, 15, h, out.x + 4, h);
-    });
+    MCGuiStep("and dragged back to the front", [] { DragTab(strip(), strip()->count() - 1, 0); });
     MCGuiWait("a at the front again", 10, [] { return row() == ">tab-a.txt README.md tab-b.py tab-c.txt"; });
     MCGuiStep("the strip and the window agree; then b's tab", [] {
         GCHECK(stripAgrees());

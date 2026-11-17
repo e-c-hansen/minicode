@@ -20,6 +20,7 @@
 #include "TabSessions.h"
 #include "TabStrip.h"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -59,6 +60,22 @@ bool WindowAgrees() {
         if (!on || on->id() != w.active(g)) return false;
     }
     return w.documents().size() == ed()->documents().size();
+}
+
+// A real drag of tab `from` to tab `to`'s near edge (its far edge when
+// moving right), in the window's coordinates: a negative x would mean a
+// widget's middle to MCGuiDrag, and the tab dragged to may be scrolled past
+// the strip's left edge.
+void DragTab(TabStrip* st, int from, int to) {
+    GtkWidget* win = GTK_WIDGET(MCGuiApp().window);
+    GtkWidget* a = st->tabWidget(from);
+    GtkWidget* b = st->tabWidget(to);
+    const double h = gtk_widget_get_height(a) / 2.0;
+    graphene_point_t p0 = GRAPHENE_POINT_INIT(15, (float)h), p1, q0, q1;
+    q0 = GRAPHENE_POINT_INIT(to > from ? (float)gtk_widget_get_width(b) - 4 : 4.0f, (float)h);
+    if (!gtk_widget_compute_point(a, win, &p0, &p1)) p1 = p0;
+    if (!gtk_widget_compute_point(b, win, &q0, &q1)) q1 = q0;
+    MCGuiDrag(win, p1.x, p1.y, std::max(1.0f, q1.x), p1.y);
 }
 
 GtkTextBuffer* Buf() { return gtk_text_view_get_buffer(GTK_TEXT_VIEW(ed()->textView())); }
@@ -244,15 +261,7 @@ MC_GUI_SUITE(split_editor) {
         return Groups() == "s-a.txt s-c.txt >s-b.txt | >s-a.txt (left)" && Keyboard();
     });
     MCGuiStep("the groups are the window's", [] { GCHECK(WindowAgrees()); });
-    MCGuiStep("s-c.txt dragged to the front of the left group's row", [] {
-        TabStrip* st = ed()->strip();
-        GtkWidget* from = st->tabWidget(1);
-        GtkWidget* first = st->tabWidget(0);
-        graphene_point_t in = GRAPHENE_POINT_INIT(0, 0), out;
-        if (!gtk_widget_compute_point(first, from, &in, &out)) out = in;
-        const double h = gtk_widget_get_height(from) / 2.0;
-        MCGuiDrag(from, 15, h, out.x + 4, h);
-    });
+    MCGuiStep("s-c.txt dragged to the front of the left group's row", [] { DragTab(ed()->strip(), 1, 0); });
     MCGuiWait("it leads the row, on show (the press chose it), the right group untouched", 5, [] {
         return Groups() == ">s-c.txt s-a.txt s-b.txt | >s-a.txt (left)";
     });
