@@ -5345,3 +5345,15 @@ write job cannot read a file. `replace_in_folder` writes a file just over
 1 MB with a match at its end: Find in Folder lists it, Replace All names it
 as above, and it is byte for byte as it was. Checked: that suite (20 passed;
 3 fail with the fix taken out).
+
+### 79. The workspace-edit applier's and the inline agent's undo steps are named (done, November 2026)
+
+`LspSession::applyEdit` takes the step's name and gives it to
+`MultiEdit::apply`: "Rename" for F2, the code action's title for a quick fix,
+the server's `label` (else "Edit") for workspace/applyEdit, and "Format
+Document" for the server fallback, as the Mac's `applyWorkspaceEdit:...
+actionName:`. The inline agent's Keep names its step "Inline Agent", as the
+Mac's `applyText`. Checks: `lsp_actions` reads `undoName()` of the renamed
+files (c.py, a.py) and `agent_panel` that of the kept edit; all three new
+checks fail ("Edit") with the src change taken out. The "Not done" note in
+item 72 about these two is now done.
