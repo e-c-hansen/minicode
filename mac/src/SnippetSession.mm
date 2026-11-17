@@ -165,9 +165,8 @@ static NSRange RangeOf(const Snippet::Range &r) { return NSMakeRange(r.start, r.
 // One replacement, as it is made (MCSourceStorage onReplaceCharacters).
 - (void)replaced:(NSRange)range length:(NSUInteger)length {
     if (!_active) return;
-    NSUndoManager *um = _tv.undoManager;
     // Undo puts back text the stops knew nothing of.
-    if (um.isUndoing || um.isRedoing) {
+    if (MCTextViewUndoing(_tv)) {
         [self end];
         return;
     }

@@ -4056,8 +4056,9 @@ void testSettings() {
     // control.page-input, and editor.inlay-hint-parameter-names, and
     // syntax.tag, syntax.attribute and syntax.tag-bracket, and html.scripts,
     // and editor.merge-current and editor.merge-incoming, and the four
-    // test.<language> commands, and editor.spell-check with its color.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 139);
+    // test.<language> commands, and editor.spell-check with its color, and
+    // editor.session-host.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 140);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4419,6 +4420,9 @@ void testSettings() {
               we[0].message.find("on or off") != std::string::npos);
         // Auto-closing pairs: on by default, as in VS Code.
         CHECK(parseSettings("").autoClose());
+        CHECK(!parseSettings("").sessionHost());
+        CHECK(parseSettings("editor.session-host = on\n").sessionHost());
+        CHECK(!parseSettings("editor.session-host = off\n").sessionHost());
         CHECK(!parseSettings("editor.auto-close = off\n").autoClose());
         CHECK(!parseSettings("editor.auto-close = false\n").autoClose());
         CHECK(parseSettings("editor.auto-close = On\n").autoClose());

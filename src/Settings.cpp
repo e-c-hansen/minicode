@@ -1038,6 +1038,17 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.autoClose_ = on;
                return true;),
+        MC_KEY("editor.session-host", Word, false,
+               const std::string w = lower(v);
+               bool on = false;
+               if (w == "on") on = true;
+               else if (w == "off") on = false;
+               else if (!parseBool(w, on)) {
+                   e = "'" + v + "' is not on or off";
+                   return false;
+               }
+               s.sessionHost_ = on;
+               return true;),
         MC_KEY("editor.large-file-optimizations", Word, false,
                const std::string w = lower(v);
                bool on = true;
@@ -1717,6 +1728,11 @@ const char* Settings::defaultFileText() {
 # LaTeX, and plain text. Typing a bracket or quote over a selection wraps it
 # either way.
 # editor.auto-close = on
+# Each file's text is kept by minicode's session host, a part of the app on
+# a thread of its own that will later let two screens edit one session
+# (macOS; on Linux it always is). Off, the editor keeps it itself, as
+# before. Files opened after a change follow it.
+# editor.session-host = off
 # A file over 20 MB or 300,000 lines opens in large-file mode, as in VS Code:
 # no syntax colors, folding, bracket boxes or language server. The status
 # bar says so, and a click there turns them on for that tab (macOS). Off,

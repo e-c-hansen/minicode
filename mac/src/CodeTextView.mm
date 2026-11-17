@@ -7,6 +7,7 @@
 #import "EditorConflicts.h"
 #import "LayoutCatchUp.h"
 #import "SpellMarks.h"
+#import "SessionLink.h"
 #include <os/log.h>
 
 // -------------------------------------------------------- CodeTextView
@@ -61,6 +62,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
     // how much, and the x it was given.
     CGFloat _caretShift, _caretShiftedX;
     BOOL _paneRedrawScheduled;   // redrawWholePane's second mark, once a turn
+    NSInteger _sessionTyping;
 }
 
 - (MCMultiCarets *)multiCarets { return _multi; }
@@ -71,6 +73,28 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
 - (MCSpellMarks *)spellMarks { return _spell; }
 - (NSEvent *)currentKeyEvent { return _keyEvent; }
 - (BOOL)multiCaretActive { return _multi.active; }
+- (NSInteger)sessionTyping { return _sessionTyping; }
+- (MCSessionDoc *)sessionDoc { return _sessionDocProvider ? _sessionDocProvider() : nil; }
+
+BOOL MCTextViewUndoing(NSTextView *tv) {
+    NSUndoManager *um = tv.undoManager;
+    if (um.isUndoing || um.isRedoing) return YES;
+    return [tv isKindOfClass:[CodeTextView class]] && ((CodeTextView *)tv).sessionUndoing;
+}
+
+namespace {
+// Counts up for the scope it is in.
+struct Counting {
+    NSInteger &n;
+    explicit Counting(NSInteger &c) : n(c) { n++; }
+    ~Counting() { n--; }
+};
+}  // namespace
+
+- (void)breakUndoCoalescing {
+    [super breakUndoCoalescing];
+    [self.sessionDoc breakCoalescing];
+}
 
 // The designated initializer (initWithFrame: comes through it too), so a
 // view made over a text storage of its own (the editor's MCSourceStorage)
@@ -502,6 +526,11 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
     }
     NSUndoManager *um = self.undoManager;
     const BOOL allows = self.allowsUndo, undo = allows && um && um.isUndoRegistrationEnabled;
+    // The session's host records the edits as they reach the storage, in
+    // a step named here (its undo, which is the host's, comes back through
+    // this method, recording nothing: MCSessionDoc applying).
+    MCSessionDoc *session = self.sessionDoc;
+    if (session && !session.applying) [session beginNamed:name view:self];
     [self breakUndoCoalescing];
     if (undo) [um beginUndoGrouping];
     self.allowsUndo = NO;   // keeps what is on the stack; registers nothing for this change
@@ -603,6 +632,7 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
 // ---- several carets: everything that types, moves or sets the selection
 // goes to MCMultiCarets first while it has two or more.
 - (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
+    Counting typing(_sessionTyping);
     if ([_multi insertText:string replacementRange:replacementRange]) return;
     [super insertText:string replacementRange:replacementRange];
 }
@@ -644,6 +674,16 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
 }
 
 - (void)doCommandBySelector:(SEL)selector {
+    // Backspace, Delete, Return and Tab are typing, for the session host's
+    // steps (insertText: is the rest).
+    const char *name = sel_getName(selector);
+    const BOOL typing = !strncmp(name, "delete", 6) || !strncmp(name, "insert", 6);
+    if (typing) _sessionTyping++;
+    [self commandBySelector:selector];
+    if (typing) _sessionTyping--;
+}
+
+- (void)commandBySelector:(SEL)selector {
     // A snippet's tab stops take Tab, Shift+Tab and Esc first (before the
     // several carets its mirrors may be, and before AutoIndent's Tab).
     if (self.editable && [_snippets doCommand:selector]) return;
@@ -875,6 +915,8 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
     // F8) opens it, so what was gone to is seen.
     if (_folds.hasFolds && !still) [_folds revealRanges:ranges];
     [super setSelectedRanges:ranges affinity:affinity stillSelecting:still];
+    // Moved by anything but an edit: typing starts a new undo step.
+    if (!still) [self.sessionDoc noteSelection:self.selectedRanges];
 }
 
 - (BOOL)shouldDrawInsertionPoint {
