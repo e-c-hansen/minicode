@@ -5208,7 +5208,75 @@ moves onto next. What a user meets: the Mac's undo rules.
   named "Edit"; drag and drop of text is typing; carets beyond the first
   are not restored by an undo.
 
-### 73. The workspace-edit applier's and the inline agent's undo steps are named (done, November 2026)
+### 73. Tabs: the core's window (done, November 2026; SESSION-DESIGN.md stage 3a)
+
+The editor's tabs, their order, the two editor groups, the tab on show in
+each, the preview tabs and Reopen Closed Tab's list are a `Model::Window`
+of the core's (`src/EditorTabs.{h,cpp}`, beside the rules it was already
+asking), one of a process-wide `Model::Session` that every window's
+`Editor` joins as it is made and leaves as it goes (`Editor::session()`,
+`Editor::window()`). The Mac's EditorController moves onto the same
+window in stage 3c; sessions.json and the backup planner follow in 3b.
+- **What moved.** `tabs_`, `other_`, `split_`, `focused_`,
+  `groupFraction_`, `closed_`, the use stamps and `Document`'s
+  `previewTab_` and `agentPreview_` are gone. The window names documents
+  by `Document::id()`; the editor keeps the documents (`docs_`, made by
+  `newDocument()`, let go in `destroy()`) and shows what the window says.
+  `active_` and `otherActive_` stay as what the view and the mirror show,
+  set from `window().active()` and `active(other())` at the same points as
+  before. `Document::isPreviewTab()`, `isAgentPreview()` and `lastUsed()`
+  ask the window through `DocumentHost`; a session's preview tab comes
+  back through `Editor::setPreview`.
+- **Paths.** The window keeps each tab's file ("" for a diff, a
+  comparison or a page: `Editor::fileOf`) for labels, Reopen Closed Tab
+  and the groups' session; `syncPaths()` gives it every document's in
+  `refreshStrip` and before an open, so a rename or Save As needs no hook
+  of its own.
+- **The rules** are the window's now: `prepareOpen` (in preview or not;
+  a code navigation keeping the preview tab it starts from; a kept open
+  keeping a preview), `add` (the preview tab's place and replacement, the
+  agents' preview tab, a dirty or typed-in one kept instead, the replaced
+  tab out of both groups and never remembered), `activate` (a tab only
+  the other group has joins this one), `close` (the tab used most
+  recently, a group closing with its last tab, a tab the other group
+  still has not remembered), `putInOther`, `focus`, `canMove`,
+  `restoreGroups` and `groupsSession`. Groups.cpp keeps the views: the
+  mirror's places, the swap, the bar.
+- **New for a user**: a tab can be dragged along either group's row
+  (`TabStrip::onMove`, `Window::move`), as the browser's could; the
+  order is kept in the session. A preview tab replaced while the other
+  group also showed it now leaves both groups (it stayed in the other
+  before).
+- **Checks**: the core's `session:*` (each rule of "Tabs, sessions and
+  the disk", "The preview tab" and "Two editor groups" in CLAUDE.md, and
+  a random walk holding the window's bookkeeping), the `tabs` suite (the
+  strip checked against the window, a tab dragged to the end and back)
+  and `split_editor` (the groups checked against the window after each
+  move, a drag in the left group's row, kept by a new window's session).
+
+### 74. File tree icons by kind (done, November 2026)
+
+A file row's icon follows `FileIcon::kindOf` (what a click on the file opens), as the Mac's does: `fileIconName` in `linux/src/FileTree.cpp` maps each kind to a symbolic name that Adwaita has (checked against `/usr/share/icons/Adwaita/symbolic`, since GTK draws the missing-icon picture for a name the theme lacks): image, video and audio `*-x-generic`, `x-office-document` for a PDF, `x-office-spreadsheet` for a table, `accessories-dictionary` for a notebook, `drive-harddisk` for a database, `package-x-generic` for an archive, `web-browser` for a web page, `user-bookmarks` for a bookmark, `utilities-terminal` for source code (Adwaita has no script icon), `text-x-generic` for the rest. Folders keep `folder-symbolic`. The `tree_icons` suite writes one file of each kind and reads the names off the rows. Other themes may draw these names differently; the look needs the owner's eyes.
+
+### 75. A notebook's In and Out prompts (done, November 2026)
+
+A fenced block with a `MdRun::label` (the core's Notebook gives a run cell "In [n]" and its result "Out [n]") gets that text on a line of its own above the block, at the block's first run only, in the new `md_codelabel` tag: monospace 11 points in the Markdown quote color, as the Mac's `markdownLabelFor:`. The tag is made with the others in `Editor.cpp` and recolored in `applySettings`. The notebook check in `json_outline` now reads "In [3]" and "Out [3]" from the shown text, in order before their blocks, and the tag at the label. The Mac's extra indent for a block inside a list is not copied, since notebook cells are never in lists. The look needs the owner's eyes.
+
+### 76. Replace in Folder names files over 1 MB as too large (done, November 2026)
+
+The core's `planReplace` leaves files over `FolderSearchOptions::maxFileSize`
+alone and reports them in `FolderReplacePlan::tooLarge` and `tooLargeCount`;
+`SearchPanel::planned` now says what the Mac's does: "Nothing replaced: the
+matches are in files larger than 1 MB, which Replace in Folder leaves alone
+(big.txt)" when nothing else is left, " Left alone, since they are larger
+than 1 MB: big.txt." in the question, "and N more" past the listed names, and
+"big.txt is larger than 1 MB, which Replace in Folder leaves alone" where the
+write job cannot read a file. `replace_in_folder` writes a file just over
+1 MB with a match at its end: Find in Folder lists it, Replace All names it
+as above, and it is byte for byte as it was. Checked: that suite (20 passed;
+3 fail with the fix taken out).
+
+### 77. The workspace-edit applier's and the inline agent's undo steps are named (done, November 2026)
 
 `LspSession::applyEdit` takes the step's name and gives it to
 `MultiEdit::apply`: "Rename" for F2, the code action's title for a quick fix,

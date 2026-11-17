@@ -620,6 +620,28 @@ gboolean FileTree::filterVisible(gpointer item, gpointer selfp) {
     return TRUE;
 }
 
+// A file row's icon: one per kind the core names (FileIcon::kindOf, what a
+// click opens), the same grouping as the Mac's MCTreeIconSymbol. Every name
+// is in Adwaita's symbolic set, since GTK shows its missing-icon picture for
+// one the theme lacks.
+static const char* fileIconName(const char* path) {
+    switch (FileIcon::kindOf(path ? path : "")) {
+    case FileIcon::Kind::Image: return "image-x-generic-symbolic";
+    case FileIcon::Kind::Video: return "video-x-generic-symbolic";
+    case FileIcon::Kind::Audio: return "audio-x-generic-symbolic";
+    case FileIcon::Kind::Pdf: return "x-office-document-symbolic";
+    case FileIcon::Kind::Table: return "x-office-spreadsheet-symbolic";
+    case FileIcon::Kind::Notebook: return "accessories-dictionary-symbolic";
+    case FileIcon::Kind::Database: return "drive-harddisk-symbolic";
+    case FileIcon::Kind::Archive: return "package-x-generic-symbolic";
+    case FileIcon::Kind::Web: return "web-browser-symbolic";
+    case FileIcon::Kind::Bookmark: return "user-bookmarks-symbolic";
+    case FileIcon::Kind::Code: return "utilities-terminal-symbolic";
+    case FileIcon::Kind::Text: break;
+    }
+    return "text-x-generic-symbolic";
+}
+
 // ---------------------------------------------------------------- row widgets
 
 void FileTree::onSetup(GtkSignalListItemFactory* /*f*/, GObject* obj,
@@ -685,7 +707,7 @@ void FileTree::onBind(GtkSignalListItemFactory* /*f*/, GObject* obj,
         gtk_widget_remove_css_class(icon, "minicode-file-icon");
         gtk_widget_add_css_class(icon, "minicode-dir-icon");
     } else {
-        gtk_image_set_from_icon_name(GTK_IMAGE(icon), "text-x-generic-symbolic");
+        gtk_image_set_from_icon_name(GTK_IMAGE(icon), fileIconName(path));
         gtk_widget_remove_css_class(icon, "minicode-dir-icon");
         gtk_widget_add_css_class(icon, "minicode-file-icon");
     }

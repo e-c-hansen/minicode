@@ -110,6 +110,15 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 @property(nonatomic, strong) NSColor *rulerColor;
 // Drawn behind the text, after the background: the find bar's highlights.
 @property(nonatomic, copy) void (^drawBehindText)(NSRect rect);
+// Drawn over the text, after everything else: Show Line History's words
+// beside each line (LineHistory.h).
+@property(nonatomic, copy) void (^drawOverText)(NSRect rect);
+// A press in the view before anything else sees it (Show Line History's
+// words take a click). YES takes the press.
+@property(nonatomic, copy) BOOL (^onMouseDownFirst)(NSEvent *event);
+// The pointer moved over the view, at `point` in its coordinates, or left
+// it (`inside` NO).
+@property(nonatomic, copy) void (^onPointerMoved)(NSPoint point, BOOL inside);
 // The Edit menu's find items (performTextFinderAction:, by their
 // NSTextFinderAction tags) go here when set, in place of NSTextFinder.
 @property(nonatomic, copy) BOOL (^onFindAction)(NSInteger tag);

@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -126,7 +127,16 @@ public:
     GtkTextBuffer* sourceBuffer() const;
 
     // ------------------------------------------------------------ tabs
-    // (Tabs.cpp; the rules are EditorTabs.h's, as on the Mac.)
+    // (Tabs.cpp; the rules are EditorTabs.h's, as on the Mac.) The tabs, their
+    // order, the groups, the preview tabs and the closed tabs are the core's
+    // Model::Window (window()), one of the process's Model::Session
+    // (session()); the editor shows what it says, and keeps the documents
+    // it names by Document::id().
+    Model::Window& window() const { return *win_; }
+    static Model::Session& session();
+    // A tab's preview state (a session coming back), and the window's
+    // answers for Document::isPreviewTab and lastUsed.
+    void setPreview(Document* d, Model::Preview p);
 
     // Show a file in its tab, else in a new one: the preview tab when `from`
     // opens in preview (replacing the old preview tab, which has no unsaved
@@ -138,7 +148,7 @@ public:
                   EditorTabs::OpenFrom from = EditorTabs::OpenFrom::Other);
     // The tabs count, index and step in the focused group, the one the strip
     // shows (the editor's only group while it is not split).
-    int tabCount() const { return (int)tabs_.size(); }
+    int tabCount() const { return win_->count(); }
     Document* document(int index) const;
     // Every document of the window, in either group, once each: the focused
     // group's in tab order, then the other's (backups, sessions, auto-save,
@@ -148,7 +158,7 @@ public:
     int activeIndex() const;
     int indexOf(const Document* d) const;
     Document* documentFor(const std::string& path) const;   // its tab, or null
-    Document* documentById(uint64_t id) const;               // by Document::id, or null
+    Document* documentById(uint64_t id) const;               // by Document::id, or null (a window's DocId)
     // Put a tab on show (the keyboard stays where it is).
     void activate(Document* d);
     // A tab by index, by step (wrapping) or by number (1 to 8, 9 the last),
@@ -167,8 +177,8 @@ public:
     // selection and scroll; files no longer there are passed over. A file
     // open again meanwhile is only shown. False when none is left.
     bool reopenClosedTab();
-    bool canReopenClosedTab() const { return !closed_.empty(); }
-    size_t closedTabCount() const { return closed_.size(); }
+    bool canReopenClosedTab() const { return win_->canReopen(); }
+    size_t closedTabCount() const { return win_->closedCount(); }
     // A tab for `path` at the end of the row, not put on show, its file not
     // read until it first is (a session coming back, Persistence.h).
     Document* addTab(const std::string& path);
@@ -215,8 +225,8 @@ public:
     // its own on the same buffer (one document, one undo, one dirty state),
     // with its own caret and scroll, as the Mac's MCEditorMirror. A press
     // in it, or on its strip, focuses that group. Groups are 0 (left) and 1.
-    bool isSplit() const { return split_; }
-    int focusedGroup() const { return split_ ? focused_ : 0; }
+    bool isSplit() const { return win_->split(); }
+    int focusedGroup() const { return win_->focused(); }
     std::vector<Document*> groupDocuments(int group) const;   // in tab order
     Document* groupActive(int group) const;
     bool isOpen(const Document* d) const;        // a tab in either group
@@ -231,7 +241,7 @@ public:
     // leaves this group for the other, which takes the keyboard, making a
     // group on the right when not split (EditorTabs::moveTarget).
     void moveToGroup(int direction);
-    double groupFraction() const { return groupFraction_; }
+    double groupFraction() const { return win_->fraction(); }
     void setGroupFraction(double f);
     // For the session (Persistence.h), and back from it once the tabs are
     // in: the split laid out over them, its tabs on show.
@@ -485,6 +495,8 @@ public:
     void documentWillReload(Document* d) override;
     void documentReloaded(Document* d) override;
     void documentLoaded(Document* d, int result, bool blank) override;   // LargeFileView.cpp
+    Model::Preview documentPreview(const Document* d) const override;
+    uint64_t documentLastUsed(const Document* d) const override;
 
 private:
     // ---- tabs (Tabs.cpp)
@@ -494,6 +506,20 @@ private:
     // message saying why not.
     bool textRead(Document* d, const std::string& path, int result, const std::string& content);
     bool opensInPreview(EditorTabs::OpenFrom from) const;
+    EditorTabs::PreviewSettings previewSettings() const;
+    // A new document, known by its id until destroy() lets it go.
+    Document* newDocument();
+    // The window's documents in the order it gives.
+    std::vector<Document*> documentsOf(const std::vector<Model::DocId>& ids) const;
+    // What the window keeps as a tab's file: "" for a diff, a comparison or
+    // a page. syncPaths gives it every document's, as they are now.
+    static std::string fileOf(const Document* d);
+    void syncPaths() const;
+    // A document the window dropped by itself (a preview tab replaced):
+    // the other group's view lets go of it, and it is deleted.
+    void letGo(Document* d);
+    // The other group's tab on show is the window's again, in its view.
+    void syncMirror();
     void dropTab(Document* d, bool remember);   // out of the row, and deleted
     void destroy(Document* d);
     void refreshStrip();
@@ -619,11 +645,9 @@ private:
     GtkWidget*     mirrorNote_ = nullptr;
     GtkTextBuffer* mirrorEmpty_ = nullptr;
     GtkWidget*     groupBar_ = nullptr;
-    bool           split_ = false;
-    int            focused_ = 0;            // the focused group, 0 left, 1 right
-    double         groupFraction_ = 0.5;    // the left group's share
-    std::vector<Document*> other_;          // the other group's tabs
-    Document*      otherActive_ = nullptr;  // and its tab on show
+    // The other group's tab on show, in mirrorView_ (the window's
+    // active(other()) once the editor has shown it).
+    Document*      otherActive_ = nullptr;
     // The other group's selection and first line on show, in its document's
     // buffer (refs of our own: a mark outlives a buffer that goes).
     GtkTextMark*   mirrorIns_ = nullptr;
@@ -637,7 +661,7 @@ private:
     void buildGroups();
     void refreshMirror();
     void swapGroups();
-    void closeFocusedGroup();               // its last tab went: the other is the only one
+    void closeFocusedGroup();               // its last tab went: the other's tab into the view
     void dropOther(Document* d, bool remember);
     bool inOther(const Document* d) const;
     void dropMirrorMarks();
@@ -693,13 +717,14 @@ private:
     bool           prose_ = true;         // the view shows prose, not source (setProseFont)
     bool           composing_ = false;    // an input method's text in the view
 
-    // The documents, in tab order, and the one on show.
+    // The window's tabs (the core's), the documents they name, and the one
+    // the view shows (the window's active() once the editor has shown it).
     DocumentTags           tags_;
-    std::vector<Document*> tabs_;
+    Model::Session::WindowId winId_ = 0;
+    Model::Window*         win_ = nullptr;
+    std::map<uint64_t, Document*> docs_;
     Document*              active_ = nullptr;
     Document*              diffDoc_ = nullptr;   // the tab diffs and commits share
-    uint64_t               stamp_ = 0;           // for Document::lastUsed
-    EditorTabs::ClosedTabs closed_;
     GSimpleActionGroup*    tabActions_ = nullptr;   // "tab.", the tab menu's
     GSimpleActionGroup*    undoActions_ = nullptr;  // "text." on the view's menu: undo and redo
 

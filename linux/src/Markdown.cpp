@@ -801,6 +801,18 @@ Markdown::Page Markdown::renderRuns(GtkTextView* view, GtkTextBuffer* buffer,
             }
         }
 
+        // A fenced block's label ("In [3]") on its own small line above it,
+        // at the block's first run only (the Mac's markdownLabelFor:).
+        if (r.codeBlock && !r.label.empty() && (i == first || !runs[i - 1].codeBlock)) {
+            MdRun lr = r;
+            lr.code = lr.codeBlock = false;
+            lr.lang.clear();
+            lr.label.clear();
+            int a = 0, b = 0;
+            insertRun(r.label + "\n", lr, &a, &b);
+            applyTag(buffer, "md_codelabel", a, b);
+            lineLen = 0;
+        }
         int startOff = 0, endOff = 0;
         insertRun(text, r, &startOff, &endOff);
         if (fetchLater) {

@@ -63,8 +63,8 @@ public:
     std::function<GMenuModel*(int index)> menuFor;
     // Dragging a tab along the row (EditorTabs::dropIndex): called once the
     // pointer is let go, with the tab's place now and the place it goes to
-    // in the row after the move. Off unless set; the editor's strip leaves
-    // it unset, as the Mac's does, and the browser's sets it.
+    // in the row after the move. Off unless set; the editor's strips and
+    // the browser's set it (the Mac's editor strip does not yet).
     std::function<void(int from, int to)> onMove;
     // What a drop at `rowX` (in the row's coordinates) does to tab `from`,
     // as if the pointer had been let go there; for the checks.
