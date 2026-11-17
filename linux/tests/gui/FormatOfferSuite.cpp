@@ -146,8 +146,8 @@ MC_GUI_SUITE(format_offer) {
                "Don't Ask Again");
         GCHECK(std::string(gtk_button_get_label(GTK_BUTTON(offer()->closeButton()))) == "×");
         GCHECK(settingsFile().find("format.on-save") == std::string::npos);
-        MCGuiClick(offer()->closeButton());
     });
+    MCGuiClickWhenReady("the bar's ×", [] { return offer()->closeButton(); });
     MCGuiWait("× closes it", 10, [] { return !offer()->shown(); });
     MCGuiStep("nothing was written, and a second save the same launch offers nothing", [] {
         GCHECK(settingsFile().find("format.on-save") == std::string::npos);
@@ -161,7 +161,7 @@ MC_GUI_SUITE(format_offer) {
     // ---- Turn On
     saveWithOffer("v = 5\n");
     MCGuiWait("the bar shows again", 15, [] { return barReady(); });
-    MCGuiStep("Turn On", [] { MCGuiClick(offer()->turnOnButton()); });
+    MCGuiClickWhenReady("Turn On", [] { return offer()->turnOnButton(); });
     MCGuiWait("the bar goes and the settings say project", 10, [] {
         return !offer()->shown() && settingsFile().find("format.on-save = project") != std::string::npos;
     });
@@ -213,7 +213,7 @@ MC_GUI_SUITE(format_offer) {
     MCGuiWait("off", 10, [] { return !actionOn(); });
     saveWithOffer("s = 8\n");
     MCGuiWait("the bar shows", 15, [] { return barReady(); });
-    MCGuiStep("Don't Ask Again", [] { MCGuiClick(offer()->muteButton()); });
+    MCGuiClickWhenReady("Don't Ask Again", [] { return offer()->muteButton(); });
     MCGuiWait("the bar goes and the key is kept", 10, [] {
         return !offer()->shown() && ConsentBar::installMuted(FormatOffer::key());
     });

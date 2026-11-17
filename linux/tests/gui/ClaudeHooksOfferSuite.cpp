@@ -129,16 +129,16 @@ MC_GUI_SUITE(claude_hooks_offer) {
         GtkWidget* b = dock()->notice();
         GCHECK(button(b, "Turn On…") != nullptr && button(b, "Not Now") != nullptr && button(b, "×") != nullptr);
         GCHECK(!MCGuiFileExists(gSettings));
-        MCGuiClick(button(b, "Turn On…"));
     });
+    MCGuiClickWhenReady("the bar's Turn On…", [] { return bar() ? button(dock()->notice(), "Turn On…") : nullptr; });
     MCGuiWait("it asks first", 10, [] { return questionWith("Add the Hooks") && questionWith("Cancel"); });
     MCGuiStep("Cancel writes nothing and keeps the bar", [] { answer("Cancel"); });
     MCGuiWait("the question is gone", 10, [] { return MCGuiTopWindow() == MCGuiApp().window; });
     MCGuiStep("no file, and Turn On… again", [] {
         GCHECK(!MCGuiFileExists(gSettings));
         GCHECK(bar());
-        MCGuiClick(button(dock()->notice(), "Turn On…"));
     });
+    MCGuiClickWhenReady("the bar's Turn On…, again", [] { return bar() ? button(dock()->notice(), "Turn On…") : nullptr; });
     MCGuiWait("it asks again", 10, [] { return questionWith("Add the Hooks"); });
     MCGuiStep("Add the Hooks", [] { answer("Add the Hooks"); });
     MCGuiWait("it says where it wrote", 10, [] { return questionWith("OK"); });
@@ -167,7 +167,7 @@ MC_GUI_SUITE(claude_hooks_offer) {
         run(MCGuiProjectFile("fakebin/claude"));
     });
     MCGuiWait("the bar", 10, [] { return barReady(); });
-    MCGuiStep("Not Now", [] { MCGuiClick(button(dock()->notice(), "Not Now")); });
+    MCGuiClickWhenReady("the bar's Not Now", [] { return bar() ? button(dock()->notice(), "Not Now") : nullptr; });
     MCGuiWait("the bar is gone", 10, [] { return !bar(); });
     MCGuiStep("it is kept, on disk, and nothing was written", [] {
         GCHECK(ConsentBar::installMuted(ClaudeHooksOffer::kKey));
@@ -190,8 +190,8 @@ MC_GUI_SUITE(claude_hooks_offer) {
     MCGuiWait("the bar, from the foreground program", 15, [] { return barReady(); });
     MCGuiStep("× takes it away and writes nothing", [] {
         GCHECK(!MCGuiFileExists(gSettings));
-        MCGuiClick(button(dock()->notice(), "×"));
     });
+    MCGuiClickWhenReady("the bar's ×", [] { return bar() ? button(dock()->notice(), "×") : nullptr; });
     MCGuiWait("gone", 10, [] { return !bar(); });
     MCGuiWait("the program is done", 15, [] { return atPrompt() && gT->shellState().prompts > gPrompts; });
     MCGuiStep("the tab closes and the settings are put back", [] {
@@ -204,5 +204,10 @@ MC_GUI_SUITE(claude_hooks_offer) {
         if (gHadShell) g_setenv("SHELL", gOldShell.c_str(), TRUE);
         else g_unsetenv("SHELL");
         g_remove((gHome + "/.bashrc").c_str());
+        // The questions above took the X focus and gave it to no one when
+        // they closed; without this the next suite's window is not active
+        // and nothing in it has the keyboard (format_offer, run right
+        // after, timed out on "the editor has the keyboard").
+        MCGuiFocusKeyWindow();
     });
 }
