@@ -690,9 +690,9 @@ NSAlert *MCClosingRunningAlert(NSArray<NSString *> *commands, NSString *question
 // the user agreed to that at the question, and the status bar says so.
 - (void)noteDroppedCommands:(NSArray<TerminalView *> *)terminals {
     for (TerminalView *t in terminals) {
-        NSString *c = t.pendingCommand;
-        if (c && self.onNote)
-            self.onNote([NSString stringWithFormat:@"“%@” did not run: its terminal was closed", c]);
+        for (NSString *c in t.pendingCommands)
+            if (self.onNote)
+                self.onNote([NSString stringWithFormat:@"“%@” did not run: its terminal was closed", c]);
     }
 }
 

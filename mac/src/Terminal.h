@@ -126,8 +126,11 @@ extern NSNotificationName const MCTerminalClaudeDidStartNotification;
 // first background job's leader (the server left with `&` or `disown`);
 // 0 when neither runs. What the close question's Show in Processes selects.
 @property(nonatomic, readonly) pid_t firstJob;
-// A runCommand: line still waiting for the shell's prompt, or nil.
+// The next runCommand: line still waiting for the shell's prompt, or nil.
 @property(nonatomic, readonly, copy) NSString *pendingCommand;
+// Every runCommand: line still waiting, in the order they will start (one
+// per prompt); empty when none waits.
+@property(nonatomic, readonly, copy) NSArray<NSString *> *pendingCommands;
 // What a tab shows: the running program's own title (OSC 0 or 2), else
 // the command running, else the folder's name.
 @property(nonatomic, readonly, copy) NSString *title;

@@ -10,6 +10,7 @@
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
+#import "SessionStore.h"
 
 namespace {
 NSString *Folder() { return [MCGuiScratch() stringByAppendingPathComponent:@"restore"]; }
@@ -71,6 +72,60 @@ MC_GUI_SUITE(window_restore) {
             if (status != 0 || [out containsString:@"FAIL"]) MCGuiNote(@"reader:\n%@", out);
             done();
         });
+    });
+    MCGuiStep(@"the windows and the folder's tabs are in sessions.json", ^{
+        GCHECK([[NSFileManager defaultManager] fileExistsAtPath:MCSessionsFilePath()]);
+        const TabSessions::Store store = MCSessionsRead();
+        GCHECK(!store.windows.empty());
+        GCHECK(!store.windows.empty() && store.windows[0].root == Real(Folder()).UTF8String);
+        GCHECK(store.folders.count(Real(Folder()).UTF8String) == 1);
+    });
+    MCGuiStep(@"an older minicode's user defaults are carried over as they were", ^{
+        NSString *root = @"/old/proj";
+        NSData *record = [@"history" dataUsingEncoding:NSUTF8StringEncoding];
+        NSDictionary *folders = @{
+            root: @{@"files": @[@"/old/proj/a.txt", @"/old/proj/b.md", @"/old/proj/c.txt"],
+                    @"active": @1, @"preview": @"/old/proj/c.txt",
+                    @"sidePreview": @[@"/old/proj/b.md"], @"used": @1762700000.0,
+                    @"groups": @{@"groups": @[@[@"/old/proj/a.txt"],
+                                              @[@"/old/proj/b.md", @"/old/proj/c.txt"]],
+                                 @"active": @[@"/old/proj/a.txt", @"/old/proj/b.md"],
+                                 @"focused": @1, @"fraction": @0.4},
+                    @"browser": @{@"page": @{@"tabs": @[@{@"url": @"https://example.com/",
+                                                          @"title": @"Example",
+                                                          @"state": record,
+                                                          @"archived": @YES},
+                                                        @{@"url": @"http://localhost:3000/"}],
+                                             @"active": @1},
+                                  @"visible": @YES, @"fraction": @0.3}},
+            @"/old/empty": @{@"files": @[], @"active": @0},
+        };
+        TabSessions::Window w;
+        w.root = "/old/proj";
+        const TabSessions::Store store = MCSessionsFromDefaults(
+            folders, @(TabSessions::encodeWindows({w}).c_str()));
+        GCHECK(store.windows.size() == 1 && store.windows[0].root == "/old/proj");
+        GCHECK(store.folders.size() == 1 && store.folders.count("/old/proj") == 1);
+        if (!store.folders.count("/old/proj")) return;
+        // Written to the file and read back, as the next launch reads it.
+        const TabSessions::Session s =
+            TabSessions::decodeStore(TabSessions::encodeStore(store)).folders.at("/old/proj");
+        GCHECK(s.tabs.size() == 3 && s.active == 1 && s.preview == 2);
+        GCHECK(s.tabs.size() == 3 && s.tabs[1].side && !s.tabs[0].side && !s.tabs[2].side);
+        GCHECK(s.used == 1762700000.0);
+        GCHECK(s.split && s.groups.focused == 1 && s.groups.fraction == 0.4);
+        GCHECK(s.groups.groups[1].size() == 2 && s.groups.active[1] == "/old/proj/b.md");
+        GCHECK(s.browser.size() == 2 && s.browserActive == 1);
+        GCHECK(s.browserShown && s.browserFraction == 0.3);
+        // The pane gets its tabs back as it kept them, the record's bytes
+        // and form included.
+        NSDictionary *page = MCSessionBrowserPage(s);
+        NSArray *tabs = page[@"tabs"];
+        GCHECK(tabs.count == 2 && [page[@"active"] intValue] == 1);
+        GCHECK(tabs.count == 2 && [tabs[0][@"state"] isEqual:record] &&
+               [tabs[0][@"archived"] boolValue] && [tabs[0][@"title"] isEqual:@"Example"]);
+        GCHECK(tabs.count == 2 && tabs[1][@"state"] == nil &&
+               [tabs[1][@"url"] isEqual:@"http://localhost:3000/"]);
     });
 }
 

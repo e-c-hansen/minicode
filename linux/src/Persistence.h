@@ -115,6 +115,9 @@ public:
     TabSessions::Session session();
     // Written with the other windows' on the folder after this one's.
     void saveSession();
+    // The session save planned for a second after the tabs changed, written
+    // now if there is one (another window is about to read the folder's).
+    void flushSession();
     // The window is going: another window on the folder saves instead, or
     // this one does; nothing is written for it after this.
     void saveSessionClosing();
@@ -160,9 +163,8 @@ private:
     std::string key_;
     Host host_;
     bool closing_ = false;
-    guint sessionTimer_ = 0;
-    // When backups and auto-saves are written (SavePlan.h), on the monotonic
-    // clock, and the one timer that ticks it.
+    // When backups, auto-saves and the session are written (SavePlan.h), on
+    // the monotonic clock, and the one timer that ticks it.
     SavePlan::Planner plan_;
     guint planTimer_ = 0;
     bool editorHadFocus_ = false;

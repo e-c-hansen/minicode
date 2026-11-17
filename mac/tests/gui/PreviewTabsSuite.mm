@@ -76,11 +76,8 @@ BOOL ClickFile(EditorController *c, NSString *path, NSInteger clicks, NSEventMod
     return YES;
 }
 
-NSDictionary *SavedSession(EditorController *c) {
-    NSUserDefaults *d = [[NSUserDefaults alloc]
-        initWithSuiteName:NSProcessInfo.processInfo.environment[@"MINICODE_DEFAULTS_SUITE"]];
-    return [d dictionaryForKey:@"MCTabSessions"][c.rootPath.stringByResolvingSymlinksInPath];
-}
+// The folder's session as sessions.json holds it (SessionStore.h).
+NSDictionary *SavedSession(EditorController *c) { return [c storedSession]; }
 
 }  // namespace
 

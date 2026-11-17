@@ -4,9 +4,13 @@
 // block in EditorController+Private.h.
 #pragma once
 #import "EditorController+Private.h"
+#include "SavePlan.h"
 
 @interface EditorController () {
-    NSDate *_backupFirstPending;           // the oldest buffer change not yet backed up
+    // When unsaved tabs are written (backups, auto-save), and the one timer
+    // that ticks it (armSavePlan).
+    SavePlan::Planner _plan;
+    NSTimer *_planTimer;
     // The window as the last run left it (TabSessions::Window, encoded),
     // from restoreWindowRecord: until showWindow has put it all back.
     NSString *_windowRecord;

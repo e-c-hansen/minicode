@@ -191,7 +191,7 @@
     self.lsp.openPaths = ^NSArray<NSString *> *{
         EditorController *s = weakSelf;
         NSMutableArray<NSString *> *paths = [NSMutableArray array];
-        for (MCTab *t in s ? s->_tabs : @[]) if (t.currentPath) [paths addObject:t.currentPath];
+        for (MCTab *t in s ? [s tabs] : @[]) if (t.currentPath) [paths addObject:t.currentPath];
         return paths;
     };
     // A tab an edit opened, then could not change (it is unedited, so
@@ -367,7 +367,7 @@
     // own selected-text color took over after a switch between light and dark).
     self.textView.selectedTextAttributes =
         @{NSBackgroundColorAttributeName: [NSColor selectedTextBackgroundColor]};
-    for (MCTab *t in _tabs) [t.latex applySettings];
+    for (MCTab *t in [self tabs]) [t.latex applySettings];
     [self applyTabSettings];
     [self applyGroupSettings];
     self.imageView.layer.backgroundColor = [cfg background:Surface::Editor].CGColor;
@@ -377,7 +377,7 @@
     if (self.isDiff && self.diffData) [self renderDiff];
     [self.gitPanel applySettings];
     if (_agents.started) [_agents.panel applySettings];
-    for (MCTab *t in _tabs)
+    for (MCTab *t in [self tabs])
         if ([t.page respondsToSelector:@selector(pageApplySettings)]) [t.page pageApplySettings];
     self.textView.insertionPointColor = [cfg text:Surface::Editor];
     NSMutableArray *rulers = [NSMutableArray array];
@@ -555,7 +555,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     BOOL showCompare = showEditor && self.compareView != nil && self.isDiff &&
                        _activeTab.comparison != nil;
     BOOL showPage = showEditor && self.isDiff && _activeTab.page != nil;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (!t.page) continue;
         NSView *v = t.page.pageView;
         const BOOL on = showPage && t == _activeTab;

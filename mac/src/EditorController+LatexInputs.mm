@@ -100,7 +100,7 @@
 - (void)latexFileSaved:(MCTab *)saved {
     NSString *path = saved.currentPath;
     if (!path.length) return;
-    for (MCTab *t in _tabs)
+    for (MCTab *t in [self tabs])
         if (t != saved && t.latex && [t.latex typesetReadFile:path]) [t.latex compileNow];
 }
 

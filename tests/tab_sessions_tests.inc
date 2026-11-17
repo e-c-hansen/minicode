@@ -316,6 +316,36 @@ static void testTabSessions() {
         CHECK(sanitize(ok).layout.rows[0][0] == 0.7);
     }
 
+    GROUP("tab-sessions:mac-browser");
+    {
+        // The Mac's browser pane in a folder's session: each tab's record
+        // and its form, whether the pane showed and its share.
+        Sessions all;
+        Session s;
+        s.tabs = {tab("/p/a.txt", 0, 0, false, 0, 0)};
+        BrowserTab b;
+        b.url = "https://example.com/";
+        b.title = "Example";
+        b.state = "AAEC";
+        b.archived = true;
+        BrowserTab plain;
+        plain.url = "http://localhost:5173/";
+        s.browser = {b, plain};
+        s.browserActive = 1;
+        s.browserShown = true;
+        s.browserFraction = 0.4;
+        put(all, "/p", s, 1);
+        const Session back = decode(encode(all)).at("/p");
+        CHECK(back.browser.size() == 2 && back.browserActive == 1);
+        CHECK(back.browser[0].archived && back.browser[0].state == "AAEC");
+        CHECK(!back.browser[1].archived && back.browser[1].state.empty());
+        CHECK(back.browserShown && back.browserFraction == 0.4);
+        // A session from before (GTK's, or with no pane) reads as hidden.
+        const Sessions old = decode(R"({"/q": {"tabs": [], "browser": [{"url": "https://a/"}]}})");
+        CHECK(old.count("/q") && !old.at("/q").browserShown && old.at("/q").browserFraction == 0);
+        CHECK(!old.at("/q").browser[0].archived);
+    }
+
     GROUP("tab-sessions:store");
     {
         // sessions.json with its folders and the windows beside them.

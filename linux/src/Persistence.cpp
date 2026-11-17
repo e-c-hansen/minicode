@@ -107,11 +107,10 @@ Persistence::Persistence(Editor* editor, const std::string& root, Host host)
 
 Persistence::~Persistence() {
     closing_ = true;
-    for (guint* t : {&sessionTimer_, &planTimer_})
-        if (*t) {
-            g_source_remove(*t);
-            *t = 0;
-        }
+    if (planTimer_) {
+        g_source_remove(planTimer_);
+        planTimer_ = 0;
+    }
 }
 
 std::string Persistence::keyFor(const std::string& root) {
@@ -148,17 +147,16 @@ void Persistence::changed(Document* d) {
     if (closing_) return;
     // The backups and auto-save planned again from now (SavePlan.h).
     plan_.setAutoSave(autoSaveMode(), editor_->documentSettings().autoSaveDelay());
-    apply(plan_.changed(planTabs(), monoNow()));
-    arm();
+    const double now = monoNow();
     // The tabs changed: remembered a second later, once whatever changed
     // them has settled (an edit alone changes nothing remembered).
-    if (!d && !sessionTimer_)
-        sessionTimer_ = g_timeout_add(1000, [](gpointer p) -> gboolean {
-            Persistence* self = static_cast<Persistence*>(p);
-            self->sessionTimer_ = 0;
-            self->saveSession();
-            return G_SOURCE_REMOVE;
-        }, this);
+    if (!d) plan_.sessionChanged(now);
+    apply(plan_.changed(planTabs(), now));
+    arm();
+}
+
+void Persistence::flushSession() {
+    if (!closing_ && plan_.takeSession()) saveSession();
 }
 
 void Persistence::tabShown() {
@@ -227,10 +225,7 @@ TabSessions::Session Persistence::session() {
 }
 
 void Persistence::saveSession() {
-    if (sessionTimer_) {
-        g_source_remove(sessionTimer_);
-        sessionTimer_ = 0;
-    }
+    plan_.takeSession();   // written now, not again a second later
     if (key_.empty()) return;
     std::vector<TabSessions::Session> others;
     if (host_.sameFolder)
@@ -267,6 +262,11 @@ void Persistence::restoreSession(const TabSessions::Session* own) {
     if (own) {
         saved = *own;   // a window brought back has its own tabs
     } else {
+        // Another window on the folder whose tabs changed within the second
+        // writes them first, so this one reads the folder as it is
+        // (SavePlan::Planner::takeSession).
+        if (host_.sameFolder)
+            for (Persistence* p : host_.sameFolder()) p->flushSession();
         const TabSessions::Sessions all = readSessions();
         const auto found = all.find(key_);
         if (found != all.end()) saved = found->second;
@@ -386,6 +386,7 @@ void Persistence::apply(const SavePlan::Plan& plan) {
     for (uint64_t id : plan.writeBackups)
         if (Document* d = documentWithId(id)) writeBackup(d);
     if (plan.autoSave) autoSaveNow();
+    if (plan.saveSession) saveSession();
 }
 
 // One timer for the planner, set for when it next has something to do. Due

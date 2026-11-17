@@ -78,11 +78,8 @@ void PressOtherGroup(EditorController *c, NSUInteger character) {
     [m.textView mouseDown:down];
 }
 
-NSDictionary *SavedSession(EditorController *c) {
-    NSUserDefaults *d = [[NSUserDefaults alloc]
-        initWithSuiteName:NSProcessInfo.processInfo.environment[@"MINICODE_DEFAULTS_SUITE"]];
-    return [d dictionaryForKey:@"MCTabSessions"][c.rootPath.stringByResolvingSymlinksInPath];
-}
+// The folder's session as sessions.json holds it (SessionStore.h).
+NSDictionary *SavedSession(EditorController *c) { return [c storedSession]; }
 
 NSString *const kA = @"def one():\n    return 1\n\n\ndef two():\n    return 2\n";
 NSString *const kB = @"bravo\nline 2\n";
