@@ -37,6 +37,7 @@
 #pragma once
 #import <Cocoa/Cocoa.h>
 
+#include <functional>
 #include <string>
 
 #include "SessionClient.h"
@@ -48,6 +49,12 @@ BOOL MCSessionHostEnabled(void);
 // The process's client, the host started with it.
 Shared::Client &MCSessionClient(void);
 BOOL MCSessionLoopback(void);
+// Another renderer of the process's host (a browser's view, SessionBrowser.h,
+// on a thread of its own): `client` says Hello through it, and the host's
+// messages for it go to Client::deliver from then on. What it returns lets
+// it go: nothing is delivered to `client` after it returns, and the host
+// forgets the renderer (any thread).
+std::function<void()> MCSessionConnectViewer(Shared::Client &client);
 
 // One tab's document on the host (made by MCTab when its text is first set
 // with the setting on, closed with the tab).

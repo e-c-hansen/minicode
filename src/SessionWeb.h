@@ -27,7 +27,7 @@
 // nobody still ends when its lifetime says.
 //
 // What goes to the browser, one JSON object per text frame ("t" names it):
-//   hello   {machine, folder, palette}: once, first
+//   hello   {machine, folder, palette, termNote}: once, first
 //   state   {windows, docs, terms}: whenever the session's state changes
 //           (looked at every half second)
 //   doc     {id, path, kind, version, lines | html | note}: the document the
@@ -55,6 +55,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -198,7 +199,19 @@ private:
 // ---- the server
 struct Options {
     std::string hostSocket;   // the host's Unix socket
+    // Or a host in this process (the Mac's, editor.session-host): connects
+    // the view's client to it (its Hello sent through it, the host's
+    // messages for it delivered to Client::deliver from then on) and
+    // returns what lets it go again. Used instead of hostSocket; the host
+    // then serves no one folder, so its state's folder is not checked.
+    std::function<std::function<void()>(Client& client)> connect;
     std::string folder;       // resolved: the host must serve it
+    // Only this window's tabs and their documents (0: every window's and
+    // every document).
+    std::uint64_t window = 0;
+    // A muted line where the terminals go while there are none ("" for
+    // none).
+    std::string termNote;
     std::string machine;      // the header's name ("" for this machine's)
     int port = 0;             // 0: any free port (checks)
     std::string token;        // "" for a fresh one

@@ -370,6 +370,49 @@ SUITES=session_web` loads the page in a WKWebView that is in no window
 against a host in the guitest process: lines and colored spans, typing and
 terminal output followed, a wrong token refused.
 
+### The Mac's own host in a browser (View > Show Session in Browser…)
+
+`mac/src/SessionBrowser.{h,mm}` and `EditorController+SessionBrowser.mm`
+serve the window's tabs from the process's in-process host, with no
+`minicode host`. Two View items, no keys (`minicode.showSessionInBrowser`,
+`minicode.copySessionBrowserLink`): Show opens the address through
+`NSWorkspace openURL:` (`MCSessionBrowserOpener` in checks), Copy puts it
+on the general pasteboard. With `editor.session-host` off both run an
+NSAlert offering Turn On (`AppSettings writeValue:`), and do nothing on
+Cancel.
+
+- **One server per window**, an `MCSessionBrowser` kept as an associated
+  object on the controller, made at the first choice and reused; it stops
+  on the window's `NSWindowWillCloseNotification` (and in dealloc), so
+  EditorController gained no hook.
+- **The in-process host.** `Web::Options::connect` replaces the Unix
+  socket: `MCSessionConnectViewer` (SessionLink.mm) connects the view's
+  read-only client as another renderer of `gHost`, and the host's Sink
+  routes by `ClientId` (`gViewers`, under a lock, so the function it
+  returns stops deliveries before the client goes). The state's folder is
+  not checked then (one host serves every window), and `run()` does not
+  look for a socket file.
+- **One window's tabs.** The Mac reports nothing to the host about windows
+  otherwise, so while a server runs the window sends `Client::windowTabs`
+  (`windowJson`'s shape, by hand: groups of tabs with a document on the
+  host, each group's tab on show) every half second when it changed, and
+  `windowClosed` when it stops. `Web::Options::window` keeps the state the
+  browsers get to that window and its documents, and a `show` of any other
+  document answers `gone`. Window ids start at 1000.
+- **Terminals** are the app's own, not the host's, so `Options::termNote`
+  (in the hello) puts "Terminals appear here once they run through the
+  session host" in a muted line while the state has none.
+- A tab opened before the setting was on has no document on the host and
+  is left out of the page until it is opened again.
+
+Checks: `sessionweb:in-process` (an in-process `SessionHost` with a routing
+Sink, two windows' tabs, the view filtered to one, typing followed, the
+host let go when the browser leaves); `make guitest
+SUITES=session_browser` (the alert's Cancel and Turn On, the address
+caught rather than opened, Copy, plain requests with and without the
+token and with another Host, a WebSocket that gets the window's document
+and an edit typed in the window, the port closed once the window is).
+
 ### For editing (8b)
 
 - The page needs input paths: a renderer that edits (not read-only), its

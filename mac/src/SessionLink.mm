@@ -8,7 +8,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <os/log.h>
 #include <vector>
 
@@ -32,6 +34,12 @@ Shared::Client *gClient = nullptr;
 Shared::ClientId gId = 0;
 bool gLoopback = false;
 std::atomic<bool> gDispatchQueued{false};
+// Renderers other than the app's own client (a browser's view,
+// MCSessionConnectViewer), by their id on the host: each message the host
+// sends one of them goes to its client, under the lock, so letting one go
+// stops its deliveries at once.
+std::mutex gViewersMu;
+std::map<Shared::ClientId, Shared::Client *> gViewers;
 
 Shared::Message Wire(Shared::Message &&m) { return gLoopback ? Shared::roundTrip(m) : std::move(m); }
 
@@ -56,7 +64,18 @@ void Start() {
         if (!gDispatchQueued.exchange(true)) dispatch_async(dispatch_get_main_queue(), ^{ DispatchOnMain(); });
     });
     gHost = new Shared::SessionHost(
-        [](Shared::ClientId, Shared::Message &&m) { gClient->deliver(Wire(std::move(m))); }, delayUs);
+        [](Shared::ClientId to, Shared::Message &&m) {
+            {
+                std::lock_guard<std::mutex> lk(gViewersMu);
+                auto it = gViewers.find(to);
+                if (it != gViewers.end()) {
+                    it->second->deliver(Wire(std::move(m)));
+                    return;
+                }
+            }
+            gClient->deliver(Wire(std::move(m)));
+        },
+        delayUs);
     gId = gHost->connect();
     gClient->connect([](Shared::Message &&m) { gHost->post(gId, Wire(std::move(m))); });
 }
@@ -74,6 +93,23 @@ BOOL MCSessionHostEnabled(void) {
 Shared::Client &MCSessionClient(void) {
     if (!gClient) Start();
     return *gClient;
+}
+
+std::function<void()> MCSessionConnectViewer(Shared::Client &client) {
+    MCSessionClient();
+    const Shared::ClientId id = gHost->connect();
+    {
+        std::lock_guard<std::mutex> lk(gViewersMu);
+        gViewers[id] = &client;
+    }
+    client.connect([id](Shared::Message &&m) { gHost->post(id, Wire(std::move(m))); });
+    return [id] {
+        {
+            std::lock_guard<std::mutex> lk(gViewersMu);
+            gViewers.erase(id);
+        }
+        gHost->disconnect(id);
+    };
 }
 
 BOOL MCSessionLoopback(void) {

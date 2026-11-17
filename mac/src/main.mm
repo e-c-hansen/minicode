@@ -753,6 +753,9 @@ static BOOL MCWindowTabAction(SEL a) {
     }
     if (item.action == @selector(showContextMenu:))
         return (NSApp.keyWindow ?: NSApp.mainWindow) != nil;
+    if (item.action == @selector(showSessionInBrowser:) ||
+        item.action == @selector(copySessionBrowserLink:))
+        return [self current] != nil;
     if (item.action == @selector(exportPDF:)) return [self current].canExportPDF;
     if (item.action == @selector(exportMarkdownHtml:)) return [self current].canExportMarkdownHtml;
     if (item.action == @selector(saveBrowserBookmark:)) return [self current].canSaveBrowserBookmark;
@@ -829,6 +832,8 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)previousChange:(id)sender { [[self current] previousChange:sender]; }
 - (void)toggleAgents:(id)sender    { [[self current] toggleAgents:sender]; }
 - (void)toggleProcesses:(id)sender { [[self current] toggleProcesses:sender]; }
+- (void)showSessionInBrowser:(id)sender { [[self current] showSessionInBrowser:sender]; }
+- (void)copySessionBrowserLink:(id)sender { [[self current] copySessionBrowserLink:sender]; }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)requestChange:(id)sender   { [[self current] requestChange:sender]; }
@@ -1613,6 +1618,14 @@ static void BuildMenu(void) {
     [viewMenu addItem:processes];
     // Claude Code's /ide for each window (agent.ide-link; IdeLinkServer.h).
     [viewMenu addItem:MCIdeLinkMenuItem()];
+    // The window's tabs on the session's host, read-only in the default
+    // browser (editor.session-host; SessionBrowser.h).
+    [viewMenu addItemWithTitle:@"Show Session in Browser…"
+                        action:@selector(showSessionInBrowser:)
+                 keyEquivalent:@""];
+    [viewMenu addItemWithTitle:@"Copy Session Browser Link"
+                        action:@selector(copySessionBrowserLink:)
+                 keyEquivalent:@""];
 
     // Shift+Cmd+M as in VS Code: every problem the language servers report,
     // above the terminal.
