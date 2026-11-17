@@ -584,7 +584,12 @@ MC_GUI_SUITE(agents) {
         GCHECK(page->applyTitle() == "Applied to Main" && !page->applyEnabled());
         GCHECK(!gtk_widget_get_sensitive(page->applyButton()));
         GCHECK(page->sourceButtonShown());
-        GCHECK(MCGuiOnScreen(page->sourceButton()));
+    });
+    // Shown by the step above's answer and laid out a frame or so later, as
+    // Apply to Main's own button (#116).
+    MCGuiWait("Show in Source Control on screen", 10, [] {
+        ChangeReviewPage* page = changesPage();
+        return page && MCGuiOnScreen(page->sourceButton());
     });
     MCGuiStep("Show in Source Control hands over the main checkout", [] {
         ChangeReviewPage* page = changesPage();
