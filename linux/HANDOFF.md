@@ -5331,3 +5331,17 @@ written twice. Core checks: `saveplan:session` and
 `saveplan:session-before-another-window-reads`. The Mac moved onto the
 planner for backups and auto-save in the same stage; it writes its
 session at once, to the same sessions.json format in its own folder.
+
+### 78. Replace in Folder names files over 1 MB as too large (done, November 2026)
+
+The core's `planReplace` leaves files over `FolderSearchOptions::maxFileSize`
+alone and reports them in `FolderReplacePlan::tooLarge` and `tooLargeCount`;
+`SearchPanel::planned` now says what the Mac's does: "Nothing replaced: the
+matches are in files larger than 1 MB, which Replace in Folder leaves alone
+(big.txt)" when nothing else is left, " Left alone, since they are larger
+than 1 MB: big.txt." in the question, "and N more" past the listed names, and
+"big.txt is larger than 1 MB, which Replace in Folder leaves alone" where the
+write job cannot read a file. `replace_in_folder` writes a file just over
+1 MB with a match at its end: Find in Folder lists it, Replace All names it
+as above, and it is byte for byte as it was. Checked: that suite (20 passed;
+3 fail with the fix taken out).
