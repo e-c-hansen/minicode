@@ -5346,7 +5346,7 @@ write job cannot read a file. `replace_in_folder` writes a file just over
 as above, and it is byte for byte as it was. Checked: that suite (20 passed;
 3 fail with the fix taken out).
 
-### 78. The workspace-edit applier's and the inline agent's undo steps are named (done, November 2026)
+### 79. The workspace-edit applier's and the inline agent's undo steps are named (done, November 2026)
 
 `LspSession::applyEdit` takes the step's name and gives it to
 `MultiEdit::apply`: "Rename" for F2, the code action's title for a quick fix,
