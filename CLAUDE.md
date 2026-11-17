@@ -472,8 +472,10 @@ container (PanelHost, laid out by hand in layoutContainer)
   something else (Cmd+N New File, Cmd+L Select Line, Cmd+I the inline agent).
   The one exception, the owner's call (2026-11-16): Shift+Cmd+N, New Folder
   by Finder's convention, is VS Code's New Window (`When::NotTree`, keeping
-  Option+Cmd+N) and New Folder only while the tree has the keyboard (a
-  `Tree` command, so on Linux Ctrl+Alt+N is the tree's too).
+  Option+Cmd+N) and New Folder only while the tree has the keyboard
+  (`minicode.tree.newFolder`, a Mac-only `Tree` row sending `newFolder:`
+  with tag 1; `explorer.newFolder` keeps the menu item, keyless on the Mac
+  and Ctrl+Alt+N everywhere on Linux).
   Dump every menu key equivalent before adding one; no key is bound twice (the
   `keymap` suite and `commands:*` check it).
 - **A new shortcut**: a row in `src/Commands.cpp` (id in VS Code's spelling
@@ -600,7 +602,7 @@ container (PanelHost, laid out by hand in layoutContainer)
   types); when two commands share a key in different places; and for keys a
   menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation);
   and for a `Tree` command (renameFile on F2, moveFileToTrash on Cmd+Delete,
-  explorer.newFolder on Shift+Cmd+N, which is New Window elsewhere) while the tree has the keyboard; and for a function key whose `Any`
+  minicode.tree.newFolder on Shift+Cmd+N, which is New Window elsewhere) while the tree has the keyboard; and for a function key whose `Any`
   command something in the responder chain takes (F7 in the compare view's
   panes, plain text views that would beep at it). A `Tree` command's keys are never put on
   its menu item, since a menu key acts from every pane (Cmd+Delete once

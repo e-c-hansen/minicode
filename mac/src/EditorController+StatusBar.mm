@@ -445,7 +445,7 @@ static const CGFloat kHintsPad = 16;
 
     [self appendHintsHeading:@"Files" to:s];
     [self appendHintsRow:s key:[self hk:@"workbench.action.newWindow"] label:@"New window"
-                    key2:[self hk:@"explorer.newFolder"] label2:@"New folder (in the tree)" state:nil];
+                    key2:[self hk:@"minicode.tree.newFolder"] label2:@"New folder (in the tree)" state:nil];
     [self appendHintsRow:s key:@"⌘⌫" label:@"Trash (in the tree)"
                     key2:[self hk:@"workbench.files.action.refreshFilesExplorer"] label2:@"Refresh tree" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.rename"] label:@"Rename (in the tree)"

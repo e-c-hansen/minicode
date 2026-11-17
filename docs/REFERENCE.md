@@ -486,7 +486,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Move to the previous or next command in the terminal, its prompt at the top | Command Up, Command Down, in the terminal |  |  |
 | Move to the start or end of the line at the terminal's prompt, or delete back to its start | Command Left, Command Right, Command Delete |  |  |
 | New file | Command N | Ctrl N | New file in the ⋮ menu |
-| New folder | Shift Command N, in the file tree | Ctrl Alt N, in the file tree |  |
+| New folder | Shift Command N, in the file tree | Ctrl Alt N |  |
 | New tab in the browser, while it has the keyboard (View > New Browser Tab anywhere) | Command T, or the + at the end of its tabs | Ctrl T, or the button at the end of its tabs |  |
 | New window | Shift Command N (outside the file tree) or Option Command N | Ctrl Shift N |  |
 | Next tab, previous tab (the browser's, while it has the keyboard and more than one tab) | Control Tab, Control Shift Tab, or Shift Command ], Shift Command [, or Option Command Right, Option Command Left | Ctrl Page Down, Ctrl Page Up, or Ctrl Tab, Ctrl Shift Tab |  |

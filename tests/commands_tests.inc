@@ -208,13 +208,15 @@ static void testCommandTable() {
     CHECK(d.commandFor(K("space"), When::Tree) == find("minicode.tree.quickLook"));
     // Shift+Cmd+N is New Folder in the tree, as in Finder, and VS Code's New
     // Window everywhere else; Option+Cmd+N stays New Window's too.
-    CHECK(d.commandFor(K("shift+cmd+n"), When::Tree) == find("explorer.newFolder"));
+    CHECK(d.commandFor(K("shift+cmd+n"), When::Tree) == find("minicode.tree.newFolder"));
     for (When w : {When::Editor, When::Terminal, When::Page, When::Any})
         CHECK(d.commandFor(K("shift+cmd+n"), w) == find("workbench.action.newWindow"));
     CHECK(d.keysOf("workbench.action.newWindow").size() == 2 &&
           format(d.keysOf("workbench.action.newWindow")[0]) == "shift+cmd+n" &&
           HasKey(d, "workbench.action.newWindow", "alt+cmd+n"));
-    CHECK(d.keysOf("explorer.newFolder").size() == 1 && find("explorer.newFolder")->when == When::Tree);
+    CHECK(d.keysOf("explorer.newFolder").empty() && find("explorer.newFolder")->when == When::Any);
+    CHECK(find("minicode.tree.newFolder")->when == When::Tree &&
+          std::string(find("minicode.tree.newFolder")->selector) == "newFolder:");
     // Cmd+=, Cmd+- and Cmd+0 zoom a web page or a PDF in one, as in Safari;
     // the zoom keys are the terminals' zoom in a terminal and the editor's
     // everywhere else, and Cmd+0 is Focus File Tree outside a page.

@@ -323,13 +323,19 @@ const std::vector<Command>& all() {
          "saveBrowserTabsAsBookmarks:", 0, 0, nullptr},
         {"minicode.browser.openBookmarks", "Open All in Browser Tabs", "File", "", A,
          "openBookmarksInTabs:", 0, 0, nullptr},
+        // From anywhere through the menu, with no key on the Mac: its
+        // Shift+Cmd+N is minicode.tree.newFolder's, the tree's alone.
+        {"explorer.newFolder", "New Folder…", "File", "", A, "newFolder:", 0, 0, nullptr},
         // Keys only while the tree has the keyboard, as in Finder and VS Code:
         // a tree command's key is never put on its menu item, which would run
         // it from the editor too (Cmd+Delete trashed the tree's selection
         // from the editor once). The key monitor runs them (Keymap.mm).
         // Shift+Cmd+N, Finder's New Folder, is New Window anywhere else.
-        {"explorer.newFolder", "New Folder…", "File", "shift+cmd+n", R, "newFolder:", 0, 0,
-         nullptr},
+        // The menu item is explorer.newFolder's above, with no key on the
+        // Mac; on Linux that one keeps Ctrl+Alt+N everywhere, since there
+        // no other command has it. Tag 1 only tells the two rows apart.
+        {"minicode.tree.newFolder", "New Folder…", "File", "shift+cmd+n", R, "newFolder:", 1, 0,
+         "the file tree (File > New Folder… from anywhere)"},
         {"renameFile", "Rename…", "File", "f2", R, "renameSelected:", 0, 0, nullptr},
         {"moveFileToTrash", "Move to Trash", "File", "cmd+backspace cmd+delete", R,
          "deleteSelected:", 0, 0, nullptr},
