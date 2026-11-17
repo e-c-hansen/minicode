@@ -5086,7 +5086,7 @@ GUI checks (`tests/gui`):
   `FileTree::decorate`, which returns before the git colors. A right click on
   one pops its own two-item menu (`win.compareworktree`,
   `win.worktreewindow`). Compare with Main was a list page here
-  (`WorktreeChangesPage`, gone: item 85) and is the review page in its
+  (`WorktreeChangesPage`, gone: item 87) and is the review page in its
   worktree mode, the changed files against the merge base
   (`AgentView::compareBase`).
 - **Left**: Show Terminal for a session waiting in a terminal (the attention
@@ -5571,7 +5571,7 @@ link, the page kept).
 
 ### 87. Compare with Main in one scroll, and Apply to Main (done, November 2026)
 
-The Mac's worktree page (`ae95033`, `f714354`) on the review page of item 84.
+The Mac's worktree page (`ae95033`, `f714354`) on the review page of item 85.
 The tree's Worktrees node menu, `win.compareworktree`, opens a
 `ChangeReviewPage` made with its second constructor (the worktree's folder,
 its name, its branch, the main branch): the same page over what the worktree
