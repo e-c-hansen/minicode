@@ -60,6 +60,9 @@ public:
         // unconfirmed edits: apply it now, recording nothing. `select`, for
         // an undo, is the selection to show.
         virtual void hostEdited(DocId doc, const Ot::Ops& ops, int flag, const Selection* select) = 0;
+        // A view's document closed on the host, or was never there
+        // (view()): the client has forgotten it.
+        virtual void hostGone(DocId /*doc*/) {}
     };
     // Each edit the host applied, in UTF-16 and in the host's order, once
     // the copy (watch()) has taken it.
@@ -73,6 +76,10 @@ public:
     // Says Hello through `send` (which runs on this thread and must not call
     // back into the client).
     void connect(Send send);
+    // A renderer that only reads (a browser's view, SessionWeb.h): said in
+    // its Hello, so the host refuses anything from it that would change the
+    // session. Before connect().
+    void setReadOnly(bool on) { readOnly_ = on; }
     Model::Unit unit() const { return unit_; }
 
     // ---- the host's messages
@@ -93,6 +100,10 @@ public:
     // its history forgotten.
     void reset(DocId doc, std::string text8);
     void close(DocId doc);
+    // A read-only renderer's view of a document the host has: its text comes
+    // to `listener` as one insertion, then every edit. The host neither makes
+    // the document nor keeps it open for this; hostGone when it goes.
+    void view(DocId doc, Listener* listener);
     bool isOpen(DocId doc) const { return docs_.count(doc) > 0; }
     // The host version this renderer has applied.
     std::uint64_t version(DocId doc) const;
@@ -216,6 +227,7 @@ private:
 
     Model::Unit unit_;
     std::string name_;
+    bool readOnly_ = false;
     Send send_;
     ClientId id_ = 0;
     std::map<DocId, Doc> docs_;

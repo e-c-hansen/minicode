@@ -48,6 +48,9 @@ core_sources = [
   core_dir / 'SessionHost.cpp',
   core_dir / 'SessionClient.cpp',
   core_dir / 'SessionServer.cpp',
+  # A browser's read-only view of a host (`minicode host --web`, stage 6b).
+  core_dir / 'SessionWeb.cpp',
+  core_dir / 'SessionWebPage.cpp',
   # The terminals' ptys belong to the host too (stage 5): a pty per shell,
   # and a headless screen with scrollback fed its bytes, whose marks give
   # the commands and whose replay rebuilds it for a renderer.

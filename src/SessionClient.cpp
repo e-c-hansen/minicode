@@ -16,6 +16,7 @@ void Client::connect(Send send) {
     h.kind = Kind::Hello;
     h.unit = unit_;
     h.name = name_;
+    if (readOnly_) h.flag = 1;
     send_(std::move(h));
 }
 
@@ -67,6 +68,8 @@ void Client::open(DocId id, const std::string& path, std::string text8, Listener
     queue(std::move(m));
     pump();
 }
+
+void Client::view(DocId id, Listener* listener) { open(id, std::string(), std::string(), listener); }
 
 void Client::reset(DocId id, std::string text8) {
     Doc* d = doc(id);
@@ -301,6 +304,14 @@ void Client::process(Message&& m) {
         break;
     }
     case Kind::Error: errors_.push_back(m.name); break;
+    case Kind::DocGone: {
+        auto it = docs_.find(m.doc);
+        if (it == docs_.end()) break;
+        Listener* l = it->second.listener;
+        docs_.erase(it);
+        if (l) l->hostGone(m.doc);
+        break;
+    }
     case Kind::TermOpened:
     case Kind::TermOutput:
     case Kind::TermReplay:

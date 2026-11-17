@@ -23,7 +23,9 @@ found through that list.
   `host-<hash>.sock` and its `.lock` in the same folder
   (`ControlChannel::socketFolders()`, shared by the CLI); the sweep of dead
   pids' sockets skips them (no pid in the name). See session-host.md's
-  "The headless host".
+  "The headless host". `--web PORT` (on `host` or `attach`) also serves a
+  read-only view to a browser on 127.0.0.1 (session-host.md, "The browser's
+  view").
 - `tools/minicode-cli.cpp` builds `Contents/MacOS/minicode-cli`, which the
   launcher execs for subcommands: newest live socket (or `--pid`) in the
   shell's `$TMPDIR/MiniCode` and the user's own temporary folder's (a nix
