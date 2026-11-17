@@ -154,8 +154,10 @@ MC_GUI_SUITE(folder_picker) {
         [w openFolder:nil];
         Type(w, [many stringByAppendingString:@"/"]);
     });
+    // The first 2,000 by name are rows until a name narrows them (d2999
+    // sorts past them).
     MCGuiWait(@"its subfolders listed", 10, ^BOOL {
-        return Lists(Labels(w), [many stringByAppendingPathComponent:@"d2999"]);
+        return Lists(Labels(w), [many stringByAppendingPathComponent:@"d1000"]);
     });
     MCGuiStep(@"typing filters it quickly", ^{
         const double c0 = MCGuiThreadCpuMs();
