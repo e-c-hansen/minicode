@@ -23,6 +23,7 @@
 #include "Persistence.h"
 #include "TabSessions.h"
 #include "TabStrip.h"
+#include "WindowLayout.h"
 
 #include <glib/gstdio.h>
 #include <sys/stat.h>
