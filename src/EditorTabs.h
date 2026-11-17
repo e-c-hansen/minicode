@@ -71,12 +71,13 @@ int dropIndex(const std::vector<double> &widths, int from, double x);
 // file, its place in the row, whether it showed its preview (a Markdown or
 // LaTeX file), and, when it had been on show, its view: the selection and
 // the first character on show, in characters, and how far below that
-// character's line the view's top was. The Mac keeps the same in
-// EditorController+Tabs.mm (rememberClosedTab:); the GTK port keeps it here.
+// character's line the view's top was. Both ports keep them here, through
+// Model::Window (the Mac's characters are UTF-16 units, GTK's code points).
 struct ClosedTab {
     std::string path;
     int index = 0;
     bool preview = false;
+    bool side = false;   // its Markdown page beside its source (the Mac)
     bool haveView = false;
     long selStart = 0, selEnd = 0;
     long top = 0;

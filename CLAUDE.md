@@ -212,8 +212,8 @@ goes here first, with tests; the GUI only displays it.
   "Tabs, sessions and the disk"), `Backups` (backups
   of unsaved tabs, with a POSIX `Fs`), `TabSessions` (what a folder and a
   window keep between runs: sessions.json's `Store`, the window record),
-  `SavePlan` (when backups and auto-saves are written, from a clock the
-  port ticks), `FileDetails` (tree sorts, ages, folder
+  `SavePlan` (when backups, auto-saves and GTK's session are written,
+  from a clock the port ticks), `FileDetails` (tree sorts, ages, folder
   totals), `RunFile` (Run File's quoting), `Runnables` (the tests in a
   file, found through the highlighter's tokens, and the command for one
   test or the file), `RightAreaLayout` (the right
@@ -328,7 +328,7 @@ goes here first, with tests; the GUI only displays it.
   TODOs window), `GitPanel`, `ChangeReviewPage` (every uncommitted change in
   one tab), `GitGutter` (change bars), `EditorConflicts` (merge conflicts
   in the editor), `TreeDetails`,
-  `FormatRunner`, `BackupStore`,
+  `FormatRunner`, `BackupStore`, `SessionStore` (sessions.json),
   `PalettePanel`, `Navigation`, `HintsSearchBox` (the hints panel's search box).
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
@@ -350,7 +350,7 @@ goes here first, with tests; the GUI only displays it.
 `validateMenuItem:`, undo and redo, and the forwarding accessors of the active
 tab. The rest is in `EditorController+<Concern>.mm`: Layout, StatusBar, Panels
 (terminal dock, browser, keyboard between panes), Search, Tree, TreeDetails,
-Tabs (tabs, closed tabs, saving), Groups (the split editor), Persistence (sessions, backups, auto-save,
+Tabs (tabs, closed tabs, saving), Groups (the split editor, and the window's Model::Window behind both), Persistence (sessions, backups, auto-save,
 files changed outside), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,
@@ -684,15 +684,24 @@ container (PanelHost, laid out by hand in layoutContainer)
   window reads nothing and shows nothing: a port changes it
   (`prepareOpen`, `add`, `activate`, `close`, `putInOther`, `focus`,
   `move`, ...) and shows what it says. `Model::Session` is the app's
-  windows. The GTK editor keeps its tabs in one (linux/HANDOFF.md item
-  73); the Mac still keeps its own in EditorController by the same rules,
-  until stage 3c moves it over, and sessions.json and the backup planner
-  join the core in 3b. A rule changed here is changed in the window, with
-  its `session:*` check.
+  windows. Both editors keep their tabs in one (GTK: linux/HANDOFF.md
+  item 73; the Mac since stage 3c: `_win`, one of a process-wide
+  `Model::Session` made in EditorController.mm, with `_docs` the MCTabs
+  by `docId`). A rule changed here is changed in the window, with its
+  `session:*` check. The Mac keeps three of its own rules where the
+  window's differ, by using `insert`, `setPreview` and `close` rather
+  than `add`: a replaced preview tab the other group also shows stays
+  there; the user's preview tab replaced is the focused group's only;
+  and the agents have two preview tabs, one for notes and one for
+  comparisons.
 - **One text view, many documents.** `MCTab` holds a document's path, text,
   `savedText`, mode flags, `dirty`, its own `NSUndoManager` (from
   `undoManagerForTextView:`), its own `LatexView`, folds, viewer kind,
-  `agentPreview`, `comparison` and where its view was. The controller's
+  `comparison` and where its view was. Its place among the tabs is the
+  window's: `preview`, `agentPreview` and `lastActive` are read-only and
+  ask its `owner` (`MCTabOwner`, EditorController+Groups.mm), which
+  answers from `_win`; `setCurrentPath:` tells it the new path. The
+  controller's
   document properties are forwarding accessors to `_activeTab`
   (`MC_TAB_PROPERTY`), nil/NO with no tab. Shared viewers are let go by
   `stashActiveTab` (a playing sound stops) and rebuilt by `showActiveTab`. A
@@ -705,7 +714,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   reveal, rename and trash; the File menu repeats them for the active tab so
   the palette finds them.
 - **The preview tab** (2026-11-08, VS Code's enablePreview,
-  `workbench.enable-preview`): `MCTab preview`, italic like `agentPreview`.
+  `workbench.enable-preview`): `Model::Preview::User` (`MCTab preview`),
+  italic like `agentPreview`.
   Every open goes through `openFileAtPath:from:` (`openFileAtPath:` is
   `OpenFrom::Other`, kept) and the rules are the core's
   (`EditorTabs::opensInPreview`, `treeClick`, `staysPreview`,
@@ -753,7 +763,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   (`isARepeat`) is ignored, so a held Cmd+W closes one thing. Shift+Cmd+W
   closes the window. Cmd+N New File (with no window, opens one), Shift+Cmd+N
   (outside the tree) and Option+Cmd+N New Window. Reopen Closed Tab (Option+Shift+Cmd+T): the newest of the
-  window's last 50 (`_closedTabs`, with place, selection, scroll, mode),
+  window's last 50 (`Model::Window`'s closed tabs, each with
+  `closedPlaceOf:`'s place, selection, scroll, mode and side page),
   skipping files gone.
 - **Unsaved tabs are never dropped**: a dirty tab asks Save / Don't Save /
   Cancel; window close, Open Folder and quit ask once for all. Trash closes
@@ -775,10 +786,23 @@ container (PanelHost, laid out by hand in layoutContainer)
   show as text an undo action of its own, `registerReloadUndoForTab:`; an
   NSTextView registration made during an undo redid onto the wrong range).
   A read that fails moves no date.
-- **Sessions**: `MCTabSessions` (NSUserDefaults, by resolved folder, 50
-  folders) reopens a folder's tabs and its browser page, else a read-only empty
-  editor. Off under `MINICODE_DEMO` and `MINICODE_BENCH`;
-  `MINICODE_DEFAULTS_SUITE` points it at a scratch suite. A tab over 16 MB or
+- **Sessions** (since stage 3c, 2026-11-17, `SessionStore.{h,mm}`): a
+  folder's `TabSessions::Session` in sessions.json
+  (`~/Library/Application Support/MiniCode/sessions.json`, NSHomeDirectory,
+  or `$MINICODE_SESSIONS_FILE`; the GTK port's format, by resolved folder,
+  50 folders) reopens its tabs and its browser pane (each tab's
+  `interactionState` as base64, `archived` for NSKeyedArchiver's form,
+  `browserShown`, `browserFraction`), else a read-only empty editor. Every
+  read and write runs on one serial queue: a save is handed over at once
+  and written in that turn over the file as it is then (another
+  minicode's folders stay); a read waits for the writes queued before it;
+  `applicationWillTerminate` waits for all (`MCSessionsFlush`). The user
+  defaults' `MCTabSessions` and `MCOpenWindows` are carried over once,
+  by the first minicode with no file (`MCSessionsFromDefaults`, checked in
+  window_restore; `MCSessionsMovedToFile` marks it, and the old keys stay
+  for an older minicode). Off under `MINICODE_DEMO` and `MINICODE_BENCH`;
+  the harness's scratch home holds the file, and `MINICODE_DEFAULTS_SUITE`
+  the old keys. The checks read it through `storedSession`. A tab over 16 MB or
   not a plain file waits for a click. Windows on one folder share it: each save
   lists the saving window's files then the others'. Agent preview tabs are left
   out (they were saved until 2026-11-08); the user's preview tab is saved as
@@ -790,9 +814,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   relaunch) reopens every window open at the last quit, front first. Before
   this, a Dock launch opened a window on `/` (its cwd) with nothing in it,
   and the ↻ restart brought folders and tabs back but no frames, carets,
-  panels or tree. The record is the core's (`encodeWindows`, a JSON string
-  in the defaults' `MCOpenWindows` until stage 3 moves the session into the
-  core): per window its frame (`fitFrame` onto today's screens), full
+  panels or tree. The record is the core's (`encodeWindows`, sessions.json's
+  `"windows"` since stage 3c, the defaults' `MCOpenWindows` before): per window its frame (`fitFrame` onto today's screens), full
   screen, folder, its own tabs as a `TabSessions::Session` (each tab's
   selection, top character and offset, page or source, side preview, the
   groups), the sidebar's panel, width and Cmd+B state, editor hidden,
@@ -802,7 +825,7 @@ container (PanelHost, laid out by hand in layoutContainer)
   `applicationWillTerminate`, by `windowWillClose:` (`noteWindowClosing`,
   `TabSessions::afterClosing`: the last window is kept, since closing it
   quits) and 3 s after a tab switch (saveSession), never empty. A restored
-  window takes its tabs from the record, not the folder's `MCTabSessions`
+  window takes its tabs from the record, not the folder's session
   (two windows on one folder each get theirs); showWindow puts back the
   frame first (`placeRestoredWindow`), then the sidebar, terminals and
   Problems before the tabs, so text is laid out at its width
@@ -819,10 +842,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   as folders only and an older minicode skips the key. The GTK app
   reopens those windows on a launch with no path from the home folder or
   `/` (its size, own tabs, sidebar, terminal, Problems; linux/HANDOFF.md
-  item 76). The Mac is unchanged: `MCOpenWindows` was already this
-  record, and its per-folder `MCTabSessions` stays a dictionary of its own
-  (the browser's `interactionState` data in it) until 3c moves it to the
-  shared file.
+  item 76). The Mac keeps the same file since 3c (see "Sessions").
+  GTK writes a window's session 1 s after its tabs change
+  (`Planner::sessionChanged`), so a window opening on a folder first has
+  every other window on it write a pending save (`takeSession`,
+  `Persistence::flushSession`, `saveplan:session-before-another-window-reads`;
+  GTK split_editor's flake, #81); the Mac writes at once.
 - AppDelegate's `current` maps a window an editor made (`ownsWindow:`, Find in
   Folder and TODOs) to that editor; items that edit the file on show are
   disabled while another window is key, so keys reach that window's field.
@@ -836,13 +861,18 @@ container (PanelHost, laid out by hand in layoutContainer)
   several layout managers, one storage), else a copy of that tab's
   attributed text, else a picture (`cacheDisplayInRect:`) of what the
   editor showed. Focusing a group (a press in the mirror or its strip,
-  Cmd+1, Cmd+2) copies what the editor shows into the mirror, swaps the
-  group lists and strips (`self.tabStrip` is always the focused group's)
-  and activates the other tab at the mirror's place; a press goes on to
-  the same character. `_tabs` stays every document of either group
-  (backups, sessions, auto-save, disk checks, the servers' open files
-  untouched); the strip, tab keys and closing use `groupTabs`, and inserts
-  and removals go through `groupInsertTab:`/`groupRemoveTab:`. One MCTab per
+  Cmd+1, Cmd+2) copies what the editor shows into the mirror, focuses the
+  window's other group (`_win->focus`), swaps the strips (`self.tabStrip`
+  is always the focused group's) and activates the other tab at the
+  mirror's place; a press goes on to the same character. The groups are
+  `_win`'s; `tabs` is every document of either group
+  (`Model::Window::documents`: backups, sessions, auto-save, disk checks,
+  the servers' open files untouched); the strip, tab keys and closing use
+  `groupTabs`, and new tabs go in through `groupInsertTab:` (or
+  `groupAppendTab:`, a session). A close that empties a group drops it in
+  the window at once (`Model::Window::close`), and the views follow:
+  `editorGroupsJoined`, or `editorGroupClosed` when the focused group
+  went (the other takes the editor at the mirror's place). One MCTab per
   file even in both groups (one text, undo, backup). **Traps**: never move
   the mirror's layout manager with `replaceTextStorage:`, which carries
   every layout manager of the storage, the editor's too
@@ -878,12 +908,14 @@ container (PanelHost, laid out by hand in layoutContainer)
 - **The planner** (2026-11-16, stage 3b): these timing rules, auto-save's
   below included, are the core's `SavePlan::Planner` (`changed`,
   `focusChanged`, `tick(now)`, `nextDue()`; `saveplan:*` holds it to each
-  rule here, with a random walk). The GTK port runs on it with one timer;
-  the Mac still runs `scheduleBackups`/`scheduleAutoSave` on its own
-  performSelector timers and moves onto the planner in 3c (MCTab's
-  `textGeneration`, `backedUpGeneration`, `backedUpPath` and `hasBackup`
-  are `SavePlan::Tab`'s fields one for one). A rule changed here changes
-  there.
+  rule here, with a random walk). Both ports run on it with one timer:
+  the Mac since 3c, `_plan` and `_planTimer` (an NSTimer, re-armed for
+  `nextDue()` by `armSavePlan`, which never loses a planned save: it is
+  only when), fed by `scheduleBackups`, `scheduleAutoSave` and
+  `autoSaveOnFocusChange` (`planTabOf:`: MCTab's `textGeneration`,
+  `backedUpGeneration`, `backedUpPath` and `hasBackup` one for one,
+  `tabTakesAutoSave`'s other conditions as `mayAutoSave`), stopped by
+  `stopSavePlan` as the window closes. A rule changed here changes there.
 - Restore: `planForRoot:` takes the folder's backups no live process holds (pid
   and start time); `takeBackup:intoTab:` makes the tab dirty with the backup's
   base date and inode, and on first show (`showRestoredText:`) the backup is
@@ -2848,10 +2880,17 @@ for full-screen programs. Both can be open at once.
   outside brackets control characters are dropped. Both go through
   `canTypeNow`: `tcgetpgrp(master)` must be the shell, and `_zleReady` (B),
   not A, since bytes sent between precmd and ZLE start echo as `^[[9999~`;
-  with no B, a prompt 0.3 s old whose tty is raw counts. Typing uses the
-  prompt up (`_zleReady`, `_atPrompt` cleared), so a second command waits.
-  What cannot go in yet is queued (`_pendingCommand`, `_pendingTyped`) and
-  `flushPendingInput` tries again on every event and every 0.1 s. `busy` is
+  with no B, a prompt 0.3 s old counts; either way the tty must be raw
+  (2026-11-16: a B a background job printed while cat ran was still set
+  when cat ended, before the shell's prompt, and `read` reads a cooked tty
+  too). Typing uses the prompt up (`_zleReady`, `_atPrompt` cleared), so a
+  second command waits. What cannot go in yet is queued, commands in order
+  (`_pendingCommands`, one typed per prompt; `pendingCommands`) and
+  `_pendingTyped`, and `flushPendingInput` tries again on every event and
+  every 0.1 s. **Trap** (2026-11-16): the queue was one line, and a second
+  `runCommand:` while the first still waited (a prompt between its 133;A
+  and B) replaced it: the first never ran (terminal_reflow's flake on CI,
+  `read` missing from the screen). `busy` is
   also YES while another program holds the foreground. Private keys sent only while ZLE reads: `ESC[9998~`
   beginning-of-line, 9997 end-of-line, 9996 backward-kill-line, 9995
   clear-screen (Cmd+Left, Cmd+Right, Cmd+Delete, Cmd+K); elsewhere on the main
@@ -3616,7 +3655,7 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `applicationWillTerminate` writes `MCRestart` and `MCLaunchAfterExit` spawns
   a detached `/bin/sh` that waits for our pid and runs `open -n
   <source>/MiniCode.app`; the new process takes a record under two minutes old
-  (`reopenAfterRestart:`), brings every window back from `MCOpenWindows`
+  (`reopenAfterRestart:`), brings every window back from sessions.json
   (written by that same quit; see "Every window comes back") and runs `develop.command --continue` in the
   resuming window (never the record's command, and only in a folder that
   looks like the source). After a restart the user runs the repo's build until the next `brew

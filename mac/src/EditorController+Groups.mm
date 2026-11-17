@@ -13,10 +13,12 @@
 // click on its strip, Cmd+1 or Cmd+2 moves the editor there (focusEditorGroup:),
 // at the place the group showed, and a click goes on to the same character.
 //
-// _tabs stays every open document, so backups, auto-save, sessions, the
-// disk checks and the servers' open files need nothing of groups; the
-// strip, the tab keys and closing go by the focused group's list
-// (groupTabs). Closing a tab that the other group also holds asks nothing
+// The groups themselves are the core's Model::Window (_win, EditorTabs.h):
+// each group's tabs, the tab each shows, the focused group and the share.
+// Every open document (tabs) is a list of its own, so backups, auto-save,
+// sessions, the disk checks and the servers' open files need nothing of
+// groups; the strip, the tab keys and closing go by the focused group's
+// list (groupTabs). Closing a tab that the other group also holds asks nothing
 // (the document stays); closing a group's last tab closes the group.
 #import "EditorController+Private.h"
 #import "EditorController+GroupsIvars.h"
@@ -30,67 +32,107 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 @implementation EditorController (Groups)
 
 // ------------------------------------------------------------ the lists
-- (BOOL)editorSplit { return _split; }
-- (NSInteger)focusedGroup { return _split ? _focusedGroup : 0; }
+// The window's tabs are the core's Model::Window (_win): each group's tabs
+// in order, the tab each shows, the focused group, the preview tabs, the
+// closed tabs. It names documents by id; _docs gives each id's MCTab.
+- (MCTab *)tabWithId:(Model::DocId)i { return i ? _docs[@(i)] : nil; }
 
-- (NSMutableArray<MCTab *> *)groupTabs { return _split ? _shownTabs : _tabs; }
+- (NSArray<MCTab *> *)tabsWithIds:(const std::vector<Model::DocId> &)ids {
+    NSMutableArray<MCTab *> *out = [NSMutableArray arrayWithCapacity:ids.size()];
+    for (Model::DocId i : ids)
+        if (MCTab *t = _docs[@(i)]) [out addObject:t];
+    return out;
+}
+
+- (BOOL)editorSplit { return _win->split(); }
+- (BOOL)isSplit { return _win->split(); }
+- (NSInteger)focusedGroup { return _win->focused(); }
+
+- (NSArray<MCTab *> *)tabs { return [self tabsWithIds:_win->documents()]; }
+- (BOOL)holdsTab:(MCTab *)t { return t && _win->isOpen(t.docId) && _docs[@(t.docId)] == t; }
+- (NSArray<MCTab *> *)groupTabs { return [self tabsWithIds:_win->tabs()]; }
+- (NSArray<MCTab *> *)parkedTabs {
+    return _win->split() ? [self tabsWithIds:_win->tabs(_win->other())] : nil;
+}
+- (MCTab *)parkedActive {
+    return _win->split() ? [self tabWithId:_win->active(_win->other())] : nil;
+}
 
 - (BOOL)otherGroupHoldsTab:(MCTab *)t {
-    return _split && t && [_parkedTabs containsObject:t];
+    return t && _win->split() && _win->inGroup(t.docId, _win->other());
+}
+
+// A tab the window takes: its id is known by _docs, and the tab asks the
+// window what it is (MCTabOwner).
+- (void)adoptTab:(MCTab *)t {
+    _docs[@(t.docId)] = t;
+    t.owner = self;
+}
+
+// The tabs neither group holds any more are let go.
+- (void)forgetClosedTabs {
+    for (NSNumber *i in _docs.allKeys) {
+        if (_win->isOpen(i.unsignedLongLongValue)) continue;
+        MCTab *t = _docs[i];
+        if (t.owner == self) t.owner = nil;
+        [_docs removeObjectForKey:i];
+    }
 }
 
 - (void)groupInsertTab:(MCTab *)t atIndex:(NSUInteger)i {
-    NSMutableArray<MCTab *> *g = [self groupTabs];
-    [g insertObject:t atIndex:MIN(i, g.count)];
-    if (_split && ![_tabs containsObject:t]) [_tabs addObject:t];
+    [self groupInsertTab:t atIndex:i preview:Model::Preview::None];
+}
+
+- (void)groupInsertTab:(MCTab *)t atIndex:(NSUInteger)i preview:(Model::Preview)kind {
+    if (!t || _win->isOpen(t.docId)) return;
+    [self adoptTab:t];
+    _win->insert(t.docId, t.currentPath ? Utf8String(t.currentPath) : "",
+                 (int)MIN(i, (NSUInteger)_win->count()));
+    if (kind != Model::Preview::None) _win->setPreview(t.docId, kind);
+}
+
+- (void)groupAppendTab:(MCTab *)t preview:(Model::Preview)kind {
+    if (!t || _win->isOpen(t.docId)) return;
+    [self adoptTab:t];
+    _win->append(t.docId, t.currentPath ? Utf8String(t.currentPath) : "", kind);
 }
 
 - (void)groupRemoveTab:(MCTab *)t {
-    if (!_split) {
-        [_tabs removeObject:t];
-        return;
-    }
-    [_shownTabs removeObject:t];
-    if (![_parkedTabs containsObject:t]) [_tabs removeObject:t];
-}
-
-// A tab put on show that the focused group does not hold (Go Back, a
-// server's file, an agent's) joins it beside the one on show, as VS Code
-// opens an editor in the active group.
-- (void)ensureTabInFocusedGroup:(MCTab *)t {
-    if (!_split || !t || [_shownTabs containsObject:t]) return;
-    const NSInteger active = _activeTab ? (NSInteger)[_shownTabs indexOfObject:_activeTab] : -1;
-    [self groupInsertTab:t
-                 atIndex:(NSUInteger)EditorTabs::insertionIndex((int)active, (int)_shownTabs.count)];
+    if (!t || !_win->inGroup(t.docId, _win->focused())) return;
+    const Model::Window::Closed c = _win->close(t.docId, _win->focused(), nullptr);
+    [self forgetClosedTabs];
+    if (c.groupClosed) [self editorGroupClosed];
 }
 
 // The other group's tab `t` goes (closed there, or moved): the group shows
 // the tab it used last, and with none left the editor is one group again.
 - (void)removeTabFromOtherGroup:(MCTab *)t {
-    if (!_split || ![_parkedTabs containsObject:t]) return;
-    std::vector<uint64_t> stamps;
-    for (MCTab *each in _parkedTabs) stamps.push_back(each.lastActive);
-    const NSInteger index = (NSInteger)[_parkedTabs indexOfObject:t];
-    const NSInteger active = _parkedActive ? (NSInteger)[_parkedTabs indexOfObject:_parkedActive] : -1;
-    const int next = EditorTabs::activeAfterClose(stamps, (int)active, (int)index);
-    [_parkedTabs removeObject:t];
-    if (![_shownTabs containsObject:t]) [_tabs removeObject:t];
-    if (_parkedTabs.count == 0) {
-        [self joinEditorGroups];
+    if (![self otherGroupHoldsTab:t]) return;
+    const BOOL wasShown = t == [self parkedActive];
+    const Model::Window::Closed c = _win->close(t.docId, _win->other(), nullptr);
+    [self forgetClosedTabs];
+    if (c.groupClosed) {
+        [self editorGroupsJoined];
         return;
     }
-    if (t == _parkedActive) {
-        _parkedActive = next >= 0 ? _parkedTabs[(NSUInteger)next] : _parkedTabs.firstObject;
+    if (wasShown) {
         _mirrorTab = nil;   // shown afresh
         [self syncEditorMirror];
     }
     [self reloadParkedStrip];
 }
 
+// ---------------------------------------------- what MCTab asks (MCTabOwner)
+- (BOOL)tabIsPreview:(MCTab *)t { return _win->preview(t.docId) == Model::Preview::User; }
+- (BOOL)tabIsAgentPreview:(MCTab *)t { return _win->preview(t.docId) == Model::Preview::Agent; }
+- (uint64_t)tabLastUsed:(MCTab *)t { return _win->lastUsed(t.docId); }
+- (void)tabPathChanged:(MCTab *)t {
+    if ([self holdsTab:t]) _win->setPath(t.docId, t.currentPath ? Utf8String(t.currentPath) : "");
+}
+
 // ------------------------------------------------------------ the views
 - (void)makeEditorGroupViews {
     if (_mirror) return;
-    _groupFraction = _groupFraction > 0 ? _groupFraction : 0.5;
     _mirror = [[MCEditorMirror alloc] initInView:self.rightArea];
     __weak EditorController *weakSelf = self;
     _mirror.onPress = ^(NSEvent *e, NSUInteger c) { [weakSelf otherGroupPressed:e character:c]; };
@@ -114,13 +156,13 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
     [self applyGroupSettings];
 }
 
-- (NSView *)groupDivider { return _split ? _groupDivider : nil; }
+- (NSView *)groupDivider { return _win->split() ? _groupDivider : nil; }
 
 - (void)groupBarDraggedTo:(CGFloat)x {
     const CGFloat W = NSWidth(_groupSlot);
     if (W <= 0) return;
     const CGFloat left = MIN(MAX(x - NSMinX(_groupSlot), kMinGroupWidth), W - kMinGroupWidth);
-    _groupFraction = MIN(MAX(left / W, 0.05), 0.95);
+    _win->setFraction(MIN(MAX(left / W, 0.05), 0.95));
     [self relayoutRightArea];
     [self saveSession];
 }
@@ -129,7 +171,7 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 // strip and the bar between them laid out; returns the focused group's part
 // of the slot, for the editor and everything that shares its place.
 - (NSRect)layoutEditorGroupsIn:(NSRect)slot editorShown:(BOOL)shown {
-    if (!_split || !_mirror) {
+    if (!_win->split() || !_mirror) {
         if (_mirror) {
             [_mirror layoutInRect:NSZeroRect hidden:YES];
             _parkedStrip.hidden = YES;
@@ -140,11 +182,11 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
     }
     _groupSlot = slot;
     const CGFloat W = NSWidth(slot);
-    const CGFloat lw = EditorTabs::leftGroupWidth(W, _groupFraction, kMinGroupWidth);
+    const CGFloat lw = EditorTabs::leftGroupWidth(W, _win->fraction(), kMinGroupWidth);
     const NSRect left = NSMakeRect(NSMinX(slot), NSMinY(slot), lw, NSHeight(slot));
     const NSRect right = NSMakeRect(NSMinX(slot) + lw, NSMinY(slot), W - lw, NSHeight(slot));
-    const NSRect live = _focusedGroup == 0 ? left : right;
-    const NSRect other = _focusedGroup == 0 ? right : left;
+    const NSRect live = _win->focused() == 0 ? left : right;
+    const NSRect other = _win->focused() == 0 ? right : left;
     const CGFloat h = MIN(MCTabStripHeight(), NSHeight(other));
     _parkedStrip.hidden = !shown;
     _parkedStrip.frame = NSMakeRect(NSMinX(other), NSMaxY(other) - h, NSWidth(other), h);
@@ -182,21 +224,22 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
                  lineNumbers:g.mode != MCLineNumbersOff
                    laneWidth:g.laneWidth];
     // A copy keeps the colors and font it was taken with: taken again.
-    if (_split && !_mirror.sharedStorage) {
+    if (_win->split() && !_mirror.sharedStorage) {
         _mirrorTab = nil;
         [self syncEditorMirror];
     }
 }
 
 - (void)reloadParkedStrip {
-    if (!_split || !_parkedStrip) return;
-    _parkedStrip.items = [self stripItemsForTabs:_parkedTabs];
-    _parkedStrip.activeIndex = _parkedActive ? (NSInteger)[_parkedTabs indexOfObject:_parkedActive] : -1;
+    if (!_win->split() || !_parkedStrip) return;
+    const int other = _win->other();
+    _parkedStrip.items = [self stripItemsForGroup:other];
+    _parkedStrip.activeIndex = _win->indexOf(_win->active(other), other);
 }
 
 // A press on a strip: the other group's takes the keyboard there first.
 - (void)focusGroupOfStrip:(MCTabStrip *)strip {
-    if (_split && strip && strip == _parkedStrip) [self focusEditorGroup:1 - _focusedGroup];
+    if (_win->split() && strip && strip == _parkedStrip) [self focusEditorGroup:1 - _win->focused()];
 }
 
 // ------------------------------------------------------- what it shows
@@ -289,8 +332,8 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 // copy made now. Cheap when nothing changed; run after every change of
 // what the editor shows.
 - (void)syncEditorMirror {
-    if (!_split || !_mirror) return;
-    MCTab *t = _parkedActive;
+    if (!_win->split() || !_mirror) return;
+    MCTab *t = [self parkedActive];
     if (!t) {
         [_mirror clear];
         _mirrorTab = nil;
@@ -348,14 +391,14 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 - (void)editorTextWillBeReplaced {
     if (!_mirror.sharedStorage) return;
     [_mirror keepCopyOfSharedText];
-    _mirrorText = _parkedActive.sourceText;
+    _mirrorText = [self parkedActive].sourceText;
     [self syncEditorMirrorSoon];   // shared again if it is still the same tab's text
 }
 
 // The editor is about to show another tab (activateTab:): the other group
 // stops sharing a text that is about to go.
 - (void)editorWillShowTab:(MCTab *)tab {
-    if (_split && _mirror.sharedStorage && tab != _activeTab) [self editorTextWillBeReplaced];
+    if (_win->split() && _mirror.sharedStorage && tab != _activeTab) [self editorTextWillBeReplaced];
 }
 
 // The character at the top of the editor's pane and its line's distance
@@ -378,9 +421,9 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 // The editor moves to group `g`: the group it leaves shows what it
 // showed, and it shows that group's tab at the place the group showed it.
 - (void)focusEditorGroup:(NSInteger)g {
-    if (!_split || g == _focusedGroup || (g != 0 && g != 1)) return;
+    if (!_win->split() || g == _win->focused() || (g != 0 && g != 1)) return;
     [self makeEditorGroupViews];
-    MCTab *leaving = _activeTab, *arriving = _parkedActive;
+    MCTab *leaving = _activeTab, *arriving = [self parkedActive];
     CGFloat arriveOffset = 0;
     const BOOL arriveHasPlace = arriving && _mirrorTab == arriving && !_mirror.showsPicture &&
                                 _mirror.textView.textStorage.length > 0;
@@ -404,15 +447,9 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
     _parkedSelectionTab = leaving;
     _parkedSelection = self.textView.selectedRange;
 
-    // The groups change places.
-    NSMutableArray<MCTab *> *lists = _shownTabs;
-    _shownTabs = _parkedTabs;
-    _parkedTabs = lists;
-    MCTabStrip *strip = self.tabStrip;
-    self.tabStrip = _parkedStrip;
-    _parkedStrip = strip;
-    _parkedActive = leaving;
-    _focusedGroup = g;
+    // The groups change places: the group left keeps `leaving` on show.
+    _win->focus((int)g);
+    [self swapGroupStrips];
     [self applyTabSettings];   // the strips' colors change places too
     if (copy) {
         [_mirror showText:copy wraps:[self editorWraps]];
@@ -454,8 +491,8 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 // would select from the character to wherever the other group's view
 // maps the pointer.
 - (void)otherGroupPressed:(NSEvent *)e character:(NSUInteger)c {
-    if (!_split) return;
-    [self focusEditorGroup:1 - _focusedGroup];
+    if (!_win->split()) return;
+    [self focusEditorGroup:1 - _win->focused()];
     const BOOL text = [self editorShowsEditableText] && !self.editorScroll.hidden;
     if (!text || c == NSNotFound || e.type != NSEventTypeLeftMouseDown) {
         [self focusActiveDocument];
@@ -486,18 +523,11 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
         return;
     }
     [self revealEditor];
-    if (_split) {
-        if (![_parkedTabs containsObject:t]) {
-            const NSInteger active =
-                _parkedActive ? (NSInteger)[_parkedTabs indexOfObject:_parkedActive] : -1;
-            [_parkedTabs insertObject:t
-                              atIndex:(NSUInteger)EditorTabs::insertionIndex(
-                                          (int)active, (int)_parkedTabs.count)];
-        }
-        _parkedActive = t;
+    if (_win->split()) {
+        _win->putInOther(t.docId);   // beside the group's tab on show, unless it has it
         _mirrorTab = nil;
         [self syncEditorMirror];
-        [self focusEditorGroup:1 - _focusedGroup];
+        [self focusEditorGroup:1 - _win->focused()];
         [self focusActiveDocument];
         return;
     }
@@ -509,11 +539,7 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
         t.topOffset = offset;
         t.haveView = YES;
     }
-    _split = YES;
-    _focusedGroup = 0;
-    _shownTabs = [_tabs mutableCopy];
-    _parkedTabs = [NSMutableArray arrayWithObject:t];
-    _parkedActive = t;
+    _win->putInOther(t.docId);   // a group on the right with the tab; the focus stays
     _mirrorTab = nil;
     _parkedSelectionTab = nil;
     [self relayoutRightArea];
@@ -522,10 +548,10 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
     [self focusActiveDocument];
 }
 
-// One group again: the one with the keyboard, whose order the tabs take.
-- (void)joinEditorGroups {
-    if (!_split) return;
-    [self joinEditorGroupsQuietly];
+// The other group has closed (Model::Window::close dropped it): the views
+// are one group's again.
+- (void)editorGroupsJoined {
+    [self hideEditorGroupViews];
     [self relayoutRightArea];
     [self reloadTabStrip];
     [self saveSession];
@@ -534,15 +560,10 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 // The same, remembering nothing: every tab is about to go (dropAllTabs),
 // and the folder's session stays as it was.
 - (void)joinEditorGroupsQuietly {
-    if (!_split) return;
-    NSMutableArray<MCTab *> *order = [_shownTabs mutableCopy];
-    for (MCTab *t in _tabs)
-        if (![order containsObject:t]) [order addObject:t];
-    [_tabs setArray:order];
-    _split = NO;
-    _shownTabs = nil;
-    _parkedTabs = nil;
-    _parkedActive = nil;
+    if (_win->split()) [self hideEditorGroupViews];
+}
+
+- (void)hideEditorGroupViews {
     _mirrorTab = nil;
     _mirrorText = nil;
     [_mirror clear];   // off the editor's storage
@@ -551,12 +572,40 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
     _groupDivider.hidden = YES;
 }
 
-// The focused group lost its last tab: the other group takes the keyboard
-// and is the only one.
-- (void)closeEmptyEditorGroup {
-    if (!_split || _shownTabs.count) return;
-    [self focusEditorGroup:1 - _focusedGroup];
-    [self joinEditorGroups];
+// The strip under the window's title is always the focused group's.
+- (void)swapGroupStrips {
+    MCTabStrip *strip = self.tabStrip;
+    self.tabStrip = _parkedStrip;
+    _parkedStrip = strip;
+}
+
+// The focused group lost its last tab, and the window closed it
+// (Model::Window::close): the other group, now the only one, takes the
+// editor, at the place it showed its tab, and the keyboard. The tab that
+// closed has left the editor already.
+- (void)editorGroupClosed {
+    MCTab *arriving = [self tabWithId:_win->active()];
+    CGFloat arriveOffset = 0;
+    const BOOL arriveHasPlace = arriving && _mirrorTab == arriving && !_mirror.showsPicture &&
+                                _mirror.textView.textStorage.length > 0;
+    const NSUInteger arriveTop = arriveHasPlace ? [_mirror topCharacter:&arriveOffset] : 0;
+    const BOOL arriveHasSelection = _parkedSelectionTab == arriving && arriving;
+    const NSRange arriveSelection = _parkedSelection;
+    [self flushHighlighting];
+    _parkedSelectionTab = nil;
+    _parkedSelection = self.textView.selectedRange;
+    [self swapGroupStrips];
+    [self applyTabSettings];   // the strips' colors change places too
+    if (arriving) {
+        if (arriveHasPlace) {
+            arriving.haveView = YES;
+            arriving.topCharacter = arriveTop;
+            arriving.topOffset = arriveOffset;
+        }
+        if (arriveHasSelection) arriving.selection = arriveSelection;
+        [self activateTab:arriving];
+    }
+    [self editorGroupsJoined];
     [self focusActiveDocument];
 }
 
@@ -569,7 +618,7 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 // Cmd+2: the second group, made from the tab on show when there is none,
 // as VS Code does.
 - (void)focusSecondEditorGroup:(id)sender {
-    if (!_split) {
+    if (!_win->split()) {
         [self splitEditor:sender];
         return;
     }
@@ -585,13 +634,13 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 
 - (void)moveEditorToGroupInDirection:(int)direction {
     MCTab *t = _activeTab;
-    const int target = EditorTabs::moveTarget((int)[self focusedGroup], _split, direction);
+    const int target = EditorTabs::moveTarget((int)[self focusedGroup], _win->split(), direction);
     if (!t || target < 0) {
         NSBeep();
         return;
     }
-    if (!_split) {
-        if (_tabs.count < 2) {   // the only tab: nothing to leave behind
+    if (!_win->split()) {
+        if (_win->count() < 2) {   // the only tab: nothing to leave behind
             NSBeep();
             return;
         }
@@ -607,11 +656,12 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 - (BOOL)validateGroupItem:(NSMenuItem *)item enabled:(BOOL *)enabled {
     const SEL a = item.action;
     if (a == @selector(splitEditor:)) *enabled = _activeTab != nil;
-    else if (a == @selector(focusSecondEditorGroup:)) *enabled = _split || _activeTab != nil;
+    else if (a == @selector(focusSecondEditorGroup:)) *enabled = _win->split() || _activeTab != nil;
     else if (a == @selector(moveEditorToNextGroup:) || a == @selector(moveEditorToPreviousGroup:)) {
         const int d = a == @selector(moveEditorToNextGroup:) ? 1 : -1;
-        *enabled = _activeTab && EditorTabs::moveTarget((int)[self focusedGroup], _split, d) >= 0 &&
-                   (_split || _tabs.count > 1);
+        const bool split = _win->split();
+        *enabled = _activeTab && EditorTabs::moveTarget((int)[self focusedGroup], split, d) >= 0 &&
+                   (split || _win->count() > 1);
     } else return NO;
     return YES;
 }
@@ -621,11 +671,12 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 // each group's files, their files on show, which group had the keyboard
 // and the left group's share. nil when not split.
 - (NSDictionary *)editorGroupsSessionState {
-    if (!_split) return nil;
-    NSArray<MCTab *> *left = _focusedGroup == 0 ? _shownTabs : _parkedTabs;
-    NSArray<MCTab *> *right = _focusedGroup == 0 ? _parkedTabs : _shownTabs;
-    MCTab *leftActive = _focusedGroup == 0 ? _activeTab : _parkedActive;
-    MCTab *rightActive = _focusedGroup == 0 ? _parkedActive : _activeTab;
+    if (!_win->split()) return nil;
+    const int focused = _win->focused();
+    NSArray<MCTab *> *left = [self tabsWithIds:_win->tabs(0)];
+    NSArray<MCTab *> *right = [self tabsWithIds:_win->tabs(1)];
+    MCTab *leftActive = focused == 0 ? _activeTab : [self parkedActive];
+    MCTab *rightActive = focused == 0 ? [self parkedActive] : _activeTab;
     NSArray *(^paths)(NSArray<MCTab *> *) = ^NSArray *(NSArray<MCTab *> *tabs) {
         NSMutableArray *out = [NSMutableArray array];
         for (MCTab *t in tabs)
@@ -634,14 +685,14 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
     };
     return @{@"groups": @[paths(left), paths(right)],
              @"active": @[leftActive.currentPath ?: @"", rightActive.currentPath ?: @""],
-             @"focused": @(_focusedGroup), @"fraction": @(_groupFraction)};
+             @"focused": @(focused), @"fraction": @(_win->fraction())};
 }
 
 // After the session's tabs are back (restoreSession), the split they were
 // in: the other group's tab is shown first, so the group has its text and
 // colors, then the focused group's.
 - (void)restoreEditorGroups:(NSDictionary *)state {
-    if (_split || ![state isKindOfClass:NSDictionary.class]) return;
+    if (_win->split() || ![state isKindOfClass:NSDictionary.class]) return;
     NSArray *groups = state[@"groups"], *active = state[@"active"];
     if (![groups isKindOfClass:NSArray.class] || groups.count != 2) return;
     EditorTabs::GroupsSession s;
@@ -656,29 +707,21 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
     s.focused = [state[@"focused"] intValue];
     s.fraction = [state[@"fraction"] doubleValue];
     std::vector<std::string> open;
-    NSArray<MCTab *> *tabs = [_tabs copy];
-    for (MCTab *t in tabs) open.push_back(t.currentPath ? Utf8String(t.currentPath) : "");
+    for (MCTab *t in [self tabs]) open.push_back(t.currentPath ? Utf8String(t.currentPath) : "");
     const EditorTabs::GroupLayout l = EditorTabs::restoreGroups(s, open);
     if (!l.split) return;
-    NSMutableArray<MCTab *> *lists[2] = {[NSMutableArray array], [NSMutableArray array]};
-    for (int g = 0; g < 2; g++)
-        for (int i : l.groups[g]) [lists[g] addObject:tabs[(NSUInteger)i]];
     [self makeEditorGroupViews];
-    _groupFraction = l.fraction;
-    const int first = 1 - l.focused;
-    _split = YES;
-    _focusedGroup = first;
-    _shownTabs = lists[first];
-    _parkedTabs = lists[l.focused];
-    _parkedActive = _parkedTabs[(NSUInteger)l.active[l.focused]];
+    if (!_win->restoreGroups(l)) return;
+    const int first = 1 - _win->focused();
+    _win->focus(first);
     _mirrorTab = nil;
     // The editor shows a tab of neither list yet, or the wrong one.
-    if (![_shownTabs containsObject:_activeTab]) {
+    if (!_activeTab || !_win->inGroup(_activeTab.docId, first)) {
         [self stashActiveTab];
         _activeTab = nil;
     }
     [self relayoutRightArea];
-    [self activateTab:_shownTabs[(NSUInteger)l.active[first]]];
-    [self focusEditorGroup:l.focused];
+    [self activateTab:[self tabWithId:_win->active(first)]];
+    [self focusEditorGroup:1 - first];
 }
 @end

@@ -1,33 +1,59 @@
 // EditorController+Persistence.mm — EditorController: the tabs between runs, backups and hot exit, auto-save, files changed, moved or deleted outside.
 #import "EditorController+Private.h"
 #import "EditorController+PersistenceIvars.h"
+#include <set>
+
 #include "TabSessions.h"
+#import "SessionStore.h"
 
 @implementation EditorController (Persistence)
 
 // ----------------------------------------------- the tabs between runs
-// Each folder's open files and which was on show, in the user defaults by
-// the folder's real path; the most recently used 50 folders are kept. Off
-// for the demos and the memory benchmark, which must start the same way
-// every time.
-static NSString *const kTabSessionsKey = @"MCTabSessions";
-static const NSUInteger kMaxTabSessions = 50;
+// Each folder's open files and which was on show, in sessions.json by the
+// folder's real path (SessionStore.h, the core's TabSessions::Store, which
+// the user defaults' MCTabSessions was carried into once); the most
+// recently used 50 folders are kept. Off for the demos and the memory
+// benchmark, which must start the same way every time.
 // The largest file shown at launch, the GTK port's limit for opening one.
 static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
-
-static NSUserDefaults *MCSessionDefaults(void) {
-    // Tests point this at a scratch suite, away from the user's own.
-    NSString *suite = NSProcessInfo.processInfo.environment[@"MINICODE_DEFAULTS_SUITE"];
-    return suite.length ? [[NSUserDefaults alloc] initWithSuiteName:suite]
-                        : [NSUserDefaults standardUserDefaults];
-}
 
 static BOOL MCSessionsEnabled(void) {
     NSDictionary *env = NSProcessInfo.processInfo.environment;
     return !env[@"MINICODE_DEMO"] && !env[@"MINICODE_BENCH"];
 }
 
-- (NSUserDefaults *)sessionDefaults { return MCSessionDefaults(); }
+// The folder's session as stored, nil when there is none.
+- (BOOL)storedSession:(TabSessions::Session *)out {
+    const TabSessions::Store store = MCSessionsRead();
+    auto found = store.folders.find(Utf8String([self sessionKey]));
+    if (found == store.folders.end()) return NO;
+    *out = found->second;
+    return YES;
+}
+
+static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g);
+static EditorTabs::GroupsSession MCGroupsSession(NSDictionary *state);
+
+// The same in the shape the user defaults held it (files, active, preview,
+// sidePreview, groups, browser), for the checks.
+- (NSDictionary *)storedSession {
+    TabSessions::Session s;
+    if (![self storedSession:&s]) return nil;
+    NSMutableArray *files = [NSMutableArray array], *besides = [NSMutableArray array];
+    for (const TabSessions::Tab &t : s.tabs) {
+        [files addObject:@(t.path.c_str())];
+        if (t.side) [besides addObject:@(t.path.c_str())];
+    }
+    NSMutableDictionary *e = [@{@"files": files, @"active": @(s.active), @"used": @(s.used)}
+                              mutableCopy];
+    if (besides.count) e[@"sidePreview"] = besides;
+    if (s.preview >= 0) e[@"preview"] = files[(NSUInteger)s.preview];
+    if (s.split) e[@"groups"] = MCGroupsState(s.groups);
+    if (NSDictionary *page = MCSessionBrowserPage(s))
+        e[@"browser"] = @{@"page": page, @"visible": @(s.browserShown),
+                          @"fraction": @(s.browserFraction)};
+    return e;
+}
 
 - (BOOL)sessionsEnabled { return MCSessionsEnabled(); }
 
@@ -36,7 +62,7 @@ static BOOL MCSessionsEnabled(void) {
 // The files this window would reopen, in tab order.
 - (NSArray<NSString *> *)sessionFilePaths {
     NSMutableArray<NSString *> *files = [NSMutableArray array];
-    for (MCTab *t in _tabs)
+    for (MCTab *t in [self tabs])
         if (t.currentPath && !t.agentPreview) [files addObject:t.currentPath];
     return files;
 }
@@ -46,22 +72,23 @@ static BOOL MCSessionsEnabled(void) {
     // The file on show, or with a diff on show the file shown last.
     // An agent's preview tab is left out, so it is never the one on show.
     MCTab *shown = _activeTab.currentPath && !_activeTab.agentPreview ? _activeTab : nil;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (!t.currentPath || t.agentPreview) continue;
         if (!shown) shown = t;
         else if (shown != _activeTab && t.lastActive > shown.lastActive) shown = t;
     }
-    NSMutableArray<NSString *> *files = [NSMutableArray array];
-    NSMutableArray<NSString *> *besides = [NSMutableArray array];   // with the page to the side
-    NSInteger active = 0;
-    NSString *preview = nil;   // the user's preview tab comes back as one
-    for (MCTab *t in _tabs) {
+    TabSessions::Session session;
+    std::set<std::string> have;
+    for (MCTab *t in [self tabs]) {
         // A diff is not reopened, nor an agent's preview tab (its note is gone).
         if (!t.currentPath || t.agentPreview) continue;
-        if (t == shown) active = (NSInteger)files.count;
-        [files addObject:t.currentPath];
-        if (t.sidePreview) [besides addObject:t.currentPath];
-        if (t.preview) preview = t.currentPath;
+        TabSessions::Tab tab;
+        tab.path = Utf8String(t.currentPath);
+        if (!have.insert(tab.path).second) continue;
+        tab.side = t.sidePreview;   // with the page to the side
+        if (t == shown) session.active = (int)session.tabs.size();
+        if (t.preview) session.preview = (int)session.tabs.size();   // comes back as one
+        session.tabs.push_back(tab);
     }
     NSString *key = [self sessionKey];
     // Windows open on the same folder share its session: this window's
@@ -81,38 +108,24 @@ static BOOL MCSessionsEnabled(void) {
             [other saveSession];
             return;
         }
-        for (NSString *f in [other sessionFilePaths])
-            if (![files containsObject:f]) [files addObject:f];
-    }
-    NSUserDefaults *d = [self sessionDefaults];
-    NSMutableDictionary *all = [[d dictionaryForKey:kTabSessionsKey] mutableCopy]
-                               ?: [NSMutableDictionary dictionary];
-    // The browser panel: where it was, and whether it showed.
-    NSDictionary *browser = [self browserSessionState];
-    if (files.count == 0 && !browser) {
-        [all removeObjectForKey:key];
-    } else {
-        NSMutableDictionary *entry = [@{@"files": files, @"active": @(active),
-                                        @"used": @([NSDate date].timeIntervalSince1970)}
-                                      mutableCopy];
-        if (browser) entry[@"browser"] = browser;
-        if (besides.count) entry[@"sidePreview"] = besides;
-        if (preview) entry[@"preview"] = preview;
-        // Two editor groups: each one's files (`files` stays all of them).
-        if (NSDictionary *groups = [self editorGroupsSessionState]) entry[@"groups"] = groups;
-        all[key] = entry;
-        while (all.count > kMaxTabSessions) {
-            NSString *oldest = nil;
-            double when = DBL_MAX;
-            for (NSString *k in all) {
-                double used = [all[k][@"used"] doubleValue];
-                if (used < when) { when = used; oldest = k; }
-            }
-            if (!oldest) break;
-            [all removeObjectForKey:oldest];
+        for (NSString *f in [other sessionFilePaths]) {
+            TabSessions::Tab tab;
+            tab.path = Utf8String(f);
+            if (have.insert(tab.path).second) session.tabs.push_back(tab);
         }
     }
-    [d setObject:all forKey:kTabSessionsKey];
+    // The browser panel: its tabs, whether it showed, and its share.
+    if (NSDictionary *browser = [self browserSessionState]) {
+        MCSessionPutBrowserPage(browser[@"page"], &session);
+        session.browserShown = [browser[@"visible"] boolValue];
+        session.browserFraction = [browser[@"fraction"] doubleValue];
+    }
+    // Two editor groups: each one's files (`tabs` stays all of them).
+    if (NSDictionary *groups = [self editorGroupsSessionState]) {
+        session.split = true;
+        session.groups = MCGroupsSession(groups);
+    }
+    MCSessionsPutFolder(Utf8String(key), session);   // none: the folder goes
     // And every window, a moment later (one write for a burst of switches),
     // so a crash or a force quit loses little of them.
     [NSObject cancelPreviousPerformRequestsWithTarget:EditorController.class
@@ -135,15 +148,16 @@ static BOOL MCSessionsEnabled(void) {
 // A new window's browser comes back as it was: made now if the folder's
 // session had one, shown if it showed, without taking the keyboard.
 - (void)restoreBrowserFromSession {
-    if (![self sessionsEnabled]) return;
-    NSDictionary *s = [[self sessionDefaults] dictionaryForKey:kTabSessionsKey][[self sessionKey]];
-    NSDictionary *b = [s isKindOfClass:NSDictionary.class] ? s[@"browser"] : nil;
-    if (![b isKindOfClass:NSDictionary.class] || self.browser) return;
+    if (![self sessionsEnabled] || self.browser) return;
+    TabSessions::Session s;
+    if (![self storedSession:&s]) return;
+    NSDictionary *page = MCSessionBrowserPage(s);
+    if (!page) return;
     [self makeBrowserWithHome:@""];
-    [self.browser restoreState:b[@"page"]];
-    const double fraction = [b[@"fraction"] doubleValue];
+    [self.browser restoreState:page];
+    const double fraction = s.browserFraction;
     if (fraction > 0.05 && fraction < 0.95) self.browserFraction = fraction;
-    if ([b[@"visible"] boolValue]) {
+    if (s.browserShown) {
         self.browserVisible = YES;
         // The browser window's page over the editor's side, as it opened
         // (+Bookmarks), unless the session brought a file back.
@@ -153,22 +167,21 @@ static BOOL MCSessionsEnabled(void) {
     [self relayoutRightArea];
 }
 
-static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g);
-
 // Open the tabs this folder had last time; only the one on show is read
 // now, the others when they are first shown.
 - (void)restoreSession {
     if (![self sessionsEnabled]) return;
-    NSDictionary *s = [[self sessionDefaults] dictionaryForKey:kTabSessionsKey][[self sessionKey]];
     EditorTabs::Session saved;
     NSSet *besides = nil;   // the files whose page was beside their source
     NSDictionary *groups = nil;
     std::map<std::string, TabSessions::Tab> places;   // where each was, for a window brought back
     TabSessions::Window record;
-    if ([self restoringWindow:&record]) {
+    TabSessions::Session folder;
+    const BOOL restoring = [self restoringWindow:&record];
+    if (restoring || [self storedSession:&folder]) {
         // A window brought back has its own tabs, not the folder's: two
         // windows on one folder each get theirs.
-        const TabSessions::Session &ws = record.tabs;
+        const TabSessions::Session &ws = restoring ? record.tabs : folder;
         saved = TabSessions::files(ws);
         NSMutableSet *side = [NSMutableSet set];
         for (const TabSessions::Tab &t : ws.tabs) {
@@ -177,16 +190,6 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g);
         }
         besides = side;
         if (ws.split) groups = MCGroupsState(ws.groups);
-    } else if ([s isKindOfClass:NSDictionary.class]) {
-        for (id f in s[@"files"])
-            if ([f isKindOfClass:NSString.class]) saved.files.push_back(Utf8String(f));
-        saved.active = [s[@"active"] intValue];
-        if ([s[@"sidePreview"] isKindOfClass:NSArray.class])
-            besides = [NSSet setWithArray:s[@"sidePreview"]];
-        if ([s[@"preview"] isKindOfClass:NSString.class])
-            for (size_t i = 0; i < saved.files.size(); i++)
-                if (saved.files[i] == Utf8String(s[@"preview"])) saved.preview = (int)i;
-        groups = s[@"groups"];
     }
     // Unsaved buffers kept from a crash, a force quit or a restart: a file of
     // the session with a backup comes back even if it is gone from disk, and
@@ -222,7 +225,7 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g);
             continue;   // nothing to show: the backup does not read and the file is gone
         // The preview tab comes back as one, unless unsaved changes came
         // back into it from a backup (an edit keeps a tab).
-        t.preview = !previewFile.empty() && f == previewFile && !t.dirty;
+        const bool preview = !previewFile.empty() && f == previewFile && !t.dirty;
         // Its page or source, selection and scroll, put back when it is
         // first read (applySessionPlaceOf:).
         auto p = places.find(f);
@@ -237,10 +240,11 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g);
             t.topCharacter = (NSUInteger)at.top;
             t.topOffset = (CGFloat)at.into;
         }
-        [_tabs addObject:t];
+        [self groupAppendTab:t preview:preview ? Model::Preview::User : Model::Preview::None];
     }
-    if (_tabs.count == 0) return;
-    if (r.active >= (int)_tabs.count) r.active = (int)_tabs.count - 1;
+    NSArray<MCTab *> *tabs = [self tabs];
+    if (tabs.count == 0) return;
+    if (r.active >= (int)tabs.count) r.active = (int)tabs.count - 1;
     // The tab on show is read now, while the window opens. One holding a
     // file too big for that (it held up every launch) or no plain file at
     // all waits for a click instead, and the nearest other tab is shown.
@@ -250,21 +254,39 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g);
                a.fileSize <= kMaxRestoredFileBytes;
     };
     NSInteger active = -1;
-    for (NSInteger d = 0; active < 0 && d < (NSInteger)_tabs.count; d++)
+    for (NSInteger d = 0; active < 0 && d < (NSInteger)tabs.count; d++)
         for (NSInteger i : {(NSInteger)r.active - d, (NSInteger)r.active + d})
-            if (active < 0 && i >= 0 && i < (NSInteger)_tabs.count && quick(_tabs[(NSUInteger)i].currentPath))
+            if (active < 0 && i >= 0 && i < (NSInteger)tabs.count && quick(tabs[(NSUInteger)i].currentPath))
                 active = i;
     if (active < 0) {
         [self reloadTabStrip];
         [self updateTitle];
         return;
     }
-    [self activateTab:_tabs[(NSUInteger)active]];
+    [self activateTab:tabs[(NSUInteger)active]];
     if (groups) [self restoreEditorGroups:groups];
 }
 
-// The split editor's groups in the form restoreEditorGroups: and
+// The split editor's groups from the form restoreEditorGroups: and
 // editorGroupsSessionState use.
+static EditorTabs::GroupsSession MCGroupsSession(NSDictionary *state) {
+    EditorTabs::GroupsSession g;
+    NSArray *groups = state[@"groups"], *active = state[@"active"];
+    for (int k = 0; k < 2; k++) {
+        if ([groups isKindOfClass:NSArray.class] && groups.count == 2 &&
+            [groups[k] isKindOfClass:NSArray.class])
+            for (id f in groups[k])
+                if ([f isKindOfClass:NSString.class]) g.groups[k].push_back(Utf8String(f));
+        if ([active isKindOfClass:NSArray.class] && active.count == 2 &&
+            [active[k] isKindOfClass:NSString.class])
+            g.active[k] = Utf8String(active[k]);
+    }
+    g.focused = [state[@"focused"] intValue] == 1 ? 1 : 0;
+    g.fraction = [state[@"fraction"] doubleValue];
+    return g;
+}
+
+// And to it.
 static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g) {
     NSMutableArray *lists = [NSMutableArray array];
     for (int k = 0; k < 2; k++) {
@@ -282,10 +304,8 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g) {
 // quit (or the last one closed, which quits it) come back on the next
 // launch that is asked to open nothing, from the Dock, Finder, a restart
 // or a `brew upgrade`'s reopening, each as it was. The record is the core's
-// (TabSessions::Window), kept in the user defaults until the session moves
-// into the core (SESSION-DESIGN.md, stage 3); the folders' own sessions
-// above stay for opening a folder.
-static NSString *const kOpenWindowsKey = @"MCOpenWindows";
+// (TabSessions::Window), kept in sessions.json beside the folders' own
+// sessions, which stay for opening a folder.
 
 - (void)restoreWindowRecord:(NSString *)record {
     _windowRecord = [record copy];
@@ -302,11 +322,9 @@ static NSString *const kOpenWindowsKey = @"MCOpenWindows";
 
 + (NSArray<NSDictionary *> *)windowsToRestore {
     if (!MCSessionsEnabled()) return @[];
-    NSString *text = [MCSessionDefaults() stringForKey:kOpenWindowsKey];
-    if (!text.length) return @[];
     NSMutableArray *out = [NSMutableArray array];
     NSFileManager *fm = [NSFileManager defaultManager];
-    for (const TabSessions::Window &w : TabSessions::decodeWindows(Utf8String(text))) {
+    for (const TabSessions::Window &w : MCSessionsRead().windows) {
         NSString *root = @(w.root.c_str());
         BOOL dir = NO;
         if (!root.length || ![fm fileExistsAtPath:root isDirectory:&dir] || !dir) continue;
@@ -342,8 +360,7 @@ static NSString *const kOpenWindowsKey = @"MCOpenWindows";
 
 static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
     if (list.empty()) return;   // the last window's record stays
-    NSUserDefaults *d = MCSessionDefaults();
-    [d setObject:@(TabSessions::encodeWindows(list).c_str()) forKey:kOpenWindowsKey];
+    MCSessionsPutWindows(list);
 }
 
 + (void)saveOpenWindows {
@@ -384,12 +401,12 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
     // Its tabs, as saveSession lists them, each with where it was.
     TabSessions::Session &s = w.tabs;
     MCTab *shown = _activeTab.currentPath && !_activeTab.agentPreview ? _activeTab : nil;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (!t.currentPath || t.agentPreview) continue;
         if (!shown) shown = t;
         else if (shown != _activeTab && t.lastActive > shown.lastActive) shown = t;
     }
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (!t.currentPath || t.agentPreview) continue;
         TabSessions::Tab tab;
         tab.path = Utf8String(t.currentPath);
@@ -561,7 +578,10 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
 // their backups; a crash, a force quit or a power loss leaves them, and the
 // folder's next window brings them back as unsaved tabs. Request a Change's
 // restart writes them at once and asks nothing about them.
-static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
+// When is the core's (SavePlan::Planner, _plan): 1 s after typing stops,
+// at most 5 s after the first change not yet written, ticked by one timer
+// (_planTimer) on the monotonic clock, with auto-save's times beside them.
+static double MCMonoNow(void) { return NSProcessInfo.processInfo.systemUptime; }
 
 // Only text read from a file has anything to keep.
 - (BOOL)tabTakesBackup:(MCTab *)t {
@@ -575,28 +595,86 @@ static const NSTimeInterval kBackupDelay = 1.0, kBackupMaxWait = 5.0;
             ![t.backedUpPath isEqualToString:t.currentPath]);
 }
 
+// A tab as the planner sees it (SavePlan::Tab).
+- (SavePlan::Tab)planTabOf:(MCTab *)t {
+    SavePlan::Tab p;
+    p.id = t.docId;
+    p.dirty = t.dirty;
+    p.keepsText = [self tabTakesBackup:t];
+    // What tabTakesAutoSave asks besides those two.
+    p.mayAutoSave = t.loaded && !t.gone && t != _formatSaveTab &&
+                    !(t == _activeTab && _agent.editPending);
+    p.generation = t.textGeneration;
+    if (const char *path = t.currentPath.UTF8String) p.path = path;
+    p.backupWritten = t.hasBackup;
+    p.backupGeneration = t.backedUpGeneration;
+    if (const char *path = t.backedUpPath.UTF8String) p.backupPath = path;
+    return p;
+}
+
+- (std::vector<SavePlan::Tab>)planTabs {
+    std::vector<SavePlan::Tab> out;
+    for (MCTab *t in [self tabs]) out.push_back([self planTabOf:t]);
+    return out;
+}
+
+// What the planner says to do now.
+- (void)applyPlan:(const SavePlan::Plan &)plan {
+    for (uint64_t i : plan.discardBackups)
+        if (MCTab *t = [self tabWithId:i]) [self discardBackupOf:t];
+    if (!plan.writeBackups.empty()) {
+        NSMutableArray<MCTab *> *write = [NSMutableArray array];
+        for (uint64_t i : plan.writeBackups)
+            if (MCTab *t = [self tabWithId:i]) [write addObject:t];
+        [self writeBackupsOf:write];
+    }
+    if (plan.autoSave) [self autoSaveNow];
+}
+
+// The one timer, set for the planner's next due time. Due now (a
+// focus-change save) fires on the next turn of the run loop, never inside
+// the responder change that asked for it. Setting it again never loses a
+// save the planner holds: it is only when, not what.
+- (void)armSavePlan {
+    const double due = _closing ? SavePlan::kNever : _plan.nextDue();
+    if (due == SavePlan::kNever) {
+        [_planTimer invalidate];
+        _planTimer = nil;
+        return;
+    }
+    const NSTimeInterval wait = MAX(0, due - MCMonoNow());
+    if (_planTimer.valid) {   // moved, not made again: this runs on every keystroke
+        _planTimer.fireDate = [NSDate dateWithTimeIntervalSinceNow:wait];
+        return;
+    }
+    __weak EditorController *weakSelf = self;
+    _planTimer = [NSTimer scheduledTimerWithTimeInterval:wait
+                                                 repeats:NO
+                                                   block:^(NSTimer *) { [weakSelf savePlanTick]; }];
+}
+
+- (void)savePlanTick {
+    _planTimer = nil;
+    if (_closing) return;
+    [self applyPlan:_plan.tick([self planTabs], MCMonoNow())];
+    [self armSavePlan];
+}
+
+// The window is closing: nothing more is written for it.
+- (void)stopSavePlan {
+    _plan.cancel();
+    [_planTimer invalidate];
+    _planTimer = nil;
+}
+
 // After every edit and every change of a dirty flag: a clean tab's backup
 // goes now, and a changed buffer is written when typing pauses. Costs a
 // comparison of counts per tab and copies no text (MCTab sourceText), so
 // it can run on every keystroke.
 - (void)scheduleBackups {
     if (_closing || ![MCBackupStore shared]) return;
-    BOOL pending = NO;
-    for (MCTab *t in _tabs) {
-        if (t.dirty && [self tabTakesBackup:t]) pending = pending || [self tabNeedsBackup:t];
-        else if (t.hasBackup) [self discardBackupOf:t];
-    }
-    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(writeBackups)
-                                               object:nil];
-    if (!pending) {
-        _backupFirstPending = nil;
-        return;
-    }
-    NSDate *now = [NSDate date];
-    if (!_backupFirstPending) _backupFirstPending = now;
-    const NSTimeInterval waited = [now timeIntervalSinceDate:_backupFirstPending];
-    [self performSelector:@selector(writeBackups) withObject:nil
-               afterDelay:MAX(0, MIN(kBackupDelay, kBackupMaxWait - waited))];
+    [self applyPlan:_plan.backupsChanged([self planTabs], MCMonoNow())];
+    [self armSavePlan];
 }
 
 // How a tab's file is written, as its backup records it.
@@ -606,11 +684,12 @@ static NSString *MCTabEncodingName(MCTab *t) {
 
 // Every changed buffer to the store's queue; the main thread only hands
 // over the (immutable) text.
-- (void)writeBackups {
-    _backupFirstPending = nil;
+- (void)writeBackups { [self writeBackupsOf:[self tabs]]; }
+
+- (void)writeBackupsOf:(NSArray<MCTab *> *)tabs {
     MCBackupStore *store = [MCBackupStore shared];
     if (_closing || !store) return;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in tabs) {
         if (![self tabNeedsBackup:t]) continue;
         if (!t.backupID) t.backupID = [store newID];
         [store writeID:t.backupID path:t.currentPath root:[self sessionKey]
@@ -638,7 +717,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
     [self saveBeforeLeavingFormatSave];
     if (self.textView.editable && _activeTab && !_activeTab.showingMessage)
         self.sourceText = self.textView.string;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (!t.dirty || ![self tabTakesBackup:t]) continue;
         if (!t.backupID) t.backupID = [store newID];
         if (![store writeNowID:t.backupID path:t.currentPath root:[self sessionKey]
@@ -662,10 +741,9 @@ static NSString *MCTabEncodingName(MCTab *t) {
     id app = NSApp.delegate;
     SEL restartApp = NSSelectorFromString(@"restartApp");
     const BOOL restarting = [app respondsToSelector:restartApp] && [app valueForKey:@"restartApp"];
-    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(writeBackups)
-                                               object:nil];
+    [self stopSavePlan];
     if (!restarting)
-        for (MCTab *t in _tabs) [self discardBackupOf:t];
+        for (MCTab *t in [self tabs]) [self discardBackupOf:t];
     [store flush];
 }
 
@@ -754,28 +832,30 @@ static NSString *MCTabEncodingName(MCTab *t) {
            t != _formatSaveTab && !(t == _activeTab && _agent.editPending);
 }
 
-// After every edit and every change of a dirty flag, beside scheduleBackups.
-- (void)scheduleAutoSave {
-    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autoSaveAfterDelay)
-                                               object:nil];
-    if (_closing || [self autoSaveMode] != Settings::AutoSave::AfterDelay) return;
-    BOOL any = NO;
-    for (MCTab *t in _tabs) any = any || [self tabTakesAutoSave:t];
-    if (!any) return;
-    const int ms = [AppSettings shared].settings.autoSaveDelay();
-    [self performSelector:@selector(autoSaveAfterDelay) withObject:nil afterDelay:ms / 1000.0];
+// The planner told the setting as it is now.
+- (void)tellPlanAutoSave {
+    _plan.setAutoSave([self autoSaveMode], [AppSettings shared].settings.autoSaveDelay());
 }
-- (void)autoSaveAfterDelay { [self autoSaveNow]; }
+
+// After every edit and every change of a dirty flag, beside scheduleBackups:
+// after-delay planned again from now (every edit puts it off), or dropped
+// when no tab takes it.
+- (void)scheduleAutoSave {
+    if (_closing) return;
+    [self tellPlanAutoSave];
+    _plan.autoSaveChanged([self planTabs], MCMonoNow());
+    [self armSavePlan];
+}
 
 // focus-change: the editor lost the keyboard, the window lost key, or the
 // tab on show is about to change. Saved on the next turn of the run loop,
-// not inside the responder change (a selector of its own, which the
-// debounce above never cancels).
+// not inside the responder change; nothing an edit does cancels it
+// (SavePlan::Planner::focusChanged).
 - (void)autoSaveOnFocusChange {
     if (_closing || [self autoSaveMode] != Settings::AutoSave::FocusChange) return;
-    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autoSaveNow)
-                                               object:nil];
-    [self performSelector:@selector(autoSaveNow) withObject:nil afterDelay:0];
+    [self tellPlanAutoSave];
+    _plan.focusChanged(MCMonoNow());
+    [self armSavePlan];
 }
 
 // Every tab that takes an auto-save, written now, unasked.
@@ -784,7 +864,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
     if (_activeTab && self.textView.editable && !_activeTab.showingMessage)
         self.sourceText = self.textView.string;
     NSMutableArray<NSString *> *changed = [NSMutableArray array];
-    for (MCTab *t in [_tabs copy]) {
+    for (MCTab *t in [self tabs]) {
         if (![self tabTakesAutoSave:t]) continue;
         // Text an input method is still composing is not written; the edit
         // that ends the composition schedules the next auto-save.
@@ -857,7 +937,7 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
             EditorController *s = weakSelf;
             if (!s || s->_closing || t.diskReadGeneration != generation ||
                 ![t.currentPath isEqualToString:path] || t.dirty || !t.loaded ||
-                ![t.savedText ?: @"" isEqualToString:saved] || ![s->_tabs containsObject:t])
+                ![t.savedText ?: @"" isEqualToString:saved] || ![s holdsTab:t])
                 return;
             if (d.tooLarge) {
                 if (!t.tooLargeToFollow)
@@ -1085,7 +1165,7 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
 // until it is saved (Cmd+S asks, an auto-save skips it), shown again, or
 // the window comes forward.
 - (void)checkTabsOnDisk {
-    for (MCTab *t in [_tabs copy]) {
+    for (MCTab *t in [self tabs]) {
         if (!t.currentPath || !t.fileModDate) continue;
         MCDiskStamp *disk = MCStampOfFile(t.currentPath);
         if (!disk) {

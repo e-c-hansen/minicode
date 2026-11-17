@@ -547,7 +547,7 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 // is in it.
 - (MCTab *)agentPreviewTabForComparison:(BOOL)comparison besideUser:(BOOL)beside {
     MCTab *found = nil;
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         if (!t.agentPreview || (t.comparison != nil) != comparison || t.page) continue;
         if (beside && t == _activeTab) continue;
         found = t;
@@ -556,12 +556,20 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     return found;
 }
 
-// A new agent tab goes where the old preview tab was, else beside the
-// active one; shown at once unless the user is typing (`beside`).
-- (void)putAgentTab:(MCTab *)tab replacing:(MCTab *)old beside:(BOOL)beside {
-    if (old && [[self groupTabs] containsObject:old])
-        [self groupInsertTab:tab atIndex:[[self groupTabs] indexOfObject:old]];
-    else [self insertTab:tab];
+// A new agent tab, an agent preview tab when `preview` is set, goes where
+// the old preview tab was, else beside the active one; shown at once unless
+// the user is typing (`beside`).
+- (void)putAgentTab:(MCTab *)tab
+            preview:(BOOL)preview
+          replacing:(MCTab *)old
+             beside:(BOOL)beside {
+    NSArray<MCTab *> *group = [self groupTabs];
+    const NSInteger active = _activeTab ? (NSInteger)[group indexOfObject:_activeTab] : -1;
+    const NSUInteger at = old && [group containsObject:old]
+                              ? [group indexOfObject:old]
+                              : (NSUInteger)EditorTabs::insertionIndex((int)active, (int)group.count);
+    [self groupInsertTab:tab atIndex:at
+                 preview:preview ? Model::Preview::Agent : Model::Preview::None];
     if (!beside) [self activateTab:tab];
     if (old) [self dropAgentPreviewTab:old];
     if (beside) {
@@ -593,11 +601,10 @@ static NSUInteger MCLineStart(NSString *text, int line) {
         MCTab *old = preview ? [self agentPreviewTabForComparison:NO besideUser:beside] : nil;
         MCTab *t = [MCTab new];
         t.currentPath = path;
-        t.agentPreview = preview;
-        [self putAgentTab:t replacing:old beside:beside];
+        [self putAgentTab:t preview:preview replacing:old beside:beside];
         tab = t;
     }];
-    if (!tab || ![_tabs containsObject:tab]) return nil;
+    if (!tab || ![self holdsTab:tab]) return nil;
     return tab;
 }
 
@@ -614,10 +621,10 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 // changes, since an edit makes it an ordinary tab) and no place in Reopen
 // Closed Tab.
 - (void)dropAgentPreviewTab:(MCTab *)t {
-    if (t == _activeTab || ![_tabs containsObject:t]) return;
+    if (t == _activeTab || ![self holdsTab:t]) return;
     if ([self otherGroupHoldsTab:t]) [self removeTabFromOtherGroup:t];
     if ([[self groupTabs] containsObject:t]) [self groupRemoveTab:t];
-    if ([_tabs containsObject:t]) return;   // still on show in the other group
+    if ([self holdsTab:t]) return;   // still on show in the other group
     [self discardBackupOf:t];
     [t.latex removeFromSuperview];
     [self.lsp tabsChanged];
@@ -646,9 +653,8 @@ static NSUInteger MCLineStart(NSString *text, int line) {
         tab.isDiff = YES;
         tab.comparison = comparison;
         tab.diffName = comparison.title;
-        tab.agentPreview = preview;
         [self compareViewMade];
-        [self putAgentTab:tab replacing:old beside:beside];
+        [self putAgentTab:tab preview:preview replacing:old beside:beside];
     }];
     return tab == _activeTab;
 }
@@ -657,7 +663,7 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 // with the same key as one already open selects that tab instead.
 - (void)showPage:(id<MCEditorPage>)page {
     if (!page) return;
-    for (MCTab *t in _tabs)
+    for (MCTab *t in [self tabs])
         if (t.page && [t.page.pageKey isEqualToString:page.pageKey]) {
             [self revealEditor];
             [self activateTab:t];
@@ -773,7 +779,7 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 
 - (NSArray<NSDictionary *> *)controlTabs {
     NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
-    for (MCTab *t in _tabs) {
+    for (MCTab *t in [self tabs]) {
         NSString *kind = t.page ? t.page.pageKind : t.comparison ? @"diff" : t.isDiff ? (t.diffIsCommit ? @"commit" : @"git-diff")
                        : t.isImage ? @"image" : t.isPDF ? @"pdf" : t.isMedia ? @"media"
                        : t.viewerKind == MCViewerQuickLook ? @"quicklook"
@@ -875,7 +881,7 @@ static NSDictionary *MCLineColumn(NSString *s, NSUInteger index, MCLineGutter *g
 
 - (NSUInteger)closeComparisonTabsMatching:(BOOL (^)(MCComparison *comparison))match {
     NSUInteger n = 0;
-    for (MCTab *t in [_tabs copy])
+    for (MCTab *t in [self tabs])
         if (t.comparison && match(t.comparison) && [self closeTabEverywhere:t prompt:NO]) n++;
     return n;
 }

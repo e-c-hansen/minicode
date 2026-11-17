@@ -2,8 +2,18 @@
 #import <Cocoa/Cocoa.h>
 #import "FileViewers.h"
 
-@class LatexView, MCComparison;
+@class LatexView, MCComparison, MCTab;
 @protocol MCEditorPage;
+
+// The window a tab is open in keeps its place among the tabs (the core's
+// Model::Window, EditorTabs.h): its tab id, whether it is a preview tab,
+// and when it last came on show. The tab asks it.
+@protocol MCTabOwner
+- (BOOL)tabIsPreview:(MCTab *)t;
+- (BOOL)tabIsAgentPreview:(MCTab *)t;
+- (uint64_t)tabLastUsed:(MCTab *)t;
+- (void)tabPathChanged:(MCTab *)t;
+@end
 
 // ---------------------------------------------------------------------------
 // A file on disk as the tabs see it (FolderSearch's FileStamp and stable
@@ -62,6 +72,10 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 // with no tab open they read as nothing.
 // ---------------------------------------------------------------------------
 @interface MCTab : NSObject
+// Its id in its window's Model::Window, given when it is made, never reused.
+@property(nonatomic, readonly) uint64_t docId;
+// The window it is open in, while it is (set and cleared by the window).
+@property(nonatomic, weak) id<MCTabOwner> owner;
 @property(nonatomic, copy)   NSString *currentPath;   // nil for a diff or commit
 @property(nonatomic, assign) BOOL loaded;             // read from disk yet
 // The buffer's text, immutable. While the tab on show is edited it is the
@@ -147,16 +161,20 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 @property(nonatomic, strong) id<MCEditorPage> page;
 // The window's agent preview tab: what `minicode open --note` and the like
 // show, replaced by the next such open; an edit or a double-click on its
-// title keeps it as an ordinary tab.
-@property(nonatomic, assign) BOOL agentPreview;
+// title keeps it as an ordinary tab. Its window's (Model::Preview::Agent);
+// NO for a tab in no window.
+@property(nonatomic, readonly) BOOL agentPreview;
 // The window's preview tab (workbench.enable-preview): a file opened by a
 // single click in the tree, a search result or a code navigation, replaced
 // by the next such open; an edit, a save, a double-click on its title or on
 // the file in the tree, or Keep Open makes it an ordinary tab. Kept apart
 // from agentPreview on purpose (EditorTabs.h): neither replaces the other.
-@property(nonatomic, assign) BOOL preview;
+// Its window's (Model::Preview::User).
+@property(nonatomic, readonly) BOOL preview;
 @property(nonatomic, strong) NSUndoManager *undoManager;
-@property(nonatomic, assign) uint64_t lastActive;     // for the tab shown after a close
+// When it last came on show in its window (Model::Window::lastUsed), larger
+// for later: the tab shown after a close, the files Quick Open lists first.
+@property(nonatomic, readonly) uint64_t lastActive;
 // Where the view was when another tab took over.
 @property(nonatomic, assign) BOOL haveView;
 @property(nonatomic, assign) NSRange selection;

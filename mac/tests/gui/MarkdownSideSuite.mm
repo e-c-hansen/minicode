@@ -308,11 +308,7 @@ MC_GUI_SUITE(markdown_side) {
 
     MCGuiStep(@"the session remembers it", ^{
         [c saveSession];
-        NSString *suite = NSProcessInfo.processInfo.environment[@"MINICODE_DEFAULTS_SUITE"];
-        NSUserDefaults *d = suite.length ? [[NSUserDefaults alloc] initWithSuiteName:suite]
-                                         : [NSUserDefaults standardUserDefaults];
-        NSDictionary *all = [d dictionaryForKey:@"MCTabSessions"];
-        NSDictionary *entry = all[[c sessionKey]];
+        NSDictionary *entry = [c storedSession];   // as sessions.json holds it
         MCGuiNote(@"session: %@", entry[@"sidePreview"]);
         GCHECK([entry[@"sidePreview"] containsObject:md]);
         GCHECK(![entry[@"sidePreview"] containsObject:other]);

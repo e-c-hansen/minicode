@@ -342,6 +342,15 @@ MC_GUI_SUITE(terminal_reflow) {
     BOOL (^hasLine)(NSString *) = ^BOOL(NSString *s) {
         return [[[term recentText:12] componentsSeparatedByString:@"\n"] containsObject:s];
     };
+    // After a wait on the terminal's text: when it timed out, what the
+    // terminal showed, so the failure says what happened.
+    void (^showIfNot)(NSString *, BOOL (^)(void)) = ^(NSString *what, BOOL (^ok)(void)) {
+        MCGuiStep([@"what the terminal showed, if not: " stringByAppendingString:what], ^{
+            if (ok()) return;
+            MCGuiNote(@"pending %@, atPrompt %d, busy %d; the terminal showed:\n%@",
+                      term.pendingCommands, term.atPrompt, term.busy, [term recentText:12]);
+        });
+    };
     MCGuiStep(@"marks without the nonce, printed by a program, then cat", ^{
         [term runCommand:@"printf '\\e]133;A\\a\\e]133;B\\a\\e]7;file:///forged\\a"
                           "\\e]133;A;mc=0\\a\\e]133;B;mc=0\\a'; cat"];
@@ -355,15 +364,27 @@ MC_GUI_SUITE(terminal_reflow) {
         GCHECK(![term.directory isEqualToString:@"/forged"]);
         [term runCommand:@"echo typed-after"];
         GCHECK_EQ_STR(term.pendingCommand, @"echo typed-after");
+        // A second one queues behind it (it used to replace the first,
+        // which then never ran).
+        [term runCommand:@"echo typed-second"];
+        GCHECK([term.pendingCommands isEqualToArray:(@[@"echo typed-after", @"echo typed-second"])]);
+        GCHECK_EQ_STR(term.pendingCommand, @"echo typed-after");
+        GCHECK([term.runningCommands containsObject:@"echo typed-second (waiting to start)"]);
     });
     MCGuiPause(0.5);   // negative: nothing reaches cat in this time
     MCGuiStep(@"cat was given nothing", ^{
         GCHECK(![[term recentText:6] containsString:@"typed-after"]);
+        GCHECK(![[term recentText:6] containsString:@"typed-second"]);
         Send(grid, @"\x03");
     });
-    MCGuiWait(@"at the prompt the command runs", 10, ^BOOL {
-        return !term.pendingCommand && term.atPrompt && hasLine(@"typed-after");
-    });
+    BOOL (^bothRan)(void) = ^BOOL {
+        if (term.pendingCommands.count || !term.atPrompt) return NO;
+        NSArray<NSString *> *lines = [[term recentText:12] componentsSeparatedByString:@"\n"];
+        NSUInteger a = [lines indexOfObject:@"typed-after"], b = [lines indexOfObject:@"typed-second"];
+        return a != NSNotFound && b != NSNotFound && a < b;
+    };
+    MCGuiWait(@"at the prompt both run, in order, one per prompt", 10, bothRan);
+    showIfNot(@"both ran", bothRan);
 
     MCGuiStep(@"marks with the nonce while another program has the terminal", ^{
         // The shell's own function prints them from a background job, so
@@ -386,15 +407,27 @@ MC_GUI_SUITE(terminal_reflow) {
         return !term.pendingCommand && term.atPrompt && hasLine(@"fg-waited");
     });
 
+    // The prompt after fg-waited may not take typing yet (its 133;B not
+    // read, or ZLE not yet raw): then the read waits too, first in line. It
+    // runs first all the same.
     MCGuiStep(@"two commands at once: the second waits for the first", ^{
         [term runCommand:@"read -t 2 x; echo \"got=[$x]\""];
         GCHECK(term.busy);
         [term runCommand:@"echo second-ran"];
-        GCHECK_EQ_STR(term.pendingCommand, @"echo second-ran");
+        GCHECK_EQ_STR(term.pendingCommands.lastObject, @"echo second-ran");
+        GCHECK(term.pendingCommands.count == 1 ||
+               [term.pendingCommands.firstObject hasPrefix:@"read -t 2 x"]);
     });
-    MCGuiWait(@"read timed out with nothing, then the second ran", 10, ^BOOL {
-        return term.atPrompt && !term.pendingCommand && hasLine(@"got=[]") && hasLine(@"second-ran");
-    });
+    // Read gets nothing typed: got=[] (not got=[echo second-ran]), and the
+    // second runs after it.
+    BOOL (^readThenSecond)(void) = ^BOOL {
+        if (term.pendingCommands.count || !term.atPrompt) return NO;
+        NSArray<NSString *> *lines = [[term recentText:12] componentsSeparatedByString:@"\n"];
+        NSUInteger a = [lines indexOfObject:@"got=[]"], b = [lines indexOfObject:@"second-ran"];
+        return a != NSNotFound && b != NSNotFound && a < b;
+    };
+    MCGuiWait(@"read timed out with nothing, then the second ran", 10, readThenSecond);
+    showIfNot(@"read timed out with nothing, then the second ran", readThenSecond);
 
     MCGuiStep(@"the programs it runs never see the nonce", ^{
         [term runCommand:@"env | grep -c MINICODE_NONCE"];
