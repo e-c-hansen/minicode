@@ -339,9 +339,23 @@ CSS and script, no third-party code). The user's side is REFERENCE.md's
   the lines that went into the scrollback and the rows `takeDirty` marked
   (all rows once anything scrolled), at most every 30 ms. A replay starts
   the screen over; a size change seen in the host's state (looked at every
-  `pollMs`, 500) attaches again for a fresh replay at the new size. The
-  palette is the host machine's theme (its settings file, else Dark
-  Modern).
+  `pollMs`, 500) attaches again for a fresh replay at the new size.
+- **Colors** (stage 8b's first part): `Web::paletteJson(Settings)` gives
+  the page every color the editor resolves (the theme, then the file's
+  own): the syntax styles, each surface's background and text by its
+  settings name, the gutter, line numbers, ruler columns and color,
+  bracket colors, the Markdown preview's five colors and code background
+  and `markdown.max-width`, `editor.word-wrap`, and `editor.font-size`,
+  `terminal.font-size` and `tabs.font-size` (points as CSS pixels). The
+  server reads the settings file (`Options::settingsPath`, else
+  `$MINICODE_SETTINGS`, else `~/.config/minicode/settings.conf`) at start
+  and looks at its stamp (mtime, size, inode) every second;
+  `Server::reloadSettings()` (any thread) looks at once, which the Mac
+  calls on `MCSettingsDidChangeNotification` with AppSettings' own path.
+  A palette that changed goes to every page as `palette`, and the page
+  sets its CSS variables, one rule per syntax style in its `#theme`
+  style element, and the Markdown frame's colors (a `<style>` put before
+  the page's `</head>`, so the frame keeps no script) again, in place.
 - **The page** says only `show {doc, term}`, when what it looks at
   changes; anything else is dropped. It follows the session's tab on show
   until a tab is clicked, keeps 5,000 scrollback lines, sticks to the

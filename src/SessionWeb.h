@@ -28,6 +28,7 @@
 //
 // What goes to the browser, one JSON object per text frame ("t" names it):
 //   hello   {machine, folder, palette, termNote}: once, first
+//   palette {palette}: the host's settings file changed (paletteJson)
 //   state   {windows, docs, terms}: whenever the session's state changes
 //           (looked at every half second)
 //   doc     {id, path, kind, version, lines | html | note}: the document the
@@ -54,6 +55,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -120,8 +122,11 @@ enum TermFlag {
 // A terminal line as runs [[text, fg, bg, flags], ...], trailing blanks
 // dropped; a run of default style is [text].
 Json termLineJson(const std::vector<TermCell>& cells);
-// The syntax colors (the default theme's, Settings.h) by TokenStyle, and the
-// editor's and terminal's background and text, as "#rrggbb".
+// Every color the page draws with, resolved as the editor resolves them
+// (Settings.h: the theme, then the file's own colors), as "#rrggbb": the
+// syntax colors by TokenStyle, each surface's background and text, the
+// gutter, line numbers, ruler and bracket colors, the Markdown preview's,
+// and the editor's and terminal's font sizes in points.
 Json paletteJson(const Settings& s);
 Json paletteJson();   // the default theme's
 
@@ -216,6 +221,10 @@ struct Options {
     int port = 0;             // 0: any free port (checks)
     std::string token;        // "" for a fresh one
     int pollMs = 500;         // how often the session's state is looked at
+    // The settings file the page's colors come from ("" for
+    // $MINICODE_SETTINGS, else ~/.config/minicode/settings.conf), looked at
+    // every second: a change recolors every page.
+    std::string settingsPath;
 };
 
 class Server {
@@ -237,6 +246,12 @@ public:
     void stop();
     // Browsers connected over the socket now (any thread).
     int browsers() const { return browsers_.load(); }
+    // The settings file changed (any thread): read it now rather than at
+    // the next look.
+    void reloadSettings();
+    // The palette the pages were last sent (the server's thread, or before
+    // run()).
+    const Json& palette() const { return palette_; }
 
 private:
     struct Conn;
@@ -248,7 +263,14 @@ private:
     std::atomic<int> browsers_{0};
     std::vector<std::unique_ptr<Conn>> conns_;
     std::unique_ptr<Session> session_;
-    std::string helloText_;
+    Json palette_;
+    std::string settingsPath_, settingsStamp_;
+    std::chrono::steady_clock::time_point lastSettingsLook_;
+    std::atomic<bool> reload_{false};
+    // Reads the settings file when it changed (or `force`): true when the
+    // palette did.
+    bool lookAtSettings(bool force);
+    std::string helloText() const;
     void wake();
     void acceptAll();
     void readFrom(Conn& c);

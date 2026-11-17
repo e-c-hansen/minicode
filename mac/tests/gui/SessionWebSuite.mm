@@ -5,8 +5,9 @@
 // opens a Python file and a shell in it, and a WKWebView that is in no
 // window loads the address with its token: the page draws the tabs, the
 // file's lines with the highlighter's colors and the terminal's rows, and
-// follows typing and output live. The same address with a wrong token
-// shows only the refusal. Nothing here reaches the screen.
+// follows typing and output live, in the settings file's colors and font
+// size, and recolors when the file changes. The same address with a wrong
+// token shows only the refusal. Nothing here reaches the screen.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
 
@@ -53,6 +54,7 @@ struct Rig {
 Rig* gRig = nullptr;
 WKWebView* gPage = nil;
 NSDictionary* gSeen = nil;   // the page as last read
+NSString* gSettings = nil;   // the settings file the page's colors come from
 
 // What the page shows, read by a script in an isolated world.
 NSString* const kRead =
@@ -64,6 +66,8 @@ NSString* const kRead =
     @" first: [...document.querySelectorAll('#code .l:first-child span')].map(s =>"
     @"   s.className + ' ' + s.textContent + ' ' + getComputedStyle(s).color),"
     @" screen: [...document.querySelectorAll('#screen .r')].map(r => r.textContent).join('\\n'),"
+    @" bg: getComputedStyle(document.body).backgroundColor,"
+    @" font: getComputedStyle(document.getElementById('code')).fontSize,"
     @" body: document.body ? document.body.innerText.slice(0, 300) : ''})";
 
 // The refusal page has none of the view's elements: only its text.
@@ -129,6 +133,9 @@ MC_GUI_SUITE(session_web) {
         w.folder = o.folder;
         w.machine = "guitest-host";
         w.pollMs = 150;
+        gSettings = [dir stringByAppendingPathComponent:@"settings.conf"];
+        MCGuiWriteFile(gSettings, @"theme = dark-modern\neditor.background = #102030\n");
+        w.settingsPath = gSettings.fileSystemRepresentation;
         GCHECK(gRig->web.start(w, &error));
         if (!error.empty()) MCGuiNote(@"web: %s", error.c_str());
         gRig->webThread = std::thread([] { gRig->web.run(); });
@@ -154,6 +161,21 @@ MC_GUI_SUITE(session_web) {
         MCGuiNote(@"first span: %@", def);
         GCHECK([def hasPrefix:@"s1 def rgb("]);   // TokenStyle::Keyword, colored
         GCHECK(![def hasSuffix:@"rgb(0, 0, 0)"]);
+        // The settings file's colors and the editor's font size.
+        MCGuiNote(@"background %@, font %@", gSeen[@"bg"], gSeen[@"font"]);
+        GCHECK_EQ_STR(gSeen[@"bg"], @"rgb(16, 32, 48)");
+        GCHECK_EQ_STR(gSeen[@"font"], @"13px");
+        MCGuiWriteFile(gSettings, @"theme = light-plus\neditor.background = #FAFAF0\n"
+                                  @"editor.font-size = 16\nsyntax.keyword = #AA0011\n");
+    });
+    MCGuiWait(@"a change to the settings file recolors the page as it is", 20, ^BOOL {
+        Read(gPage);
+        return [gSeen[@"bg"] isEqualToString:@"rgb(250, 250, 240)"];
+    });
+    MCGuiStep(@"its colors, its size and the syntax colors, the text untouched", ^{
+        GCHECK_EQ_STR(gSeen[@"font"], @"16px");
+        GCHECK([[gSeen[@"first"] firstObject] hasPrefix:@"s1 def rgb(170, 0, 17)"]);
+        GCHECK([gSeen[@"lines"] count] == 3);
     });
     MCGuiStep(@"typing in the editor", ^{
         for (int i = 0; i < 12; i++) gRig->editor.type(i % 4 == 3 ? u"\n" : u"x");

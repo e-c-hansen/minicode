@@ -1,6 +1,7 @@
 // SessionBrowser.mm — see SessionBrowser.h.
 #import "SessionBrowser.h"
 
+#import "AppSettings.h"
 #import "EditorTab.h"
 #import "SessionLink.h"
 
@@ -30,6 +31,7 @@ std::atomic<uint64_t> gNextWindow{1000};   // clear of GTK's and the checks' sma
     std::string _sentTabs;
     uint64_t _windowId;
     id _closeObserver;
+    id _settingsObserver;
 }
 
 - (instancetype)initWithWindow:(NSWindow *)window
@@ -48,6 +50,16 @@ std::atomic<uint64_t> gNextWindow{1000};   // clear of GTK's and the checks' sma
                         object:window
                          queue:nil
                     usingBlock:^(NSNotification *) { [weakSelf stop]; }];
+        // The page takes the settings' colors and sizes: a change recolors
+        // it at once (the server also looks at the file every second).
+        _settingsObserver = [NSNotificationCenter.defaultCenter
+            addObserverForName:MCSettingsDidChangeNotification
+                        object:nil
+                         queue:nil
+                    usingBlock:^(NSNotification *) {
+                        MCSessionBrowser *s = weakSelf;
+                        if (s && s->_server) s->_server->reloadSettings();
+                    }];
     }
     return self;
 }
@@ -55,6 +67,7 @@ std::atomic<uint64_t> gNextWindow{1000};   // clear of GTK's and the checks' sma
 - (void)dealloc {
     [self stop];
     if (_closeObserver) [NSNotificationCenter.defaultCenter removeObserver:_closeObserver];
+    if (_settingsObserver) [NSNotificationCenter.defaultCenter removeObserver:_settingsObserver];
 }
 
 - (uint64_t)windowId { return _windowId; }
@@ -77,6 +90,7 @@ std::atomic<uint64_t> gNextWindow{1000};   // clear of GTK's and the checks' sma
     o.window = _windowId;
     o.termNote = MCSessionBrowserTermNote.UTF8String;
     o.port = 0;   // any free port
+    o.settingsPath = [AppSettings shared].path.fileSystemRepresentation ?: "";
     std::string why;
     if (!server->start(o, &why)) {
         if (error) *error = [NSString stringWithUTF8String:why.c_str()];

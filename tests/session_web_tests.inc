@@ -227,6 +227,11 @@ struct PageClient {
 
 Web::Request request(const std::string& text) { return Web::readRequest(text); }
 
+void writeText(const std::string& path, const std::string& text) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f << text;
+}
+
 std::string getWith(const std::string& target, const std::string& extra = "") {
     return "GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1:8123\r\n" + extra + "\r\n";
 }
@@ -550,6 +555,39 @@ static void testSessionWeb() {
         CHECK(big.snapshot()["kind"].asString() == "large" && !big.snapshot().has("lines"));
     }
 
+    GROUP("sessionweb:palette");
+    {
+        // The page's colors are the editor's, resolved: the theme, then the
+        // file's own.
+        const Json d = Web::paletteJson();
+        CHECK(d["theme"].asString() == "dark-modern" && d["dark"].asBool());
+        CHECK(d["syntax"].size() == (std::size_t)kTokenStyleCount);
+        CHECK(d["surfaces"].size() == (std::size_t)kSurfaceCount);
+        CHECK(d["surfaces"]["terminal"]["background"].asString() == d["terminalBackground"].asString());
+        CHECK(d["markdown"]["heading"].isString() && d["markdown"]["codeBackground"].isString());
+        CHECK(d["editorFontSize"].asInt() == 13 && d["terminalFontSize"].asInt() == 12);
+        CHECK(d["rulers"].size() == 1 && d["rulers"][0].asInt() == 100);
+        CHECK(!d.has("tabsFontSize"));
+        const Settings s = Settings::parse(
+            "theme = light-plus\neditor.font-size = 15\nsyntax.keyword = #112233\n"
+            "markdown.heading = #445566\neditor.background = #FEFEFE\nterminal.font-size = 11\n"
+            "editor.line-number-color = #010203\ntabs.font-size = 14\neditor.ruler = off\n");
+        const Json l = Web::paletteJson(s);
+        CHECK(l["theme"].asString() == "light-plus" && !l["dark"].asBool());
+        CHECK(l["syntax"][(int)TokenStyle::Keyword].asString() == "#112233");
+        CHECK(l["markdown"]["heading"].asString() == "#445566");
+        CHECK(l["background"].asString() == "#fefefe" &&
+              l["surfaces"]["editor"]["background"].asString() == "#fefefe");
+        CHECK(l["lineNumber"].asString() == "#010203");
+        CHECK(l["editorFontSize"].asInt() == 15 && l["terminalFontSize"].asInt() == 11 &&
+              l["tabsFontSize"].asInt() == 14);
+        CHECK(l["rulers"].size() == 0);
+        CHECK(l["syntax"][(int)TokenStyle::String].asString() !=
+              d["syntax"][(int)TokenStyle::String].asString());   // the theme's own
+        // The page applies it: no built-in palette of its own once told.
+        CHECK(Web::pageHtml().find("case \"palette\": applyPalette") != std::string::npos);
+    }
+
     GROUP("sessionweb:term-rows");
     {
         Web::TermView v(1, 20, 5);
@@ -785,6 +823,9 @@ static void testSessionWeb() {
         o.window = 5;
         o.termNote = "Terminals appear here once they run through the session host";
         o.pollMs = 100;
+        const std::string settingsFile = scratchFolder() + "/settings.conf";
+        writeText(settingsFile, "theme = dark-plus\n");
+        o.settingsPath = settingsFile;
         o.connect = [&](Shared::Client& c) -> std::function<void()> {
             connects++;
             const Shared::ClientId id = host.connect();
@@ -843,6 +884,23 @@ static void testSessionWeb() {
             mine.type(u"// typed\n");
             CHECK(editor.settle());
             CHECK(p.pump(take, [&] { return doc.text() == Model::utf8FromUtf16(mine.text); }));
+            // The settings file's colors, and a change to it recolors the page.
+            CHECK(hello["palette"]["theme"].asString() == "dark-plus");
+            Json palette;
+            auto takePalette = [&](const Json& m) {
+                if (m["t"].asString() == "palette") palette = m["palette"];
+                take(m);
+            };
+            writeText(settingsFile, "theme = light-modern\neditor.background = #FAFAF0\n");
+            CHECK(p.pump(takePalette, [&] { return palette.isObject(); }, 5000));
+            CHECK(palette["theme"].asString() == "light-modern" && !palette["dark"].asBool() &&
+                  palette["background"].asString() == "#fafaf0");
+            // Asked to look now: the next change comes without the second's wait.
+            palette = Json();
+            writeText(settingsFile, "theme = monokai\n");
+            web.reloadSettings();
+            CHECK(p.pump(takePalette, [&] { return palette.isObject(); }, 900));
+            CHECK(palette["theme"].asString() == "monokai");
             p.close();
             CHECK(waitUntil([&] { return web.browsers() == 0 && letGos == 1; }));
         }
