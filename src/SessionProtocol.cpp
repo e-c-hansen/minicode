@@ -3,6 +3,8 @@
 
 #include "EditorTabs.h"
 
+#include <cstring>
+
 namespace Shared {
 
 namespace {
@@ -24,7 +26,57 @@ const KindName kKinds[] = {
     {Kind::DocUndone, "doc.undone"},    {Kind::UndoState, "doc.undo-state"},
     {Kind::DocText, "doc.text"},        {Kind::State, "session.state-reply"},
     {Kind::Pong, "pong"},               {Kind::Error, "error"},
+    {Kind::TermOpen, "term.open"},      {Kind::TermInput, "term.input"},
+    {Kind::TermResize, "term.resize"},  {Kind::TermAck, "term.ack"},
+    {Kind::TermClose, "term.close"},    {Kind::TermAttach, "term.attach"},
+    {Kind::TermOpened, "term.opened"},  {Kind::TermOutput, "term.output"},
+    {Kind::TermShell, "term.shell"},    {Kind::TermMarks, "term.marks"},
+    {Kind::TermExited, "term.exited"},  {Kind::TermReplay, "term.replay"},
 };
+
+// Terminal bytes are any bytes, which a JSON string cannot carry: base64.
+const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+std::string base64(const std::string& in) {
+    std::string out;
+    out.reserve((in.size() + 2) / 3 * 4);
+    std::size_t i = 0;
+    for (; i + 2 < in.size(); i += 3) {
+        const unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8) |
+                           (unsigned char)in[i + 2];
+        out += kB64[v >> 18];
+        out += kB64[(v >> 12) & 63];
+        out += kB64[(v >> 6) & 63];
+        out += kB64[v & 63];
+    }
+    if (i < in.size()) {
+        unsigned v = (unsigned char)in[i] << 16;
+        if (i + 1 < in.size()) v |= (unsigned char)in[i + 1] << 8;
+        out += kB64[v >> 18];
+        out += kB64[(v >> 12) & 63];
+        out += i + 1 < in.size() ? kB64[(v >> 6) & 63] : '=';
+        out += '=';
+    }
+    return out;
+}
+
+bool unbase64(const std::string& in, std::string* out) {
+    out->clear();
+    unsigned v = 0;
+    int bits = 0;
+    for (char c : in) {
+        if (c == '=') break;
+        const char* at = c ? std::strchr(kB64, c) : nullptr;
+        if (!at) return false;
+        v = (v << 6) | (unsigned)(at - kB64);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out->push_back((char)((v >> bits) & 0xFF));
+        }
+    }
+    return true;
+}
 
 // A text: UTF-8 when it can be, else its units.
 Json textJson(const std::u16string& s) {
@@ -160,6 +212,10 @@ std::string encode(const Message& m) {
         j.set("undo", std::move(u));
     }
     if (!m.json.isNull()) j.set("json", m.json);
+    setNum(j, "term", m.term);
+    if (!m.bytes.empty()) j.set("bytes", Json(base64(m.bytes)));
+    if (m.cols) j.set("cols", Json(m.cols));
+    if (m.rows) j.set("rows", Json(m.rows));
     return j.dump();
 }
 
@@ -225,6 +281,10 @@ bool decode(const std::string& line, Message* out, std::string* error) {
         m.undo.redoName = u["redoName"].asString();
     }
     if (j.has("json")) m.json = j["json"];
+    m.term = num(j, "term");
+    if (j.has("bytes") && !unbase64(j["bytes"].asString(), &m.bytes)) return fail("bad bytes");
+    m.cols = (int)j["cols"].asInt();
+    m.rows = (int)j["rows"].asInt();
     *out = std::move(m);
     return true;
 }
@@ -236,6 +296,123 @@ Message roundTrip(const Message& m) {
         out = Message();
         out.kind = Kind::Error;
         out.name = "loopback could not read its own message: " + error;
+    }
+    return out;
+}
+
+namespace {
+
+Json stringsJson(const std::vector<std::string>& v) {
+    Json a = Json::array();
+    for (const std::string& s : v) a.push(Json(s));
+    return a;
+}
+
+std::vector<std::string> stringsFrom(const Json& j) {
+    std::vector<std::string> v;
+    for (const Json& e : j.elements())
+        if (e.isString()) v.push_back(e.asString());
+    return v;
+}
+
+}  // namespace
+
+Json termSpecJson(const TermSpec& s) {
+    Json j = Json::object();
+    j.set("program", Json(s.program));
+    j.set("argv", stringsJson(s.argv));
+    j.set("env", stringsJson(s.env));
+    j.set("cwd", Json(s.cwd));
+    j.set("cols", Json(s.cols));
+    j.set("rows", Json(s.rows));
+    j.set("scrollback", Json(s.scrollback));
+    j.set("nonce", Json(s.nonce));
+    return j;
+}
+
+TermSpec termSpecFrom(const Json& j) {
+    TermSpec s;
+    s.program = j["program"].asString();
+    s.argv = stringsFrom(j["argv"]);
+    s.env = stringsFrom(j["env"]);
+    s.cwd = j["cwd"].asString();
+    if (j["cols"].isNumber()) s.cols = (int)j["cols"].asInt();
+    if (j["rows"].isNumber()) s.rows = (int)j["rows"].asInt();
+    if (j["scrollback"].isNumber()) s.scrollback = (int)j["scrollback"].asInt();
+    s.nonce = j["nonce"].asString();
+    return s;
+}
+
+bool TermShell::operator==(const TermShell& o) const {
+    return known == o.known && busy == o.busy && atPrompt == o.atPrompt && inputReady == o.inputReady &&
+           prompts == o.prompts && started == o.started && done == o.done && status == o.status &&
+           command == o.command && cwd == o.cwd && title == o.title && foreground == o.foreground &&
+           raw == o.raw && echoOff == o.echoOff;
+}
+
+Json termShellJson(const TermShell& s) {
+    Json j = Json::object();
+    j.set("known", Json(s.known));
+    j.set("busy", Json(s.busy));
+    j.set("atPrompt", Json(s.atPrompt));
+    j.set("inputReady", Json(s.inputReady));
+    j.set("prompts", Json((int64_t)s.prompts));
+    j.set("started", Json((int64_t)s.started));
+    j.set("done", Json((int64_t)s.done));
+    j.set("status", Json(s.status));
+    j.set("command", Json(s.command));
+    j.set("cwd", Json(s.cwd));
+    j.set("title", Json(s.title));
+    j.set("foreground", Json(s.foreground));
+    j.set("raw", Json(s.raw));
+    j.set("echoOff", Json(s.echoOff));
+    return j;
+}
+
+TermShell termShellFrom(const Json& j) {
+    TermShell s;
+    s.known = j["known"].asBool();
+    s.busy = j["busy"].asBool();
+    s.atPrompt = j["atPrompt"].asBool();
+    s.inputReady = j["inputReady"].asBool();
+    s.prompts = j["prompts"].asInt();
+    s.started = j["started"].asInt();
+    s.done = j["done"].asInt();
+    s.status = j["status"].isNumber() ? (int)j["status"].asInt() : -1;
+    s.command = j["command"].asString();
+    s.cwd = j["cwd"].asString();
+    s.title = j["title"].asString();
+    s.foreground = (int)j["foreground"].asInt();
+    s.raw = j["raw"].asBool();
+    s.echoOff = j["echoOff"].asBool();
+    return s;
+}
+
+Json termMarksJson(const std::vector<TermMark>& marks) {
+    Json a = Json::array();
+    for (const TermMark& m : marks) {
+        Json e = Json::array();
+        e.push(Json((int64_t)m.prompt));
+        e.push(Json((int64_t)m.output));
+        e.push(Json((int64_t)m.end));
+        e.push(Json(m.status));
+        a.push(std::move(e));
+    }
+    Json j = Json::object();
+    j.set("commands", std::move(a));
+    return j;
+}
+
+std::vector<TermMark> termMarksFrom(const Json& j) {
+    std::vector<TermMark> out;
+    for (const Json& e : j["commands"].elements()) {
+        if (!e.isArray() || e.size() != 4) continue;
+        TermMark m;
+        m.prompt = e[0].asInt();
+        m.output = e[1].asInt();
+        m.end = e[2].asInt();
+        m.status = (int)e[3].asInt();
+        out.push_back(m);
     }
     return out;
 }

@@ -2,7 +2,11 @@
 #include "SessionHost.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
+#include <fcntl.h>
+#include <poll.h>
+#include <unistd.h>
 
 namespace Shared {
 
@@ -12,6 +16,13 @@ ClientId Host::connect() { return ++nextClient_; }
 
 void Host::disconnect(ClientId c) {
     renderers_.erase(c);
+    // Its terminals stay (stage 6 keeps them for the next renderer); their
+    // output goes nowhere meanwhile, unthrottled.
+    for (auto& [id, t] : terms_)
+        if (t.owner == c) {
+            t.owner = 0;
+            t.unacked = 0;
+        }
     for (auto& [id, d] : docs_) {
         if (d.stepOpen && d.stepBy == c) closeStep(d);
         d.seats.erase(c);
@@ -65,6 +76,31 @@ void Host::handle(ClientId from, Message&& m) {
         send(from, std::move(r));
         break;
     }
+    case Kind::TermOpen: onTermOpen(from, m); break;
+    case Kind::TermAttach: onTermAttach(from, m); break;
+    case Kind::TermInput: {
+        auto it = terms_.find(m.term);
+        if (it != terms_.end() && it->second.pty) it->second.pty->write(m.bytes);
+        break;
+    }
+    case Kind::TermResize: {
+        auto it = terms_.find(m.term);
+        if (it == terms_.end() || m.cols < 2 || m.rows < 1) break;
+        Term& t = it->second;
+        if (m.cols == t.screen.cols() && m.rows == t.screen.rows()) break;
+        t.screen.resize(m.cols, m.rows);
+        if (t.pty) t.pty->resize(m.cols, m.rows);
+        if (t.screen.takeDirty().marks) sendMarks(it->first, t);
+        break;
+    }
+    case Kind::TermAck: {
+        auto it = terms_.find(m.term);
+        if (it != terms_.end()) it->second.unacked = std::max(0LL, it->second.unacked - (long long)m.v);
+        break;
+    }
+    case Kind::TermClose:
+        if (terms_.count(m.term)) endTerminal(m.term, 0);
+        break;
     default: error(from, m.doc, std::string("the host takes no ") + kindName(m.kind)); break;
     }
 }
@@ -478,10 +514,299 @@ Json Host::state() const {
     return s;
 }
 
+// ---------------------------------------------------------------- terminals
+
+void applyTermEvent(TermShell& s, const TermEvent& e) {
+    switch (e.kind) {
+    case TermEvent::PromptStart:
+        s.known = true;
+        if (s.busy) s.done = s.started;   // a command whose end never came
+        s.busy = false;
+        s.prompts++;
+        s.atPrompt = true;
+        s.inputReady = false;
+        s.command.clear();
+        break;
+    case TermEvent::InputStart:
+        s.known = true;
+        s.inputReady = true;
+        break;
+    case TermEvent::CommandStart:
+        s.known = true;
+        s.started++;
+        s.busy = true;
+        s.atPrompt = false;
+        s.inputReady = false;
+        s.command = e.text;
+        break;
+    case TermEvent::CommandEnd:
+        s.known = true;
+        if (s.busy) {
+            s.done = s.started;
+            s.status = e.status;
+            s.busy = false;
+            s.command.clear();
+        }
+        break;
+    case TermEvent::Directory: s.cwd = e.text; break;
+    case TermEvent::Title: s.title = e.text; break;
+    default: break;
+    }
+}
+
+bool Host::openPty(ClientId c, TermId id, const TermSpec& spec, std::string* error) {
+    if (terms_.count(id)) {
+        if (error) *error = "a terminal with that id is open";
+        return false;
+    }
+    PtySpec p;
+    p.program = spec.program;
+    p.argv = spec.argv;
+    p.env = spec.env;
+    p.cwd = spec.cwd;
+    p.cols = std::max(2, spec.cols);
+    p.rows = std::max(1, spec.rows);
+    std::unique_ptr<Pty> pty = Pty::spawn(p, error);
+    if (!pty) return false;
+    Term& t = terms_[id];
+    t.owner = c;
+    t.pty = std::move(pty);
+    t.screen = TerminalScreen(p.cols, p.rows);
+    t.screen.setScrollbackLimit(std::max(0, spec.scrollback));
+    t.nonce = spec.nonce;
+    t.screen.setMarkNonce(spec.nonce);
+    t.stream.setMarkNonce(spec.nonce);
+    t.stream.setEventsOnly(true);
+    t.screen.takeDirty();
+    return true;
+}
+
+void Host::onTermOpen(ClientId c, Message& m) {
+    std::string why;
+    if (!openPty(c, m.term, termSpecFrom(m.json), &why)) {
+        Message r;
+        r.kind = Kind::TermExited;
+        r.term = m.term;
+        r.flag = -1;
+        r.name = why.empty() ? "the shell could not be started" : why;
+        send(c, std::move(r));
+        return;
+    }
+    Term& t = terms_[m.term];
+    Message r;
+    r.kind = Kind::TermOpened;
+    r.term = m.term;
+    r.v = (std::uint64_t)t.pty->pid();
+    send(c, std::move(r));
+    look(t);
+    sendShell(m.term, t, true);
+}
+
+void Host::onTermAttach(ClientId c, Message& m) {
+    auto it = terms_.find(m.term);
+    if (it == terms_.end()) {
+        Message r;
+        r.kind = Kind::TermExited;
+        r.term = m.term;
+        r.flag = -1;
+        r.name = "no such terminal";
+        send(c, std::move(r));
+        return;
+    }
+    Term& t = it->second;
+    t.owner = c;
+    t.unacked = 0;
+    Message r;
+    r.kind = Kind::TermReplay;
+    r.term = m.term;
+    r.bytes = t.screen.replay(t.nonce);
+    r.v = (std::uint64_t)(t.screen.historyBase() + t.screen.cursorRow());
+    r.flag = t.screen.altScreen() ? 1 : 0;
+    send(c, std::move(r));
+    sendShell(m.term, t, true);
+    sendMarks(m.term, t);
+}
+
+void Host::sendShell(TermId id, Term& t, bool always) {
+    if (!always && t.told && t.shell == t.sent) return;
+    t.sent = t.shell;
+    t.told = true;
+    if (!t.owner) return;
+    Message r;
+    r.kind = Kind::TermShell;
+    r.term = id;
+    r.json = termShellJson(t.shell);
+    send(t.owner, std::move(r));
+}
+
+void Host::sendMarks(TermId id, Term& t) {
+    if (!t.owner) return;
+    const long long base = t.screen.historyBase();
+    std::vector<TermMark> marks;
+    for (const TermCommand& c : t.screen.commands()) {
+        TermMark k;
+        k.prompt = base + c.promptLine;
+        k.output = c.ran ? base + c.outputLine : -1;
+        k.end = c.ended ? base + c.endLine : -1;
+        k.status = c.status;
+        marks.push_back(k);
+    }
+    Message r;
+    r.kind = Kind::TermMarks;
+    r.term = id;
+    r.json = termMarksJson(marks);
+    send(t.owner, std::move(r));
+}
+
+void Host::look(Term& t) {
+    if (!t.pty) return;
+    t.shell.foreground = t.pty->foreground();
+    t.shell.raw = t.pty->raw();
+    t.shell.echoOff = t.pty->echoOff();
+    t.nextLook = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+}
+
+void Host::output(TermId id, Term& t, std::string&& bytes) {
+    if (bytes.empty()) return;
+    t.screen.setRawTty(t.shell.raw);
+    t.screen.feed(bytes);
+    t.screen.takeReplies();   // the renderer's emulator answers
+    for (const TermEvent& e : t.stream.feed(bytes)) applyTermEvent(t.shell, e);
+    const bool marks = t.screen.takeDirty().marks;
+    look(t);
+    if (t.owner) {
+        Message r;
+        r.kind = Kind::TermOutput;
+        r.term = id;
+        r.v = (std::uint64_t)(t.screen.historyBase() + t.screen.cursorRow());
+        r.flag = t.screen.altScreen() ? 1 : 0;
+        t.unacked += (long long)bytes.size();
+        r.bytes = std::move(bytes);
+        send(t.owner, std::move(r));
+    }
+    // After the output, so a renderer has fed the bytes the marks are in.
+    if (marks) sendMarks(id, t);
+    sendShell(id, t);
+}
+
+void Host::pollSet(std::vector<PollFd>* out) const {
+    for (const auto& [id, t] : terms_) {
+        if (!t.pty || t.pty->fd() < 0) continue;
+        PollFd p;
+        p.fd = t.pty->fd();
+        p.term = id;
+        p.read = !t.owner || t.unacked < kTermCredit;
+        p.write = t.pty->wantsWrite();
+        if (p.read || p.write) out->push_back(p);
+    }
+}
+
+void Host::readable(TermId id) {
+    auto it = terms_.find(id);
+    if (it == terms_.end() || !it->second.pty) return;
+    Term& t = it->second;
+    std::string bytes;
+    const bool more = t.pty->read(bytes);
+    output(id, t, std::move(bytes));
+    if (!more) endTerminal(id, t.owner);
+}
+
+void Host::writable(TermId id) {
+    auto it = terms_.find(id);
+    if (it != terms_.end() && it->second.pty) it->second.pty->flush();
+}
+
+void Host::endTerminal(TermId id, ClientId tell) {
+    auto it = terms_.find(id);
+    if (it == terms_.end()) return;
+    Term& t = it->second;
+    if (tell && t.pty) {
+        // What the shell wrote before it went comes first.
+        for (int i = 0; i < 64; i++) {
+            std::string bytes;
+            const bool more = t.pty->read(bytes);
+            if (bytes.empty()) break;
+            output(id, t, std::move(bytes));
+            if (!more) break;
+        }
+    }
+    if (t.pty) {
+        t.pty->hangUp();
+        Dying d;
+        d.term = id;
+        d.tell = tell;
+        d.pty = std::move(t.pty);
+        dying_.push_back(std::move(d));
+    }
+    terms_.erase(it);
+}
+
+int Host::tick() {
+    const auto now = std::chrono::steady_clock::now();
+    for (size_t i = 0; i < dying_.size();) {
+        int status = -1;
+        if (!dying_[i].pty->reap(&status)) {
+            i++;
+            continue;
+        }
+        if (dying_[i].tell && renderers_.count(dying_[i].tell)) {
+            Message r;
+            r.kind = Kind::TermExited;
+            r.term = dying_[i].term;
+            r.flag = status;
+            send(dying_[i].tell, std::move(r));
+        }
+        dying_.erase(dying_.begin() + (long)i);
+    }
+    std::vector<TermId> exited;
+    for (auto& [id, t] : terms_) {
+        if (!t.pty) continue;
+        // A shell gone while a program it started holds the pty open: the
+        // terminal ends with the shell, as VTE's child-exited does.
+        if (t.pty->exited(nullptr)) {
+            exited.push_back(id);
+            continue;
+        }
+        if (now >= t.nextLook) {
+            look(t);
+            sendShell(id, t);
+        }
+    }
+    for (TermId id : exited) endTerminal(id, terms_[id].owner);
+    if (!dying_.empty()) return 50;
+    return terms_.empty() ? -1 : 200;
+}
+
+const TerminalScreen* Host::screen(TermId t) const {
+    auto it = terms_.find(t);
+    return it == terms_.end() ? nullptr : &it->second.screen;
+}
+
+TermShell Host::shell(TermId t) const {
+    auto it = terms_.find(t);
+    return it == terms_.end() ? TermShell() : it->second.shell;
+}
+
+int Host::ptyFd(TermId t) const {
+    auto it = terms_.find(t);
+    return it == terms_.end() || !it->second.pty ? -1 : it->second.pty->fd();
+}
+
+int Host::shellPid(TermId t) const {
+    auto it = terms_.find(t);
+    return it == terms_.end() || !it->second.pty ? 0 : it->second.pty->pid();
+}
+
 // ---------------------------------------------------------------- SessionHost
 
 SessionHost::SessionHost(Host::Sink sink, unsigned delayUs)
     : host_(std::move(sink)), delayUs_(delayUs) {
+    if (pipe(wake_) == 0) {
+        for (int fd : wake_) {
+            fcntl(fd, F_SETFD, FD_CLOEXEC);
+            fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+        }
+    }
     thread_ = std::thread([this] { loop(); });
 }
 
@@ -490,8 +815,21 @@ SessionHost::~SessionHost() {
         std::lock_guard<std::mutex> lk(mu_);
         stop_ = true;
     }
-    cv_.notify_all();
+    wake();
     if (thread_.joinable()) thread_.join();
+    for (int fd : wake_)
+        if (fd >= 0) close(fd);
+}
+
+// Any thread: the loop takes the queue at its next turn, out of poll at once.
+void SessionHost::wake() {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (wakePending_) return;
+        wakePending_ = true;
+    }
+    const char b = 1;
+    while (write(wake_[1], &b, 1) < 0 && errno == EINTR) {}
 }
 
 ClientId SessionHost::connect() {
@@ -509,7 +847,7 @@ ClientId SessionHost::connect() {
                                   cv.notify_all();
                               }});
     }
-    cv_.notify_all();
+    wake();
     std::unique_lock<std::mutex> lk(m);
     cv.wait(lk, [&] { return done; });
     return id;
@@ -520,7 +858,7 @@ void SessionHost::post(ClientId from, Message&& m) {
         std::lock_guard<std::mutex> lk(mu_);
         queue_.push_back(Item{from, std::move(m), nullptr});
     }
-    cv_.notify_all();
+    wake();
 }
 
 void SessionHost::disconnect(ClientId c) {
@@ -528,7 +866,7 @@ void SessionHost::disconnect(ClientId c) {
         std::lock_guard<std::mutex> lk(mu_);
         queue_.push_back(Item{0, Message(), [this, c] { host_.disconnect(c); }});
     }
-    cv_.notify_all();
+    wake();
 }
 
 void SessionHost::inspect(const std::function<void(const Host&)>& f) {
@@ -544,24 +882,50 @@ void SessionHost::inspect(const std::function<void(const Host&)>& f) {
                                   cv.notify_all();
                               }});
     }
-    cv_.notify_all();
+    wake();
     std::unique_lock<std::mutex> lk(m);
     cv.wait(lk, [&] { return done; });
 }
 
+// Messages first, then whatever the ptys have, then a wait in poll(2) for
+// either. A terminal's output is read 64 KB a turn, so messages (a key the
+// user typed) never wait behind a program printing without pause.
 void SessionHost::loop() {
+    std::vector<Host::PollFd> fds;
+    std::vector<pollfd> polls;
     for (;;) {
-        Item item;
+        char buf[64];
+        while (read(wake_[0], buf, sizeof buf) > 0) {}
+        std::deque<Item> items;
+        bool stopping;
         {
-            std::unique_lock<std::mutex> lk(mu_);
-            cv_.wait(lk, [this] { return stop_ || !queue_.empty(); });
-            if (queue_.empty()) return;   // stopping, and everything done
-            item = std::move(queue_.front());
-            queue_.pop_front();
+            std::lock_guard<std::mutex> lk(mu_);
+            wakePending_ = false;
+            items.swap(queue_);
+            stopping = stop_;
         }
-        if (delayUs_) std::this_thread::sleep_for(std::chrono::microseconds(delayUs_));
-        if (item.run) item.run();
-        else host_.handle(item.from, std::move(item.m));
+        for (Item& item : items) {
+            if (delayUs_) std::this_thread::sleep_for(std::chrono::microseconds(delayUs_));
+            if (item.run) item.run();
+            else host_.handle(item.from, std::move(item.m));
+        }
+        if (stopping && items.empty()) return;   // everything posted is done
+        const int timeout = host_.tick();
+        fds.clear();
+        host_.pollSet(&fds);
+        polls.assign(1, pollfd{wake_[0], POLLIN, 0});
+        for (const Host::PollFd& f : fds)
+            polls.push_back(pollfd{f.fd, (short)((f.read ? POLLIN : 0) | (f.write ? POLLOUT : 0)), 0});
+        int n;
+        do n = poll(polls.data(), (nfds_t)polls.size(), stopping ? 0 : timeout);
+        while (n < 0 && errno == EINTR);
+        if (n <= 0) continue;
+        for (size_t i = 0; i < fds.size(); i++) {
+            const short r = polls[i + 1].revents;
+            if (!r) continue;
+            if (r & POLLOUT) host_.writable(fds[i].term);
+            if (r & (POLLIN | POLLHUP | POLLERR)) host_.readable(fds[i].term);
+        }
     }
 }
 

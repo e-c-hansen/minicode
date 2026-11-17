@@ -442,6 +442,75 @@ for full-screen programs. Both can be open at once.
   `~/.zsh_history`; an app-typed command snaps a scrolled view, so test "stays
   on its text" with output from a command already running.
 
+## Terminals owned by the session's host (stage 5)
+
+SESSION-DESIGN.md's stage 5, core half (2026-11-17; `HostPty.{h,cpp}`,
+`SessionHost`, `SessionProtocol`, `SessionClient`, `TerminalScreen::replay`,
+`tests/session_terminal_tests.inc`). The Mac's terminal still owns its
+MCPty; the GTK port moves onto this next.
+
+- **The pty** (`Shared::Pty`): `posix_openpt`, the slave opened and its
+  modes (the kernel's plus IUTF8) and size set in the parent, then
+  `fork`; the child resets signals, `setsid`, `TIOCSCTTY`, closes every
+  other descriptor and execs, with argv, the environment and the program's
+  path (looked up in the spec's PATH) prepared before the fork. MCPty's
+  rules hold: the master non-blocking, unwritten bytes waiting in order for
+  `flush` (the host polls for writing while `wantsWrite`), a hang-up that
+  drops them, closes the master and sends SIGHUP, and `reap` polling
+  `waitpid` with SIGKILL 2 s after the hang-up. `exited` notices a shell
+  gone while a program it started still holds the pty open (VTE's
+  child-exited does the same); the terminal ends with the shell then.
+- **The host's thread does the I/O.** `SessionHost::loop` waits in `poll`
+  on a pipe `post` writes to and every pty `Host::pollSet` names, takes
+  every queued message first, then reads 64 KB per readable pty a turn, so
+  a key never waits behind `yes`. `Host::tick` reaps hung-up shells (every
+  50 ms while any wait) and looks at each pty's foreground group and modes
+  every 200 ms (and after each read), so `TermShell::foreground` is at most
+  that old.
+- **Per terminal** the host keeps a headless `TerminalScreen` (the
+  scrollback the renderer asked for, the integration's nonce) and an
+  events-only `TerminalStream` with the same nonce; `applyTermEvent` turns
+  the stream's events into a `TermShell` (known, busy, at a prompt, the
+  line editor reading, counts of prompts, commands started and finished,
+  the last status, the running command's text, the folder, the title),
+  sent when it changes. `TermMarks` sends every marked command (prompt,
+  output, end, status) as lines counted from the first that ever went into
+  the scrollback, after the output that moved them; `TermOutput` carries
+  the host's cursor line after its bytes, so a renderer maps a mark to its
+  own emulator's rows through the cursor (VTE's rows are counted the same
+  way). **The host's screen answers no queries**: `takeReplies` is thrown
+  away, since the renderer's emulator answers DA, DSR and the rest through
+  its input, and two answers would reach the program.
+- **Credit**: output not yet acknowledged (`TermAck`) past `kTermCredit`
+  (1 MB) takes the pty out of the poll set, so the program blocks, as the
+  Mac's reader stops past 1 MB; a renderer acknowledges once its emulator
+  has the bytes. A renderer that goes (`disconnect`) leaves its terminals
+  running unthrottled, nobody hearing them, until stage 6 attaches again.
+- **Replay** (`TerminalScreen::replay`, ~300 lines): bytes that rebuild the
+  screen in a fresh terminal of the same size and scrollback limit, fed to
+  a renderer that attaches (`TermAttach`, answered by `TermReplay`,
+  `TermShell` and `TermMarks`). Every scrollback and screen line is written
+  at the bottom with its SGR and OSC 8 link, soft wraps reproduced by the
+  receiver's own autowrap (a wide character's wrap with a wide character,
+  written over when the line no longer starts with one; a bottom row
+  wrapping onto itself under a scroll region that leaves it out), the
+  marks emitted where they were (`;mc=<nonce>`), then the alternate screen
+  written whole, the cursors and saved cursors (a cursor waiting to wrap
+  by writing its cell again), the region, tab stops, character sets,
+  modes, keyboard flags, title, folder and open link. **Traps found by its
+  fuzz** (`screen:replay`, 300 rounds; 24,000 clean while writing it): a
+  prompt mark makes the next wrap zsh's PROMPT_SP, so each written A is
+  followed by a carriage return; `promptActive_` (zsh's widths) follows
+  marks the screen does not keep, so it is set at the end with a mark
+  written on the alternate screen; a line entered by a wrap was erased in
+  the colors the wrap was written in, so its blanks are erased again with
+  the default ones (EL); a mark on a wide character's right half, at a
+  wrapped line's start, or after the last column each need the cursor put
+  there without writing. Left out: lines a shrink set aside (`below_`),
+  and the wrap of a bottom row that a wrap continued onto (and of any
+  wrapped bottom row on a screen of two rows), which only a scroll could
+  make.
+
 ## Traps
 
 Each trap's first sentence, in the order it appears above; the whole
@@ -452,3 +521,5 @@ text is in place in its section.
 - The terminal: Trap: the harness can run zsh; an agent's own shell may be refused it by the worktree guard.
 - The terminal: Trap: a CGColor taken from a temporary NSColor can be freed before it is retained; hold the NSColor with `objc_precise_lifetime` until then.
 - The terminal: **Trap**: the panel's `closeTerminal:` and `renameTerminal:` share their selectors with the menu's actions, so with the keyboard in a terminal the panel received Ctrl+Shift+W as `closeTerminal:(NSMenuItem *)` and closed nothing (until 2026-11-08); both take a non-terminal argument as "the active one".
+- Terminals owned by the session's host (stage 5): **The host's screen answers no queries**: `takeReplies` is thrown away, since the renderer's emulator answers DA, DSR and the rest through its input, and two answers would reach the program.
+- Terminals owned by the session's host (stage 5): **Traps found by its fuzz** (`screen:replay`): a prompt mark makes the next wrap zsh's PROMPT_SP, so each written A is followed by a carriage return.

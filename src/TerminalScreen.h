@@ -345,6 +345,21 @@ public:
     TermCursorShape cursorShape() const { return cursorShape_; }
     bool cursorBlinks() const { return cursorBlink_; }
 
+    // Bytes that rebuild this screen in a fresh terminal of the same size
+    // and scrollback limit (SESSION-DESIGN.md, stage 5: what a renderer
+    // attaching to a running terminal is fed before the live output). The
+    // scrollback and the screen with their styles, links and soft wraps;
+    // the alternate screen; the cursor, the saved cursors, the scroll
+    // region, the tab stops, the character sets and every mode; the
+    // keyboard flags; the title and directory; and the shell integration's
+    // marks where they are, each ending in ";mc=<nonce>" when a nonce is
+    // given (the receiver's setMarkNonce). Lines a shrink set aside below
+    // the screen (resize) are left out, and each character takes the
+    // width the receiver gives it when it is written (marks come in
+    // reading order, so a prompt's line is written under zsh's widths as
+    // it was).
+    std::string replay(const std::string& nonce = "") const;
+
     // The underline color of a style (TermStyle::underlineColor); the
     // default color (the text's) for 0.
     TermColor underlineColor(uint16_t id) const { return underlineColors_.color(id); }
@@ -581,6 +596,7 @@ private:
     void setMode(const std::string& params, bool on);
     void reportMode(const std::string& params);   // DECRQM
 
+    struct Replay;                    // replay()'s writer
     void lineFeed();
     void reverseIndex();
     void scrollUp(int n, bool save = false);   // within the scroll region;
