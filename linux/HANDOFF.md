@@ -5457,8 +5457,16 @@ or the toggle key, so an autofocus field cannot take the keyboard.
 Differences: WebKitGTK has no read-access folder for a file page (the Mac's
 `loadFileURL:allowingReadAccessToURL:`), so subresources load from wherever
 the page names them (scripts still cannot read other files, as file access
-from file URLs is off); and a frame inside the page is told from the main
-frame by its name only. `html_page` checks the page's text and style, the
+from file URLs is off). The frame's name is not used to tell a frame from the
+main frame (most iframes have none): `decide` lets a navigation leave the page
+only when the user made it (a clicked link, a submitted form, a gesture), so
+an iframe loads; and a script's navigation of the main frame (`location =`) is
+caught at `WEBKIT_LOAD_COMMITTED` (at STARTED the view still names the old
+address), where `HtmlPage::started` stops the load, the page is loaded again in
+its place and the address goes to the link handler (or only the restore, for a
+stale load). `html_page` checks the page's text and style, the
 script not running and then running after Run Scripts, the keyboard, the
 toggle, a write from outside keeping the scroll, a link to another file, the
-remembered answer's setting and `off`.
+remembered answer's setting and `off`, an unnamed iframe to a local file
+(its text shows, nothing opens), and a script's `location =` (opened as a
+link, the page kept).

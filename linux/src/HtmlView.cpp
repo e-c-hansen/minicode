@@ -40,6 +40,7 @@ std::string uriForPath(const std::string& path) {
 HtmlPage::Navigation::Kind kindOf(WebKitNavigationType t) {
     switch (t) {
     case WEBKIT_NAVIGATION_TYPE_LINK_CLICKED: return HtmlPage::Navigation::Kind::Link;
+    case WEBKIT_NAVIGATION_TYPE_FORM_SUBMITTED: return HtmlPage::Navigation::Kind::Form;
     case WEBKIT_NAVIGATION_TYPE_RELOAD: return HtmlPage::Navigation::Kind::Reload;
     case WEBKIT_NAVIGATION_TYPE_BACK_FORWARD: return HtmlPage::Navigation::Kind::BackForward;
     default: return HtmlPage::Navigation::Kind::Other;
@@ -161,15 +162,9 @@ void HtmlView::makeWeb() {
     }), this);
 }
 
-gboolean HtmlView::onPolicy(WebKitPolicyDecision* d, WebKitPolicyDecisionType type) {
-    if (type != WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION &&
-        type != WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION)
-        return FALSE;
-    WebKitNavigationAction* a =
-        webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(d));
-    WebKitURIRequest* r = a ? webkit_navigation_action_get_request(a) : nullptr;
-    const char* uri = r ? webkit_uri_request_get_uri(r) : nullptr;
-    if (!uri) return FALSE;
+// The scheme, file path and query of an address, for the core's rules. The
+// frame is not told apart: its name is no sign of a main frame.
+static HtmlPage::Navigation navigationFor(const char* uri) {
     HtmlPage::Navigation nav;
     char* scheme = g_uri_parse_scheme(uri);
     if (scheme) {
@@ -186,11 +181,20 @@ gboolean HtmlView::onPolicy(WebKitPolicyDecision* d, WebKitPolicyDecisionType ty
         nav.path = f ? canonical(f) : "";
         g_free(f);
     }
-    // The main frame is the one with no name of its own.
-    const char* frame = webkit_navigation_action_get_frame_name(a);
-    nav.mainFrame = type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION ||
-                    !frame || !*frame || !g_strcmp0(frame, "_self") || !g_strcmp0(frame, "_top") ||
-                    !g_strcmp0(frame, "_parent");
+    return nav;
+}
+
+gboolean HtmlView::onPolicy(WebKitPolicyDecision* d, WebKitPolicyDecisionType type) {
+    if (type != WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION &&
+        type != WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION)
+        return FALSE;
+    WebKitNavigationAction* a =
+        webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(d));
+    WebKitURIRequest* r = a ? webkit_navigation_action_get_request(a) : nullptr;
+    const char* uri = r ? webkit_uri_request_get_uri(r) : nullptr;
+    if (!uri) return FALSE;
+    HtmlPage::Navigation nav = navigationFor(uri);
+    nav.userGesture = webkit_navigation_action_is_user_gesture(a);
     nav.kind = kindOf(webkit_navigation_action_get_navigation_type(a));
     HtmlPage::Verdict v = HtmlPage::decide(nav, canonical(path_), requested_);
     if (type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION && v == HtmlPage::Verdict::Allow)
@@ -410,6 +414,29 @@ void HtmlView::startLoad(unsigned generation) {
 }
 
 void HtmlView::onLoad(WebKitLoadEvent ev) {
+    if (ev == WEBKIT_LOAD_COMMITTED) {
+        // Only the main frame reports a load here (at STARTED the view still
+        // names the old address, so it is read once committed). One the
+        // page's own script made, away from the file, is stopped, the page
+        // put back and the address opened as a link.
+        const char* uri = webkit_web_view_get_uri(WEBKIT_WEB_VIEW(web_));
+        if (!uri || path_.empty()) return;
+        const HtmlPage::Started s =
+            HtmlPage::started(navigationFor(uri), canonical(path_), requested_);
+        if (s == HtmlPage::Started::Keep) return;
+        webkit_web_view_stop_loading(WEBKIT_WEB_VIEW(web_));
+        const std::string target = uri;
+        const bool open = s == HtmlPage::Started::RestoreAndOpen;
+        struct Job { HtmlView* v; std::shared_ptr<bool> alive; std::string target; bool open; unsigned g; };
+        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, +[](gpointer p) -> gboolean {
+            std::unique_ptr<Job> j(static_cast<Job*>(p));
+            if (!*j->alive || j->g != j->v->generation_) return G_SOURCE_REMOVE;
+            j->v->loadKeepingScroll(true);   // the file's page again, in its place
+            if (j->open && j->v->host_.openLink) j->v->host_.openLink(j->target);
+            return G_SOURCE_REMOVE;
+        }, new Job{this, alive_, target, open, generation_}, nullptr);
+        return;
+    }
     if (ev != WEBKIT_LOAD_FINISHED) return;
     if (!restoreScroll_) {
         restoring_ = false;

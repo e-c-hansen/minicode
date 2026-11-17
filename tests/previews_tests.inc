@@ -68,10 +68,48 @@ static void testHtmlPage() {
         CHECK(HtmlPage::decide(nav("file", "/w/b.html", N::Kind::Other), own, asked) == V::Drop);
         CHECK(HtmlPage::decide(nav("file", "/w/c.html", N::Kind::Reload), own, asked) == V::Drop);
         CHECK(HtmlPage::decide(nav("file", "/w/c.html", N::Kind::BackForward), own, asked) == V::Drop);
-        // Not asked for, by script: a link.
-        CHECK(HtmlPage::decide(nav("file", "/w/c.html", N::Kind::Other), own, asked) == V::Open);
+        // Not by the user (an iframe loading its address, a script): allowed
+        // here, and a script's in the main frame is caught by `started`.
+        CHECK(HtmlPage::decide(nav("file", "/w/c.html", N::Kind::Other), own, asked) == V::Allow);
+        CHECK(HtmlPage::decide(nav("https", "", N::Kind::Other), own, asked) == V::Allow);
+        // A gesture or a form leaves the page.
+        N gesture = nav("file", "/w/c.html", N::Kind::Other);
+        gesture.userGesture = true;
+        CHECK(HtmlPage::decide(gesture, own, asked) == V::Open);
+        CHECK(HtmlPage::decide(nav("https", "", N::Kind::Form), own, asked) == V::Open);
         // Nothing on show: nothing is the own page.
         CHECK(HtmlPage::decide(nav("file", "/w/a.html", N::Kind::Link), "", {}) == V::Open);
+    }
+    GROUP("htmlpage:started");
+    {
+        using N = HtmlPage::Navigation;
+        using S = HtmlPage::Started;
+        const std::string own = "/w/a.html";
+        const std::set<std::string> asked = {"/w/a.html", "/w/b.html"};
+        auto nav = [](const char *scheme, const std::string &path, bool query = false) {
+            N n;
+            n.scheme = scheme;
+            n.path = path;
+            n.hasQuery = query;
+            return n;
+        };
+        CHECK(HtmlPage::started(nav("file", own), own, asked) == S::Keep);
+        CHECK(HtmlPage::started(nav("about", ""), own, asked) == S::Keep);
+        // A script sent the main frame to a file or an address: stop, restore, open.
+        CHECK(HtmlPage::started(nav("file", "/w/c.html"), own, asked) == S::RestoreAndOpen);
+        CHECK(HtmlPage::started(nav("https", ""), own, asked) == S::RestoreAndOpen);
+        CHECK(HtmlPage::started(nav("file", own, true), own, asked) == S::RestoreAndOpen);
+        // A load asked for earlier: restore only.
+        CHECK(HtmlPage::started(nav("file", "/w/b.html"), own, asked) == S::Restore);
+        // An iframe's load is a decide() matter: allowed without a gesture.
+        N frame = nav("https", "");
+        CHECK(HtmlPage::decide(frame, own, asked) == HtmlPage::Verdict::Allow);
+        // A reload and back/forward stay dropped.
+        N rl = nav("file", "/w/c.html");
+        rl.kind = N::Kind::Reload;
+        CHECK(HtmlPage::decide(rl, own, asked) == HtmlPage::Verdict::Drop);
+        rl.kind = N::Kind::BackForward;
+        CHECK(HtmlPage::decide(rl, own, asked) == HtmlPage::Verdict::Drop);
     }
 }
 

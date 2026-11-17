@@ -16,6 +16,7 @@
 #include "AppSettings.h"
 #include "Document.h"
 #include "Editor.h"
+#include "WindowLayout.h"
 #include "HtmlView.h"
 
 #include <string>
@@ -70,6 +71,8 @@ bool focusInPage() {
 }
 
 unsigned gLoads = 0;
+size_t gDocs = 0;
+bool gBrowserBefore = false;   // another suite may have left the pane shown
 std::string gWasSettings;
 
 }  // namespace
@@ -78,6 +81,7 @@ MC_GUI_SUITE(html_page) {
     MCGuiStep("a folder with pages; html.scripts unset", [] {
         ed()->closeAllTabs();
         gWasSettings = settingsText();
+        gBrowserBefore = MCGuiApp().layout->browserShown();
         MCGuiSetSettings("lsp.enabled = false\n");
         MCGuiWriteFile(F("index.html"), pageSource("First"));
         MCGuiWriteFile(F("second.html"), pageSource("Two"));
@@ -234,6 +238,58 @@ MC_GUI_SUITE(html_page) {
     MCGuiWait("the page answers", 10, [] { return !gSeen.empty(); });
     MCGuiStep("not run", [] {
         GCHECK_EQ_STR(gSeen, "not run|Three|0|rgb(1, 2, 3)");
+    });
+
+    // ----------------------------------- frames, and a script's navigation
+    MCGuiStep("scripts on; a page with an unnamed iframe to a local file", [] {
+        MCGuiSetSettings("lsp.enabled = false\nhtml.scripts = on\n");
+        MCGuiWriteFile(F("frame.html"),
+                       "<p>inside the frame</p>"
+                       "<script>parent.postMessage(document.body.innerText, '*');</script>");
+        MCGuiWriteFile(F("framed.html"),
+                       "<div id=out>none</div><iframe src='frame.html'></iframe>"
+                       "<script>addEventListener('message', function (e) {"
+                       " document.getElementById('out').textContent = e.data; });</script>");
+        gDocs = ed()->documents().size();
+        MCGuiOpenFileKept(F("framed.html"));
+    });
+    MCGuiWait("the frame's text arrives in the page", 20, [] {
+        if (!page() || !loaded(1, "framed.html")) return false;
+        if (gSeen.empty()) read("document.getElementById('out').textContent");
+        else if (has(gSeen, "inside the frame")) return true;
+        else gSeen.clear();
+        return false;
+    });
+    MCGuiStep("the frame opened nothing: no new tab, no browser pane, still its own page", [] {
+        GCHECK(ed()->documents().size() == gDocs + 1);   // framed.html only
+        GCHECK(has(ed()->active()->path(), "/framed.html"));
+        GCHECK(MCGuiApp().layout->browserShown() == gBrowserBefore);
+        const char* uri = webkit_web_view_get_uri(page()->webView());
+        GCHECK(uri && has(uri, "framed.html"));
+        MCGuiWriteFile(F("target.html"), "<p>the target</p>");
+        MCGuiWriteFile(F("jump.html"),
+                       "<p>jumping</p><script>if (window.name !== 'jumped') {"
+                       " window.name = 'jumped'; location = 'target.html'; }</script>");
+        gDocs = ed()->documents().size();
+        MCGuiOpenFileKept(F("jump.html"));
+    });
+    MCGuiWait("the script's navigation away opens that file in a tab of its own", 20, [] {
+        Document* d = ed()->active();
+        return d && has(d->path(), "/target.html") && d->showsPage() && loaded(1, "target.html");
+    });
+    MCGuiStep("the HTML tab is still there, and shows its own page", [] {
+        GCHECK(ed()->documents().size() == gDocs + 2);   // jump.html and target.html
+        gLoads = page()->loads();
+        MCGuiOpenFileKept(F("jump.html"));
+    });
+    MCGuiWait("jump.html shows", 20, [] {
+        Document* d = ed()->active();
+        return d && has(d->path(), "/jump.html") && loaded(1, "jump.html");
+    });
+    MCGuiStep("its own page, not the target, and the frame opened no browser", [] {
+        const char* uri = webkit_web_view_get_uri(page()->webView());
+        GCHECK(uri && has(uri, "jump.html") && !has(uri, "target.html"));
+        GCHECK(MCGuiApp().layout->browserShown() == gBrowserBefore);
         ed()->closeAllTabs();
         MCGuiSetSettings(gWasSettings);
     });

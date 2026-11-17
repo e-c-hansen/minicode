@@ -49,16 +49,29 @@ std::string withoutFragment(const std::string &uri) {
     return hash == std::string::npos ? uri : uri.substr(0, hash);
 }
 
+static bool isOwnOrBlank(const Navigation &nav, const std::string &own) {
+    const bool ownPage = nav.scheme == "file" && !nav.hasQuery && !own.empty() && nav.path == own;
+    return nav.scheme.empty() || ownPage || nav.scheme == "about";
+}
+
 Verdict decide(const Navigation &nav, const std::string &own,
                const std::set<std::string> &requested) {
+    if (isOwnOrBlank(nav, own) || !nav.mainFrame) return Verdict::Allow;
     const bool isFile = nav.scheme == "file";
-    const bool ownPage = isFile && !nav.hasQuery && !own.empty() && nav.path == own;
-    const bool blank = nav.scheme == "about";
-    if (nav.scheme.empty() || !nav.mainFrame || ownPage || blank) return Verdict::Allow;
     const bool stale = nav.kind == Navigation::Kind::Reload ||
                        nav.kind == Navigation::Kind::BackForward ||
                        (nav.kind == Navigation::Kind::Other && isFile && requested.count(nav.path));
-    return stale ? Verdict::Drop : Verdict::Open;
+    if (stale) return Verdict::Drop;
+    const bool byUser = nav.kind == Navigation::Kind::Link || nav.kind == Navigation::Kind::Form ||
+                        nav.userGesture;
+    return byUser ? Verdict::Open : Verdict::Allow;
+}
+
+Started started(const Navigation &nav, const std::string &own,
+                const std::set<std::string> &requested) {
+    if (isOwnOrBlank(nav, own)) return Started::Keep;
+    if (nav.scheme == "file" && !nav.hasQuery && requested.count(nav.path)) return Started::Restore;
+    return Started::RestoreAndOpen;
 }
 
 }  // namespace HtmlPage

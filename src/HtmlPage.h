@@ -61,8 +61,12 @@ struct Navigation {
     std::string scheme;        // lower case, "" when none
     std::string path;          // a file: address's path, decoded
     bool hasQuery = false;
+    // Whether the navigation is in the main frame. The GTK port cannot tell
+    // (a frame's name is no sign), so it leaves this true and relies on the
+    // user's gesture, and on `started` for the main frame.
     bool mainFrame = true;
-    enum class Kind { Link, Reload, BackForward, Other } kind = Kind::Other;
+    bool userGesture = false;   // a click or a key made it
+    enum class Kind { Link, Form, Reload, BackForward, Other } kind = Kind::Other;
 };
 
 enum class Verdict {
@@ -73,7 +77,19 @@ enum class Verdict {
 
 // `own` is the file on show; `requested` the files this page was asked to
 // load (their paths).
+// Only a navigation the user made (a clicked link, a submitted form, a
+// gesture) leaves the page here; any other (a frame loading its address, a
+// script's) is allowed, and a script's in the main frame is caught by
+// `started` when the load begins.
 Verdict decide(const Navigation &nav, const std::string &own,
                const std::set<std::string> &requested);
+
+// The main frame has started loading `nav` (the scheme, path and query of
+// its address): Keep what is the page's own file or about:blank; otherwise
+// stop it and put the page back, and Open the address, or only restore it
+// when it is a load this page asked for earlier (stale).
+enum class Started { Keep, Restore, RestoreAndOpen };
+Started started(const Navigation &nav, const std::string &own,
+                const std::set<std::string> &requested);
 
 }  // namespace HtmlPage
