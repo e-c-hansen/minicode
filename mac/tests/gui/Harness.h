@@ -74,7 +74,13 @@
 // monitor must go through [NSApp sendEvent:] with the window's number
 // (MCGuiSendKeyToApp), while menu keys work best as CGEvent-made events
 // through the window and then the main menu (MCGuiPerformMenuKey).
+// A suite changes an environment variable only with MCSetEnv(name, value
+// or nil) from Environment.h, never setenv or unsetenv: workers start git,
+// servers and tools from the app's snapshot of the environment, which
+// MCSetEnv refreshes, and a raw setenv under a thread copying environ
+// corrupted the heap on Linux (core check env:raw-access).
 #import <Cocoa/Cocoa.h>
+#import "Environment.h"
 
 @class EditorController;
 

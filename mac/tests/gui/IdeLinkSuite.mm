@@ -251,7 +251,7 @@ MC_GUI_SUITE(idelink) {
     MCGuiStep(@"a scratch Claude Code folder, with lock files of others and a stale one of minicode's", ^{
         configDir = [MCGuiScratch() stringByAppendingPathComponent:@"claude-config"];
         ideDir = [configDir stringByAppendingPathComponent:@"ide"];
-        setenv("CLAUDE_CONFIG_DIR", configDir.fileSystemRepresentation, 1);
+        MCSetEnv("CLAUDE_CONFIG_DIR", configDir.fileSystemRepresentation);
         [[NSFileManager defaultManager] createDirectoryAtPath:ideDir withIntermediateDirectories:YES
                                                    attributes:nil error:nil];
         GCHECK_EQ_STR(MCIdeLinkFolder(), ideDir);
@@ -684,8 +684,8 @@ MC_GUI_SUITE(mermaid) {
         NSString *mmdc = [dir stringByAppendingPathComponent:@"mmdc"];
         MCGuiWriteFile(mmdc, script);
         chmod(mmdc.fileSystemRepresentation, 0755);
-        setenv("MINICODE_MMDC", mmdc.fileSystemRepresentation, 1);
-        setenv("MINICODE_MERMAID_CACHE", [dir stringByAppendingPathComponent:@"cache"].fileSystemRepresentation, 1);
+        MCSetEnv("MINICODE_MMDC", mmdc.fileSystemRepresentation);
+        MCSetEnv("MINICODE_MERMAID_CACHE", [dir stringByAppendingPathComponent:@"cache"].fileSystemRepresentation);
         settingsBefore = [NSString stringWithContentsOfFile:NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"]
                                                    encoding:NSUTF8StringEncoding error:nil] ?: @"";
         MCGuiWriteFile(MCGuiProjectFile(@"diagrams.md"),
@@ -762,22 +762,22 @@ MC_GUI_SUITE(mermaid) {
 
     MCGuiStep(@"no mmdc: the source, and nothing run", ^{
         MCGuiSetSettings(settingsBefore);
-        setenv("MINICODE_MMDC", "/nonexistent/mmdc", 1);
+        MCSetEnv("MINICODE_MMDC", "/nonexistent/mmdc");
         GCHECK(MCMermaidPath() == nil);
         MCGuiWriteFile(MCGuiProjectFile(@"other.md"), @"```mermaid\nsequenceDiagram\n  A->>B: hi\n```\n");
         EditorController *c = MCGuiController();
         GCHECK([c showFile:MCGuiProjectFile(@"other.md")]);
         NSTextView *tv = [c valueForKey:@"textView"];
         GCHECK([tv.string containsString:@"A->>B: hi"]);
-        unsetenv("MINICODE_MMDC");
+        MCSetEnv("MINICODE_MMDC", nullptr);
     });
 
     // Without mmdc: the pinned mermaid.js, downloaded from the page. A
     // stand-in plays it here (the real file is 5.5 MB from the web).
     static NSString *standIn, *standInHash, *mermaidDir;
     MCGuiStep(@"no mmdc and no mermaid.js: a line above the diagram offers the download", ^{
-        setenv("MINICODE_MMDC", "/nonexistent/mmdc", 1);
-        unsetenv("MINICODE_MERMAID_JS");
+        MCSetEnv("MINICODE_MMDC", "/nonexistent/mmdc");
+        MCSetEnv("MINICODE_MERMAID_JS", nullptr);
         mermaidDir = [MCGuiScratch() stringByAppendingPathComponent:@"mermaid"];
         GCHECK(MCMermaidPath() == nil && MCMermaidJsPath() == nil && MCMermaidDrawerState() == 0);
         EditorController *c = MCGuiController();
@@ -825,7 +825,7 @@ MC_GUI_SUITE(mermaid) {
         NSMutableString *hex = [NSMutableString string];
         for (int i = 0; i < 32; i++) [hex appendFormat:@"%02x", digest[i]];
         standInHash = hex;
-        setenv("MINICODE_MERMAID_DOWNLOAD", [NSURL fileURLWithPath:standIn].absoluteString.UTF8String, 1);
+        MCSetEnv("MINICODE_MERMAID_DOWNLOAD", [NSURL fileURLWithPath:standIn].absoluteString.UTF8String);
         MCDownloadMermaid(^(NSString *problem) {
             MCGuiNote(@"the download said: %@", problem);
             GCHECK([problem containsString:@"checksum"]);
@@ -835,7 +835,7 @@ MC_GUI_SUITE(mermaid) {
     });
     MCGuiAsync(@"one that matches is kept; a copy not matching the pinned release is still not used", 20,
                ^(MCGuiDone done) {
-        setenv("MINICODE_MERMAID_SHA256", standInHash.UTF8String, 1);
+        MCSetEnv("MINICODE_MERMAID_SHA256", standInHash.UTF8String);
         MCDownloadMermaid(^(NSString *problem) {
             GCHECK(problem == nil);
             NSString *support = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,
@@ -844,13 +844,13 @@ MC_GUI_SUITE(mermaid) {
             GCHECK([[NSFileManager defaultManager] fileExistsAtPath:kept]);
             GCHECK(MCMermaidJsPath() == nil);   // the stand-in is not mermaid.js 12.3.0
             [[NSFileManager defaultManager] removeItemAtPath:kept error:nil];
-            unsetenv("MINICODE_MERMAID_SHA256");
-            unsetenv("MINICODE_MERMAID_DOWNLOAD");
+            MCSetEnv("MINICODE_MERMAID_SHA256", nullptr);
+            MCSetEnv("MINICODE_MERMAID_DOWNLOAD", nullptr);
             done();
         });
     });
     MCGuiStep(@"with mermaid.js: the diagrams go to it", ^{
-        setenv("MINICODE_MERMAID_JS", standIn.fileSystemRepresentation, 1);
+        MCSetEnv("MINICODE_MERMAID_JS", standIn.fileSystemRepresentation);
         GCHECK(MCMermaidDrawerState() == 3);
         MCGuiWriteFile(MCGuiProjectFile(@"web.md"),
                        @"# Diagrams\n\n```mermaid\nflowchart LR\n  Web --> Drawn\n```\n\n"
@@ -910,8 +910,8 @@ MC_GUI_SUITE(mermaid) {
         MCGuiNote(@"the kept PDF: %lu bytes", (unsigned long)kept.length);
         GCHECK(kept.length > 5 && memcmp(kept.bytes, "%PDF-", 5) == 0);
         GCHECK(MCMermaidWebLoadsRefused() >= 1);   // the frame it tried to open
-        unsetenv("MINICODE_MERMAID_JS");
-        unsetenv("MINICODE_MMDC");
+        MCSetEnv("MINICODE_MERMAID_JS", nullptr);
+        MCSetEnv("MINICODE_MMDC", nullptr);
     });
 
     // With MC_GUI_REAL_MMDC naming a real mmdc (a wrapper that adds -p for a
@@ -919,7 +919,7 @@ MC_GUI_SUITE(mermaid) {
     NSString *real = NSProcessInfo.processInfo.environment[@"MC_GUI_REAL_MMDC"];
     if (real.length) {
         MCGuiStep(@"a real mmdc draws a real diagram", ^{
-            setenv("MINICODE_MMDC", real.fileSystemRepresentation, 1);
+            MCSetEnv("MINICODE_MMDC", real.fileSystemRepresentation);
             MCGuiWriteFile(MCGuiProjectFile(@"real.md"),
                            @"# A real diagram\n\nText before it.\n\n```mermaid\nflowchart LR\n"
                            @"  A[Start] --> B{Is it?}\n  B -->|Yes| C[OK]\n  B -->|No| D[Not OK]\n```\n\n"
@@ -932,11 +932,11 @@ MC_GUI_SUITE(mermaid) {
         });
         MCGuiStep(@"a picture of the window", ^{
             MCGuiSnapshot(MCGuiController().window.contentView, @"mermaid-real");
-            unsetenv("MINICODE_MMDC");
+            MCSetEnv("MINICODE_MMDC", nullptr);
         });
     }
     MCGuiStep(@"done with the stand-in", ^{
-        unsetenv("MINICODE_MERMAID_CACHE");
+        MCSetEnv("MINICODE_MERMAID_CACHE", nullptr);
         [MCGuiController() closeAllTabs:nil];
     });
 }

@@ -1,5 +1,6 @@
 // SessionStore.mm — see SessionStore.h.
 #import "SessionStore.h"
+#import "Environment.h"
 
 #include <map>
 #include <optional>
@@ -16,7 +17,7 @@ NSString *NS(const std::string &s) { return [NSString stringWithUTF8String:s.c_s
 // Where the records of minicode 1.5.30 and before are: the user defaults,
 // or the scratch suite the checks point them at.
 NSUserDefaults *OldDefaults() {
-    NSString *suite = NSProcessInfo.processInfo.environment[@"MINICODE_DEFAULTS_SUITE"];
+    NSString *suite = MCEnvironment()[@"MINICODE_DEFAULTS_SUITE"];
     return suite.length ? [[NSUserDefaults alloc] initWithSuiteName:suite]
                         : [NSUserDefaults standardUserDefaults];
 }
@@ -132,7 +133,7 @@ std::vector<TabSessions::Window> MCSessionsWindowsToRestore(void) {
 }
 
 NSString *MCSessionsFilePath(void) {
-    NSString *env = NSProcessInfo.processInfo.environment[@"MINICODE_SESSIONS_FILE"];
+    NSString *env = MCEnvironment()[@"MINICODE_SESSIONS_FILE"];
     if (env.length) return env.stringByStandardizingPath;
     return [NSHomeDirectory()
         stringByAppendingPathComponent:@"Library/Application Support/MiniCode/sessions.json"];

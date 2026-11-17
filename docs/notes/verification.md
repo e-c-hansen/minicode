@@ -46,6 +46,12 @@ found through that list.
   found by walking this run's descendants or a token, never by name. A
   suite that fails only beside the other half is a sharing bug to fix
   here, never a retry.
+- **Environment variables in a suite** (2026-11-17): only `MCSetEnv(name,
+  value or nil)`, never setenv or unsetenv, which raced with git and the
+  other workers copying the environment for their children (the GTK
+  harness corrupted its heap that way); `env:raw-access` in `make test`
+  holds mac/tests/gui to it. See docs/notes/build.md, "The environment
+  and starting programs".
 - **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
   window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
   through the window then the main menu (`MCGuiPerformMenuKey`, built from the
