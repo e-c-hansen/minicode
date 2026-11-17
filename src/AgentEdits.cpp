@@ -110,7 +110,9 @@ FileHistory collect(const Fs &fs, const std::string &transcript, const std::stri
         std::string id;
         double time;
         AgentTranscript::Span input;
+        size_t prompt;   // into prompts, or npos
     };
+    std::vector<std::string> prompts;   // the prompts calls answered, each once
     std::vector<Call> calls;
     std::map<std::string, size_t> byId;   // tool_use id -> calls[]
     struct Answer {
@@ -121,7 +123,18 @@ FileHistory collect(const Fs &fs, const std::string &transcript, const std::stri
     std::map<std::string, bool> pathMatches;   // a path seen before, and whether it is the file
     AgentTranscript::Tail tail;
     tail.path = transcript;
+    std::string lastPrompt;
+    size_t lastPromptAt = std::string::npos;   // lastPrompt's place in prompts, once kept
     auto onLine = [&](const Line &l) {
+        if (l.prompt && !l.meta) {
+            lastPrompt.clear();
+            lastPromptAt = std::string::npos;
+            for (const Block &b : l.blocks)
+                if (b.kind == Block::Kind::Text) {
+                    if (!lastPrompt.empty()) lastPrompt += "\n";
+                    lastPrompt += b.text;
+                }
+        }
         for (const Block &b : l.blocks) {
             if (b.kind == Block::Kind::ToolUse) {
                 Tool t;
@@ -131,7 +144,11 @@ FileHistory collect(const Fs &fs, const std::string &transcript, const std::stri
                     seen = pathMatches.emplace(b.filePath, samePath(fs, b.filePath, file)).first;
                 if (!seen->second) continue;
                 if (!b.id.empty()) byId[b.id] = calls.size();
-                calls.push_back(Call{t, b.id, l.time, b.input});
+                if (lastPromptAt == std::string::npos && !lastPrompt.empty()) {
+                    prompts.push_back(lastPrompt);
+                    lastPromptAt = prompts.size() - 1;
+                }
+                calls.push_back(Call{t, b.id, l.time, b.input, lastPromptAt});
             } else if (b.kind == Block::Kind::ToolResult && !b.id.empty()) {
                 if (byId.count(b.id)) answers[b.id] = Answer{b.isError, b.output};
             }
@@ -142,6 +159,9 @@ FileHistory collect(const Fs &fs, const std::string &transcript, const std::stri
         calls.clear();
         byId.clear();
         answers.clear();
+        prompts.clear();
+        lastPrompt.clear();
+        lastPromptAt = std::string::npos;
     };
     AgentTranscript::ReadStats st;
     tail.read(fs, AgentTranscript::claudeCode(), onLine, onReset, &st);
@@ -177,6 +197,7 @@ FileHistory collect(const Fs &fs, const std::string &transcript, const std::stri
         for (Change &c : changes) {
             c.toolUseId = call.id;
             c.time = call.time;
+            if (call.prompt != std::string::npos) c.prompt = prompts[call.prompt];
             c.answered = answered;
             c.refused = refused;
             c.created = created;

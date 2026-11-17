@@ -43,6 +43,10 @@ struct Change {
     Tool tool = Tool::Edit;
     std::string toolUseId;
     double time = 0;                 // when it was asked for (Unix seconds)
+    // The prompt the call answered: the last one written before it (a
+    // person's, or for a subagent its parent's), as written, cut at
+    // AgentTranscript::kTextCap. Empty when none came before it.
+    std::string prompt;
     // Edit and each part of a MultiEdit: what was there and what went in.
     // Write: newText is the whole file. NotebookEdit: newText is the cell's
     // new source, oldText empty.
