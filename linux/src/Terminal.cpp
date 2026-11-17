@@ -1356,14 +1356,18 @@ void Terminal::focus() {
 
 // The shell leads its own session and process group (the host starts it
 // so); a command it runs gets the foreground group of its own. The host
-// reads the pty's foreground group after each output and every 200 ms.
+// reads the pty's foreground group after each output and every 200 ms, so
+// a program just started may not have it yet: a command the integration's
+// marks say is running counts too (bash prints its start mark before it
+// forks the command).
 bool Terminal::busy() const {
     if (!vte_ || shellPid_ <= 0) return false;
-    return host_.foreground > 0 && host_.foreground != shellPid_;
+    if (host_.foreground > 0 && host_.foreground != shellPid_) return true;
+    return shell_.known && shell_.busy;
 }
 
 int Terminal::foregroundJob() const {
-    return busy() ? host_.foreground : 0;
+    return busy() && host_.foreground != shellPid_ ? host_.foreground : 0;
 }
 
 bool Terminal::typeText(const std::string& text) {
@@ -1537,6 +1541,9 @@ void Terminal::onContentsChanged(VteTerminal*, gpointer selfp) {
 void Terminal::onCommit(VteTerminal*, char* text, guint size, gpointer selfp) {
     Terminal* self = static_cast<Terminal*>(selfp);
     if (!text || !size) return;
+    // VTE's size first: a key typed right after a resize (a zoom) is read by
+    // a program that asks for the width at once.
+    self->sendSize();
     if (self->hostTerm_) SessionLink::client().terminalInput(self->hostTerm_, std::string(text, size));
     if (self->userInput_) self->userTyped();
     if (!memchr(text, '\r', size) && !memchr(text, '\n', size)) return;

@@ -22,6 +22,7 @@
 
 #include <vte/vte.h>
 
+#include <algorithm>
 #include <string>
 
 namespace {
@@ -34,24 +35,42 @@ void typeLine(const std::string& line) {
     vte_terminal_feed_child(vte, bytes.c_str(), (gssize)bytes.size());
 }
 
+// A row and the two below it, a soft wrap joining them (the prompt holds the
+// scratch folder's long path, so a command often wraps).
 std::string rowText(long row) {
     VteTerminal* vte = VTE_TERMINAL(term()->vteWidget());
     gsize n = 0;
-    char* t = vte_terminal_get_text_range_format(vte, VTE_FORMAT_TEXT, row, 0, row,
+    char* t = vte_terminal_get_text_range_format(vte, VTE_FORMAT_TEXT, row, 0, row + 2,
                                                  vte_terminal_get_column_count(vte), &n);
     std::string s = t ? std::string(t, n) : std::string();
     g_free(t);
     return s;
 }
 
-// The first row on show.
+// The first three rows on show, joined (a soft wrap may or may not end a
+// line of VTE's text).
 std::string topText() {
     VteTerminal* vte = VTE_TERMINAL(term()->vteWidget());
     char* t = vte_terminal_get_text_format(vte, VTE_FORMAT_TEXT);
     std::string s = t ? t : "";
     g_free(t);
-    const size_t nl = s.find('\n');
-    return nl == std::string::npos ? s : s.substr(0, nl);
+    std::string out;
+    int lines = 0;
+    for (char c : s) {
+        if (c == '\n' && ++lines == 3) break;
+        if (c != '\n') out += c;
+    }
+    return out;
+}
+
+// The command whose prompt is at the top of the view: the rows on show begin
+// with its prompt's rows.
+bool atTop(long long prompt, const std::string& command) {
+    std::string mine = rowText(term()->rowOfLine(prompt));
+    mine.erase(std::remove(mine.begin(), mine.end(), '\n'), mine.end());
+    const std::string top = topText();
+    return top.find(command) != std::string::npos && mine.size() >= 10 && top.compare(0, 10, mine, 0, 10) == 0 &&
+           top.find(command) == mine.find(command);
 }
 
 bool atEnd() {
@@ -142,7 +161,7 @@ MC_GUI_SUITE(terminal_marks) {
         MCGuiKey("ctrl+up");
     });
     MCGuiWait("Ctrl+Up again: seq, its prompt at the top", 5, [] {
-        return term()->outlinedCommand() == gSeq && topText().find("seq 1 80") != std::string::npos;
+        return term()->outlinedCommand() == gSeq && atTop(gSeq, "seq 1 80");
     });
     MCGuiStep("Ctrl+Down", [] { MCGuiKey("ctrl+down"); });
     MCGuiWait("echo three again", 5, [] { return term()->outlinedCommand() == gThree; });
@@ -212,7 +231,8 @@ MC_GUI_SUITE(terminal_marks) {
         long col = 0, row = 0;
         vte_terminal_get_cursor_position(vte, &col, &row);
         for (long r = row; r >= 0 && r > row - 6; r--)
-            if (rowText(r).find(want) == 0) return true;
+            if (rowText(r).find("\n" + want + "\n") != std::string::npos || rowText(r).find(want + "\n") == 0)
+                return true;
         return false;
     });
     MCGuiStep("the font as it was", [] {

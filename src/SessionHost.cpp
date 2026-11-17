@@ -647,6 +647,9 @@ void Host::output(TermId id, Term& t, std::string&& bytes) {
     for (const TermEvent& e : t.stream.feed(bytes)) applyTermEvent(t.shell, e);
     const bool marks = t.screen.takeDirty().marks;
     look(t);
+    // And again shortly: a shell prints a command's start mark before the
+    // command takes the foreground.
+    t.nextLook = std::chrono::steady_clock::now() + std::chrono::milliseconds(30);
     if (t.owner) {
         Message r;
         r.kind = Kind::TermOutput;
@@ -747,7 +750,13 @@ int Host::tick() {
     }
     for (TermId id : exited) endTerminal(id, terms_[id].owner);
     if (!dying_.empty()) return 50;
-    return terms_.empty() ? -1 : 200;
+    if (terms_.empty()) return -1;
+    long long wait = 200;
+    for (const auto& [id, t] : terms_) {
+        const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(t.nextLook - now).count();
+        wait = std::max(1LL, std::min(wait, ms));
+    }
+    return (int)wait;
 }
 
 const TerminalScreen* Host::screen(TermId t) const {
