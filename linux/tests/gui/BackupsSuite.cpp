@@ -198,12 +198,15 @@ MC_GUI_SUITE(backups) {
         MCGuiType("x");
         gTypedAt = MCGuiNowMs();
     });
+    // The key is an X event the app handles after the step that sent it, so
+    // the tab turns dirty a moment later (on a quick machine the next step
+    // ran 11 to 25 ms after the key and found it clean every time).
+    MCGuiWait("the key lands", 5, [] { return Shown() && Shown()->dirty(); });
     MCGuiStep("no backup the moment after it", [] {
         // Typing has to pause for a second first; a step later than that
         // (a loaded machine) checks nothing here.
         const double since = MCGuiNowMs() - gTypedAt;
         MCGuiNote("%.0f ms after the key", since);
-        GCHECK(Shown() && Shown()->dirty());
         if (since < 800) GCHECK(!Shown()->backup().written);
     });
     MCGuiWait("its backup, once typing paused", 10, [] { return Shown() && Shown()->backup().written; });
