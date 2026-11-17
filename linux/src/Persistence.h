@@ -18,8 +18,9 @@
 //
 // Backups and hot exit. Every tab with unsaved changes has its text on disk
 // while it is edited (BackupStore.h): written a second after typing stops
-// and at most five seconds after the first change not yet written, off the
-// main thread, and removed once the tab is clean again or goes (closed after
+// and at most five seconds after the first change not yet written (the
+// core's SavePlan::Planner decides when, from the monotonic clock, and one
+// timer here ticks it), off the main thread, and removed once the tab is clean again or goes (closed after
 // the question, or with its window). A crash, a SIGKILL or a power loss
 // leaves them, and the folder's next window brings them back as unsaved
 // tabs: the backup is the buffer, the disk's text the saved text, there is
@@ -47,6 +48,7 @@
 #include <vector>
 
 #include "Backups.h"
+#include "SavePlan.h"
 #include "Settings.h"
 #include "TabSessions.h"
 
@@ -65,6 +67,10 @@ public:
         std::function<bool(const Document*)> saveWaits;
         // The browser pane's tabs and the one on show, for the session.
         std::function<std::vector<TabSessions::BrowserTab>(int* active)> browserTabs;
+        // The window's size and panels, for its record (windowRecord).
+        std::function<void(TabSessions::Window*)> windowState;
+        // The tabs were saved: the windows' records are written again.
+        std::function<void()> windowsChanged;
     };
 
     Persistence(Editor* editor, const std::string& root, Host host);
@@ -81,6 +87,11 @@ public:
     // back under a lock, since every minicode process saves into the one
     // file.
     static void putSession(const std::string& key, const TabSessions::Session& s);
+    // The windows a launch that opens nothing brings back, front first, kept
+    // in the same file under "windows" (TabSessions::Store), as the Mac keeps
+    // them in its user defaults: read, and written over under the lock.
+    static std::vector<TabSessions::Window> savedWindows();
+    static void putWindows(const std::vector<TabSessions::Window>& windows);
     const std::string& key() const { return key_; }
     // Open Folder: the old folder's session saved first, then this, then
     // restoreSession for the new one.
@@ -107,12 +118,16 @@ public:
     // The window is going: another window on the folder saves instead, or
     // this one does; nothing is written for it after this.
     void saveSessionClosing();
-    // The folder's tabs back in this window, with any backups of its files
-    // no running process holds.
-    void restoreSession();
+    // This window's record: folder, own tabs, size and panels.
+    TabSessions::Window windowRecord();
+    // The folder's tabs back in this window (or `own`, a window's own tabs
+    // from its record), with any backups of its files no running process
+    // holds.
+    void restoreSession(const TabSessions::Session* own = nullptr);
 
     // ---- backups
     void scheduleBackups();
+    // Every buffer that needs one written now.
     void writeBackups();
 
     // ---- auto-save
@@ -124,7 +139,16 @@ public:
 private:
     bool takesBackup(Document* d) const;
     bool needsBackup(Document* d) const;
+    void writeBackup(Document* d);
     void discardBackup(Document* d);
+    // The planner's view of the tabs, and what it says to do.
+    SavePlan::Tab planTab(Document* d) const;
+    std::vector<SavePlan::Tab> planTabs() const;
+    Document* documentWithId(uint64_t id) const;
+    void apply(const SavePlan::Plan& plan);
+    // The one timer, set for the planner's next due time, and its firing.
+    void arm();
+    void tick();
     // A backup into a tab made for it; true when its file changed on disk
     // since the backup was taken (it is then asked about when shown).
     bool takeBackup(Document* d, const std::string& id, const Backups::Entry& e,
@@ -137,9 +161,9 @@ private:
     Host host_;
     bool closing_ = false;
     guint sessionTimer_ = 0;
-    guint backupTimer_ = 0;
-    gint64 backupFirstPending_ = 0;   // monotonic µs, 0 for none
-    guint autoSaveTimer_ = 0;
-    guint focusSaveIdle_ = 0;
+    // When backups and auto-saves are written (SavePlan.h), on the monotonic
+    // clock, and the one timer that ticks it.
+    SavePlan::Planner plan_;
+    guint planTimer_ = 0;
     bool editorHadFocus_ = false;
 };

@@ -5262,7 +5262,61 @@ A file row's icon follows `FileIcon::kindOf` (what a click on the file opens), a
 
 A fenced block with a `MdRun::label` (the core's Notebook gives a run cell "In [n]" and its result "Out [n]") gets that text on a line of its own above the block, at the block's first run only, in the new `md_codelabel` tag: monospace 11 points in the Markdown quote color, as the Mac's `markdownLabelFor:`. The tag is made with the others in `Editor.cpp` and recolored in `applySettings`. The notebook check in `json_outline` now reads "In [3]" and "Out [3]" from the shown text, in order before their blocks, and the tag at the label. The Mac's extra indent for a block inside a list is not copied, since notebook cells are never in lists. The look needs the owner's eyes.
 
-### 76. Replace in Folder names files over 1 MB as too large (done, November 2026)
+### 76. Sessions and the save planner in the core (done, November 2026; SESSION-DESIGN.md stage 3b)
+
+What a window keeps between runs is one core record, and when its unsaved
+tabs are written is decided by the core.
+- **The record.** `TabSessions::Window` (W1's, `src/TabSessions.h`: folder,
+  frame, its own tabs with both groups, the tab on show, carets and
+  scroll, the sidebar, the editor, Problems, the terminal dock, the tree)
+  is what the Mac keeps in `MCOpenWindows` and now what sessions.json
+  keeps under the key `"windows"`, beside the folders' sessions
+  (`TabSessions::Store`, `encodeStore`/`decodeStore`). Folder keys are
+  absolute paths, so the key never clashes; a sessions.json from before
+  has no windows and reads as before, and a minicode from before skips the
+  key and keeps the folders (it drops the windows when it writes).
+  `Persistence::putSession` and `putWindows` both go through
+  `changeStore`, under the one lock.
+- **Windows back on a desktop launch.** `Persistence::windowRecord()` is
+  the window's folder and own tabs plus what `Host::windowState` adds:
+  its size (`gtk_window_get_default_size`; Wayland gives no place, so the
+  frame's x and y stay 0), and whether the sidebar, the editor, Problems
+  and the terminal showed. `saveOpenWindows()` (main.cpp) writes every
+  window, front first, with each session save (`Host::windowsChanged`)
+  and at Quit; `onWindowRemoved` writes the others, or the closing window
+  alone when it was the last (`TabSessions::afterClosing`'s rule). A
+  launch with no path, from the home folder or `/` (the dock, the desktop
+  entry), with no window open yet, runs `restoreOpenWindows()`: each
+  window whose folder is still there, back to front, through
+  `newWindow(root, "", &record)`, which sets its size, restores its own
+  tabs (`restoreSession(&record.tabs)`, backups included) and, on the
+  next idle, hides its sidebar, shows its terminal and Problems. Not yet:
+  the tree's open folders and selection, the terminal's tabs and splits
+  (a single fresh shell comes back), the sidebar's width, a hidden editor
+  (recorded, not restored), maximized. `minicode` typed in a project
+  folder still opens that folder.
+- **The planner.** `SavePlan::Planner` (`src/SavePlan.{h,cpp}`) holds the
+  Mac's timing rules: a dirty tab's backup 1 s after typing stops and at
+  most 5 s after the first change not yet written, a clean tab's backup
+  removed at once, after-delay auto-save restarted by every edit, a
+  focus-change save due at once and never cancelled by an edit. The port
+  gives it the tabs (`SavePlan::Tab`: id, dirty, generation, path, and
+  what the backup holds, from `Document::Backup`) and the monotonic time;
+  `nextDue()` says when to tick and `tick(now)` what to write.
+  Persistence's three timers (backup, auto-save delay, focus idle) are one,
+  `planTimer_`, set by `arm()`; due now is a `G_PRIORITY_HIGH` idle as the
+  focus save was. The Mac's EditorController+Persistence.mm keeps its own
+  timers until 3c; `saveplan:*` pins its rules.
+- **Checks**: the core's `saveplan:*` and `tab-sessions:store`; the
+  `sessions` suite's new windows part (a child opens two windows on two
+  folders, places a caret, notes a size, hides one sidebar and quits; a
+  child launched with no path from the home folder gets both back, each
+  with its own tabs, caret, size and sidebar; `MCGuiRunChild` takes an
+  empty folder for that); the `backups` suite's new timing part (no backup
+  the moment after a key, one once typing pauses, one within 5 s of
+  typing that never pauses, removed at once on save).
+
+### 77. Replace in Folder names files over 1 MB as too large (done, November 2026)
 
 The core's `planReplace` leaves files over `FolderSearchOptions::maxFileSize`
 alone and reports them in `FolderReplacePlan::tooLarge` and `tooLargeCount`;

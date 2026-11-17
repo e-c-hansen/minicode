@@ -75,8 +75,9 @@ opening comment says what it does in more detail than the lines below.
   with every feature; do not quote them (8,490 at the end of 2026-11-05). Run
   it from the repo root: corpus and docs checks read files there and skip
   themselves when missing. clang++ on the Mac, make's default (g++) elsewhere,
-  so CI runs it on Linux; `make test CXX=g++-16` reproduces CI's libstdc++ job
-  on the Mac. Checks that read the docs: `commands:readme` (every default key
+  so CI runs it on Linux (the sanitizers job's g++ build; since 2026-11-17
+  the GTK job runs no plain copy); `make test CXX=g++-16` reproduces CI's
+  libstdc++ build on the Mac. Checks that read the docs: `commands:readme` (every default key
   is in `docs/REFERENCE.md`'s macOS column), `commands:linux-readme` (its
   Linux column against the Linux table, both ways), `install:readme` (every
   install command is in `docs/REFERENCE.md` in backticks), `linux:build-lists` (linux/Makefile and
@@ -110,7 +111,7 @@ opening comment says what it does in more detail than the lines below.
   release.sh does (`nm`, the zip's contents, check-minos); the Android
   release job signs with a key made in the job (`keytool`, random
   password), never the owner's release key. Every job has a
-  `timeout-minutes` (macOS 40, tsan 45, the rest 20; `ci:timeouts` checks
+  `timeout-minutes` (macOS 40, GTK 45, tsan 45, the rest 20; `ci:timeouts` checks
   a new job has one), so a hang never holds a runner for six hours.
   **Since 2026-11-14** (`docs/ci.md`, the failure history and the branch
   protection): a seventh job, **CI passed**, is green only when the six
@@ -123,7 +124,23 @@ opening comment says what it does in more detail than the lines below.
   (FAIL, FATAL, sanitizer reports, compiler errors) plus SLOW, NEAR and
   LEAK lines at the top of the run's page and on the PR; the runner
   images are named (`macos-26`, `ubuntu-26.04`), never `latest`; a newer
-  push cancels a PR's older run. `scripts/ci-local.sh` runs on the Mac
+  push cancels a PR's older run. **Speed** (2026-11-17, docs/ci.md's
+  "What makes a run quick"): the macOS, GTK4, sanitizers and tsan jobs
+  compile through ccache, restored and saved with actions/cache
+  (`scripts/ci-ccache.sh`: links named clang++, g++ or clang++-22 in front
+  of PATH, so make's command lines and `build/obj/flags.txt` are
+  unchanged; Meson adds ccache itself; ccache's compiler check is the
+  compiler's `--version`, and no build folder is cached, so make and
+  Meson decide what to build as on a fresh checkout). The macOS job runs
+  `build/run_tests` beside the GUI checks, and both GUI jobs run their
+  checks as two harness processes at once (`scripts/ci-together.sh`, one
+  log each: core-tests, gui-checks-1, gui-checks-2): the step's
+  `GUI_SECOND_HALF` names the second half's suites, and the first half
+  skips them (`MC_GUI_SKIP_SUITES`, both harnesses), so a new suite runs
+  in the first unlisted; a name no suite has fails the run. Rebalance
+  the list from a run's "Suite x" timestamps when one half grows well
+  past the other. The GTK job runs no plain `make test` (the sanitizers
+  job's g++ build runs the same groups). `scripts/ci-local.sh` runs on the Mac
   what CI runs, without Docker (`--quick` before a push: core tests,
   build, check-minos, the sweep; the full run adds g++, the sanitizers,
   `make guitest`, which takes the keyboard, and the release zip). No
@@ -193,7 +210,10 @@ goes here first, with tests; the GUI only displays it.
   own in `CommandsLinux.cpp`, the Mac's rows untouched), `EditorTabs` (tab rules, and
   `Model::Window` and `Model::Session`, which hold the tabs by them: see
   "Tabs, sessions and the disk"), `Backups` (backups
-  of unsaved tabs, with a POSIX `Fs`), `FileDetails` (tree sorts, ages, folder
+  of unsaved tabs, with a POSIX `Fs`), `TabSessions` (what a folder and a
+  window keep between runs: sessions.json's `Store`, the window record),
+  `SavePlan` (when backups and auto-saves are written, from a clock the
+  port ticks), `FileDetails` (tree sorts, ages, folder
   totals), `RunFile` (Run File's quoting), `Runnables` (the tests in a
   file, found through the highlighter's tokens, and the command for one
   test or the file), `RightAreaLayout` (the right
@@ -234,7 +254,8 @@ goes here first, with tests; the GUI only displays it.
   buffer), `BracketMatch`, `Folding`, `TextFind` (find and replace, UTF-16 and
   UTF-8), `Regex` (its linear-time engine), `Formatter` (Format Document's
   plan), `InstallHints`, `LargeFile.h` (VS Code's large-file thresholds,
-  header only).
+  header only), `SpellCheck` (which words of a file are prose for the
+  spell checker).
 - Language servers: `LspClient.h` over nine files (see "LSP": protocol,
   results, WorkspaceEdits, diagnostics with versions, completion edits,
   symbols, folding ranges, the second server's routing and
@@ -276,7 +297,8 @@ goes here first, with tests; the GUI only displays it.
   `EditorPanes` (`PanelHost`, `DragBar`, `PanelScrollView`), `FileTree`
   (`FileItem`, `ClickOutline`, `gShowHidden`), `EditorPage.h`.
 - The editor: `SourceStorage` (`MCSourceStorage`), `CodeTextView.mm`, `Gutter`,
-  `FoldView`, `EditorFont`, `EditorFind`, `FindWidget` (the find bar's and
+  `FoldView`, `SpellMarks` (spell checking's marks and menu items),
+  `EditorFont`, `EditorFind`, `FindWidget` (the find bar's and
   Find in Folder's colors, icon buttons and inputs), `MultiCaretView`, `EditingCommands`
   (AutoIndent and KeepSorted on an NSTextView), `MarkdownCode` (code colors in
   previews), `TestGutter` (the ▶ beside each test).
@@ -790,6 +812,17 @@ container (PanelHost, laid out by hand in layoutContainer)
   `loadActiveTab`). A path argument or a Finder open at launch opens only
   that, as before. The Mac's selection offsets are UTF-16 and GTK's code
   points: each reads only what it wrote, which stage 3 must settle.
+- **One record on both ports** (2026-11-16, stage 3b): GTK's sessions.json
+  keeps the same `TabSessions::Window` list under the key `"windows"`,
+  beside the folders' sessions (`TabSessions::Store`,
+  `encodeStore`/`decodeStore`, `tab-sessions:store`); an older file reads
+  as folders only and an older minicode skips the key. The GTK app
+  reopens those windows on a launch with no path from the home folder or
+  `/` (its size, own tabs, sidebar, terminal, Problems; linux/HANDOFF.md
+  item 76). The Mac is unchanged: `MCOpenWindows` was already this
+  record, and its per-folder `MCTabSessions` stays a dictionary of its own
+  (the browser's `interactionState` data in it) until 3c moves it to the
+  shared file.
 - AppDelegate's `current` maps a window an editor made (`ownsWindow:`, Find in
   Folder and TODOs) to that editor; items that edit the file on show are
   disabled while another window is key, so keys reach that window's field.
@@ -842,6 +875,15 @@ container (PanelHost, laid out by hand in layoutContainer)
   `backedUpGeneration`) is written 1 s after typing stops, at most 5 s after the
   first unwritten change, the immutable NSString converted on the queue. Only
   text tabs with a path.
+- **The planner** (2026-11-16, stage 3b): these timing rules, auto-save's
+  below included, are the core's `SavePlan::Planner` (`changed`,
+  `focusChanged`, `tick(now)`, `nextDue()`; `saveplan:*` holds it to each
+  rule here, with a random walk). The GTK port runs on it with one timer;
+  the Mac still runs `scheduleBackups`/`scheduleAutoSave` on its own
+  performSelector timers and moves onto the planner in 3c (MCTab's
+  `textGeneration`, `backedUpGeneration`, `backedUpPath` and `hasBackup`
+  are `SavePlan::Tab`'s fields one for one). A rule changed here changes
+  there.
 - Restore: `planForRoot:` takes the folder's backups no live process holds (pid
   and start time); `takeBackup:intoTab:` makes the tab dirty with the backup's
   base date and inode, and on first show (`showRestoredText:`) the backup is
@@ -1238,6 +1280,32 @@ container (PanelHost, laid out by hand in layoutContainer)
   edits through `BracketPairs::PaintedEdits`, applied once at the flush:
   moving it per edit was quadratic in a multi-range edit. Off with no
   highlighter (large files, plain text) and in the settings file.
+- **Spell checking** (Mac, 2026-11-16, `editor.spell-check`: on, off,
+  prose-only by default; `editor.spell-check-color`; core
+  `SpellCheck.{h,cpp}`, `spell:*`; Mac `SpellMarks.{h,mm}`, an
+  `MCSpellMarks` per CodeTextView like the folds; `make guitest
+  SUITES=spell_check`). The core picks the words: Markdown's prose by
+  `MarkdownParser::lines` (from the text's top, since a fence above
+  decides) less code spans, `$` math, links' addresses and tags; LaTeX's
+  and code's from the highlighter's tokens (LaTeX: everything but
+  commands, their `[...]` options, the groups of naming commands such as
+  `\label`, `\cite`, `\usepackage`, math and verbatim; code: comments, and
+  strings that read as sentences); then only words of letters (no digit,
+  `_`, `/`, inner dot, camelCase or two capitals). Only those go to
+  NSSpellChecker, copied into a string of spaces as long as the lines on
+  screen, so the answer's ranges are the text's
+  (`requestCheckingOfString:`, off the main thread, the words picked on a
+  queue of their own). Checked 0.5 s after typing stops (one pending
+  perform, not one a key) and as lines scroll in; an edit only moves the
+  marks after it and drops those it touches. The +Highlighting hook
+  (`updateSpellCheck`, from applyHighlighting) gives the kind and the
+  lines' tokens (`spellLinesFor:tokens:`). Ignore is per document tag (one
+  per path, for the text view's life). **NSTextView's continuous checking
+  never runs in the editor**: CodeTextView's setters keep it off and its
+  menu drops AppKit's Spelling and Grammar submenu (a copy of the menu,
+  so a menu AppKit keeps never gathers items); it would mark code and lay
+  out the whole text. The commit box uses the system's own continuous
+  checking (small, all prose), off with `editor.spell-check = off`.
 - Linux retags in idle slices over a UTF-8 mirror; Android's `Highlighter.kt`
   uses the core over a native mirror.
 
@@ -4173,7 +4241,7 @@ session has a display. Check first.
   core's `docs:gui-suites` holds this list to them, both ways):
   editing: keystroke, multiedit, editor_keys, auto_close, bracket_pairs,
   folding, foldperf, multicaretclick, multicaret_rows, find_bar,
-  large_file, save, paste, zoomfit;
+  large_file, save, paste, zoomfit, spell_check;
   files and windows: tree, tree_hidden, folder_picker, preview_tabs, split_editor, search,
   replace_in_folder, backups, window_restore, palette, symbols, keymap, config_writes,
   daily_work, structure, utf16, hints_panel, swatch_escape;
@@ -4238,10 +4306,33 @@ session has a display. Check first.
   back what it can (the pin, the answers). The two files are the
   harness's to put back between suites and an extra terminal is only
   noted: `LEFT [suite]`, a warning, so a suite needs no step to undo its
-  settings. `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
+  settings. A browser pane or agent page shown or hidden in any window is
+  a LEFT line too (2026-11-17, after control's agent page narrowed
+  markdown_side_sync's editor), until the suites that leave one close
+  it; then it can be a LEAK. `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
   are skipped. A failed check with `MC_GUI_SNAPSHOTS` set leaves a
   picture of the test window (the first ten); CI keeps them as an
-  artifact.
+  artifact, a folder per half.
+- **Two harnesses at once** (2026-11-17, CI's halves): each process makes
+  its own world, so nothing a suite touches is shared. Mac: `/tmp/mcgui-*`
+  by mkdtemp, home, TMPDIR (so control sockets; `MINICODE_CONTROL_DIR`
+  is only set by suites, inside their scratch), the defaults suite and
+  pasteboard named by pid, `CLAUDE_CONFIG_DIR`; the Python interpreter
+  choice was the one app state in the standard defaults (the `guitest`
+  domain, shared by every process of that name) and now goes through
+  `MCAppDefaults()` like the rest. Ports: servers bind port 0 and keep
+  the socket, or take one from `FreePort()` and hand it to `serve.py`;
+  macOS gives TCP ephemeral ports out in turn
+  (`net.inet.tcp.randomize_ports` 0), so a released port is not handed to
+  the other process before the range wraps. Launch Services is never
+  touched (openURL: swizzled, BROWSER's fallback a recorder); the recent
+  folders the app notes go to the system's list for the `guitest`
+  identity, which no check reads. GTK: Xvfb picks its own display
+  (`-displayfd`), each run has its own dbus-run-session, scratch, XDG
+  folders, TMPDIR and `GSETTINGS_BACKEND=memory`, and processes are
+  found by walking this run's descendants or a token, never by name. A
+  suite that fails only beside the other half is a sharing bug to fix
+  here, never a retry.
 - **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
   window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
   through the window then the main menu (`MCGuiPerformMenuKey`, built from the

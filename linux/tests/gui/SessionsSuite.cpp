@@ -10,6 +10,12 @@
 // this app, two windows on one folder share its session, and the one that
 // closes while the other stays drops out of it, as on the Mac. Saves made
 // at the same moment keep each other's folders.
+//
+// Windows (TabSessions::Window, kept in the same file under "windows"): a
+// fourth app opens two windows on two folders, gives one a size and two
+// tabs with the caret placed, hides the other's sidebar, and quits; a fifth
+// app launched with no path from the home folder, as the dock launches it,
+// gets both windows back with their own tabs, caret, size and sidebar.
 #include "Harness.h"
 
 #include "Document.h"
@@ -17,6 +23,7 @@
 #include "Persistence.h"
 #include "TabSessions.h"
 #include "TabStrip.h"
+#include "WindowLayout.h"
 
 #include <glib/gstdio.h>
 #include <sys/stat.h>
@@ -99,6 +106,51 @@ Document* TabFor(const std::string& path) { return ed()->documentFor(path); }
 
 size_t gWindows = 0;
 
+// ---- windows
+std::string WinA() { return MCGuiScratch() + "/win-a"; }
+std::string WinB() { return MCGuiScratch() + "/win-b"; }
+// The size the first app's window had as it quit, as it read it (GTK may
+// or may not resize a mapped window to a new default size without a window
+// manager), for the checks after it.
+std::string SizeFile() { return MCGuiScratch() + "/win-a-size"; }
+std::string SizeOf(GtkWindow* w) {
+    int width = 0, height = 0;
+    gtk_window_get_default_size(w, &width, &height);
+    return std::to_string(width) + "x" + std::to_string(height);
+}
+const std::string kA2 = "first line\nsecond line\nthird line\nfourth line\n";
+const long kA2Caret = (long)std::string("first line\nsecond line\n").size();
+
+const TabSessions::Window* WindowOn(const std::vector<TabSessions::Window>& list,
+                                    const std::string& folder) {
+    for (const TabSessions::Window& w : list)
+        if (w.root == Persistence::keyFor(folder)) return &w;
+    return nullptr;
+}
+
+const MCGuiAppWindow* AppOn(const std::vector<MCGuiAppWindow>& list, const std::string& folder) {
+    for (const MCGuiAppWindow& w : list)
+        if (Persistence::keyFor(w.rootDir) == Persistence::keyFor(folder)) return &w;
+    return nullptr;
+}
+
+std::string RowOf(Editor* e) {
+    std::string out;
+    TabStrip* strip = e->strip();
+    for (int i = 0; i < strip->count(); i++) {
+        std::string t = strip->item(i).title;
+        if (i == strip->activeIndex()) t = ">" + t;
+        out += (out.empty() ? "" : " ") + t;
+    }
+    return out;
+}
+
+long CaretOf(Editor* e) {
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_mark(e->buffer(), &it, gtk_text_buffer_get_insert(e->buffer()));
+    return gtk_text_iter_get_offset(&it);
+}
+
 }  // namespace
 
 // ------------------------------------------------ the parent's part
@@ -133,6 +185,48 @@ MC_GUI_SUITE(sessions) {
         MCGuiRunChild("_sessions_again", Folder(), [done](int status, std::string out) {
             GCHECK(status == 0);
             if (status != 0) MCGuiNote("again (%d):\n%s", status, out.c_str());
+            done();
+        });
+    });
+
+    // ---- every window back on a launch that opens nothing
+    MCGuiStep("two folders, for two windows", [] {
+        MCGuiWriteFile(WinA() + "/a1.txt", "a1\n");
+        MCGuiWriteFile(WinA() + "/a2.txt", kA2);
+        MCGuiWriteFile(WinB() + "/b1.txt", "b1\n");
+    });
+    MCGuiAsync("a fourth app opens and arranges two windows, and quits", 90, [](MCGuiDone done) {
+        MCGuiRunChild("_windows_first", WinA(), [done](int status, std::string out) {
+            GCHECK(status == 0);
+            if (status != 0) MCGuiNote("windows (%d):\n%s", status, out.c_str());
+            done();
+        });
+    });
+    MCGuiStep("both windows are in the file, beside the folders' sessions", [] {
+        const std::string text = MCGuiReadFile(SessionsFile());
+        const TabSessions::Store st = TabSessions::decodeStore(text);
+        MCGuiNote("%zu windows kept", st.windows.size());
+        GCHECK(st.windows.size() == 2);
+        const TabSessions::Window* a = WindowOn(st.windows, WinA());
+        const TabSessions::Window* b = WindowOn(st.windows, WinB());
+        GCHECK(a && b);
+        if (!a || !b) return;
+        GCHECK_EQ_STR(Names(a->tabs), "a1.txt >a2.txt");
+        GCHECK_EQ_STR(Names(b->tabs), ">b1.txt");
+        GCHECK(a->tabs.tabs.size() == 2 && a->tabs.tabs[1].selStart == kA2Caret);
+        const std::string size = MCGuiReadFile(SizeFile());
+        MCGuiNote("A's size as it quit: %s", size.c_str());
+        GCHECK(a->haveFrame);
+        GCHECK_EQ_STR(std::to_string((int)a->frame.w) + "x" + std::to_string((int)a->frame.h), size);
+        GCHECK(b->sidebarHidden && !a->sidebarHidden);
+        // The folders' sessions still read as before, by the old reader too.
+        GCHECK_EQ_STR(Names(SavedFor(WinA())), "a1.txt >a2.txt");
+        GCHECK(TabSessions::decode(text).count(TabSessions::kWindowsKey) == 0);
+    });
+    MCGuiAsync("a fifth app, launched with no path from the home folder", 90, [](MCGuiDone done) {
+        MCGuiRunChild("_windows_again", "", [done](int status, std::string out) {
+            GCHECK(status == 0);
+            if (status != 0) MCGuiNote("windows again (%d):\n%s", status, out.c_str());
             done();
         });
     });
@@ -283,5 +377,80 @@ MC_GUI_SUITE(_sessions_again) {
     MCGuiStep("a file opened in preview", [] { MCGuiOpenFile(In("extra.txt")); });
     MCGuiWait("replaces the preview tab that came back", 10, [] {
         return Row() == "one.txt two.md pipe >[extra.txt] huge.log three.txt";
+    });
+}
+
+// ------------------- the windows' first app: two windows arranged, a quit
+MC_GUI_SUITE(_windows_first) {
+    MCGuiStep("two files here", [] {
+        GCHECK(MCGuiApp().rootDir == WinA());
+        MCGuiOpenFileKept(WinA() + "/a1.txt");
+        MCGuiOpenFileKept(WinA() + "/a2.txt");
+    });
+    MCGuiWait("a2.txt on show", 10, [] { return ed()->currentPath() == WinA() + "/a2.txt"; });
+    MCGuiStep("the caret to its third line, and the window 900 by 640", [] {
+        MCGuiClick(ed()->textView());
+        MCGuiKey("ctrl+Home");
+        MCGuiKey("Down");
+        MCGuiKey("Down");
+        gtk_window_set_default_size(MCGuiApp().window, 900, 640);
+    });
+    MCGuiWait("the caret there", 10, [] { return Caret() == kA2Caret; });
+    MCGuiStep("a second window, on the other folder", [] { MCGuiOpenWindow(WinB()); });
+    MCGuiWait("it is up", 10, [] {
+        return MCGuiAppWindows().size() == 2 && MCGuiApp().rootDir == WinB() &&
+               gtk_widget_get_mapped(GTK_WIDGET(MCGuiApp().window));
+    });
+    MCGuiStep("b1.txt in it, and its sidebar hidden", [] {
+        MCGuiSetKeyWindow(MCGuiApp().window);
+        MCGuiOpenFileKept(WinB() + "/b1.txt");
+        if (MCGuiApp().layout->sidebarShown()) MCGuiApp().layout->toggleSidebar();
+    });
+    MCGuiWait("so", 10, [] {
+        return ed()->currentPath() == WinB() + "/b1.txt" && !MCGuiApp().layout->sidebarShown();
+    });
+    MCGuiStep("A's size noted, then quit", [] {
+        const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
+        const MCGuiAppWindow* a = AppOn(all, WinA());
+        GCHECK(a != nullptr);
+        if (a) MCGuiWriteFile(SizeFile(), SizeOf(a->window));
+        MCGuiKey("ctrl+q");
+    });
+    MCGuiWait("every window closes", 15, [] { return MCGuiAppWindows().empty(); });
+}
+
+// ------------- the windows' second app: launched from home with no path
+MC_GUI_SUITE(_windows_again) {
+    MCGuiWait("both windows are back", 20, [] {
+        const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
+        return all.size() == 2 && AppOn(all, WinA()) && AppOn(all, WinB());
+    });
+    MCGuiWait("each with its own tabs, and the caret where it was", 10, [] {
+        const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
+        const MCGuiAppWindow* a = AppOn(all, WinA());
+        const MCGuiAppWindow* b = AppOn(all, WinB());
+        return a && b && RowOf(a->editor) == "a1.txt >a2.txt" && RowOf(b->editor) == ">b1.txt" &&
+               CaretOf(a->editor) == kA2Caret;
+    });
+    MCGuiStep("so, and at the size it had", [] {
+        const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
+        const MCGuiAppWindow* a = AppOn(all, WinA());
+        const MCGuiAppWindow* b = AppOn(all, WinB());
+        GCHECK(a && b);
+        if (!a || !b) return;
+        MCGuiNote("A: %s; B: %s", RowOf(a->editor).c_str(), RowOf(b->editor).c_str());
+        GCHECK_EQ_STR(RowOf(a->editor), "a1.txt >a2.txt");
+        GCHECK_EQ_STR(RowOf(b->editor), ">b1.txt");
+        GCHECK(CaretOf(a->editor) == kA2Caret);
+        MCGuiNote("A's size: %s", SizeOf(a->window).c_str());
+        GCHECK_EQ_STR(SizeOf(a->window), MCGuiReadFile(SizeFile()));
+        // Not the home folder this app was started in.
+        for (const MCGuiAppWindow& x : all) GCHECK(x.rootDir != std::string(g_get_home_dir()));
+    });
+    MCGuiWait("B's sidebar hidden, A's shown", 10, [] {
+        const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
+        const MCGuiAppWindow* a = AppOn(all, WinA());
+        const MCGuiAppWindow* b = AppOn(all, WinB());
+        return a && b && a->layout->sidebarShown() && !b->layout->sidebarShown();
     });
 }
