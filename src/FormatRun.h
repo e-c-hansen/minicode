@@ -83,6 +83,13 @@ Decision decide(const std::string& path, const std::string& root, const std::str
                 const std::string& consent, int firstLine, int lastLine, const Env& env,
                 bool projectOnly = false);
 
+// The offer of format on save after a save of `path` (the Mac's
+// MCFindFormatOnSaveOffer): Formatter::onSaveQuestion when the project's own
+// configuration chose the file's formatter and that formatter is installed
+// somewhere, "" otherwise. `setting` is format.<lang>.
+std::string onSaveOffer(const std::string& path, const std::string& root,
+                        const std::string& setting, const Env& env);
+
 // The question for a NeedsConsent decision: Allow, Don't Allow, Cancel.
 struct Question {
     std::string message, detail;

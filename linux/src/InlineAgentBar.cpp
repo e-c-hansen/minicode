@@ -816,7 +816,7 @@ bool InlineAgentBar::applyToBuffer(const std::string& after) {
     std::vector<MultiEdit::Change> changes;
     for (const FormatRun::Replacement::Change& c : r.changes())
         changes.push_back(MultiEdit::Change{c.start, c.length, c.text});
-    if (!MultiEdit::apply(b, changes, false)) return false;
+    if (!MultiEdit::apply(b, changes, false, "Inline Agent")) return false;
     const size_t newIns = r.map(insAt);
     const size_t newBound = insAt == boundAt ? newIns : r.map(boundAt);
     gtk_text_buffer_get_iter_at_offset(b, &ins, (int)newIns);

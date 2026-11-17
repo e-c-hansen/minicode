@@ -35,6 +35,12 @@ void format(const std::string& text, const std::string& path, const std::string&
             int lastLine, double timeoutSeconds, std::function<void(Result)> done,
             bool projectOnly = false);
 
+// The offer of format on save after a save (FormatRun::onSaveOffer): the
+// question to put, "" for none, found off the main thread; `done` comes on
+// the main thread.
+void offerOnSave(const std::string& path, const std::string& root, const std::string& setting,
+                 std::function<void(std::string question)> done);
+
 // Runs started and not yet ended, and the process id of the last one
 // started (checks: a formatter killed at the limit is gone).
 int running();

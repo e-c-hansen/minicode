@@ -1102,6 +1102,7 @@ bool Editor::saveDocument(Document* d, std::string* error) {
     if (!d || !d->canSave()) return true;
     if (!d->save(error)) return false;
     if (d->isPreviewTab() || d->isAgentPreview()) keepPreviewTab(d);   // saved: kept, as in VS Code
+    latexFileSaved(d);
     if (observer_) observer_->documentSaved(d);
     refreshStrip();
     if (d == active_) titleChanged();
@@ -1331,6 +1332,23 @@ LatexPreview* Editor::makeLatex(Document* d) {
             if (path.empty() || !openFile(path, EditorTabs::OpenFrom::Other)) return;
             if (line > 0) revealLine(line, 0, 0);
         });
+        // The files the document reads: a double-click on their text edits
+        // their tabs (the Mac's EditorController+LatexInputs.mm).
+        l->setInputHost(LatexPreview::InputHost{
+            [this](const std::string& path, std::string* text) {
+                Document* t = documentFor(path);
+                if (!t || t->kind() != Document::Kind::Text || t->unread() || t->loading())
+                    return false;
+                *text = t->text();
+                return true;
+            },
+            [this](const std::string& path, const std::string& from, const std::string& to) {
+                return editLatexInput(path, from, to);
+            },
+            [this](const std::string& path) {
+                Document* t = documentFor(path);
+                return t && t->dirty();
+            }});
         gtk_stack_add_child(GTK_STACK(slot_), l->widget());
         d->setLatexPreview(l);
     }
@@ -1338,6 +1356,64 @@ LatexPreview* Editor::makeLatex(Document* d) {
 #else
     (void)d;
     return nullptr;
+#endif
+}
+
+// The file's tab with its text read, for an edit made from a LaTeX preview:
+// the open one, or a new one beside the active tab, not shown (as the Mac's
+// latexInputTab). Null when the file does not read as text.
+Document* Editor::latexInputTab(const std::string& path) {
+    Document* d = documentFor(path);
+    if (!d) d = openForAgent(path, false, true);
+    if (!d) return nullptr;
+    if (d->unread()) loadInto(d, path);   // as showActive reads a tab first shown
+    if (d->kind() != Document::Kind::Text || d->unread() || d->loading()) return nullptr;
+    return d;
+}
+
+// The edit of an \\input file: `from` (its text as the box was opened on)
+// turned into `to` in its tab's buffer, unsaved, one "Edit in Preview" step.
+bool Editor::editLatexInput(const std::string& path, const std::string& from,
+                            const std::string& to) {
+#ifdef MINICODE_ENABLE_PDF
+    Document* d = latexInputTab(path);
+    if (!d || d->text() != from) return false;
+    LatexPreview::spliceInto(d->buffer(), from, to);
+    if (d->isPreviewTab() || d->isAgentPreview()) keepPreviewTab(d);   // edited: kept, as typing keeps it
+    refreshStrip();
+    return true;
+#else
+    (void)path; (void)from; (void)to;
+    return false;
+#endif
+}
+
+// A file was written: the previews whose last typeset read it typeset
+// again (they read it from disk), and their bars drop it from the unsaved
+// ones.
+void Editor::latexFileSaved(Document* saved) {
+#ifdef MINICODE_ENABLE_PDF
+    if (!saved || saved->path().empty()) return;
+    for (Document* d : documents())
+        if (d != saved && d->latexPreview() && d->latexPreview()->readsFile(saved->path()))
+            d->latexPreview()->compileNow();
+#else
+    (void)saved;
+#endif
+}
+
+// Ctrl+S with the LaTeX preview on show: the files the last typeset read
+// that have unsaved changes are saved with the document, so the page shows
+// them. `save` is the window's own save (its errors shown).
+void Editor::saveLatexInputs(const std::function<bool(Document*)>& save) {
+#ifdef MINICODE_ENABLE_PDF
+    if (!active_ || !active_->isLatex() || !active_->showsPreview() || !latex()) return;
+    for (const std::string& f : latex()->inputFiles()) {
+        Document* t = documentFor(f);
+        if (t && t != active_ && t->dirty()) save(t);
+    }
+#else
+    (void)save;
 #endif
 }
 

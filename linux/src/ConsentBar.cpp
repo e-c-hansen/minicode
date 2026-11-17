@@ -63,6 +63,8 @@ std::set<std::string> readMuted() {
 
 }  // namespace
 
+void ConsentBar::ensureCss() { installCss(); }
+
 bool ConsentBar::installMuted(const std::string& key) { return readMuted().count(key) > 0; }
 
 void ConsentBar::setInstallMuted(const std::string& key, bool muted) {

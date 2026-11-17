@@ -116,6 +116,8 @@ const std::vector<LinuxRow>& linuxRows() {
         // lines, as on the Mac: VS Code's Format Selection is a chord. An
         // editor command, so in the terminal the key is the program's.
         {"editor.action.formatDocument", "ctrl+shift+i", 0, nullptr, nullptr},
+        // Edit > Format on Save: no key, as on the Mac.
+        {"minicode.toggleFormatOnSave", "", 0, nullptr, nullptr},
         {"minicode.sortLines", "f9", 0, nullptr, nullptr},
         {"minicode.sortKeepSortedBlocks", "shift+f9", 0, nullptr, nullptr},
         {"editor.action.triggerSuggest", "ctrl+space", 0, nullptr, nullptr},

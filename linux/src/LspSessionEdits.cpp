@@ -81,7 +81,8 @@ int LspSession::applyWorkspaceEdit(const Lsp::WorkspaceEdit& we, std::string* fa
 }
 
 int LspSession::applyEdit(const Lsp::WorkspaceEdit& we, Server* server,
-                          const Lsp::DocVersions* asked, std::string* failure) {
+                          const Lsp::DocVersions* asked, std::string* failure,
+                          const std::string& actionName) {
     std::string unused;
     if (!failure) failure = &unused;
     failure->clear();
@@ -191,7 +192,7 @@ int LspSession::applyEdit(const Lsp::WorkspaceEdit& we, Server* server,
         std::vector<MultiEdit::Change> changes;
         for (const Lsp::PointEdit& p : Lsp::pointEdits(files[i].units, we.files[i].edits))
             changes.push_back({p.start, p.length, p.text});
-        if (!d || !MultiEdit::apply(d->buffer(), changes, true)) {
+        if (!d || !MultiEdit::apply(d->buffer(), changes, true, actionName.c_str())) {
             why = baseName(files[i].path) + " could not be edited";
             ok = false;
             break;

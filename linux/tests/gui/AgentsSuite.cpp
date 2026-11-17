@@ -464,7 +464,12 @@ MC_GUI_SUITE(agents) {
     });
     MCGuiWait("a page lists the changes", 20, [] { return changesPage() && changesPage()->loaded(); });
     MCGuiStep("the agent's files, none of main's later work", [] {
-        auto rows = changesPage()->rowDescriptions();
+        // The wait above may have timed out with no page (a full run once
+        // did, then this step read through a null page and the run died).
+        WorktreeChangesPage* page = changesPage();
+        GCHECK(page != nullptr);
+        if (!page) return;
+        auto rows = page->rowDescriptions();
         GCHECK(((int)rows.size()) == (3));
         bool agent = false, base = false, untracked = false, later = false;
         for (const std::string& r : rows) {
@@ -475,11 +480,15 @@ MC_GUI_SUITE(agents) {
         }
         GCHECK(agent && base && untracked && !later);
         for (size_t i = 0; i < rows.size(); i++)
-            if (rows[i] == "M base.txt") changesPage()->openChangeAtRow((int)i);
+            if (rows[i] == "M base.txt") page->openChangeAtRow((int)i);
     });
     MCGuiWait("the compare view opens that file", 20, [] { return MCGuiApp().editor->isComparison(); });
     MCGuiStep("main at the branch point on the left: its later line is not taken out", [] {
-        const CompareSpec& sp = MCGuiApp().editor->active()->compare()->spec;
+        // As above: after a timed-out wait there may be no comparison.
+        Document* doc = MCGuiApp().editor->active();
+        GCHECK(doc && doc->compare());
+        if (!doc || !doc->compare()) return;
+        const CompareSpec& sp = doc->compare()->spec;
         GCHECK_EQ_STR(sp.leftText, "one\ntwo\nthree\n");
         GCHECK_EQ_STR(sp.rightText, "one\ntwo changed\nthree\n");
         GCHECK(has(sp.leftLabel, "main at the branch point"));

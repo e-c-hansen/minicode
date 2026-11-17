@@ -152,6 +152,22 @@ bool validUtf8(const std::string& s) {
 
 }  // namespace
 
+std::string onSaveOffer(const std::string& path, const std::string& root,
+                        const std::string& setting, const Env& env) {
+    const std::string lang = Formatter::languageFor(path);
+    if (lang.empty() || path.empty()) return "";
+    const std::string realPath = resolved(env, path);
+    const std::string realRoot = root.empty() ? "" : resolved(env, root);
+    const Formatter::Plan plan = Formatter::plan(lang, setting, realPath, realRoot, env.fs);
+    if (!Formatter::offersOnSave(plan) || plan.candidates.empty()) return "";
+    // Only a formatter that is installed somewhere: an offer for a missing
+    // one would end in a note on every save.
+    const Formatter::Candidate& c = plan.candidates[0];
+    const Lookup found = findFormatter(c.program, lang, realPath, realRoot, env);
+    if (found.local.empty() && found.outside.empty()) return "";
+    return Formatter::onSaveQuestion(lang, Formatter::programName(c.program), plan.configFile);
+}
+
 Decision decide(const std::string& path, const std::string& root, const std::string& setting,
                 const std::string& consent, int firstLine, int lastLine, const Env& env,
                 bool projectOnly) {

@@ -115,7 +115,7 @@ bool LspSession::formatDocument(long selStart, long selEnd,
             // step, nothing saved.
             std::string failure;
             const std::shared_ptr<Server> server = asker.lock();
-            if (applyEdit(we, server.get(), asked.get(), &failure) < 0) {
+            if (applyEdit(we, server.get(), asked.get(), &failure, "Format Document") < 0) {
                 once(name + " could not format the file: " + failure, true);
                 return;
             }

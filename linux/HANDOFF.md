@@ -5346,7 +5346,83 @@ write job cannot read a file. `replace_in_folder` writes a file just over
 as above, and it is byte for byte as it was. Checked: that suite (20 passed;
 3 fail with the fix taken out).
 
-### 79. The Claude Code hooks offer (done, November 2026)
+### 79. The workspace-edit applier's and the inline agent's undo steps are named (done, November 2026)
+
+`LspSession::applyEdit` takes the step's name and gives it to
+`MultiEdit::apply`: "Rename" for F2, the code action's title for a quick fix,
+the server's `label` (else "Edit") for workspace/applyEdit, and "Format
+Document" for the server fallback, as the Mac's `applyWorkspaceEdit:...
+actionName:`. The inline agent's Keep names its step "Inline Agent", as the
+Mac's `applyText`. Checks: `lsp_actions` reads `undoName()` of the renamed
+files (c.py, a.py) and `agent_panel` that of the kept edit; all three new
+checks fail ("Edit") with the src change taken out. The "Not done" note in
+item 72 about these two is now done.
+
+### 80. The offer of format on save and Edit > Format on Save (done, November 2026)
+
+The Mac's offer bar (`FormatOnSave.mm`) and menu item. After Ctrl+S saves a
+file whose project's own configuration chose its formatter and that
+formatter is installed (`FormatRun::onSaveOffer`, over
+`Formatter::offersOnSave` and the same formatter lookup Format Document
+uses, with a core check `format-run:on-save-offer`), while format.on-save is
+off and the offer is not muted, a bar under the tabs (`FormatOffer.{h,cpp}`,
+the consent bar's look) asks "This project formats Python files with ruff,
+set up in pyproject.toml. Format them each time you save?": Turn On writes
+`format.on-save = project` (through `AppSettings::writeValue`, so the same
+refusal while the settings file has unsaved changes) and says "Format on
+save is on for formatters a project sets up. Edit > Format on Save turns it
+off." in the status bar; Don't Ask Again is kept in install-hints.json under
+"format-on-save", with the install bar's; × closes it until minicode starts
+again. Once per launch across windows; the look runs off the main thread
+(`FormatRunner::offerOnSave`) and Save All and auto-save never offer. The
+settings turning format on some other way closes the bar. Edit > Format on
+Save (`minicode.toggleFormatOnSave`, no key, `app.formatonsave`) is checked
+while format.on-save is on and writes `false` or `project`. Not offered
+after a Ctrl+S that went through organize imports first, which saves
+through Formatting's own path. Checked by the `format_offer` suite.
+
+### 81. A double-click in the LaTeX preview on text from an \input file edits that file (done, November 2026)
+
+The Mac's change (30eddf9, aec3869, 03ce0c5) in the GTK preview. The core
+had the pieces (`SyncTexIndex::tagsAtPoint`, `inputs()`,
+`LatexDoc::parseInput`); `LatexPreview::doubleClick` now tries the inputs
+the boxes under the point name, likeliest first, then the document, each
+parsed on its own from its tab's buffer or else the disk
+(`docOfInputFile`, parsed again only when the text changed). The box is
+titled "Editing text in chapter.tex"; its text and lists are that file's.
+Save is a splice of that file's text, made by the editor
+(`LatexPreview::InputHost`, `Editor::editLatexInput`): into the file's tab,
+or a tab made beside the active one and not shown (`openForAgent` quiet,
+then read), unsaved, one "Edit in Preview" step; nothing is written. It is
+refused with "chapter.tex changed while the box was open, so the edit was
+not made" when the file's text moved, and "chapter.tex could not be
+changed" when its tab cannot take it. The bar says "chapter.tex has
+unsaved changes: save to see them in the PDF" (or "N files it reads have
+unsaved changes: save to see them in the PDF"), since tectonic reads the
+disk; Ctrl+S with the preview on show saves those files too
+(`Editor::saveLatexInputs`, from `act_save`), and any save of a file a
+preview read typesets that preview again (`Editor::latexFileSaved`). The
+document's own edit is now named "Edit in Preview" as well. The Mac's
+"clicked word selected" fix (03ce0c5) has no counterpart: the GTK box
+selects the whole span for every click. Checked by `latex_inputs`, over the
+committed three-file fixture and a stand-in tectonic.
+
+### 82. Show in Processes in the terminal's close question (done, November 2026)
+
+The close question of a terminal with a program running (`askCloseBusyTerminal`
+in main.cpp, still an async `GtkAlertDialog` answered in one callback) has the
+Mac's third button, Show in Processes. It shows the Processes panel (View >
+Toggle Processes when hidden) and calls `ProcessesPanel::revealTerminal(id,
+job)`, the Mac's `revealTerminal:job:`: the row of the foreground process
+group's leader (`Terminal::foregroundJob`, read when the question is asked)
+is selected and scrolled to; a job not seen yet waits up to 3 s for a look,
+then the terminal's first running process stands in (15 s in all). Nothing is
+closed. `processes` closes the busy terminal, presses the button and checks
+the panel, the selected row (`selectedPid`) and that the terminal is still
+there. The question's wording is Linux's own ("Close this terminal?"); the Mac
+names the command, which the GTK terminal does not know.
+
+### 83. The Claude Code hooks offer (done, November 2026)
 
 The Mac's `ClaudeHooksOffer` on GTK: when Claude Code starts in a terminal a
 bar between the terminal tabs and the terminals (`TerminalDock::setNotice`)
