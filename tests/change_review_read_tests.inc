@@ -161,7 +161,13 @@ static void testWorktreeReview() {
     }
     CHECK((names == std::vector<std::string>{"agent.txt", "base.txt", "keep.txt", "untracked.txt"}));
     CHECK(w.baseLabel.find("main at the branch point") == 0);
-    CHECK(w.mainPath == mainDir);
+    // git names main's checkout resolved; on the Mac the scratch folder is
+    // under /var, a link to /private/var (CI's macOS core tests, #104).
+    auto resolved = [](const std::string& p) {
+        char buf[PATH_MAX];
+        return realpath(p.c_str(), buf) ? std::string(buf) : p;
+    };
+    CHECK(resolved(w.mainPath) == resolved(mainDir));
     if (w.read.diffs.size() == 4) {
         CHECK(w.read.diffs[0].file.letter == 'A' && !w.read.diffs[0].file.oldExists);
         // The left side is main where the branch left it, not main's tip.
