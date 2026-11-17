@@ -20,7 +20,7 @@ found through that list.
   CSV table, whose edits go through `setViewerText:actionName:reshow:` so
   dirty, undo, backups and saving work as for text) or beside text (the JSON
   outline, `besideTextShown`). Shift+Cmd+V flips them (`canTogglePreview`).
-- **HTML pages** (2026-11-15, `HtmlPage.{h,mm}`, `MCViewerHtml`, over
+- **HTML pages** (2026-11-15, `HtmlPageView.{h,mm}`, `MCViewerHtml`, over
   the text like the CSV table; `FileSniff::Kind::Html`, `sniff:html`, `make
   guitest SUITES=html_page`): the page is the saved file, loaded with
   `loadFileURL:allowingReadAccessToURL:` scoped to the window's folder (the

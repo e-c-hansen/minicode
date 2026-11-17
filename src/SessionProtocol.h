@@ -126,9 +126,10 @@ bool decode(const std::string& line, Message* out, std::string* error = nullptr)
 Message roundTrip(const Message& m);
 
 // A window's tabs as its renderer reports them (WindowTabs) and the host
-// keeps them: its folder, the focused group and the share, and each group's
-// tabs in order (document, file, preview kind) with the one on show. When
-// each tab was last used is left out: it moves without the tabs changing.
+// keeps them: its folder, the focused group, and each group's tabs in order
+// (document, file, preview kind) with the one on show. When each tab was
+// last used and the groups' share are left out: they move without the tabs
+// changing (stage 6, which gives them to a second screen, adds them).
 Json windowJson(const Model::Window& w);
 
 }  // namespace Shared

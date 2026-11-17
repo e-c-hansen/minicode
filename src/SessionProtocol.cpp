@@ -243,7 +243,6 @@ Json windowJson(const Model::Window& w) {
     Json j = Json::object();
     j.set("root", Json(w.root()));
     j.set("focused", Json(w.focused()));
-    j.set("fraction", Json(w.fraction()));
     Json groups = Json::array();
     for (int g = 0; g < w.groupCount(); g++) {
         Json group = Json::object();

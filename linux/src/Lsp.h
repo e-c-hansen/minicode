@@ -426,11 +426,11 @@ private:
     uint64_t documentEdits(uint64_t docId) const;
     void flushChanges();
     void scheduleChange();
-    void watchBuffers();
-    void noteEdit(uint64_t docId, size_t start, size_t removed, const char* inserted, int len);
-    static void onSyncInsert(GtkTextBuffer* b, GtkTextIter* at, char* text, int len,
-                             gpointer watch);
-    static void onSyncDelete(GtkTextBuffer* b, GtkTextIter* a, GtkTextIter* z, gpointer watch);
+    // Each document a server has, followed through the session's host
+    // (SessionLink.h): its copy of the host's text, and the host's edits in
+    // UTF-16 as it applied them.
+    void watchDocuments();
+    void noteEdit(uint64_t docId, size_t start, size_t removed, size_t inserted);
 
     // ---- diagnostics (LspSessionDiagnostics.cpp)
     std::unique_ptr<DiagState> diag_;
