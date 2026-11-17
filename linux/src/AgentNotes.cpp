@@ -40,9 +40,6 @@ void AgentNotes::buildBox() {
     box_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     g_object_ref_sink(box_);
     gtk_widget_add_css_class(box_, "agent-note");
-    gtk_widget_set_halign(box_, GTK_ALIGN_START);
-    gtk_widget_set_valign(box_, GTK_ALIGN_START);
-    gtk_widget_set_margin_start(box_, 56);
     gtk_widget_set_visible(box_, FALSE);
     GtkWidget* top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     head_ = gtk_label_new("");
@@ -68,6 +65,14 @@ void AgentNotes::buildBox() {
     gtk_box_append(GTK_BOX(box_), top);
     gtk_box_append(GTK_BOX(box_), body_);
     ed_->addOverlay(box_);
+    // The overlay asks where the box goes (childPosition): its rect is whole,
+    // so no margin of ours feeds back into what it is measured at.
+    g_signal_connect(ed_->overlay(), "get-child-position",
+                     G_CALLBACK(+[](GtkOverlay* o, GtkWidget* w, GdkRectangle* r, gpointer p) -> gboolean {
+        AgentNotes* s = static_cast<AgentNotes*>(p);
+        if (w != s->box_) return FALSE;
+        return s->childPosition(r, gtk_widget_get_width(GTK_WIDGET(o)));
+    }), this);
 }
 
 std::string AgentNotes::label() const {
@@ -216,9 +221,19 @@ void AgentNotes::place(Document* doc) {
 }
 
 // The box over the text, above the first line; below the last line when
-// there is no room above.
+// there is no room above. Placed by the overlay (childPosition).
 void AgentNotes::reposition() {
     if (!box_ || !shown()) return;
+    gtk_widget_queue_allocate(box_);
+    gtk_widget_queue_resize(box_);
+}
+
+// The box's rectangle in the overlay. Its width is its natural one, held
+// between its minimum and what the overlay has past the 56 point indent (a
+// width under the minimum was GTK's warning and a height that changed from
+// one call to the next); its height is measured at that very width.
+bool AgentNotes::childPosition(GdkRectangle* out, int overlayWidth) {
+    if (!box_ || !shown() || !start_ || !end_) return FALSE;
     GtkTextView* view = GTK_TEXT_VIEW(ed_->textView());
     GtkTextIter s, e;
     gtk_text_buffer_get_iter_at_mark(buf_, &s, start_);
@@ -229,18 +244,17 @@ void AgentNotes::reposition() {
     int x, y1, y2;
     gtk_text_view_buffer_to_window_coords(view, GTK_TEXT_WINDOW_WIDGET, r1.x, r1.y, &x, &y1);
     gtk_text_view_buffer_to_window_coords(view, GTK_TEXT_WINDOW_WIDGET, r2.x, r2.y, &x, &y2);
-    // The height at the width the box takes (its natural one, halign start).
-    // Measured with no width (-1), the wrapping body label answers for
-    // whatever width it last had, and the box was taken for twice as tall as
-    // it is: it floated away above the line, or fell below the last one.
+    constexpr int kIndent = 56;
     int minW = 0, natW = 0, minH = 0, natH = 0;
     gtk_widget_measure(box_, GTK_ORIENTATION_HORIZONTAL, -1, &minW, &natW, nullptr, nullptr);
-    gtk_widget_measure(box_, GTK_ORIENTATION_VERTICAL, natW, &minH, &natH, nullptr, nullptr);
+    const int w = std::max(minW, std::min(natW, overlayWidth - kIndent));
+    gtk_widget_measure(box_, GTK_ORIENTATION_VERTICAL, w, &minH, &natH, nullptr, nullptr);
     int top = y1 - natH - 4;
     if (top < 2) top = y2 + r2.height + 4;
     const int viewH = gtk_widget_get_height(GTK_WIDGET(view));
     if (viewH > natH) top = std::max(2, std::min(top, viewH - natH - 2));
-    gtk_widget_set_margin_top(box_, top);
+    *out = GdkRectangle{kIndent, top, w, natH};
+    return TRUE;
 }
 
 // The shown note off the screen. Kept for its tab (with its lines as they are
