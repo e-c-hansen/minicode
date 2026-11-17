@@ -18,6 +18,7 @@
 #import "AppSettings.h"
 #import "ControlServer.h"
 #import "TreeDetails.h"   // MCAppDefaults
+#import "SessionLink.h"
 
 int minicode_main(int argc, const char *argv[]);   // mac/src/main.mm, renamed
 
@@ -443,9 +444,32 @@ static void Leak(NSString *suite, NSString *what, BOOL fails = YES) {
     }
 }
 
+// With the session's host on (editor.session-host, MINICODE_SESSION_HOST),
+// every tab's text as the host has it must be the tab's own, the editor's
+// storage for the tab on show: the mirrors never drift, whatever a suite
+// did to them. GTK's harness checks the same (checkSessionMirrors).
+static void CheckSessionMirrors(NSString *suite) {
+    for (EditorController *c in MCGuiControllers()) {
+        NSArray<MCTab *> *tabs = nil;
+        @try {
+            tabs = [c valueForKey:@"tabs"];
+        } @catch (NSException *) {
+        }
+        if (![tabs isKindOfClass:NSArray.class]) continue;
+        NSString *why = MCSessionCheckTabs(tabs);
+        if (!why.length) continue;
+        std::printf("  FAIL [%s] the session's host and the window it renders differ: %s\n",
+                    suite.UTF8String ?: "", why.UTF8String);
+        std::fflush(stdout);
+        gFail++;
+        gSuiteFail++;
+    }
+}
+
 static void CheckWhatSuiteLeft(NSString *suite) {
     // A "_" suite runs alone in a process of its own, which it may end.
     if (!suite || [suite hasPrefix:@"_"]) return;
+    CheckSessionMirrors(suite);
     const BOOL putBack = LeaksFail();
     if (gKeyWindow) {
         Leak(suite, @"left the key window pinned (MCGuiSetKeyWindow(nil) at its end)");

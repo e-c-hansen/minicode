@@ -34,12 +34,29 @@
 @class MCSnippetSession;
 @class MCEditorConflicts;
 @class MCSpellMarks;
+@class MCSessionDoc;
 
 // The color a diagnostic's severity is drawn in (1 error ... 4 hint): the
 // squiggles, the hover box's messages and the gutter's dots.
 NSColor *MCDiagnosticColor(NSInteger severity);
 
+// An undo or redo is going into `tv`: its undo manager's, or the session
+// host's (CodeTextView sessionUndoing).
+BOOL MCTextViewUndoing(NSTextView *tv);
+
 @interface CodeTextView : NSTextView
+// The session's host (SessionLink.h): the document whose source the view
+// shows, editable, when the host owns its text, else nil. Every edit is
+// then recorded on it, and replaceRanges:withStrings:actionName: names its
+// step.
+@property(nonatomic, copy) MCSessionDoc * (^sessionDocProvider)(void);
+@property(nonatomic, readonly) MCSessionDoc *sessionDoc;
+// Typing is going on (insertText:, Backspace and the like): an edit then
+// opens a "Typing" step, which joins the one before it.
+@property(nonatomic, readonly) NSInteger sessionTyping;
+// The host's undo or redo is going into the text (as NSUndoManager's
+// isUndoing): what ends on an undo (a snippet's stops) ends.
+@property(nonatomic, assign) BOOL sessionUndoing;
 @property(nonatomic, copy) NSArray<MCDiagnosticMark *> *diagnostics;
 // Problems from a build rather than a language server (the LaTeX preview's
 // typeset): dots in the gutter only, kept on their text while it is edited

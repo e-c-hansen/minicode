@@ -178,6 +178,8 @@ goes here first, with tests; the GUI only displays it.
   one tab), `GitGutter` (change bars), `EditorConflicts` (merge conflicts
   in the editor), `TreeDetails`,
   `FormatRunner`, `BackupStore`, `SessionStore` (sessions.json),
+  `SessionLink` (the session's host and each tab's document on it,
+  editor.session-host; `docs/notes/session-host.md`),
   `PalettePanel`, `Navigation`, `HintsSearchBox` (the hints panel's search box).
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
@@ -199,7 +201,7 @@ goes here first, with tests; the GUI only displays it.
 `validateMenuItem:`, undo and redo, and the forwarding accessors of the active
 tab. The rest is in `EditorController+<Concern>.mm`: Layout, StatusBar, Panels
 (terminal dock, browser, keyboard between panes), Search, Tree, TreeDetails,
-Tabs (tabs, closed tabs, saving), Groups (the split editor, and the window's Model::Window behind both), Persistence (sessions, backups, auto-save,
+Tabs (tabs, closed tabs, saving), Session (the session host's hooks), Groups (the split editor, and the window's Model::Window behind both), Persistence (sessions, backups, auto-save,
 files changed outside), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,

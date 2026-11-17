@@ -617,6 +617,16 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (BOOL)openFileForLanguageServer:(NSString *)p from:(EditorTabs::OpenFrom)from;
 @end
 
+// EditorController+Session.mm: the session's host (SessionLink.h,
+// editor.session-host): the storage's edits of the tab on show go to its
+// document there, and the text view asks which document it shows.
+@interface EditorController (Session)
+- (void)installSessionHooks;
+- (void)sessionForgetHistoryOf:(MCTab *)t;
+- (CodeTextView *)textViewShowingSourceOf:(MCTab *)t;
+- (void)tabTextChangedByHost:(MCTab *)t;
+@end
+
 // EditorController+Groups.mm: two editor groups side by side (Split Editor),
 // and the window's tabs (Model::Window), which each MCTab asks about itself.
 @interface EditorController (Groups) <MCTabOwner>

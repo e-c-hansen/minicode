@@ -259,13 +259,13 @@ void Client::process(Message&& m) {
         break;
     case Kind::DocUndone:
         if (Doc* d = doc(m.doc)) d->broken = true;
-        replies_[m.req] = std::move(m);
+        if (!abandoned_.erase(m.req)) replies_[m.req] = std::move(m);
         break;
     case Kind::DocText:
     case Kind::State:
     case Kind::Pong: {
         const std::uint64_t req = m.req;
-        replies_[req] = std::move(m);
+        if (!abandoned_.erase(req)) replies_[req] = std::move(m);
         break;
     }
     case Kind::Error: errors_.push_back(m.name); break;
@@ -378,6 +378,8 @@ bool Client::ask(Message&& m, Message* reply, int timeoutMs) {
     const bool ok = waitFor([&] { return replies_.count(req) > 0; }, timeoutMs);
     if (ok && reply) *reply = std::move(replies_[req]);
     replies_.erase(req);
+    // Its answer, should it come after all, is dropped (process()).
+    if (!ok) abandoned_.insert(req);
     return ok;
 }
 
@@ -429,7 +431,7 @@ bool Client::outcome(std::uint64_t req, Outcome* out) {
 
 // ---------------------------------------------------------------- the host's text
 
-const Model::Text* Client::watch(DocId id, const void* owner, Watcher w) {
+const Model::Text* Client::watch(DocId id, const void* owner, Watcher w, int timeoutMs) {
     Doc* d = doc(id);
     if (!d) return nullptr;
     bool found = false;
@@ -445,7 +447,30 @@ const Model::Text* Client::watch(DocId id, const void* owner, Watcher w) {
         m.doc = id;
         m.flag = 1;
         Message reply;
-        if (!ask(std::move(m), &reply)) return nullptr;
+        if (!ask(std::move(m), &reply, timeoutMs)) {
+            // The host did not answer in time: no copy, so no watcher
+            // either. Left registered, it would be called once a later
+            // watch made the copy, after its owner (an LspSession, a
+            // closed window's) may have gone. The host is told to stop
+            // too, after the watch it has still to take.
+            d = doc(id);
+            if (d) {
+                d->watchers.erase(std::remove_if(d->watchers.begin(), d->watchers.end(),
+                                                 [owner](const std::pair<const void*, Watcher>& p) {
+                                                     return p.first == owner;
+                                                 }),
+                                  d->watchers.end());
+                if (d->watchers.empty()) {
+                    Message off;
+                    off.kind = Kind::DocWatch;
+                    off.doc = id;
+                    off.flag = 0;
+                    queue(std::move(off));
+                    pump();
+                }
+            }
+            return nullptr;
+        }
         d = doc(id);   // a listener may have closed it meanwhile
         if (!d) return nullptr;
         d->copy = std::make_unique<Model::Text>(reply.text16);
@@ -469,6 +494,14 @@ void Client::unwatch(DocId id, const void* owner) {
     m.flag = 0;
     queue(std::move(m));
     pump();
+}
+
+bool Client::watching(DocId id, const void* owner) const {
+    auto it = docs_.find(id);
+    if (it == docs_.end()) return false;
+    for (const auto& [o, f] : it->second.watchers)
+        if (o == owner) return true;
+    return false;
 }
 
 const Model::Text* Client::hostCopy(DocId id) const {

@@ -1,5 +1,6 @@
 // EditorTab.mm — see EditorTab.h.
 #import "EditorTab.h"
+#import "SessionLink.h"
 #import "SourceStorage.h"
 #include "FolderSearch.h"
 
@@ -62,6 +63,20 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
     return YES;
 }
 
+// A tab's undo manager: a name given to its step (Toggle Comment, Change
+// Color, ...) names the session host's step too while the host owns the
+// tab's history.
+@interface MCTabUndoManager : NSUndoManager
+@property(nonatomic, weak) MCTab *tab;
+@end
+
+@implementation MCTabUndoManager
+- (void)setActionName:(NSString *)name {
+    [super setActionName:name];
+    [self.tab.session nameStep:name];
+}
+@end
+
 @implementation MCTab {
     NSString *_sourceText;
     MCSourceStorage *_live;   // set while the text is the storage's, not yet copied
@@ -72,7 +87,9 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
     if ((self = [super init])) {
         static uint64_t lastId = 0;   // made on the main thread only
         _docId = ++lastId;
-        _undoManager = [NSUndoManager new];
+        MCTabUndoManager *um = [MCTabUndoManager new];
+        um.tab = self;
+        _undoManager = um;
         _mediaSeconds = -1;
         _pdfAutoScales = YES;
         _fileSize = -1;
@@ -100,6 +117,12 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 
 - (void)setSourceText:(NSString *)text {
     NSString *copy = [text copy];
+    // The session's host follows every change it did not make itself.
+    if (_session) {
+        if (!_session.applying) [_session textWillChangeFrom:self.currentText to:copy];
+    } else if (copy && MCSessionHostEnabled()) {
+        _session = [[MCSessionDoc alloc] initWithTab:self text:copy];
+    }
     const BOOL same = !_live && copy == _sourceText;
     _live = nil;
     _sourceText = copy;

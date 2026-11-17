@@ -103,6 +103,7 @@
     self.textView.textStorage.delegate = self;   // incremental highlighting
     self.textView.richText = YES;
     self.textView.allowsUndo = YES;
+    [self installSessionHooks];   // editor.session-host (EditorController+Session.mm)
     self.textView.automaticSpellingCorrectionEnabled = NO;
     self.textView.automaticDashSubstitutionEnabled = NO;
     // No smart copy and paste: AppKit's default adds a space around a pasted
