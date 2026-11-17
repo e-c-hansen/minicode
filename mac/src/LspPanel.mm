@@ -260,6 +260,9 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
         [line.widthAnchor constraintEqualToConstant:kPanelWidth - 24].active = YES;
         [card addArrangedSubview:line];
     }
+    // clangd guessing the open file's flags: why its errors may be wrong.
+    if (info.compileFlagsNote.length)
+        [card addArrangedSubview:Label(info.compileFlagsNote, Small(), muted, YES, YES)];
     if (info.message.length) {
         BOOL bad = info.state == MCLspStateFailed || info.state == MCLspStateCrashed ||
                    info.state == MCLspStateRestarting;

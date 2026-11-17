@@ -57,6 +57,18 @@ opening comment says what it does in more detail than the lines below.
   whether `-j` was given, so the top-level make adds `-j$(JOBS)` itself (one
   job per core, never with `clean` among the goals); `make JOBS=1` builds
   serially.
+- **compile_commands.json** (2026-11-16): `make` (and `make compdb` alone)
+  writes it at the repo root for clangd, one entry per source file from
+  the Makefile's own variables (`APPCMD` for `src/`, `mac/src`, the CLI
+  and the sweep, plus `-Imac/tests/gui` for the GUI suites; `TESTCMD` for
+  run_tests.cpp and fakelsp), rewritten only when its text changes,
+  git-ignored with clangd's `.cache/`. Without it clangd guessed (no
+  `-Isrc`, no `-fobjc-arc`): 21 false errors on mac/src/AgentModel.mm,
+  none with it (`clangd --check=`, the command line tools' clangd, never
+  /usr/bin's shim). The `*.inc` groups and `*Tests.cpp` have no entry;
+  clangd takes them from run_tests.cpp. A new compile rule with new flags
+  needs its line in `COMPDB_LINES`. Linux's Meson build writes its own in
+  its build folder.
 - `make test` builds and runs the core's tests (`tests/run_tests.cpp` with the
   `tests/*.inc` groups and the `*Tests.cpp` files) in `build/test-obj`, without
   -O2, and exits non-zero on failure. Groups are named `area:case`. Counts grow
@@ -240,7 +252,8 @@ goes here first, with tests; the GUI only displays it.
   (the review view's rows, and what staging, unstaging or discarding one
   block or a few lines makes of the file), `MergeConflicts` (git's
   conflict blocks, and what keeping a side or both makes of the text).
-- `CommandPalette` (matching, modes, Quick Open, symbol rows), `HintsSearch.h`
+- `CommandPalette` (matching, modes, Quick Open, symbol rows), `FolderPicker`
+  (the folder picker's paths, rows and completion), `HintsSearch.h`
   (the shortcut hints' search, header only), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
@@ -365,7 +378,7 @@ container (PanelHost, laid out by hand in layoutContainer)
 ├── titlebarView + titleLabel                     with a custom title bar
 ├── NSSplitView (vertical)                        sidebar | right pane
 │   ├── treeScroll → ClickOutline                 file tree, MCTreeCell rows,
-│   │   a Worktrees node first; or MCGitPanel (Ctrl+Shift+G), the Agents
+│   │   a Worktrees node first; or MCGitPanel (Shift+Cmd+G), the Agents
 │   │   panel (Shift+Cmd+A) or MCProcessesPanel (View > Toggle Processes)
 │   │   swapped in with replaceSubview:
 │   └── rightArea (PanelHost, relayoutRightArea)
@@ -473,6 +486,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   Shift+Cmd+T Toggle Terminal, Shift+Cmd+D TODOs, Shift+Cmd+E, Shift+Cmd+B,
   Shift+Cmd+H, ...); only a Command-only key yields when VS Code binds it to
   something else (Cmd+N New File, Cmd+L Select Line, Cmd+I the inline agent).
+  The one exception, the owner's call (2026-11-16): Shift+Cmd+N, New Folder
+  by Finder's convention, is VS Code's New Window (`When::NotTree`, keeping
+  Option+Cmd+N) and New Folder only while the tree has the keyboard
+  (`minicode.tree.newFolder`, a Mac-only `Tree` row sending `newFolder:`
+  with tag 1; `explorer.newFolder` keeps the menu item, keyless on the Mac
+  and Ctrl+Alt+N everywhere on Linux).
   Dump every menu key equivalent before adding one; no key is bound twice (the
   `keymap` suite and `commands:*` check it).
 - **A new shortcut**: a row in `src/Commands.cpp` (id in VS Code's spelling
@@ -609,8 +628,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   the text view as typing before the menu (in another field or the grid it
   types); when two commands share a key in different places; and for keys a
   menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation);
-  and for a `Tree` command (renameFile on F2, moveFileToTrash on Cmd+Delete)
-  while the tree has the keyboard; and for a function key whose `Any`
+  and for a `Tree` command (renameFile on F2, moveFileToTrash on Cmd+Delete,
+  minicode.tree.newFolder on Shift+Cmd+N, which is New Window elsewhere) while the tree has the keyboard; and for a function key whose `Any`
   command something in the responder chain takes (F7 in the compare view's
   panes, plain text views that would beep at it). A `Tree` command's keys are never put on
   its menu item, since a menu key acts from every pane (Cmd+Delete once
@@ -692,8 +711,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   tab, or the terminal, the browser's tab (the browser with its last) or
   Problems list with the keyboard; a repeat
   (`isARepeat`) is ignored, so a held Cmd+W closes one thing. Shift+Cmd+W
-  closes the window. Cmd+N New File (with no window, opens one), Option+Cmd+N
-  New Window. Reopen Closed Tab (Option+Shift+Cmd+T): the newest of the
+  closes the window. Cmd+N New File (with no window, opens one), Shift+Cmd+N
+  (outside the tree) and Option+Cmd+N New Window. Reopen Closed Tab (Option+Shift+Cmd+T): the newest of the
   window's last 50 (`_closedTabs`, with place, selection, scroll, mode),
   skipping files gone.
 - **Unsaved tabs are never dropped**: a dirty tab asks Save / Don't Save /
@@ -1410,7 +1429,12 @@ container (PanelHost, laid out by hand in layoutContainer)
   lines, applied `whenCurrent:`), over a copy of the text made once per
   edit of it (`MCFindText`: an NSString copy on main, UTF-16 on the
   queue), never once per keystroke in the query, and draws through `drawBehindText`. Cmd+G /
-  Shift+Cmd+G, Return / Shift+Return; Option+Cmd+C, W, R; Return in the replace
+  Shift+Cmd+G, Return / Shift+Return (Shift+Cmd+G is Toggle Source
+  Control's menu key since 2026-11-16, the owner's call: Find Previous has
+  no registry key, and the bar, the terminal's and browser's
+  `MCTerminalFindBar`, and Find in Folder's window, whose
+  `MCSearchContent` steps through the results with Cmd+G and Shift+Cmd+G,
+  take it in `performKeyEquivalent:` before the menu); Option+Cmd+C, W, R; Return in the replace
   field replaces and moves on; Shift+Cmd+1 replaces only while the bar has the
   keyboard (Go to Tab 1 elsewhere); Up and Down in either field walk its
   history (2026-11-14, `FindHistory.h`, VS Code's: newest last, a text
@@ -1609,6 +1633,29 @@ container (PanelHost, laid out by hand in layoutContainer)
   without taking the keyboard; Esc puts selection and scroll back.
   `workspace/symbol` goes to every running server that offers it, older
   requests cancelled, answers merged.
+- **The folder picker** (2026-11-16, the owner's ask: Finder's open
+  panel "always sucks"; `FolderPicker.{h,cpp}`, `folderpick:*`, `make
+  guitest SUITES=folder_picker`): Open Folder… (`openFolder:`, Cmd+O) and
+  the Dock's Open Folder… (`openFolderInNewWindow:`) show the palette with
+  an `MCFolderPick` (`MCShowFolderPicker`, `MCPaletteContext folderPick`),
+  never NSOpenPanel, except Choose in Finder…, its last row, and the
+  Dock's with no editor window. Rows are the core's: a name is matched
+  (`rankFiles` on the paths spelled with ~) against the recent folders
+  then the base folder's (the window's, else home) subfolders; text with
+  a '/' or starting with "~" is a path whose folder's subfolders are
+  matched by name, Open This Folder first when the text ends in '/'
+  (Return opens it), else after the matches when the text names a folder
+  the listing has. Hidden folders only after a typed dot. Folders are read
+  with `FolderPicker::listSubfolders` (readdir, stat only for links) on a
+  global queue, kept per palette by path, the reading of a folder no longer
+  typed cancelled. Tab (`completeSelectedFolder`) and '/' typed after a name
+  (`controlTextDidChange:`, `slashCompletes`) put the selected folder in
+  the field (`FolderPicker::complete`, keeping the text's own spelling of
+  the folder before it); Cmd+Return reaches the overlay's
+  `performKeyEquivalent:` ahead of Insert Line Below's menu key. Open
+  Folder… now asks about unsaved tabs after the choice (`switchToFolder:`),
+  so a cancelled pick asks nothing. A pick or the folder picker skips the
+  menu walk the palette makes for commands.
 - Go Back and Forward (Ctrl+-, Ctrl+Shift+-): `MCNavigator` over `NavHistory`
   (places within ten lines are one entry; a new jump drops what lay ahead; 50
   entries; entries follow renames and leave with deleted files). Recorded: tab
@@ -1883,7 +1930,21 @@ view is disposed (on `unrealize`), or dispose loops forever.
   carry the server's document versions from when they were asked
   (`Client::versions`, `staleEditFile`) and are refused for a file that moved
   on. Files no tab has open are kept apart (`_otherDiags`) for
-  Problems.
+  Problems. A diagnostic `Lsp::drawsOnText` refuses (clang's
+  `fatal_too_many_errors`, which clang places at the file's first
+  character, so it sat on a line-1 comment) is an `MCDiagnosticMark
+  quiet`: counted in the status bar and listed in Problems, but no
+  squiggle, gutter dot, hover or F8 stop.
+- **clangd without compile flags** (2026-11-16, `Lsp::clangdHasCompileFlags`,
+  `lsp:clangd-flags`, `make guitest SUITES=clangd_flags`): no
+  compile_commands.json or compile_flags.txt from the file's folder up
+  (each folder and its `build/`, as clangd looks), no `.clangd` with a
+  CompileFlags section, no `--compile-commands-dir`, so clangd guesses and
+  missing-header errors may be false. clangd's card in the Language
+  Servers popover says so (`MCLspServerInfo compileFlagsNote`,
+  `Lsp::kClangdNoFlagsText`) while it holds, and the status bar once per
+  folder a launch (`noteMissingCompileFlags`, from `documentOpened:`);
+  never a bar. Checked with stats, not clangd's log.
 - **Inlay hints** (2026-11-07, `Lsp+InlayHints.mm`, `LspInlayHints.mm`,
   core `InlayHints.{h,cpp}`, `lsp:inlay-*`, `make guitest
   SUITES=inlay_hints`): VS Code's editor.inlayHints. Asked for the lines on
@@ -2058,7 +2119,15 @@ view is disposed (on `unrealize`), or dispose loops forever.
   selections, text blocks and table borders come through the same method.
   A page replaced while scrolled down redraws the whole pane
   (`MCRedrawWholePane`): TextKit marks only the page's own column there, so
-  a new zoom's margins kept the old page's ink.
+  a new zoom's margins kept the old page's ink. **The same on a tab
+  switch** (2026-11-16, the owner's screenshot: settings.conf's text, its
+  swatches too, in the margins beside JOBS.md's page, the title saying
+  [Preview]): a page shown in place of another tab's text marked only its
+  column. `CodeTextView redrawWholePane` marks the visible and prepared
+  rects now and again from a run-loop block, where the pane ended up;
+  `activateTab:` and `renderMarkdown:` call it, and the view calls it when
+  shown again (`viewDidUnhide`: marks made while hidden had no visible
+  rect). markdown_side records the view's marks across switches.
 - Every run carries its source `line` (`kMarkdownSourceLine`): Shift+Cmd+V
   opens the preview at the caret and the source where a scrolled preview is.
   Links (`openMarkdownLink:`): `#heading` by GitHub's anchor
@@ -3005,6 +3074,7 @@ for full-screen programs. Both can be open at once.
 
 ## Git panel (all three ports)
 
+Shift+Cmd+G (the Mac's, outside a find bar; see "Find and replace") or
 Ctrl+Shift+G swaps the tree for `MCGitPanel` (`replaceSubview:with:`, same
 frame). All three panels draw from the core's `src/GitModel.{h,cpp}`
 (`GitUi`: rows, the selection after a refresh, every argument vector, the
@@ -3880,8 +3950,9 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   folder URL is taken because Info.plist claims public.folder; checked in
   the real bundle). A pick arrives as an odoc at `application:openURLs:`.
   `applicationDockMenu:` adds New Window and Open Folder…
-  (`openFolderInNewWindow:`, a folder picker, then `openURLs:`; the window
-  in front keeps its folder). The first launch seeds the Dock's list from
+  (`openFolderInNewWindow:`, minicode's folder picker over the window in
+  front, then `openURLs:`; the window in front keeps its folder; see "The
+  palette, symbols and Go Back"). The first launch seeds the Dock's list from
   the stored folders when it is empty; Clear Recently Opened clears both.
   How the Dock shows it needs the owner's eyes.
 - The launcher (`scripts/minicode-launcher`, `Contents/Resources/minicode`):
@@ -4041,12 +4112,12 @@ session has a display. Check first.
   editing: keystroke, multiedit, editor_keys, auto_close, bracket_pairs,
   folding, foldperf, multicaretclick, multicaret_rows, find_bar,
   large_file, save, paste, zoomfit, spell_check;
-  files and windows: tree, tree_hidden, preview_tabs, split_editor, search,
+  files and windows: tree, tree_hidden, folder_picker, preview_tabs, split_editor, search,
   replace_in_folder, backups, palette, symbols, keymap, config_writes,
   daily_work, structure, utf16, hints_panel, swatch_escape;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
-  snippets, completion_keys, problems, servers_by_extension, server_consent, tools_consent,
+  snippets, completion_keys, problems, clangd_flags, servers_by_extension, server_consent, tools_consent,
   organize_on_save, format, format_consent, format_coverage, format_on_save;
   documents and viewers: markdown_preview, markdown_side,
   markdown_side_sync, markdown_width, markdown_page, markdown_math, mermaid, latex,

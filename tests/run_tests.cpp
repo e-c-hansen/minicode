@@ -33,6 +33,7 @@
 #include "MultiCaret.h"
 #include "AutoClose.h"
 #include "CommandPalette.h"
+#include "FolderPicker.h"
 #include "Backups.h"
 #include "TabSessions.h"
 #include "InlineAgent.h"
@@ -11140,6 +11141,7 @@ static void testMultiCaretOccurrences() {
 #include "agent_view_tests.inc"
 #include "fold_tests.inc"
 #include "previews_tests.inc"
+#include "folder_picker_tests.inc"
 #include "commands_tests.inc"
 #include "commands_linux_tests.inc"
 #include "procs_tests.inc"
@@ -11170,6 +11172,7 @@ static void testMultiCaretOccurrences() {
 #include "text_model_tests.inc"
 #include "undo_history_tests.inc"
 #include "lsp_trust_tests.inc"
+#include "lsp_clangd_tests.inc"
 #include "multiedit_tests.inc"
 #include "edit_batch_tests.inc"
 #include "folder_search_tests.inc"
@@ -11290,6 +11293,7 @@ int main() {
     testChangeRequest();
     testMultiCaret();
     testCommandPalette();
+    testFolderPicker();
     testMultiCaretOccurrences();
     testBackups();
     testTabSessions();
@@ -11351,6 +11355,7 @@ int main() {
     testTextModel();
     testUndoHistory();
     testLspProjectCode();
+    testLspClangdFlags();
     testMultiEdit();
     testEditBatch();
     testFolderSearchParallel();

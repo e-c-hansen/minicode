@@ -28,7 +28,7 @@ With a language server installed (clangd, basedpyright, gopls, rust-analyzer, ty
 
 ![Saving a change, then staging that hunk and committing it in the source control panel](docs/demos/git.gif)
 
-Control Shift G swaps the tree for a source control panel: changes and their diffs, the commit graph with what is and is not pushed, and push, pull, and fetch. Stage or discard a file, a hunk, or the lines you select, and a discard can be undone. Bars beside the line numbers mark what changed, and a click on one reverts or stages that change alone.
+Shift Command G or Control Shift G swaps the tree for a source control panel: changes and their diffs, the commit graph with what is and is not pushed, and push, pull, and fetch. Stage or discard a file, a hunk, or the lines you select, and a discard can be undone. Bars beside the line numbers mark what changed, and a click on one reverts or stages that change alone.
 
 ### A real terminal
 
@@ -132,7 +132,7 @@ Linux uses Ctrl where the Mac uses Command, with VS Code's Linux key where VS Co
 | Toggle the sidebar | Command B | Ctrl B |
 | Toggle the terminal | Control backtick | Ctrl backtick |
 | Toggle the browser | Shift Command B | Ctrl Shift B |
-| Toggle the source control panel | Control Shift G | Ctrl Shift G |
+| Toggle the source control panel | Shift Command G or Control Shift G | Ctrl Shift G |
 | Toggle the Markdown or LaTeX preview | Shift Command V | Ctrl Shift V |
 | Show the Markdown page beside its source | Control Command V | Ctrl Alt V |
 | Split the editor | Command backslash | Ctrl backslash |

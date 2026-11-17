@@ -910,8 +910,9 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 // program has the screen).
 - (BOOL)gridShowing { return _gridMode && !self.grid.hidden; }
 
-// Edit > Find (Cmd+F), Find Next and Find Previous (Cmd+G, Shift+Cmd+G),
-// reached through the responder chain while the grid has the keyboard. The
+// Edit > Find (Cmd+F), Find Next (Cmd+G) and Find Previous (the menu's
+// item; Shift+Cmd+G is the find bar's own), reached through the responder
+// chain while the grid has the keyboard. The
 // tags are NSTextFinderAction values, as the menu sets them for the editor.
 - (void)performTextFinderAction:(id)sender {
     if (![self gridShowing]) return;

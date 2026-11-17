@@ -46,7 +46,8 @@
 @interface BrowserView : NSView
 - (instancetype)initWithHomeURL:(NSString *)url;
 // Find in the page on show (Cmd+F while the pane has the keyboard, the
-// address bar too; Cmd+G and Shift+Cmd+G, Return and Shift+Return, Esc): the
+// address bar too; Cmd+G, Return and Shift+Return, and in the bar's field
+// Shift+Cmd+G, Esc): the
 // terminal's bar over the page's top right, WebKit doing the finding. Nil
 // until first asked for.
 @property(nonatomic, readonly) MCTerminalFindBar *findBar;

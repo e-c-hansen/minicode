@@ -573,4 +573,73 @@ ProjectCodeCheck checkProjectCode(const std::string& server, bool allowed,
     return c;
 }
 
+
+// ------------------------------------------------------ clangd's compile flags
+const char* const kClangdNoFlagsText =
+    "clangd has no compile flags for this project, so it guesses; errors about missing "
+    "headers may be wrong. Projects usually generate compile_commands.json (CMake: "
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON; Bear for make).";
+const char* const kClangdNoFlagsNote =
+    "clangd has no compile flags for this project, so errors about missing headers may be "
+    "wrong (more in the Language Servers popover)";
+
+bool isClangd(const std::string& program) {
+    const size_t slash = program.rfind('/');
+    const std::string name = slash == std::string::npos ? program : program.substr(slash + 1);
+    if (name == "clangd") return true;
+    if (name.compare(0, 7, "clangd-") != 0 || name.size() == 7) return false;
+    for (size_t i = 7; i < name.size(); i++)
+        if (!std::isdigit((unsigned char)name[i]) && name[i] != '.') return false;
+    return true;
+}
+
+bool clangdHasCompileFlags(const std::string& fileDir, const std::vector<std::string>& command,
+                           const std::function<bool(const std::string& path)>& exists,
+                           const std::function<std::string(const std::string& path)>& readSmallFile,
+                           std::string* found) {
+    for (size_t i = 1; i < command.size(); i++)
+        if (command[i] == "--compile-commands-dir" ||
+            command[i].compare(0, 23, "--compile-commands-dir=") == 0) {
+            if (found) *found = command[i];
+            return true;
+        }
+    if (fileDir.empty() || fileDir[0] != '/') return false;
+    std::string dir = fileDir;
+    while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
+    for (;;) {
+        const std::string base = dir == "/" ? "" : dir;
+        for (const char* sub : {"", "/build"})
+            for (const char* name : {"/compile_commands.json", "/compile_flags.txt"}) {
+                const std::string path = base + sub + name;
+                if (exists(path)) {
+                    if (found) *found = path;
+                    return true;
+                }
+            }
+        const std::string config = base + "/.clangd";
+        if (exists(config)) {
+            // A section of its own (CompileFlags: at a line's start), not
+            // the word in a comment.
+            const std::string text = readSmallFile(config);
+            size_t at = 0;
+            while ((at = text.find("CompileFlags", at)) != std::string::npos) {
+                size_t lineStart = at;
+                while (lineStart > 0 && text[lineStart - 1] != '\n') lineStart--;
+                bool blanks = true;
+                for (size_t k = lineStart; k < at; k++)
+                    if (text[k] != ' ' && text[k] != '\t') blanks = false;
+                if (blanks) {
+                    if (found) *found = config;
+                    return true;
+                }
+                at += 12;
+            }
+        }
+        if (dir == "/") break;
+        const size_t slash = dir.rfind('/');
+        dir = slash == 0 ? "/" : dir.substr(0, slash);
+    }
+    return false;
+}
+
 }  // namespace Lsp

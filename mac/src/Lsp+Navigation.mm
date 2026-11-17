@@ -263,6 +263,7 @@ static const NSTimeInterval kHoverDelay = 0.4, kHoverGrace = 0.3;
     NSAttributedString *gap = [[NSAttributedString alloc] initWithString:@"\n\n"
         attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:5]}];
     for (MCDiagnosticMark *m in _tv.diagnostics) {
+        if (m.quiet) continue;
         if (!(NSLocationInRange(index, m.range) ||
               (m.range.length == 0 && index == m.range.location)))
             continue;

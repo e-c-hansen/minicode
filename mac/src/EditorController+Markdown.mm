@@ -607,6 +607,7 @@ static char kMarkdownMermaidKey;
     [self layoutHeldTextBlocks];   // its quotes and code boxes (displaySourceEditable)
     [self.textView.textStorage setAttributedString:page];
     [self.textView scrollToBeginningOfDocument:nil];
+    [self.textView redrawWholePane];   // its margins too, which no glyph marks
     [self finishMarkdownPage];
 }
 

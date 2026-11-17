@@ -609,25 +609,44 @@ static BOOL MCWindowTabAction(SEL a) {
     (void)sender;
     return MCDockMenu(self);
 }
-// The Dock's Open Folder…: a folder picker, then the window on that folder
-// comes forward or a new one opens on it, as for a folder dropped on the
-// Dock icon. The window in front keeps its own folder.
+// The Dock's Open Folder…: minicode's folder picker over the window in
+// front (PalettePanel.h, MCFolderPick), then the window on that folder comes
+// forward or a new one opens on it, as for a folder dropped on the Dock
+// icon. The window in front keeps its own folder. With no window open, and
+// from the picker's Choose in Finder…, the system's open panel.
 - (void)openFolderInNewWindow:(id)sender {
     (void)sender;
-    NSURL *url = nil;
     if (MCDockFolderChooser) {
-        url = MCDockFolderChooser();
-    } else {
-        [NSApp activateIgnoringOtherApps:YES];
-        NSOpenPanel *panel = [NSOpenPanel openPanel];
-        panel.canChooseDirectories = YES;
-        panel.canChooseFiles = NO;
-        panel.allowsMultipleSelection = NO;
-        panel.prompt = @"Open";
-        panel.message = @"Choose a folder to open in a minicode window.";
-        if ([panel runModal] == NSModalResponseOK) url = panel.URL;
+        NSURL *url = MCDockFolderChooser();
+        if (url) [self application:NSApp openURLs:@[ url ]];
+        return;
     }
-    if (url) [self application:NSApp openURLs:@[ url ]];
+    [NSApp activateIgnoringOtherApps:YES];
+    EditorController *c = [self current];
+    if (!c.window) {
+        [self chooseFolderInFinderForNewWindow];
+        return;
+    }
+    [c.window makeKeyAndOrderFront:nil];
+    MCFolderPick *pick = [MCFolderPick new];
+    pick.recentFolders = MCRecentFolders();
+    pick.baseFolder = c.rootPath;
+    __weak AppDelegate *weakSelf = self;
+    pick.choose = ^(NSString *path) {
+        [weakSelf application:NSApp openURLs:@[ [NSURL fileURLWithPath:path isDirectory:YES] ]];
+    };
+    pick.chooseInFinder = ^{ [weakSelf chooseFolderInFinderForNewWindow]; };
+    MCShowFolderPicker(c.window, pick);
+}
+- (void)chooseFolderInFinderForNewWindow {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseDirectories = YES;
+    panel.canChooseFiles = NO;
+    panel.allowsMultipleSelection = NO;
+    panel.prompt = @"Open";
+    panel.message = @"Choose a folder to open in a minicode window.";
+    if ([panel runModal] == NSModalResponseOK && panel.URL)
+        [self application:NSApp openURLs:@[ panel.URL ]];
 }
 - (void)togglePreview:(id)sender   { [[self current] togglePreview:sender]; }
 - (void)toggleSidePreview:(id)sender { [[self current] toggleSidePreview:sender]; }
@@ -970,15 +989,16 @@ static void BuildMenu(void) {
     NSMenuItem *fileItem = [[NSMenuItem alloc] init];
     [menubar addItem:fileItem];
     NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
-    // Cmd+N is New File, as in VS Code. It was New Window, which moved to
-    // Option+Cmd+N (VS Code's Shift+Cmd+N is New Folder here).
+    // Cmd+N is New File and Shift+Cmd+N New Window, as in VS Code (New
+    // Window keeps Option+Cmd+N too). In the file tree Shift+Cmd+N is New
+    // Folder, which the key monitor runs before the menu sees the key.
     [fileMenu addItemWithTitle:@"New File…"
                         action:@selector(newFile:)
                  keyEquivalent:@"n"];
     NSMenuItem *newWindow =
         [[NSMenuItem alloc] initWithTitle:@"New Window"
                                    action:@selector(newWindow:) keyEquivalent:@"n"];
-    newWindow.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    newWindow.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [fileMenu addItem:newWindow];
     [fileMenu addItemWithTitle:@"Open Folder…"
                         action:@selector(openFolder:)
@@ -1031,13 +1051,10 @@ static void BuildMenu(void) {
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
     // The file tree's commands, on its clicked or selected row (else the
-    // open folder), as in its right click menu.
-    NSMenuItem *newFolder =
-        [[NSMenuItem alloc] initWithTitle:@"New Folder…"
-                                   action:@selector(newFolder:) keyEquivalent:@"n"];
-    newFolder.keyEquivalentModifierMask =
-        NSEventModifierFlagCommand | NSEventModifierFlagShift;
-    [fileMenu addItem:newFolder];
+    // open folder), as in its right click menu. Their keys (Shift+Cmd+N,
+    // F2, Cmd+Delete) are the tree's alone, so none sits on its item.
+    [fileMenu addItemWithTitle:@"New Folder…"
+                        action:@selector(newFolder:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Rename…"
                         action:@selector(renameSelected:) keyEquivalent:@""];
     // No key equivalent: a menu key works from every pane, and Cmd+Delete
@@ -1263,10 +1280,10 @@ static void BuildMenu(void) {
     findNext.tag = NSTextFinderActionNextMatch;
     NSMenuItem *findPrev = [editMenu addItemWithTitle:@"Find Previous"
                                                action:@selector(performTextFinderAction:)
-                                        keyEquivalent:@"g"];
+                                        keyEquivalent:@""];
+    // Its Shift+Cmd+G is a find bar's own (Commands.cpp): as a menu key it
+    // would take Toggle Source Control's from every pane.
     findPrev.tag = NSTextFinderActionPreviousMatch;
-    findPrev.keyEquivalentModifierMask =
-        NSEventModifierFlagCommand | NSEventModifierFlagShift;
     NSMenuItem *useSelection = [editMenu addItemWithTitle:@"Use Selection for Find"
                                                    action:@selector(performTextFinderAction:)
                                             keyEquivalent:@"e"];
@@ -1474,13 +1491,14 @@ static void BuildMenu(void) {
     sidebar.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [viewMenu addItem:sidebar];
 
-    // Ctrl+Shift+G as in VS Code (Shift+Cmd+G is Find Previous).
+    // Shift+Cmd+G, and Ctrl+Shift+G as in VS Code (on a hidden item the
+    // keymap adds); a find bar's field takes Shift+Cmd+G as Find Previous.
     NSMenuItem *git =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Source Control"
                                    action:@selector(toggleSourceControl:)
                             keyEquivalent:@"g"];
     git.keyEquivalentModifierMask =
-        NSEventModifierFlagControl | NSEventModifierFlagShift;
+        NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:git];
     // Pushing and pulling (git.fetch, git.pull, git.push, git.sync), staging
     // everything, discarding and switching branches, with no keys, as in VS

@@ -479,7 +479,7 @@ static const NSUInteger kMinDigits = 3;
     NSArray<MCDiagnosticMark *> *all = tv.diagnostics;
     if (tv.buildMarks.count) all = [all ?: @[] arrayByAddingObjectsFromArray:tv.buildMarks];
     for (MCDiagnosticMark *m in all) {
-        if (m.severity > 2) continue;
+        if (m.severity > 2 || m.quiet) continue;
         const NSUInteger at = m.range.location;
         if (at + 1 < chars.location || at > NSMaxRange(chars) + 1) continue;
         const size_t line = _index.lineOf(at);

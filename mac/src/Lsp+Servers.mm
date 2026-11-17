@@ -753,8 +753,49 @@ static NSString *StateText(MCLspState state) {
             info.interpreterSource = source;
         }
     }
+    if ([key isEqualToString:@"cpp"] && [_langKey isEqualToString:@"cpp"] &&
+        info.state != MCLspStateOff && info.state != MCLspStateNotInstalled)
+        info.compileFlagsNote = [self compileFlagsNoteForProgram:info.program
+                                                         command:info.command];
     info.stateText = StateText(info.state);
     return info;
+}
+
+// clangd on the open file with no compile flags to read (no
+// compile_commands.json or compile_flags.txt from the file's folder up, no
+// .clangd adding flags, no --compile-commands-dir): the card's words, else
+// nil. A few stats a file opened, and on each look at the popover.
+- (NSString *)compileFlagsNoteForProgram:(NSString *)program command:(NSString *)command {
+    if (!_path.length || !program.length || !Lsp::isClangd(Std(program))) return nil;
+    NSString *dir = [RealPath(_path) stringByDeletingLastPathComponent];
+    auto exists = [](const std::string &p) { return access(p.c_str(), F_OK) == 0; };
+    auto read = [](const std::string &p) {
+        NSData *d = [NSData dataWithContentsOfFile:NS(p) options:NSDataReadingMappedIfSafe
+                                             error:nil];
+        if (!d || d.length > 256 * 1024) return std::string();
+        return std::string((const char *)d.bytes, d.length);
+    };
+    if (Lsp::clangdHasCompileFlags(Std(dir), Lsp::splitCommand(Std(command ?: @"")), exists,
+                                   read))
+        return nil;
+    return NS(Lsp::kClangdNoFlagsText);
+}
+
+// The status bar says so once per folder in a launch (every window on it
+// sharing the once), as a note that goes, never a bar over the file; the
+// Language Servers popover says it on clangd's card for as long as it holds.
+- (void)noteMissingCompileFlags {
+    if (![_langKey isEqualToString:@"cpp"]) return;
+    MCLspEntry *e = _entries[_langKey];
+    if (!e.server) return;
+    if (![self compileFlagsNoteForProgram:e.server.program command:e.command]) return;
+    static NSMutableSet<NSString *> *noted;
+    if (!noted) noted = [NSMutableSet set];
+    NSString *folder = _root.length ? RealPath(_root)
+                                    : [RealPath(_path) stringByDeletingLastPathComponent];
+    if ([noted containsObject:folder]) return;
+    [noted addObject:folder];
+    [self note:NS(Lsp::kClangdNoFlagsNote)];
 }
 
 // A language's second server, for the popover: when the settings name one
