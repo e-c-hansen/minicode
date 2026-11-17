@@ -347,6 +347,15 @@ static void testClaudeHooks() {
         CHECK(!isClaudeProgramPath("/usr/local/bin/node") && !isClaudeProgramPath("/bin/zsh") &&
               !isClaudeProgramPath(""));
     }
+
+    GROUP("hooks:offer");
+    {
+        CHECK(shouldOffer(false, false, false, false));
+        CHECK(!shouldOffer(true, false, false, false));    // Not Now, kept
+        CHECK(!shouldOffer(false, true, false, false));    // already installed
+        CHECK(!shouldOffer(false, false, true, false));    // offered this launch
+        CHECK(!shouldOffer(false, false, false, true));    // a bar is up
+    }
 }
 
 static void testNotifyCommandLine() {

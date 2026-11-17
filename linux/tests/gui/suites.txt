@@ -74,6 +74,7 @@ CompareSuite.cpp
 ProcessesSuite.cpp
 NotesSuite.cpp
 AttentionSuite.cpp
+ClaudeHooksOfferSuite.cpp
 IdeLinkSuite.cpp
 BrowserPagesSuite.cpp
 AgentsSuite.cpp
