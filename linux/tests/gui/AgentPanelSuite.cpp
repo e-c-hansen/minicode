@@ -249,6 +249,7 @@ MC_GUI_SUITE(agent_panel) {
         GCHECK_EQ_STR(bufferText(), kTripled);
         GCHECK(ed()->dirty());
         GCHECK(bar()->tintedLines() == 0);
+        GCHECK_EQ_STR(ed()->active()->undoName(), "Inline Agent");   // as the Mac's
         focusText();
         MCGuiKey("ctrl+z");
     });
