@@ -516,4 +516,8 @@ bool isClaudeProgramPath(const std::string &path) {
     return path.find("/claude/versions/") != std::string::npos;
 }
 
+bool shouldOffer(bool muted, bool installed, bool offeredThisLaunch, bool barShown) {
+    return !muted && !installed && !offeredThisLaunch && !barShown;
+}
+
 }  // namespace ClaudeHooks

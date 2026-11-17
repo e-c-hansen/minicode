@@ -380,6 +380,11 @@ Json encodeWindowList(const std::vector<Window> &windows) {
         o.set("expanded", expanded);
         if (!w.selected.empty()) o.set("selected", w.selected);
         o.set("treeScroll", w.treeScroll);
+        if (w.ownerPid > 0) {
+            o.set("ownerPid", Json((double)w.ownerPid));
+            o.set("ownerStart", w.ownerStart);
+            o.set("saved", w.saved);
+        }
         list.push(o);
     }
     return list;
@@ -432,6 +437,14 @@ std::vector<Window> decodeWindowList(const Json &list) {
         w.selected = o["selected"].isString() ? o["selected"].asString() : "";
         const double ts = o["treeScroll"].asNumber(0);
         w.treeScroll = std::isfinite(ts) && ts > 0 && ts < 1e9 ? ts : 0;
+        const double pid = o["ownerPid"].asNumber(0), start = o["ownerStart"].asNumber(0),
+                     saved = o["saved"].asNumber(0);
+        if (std::isfinite(pid) && pid > 0 && pid < 1e9 && std::isfinite(start) && start > 0 &&
+            std::isfinite(saved) && saved >= 0) {
+            w.ownerPid = (long)pid;
+            w.ownerStart = start;
+            w.saved = saved;
+        }
         out.push_back(w);
     }
     return out;
@@ -471,6 +484,42 @@ std::vector<Window> afterClosing(const std::vector<Window> &open, size_t closing
     if (open.size() == 1) return open;
     std::vector<Window> out = open;
     out.erase(out.begin() + (long)closing);
+    return out;
+}
+
+bool sameProcess(long pid, double start, const Process &p) {
+    return pid > 0 && pid == p.pid && std::fabs(start - p.start) < 1.0;
+}
+
+namespace {
+// Another minicode's window that one running now holds open.
+bool heldElsewhere(const Window &w, const Process &me, IsRunning running, void *context) {
+    return w.ownerPid > 0 && !sameProcess(w.ownerPid, w.ownerStart, me) && running &&
+           running(w.ownerPid, w.ownerStart, context);
+}
+}  // namespace
+
+std::vector<Window> mergeWindows(const std::vector<Window> &mine, const std::vector<Window> &stored,
+                                 const Process &me, double now, IsRunning running, void *context) {
+    std::vector<Window> out;
+    for (Window w : mine) {
+        w.ownerPid = me.pid;
+        w.ownerStart = me.start;
+        w.saved = now;
+        out.push_back(w);
+    }
+    for (const Window &w : stored) {
+        if (w.ownerPid <= 0 || sameProcess(w.ownerPid, w.ownerStart, me)) continue;
+        if (heldElsewhere(w, me, running, context) || w.saved >= me.start) out.push_back(w);
+    }
+    return out;
+}
+
+std::vector<Window> toRestore(const std::vector<Window> &stored, const Process &me,
+                              IsRunning running, void *context) {
+    std::vector<Window> out;
+    for (const Window &w : stored)
+        if (!heldElsewhere(w, me, running, context)) out.push_back(w);
     return out;
 }
 

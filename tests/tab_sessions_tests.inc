@@ -425,6 +425,85 @@ static void testTabSessions() {
         CHECK(afterClosing({}, 0).empty());
     }
 
+    // Two minicodes at once share the record (a build beside the Homebrew
+    // copy, `minicode -n`, the GUI checks' parent and its child apps): each
+    // writes its own windows over its own, never over the other's.
+    GROUP("tab-sessions:windows-of-several");
+    {
+        struct Running {
+            std::vector<Process> live;
+        } running;
+        auto isRunning = [](long pid, double start, void *context) {
+            for (const Process &p : static_cast<Running *>(context)->live)
+                if (sameProcess(pid, start, p)) return true;
+            return false;
+        };
+        auto win = [](const std::string &root, long pid, double start, double saved) {
+            Window w;
+            w.root = root;
+            w.ownerPid = pid;
+            w.ownerStart = start;
+            w.saved = saved;
+            return w;
+        };
+        auto roots = [](const std::vector<Window> &ws) {
+            std::string out;
+            for (const Window &w : ws) out += w.root + " ";
+            return out;
+        };
+        const Process me{100, 5000}, other{200, 4000}, last{300, 1000};
+        Window mine;
+        mine.root = "/mine";
+        // One minicode, as always: its windows replace the last run's, the
+        // untagged ones of minicode 1.5.31 and before too, stamped as its.
+        std::vector<Window> out = mergeWindows(
+            {mine}, {win("/last", last.pid, last.start, 4900), win("/old", 0, 0, 0)}, me, 5100,
+            isRunning, &running);
+        CHECK(roots(out) == "/mine ");
+        CHECK(out.size() == 1 && out[0].ownerPid == 100 && out[0].ownerStart == 5000 &&
+              out[0].saved == 5100);
+        // It reads back with its owner.
+        const std::vector<Window> back = decodeWindows(encodeWindows(out));
+        CHECK(back.size() == 1 && back[0].ownerPid == 100 && back[0].ownerStart == 5000 &&
+              back[0].saved == 5100);
+        // Its own earlier windows go too (a window closed since).
+        out = mergeWindows({mine}, {win("/closed", 100, 5000.4, 5050)}, me, 5100, isRunning, &running);
+        CHECK(roots(out) == "/mine ");
+        // Another running minicode's windows stay, after this one's, even
+        // written before this one started.
+        running.live = {other};
+        out = mergeWindows({mine}, {win("/other", other.pid, other.start, 4500)}, me, 5100, isRunning,
+                           &running);
+        CHECK(roots(out) == "/mine /other ");
+        // One that quit while this one ran keeps what it left: four
+        // windows quit with stay when this one writes three seconds later.
+        running.live = {};
+        out = mergeWindows({mine},
+                           {win("/q1", other.pid, other.start, 5200), win("/q2", other.pid, other.start, 5200)},
+                           me, 5203, isRunning, &running);
+        CHECK(roots(out) == "/mine /q1 /q2 ");
+        // A pid reused by a later process is not the one that wrote it.
+        running.live = {Process{200, 4800}};
+        out = mergeWindows({mine}, {win("/other", other.pid, other.start, 4500)}, me, 5100, isRunning,
+                           &running);
+        CHECK(roots(out) == "/mine ");
+        // Nothing of this one's (no window yet): the others' as they were.
+        running.live = {other};
+        out = mergeWindows({}, {win("/other", other.pid, other.start, 4500)}, me, 5100, isRunning,
+                           &running);
+        CHECK(roots(out) == "/other ");
+
+        // A launch with nothing to open brings back all but what another
+        // running minicode holds open.
+        running.live = {other};
+        const std::vector<Window> stored = {win("/other", other.pid, other.start, 4500),
+                                            win("/last", last.pid, last.start, 900),
+                                            win("/old", 0, 0, 0), win("/self", 100, 5000, 5001)};
+        CHECK(roots(toRestore(stored, me, isRunning, &running)) == "/last /old /self ");
+        running.live = {};
+        CHECK(roots(toRestore(stored, me, isRunning, &running)) == "/other /last /old /self ");
+    }
+
     GROUP("tab-sessions:fit-frame");
     {
         const std::vector<Frame> one = {Frame{0, 0, 1440, 875}};

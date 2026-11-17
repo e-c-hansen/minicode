@@ -1,6 +1,7 @@
 // Harness.mm — see Harness.h.
 #import "Harness.h"
 #import "EditorController.h"
+#import "SessionStore.h"
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
@@ -828,6 +829,10 @@ static NSArray<NSString *> *SuiteNames(NSString *list) {
     std::fflush(stdout);
     // The windows go (their shells hung up and reaped), then the world.
     for (EditorController *c in [MCGuiControllers() copy]) [c.window close];
+    // What closing them wrote down (the last window's record, kept) is in
+    // sessions.json before the process goes, as quitting flushes it: a
+    // child app's parent reads the file next.
+    MCSessionsFlush();
     MCControlServerStop();
     NSString *suite = Env(@"MINICODE_DEFAULTS_SUITE");
     if (suite.length) [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:suite];

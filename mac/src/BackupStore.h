@@ -5,6 +5,11 @@
 #import <Foundation/Foundation.h>
 #include "Backups.h"
 
+// When a process started (Unix seconds), or 0 when there is no such process.
+// With its pid, what tells a running process from one gone whose pid was
+// reused (the backups' owners, the windows record's).
+double MCProcessStart(pid_t pid);
+
 @interface MCBackupStore : NSObject
 // nil while backups are off: under MINICODE_DEMO and MINICODE_BENCH, which
 // must start the same way every time, as the tab sessions are.

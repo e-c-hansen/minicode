@@ -184,6 +184,11 @@ public:
     const ShellIntegration::ShellState& shellState() const { return shell_; }
     // After each believed mark.
     std::function<void()> onShellStateChanged;
+    // Claude Code started here (the Mac's MCTerminalClaudeDidStartNotification):
+    // the command the shell marked names it (ClaudeHooks::startsClaude), or,
+    // a second later and still running, the foreground process is its
+    // binary (an alias, or a script). Needs the shell integration.
+    std::function<void()> onClaudeStarted;
     // The folder holding this process's copies of the scripts ("" when it
     // could not be made), for the checks.
     static const std::string& integrationFolder();
@@ -262,6 +267,9 @@ private:
     // the look for a command's end after Return (typeText, onCommandFinished).
     std::string pendingType_;
     guint  typeTimer_ = 0;
+    guint  claudeTimer_ = 0;       // the look at the foreground program, 1 s after a command starts
+    long long claudeLookFor_ = 0;  // the command (shell_.started) it looks at
+    void lookForClaude();
     int    typeTries_ = 0;
     bool   shellSpoke_ = false;   // the shell printed something since it started
     guint  finishTimer_ = 0;

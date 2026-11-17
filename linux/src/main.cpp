@@ -51,6 +51,7 @@
 #include "BracketView.h"
 #include "WebBookmark.h"
 #include "Carets.h"
+#include "ClaudeHooksOffer.h"
 #include "ConsentBar.h"
 #include "FormatOffer.h"
 #include "Detach.h"
@@ -1173,6 +1174,15 @@ static Terminal* makeTerminal(App* app) {
         if (!app->dead && app->lsp) app->lsp->lookAgainForMissingServer();
     };
     t->setSessionRoots([app, t] { return sessionRootsOf(app, t->controlId()); });
+    // Claude Code started here: the bar offering its hooks over the terminals
+    // (ClaudeHooksOffer.h), once per launch.
+    t->onClaudeStarted = [app] {
+        if (app->dead || !app->termDock) return;
+        GtkWidget* bar = ClaudeHooksOffer::takeBar(GTK_WINDOW(app->window), app->termDock->notice() != nullptr, [app] {
+            if (!app->dead && app->termDock) app->termDock->setNotice(nullptr);
+        });
+        if (bar) app->termDock->setNotice(bar);
+    };
     t->setLinkHandler([app](const Terminal::Link& link) {
         if (!app->dead) openTerminalLink(app, link);
     });

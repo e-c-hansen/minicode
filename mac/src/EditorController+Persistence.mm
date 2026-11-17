@@ -324,7 +324,7 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g) {
     if (!MCSessionsEnabled()) return @[];
     NSMutableArray *out = [NSMutableArray array];
     NSFileManager *fm = [NSFileManager defaultManager];
-    for (const TabSessions::Window &w : MCSessionsRead().windows) {
+    for (const TabSessions::Window &w : MCSessionsWindowsToRestore()) {
         NSString *root = @(w.root.c_str());
         BOOL dir = NO;
         if (!root.length || ![fm fileExistsAtPath:root isDirectory:&dir] || !dir) continue;
