@@ -1084,7 +1084,8 @@ static void SceneLsp(MCDemo *d) {
     [d pause:0.5];
     [d clickAt:^NSPoint { return [d pointForText:@"scaled(2);" after:nil atEnd:YES]; }];
     [d hidePointer];
-    [d type:@"\n    double d = p."];
+    // Return indents the line itself, so no spaces (I1: four more made eight).
+    [d type:@"\ndouble d = p."];
     [d waitFor:^BOOL(MCDemo *m) {
         return [[[m ui:@"lsp"] valueForKey:@"completionVisible"] boolValue];
     } timeout:10 recorded:YES];
