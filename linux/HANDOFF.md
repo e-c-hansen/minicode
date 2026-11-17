@@ -2968,9 +2968,10 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `runGit`) and the reads run on a thread, the lining up on
   `showComparison`'s own, and the answer waits for the tab. While the user
   types in the editor the tab opens quietly beside theirs (`quiet`, and
-  `"background"`, which the client already says). Each call makes a tab of
-  its own: the Mac's one diff preview tab that each call replaces and `--keep`
-  are not built. Titles and labels are the Mac's.
+  `"background"`, which the client already says). Since item 84 a call
+  without `--keep` opens in the agents' preview tab for comparisons
+  (`CompareSpec::preview`, `Model::Preview::AgentDiff`), which the next
+  such call replaces, as on the Mac. Titles and labels are the Mac's.
 - **The corner** (November 2026): the cell of the pane's grid under the
   shared vertical bar, beside the right pane's horizontal bar, had no
   widget, so the window behind it showed (white under a light desktop
@@ -3085,10 +3086,11 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   again on scrolling and 60 ms after placing.
 - **The agent's preview tab**: `Document::isAgentPreview`, its title italic
   like the preview tab, replaced by the next `Editor::openForAgent(path,
-  preview, quiet)` (never a dirty one, nor the tab the user types in), kept
-  by an edit, a save or a double-click on its title (`keepPreviewTab`). A
-  file already in a tab uses it. `--keep` opens a kept tab. Without `--note`
-  `open` is as before.
+  preview, quiet)` in its place (never a dirty one, which is kept, nor the
+  tab the user types in, which is left a preview), kept by an edit, a save
+  or a double-click on its title (`keepPreviewTab`). A file already in a
+  tab uses it as it is (item 84). `--keep` opens a kept tab. Without
+  `--note` `open` is as before. A diff has a preview tab of its own.
 - **The keyboard**: `open --note` and `tour` open beside the user's tab,
   unshown, while the keyboard is in the editor (`userIsInDocument`; the
   client says so, `"background": true`), the file added unread; the note
@@ -5245,9 +5247,9 @@ window in stage 3c; sessions.json and the backup planner follow in 3b.
   mirror's places, the swap, the bar.
 - **New for a user**: a tab can be dragged along either group's row
   (`TabStrip::onMove`, `Window::move`), as the browser's could; the
-  order is kept in the session. A preview tab replaced while the other
-  group also showed it now leaves both groups (it stayed in the other
-  before).
+  order is kept in the session. (A preview tab replaced while the other
+  group also showed it left both groups here; item 84 put back the Mac's
+  rule, under which it stays in the other.)
 - **Checks**: the core's `session:*` (each rule of "Tabs, sessions and
   the disk", "The preview tab" and "Two editor groups" in CLAUDE.md, and
   a random walk holding the window's bookkeeping), the `tabs` suite (the
@@ -5442,7 +5444,43 @@ be added in the alert's detail (Add the Hooks, Cancel), writes through
 Install Claude Code Hooks… and the Agents panel's header line.
 `claude_hooks_offer` checks it against the scratch `CLAUDE_CONFIG_DIR`.
 
-### 84. The review page of uncommitted changes (done, November 2026)
+### 84. One set of tab rules with the Mac (done, November 2026; SESSION-DESIGN.md stage 3d)
+
+Stage 3c left the Mac on its own rules where `Model::Window`'s differed;
+the window now follows the Mac's (CLAUDE.md, "The preview tab" and "Two
+editor groups") and the Mac's copies are gone, so both ports run the same
+code. What changes on Linux:
+- **A preview tab per group.** A tree click (or a search result's) replaces
+  the focused group's preview tab only; one the other group has is left
+  alone (before, the window's one preview tab was replaced wherever it
+  was).
+- **A replaced preview tab the other group also shows stays there**, still
+  a preview; only the focused group's tab of it closes (before, it left
+  both groups).
+- **The agents have two preview tabs**: `minicode open --note` replaces
+  the files' one, `minicode diff` (without `--keep`) the comparisons'
+  (`Model::Preview::AgentDiff`), so a diff after a note leaves the note's
+  tab. Before, every `diff` opened a kept tab of its own.
+- **The agents' new preview tab takes the old one's place** in the row,
+  not a place beside the tab on show.
+- **While the user types**, an agent's open never replaces the agents'
+  preview tab they are in, and that tab stays a preview (`passOver`);
+  before, it was made an ordinary tab.
+- **A kept open of a file in the agents' preview tab keeps it** (a
+  double-click in the tree, Return, a menu), as the user's preview tab is
+  kept; before, only the user's was.
+- **An agent's open of a file already in a tab shows that tab as it is**
+  (`Editor::openForAgent`): a preview stays a preview. Before, it went
+  through `openFile` as a kept open, which kept it.
+
+The rules are `Window::add` (its new `passOver`, the agents' place, a
+User preview closed in the focused group only), `previewTab` (the focused
+group's for User) and `prepareOpen` (any preview kept by a kept open).
+Checked by the core's `session:preview` and `session:groups` groups. The
+GTK files changed: `linux/src/Tabs.cpp`, `Editor.h`, `Document.h`,
+`ComparePanes.h` and `ControlCommands.cpp`; no GTK suite needed changing.
+
+### 85. The review page of uncommitted changes (done, November 2026)
 
 The Mac's change review (A1, `mac/src/ChangeReviewPage.mm`) in a tab:
 `ChangeReviewPage` (`linux/src/ChangeReviewPage.{h,cpp}`, an `EditorPage`
@@ -5482,7 +5520,56 @@ buttons' titles). `git_review` (after `git_verbs` in suites.txt) presses
 the panel's button, a block's Stage, Discard with Cancel and with the answer,
 Undo Discard, Stage File, and a change made with the panel hidden.
 
-### 85. Compare with Main in one scroll, and Apply to Main (done, November 2026)
+### 86. An .html file opens as its page (done, November 2026)
+
+The Mac's HTML page (mac/src/HtmlPage.mm, 1.5.27 and the fixes after it) on
+GTK: an .html, .htm or .xhtml file (FileSniff::Kind::Html, `Document::isHtml`,
+browser builds only) opens as its page in the editor's slot, a viewer over
+the tab's text like the CSV table (`Editor::showHtml`, beside `showTable`),
+and Ctrl+Shift+V flips to the source and back, giving the keyboard to the
+page when it is asked for (`togglePreview`). An empty file opens in its
+source. The rules are the core's (`src/HtmlPage.{h,cpp}`, `htmlpage:*`):
+what `html.scripts` and the file's answer make of a page (`scripts`), the
+bar's and the answered line's wording, the folder a page may read, which
+navigations load and which go to the link handler or are dropped as stale
+(`decide`: a reload, a back or forward, or a load this page asked for
+earlier arrives after the tab moved on and is never taken for a link). The
+Mac keeps its own copy of those rules in the .mm; it was not changed here.
+The view is `HtmlView.{h,cpp}`: a box with the bar (the consent bar's look,
+`minicode-consent-bar`) over a WebKitWebView on an ephemeral network
+session, JavaScript off in its settings until allowed (`html.scripts` on, or
+Run Scripts, or an answer held for the file until quit; the setting is the
+page's and takes effect on the load that follows, so an answer loads the page
+again). The bar says "This page has scripts. Run them?" with Run Scripts,
+Don't Run and "Remember for every HTML file", which writes `html.scripts =
+on` or `off` through `Editor::htmlRemember` (main.cpp's `writeValue`); an
+answer leaves a line in the bar's place ("This page's scripts run, until
+minicode quits.") with an ×, so the page does not move. A save, or a write
+from outside, loads the page again (its own `GFileMonitor`, 200 ms after the
+last event, and a stamp of mtime, size and inode), reading the scroll first
+and putting it back every 100 ms until it holds (the Mac's), with a
+generation count so an older answer is dropped. A link or `window.open`
+leaving the page goes to `Editor::openMarkdownLink` (a local file in a tab, a
+web address in the browser pane). The web view is not focusable until a click
+or the toggle key, so an autofocus field cannot take the keyboard.
+Differences: WebKitGTK has no read-access folder for a file page (the Mac's
+`loadFileURL:allowingReadAccessToURL:`), so subresources load from wherever
+the page names them (scripts still cannot read other files, as file access
+from file URLs is off). The frame's name is not used to tell a frame from the
+main frame (most iframes have none): `decide` lets a navigation leave the page
+only when the user made it (a clicked link, a submitted form, a gesture), so
+an iframe loads; and a script's navigation of the main frame (`location =`) is
+caught at `WEBKIT_LOAD_COMMITTED` (at STARTED the view still names the old
+address), where `HtmlPage::started` stops the load, the page is loaded again in
+its place and the address goes to the link handler (or only the restore, for a
+stale load). `html_page` checks the page's text and style, the
+script not running and then running after Run Scripts, the keyboard, the
+toggle, a write from outside keeping the scroll, a link to another file, the
+remembered answer's setting and `off`, an unnamed iframe to a local file
+(its text shows, nothing opens), and a script's `location =` (opened as a
+link, the page kept).
+
+### 87. Compare with Main in one scroll, and Apply to Main (done, November 2026)
 
 The Mac's worktree page (`ae95033`, `f714354`) on the review page of item 84.
 The tree's Worktrees node menu, `win.compareworktree`, opens a

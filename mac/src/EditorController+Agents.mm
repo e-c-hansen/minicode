@@ -542,36 +542,18 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     return YES;
 }
 
-// The window's preview tab of a kind (one for files with notes, one for
-// comparisons) that a new one replaces: not the tab on show while the user
-// is in it.
-- (MCTab *)agentPreviewTabForComparison:(BOOL)comparison besideUser:(BOOL)beside {
-    MCTab *found = nil;
-    for (MCTab *t in [self tabs]) {
-        if (!t.agentPreview || (t.comparison != nil) != comparison || t.page) continue;
-        if (beside && t == _activeTab) continue;
-        found = t;
-        break;
-    }
-    return found;
-}
-
-// A new agent tab, an agent preview tab when `preview` is set, goes where
-// the old preview tab was, else beside the active one; shown at once unless
-// the user is typing (`beside`).
-- (void)putAgentTab:(MCTab *)tab
-            preview:(BOOL)preview
-          replacing:(MCTab *)old
-             beside:(BOOL)beside {
-    NSArray<MCTab *> *group = [self groupTabs];
-    const NSInteger active = _activeTab ? (NSInteger)[group indexOfObject:_activeTab] : -1;
-    const NSUInteger at = old && [group containsObject:old]
-                              ? [group indexOfObject:old]
-                              : (NSUInteger)EditorTabs::insertionIndex((int)active, (int)group.count);
-    [self groupInsertTab:tab atIndex:at
-                 preview:preview ? Model::Preview::Agent : Model::Preview::None];
+// A new agent tab, an agent preview tab when `preview` is set (the
+// window's rules, Model::Window::add: the files' preview tab or the
+// comparisons', whose place a new one takes), else beside the active one;
+// shown at once unless the user is typing (`beside`), whose tab is then
+// never the one replaced.
+- (void)putAgentTab:(MCTab *)tab preview:(BOOL)preview beside:(BOOL)beside {
+    const Model::Preview kind = !preview ? Model::Preview::None
+                                : tab.comparison ? Model::Preview::AgentDiff
+                                                 : Model::Preview::Agent;
+    MCTab *old = [self groupAddTab:tab preview:kind passOver:beside ? _activeTab : nil];
     if (!beside) [self activateTab:tab];
-    if (old) [self dropAgentPreviewTab:old];
+    [self letGoOfReplacedTab:old];
     if (beside) {
         [self reloadTabStrip];
         [self showStatusNote:[NSString stringWithFormat:
@@ -596,12 +578,11 @@ static NSUInteger MCLineStart(NSString *text, int line) {
             tab = [self tabForPath:path];
             return;
         }
-        // The window's one preview tab takes the file, in its place, or a
-        // tab of its own (--keep) beside the user's.
-        MCTab *old = preview ? [self agentPreviewTabForComparison:NO besideUser:beside] : nil;
+        // The agents' preview tab takes the file, in its place, or a tab of
+        // its own (--keep) beside the user's.
         MCTab *t = [MCTab new];
         t.currentPath = path;
-        [self putAgentTab:t preview:preview replacing:old beside:beside];
+        [self putAgentTab:t preview:preview beside:beside];
         tab = t;
     }];
     if (!tab || ![self holdsTab:tab]) return nil;
@@ -615,21 +596,6 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 
 - (BOOL)agentTabShown:(id)tab {
     return tab && tab == _activeTab;
-}
-
-// The preview tab a newer one replaced: no question (it never has unsaved
-// changes, since an edit makes it an ordinary tab) and no place in Reopen
-// Closed Tab.
-- (void)dropAgentPreviewTab:(MCTab *)t {
-    if (t == _activeTab || ![self holdsTab:t]) return;
-    if ([self otherGroupHoldsTab:t]) [self removeTabFromOtherGroup:t];
-    if ([[self groupTabs] containsObject:t]) [self groupRemoveTab:t];
-    if ([self holdsTab:t]) return;   // still on show in the other group
-    [self discardBackupOf:t];
-    [t.latex removeFromSuperview];
-    [self.lsp tabsChanged];
-    [self reloadTabStrip];
-    [self saveSession];
 }
 
 // A double-click on the preview tab's title keeps it: keepTabAtIndex:
@@ -647,14 +613,13 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     __block MCTab *tab = nil;
     [self keepKeyboardDuring:^{
         if (!beside) [self revealEditor];
-        MCTab *old = preview ? [self agentPreviewTabForComparison:YES besideUser:beside] : nil;
         tab = [MCTab new];
         tab.loaded = YES;
         tab.isDiff = YES;
         tab.comparison = comparison;
         tab.diffName = comparison.title;
         [self compareViewMade];
-        [self putAgentTab:tab preview:preview replacing:old beside:beside];
+        [self putAgentTab:tab preview:preview beside:beside];
     }];
     return tab == _activeTab;
 }

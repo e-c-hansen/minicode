@@ -35,6 +35,7 @@ class CodeView;
 class FoldUi;
 class MediaView;
 class CsvTable;
+class HtmlView;
 class SqliteView;
 class JsonOutlineView;
 class MarkdownSide;
@@ -184,10 +185,11 @@ public:
     Document* addTab(const std::string& path);
     // A file for the agent (`minicode open --note`, AgentNotes.h): in the
     // agent's preview tab when `preview` (each such open replaces the last
-    // one; an edit keeps it), else a kept tab, just right of the active
-    // one. With `quiet` it is only added beside the user's tab, to be read
-    // when shown; else shown. A file already in a tab uses that tab. Null
-    // when it could not be opened.
+    // one, in its place; an edit keeps it), else a kept tab, just right of
+    // the active one (Model::Window::add). With `quiet` it is only added
+    // beside the user's tab, to be read when shown, and the tab the user is
+    // in is never the one replaced; else shown. A file already in a tab
+    // uses that tab, as it is. Null when it could not be opened.
     Document* openForAgent(const std::string& path, bool preview, bool quiet);
     Document* agentPreviewTab() const;
     // The window's notes, hanging over the text (AgentNotes.h).
@@ -475,6 +477,13 @@ public:
     };
     void setLinkHandler(std::function<void(const Link&)> h) { linkHandler_ = std::move(h); }
 
+    // An .html file shown as its page (HtmlView.h; browser builds). The
+    // window's folder, which the page may read, and the write of a
+    // remembered html.scripts answer, from main.cpp.
+    std::function<std::string()> htmlRoot;
+    std::function<bool(const std::string& value)> htmlRemember;
+    HtmlView* htmlView() const { return html_; }
+
     // Big files (LargeFileView.h): the status bar's "Large file: features off"
     // (main.cpp puts the widget in the status bar), and its click, which
     // turns the features on for the tab on show.
@@ -698,6 +707,8 @@ private:
     gulong         csvChanged_ = 0;       // csvDoc_'s buffer "changed"
     bool           csvApplying_ = false;  // the table's own edit is going in
     void showTable(Document* d);
+    HtmlView*      html_     = nullptr;   // made on the first page
+    void showHtml(Document* d);
     JsonOutlineView* outline_ = nullptr;
     GtkWidget*     outlinePaned_ = nullptr;
     Document*      outlineDoc_ = nullptr;   // the tab it shows
