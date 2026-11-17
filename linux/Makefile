@@ -41,6 +41,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/CommandPalette.cpp ../src/SymbolOutline.cpp \
         ../src/BracketMatch.cpp ../src/BracketPairs.cpp ../src/AutoClose.cpp \
         ../src/MultiCaret.cpp ../src/Snippet.cpp ../src/EditBatch.cpp ../src/Folding.cpp \
+        ../src/SpellCheck.cpp \
         ../src/Formatter.cpp ../src/FormatRun.cpp ../src/FolderTools.cpp \
         ../src/PythonEnvs.cpp ../src/InstallHints.cpp
 

@@ -4053,8 +4053,8 @@ void testSettings() {
     // control.page-input, and editor.inlay-hint-parameter-names, and
     // syntax.tag, syntax.attribute and syntax.tag-bracket, and html.scripts,
     // and editor.merge-current and editor.merge-incoming, and the four
-    // test.<language> commands.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 137);
+    // test.<language> commands, and editor.spell-check with its color.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 139);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -11202,6 +11202,7 @@ static void testMultiCaretOccurrences() {
 #include "getting_around_tests.inc"
 #include "adjust_settings_tests.inc"
 #include "runnables_tests.inc"
+#include "spell_check_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -11273,6 +11274,7 @@ int main() {
     testWebBookmarks();
     testSnippets();
     testRunnables();
+    testSpellCheck();
     testSnippetCompletionItems();
     testEditorTabs();
     testSessionModel();

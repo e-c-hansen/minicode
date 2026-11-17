@@ -609,7 +609,7 @@ const std::vector<AppearanceSurface>& Settings::appearanceSurfaces() {
           "editor.gutter-background", "editor.line-number-color",
           "editor.line-number-active-color", "editor.bracket-match",
           "editor.inlay-hint-color", "editor.inlay-hint-background",
-          "editor.merge-current", "editor.merge-incoming",
+          "editor.merge-current", "editor.merge-incoming", "editor.spell-check-color",
           "editor.git-added", "editor.git-modified", "editor.git-deleted",
           "syntax.keyword", "syntax.type", "syntax.string", "syntax.comment",
           "syntax.number", "syntax.preprocessor", "syntax.function",
@@ -1084,6 +1084,20 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return colorValue(v, s.gitGutterColor_[2], e);),
         MC_KEY("editor.inlay-hint-color", Word, true,
                return colorValue(v, s.inlayHintColor_, e);),
+        MC_KEY("editor.spell-check", Word, false,
+               const std::string w = lower(v);
+               bool on = true;
+               if (w == "prose-only" || w == "proseonly" || w == "prose")
+                   s.spellCheck_ = SpellCheck::ProseOnly;
+               else if (w == "on" || w == "off" || parseBool(w, on))
+                   s.spellCheck_ = w == "off" || !on ? SpellCheck::Off : SpellCheck::On;
+               else {
+                   e = "'" + v + "' is not on, off or prose-only";
+                   return false;
+               }
+               return true;),
+        MC_KEY("editor.spell-check-color", Word, true,
+               return colorValue(v, s.spellCheckColor_, e);),
         MC_KEY("editor.inlay-hint-background", Word, true,
                return colorValue(v, s.inlayHintBackground_, e);),
         MC_KEY("editor.merge-current", Word, true,
@@ -1470,6 +1484,12 @@ Rgba Settings::treeGitColor(TreeGitColor c) const {
     return Rgba::hex(theme_->dark ? dark[i] : light[i]);
 }
 
+// VS Code's editorInfo.foreground, dark and light.
+Rgba Settings::spellCheckColor() const {
+    if (spellCheckColor_) return *spellCheckColor_;
+    return Rgba::hex(theme_->dark ? 0x3794FF : 0x1A85FF);
+}
+
 Rgba Settings::inlayHintColor() const {
     return inlayHintColor_ ? *inlayHintColor_ : Rgba::hex(0x969696);
 }
@@ -1742,6 +1762,14 @@ const char* Settings::defaultFileText() {
 # conflict (macOS). The markers' lines take the color more strongly.
 # editor.merge-current = #40C8AE33
 # editor.merge-incoming = #40A6FF33
+# Misspelled words marked with a dotted underline, from macOS's own spelling
+# checker; a right click on one offers its corrections, Learn Spelling, and
+# Ignore Spelling. prose-only checks Markdown and LaTeX text and commit
+# messages; on adds comments, docstrings, strings that read as sentences,
+# and plain text; code, identifiers, paths, and addresses are never checked
+# (macOS).
+# editor.spell-check = prose-only
+# editor.spell-check-color = #3794FF
 # editor.inlay-hint-parameter-names = false
 # Sort the lines between "keep-sorted start" and "keep-sorted end" comments
 # every time a file is saved, as Google's keep-sorted tool would.

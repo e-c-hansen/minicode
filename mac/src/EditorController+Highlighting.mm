@@ -3,6 +3,8 @@
 #import "SourceStorage.h"
 #import "EditorController+Private.h"
 #import "EditorController+HighlightingIvars.h"
+#import "SpellMarks.h"
+#include "SpellCheck.h"
 
 // attributesForStyle:'s indexes: the lexer's styles by TokenStyle, then
 // plain text, the semantic colors (SemanticColor order), and the bracket
@@ -200,6 +202,52 @@ struct MCOverlay {
         // on screen without a scroll.
         [self semanticViewScrolled:nil];
     }
+    [self updateSpellCheck];
+}
+
+// ---- spell checking (SpellMarks.h)
+// What editor.spell-check makes of the file shown: its kind of text (none
+// for a settings file, large-file mode, or a kind the setting leaves
+// out), and the tokens of the lines on screen, which tell its prose from
+// its code.
+- (void)updateSpellCheck {
+    CodeTextView *tv = (CodeTextView *)self.textView;
+    AppSettings *cfg = [AppSettings shared];
+    const std::string ext = Utf8String(self.currentExt.lowercaseString ?: @"");
+    Spell::Kind kind = Spell::kindForExtension(ext, SyntaxHighlighter::supports(ext));
+    Spell::Mode mode = Spell::Mode::ProseOnly;
+    switch (cfg.settings.spellCheck()) {
+    case Settings::SpellCheck::Off: mode = Spell::Mode::Off; break;
+    case Settings::SpellCheck::ProseOnly: mode = Spell::Mode::ProseOnly; break;
+    case Settings::SpellCheck::On: mode = Spell::Mode::On; break;
+    }
+    if (!Spell::checks(mode, kind) || _highlightingSettingsFile || [self largeFileFeaturesOff])
+        kind = Spell::Kind::None;
+    __weak EditorController *weakSelf = self;
+    [tv.spellMarks showDocument:self.currentPath ?: @""
+                           kind:(NSInteger)kind
+                          color:MCColor(cfg.settings.spellCheckColor())
+                          lines:^NSRange(NSRange range, std::vector<Token> *tokens) {
+        EditorController *me = weakSelf;
+        return me ? [me spellLinesFor:range tokens:tokens] : NSMakeRange(0, 0);
+    }];
+}
+
+// The whole lines of `range`, with their tokens while the highlighter
+// follows the text.
+- (NSRange)spellLinesFor:(NSRange)range tokens:(std::vector<Token> *)tokens {
+    NSTextStorage *storage = self.textView.textStorage;
+    const NSUInteger total = storage.length;
+    if (!total || range.location >= total) return NSMakeRange(0, 0);
+    if (_hl && _liveHighlight) [self flushHighlighting];
+    if (_hl && _hl->length() == total) {
+        const size_t first = _hl->lineOf(range.location);
+        const size_t last = _hl->lineOf(MAX(NSMaxRange(range), range.location + 1) - 1);
+        _hl->lineTokens(NSStringSource(storage.string), first, last + 1, *tokens);
+        const size_t to = last + 1 < _hl->lineCount() ? _hl->lineStart(last + 1) : _hl->length();
+        return NSMakeRange(_hl->lineStart(first), to - _hl->lineStart(first));
+    }
+    return [storage.string lineRangeForRange:range];
 }
 
 // The edits gathered since _bracketPainted last followed the text

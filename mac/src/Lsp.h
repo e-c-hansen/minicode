@@ -33,6 +33,7 @@
 @class MCInlayHints;
 @class MCSnippetSession;
 @class MCEditorConflicts;
+@class MCSpellMarks;
 
 // The color a diagnostic's severity is drawn in (1 error ... 4 hint): the
 // squiggles, the hover box's messages and the gutter's dots.
@@ -92,6 +93,9 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 // Merge conflicts in the text (EditorConflicts.h): tinted, with Keep
 // Current, Keep Incoming and Keep Both over each block.
 @property(nonatomic, readonly) MCEditorConflicts *conflicts;
+// Spell checking (SpellMarks.h, editor.spell-check): the misspelled words
+// of the prose on screen, dotted, with corrections in the right-click menu.
+@property(nonatomic, readonly) MCSpellMarks *spellMarks;
 // The key press being interpreted (during keyDown:), else nil: a command a
 // key sent can tell Shift+Return from Return by it.
 @property(nonatomic, readonly) NSEvent *currentKeyEvent;
