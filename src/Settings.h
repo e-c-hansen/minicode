@@ -347,6 +347,15 @@ public:
     Rgba gitGutterColor(int kind) const;
     Rgba inlayHintColor() const;
     Rgba inlayHintBackground() const;
+    // editor.spell-check: misspelled words in prose marked with a dotted
+    // underline, from the system's checker (SpellCheck.h): off, prose-only
+    // (the default: Markdown, LaTeX, and commit messages), or on (comments,
+    // docstrings, sentence-like strings, and plain text too).
+    // editor.spell-check-color colors the underline, VS Code's
+    // editorInfo.foreground unless set, dark or light with the theme.
+    enum class SpellCheck { Off, ProseOnly, On };
+    SpellCheck spellCheck() const { return spellCheck_; }
+    Rgba spellCheckColor() const;
     // editor.merge-current and editor.merge-incoming: the lines of a merge
     // conflict's current side (ours, after "<<<<<<<") and incoming side
     // (theirs, before ">>>>>>>"), in the editor and on the review page,
@@ -569,6 +578,8 @@ private:
     InlayHints inlayHints_ = InlayHints::On;
     bool inlayHintParameterNames_ = false;
     std::optional<Rgba> inlayHintColor_, inlayHintBackground_;
+    SpellCheck spellCheck_ = SpellCheck::ProseOnly;
+    std::optional<Rgba> spellCheckColor_;
     std::optional<Rgba> mergeCurrent_, mergeIncoming_;
     bool gitGutter_ = true;
     std::optional<Rgba> gitGutterColor_[3];

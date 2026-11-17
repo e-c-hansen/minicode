@@ -36,6 +36,7 @@
 #include "FolderPicker.h"
 #include "Backups.h"
 #include "TabSessions.h"
+#include "SavePlan.h"
 #include "InlineAgent.h"
 #include "SymbolOutline.h"
 #include "NavHistory.h"
@@ -4053,8 +4054,8 @@ void testSettings() {
     // control.page-input, and editor.inlay-hint-parameter-names, and
     // syntax.tag, syntax.attribute and syntax.tag-bracket, and html.scripts,
     // and editor.merge-current and editor.merge-incoming, and the four
-    // test.<language> commands.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 137);
+    // test.<language> commands, and editor.spell-check with its color.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 139);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -11122,6 +11123,7 @@ static void testMultiCaretOccurrences() {
 }
 #include "backups_tests.inc"
 #include "tab_sessions_tests.inc"
+#include "save_plan_tests.inc"
 #include "agent_tests.inc"
 #include "lsp_also_tests.inc"
 #include "lsp_fixes_tests.inc"
@@ -11202,6 +11204,7 @@ static void testMultiCaretOccurrences() {
 #include "getting_around_tests.inc"
 #include "adjust_settings_tests.inc"
 #include "runnables_tests.inc"
+#include "spell_check_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -11273,6 +11276,7 @@ int main() {
     testWebBookmarks();
     testSnippets();
     testRunnables();
+    testSpellCheck();
     testSnippetCompletionItems();
     testEditorTabs();
     testSessionModel();
@@ -11298,6 +11302,7 @@ int main() {
     testMultiCaretOccurrences();
     testBackups();
     testTabSessions();
+    testSavePlan();
     testInlineAgent();
     testLspSecondServer();
     testLspReviewFixes();

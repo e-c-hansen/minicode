@@ -435,10 +435,11 @@ std::string bytesText(GBytes* b) {
 
 void MCGuiRunProcess(const std::vector<std::string>& argv,
                      const std::map<std::string, std::string>& env,
-                     std::function<void(int, std::string, std::string)> done) {
+                     std::function<void(int, std::string, std::string)> done,
+                     const std::string& cwd) {
     GSubprocessLauncher* launcher = g_subprocess_launcher_new(
         (GSubprocessFlags)(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE));
-    g_subprocess_launcher_set_cwd(launcher, MCGuiProject().c_str());
+    g_subprocess_launcher_set_cwd(launcher, cwd.empty() ? MCGuiProject().c_str() : cwd.c_str());
     for (const auto& kv : env) g_subprocess_launcher_setenv(launcher, kv.first.c_str(), kv.second.c_str(), TRUE);
     std::vector<const char*> c;
     for (const std::string& a : argv) c.push_back(a.c_str());
@@ -478,10 +479,15 @@ void MCGuiRunChild(const std::string& suite, const std::string& folder,
     g_free(dbusRun);
     const std::string config = "--config-file=" + MCGuiScratch() + "/dbus.conf";
     const std::string daemon = "--dbus-daemon=" + selfPath();
-    MCGuiRunProcess({runner, config, daemon, "--", selfPath(), folder}, {{"MC_GUI_SUITES", suite}},
+    // No folder: launched as the dock launches it, with no path and the
+    // home folder as its working folder.
+    std::vector<std::string> argv = {runner, config, daemon, "--", selfPath()};
+    if (!folder.empty()) argv.push_back(folder);
+    MCGuiRunProcess(argv, {{"MC_GUI_SUITES", suite}},
                     [done](int status, std::string out, std::string err) {
                         done(status, out + err);
-                    });
+                    },
+                    folder.empty() ? std::string(g_get_home_dir()) : std::string());
 }
 
 // ---------------------------------------------------------------- runner
@@ -714,15 +720,33 @@ gboolean tick(gpointer) {
     return G_SOURCE_REMOVE;
 }
 
+std::set<std::string> suiteNames(const std::string& list) {
+    std::set<std::string> out;
+    std::istringstream in(list);
+    for (std::string w; in >> w;) out.insert(w);
+    return out;
+}
+
 void selectSuites() {
-    std::set<std::string> wanted;
-    std::istringstream in(envOr("MC_GUI_SUITES"));
-    for (std::string w; in >> w;) wanted.insert(w);
+    const std::set<std::string> wanted = suiteNames(envOr("MC_GUI_SUITES"));
+    // MC_GUI_SKIP_SUITES leaves suites out: CI runs the list as two
+    // processes at once, one naming its half and the other skipping it, so
+    // a new suite lands in the second without anyone listing it.
+    const std::set<std::string> skipped = suiteNames(envOr("MC_GUI_SKIP_SUITES"));
+    // A name in either list that no suite has is a failure, not a silent
+    // skip: a suite renamed after CI's list named it would otherwise run in
+    // neither half.
+    std::set<std::string> known;
+    for (const Suite& s : suites()) known.insert(s.name);
+    for (const std::set<std::string>* list : {&wanted, &skipped})
+        for (const std::string& w : *list)
+            if (!known.count(w)) MCGuiCheck(false, "no suite is named \"" + w + "\"", __FILE__, __LINE__);
     int ran = 0;
     for (const Suite& s : suites()) {
         // A suite named with a leading underscore is a part another suite
         // runs in a process of its own: only when named.
         if (wanted.empty() ? s.name[0] == '_' : !wanted.count(s.name)) continue;
+        if (skipped.count(s.name)) continue;
         enqueue(Kind::Suite, s.name, 0);
         s.body();
         ran++;

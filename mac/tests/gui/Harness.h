@@ -63,6 +63,9 @@
 // gets a picture of the test window at each of the first ten failures.
 //
 // `make guitest` runs every suite; `make guitest SUITES="control"` some.
+// MC_GUI_SKIP_SUITES="a b" leaves suites out (CI runs the list as two
+// processes at once, one naming its half, the other skipping it); a name
+// in either list that no suite has fails the run.
 // A suite whose name starts with "_" runs only when named: it is a part
 // another suite runs in a second process (MCGuiRunChild), as BackupsSuite
 // does to SIGKILL an app and start another on what it left.

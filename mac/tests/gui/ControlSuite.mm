@@ -7,6 +7,7 @@
 #import "EditorController.h"
 #import "ControlServer.h"
 #import "AgentNotes.h"
+#import "Browser.h"
 #import "CompareView.h"
 #import "GitPanel.h"
 #import "TabStrip.h"
@@ -776,6 +777,17 @@ MC_GUI_SUITE(control) {
         for (EditorController *e in [MCGuiControllers() copy])
             if (e != c && [e.rootPath.lastPathComponent isEqualToString:@"other"]) [e.window close];
         GCHECK(MCGuiControllers().count == 1 && MCGuiController() == c);
+    });
+
+    // `browse` above opened the browser pane with the agent page in the
+    // project's window; the suites after this one work in that window, and
+    // one that measures the editor's lines (markdown_side_sync, before it
+    // had a window of its own) found them wrapping in the narrower pane.
+    MCGuiStep(@"the agent page closes and the browser pane hides", ^{
+        BrowserView *browser = [c valueForKey:@"browser"];
+        if (browser.hasAgentPage) [browser closeAgentPage];
+        if ([[c valueForKey:@"browserVisible"] boolValue]) [c toggleBrowser:nil];
+        GCHECK(![[c valueForKey:@"browserVisible"] boolValue]);
     });
 
     // ------------------------------------------------------- the socket goes

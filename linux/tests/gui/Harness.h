@@ -46,7 +46,10 @@
 // suite file is not listed). A suite whose name starts with "_" runs only
 // when named: it is a part another suite starts with MCGuiRunChild.
 //
-// Environment: SUITES or MC_GUI_SUITES, as arguments do; MC_GUI_KEEP=1 keeps
+// Environment: SUITES or MC_GUI_SUITES, as arguments do; MC_GUI_SKIP_SUITES
+// leaves suites out (CI runs the list as two processes at once, one naming
+// its half, the other skipping it), and a name in either list that no suite
+// has fails the run; MC_GUI_KEEP=1 keeps
 // the scratch folders; MC_GUI_VERBOSE=1 names each step; MC_GUI_SNAPSHOTS=dir
 // is where MCGuiSnapshot writes, and where a failed check leaves a picture of
 // the window on top (fail-<n>-<suite>.png, the first ten); MC_SKIP_TIMING=1
@@ -247,14 +250,16 @@ void MCGuiScroll(GtkWidget* widget, int clicks);
 
 // ---- processes
 // Runs a program (the environment is this process's, plus `env`) in the
-// project folder without blocking the main loop; `done` gets its exit status
-// (128 + the signal if one ended it), stdout, and stderr.
+// project folder (or `cwd`) without blocking the main loop; `done` gets its
+// exit status (128 + the signal if one ended it), stdout, and stderr.
 void MCGuiRunProcess(const std::vector<std::string>& argv,
                      const std::map<std::string, std::string>& env,
-                     std::function<void(int status, std::string out, std::string err)> done);
+                     std::function<void(int status, std::string out, std::string err)> done,
+                     const std::string& cwd = "");
 // Runs this program again as a second app in the same scratch world and on
 // the same display, on a private session bus of its own, opening `folder`,
-// with only the suite named `suite` (a "_" one). `done` gets the exit status
+// with only the suite named `suite` (a "_" one); an empty `folder` launches
+// it with no path from the home folder, as the dock does. `done` gets the exit status
 // and the output. A real SIGKILL or crash in the child is safe to test: it
 // is reported in the status and nothing else is hit.
 void MCGuiRunChild(const std::string& suite, const std::string& folder,

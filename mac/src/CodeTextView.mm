@@ -6,6 +6,7 @@
 #import "SnippetSession.h"
 #import "EditorConflicts.h"
 #import "LayoutCatchUp.h"
+#import "SpellMarks.h"
 #include <os/log.h>
 
 // -------------------------------------------------------- CodeTextView
@@ -54,6 +55,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
     MCInlayHints *_inlays;
     MCSnippetSession *_snippets;
     MCEditorConflicts *_conflicts;
+    MCSpellMarks *_spell;
     NSEvent *_keyEvent;   // the key being interpreted, during keyDown:
     // The caret moved left of a hint's room (placeCaretBesideHints): by
     // how much, and the x it was given.
@@ -66,6 +68,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
 - (MCInlayHints *)inlayHints { return _inlays; }
 - (MCSnippetSession *)snippets { return _snippets; }
 - (MCEditorConflicts *)conflicts { return _conflicts; }
+- (MCSpellMarks *)spellMarks { return _spell; }
 - (NSEvent *)currentKeyEvent { return _keyEvent; }
 - (BOOL)multiCaretActive { return _multi.active; }
 
@@ -79,6 +82,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
         _inlays = [[MCInlayHints alloc] initWithTextView:self];
         _snippets = [[MCSnippetSession alloc] initWithTextView:self];
         _conflicts = [[MCEditorConflicts alloc] initWithTextView:self];
+        _spell = [[MCSpellMarks alloc] initWithTextView:self];
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(storageEdited:)
                    name:NSTextStorageDidProcessEditingNotification
@@ -162,6 +166,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
     if ((ts.editedMask & NSTextStorageEditedCharacters) && _multi.active && !_multi.applying)
         [_multi clear];
     if (!(ts.editedMask & NSTextStorageEditedCharacters)) return;
+    [_spell textEdited:ts];
     if (_diagnostics.count) {
         _diagnostics = MCMarksAfterEdit(_diagnostics, ts);
         self.needsDisplay = YES;
@@ -249,6 +254,7 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
         [_folds drawPlaceholdersInRect:dirty color:_bracketMatchColor ?: [NSColor grayColor]];
     [_inlays drawInRect:dirty];
     [_multi drawInRect:dirty];
+    [_spell drawInRect:dirty];
     if (_drawOverText) _drawOverText(dirty);
     if (_diagnostics.count == 0) return;
     NSRange visible = [self visibleCharacterRange];
@@ -310,6 +316,47 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
             [path stroke];
         }];
     }
+}
+
+// ---- spelling
+// NSTextView's own continuous checking never runs here: it would mark
+// code and lay out the whole text (MCSpellMarks checks the prose on
+// screen instead), so AppKit's Spelling and Grammar items, which turn it
+// on, are left out of the menu and its setters keep it off.
+- (void)setContinuousSpellCheckingEnabled:(BOOL)flag {
+    (void)flag;
+    [super setContinuousSpellCheckingEnabled:NO];
+}
+
+- (void)setGrammarCheckingEnabled:(BOOL)flag {
+    (void)flag;
+    [super setGrammarCheckingEnabled:NO];
+}
+
+static BOOL MCIsSpellingMenu(NSMenu *submenu) {
+    for (NSMenuItem *it in submenu.itemArray) {
+        const SEL a = it.action;
+        if (a == @selector(toggleContinuousSpellChecking:) || a == @selector(showGuessPanel:) ||
+            a == @selector(checkSpelling:) || a == @selector(toggleGrammarChecking:))
+            return YES;
+    }
+    return NO;
+}
+
+// The context menu: the spelling items for a misspelled word under the
+// pointer (or at the caret, for Shift+F10) first.
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    // A copy, so a menu AppKit keeps and hands out again never gathers items.
+    NSMenu *menu = [[super menuForEvent:event] copy];
+    for (NSInteger i = menu.numberOfItems - 1; i >= 0; i--) {
+        NSMenuItem *it = [menu itemAtIndex:i];
+        if (it.submenu && MCIsSpellingMenu(it.submenu)) [menu removeItemAtIndex:i];
+    }
+    if (menu && self.editable) {
+        const NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+        [_spell addItemsToMenu:menu atIndex:[self characterIndexForInsertionAtPoint:p]];
+    }
+    return menu;
 }
 
 // ---- the pointer, for hover info

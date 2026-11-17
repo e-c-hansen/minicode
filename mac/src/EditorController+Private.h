@@ -775,6 +775,10 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // The language server's semantic tokens for the text as it is
 // (LspSession.onSemanticTokens): an array of Lsp::SemanticSpan.
 - (void)semanticTokensArrived:(NSData *)spans;
+// editor.spell-check for the file shown (SpellMarks.h), and the whole
+// lines of a range with their tokens, which its checks read.
+- (void)updateSpellCheck;
+- (NSRange)spellLinesFor:(NSRange)range tokens:(std::vector<Token> *)tokens;
 @end
 
 // EditorController+LargeFile.mm: large-file mode (LargeFile.h), its status

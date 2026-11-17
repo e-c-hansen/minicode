@@ -49,7 +49,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/Formatter.cpp src/FormatRun.cpp src/FolderTools.cpp src/InstallHints.cpp src/LineDiff.cpp src/QuickDiff.cpp \
             src/PythonEnvs.cpp \
             src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp \
-            src/ChangeRequest.cpp src/MultiCaret.cpp src/AutoClose.cpp src/CommandPalette.cpp src/FolderPicker.cpp src/Backups.cpp src/TabSessions.cpp \
+            src/ChangeRequest.cpp src/MultiCaret.cpp src/AutoClose.cpp src/CommandPalette.cpp src/FolderPicker.cpp src/Backups.cpp src/TabSessions.cpp src/SavePlan.cpp \
             src/InlineAgent.cpp src/LineIndex.cpp src/BracketMatch.cpp src/BracketPairs.cpp \
             src/ControlProtocol.cpp src/SideBySide.cpp src/ChangeReview.cpp src/MergeConflicts.cpp src/PreviewScroll.cpp \
             src/AgentTranscript.cpp src/AgentIndex.cpp src/AgentEvidence.cpp src/AgentView.cpp src/AgentEdits.cpp src/LineHistory.cpp \
@@ -61,7 +61,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/LatexLog.cpp \
             src/MarkdownHtml.cpp src/MarkdownPage.cpp src/TerminalLayout.cpp src/RightAreaLayout.cpp \
             src/Snippet.cpp src/EditBatch.cpp \
-            src/BrowserTabs.cpp src/WebBookmark.cpp
+            src/BrowserTabs.cpp src/WebBookmark.cpp src/SpellCheck.cpp
 
 # Each source file compiles to its own object in build/obj (build/test-obj for
 # the tests), with a dependency file listing the headers it read, so touching
@@ -107,7 +107,7 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(VARIANT)' > $(OBJDIR)/variant.txt)
 endif
 
-.PHONY: all app run test test-asan test-tsan guitest fakelsp latex-sweep install dmg dist-zip clean demos membench-mac membench-linux icon compdb FORCE
+.PHONY: all app run test test-asan test-tsan guitest guitest-build fakelsp latex-sweep install dmg dist-zip clean demos membench-mac membench-linux icon compdb FORCE
 
 all: app compile_commands.json
 
@@ -360,7 +360,12 @@ $(FAKELSP): $(FAKELSP_OBJ)
 
 fakelsp: $(FAKELSP)
 
-guitest: build/guitest $(CLI) $(FAKELSP) $(BROWSER_HELPER) $(ZSH_INTEGRATION)
+# guitest-build builds what the checks need without running them: CI builds
+# it with the app and the core tests in one make, then runs build/guitest
+# as two processes at once (.github/workflows/ci.yml).
+guitest-build: build/guitest $(CLI) $(FAKELSP) $(BROWSER_HELPER) $(ZSH_INTEGRATION)
+
+guitest: guitest-build
 	@./build/guitest $(SUITES)
 
 # The LaTeX preview's click-to-source sweep (tests/latex/sweep.mm): every
