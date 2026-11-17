@@ -20,6 +20,7 @@
 #import "CompareView.h"
 #import "ControlServer.h"
 #import "GitPanel.h"
+#import "Lsp.h"
 #import "LspPicker.h"
 #import "Terminal.h"
 #import "TerminalPanel.h"
@@ -224,6 +225,58 @@ void BuildWorld() {
     NSString *bigT = [gSessDir stringByAppendingPathComponent:@"sess-big.jsonl"];
     MCGuiWriteFile(bigT, b);
     SetAge(bigT, 650);
+
+    // A session with every kind of entry the Evidence page tells apart
+    // (A6), kept outside the transcripts folder so the panel's counts stay.
+    NSString *kinds = @"sess-kinds";
+    NSMutableString *k = [NSMutableString string];
+    [k appendFormat:@"%@\n", Prompt(kinds, 600, @"Make **tabs** faster.\n\n- keep the order\n- no new keys")];
+    [k appendFormat:@"%@\n", Reply(kinds, 599, @"mk1",
+        @"## Plan\nRead `Tabs.mm` first, then **measure**.\n\n```python\nprint('hi')\n```")];
+    [k appendFormat:@"%@\n", Use(kinds, 598, @"k1", @"Read",
+                                 @{@"file_path": [gReal stringByAppendingPathComponent:@"src/Terminal.mm"]})];
+    [k appendFormat:@"%@\n", Result(kinds, 597, @"k1", @"1\tmain line 1", NO)];
+    [k appendFormat:@"%@\n", Use(kinds, 596, @"k2", @"WebFetch", @{@"url": @"https://example.com/doc",
+                                                                   @"prompt": @"Summarize"})];
+    [k appendFormat:@"%@\n", Result(kinds, 595, @"k2", @"Claude requested permissions to use WebFetch", YES)];
+    [k appendFormat:@"%@\n", Use(kinds, 594, @"k3", @"Bash", @{@"command": @"make 2>&1",
+                                                               @"description": @"Build it"})];
+    NSMutableDictionary *built = Head(@"user", kinds, 593);
+    built[@"message"] = @{@"role": @"user", @"content": @[@{@"tool_use_id": @"k3", @"type": @"tool_result",
+                                                           @"content": @"compiled 12 files\nwarning: unused x",
+                                                           @"is_error": @NO}]};
+    built[@"toolUseResult"] = @{@"stdout": @"compiled 12 files", @"stderr": @"warning: unused x"};
+    [k appendFormat:@"%@\n", Json(built)];
+    [k appendFormat:@"%@\n", Use(kinds, 592, @"k4", @"Bash", @{@"command": @"false", @"description": @"Fail"})];
+    [k appendFormat:@"%@\n", Result(kinds, 591, @"k4", @"Exit code 1\nit broke", YES)];
+    [k appendFormat:@"%@\n", Use(kinds, 590, @"k5", @"Agent", @{@"description": @"Look for slow paths",
+                                                                @"subagent_type": @"Explore", @"prompt": @"Go"})];
+    NSMutableDictionary *spawned = Head(@"user", kinds, 589);
+    spawned[@"message"] = @{@"role": @"user", @"content": @[@{@"tool_use_id": @"k5", @"type": @"tool_result",
+                                                             @"content": @"Found two"}]};
+    spawned[@"toolUseResult"] = @{@"agentId": @"abc123"};
+    [k appendFormat:@"%@\n", Json(spawned)];
+    [k appendFormat:@"%@\n", Use(kinds, 588, @"k6", @"SendMessage",
+                                 @{@"to": @"abc123", @"summary": @"More", @"message": @"Look at **draw** too"})];
+    NSMutableDictionary *peer = Head(@"user", kinds, 587);
+    peer[@"origin"] = @{@"kind": @"peer", @"from": @"bridge:session_X", @"name": @"Linux port",
+                        @"body": @"Bookmarks are **merged**."};
+    peer[@"message"] = @{@"role": @"user", @"content": @"Another Claude session sent a message:\n"
+                         @"<cross-session-message from=\"bridge:session_X\" from-name=\"Linux port\">\n"
+                         @"Bookmarks are **merged**.\n</cross-session-message>"};
+    [k appendFormat:@"%@\n", Json(peer)];
+    NSMutableDictionary *note = Head(@"user", kinds, 586);
+    note[@"origin"] = @{@"kind": @"task-notification"};
+    note[@"message"] = @{@"role": @"user", @"content": @"<task-notification>\n<status>completed</status>\n"
+                         @"<summary>Background command \"Wait for CI\" completed (exit code 0)</summary>\n"
+                         @"</task-notification>"};
+    [k appendFormat:@"%@\n", Json(note)];
+    NSMutableDictionary *hook = Head(@"attachment", kinds, 585);
+    hook[@"attachment"] = @{@"type": @"hook_non_blocking_error", @"hookName": @"PostToolUse:Edit",
+                            @"stderr": @"lint failed\n", @"stdout": @"", @"exitCode": @1};
+    [k appendFormat:@"%@\n", Json(hook)];
+    [k appendFormat:@"%@\n", Reply(kinds, 584, @"mk2", @"Done: tabs are *faster*.")];
+    MCGuiWriteFile([gBase stringByAppendingPathComponent:@"kinds/sess-kinds.jsonl"], k);
 
     setenv("MINICODE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation, 1);
     setenv("MINICODE_CLAUDE_TMP", gTmp.fileSystemRepresentation, 1);
@@ -569,6 +622,98 @@ MC_GUI_SUITE(agents) {
         MCGuiSnapshot(pg.pageView, @"agents-session-file");
         [pg compareBeforeAndNow];
         GCHECK_EQ_STR(ActiveTab(c)[@"kind"], @"diff");
+    });
+
+    // ------------------------------------------------- each kind its own look (A6)
+    MCGuiStep(@"a session with every kind of entry", ^{
+        [Agents(c) showEvidenceForTranscript:[gBase stringByAppendingPathComponent:@"kinds/sess-kinds.jsonl"]
+                                        name:@"Make tabs faster"];
+    });
+    MCGuiWait(@"its entries are read and its Markdown built", 15, ^BOOL {
+        MCEvidencePage *e = ActivePage(c);
+        return [e isKindOfClass:MCEvidencePage.class] && e.outputsLoaded && e.markdownBuilt &&
+               [e.transcript hasSuffix:@"sess-kinds.jsonl"];
+    });
+    MCGuiStep(@"prompts and messages are Markdown, and each kind has its own color", ^{
+        MCEvidencePage *e = ActivePage(c);
+        NSMutableArray *kinds = [NSMutableArray array];
+        for (NSUInteger i = 0; i < e.entryCount; i++) [kinds addObject:[e entryKind:i]];
+        NSArray *want = @[@"prompt", @"message", @"tool", @"tool", @"command", @"command", @"subagent",
+                          @"sent", @"received", @"notification", @"hook", @"message"];
+        MCGuiNote(@"entries: %@", [kinds componentsJoinedByString:@" "]);
+        GCHECK([kinds isEqualToArray:want]);
+        if (![kinds isEqualToArray:want]) return;
+        NSTextStorage *ts = e.commandsView.textStorage;
+        NSString *all = ts.string;
+        // The color (or font) where `needle` first shows inside entry `i`.
+        auto at = [&](NSUInteger i, NSString *needle, NSAttributedStringKey key) -> id {
+            const NSRange r = [e entryRange:i];
+            const NSRange f = r.location == NSNotFound ? r : [all rangeOfString:needle options:0 range:r];
+            if (f.location == NSNotFound) {
+                MCGuiNote(@"\"%@\" not in entry %lu: %@", needle, (unsigned long)i,
+                          r.location == NSNotFound ? @"" : [all substringWithRange:r]);
+                return nil;
+            }
+            return [ts attribute:key atIndex:f.location effectiveRange:NULL];
+        };
+        AppSettings *cfg = [AppSettings shared];
+        NSColor *error = MCDiagnosticColor(1);
+        // Markdown: no markup left, bold where it said, a heading in the
+        // heading color and larger than the text, code in monospace.
+        NSString *prompt = [all substringWithRange:[e entryRange:0]];
+        GCHECK([prompt containsString:@"You asked"] && ![prompt containsString:@"**"] &&
+               [prompt containsString:@"tabs"]);
+        NSFont *bold = at(0, @"tabs", NSFontAttributeName);
+        GCHECK(bold && (bold.fontDescriptor.symbolicTraits & NSFontDescriptorTraitBold));
+        NSString *reply = [all substringWithRange:[e entryRange:1]];
+        GCHECK([reply containsString:@"Claude"] && ![reply containsString:@"## "] &&
+               ![reply containsString:@"```"]);
+        NSFont *heading = at(1, @"Plan", NSFontAttributeName);
+        NSFont *body = at(1, @"first", NSFontAttributeName);
+        GCHECK(heading && body && heading.pointSize > body.pointSize);
+        GCHECK([at(1, @"Plan", NSForegroundColorAttributeName) isEqual:[cfg markdown:MarkdownColor::Heading]]);
+        NSFont *code = at(1, @"print", NSFontAttributeName);
+        GCHECK(code && code.fixedPitch);
+        // A tool call on one line, its file a link; an error's text in the
+        // error color.
+        NSString *read = [all substringWithRange:[e entryRange:2]];
+        GCHECK([read hasPrefix:@"\tRead  src/Terminal.mm"] || [read containsString:@"Read  src/Terminal.mm"]);
+        GCHECK([at(2, @"Read", NSForegroundColorAttributeName) isEqual:[cfg syntax:TokenStyle::Keyword]]);
+        GCHECK(at(2, @"src/Terminal.mm", NSLinkAttributeName) != nil);
+        GCHECK([at(3, @"Claude requested permissions", NSForegroundColorAttributeName) isEqual:error]);
+        // A command in its own color and monospace, its output boxed,
+        // stderr and a failure's exit line in the error color.
+        GCHECK([at(4, @"$ make 2>&1", NSForegroundColorAttributeName) isEqual:[cfg syntax:TokenStyle::Function]]);
+        NSFont *cmdFont = at(4, @"$ make 2>&1", NSFontAttributeName);
+        GCHECK(cmdFont && cmdFont.fixedPitch);
+        NSParagraphStyle *box = at(4, @"compiled 12 files", NSParagraphStyleAttributeName);
+        GCHECK(box.textBlocks.count == 2 && box.textBlocks.lastObject.backgroundColor != nil);
+        GCHECK(![at(4, @"compiled 12 files", NSForegroundColorAttributeName) isEqual:error]);
+        GCHECK([at(4, @"warning: unused x", NSForegroundColorAttributeName) isEqual:error]);
+        GCHECK([at(5, @"Exit code 1", NSForegroundColorAttributeName) isEqual:error]);
+        GCHECK(![at(5, @"it broke", NSForegroundColorAttributeName) isEqual:error]);
+        // A subagent, and messages to it and from another session, named.
+        GCHECK([[all substringWithRange:[e entryRange:6]] containsString:@"Look for slow paths"]);
+        GCHECK([at(7, @"Message to Look for slow paths", NSForegroundColorAttributeName)
+                   isEqual:[cfg syntax:TokenStyle::Type]]);
+        GCHECK([at(8, @"Message from Linux port", NSForegroundColorAttributeName)
+                   isEqual:[cfg syntax:TokenStyle::Type]]);
+        NSFont *merged = at(8, @"merged", NSFontAttributeName);
+        GCHECK(merged && (merged.fontDescriptor.symbolicTraits & NSFontDescriptorTraitBold));
+        GCHECK(![[all substringWithRange:[e entryRange:8]] containsString:@"cross-session-message"]);
+        // A background task's end, muted; a hook's error in the error color.
+        GCHECK([at(9, @"Wait for CI", NSForegroundColorAttributeName) isEqual:[NSColor colorWithSRGBRed:0x9D / 255.0
+                   green:0x9D / 255.0 blue:0x9D / 255.0 alpha:1]]);
+        GCHECK([at(10, @"Hook PostToolUse:Edit", NSForegroundColorAttributeName)
+                   isEqual:[cfg syntax:TokenStyle::Comment]]);
+        GCHECK([at(10, @"lint failed", NSForegroundColorAttributeName) isEqual:error]);
+        // The final message box is Markdown too.
+        GCHECK([e.finalMessageText isEqualToString:@"Done: tabs are *faster*."]);
+        MCGuiSnapshot(e.pageView, @"agents-evidence-kinds");
+        // The Read's file opens from its link.
+        NSURL *open = [NSURL URLWithString:@"minicode-evidence://open/2"];
+        [(id<NSTextViewDelegate>)e textView:e.commandsView clickedOnLink:open atIndex:0];
+        GCHECK([[ActiveTab(c)[@"path"] description] hasSuffix:@"src/Terminal.mm"]);
     });
 
     MCGuiStep(@"a 1.3 MB output opens without holding up the window", ^{

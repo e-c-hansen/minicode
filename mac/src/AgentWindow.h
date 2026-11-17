@@ -28,6 +28,9 @@
 // The tree's Worktrees node is open, so its ahead and modified marks are on
 // show and worth asking git for as files change.
 @property(nonatomic, readonly) BOOL agentWorktreesOnShow;
+// Markdown (a session's prompts and Claude's messages, A6) as the
+// Markdown preview draws it, laid out for `width` points.
+- (NSAttributedString *)agentMarkdown:(NSString *)markdown width:(CGFloat)width;
 @end
 
 @interface MCAgentWindow : NSObject

@@ -3671,7 +3671,19 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   chain past env, time, timeout and assignments (pytest forms, make test and
   check, ctest, npm/pnpm/yarn test, cargo test, go test, python -m unittest,
   tox, nox, jest and vitest, through npx, uvx and the like), their summaries read
-  from the tail, no verdicts. Paths: `~/.claude/projects`
+  from the tail, no verdicts. **Entries** (A6, 2026-11-16, `evidence:entries`):
+  `Evidence::entries` is the session item by item, each an `EntryKind`
+  (prompt, message, command, edit, tool, subagent, sent, received,
+  notification, hook; commands and edits point into their lists) so a
+  port gives each its own look. A text-only user line is a prompt (origin
+  human or coordinator), a message from another session (origin `peer`,
+  named by `origin.name`, its `body`), a task notification (its
+  `<summary>`) or a slash command; an `attachment` line of a `hook_*` type
+  with something said is a hook. SendMessage's `to` is named by what a
+  peer message said of that id, or a subagent's task (`toolUseResult.agentId`
+  of its Agent call). A command keeps `toolUseResult.stderr`
+  (`stderrLineCount`: Claude Code appends it to the output). Entry text is
+  cut at 16 KB. Paths: `~/.claude/projects`
   (`$MINICODE_CLAUDE_PROJECTS`), the `/private/tmp/claude-<uid>` scratchpads
   (`$MINICODE_CLAUDE_TMP`). Fixtures: `tests/fixtures/claude`.
 - **The panel's column** stays the list's width (`autoresizesOutlineColumn`
@@ -3693,9 +3705,24 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   the row menu keeps Open. The Evidence view lists the edits among the
   commands, each a link to that page. The Evidence view
   (`MCEvidencePage`, an `EditorPage`): the final message beside the last test
-  command's result, then every command with the first and last 20 lines of
-  output read lazily (Show all up to 1 MB); Open in Terminal types a command at
-  the session's folder.
+  command's result, then the entries in order, every command with the first
+  and last 20 lines of output read lazily (Show all up to 1 MB); Open in
+  Terminal types a command at the session's folder. **Each kind its own
+  look** (A6, 2026-11-16, the owner's "hard to skim"; `agents` suite's
+  kinds steps): prompts, Claude's messages and messages to and from other
+  sessions are Markdown through the window's own builder
+  (`MCAgentWorkHost agentMarkdown:width:`, +Markdown's
+  `markdownFragmentFor:width:`, which saves and puts back the preview's
+  page state, math left as TeX), fonts scaled to 12.5 and moved to the
+  entries' indent by an outer text block (`FitMarkdown`; a table stays
+  page-wide). Built on the main thread a slice of about 12 ms a turn, plain
+  text until then, cached per entry with its text (dropped on a settings
+  change and a settled new width). Colors: the command in
+  `syntax.function`, tool names in `syntax.keyword`, sessions and
+  subagents in `syntax.type`, hooks in `syntax.comment`, links in
+  `markdown.link`, your prompt's label in `markdown.heading`, output in a
+  box tinted as a Markdown code block, stderr, an exit line, a tool's
+  error and a failed hook in the diagnostics' error color, the rest muted.
 - **Waiting for you** (spec feature 7, 2026-11-06): a terminal's id
   (`TerminalView terminalID`, what `minicode state` reports) is given when it
   is made, not on first use, because its shell gets it as

@@ -863,6 +863,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)closePageOf:(MCTab *)t;
 - (void)agentWorktreesChanged;
 - (BOOL)agentWorktreesOnShow;
+- (NSAttributedString *)agentMarkdown:(NSString *)markdown width:(CGFloat)width;
 - (void)agentFolderChangedOnDisk:(NSString *)path;
 - (MCCompareView *)compareViewMade;
 - (void)openFileAtPath:(NSString *)path line:(NSInteger)line;
@@ -915,6 +916,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
                                          to:(size_t)to
                                     anchors:(NSMutableArray<NSArray *> *)anchors;
 - (NSAttributedString *)markdownNoteForRuns:(const std::vector<MdRun> &)runs;
+- (NSAttributedString *)markdownFragmentFor:(NSString *)content width:(CGFloat)width;
 - (void)keepPlaceIn:(NSTextView *)tv scroll:(NSScrollView *)scroll
      whileRendering:(void (^)(void))render;
 - (BOOL)showsMarkdownPage;

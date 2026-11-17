@@ -2,6 +2,7 @@
 #include "AgentTranscript.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
@@ -337,7 +338,7 @@ public:
         const char *p = ws(data, e);
         if (p >= e || *p != '{') return false;
         const char *msgS = nullptr, *msgE = nullptr, *turS = nullptr, *turE = nullptr;
-        const char *origS = nullptr, *origE = nullptr;
+        const char *origS = nullptr, *origE = nullptr, *attS = nullptr, *attE = nullptr;
         std::string timestamp;
         const char *end = members(p, e, 0, [&](SV k, const char *vs, const char *ve) {
             if (k == "type") out->type = strOf(vs, ve, 64);
@@ -353,6 +354,7 @@ public:
             else if (k == "message") { msgS = vs; msgE = ve; }
             else if (k == "toolUseResult") { turS = vs; turE = ve; }
             else if (k == "origin") { origS = vs; origE = ve; }
+            else if (k == "attachment") { attS = vs; attE = ve; }
         });
         if (!end || ws(end, e) != e) return false;
         out->time = parseTime(timestamp);
@@ -363,13 +365,19 @@ public:
             hasOrigin = true;
             members(origS, origE, 1, [&](SV k, const char *vs, const char *ve) {
                 if (k == "kind") originKind = strOf(vs, ve, 64);
+                else if (k == "name") out->originName = strOf(vs, ve, 512);
+                else if (k == "from") out->originFrom = strOf(vs, ve, 512);
+                else if (k == "body") out->originBody = strOf(vs, ve, kTextCap);
             });
+            out->originKind = originKind;
         }
         if (turS && *turS == '{') {
             members(turS, turE, 1, [&](SV k, const char *vs, const char *ve) {
                 if (k == "agentId") out->spawnedAgent = strOf(vs, ve, 128);
+                else if (k == "stderr") out->stderrText = strOf(vs, ve, kInputCap);
             });
         }
+        if (attS && *attS == '{' && out->type == "attachment") readAttachment(attS, attE, out);
         // Only the conversation's own lines: Claude Code also logs copies of
         // the messages it sends (api-request-blob), which would count twice.
         if (msgS && *msgS == '{' && (out->type == "user" || out->type == "assistant"))
@@ -399,6 +407,67 @@ public:
     }
 
 private:
+    // An attachment line: its type, and for a hook's what the hook said.
+    // The other attachments (a prompt snapshot, a file read in) can be
+    // large, so values are decoded only once the type says it is a hook's.
+    static void readAttachment(const char *as, const char *ae, Line *out) {
+        struct Field { SV key; const char *vs, *ve; };
+        std::vector<Field> fields;
+        members(as, ae, 1, [&](SV k, const char *vs, const char *ve) {
+            if (k == "type") out->attachmentType = strOf(vs, ve, 64);
+            else if (k == "hookName" || k == "stdout" || k == "stderr" || k == "content" ||
+                     k == "blockingError" || k == "message" || k == "exitCode")
+                fields.push_back({k, vs, ve});
+        });
+        const std::string &t = out->attachmentType;
+        if (t.compare(0, 5, "hook_") != 0) return;
+        std::string stdoutText, stderrText, content, blocking, message;
+        bool failedExit = false;
+        auto textOf = [](const char *vs, const char *ve) {
+            // A string, or the strings of an array (hook_additional_context).
+            if (*vs == '"') return strOf(vs, ve, kInputCap);
+            std::string joined;
+            if (*vs == '[')
+                elements(vs, ve, 2, [&](const char *xs, const char *xe) {
+                    if (*xs != '"' || joined.size() >= kInputCap) return;
+                    if (!joined.empty()) joined += "\n";
+                    joined += strOf(xs, xe, kInputCap);
+                });
+            return joined;
+        };
+        for (const Field &f : fields) {
+            if (f.key == "hookName") out->hookName = strOf(f.vs, f.ve, 256);
+            else if (f.key == "stdout") stdoutText = strOf(f.vs, f.ve, kInputCap);
+            else if (f.key == "stderr") stderrText = strOf(f.vs, f.ve, kInputCap);
+            else if (f.key == "content") content = textOf(f.vs, f.ve);
+            else if (f.key == "message") message = textOf(f.vs, f.ve);
+            else if (f.key == "exitCode")
+                failedExit = !(f.ve - f.vs == 1 && *f.vs == '0') && *f.vs != 'n';
+            else if (f.key == "blockingError") {
+                if (*f.vs == '"') blocking = strOf(f.vs, f.ve, kInputCap);
+                else if (*f.vs == '{')
+                    members(f.vs, f.ve, 2, [&](SV k, const char *vs, const char *ve) {
+                        if (k == "blockingError") blocking = strOf(vs, ve, kInputCap);
+                    });
+            }
+        }
+        std::string text;
+        for (const std::string *part : {&blocking, &message, &content, &stdoutText, &stderrText}) {
+            size_t a = 0, b = part->size();
+            while (a < b && std::isspace((unsigned char)(*part)[a])) a++;
+            while (b > a && std::isspace((unsigned char)(*part)[b - 1])) b--;
+            if (a == b) continue;
+            if (!text.empty()) text += "\n";
+            text.append(*part, a, b - a);
+        }
+        if (text.size() > kInputCap) text.resize(kInputCap);
+        trimUtf8(text);
+        out->hookText = std::move(text);
+        out->hookError = t == "hook_non_blocking_error" || t == "hook_blocking_error" ||
+                         t == "hook_error_during_execution" ||
+                         (failedExit && !stderrText.empty());
+    }
+
     static void readMessage(const char *base, uint64_t offset, const char *ms, const char *me,
                             Line *out) {
         const char *cs = nullptr, *ce = nullptr;
@@ -447,6 +516,14 @@ private:
                             b.filePath = strOf(vs, ve, kInputCap);
                         else if (k == "command") b.command = strOf(vs, ve, kInputCap, &b.commandCut);
                         else if (k == "description") b.description = strOf(vs, ve, 1024);
+                        else if (k == "pattern") b.pattern = strOf(vs, ve, kInputCap);
+                        else if (k == "path") b.searchPath = strOf(vs, ve, kInputCap);
+                        else if ((k == "url" || k == "query" || k == "skill") && b.target.empty())
+                            b.target = strOf(vs, ve, kInputCap);
+                        else if (k == "to") b.to = strOf(vs, ve, 512);
+                        else if (k == "summary") b.summary = strOf(vs, ve, 1024);
+                        else if (k == "message") b.message = strOf(vs, ve, kTextCap, &b.textCut);
+                        else if (k == "subagent_type") b.subagentType = strOf(vs, ve, 256);
                     });
                 }
                 out->blocks.push_back(std::move(b));
@@ -489,6 +566,15 @@ void Line::clear() {
     aiTitle.clear();
     sidechain = meta = prompt = false;
     spawnedAgent.clear();
+    stderrText.clear();
+    originKind.clear();
+    originName.clear();
+    originFrom.clear();
+    originBody.clear();
+    attachmentType.clear();
+    hookName.clear();
+    hookText.clear();
+    hookError = false;
     blocks.clear();
     span = {};
 }

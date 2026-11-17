@@ -131,6 +131,16 @@ static NSString *Resolved(NSString *path) {
     page.onShowFileChanges = ^(NSString *path) {
         [weakSelf showChangesToFile:path transcript:t name:n];
     };
+    __weak id<MCAgentWorkHost> host = _host;
+    page.markdown = ^NSAttributedString *(NSString *markdown, CGFloat width) {
+        return [host agentMarkdown:markdown width:width];
+    };
+    page.onOpenLink = ^(NSString *target, BOOL isURL) {
+        MCTermLink *link = [MCTermLink new];
+        link.target = target;
+        link.isURL = isURL;
+        [host openTerminalLink:link];
+    };
     [_host showPage:page];
 }
 

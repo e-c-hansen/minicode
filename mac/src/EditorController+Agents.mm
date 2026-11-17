@@ -698,6 +698,10 @@ static NSUInteger MCLineStart(NSString *text, int line) {
            [self.outline isItemExpanded:_worktreesItem];
 }
 
+- (NSAttributedString *)agentMarkdown:(NSString *)markdown width:(CGFloat)width {
+    return [self markdownFragmentFor:markdown width:width];
+}
+
 - (void)agentFolderChangedOnDisk:(NSString *)path {
     [_agents folderChangedOnDisk:path];
 }
