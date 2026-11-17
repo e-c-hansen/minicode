@@ -5207,3 +5207,7 @@ moves onto next. What a user meets: the Mac's undo rules.
 - **Not done**: the workspace edit applier and the inline agent's Keep are
   named "Edit"; drag and drop of text is typing; carets beyond the first
   are not restored by an undo.
+
+### 73. A notebook's In and Out prompts (done, November 2026)
+
+A fenced block with a `MdRun::label` (the core's Notebook gives a run cell "In [n]" and its result "Out [n]") gets that text on a line of its own above the block, at the block's first run only, in the new `md_codelabel` tag: monospace 11 points in the Markdown quote color, as the Mac's `markdownLabelFor:`. The tag is made with the others in `Editor.cpp` and recolored in `applySettings`. The notebook check in `json_outline` now reads "In [3]" and "Out [3]" from the shown text, in order before their blocks, and the tag at the label. The Mac's extra indent for a block inside a list is not copied, since notebook cells are never in lists. The look needs the owner's eyes.
