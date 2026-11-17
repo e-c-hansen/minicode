@@ -599,40 +599,13 @@ void LspSession::completionFollowsCaret() {
 
 // ---------------------------------------------------------------- accepting
 
-// GtkTextHistory joins an action that only inserts to the typing just
-// before it, so one Ctrl+Z would take what was typed away with the word
-// (the Mac's accept is a step of its own); an action that also deletes is
-// a step of its own. So an accept that only inserts takes the last
-// character it put in out and puts it back, in the same action.
+// An accept is a step of its own, "Completion", as on the Mac: never joined
+// to the typing just before it (Document's history joins only typing).
 bool LspSession::applyAcceptEdits(const std::vector<Lsp::PointEdit>& edits) {
     if (edits.empty() || !buffer_) return false;
     std::vector<MultiEdit::Change> changes;
-    bool deletes = false;
-    size_t lastEnd = 0;   // where the last non-empty insertion ends, once all are in
-    long shift = 0;
-    bool inserts = false;
-    for (const Lsp::PointEdit& e : edits) {
-        changes.push_back({e.start, e.length, e.text});
-        const size_t chars = (size_t)g_utf8_strlen(e.text.data(), (gssize)e.text.size());
-        if (e.length) deletes = true;
-        if (chars) {
-            inserts = true;
-            lastEnd = (size_t)((long)e.start + shift) + chars;
-        }
-        shift += (long)chars - (long)e.length;
-    }
-    gtk_text_buffer_begin_user_action(buffer_);
-    const bool ok = MultiEdit::apply(buffer_, changes, false);
-    if (ok && !deletes && inserts && lastEnd > 0) {
-        const std::string last = sliceOf(buffer_, lastEnd - 1, lastEnd);
-        GtkTextIter x, y;
-        gtk_text_buffer_get_iter_at_offset(buffer_, &x, (int)(lastEnd - 1));
-        gtk_text_buffer_get_iter_at_offset(buffer_, &y, (int)lastEnd);
-        gtk_text_buffer_delete(buffer_, &x, &y);
-        gtk_text_buffer_insert(buffer_, &x, last.data(), (int)last.size());
-    }
-    gtk_text_buffer_end_user_action(buffer_);
-    return ok;
+    for (const Lsp::PointEdit& e : edits) changes.push_back({e.start, e.length, e.text});
+    return MultiEdit::apply(buffer_, changes, false, "Completion");
 }
 
 void LspSession::acceptCompletion(int row) {
@@ -771,7 +744,7 @@ void LspSession::acceptChoice(int row) {
     GtkTextIter a, b;
     gtk_text_buffer_get_selection_bounds(buffer_, &a, &b);
     const size_t from = offsetOf(&a), to = offsetOf(&b);
-    if (!MultiEdit::apply(buffer_, {{from, to - from, choice}}, false)) return;
+    if (!MultiEdit::apply(buffer_, {{from, to - from, choice}}, false, "Completion")) return;
     GtkTextIter at;
     gtk_text_buffer_get_iter_at_offset(
         buffer_, &at, (int)(from + (size_t)g_utf8_strlen(choice.data(), (gssize)choice.size())));
@@ -912,13 +885,14 @@ void LspSession::pendingAcceptResolved(int key, const Lsp::CompletionItem& item)
 
     applyingEdit_ = true;
     bool ok = false;
-    if (docGen_ == p->docGen && gtk_text_buffer_get_can_undo(buffer_)) {
+    Document* doc = Document::of(buffer_);
+    if (docGen_ == p->docGen && doc && doc->canUndo()) {
         // Nothing has changed since the word went in: the same undo step,
-        // as on the Mac. GtkTextHistory cannot add to a step once made, so
-        // the accept is taken back and put in again with them, as one.
+        // as on the Mac. The accept is taken back and put in again with
+        // them, as one step.
         if (snippets) snippets->hold();
         cmp_->replaying = true;
-        gtk_text_buffer_undo(buffer_);
+        doc->undo();
         cmp_->replaying = false;
         if ((size_t)gtk_text_buffer_get_char_count(buffer_) == p->before &&
             sliceOf(buffer_, p->start, p->start + p->removed) == p->removedText) {
@@ -928,7 +902,7 @@ void LspSession::pendingAcceptResolved(int key, const Lsp::CompletionItem& item)
         }
         // Not the text the accept was made on (the step undone was another):
         // put back as it was, and the edits go as a step of their own.
-        if (!ok) gtk_text_buffer_redo(buffer_);
+        if (!ok) doc->redo();
         if (snippets) snippets->release(ok ? spans : std::vector<EditSpans::Span>());
     }
     // Typing came between: a step of its own, so each undoes in turn.

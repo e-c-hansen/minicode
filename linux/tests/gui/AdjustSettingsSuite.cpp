@@ -516,8 +516,8 @@ MC_GUI_SUITE(adjust_settings) {
     });
 
     // ---- done: the edits dropped, the window closed
-    // The typed line undone too, a step at a time (GTK takes typing back a
-    // piece at a time), never past the file as on disk.
+    // The typed line undone too (one step, or more were it typed in
+    // pieces), never past the file as on disk.
     for (int i = 0; i < 8; i++) {
         MCGuiStep("Ctrl+Z while unsaved", [] {
             gText = bufferText(ed()->buffer());

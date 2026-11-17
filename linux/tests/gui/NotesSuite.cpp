@@ -174,7 +174,7 @@ MC_GUI_SUITE(notes) {
         GCHECK(d && d->isAgentPreview());
         GCHECK(!d->dirty());
         GCHECK_EQ_STR(MCGuiEditorText(), numbered("line", 40));
-        GCHECK(!gtk_text_buffer_get_can_undo(d->buffer()));
+        GCHECK(d && !d->canUndo());
     });
     MCGuiWait("the box is placed above the first line", 5, [] {
         GtkTextView* v = GTK_TEXT_VIEW(ed()->textView());

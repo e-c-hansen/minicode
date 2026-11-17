@@ -1201,7 +1201,8 @@ theme and at 2x, and the box's height against the text on the ThinkPad
 
 What later items build on:
 - **`Document`** (`src/Document.{h,cpp}`) is one open file: its own
-  `GtkTextBuffer` over the editor's one tag table, GTK's undo, the
+  `GtkTextBuffer` over the editor's one tag table, its undo history (the
+  core's `UndoHistory` since item 72; GTK's undo until then), the
   highlighter and its mirror, `dirty()` (the text differs from the text last
   read or saved), its file watch, a page buffer for the Markdown preview
   (`page()`), its LaTeX preview, and `place()`, where its view was. State
@@ -1552,13 +1553,12 @@ What later items build on:
     again after every delete, an X round trip each: 40,000 deletes took
     58 s. `MultiEdit` takes the selection away first and carries it
     through.
-  - GTK replays an undo step edit by edit with no user action around it, so
-    the highlighter followed each of 40,000 edits alone (19 s).
-    `Document` takes "undo" and "redo" as one action of its own (its flags
-    only: a user action on the buffer would clear GTK's redo queue). The
-    undo of Replace All of 20,000 matches still costs about 1.6 s: GTK
-    places the caret after each edit it puts back, and the view lays out
-    that line for the input method. Not done: undoing such a step faster.
+  - GTK replayed an undo step edit by edit with no user action around it,
+    so the highlighter followed each of 40,000 edits alone (19 s), and even
+    taken as one action the undo of Replace All of 20,000 matches cost
+    about 1.6 s, GTK placing the caret after each edit it put back. Since
+    item 72 an undo is the history's plan put in as one `MultiEdit::apply`,
+    as the Replace All itself was.
   - The checks run with `GTK_A11Y=none`. Whether GTK's accessibility
     (AT-SPI on the owner's desktop) costs something per edit of a large
     Replace All has not been measured.
@@ -2206,7 +2206,7 @@ Item 2.1 (`LspSessionActions.cpp`, `LspSessionEdits.cpp`, `LspPicker.{h,cpp}`):
   text; then each file's edits as one `MultiEdit::apply` on its own buffer
   (`Lsp::pointEdits` turns the UTF-16 edits into code points), one undo
   step per file, background tabs included without showing them. A failure
-  part way undoes the files edited (`gtk_text_buffer_undo`) and closes the
+  part way undoes the files edited (`Document::undo`) and closes the
   tabs it opened; the tab on show is put back on show; nothing is saved.
   `applyingEdit_` is set meanwhile, so the tabs it opens do not close the
   lists or forget the rename, and `MultiEdit::applying()` keeps completion
@@ -2230,15 +2230,16 @@ Item 2.1 (`LspSessionActions.cpp`, `LspSessionEdits.cpp`, `LspPicker.{h,cpp}`):
   there as the context; an action without its edit is resolved first, then
   its edit applied, then its command run. `workspace/applyEdit` from a
   server (`Client::onApplyEdit`, set in `serverForKey`) goes through the
-  same applier in an idle and is answered whether it went in. GTK has no
-  undo names, so the Mac's action names are not kept.
+  same applier in an idle and is answered whether it went in. Its steps
+  are named "Edit" (item 72 gave the port named steps; the applier takes
+  no name yet).
 - **For checks**: `lastNote()`, `pickerKind()`, `pickerRows()`,
   `pickerSelectedRow()`, `pickerRowWidget(row)`, `renameBoxVisible()`,
   `renameEntry()`; the scripted server's `${version:name-1}` makes an edit
   for an older version, and `${uri:/absolute/path}` names a file it does not
   have open.
 - **Not done here**: Organize Imports and the second server's merged code
-  actions (item 2.2), and the Mac's undo names.
+  actions (item 2.2).
 - **Traps**: the scripted server answers `codeAction/resolve` by its first
   matching rule, so a rule for one action needs a `when`, or it resolves
   every action without an edit (a command action too) into that edit.
@@ -5146,3 +5147,63 @@ File's busy check and the finishing mark.
   `meson.build`, so the package has it), else the checkout's own. The
   `control` suite installs with `--dir` into its scratch folder.
 - **Left of 3.1**: nothing of `split` (done with item 60).
+
+### 72. Undo: the core's history (done, November 2026; SESSION-DESIGN.md stage 2)
+
+GtkTextBuffer's undo (GtkTextHistory) is off for every document, and each
+`Document` records its edits into the core's `Model::UndoHistory`
+(`src/UndoHistory.{h,cpp}`, in code points), the history the Mac's editor
+moves onto next. What a user meets: the Mac's undo rules.
+- **Steps.** A user action (`gtk_text_buffer_begin_user_action`) is one
+  step. One nobody named is typing, which joins the step before while the
+  caret stays where that step left it, as NSTextView's typing does: a run
+  typed with spaces and Returns is one Ctrl+Z, where GtkTextHistory broke
+  it at words. A click, an arrow, an undo or redo (`mark-set` on the
+  insert mark, `noteSelection`) or `breakUndoCoalescing()` starts a new
+  one. Anything else names its step first and is never joined:
+  `MultiEdit::apply(..., stepName)` ("Edit" when none: Replace All,
+  Replace, Format Document, Revert Change, Replace in Folder, Snippet,
+  Completion, Typing at several carets), `Document::nameStep(buffer,
+  name)` before a user action (auto-close's pair, Preview Edit, Toggle
+  Line Comment, Toggle Task, Edit Cell, Change Color, Change Opacity,
+  Adjust Settings, Paste and Cut from the view's signals, Reload from
+  Disk). The first name a step is given stands, so a MultiEdit inside a
+  caller's named action keeps the caller's. Edits outside any user action
+  (code or a test calling `gtk_text_buffer_insert`, `set_text`) are one
+  step a turn of the main loop ("Edit"), closed in a high-priority idle
+  or when the next action, undo or `canUndo()` comes.
+- **Recording** is in `onInsertText`/`onDeleteRange`, before the buffer
+  changes (the deleted text is read then with `get_slice`), skipped while
+  filling, loading (`load_`), or putting an undo back (`replaying_`).
+  `fill()` (a file read, a message) and `finishLoading` start the history
+  over. A multi-range edit arrives last first (a delete and an insert per
+  range) and the core takes such a sequence whole in one pass.
+- **Undo** (`Document::undo`/`redo`, `UndoResult`): the core checks every
+  range still holds what the step left there, else refuses, changes
+  nothing, forgets the history and the editor rings the bell (logged on
+  stderr). Done, it emits the buffer's own "undo" or "redo" signal (the
+  snippet session and the completion waiting for its import listen for
+  them), puts the plan in as one `MultiEdit::apply` that is not recorded,
+  and selects what was selected before the step (after it, for a redo).
+  Reload from Disk (a clean tab following its file, and Reload chosen in
+  the question) is a step that keeps the ones before it.
+- **Keys and menu.** `Editor::onViewKey` takes Ctrl+Z, Ctrl+Shift+Z and
+  Ctrl+Y in the source and in a Markdown page (`undoInSource`) before the
+  view's bindings, which reach GTK's undo and do nothing now; the CSV
+  table and the LaTeX preview call the document's too. GtkTextView's own
+  right click Undo and Redo name "text.undo" and "text.redo", class
+  actions that ask GTK's undo; `Editor::adoptViewMenu` inserts a "text"
+  group of ours on the menu's popover (asked before the view's class
+  actions) once the view has made it, and relabels the items in the
+  view's own sections ("Undo Typing", `refreshUndoMenu`, run as a right
+  click or the menu key starts).
+- **Checks**: the core's `undo:*` (each rule, a fuzz against a plain
+  string in both units, the speed of a 20,000-range step) and the
+  `undo_history` suite (typing as one step and its caret, the run broken
+  by Left and Right, Ctrl+Y, a three-range MultiEdit, Reload from Disk
+  undone and redone with the step before it kept, the right click menu's
+  Undo Typing taking the run back). Suites that read GTK's undo
+  (`gtk_text_buffer_get_can_undo`) ask the `Document` now.
+- **Not done**: the workspace edit applier and the inline agent's Keep are
+  named "Edit"; drag and drop of text is typing; carets beyond the first
+  are not restored by an undo.

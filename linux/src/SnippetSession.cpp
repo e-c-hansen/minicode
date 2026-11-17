@@ -174,7 +174,7 @@ void SnippetSession::writeTransforms() {
         changes.push_back({r.start, r.length, utf16::toUtf8(r.text)});
     }
     applying_++;
-    MultiEdit::apply(buffer_, changes, false);
+    MultiEdit::apply(buffer_, changes, false, "Snippet");
     applying_--;
 }
 

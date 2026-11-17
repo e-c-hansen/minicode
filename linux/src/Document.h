@@ -7,7 +7,11 @@
 //
 // A document holds:
 //   - its source in a GtkTextBuffer of its own, over the tag table every
-//     document shares, with GTK's own undo, so each tab keeps its history;
+//     document shares, and its undo history (the core's UndoHistory, in
+//     place of GTK's buffer undo, which stays off), so each tab keeps its
+//     history: named steps, typing joined until the caret moves, a
+//     multi-range edit and Reload from Disk each one step, and an undo that
+//     checks its ranges still hold what it put there;
 //   - the incremental highlighter and its UTF-8 mirror, fed by every edit of
 //     the buffer whether it is on show or not;
 //   - whether it differs from the disk: the text as last read or saved is
@@ -43,6 +47,7 @@
 #include "ComparePanes.h"
 #include "EditorPage.h"
 #include "SyntaxHighlighter.h"
+#include "UndoHistory.h"
 
 #ifdef MINICODE_ENABLE_PDF
 #include "PdfView.h"
@@ -215,6 +220,38 @@ public:
     // The source (Text) or the message (Message). Media and Diff have an
     // empty one, which is what the view holds while they are shown.
     GtkTextBuffer* buffer() const { return buffer_; }
+    // The document whose source `buffer` is, or null.
+    static Document* of(GtkTextBuffer* buffer);
+
+    // ---- Undo (UndoHistory.h, SESSION-DESIGN.md stage 2)
+    // Every edit of the source is recorded: a user action
+    // (gtk_text_buffer_begin_user_action) is one step, and edits made
+    // outside one are one step per turn of the main loop. A user action no
+    // one names is typing, which joins the step before while the caret
+    // stays where that step left it; anything else names its step first
+    // (nameStep, MultiEdit::apply), never joins, and is never joined.
+    // GTK's own undo stays off: gtk_text_buffer_undo does nothing here.
+    enum class UndoResult { Done, Nothing, Refused };
+    bool canUndo();
+    bool canRedo();
+    // The step an undo or redo would take ("Typing", "Replace All", "" for
+    // none), for "Undo Typing".
+    std::string undoName();
+    std::string redoName();
+    // Takes the last step back (or puts it back) as one user action, the
+    // selection as it was, emitting the buffer's "undo" (or "redo") signal
+    // first for those who listen for it. Refused, changing nothing and
+    // forgetting every step, when a range no longer holds what the step
+    // left there; the caller rings the bell.
+    UndoResult undo();
+    UndoResult redo();
+    // The name of the step being recorded, or of the next one: a user
+    // action given a name is not typing. The first name given to a step
+    // stands, so an edit inside another's action keeps the outer name.
+    void nameStep(const char* name, bool coalesce = false);
+    static void nameStep(GtkTextBuffer* buffer, const char* name, bool coalesce = false);
+    // The next edit starts a step of its own (the Mac's breakUndoCoalescing).
+    void breakUndoCoalescing() { history_.breakCoalescing(); }
     // The rendered Markdown page, made on first use; never undone into.
     GtkTextBuffer* page();
     Markdown::Page& pageInfo() { return page_; }
@@ -420,6 +457,24 @@ private:
                            gpointer self);
     static void onBeginUserAction(GtkTextBuffer* buf, gpointer self);
     static void onEndUserAction(GtkTextBuffer* buf, gpointer self);
+    static void onMarkSet(GtkTextBuffer* buf, GtkTextIter* at, GtkTextMark* mark, gpointer self);
+
+    // Undo (see undo()): the history, in characters as GtkTextIter counts.
+    Model::UndoHistory history_{Model::Unit::CodePoint};
+    bool   stepOpen_ = false;      // a user action's step is being recorded
+    bool   stepNamed_ = false;     // and was given a name
+    bool   outsideOpen_ = false;   // edits outside a user action, this turn
+    guint  outsideIdle_ = 0;
+    bool   replaying_ = false;     // an undo or redo going in: not recorded
+    Model::UndoHistory::StepInfo pendingStep_;   // nameStep's, for the next step
+    gint64 pendingAt_ = 0;                       // when it was given (0: none)
+    bool recording() const;
+    Model::UndoHistory::Selection selection() const;
+    std::u16string slice(std::size_t from, std::size_t length) const;
+    void recordEdit(std::size_t at, std::u16string removed, std::u16string inserted);
+    void closeOutside();
+    void resetHistory();
+    UndoResult takeStep(bool undoing);
     static void onChanged(GtkTextBuffer* buf, gpointer self);
     static gboolean onIdleRetag(gpointer self);
 

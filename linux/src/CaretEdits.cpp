@@ -146,7 +146,7 @@ bool Carets::applyEdit(const MultiCaret::Edit& e, const CaretText* text) {
     const double t0 = threadCpuMs();
     applying_++;
     GdkClipboard* primary = takePrimary();
-    const bool ok = MultiEdit::apply(buffer_, changes, false);
+    const bool ok = MultiEdit::apply(buffer_, changes, false, "Typing");
     if (ok) set(e.carets);
     givePrimary(primary);
     applying_--;

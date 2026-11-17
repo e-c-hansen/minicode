@@ -481,7 +481,6 @@ void Document::beginLoading(const std::string& path) {
 #ifdef MINICODE_ENABLE_PDF
     latex_ = ext_ == "tex" || ext_ == "ltx" || ext_ == "latex";
 #endif
-    gtk_text_buffer_set_enable_undo(buffer_, FALSE);
     fill("");
     load_ = new Load;
     load_->placeholder = gtk_text_buffer_new(tags_->table);
@@ -597,7 +596,7 @@ void Document::finishLoading() {
     largeOff_ = job->large && job->optimizations;
     utf16Length_ = job->utf16;
     ++edits_;
-    gtk_text_buffer_set_enable_undo(buffer_, TRUE);
+    resetHistory();   // the pieces put in are the file, nothing to undo
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(buffer_, &start);
     gtk_text_buffer_place_cursor(buffer_, &start);
@@ -723,6 +722,7 @@ bool LargeFileUi::copyWhole(GtkTextView* v, bool cut) {
     gdk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(v)), all);
     g_free(all);
     if (cut && gtk_text_view_get_editable(v)) {
+        Document::nameStep(b, "Cut");
         gtk_text_buffer_begin_user_action(b);
         gtk_text_buffer_delete_selection(b, TRUE, TRUE);
         gtk_text_buffer_end_user_action(b);

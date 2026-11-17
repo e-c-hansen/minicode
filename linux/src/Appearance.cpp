@@ -395,6 +395,7 @@ void showSurfaceKeys(Editor* editor, const std::string& surface, const FileHost&
         const bool wasClean = !d->dirty();
         GtkTextIter end;
         gtk_text_buffer_get_end_iter(buffer, &end);
+        Document::nameStep(buffer, "Adjust Settings");
         gtk_text_buffer_begin_user_action(buffer);
         gtk_text_buffer_insert(buffer, &end, add.c_str(), (int)add.size());
         gtk_text_buffer_end_user_action(buffer);

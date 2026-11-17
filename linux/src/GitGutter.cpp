@@ -453,7 +453,7 @@ bool GitGutter::revertChange(int index) {
     c.start = (size_t)utf16::toCharOffset(buffer, e.start);
     c.length = (size_t)utf16::toCharOffset(buffer, e.start + e.length) - c.start;
     c.text = utf16::toUtf8(e.text);
-    const bool ok = MultiEdit::apply(b, {c});
+    const bool ok = MultiEdit::apply(b, {c}, true, "Revert Change");
     gtk_widget_grab_focus(view_);
     return ok;
 }

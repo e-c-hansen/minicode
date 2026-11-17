@@ -99,13 +99,47 @@ Editor::Editor() {
     GtkEventController* motion = gtk_event_controller_motion_new();
     g_signal_connect(motion, "motion", G_CALLBACK(onMotion), this);
     gtk_widget_add_controller(view_, motion);
-    // Return, noted for its indent (onViewKey), and Ctrl+Z and Ctrl+Shift+Z
-    // in a Markdown page, whose buffer is never undone into: they are the
-    // source buffer's undo there.
+    // Return, noted for its indent (onViewKey), and Ctrl+Z, Ctrl+Shift+Z and
+    // Ctrl+Y: the document's own undo (Document::undo), before the view's
+    // bindings reach GTK's, which stays off; in a Markdown page, whose
+    // buffer is never undone into, the source's.
     GtkEventController* keys = gtk_event_controller_key_new();
     gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
     g_signal_connect(keys, "key-pressed", G_CALLBACK(onViewKey), this);
     gtk_widget_add_controller(view_, keys);
+    // Paste and Cut are steps of their own, never joined to typing.
+    g_signal_connect(view_, "paste-clipboard", G_CALLBACK(+[](GtkTextView*, gpointer self) {
+        Editor* e = static_cast<Editor*>(self);
+        if (e->isSource()) e->active_->nameStep("Paste");
+    }), this);
+    g_signal_connect(view_, "cut-clipboard", G_CALLBACK(+[](GtkTextView*, gpointer self) {
+        Editor* e = static_cast<Editor*>(self);
+        if (e->isSource()) e->active_->nameStep("Cut");
+    }), this);
+    // The right click menu's Undo and Redo: GtkTextView's own items, whose
+    // "text.undo" and "text.redo" would ask GTK's undo, which is off. Our
+    // actions under the same names, inserted on the menu's popover (which
+    // asks its own groups before the view's), take them, and the items are
+    // named for the steps ("Undo Typing"), as a right click starts.
+    undoActions_ = g_simple_action_group_new();
+    for (const char* name : {"undo", "redo"}) {
+        GSimpleAction* a = g_simple_action_new(name, nullptr);
+        g_signal_connect(a, "activate", G_CALLBACK(+[](GSimpleAction* act, GVariant*, gpointer self) {
+            static_cast<Editor*>(self)->undoInSource(
+                std::string(g_action_get_name(G_ACTION(act))) == "redo");
+        }), this);
+        g_action_map_add_action(G_ACTION_MAP(undoActions_), G_ACTION(a));
+        g_object_unref(a);
+    }
+    refreshUndoMenu();
+    GtkGesture* menuPress = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(menuPress), GDK_BUTTON_SECONDARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(menuPress), GTK_PHASE_CAPTURE);
+    g_signal_connect(menuPress, "pressed", G_CALLBACK(+[](GtkGestureClick*, int, double, double,
+                                                          gpointer self) {
+        static_cast<Editor*>(self)->refreshUndoMenu();
+    }), this);
+    gtk_widget_add_controller(view_, GTK_EVENT_CONTROLLER(menuPress));
     // An input method composing text: auto-save waits for it (Persistence.h).
     g_signal_connect(view_, "preedit-changed", G_CALLBACK(+[](GtkTextView*, char* preedit,
                                                             gpointer self) {
@@ -322,6 +356,12 @@ Editor::~Editor() {
     }
     gtk_widget_insert_action_group(strip_->widget(), "tab", nullptr);
     g_object_unref(tabActions_);
+    if (undoIdle_) g_source_remove(undoIdle_);
+    undoIdle_ = 0;
+    for (const char* name : {"undo", "redo"})
+        g_signal_handlers_disconnect_by_data(g_action_map_lookup_action(G_ACTION_MAP(undoActions_), name),
+                                             this);
+    g_object_unref(undoActions_);
     delete strip_;
     delete otherStrip_;
     otherStrip_ = nullptr;
@@ -877,6 +917,7 @@ void Editor::showTable(Document* d) {
             if (!t) return;
             GtkTextBuffer* b = t->buffer();
             csvApplying_ = true;
+            Document::nameStep(b, "Edit Cell");
             gtk_text_buffer_begin_user_action(b);
             GtkTextIter a, e;
             gtk_text_buffer_get_iter_at_offset(b, &a, start);
@@ -890,11 +931,8 @@ void Editor::showTable(Document* d) {
         csv_->onUndo = [this](bool redo) {
             Document* t = csvDoc_;
             if (!t) return;
-            GtkTextBuffer* b = t->buffer();
-            if (redo ? gtk_text_buffer_get_can_redo(b) : gtk_text_buffer_get_can_undo(b)) {
-                if (redo) gtk_text_buffer_redo(b);
-                else gtk_text_buffer_undo(b);
-            }
+            if ((redo ? t->redo() : t->undo()) != Document::UndoResult::Done)
+                gtk_widget_error_bell(view_);
         };
     }
     GtkTextBuffer* b = d->buffer();
@@ -1802,6 +1840,7 @@ void Editor::setLineColor(int line, const Rgba& c) {
     const int curLine = gtk_text_iter_get_line(&cur);
     const int curCol = gtk_text_iter_get_line_offset(&cur);
 
+    Document::nameStep(buffer_, "Change Color");
     gtk_text_buffer_begin_user_action(buffer_);
     gtk_text_buffer_delete(buffer_, &ls, &le);
     gtk_text_buffer_insert(buffer_, &ls, out.c_str(), (int)out.size());
@@ -1846,6 +1885,7 @@ bool Editor::toggleComment() {
         (int)utf16::toCharOffset(text, r.replaceStart + r.replaceLength));
     const std::string replacement = utf16::toUtf8(r.replacement);
     // One user action, so one Ctrl+Z undoes the whole toggle.
+    Document::nameStep(buffer_, "Toggle Line Comment");
     gtk_text_buffer_begin_user_action(buffer_);
     gtk_text_buffer_delete(buffer_, &from, &to);
     gtk_text_buffer_insert(buffer_, &from, replacement.c_str(), (int)replacement.size());
@@ -2652,18 +2692,97 @@ void Editor::applyMarkdownSource(const std::string& source) {
 // the source, the preview's edits and typing alike, and shows the page again.
 void Editor::undoFromPage(bool redo) {
     Document* d = active_;
-    GtkTextBuffer* src = d->buffer();
-    if (!(redo ? gtk_text_buffer_get_can_redo(src) : gtk_text_buffer_get_can_undo(src))) {
+    GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    const double keep = gtk_adjustment_get_value(v);
+    if ((redo ? d->redo() : d->undo()) != Document::UndoResult::Done) {
         gtk_widget_error_bell(view_);
         return;
     }
-    GtkAdjustment* v = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
-    const double keep = gtk_adjustment_get_value(v);
-    if (redo) gtk_text_buffer_redo(src);
-    else gtk_text_buffer_undo(src);
     rerenderPreview();
     d->place().previewEntryV = keep;
     d->refreshTaskCount();
+}
+
+// Ctrl+Z and Ctrl+Shift+Z (Ctrl+Y) in the editor, and the menu's items: the
+// document's undo (Document.h), the bell when there is nothing to take or
+// the step no longer fits the text.
+void Editor::undoInSource(bool redo) {
+    if (inMarkdownPage()) {
+        undoFromPage(redo);
+        return;
+    }
+    if (!isSource() || !gtk_text_view_get_editable(GTK_TEXT_VIEW(view_))) return;
+    Document* d = active_;
+    if ((redo ? d->redo() : d->undo()) != Document::UndoResult::Done) {
+        gtk_widget_error_bell(view_);
+        return;
+    }
+    gtk_text_view_scroll_mark_onscreen(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(d->buffer()));
+}
+
+namespace {
+
+// The menu's items for `action` ("text.undo") get `label`, in every
+// section that is a GMenu (GtkTextView builds its sections as such).
+void relabel(GMenuModel* model, const char* action, const std::string& label) {
+    for (int i = 0; i < g_menu_model_get_n_items(model); i++) {
+        if (GMenuModel* section = g_menu_model_get_item_link(model, i, G_MENU_LINK_SECTION)) {
+            relabel(section, action, label);
+            g_object_unref(section);
+            continue;
+        }
+        char* act = nullptr;
+        char* now = nullptr;
+        g_menu_model_get_item_attribute(model, i, G_MENU_ATTRIBUTE_ACTION, "s", &act);
+        g_menu_model_get_item_attribute(model, i, G_MENU_ATTRIBUTE_LABEL, "s", &now);
+        if (act && strcmp(act, action) == 0 && G_IS_MENU(model) && (!now || label != now)) {
+            GMenuItem* item = g_menu_item_new_from_model(model, i);
+            g_menu_item_set_label(item, label.c_str());
+            g_menu_remove(G_MENU(model), i);
+            g_menu_insert_item(G_MENU(model), i, item);
+            g_object_unref(item);
+        }
+        g_free(act);
+        g_free(now);
+    }
+}
+
+}  // namespace
+
+void Editor::refreshUndoMenu() {
+    Document* d = isSource() || inMarkdownPage() ? active_ : nullptr;
+    const std::string undo = d ? d->undoName() : std::string();
+    const std::string redo = d ? d->redoName() : std::string();
+    undoLabel_ = undo.empty() ? "_Undo" : "_Undo " + undo;
+    redoLabel_ = redo.empty() ? "_Redo" : "_Redo " + redo;
+    g_simple_action_set_enabled(
+        G_SIMPLE_ACTION(g_action_map_lookup_action(G_ACTION_MAP(undoActions_), "undo")), !undo.empty());
+    g_simple_action_set_enabled(
+        G_SIMPLE_ACTION(g_action_map_lookup_action(G_ACTION_MAP(undoActions_), "redo")), !redo.empty());
+    adoptViewMenu();
+    // The view makes its popover at its first menu, after this press: once
+    // more when it has.
+    if (!undoIdle_)
+        undoIdle_ = g_idle_add([](gpointer self) -> gboolean {
+            Editor* e = static_cast<Editor*>(self);
+            e->undoIdle_ = 0;
+            e->adoptViewMenu();
+            return G_SOURCE_REMOVE;
+        }, this);
+}
+
+void Editor::adoptViewMenu() {
+    for (GtkWidget* c = gtk_widget_get_first_child(view_); c; c = gtk_widget_get_next_sibling(c)) {
+        if (!GTK_IS_POPOVER_MENU(c)) continue;
+        if (!g_object_get_data(G_OBJECT(c), "minicode-undo")) {
+            gtk_widget_insert_action_group(c, "text", G_ACTION_GROUP(undoActions_));
+            g_object_set_data(G_OBJECT(c), "minicode-undo", GINT_TO_POINTER(1));
+        }
+        if (GMenuModel* model = gtk_popover_menu_get_menu_model(GTK_POPOVER_MENU(c))) {
+            relabel(model, "text.undo", undoLabel_);
+            relabel(model, "text.redo", redoLabel_);
+        }
+    }
 }
 
 gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifierType mods,
@@ -2683,6 +2802,21 @@ gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifier
     if (self->snippets_ && self->snippets_->keyPressed(key, mods)) return TRUE;
     // Typing, Return, Tab, Backspace and Escape at several carets (Carets.h).
     if (self->carets_ && self->carets_->keyPressed(key, mods)) return TRUE;
+    // Undo and redo, in the source and in a Markdown page alike.
+    if ((mods & GDK_CONTROL_MASK) && !(mods & (GDK_ALT_MASK | GDK_SUPER_MASK)) &&
+        (self->isSource() || self->inMarkdownPage())) {
+        const bool shift = mods & GDK_SHIFT_MASK;
+        const bool z = key == GDK_KEY_z || key == GDK_KEY_Z;
+        const bool y = key == GDK_KEY_y || key == GDK_KEY_Y;
+        if (z || (y && !shift)) {
+            self->undoInSource(shift || y);
+            return TRUE;
+        }
+    }
+    // The keyboard's menu keys open the right click menu: its undo items
+    // named first.
+    if (key == GDK_KEY_Menu || (key == GDK_KEY_F10 && (mods & GDK_SHIFT_MASK)))
+        self->refreshUndoMenu();
     // Escape closes an agent's note over the text (AgentNotes.h).
     if (key == GDK_KEY_Escape && plain && self->notes_ && self->notes_->closeFromKey()) return TRUE;
     // Beside a fold (Folds.h): Backspace or Delete opens it, and Return at
@@ -2711,14 +2845,7 @@ gboolean Editor::onViewKey(GtkEventControllerKey*, guint key, guint, GdkModifier
             if (c == ':' || c == ')' || c == ']' || c == '}') self->typedKey_ = (char)c;
         }
     }
-    if (!self->inMarkdownPage()) return FALSE;
-    const bool ctrl = mods & GDK_CONTROL_MASK, shift = mods & GDK_SHIFT_MASK;
-    const bool undo = ctrl && !shift && (key == GDK_KEY_z || key == GDK_KEY_Z);
-    const bool redo = ctrl && ((shift && (key == GDK_KEY_z || key == GDK_KEY_Z)) ||
-                               (!shift && (key == GDK_KEY_y || key == GDK_KEY_Y)));
-    if (!undo && !redo) return FALSE;
-    self->undoFromPage(redo);
-    return TRUE;
+    return FALSE;
 }
 
 // ---------------------------------------------------------------- tasks
@@ -2750,6 +2877,7 @@ void Editor::applyTaskEdit(const std::u16string& text, std::size_t replaceStart,
         (int)(base + utf16::toCharOffset(text, replaceStart + replaceLength)));
     const std::string bytes = utf16::toUtf8(replacement);
     // One user action, so one Ctrl+Z takes it back.
+    Document::nameStep(buffer_, "Toggle Task");
     gtk_text_buffer_begin_user_action(buffer_);
     gtk_text_buffer_delete(buffer_, &from, &to);
     gtk_text_buffer_insert(buffer_, &from, bytes.c_str(), (int)bytes.size());

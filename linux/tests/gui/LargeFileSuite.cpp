@@ -415,7 +415,7 @@ MC_GUI_SUITE(large_file) {
         GCHECK_TIME(again, kStallBoundMs, "switching from the 25 MB tab to a tab shown before");
         GCHECK_TIME(back2, kStallBoundMs, "switching back to the 25 MB tab again");
         GCHECK(caret() == gCaretBefore);
-        GCHECK(gtk_text_buffer_get_can_undo(buf()));
+        GCHECK(doc()->canUndo());
         gWaitFrom = MCGuiNowMs();
     });
     // GTK lays the 470,000 lines out for 10 to 20 s after the tab comes back

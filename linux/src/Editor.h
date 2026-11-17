@@ -97,6 +97,16 @@ public:
     // The GtkTextView, and the buffer it shows: the active document's source,
     // its Markdown page, a message, or the empty editor with no tab open.
     GtkWidget*     textView() const { return view_; }
+    // Ctrl+Z (redo: Ctrl+Shift+Z, Ctrl+Y) on what the view shows: the
+    // active document's undo (Document::undo), its source's from a Markdown
+    // page; the bell when there is nothing to take back.
+    void undoInSource(bool redo);
+    // The right click menu's Undo and Redo, GtkTextView's own items, made
+    // to take the document's undo and named for its steps ("Undo Typing"):
+    // a right click runs this first. undoLabel() is the name it gives
+    // ("_Undo Typing"; redo for Redo).
+    void refreshUndoMenu();
+    const std::string& undoLabel(bool redo) const { return redo ? redoLabel_ : undoLabel_; }
     GtkTextBuffer* buffer() const { return buffer_; }
     // The view's own drawing passes, the ruler and the line-number gutter
     // (CodeView.h).
@@ -543,6 +553,9 @@ private:
     void applyMarkdownSource(const std::string& source);
     // Ctrl+Z, Ctrl+Shift+Z in the Markdown page: the source buffer's undo.
     void undoFromPage(bool redo);
+    std::string undoLabel_, redoLabel_;   // the menu's, as last set
+    guint undoIdle_ = 0;
+    void adoptViewMenu();   // our actions and labels on the view's menu
     // A click on a task's box in the preview: that one byte of the source
     // flipped (MarkdownTasks::toggleBox), as a preview edit.
     void toggleTaskBox(int line);
@@ -688,6 +701,7 @@ private:
     uint64_t               stamp_ = 0;           // for Document::lastUsed
     EditorTabs::ClosedTabs closed_;
     GSimpleActionGroup*    tabActions_ = nullptr;   // "tab.", the tab menu's
+    GSimpleActionGroup*    undoActions_ = nullptr;  // "text." on the view's menu: undo and redo
 
     std::string settingsPath_;
     Settings    settings_;    // for tag colors and swatch text contrast

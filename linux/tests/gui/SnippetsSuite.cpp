@@ -57,8 +57,9 @@ void askAfter(const std::string& word) {
 // `still` in the text when it is given.
 int undoToOriginal(const std::string& still = "") {
     int undos = 0;
-    while (text() != kOriginal && undos < 20 && gtk_text_buffer_get_can_undo(buf())) {
-        gtk_text_buffer_undo(buf());
+    Document* d = Document::of(buf());
+    while (text() != kOriginal && undos < 20 && d && d->canUndo()) {
+        d->undo();
         undos++;
         if (text() != kOriginal && !still.empty())
             GCHECK(text().find(still) != std::string::npos);
