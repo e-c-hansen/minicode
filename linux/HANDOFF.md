@@ -5567,3 +5567,18 @@ toggle, a write from outside keeping the scroll, a link to another file, the
 remembered answer's setting and `off`, an unnamed iframe to a local file
 (its text shows, nothing opens), and a script's `location =` (opened as a
 link, the page kept).
+
+86. **The note's box measured at no width** (the `notes` suite's flake in full
+    runs, 2026-11-17). `AgentNotes::reposition` measured the box's height with
+    no width (-1). The wrapping body label then answers for whatever width it
+    last had, so the same one-line note measured 65 to 118 pixels across a
+    run while it is 55 tall. A note whose line sits near the top of the view
+    (the scroll puts it a third of the way down) was taken for too tall to
+    fit above it and was placed below its last line, or, near the limit, too
+    high; `notes` waits for the box above the first line and failed in two
+    full runs of three. It now measures the natural width first and the height
+    at that width. Reproduced with the first 74 suites in suites.txt order
+    (2 of 4 runs failed with `y=123 h=418 margin=175`, the box 118 tall),
+    and 3 of 3 passed after. Not settled: `git_sync`'s
+    `autoFetchTickAt(t + 599)` failure, which showed once in the review's
+    first runs and not in any of these seven full runs.

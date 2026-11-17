@@ -229,8 +229,13 @@ void AgentNotes::reposition() {
     int x, y1, y2;
     gtk_text_view_buffer_to_window_coords(view, GTK_TEXT_WINDOW_WIDGET, r1.x, r1.y, &x, &y1);
     gtk_text_view_buffer_to_window_coords(view, GTK_TEXT_WINDOW_WIDGET, r2.x, r2.y, &x, &y2);
-    int minH = 0, natH = 0;
-    gtk_widget_measure(box_, GTK_ORIENTATION_VERTICAL, -1, &minH, &natH, nullptr, nullptr);
+    // The height at the width the box takes (its natural one, halign start).
+    // Measured with no width (-1), the wrapping body label answers for
+    // whatever width it last had, and the box was taken for twice as tall as
+    // it is: it floated away above the line, or fell below the last one.
+    int minW = 0, natW = 0, minH = 0, natH = 0;
+    gtk_widget_measure(box_, GTK_ORIENTATION_HORIZONTAL, -1, &minW, &natW, nullptr, nullptr);
+    gtk_widget_measure(box_, GTK_ORIENTATION_VERTICAL, natW, &minH, &natH, nullptr, nullptr);
     int top = y1 - natH - 4;
     if (top < 2) top = y2 + r2.height + 4;
     const int viewH = gtk_widget_get_height(GTK_WIDGET(view));
