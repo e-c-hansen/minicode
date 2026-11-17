@@ -61,6 +61,7 @@ const std::vector<Action>& actions() {
         {"editor.action.commentLine", "win.togglecomment", true},
         {"minicode.markdown.toggleTask", "win.toggletask", false},
         {"editor.action.formatDocument", "win.formatdocument", false},
+        {"minicode.toggleFormatOnSave", "app.formatonsave", false},
         {"minicode.sortLines", "win.sortlines", false},
         {"minicode.sortKeepSortedBlocks", "win.fixkeepsorted", false},
         {"editor.action.triggerSuggest", "win.complete", true},

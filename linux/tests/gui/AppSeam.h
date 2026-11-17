@@ -28,6 +28,7 @@ class WindowLayout;
 class NavHistoryUi;
 class ConsentBar;
 class Formatting;
+class FormatOffer;
 class GitGutter;
 class TreeGitColors;
 class ProblemsPanel;
@@ -66,6 +67,7 @@ struct MCGuiAppWindow {
     NavHistoryUi* nav = nullptr;           // Go Back and Go Forward's history
     ConsentBar* consentBar = nullptr;      // the folder's own tools' question (2.3)
     Formatting* format = nullptr;          // Format Document (2.4)
+    FormatOffer* formatOffer = nullptr;    // the bar offering format on save
     ProblemsPanel* problems = nullptr;     // the Problems list and its counts (2.2)
     GitGutter*  changeBars = nullptr;      // the editor's change bars (2.10)
     TreeGitColors* treeColors = nullptr;   // the tree's colors (2.10)

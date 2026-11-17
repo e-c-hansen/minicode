@@ -425,6 +425,29 @@ static void testFolderTools() {
         CHECK(FolderTools::projectCodeTooltip("Q.", "Edit").find("Q. Until then") == 0);
     }
 
+    GROUP("format-run:on-save-offer");
+    {
+        // The Mac's MCFindFormatOnSaveOffer: the project's configuration
+        // chose the formatter and it is installed.
+        FakeMachine m;
+        m.files = {{"/w/pyproject.toml", "[tool.ruff]\nline-length = 88\n"}};
+        const FormatRun::Env none = m.env();
+        CHECK(FormatRun::onSaveOffer("/w/a.py", "/w", "", none).empty());   // not installed
+        m.runnable = {"/usr/bin/ruff"};
+        m.onPath = {{"ruff", "/usr/bin/ruff"}};
+        const std::string q = FormatRun::onSaveOffer("/w/a.py", "/w", "", m.env());
+        CHECK(q == "This project formats Python files with ruff, set up in pyproject.toml. "
+                   "Format them each time you save?");
+        // Nothing the project chose: Google's default is no offer.
+        FakeMachine plain;
+        plain.runnable = {"/usr/bin/pyink"};
+        plain.onPath = {{"pyink", "/usr/bin/pyink"}};
+        CHECK(FormatRun::onSaveOffer("/w/a.py", "/w", "", plain.env()).empty());
+        // The settings naming a command is a choice made already.
+        CHECK(FormatRun::onSaveOffer("/w/a.py", "/w", "/usr/bin/ruff format -", m.env()).empty());
+        CHECK(FormatRun::onSaveOffer("/w/notes.txt", "/w", "", m.env()).empty());
+    }
+
     GROUP("folder-tools:file");
     {
         std::map<std::string, std::string> answers = {{"/w/a", "allow"}, {"/w/b \"q\"", "deny"}};
