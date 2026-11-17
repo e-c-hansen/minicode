@@ -78,6 +78,10 @@
 // EditorController+StatusBar.mm
 @interface EditorController (StatusBar)
 - (void)toggleHints:(id)sender;       // Shift+Cmd+H shortcut-hints overlay
+// While the hints show, a key without Command or Control types into their
+// search box wherever the keyboard is (the key monitor asks first); YES
+// when the box took it.
+- (BOOL)hintsPanelTakesKeyDown:(NSEvent *)event;
 @end
 
 // EditorController+Panels.mm

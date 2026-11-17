@@ -224,7 +224,8 @@ goes here first, with tests; the GUI only displays it.
   (the review view's rows, and what staging, unstaging or discarding one
   block or a few lines makes of the file), `MergeConflicts` (git's
   conflict blocks, and what keeping a side or both makes of the text).
-- `CommandPalette` (matching, modes, Quick Open, symbol rows), `SymbolOutline`
+- `CommandPalette` (matching, modes, Quick Open, symbol rows), `HintsSearch.h`
+  (the shortcut hints' search, header only), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
   line's parsing), `SideBySide` (diff rows), `PageCheck` (agents checking
@@ -274,7 +275,7 @@ goes here first, with tests; the GUI only displays it.
   one tab), `GitGutter` (change bars), `EditorConflicts` (merge conflicts
   in the editor), `TreeDetails`,
   `FormatRunner`, `BackupStore`,
-  `PalettePanel`, `Navigation`.
+  `PalettePanel`, `Navigation`, `HintsSearchBox` (the hints panel's search box).
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
   `ClaudeHooksOffer` (the waiting dots' hooks, offered in the app),
@@ -468,7 +469,18 @@ container (PanelHost, laid out by hand in layoutContainer)
   stops come from the drawn widths of each column's keys and labels
   (`PageMeasure::layoutHints`): two columns when they fit the window, else
   one, never a row broken mid-row; it scales with the editor's zoom and
-  scrolls when taller than the window (2026-11-08). Prefer
+  scrolls when taller than the window (2026-11-08). **Its search box**
+  (2026-11-16, `HintsSearchBox.{h,mm}`, core `HintsSearch.h`,
+  `hints:search`): while the panel shows, the key monitor asks
+  `hintsPanelTakesKeyDown:` before `MCKeymapHandleKeyDown`, and every key
+  without Command or Control, not a function or Menu key, goes to the box
+  (sent to its field editor's `keyDown:`, the keyboard taken at the first,
+  given back on close; not while the palette is open): no command or view
+  sees it, so Option+Z types. Esc clears, then closes; Return and Tab do
+  nothing. A shortcut (key, label, state; a pair is two) matches when every
+  word is found in it, keys also by name ("cmd", "shift+cmd+h"); matches
+  are marked (`MCHintsMatchAttribute`) and the rest dimmed
+  (`MCHintsDimmedAttribute`), never hidden, so the layout stays. Prefer
   menu items with key equivalents to the key monitor: they work in every pane
   and for shifted variants.
 - No third-party dependencies, ever; new capabilities use system frameworks.

@@ -4,6 +4,10 @@
 // the window at every size and zoom: two columns of tab stops when they
 // fit side by side, else one, never a row broken in the middle, and a
 // panel no taller than the window's room that scrolls to its last row.
+// Its search box takes every key without Command or Control while it
+// shows (never the editor or the key monitor), marks what it finds, dims
+// the rest, matches keys by name ("shift+cmd+h"), and Esc clears it, then
+// closes the panel, the keyboard going back to the editor.
 //
 // `make guitest SUITES=markdown_width`: a rendered Markdown page's lines
 // keep to markdown.max-width at the zoom, centered in a wider pane, its
@@ -21,6 +25,8 @@
 #import "Appearance.h"
 #import "ControlServer.h"
 #import "EditorFont.h"
+#import "HintsSearchBox.h"
+#import <Carbon/Carbon.h>
 #import "MarkdownSidePreview.h"
 #include "PageMeasure.h"
 #include "Settings.h"
@@ -103,6 +109,48 @@ void CheckHints(EditorController *c, NSString *name, NSInteger columns) {
     GCHECK(tv.textContainerOrigin.x + NSMaxX(used) <= NSWidth(scroll.contentView.bounds) + 0.5);
     [tv scrollRangeToVisible:NSMakeRange(0, 0)];
     MCGuiSnapshot(c.window.contentView, [@"hints_" stringByAppendingString:name]);
+}
+
+// The texts of the hints marked as found, in order.
+NSArray<NSString *> *Found(NSTextView *tv) {
+    NSMutableArray *out = [NSMutableArray array];
+    NSTextStorage *ts = tv.textStorage;
+    [ts enumerateAttribute:MCHintsMatchAttribute inRange:NSMakeRange(0, ts.length) options:0
+                usingBlock:^(id v, NSRange r, BOOL *) {
+        if (v) [out addObject:[ts.string substringWithRange:r]];
+    }];
+    return out;
+}
+
+// Whether the text at `what`'s first place is drawn dimmed (not found).
+BOOL Dimmed(NSTextView *tv, NSString *what) {
+    NSRange r = [tv.string rangeOfString:what];
+    if (r.location == NSNotFound) return NO;
+    return [tv.textStorage attribute:MCHintsDimmedAttribute atIndex:r.location
+                      effectiveRange:NULL] != nil;
+}
+
+NSUInteger DimmedCount(NSTextView *tv) {
+    __block NSUInteger n = 0;
+    NSTextStorage *ts = tv.textStorage;
+    [ts enumerateAttribute:MCHintsDimmedAttribute inRange:NSMakeRange(0, ts.length) options:0
+                usingBlock:^(id v, NSRange, BOOL *) { if (v) n++; }];
+    return n;
+}
+
+// Types `text` over whatever the box holds, as its field editor would.
+void TypeInBox(MCHintsSearchBox *box, NSString *text) {
+    NSTextView *fe = (NSTextView *)box.field.currentEditor;
+    GCHECK(fe != nil);
+    [fe selectAll:nil];
+    [fe insertText:text replacementRange:fe.selectedRange];
+}
+
+NSEvent *Key(NSWindow *w, unsigned short code, NSEventModifierFlags flags, NSString *chars) {
+    return [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:flags
+                           timestamp:NSProcessInfo.processInfo.systemUptime
+                        windowNumber:w.windowNumber context:nil characters:chars
+         charactersIgnoringModifiers:chars isARepeat:NO keyCode:code];
 }
 
 // The tab stops of the hints' first shortcut row.
@@ -198,6 +246,104 @@ MC_GUI_SUITE(hints_panel) {
         // Aligned by stops, never spaces: no run of two spaces in a row.
         GCHECK(![tv.string containsString:@"  ("] || [tv.string containsString:@"(also"]);
         GCHECK([tv.string rangeOfString:@"\t"].location != NSNotFound);
+    });
+    NSString *file = MCGuiProjectFile(@"hints-search.txt");
+    MCGuiStep(@"a key with the hints open goes into their box, not the editor", ^{
+        [c toggleHints:nil];   // closed while a file opens
+        MCGuiWriteFile(file, @"hello\n");
+        GCHECK([c showFile:file]);
+        NSTextView *ed = [c valueForKey:@"textView"];
+        [c.window makeFirstResponder:ed];
+        [c toggleHints:nil];
+        GCHECK(c.hintsVisible);
+        MCHintsSearchBox *box = c.hintsSearchBox;
+        GCHECK(box != nil && box.field.superview == [c valueForKey:@"hintsPanel"]);
+        GCHECK(!box.hasKeyboard && box.query.length == 0);
+        // The box sits at the panel's top, inside it, above the text.
+        NSView *panel = [c valueForKey:@"hintsPanel"];
+        NSScrollView *scroll = [c valueForKey:@"hintsScroll"];
+        GCHECK(NSContainsRect(panel.bounds, box.field.frame));
+        GCHECK(NSMinY(box.field.frame) >= NSMaxY(scroll.frame) - 0.5);
+        // A letter, then Option+Z (Word Wrap's key elsewhere): both the box's.
+        MCGuiSendKeyToApp(c.window, kVK_ANSI_S, 0, @"s", @"s");
+        MCGuiSendKeyToApp(c.window, kVK_ANSI_Z, NSEventModifierFlagOption, @"Ω", @"z");
+        MCGuiNote(@"box after two keys: \"%@\", keyboard in box %d", box.query, box.hasKeyboard);
+        GCHECK(box.hasKeyboard);
+        GCHECK([ed.string isEqualToString:@"hello\n"]);
+        GCHECK(c.hintsVisible);
+        // Menu keys, Control keys and function keys stay theirs.
+        GCHECK(![c hintsPanelTakesKeyDown:Key(c.window, kVK_ANSI_S, NSEventModifierFlagCommand, @"s")]);
+        GCHECK(![c hintsPanelTakesKeyDown:Key(c.window, kVK_ANSI_G, NSEventModifierFlagControl, @"g")]);
+        unichar f2 = NSF2FunctionKey;
+        GCHECK(![c hintsPanelTakesKeyDown:Key(c.window, kVK_F2, NSEventModifierFlagFunction,
+                                              [NSString stringWithCharacters:&f2 length:1])]);
+    });
+    MCGuiStep(@"what the box finds is marked, the rest dimmed, the layout kept", ^{
+        MCHintsSearchBox *box = c.hintsSearchBox;
+        NSTextView *tv = [c valueForKey:@"hintsTextView"];
+        NSString *before = [tv.string copy];
+        TypeInBox(box, @"SAVE");
+        GCHECK([box.query isEqualToString:@"SAVE"]);
+        NSArray *found = Found(tv);
+        MCGuiNote(@"found for SAVE: %@", found);
+        GCHECK(found.count >= 2);   // Save, Save all
+        for (NSString *f in found) GCHECK([f.lowercaseString isEqualToString:@"save"]);
+        GCHECK(!Dimmed(tv, @"Save all"));
+        GCHECK(Dimmed(tv, @"Undo"));
+        GCHECK(Dimmed(tv, @"TABS"));   // a heading with nothing found under it
+        GCHECK(!Dimmed(tv, @"EDITING"));
+        GCHECK([tv.string isEqualToString:before]);   // nothing hidden, nothing moved
+        CheckHints(c, @"search_save", 2);
+        // Keys by name and as combinations, modifiers in any order.
+        TypeInBox(box, @"cmd+shift+h");
+        found = Found(tv);
+        MCGuiNote(@"found for cmd+shift+h: %@", found);
+        GCHECK([found containsObject:@"⇧⌘H"]);
+        GCHECK(!Dimmed(tv, @"Hide these hints"));
+        GCHECK(Dimmed(tv, @"New file"));
+        TypeInBox(box, @"shift");
+        GCHECK([Found(tv) containsObject:@"⇧"]);
+        // Nothing found: everything dims, the text stays.
+        TypeInBox(box, @"zzqx");
+        GCHECK(Found(tv).count == 0 && DimmedCount(tv) > 20);
+        MCGuiSnapshot(c.window.contentView, @"hints_search_nothing");
+        // Backspace edits the box.
+        TypeInBox(box, @"undo");
+        [(NSTextView *)box.field.currentEditor deleteBackward:nil];
+        GCHECK([box.query isEqualToString:@"und"]);
+        GCHECK([Found(tv) containsObject:@"Und"]);
+        MCGuiSnapshot(c.window.contentView, @"hints_search_und");
+    });
+    MCGuiStep(@"Esc clears the box, then closes the panel, the keyboard back in the editor", ^{
+        MCHintsSearchBox *box = c.hintsSearchBox;
+        NSTextView *tv = [c valueForKey:@"hintsTextView"];
+        MCGuiSendKeyToApp(c.window, kVK_Escape, 0, @"\x1b", @"\x1b");
+        GCHECK(box.query.length == 0);
+        GCHECK(c.hintsVisible);
+        GCHECK(Found(tv).count == 0 && DimmedCount(tv) == 0);
+        MCGuiSendKeyToApp(c.window, kVK_Escape, 0, @"\x1b", @"\x1b");
+        GCHECK(!c.hintsVisible);
+        GCHECK([[c valueForKey:@"hintsPanel"] isHidden]);
+        GCHECK(!box.hasKeyboard);
+        GCHECK(c.window.firstResponder == [c valueForKey:@"textView"]);
+        GCHECK([((NSTextView *)[c valueForKey:@"textView"]).string isEqualToString:@"hello\n"]);
+    });
+    MCGuiStep(@"a click puts the keyboard in the box; Shift+Cmd+H closes the panel and empties it", ^{
+        [c toggleHints:nil];
+        MCHintsSearchBox *box = c.hintsSearchBox;
+        GCHECK(box.query.length == 0);
+        // As a click does (a mouse down never reaches an offscreen view).
+        GCHECK([c.window makeFirstResponder:box.field]);
+        GCHECK(box.hasKeyboard);
+        TypeInBox(box, @"tab");
+        GCHECK(Found([c valueForKey:@"hintsTextView"]).count > 0);
+        GCHECK(MCGuiPerformMenuKey(c.window, kVK_ANSI_H,
+                                   NSEventModifierFlagShift | NSEventModifierFlagCommand, @"H", @"h"));
+        GCHECK(!c.hintsVisible);
+        GCHECK(box.query.length == 0);
+        GCHECK(c.window.firstResponder == [c valueForKey:@"textView"]);
+        [c toggleHints:nil];   // open again for the steps below
+        GCHECK(c.hintsVisible && box.query.length == 0);
     });
     MCGuiStep(@"short: the panel stops at the window's room and scrolls", ^{
         Resize(c, 1400, 500);

@@ -65,6 +65,7 @@
 #include "FindHistory.h"
 #include "FindRules.h"
 #include "PageMeasure.h"
+#include "HintsSearch.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -4822,6 +4823,72 @@ void testSettings() {
         // A heading wider than everything sets the width.
         HintRow wide; wide.heading = true; wide.key1 = 2000;
         CHECK(PageMeasure::layoutHints({wide, pair(1, 1, 1, 1)}, 5000, 10, 24).textWidth == 2000);
+    }
+
+    GROUP("hints:search");
+    {
+        using HintsSearch::Field;
+        // A shortcut as the panel shows it: key, label.
+        const std::vector<Field> save = {{u"⌘S", true}, {u"Save", false}};
+        const std::vector<Field> hide = {{u"⇧⌘H", true}, {u"Hide these hints", false}};
+        const std::vector<Field> term = {{u"⇧⌘T", true}, {u"Terminal", false},
+                                         {u"open", false}};
+        const std::vector<Field> line = {{u"⌥↓ ⌘↓", true},
+                                         {u"Move line down", false}};
+        // An empty query (or only spaces) finds everything and marks nothing.
+        HintsSearch::Match all = HintsSearch::match(u"", save);
+        CHECK(all.matches && all.spans.empty());
+        CHECK(HintsSearch::match(u"   ", save).matches);
+        // Case does not matter; the place found is marked in its field.
+        HintsSearch::Match m = HintsSearch::match(u"SAV", save);
+        CHECK(m.matches && m.spans.size() == 1);
+        CHECK(m.spans.size() == 1 && m.spans[0].field == 1 && m.spans[0].start == 0 &&
+              m.spans[0].length == 3);
+        CHECK(!HintsSearch::match(u"open", save).matches);
+        CHECK(HintsSearch::match(u"open", save).spans.empty());
+        // Every place, in labels and keys; a state counts as text.
+        m = HintsSearch::match(u"h", hide);
+        CHECK(m.matches && m.spans.size() == 4);   // the key's H, Hide, these, hints
+        CHECK(HintsSearch::match(u"open", term).matches);
+        // Every word must be found, anywhere in the shortcut.
+        CHECK(HintsSearch::match(u"move down", line).matches);
+        CHECK(!HintsSearch::match(u"move up", line).matches);
+        // Keys by name: cmd, command, shift, option, alt, ctrl, and the glyph itself.
+        m = HintsSearch::match(u"cmd", save);
+        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].field == 0 && m.spans[0].length == 1);
+        CHECK(HintsSearch::match(u"Command", save).matches);
+        CHECK(HintsSearch::match(u"⌘", save).matches);
+        CHECK(HintsSearch::match(u"shift", hide).matches);
+        CHECK(!HintsSearch::match(u"shift", save).matches);
+        CHECK(HintsSearch::match(u"alt", line).matches && HintsSearch::match(u"opt", line).matches);
+        CHECK(HintsSearch::match(u"down", line).matches);
+        m = HintsSearch::match(u"cmd", line);
+        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].start == 3);
+        // A name's first three letters count; two are only text.
+        CHECK(HintsSearch::match(u"shi", hide).matches);
+        CHECK(!HintsSearch::match(u"sh", hide).matches);
+        // A name never matches a label as a glyph: "cmd" in a label is text.
+        CHECK(!HintsSearch::match(u"cmd", {{u"Command palette", false}}).matches);
+        CHECK(HintsSearch::match(u"comm", {{u"Command palette", false}}).matches);
+        // Combinations, modifiers in any order, the letter's case ignored.
+        CHECK(HintsSearch::match(u"cmd+shift+h", hide).matches);
+        CHECK(HintsSearch::match(u"Shift+Cmd+H", hide).matches);
+        CHECK(HintsSearch::match(u"cmd+h", hide).matches);   // ⌘H inside ⇧⌘H
+        CHECK(!HintsSearch::match(u"cmd+shift+s", save).matches);
+        CHECK(HintsSearch::match(u"cmd+s", save).matches);
+        CHECK(HintsSearch::match(u"opt+down", line).matches);
+        CHECK(HintsSearch::combination(u"ctrl+alt+shift+cmd+k") == u"⌃⌥⇧⌘k");
+        CHECK(HintsSearch::combination(u"cmd++") == u"⌘+");
+        CHECK(HintsSearch::combination(u"cmd+delete") == u"⌘⌫");
+        CHECK(HintsSearch::combination(u"a+b").empty());
+        CHECK(HintsSearch::combination(u"+").empty());
+        // Overlapping finds merge into one mark.
+        m = HintsSearch::match(u"hint hints", hide);
+        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].start == 11 &&
+              m.spans[0].length == 5);
+        // Spans come sorted by field, then place.
+        m = HintsSearch::match(u"line move", line);
+        CHECK(m.spans.size() == 2 && m.spans[0].start < m.spans[1].start);
     }
 
     GROUP("settings:keep-sorted");
