@@ -80,7 +80,12 @@ goes here first, with tests; the GUI only displays it.
   and handed to the document's `Listener`; steps and coalescing decided
   by the renderer, which knows the keys; waits that are a round trip
   through the host's queue: `settle`, `undo`, the undo state; and on
-  request a copy of the host's text kept from its own edits). The wire
+  request a copy of the host's text kept from its own edits), and
+  `SessionServer` (stage 6: a headless host for one folder on a Unix
+  socket, `HostServer`, one per folder by a lock file, ending after its
+  idle time with no renderer and nothing unsaved or running; `HostLink`, a
+  renderer's connection; `dumpSession`, `minicode attach --dump`'s text;
+  `hostserver:*`; docs/notes/session-host.md). The wire
   unit is the renderer's (Hello says which); the host converts at the
   edge. A UTF-16 renderer must never split a surrogate pair (a renderer
   counting code points could not follow). `host:*`: the edit loop, undo

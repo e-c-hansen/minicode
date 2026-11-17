@@ -369,7 +369,8 @@ const std::vector<std::string>& subcommands() {
     static const std::vector<std::string> words = {"open", "window", "browse", "term",
                                                    "diff", "split", "state", "selection",
                                                    "term-output", "tour", "procs", "notify",
-                                                   "hooks", "page", "open-url", "help"};
+                                                   "hooks", "page", "open-url", "host",
+                                                   "attach", "help"};
     return words;
 }
 
@@ -495,6 +496,18 @@ const Help kHelp[] = {
      "    from MINICODE_TERMINAL_ID and MINICODE_PID, which every minicode\n"
      "    terminal has. With no minicode, or outside one, it does nothing and\n"
      "    exits 0, so a hook never fails because of it.\n"},
+    {"host",
+     "minicode host --folder DIR [--idle-minutes N]\n"
+     "    Runs the session's host for a folder with no window, until it has had\n"
+     "    no renderer for N minutes (10 by default) and nothing in it is\n"
+     "    unsaved or running. Renderers attach and detach over its socket;\n"
+     "    documents and terminals stay with the host between them. A second\n"
+     "    host for the same folder finds the first and exits.\n"},
+    {"attach",
+     "minicode attach --folder DIR --dump\n"
+     "    Prints the session a folder's host holds (its documents and\n"
+     "    terminals' screens) and detaches, leaving everything running.\n"
+     "    Exits 3 when no host serves the folder.\n"},
     {"hooks",
      "minicode hooks --print\n"
      "minicode hooks --install\n"
@@ -605,6 +618,37 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
         return c;
     }
     c.cmd = sub;
+    if (sub == "host" || sub == "attach") {
+        // The session's host (SessionServer.h): run by the command line
+        // itself, no minicode asked.
+        for (size_t i = 0; i < a.size() && c.error.empty(); i++) {
+            const std::string& w = a[i];
+            std::string v;
+            if (w == "-h" || w == "--help") {
+                c.help = true;
+                c.helpTopic = sub;
+                return c;
+            }
+            if (takeValue(a, i, "folder", v, c.error)) {
+                if (c.error.empty()) c.args.set("folder", absolutePath(v, cwd, home));
+            } else if (sub == "host" && takeValue(a, i, "idle-minutes", v, c.error)) {
+                char* end = nullptr;
+                const double m = v.empty() ? -1 : std::strtod(v.c_str(), &end);
+                if (c.error.empty() && (m < 0 || !end || *end))
+                    c.error = "--idle-minutes needs a number of minutes";
+                c.args.set("idle_minutes", m);
+            } else if (sub == "attach" && w == "--dump") {
+                c.args.set("dump", true);
+            } else {
+                c.error = "unknown " + std::string(startsWith(w, "-") ? "option " : "argument ") + w +
+                          " for " + sub;
+            }
+        }
+        if (c.error.empty() && !c.args.has("folder")) c.error = sub + " needs --folder";
+        if (c.error.empty() && sub == "attach" && !c.args.has("dump"))
+            c.error = "attach needs --dump (the only renderer it has so far)";
+        return c;
+    }
     const CommandSpec* spec = findCommand(sub);
     auto accepts = [&](const char* name) {
         if (!spec) return false;   // hooks: the command line's own

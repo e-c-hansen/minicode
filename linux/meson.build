@@ -47,6 +47,7 @@ core_sources = [
   core_dir / 'SessionProtocol.cpp',
   core_dir / 'SessionHost.cpp',
   core_dir / 'SessionClient.cpp',
+  core_dir / 'SessionServer.cpp',
   # The terminals' ptys belong to the host too (stage 5): a pty per shell,
   # and a headless screen with scrollback fed its bytes, whose marks give
   # the commands and whose replay rebuilds it for a renderer.
