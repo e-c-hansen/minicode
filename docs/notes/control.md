@@ -19,6 +19,11 @@ found through that list.
   answer is out), writes are non-blocking with a write source, and a peer
   that takes nothing for 10 s is dropped, so one client can neither queue
   unbounded main-thread work nor hold up the others.
+- A headless session host (`minicode host --folder DIR`) puts
+  `host-<hash>.sock` and its `.lock` in the same folder
+  (`ControlChannel::socketFolders()`, shared by the CLI); the sweep of dead
+  pids' sockets skips them (no pid in the name). See session-host.md's
+  "The headless host".
 - `tools/minicode-cli.cpp` builds `Contents/MacOS/minicode-cli`, which the
   launcher execs for subcommands: newest live socket (or `--pid`) in the
   shell's `$TMPDIR/MiniCode` and the user's own temporary folder's (a nix
