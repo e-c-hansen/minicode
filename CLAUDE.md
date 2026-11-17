@@ -2018,7 +2018,15 @@ view is disposed (on `unrealize`), or dispose loops forever.
   selections, text blocks and table borders come through the same method.
   A page replaced while scrolled down redraws the whole pane
   (`MCRedrawWholePane`): TextKit marks only the page's own column there, so
-  a new zoom's margins kept the old page's ink.
+  a new zoom's margins kept the old page's ink. **The same on a tab
+  switch** (2026-11-16, the owner's screenshot: settings.conf's text, its
+  swatches too, in the margins beside JOBS.md's page, the title saying
+  [Preview]): a page shown in place of another tab's text marked only its
+  column. `CodeTextView redrawWholePane` marks the visible and prepared
+  rects now and again from a run-loop block, where the pane ended up;
+  `activateTab:` and `renderMarkdown:` call it, and the view calls it when
+  shown again (`viewDidUnhide`: marks made while hidden had no visible
+  rect). markdown_side records the view's marks across switches.
 - Every run carries its source `line` (`kMarkdownSourceLine`): Shift+Cmd+V
   opens the preview at the caret and the source where a scrolled preview is.
   Links (`openMarkdownLink:`): `#heading` by GitHub's anchor

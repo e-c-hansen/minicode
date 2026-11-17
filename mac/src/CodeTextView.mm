@@ -57,6 +57,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
     // The caret moved left of a hint's room (placeCaretBesideHints): by
     // how much, and the x it was given.
     CGFloat _caretShift, _caretShiftedX;
+    BOOL _paneRedrawScheduled;   // redrawWholePane's second mark, once a turn
 }
 
 - (MCMultiCarets *)multiCarets { return _multi; }
@@ -97,6 +98,38 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
 - (void)setNeedsDisplay:(BOOL)flag {
     if (!flag) { [super setNeedsDisplay:NO]; return; }
     [self setNeedsDisplayInRect:NSUnionRect(self.visibleRect, self.preparedContentRect)];
+}
+
+// The whole pane drawn again: now, and once more as the turn ends, before
+// the window draws. A change marks only what it touched, in the pane as it
+// stood then: a new text marks the column its glyphs take, and a page's
+// centered inset leaves margins no glyph covers, so whatever the pane last
+// drew there (another tab's text) stayed in them. The second mark is made
+// where the pane ends up, after the tab's place is put back and any layout
+// the turn still does.
+- (void)redrawWholePane {
+    [self setNeedsDisplayInRect:NSUnionRect(self.visibleRect, self.preparedContentRect)
+          avoidAdditionalLayout:YES];
+    if (_paneRedrawScheduled) return;
+    _paneRedrawScheduled = YES;
+    __weak CodeTextView *weakSelf = self;
+    CFRunLoopRef main = CFRunLoopGetMain();
+    CFRunLoopPerformBlock(main, kCFRunLoopCommonModes, ^{
+        CodeTextView *me = weakSelf;
+        if (!me) return;
+        me->_paneRedrawScheduled = NO;
+        [me setNeedsDisplayInRect:NSUnionRect(me.visibleRect, me.preparedContentRect)
+               avoidAdditionalLayout:YES];
+    });
+    CFRunLoopWakeUp(main);
+}
+
+// Marks made while the pane was hidden (another viewer in the slot, the
+// editor hidden) had no visible rect to cover, and the layer kept what it
+// last drew: shown again, all of it is drawn.
+- (void)viewDidUnhide {
+    [super viewDidUnhide];
+    [self redrawWholePane];
 }
 
 - (void)setDiagnostics:(NSArray<MCDiagnosticMark *> *)diagnostics {

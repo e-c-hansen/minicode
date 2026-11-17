@@ -114,6 +114,10 @@ NSColor *MCDiagnosticColor(NSInteger severity);
 // these characters, behind the text, in this color (faintly filled with it).
 @property(nonatomic, copy) NSArray<NSValue *> *bracketRanges;
 @property(nonatomic, strong) NSColor *bracketMatchColor;
+// Draw all of the pane again, now and as this run-loop turn ends: after a
+// tab's text or page goes in, whose marks cover only its own glyphs
+// (CodeTextView.mm).
+- (void)redrawWholePane;
 // The character drawn at a point in the view, or NSNotFound.
 - (NSUInteger)characterIndexUnderPoint:(NSPoint)point;
 // The message of the diagnostic covering a character, or nil.

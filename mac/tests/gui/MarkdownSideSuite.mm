@@ -7,7 +7,11 @@
 // another file and for Shift+Cmd+V and comes back with the tab; the bar
 // resizes it and closes it at the right edge; the key closes it from the
 // pane, the keyboard going back to the source; the session remembers it;
-// and closing the tab closes it.
+// and closing the tab closes it. Then the owner's report (2026-11-16): a
+// settings file and a Markdown page in one window, switched between many
+// times and at different turns, always show the active tab's text, with
+// the page's pane drawn again in full where it ended up, margins too (the
+// settings file's text had stayed in them beside the page).
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -15,7 +19,9 @@
 #import "MarkdownSidePreview.h"
 #import "MarkdownEditPanel.h"
 #import "Gutter.h"
+#import "ControlServer.h"
 #include <mach/mach.h>
+#include <objc/runtime.h>
 
 namespace {
 
@@ -63,6 +69,62 @@ NSUInteger LinkAt(NSTextView *tv, NSString *href) {
         if ([v isEqual:href]) { found = r.location; *stop = YES; }
     }];
     return found;
+}
+
+// What asks the editor's text view to draw again, recorded while
+// gRecordMarks is set: every rect given to setNeedsDisplayInRect: (in both
+// forms) of gMarkedView, in its own coordinates.
+BOOL gRecordMarks = NO;
+__unsafe_unretained NSView *gMarkedView = nil;
+NSMutableArray<NSValue *> *gMarks = nil;
+
+void RecordMarksFor(SEL sel, BOOL withAvoid) {
+    Class cls = NSClassFromString(@"CodeTextView");
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    IMP original = method_getImplementation(m);
+    IMP imp = withAvoid
+        ? imp_implementationWithBlock(^(id me, NSRect r, BOOL avoid) {
+              if (gRecordMarks && me == gMarkedView) [gMarks addObject:[NSValue valueWithRect:r]];
+              ((void (*)(id, SEL, NSRect, BOOL))original)(me, sel, r, avoid);
+          })
+        : imp_implementationWithBlock(^(id me, NSRect r) {
+              if (gRecordMarks && me == gMarkedView) [gMarks addObject:[NSValue valueWithRect:r]];
+              ((void (*)(id, SEL, NSRect))original)(me, sel, r);
+          });
+    // Added to CodeTextView when only a superclass has it (calling that one
+    // is calling super), else in place of its own.
+    if (!class_addMethod(cls, sel, imp, method_getTypeEncoding(m))) method_setImplementation(m, imp);
+}
+
+void StartMarks(NSView *view) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        RecordMarksFor(@selector(setNeedsDisplayInRect:avoidAdditionalLayout:), YES);
+        RecordMarksFor(@selector(setNeedsDisplayInRect:), NO);
+    });
+    gMarks = [NSMutableArray array];
+    gMarkedView = view;
+    gRecordMarks = YES;
+}
+
+// Some one mark covers all of `rect`.
+BOOL MarkCovers(NSRect rect) {
+    for (NSValue *v in gMarks)
+        if (NSContainsRect(v.rectValue, NSInsetRect(rect, 1, 1))) return YES;
+    return NO;
+}
+
+// The page's margins in the pane as it shows now: left and right of its
+// column, where no glyph of it is.
+NSRect LeftMargin(NSTextView *tv) {
+    const NSRect vis = tv.visibleRect;
+    return NSMakeRect(NSMinX(vis), NSMinY(vis), tv.textContainerOrigin.x - NSMinX(vis), NSHeight(vis));
+}
+NSRect RightMargin(NSTextView *tv) {
+    const NSRect vis = tv.visibleRect;
+    const CGFloat right = tv.textContainerOrigin.x + tv.textContainer.size.width;
+    return NSMakeRect(right, NSMinY(vis), NSMaxX(vis) - right, NSHeight(vis));
 }
 
 }  // namespace
@@ -264,6 +326,185 @@ MC_GUI_SUITE(markdown_side) {
         for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy])
             if ([t.currentPath isEqualToString:other] || [t.currentPath isEqualToString:md])
                 [c closeTab:t prompt:NO];
+    });
+
+    // ------------------------------------------------ the owner's report
+    // A settings file and JOBS.md, the page beside its source or in place
+    // of it, switched between: the source pane held the settings file's
+    // text, swatches and all, beside JOBS.md's page. A window of its own, as
+    // wide as a laptop's, so the full page has margins.
+    __block EditorController *w = nil;
+    NSString *dir = MCGuiProjectFile(@"side_switch");
+    NSString *jobs = [dir stringByAppendingPathComponent:@"JOBS.md"];
+    NSString *settingsPath = NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"];
+    __block NSString *settingsText = nil, *original = nil;
+    NSMutableString *jobsText = [NSMutableString stringWithString:
+        @"# Jobs minicode has to do better\n\nTwo layers.\n\n"];
+    for (int i = 1; i <= 30; i++)
+        [jobsText appendFormat:@"- [%@] Job %d: a line long enough to wrap in a narrow pane, "
+                                @"said plainly.\n", i % 3 ? @" " : @"x", i];
+    [jobsText appendString:@"\n## The end\n\nDone.\n"];
+    // The source pane shows `text` and nothing else; the page beside it
+    // shows `side` (nil: no page beside it).
+    BOOL (^shows)(NSString *, NSString *) = ^BOOL(NSString *text, NSString *side) {
+        const BOOL source = Source(w).editable && [Source(w).string isEqualToString:text];
+        const BOOL page = side ? [w sidePreviewShowing] && SideBySide(w) && [Page(w) containsString:side]
+                               : ![w sidePreviewShowing] && Side(w).scrollView.hidden;
+        if (!source || !page)
+            MCGuiNote(@"active %@, source editable %d starts \"%@\", side %d, page starts \"%@\"",
+                      Active(w).currentPath.lastPathComponent, Source(w).editable,
+                      [Source(w).string substringToIndex:MIN((NSUInteger)40, Source(w).string.length)],
+                      [w sidePreviewShowing],
+                      [Page(w) substringToIndex:MIN((NSUInteger)40, Page(w).length)]);
+        return source && page;
+    };
+
+    MCGuiStep(@"a settings file and JOBS.md in a wide window of their own", ^{
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES
+                                                   attributes:nil error:nil];
+        MCGuiWriteFile(jobs, jobsText);
+        original = [NSString stringWithContentsOfFile:settingsPath encoding:NSUTF8StringEncoding
+                                                error:nil] ?: @"";
+        settingsText = original;
+        // A color, so the file has a swatch, as the owner's had, and
+        // comments enough to scroll.
+        NSMutableString *more = [NSMutableString stringWithString:settingsText];
+        for (int i = 1; i <= 80; i++)
+            [more appendFormat:@"# A comment line %d, as the default file has many.\n", i];
+        settingsText = [more copy];
+        MCGuiSetSettings([settingsText stringByAppendingString:@"editor.ruler-color = #5A5A5A\n"]);
+        w = [(id<MCControlAppHost>)NSApp.delegate controlOpenWindowAtPath:dir];
+        GCHECK(w != nil);
+        if (!w) return;
+        MCGuiSetKeyWindow(w.window);
+        NSRect fr = w.window.frame;
+        fr.size = NSMakeSize(1800, 900);
+        [w.window setFrame:fr display:NO];
+        [w.window.contentView layoutSubtreeIfNeeded];
+        GCHECK([w showFile:settingsPath]);
+        GCHECK([Source(w).string containsString:@"editor.ruler-color = #5A5A5A"]);
+        GCHECK([w showFile:jobs]);
+        GCHECK(w.previewMode);   // a Markdown file opens rendered
+        MCGuiNote(@"view %.0f wide, page inset %.0f", NSWidth(Source(w).frame),
+                  Source(w).textContainerInset.width);
+        GCHECK(Source(w).textContainerInset.width > 100);   // margins either side of the page
+        GCHECK([w showFile:settingsPath]);
+        GCHECK(Source(w).editable && Source(w).textContainerInset.width < 20);
+    });
+
+    // The full page in place of the source: after the switch, as the turn
+    // ends, the pane is asked to draw again where it ended up, its margins
+    // too. Before, only the page's own column was, and the settings file's
+    // text stayed in the margins. Three ways round: one switch in a step,
+    // the settings file scrolled down first, and there and back and there
+    // again in one turn.
+    for (int round = 0; round < 3; round++) {
+        MCGuiStep([NSString stringWithFormat:@"round %d: the settings file, then the page", round], ^{
+            NSTextView *tv = Source(w);
+            if (round == 1)   // the settings file scrolled to its end
+                [tv scrollRangeToVisible:NSMakeRange(tv.string.length, 0)];
+            if (round == 2) {   // there and back in the same turn first
+                GCHECK([w showFile:jobs]);
+                GCHECK([w showFile:settingsPath]);
+                GCHECK(Source(w).editable && [Source(w).string containsString:@"ruler-color"]);
+            }
+            GCHECK([w showFile:jobs]);
+            // What asks the pane to draw from here to the end of the turn.
+            StartMarks(tv);
+        });
+        MCGuiStep([NSString stringWithFormat:@"round %d: all of the pane is drawn again, margins too",
+                                             round], ^{
+            gRecordMarks = NO;
+            NSTextView *tv = Source(w);
+            GCHECK(w.previewMode && !tv.editable);
+            GCHECK([tv.string hasPrefix:@"Jobs minicode has to do better"]);
+            GCHECK(![tv.string containsString:@"ruler-color"]);
+            const NSRect left = LeftMargin(tv), right = RightMargin(tv);
+            MCGuiNote(@"visible %@, margins %@ and %@, %lu marks after the switch: %@",
+                      NSStringFromRect(tv.visibleRect), NSStringFromRect(left),
+                      NSStringFromRect(right), (unsigned long)gMarks.count,
+                      gMarks.count ? NSStringFromRect(gMarks.lastObject.rectValue) : @"-");
+            GCHECK(NSWidth(left) > 50 && NSWidth(right) > 50);
+            GCHECK(MarkCovers(left));
+            GCHECK(MarkCovers(right));
+            GCHECK([w showFile:settingsPath]);
+            GCHECK(Source(w).editable && [Source(w).string containsString:@"ruler-color"]);
+        });
+    }
+
+    MCGuiStep(@"the page beside its source (Control+Command+V)", ^{
+        GCHECK([w showFile:jobs]);
+        GCHECK(w.previewMode);
+        [w toggleSidePreview:nil];
+        GCHECK(!w.previewMode);
+        GCHECK(shows(jobsText, @"Two layers."));
+    });
+    MCGuiStep(@"switched ten times in one turn, the source is always the active tab's", ^{
+        for (int i = 0; i < 10; i++) {
+            GCHECK([w showFile:settingsPath]);
+            GCHECK(!w.previewMode);
+            GCHECK([Source(w).string containsString:@"editor.ruler-color = #5A5A5A"]);
+            GCHECK(shows(Source(w).string, nil));
+            GCHECK([w showFile:jobs]);
+            GCHECK(shows(jobsText, @"Two layers."));
+        }
+    });
+    // A turn of its own for each switch.
+    for (int i = 0; i < 4; i++) {
+        MCGuiStep([NSString stringWithFormat:@"switch %d, one a turn", i], ^{
+            if (i % 2 == 0) {
+                GCHECK([w showFile:settingsPath]);
+                GCHECK([Source(w).string containsString:@"editor.ruler-color = #5A5A5A"]);
+                GCHECK(shows(Source(w).string, nil));
+            } else {
+                GCHECK([w showFile:jobs]);
+                GCHECK(shows(jobsText, @"Two layers."));
+            }
+        });
+    }
+    MCGuiStep(@"typed in the source, then the settings file before the page follows", ^{
+        GCHECK(shows(jobsText, @"Two layers."));
+        NSTextView *tv = Source(w);
+        tv.selectedRange = NSMakeRange(tv.string.length, 0);
+        Type(tv, @"\nTyped before the switch.\n");
+        GCHECK(Side(w).renderPending);
+        GCHECK([w showFile:settingsPath]);
+        GCHECK([Source(w).string containsString:@"ruler-color"] && shows(Source(w).string, nil));
+    });
+    // A negative check: the page's render was due 0.3 s after the typing,
+    // and must not land in the settings file's tab.
+    MCGuiPause(0.8);
+    MCGuiStep(@"the render that was due left the settings file alone", ^{
+        GCHECK(![Source(w).string containsString:@"Typed before the switch"]);
+        GCHECK([Source(w).string containsString:@"ruler-color"] && shows(Source(w).string, nil));
+        GCHECK(Page(w).length == 0);
+        GCHECK([w showFile:jobs]);
+        NSString *typed = [jobsText stringByAppendingString:@"\nTyped before the switch.\n"];
+        GCHECK(shows(typed, @"Typed before the switch."));
+        [Source(w).undoManager undo];
+        GCHECK([Source(w).string isEqualToString:jobsText] && !Active(w).dirty);
+    });
+    MCGuiStep(@"the settings file changed on disk while the page shows", ^{
+        MCGuiSetSettings([settingsText stringByAppendingString:@"editor.ruler-color = #6B6B6B\n"]);
+        GCHECK(shows(jobsText, @"Two layers."));
+    });
+    MCGuiWait(@"its tab to follow, shown", 5, ^BOOL {
+        if (Active(w) && [Active(w).currentPath isEqualToString:jobs]) [w showFile:settingsPath];
+        if ([Source(w).string containsString:@"#6B6B6B"]) return YES;
+        [w showFile:jobs];   // shown again, it is checked against the disk again
+        return NO;
+    });
+    MCGuiStep(@"and back: JOBS.md's source beside its page", ^{
+        GCHECK(shows(Source(w).string, nil));
+        GCHECK([w showFile:jobs]);
+        GCHECK(shows(jobsText, @"Two layers."));
+    });
+    MCGuiStep(@"the window goes", ^{
+        MCGuiSetSettings(original);
+        if ([w sidePreviewShowing]) [w toggleSidePreview:nil];
+        for (MCTab *t in [(NSArray *)[w valueForKey:@"tabs"] copy]) [w closeTab:t prompt:NO];
+        MCGuiSetKeyWindow(nil);
+        [w.window performClose:nil];
     });
 }
 

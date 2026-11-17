@@ -494,6 +494,9 @@
     [self.navigator tabDidSwitch];
     [_notes activeTabDidChange];
     [self syncEditorMirror];   // the other group, if it shows this tab too
+    // All of the pane, where the tab's place left it: a Markdown page's
+    // margins kept the last tab's text (the settings file's beside JOBS.md).
+    [self.textView redrawWholePane];
 }
 
 // The active tab is about to leave the screen: remember where its view
