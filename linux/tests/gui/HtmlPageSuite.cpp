@@ -144,6 +144,7 @@ MC_GUI_SUITE(html_page) {
         MCGuiKey("ctrl+shift+v");
     });
     MCGuiWait("the page is back", 10, [] { return ed()->active() && ed()->active()->showsPage(); });
+    MCGuiWait("the toggle gave the keyboard to the page: asked for, given", 10, [] { return focusInPage(); });
     MCGuiStep("it was not loaded again for an unchanged file", [] {
         GCHECK(page()->loads() == gLoads);
         GCHECK(page()->settled());
