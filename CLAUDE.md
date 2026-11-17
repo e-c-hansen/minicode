@@ -3380,7 +3380,11 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `writeFileAtomically`, so a clean tab follows the disk ("Reload from
   Disk"); a dirty tab's file is refused. Every action, and every panel
   refresh (`MCGitPanelDidRefreshNotification`), reads again and keeps the
-  place by `ChangeReview::anchorAt`/`rowFor`. Rows are one height
+  place by `ChangeReview::anchorAt`/`rowFor`. An action's note stays
+  while the reads show what the first read after it showed
+  (`noteRead:serial:`), and goes at that first read when HEAD moved
+  since the page's last read before it: a commit landing between the
+  action and its read (2026-11-17, a flake on main). Rows are one height
   (`ReviewRowHeight`), so places are arithmetic and layout is
   non-contiguous; tints, numbers and the buttons are drawn, the buttons
   pinned to the visible right edge (a sideways scroll redraws). New,
