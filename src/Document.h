@@ -2,7 +2,7 @@
 // stage 1): its text (Model::Text), the text as last read or written (the
 // saved text), the file's stamp from then, how its bytes are written (the
 // encoding and byte order mark), whether the file has gone, and whether it
-// is large. The rules are the Mac's, as CLAUDE.md's "Tabs, sessions and
+// is large. The rules are the Mac's, as docs/notes/sessions.md's "Tabs, sessions and
 // the disk" gives them, with the same tests:
 //
 //   - Dirty means "differs from the saved text", not "was edited": an edit

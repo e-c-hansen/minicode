@@ -1,6 +1,6 @@
 // session_model_tests.inc — the `session:*` groups of run_tests.cpp: the
 // core's Model::Window and Model::Session (EditorTabs.h, SESSION-DESIGN.md
-// stage 3a), held to the Mac's tab rules as CLAUDE.md gives them ("Tabs,
+// stage 3a), held to the Mac's tab rules as docs/notes/sessions.md gives them ("Tabs,
 // sessions and the disk", "The preview tab", "Two editor groups"): where a
 // new tab goes, which shows after a close, the keys, labels, the preview
 // tab and the agents', Reopen Closed Tab, and the split editor's two

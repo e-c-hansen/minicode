@@ -141,7 +141,7 @@ NSString *const kLive = @"stale/.live.minicode.tex";    // a running process's
 }  // namespace
 
 // The preview's own steps, driven as a double-click and the popover's Save
-// would drive them (CLAUDE.md, "Headless").
+// would drive them (docs/notes/latex.md, "Headless").
 @interface LatexView (LatexSuite)
 - (void)openEditorForPage:(PDFPage *)page point:(NSPoint)pagePoint;
 - (void)commitEdit:(id)sender;
