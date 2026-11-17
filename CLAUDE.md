@@ -110,9 +110,14 @@ a trap.
   `GUI_SECOND_HALF`): `docs/notes/build.md`. `scripts/ci-local.sh` runs on the Mac
   what CI runs, without Docker (`--quick` before a push: core tests,
   build, check-minos, the sweep; the full run adds g++, the sanitizers,
-  `make guitest`, which takes the keyboard, and the release zip). No
-  blanket retries: a retry for one named check prints FLAKY and is
-  listed in docs/ci.md's "Known flaky checks".
+  `make guitest`, which takes the keyboard, and the release zip).
+  **Retries** (2026-11-17, `docs/ci.md`): a GUI suite that fails in CI
+  is run once more, alone, in a fresh process (`MC_GUI_RETRIES`,
+  `tests/GuiRetry.h`); passing then, it is a `FLAKY [suite]` line and
+  the run passes; three such suites a job at most. The core tests are
+  never retried. Every FLAKY line must lead to a fix; the nightly soak
+  (`.github/workflows/soak.yml`, seeded orders `MC_GUI_SHUFFLE`, no
+  retries) keeps the issue "Soak: flaky checks".
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `mac/tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
@@ -368,7 +373,7 @@ session has a display. Check first.
   git_gutter, line_history;
   agents and control: agents, agent_panel, agent_places, agentcommands,
   agent_autosave, attention, control, browserpages, browser_tabs, browser_find, bookmarks,
-  idelink, processes;
+  idelink, processes, temp_retry_proof;
   run only when named: _backups_writer, _backups_restore, _restore_writer,
   _restore_reader.
   A suite's file is usually its name in CamelCase; the exceptions are

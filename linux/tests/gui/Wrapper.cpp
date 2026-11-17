@@ -24,6 +24,8 @@
 #include <glib.h>
 #include <glib/gstdio.h>
 
+#include "../../../tests/GuiRetry.h"
+
 #include <algorithm>
 #include <map>
 #include <set>
@@ -245,7 +247,7 @@ void clearEnvironment() {
     for (const std::string& n : names)
         if (n != "MC_GUI_KEEP" && n != "MC_GUI_VERBOSE" && n != "MC_GUI_SNAPSHOTS" &&
             n != "MC_GUI_TOTAL_SECONDS" && n != "MC_GUI_STEP_SECONDS" && n != "MC_GUI_SUITES" &&
-            n != "MC_GUI_SKIP_SUITES" &&
+            n != "MC_GUI_SKIP_SUITES" && n != "MC_GUI_SHUFFLE" && n != "MC_GUI_RETRY_OF" &&
             n != "MC_GUI_WAIT_SCALE" && n != "MC_GUI_LEAKS" &&
             // The session's host through its wire format (SessionLink.h).
             n != "MINICODE_HOST" && n != "MINICODE_HOST_DELAY_US")
@@ -377,6 +379,12 @@ int MCGuiWrapperMain(int argc, char** argv) {
 
     const std::string wanted = suitesFromCommandLine(argc, argv);
     prctl(PR_SET_CHILD_SUBREAPER, 1);
+    // The environment as started, for a retry's fresh run (below), and how
+    // many failed suites a run may retry (CI sets it; tests/GuiRetry.h).
+    std::vector<std::string> startEnv;
+    for (char** e = environ; e && *e; e++) startEnv.push_back(*e);
+    const char* retriesText = getenv("MC_GUI_RETRIES");
+    const int retries = retriesText ? atoi(retriesText) : 0;
 
     // The scratch world goes beside the binary, or under $MC_GUI_ROOT: a
     // checkout under .claude/worktrees puts that segment in every scratch
@@ -400,6 +408,9 @@ int MCGuiWrapperMain(int argc, char** argv) {
     clearEnvironment();
     setWorld(root, shortRoot);
     if (!wanted.empty()) setenv("MC_GUI_SUITES", wanted.c_str(), 1);
+    // What failed goes beside the scratch folder (Harness.cpp's finish).
+    const std::string results = root + ".results";
+    setenv("MC_GUI_RESULTS", results.c_str(), 1);
 
     struct sigaction sa {};
     sa.sa_handler = onStopSignal;
@@ -472,5 +483,10 @@ int MCGuiWrapperMain(int argc, char** argv) {
         removeTree(root);
         removeTree(shortRoot);
     }
+    // A failed suite once more, alone, as a fresh run of this program (its
+    // own world and display), when the run allows it: FLAKY when it passes.
+    if (status == 1 && !gStopSignal)
+        status = GuiRetry::retryFailedSuites(status, results, retries, self, startEnv, stdout);
+    unlink(results.c_str());
     return status == 0 ? 0 : 1;
 }

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
+#include <crt_externs.h>
 #include <mach-o/dyld.h>
 #include <objc/runtime.h>
 #include <string>
@@ -19,6 +20,7 @@
 #import "ControlServer.h"
 #import "TreeDetails.h"   // MCAppDefaults
 #import "SessionLink.h"
+#include "../../../tests/GuiRetry.h"
 
 int minicode_main(int argc, const char *argv[]);   // mac/src/main.mm, renamed
 
@@ -59,6 +61,10 @@ static NSMutableArray<NSString *> *gAlerts;
 static NSMutableArray<NSString *> *gSheets;
 static __weak NSWindow *gLastSheetWindow;
 static __weak NSWindow *gKeyWindow;
+// What failed, by suite, for the first stage's retry (tests/GuiRetry.h);
+// gOutside while the end's checks or the run's own limit fail.
+static GuiRetry::Results gResults;
+static BOOL gOutside;
 
 static void Enqueue(MCGuiItem *item) {
     if (!gItems) gItems = [NSMutableArray array];
@@ -143,12 +149,17 @@ BOOL MCGuiCheck(BOOL ok, NSString *what, const char *file, int line) {
     if (ok) {
         gPass++;
         gSuitePass++;
+        gResults.passed++;
     } else {
         gFail++;
         gSuiteFail++;
         const char *slash = strrchr(file, '/');
         std::printf("  FAIL [%s] %s:%d  %s  (in: %s)\n", gSuite.UTF8String ?: "",
                     slash ? slash + 1 : file, line, what.UTF8String, gStep.UTF8String ?: "");
+        char text[1024];
+        snprintf(text, sizeof text, "%s:%d  %s  (in: %s)", slash ? slash + 1 : file, line,
+                 what.UTF8String, gStep.UTF8String ?: "");
+        GuiRetry::noteFailure(gResults, gOutside ? "" : (gSuite.UTF8String ?: ""), text);
         std::fflush(stdout);
         // A picture of the test window as it was (CI keeps them when the job
         // fails), the first few only: a run that goes wrong early can fail
@@ -441,6 +452,8 @@ static void Leak(NSString *suite, NSString *what, BOOL fails = YES) {
     if (fails && LeaksFail()) {
         gFail++;
         gSuiteFail++;
+        GuiRetry::noteFailure(gResults, suite.UTF8String ?: "",
+                              std::string("LEAK ") + (what.UTF8String ?: ""));
     }
 }
 
@@ -463,6 +476,9 @@ static void CheckSessionMirrors(NSString *suite) {
         std::fflush(stdout);
         gFail++;
         gSuiteFail++;
+        GuiRetry::noteFailure(gResults, suite.UTF8String ?: "",
+                              std::string("the session's host and the window it renders differ: ") +
+                                  (why.UTF8String ?: ""));
     }
 }
 
@@ -676,7 +692,8 @@ void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, N
     NSString *program = [MCGuiBuildDir() stringByAppendingPathComponent:@"guitest"];
     MCGuiRunProcess(folder.length ? @[program, folder] : @[program],
                     @{@"MC_GUI_CHILD": @"1", @"MC_GUI_SUITES": suite, @"MC_GUI_KEEP": @"1",
-                      @"MINICODE_DEFAULTS_SUITE": defaults},
+                      @"MINICODE_DEFAULTS_SUITE": defaults, @"MC_GUI_RESULTS": @"",
+                      @"MC_GUI_SHUFFLE": @""},
                     ^(int status, NSString *out, NSString *err) {
                         done(status, [out stringByAppendingString:err ?: @""]);
                     });
@@ -729,7 +746,7 @@ static NSArray<NSString *> *SuiteNames(NSString *list) {
     for (NSString *w in [wanted arrayByAddingObjectsFromArray:skipped])
         if (![known containsObject:w])
             MCGuiCheck(NO, [NSString stringWithFormat:@"no suite is named \"%@\"", w], __FILE__, __LINE__);
-    int ran = 0;
+    std::vector<const Suite *> chosen;
     for (const Suite &s : suites()) {
         NSString *name = [NSString stringWithUTF8String:s.name.c_str()];
         if (wanted.count && ![wanted containsObject:name]) continue;
@@ -737,11 +754,34 @@ static NSArray<NSString *> *SuiteNames(NSString *list) {
         // A suite named with a leading underscore is a part another suite
         // runs in a process of its own (BackupsSuite): only when named.
         if (!wanted.count && [name hasPrefix:@"_"]) continue;
+        chosen.push_back(&s);
+    }
+    // MC_GUI_SHUFFLE=<seed>: the chosen suites in the order the seed gives
+    // (tests/GuiRetry.h), the same on every machine, so the soak
+    // workflow's rounds can be replayed. Otherwise the order they are
+    // linked in.
+    NSString *shuffle = Env(@"MC_GUI_SHUFFLE");
+    if (shuffle.length) {
+        uint64_t seed = 0;
+        if (!GuiRetry::parseSeed(shuffle.UTF8String, &seed)) {
+            MCGuiCheck(NO, [NSString stringWithFormat:@"MC_GUI_SHUFFLE is \"%@\", not a number", shuffle],
+                       __FILE__, __LINE__);
+        } else {
+            std::vector<const Suite *> order;
+            for (size_t i : GuiRetry::shuffledOrder(chosen.size(), seed)) order.push_back(chosen[i]);
+            chosen = order;
+            std::printf("Suite order shuffled with MC_GUI_SHUFFLE=%llu (the same seed and suites "
+                        "replay it)\n", (unsigned long long)seed);
+            std::fflush(stdout);
+        }
+    }
+    int ran = 0;
+    for (const Suite *s : chosen) {
         MCGuiItem *marker = [MCGuiItem new];
         marker.kind = MCGuiKindSuite;
-        marker.name = name;
+        marker.name = [NSString stringWithUTF8String:s->name.c_str()];
         Enqueue(marker);
-        s.body();
+        s->body();
         ran++;
     }
     if (!ran) {
@@ -843,6 +883,7 @@ static NSArray<NSString *> *SuiteNames(NSString *list) {
 - (void)finish {
     CountOnScreen();
     gStep = @"the end";
+    gOutside = YES;
     MCGuiCheck(gOnScreen == 0, @"no window of this process was ever on screen", __FILE__, __LINE__);
     std::printf("\nGUI checks: %d passed, %d failed (%.1f s)\n", gPass, gFail,
                 -[_started timeIntervalSinceNow]);
@@ -866,6 +907,10 @@ static NSArray<NSString *> *SuiteNames(NSString *list) {
     else if (scratch.length)
         std::printf("Scratch kept in %s\n", scratch.UTF8String);
     std::fflush(stdout);
+    // What failed, for the first stage, which may retry a failed suite
+    // (MC_GUI_RETRIES; "_" children are given none to write).
+    gResults.complete = YES;
+    if (Env(@"MC_GUI_RESULTS").length) GuiRetry::writeResults(Env(@"MC_GUI_RESULTS").UTF8String, gResults);
     _exit(gFail ? 1 : 0);
 }
 @end
@@ -984,6 +1029,9 @@ static NSString *MakeWorld(void) {
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         if (!getenv("MC_GUI_CHILD")) {
+            // The environment as started, for a retry's fresh run (below).
+            std::vector<std::string> startEnv;
+            for (char **e = *_NSGetEnviron(); e && *e; e++) startEnv.push_back(*e);
             // Re-run this program in the scratch world, so nothing the app
             // reads at startup (home, defaults, settings) is the user's.
             NSString *root = MakeWorld();
@@ -1030,11 +1078,37 @@ int main(int argc, const char *argv[]) {
             char self[PATH_MAX];
             uint32_t size = sizeof self;
             _NSGetExecutablePath(self, &size);
+            // What failed goes beside the scratch folder, which the run
+            // removes as it ends.
+            NSString *results = [root stringByAppendingString:@".results"];
+            setenv("MC_GUI_RESULTS", results.fileSystemRepresentation, 1);
             const char *child[] = {self, [root stringByAppendingPathComponent:@"project"].UTF8String,
                                    nullptr};
-            execv(self, (char *const *)child);
-            perror("execv");
-            return 2;
+            // The run is a child, so that this process can retry a suite
+            // that failed (MC_GUI_RETRIES, tests/GuiRetry.h) once it ends.
+            std::fflush(stdout);
+            const pid_t run = fork();
+            if (run == 0) {
+                execv(self, (char *const *)child);
+                perror("execv");
+                _exit(2);
+            }
+            int status = 2;
+            if (run > 0) {
+                int st = 0;
+                while (waitpid(run, &st, 0) < 0 && errno == EINTR) {
+                }
+                status = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);
+                if (WIFSIGNALED(st)) {
+                    std::printf("\nguitest: the run ended with signal %d\n", WTERMSIG(st));
+                    std::fflush(stdout);
+                }
+            }
+            const char *retries = getenv("MC_GUI_RETRIES");
+            status = GuiRetry::retryFailedSuites(status, results.fileSystemRepresentation,
+                                                 retries ? atoi(retries) : 0, self, startEnv, stdout);
+            unlink(results.fileSystemRepresentation);
+            return status == 0 ? 0 : 1;
         }
         InstallSwizzles();
         // MC_GUI_SCROLLBARS=always: scroll bars that always take room, as
@@ -1057,6 +1131,7 @@ int main(int argc, const char *argv[]) {
                                  ? Env(@"MC_GUI_TOTAL_SECONDS").doubleValue : 1500;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(total * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
+            gOutside = YES;
             MCGuiCheck(NO, [NSString stringWithFormat:@"the whole run took over %.0f s", total],
                        __FILE__, __LINE__);
             [[MCGuiRunner shared] finish];

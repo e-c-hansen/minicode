@@ -6,6 +6,7 @@
 #include "Editor.h"
 #include "SessionLink.h"
 #include "TerminalDock.h"
+#include "../../../tests/GuiRetry.h"
 
 #include <execinfo.h>
 #include <limits.h>
@@ -67,6 +68,10 @@ double gDeadlineMs = 0;
 bool gAsyncDone = false;
 int gPass = 0, gFail = 0, gSuitePass = 0, gSuiteFail = 0, gSlow = 0, gLeaks = 0;
 std::string gSuite, gStep;
+// What failed, by suite, for the wrapper's retry (tests/GuiRetry.h);
+// gOutside while the end's checks or the run's own limit fail.
+GuiRetry::Results gResults;
+bool gOutside = false;
 double gStartedMs = 0;
 double gStepSeconds = 60;
 
@@ -138,12 +143,16 @@ bool MCGuiCheck(bool ok, const std::string& what, const char* file, int line) {
     if (ok) {
         gPass++;
         gSuitePass++;
+        gResults.passed++;
     } else {
         gFail++;
         gSuiteFail++;
         const char* slash = strrchr(file, '/');
         printf("  FAIL [%s] %s:%d  %s  (in: %s)\n", gSuite.c_str(), slash ? slash + 1 : file, line,
                what.c_str(), gStep.c_str());
+        GuiRetry::noteFailure(gResults, gOutside ? "" : gSuite,
+                              std::string(slash ? slash + 1 : file) + ":" + std::to_string(line) + "  " +
+                                  what + "  (in: " + gStep + ")");
         fflush(stdout);
         // When pictures are kept, one of the window on top as it was at the
         // failure (CI keeps them when the job fails). The first few only: a
@@ -486,7 +495,7 @@ void MCGuiRunChild(const std::string& suite, const std::string& folder,
     // home folder as its working folder.
     std::vector<std::string> argv = {runner, config, daemon, "--", selfPath()};
     if (!folder.empty()) argv.push_back(folder);
-    MCGuiRunProcess(argv, {{"MC_GUI_SUITES", suite}},
+    MCGuiRunProcess(argv, {{"MC_GUI_SUITES", suite}, {"MC_GUI_RESULTS", ""}, {"MC_GUI_SHUFFLE", ""}},
                     [done](int status, std::string out, std::string err) {
                         done(status, out + err);
                     },
@@ -604,6 +613,7 @@ void leak(const std::string& what, bool fails = true) {
     if (fails && leaksFail()) {
         gFail++;
         gSuiteFail++;
+        GuiRetry::noteFailure(gResults, gSuite, "LEAK " + what);
     }
 }
 
@@ -772,19 +782,41 @@ void selectSuites() {
     for (const std::set<std::string>* list : {&wanted, &skipped})
         for (const std::string& w : *list)
             if (!known.count(w)) MCGuiCheck(false, "no suite is named \"" + w + "\"", __FILE__, __LINE__);
-    int ran = 0;
+    std::vector<const Suite*> chosen;
     for (const Suite& s : suites()) {
         // A suite named with a leading underscore is a part another suite
         // runs in a process of its own: only when named.
         if (wanted.empty() ? s.name[0] == '_' : !wanted.count(s.name)) continue;
         if (skipped.count(s.name)) continue;
-        enqueue(Kind::Suite, s.name, 0);
-        s.body();
+        chosen.push_back(&s);
+    }
+    // MC_GUI_SHUFFLE=<seed>: the chosen suites in the order the seed gives
+    // (tests/GuiRetry.h), the same on every machine, so the soak
+    // workflow's rounds can be replayed. Otherwise suites.txt's order.
+    const std::string shuffle = envOr("MC_GUI_SHUFFLE");
+    if (!shuffle.empty()) {
+        uint64_t seed = 0;
+        if (!GuiRetry::parseSeed(shuffle.c_str(), &seed)) {
+            MCGuiCheck(false, "MC_GUI_SHUFFLE is \"" + shuffle + "\", not a number", __FILE__, __LINE__);
+        } else {
+            std::vector<const Suite*> order;
+            for (size_t i : GuiRetry::shuffledOrder(chosen.size(), seed)) order.push_back(chosen[i]);
+            chosen = order;
+            printf("Suite order shuffled with MC_GUI_SHUFFLE=%llu (the same seed and suites replay it)\n",
+                   (unsigned long long)seed);
+            fflush(stdout);
+        }
+    }
+    int ran = 0;
+    for (const Suite* s : chosen) {
+        enqueue(Kind::Suite, s->name, 0);
+        s->body();
         ran++;
     }
     if (!ran) {
         printf("No suite matched \"%s\".\n", envOr("MC_GUI_SUITES").c_str());
         gFail++;
+        GuiRetry::noteFailure(gResults, "", "no suite matched");
     }
 }
 
@@ -792,6 +824,7 @@ void finish() {
     if (gFinished) return;
     gFinished = true;
     gStep = "the end";
+    gOutside = true;
     gItemName = "closing the windows";
     gItemDeadlineMs = MCGuiNowMs() + 30000;
     printf("\nGUI checks: %d passed, %d failed (%.1f s)\n", gPass, gFail,
@@ -801,6 +834,10 @@ void finish() {
                "between suites\n", gSlow, gLeaks);
     printNearestBounds();
     fflush(stdout);
+    // What failed, for the wrapper, which may retry a failed suite
+    // (MC_GUI_RETRIES; "_" children are given none to write).
+    gResults.complete = true;
+    if (!envOr("MC_GUI_RESULTS").empty()) GuiRetry::writeResults(envOr("MC_GUI_RESULTS"), gResults);
     // The windows go the way a user's do (the shells hung up, the servers
     // told to stop), then a short turn of the loop for what that starts. The
     // wrapper stops anything that still runs.
@@ -876,6 +913,7 @@ gboolean startWhenWindowIsUp(gpointer) {
 
     const double total = getenv("MC_GUI_TOTAL_SECONDS") ? atof(getenv("MC_GUI_TOTAL_SECONDS")) : 1200;
     g_timeout_add_seconds((guint)(total > 0 ? total : 1200), [](gpointer) -> gboolean {
+        gOutside = true;
         MCGuiCheck(false, "the whole run finished within its limit", __FILE__, __LINE__);
         finish();
         return G_SOURCE_REMOVE;

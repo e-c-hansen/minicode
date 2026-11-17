@@ -11198,6 +11198,7 @@ static void testMultiCaretOccurrences() {
 #include "terminal_paste_tests.inc"
 #include "terminal_marks_tests.inc"
 #include "latex_safety_tests.inc"
+#include "gui_retry_tests.inc"
 #include "latex_tests.inc"
 #include "markdown_gfm_tests.inc"
 #include "markdown_html_tests.inc"
@@ -11277,6 +11278,7 @@ int main() {
     testShellVte();
     testPpaWait();
     testCiTimeouts();
+    testGuiRetry();
     testTerminalMarks();
     testTerminalDraw();
     testTerminalVt();

@@ -17,7 +17,19 @@
 #   "  SLOW [suite] ..."              a timing check over its bound, within
 #                                     the room CI gives (a pass)
 #   "  NEAR [suite] ..."              the timing checks closest to their bounds
+#   "  FLAKY [suite] <first failure>" a suite that failed, then passed when
+#                                     its harness ran it again alone in a
+#                                     fresh process (tests/GuiRetry.h): its
+#                                     first run's FAIL and LEAK lines are not
+#                                     counted as failures, the FLAKY line is
+#   "  RETRY [suite] ..."             a suite that failed its retry too (its
+#                                     FAIL lines stand)
 #   sanitizer reports, compiler errors, and make's and ninja's failures.
+#
+# A job may need at most MAX_FLAKY (3) retried suites in all, whatever
+# processes they ran in: past that, more is wrong than one flaky check, so
+# this fails the job with a line saying so (docs/ci.md, "Retries"). It
+# exits 0 otherwise; the steps before it decide whether the job failed.
 set -u
 job="${1:?usage: ci-summary.sh JOB LOGDIR}"
 dir="${2:?usage: ci-summary.sh JOB LOGDIR}"
@@ -40,6 +52,25 @@ grab() {   # grab REGEX: matching lines of every log, cleaned, in order, unique
 
 fails="$(grab '^  FAIL \[|^FATAL|SUMMARY: (Address|Undefined|Thread|Leak)Sanitizer|^WARNING: ThreadSanitizer|runtime error: ')"
 leaks="$(grab '^  LEAK \[')"
+flaky="$(grab '^  FLAKY \[')"
+retried="$(grab '^  RETRY \[|^No suite retried: ')"
+# A suite that passed its retry: its first run's FAIL and LEAK lines are the
+# FLAKY line's business now, not failures.
+if [ -n "$flaky" ]; then
+    flakySuites="$(printf '%s\n' "$flaky" | sed -nE 's/^  FLAKY \[([^]]*)\].*/\1/p' | sort -u | tr '\n' ' ')"
+    notFlaky() {
+        awk -v names="$flakySuites" 'BEGIN { n = split(names, a, " "); for (i = 1; i <= n; i++) skip[a[i]] = 1 }
+            { s = $0; if (match(s, /^  (FAIL|LEAK) \[[^]]*\]/)) { name = substr(s, 1, RLENGTH); sub(/^  (FAIL|LEAK) \[/, "", name); sub(/\]$/, "", name); if (name in skip) next } print }'
+    }
+    fails="$(printf '%s\n' "$fails" | notFlaky)"
+    leaks="$(printf '%s\n' "$leaks" | notFlaky)"
+fi
+MAX_FLAKY="${MAX_FLAKY:-3}"
+nflaky=0
+[ -n "$flaky" ] && nflaky=$(printf '%s\n' "$flaky" | wc -l | tr -d ' ')
+if [ "$nflaky" -gt "$MAX_FLAKY" ]; then
+    fails="$(printf '%s\n%s' "  FAIL [retries] $nflaky suites in this job passed only when retried, more than the $MAX_FLAKY a run may: more is wrong than one flaky check" "$fails" | sed '/^$/d')"
+fi
 left="$(grab '^  LEFT \[')"
 slow="$(grab '^  SLOW \[')"
 # Closest first, across every log: the GUI checks run as two processes, each
@@ -77,6 +108,7 @@ annotate() {   # annotate error|warning LINE
     fi
     [ "$nl" -gt 0 ] && echo "**$nl leak(s) between GUI suites**"
     [ "$ns" -gt 0 ] && echo "$ns timing check(s) over their bound, passed within CI's room (SLOW)"
+    [ "$nflaky" -gt 0 ] && echo "**$nflaky suite(s) failed, then passed when retried alone (FLAKY): each needs a fix** (docs/ci.md, \"Retries\"; the soak issue tracks them)"
     # Which suites or groups failed, and how often: a cascade reads at once.
     if [ "$nf" -gt 0 ]; then
         bySuite="$(printf '%s\n' "$fails" | sed -nE 's/^  FAIL \[([^]]*)\].*/\1/p' | sort | uniq -c |
@@ -96,8 +128,14 @@ annotate() {   # annotate error|warning LINE
         echo "Build or step errors:"
         lines "$builds"
     fi
+    lines "$flaky"
     lines "$leaks"
     lines "$slow"
+    if [ -n "$retried" ]; then
+        echo
+        echo "Retries that did not pass, or were not made:"
+        lines "$retried"
+    fi
     if [ -n "$left" ]; then
         echo
         echo "<details><summary>$(count "$left") thing(s) GUI suites left that the harness put back or only warns about (LEFT)</summary>"
@@ -127,4 +165,6 @@ if [ -n "$fails" ]; then printf '%s\n' "$fails" | head -20 | while IFS= read -r 
 if [ "$nf" -eq 0 ] && [ -n "$builds" ]; then printf '%s\n' "$builds" | while IFS= read -r l; do annotate error "$l"; done; fi
 if [ -n "$leaks" ]; then printf '%s\n' "$leaks" | while IFS= read -r l; do annotate "$leakKind" "$l"; done; fi
 if [ -n "$slow" ]; then printf '%s\n' "$slow" | while IFS= read -r l; do annotate warning "$l"; done; fi
+if [ -n "$flaky" ]; then printf '%s\n' "$flaky" | while IFS= read -r l; do annotate warning "$l"; done; fi
+[ "$nflaky" -gt "$MAX_FLAKY" ] && exit 1
 exit 0

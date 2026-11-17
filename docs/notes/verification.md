@@ -46,6 +46,21 @@ found through that list.
   found by walking this run's descendants or a token, never by name. A
   suite that fails only beside the other half is a sharing bug to fix
   here, never a retry.
+- **Seeded orders and one retry** (2026-11-17, both harnesses,
+  `tests/GuiRetry.h`): `MC_GUI_SHUFFLE=<seed>` plays the selected suites
+  in an order drawn from the seed (splitmix64 and Fisher-Yates of our
+  own, so libc++ and libstdc++ agree and a seed replays anywhere); the
+  soak workflow prints a seed per round. `MC_GUI_RETRIES=<n>` (CI's 3):
+  the run writes what failed to `MC_GUI_RESULTS` as it ends (per suite,
+  with the first failure; failures in no suite counted apart), and the
+  process that started it (the Mac's first stage, which now forks and
+  waits instead of exec'ing the run; GTK's wrapper) runs each failed
+  suite once more as a fresh run of the whole program, its world, and
+  on GTK its display, new. A pass is a `FLAKY [suite]` line and a passing
+  run. A suite that depends on what an earlier suite left passes its
+  retry only if it sets that up itself: a suite must stand alone, which
+  the seeded orders test too. `_x` children get an empty `MC_GUI_RESULTS`
+  and `MC_GUI_SHUFFLE`, so they never write over their parent's record.
 - **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
   window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
   through the window then the main menu (`MCGuiPerformMenuKey`, built from the

@@ -110,9 +110,18 @@ jobs:
       # processes sharing the runner's cores slow the waits, not the bounds.
       # What a suite leaves for the next (a pinned key window, a window, an
       # alert answer) fails that suite by name, a LEAK line (Harness.h).
+      #
+      # A GUI suite that fails is run once more at the end of its process,
+      # alone, in a fresh process and scratch world (MC_GUI_RETRIES,
+      # tests/GuiRetry.h); passing then, it is a FLAKY line at the top of
+      # the run's page and the run goes on. At most three suites a job
+      # (scripts/ci-summary.sh fails the job past that). The core tests
+      # are never retried. docs/ci.md, "Retries", says why and what a
+      # FLAKY line asks for.
       - name: Run the core tests and the GUI checks
         id: gui
         env:
+          MC_GUI_RETRIES: '3'
           MC_GUI_WAIT_SCALE: '1.5'
           MC_TIMING_SCALE: '1.5'
           PICTURES: ${{ runner.temp }}/gui-pictures
@@ -307,9 +316,12 @@ jobs:
         # The same room as the macOS job's GUI checks (see there and
         # linux/tests/gui/Harness.h): waits and CPU-time bounds half again,
         # a SLOW line for a time over its bound, and what a suite leaves for
-        # the next failing that suite by name (LEAK lines).
+        # the next failing that suite by name (LEAK lines), and a failed
+        # suite run once more by the wrapper, alone, in a fresh run of its
+        # own (FLAKY when it passes then; MC_GUI_RETRIES, docs/ci.md).
         timeout-minutes: 20
         env:
+          MC_GUI_RETRIES: '3'
           MC_GUI_TOTAL_SECONDS: '1080'
           MC_GUI_WAIT_SCALE: '1.5'
           MC_TIMING_SCALE: '1.5'
@@ -343,6 +355,7 @@ jobs:
         env:
           MINICODE_HOST: loopback
           MINICODE_HOST_DELAY_US: '200'
+          MC_GUI_RETRIES: '3'
           MC_GUI_TOTAL_SECONDS: '600'
           MC_GUI_WAIT_SCALE: '1.5'
           MC_TIMING_SCALE: '1.5'
