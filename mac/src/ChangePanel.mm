@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-extern char **environ;
+#include "ProcessEnv.h"
 
 static std::string Std(NSString *s) { return s.UTF8String ?: ""; }
 static NSString *NS(const std::string &s) { return @(s.c_str()) ?: @""; }
@@ -433,7 +433,8 @@ BOOL MCLaunchAfterExit(NSString *appPath) {
     posix_spawnattr_init(&attr);
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT);
     pid_t child = 0;
-    const int rc = posix_spawn(&child, "/bin/sh", &fa, &attr, (char *const *)argv, environ);
+    ProcessEnv::Block env(*ProcessEnv::current());   // never environ (src/ProcessEnv.h)
+    const int rc = posix_spawn(&child, "/bin/sh", &fa, &attr, (char *const *)argv, env.envp());
     posix_spawn_file_actions_destroy(&fa);
     posix_spawnattr_destroy(&attr);
     return rc == 0;

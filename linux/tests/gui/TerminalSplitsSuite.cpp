@@ -106,7 +106,7 @@ MC_GUI_SUITE(terminal_splits) {
         gOldShell = old ? old : "";
         gHome = g_get_home_dir();
         GCHECK(gHome.find(MCGuiScratch()) == 0);   // never the user's own
-        g_setenv("SHELL", "/bin/bash", TRUE);
+        EnvLock::envSet("SHELL", "/bin/bash", TRUE);
         MCGuiWriteFile(gHome + "/.bashrc", "\n");
         gOldConfirm = dock()->confirmClose;
         dock()->confirmClose = nullptr;
@@ -358,7 +358,7 @@ MC_GUI_SUITE(terminal_splits) {
     MCGuiStep("one pane again; the settings are put back", [] {
         while (grp()->count() > 1) dock()->closePane(grp()->panes().back(), false);
         dock()->confirmClose = gOldConfirm;
-        if (gHadShell) g_setenv("SHELL", gOldShell.c_str(), TRUE);
-        else g_unsetenv("SHELL");
+        if (gHadShell) EnvLock::envSet("SHELL", gOldShell.c_str(), TRUE);
+        else EnvLock::envUnset("SHELL");
     });
 }

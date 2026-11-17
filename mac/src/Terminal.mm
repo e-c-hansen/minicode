@@ -80,7 +80,7 @@
 #include <string>
 #include <vector>
 
-extern char **environ;
+#include "ProcessEnv.h"
 
 // A process's command line ("sleep 100"), from KERN_PROCARGS2: argc, the
 // executable's path, padding, then the arguments. The program's path is cut
@@ -2157,8 +2157,9 @@ static NSString *MCBrowserHelperPath(void) {
     std::string userZdotdir;
     bool hadZdotdir = false, hasLocale = false;
     NSString *browserHelper = MCBrowserHelperPath();
-    for (char **e = environ; *e; e++) {
-        std::string kv = *e;
+    // From the snapshot, never environ (src/ProcessEnv.h).
+    std::shared_ptr<const ProcessEnv::Snapshot> snapshot = ProcessEnv::current();
+    for (const std::string &kv : snapshot->entries) {
         std::string key = kv.substr(0, kv.find('='));
         if (key == "ZDOTDIR") {
             hadZdotdir = true;

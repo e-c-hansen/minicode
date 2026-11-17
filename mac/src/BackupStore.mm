@@ -1,5 +1,6 @@
 // BackupStore.mm — see BackupStore.h.
 #import "BackupStore.h"
+#import "Environment.h"
 #include <sys/sysctl.h>
 #include <unistd.h>
 
@@ -30,7 +31,7 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
     static MCBackupStore *store;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        NSDictionary *env = NSProcessInfo.processInfo.environment;
+        NSDictionary *env = MCEnvironment();
         if (env[@"MINICODE_DEMO"] || env[@"MINICODE_BENCH"]) return;
         store = [MCBackupStore new];
     });
@@ -39,7 +40,7 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
 
 - (instancetype)init {
     if ((self = [super init])) {
-        NSString *dir = NSProcessInfo.processInfo.environment[@"MINICODE_BACKUP_DIR"];
+        NSString *dir = MCEnvironment()[@"MINICODE_BACKUP_DIR"];
         if (!dir.length)
             dir = [NSHomeDirectory() stringByAppendingPathComponent:
                    @"Library/Application Support/MiniCode/Backups"];

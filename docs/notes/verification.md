@@ -61,6 +61,12 @@ found through that list.
   retry only if it sets that up itself: a suite must stand alone, which
   the seeded orders test too. `_x` children get an empty `MC_GUI_RESULTS`
   and `MC_GUI_SHUFFLE`, so they never write over their parent's record.
+- **Environment variables in a suite** (2026-11-17): only `MCSetEnv(name,
+  value or nil)`, never setenv or unsetenv, which raced with git and the
+  other workers copying the environment for their children (the GTK
+  harness corrupted its heap that way); `env:raw-access` in `make test`
+  holds mac/tests/gui to it. See docs/notes/build.md, "The environment
+  and starting programs".
 - **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
   window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
   through the window then the main menu (`MCGuiPerformMenuKey`, built from the

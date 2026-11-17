@@ -9,16 +9,20 @@
 //     storage (MCSourceStorage willReplaceCharacters, before the store
 //     changes, so a surrogate pair is never split) or, for a text set
 //     whole (a viewer's edit, a preview's, a reload), as the one range in
-//     which the two differ (MCTab setSourceText:);
+//     which the two differ (MCTab setSourceText:); a storage edit outside
+//     a change of the text view's (CodeTextView sessionChanging) is in no
+//     undo step, and the host's history moves past it;
 //   - the edits of one run-loop turn are one undo step, as NSUndoManager's
 //     grouping by event made them, named by the first name given
 //     (replaceRanges:withStrings:actionName:, setActionName:), else
 //     "Typing" (joining the step before while the caret stays put) for
 //     what is typed and "Edit" for the rest;
-//   - undo and redo are still NSUndoManager's, each an edit of the mirror
-//     like any other (the next step of 4b gives them to the host, whose
-//     answer comes back as an edit put into the storage through
-//     replaceRanges:withStrings:actionName:, recording nothing);
+//   - undo and redo ask the host (the tab's undo manager, MCTabUndoManager
+//     in EditorTab.mm, and CodeTextView undo:, redo:), whose answer comes
+//     back as an edit put into the storage through
+//     replaceRanges:withStrings:actionName:, recording nothing (and with
+//     the tab's undo registration off); what NSTextView and the editor
+//     register still goes on NSUndoManager's stacks, never undone then;
 //   - an edit the host sends while the storage is in the middle of an edit
 //     of its own (inside processEditing, a storage notification, a wait
 //     that dispatched it there) waits for the next run-loop turn, and an
@@ -65,9 +69,11 @@ BOOL MCSessionLoopback(void);
 // The step being recorded takes this name (when it has none yet), or a new
 // step opens with it.
 - (void)nameStep:(NSString *)name;
-// An edit named `name` (nil: by what is going on) begins: the step of this
-// turn takes the name when it has none, or opens with it.
+// replaceRanges:withStrings:actionName:'s edit named `name` (nil: by what
+// is going on) begins and ends: a step of its own, as its undo group was,
+// unless it is inside a group or follows this turn's typing.
 - (void)beginNamed:(NSString *)name view:(CodeTextView *)view;
+- (void)endNamed;
 - (void)breakCoalescing;
 - (void)noteSelection:(NSArray<NSValue *> *)ranges;
 // The text was read afresh: nothing to undo, the host's copy starts again
@@ -75,11 +81,18 @@ BOOL MCSessionLoopback(void);
 - (void)forgetHistoryWithText:(NSString *)text;
 // The step of this turn, closed now (before an undo, or asking about one).
 - (void)closeStep;
+// The undo history forgotten, the text kept (the tab's undo manager's
+// removeAllActions).
+- (void)forgetHistory;
 // The tab's text was written to its file.
 - (void)saved;
 
 // ---- undo
 - (BOOL)canUndo:(BOOL)redo name:(NSString **)name;
+// An undo (1) or redo (2) of the host's is going into the text, else 0.
+@property(nonatomic, readonly) int undoing;
+// How many undos and redos the host has made of this document.
+@property(nonatomic, readonly) NSUInteger undoCount;
 // The host takes its last step back (or puts it back); the edit is in the
 // view before this returns. NO when there was nothing to do or it was
 // refused.

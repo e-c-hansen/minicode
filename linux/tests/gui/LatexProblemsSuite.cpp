@@ -118,7 +118,7 @@ MC_GUI_SUITE(latex_problems) {
             "sed \"s/@SIB@/$sib/g\" \"$d/ok.log\" > \"$out/$stem.log\"\n"
             "sed \"s/@SIB@/$sib/g\" \"$d/ok.out\"\n");
         g_chmod((D() + "/tectonic").c_str(), 0755);
-        g_setenv("MINICODE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);
+        EnvLock::envSet("MINICODE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);
         MCGuiWriteFile(F("lp-bad.tex"), doc("\\foo FAILME"));
         MCGuiWriteFile(F("lp-good.tex"), doc("See \\ref{sec:missing}."));
         MCGuiWriteFile(F("parts/chapter.tex"), "one\ntwo\nthree\nfour\n");
@@ -129,7 +129,7 @@ MC_GUI_SUITE(latex_problems) {
         // finds the control socket through XDG_RUNTIME_DIR.
         if (const char* x = getenv("XDG_RUNTIME_DIR")) gOldXdg = x;
         gHadXdg = getenv("XDG_RUNTIME_DIR") != nullptr;
-        g_setenv("XDG_RUNTIME_DIR", base.c_str(), TRUE);
+        EnvLock::envSet("XDG_RUNTIME_DIR", base.c_str(), TRUE);
         g_mkdir_with_parents(base.c_str(), 0755);
         for (int k = 0; k < 2; ++k) {
             const std::string sib = F(k ? ".keep.tex.7.minicode.tex" : ".gone.tex.7.minicode.tex");
@@ -244,8 +244,8 @@ MC_GUI_SUITE(latex_problems) {
     });
     MCGuiStep("closing the tabs", [] {
         ed()->closeAllTabs();
-        if (gHadXdg) g_setenv("XDG_RUNTIME_DIR", gOldXdg.c_str(), TRUE);
-        else g_unsetenv("XDG_RUNTIME_DIR");
+        if (gHadXdg) EnvLock::envSet("XDG_RUNTIME_DIR", gOldXdg.c_str(), TRUE);
+        else EnvLock::envUnset("XDG_RUNTIME_DIR");
     });
 }
 #endif

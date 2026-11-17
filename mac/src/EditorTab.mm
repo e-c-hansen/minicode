@@ -63,17 +63,107 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
     return YES;
 }
 
-// A tab's undo manager: a name given to its step (Toggle Comment, Change
-// Color, ...) names the session host's step too while the host owns the
-// tab's history.
+// A tab's undo manager. While the session's host owns the tab's history
+// (MCTab session, editor.session-host) it is the host's front: undo, redo,
+// undoNestedGroup and what they would do are the host's, and a name given
+// to a step (Toggle Comment, Change Color, ...) names the host's step too.
+// Everything that undoes through the tab's manager (the menu, a viewer's
+// table, the workspace edit applier's put-back, the GUI checks) then undoes
+// on the host. What NSTextView and the editor register still goes on
+// NSUndoManager's own stacks, which are never undone then: NSTextView keeps
+// deciding by the manager it gets (an undoManager answered while allowsUndo
+// was off made it register twice), so it is left exactly as it was. Without
+// a session it is NSUndoManager, untouched.
 @interface MCTabUndoManager : NSUndoManager
 @property(nonatomic, weak) MCTab *tab;
 @end
 
-@implementation MCTabUndoManager
+@implementation MCTabUndoManager {
+    NSInteger _ownGroups;   // depth of groups begun outside event grouping
+}
+- (MCSessionDoc *)host { return self.tab.session; }
+
 - (void)setActionName:(NSString *)name {
     [super setActionName:name];
-    [self.tab.session nameStep:name];
+    [self.host nameStep:name];
+}
+
+// A group begun with event grouping off (the GUI checks' group around one
+// simulated key press) is an undo action of its own: a step of its own on
+// the host, its typing joining nothing before it. Groups NSTextView and
+// NSUndoManager open by event are left alone.
+- (void)beginUndoGrouping {
+    MCSessionDoc *h = self.host;
+    if (h && (_ownGroups > 0 || !self.groupsByEvent) && _ownGroups++ == 0) {
+        [h closeStep];
+        [h breakCoalescing];
+    }
+    [super beginUndoGrouping];
+}
+
+- (void)endUndoGrouping {
+    [super endUndoGrouping];
+    MCSessionDoc *h = self.host;
+    if (h && _ownGroups > 0 && --_ownGroups == 0) [h closeStep];
+}
+
+// The steps NSUndoManager had go, and so does the host's history.
+- (void)removeAllActions {
+    [super removeAllActions];
+    [self.host forgetHistory];
+}
+
+- (BOOL)canUndo {
+    MCSessionDoc *h = self.host;
+    return h ? [h canUndo:NO name:NULL] : [super canUndo];
+}
+
+- (BOOL)canRedo {
+    MCSessionDoc *h = self.host;
+    return h ? [h canUndo:YES name:NULL] : [super canRedo];
+}
+
+- (void)undo {
+    MCSessionDoc *h = self.host;
+    if (h) [h undo:NO inView:nil];
+    else [super undo];
+}
+
+- (void)redo {
+    MCSessionDoc *h = self.host;
+    if (h) [h undo:YES inView:nil];
+    else [super redo];
+}
+
+- (void)undoNestedGroup {
+    MCSessionDoc *h = self.host;
+    if (h) [h undo:NO inView:nil];
+    else [super undoNestedGroup];
+}
+
+- (BOOL)isUndoing { return self.host.undoing == 1 || [super isUndoing]; }
+- (BOOL)isRedoing { return self.host.undoing == 2 || [super isRedoing]; }
+
+- (NSString *)undoActionName {
+    MCSessionDoc *h = self.host;
+    if (!h) return [super undoActionName];
+    NSString *name = nil;
+    return [h canUndo:NO name:&name] ? name ?: @"" : @"";
+}
+
+- (NSString *)redoActionName {
+    MCSessionDoc *h = self.host;
+    if (!h) return [super redoActionName];
+    NSString *name = nil;
+    return [h canUndo:YES name:&name] ? name ?: @"" : @"";
+}
+
+- (NSString *)undoMenuItemTitle {
+    return self.host ? [self undoMenuTitleForUndoActionName:self.undoActionName] : [super undoMenuItemTitle];
+}
+
+- (NSString *)redoMenuItemTitle {
+    return self.host ? [self redoMenuTitleForUndoActionName:self.redoActionName] : [super redoMenuItemTitle];
 }
 @end
 
@@ -123,6 +213,18 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
     } else if (copy && MCSessionHostEnabled()) {
         _session = [[MCSessionDoc alloc] initWithTab:self text:copy];
     }
+    const BOOL same = !_live && copy == _sourceText;
+    _live = nil;
+    _sourceText = copy;
+    if (!same) _textGeneration++;
+}
+
+- (void)takeTextFromStorage:(NSString *)text {
+    if (!_session) {
+        self.sourceText = text;
+        return;
+    }
+    NSString *copy = [text copy];
     const BOOL same = !_live && copy == _sourceText;
     _live = nil;
     _sourceText = copy;

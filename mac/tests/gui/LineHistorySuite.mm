@@ -141,8 +141,8 @@ void BuildWorld() {
     [t appendFormat:@"%@\n", Json(title)];
     MCGuiWriteFile([sessDir stringByAppendingFormat:@"/%@.jsonl", kSid], t);
     MCGuiWriteFile(gFile, kNow);
-    setenv("MINICODE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation, 1);
-    setenv("MINICODE_CLAUDE_TMP", [gBase stringByAppendingPathComponent:@"claude-tmp"].fileSystemRepresentation, 1);
+    MCSetEnv("MINICODE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation);
+    MCSetEnv("MINICODE_CLAUDE_TMP", [gBase stringByAppendingPathComponent:@"claude-tmp"].fileSystemRepresentation);
 }
 
 EditorController *Win() {
@@ -342,8 +342,8 @@ MC_GUI_SUITE(line_history) {
         [c.window close];
         c = nil;
         MCGuiSetKeyWindow(nil);
-        unsetenv("MINICODE_CLAUDE_PROJECTS");
-        unsetenv("MINICODE_CLAUDE_TMP");
+        MCSetEnv("MINICODE_CLAUDE_PROJECTS", nullptr);
+        MCSetEnv("MINICODE_CLAUDE_TMP", nullptr);
         GCHECK(Win() == nil);
     });
 }

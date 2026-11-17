@@ -184,7 +184,7 @@ MC_GUI_SUITE(terminal_links) {
         MCGuiWriteFile(recorder, [NSString stringWithFormat:
             @"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> '%@/opened.txt'\n", gDir]);
         chmod(recorder.fileSystemRepresentation, 0755);
-        setenv("MINICODE_OPEN_FALLBACK", recorder.fileSystemRepresentation, 1);
+        MCSetEnv("MINICODE_OPEN_FALLBACK", recorder.fileSystemRepresentation);
         // A program that turns on mouse reporting, prints one address, and
         // on a plain click opens another with Python's webbrowser.
         MCGuiWriteFile([gDir stringByAppendingPathComponent:@"mouse_open.py"],
@@ -402,7 +402,7 @@ MC_GUI_SUITE(terminal_links) {
     }
 
     MCGuiStep(@"the server stops and the suite's window closes", ^{
-        unsetenv("MINICODE_OPEN_FALLBACK");
+        MCSetEnv("MINICODE_OPEN_FALLBACK", nullptr);
         [term runCommand:@"kill %1"];
     });
     MCGuiWait(@"the server is gone", 10, ^BOOL { return term.atPrompt && !term.busy; });

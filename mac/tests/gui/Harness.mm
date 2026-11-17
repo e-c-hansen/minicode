@@ -1056,10 +1056,10 @@ int main(int argc, const char *argv[]) {
                 @"GIT_COMMITTER_NAME": @"GUI Check",
                 @"GIT_COMMITTER_EMAIL": @"gui@example.invalid",
             };
-            for (NSString *k in env) setenv(k.UTF8String, [env[k] UTF8String], 1);
+            for (NSString *k in env) MCSetEnv(k.UTF8String, [env[k] UTF8String]);
             NSMutableString *wanted = [NSMutableString string];
             for (int i = 1; i < argc; i++) [wanted appendFormat:@"%s%s", i > 1 ? " " : "", argv[i]];
-            setenv("MC_GUI_SUITES", wanted.UTF8String, 1);
+            MCSetEnv("MC_GUI_SUITES", wanted.UTF8String);
             // A socket left by a process that is gone, as kill -9 leaves one:
             // the app must remove it when it starts.
             pid_t dead = fork();
@@ -1074,14 +1074,14 @@ int main(int argc, const char *argv[]) {
             strlcpy(addr.sun_path, stale.fileSystemRepresentation, sizeof addr.sun_path);
             bind(fd, (struct sockaddr *)&addr, sizeof addr);
             close(fd);
-            setenv("MC_GUI_STALE_SOCKET", stale.UTF8String, 1);
+            MCSetEnv("MC_GUI_STALE_SOCKET", stale.UTF8String);
             char self[PATH_MAX];
             uint32_t size = sizeof self;
             _NSGetExecutablePath(self, &size);
             // What failed goes beside the scratch folder, which the run
             // removes as it ends.
             NSString *results = [root stringByAppendingString:@".results"];
-            setenv("MC_GUI_RESULTS", results.fileSystemRepresentation, 1);
+            MCSetEnv("MC_GUI_RESULTS", results.fileSystemRepresentation);
             const char *child[] = {self, [root stringByAppendingPathComponent:@"project"].UTF8String,
                                    nullptr};
             // The run is a child, so that this process can retry a suite

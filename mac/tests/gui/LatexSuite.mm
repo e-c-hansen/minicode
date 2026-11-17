@@ -158,7 +158,7 @@ MC_GUI_SUITE(latex) {
     NSString *b = Project(@"latex-b/paper.tex");
 
     MCGuiStep(@"a stand-in tectonic, two paper.tex files and a crash's leftovers", ^{
-        setenv("MINICODE_LATEX_WORK", Scratch(@"latex/work").UTF8String, 1);
+        MCSetEnv("MINICODE_LATEX_WORK", Scratch(@"latex/work").UTF8String);
         NSString *pdfs = Scratch(@"latex/pdfs");
         [[NSFileManager defaultManager] createDirectoryAtPath:pdfs withIntermediateDirectories:YES
                                                    attributes:nil error:nil];
@@ -180,7 +180,7 @@ MC_GUI_SUITE(latex) {
         NSString *tool = Scratch(@"latex/tectonic");
         MCGuiWriteFile(tool, script);
         chmod(tool.fileSystemRepresentation, 0755);
-        setenv("MINICODE_TECTONIC", tool.UTF8String, 1);
+        MCSetEnv("MINICODE_TECTONIC", tool.UTF8String);
         GCHECK_EQ_STR(MCTectonicPath(), tool);
 
         MCGuiWriteFile(a, @"\\documentclass{article}\\begin{document}ALPHA\\end{document}\n");
@@ -395,7 +395,7 @@ MC_GUI_SUITE(latex) {
         NSString *tool = Scratch(@"latex/tectonic2");
         MCGuiWriteFile(tool, script);
         chmod(tool.fileSystemRepresentation, 0755);
-        setenv("MINICODE_TECTONIC", tool.UTF8String, 1);
+        MCSetEnv("MINICODE_TECTONIC", tool.UTF8String);
         MCGuiWriteFile(fwd, @"\\documentclass{article}\n\\begin{document}\nFORWARD on page one\n"
                             @"\\newpage\nPage two,\nin one line.\n\\end{document}\n");
         MCGuiWriteFile(broken, @"\\documentclass{article}\n\\begin{document}\nBROKEN here\n"
@@ -566,7 +566,7 @@ MC_GUI_SUITE(latex) {
         NSString *tool = Scratch(@"latex/tectonic3");
         MCGuiWriteFile(tool, script);
         chmod(tool.fileSystemRepresentation, 0755);
-        setenv("MINICODE_TECTONIC", tool.UTF8String, 1);
+        MCSetEnv("MINICODE_TECTONIC", tool.UTF8String);
         for (NSString *rel in @[@"logs/warnings.tex", @"logs/parts/chapter.tex",
                                 @"fixtures/main.tex", @"fixtures/chapter.tex",
                                 @"fixtures/appendix.tex"])
@@ -879,7 +879,7 @@ MC_GUI_SUITE(latex) {
         NSString *real = Project(@"latex-real/forward.tex");
         NSString *main = Project(@"latex-real/main.tex");
         MCGuiStep(@"real tectonic: the forward search fixture", ^{
-            setenv("MINICODE_TECTONIC", realTool.UTF8String, 1);
+            MCSetEnv("MINICODE_TECTONIC", realTool.UTF8String);
             GCHECK_EQ_STR(MCTectonicPath(), realTool);
             NSString *src = [NSString stringWithContentsOfFile:
                 [MCGuiBuildDir().stringByDeletingLastPathComponent
@@ -982,7 +982,7 @@ MC_GUI_SUITE(latex) {
         if (!safe) { MCGuiNote(@"Application Support is %@, not in the scratch world", bin); done(); return; }
         NSString *fake = Scratch(@"latex/fake.tar.gz");
         MCGuiWriteFile(fake, @"not the tectonic archive");
-        setenv("MINICODE_TECTONIC_DOWNLOAD", [NSURL fileURLWithPath:fake].absoluteString.UTF8String, 1);
+        MCSetEnv("MINICODE_TECTONIC_DOWNLOAD", [NSURL fileURLWithPath:fake].absoluteString.UTF8String);
         MCDownloadTectonic(^(NSString *problem) {
             GCHECK([problem containsString:@"checksum"]);
             if (![problem containsString:@"checksum"]) MCGuiNote(@"the download said: %@", problem);
@@ -997,7 +997,7 @@ MC_GUI_SUITE(latex) {
     if (real.length) {
         MCGuiAsync(@"the real archive installs tectonic", 60, ^(MCGuiDone done) {
             if (!safe) { done(); return; }
-            setenv("MINICODE_TECTONIC_DOWNLOAD", [NSURL fileURLWithPath:real].absoluteString.UTF8String, 1);
+            MCSetEnv("MINICODE_TECTONIC_DOWNLOAD", [NSURL fileURLWithPath:real].absoluteString.UTF8String);
             MCDownloadTectonic(^(NSString *problem) {
                 GCHECK(problem == nil);
                 if (problem) MCGuiNote(@"the download said: %@", problem);
@@ -1010,7 +1010,7 @@ MC_GUI_SUITE(latex) {
         });
     }
     MCGuiStep(@"clean up", ^{
-        unsetenv("MINICODE_TECTONIC_DOWNLOAD");
-        unsetenv("MINICODE_TECTONIC");
+        MCSetEnv("MINICODE_TECTONIC_DOWNLOAD", nullptr);
+        MCSetEnv("MINICODE_TECTONIC", nullptr);
     });
 }

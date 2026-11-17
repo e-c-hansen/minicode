@@ -19,6 +19,10 @@
 #include "TermLinks.h"
 #include "WebImageRules.h"
 #include "LaunchOptions.h"
+#include "EnvLock.h"
+#include <gio/gio.h>
+#include <atomic>
+#include <thread>
 #include <algorithm>
 #include <cstdio>
 #include <sys/stat.h>
@@ -796,6 +800,40 @@ static void testLaunchOptions() {
     CHECK(scopeName(".x y", 1) == "app-minicode-\\x2ex\\x20y-1.scope");
 }
 
+// A worker making launchers (each copies the environment) while the main
+// thread sets ever more variables. Without EnvLock this tears the heap (CI's
+// "realloc(): invalid next size" in g_environ_setenv from the git panel's
+// thread); with it, nothing is read while the environment changes.
+static void testEnvLock() {
+    GROUP("env lock: launchers while the environment grows");
+    std::atomic<bool> stop{false};
+    std::atomic<long> made{0};
+    std::thread worker([&] {
+        while (!stop.load()) {
+            GSubprocessLauncher* l;
+            {
+                EnvLock::EnvRead env;
+                l = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
+            }
+            g_subprocess_launcher_setenv(l, "MC_ENV_TEST_CHILD", "1", TRUE);
+            g_object_unref(l);
+            made++;
+        }
+    });
+    const gint64 until = g_get_monotonic_time() + 400 * 1000;
+    long n = 0;
+    while (g_get_monotonic_time() < until) {
+        const std::string name = "MC_ENV_TEST_" + std::to_string(n++);
+        EnvLock::envSet(name.c_str(), "value value value value", true);
+    }
+    stop = true;
+    worker.join();
+    for (long i = 0; i < n; ++i) EnvLock::envUnset(("MC_ENV_TEST_" + std::to_string(i)).c_str());
+    CHECK(n > 0);
+    CHECK(made.load() > 0);
+    CHECK(g_getenv("MC_ENV_TEST_0") == nullptr);
+}
+
 int main() {
     std::printf("Running MiniCode Linux port tests...\n\n");
     testAscii();
@@ -812,6 +850,7 @@ int main() {
     testTermLinkPath();
     testWebImageRules();
     testLaunchOptions();
+    testEnvLock();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

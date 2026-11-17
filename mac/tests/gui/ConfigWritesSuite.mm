@@ -71,7 +71,7 @@ MC_GUI_SUITE(config_writes) {
         // suite needs its first start (which clears dead lock files) itself.
         const char *config = getenv("CLAUDE_CONFIG_DIR");
         configBefore = config ? @(config) : nil;
-        setenv("CLAUDE_CONFIG_DIR", Dots(@"no-claude").fileSystemRepresentation, 1);
+        MCSetEnv("CLAUDE_CONFIG_DIR", Dots(@"no-claude").fileSystemRepresentation);
         NSMenuItem *item = MCIdeLinkMenuItem();
         const BOOL was = [AppSettings shared].settings.ideLink();
         GCHECK([NSApp sendAction:item.action to:item.target from:item]);
@@ -108,8 +108,8 @@ MC_GUI_SUITE(config_writes) {
         [NSApp sendAction:item.action to:item.target from:item];
         GCHECK([AppSettings shared].settings.ideLink() == was);
         GCHECK_EQ_STR(Disk(Dots(@"settings.conf")), disk);
-        if (configBefore) setenv("CLAUDE_CONFIG_DIR", configBefore.fileSystemRepresentation, 1);
-        else unsetenv("CLAUDE_CONFIG_DIR");
+        if (configBefore) MCSetEnv("CLAUDE_CONFIG_DIR", configBefore.fileSystemRepresentation);
+        else MCSetEnv("CLAUDE_CONFIG_DIR", nullptr);
     });
     MCGuiStep(@"once the edit is undone, the theme is written", ^{
         NSUndoManager *u = TV(c).undoManager;

@@ -505,7 +505,12 @@
         [self saveCurrentFile:nil];
     [tv breakUndoCoalescing];   // typing in the next tab is a new undo step
     [self flushHighlighting];
-    if (tv.editable && !t.showingMessage) t.sourceText = tv.string;
+    if (tv.editable && !t.showingMessage) {
+        // The storage was the tab's mirror on the session's host while it
+        // held its source: nothing new for the host in it.
+        if (_liveHighlight) [t takeTextFromStorage:tv.string];
+        else t.sourceText = tv.string;
+    }
     if (tv.editable && !t.showingMessage) t.folds = [self.textView.folds snapshot];
     NSRange sel = tv.selectedRange;
     NSUInteger top = 0;

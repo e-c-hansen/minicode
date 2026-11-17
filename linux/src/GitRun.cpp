@@ -2,6 +2,7 @@
 // its verbs (PARITY.md 2.9): git apply's patch on stdin, and a session of
 // its own for git talking to a remote.
 #include "GitRun.h"
+#include "EnvLock.h"
 #include "StartupLog.h"
 
 #include <gio/gio.h>
@@ -86,6 +87,7 @@ const std::string& gitExecutable() {
     static std::string git;
     static std::once_flag once;
     std::call_once(once, [] {
+        EnvLock::EnvRead env;
         if (char* p = g_find_program_in_path("git")) {
             git = p;
             g_free(p);
@@ -109,7 +111,13 @@ GitResult runGitWithin(const std::string& dir, const std::vector<std::string>& a
     }
     int flags = G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE;
     if (input) flags |= G_SUBPROCESS_FLAGS_STDIN_PIPE;
-    GSubprocessLauncher* l = g_subprocess_launcher_new((GSubprocessFlags)flags);
+    // The launcher copies the process environment when it is made; a setenv
+    // on another thread meanwhile corrupts the heap (EnvLock.h).
+    GSubprocessLauncher* l;
+    {
+        EnvLock::EnvRead env;
+        l = g_subprocess_launcher_new((GSubprocessFlags)flags);
+    }
     for (const GitUi::EnvVar& e : GitUi::gitEnvironment())
         g_subprocess_launcher_setenv(l, e.name, e.value, TRUE);
     g_subprocess_launcher_set_cwd(l, dir.c_str());

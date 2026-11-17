@@ -63,6 +63,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
     CGFloat _caretShift, _caretShiftedX;
     BOOL _paneRedrawScheduled;   // redrawWholePane's second mark, once a turn
     NSInteger _sessionTyping;
+    BOOL _sessionChanging;
 }
 
 - (MCMultiCarets *)multiCarets { return _multi; }
@@ -74,6 +75,7 @@ static NSArray<MCDiagnosticMark *> *MCMarksAfterEdit(NSArray<MCDiagnosticMark *>
 - (NSEvent *)currentKeyEvent { return _keyEvent; }
 - (BOOL)multiCaretActive { return _multi.active; }
 - (NSInteger)sessionTyping { return _sessionTyping; }
+- (BOOL)sessionChanging { return _sessionChanging; }
 - (MCSessionDoc *)sessionDoc { return _sessionDocProvider ? _sessionDocProvider() : nil; }
 
 BOOL MCTextViewUndoing(NSTextView *tv) {
@@ -90,6 +92,56 @@ struct Counting {
     ~Counting() { n--; }
 };
 }  // namespace
+
+// ---- undo by the session's host (SessionLink.h)
+// NSTextView answers no undo: of its own (the window's goes to the undo
+// manager), so the view takes Undo and Redo only while the host owns what
+// it shows; otherwise it does not answer them at all and they go where they
+// always went.
+- (BOOL)respondsToSelector:(SEL)selector {
+    if (selector == @selector(undo:) || selector == @selector(redo:)) return self.sessionDoc != nil;
+    return [super respondsToSelector:selector];
+}
+
+- (void)undo:(id)sender {
+    MCSessionDoc *doc = self.sessionDoc;
+    if (!doc || ![doc undo:NO inView:self]) NSBeep();
+}
+
+- (void)redo:(id)sender {
+    MCSessionDoc *doc = self.sessionDoc;
+    if (!doc || ![doc undo:YES inView:self]) NSBeep();
+}
+
+- (BOOL)validateSessionUndo:(NSMenuItem *)item redo:(BOOL)redo {
+    MCSessionDoc *doc = self.sessionDoc;
+    NSString *name = nil;
+    const BOOL can = doc && self.editable && [doc canUndo:redo name:&name];
+    NSString *verb = redo ? @"Redo" : @"Undo";
+    item.title = can && name.length ? [NSString stringWithFormat:@"%@ %@", verb, name] : verb;
+    return can;
+}
+
+// What a change of the view's edits is in the undo history; a storage edit
+// outside one (nothing registered it) is not (sessionChanging). Cleared
+// before the notification, so a change made from it counts on its own.
+- (BOOL)shouldChangeTextInRanges:(NSArray<NSValue *> *)ranges
+              replacementStrings:(NSArray<NSString *> *)strings {
+    const BOOL ok = [super shouldChangeTextInRanges:ranges replacementStrings:strings];
+    if (ok) _sessionChanging = YES;
+    return ok;
+}
+
+- (BOOL)shouldChangeTextInRange:(NSRange)range replacementString:(NSString *)string {
+    const BOOL ok = [super shouldChangeTextInRange:range replacementString:string];
+    if (ok) _sessionChanging = YES;
+    return ok;
+}
+
+- (void)didChangeText {
+    _sessionChanging = NO;
+    [super didChangeText];
+}
 
 - (void)breakUndoCoalescing {
     [super breakUndoCoalescing];
@@ -626,6 +678,7 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
         [um endUndoGrouping];
     }
     [self breakUndoCoalescing];
+    if (session && !session.applying) [session endNamed];
     return ok;
 }
 
@@ -806,6 +859,8 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
 
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     SEL a = item.action;
+    if (a == @selector(undo:) || a == @selector(redo:))
+        return [self validateSessionUndo:item redo:a == @selector(redo:)];
     if (a == @selector(foldRegion:) || a == @selector(unfoldRegion:) ||
         a == @selector(toggleFold:) || a == @selector(foldRecursively:) ||
         a == @selector(unfoldRecursively:) || a == @selector(foldAll:) ||

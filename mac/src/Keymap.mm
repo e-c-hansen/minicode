@@ -1,5 +1,6 @@
 // Keymap.mm — see Keymap.h.
 #import "Keymap.h"
+#import "Environment.h"
 #import "AppSettings.h"        // MCWriteConfigFile
 #import "Lsp.h"                // CodeTextView
 #import "Terminal.h"           // TerminalView
@@ -217,7 +218,7 @@ bool MenuShows(const Commands::Command *c, const Key &k, const Commands::Keymap 
 
 - (instancetype)init {
     if ((self = [super init])) {
-        NSString *env = NSProcessInfo.processInfo.environment[@"MINICODE_KEYS"];
+        NSString *env = MCEnvironment()[@"MINICODE_KEYS"];
         _path = env.length ? env.stringByExpandingTildeInPath
                            : [NSHomeDirectory() stringByAppendingPathComponent:
                                  @".config/minicode/keys.conf"];

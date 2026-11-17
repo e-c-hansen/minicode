@@ -1,6 +1,7 @@
 // LspServer.mm — Objective-C++. Finding a language server's program and
 // running it (MCLspServer); see LspServer.h.
 #import "LspShared.h"
+#import "Environment.h"
 #import "LspServer.h"
 #include <atomic>
 #include <memory>
@@ -42,7 +43,7 @@ static NSString *NpmrcPrefix(NSString *home) {
 // the places package managers put language servers are searched as well.
 NSArray<NSString *> *MCSearchDirs(void) {
     NSMutableArray<NSString *> *dirs = [NSMutableArray array];
-    NSString *path = NSProcessInfo.processInfo.environment[@"PATH"] ?: @"";
+    NSString *path = MCEnvironment()[@"PATH"] ?: @"";
     NSString *home = NSHomeDirectory();
     NSString * (^h)(NSString *) = ^NSString *(NSString *sub) {
         return [home stringByAppendingPathComponent:sub];
@@ -212,7 +213,7 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
     // first: a script that starts with "#!/usr/bin/env node" then runs the
     // node it was installed with (nvm keeps them side by side), not
     // whichever comes first on PATH.
-    NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
+    NSMutableDictionary *env = [MCEnvironment() mutableCopy];
     NSMutableArray *path = [NSMutableArray arrayWithObject:
         _program.stringByDeletingLastPathComponent];
     for (NSString *d in MCSearchDirs()) if (![path containsObject:d]) [path addObject:d];
@@ -226,7 +227,7 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
     // request there, and a full pipe would stall the server mid-reply). Its
     // last lines say why a server that dies died.
     _task.standardError = errors;
-    NSString *logPath = NSProcessInfo.processInfo.environment[@"MINICODE_LSP_LOG"];
+    NSString *logPath = MCEnvironment()[@"MINICODE_LSP_LOG"];
     if (logPath.length) {
         // O_APPEND, so several servers (and their stderr) share one file
         // without writing over each other.
