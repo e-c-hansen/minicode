@@ -215,6 +215,16 @@ void MCGuiType(const std::string& utf8);
 // click at the window's corner.
 void MCGuiMoveTo(GtkWidget* widget, double x = -1, double y = -1);
 void MCGuiClick(GtkWidget* widget, double x = -1, double y = -1, int button = 1);
+// A click on a widget that may not be laid out yet: a bar or a question
+// just put up has its buttons a frame or so later (#96, #97: a click at a
+// 0x0 button, or before the bar's notice was mapped, reached nothing). This
+// queues a wait until `find` returns a widget on screen (MCGuiOnScreen),
+// then a step that finds it again and clicks it. When the wait times out,
+// the click step fails naming `what` and why it is not on screen ("no
+// widget", "a GtkButton, 0x0", what covers it). Prefer it to MCGuiClick
+// for anything that appeared in the step before.
+void MCGuiClickWhenReady(const std::string& what, std::function<GtkWidget*()> find,
+                         double timeout = 10);
 // `count` clicks at one point as a hand makes them: the first now, each next
 // 60 ms of the X server's time after the one before, while the app runs on
 // (well within GTK's double-click time); the next step waits until they
