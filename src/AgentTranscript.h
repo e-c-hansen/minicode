@@ -87,6 +87,19 @@ struct Block {
     std::string command;
     bool commandCut = false;
     std::string description;
+    // ToolUse input the Evidence page shows on an entry's line (A6), each
+    // cut at kInputCap: `pattern` (Grep, Glob), `path` (Grep's folder),
+    // the first of `url`, `query` and `skill` (WebFetch, WebSearch, Skill,
+    // ToolSearch), and SendMessage's `to`, `summary` and `message` (the
+    // message cut at kTextCap, textCut set when it was), and an Agent
+    // call's `subagent_type`.
+    std::string pattern;
+    std::string searchPath;
+    std::string target;
+    std::string to;
+    std::string summary;
+    std::string message;
+    std::string subagentType;
     // ToolUse: where the whole input object is in the file, braces
     // included, for a reader that needs more of it (AgentEdits.h reads an
     // Edit's old and new text from there, on demand).
@@ -118,6 +131,27 @@ struct Line {
     // On a tool result line, the subagent an Agent call started
     // (toolUseResult.agentId), "" otherwise.
     std::string spawnedAgent;
+    // On a tool result line, what the command wrote to stderr
+    // (toolUseResult.stderr), cut at kInputCap; "" for none.
+    std::string stderrText;
+    // Where the line came from (origin.kind: "human", "peer",
+    // "task-notification", "coordinator", ...; "" when not said). A
+    // message from another Claude Code session ("peer") also names it
+    // (origin.name, origin.from) and carries its text (origin.body, cut at
+    // kTextCap).
+    std::string originKind;
+    std::string originName;
+    std::string originFrom;
+    std::string originBody;
+    // An "attachment" line: its attachment's type ("hook_success",
+    // "hook_non_blocking_error", ...). For a hook's, the hook (hookName)
+    // and what it said: stdout, stderr, content, a blocking error's text
+    // or a message, joined and cut at kInputCap (hookText), and whether it
+    // failed (hookError: an error type, or stderr with a non-zero exit).
+    std::string attachmentType;
+    std::string hookName;
+    std::string hookText;
+    bool hookError = false;
     std::vector<Block> blocks;
     Span span;                  // the whole line in the file, newline excluded
 

@@ -189,6 +189,140 @@ static void testAgentEvidence() {
                      TestTool::Nox);
     CHECK(s.found && s.format == "nox" && s.passed == 1 && s.failed == 1 && s.skipped == 1);
 
+    GROUP("evidence:entries");
+    {
+        // A session item by item, each with its kind (A6): what the page
+        // gives its own look.
+        CHECK(std::string(entryKindName(EntryKind::ReceivedMessage)) == "received");
+        CHECK(taskNotification("<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n"
+                               "<summary>Background command \"Wait\" completed (exit code 0)</summary>\n"
+                               "</task-notification>", nullptr, nullptr));
+        std::string sum;
+        bool failed = false;
+        CHECK(taskNotification(" <task-notification><status>failed</status><summary>Build broke</summary>"
+                               "</task-notification>", &sum, &failed) && sum == "Build broke" && failed);
+        CHECK(taskNotification("<task-notification><status>killed</status></task-notification>", &sum,
+                               &failed) && sum == "A background task killed" && failed);
+        CHECK(!taskNotification("Please look at <task-notification>", &sum, &failed));
+        // stderr: the output's trailing lines that end the stderr text.
+        CHECK(stderrLineCount({"ok", "warning: x", "Shell cwd was reset"},
+                              "\nwarning: x\nShell cwd was reset\n") == 2);
+        CHECK(stderrLineCount({"ok", "Shell cwd was reset", ""}, "Shell cwd was reset") == 2);
+        CHECK(stderrLineCount({"ok", "done"}, "warning: x") == 0);
+        CHECK(stderrLineCount({"only the end"}, "first line\nonly the end") == 1);
+        CHECK(stderrLineCount({"a"}, "\n\n") == 0);
+        AgentTranscript::Block g;
+        g.name = "Grep";
+        g.pattern = "TODO";
+        g.searchPath = "src";
+        CHECK(toolDetail(g) == "TODO in src");
+        AgentTranscript::Block w;
+        w.target = "https://example.com/a\nb";
+        CHECK(toolDetail(w) == "https://example.com/a");
+
+        fsys::path root = scratch("entries");
+        fsys::path t = root / "s.jsonl";
+        const std::string sid = "S9", cwd = "/w/p";
+        auto line = [&](const std::string &type, const std::string &ts, const std::string &rest) {
+            return head(type, sid, cwd, ts) + rest + "}\n";
+        };
+        std::string data =
+            prompt(sid, cwd, "2026-11-05T10:00:00Z", "Make **tabs** faster.\n\n- one\n- two") + "\n" +
+            text(sid, cwd, "2026-11-05T10:00:01Z", "## Plan\nRead the code first.", "m1") + "\n" +
+            text(sid, cwd, "2026-11-05T10:00:01Z", "Then `make test`.", "m1") + "\n" +
+            use(sid, cwd, "2026-11-05T10:00:02Z", "r1", "Read", "{\"file_path\":\"/w/p/src/tabs.cpp\"}") + "\n" +
+            result(sid, cwd, "2026-11-05T10:00:03Z", "r1", "1\tint x;") + "\n" +
+            use(sid, cwd, "2026-11-05T10:00:04Z", "g1", "Grep", "{\"pattern\":\"TODO\",\"path\":\"src\"}") + "\n" +
+            use(sid, cwd, "2026-11-05T10:00:05Z", "f1", "WebFetch", "{\"url\":\"https://example.com\",\"prompt\":\"x\"}") + "\n" +
+            result(sid, cwd, "2026-11-05T10:00:06Z", "f1", "Claude requested permissions to use WebFetch", true) + "\n" +
+            bash(sid, cwd, "2026-11-05T10:00:07Z", "b1", "make 2>&1", "Build") + "\n" +
+            line("user", "2026-11-05T10:00:08Z",
+                 ",\"message\":{\"role\":\"user\",\"content\":[{\"tool_use_id\":\"b1\",\"type\":\"tool_result\","
+                 "\"content\":\"built\\nwarning: unused\",\"is_error\":false}]},"
+                 "\"toolUseResult\":{\"stdout\":\"built\",\"stderr\":\"warning: unused\"}") +
+            use(sid, cwd, "2026-11-05T10:00:09Z", "a1", "Agent",
+                "{\"description\":\"Look for slow paths\",\"subagent_type\":\"Explore\",\"prompt\":\"Go\"}") + "\n" +
+            line("user", "2026-11-05T10:00:10Z",
+                 ",\"message\":{\"role\":\"user\",\"content\":[{\"tool_use_id\":\"a1\",\"type\":\"tool_result\","
+                 "\"content\":\"Found two\"}]},\"toolUseResult\":{\"agentId\":\"abc123\"}") +
+            use(sid, cwd, "2026-11-05T10:00:11Z", "s1", "SendMessage",
+                "{\"to\":\"abc123\",\"summary\":\"More\",\"message\":\"Look at **draw** too\"}") + "\n" +
+            use(sid, cwd, "2026-11-05T10:00:12Z", "s2", "SendMessage",
+                "{\"to\":\"bridge:session_X\",\"summary\":\"Status\",\"message\":\"Tabs are done.\"}") + "\n" +
+            line("user", "2026-11-05T10:00:13Z",
+                 ",\"origin\":{\"kind\":\"peer\",\"from\":\"bridge:session_X\",\"name\":\"Linux port\","
+                 "\"body\":\"Thanks, **merged**.\"},\"message\":{\"role\":\"user\",\"content\":"
+                 "\"Another Claude session sent a message:\\n<cross-session-message from=\\\"bridge:session_X\\\" "
+                 "from-name=\\\"Linux port\\\">\\nThanks, **merged**.\\n</cross-session-message>\"}") +
+            line("user", "2026-11-05T10:00:14Z",
+                 ",\"origin\":{\"kind\":\"task-notification\"},\"message\":{\"role\":\"user\",\"content\":"
+                 "\"<task-notification>\\n<status>completed</status>\\n<summary>Background command \\\"Wait\\\" "
+                 "completed (exit code 0)</summary>\\n</task-notification>\"}") +
+            line("attachment", "2026-11-05T10:00:15Z",
+                 ",\"attachment\":{\"type\":\"hook_non_blocking_error\",\"hookName\":\"PostToolUse:Edit\","
+                 "\"stderr\":\"lint failed\\n\",\"stdout\":\"\",\"exitCode\":1}") +
+            line("attachment", "2026-11-05T10:00:16Z",
+                 ",\"attachment\":{\"type\":\"hook_success\",\"hookName\":\"Stop\",\"stdout\":\"\","
+                 "\"stderr\":\"\",\"exitCode\":0}") +
+            line("attachment", "2026-11-05T10:00:16Z",
+                 ",\"attachment\":{\"type\":\"prompt_snapshot\",\"systemPrompt\":[\"big\"]}") +
+            line("user", "2026-11-05T10:00:17Z", ",\"isMeta\":true,\"message\":{\"role\":\"user\",\"content\":\"Caveat\"}") +
+            line("user", "2026-11-05T10:00:18Z",
+                 ",\"message\":{\"role\":\"user\",\"content\":\"<command-name>/clear</command-name>\\n"
+                 "<command-message>clear</command-message>\\n<command-args></command-args>\"}") +
+            write(sid, cwd, "2026-11-05T10:00:19Z", "w1", "/w/p/a.txt") + "\n" +
+            text(sid, cwd, "2026-11-05T10:00:20Z", "Done.", "m2") + "\n";
+        put(t, data);
+        Reader r(t.string());
+        CHECK(r.update(AgentTranscript::posixFs()));
+        const Evidence &ev = r.evidence();
+        std::vector<std::string> kinds;
+        for (const Entry &e : ev.entries) kinds.push_back(entryKindName(e.kind));
+        const std::vector<std::string> want = {"prompt", "message", "tool", "tool", "tool", "command",
+                                               "subagent", "sent", "sent", "received", "notification",
+                                               "hook", "notification", "edit", "message"};
+        CHECK(kinds == want);
+        if (kinds == want) {
+            const auto &E = ev.entries;
+            CHECK(E[0].text == "Make **tabs** faster.\n\n- one\n- two" && !ev.subagent);
+            CHECK(E[1].text == "## Plan\nRead the code first.\n\nThen `make test`.");
+            CHECK(E[2].tool == "Read" && E[2].path == "/w/p/src/tabs.cpp" && E[2].answered && !E[2].isError);
+            CHECK(E[3].tool == "Grep" && E[3].text == "TODO in src" && !E[3].answered);
+            CHECK(E[4].tool == "WebFetch" && E[4].text == "https://example.com" && E[4].isError &&
+                  !E[4].output.empty());
+            CHECK(E[5].index == 0 && ev.commands.size() == 1 && ev.commands[0].stderrText == "warning: unused");
+            CHECK(E[6].text == "Look for slow paths" && E[6].subagentType == "Explore" && E[6].answered);
+            // Sent to the subagent by its id: named by its task. Sent to a
+            // session before it wrote: named once it does.
+            CHECK(E[7].peer == "Look for slow paths" && E[7].text == "Look at **draw** too");
+            CHECK(E[8].peer == "Linux port" && E[8].text == "Tabs are done.");
+            CHECK(E[9].peer == "Linux port" && E[9].text == "Thanks, **merged**.");
+            CHECK(E[10].tool == "task" && E[10].text == "Background command \"Wait\" completed (exit code 0)" &&
+                  !E[10].isError);
+            CHECK(E[11].tool == "PostToolUse:Edit" && E[11].text == "lint failed" && E[11].isError);
+            CHECK(E[12].tool == "command" && E[12].text == "/clear");
+            CHECK(E[13].index == 0 && ev.edits.size() == 1 && E[13].path == "/w/p/a.txt");
+            CHECK(E[14].text == "Done." && ev.finalMessage == "Done.");
+        }
+        // More lines: entries are added, not built again; a peer message
+        // with no origin body has its wrapper taken off.
+        put(t, line("user", "2026-11-05T10:01:00Z",
+                    ",\"origin\":{\"kind\":\"peer\",\"from\":\"bridge:session_Y\"},\"message\":{\"role\":\"user\","
+                    "\"content\":\"Another Claude session sent a message:\\n<cross-session-message from=\\\"y\\\">\\n"
+                    "Hello\\n</cross-session-message>\"}"),
+            true);
+        CHECK(r.update(AgentTranscript::posixFs()));
+        CHECK(ev.entries.size() == want.size() + 1 && ev.entries.back().text == "Hello" &&
+              ev.entries.back().peer == "bridge:session_Y");
+        // A Message entry's text is cut, never inside a character.
+        put(t, text(sid, cwd, "2026-11-05T10:02:00Z", std::string(kEntryTextCap - 1, 'x') + "\xC3\xA9 tail", "m3") +
+                   "\n",
+            true);
+        CHECK(r.update(AgentTranscript::posixFs()));
+        CHECK(ev.entries.back().textCut && ev.entries.back().text.size() == kEntryTextCap - 1);
+        fsys::remove_all(root);
+    }
+
     std::ifstream probe("tests/fixtures/claude/projects/-Users-user-Code-public-minicode/"
                         "1e1f578c-45c6-4cb5-92e5-84e11a306454/subagents/agent-a1ad4e3e0a7ec7fd2.jsonl");
     if (!probe) return;

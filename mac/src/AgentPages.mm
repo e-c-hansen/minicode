@@ -5,6 +5,7 @@
 #import "AppSettings.h"
 #import "Appearance.h"
 #import "CompareView.h"
+#import "Lsp.h"
 
 #include "AgentEdits.h"
 #include "ChangeReview.h"
@@ -13,7 +14,10 @@
 #include "InlineAgent.h"
 #include "AgentView.h"
 #include "Settings.h"
+#include "SyntaxHighlighter.h"
 
+#include <algorithm>
+#include <cstring>
 #include <map>
 #include <memory>
 
@@ -36,6 +40,76 @@ static NSColor *Accent() { return PHex(0x4EA1F7); }
 
 static const size_t kExpandBytes = 1 << 20;   // a whole output, shown up to 1 MB
 
+// The Evidence page's colors for each kind of entry (A6), from the
+// settings, so light and dark themes both work: the error color is the
+// diagnostics' (as Problems and the squiggles), the rest the theme's.
+static NSColor *ErrorColor() { return MCDiagnosticColor(1); }
+static NSColor *CommandColor() { return [[AppSettings shared] syntax:TokenStyle::Function]; }
+static NSColor *ToolColor() { return [[AppSettings shared] syntax:TokenStyle::Keyword]; }
+static NSColor *PeerColor() { return [[AppSettings shared] syntax:TokenStyle::Type]; }
+static NSColor *HookColor() { return [[AppSettings shared] syntax:TokenStyle::Comment]; }
+static NSColor *LinkColor() { return [[AppSettings shared] markdown:MarkdownColor::Link]; }
+static NSColor *PromptColor() { return [[AppSettings shared] markdown:MarkdownColor::Heading]; }
+static NSColor *BoxColor() { return MCColor([AppSettings shared].settings.markdownCodeBackground()); }
+
+static const CGFloat kEntryIndent = 28;   // the number column, then every entry's text
+
+// A text block as wide as the container whose left padding moves what it
+// holds `points` right (a margin on a box would leave the box's background
+// under it, MarkdownRender's MCIndentBlock).
+static NSTextBlock *IndentBlock(CGFloat points) {
+    NSTextBlock *b = [NSTextBlock new];
+    [b setValue:100 type:NSTextBlockPercentageValueType forDimension:NSTextBlockWidth];
+    [b setWidth:points type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSRectEdgeMinX];
+    return b;
+}
+
+// A command's output box: indented to the entries' text, tinted as a
+// Markdown code block, so output reads apart from what ran it.
+static NSArray<NSTextBlock *> *OutputBlocks(void) {
+    NSTextBlock *box = [NSTextBlock new];
+    [box setValue:100 type:NSTextBlockPercentageValueType forDimension:NSTextBlockWidth];
+    box.backgroundColor = BoxColor();
+    [box setWidth:8 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSRectEdgeMinX];
+    [box setWidth:8 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSRectEdgeMaxX];
+    [box setWidth:3 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSRectEdgeMinY];
+    [box setWidth:3 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSRectEdgeMaxY];
+    return @[IndentBlock(kEntryIndent), box];
+}
+
+// The preview's Markdown page made to sit among the entries: its fonts
+// scaled from the preview's 15 points (and zoom) to `size`, and every
+// paragraph moved `indent` right (by a text block around its own, so
+// quotes and code boxes move whole; a table stays as wide as the page).
+static NSAttributedString *FitMarkdown(NSAttributedString *page, CGFloat indent, CGFloat size) {
+    NSMutableAttributedString *s = [page mutableCopy];
+    const NSRange all = NSMakeRange(0, s.length);
+    const CGFloat k = size / (15 * MAX(0.25, MCZoomScale()));
+    [s enumerateAttribute:NSFontAttributeName inRange:all options:0
+               usingBlock:^(NSFont *f, NSRange r, BOOL *stop) {
+        (void)stop;
+        if (f) [s addAttribute:NSFontAttributeName value:[NSFont fontWithDescriptor:f.fontDescriptor
+                                                                               size:f.pointSize * k] ?: f
+                         range:r];
+    }];
+    if (indent > 0) {
+        NSTextBlock *outer = IndentBlock(indent);
+        [s enumerateAttribute:NSParagraphStyleAttributeName inRange:all options:0
+                   usingBlock:^(NSParagraphStyle *ps, NSRange r, BOOL *stop) {
+            (void)stop;
+            NSMutableParagraphStyle *m = ps ? [ps mutableCopy] : [NSMutableParagraphStyle new];
+            for (NSTextBlock *b in m.textBlocks)
+                if ([b isKindOfClass:NSTextTableBlock.class]) return;
+            m.textBlocks = [@[outer] arrayByAddingObjectsFromArray:m.textBlocks ?: @[]];
+            [s addAttribute:NSParagraphStyleAttributeName value:m range:r];
+        }];
+    }
+    if (s.length && ![s.string hasSuffix:@"\n"])
+        [s appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
+            attributes:[s attributesAtIndex:s.length - 1 effectiveRange:NULL]]];
+    return s;
+}
+
 // ===================================================================== evidence
 // One command as the page shows it (main thread).
 @interface MCEvCommand : NSObject
@@ -49,6 +123,8 @@ static const size_t kExpandBytes = 1 << 20;   // a whole output, shown up to 1 M
 @property(nonatomic) unsigned long long bytes;
 @property(nonatomic, copy) NSString *full;                // the whole output, once expanded
 @property(nonatomic) BOOL fullCut;
+@property(nonatomic) NSUInteger stderrLines;              // the last of head + tail that are stderr
+@property(nonatomic) NSUInteger fullStderrLines;          // the same for the whole output
 @end
 @implementation MCEvCommand
 @end
@@ -60,6 +136,18 @@ static const size_t kExpandBytes = 1 << 20;   // a whole output, shown up to 1 M
 @property(nonatomic) BOOL answered, isError;
 @end
 @implementation MCEvEdit
+@end
+
+// One item of the session (AgentEvidence::Entry) as the page shows it.
+@interface MCEvEntry : NSObject
+@property(nonatomic) AgentEvidence::EntryKind kind;
+@property(nonatomic) NSTimeInterval time;
+@property(nonatomic) NSUInteger index;
+@property(nonatomic, copy) NSString *tool, *text, *path, *peer, *subagentType;
+@property(nonatomic) BOOL textCut, answered, isError;
+@property(nonatomic, copy) NSArray<NSString *> *errorLines;   // a tool's error, its first lines
+@end
+@implementation MCEvEntry
 @end
 
 static NSString *ClockTime(NSTimeInterval t) {
@@ -110,6 +198,21 @@ static NSArray<NSString *> *Lines(const std::vector<std::string> &v) {
     NSView *_claimBox, *_testBox;
     NSArray<MCEvCommand *> *_commands;
     NSArray<MCEvEdit *> *_edits;
+    NSArray<MCEvEntry *> *_entries;
+    std::map<std::string, std::vector<std::string>> _errorLines;   // on _queue, by tool use id
+    // Markdown built for entries (by index, with the text it was built
+    // from), those still to build, and the final message's.
+    NSMutableDictionary<NSNumber *, NSAttributedString *> *_mdCache;
+    NSMutableDictionary<NSNumber *, NSString *> *_mdCacheText;
+    NSMutableIndexSet *_mdPending;
+    BOOL _mdScheduled;
+    CGFloat _mdWidth;
+    CFAbsoluteTime _mdLastRender;
+    NSAttributedString *_finalPage;
+    NSString *_finalPageText;
+    CGFloat _finalPageWidth;
+    std::vector<NSRange> _entryRanges;
+    BOOL _subagent;
     NSString *_cwd, *_final, *_info;
     NSInteger _lastTest;
     BOOL _updating, _again, _closed;
@@ -125,6 +228,10 @@ static NSArray<NSString *> *Lines(const std::vector<std::string> &v) {
         _queue = dispatch_queue_create("minicode.evidence", DISPATCH_QUEUE_SERIAL);
         _reader.reset(new AgentEvidence::Reader(PU8(transcript)));
         _commands = @[];
+        _entries = @[];
+        _mdCache = [NSMutableDictionary dictionary];
+        _mdCacheText = [NSMutableDictionary dictionary];
+        _mdPending = [NSMutableIndexSet indexSet];
         _lastTest = -1;
         [self build];
         [self pageApplySettings];
@@ -149,6 +256,7 @@ static NSArray<NSString *> *Lines(const std::vector<std::string> &v) {
 - (NSView *)pageFocusView { return _commandsView; }
 - (void)pageClosed {
     _closed = YES;
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
     if (_observer) [NSNotificationCenter.defaultCenter removeObserver:_observer];
     _observer = nil;
 }
@@ -264,6 +372,10 @@ static NSArray<NSString *> *Lines(const std::vector<std::string> &v) {
     _testLabel.frame = NSMakeRect(8, 24, testW - 16, boxH - 30);
     const CGFloat listTop = top + boxH + 10;
     _commandsScroll.frame = NSMakeRect(pad - 6, listTop, W - 2 * pad + 6, MAX(0, H - listTop - 4));
+    if (_mdCache.count) {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(widthSettled) object:nil];
+        [self performSelector:@selector(widthSettled) withObject:nil afterDelay:0.3];
+    }
 }
 
 - (void)pageApplySettings {
@@ -272,6 +384,26 @@ static NSArray<NSString *> *Lines(const std::vector<std::string> &v) {
     NSColor *text = [cfg text:Surface::Editor];
     _titleLabel.textColor = text;
     _claimView.textColor = text;
+    NSDictionary *links = @{NSCursorAttributeName: NSCursor.pointingHandCursor,
+                            NSForegroundColorAttributeName: LinkColor()};
+    _commandsView.linkTextAttributes = links;
+    _claimView.linkTextAttributes = links;
+    // New colors: Markdown is built again in them.
+    [self forgetMarkdown];
+    [self render];
+}
+
+- (void)forgetMarkdown {
+    [_mdCache removeAllObjects];
+    [_mdCacheText removeAllObjects];
+    _finalPage = nil;
+}
+
+// The page's width settled at a new size: Markdown (its tables) laid out
+// for it again, once, not at every step of a resize.
+- (void)widthSettled {
+    if (_closed || fabs(_commandsView.textContainer.size.width - _mdWidth) < 24) return;
+    [self forgetMarkdown];
     [self render];
 }
 
@@ -364,9 +496,31 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
                 m.omitted = lo.out.omitted;
                 m.whole = lo.out.whole;
                 m.bytes = lo.out.bytes;
+                if (!c.stderrText.empty()) {
+                    // stderr comes last in the output: its lines in the tail.
+                    std::vector<std::string> shown;
+                    if (lo.out.whole) shown = lo.out.head;
+                    shown.insert(shown.end(), lo.out.tail.begin(), lo.out.tail.end());
+                    for (std::string &l : shown) l = AgentEvidence::stripAnsi(l);
+                    size_t n = AgentEvidence::stderrLineCount(shown, c.stderrText);
+                    if (!lo.out.whole) n = std::min(n, lo.out.tail.size());
+                    m.stderrLines = n;
+                }
                 if (_wantFull[i] && lo.haveFull) {
                     m.full = PNS(lo.full);
                     m.fullCut = lo.fullCut;
+                    if (!c.stderrText.empty() && !lo.fullCut) {
+                        std::vector<std::string> last;
+                        size_t end = lo.full.size();
+                        while (end > 0 && last.size() < 200) {
+                            size_t nl = lo.full.rfind('\n', end - 1);
+                            size_t from = nl == std::string::npos ? 0 : nl + 1;
+                            last.insert(last.begin(), lo.full.substr(from, end - from));
+                            if (nl == std::string::npos) break;
+                            end = nl;
+                        }
+                        m.fullStderrLines = AgentEvidence::stderrLineCount(last, c.stderrText);
+                    }
                 }
             } else if (!c.answered) {
                 m.loaded = YES;   // nothing to read yet
@@ -386,6 +540,44 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
         e.isError = fe.isError;
         [edits addObject:e];
     }
+    // The session item by item; a tool's error has its first lines read.
+    NSMutableArray<MCEvEntry *> *entries = [NSMutableArray arrayWithCapacity:ev.entries.size()];
+    for (const AgentEvidence::Entry &en : ev.entries) {
+        MCEvEntry *e = [MCEvEntry new];
+        e.kind = en.kind;
+        e.time = en.time;
+        e.index = en.index;
+        e.tool = PNS(en.tool);
+        e.text = PNS(en.text);
+        e.textCut = en.textCut;
+        e.path = PNS(en.path);
+        e.peer = PNS(en.peer);
+        e.subagentType = PNS(en.subagentType);
+        e.answered = en.answered;
+        e.isError = en.isError;
+        if (en.isError && !en.output.empty() && !en.toolUseId.empty()) {
+            auto it = _errorLines.find(en.toolUseId);
+            if (it == _errorLines.end()) {
+                AgentTranscript::Output o =
+                    AgentTranscript::readOutput(fs, transcript, en.output, 6, 0, 8 * 1024);
+                std::vector<std::string> lines;
+                for (std::string l : o.head) {
+                    for (const char *tag : {"<tool_use_error>", "</tool_use_error>"}) {
+                        size_t at;
+                        while ((at = l.find(tag)) != std::string::npos) l.erase(at, std::strlen(tag));
+                    }
+                    lines.push_back(AgentView::clipLine(AgentEvidence::stripAnsi(l)));
+                }
+                while (!lines.empty() && lines.back().empty()) lines.pop_back();
+                it = _errorLines.emplace(en.toolUseId, lines).first;
+            }
+            NSMutableArray *el = [NSMutableArray array];
+            for (const std::string &l : it->second) [el addObject:PNS(l)];
+            e.errorLines = el;
+        }
+        [entries addObject:e];
+    }
+    const BOOL subagent = ev.subagent;
     NSString *final = PNS(ev.finalMessage);
     if (ev.finalCut) final = [final stringByAppendingString:@"…"];
     NSMutableArray *versions = [NSMutableArray array];
@@ -401,6 +593,8 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
             MCEvidencePage *s = weakSelf;
             if (!s) return;
             s->_edits = edits;
+            s->_entries = entries;
+            s->_subagent = subagent;
             [s showCommands:cmds final:final cwd:cwd versions:versions lastTest:lastTest
                    badLines:bad outputs:done];
         });
@@ -426,6 +620,12 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
     if (_edits.count)
         [info addObject:[NSString stringWithFormat:@"%lu file %@", (unsigned long)_edits.count,
                          _edits.count == 1 ? @"edit" : @"edits"]];
+    NSUInteger messages = 0;
+    for (MCEvEntry *e in _entries)
+        if (e.kind == AgentEvidence::EntryKind::Message) messages++;
+    if (messages)
+        [info addObject:[NSString stringWithFormat:@"%lu %@ from Claude", (unsigned long)messages,
+                         messages == 1 ? @"message" : @"messages"]];
     if (versions.count)
         [info addObject:[@"Claude Code " stringByAppendingString:[versions componentsJoinedByString:@", "]]];
     if (bad > 0)
@@ -463,7 +663,21 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
     _titleLabel.stringValue = _name ?: @"";
     _infoLabel.stringValue = _info ?: @"";
     NSString *final = _final.length ? _final : @"(The session has no reply with text yet.)";
-    [_claimView.textStorage setAttributedString:[[NSAttributedString alloc]
+    // The final message in the preview's look (it is Markdown), built
+    // again only when it or the box's width changed.
+    const CGFloat claimWidth = MAX(80, _claimView.textContainer.size.width - 12);
+    if (_final.length && self.markdown) {
+        if (!_finalPage || ![_finalPageText isEqualToString:_final] ||
+            fabs(_finalPageWidth - claimWidth) > 1) {
+            NSAttributedString *page = self.markdown(_final, claimWidth);
+            _finalPage = page ? FitMarkdown(page, 0, 12.5) : nil;
+            _finalPageText = _final;
+            _finalPageWidth = claimWidth;
+        }
+    } else {
+        _finalPage = nil;
+    }
+    [_claimView.textStorage setAttributedString:_finalPage ?: [[NSAttributedString alloc]
         initWithString:final
             attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5],
                          NSForegroundColorAttributeName: _final.length ? text : Muted()}]];
@@ -561,8 +775,8 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
     NSString *cmd = c.command ?: @"";
     if (c.commandCut) cmd = [cmd stringByAppendingString:@" …(cut)"];
     add([@"$ " stringByAppendingString:cmd],
-        @{NSFontAttributeName: mono, NSForegroundColorAttributeName: Muted(),
-          NSParagraphStyleAttributeName: indented});
+        @{NSFontAttributeName: MCMonoFont(11.5, NSFontWeightMedium),
+          NSForegroundColorAttributeName: CommandColor(), NSParagraphStyleAttributeName: indented});
     add(@"\n", @{NSFontAttributeName: mono, NSParagraphStyleAttributeName: indented});
     if (c.isTest && c.answered) {
         NSString *sum = c.summary.length ? c.summary : @"no test summary found in its output";
@@ -573,9 +787,25 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
         add(@"\n", @{NSFontAttributeName: body, NSParagraphStyleAttributeName: indented});
     }
 
-    // The output: its ends, or all of it once expanded.
+    // The output: its ends, or all of it once expanded, in a box of its
+    // own; stderr and a failed command's exit line in the error color.
+    NSMutableParagraphStyle *boxed = [NSMutableParagraphStyle new];
+    boxed.textBlocks = OutputBlocks();
     NSDictionary *outAttrs = @{NSFontAttributeName: mono, NSForegroundColorAttributeName: text,
-                               NSParagraphStyleAttributeName: indented};
+                               NSParagraphStyleAttributeName: boxed};
+    NSDictionary *errAttrs = @{NSFontAttributeName: mono, NSForegroundColorAttributeName: ErrorColor(),
+                               NSParagraphStyleAttributeName: boxed};
+    NSDictionary *noteAttrs = @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted(),
+                                NSParagraphStyleAttributeName: boxed};
+    const NSUInteger shownLines = c.head.count + c.tail.count;
+    NSUInteger lineNo = 0;
+    auto outLine = [&](NSString *l, NSUInteger stderrFrom) {
+        const BOOL exitLine = lineNo == 0 && c.isError && [l hasPrefix:@"Exit code "];
+        NSDictionary *a = exitLine || lineNo >= stderrFrom ? errAttrs : outAttrs;
+        add(l, a);
+        add(@"\n", a);
+        lineNo++;
+    };
     if (!c.answered) {
         add(@"(no result yet)\n", @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted(),
                                     NSParagraphStyleAttributeName: indented});
@@ -584,11 +814,30 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
                                         NSForegroundColorAttributeName: Muted(),
                                         NSParagraphStyleAttributeName: indented});
     } else if (c.full) {
-        add(c.full, outAttrs);
-        if (![c.full hasSuffix:@"\n"]) add(@"\n", outAttrs);
-        if (c.fullCut)
-            add(@"(cut at 1 MB)\n", @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted(),
-                                      NSParagraphStyleAttributeName: indented});
+        // The whole output: its last stderr lines found from its end.
+        NSString *full = [c.full hasSuffix:@"\n"] ? c.full : [c.full stringByAppendingString:@"\n"];
+        NSUInteger split = full.length;
+        if (c.fullStderrLines && full.length) {
+            NSRange search = NSMakeRange(0, full.length - 1);   // past the last line's end
+            NSUInteger found = 0;
+            for (;;) {
+                const NSRange nl = [full rangeOfString:@"\n" options:NSBackwardsSearch range:search];
+                if (nl.location == NSNotFound) { split = 0; break; }
+                if (++found == c.fullStderrLines) { split = nl.location + 1; break; }
+                search = NSMakeRange(0, nl.location);
+            }
+        }
+        // A big one is indented rather than boxed: a text block over many
+        // thousands of paragraphs makes TextKit's layout of it slow.
+        NSMutableDictionary *fullAttrs = [outAttrs mutableCopy], *fullErr = [errAttrs mutableCopy];
+        if (full.length > 64 * 1024) {
+            NSMutableParagraphStyle *plain = [NSMutableParagraphStyle new];
+            plain.headIndent = plain.firstLineHeadIndent = kEntryIndent + 8;
+            fullAttrs[NSParagraphStyleAttributeName] = fullErr[NSParagraphStyleAttributeName] = plain;
+        }
+        add([full substringToIndex:split], fullAttrs);
+        if (split < full.length) add([full substringFromIndex:split], fullErr);
+        if (c.fullCut) add(@"(cut at 1 MB)\n", noteAttrs);
         add(@"Show less", @{NSFontAttributeName: small, NSParagraphStyleAttributeName: indented,
                             NSLinkAttributeName: [NSURL URLWithString:[NSString stringWithFormat:
                                 @"minicode-evidence://less/%lu", (unsigned long)i]]});
@@ -597,17 +846,16 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
         add(@"(no output)\n", @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted(),
                                 NSParagraphStyleAttributeName: indented});
     } else {
-        for (NSString *l in c.head) { add(l, outAttrs); add(@"\n", outAttrs); }
+        const NSUInteger stderrFrom = shownLines - MIN(c.stderrLines, shownLines);
+        for (NSString *l in c.head) outLine(l, stderrFrom);
         if (!c.whole) {
-            add([NSString stringWithFormat:@"⋯ %@  ", PNS(AgentView::moreLinesText(c.omitted))],
-                @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted(),
-                  NSParagraphStyleAttributeName: indented});
-            add(@"Show all", @{NSFontAttributeName: small, NSParagraphStyleAttributeName: indented,
+            add([NSString stringWithFormat:@"⋯ %@  ", PNS(AgentView::moreLinesText(c.omitted))], noteAttrs);
+            add(@"Show all", @{NSFontAttributeName: small, NSParagraphStyleAttributeName: boxed,
                                NSLinkAttributeName: [NSURL URLWithString:[NSString stringWithFormat:
                                    @"minicode-evidence://expand/%lu", (unsigned long)i]]});
-            add(@"\n", @{NSFontAttributeName: small, NSParagraphStyleAttributeName: indented});
+            add(@"\n", @{NSFontAttributeName: small, NSParagraphStyleAttributeName: boxed});
         }
-        for (NSString *l in c.tail) { add(l, outAttrs); add(@"\n", outAttrs); }
+        for (NSString *l in c.tail) outLine(l, stderrFrom);
     }
     return s;
 }
@@ -620,28 +868,258 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
         [all appendAttributedString:[[NSAttributedString alloc] initWithString:@"Reading the transcript…"
             attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5],
                          NSForegroundColorAttributeName: Muted()}]];
-    } else if (!_commands.count && !_edits.count) {
+    } else if (!_entries.count) {
         [all appendAttributedString:[[NSAttributedString alloc]
-            initWithString:@"This session ran no shell commands."
+            initWithString:@"This session has nothing to show yet."
                 attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5],
                              NSForegroundColorAttributeName: Muted()}]];
     }
-    // Commands and file edits in the order they were asked for.
-    NSUInteger ci = 0, ei = 0;
-    while (ci < _commands.count || ei < _edits.count) {
-        const BOOL edit = ei < _edits.count &&
-                          (ci >= _commands.count || _edits[ei].time < _commands[ci].time);
-        if (edit) {
-            [all appendAttributedString:[self editBlock:_edits[ei] index:ei color:text]];
-            ei++;
-        } else {
-            [all appendAttributedString:[self blockFor:_commands[ci] index:ci color:text]];
-            ci++;
-        }
+    // The session item by item, in the order they happened.
+    _entryRanges.assign(_entries.count, NSMakeRange(NSNotFound, 0));
+    for (NSUInteger i = 0; i < _entries.count; i++) {
+        NSAttributedString *block = [self entryBlock:_entries[i] index:i color:text];
+        _entryRanges[i] = NSMakeRange(all.length, block.length);
+        [all appendAttributedString:block];
     }
+    _mdLastRender = CFAbsoluteTimeGetCurrent();
     [_commandsView.textStorage setAttributedString:all];
     [scroll.contentView scrollToPoint:origin];
     [scroll reflectScrolledClipView:scroll.contentView];
+}
+
+// The paragraph style every entry's first line has: its text at the
+// entries' indent, a gap above (smaller for a one-line entry).
+static NSParagraphStyle *EntryStyle(CGFloat before) {
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.headIndent = kEntryIndent;
+    ps.paragraphSpacingBefore = before;
+    ps.tabStops = @[[[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft location:kEntryIndent
+                                                     options:@{}]];
+    return ps;
+}
+
+- (NSString *)shownPath:(NSString *)path {
+    return _cwd.length && [path hasPrefix:[_cwd stringByAppendingString:@"/"]]
+        ? [path substringFromIndex:_cwd.length + 1] : [path stringByAbbreviatingWithTildeInPath];
+}
+
+// One item of the session, by its kind.
+- (NSAttributedString *)entryBlock:(MCEvEntry *)e index:(NSUInteger)i color:(NSColor *)text {
+    using K = AgentEvidence::EntryKind;
+    switch (e.kind) {
+    case K::Command:
+        return e.index < _commands.count ? [self blockFor:_commands[e.index] index:e.index color:text]
+                                         : [NSAttributedString new];
+    case K::Edit:
+        return e.index < _edits.count ? [self editBlock:_edits[e.index] index:e.index color:text]
+                                      : [NSAttributedString new];
+    case K::Prompt: case K::Message: case K::SentMessage: case K::ReceivedMessage:
+        return [self messageBlock:e index:i color:text];
+    default:
+        return [self lineBlock:e index:i color:text];
+    }
+}
+
+// What was asked, what Claude said, a message to or from another session:
+// who, when, then the Markdown.
+- (NSAttributedString *)messageBlock:(MCEvEntry *)e index:(NSUInteger)i color:(NSColor *)text {
+    using K = AgentEvidence::EntryKind;
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    NSParagraphStyle *ps = EntryStyle(16);
+    NSString *who;
+    NSColor *whoColor;
+    switch (e.kind) {
+    case K::Prompt:
+        who = _subagent ? @"The parent agent asked" : @"You asked";
+        whoColor = PromptColor();
+        break;
+    case K::SentMessage:
+        who = [NSString stringWithFormat:@"→ Message to %@", e.peer.length ? e.peer : @"another session"];
+        whoColor = PeerColor();
+        break;
+    case K::ReceivedMessage:
+        who = [NSString stringWithFormat:@"← Message from %@", e.peer.length ? e.peer : @"another session"];
+        whoColor = PeerColor();
+        break;
+    default:
+        who = @"Claude";
+        whoColor = text;
+        break;
+    }
+    auto add = [&](NSString *str, NSDictionary *attrs) {
+        NSMutableDictionary *a = [attrs mutableCopy];
+        a[NSParagraphStyleAttributeName] = ps;
+        [s appendAttributedString:[[NSAttributedString alloc] initWithString:str ?: @"" attributes:a]];
+    };
+    add(@"\t", @{NSFontAttributeName: [NSFont systemFontOfSize:11]});
+    add(who, @{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold],
+               NSForegroundColorAttributeName: whoColor});
+    NSString *when = ClockTime(e.time);
+    if (when.length)
+        add([@"   " stringByAppendingString:when],
+            @{NSFontAttributeName: [NSFont systemFontOfSize:11], NSForegroundColorAttributeName: Muted()});
+    add(@"\n", @{NSFontAttributeName: [NSFont systemFontOfSize:11]});
+    [s appendAttributedString:[self markdownFor:e index:i color:text]];
+    return s;
+}
+
+static NSString *MarkdownOf(MCEvEntry *e) {
+    return e.textCut ? [e.text stringByAppendingString:@"\n\n*(cut here: the rest is in the transcript)*"]
+                     : e.text ?: @"";
+}
+
+// An entry's Markdown, as built; until its turn (or with no builder), its
+// text plain at the entries' indent.
+- (NSAttributedString *)markdownFor:(MCEvEntry *)e index:(NSUInteger)i color:(NSColor *)text {
+    NSString *md = MarkdownOf(e);
+    NSAttributedString *hit = _mdCache[@(i)];
+    if (hit && [_mdCacheText[@(i)] isEqualToString:md]) return hit;
+    if (self.markdown) {
+        [_mdPending addIndex:i];
+        [self scheduleMarkdown];
+    }
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+    ps.headIndent = ps.firstLineHeadIndent = kEntryIndent;
+    ps.paragraphSpacingBefore = 4;
+    return [[NSAttributedString alloc]
+        initWithString:[md stringByAppendingString:@"\n"]
+            attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5],
+                         NSForegroundColorAttributeName: text, NSParagraphStyleAttributeName: ps}];
+}
+
+- (void)scheduleMarkdown {
+    if (_mdScheduled) return;
+    _mdScheduled = YES;
+    __weak MCEvidencePage *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf buildMarkdownSlice]; });
+}
+
+// Builds pending entries' Markdown for about 12 ms, then lets the window
+// draw: a long session's messages fill in over a few turns, never one
+// stall. The page is shown again when all are built (and every 0.3 s on
+// the way).
+- (void)buildMarkdownSlice {
+    _mdScheduled = NO;
+    if (_closed || !self.markdown) return;
+    const CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
+    const CGFloat width = MAX(120, _commandsView.textContainer.size.width - 12 - kEntryIndent);
+    _mdWidth = _commandsView.textContainer.size.width;
+    BOOL built = NO;
+    while (_mdPending.count && CFAbsoluteTimeGetCurrent() - t0 < 0.012) {
+        const NSUInteger i = _mdPending.firstIndex;
+        [_mdPending removeIndex:i];
+        if (i >= _entries.count) continue;
+        NSString *md = MarkdownOf(_entries[i]);
+        if ([_mdCacheText[@(i)] isEqualToString:md] && _mdCache[@(i)]) continue;
+        NSAttributedString *page = self.markdown(md, width);
+        if (!page) continue;
+        _mdCache[@(i)] = FitMarkdown(page, kEntryIndent, 12.5);
+        _mdCacheText[@(i)] = md;
+        built = YES;
+    }
+    if (_mdPending.count) [self scheduleMarkdown];
+    if (built && (!_mdPending.count || CFAbsoluteTimeGetCurrent() - _mdLastRender > 0.3)) {
+        [self renderCommands:[self textColor]];
+        if (self.onUpdate) self.onUpdate();
+    }
+}
+
+- (BOOL)markdownBuilt {
+    if (!self.markdown) return YES;
+    if (_mdPending.count) return NO;
+    using K = AgentEvidence::EntryKind;
+    for (NSUInteger i = 0; i < _entries.count; i++) {
+        const K k = _entries[i].kind;
+        if ((k == K::Prompt || k == K::Message || k == K::SentMessage || k == K::ReceivedMessage) &&
+            !(_mdCache[@(i)] && [_mdCacheText[@(i)] isEqualToString:MarkdownOf(_entries[i])]))
+            return NO;
+    }
+    return YES;
+}
+
+// A tool call, a subagent started, a task ending, a hook: one line, with
+// a tool's error or a hook's words under it.
+- (NSAttributedString *)lineBlock:(MCEvEntry *)e index:(NSUInteger)i color:(NSColor *)text {
+    using K = AgentEvidence::EntryKind;
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    NSParagraphStyle *ps = EntryStyle(8);
+    NSFont *small = [NSFont systemFontOfSize:11];
+    NSFont *label = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold];
+    NSFont *mono = MCMonoFont(11.5, NSFontWeightRegular);
+    auto add = [&](NSString *str, NSDictionary *attrs) {
+        NSMutableDictionary *a = [attrs mutableCopy];
+        if (!a[NSParagraphStyleAttributeName]) a[NSParagraphStyleAttributeName] = ps;
+        [s appendAttributedString:[[NSAttributedString alloc] initWithString:str ?: @"" attributes:a]];
+    };
+    add(@"\t", @{NSFontAttributeName: small});
+    NSArray<NSString *> *under = nil;
+    NSColor *underColor = Muted();
+    switch (e.kind) {
+    case K::Subagent:
+        add(@"Subagent", @{NSFontAttributeName: label, NSForegroundColorAttributeName: PeerColor()});
+        add(@"  ", @{NSFontAttributeName: small});
+        add(e.text.length ? e.text : @"(no description)",
+            @{NSFontAttributeName: [NSFont systemFontOfSize:12.5], NSForegroundColorAttributeName: text});
+        if (e.subagentType.length)
+            add([NSString stringWithFormat:@"  %@", e.subagentType],
+                @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted()});
+        break;
+    case K::Notification:
+        add([e.tool isEqualToString:@"command"] ? [@"Ran " stringByAppendingString:e.text ?: @""] : e.text,
+            @{NSFontAttributeName: [NSFont systemFontOfSize:11.5],
+              NSForegroundColorAttributeName: e.isError ? ErrorColor() : Muted()});
+        break;
+    case K::Hook:
+        add(e.tool.length ? [@"Hook " stringByAppendingString:e.tool] : @"Hook",
+            @{NSFontAttributeName: label, NSForegroundColorAttributeName: HookColor()});
+        under = [e.text componentsSeparatedByString:@"\n"];
+        if (under.count > 6) under = [[under subarrayWithRange:NSMakeRange(0, 6)] arrayByAddingObject:@"…"];
+        underColor = e.isError ? ErrorColor() : Muted();
+        break;
+    default:   // a tool call
+        add(e.tool, @{NSFontAttributeName: label, NSForegroundColorAttributeName: ToolColor()});
+        if (e.path.length) {
+            add(@"  ", @{NSFontAttributeName: small});
+            add([self shownPath:e.path],
+                @{NSFontAttributeName: MCMonoFont(12, NSFontWeightRegular),
+                  NSLinkAttributeName: [NSURL URLWithString:[NSString stringWithFormat:
+                      @"minicode-evidence://open/%lu", (unsigned long)i]]});
+        }
+        if (e.text.length)
+            add([@"  " stringByAppendingString:e.text],
+                @{NSFontAttributeName: mono, NSForegroundColorAttributeName: Muted()});
+        if (e.isError) {
+            add(@"   error", @{NSFontAttributeName: [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold],
+                               NSForegroundColorAttributeName: ErrorColor()});
+            under = e.errorLines;
+            underColor = ErrorColor();
+        }
+        break;
+    }
+    NSString *when = ClockTime(e.time);
+    if (when.length)
+        add([@"   " stringByAppendingString:when],
+            @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted()});
+    add(@"\n", @{NSFontAttributeName: small});
+    if (under.count) {
+        NSMutableParagraphStyle *ups = [NSMutableParagraphStyle new];
+        ups.headIndent = ups.firstLineHeadIndent = kEntryIndent;
+        for (NSString *l in under)
+            add([l stringByAppendingString:@"\n"],
+                @{NSFontAttributeName: mono, NSForegroundColorAttributeName: underColor,
+                  NSParagraphStyleAttributeName: ups});
+    }
+    return s;
+}
+
+- (NSUInteger)entryCount { return _entries.count; }
+
+- (NSString *)entryKind:(NSUInteger)index {
+    return index < _entries.count ? @(AgentEvidence::entryKindName(_entries[index].kind)) : @"";
+}
+
+- (NSRange)entryRange:(NSUInteger)index {
+    return index < _entryRanges.size() ? _entryRanges[index] : NSMakeRange(NSNotFound, 0);
 }
 
 // One file edit: the tool's word, the file (a link to its page), the time.
@@ -650,7 +1128,7 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
     NSFont *small = [NSFont systemFontOfSize:11];
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
     ps.headIndent = 28;
-    ps.paragraphSpacingBefore = 14;
+    ps.paragraphSpacingBefore = 8;
     ps.tabStops = @[[[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft location:28 options:@{}]];
     auto add = [&](NSString *str, NSDictionary *attrs) {
         NSMutableDictionary *a = [attrs mutableCopy];
@@ -661,9 +1139,9 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
                    : [e.tool isEqualToString:@"NotebookEdit"] ? @"Edited a cell of" : @"Edited";
     add(@"\t", @{NSFontAttributeName: small});
     add([word stringByAppendingString:@" "],
-        @{NSFontAttributeName: [NSFont systemFontOfSize:12.5], NSForegroundColorAttributeName: text});
-    NSString *shown = _cwd.length && [e.path hasPrefix:[_cwd stringByAppendingString:@"/"]]
-        ? [e.path substringFromIndex:_cwd.length + 1] : [e.path stringByAbbreviatingWithTildeInPath];
+        @{NSFontAttributeName: [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold],
+          NSForegroundColorAttributeName: ToolColor()});
+    NSString *shown = [self shownPath:e.path];
     add(shown, @{NSFontAttributeName: MCMonoFont(12, NSFontWeightRegular),
                  NSLinkAttributeName: [NSURL URLWithString:[NSString stringWithFormat:
                      @"minicode-evidence://file/%lu", (unsigned long)i]]});
@@ -698,12 +1176,32 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
 - (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)charIndex {
     (void)tv; (void)charIndex;
     NSURL *url = [link isKindOfClass:NSURL.class] ? link : [NSURL URLWithString:[link description]];
-    if (![url.scheme isEqualToString:@"minicode-evidence"]) return NO;
+    if (![url.scheme isEqualToString:@"minicode-evidence"]) {
+        // A link in a message: a web address, or a file named from the
+        // session's folder.
+        NSString *href = [link isKindOfClass:NSURL.class] ? [link absoluteString] : [link description];
+        if (!href.length || !self.onOpenLink) return NO;
+        if (url.scheme.length && ![url.scheme isEqualToString:@"file"]) {
+            if (![url.scheme isEqualToString:@"http"] && ![url.scheme isEqualToString:@"https"]) return YES;
+            self.onOpenLink(href, YES);
+            return YES;
+        }
+        NSString *path = url.scheme.length ? url.path : (href.stringByRemovingPercentEncoding ?: href);
+        const NSRange hash = [path rangeOfString:@"#"];
+        if (hash.location != NSNotFound) path = [path substringToIndex:hash.location];
+        if (!path.length) return YES;
+        if (!path.isAbsolutePath && _cwd.length) path = [_cwd stringByAppendingPathComponent:path];
+        self.onOpenLink(path.stringByStandardizingPath, NO);
+        return YES;
+    }
     NSUInteger i = (NSUInteger)url.lastPathComponent.integerValue;
     if ([url.host isEqualToString:@"expand"]) [self expandCommand:i];
     else if ([url.host isEqualToString:@"less"]) [self collapseCommand:i];
     else if ([url.host isEqualToString:@"terminal"]) [self openCommandInTerminal:i];
     else if ([url.host isEqualToString:@"file"]) [self openEdit:i];
+    else if ([url.host isEqualToString:@"open"] && i < _entries.count && _entries[i].path.length &&
+             self.onOpenLink)
+        self.onOpenLink(_entries[i].path, NO);
     return YES;
 }
 

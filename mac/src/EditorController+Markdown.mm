@@ -644,6 +644,36 @@ static char kMarkdownMermaidKey;
     return out;
 }
 
+// Markdown that is not a document of the window (Claude's messages on an
+// agent session's Evidence page, A6) in the same builder's look, laid out
+// for `width` points: math stays TeX, a diagram not drawn yet stays code,
+// and nothing is waited for, so the page state of a preview (what it
+// waits for, its width) is left as it was.
+- (NSAttributedString *)markdownFragmentFor:(NSString *)content width:(CGFloat)width {
+    const CGFloat pageWidth = _markdownPageWidth;
+    NSMutableSet *webImages = _awaitedWebImages, *math = _awaitedMath;
+    NSMutableArray *mathWanted = _mathWanted;
+    const NSUInteger webMarks = _webImageMarks, mathMarks = _mathMarks;
+    const BOOL mathOn = _mathOn;
+    NSString *runProblem = _mathRunProblem;
+    _markdownPageWidth = width;
+    _awaitedWebImages = [NSMutableSet set];
+    _awaitedMath = [NSMutableSet set];
+    _mathWanted = [NSMutableArray array];
+    _mathOn = NO;
+    std::vector<MdRun> runs = MarkdownParser::parse(content.UTF8String ? content.UTF8String : "");
+    NSMutableAttributedString *out = [self markdownRuns:runs from:0 to:runs.size() anchors:nil];
+    _markdownPageWidth = pageWidth;
+    _awaitedWebImages = webImages;
+    _awaitedMath = math;
+    _mathWanted = mathWanted;
+    _webImageMarks = webMarks;
+    _mathMarks = mathMarks;
+    _mathOn = mathOn;
+    _mathRunProblem = runProblem;
+    return out;
+}
+
 // A new page: what its runs will note as they are built (formulas and
 // pictures to wait for, diagrams to draw) starts empty.
 - (void)beginMarkdownPageWidth:(CGFloat)width {

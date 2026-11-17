@@ -251,6 +251,122 @@ TestTool testCommand(const std::string &command) {
 }
 
 // =============================================================== summaries
+const char *entryKindName(EntryKind k) {
+    switch (k) {
+    case EntryKind::Prompt: return "prompt";
+    case EntryKind::Message: return "message";
+    case EntryKind::Command: return "command";
+    case EntryKind::Edit: return "edit";
+    case EntryKind::Tool: return "tool";
+    case EntryKind::Subagent: return "subagent";
+    case EntryKind::SentMessage: return "sent";
+    case EntryKind::ReceivedMessage: return "received";
+    case EntryKind::Notification: return "notification";
+    case EntryKind::Hook: return "hook";
+    }
+    return "";
+}
+
+namespace {
+
+std::string rtrimmed(const std::string &s) {
+    size_t e = s.size();
+    while (e > 0 && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\r' || s[e - 1] == '\n')) e--;
+    return s.substr(0, e);
+}
+
+std::string trimmed(const std::string &s) {
+    std::string r = rtrimmed(s);
+    size_t b = 0;
+    while (b < r.size() && (r[b] == ' ' || r[b] == '\t' || r[b] == '\r' || r[b] == '\n')) b++;
+    return r.substr(b);
+}
+
+std::string firstLine(const std::string &s) {
+    const std::string t = trimmed(s);
+    const size_t nl = t.find('\n');
+    return nl == std::string::npos ? t : t.substr(0, nl);
+}
+
+// Cut at `cap` bytes, never inside a UTF-8 character.
+void capText(std::string &s, bool &cut, size_t cap = kEntryTextCap) {
+    if (s.size() <= cap) return;
+    size_t n = cap;
+    while (n > 0 && ((unsigned char)s[n] & 0xC0) == 0x80) n--;
+    s.resize(n);
+    cut = true;
+}
+
+// Between <tag> and </tag> in `text`, or "" (*found false) when absent.
+std::string between(const std::string &text, const std::string &tag, bool *found = nullptr) {
+    const std::string open = "<" + tag + ">", close = "</" + tag + ">";
+    const size_t a = text.find(open);
+    const size_t b = a == std::string::npos ? a : text.find(close, a + open.size());
+    if (found) *found = b != std::string::npos;
+    if (b == std::string::npos) return "";
+    return text.substr(a + open.size(), b - a - open.size());
+}
+
+// A message from another session as Claude Code shows it to the model:
+// "Another Claude session sent a message:\n<cross-session-message from=..."
+// "from-name=...>\nbody\n</cross-session-message>": the body.
+std::string crossSessionBody(const std::string &text) {
+    const size_t tag = text.find("<cross-session-message");
+    if (tag == std::string::npos) return trimmed(text);
+    const size_t gt = text.find('>', tag);
+    if (gt == std::string::npos) return "";
+    size_t end = text.find("</cross-session-message>", gt);
+    if (end == std::string::npos) end = text.size();
+    return trimmed(text.substr(gt + 1, end - gt - 1));
+}
+
+}  // namespace
+
+std::string toolDetail(const Block &b) {
+    if (!b.pattern.empty())
+        return b.searchPath.empty() ? b.pattern : b.pattern + " in " + b.searchPath;
+    if (!b.target.empty()) return firstLine(b.target);
+    if (!b.description.empty()) return firstLine(b.description);
+    if (!b.command.empty()) return firstLine(b.command);
+    return "";
+}
+
+size_t stderrLineCount(const std::vector<std::string> &lines, const std::string &stderrText) {
+    std::vector<std::string> err;
+    size_t start = 0;
+    while (start <= stderrText.size()) {
+        size_t nl = stderrText.find('\n', start);
+        if (nl == std::string::npos) nl = stderrText.size();
+        err.push_back(rtrimmed(stderrText.substr(start, nl - start)));
+        start = nl + 1;
+    }
+    while (!err.empty() && err.back().empty()) err.pop_back();
+    size_t first = 0;
+    while (first < err.size() && err[first].empty()) first++;
+    if (first == err.size()) return 0;
+    size_t i = lines.size();
+    while (i > 0 && rtrimmed(lines[i - 1]).empty()) i--;
+    const size_t end = i;
+    size_t j = err.size();
+    while (i > 0 && j > first && rtrimmed(lines[i - 1]) == err[j - 1]) {
+        i--;
+        j--;
+    }
+    return i == end ? 0 : lines.size() - i;
+}
+
+bool taskNotification(const std::string &text, std::string *summary, bool *failed) {
+    const std::string t = trimmed(text);
+    if (t.compare(0, 19, "<task-notification>") != 0) return false;
+    bool found = false;
+    std::string sum = trimmed(between(t, "summary", &found));
+    const std::string status = trimmed(between(t, "status"));
+    if (!found || sum.empty()) sum = status.empty() ? "A background task ended" : "A background task " + status;
+    if (summary) *summary = sum;
+    if (failed) *failed = status == "failed" || status == "killed" || status == "error";
+    return true;
+}
+
 std::string stripAnsi(const std::string &s) {
     if (s.find('\x1b') == std::string::npos) return s;
     std::string out;
@@ -613,6 +729,28 @@ bool Reader::update(const Fs &fs) {
         if (ev_.cwd.empty() && !l.cwd.empty()) ev_.cwd = l.cwd;
         // An older main transcript also holds its subagents' lines.
         if (l.sidechain && !sideFirst_) return true;
+        ev_.subagent = sideFirst_;
+        auto entry = [&](EntryKind kind) -> Entry & {
+            entryMessageId_.clear();
+            Entry e;
+            e.kind = kind;
+            e.time = l.time;
+            ev_.entries.push_back(std::move(e));
+            return ev_.entries.back();
+        };
+        auto nameOf = [&](const std::string &id) {
+            auto it = names_.find(id);
+            return it == names_.end() ? id : it->second;
+        };
+        if (l.type == "attachment") {
+            if (!l.hookText.empty()) {
+                Entry &e = entry(EntryKind::Hook);
+                e.tool = l.hookName;
+                e.text = l.hookText;
+                e.isError = l.hookError;
+            }
+            return true;
+        }
         if (l.type == "assistant") {
             for (const Block &b : l.blocks) {
                 if (b.kind == Block::Kind::ToolUse && !b.filePath.empty() &&
@@ -624,7 +762,32 @@ bool Reader::update(const Fs &fs) {
                     fe.path = b.filePath;
                     fe.time = l.time;
                     if (!b.id.empty()) pendingEdits_[b.id] = ev_.edits.size();
+                    Entry &e = entry(EntryKind::Edit);
+                    e.index = ev_.edits.size();
+                    e.toolUseId = b.id;
+                    e.tool = b.name;
+                    e.path = b.filePath;
                     ev_.edits.push_back(std::move(fe));
+                } else if (b.kind == Block::Kind::ToolUse && b.name != "Bash") {
+                    EntryKind kind = b.name == "Agent" || b.name == "Task" ? EntryKind::Subagent
+                                   : b.name == "SendMessage"              ? EntryKind::SentMessage
+                                                                          : EntryKind::Tool;
+                    Entry &e = entry(kind);
+                    e.toolUseId = b.id;
+                    e.tool = b.name;
+                    if (kind == EntryKind::Subagent) {
+                        e.text = firstLine(b.description);
+                        e.subagentType = b.subagentType;
+                    } else if (kind == EntryKind::SentMessage) {
+                        e.peer = nameOf(b.to);
+                        e.text = b.message.empty() ? b.summary : b.message;
+                        e.textCut = b.textCut;
+                        capText(e.text, e.textCut);
+                    } else {
+                        e.path = b.filePath;
+                        e.text = toolDetail(b);
+                    }
+                    if (!b.id.empty()) pendingEntries_[b.id] = ev_.entries.size() - 1;
                 } else if (b.kind == Block::Kind::ToolUse && b.name == "Bash") {
                     Command c;
                     c.toolUseId = b.id;
@@ -636,8 +799,30 @@ bool Reader::update(const Fs &fs) {
                     c.test = testCommand(b.command);
                     if (c.test != TestTool::None) ev_.lastTest = (int)ev_.commands.size();
                     if (!b.id.empty()) pending_[b.id] = ev_.commands.size();
+                    Entry &e = entry(EntryKind::Command);
+                    e.index = ev_.commands.size();
+                    e.toolUseId = b.id;
+                    e.tool = b.name;
                     ev_.commands.push_back(std::move(c));
                 } else if (b.kind == Block::Kind::Text && !b.text.empty()) {
+                    // A reply's text blocks come a line each with one message
+                    // id: one entry while nothing came between them.
+                    if (!l.messageId.empty() && l.messageId == entryMessageId_ &&
+                        !ev_.entries.empty() && ev_.entries.back().kind == EntryKind::Message) {
+                        Entry &e = ev_.entries.back();
+                        if (!e.textCut) {
+                            e.text += "\n\n";
+                            e.text += b.text;
+                            e.textCut = b.textCut;
+                            capText(e.text, e.textCut);
+                        }
+                    } else {
+                        Entry &e = entry(EntryKind::Message);
+                        e.text = b.text;
+                        e.textCut = b.textCut;
+                        capText(e.text, e.textCut);
+                        entryMessageId_ = l.messageId;
+                    }
                     if (!l.messageId.empty() && l.messageId == lastMessageId_ &&
                         !ev_.finalMessage.empty()) {
                         ev_.finalMessage += "\n\n";
@@ -652,8 +837,73 @@ bool Reader::update(const Fs &fs) {
                 }
             }
         } else {
+            bool text = false, results = false;
+            for (const Block &b : l.blocks) {
+                if (b.kind == Block::Kind::Text) text = true;
+                if (b.kind == Block::Kind::ToolResult) results = true;
+            }
+            if (l.type == "user" && text && !results && !l.meta) {
+                std::string all;
+                bool cut = false;
+                for (const Block &b : l.blocks) {
+                    if (b.kind != Block::Kind::Text) continue;
+                    if (!all.empty()) all += "\n\n";
+                    all += b.text;
+                    cut = cut || b.textCut;
+                }
+                std::string summary;
+                bool failed = false;
+                if (l.originKind == "peer") {
+                    // Another Claude Code session wrote: it names itself.
+                    Entry &e = entry(EntryKind::ReceivedMessage);
+                    if (!l.originFrom.empty() && !l.originName.empty()) {
+                        if (names_[l.originFrom] != l.originName) {
+                            names_[l.originFrom] = l.originName;
+                            for (Entry &x : ev_.entries)
+                                if (x.kind == EntryKind::SentMessage && x.peer == l.originFrom)
+                                    x.peer = l.originName;
+                        }
+                    }
+                    e.peer = !l.originName.empty() ? l.originName : nameOf(l.originFrom);
+                    e.text = !l.originBody.empty() ? trimmed(l.originBody) : crossSessionBody(all);
+                    e.textCut = cut;
+                    capText(e.text, e.textCut);
+                } else if (taskNotification(all, &summary, &failed)) {
+                    Entry &e = entry(EntryKind::Notification);
+                    e.tool = "task";
+                    e.text = summary;
+                    e.isError = failed;
+                } else if (l.prompt || l.originKind == "coordinator") {
+                    Entry &e = entry(EntryKind::Prompt);
+                    e.text = all;
+                    e.textCut = cut;
+                    capText(e.text, e.textCut);
+                } else {
+                    bool found = false;
+                    const std::string name = trimmed(between(all, "command-name", &found));
+                    if (found && !name.empty()) {
+                        Entry &e = entry(EntryKind::Notification);
+                        e.tool = "command";
+                        std::string args = trimmed(between(all, "command-args"));
+                        e.text = args.empty() ? name : name + " " + args;
+                        capText(e.text, e.textCut, 1024);
+                    }
+                }
+                return true;
+            }
             for (const Block &b : l.blocks) {
                 if (b.kind != Block::Kind::ToolResult) continue;
+                auto pe = pendingEntries_.find(b.id);
+                if (pe != pendingEntries_.end()) {
+                    Entry &e = ev_.entries[pe->second];
+                    e.answered = true;
+                    e.isError = b.isError;
+                    e.output = b.output;
+                    if (e.kind == EntryKind::Subagent && !l.spawnedAgent.empty() && !e.text.empty())
+                        names_[l.spawnedAgent] = e.text;
+                    pendingEntries_.erase(pe);
+                    continue;
+                }
                 auto ed = pendingEdits_.find(b.id);
                 if (ed != pendingEdits_.end()) {
                     ev_.edits[ed->second].answered = true;
@@ -668,6 +918,7 @@ bool Reader::update(const Fs &fs) {
                 c.answered = true;
                 c.isError = b.isError;
                 c.output = b.output;
+                c.stderrText = l.stderrText;
                 if (c.test == TestTool::None || b.output.empty()) continue;
                 AgentTranscript::Output o =
                     AgentTranscript::readOutput(fs, path, b.output, 4, 120, 32 * 1024);
@@ -693,6 +944,9 @@ bool Reader::update(const Fs &fs) {
         ev_.transcript = t;
         pending_.clear();
         pendingEdits_.clear();
+        pendingEntries_.clear();
+        names_.clear();
+        entryMessageId_.clear();
         lastMessageId_.clear();
         sawFirst_ = sideFirst_ = false;
         changed = true;

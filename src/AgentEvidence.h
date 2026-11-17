@@ -93,6 +93,10 @@ struct Command {
     bool inBackground = false;
     TestTool test = TestTool::None;
     Summary summary;            // for a test command, once answered
+    // What it wrote to stderr, as Claude Code kept it apart (cut at 8 KB;
+    // "" for none). Claude Code also appends it to the output, so its
+    // lines are the output's last ones (stderrLineCount).
+    std::string stderrText;
 };
 
 // A file the session changed with Edit, MultiEdit, Write or NotebookEdit:
@@ -107,11 +111,57 @@ struct FileEdit {
     bool isError = false;       // refused: Claude Code did not apply it
 };
 
+// The session item by item (A6), so the page can give each kind its own
+// look: what was asked, what Claude said, each tool call, and what came in
+// from elsewhere. Commands and file edits keep their own lists above; their
+// entries point into them.
+enum class EntryKind {
+    Prompt,           // what the person asked (or the parent agent, in a subagent): Markdown
+    Message,          // Claude's text (a reply's text blocks joined): Markdown
+    Command,          // a Bash call: commands[index]
+    Edit,             // an Edit, MultiEdit, Write or NotebookEdit: edits[index]
+    Tool,             // another tool call, shown on one line: Read, Grep, Glob, WebFetch, ...
+    Subagent,         // an Agent (or Task) call: a subagent started
+    SentMessage,      // SendMessage: to another session or a subagent, Markdown
+    ReceivedMessage,  // a message from another Claude Code session: Markdown
+    Notification,     // a background task's end, a slash command run
+    Hook,             // what a hook said
+};
+const char *entryKindName(EntryKind k);   // "prompt", "message", ... for checks and logs
+
+struct Entry {
+    EntryKind kind = EntryKind::Message;
+    double time = 0;
+    size_t index = 0;           // Command: commands[index]; Edit: edits[index]
+    std::string toolUseId;
+    // Tool, Subagent, SentMessage: the tool's name; Hook: the hook's.
+    std::string tool;
+    // Prompt, Message, SentMessage, ReceivedMessage: the Markdown (cut at
+    // kEntryTextCap, textCut set). Tool: what it was asked (a pattern, an
+    // address, a query; toolDetail). Subagent: the task's description.
+    // Notification and Hook: what they said.
+    std::string text;
+    bool textCut = false;
+    std::string path;           // Tool: the file it names (Read's file_path), "" for none
+    // SentMessage: whom to, ReceivedMessage: whom from: a session's name
+    // when one is known (a message from it named it, or the subagent's
+    // task), else as the transcript spells it.
+    std::string peer;
+    std::string subagentType;   // Subagent: its type ("Explore", ...)
+    bool answered = false;
+    bool isError = false;       // a tool's error result, a failed task or hook
+    Span output;                // Tool, Subagent, SentMessage: the result's text
+};
+
+constexpr size_t kEntryTextCap = 16 * 1024;
+
 struct Evidence {
     std::string transcript;
     std::string cwd;                    // the session's first cwd
     std::vector<Command> commands;      // in the order they were asked for
     std::vector<FileEdit> edits;        // likewise
+    std::vector<Entry> entries;         // everything, in order (A6)
+    bool subagent = false;              // a subagent's transcript: its prompt is its task
     // The last assistant message that had text: its text blocks joined.
     std::string finalMessage;
     bool finalCut = false;
@@ -141,6 +191,9 @@ private:
     Evidence ev_;
     std::map<std::string, size_t> pending_;   // Bash tool_use id -> commands[]
     std::map<std::string, size_t> pendingEdits_;   // edit tool_use id -> edits[]
+    std::map<std::string, size_t> pendingEntries_; // other tool_use ids -> entries[]
+    std::map<std::string, std::string> names_;     // session or subagent id -> its name
+    std::string entryMessageId_;                   // the Message entry last added, if last
     std::string lastMessageId_;
     bool sideFirst_ = false, sawFirst_ = false;
     uint64_t bytesRead_ = 0;
@@ -151,5 +204,21 @@ Evidence read(const Fs &fs, const std::string &transcript);
 
 // Text with ANSI escape sequences (colors, cursor moves) removed.
 std::string stripAnsi(const std::string &text);
+
+// A tool call's one line on the page, after its name and path: Grep's
+// pattern and folder ("TODO in src"), Glob's pattern, WebFetch's address,
+// WebSearch's query, a Skill's name, else its description or command.
+std::string toolDetail(const AgentTranscript::Block &b);
+
+// How many of `lines` (an output's last lines, as read) are the command's
+// stderr: Claude Code puts stderr after stdout, so these are the trailing
+// lines that end the stderr text, compared with trailing spaces ignored.
+size_t stderrLineCount(const std::vector<std::string> &lines, const std::string &stderrText);
+
+// A Claude Code background task's notification ("<task-notification> ...
+// <status>completed</status><summary>Background command "x" completed
+// (exit code 0)</summary>"): its summary, and whether its status says it
+// failed. False when the text is not one.
+bool taskNotification(const std::string &text, std::string *summary, bool *failed);
 
 }  // namespace AgentEvidence

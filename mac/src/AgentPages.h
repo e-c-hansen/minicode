@@ -2,11 +2,19 @@
 // (EditorPage.h), opened from the Agents panel and the file tree:
 //
 // MCEvidencePage, a session's Evidence view (R3.1-R3.5): its final message
-// at the top beside the result of its last test command, then every shell
-// command it ran, in order, with the description the agent gave, the
-// command, whether its result was an error, a mark and the runner's own
+// at the top beside the result of its last test command, then the session
+// item by item (A6, AgentEvidence::Entry): what was asked and what Claude
+// said, as Markdown in the preview's look; every shell command it ran, in
+// order, with the description the agent gave, the command in its own
+// color, whether its result was an error, a mark and the runner's own
 // summary for test commands, and the first and last 20 lines of the output
-// with the rest a click away. Nothing is concluded from any of it. Outputs
+// in a box, stderr and an error's exit line in the error color, with the
+// rest a click away; other tool calls on a line each with their file as a
+// link and an error's text under them; messages to and from other sessions
+// and subagents, named; background tasks ending and what hooks said.
+// Nothing is concluded from any of it. Markdown is built a slice at a time
+// on the main thread (the window's builder lives there), the newest text
+// shown plain until its turn, and kept per entry. Outputs
 // are read lazily from the transcript on a background queue (the core reads
 // only the first and last 64 KB of an output, however large), so a 1 MB
 // output never holds up the window. "Open in Terminal" types a command into
@@ -38,6 +46,12 @@
 @property(nonatomic, copy) void (^onOpenInTerminal)(NSString *command, NSString *cwd);
 // A file the session changed, listed among the commands: its page.
 @property(nonatomic, copy) void (^onShowFileChanges)(NSString *path);
+// Markdown as the window's preview draws it (MCAgentWorkHost agentMarkdown:);
+// without it, prompts and messages show as plain text.
+@property(nonatomic, copy) NSAttributedString *(^markdown)(NSString *markdown, CGFloat width);
+// A link on the page: a file a tool call named (absolute), a link in a
+// message (a path made absolute from the session's folder, or a URL).
+@property(nonatomic, copy) void (^onOpenLink)(NSString *target, BOOL isURL);
 // Read the transcript again (the model calls it when it grows).
 - (void)update;
 
@@ -56,6 +70,10 @@
 @property(nonatomic, readonly) NSUInteger editCount;     // the file edits listed
 - (NSString *)editText:(NSUInteger)index;                 // one edit's line, as shown
 - (void)openEdit:(NSUInteger)index;                       // its file's page
+@property(nonatomic, readonly) NSUInteger entryCount;    // the session's items listed
+- (NSString *)entryKind:(NSUInteger)index;                // AgentEvidence::entryKindName
+- (NSRange)entryRange:(NSUInteger)index;                  // its place in commandsView
+@property(nonatomic, readonly) BOOL markdownBuilt;       // every message's Markdown is on show
 @end
 
 @interface MCSessionFilePage : NSObject <MCEditorPage>
