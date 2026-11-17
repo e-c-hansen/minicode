@@ -2848,10 +2848,17 @@ for full-screen programs. Both can be open at once.
   outside brackets control characters are dropped. Both go through
   `canTypeNow`: `tcgetpgrp(master)` must be the shell, and `_zleReady` (B),
   not A, since bytes sent between precmd and ZLE start echo as `^[[9999~`;
-  with no B, a prompt 0.3 s old whose tty is raw counts. Typing uses the
-  prompt up (`_zleReady`, `_atPrompt` cleared), so a second command waits.
-  What cannot go in yet is queued (`_pendingCommand`, `_pendingTyped`) and
-  `flushPendingInput` tries again on every event and every 0.1 s. `busy` is
+  with no B, a prompt 0.3 s old counts; either way the tty must be raw
+  (2026-11-16: a B a background job printed while cat ran was still set
+  when cat ended, before the shell's prompt, and `read` reads a cooked tty
+  too). Typing uses the prompt up (`_zleReady`, `_atPrompt` cleared), so a
+  second command waits. What cannot go in yet is queued, commands in order
+  (`_pendingCommands`, one typed per prompt; `pendingCommands`) and
+  `_pendingTyped`, and `flushPendingInput` tries again on every event and
+  every 0.1 s. **Trap** (2026-11-16): the queue was one line, and a second
+  `runCommand:` while the first still waited (a prompt between its 133;A
+  and B) replaced it: the first never ran (terminal_reflow's flake on CI,
+  `read` missing from the screen). `busy` is
   also YES while another program holds the foreground. Private keys sent only while ZLE reads: `ESC[9998~`
   beginning-of-line, 9997 end-of-line, 9996 backward-kill-line, 9995
   clear-screen (Cmd+Left, Cmd+Right, Cmd+Delete, Cmd+K); elsewhere on the main
