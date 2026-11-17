@@ -33,7 +33,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/LspFeatures.cpp ../src/LspEdits.cpp \
         ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp \
         ../src/FileDetails.cpp ../src/Commands.cpp ../src/CommandsLinux.cpp \
-        ../src/EditorTabs.cpp ../src/Backups.cpp ../src/TabSessions.cpp ../src/BrowserTabs.cpp ../src/WebBookmark.cpp \
+        ../src/EditorTabs.cpp ../src/Backups.cpp ../src/TabSessions.cpp ../src/SavePlan.cpp ../src/BrowserTabs.cpp ../src/WebBookmark.cpp \
         ../src/LineIndex.cpp ../src/QuickDiff.cpp ../src/SideBySide.cpp ../src/LineDiff.cpp \
         ../src/MergeConflicts.cpp \
         ../src/RightAreaLayout.cpp ../src/TerminalLayout.cpp \

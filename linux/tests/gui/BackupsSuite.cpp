@@ -111,6 +111,12 @@ void OpenAndType(const std::string& name) {
     });
 }
 
+// When this app's own backups are written (SavePlan.h), in its window.
+std::string TimingFile() { return MCGuiProjectFile("bk-timing.txt"); }
+Document* Shown() { return MCGuiApp().editor->active(); }
+double gTypedAt = 0, gBurstStart = 0, gWrittenDuring = -1;
+uint64_t gBurstEdits = 0;
+
 struct Writer {
     bool done = false;
     int status = -1;
@@ -178,6 +184,51 @@ MC_GUI_SUITE(backups) {
         GCHECK_EQ_STR(MCGuiReadFile(In("b.txt")), "beta, changed outside\n");
         GCHECK(!MCGuiFileExists(In("c.txt")));
     });
+
+    // ---- when the backups are written (SavePlan.h), in this app
+    MCGuiStep("a file of the project, typed into once", [] {
+        MCGuiSetKeyWindow(nullptr);
+        MCGuiWriteFile(TimingFile(), "timing\n");
+        MCGuiOpenFileKept(TimingFile());
+    });
+    MCGuiWait("on show", 10, [] { return MCGuiApp().editor->currentPath() == TimingFile(); });
+    MCGuiStep("a key", [] {
+        MCGuiClick(MCGuiApp().editor->textView());
+        MCGuiKey("ctrl+End");
+        MCGuiType("x");
+        gTypedAt = MCGuiNowMs();
+    });
+    MCGuiStep("no backup the moment after it", [] {
+        // Typing has to pause for a second first; a step later than that
+        // (a loaded machine) checks nothing here.
+        const double since = MCGuiNowMs() - gTypedAt;
+        MCGuiNote("%.0f ms after the key", since);
+        GCHECK(Shown() && Shown()->dirty());
+        if (since < 800) GCHECK(!Shown()->backup().written);
+    });
+    MCGuiWait("its backup, once typing paused", 10, [] { return Shown() && Shown()->backup().written; });
+    MCGuiStep("typing that never pauses for a second", [] {
+        gBurstStart = MCGuiNowMs();
+        gWrittenDuring = -1;
+        gBurstEdits = Shown()->backup().writtenEdits;
+    });
+    for (int i = 0; i < 24; i++) {
+        MCGuiStep("a key", [] {
+            if (gWrittenDuring < 0 && Shown() && Shown()->backup().writtenEdits != gBurstEdits)
+                gWrittenDuring = MCGuiNowMs() - gBurstStart;
+            MCGuiType("y");
+        });
+        MCGuiPause(0.3);   // time is the condition: a key every 0.3 s, never the 1 s pause
+    }
+    MCGuiStep("written while the keys went on, within 5 s of the first", [] {
+        MCGuiNote("written %.0f ms into %.0f ms of typing", gWrittenDuring, MCGuiNowMs() - gBurstStart);
+        GCHECK(gWrittenDuring >= 0);
+    });
+    MCGuiStep("saved", [] { MCGuiKey("ctrl+s"); });
+    MCGuiWait("clean, and its backup gone at once", 10, [] {
+        return Shown() && !Shown()->dirty() && !Shown()->backup().written;
+    });
+    MCGuiStep("", [] { MCGuiApp().editor->closeAllTabs(); });
 }
 
 // ------------------------------------------- the first child: type and die

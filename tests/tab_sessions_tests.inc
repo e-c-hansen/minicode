@@ -316,6 +316,70 @@ static void testTabSessions() {
         CHECK(sanitize(ok).layout.rows[0][0] == 0.7);
     }
 
+    GROUP("tab-sessions:store");
+    {
+        // sessions.json with its folders and the windows beside them.
+        Store st;
+        Session s;
+        s.tabs = {tab("/p/a.txt", 3, 7, true, 120, 4)};
+        s.active = 0;
+        put(st.folders, "/p", s, 1762700000.5);
+        Window w;
+        w.root = "/p";
+        w.haveFrame = true;
+        w.frame = Frame{0, 0, 1200, 800};
+        w.tabs.tabs = {tab("/p/a.txt", 3, 7, true, 120, 4), tab("/p/b.txt", 1, 1, false, 0, 0)};
+        w.tabs.active = 1;
+        w.sidebarHidden = true;
+        w.terminal = true;
+        w.terminals = {TerminalTab()};
+        w.terminals[0].columns = {{{"/p", ""}}};
+        w.terminalTab = 0;
+        Window v;
+        v.root = "/q";
+        st.windows = {w, v};
+        const std::string text = encodeStore(st);
+        const Store back = decodeStore(text);
+        CHECK(back.folders.size() == 1 && back.folders.count("/p") == 1);
+        CHECK(back.folders.at("/p").tabs.size() == 1);
+        CHECK(back.windows.size() == 2);
+        CHECK(back.windows[0].root == "/p" && back.windows[1].root == "/q");
+        CHECK(back.windows[0].tabs.tabs.size() == 2 && back.windows[0].tabs.active == 1);
+        CHECK(back.windows[0].tabs.tabs[0].selStart == 3 && back.windows[0].tabs.tabs[0].top == 120);
+        CHECK(back.windows[0].haveFrame && back.windows[0].frame.w == 1200);
+        CHECK(back.windows[0].sidebarHidden && back.windows[0].terminal);
+        // The file is the Mac's window record too: decodeWindows reads its
+        // windows, and decode (a minicode from before) only its folders,
+        // never "windows" as a folder.
+        CHECK(decodeWindows(text).size() == 2);
+        const Sessions old = decode(text);
+        CHECK(old.size() == 1 && old.count("/p") == 1 && old.count(kWindowsKey) == 0);
+        // A sessions.json from before: its folders, no window.
+        const Store before = decodeStore(encode(st.folders));
+        CHECK(before.folders.size() == 1 && before.windows.empty());
+        // The Mac's MCOpenWindows record: its windows, no folder.
+        const Store mac = decodeStore(encodeWindows(st.windows));
+        CHECK(mac.folders.empty() && mac.windows.size() == 2);
+        // No windows: no key at all, so a minicode from before reads the file
+        // as it always did.
+        Store none;
+        none.folders = st.folders;
+        CHECK(encodeStore(none).find("\"windows\"") == std::string::npos);
+        CHECK(encodeStore(none) == encode(st.folders));
+        // Nothing can be saved as a folder named "windows".
+        Sessions all;
+        put(all, kWindowsKey, s, 1);
+        CHECK(all.empty());
+        // Not JSON: nothing at all.
+        const Store bad = decodeStore("{\"/p\": {\"tabs\": [");
+        CHECK(bad.folders.empty() && bad.windows.empty());
+        // Windows that do not read are left out, the folders kept.
+        const Store mixed = decodeStore(
+            "{\"/p\": {\"tabs\": [{\"path\": \"/p/a\"}]}, \"windows\": [7, {\"root\": \"\"}, "
+            "{\"root\": \"/r\"}]}");
+        CHECK(mixed.folders.size() == 1 && mixed.windows.size() == 1 && mixed.windows[0].root == "/r");
+    }
+
     GROUP("tab-sessions:after-closing");
     {
         Window a, b;

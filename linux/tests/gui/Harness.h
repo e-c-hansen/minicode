@@ -250,14 +250,16 @@ void MCGuiScroll(GtkWidget* widget, int clicks);
 
 // ---- processes
 // Runs a program (the environment is this process's, plus `env`) in the
-// project folder without blocking the main loop; `done` gets its exit status
-// (128 + the signal if one ended it), stdout, and stderr.
+// project folder (or `cwd`) without blocking the main loop; `done` gets its
+// exit status (128 + the signal if one ended it), stdout, and stderr.
 void MCGuiRunProcess(const std::vector<std::string>& argv,
                      const std::map<std::string, std::string>& env,
-                     std::function<void(int status, std::string out, std::string err)> done);
+                     std::function<void(int status, std::string out, std::string err)> done,
+                     const std::string& cwd = "");
 // Runs this program again as a second app in the same scratch world and on
 // the same display, on a private session bus of its own, opening `folder`,
-// with only the suite named `suite` (a "_" one). `done` gets the exit status
+// with only the suite named `suite` (a "_" one); an empty `folder` launches
+// it with no path from the home folder, as the dock does. `done` gets the exit status
 // and the output. A real SIGKILL or crash in the child is safe to test: it
 // is reported in the status and nothing else is hit.
 void MCGuiRunChild(const std::string& suite, const std::string& folder,

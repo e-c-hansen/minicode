@@ -176,7 +176,7 @@ Sessions decode(const std::string &text) {
     if (!Json::parse(text, root) || !root.isObject()) return out;
     for (const auto &kv : root.items()) {
         Session s;
-        if (kv.first.empty() || !decodeSession(kv.second, &s)) continue;
+        if (kv.first.empty() || kv.first == kWindowsKey || !decodeSession(kv.second, &s)) continue;
         if (s.tabs.empty() && s.browser.empty()) continue;
         out[kv.first] = s;
     }
@@ -194,7 +194,7 @@ Session merged(const Session &mine, const std::vector<Session> &others) {
 }
 
 void put(Sessions &all, const std::string &key, Session s, double now, size_t max) {
-    if (key.empty()) return;
+    if (key.empty() || key == kWindowsKey) return;
     if (s.tabs.empty() && s.browser.empty()) {
         all.erase(key);
         return;
@@ -343,7 +343,9 @@ TerminalTab sanitize(TerminalTab t) {
     return t;
 }
 
-std::string encodeWindows(const std::vector<Window> &windows) {
+namespace {
+
+Json encodeWindowList(const std::vector<Window> &windows) {
     Json list = Json::array();
     for (const Window &w : windows) {
         Json o = Json::object();
@@ -373,16 +375,13 @@ std::string encodeWindows(const std::vector<Window> &windows) {
         o.set("treeScroll", w.treeScroll);
         list.push(o);
     }
-    Json root = Json::object();
-    root.set("windows", list);
-    return root.dump() + "\n";
+    return list;
 }
 
-std::vector<Window> decodeWindows(const std::string &text) {
+std::vector<Window> decodeWindowList(const Json &list) {
     std::vector<Window> out;
-    Json root;
-    if (!Json::parse(text, root) || !root.isObject() || !root["windows"].isArray()) return out;
-    for (const Json &o : root["windows"].elements()) {
+    if (!list.isArray()) return out;
+    for (const Json &o : list.elements()) {
         if (!o.isObject() || !o["root"].isString() || o["root"].asString().empty()) continue;
         Window w;
         w.root = o["root"].asString();
@@ -428,6 +427,35 @@ std::vector<Window> decodeWindows(const std::string &text) {
         w.treeScroll = std::isfinite(ts) && ts > 0 && ts < 1e9 ? ts : 0;
         out.push_back(w);
     }
+    return out;
+}
+
+}  // namespace
+
+std::string encodeWindows(const std::vector<Window> &windows) {
+    Json root = Json::object();
+    root.set("windows", encodeWindowList(windows));
+    return root.dump() + "\n";
+}
+
+std::vector<Window> decodeWindows(const std::string &text) {
+    Json root;
+    if (!Json::parse(text, root) || !root.isObject()) return {};
+    return decodeWindowList(root["windows"]);
+}
+
+std::string encodeStore(const Store &store) {
+    Json root = Json::object();
+    for (const auto &kv : store.folders)
+        if (kv.first != kWindowsKey) root.set(kv.first, encodeSession(kv.second));
+    if (!store.windows.empty()) root.set(kWindowsKey, encodeWindowList(store.windows));
+    return root.dump() + "\n";
+}
+
+Store decodeStore(const std::string &text) {
+    Store out;
+    out.folders = decode(text);
+    out.windows = decodeWindows(text);
     return out;
 }
 

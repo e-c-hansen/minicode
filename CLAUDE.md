@@ -210,7 +210,10 @@ goes here first, with tests; the GUI only displays it.
   own in `CommandsLinux.cpp`, the Mac's rows untouched), `EditorTabs` (tab rules, and
   `Model::Window` and `Model::Session`, which hold the tabs by them: see
   "Tabs, sessions and the disk"), `Backups` (backups
-  of unsaved tabs, with a POSIX `Fs`), `FileDetails` (tree sorts, ages, folder
+  of unsaved tabs, with a POSIX `Fs`), `TabSessions` (what a folder and a
+  window keep between runs: sessions.json's `Store`, the window record),
+  `SavePlan` (when backups and auto-saves are written, from a clock the
+  port ticks), `FileDetails` (tree sorts, ages, folder
   totals), `RunFile` (Run File's quoting), `Runnables` (the tests in a
   file, found through the highlighter's tokens, and the command for one
   test or the file), `RightAreaLayout` (the right
@@ -809,6 +812,17 @@ container (PanelHost, laid out by hand in layoutContainer)
   `loadActiveTab`). A path argument or a Finder open at launch opens only
   that, as before. The Mac's selection offsets are UTF-16 and GTK's code
   points: each reads only what it wrote, which stage 3 must settle.
+- **One record on both ports** (2026-11-16, stage 3b): GTK's sessions.json
+  keeps the same `TabSessions::Window` list under the key `"windows"`,
+  beside the folders' sessions (`TabSessions::Store`,
+  `encodeStore`/`decodeStore`, `tab-sessions:store`); an older file reads
+  as folders only and an older minicode skips the key. The GTK app
+  reopens those windows on a launch with no path from the home folder or
+  `/` (its size, own tabs, sidebar, terminal, Problems; linux/HANDOFF.md
+  item 76). The Mac is unchanged: `MCOpenWindows` was already this
+  record, and its per-folder `MCTabSessions` stays a dictionary of its own
+  (the browser's `interactionState` data in it) until 3c moves it to the
+  shared file.
 - AppDelegate's `current` maps a window an editor made (`ownsWindow:`, Find in
   Folder and TODOs) to that editor; items that edit the file on show are
   disabled while another window is key, so keys reach that window's field.
@@ -861,6 +875,15 @@ container (PanelHost, laid out by hand in layoutContainer)
   `backedUpGeneration`) is written 1 s after typing stops, at most 5 s after the
   first unwritten change, the immutable NSString converted on the queue. Only
   text tabs with a path.
+- **The planner** (2026-11-16, stage 3b): these timing rules, auto-save's
+  below included, are the core's `SavePlan::Planner` (`changed`,
+  `focusChanged`, `tick(now)`, `nextDue()`; `saveplan:*` holds it to each
+  rule here, with a random walk). The GTK port runs on it with one timer;
+  the Mac still runs `scheduleBackups`/`scheduleAutoSave` on its own
+  performSelector timers and moves onto the planner in 3c (MCTab's
+  `textGeneration`, `backedUpGeneration`, `backedUpPath` and `hasBackup`
+  are `SavePlan::Tab`'s fields one for one). A rule changed here changes
+  there.
 - Restore: `planForRoot:` takes the folder's backups no live process holds (pid
   and start time); `takeBackup:intoTab:` makes the tab dirty with the backup's
   base date and inode, and on first show (`showRestoredText:`) the backup is

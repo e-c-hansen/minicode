@@ -98,7 +98,9 @@
 #include "StartupLog.h"
 
 #include <algorithm>
+#include <cstring>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 #include <unistd.h>
@@ -212,7 +214,12 @@ struct Shared {
 Shared g;
 }  // namespace
 
-static App* newWindow(const std::string& root, const std::string& file);
+// A window on `root`, with `file` open; `record` brings back a window from
+// the last run (its own tabs, size and panels; restoreOpenWindows).
+static App* newWindow(const std::string& root, const std::string& file,
+                      const TabSessions::Window* record = nullptr);
+// Every open window's record written for the next launch (Persistence.h).
+static void saveOpenWindows();
 // A window on `root`, or the one already on it brought forward.
 static void showFolderWindow(const std::string& root);
 static void openRecentFolder(App* app, const std::string& dir);
@@ -1754,6 +1761,7 @@ static void act_quit(GSimpleAction*, GVariant*, gpointer) {
     // the Mac (windows closing one by one would leave only the last one's).
     for (App* a : open)
         if (!a->dead) a->persist->saveSession();
+    saveOpenWindows();   // and every window, for the next launch that opens nothing
     g.quitting = true;
     for (App* a : open)
         if (!a->dead) gtk_window_close(GTK_WINDOW(a->window));
@@ -3414,6 +3422,71 @@ static App* appForWindow(GtkWindow* w) {
     return nullptr;
 }
 
+// The open windows, the one in front first (GTK lists an application's
+// windows most recently focused first).
+static std::vector<App*> windowsFrontFirst() {
+    std::vector<App*> out;
+    for (GList* l = gtk_application_get_windows(g.gapp); l; l = l->next)
+        if (App* a = appForWindow(GTK_WINDOW(l->data)))
+            if (!a->dead && a->persist) out.push_back(a);
+    return out;
+}
+
+// Every open window as the next launch that opens nothing brings it back
+// (Persistence.h, "Windows"); never written empty, so the last window to
+// close stays in it. The benchmark keeps nothing.
+static void saveOpenWindows() {
+    // Not while a quit closes the windows one by one: what it saved first stands.
+    if (Bench::active() || g.quitting) return;
+    std::vector<TabSessions::Window> list;
+    for (App* a : windowsFrontFirst()) list.push_back(a->persist->windowRecord());
+    if (!list.empty()) Persistence::putWindows(list);
+}
+
+// A window brought back: its panels as they were, once it is up (the
+// layout places its panes from the window's size).
+static void restoreWindowPanels(App* app, const TabSessions::Window& record) {
+    struct Panels {
+        App* app;
+        bool sidebarHidden, terminal, problems;
+    };
+    auto* p = new Panels{app, record.sidebarHidden, record.terminal, record.problems};
+    g_idle_add_once([](gpointer data) {
+        std::unique_ptr<Panels> p(static_cast<Panels*>(data));
+        App* app = p->app;
+        if (app->dead || !app->layout) return;
+        if (p->sidebarHidden && app->layout->sidebarShown()) app->layout->toggleSidebar();
+        if (p->terminal) showTerminalQuietly(app);
+        if (p->problems && app->problems && !app->problems->shown()) app->problems->toggle(false);
+    }, p);
+}
+
+// A launch with no path from the home folder or / (the dock, the desktop
+// entry, GNOME's app grid): every window open when minicode last quit, the
+// first in front, as the Mac's restoreOpenWindows (VS Code's
+// window.restoreWindows "all"). False when none was kept or none of their
+// folders is still there; the launch then opens its folder as before.
+static bool launchedFromDesktop(const std::string& cwd) {
+    char here[PATH_MAX], home[PATH_MAX];
+    if (!realpath(cwd.c_str(), here)) return false;
+    if (!strcmp(here, "/")) return true;
+    return realpath(g_get_home_dir(), home) && !strcmp(here, home);
+}
+
+static bool restoreOpenWindows() {
+    if (Bench::active()) return false;
+    const std::vector<TabSessions::Window> list = Persistence::savedWindows();
+    App* front = nullptr;
+    // Opened back to front, so the first ends up in front.
+    for (auto it = list.rbegin(); it != list.rend(); ++it) {
+        struct stat st;
+        if (stat(it->root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        front = newWindow(it->root, "", &*it);
+    }
+    if (front) gtk_window_present(GTK_WINDOW(front->window));
+    return front != nullptr;
+}
+
 static void updateKeyPlace() {
     Keys::Place place;
     if (App* a = appForWindow(gtk_application_get_active_window(g.gapp))) {
@@ -3643,7 +3716,18 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->dead = true;
     // Its tabs for the folder's next window, unless a quit saved every
     // window's already. Then nothing more is written for it.
-    if (!g.quitting) app->persist->saveSessionClosing();
+    if (!g.quitting) {
+        app->persist->saveSessionClosing();
+        // The windows for the next launch: the others, or this one alone
+        // when it was the last (closing it quits, and it comes back as a
+        // quit would have left it; TabSessions::afterClosing).
+        if (!Bench::active()) {
+            std::vector<TabSessions::Window> list;
+            for (App* a : windowsFrontFirst()) list.push_back(a->persist->windowRecord());
+            if (list.empty()) list.push_back(app->persist->windowRecord());
+            Persistence::putWindows(list);
+        }
+    }
     delete app->persist;
     app->persist = nullptr;
 
@@ -3734,7 +3818,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
 }
 
 // Build a window rooted at `root`, showing `file` if one is named.
-static App* newWindow(const std::string& root, const std::string& file) {
+static App* newWindow(const std::string& root, const std::string& file,
+                      const TabSessions::Window* record) {
     initShared();
     App* app = new App;
     static int nextControlId = 1;
@@ -3745,7 +3830,15 @@ static App* newWindow(const std::string& root, const std::string& file) {
 
     app->window = gtk_application_window_new(g.gapp);
     gtk_widget_add_css_class(app->window, "minicode-window");
-    gtk_window_set_default_size(GTK_WINDOW(app->window), 1100, 720);
+    // A window brought back keeps its size; GTK places it (Wayland leaves
+    // where a window goes to the compositor, so the record's place is not
+    // used here).
+    if (record && record->haveFrame && record->frame.w >= 400 && record->frame.h >= 300 &&
+        record->frame.w <= 20000 && record->frame.h <= 20000)
+        gtk_window_set_default_size(GTK_WINDOW(app->window), (int)record->frame.w,
+                                    (int)record->frame.h);
+    else
+        gtk_window_set_default_size(GTK_WINDOW(app->window), 1100, 720);
     gtk_window_set_title(GTK_WINDOW(app->window), "minicode");
     gtk_application_window_set_show_menubar(
         GTK_APPLICATION_WINDOW(app->window), TRUE);
@@ -3875,7 +3968,36 @@ static App* newWindow(const std::string& root, const std::string& file) {
             (void)active;
 #endif
             return tabs;
-        }});
+        },
+        // Its record's size and panels. Asked as it closes too, before
+        // its widgets go.
+        [app](TabSessions::Window* w) {
+            int width = 0, height = 0;
+            gtk_window_get_default_size(GTK_WINDOW(app->window), &width, &height);
+            if (width <= 0 || height <= 0) {
+                width = gtk_widget_get_width(app->window);
+                height = gtk_widget_get_height(app->window);
+            }
+            if (width > 0 && height > 0) {
+                w->haveFrame = true;
+                w->frame = TabSessions::Frame{0, 0, (double)width, (double)height};
+            }
+            if (!app->layout) return;
+            w->sidebarHidden = !app->layout->sidebarShown();
+            w->editorHidden = !app->layout->editorShown();
+            w->problems = app->problems && app->problems->shown();
+            if (app->layout->terminalShown()) {
+                // One pane in the folder: the record says the terminal
+                // showed (a fresh shell comes back, as on the Mac).
+                TabSessions::TerminalTab t;
+                t.columns = {{TabSessions::TerminalPane{app->rootDir, ""}}};
+                t = TabSessions::sanitize(t);
+                w->terminal = true;
+                w->terminals = {t};
+                w->terminalTab = 0;
+            }
+        },
+        [] { saveOpenWindows(); }});
     app->editor->onDocumentsChanged = [app](Document* d) {
         if (!app->dead && app->persist) app->persist->changed(d);
     };
@@ -4295,10 +4417,12 @@ static App* newWindow(const std::string& root, const std::string& file) {
     }
     applyWindowSettings(app);   // now that the editor, terminal and status bar exist
     StartupLog::mark("window: actions and settings applied");
-    app->persist->restoreSession();   // the files open here last time
+    // The files open here last time: the window's own when it is brought
+    // back, else the folder's.
+    app->persist->restoreSession(record ? &record->tabs : nullptr);
 #ifdef MINICODE_ENABLE_BROWSER
     if (app->browser) {   // the browser's tabs, suspended; the one on show loads when the pane is
-        const TabSessions::Session saved = app->persist->savedSession();
+        const TabSessions::Session saved = record ? record->tabs : app->persist->savedSession();
         app->browser->restore(saved.browser, saved.browserActive);
     }
 #endif
@@ -4338,6 +4462,7 @@ static App* newWindow(const std::string& root, const std::string& file) {
     StartupLog::watchFrames(app->window);
     gtk_window_present(GTK_WINDOW(app->window));
     StartupLog::mark("window: presented");
+    if (record) restoreWindowPanels(app, *record);
     return app;
 }
 
@@ -4664,7 +4789,12 @@ static void handleCommandLine(char** args, int n, const char* cwd,
     if (!st.error.empty()) printerr(st.error);
 
     bool windowMade = false;
-    if (pathWanted) {
+    // Nothing named, from the desktop, with no window open yet: the windows
+    // of the last run come back (restoreOpenWindows).
+    if (pathWanted && !pathArg && !newOne && st.error.empty() && g.windows.empty() &&
+        launchedFromDesktop(st.root) && restoreOpenWindows()) {
+        windowMade = true;
+    } else if (pathWanted) {
         App* found = nullptr;
         for (App* a : g.windows)
             if (!newOne && a->rootDir == st.root) { found = a; break; }
