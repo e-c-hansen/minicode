@@ -441,6 +441,12 @@ void Editor::ensureTags() {
                                "background", pal::MdCodeBg,
                                "family", "monospace",
                                "size-points", 13.0, NULL);
+    // A fenced block's label (MdRun::label: a notebook's "In [3]" and
+    // "Out [3]"): a small muted monospace line above the block, as the Mac's.
+    gtk_text_buffer_create_tag(b, "md_codelabel",
+                               "foreground", pal::MdQuote,
+                               "family", "monospace",
+                               "size-points", 11.0, NULL);
     gtk_text_buffer_create_tag(b, "md_quote",
                                "foreground", pal::MdQuote,
                                "left-margin", 16,   // macOS headIndent
@@ -1563,6 +1569,7 @@ void Editor::applySettings(const Settings& s) {
     setTagColor(t, "md_code", "foreground-rgba", s.markdown(MarkdownColor::Code));
     setTagColor(t, "md_code", "background-rgba", s.markdownCodeBackground());
     setTagColor(t, "md_quote", "foreground-rgba", s.markdown(MarkdownColor::Quote));
+    setTagColor(t, "md_codelabel", "foreground-rgba", s.markdown(MarkdownColor::Quote));
     setTagColor(t, "md_link", "foreground-rgba", s.markdown(MarkdownColor::Link));
     setTagColor(t, "md_done", "foreground-rgba", s.markdown(MarkdownColor::Done));
     // Swatch text contrast depends on the editor background.

@@ -32,6 +32,16 @@ std::string textOf(GtkTextBuffer* b) {
 std::string bufferText() { return textOf(ed()->active()->buffer()); }
 std::string shownText() { return textOf(gtk_text_view_get_buffer(GTK_TEXT_VIEW(ed()->textView()))); }
 
+// Whether the shown text's byte offset `byteAt` carries the tag `name`.
+bool taggedAs(const char* name, size_t byteAt) {
+    GtkTextBuffer* b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(ed()->textView()));
+    GtkTextTag* tag = gtk_text_tag_table_lookup(gtk_text_buffer_get_tag_table(b), name);
+    const std::string t = shownText();
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_offset(b, &it, (int)g_utf8_strlen(t.c_str(), (gssize)byteAt));
+    return tag && gtk_text_iter_has_tag(&it, tag);
+}
+
 std::string selectedText() {
     GtkTextBuffer* b = ed()->active()->buffer();
     GtkTextIter s, e;
@@ -212,6 +222,13 @@ MC_GUI_SUITE(json_outline) {
         GCHECK(t.find("print('hi')") != std::string::npos);
         GCHECK(t.find("hi out") != std::string::npos);
         GCHECK(t.find("42") != std::string::npos);
+        // The prompts: "In [3]" after the cell's language, "Out [3]" for its
+        // result, each on a line above its block in the muted label style.
+        const size_t in = t.find("In [3]\n"), out = t.find("Out [3]\n");
+        GCHECK(in != std::string::npos && out != std::string::npos);
+        GCHECK(in != std::string::npos && out != std::string::npos && in < t.find("print('hi')") &&
+               out < t.find("42", out));
+        GCHECK(in != std::string::npos && taggedAs("md_codelabel", in));
         GCHECK(!ed()->showsOutline());
         GCHECK(!ed()->active()->pageInfo().embeds.empty());   // the picture
         GCHECK(!ed()->active()->dirty());
