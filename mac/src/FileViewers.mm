@@ -4,7 +4,7 @@
 #import "CsvTable.h"
 #import "JsonOutlineView.h"
 #import "SqliteView.h"
-#import "HtmlPage.h"
+#import "HtmlPageView.h"
 #include "FileSniff.h"
 #include "JsonOutline.h"
 #include "Notebook.h"

@@ -149,3 +149,22 @@ void MCPDFUseOverlayScrollers(PDFView *v) {
         if (v.autoScales) [v layoutDocumentView];
     }
 }
+
+void MCPDFShowFirstPageTop(PDFView *v) {
+    if (!v.document.pageCount) return;
+    [v layoutDocumentView];
+    NSView *docView = v.documentView;
+    NSScrollView *sv = docView.enclosingScrollView;
+    if (!sv) {
+        [v goToPage:[v.document pageAtIndex:0]];
+        return;
+    }
+    sv.automaticallyAdjustsContentInsets = NO;
+    sv.contentInsets = NSEdgeInsetsZero;
+    NSClipView *clip = sv.contentView;
+    const NSRect doc = [clip convertRect:docView.bounds fromView:docView];
+    NSRect want = clip.bounds;
+    want.origin.y = clip.isFlipped ? NSMinY(doc) : NSMaxY(doc) - NSHeight(want);
+    [clip scrollToPoint:[clip constrainBoundsRect:want].origin];
+    [sv reflectScrolledClipView:clip];
+}

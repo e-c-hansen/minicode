@@ -273,7 +273,14 @@ goes here first, with tests; the GUI only displays it.
   counting code points could not follow). `host:*`: the edit loop, undo
   across renderers, a fuzz with renderers in both units typing, undoing
   and resetting while messages wait and go in random order (each link in
-  its own order), and the threaded host (TSan in CI).
+  its own order), and the threaded host (TSan in CI). Since stage 4a the
+  GTK port's documents are mirrors of a host in the same process
+  (`linux/src/SessionLink.{h,cpp}`, `linux/HANDOFF.md` item 87): undo
+  asks the host, the language server sync reads its text, and the GTK
+  harness checks every buffer against the host as each suite ends; CI's
+  GTK job runs a named set of suites again with every message through
+  the wire format (`MINICODE_HOST=loopback`). The
+  Mac (4b) is next, behind a setting for one release.
 - Editing: `LineDiff` (Myers, split at lines unique on both sides past
   1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,
   `mapOffset`), `LineComments`,
@@ -2709,7 +2716,7 @@ plays a stand-in mermaid.js whose colors come from its style sheet.
   CSV table, whose edits go through `setViewerText:actionName:reshow:` so
   dirty, undo, backups and saving work as for text) or beside text (the JSON
   outline, `besideTextShown`). Shift+Cmd+V flips them (`canTogglePreview`).
-- **HTML pages** (2026-11-15, `HtmlPage.{h,mm}`, `MCViewerHtml`, over
+- **HTML pages** (2026-11-15, `HtmlPageView.{h,mm}`, `MCViewerHtml`, over
   the text like the CSV table; `FileSniff::Kind::Html`, `sniff:html`, `make
   guitest SUITES=html_page`): the page is the saved file, loaded with
   `loadFileURL:allowingReadAccessToURL:` scoped to the window's folder (the
@@ -2739,7 +2746,10 @@ plays a stand-in mermaid.js whose colors come from its style sheet.
 - **Images** (not SVG, which is source): `NSImageView`, scaled down never up,
   `animates`, size set to pixels (a 144 dpi screenshot drew at half size); one
   that fails to decode falls through to the text path's "Cannot display".
-  **PDFs**: `PDFView`, reload keeping page, point and scale.
+  **PDFs**: `PDFView`, reload keeping page, point and scale; a new one
+  opens at the top of its first page (`MCPDFShowFirstPageTop`, PageZoom.mm,
+  the LaTeX preview's too; until 2026-11-17 a tall page opened scrolled to
+  its foot, which read as a blank page), and a tab shown again its own place.
 - **Video and audio** (`+isMediaPath:`): `AVPlayerView`, paused on the first
   frame; `stopMedia` (from `resetViewMode`, window close, dealloc) drops the
   player so sound stops; size (rotation applied) and length arrive by KVO;
@@ -4221,8 +4231,11 @@ it left unsaved never holds it on the quit question.
 - A scene is a function in `mac/src/Demo.mm` of queued builder steps (`clickFile:`,
   `type:`, `key:caption:`, `waitFor:timeout:recorded:`, ...), points resolved
   lazily (`pointForText:` through `firstRectForCharacterRange:`). Input is real
-  posted `NSEvent`s; the pointer and key captions are an overlay view. The
-  user's own input is swallowed meanwhile (only events whose timestamp, in
+  posted `NSEvent`s; the pointer and key captions are an overlay view. Every
+  scene says what each step is for with `label:` (2026-11-17, the owner's
+  review: a first-time viewer could not tell): blue, right-aligned in the
+  tab strip's row, kept until the next label; key captions (the keys
+  pressed) stay at the bottom center. The user's own input is swallowed meanwhile (only events whose timestamp, in
   whole microseconds, the demo posted pass), since a stray key once dirtied a
   file and hung the scene on "Save changes?".
 - Capture is `screencapture -x -o -l<wid>` every 100 ms; a popover grows the

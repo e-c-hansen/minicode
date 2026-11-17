@@ -16,7 +16,7 @@
 // (`chrome`, the view around it), a page loaded from the toolbar while the
 // keyboard is still there, or while `grantKeyboard` is set around a
 // makeFirstResponder: the user's own step asked for. The browser's pages
-// and an HTML file's page (HtmlPage.h) are these.
+// and an HTML file's page (HtmlPageView.h) are these.
 @interface MCWebView : WKWebView
 @property(nonatomic, weak) NSView *chrome;          // the view around it, with its toolbar
 @property(nonatomic) BOOL toolbarNavigation;        // the last load came from the toolbar
