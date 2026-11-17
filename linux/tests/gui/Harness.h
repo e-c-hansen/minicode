@@ -97,6 +97,7 @@
 #include <vector>
 
 #include "AppSeam.h"
+#include "EnvLock.h"
 
 using MCGuiDone = std::function<void()>;
 

@@ -158,7 +158,7 @@ std::string gHome;
 // Starts the terminal's shell as `shell`: the terminal is made if need be,
 // else its shell is told to exit and the app starts the new one.
 void startShell(const std::string& shell) {
-    g_setenv("SHELL", shell.c_str(), TRUE);
+    EnvLock::envSet("SHELL", shell.c_str(), TRUE);
     gOldPid = term()->shellPid();
     if (!term()->made()) {
         if (!MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
@@ -528,8 +528,8 @@ MC_GUI_SUITE(shell_integration) {
     MCGuiStep("zsh: status 1; SHELL as it was", [] {
         if (gOldPid != -1) GCHECK(sh().status == 1);
         term()->onShellStateChanged = nullptr;
-        if (gHadShell) g_setenv("SHELL", gOldShell.c_str(), TRUE);
-        else g_unsetenv("SHELL");
+        if (gHadShell) EnvLock::envSet("SHELL", gOldShell.c_str(), TRUE);
+        else EnvLock::envUnset("SHELL");
         g_remove((gHome + "/.bashrc").c_str());
     });
 }

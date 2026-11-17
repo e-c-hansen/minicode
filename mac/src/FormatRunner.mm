@@ -1,5 +1,6 @@
 // FormatRunner.mm — see FormatRunner.h.
 #import "FormatRunner.h"
+#import "Environment.h"
 #import "AppSettings.h"
 #import "Lsp.h"   // MCFindProgram, MCSearchDirs
 #include "Formatter.h"
@@ -43,7 +44,7 @@ static MCFormatterLookup FindFormatter(const std::string &program, const std::st
         return found;
     }
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *venv = NSProcessInfo.processInfo.environment[@"VIRTUAL_ENV"] ?: @"";
+    NSString *venv = MCEnvironment()[@"VIRTUAL_ENV"] ?: @"";
     NSString *activated = venv.length
         ? [venv.stringByResolvingSymlinksInPath stringByAppendingPathComponent:@"bin"] : nil;
     std::vector<std::string> dirs;
@@ -109,7 +110,7 @@ static void RunFormatter(NSArray<NSString *> *argv, NSString *cwd, NSData *input
     task.executableURL = [NSURL fileURLWithPath:argv[0]];
     task.arguments = [argv subarrayWithRange:NSMakeRange(1, argv.count - 1)];
     task.currentDirectoryURL = [NSURL fileURLWithPath:cwd isDirectory:YES];
-    NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
+    NSMutableDictionary *env = [MCEnvironment() mutableCopy];
     NSMutableArray *dirs = [NSMutableArray arrayWithObject:
                                argv[0].stringByDeletingLastPathComponent];
     for (NSString *d in MCSearchDirs())

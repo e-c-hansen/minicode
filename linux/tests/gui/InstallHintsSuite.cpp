@@ -79,7 +79,7 @@ void openPython() {
 
 MC_GUI_SUITE(install_hints) {
     MCGuiStep("a Python file, lsp.python naming a server that is not installed", [] {
-        g_setenv("MINICODE_INSTALL_HAVE", "uv", TRUE);
+        EnvLock::envSet("MINICODE_INSTALL_HAVE", "uv", TRUE);
         ConsentBar::setInstallMuted("python", false);
         ConsentBar::forgetInstallOffers();
         MCGuiWriteFile(F("a.py"), "x = 1\n");
@@ -177,10 +177,10 @@ MC_GUI_SUITE(install_hints) {
     MCGuiPause(0.8);   // negative check
     // Format Document's note offers the formatter's install command.
     MCGuiStep("a Python file, no formatter anywhere on PATH, Format Document", [] {
-        g_setenv("MINICODE_INSTALL_HAVE", "uv", TRUE);
+        EnvLock::envSet("MINICODE_INSTALL_HAVE", "uv", TRUE);
         MCGuiSetSettings("lsp.enabled = false\n");
         gPathKept = g_getenv("PATH") ? g_getenv("PATH") : "";
-        g_setenv("PATH", "/mc-no-such-bin", TRUE);
+        EnvLock::envSet("PATH", "/mc-no-such-bin", TRUE);
         openPython();
         MCGuiApp().format->formatDocument();
     });
@@ -212,14 +212,14 @@ MC_GUI_SUITE(install_hints) {
     });
 #endif
     MCGuiStep("tidy up the formatter case", [] {
-        g_setenv("PATH", gPathKept.c_str(), TRUE);
+        EnvLock::envSet("PATH", gPathKept.c_str(), TRUE);
         if (Document* d = ed()->documentFor(F("a.py"))) ed()->closeTab(d);
     });
     MCGuiStep("tidy up", [] {
         GCHECK(hidden());
         ConsentBar::setInstallMuted("python", false);
         ConsentBar::forgetInstallOffers();
-        g_unsetenv("MINICODE_INSTALL_HAVE");
+        EnvLock::envUnset("MINICODE_INSTALL_HAVE");
         MCGuiSetSettings("lsp.enabled = false\n");
         if (Document* d = ed()->documentFor(F("a.py"))) ed()->closeTab(d);
         g_remove(F("a.py").c_str());

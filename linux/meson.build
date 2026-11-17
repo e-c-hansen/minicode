@@ -297,6 +297,7 @@ gui_sources = [
   'src/GitVerbs.cpp',
   'src/GitMenus.cpp',
   'src/GitRun.cpp',
+  'src/EnvLock.cpp',
   'src/GitTrash.cpp',
   'src/GitDiffView.cpp',
   'src/CompareView.cpp',
@@ -509,8 +510,9 @@ port_tests = executable('minicode-linux-tests',
              core_dir / 'TermLinks.cpp',
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp', core_dir / 'GitModel.cpp',
-  'src/WebImageRules.cpp', 'src/LaunchOptions.cpp'],
+  'src/WebImageRules.cpp', 'src/LaunchOptions.cpp', 'src/EnvLock.cpp'],
   include_directories : inc,
+  dependencies : [dependency('gio-2.0'), dependency('threads')],
   install : false)
 test('linux port core', port_tests)
 

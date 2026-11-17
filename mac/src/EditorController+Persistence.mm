@@ -1,5 +1,6 @@
 // EditorController+Persistence.mm — EditorController: the tabs between runs, backups and hot exit, auto-save, files changed, moved or deleted outside.
 #import "EditorController+Private.h"
+#import "Environment.h"
 #import "EditorController+PersistenceIvars.h"
 #include <set>
 
@@ -18,7 +19,7 @@
 static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
 
 static BOOL MCSessionsEnabled(void) {
-    NSDictionary *env = NSProcessInfo.processInfo.environment;
+    NSDictionary *env = MCEnvironment();
     return !env[@"MINICODE_DEMO"] && !env[@"MINICODE_BENCH"];
 }
 

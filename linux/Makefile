@@ -68,7 +68,7 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/Opaci
        src/LspSessionWatch.cpp src/LspWatcher.cpp src/LspSessionImports.cpp \
        src/LspSessionSemantic.cpp src/SemanticColors.cpp \
        src/LspSessionSymbols.cpp src/LspSessionFolding.cpp \
-       src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp \
+       src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp src/EnvLock.cpp \
        src/GitDiffView.cpp src/CompareView.cpp src/ComparePanes.cpp src/CompareDecision.cpp src/GitGutter.cpp src/AgentNotes.cpp src/InlineAgentBar.cpp src/TerminalAttention.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
        src/WebImageRules.cpp src/WebImages.cpp src/Mermaid.cpp src/Math.cpp src/Keys.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/RecentList.cpp src/DockMenu.cpp src/WindowLayout.cpp \
@@ -133,7 +133,8 @@ test:
 	    src/PageWords.cpp ../src/LatexDoc.cpp ../src/SyncTex.cpp \
 	    ../src/TermLinks.cpp src/TermLinkPath.cpp \
 	    ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp \
-	    src/WebImageRules.cpp src/LaunchOptions.cpp \
+	    src/WebImageRules.cpp src/LaunchOptions.cpp src/EnvLock.cpp \
+	    $(shell pkg-config --cflags --libs gio-2.0) -pthread \
 	    -o $(TEST_BIN)
 	@$(TEST_BIN)
 

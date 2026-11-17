@@ -1,5 +1,6 @@
 // AgentPanel.mm — see AgentPanel.h.
 #import "AgentPanel.h"
+#import "Environment.h"
 #import "AppSettings.h"
 #import "ChangePanel.h"   // MCRemoveStalePromptFiles
 #import "EditorFont.h"    // MCMonoFont
@@ -116,7 +117,7 @@ static const NSTimeInterval kProgressEvery = 0.08;
                                                                 isDirectory:&isDir] || !isDir)
         folder = NSHomeDirectory();
     task.currentDirectoryURL = [NSURL fileURLWithPath:folder];
-    NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
+    NSMutableDictionary *env = [MCEnvironment() mutableCopy];
     NSString *path = env[@"PATH"] ?: @"/usr/bin:/bin:/usr/sbin:/sbin";
     env[@"PATH"] = [[MCSearchDirs() componentsJoinedByString:@":"]
                        stringByAppendingFormat:@":%@", path];

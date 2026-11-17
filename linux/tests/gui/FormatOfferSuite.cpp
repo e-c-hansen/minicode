@@ -118,7 +118,7 @@ MC_GUI_SUITE(format_offer) {
         chmod((bin() + "/ruff").c_str(), 0755);
         const char* p = g_getenv("PATH");
         gPath = p ? p : "";
-        g_setenv("PATH", (bin() + ":" + gPath).c_str(), TRUE);
+        EnvLock::envSet("PATH", (bin() + ":" + gPath).c_str(), TRUE);
         MCGuiWriteFile(F("pyproject.toml"), "[tool.ruff]\nline-length = 88\n");
         MCGuiWriteFile(F("a.py"), "x = 1\n");
         ConsentBar::setInstallMuted(FormatOffer::key(), false);
@@ -227,7 +227,7 @@ MC_GUI_SUITE(format_offer) {
         ConsentBar::setInstallMuted(FormatOffer::key(), false);
         FormatOffer::forgetOffered();
         MCGuiSetSettings("lsp.enabled = false\n");
-        g_setenv("PATH", gPath.c_str(), TRUE);
+        EnvLock::envSet("PATH", gPath.c_str(), TRUE);
         if (Document* d = ed()->documentFor(F("a.py"))) ed()->closeTab(d);
     });
 }

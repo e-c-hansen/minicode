@@ -1,5 +1,6 @@
 // LspProcess.cpp — see LspProcess.h. Moved here from Lsp.cpp, unchanged,
 // when the session was split by concern (PARITY.md item 2.0).
+#include "EnvLock.h"
 #include "LspProcess.h"
 
 #include "Lsp.h"
@@ -28,8 +29,12 @@ std::vector<std::string> searchDirs() {
         if (!d.empty() && std::find(dirs.begin(), dirs.end(), d) == dirs.end())
             dirs.push_back(d);
     };
-    const char* path = g_getenv("PATH");
-    std::stringstream ss(path ? path : "");
+    std::string pathText;
+    {
+        EnvLock::EnvRead env;
+        if (const char* path = g_getenv("PATH")) pathText = path;
+    }
+    std::stringstream ss(pathText);
     std::string d;
     while (std::getline(ss, d, ':')) add(d);
     const std::string home = g_get_home_dir();
@@ -134,13 +139,22 @@ std::shared_ptr<Server> Server::start(const std::string& key,
     // it instead, along with all the traffic, opened O_APPEND so several
     // servers can share the file.
     int errFd = -1;
-    const char* logPath = g_getenv("MINICODE_LSP_LOG");
+    std::string logPathText;
+    {
+        EnvLock::EnvRead env;
+        if (const char* v = g_getenv("MINICODE_LSP_LOG")) logPathText = v;
+    }
+    const char* logPath = logPathText.c_str();
     if (logPath && *logPath) {
         errFd = open(logPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
         s->logFd_ = open(logPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     }
-    GSubprocessLauncher* l = g_subprocess_launcher_new(
-        errFd >= 0 ? G_SUBPROCESS_FLAGS_NONE : G_SUBPROCESS_FLAGS_STDERR_SILENCE);
+    GSubprocessLauncher* l;
+    {
+        EnvLock::EnvRead env;   // the launcher copies the environment (EnvLock.h)
+        l = g_subprocess_launcher_new(
+            errFd >= 0 ? G_SUBPROCESS_FLAGS_NONE : G_SUBPROCESS_FLAGS_STDERR_SILENCE);
+    }
     g_subprocess_launcher_take_stdin_fd(l, toServer[0]);
     g_subprocess_launcher_take_stdout_fd(l, fromServer[1]);
     if (errFd >= 0) g_subprocess_launcher_take_stderr_fd(l, errFd);

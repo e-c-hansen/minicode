@@ -1,5 +1,6 @@
 // RecentFolders.mm — see RecentFolders.h.
 #import "RecentFolders.h"
+#import "Environment.h"
 #import "TreeDetails.h"   // MCAppDefaults
 
 NSNotificationName const MCRecentFoldersDidChangeNotification =
@@ -9,7 +10,7 @@ static NSString *const kRecentFoldersKey = @"MCRecentFolders";
 static const NSUInteger kMaxRecentFolders = 20;
 
 static BOOL MCRecentFoldersOff(void) {
-    NSDictionary *env = NSProcessInfo.processInfo.environment;
+    NSDictionary *env = MCEnvironment();
     return [env[@"MINICODE_DEMO"] length] || [env[@"MINICODE_BENCH"] length];
 }
 

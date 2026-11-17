@@ -278,8 +278,8 @@ void BuildWorld() {
     [k appendFormat:@"%@\n", Reply(kinds, 584, @"mk2", @"Done: tabs are *faster*.")];
     MCGuiWriteFile([gBase stringByAppendingPathComponent:@"kinds/sess-kinds.jsonl"], k);
 
-    setenv("MINICODE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation, 1);
-    setenv("MINICODE_CLAUDE_TMP", gTmp.fileSystemRepresentation, 1);
+    MCSetEnv("MINICODE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation);
+    MCSetEnv("MINICODE_CLAUDE_TMP", gTmp.fileSystemRepresentation);
 }
 
 NSString *Real(NSString *p) {
@@ -1074,8 +1074,8 @@ MC_GUI_SUITE(agents) {
         c = nil;
         term = nil;
         MCGuiSetKeyWindow(nil);
-        unsetenv("MINICODE_CLAUDE_PROJECTS");
-        unsetenv("MINICODE_CLAUDE_TMP");
+        MCSetEnv("MINICODE_CLAUDE_PROJECTS", nullptr);
+        MCSetEnv("MINICODE_CLAUDE_TMP", nullptr);
         GCHECK(Win() == nil);
     });
 }

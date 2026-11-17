@@ -98,7 +98,7 @@ MC_GUI_SUITE(claude_hooks_offer) {
         MCGuiWriteFile(MCGuiProjectFile("fakebin/claude"), "#!/bin/sh\nexec sleep 3\n");
         chmod(MCGuiProjectFile("fakebin/claude").c_str(), 0755);
         MCGuiWriteFile(gHome + "/.bashrc", "\n");
-        g_setenv("SHELL", "/bin/bash", TRUE);
+        EnvLock::envSet("SHELL", "/bin/bash", TRUE);
         GCHECK(g_file_test("/bin/sh", G_FILE_TEST_IS_EXECUTABLE));
         if (!MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
         gT = dock()->newTerminal();
@@ -201,8 +201,8 @@ MC_GUI_SUITE(claude_hooks_offer) {
         const int at = dock()->indexOf(gT);
         if (at >= 0) dock()->close(at, false);
         GCHECK(dock()->count() >= 1);
-        if (gHadShell) g_setenv("SHELL", gOldShell.c_str(), TRUE);
-        else g_unsetenv("SHELL");
+        if (gHadShell) EnvLock::envSet("SHELL", gOldShell.c_str(), TRUE);
+        else EnvLock::envUnset("SHELL");
         g_remove((gHome + "/.bashrc").c_str());
         // The questions above took the X focus and gave it to no one when
         // they closed; without this the next suite's window is not active

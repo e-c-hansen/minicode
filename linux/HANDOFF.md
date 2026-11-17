@@ -5743,7 +5743,48 @@ wire format and a 200 us delay on a loaded machine: two of preview_tabs'
 waits timed out at 30 s, and in the loaded second pass control failed
 11 checks (no memory error either time); neither was seen otherwise.
 
-### 90. The session's host owns the terminals' ptys (done, November 2026; SESSION-DESIGN.md stage 5)
+### 90. The heap corruption of item 89 was setenv racing a spawn (done, November 2026)
+
+CI's GTK job aborted twice in its second half with `realloc(): invalid
+next size` during `recent_folders`' first step, and the harness's crash
+handler (item 89) printed the stack:
+
+```
+realloc <- g_realloc <- g_environ_setenv <- g_subprocess_launcher_setenv
+  <- runGitWithin <- runGit <- (a GThread)
+```
+
+`runGitWithin` runs on the git panel's worker thread and makes a
+`GSubprocessLauncher`, whose init copies the process environment
+(`g_get_environ`). The suite's first step called `g_setenv` on the main
+thread at the same moment; glibc's setenv reallocates `environ` and frees
+strings while the other thread reads them, so the copy was torn and the
+heap corrupted. The product changes its environment only at startup
+(`MINICODE_FOREGROUND`), but the GUI suites did it 93 times while the app's
+workers started processes.
+
+The fix is `src/EnvLock.{h,cpp}`: a `std::shared_mutex` with an `EnvRead`
+guard and `envSet`/`envUnset`, which take it exclusively. The rule: any
+spawn or environment read off the main thread holds `EnvRead` while it
+reads, never across the wait for a child. Wrapped: the launchers of
+`GitRun.cpp`, `Latex.cpp` (`newLauncher`, the tool lookups) and
+`LspProcess.cpp`, the `g_spawn_*` with no environment in `Math.cpp` and
+`Mermaid.cpp`, `g_find_program_in_path` and `g_getenv` of PATH and the
+MINICODE_* paths in those files, and the main thread's own reads
+(`Terminal.cpp`, `FormatRunner.cpp`, `InlineAgentBar.cpp`, `main.cpp`,
+`ClaudeHooksOffer.cpp`). The GUI suites call `EnvLock::envSet` and
+`envUnset`. The test `env lock: launchers while the environment grows` in
+`tests/run_tests.cpp` runs a worker making launchers against the main
+thread setting new variables.
+
+A sturdier design, not done: runners never read `environ` off the main
+thread at all, using an environment snapshot built on the main thread and
+rebuilt under the lock when the environment changes. On GTK that also
+needs the spawns moved to `g_spawn_async_with_pipes_and_fds` with an
+explicit envp and `G_SPAWN_SEARCH_PATH_FROM_ENVP`, because
+`GSubprocessLauncher`'s init copies `environ` itself.
+
+### 91. The session's host owns the terminals' ptys (done, November 2026; SESSION-DESIGN.md stage 5)
 
 What a user meets: the terminal's commands are marked, as on the Mac.
 Ctrl+Up and Ctrl+Down (VS Code's Linux keys) move to the previous or next

@@ -22,6 +22,7 @@
 //   5. Results go into memory on the main thread and a notification names
 //      them; the preview renders again with the pictures in.
 #import "MarkdownMath.h"
+#import "Environment.h"
 #import "Latex.h"
 #import <CommonCrypto/CommonDigest.h>
 #include "MathTex.h"
@@ -58,7 +59,7 @@ static void MCMathTellFetched(NSUInteger files, BOOL last) {
 }
 
 BOOL MCTectonicCacheIsEmpty(void) {
-    NSString *dir = NSProcessInfo.processInfo.environment[@"TECTONIC_CACHE_DIR"];
+    NSString *dir = MCEnvironment()[@"TECTONIC_CACHE_DIR"];
     if (!dir.length)
         dir = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES)
                    .firstObject stringByAppendingPathComponent:@"TectonicProject.Tectonic"];
@@ -189,7 +190,7 @@ NSString *MCMathKey(NSString *tex, BOOL display) {
 }
 
 NSString *MCMathCacheDirectory(void) {
-    NSString *over = NSProcessInfo.processInfo.environment[@"MINICODE_MATH_CACHE"];
+    NSString *over = MCEnvironment()[@"MINICODE_MATH_CACHE"];
     if (over.length) return over;
     NSString *caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory,
                                                            NSUserDomainMask, YES).firstObject;
@@ -419,6 +420,8 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
     task.arguments = @[@"-Z", @"continue-on-errors", @"--untrusted", @"--print", @"--keep-logs",
                        @"--reruns", @"0", @"--color", @"never", @"--outdir", dir, tex];
     task.currentDirectoryURL = [NSURL fileURLWithPath:dir];
+    // Given, so NSTask never copies environ on this queue (Environment.h).
+    task.environment = MCEnvironment();
     task.standardInput = [NSFileHandle fileHandleWithNullDevice];
     NSPipe *pipe = [NSPipe pipe];
     task.standardOutput = pipe;

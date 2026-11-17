@@ -2,6 +2,7 @@
 // MINICODE_ENABLE_TERMINAL is set.
 #include <climits>
 #include <unistd.h>
+#include "EnvLock.h"
 #include "Terminal.h"
 #include <map>
 
@@ -1224,8 +1225,12 @@ bool Terminal::moveToCommand(int direction) {
 
 void Terminal::spawnShell() {
     shellSpoke_ = false;   // a text to type waits for this shell's prompt
-    const char* shell = g_getenv("SHELL");
-    if (!shell || !*shell) shell = "/bin/bash";
+    std::string shellText;
+    {
+        EnvLock::EnvRead env;
+        if (const char* v = g_getenv("SHELL")) shellText = v;
+    }
+    const char* shell = shellText.empty() ? "/bin/bash" : shellText.c_str();
 
     lastSpawn_ = g_get_monotonic_time();
 
@@ -1234,7 +1239,11 @@ void Terminal::spawnShell() {
     // plus this terminal's (PARITY.md 3.6): `minicode notify --from-hook`
     // finds its terminal by them. Then what the window adds, such as the IDE
     // link's CLAUDE_CODE_SSE_PORT (PARITY.md 3.9).
-    gchar** envv = g_get_environ();
+    gchar** envv;
+    {
+        EnvLock::EnvRead env;
+        envv = g_get_environ();
+    }
     envv = g_environ_unsetenv(envv, "MINICODE_TERMINAL_ID");
     envv = g_environ_unsetenv(envv, "MINICODE_PID");
     for (const char* inherited : {"MINICODE_NONCE", "MINICODE_USER_ZDOTDIR", "MINICODE_EXEC"})

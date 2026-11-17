@@ -314,10 +314,10 @@ public:
     // language (AutoClose; on, the default, as VS Code's
     // editor.autoClosingBrackets and autoClosingQuotes "languageDefined").
     bool autoClose() const { return autoClose_; }
-    // editor.session-host: each document's text and version belong to the
-    // in-process session host (SESSION-DESIGN.md stage 4b; SessionLink.h
-    // on the Mac), the editor's storage its mirror. Off, the default for
-    // now, the Mac's editor owns them as before.
+    // editor.session-host: each document's text, version and undo history
+    // belong to the in-process session host (SESSION-DESIGN.md stage 4b;
+    // SessionLink.h on the Mac), the editor's storage its mirror. Off, the
+    // default for now, the Mac's editor owns them as before.
     bool sessionHost() const { return sessionHost_; }
     // editor.large-file-optimizations: a file over LargeFile's thresholds
     // (VS Code's: 20 MB or 300,000 lines) opens without highlighting,

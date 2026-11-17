@@ -194,6 +194,38 @@ void Client::closeStep(DocId id, const Selection& after) {
     pump();
 }
 
+void Client::recordOutside(DocId id, Ot::Op op) {
+    Doc* d = doc(id);
+    if (!d || (op.del == 0 && op.ins.empty())) return;
+    d->broken = true;
+    if (!outbox_.empty()) {
+        Message& tail = outbox_.back();
+        if (tail.kind == Kind::DocEdit && tail.doc == id && tail.flag == 1) {
+            tail.ops.push_back(std::move(op));
+            return;
+        }
+    }
+    Message m;
+    m.kind = Kind::DocEdit;
+    m.doc = id;
+    m.flag = 1;
+    m.ops.push_back(std::move(op));
+    queue(std::move(m));
+    pump();
+}
+
+void Client::forgetHistory(DocId id) {
+    Doc* d = doc(id);
+    if (!d) return;
+    d->lastAfter.clear();
+    d->moved = d->broken = true;
+    Message m;
+    m.kind = Kind::DocForget;
+    m.doc = id;
+    queue(std::move(m));
+    pump();
+}
+
 void Client::breakCoalescing(DocId id) {
     if (Doc* d = doc(id)) d->broken = true;
 }

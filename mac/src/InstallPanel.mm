@@ -1,5 +1,6 @@
 // InstallPanel.mm — Objective-C++. See InstallPanel.h.
 #import "InstallPanel.h"
+#import "Environment.h"
 #import "EditorFont.h"
 #import "InstallHints.h"
 #import "Lsp.h"           // MCFindProgram
@@ -22,12 +23,12 @@ static NSString *NS(const std::string &s) { return [NSString stringWithUTF8Strin
 static std::string Std(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
 
 NSPasteboard *MCInstallPasteboard(void) {
-    NSString *name = NSProcessInfo.processInfo.environment[@"MINICODE_PASTEBOARD"];
+    NSString *name = MCEnvironment()[@"MINICODE_PASTEBOARD"];
     return name.length ? [NSPasteboard pasteboardWithName:name] : [NSPasteboard generalPasteboard];
 }
 
 BOOL MCInstallerAvailable(NSString *program) {
-    NSString *fake = NSProcessInfo.processInfo.environment[@"MINICODE_INSTALL_HAVE"];
+    NSString *fake = MCEnvironment()[@"MINICODE_INSTALL_HAVE"];
     if (fake) return [[fake componentsSeparatedByString:@","] containsObject:program];
     return MCFindProgram(program) != nil;
 }

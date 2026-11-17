@@ -237,8 +237,8 @@ MC_GUI_SUITE(agents) {
                        prompt("Add the new file", 40) + writeCall("w1", gProj + "/new.txt", 30) +
                            writeCall("w2", gProj + "/gone.txt", 20));
         g_mkdir_with_parents((gTmp + "/-Users-user-Code-public-minicode").c_str(), 0755);
-        g_setenv("MINICODE_CLAUDE_PROJECTS", gProjects.c_str(), TRUE);
-        g_setenv("MINICODE_CLAUDE_TMP", gTmp.c_str(), TRUE);
+        EnvLock::envSet("MINICODE_CLAUDE_PROJECTS", gProjects.c_str(), TRUE);
+        EnvLock::envSet("MINICODE_CLAUDE_TMP", gTmp.c_str(), TRUE);
         gBefore = listingOf(gClaude);
         gFixturesBefore = listingOf(fixturesDir());
         GCHECK(!gFixturesBefore.empty());
@@ -660,7 +660,7 @@ MC_GUI_SUITE(agents) {
         const std::string fm = MCGuiProjectFile("filemanager.sh");
         MCGuiWriteFile(fm, "#!/bin/sh\necho \"$1\" >> '" + gRevealLog + "'\n");
         chmod(fm.c_str(), 0755);
-        g_setenv("MINICODE_FILE_MANAGER", fm.c_str(), TRUE);
+        EnvLock::envSet("MINICODE_FILE_MANAGER", fm.c_str(), TRUE);
         panel()->openMenuFor(rowWhere("Work in the worktree", AgentsPanel::RowInfo::Session));
         g_action_group_activate_action(panel()->actionGroup(), "scratchpad", nullptr);
         panel()->closeMenu();
@@ -668,5 +668,5 @@ MC_GUI_SUITE(agents) {
     MCGuiWait("the file manager was given the folder", 10, [] {
         return has(MCGuiReadFile(gRevealLog), gScratch);
     });
-    MCGuiStep("(cleanup)", [] { g_unsetenv("MINICODE_FILE_MANAGER"); });
+    MCGuiStep("(cleanup)", [] { EnvLock::envUnset("MINICODE_FILE_MANAGER"); });
 }

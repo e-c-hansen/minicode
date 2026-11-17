@@ -205,7 +205,9 @@ private:
     Selection mapSelection(const Selection& s, const Ot::Ops& ops, Model::Unit u) const;
     // Primitives in `u`, applied one at a time to the text: logged in both
     // units, and each recorded in the open step when `record`.
-    Entry applyOps(Doc& d, const Ot::Ops& ops, Model::Unit u, bool record);
+    // With `outside` (and not `record`), each moves the history past it
+    // instead (UndoHistory::foreign).
+    Entry applyOps(Doc& d, const Ot::Ops& ops, Model::Unit u, bool record, bool outside = false);
     void closeStep(Doc& d);
     void broadcast(DocId id, Doc& d, const Entry& e, ClientId by, std::uint64_t seq, int flag,
                    ClientId selectFor, const Selection* select16);
@@ -218,6 +220,7 @@ private:
     void onEdit(ClientId c, Message& m);
     void onUndo(ClientId c, Message& m);
     void onSaved(ClientId c, Message& m);
+    void onForget(ClientId c, Message& m);
     void onWatch(ClientId c, Message& m);
     void onQuery(ClientId c, Message& m);
 };

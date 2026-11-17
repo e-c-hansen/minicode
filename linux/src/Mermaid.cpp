@@ -1,4 +1,5 @@
 // Mermaid.cpp — see Mermaid.h.
+#include "EnvLock.h"
 #include "Mermaid.h"
 
 #include "LspProcess.h"
@@ -58,12 +59,18 @@ std::deque<Job> g_queue;
 bool g_workerStarted = false;
 
 std::string mmdcPath() {
-    if (const char* e = g_getenv("MINICODE_MMDC"); e && *e)
-        return g_file_test(e, G_FILE_TEST_IS_EXECUTABLE) ? e : "";
+    std::string fixed;
+    {
+        EnvLock::EnvRead env;
+        if (const char* e = g_getenv("MINICODE_MMDC"); e && *e) fixed = e;
+    }
+    if (!fixed.empty())
+        return g_file_test(fixed.c_str(), G_FILE_TEST_IS_EXECUTABLE) ? fixed : "";
     return lspgtk::findProgram("mmdc");
 }
 
 std::string cacheDir() {
+    EnvLock::EnvRead env;
     if (const char* e = g_getenv("MINICODE_MERMAID_CACHE"); e && *e) return e;
     return std::string(g_get_user_cache_dir()) + "/minicode/mermaid";
 }
@@ -128,11 +135,16 @@ Done runOne(const Job& job) {
     GPid pid = 0;
     gint errFd = -1;
     GError* err = nullptr;
-    if (!g_spawn_async_with_pipes(
+    gboolean started;
+    {
+        EnvLock::EnvRead env;   // a NULL envp: the child takes ours (EnvLock.h)
+        started = g_spawn_async_with_pipes(
             tmp.c_str(), argv.data(), nullptr,
             (GSpawnFlags)(G_SPAWN_DO_NOT_REAP_CHILD | G_SPAWN_STDOUT_TO_DEV_NULL |
                           G_SPAWN_STDIN_FROM_DEV_NULL),
-            [](gpointer) { setsid(); }, nullptr, &pid, nullptr, nullptr, &errFd, &err)) {
+            [](gpointer) { setsid(); }, nullptr, &pid, nullptr, nullptr, &errFd, &err);
+    }
+    if (!started) {
         done.why = std::string("could not start mmdc: ") + (err ? err->message : "unknown");
         g_clear_error(&err);
         cleanup();

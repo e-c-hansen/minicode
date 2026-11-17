@@ -102,7 +102,7 @@ MC_GUI_SUITE(terminal_find) {
         gHadShell = old != nullptr;
         gOldShell = old ? old : "";
         GCHECK(std::string(g_get_home_dir()).find(MCGuiScratch()) == 0);   // never the user's own
-        g_setenv("SHELL", "/bin/bash", TRUE);
+        EnvLock::envSet("SHELL", "/bin/bash", TRUE);
         MCGuiWriteFile(std::string(g_get_home_dir()) + "/.bashrc", "\n");
         gOldConfirm = dock()->confirmClose;
         dock()->confirmClose = nullptr;
@@ -254,7 +254,7 @@ MC_GUI_SUITE(terminal_find) {
 
     MCGuiStep("settings put back", [] {
         dock()->confirmClose = gOldConfirm;
-        if (gHadShell) g_setenv("SHELL", gOldShell.c_str(), TRUE);
-        else g_unsetenv("SHELL");
+        if (gHadShell) EnvLock::envSet("SHELL", gOldShell.c_str(), TRUE);
+        else EnvLock::envUnset("SHELL");
     });
 }

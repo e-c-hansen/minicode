@@ -1,12 +1,14 @@
 // MarkdownMermaid.mm — see MarkdownMermaid.h; the decisions are in
 // MermaidDiagram.h.
 #import "MarkdownMermaid.h"
+#import "Environment.h"
 #import "AppSettings.h"
 #import "Lsp.h"            // MCFindProgram, MCSearchDirs
 #import "MarkdownImage.h"  // MCMarkdownImage
 #import <CommonCrypto/CommonDigest.h>
 #import <WebKit/WebKit.h>
 #include "MermaidDiagram.h"
+#include "ProcessEnv.h"
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -15,7 +17,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-extern char **environ;
 
 NSAttributedStringKey const MCMarkdownMermaidAttribute = @"MCMarkdownMermaid";
 NSNotificationName const MCMermaidDrawnNotification = @"MCMermaidDrawnNotification";
@@ -27,17 +28,17 @@ static NSString *NSFromStd(const std::string &s) {
 }
 
 NSString *MCMermaidPath(void) {
-    const char *forced = getenv("MINICODE_MMDC");
-    if (forced && *forced) {
-        NSString *p = [NSString stringWithUTF8String:forced];
+    NSString *forced = MCEnv(@"MINICODE_MMDC");
+    if (forced.length) {
+        NSString *p = forced;
         return [[NSFileManager defaultManager] isExecutableFileAtPath:p] ? p : nil;
     }
     return MCFindProgram(@"mmdc");
 }
 
 NSString *MCMermaidCacheDirectory(void) {
-    const char *forced = getenv("MINICODE_MERMAID_CACHE");
-    if (forced && *forced) return [NSString stringWithUTF8String:forced];
+    NSString *forced = MCEnv(@"MINICODE_MERMAID_CACHE");
+    if (forced.length) return forced;
     NSString *caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
     return [[caches stringByAppendingPathComponent:@"MiniCode"] stringByAppendingPathComponent:@"mermaid"];
 }
@@ -81,9 +82,9 @@ static NSString *MCMermaidJsText(void) {
 }
 
 NSString *MCMermaidJsPath(void) {
-    const char *forced = getenv("MINICODE_MERMAID_JS");
-    if (forced && *forced) {
-        NSString *p = [NSString stringWithUTF8String:forced];
+    NSString *forced = MCEnv(@"MINICODE_MERMAID_JS");
+    if (forced.length) {
+        NSString *p = forced;
         return [[NSFileManager defaultManager] isReadableFileAtPath:p] ? p : nil;
     }
     NSString *managed = MCManagedMermaidJs();
@@ -114,7 +115,7 @@ void MCDownloadMermaid(void (^done)(NSString *problem)) {
         [gMermaidWaiters addObject:[done copy]];
         return;
     }
-    NSDictionary *env = NSProcessInfo.processInfo.environment;
+    NSDictionary *env = MCEnvironment();
     NSString *urlText = @(MermaidDiagram::kMermaidJsUrl);
     NSString *want = @(MermaidDiagram::kMermaidJsSha256);
     if ([env[@"MINICODE_MERMAID_DOWNLOAD"] length]) {   // the checks' stand-in
@@ -465,9 +466,11 @@ static NSData *MCMermaidRunOne(NSString *mmdc, NSString *source, NSString *theme
     // app launched from Finder has a short PATH).
     std::vector<std::string> env;
     std::string path = "/usr/bin:/bin:/usr/sbin:/sbin";
-    for (char **e = environ; *e; e++) {
-        if (strncmp(*e, "PATH=", 5) == 0) path = *e + 5;
-        else env.push_back(*e);
+    // From the snapshot: this runs on the drawing queue, where walking
+    // environ raced with setenv (src/ProcessEnv.h).
+    for (const std::string &e : ProcessEnv::current()->entries) {
+        if (e.compare(0, 5, "PATH=") == 0) path = e.substr(5);
+        else env.push_back(e);
     }
     for (NSString *d in MCSearchDirs()) path += std::string(":") + d.fileSystemRepresentation;
     path = std::string(mmdc.stringByDeletingLastPathComponent.fileSystemRepresentation) + ":" + path;

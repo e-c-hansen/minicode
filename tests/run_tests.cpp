@@ -11245,6 +11245,7 @@ static void testMultiCaretOccurrences() {
 #include "adjust_settings_tests.inc"
 #include "runnables_tests.inc"
 #include "spell_check_tests.inc"
+#include "process_env_tests.inc"
 
 int main() {
     std::printf("Running MiniCode core tests...\n");
@@ -11415,6 +11416,7 @@ int main() {
     testAutoClose();
     testLspInlayHints();
     testLspSemanticTokens();
+    testProcessEnv();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

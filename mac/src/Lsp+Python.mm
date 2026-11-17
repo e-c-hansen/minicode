@@ -5,6 +5,7 @@
 // its own tools (its .venv for the servers, and Format Document's
 // formatters too), which is kept per folder. It keeps no state of its own.
 #import "Lsp+Private.h"
+#import "Environment.h"
 #import "TreeDetails.h"   // MCAppDefaults
 
 static NSString *const kInterpretersDefaultsKey = @"MCPythonInterpreters";
@@ -78,7 +79,7 @@ void MCForgetFolderToolsConsent(NSString *root) {
                                  : RealPath(_root));
     ctx.root = Std(RealPath(_root));
     ctx.home = Std(NSHomeDirectory());
-    NSDictionary *env = NSProcessInfo.processInfo.environment;
+    NSDictionary *env = MCEnvironment();
     for (NSString *k in @[@"VIRTUAL_ENV", @"CONDA_PREFIX", @"PYENV_ROOT", @"WORKON_HOME",
                           @"CONDA_ENVS_PATH", @"POETRY_VIRTUALENVS_PATH", @"XDG_DATA_HOME",
                           @"XDG_CACHE_HOME"])
