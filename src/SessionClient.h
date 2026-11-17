@@ -34,6 +34,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -126,9 +127,13 @@ public:
 
     // ---- the host's text, copied
     // A copy of the host's text kept from the host's edits (UTF-16), and
-    // `w` told of each; null when the document is not open. `owner` names
+    // `w` told of each; null when the document is not open, or when the
+    // host did not answer within `timeoutMs` (then `w` is not kept either,
+    // so an owner that goes after a stall is never called). `owner` names
     // the watcher for unwatch().
-    const Model::Text* watch(DocId doc, const void* owner, Watcher w);
+    const Model::Text* watch(DocId doc, const void* owner, Watcher w, int timeoutMs = 10000);
+    // Whether `owner` watches `doc` (checks).
+    bool watching(DocId doc, const void* owner) const;
     void unwatch(DocId doc, const void* owner);
     const Model::Text* hostCopy(DocId doc) const;
 
@@ -183,6 +188,8 @@ private:
     Message head_;   // the edit in flight
     std::uint64_t seq_ = 0, nextStep_ = 0, nextReq_ = 0;
     std::map<std::uint64_t, Message> replies_;
+    // Requests whose wait timed out: their answers are dropped on arrival.
+    std::set<std::uint64_t> abandoned_;
     std::vector<std::string> errors_;
 
     std::mutex mu_;

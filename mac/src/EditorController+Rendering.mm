@@ -627,6 +627,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
 // (or throw past its end), so they go, and so do the LaTeX preview's.
 - (void)forgetHistoryOf:(MCTab *)t {
     [t.undoManager removeAllActions];
+    [self sessionForgetHistoryOf:t];   // the session host's too
     t.textSessionStart = nil;
     t.folds = nil;
     [t.latex forgetEdits];

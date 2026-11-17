@@ -237,6 +237,10 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
 - (void)updateFileWatcher;
 - (void)stopWatchingFilesAfter:(dispatch_block_t)stopping;
 - (void)flushChanges;
+// editor.session-host: the host's text of the document on show (SessionLink.h).
+- (const Model::Text *)hostText;
+- (NSString *)hostTextOnShow;
+- (void)releaseHostText;
 - (void)storageEdited:(NSNotification *)note;
 - (void)windowResignedKey:(NSNotification *)note;
 - (void)selectionChanged:(NSNotification *)note;

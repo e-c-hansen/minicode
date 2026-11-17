@@ -43,6 +43,7 @@ static double MCThreadCpuMs() {
     _servers = @[];
     _uri = nil;
     _changes.reset();
+    [self releaseHostText];
     [self forgetCompletionRequests];
     [self clearInlayHints];
     _tv.diagnostics = @[];
@@ -179,7 +180,7 @@ static double MCThreadCpuMs() {
     if ([AppSettings shared].settings.lspEnabled()) {
         if (_servers.count && _uri) {
             for (MCLspServer *server in _servers) want(_uri, _path, server);
-            texts[_uri] = _tv.string;
+            texts[_uri] = [self hostTextOnShow] ?: _tv.string;
             languageIds[_uri] = _languageId;
         }
         NSArray<NSString *> *paths = self.openPaths ? self.openPaths() : @[];
@@ -408,6 +409,7 @@ static double MCThreadCpuMs() {
 }
 
 - (void)shutdown {
+    [self releaseHostText];
     [self closeDocument];
     [self stopAllServers];
 }
@@ -425,7 +427,7 @@ static double MCThreadCpuMs() {
     if (!_servers.count || !_uri) { _changes.reset(); return; }
     const double c0 = MCThreadCpuMs();
     NSString *text = _tv.string;
-    const size_t length = text.length;
+    size_t length = text.length;
     Lsp::TextReader read = [text, length](size_t start, size_t n) {
         start = std::min(start, length);
         n = std::min(n, length - start);
@@ -433,6 +435,18 @@ static double MCThreadCpuMs() {
         if (n) [text getCharacters:(unichar *)out.data() range:NSMakeRange(start, n)];
         return out;
     };
+    // With editor.session-host on, the host's text (every edit sent so far
+    // applied), which is the storage's while nothing of the host's waits
+    // to go into it.
+    if (const Model::Text *host = [self hostText]) {
+        if (host->size() == length) {
+            read = [host](size_t start, size_t n) { return host->slice(start, n); };
+        } else {
+            length = host->size();
+            read = [host](size_t start, size_t n) { return host->slice(start, n); };
+            _changes.invalidate();   // the storage's edits are not the host's text's: send it whole
+        }
+    }
     const std::string uri = Std(_uri);
     for (MCLspServer *server in _servers) server.client.didChange(uri, length, _changes, read);
     _changes.reset();
@@ -440,6 +454,30 @@ static double MCThreadCpuMs() {
 }
 
 - (double)lastFlushCpuMs { return _lastFlushCpuMs; }
+
+// ---- the session's host (SessionLink.h)
+// The host's text of the document on show, when the host owns it: a copy
+// the client keeps from the host's edits, settled so it holds every edit
+// sent. Watched under this session, let go when the document leaves.
+- (const Model::Text *)hostText {
+    MCSessionDoc *doc = _tv.sessionDoc;
+    if (doc != _hostTextDoc) [self releaseHostText];
+    if (!doc) return nullptr;
+    _hostTextDoc = doc;
+    return [doc hostTextFor:(__bridge const void *)self];
+}
+
+- (NSString *)hostTextOnShow {
+    const Model::Text *host = [self hostText];
+    if (!host) return nil;
+    const std::u16string all = host->str();
+    return [NSString stringWithCharacters:(const unichar *)all.data() length:all.size()];
+}
+
+- (void)releaseHostText {
+    [_hostTextDoc releaseHostTextFor:(__bridge const void *)self];
+    _hostTextDoc = nil;
+}
 
 - (void)storageEdited:(NSNotification *)note {
     NSTextStorage *ts = note.object;

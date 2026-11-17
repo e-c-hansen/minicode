@@ -2,7 +2,7 @@
 #import <Cocoa/Cocoa.h>
 #import "FileViewers.h"
 
-@class LatexView, MCComparison, MCTab;
+@class LatexView, MCComparison, MCTab, MCSessionDoc, CodeTextView;
 @protocol MCEditorPage;
 
 // The window a tab is open in keeps its place among the tabs (the core's
@@ -13,6 +13,12 @@
 - (BOOL)tabIsAgentPreview:(MCTab *)t;
 - (uint64_t)tabLastUsed:(MCTab *)t;
 - (void)tabPathChanged:(MCTab *)t;
+@optional
+// The session's host (SessionLink.h): the text view whose storage holds the
+// tab's source as an editable text now, else nil; and the tab's text
+// changed by the host while not in the storage.
+- (CodeTextView *)textViewShowingSourceOf:(MCTab *)t;
+- (void)tabTextChangedByHost:(MCTab *)t;
 @end
 
 // ---------------------------------------------------------------------------
@@ -173,6 +179,12 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 // Its window's (Model::Preview::User).
 @property(nonatomic, readonly) BOOL preview;
 @property(nonatomic, strong) NSUndoManager *undoManager;
+// Its document on the session's host (SessionLink.h): made when its text is
+// first set while editor.session-host is on, nil otherwise. The host then
+// owns its text's history; every change of sourceText not made by the host
+// goes to it as an edit, and the editor's storage edits too while the tab
+// is on show (EditorController+Session.mm).
+@property(nonatomic, readonly) MCSessionDoc *session;
 // When it last came on show in its window (Model::Window::lastUsed), larger
 // for later: the tab shown after a close, the files Quick Open lists first.
 @property(nonatomic, readonly) uint64_t lastActive;
