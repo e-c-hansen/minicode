@@ -87,6 +87,19 @@
 - (void)toggleProcesses:(id)sender;
 @end
 
+// EditorController+SessionBrowser.mm (SessionBrowser.h)
+@class MCSessionBrowser;
+@interface EditorController (SessionBrowser)
+// View > Show Session in Browser…: the window's tabs on the session's host,
+// served read-only on 127.0.0.1 and opened in the default browser; with
+// editor.session-host off, an alert offers to turn it on.
+- (void)showSessionInBrowser:(id)sender;
+// View > Copy Session Browser Link: the same page's address, with its token.
+- (void)copySessionBrowserLink:(id)sender;
+// The window's server, nil until one of the two was chosen (checks).
+@property(nonatomic, readonly) MCSessionBrowser *sessionBrowser;
+@end
+
 // EditorController+StatusBar.mm
 @interface EditorController (StatusBar)
 - (void)toggleHints:(id)sender;       // Shift+Cmd+H shortcut-hints overlay

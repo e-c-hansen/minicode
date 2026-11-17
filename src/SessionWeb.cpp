@@ -633,6 +633,9 @@ struct Server::Conn {
 
 struct Server::Session : Client::Listener, Client::TermListener {
     std::unique_ptr<HostLink> link;
+    std::function<void()> letGo;    // an in-process host's (Options::connect)
+    // With Options::window: the documents that window's tabs hold.
+    std::set<DocId> allowed;
     std::unique_ptr<Client> client;
     std::map<DocId, std::unique_ptr<DocView>> docs;
     std::map<TermId, std::unique_ptr<TermView>> terms;
@@ -740,6 +743,7 @@ bool Server::start(const Options& o, std::string* error) {
     hello.set("machine", Json(opt_.machine));
     hello.set("folder", Json(opt_.folder));
     hello.set("palette", paletteJson(settings));
+    hello.set("termNote", Json(opt_.termNote));
     helloText_ = hello.dump();
     return true;
 }
@@ -856,14 +860,25 @@ void Server::handleMessage(Conn& c, const std::string& text) {
 }
 
 bool Server::attach() {
-    std::string error;
-    auto link = HostLink::open(opt_.hostSocket, &error);
-    if (!link) return false;
     auto s = std::make_unique<Session>();
     s->client = std::make_unique<Client>(Model::Unit::Utf16, "browser");
     s->client->setReadOnly(true);
     s->client->setWake([this] { wake(); });
     Client* client = s->client.get();
+    if (opt_.connect) {
+        // A host in this process: it delivers to the client itself.
+        s->letGo = opt_.connect(*client);
+        session_ = std::move(s);
+        lookAtState();
+        if (!session_ || !session_->state.isObject()) {
+            detach();
+            return false;
+        }
+        return true;
+    }
+    std::string error;
+    auto link = HostLink::open(opt_.hostSocket, &error);
+    if (!link) return false;
     Session* raw = s.get();
     link->start([client](Message&& m) { client->deliver(std::move(m)); },
                 [this, raw] {
@@ -886,6 +901,7 @@ bool Server::attach() {
 void Server::detach() {
     if (!session_) return;
     if (session_->link) session_->link->close();   // the reader first: it delivers to the client
+    if (session_->letGo) session_->letGo();        // no more deliveries after this
     session_->client.reset();
     session_.reset();
 }
@@ -899,10 +915,17 @@ void Server::lookAtState() {
     Json out = Json::object();
     out.set("t", Json("state"));
     Json windows = Json::array();
-    for (const Json& w : st["windows"].elements()) windows.push(w["tabs"]);
+    s.allowed.clear();
+    for (const Json& w : st["windows"].elements()) {
+        if (opt_.window && (std::uint64_t)w["window"].asInt() != opt_.window) continue;
+        windows.push(w["tabs"]);
+        for (const Json& g : w["tabs"]["groups"].elements())
+            for (const Json& t : g["tabs"].elements()) s.allowed.insert((DocId)t["doc"].asInt());
+    }
     out.set("windows", std::move(windows));
     Json docs = Json::array();
     for (const Json& d : st["documents"].elements()) {
+        if (opt_.window && !s.allowed.count((DocId)d["doc"].asInt())) continue;
         Json o = Json::object();
         o.set("id", d["doc"]);
         o.set("path", d["path"]);
@@ -997,6 +1020,14 @@ void Server::showTo(Conn& c) {
     // send" starts here for the newcomer too.
     s.lastMarkdown = Clock::time_point();
     flush();
+    // Another window's document is not this view's to show.
+    if (c.doc && opt_.window && !s.allowed.count(c.doc)) {
+        Json g = Json::object();
+        g.set("t", Json("gone"));
+        g.set("id", Json((int64_t)c.doc));
+        sendJson(c, g);
+        c.doc = 0;
+    }
     if (c.doc) {
         auto it = s.docs.find(c.doc);
         if (it == s.docs.end()) {
@@ -1112,7 +1143,7 @@ bool Server::run() {
             }
             if (msSince(session_->lastLook) >= opt_.pollMs) lookAtState();
             if (session_->pending && msSince(session_->lastTermFlush) >= 30) flush();
-        } else if (msSince(lastSocketLook) >= 1000) {
+        } else if (!opt_.connect && msSince(lastSocketLook) >= 1000) {
             // Nobody looking: the host's socket going means it ended.
             lastSocketLook = Clock::now();
             if (lstat(opt_.hostSocket.c_str(), &st) != 0) return true;

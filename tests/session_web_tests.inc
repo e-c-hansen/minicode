@@ -731,4 +731,127 @@ static void testSessionWeb() {
         PageClient late;
         CHECK(!late.connectTo(port));
     }
+
+    // A host in this process, as the Mac's (editor.session-host): the view
+    // connects through Options::connect, sees one window's tabs, and lets
+    // the host go when the last browser leaves.
+    GROUP("sessionweb:in-process");
+    {
+        std::mutex routesMu;
+        std::map<Shared::ClientId, Shared::Client*> routes;
+        Shared::SessionHost host([&](Shared::ClientId to, Message&& m) {
+            std::lock_guard<std::mutex> lk(routesMu);
+            auto it = routes.find(to);
+            if (it != routes.end()) it->second->deliver(std::move(m));
+        });
+        Shared::Client editor(Model::Unit::Utf16, "editor");
+        const Shared::ClientId editorId = host.connect();
+        {
+            std::lock_guard<std::mutex> lk(routesMu);
+            routes[editorId] = &editor;
+        }
+        editor.connect([&](Message&& m) { host.post(editorId, std::move(m)); });
+        TestMirror mine;
+        mine.client = &editor;
+        mine.doc = 1;
+        mine.text = u"int main() {\n    return 0;\n}\n";
+        editor.open(1, "/w/main.cpp", Model::utf8FromUtf16(mine.text), &mine);
+        editor.open(2, "/other/secret.txt", "another window's\n", nullptr);
+        auto tabsOf = [](Shared::DocId d, const std::string& path) {
+            Json t = Json::object();
+            t.set("doc", Json((int64_t)d));
+            t.set("path", Json(path));
+            Json tabs = Json::array();
+            tabs.push(std::move(t));
+            Json g = Json::object();
+            g.set("tabs", std::move(tabs));
+            g.set("active", Json((int64_t)d));
+            Json groups = Json::array();
+            groups.push(std::move(g));
+            Json w = Json::object();
+            w.set("root", Json("/w"));
+            w.set("focused", Json(0));
+            w.set("groups", std::move(groups));
+            return w;
+        };
+        editor.windowTabs(5, tabsOf(1, "/w/main.cpp"));
+        editor.windowTabs(6, tabsOf(2, "/other/secret.txt"));
+        CHECK(editor.settle());
+
+        std::atomic<int> connects{0}, letGos{0};
+        Web::Server web;
+        Web::Options o;
+        o.folder = "/w";
+        o.window = 5;
+        o.termNote = "Terminals appear here once they run through the session host";
+        o.pollMs = 100;
+        o.connect = [&](Shared::Client& c) -> std::function<void()> {
+            connects++;
+            const Shared::ClientId id = host.connect();
+            {
+                std::lock_guard<std::mutex> lk(routesMu);
+                routes[id] = &c;
+            }
+            c.connect([&host, id](Message&& m) { host.post(id, std::move(m)); });
+            return [&, id] {
+                {
+                    std::lock_guard<std::mutex> lk(routesMu);
+                    routes.erase(id);
+                }
+                host.disconnect(id);
+                letGos++;
+            };
+        };
+        std::string error;
+        CHECK(web.start(o, &error));
+        CHECK(o.hostSocket.empty());
+        std::thread webThread([&] { web.run(); });
+        const int port = web.port();
+        {
+            PageClient p;
+            std::string head;
+            CHECK(!p.upgrade(port, "/ws?t=" + std::string(48, '0'), &head) &&
+                  head.compare(0, 12, "HTTP/1.1 403") == 0);
+            p.close();
+            CHECK(connects == 0);
+            CHECK(p.upgrade(port, "/ws?t=" + web.token()));
+            Json hello, state;
+            PageDoc doc;
+            int gone = 0;
+            auto take = [&](const Json& m) {
+                const std::string t = m["t"].asString();
+                if (t == "hello") hello = m;
+                else if (t == "state") state = m;
+                else if (t == "gone") gone++;
+                doc.take(m);
+            };
+            CHECK(p.pump(take, [&] { return state.isObject(); }));
+            CHECK(connects == 1);
+            CHECK(hello["termNote"].asString() == o.termNote && hello["folder"].asString() == "/w");
+            // Only window 5's tab and its document.
+            CHECK(state["windows"].size() == 1 && state["docs"].size() == 1 &&
+                  state["docs"][0]["id"].asInt() == 1);
+            CHECK(state["terms"].size() == 0);
+            // Another window's document is never shown, even when asked for.
+            p.sendText("{\"t\":\"show\",\"doc\":2,\"term\":0}");
+            CHECK(p.pump(take, [&] { return gone == 1; }));
+            CHECK(doc.id != 2);
+            p.sendText("{\"t\":\"show\",\"doc\":1,\"term\":0}");
+            CHECK(p.pump(take, [&] { return doc.id == 1; }));
+            CHECK(doc.text() == Model::utf8FromUtf16(mine.text));
+            mine.caret = mine.text.size();
+            mine.type(u"// typed\n");
+            CHECK(editor.settle());
+            CHECK(p.pump(take, [&] { return doc.text() == Model::utf8FromUtf16(mine.text); }));
+            p.close();
+            CHECK(waitUntil([&] { return web.browsers() == 0 && letGos == 1; }));
+        }
+        web.stop();
+        webThread.join();
+        {
+            std::lock_guard<std::mutex> lk(routesMu);
+            CHECK(routes.size() == 1);
+            routes.clear();
+        }
+    }
 }

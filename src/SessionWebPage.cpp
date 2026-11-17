@@ -58,6 +58,8 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
                    opacity: .6; user-select: none; }
 #md { flex: 1; border: 0; width: 100%; background: #fff; min-height: 0; }
 #note { padding: 2em 1em; color: var(--muted); }
+#termnote { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px;
+            border-top: 1px solid #333333; }
 .hidden { display: none !important; }
 #term { padding: 4px 6px; }
 #term .r { white-space: pre; min-height: var(--lh); }
@@ -92,12 +94,13 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
     <div id="term"><div id="hist"></div><div id="screen"><div id="cursor" class="hidden"></div></div></div>
   </section>
 </main>
+<p id="termnote" class="hidden"></p>
 <script nonce="{{NONCE}}">
 "use strict";
 (function () {
   const $ = (id) => document.getElementById(id);
   const token = new URLSearchParams(location.search).get("t") || "";
-  let ws = null, palette = null, state = null, ended = false, folder = "";
+  let ws = null, palette = null, state = null, ended = false, folder = "", termNote = "";
   const want = { doc: 0, term: 0 };
   let followDoc = true, followTerm = true, docKind = "", termInfo = null;
   const kHist = 5000;
@@ -171,6 +174,8 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
     const strip = $("termtabs");
     strip.textContent = "";
     $("termsec").classList.toggle("none", !state.terms.length);
+    $("termnote").textContent = termNote;
+    $("termnote").classList.toggle("hidden", !termNote || state.terms.length > 0);
     state.terms.forEach((t, i) => {
       const label = t.title || (t.cwd ? base(t.cwd.replace(/\/+$/, "")) : "") || "Terminal " + (i + 1);
       let cls = t.id === want.term ? "shown" : "";
@@ -334,6 +339,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
         case "hello":
           $("machine").textContent = m.machine || "minicode";
           folder = m.folder;
+          termNote = m.termNote || "";
           // Marks keep the path's slashes where they belong in a field
           // that cuts from the left.
           $("folder").textContent = "\u200e" + m.folder + "\u200e";

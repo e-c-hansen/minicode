@@ -581,6 +581,12 @@ const std::vector<Command>& all() {
          "toggleProcesses:", 0, 0, nullptr},
         {"minicode.toggleIdeLink", "Claude Code IDE Link", "View", "", A, "toggleIdeLink:", 0,
          0, nullptr},
+        // The browser's read-only view of the window's tabs on the session's
+        // host (editor.session-host; SessionBrowser.h). No keys.
+        {"minicode.showSessionInBrowser", "Show Session in Browser…", "View", "", A,
+         "showSessionInBrowser:", 0, 0, nullptr},
+        {"minicode.copySessionBrowserLink", "Copy Session Browser Link", "View", "", A,
+         "copySessionBrowserLink:", 0, 0, nullptr},
         {"workbench.actions.view.problems", "Problems", "View", "shift+cmd+m", A,
          "toggleProblems:", 0, 0, nullptr},
         {"minicode.toggleEditor", "Toggle Editor", "View", "shift+cmd+e", A, "toggleEditor:", 0,
