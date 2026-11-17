@@ -5,9 +5,9 @@
 // themselves by those rules (SESSION-DESIGN.md, stage 3a): a session's
 // windows, each window's one or two editor groups, each group's tabs in
 // order with the one on show, the preview tabs, and the closed tabs. Plain
-// C++ with no I/O, so it is unit-tested. The GTK port keeps its tabs in a
-// Model::Window; the Mac's EditorController still keeps its own (stage 3c
-// moves it over), by the same rules.
+// C++ with no I/O, so it is unit-tested. Both ports keep their tabs in a
+// Model::Window (the GTK Editor and the Mac's EditorController), so both
+// run these rules and neither keeps a copy of them.
 #pragma once
 
 #include <cstddef>
@@ -110,9 +110,11 @@ private:
 // preview tab, its title in italics, which the next such open replaces, so
 // browsing does not pile up tabs. An edit, a save, a double-click on its
 // title or on the file in the tree, or Keep Open makes it an ordinary
-// ("kept") tab. The agents' preview tabs (`minicode open --note`, a diff)
-// follow the same rules but are their own: an agent's open never replaces
-// the user's preview tab, nor a click in the tree the agent's.
+// ("kept") tab. Each editor group has its own preview tab, as in VS Code.
+// The agents' preview tabs follow the same rules but are their own, one for
+// files (`minicode open --note`) and one for comparisons (`minicode diff`):
+// an agent's open never replaces the user's preview tab, nor a click in the
+// tree the agent's, nor a note the agents' diff.
 
 // Where an open comes from, which decides whether it goes in the preview tab.
 enum class OpenFrom {
@@ -206,10 +208,12 @@ using DocId = std::uint64_t;
 
 // Whether a tab is a preview tab, and whose (EditorTabs' preview rules).
 enum class Preview : std::uint8_t {
-    None,    // an ordinary ("kept") tab
-    User,    // the window's preview tab: a tree click, a search result
-    Agent,   // the agents' preview tab: `minicode open --note`, a diff
+    None,        // an ordinary ("kept") tab
+    User,        // a group's preview tab: a tree click, a search result
+    Agent,       // the agents' preview tab for files: `minicode open --note`
+    AgentDiff,   // the agents' preview tab for comparisons: `minicode diff`
 };
+inline bool isAgentPreview(Preview p) { return p == Preview::Agent || p == Preview::AgentDiff; }
 
 // One window's tabs. Group 0 is the left one; there is a group 1 only while
 // the editor is split, and closing a group's last tab leaves the other as
@@ -271,7 +275,9 @@ public:
     Preview preview(DocId id) const;
     bool isPreview(DocId id) const { return preview(id) != Preview::None; }
     void setPreview(DocId id, Preview p);
-    // The window's preview tab of that kind, 0 for none.
+    // The preview tab of that kind a new one would replace, 0 for none: the
+    // focused group's for User (each group has its own), the window's for
+    // the agents' kinds.
     DocId previewTab(Preview kind = Preview::User) const;
     // An ordinary tab now (an edit, a save, a double-click on its title,
     // Keep Open, a kept open of its file). True when it was a preview.
@@ -287,8 +293,8 @@ public:
     // navigation in preview keeps the preview tab it starts from, unless
     // that is the file (VS Code's enablePreviewFromCodeNavigation, off);
     // and a file already in a tab gives that tab, which a kept open keeps
-    // (EditorTabs::staysPreview). The tab is not put on show: activate()
-    // does that.
+    // (EditorTabs::staysPreview; the agents' preview tabs too). The tab is
+    // not put on show: activate() does that.
     struct Open {
         DocId existing = 0;
         bool inPreview = false;
@@ -297,16 +303,22 @@ public:
                      const EditorTabs::PreviewSettings &settings);
     // A new tab for `id` in the focused group. An ordinary one goes just
     // right of the tab on show. A User preview goes in VS Code's place
-    // (EditorTabs::placePreview) and replaces the window's preview tab; an
-    // Agent preview goes right of the tab on show and replaces the agents'
-    // preview tab; but an old preview tab `keepOld` holds back (unsaved
-    // changes; the tab being typed in) is kept instead, and stays. The
-    // replaced tab leaves every group, is not remembered for Reopen Closed
-    // Tab (VS Code leaves a replaced preview out of its recently closed),
-    // and is returned for the port to let go of (0: none). The tab on show
-    // stays as it was, unless it was the one replaced: then the new tab is.
+    // (EditorTabs::placePreview) and replaces the focused group's preview
+    // tab, which leaves only that group: the other group's tab of it stays,
+    // still a preview. An agents' preview (Agent or AgentDiff) takes the
+    // place of that kind's preview tab when the focused group has it, else
+    // goes right of the tab on show, and the tab it replaces leaves every
+    // group. A preview tab `passOver` accepts (the one the user is in, while
+    // they type) is neither replaced nor changed, and the next of its kind
+    // is looked for; one `keepOld` holds back (unsaved changes) is kept
+    // instead, an ordinary tab, and stays. The replaced tab is not
+    // remembered for Reopen Closed Tab (VS Code leaves a replaced preview
+    // out of its recently closed), and is returned for the port to let go
+    // of once no group has it (0: none). The tab on show stays as it was,
+    // unless it was the one replaced: then the new tab is.
     DocId add(DocId id, const std::string &path, Preview kind = Preview::None,
-              const std::function<bool(DocId)> &keepOld = nullptr);
+              const std::function<bool(DocId)> &keepOld = nullptr,
+              const std::function<bool(DocId)> &passOver = nullptr);
     // A tab at the end of the focused group, not on show (a session coming
     // back), or at `index` (clamped; Reopen Closed Tab's
     // ClosedTabs::indexIn).

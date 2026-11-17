@@ -30,6 +30,9 @@ struct CompareSpec {
     double lastChoiceGrace = 3;
     // The tab is added without being shown (the user is typing elsewhere).
     bool quiet = false;
+    // In the agents' preview tab for comparisons, replacing the last one
+    // (`minicode diff` without --keep), as the Mac's.
+    bool preview = false;
 };
 
 struct ComparePane {

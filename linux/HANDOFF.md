@@ -2968,9 +2968,10 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   `runGit`) and the reads run on a thread, the lining up on
   `showComparison`'s own, and the answer waits for the tab. While the user
   types in the editor the tab opens quietly beside theirs (`quiet`, and
-  `"background"`, which the client already says). Each call makes a tab of
-  its own: the Mac's one diff preview tab that each call replaces and `--keep`
-  are not built. Titles and labels are the Mac's.
+  `"background"`, which the client already says). Since item 84 a call
+  without `--keep` opens in the agents' preview tab for comparisons
+  (`CompareSpec::preview`, `Model::Preview::AgentDiff`), which the next
+  such call replaces, as on the Mac. Titles and labels are the Mac's.
 - **The corner** (November 2026): the cell of the pane's grid under the
   shared vertical bar, beside the right pane's horizontal bar, had no
   widget, so the window behind it showed (white under a light desktop
@@ -3085,10 +3086,11 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   again on scrolling and 60 ms after placing.
 - **The agent's preview tab**: `Document::isAgentPreview`, its title italic
   like the preview tab, replaced by the next `Editor::openForAgent(path,
-  preview, quiet)` (never a dirty one, nor the tab the user types in), kept
-  by an edit, a save or a double-click on its title (`keepPreviewTab`). A
-  file already in a tab uses it. `--keep` opens a kept tab. Without `--note`
-  `open` is as before.
+  preview, quiet)` in its place (never a dirty one, which is kept, nor the
+  tab the user types in, which is left a preview), kept by an edit, a save
+  or a double-click on its title (`keepPreviewTab`). A file already in a
+  tab uses it as it is (item 84). `--keep` opens a kept tab. Without
+  `--note` `open` is as before. A diff has a preview tab of its own.
 - **The keyboard**: `open --note` and `tour` open beside the user's tab,
   unshown, while the keyboard is in the editor (`userIsInDocument`; the
   client says so, `"background": true`), the file added unread; the note
@@ -5244,9 +5246,9 @@ window in stage 3c; sessions.json and the backup planner follow in 3b.
   mirror's places, the swap, the bar.
 - **New for a user**: a tab can be dragged along either group's row
   (`TabStrip::onMove`, `Window::move`), as the browser's could; the
-  order is kept in the session. A preview tab replaced while the other
-  group also showed it now leaves both groups (it stayed in the other
-  before).
+  order is kept in the session. (A preview tab replaced while the other
+  group also showed it left both groups here; item 84 put back the Mac's
+  rule, under which it stays in the other.)
 - **Checks**: the core's `session:*` (each rule of "Tabs, sessions and
   the disk", "The preview tab" and "Two editor groups" in CLAUDE.md, and
   a random walk holding the window's bookkeeping), the `tabs` suite (the
@@ -5440,3 +5442,39 @@ be added in the alert's detail (Add the Hooks, Cancel), writes through
 `ClaudeHooks::install` (backup first) and says where. Not ported: minicode >
 Install Claude Code Hooks… and the Agents panel's header line.
 `claude_hooks_offer` checks it against the scratch `CLAUDE_CONFIG_DIR`.
+
+### 84. One set of tab rules with the Mac (done, November 2026; SESSION-DESIGN.md stage 3d)
+
+Stage 3c left the Mac on its own rules where `Model::Window`'s differed;
+the window now follows the Mac's (CLAUDE.md, "The preview tab" and "Two
+editor groups") and the Mac's copies are gone, so both ports run the same
+code. What changes on Linux:
+- **A preview tab per group.** A tree click (or a search result's) replaces
+  the focused group's preview tab only; one the other group has is left
+  alone (before, the window's one preview tab was replaced wherever it
+  was).
+- **A replaced preview tab the other group also shows stays there**, still
+  a preview; only the focused group's tab of it closes (before, it left
+  both groups).
+- **The agents have two preview tabs**: `minicode open --note` replaces
+  the files' one, `minicode diff` (without `--keep`) the comparisons'
+  (`Model::Preview::AgentDiff`), so a diff after a note leaves the note's
+  tab. Before, every `diff` opened a kept tab of its own.
+- **The agents' new preview tab takes the old one's place** in the row,
+  not a place beside the tab on show.
+- **While the user types**, an agent's open never replaces the agents'
+  preview tab they are in, and that tab stays a preview (`passOver`);
+  before, it was made an ordinary tab.
+- **A kept open of a file in the agents' preview tab keeps it** (a
+  double-click in the tree, Return, a menu), as the user's preview tab is
+  kept; before, only the user's was.
+- **An agent's open of a file already in a tab shows that tab as it is**
+  (`Editor::openForAgent`): a preview stays a preview. Before, it went
+  through `openFile` as a kept open, which kept it.
+
+The rules are `Window::add` (its new `passOver`, the agents' place, a
+User preview closed in the focused group only), `previewTab` (the focused
+group's for User) and `prepareOpen` (any preview kept by a kept open).
+Checked by the core's `session:preview` and `session:groups` groups. The
+GTK files changed: `linux/src/Tabs.cpp`, `Editor.h`, `Document.h`,
+`ComparePanes.h` and `ControlCommands.cpp`; no GTK suite needed changing.

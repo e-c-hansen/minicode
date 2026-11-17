@@ -184,10 +184,11 @@ public:
     Document* addTab(const std::string& path);
     // A file for the agent (`minicode open --note`, AgentNotes.h): in the
     // agent's preview tab when `preview` (each such open replaces the last
-    // one; an edit keeps it), else a kept tab, just right of the active
-    // one. With `quiet` it is only added beside the user's tab, to be read
-    // when shown; else shown. A file already in a tab uses that tab. Null
-    // when it could not be opened.
+    // one, in its place; an edit keeps it), else a kept tab, just right of
+    // the active one (Model::Window::add). With `quiet` it is only added
+    // beside the user's tab, to be read when shown, and the tab the user is
+    // in is never the one replaced; else shown. A file already in a tab
+    // uses that tab, as it is. Null when it could not be opened.
     Document* openForAgent(const std::string& path, bool preview, bool quiet);
     Document* agentPreviewTab() const;
     // The window's notes, hanging over the text (AgentNotes.h).
