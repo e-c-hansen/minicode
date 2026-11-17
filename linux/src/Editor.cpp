@@ -26,6 +26,7 @@
 #include "Utf8Offsets.h"
 #include "MediaView.h"
 #include "CsvTable.h"
+#include "HtmlView.h"
 #include "SqliteView.h"
 #include "JsonOutlineView.h"
 #include "MarkdownSide.h"
@@ -309,6 +310,10 @@ Editor::Editor() {
 // (main.cpp deletes the editor from GtkApplication's window-removed), so
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
+#ifdef MINICODE_ENABLE_BROWSER
+    delete html_;
+    html_ = nullptr;
+#endif
     Mermaid::unsubscribe(mermaidListener_);
     Math::unsubscribe(mathListener_);
     delete inline_;
@@ -713,6 +718,8 @@ void Editor::showActive() {
             gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
         } else if (d->showsTable()) {
             showTable(d);
+        } else if (d->showsPage()) {
+            showHtml(d);
         } else if ((d->isMarkdown() || d->isNotebook()) && d->showsPreview()) {
             gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
             renderPreview();
@@ -980,6 +987,27 @@ void Editor::dropTable() {
     csvChanged_ = 0;
     csvDoc_ = nullptr;
     csv_->clear();
+}
+
+// An HTML tab as its page. The buffer stays the view's (the text is what
+// the toggle shows), the page is the file on disk.
+void Editor::showHtml(Document* d) {
+#ifdef MINICODE_ENABLE_BROWSER
+    showSource(d);
+    if (!html_) {
+        html_ = new HtmlView(HtmlView::Host{
+            [this] { return settings_.htmlScripts(); },
+            [this] { return htmlRoot ? htmlRoot() : std::string(); },
+            [this](const std::string& v) { return htmlRemember && htmlRemember(v); },
+            [this](const std::string& url) { openMarkdownLink(url); }});
+        gtk_stack_add_named(GTK_STACK(slot_), html_->widget(), "html");
+    }
+    html_->show(d->path());
+    gtk_stack_set_visible_child(GTK_STACK(slot_), html_->widget());
+#else
+    showSource(d);
+    gtk_stack_set_visible_child(GTK_STACK(slot_), scroller_);
+#endif
 }
 
 void Editor::showSource(Document* d) {
@@ -1623,6 +1651,9 @@ void Editor::applySettings(const Settings& s) {
     const bool mathBefore = settings_.math();
     const std::string mathColorBefore = mathColor();
     settings_ = s;
+#ifdef MINICODE_ENABLE_BROWSER
+    if (html_) html_->settingsChanged();
+#endif
     code_->applySettings(s);   // the ruler and the gutter
     // Bracket boxes, and the bracket colors' tags (every tab's) and whether
     // each tab has them.
@@ -1995,6 +2026,15 @@ bool Editor::toggleComment() {
 void Editor::togglePreview() {
     Document* d = active_;
     if (!d) return;
+    if (d->isHtml()) {   // the page and the source
+        d->setShowsPage(!d->showsPage());
+        showActive();
+#ifdef MINICODE_ENABLE_BROWSER
+        if (d->showsPage() && html_) html_->takeKeyboard();
+        else gtk_widget_grab_focus(view_);
+#endif
+        return;
+    }
     if (d->isCsv()) {   // the table and the text
         dropTable();
         d->setShowsTable(!d->showsTable());

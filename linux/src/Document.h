@@ -197,6 +197,11 @@ public:
     char csvDelimiter(const std::string& text) const;
     bool showsTable() const { return isCsv() && showsTable_; }
     void setShowsTable(bool on) { showsTable_ = on; }
+    // An .html, .htm or .xhtml file (browser builds): it opens as its page
+    // (HtmlView.h), and the preview key flips it to the source.
+    bool isHtml() const { return kind_ == Kind::Text && html_; }
+    bool showsPage() const { return isHtml() && showsPage_; }
+    void setShowsPage(bool on) { showsPage_ = on; }
     // A .json file (or .jsonc, tsconfig.json and the like): the text with an
     // outline beside it (JsonOutlineView.h); the preview key hides and shows
     // the outline. A .ipynb is both: rendered read-only as Markdown by
@@ -503,6 +508,7 @@ private:
     bool          sideWanted_ = false;
     int           csv_ = 0;               // 1 comma-like, 2 tab separated (FileSniff)
     bool          showsTable_ = false;
+    bool          html_ = false, showsPage_ = false;
     bool          json_ = false, notebook_ = false, showsOutline_ = true;
     void          sniffCsv(const std::string& text);
     bool          unread_ = false;

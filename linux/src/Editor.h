@@ -35,6 +35,7 @@ class CodeView;
 class FoldUi;
 class MediaView;
 class CsvTable;
+class HtmlView;
 class SqliteView;
 class JsonOutlineView;
 class MarkdownSide;
@@ -476,6 +477,13 @@ public:
     };
     void setLinkHandler(std::function<void(const Link&)> h) { linkHandler_ = std::move(h); }
 
+    // An .html file shown as its page (HtmlView.h; browser builds). The
+    // window's folder, which the page may read, and the write of a
+    // remembered html.scripts answer, from main.cpp.
+    std::function<std::string()> htmlRoot;
+    std::function<bool(const std::string& value)> htmlRemember;
+    HtmlView* htmlView() const { return html_; }
+
     // Big files (LargeFileView.h): the status bar's "Large file: features off"
     // (main.cpp puts the widget in the status bar), and its click, which
     // turns the features on for the tab on show.
@@ -699,6 +707,8 @@ private:
     gulong         csvChanged_ = 0;       // csvDoc_'s buffer "changed"
     bool           csvApplying_ = false;  // the table's own edit is going in
     void showTable(Document* d);
+    HtmlView*      html_     = nullptr;   // made on the first page
+    void showHtml(Document* d);
     JsonOutlineView* outline_ = nullptr;
     GtkWidget*     outlinePaned_ = nullptr;
     Document*      outlineDoc_ = nullptr;   // the tab it shows

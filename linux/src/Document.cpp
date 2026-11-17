@@ -203,6 +203,7 @@ void Document::clearSource() {
     largeFile_ = largeOff_ = largeOn_ = false;
     csv_ = 0;
     showsTable_ = false;
+    html_ = showsPage_ = false;
     json_ = notebook_ = false;
     showsOutline_ = true;
     stopWatching();
@@ -266,6 +267,10 @@ void Document::sniffCsv(const std::string& text) {
     if (!showsTable_) csv_ = 0;
     json_ = k == FileSniff::Kind::Json && text.size() <= kMaxOutlineBytes;
     notebook_ = k == FileSniff::Kind::Notebook;
+#ifdef MINICODE_ENABLE_BROWSER
+    html_ = k == FileSniff::Kind::Html;
+    showsPage_ = html_ && !text.empty();   // an empty file opens in its source
+#endif
 }
 
 bool Document::jsonc() const { return JsonOutline::allowsComments(path_); }
@@ -717,6 +722,7 @@ void Document::setPath(const std::string& path) {
         latex_ = ext == "tex" || ext == "ltx" || ext == "latex";
 #endif
         if (showsPreview_ && !markdown_ && !latex_ && !notebook_) showsPreview_ = false;
+        if (html_ && ext != "html" && ext != "htm" && ext != "xhtml") html_ = showsPage_ = false;
     }
     // Keep comparing against the same disk contents, under the new name.
     const bool watched = monitor_ != nullptr;

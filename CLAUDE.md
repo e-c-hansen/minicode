@@ -2707,7 +2707,9 @@ plays a stand-in mermaid.js whose colors come from its style sheet.
   media paused (macOS 12; macOS 11 drops it), so it comes back scrolled
   where it was. Cmd+1 and the toggle give it the keyboard through
   `MCFileViewers focusInWindow:` (`grantKeyboard`); nothing else does.
-  Linux keeps .html as source for now (its switch has a default).
+  The GTK port shows .html as its page too (`linux/src/HtmlView.cpp`, the
+  rules in `src/HtmlPage.{h,cpp}`, `linux/HANDOFF.md` item 83); this file's
+  .mm keeps its own copy of those rules.
 - **Images** (not SVG, which is source): `NSImageView`, scaled down never up,
   `animates`, size set to pixels (a 144 dpi screenshot drew at half size); one
   that fails to decode falls through to the text path's "Cannot display".

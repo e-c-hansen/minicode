@@ -4304,6 +4304,11 @@ static App* newWindow(const std::string& root, const std::string& file,
 #endif
         }});
     app->editor->addBar(app->consentBar->widget());
+    app->editor->htmlRoot = [app] { return app->rootDir; };
+    app->editor->htmlRemember = [](const std::string& value) {
+        std::string why;
+        return g.settings && g.settings->writeValue("html.scripts", value, &why);
+    };
     app->formatOffer = new FormatOffer(FormatOffer::Host{
         [app] { return app->rootDir; },
         [](const std::string& lang) {

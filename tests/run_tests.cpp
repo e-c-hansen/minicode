@@ -59,6 +59,7 @@
 #include "AgentView.h"
 #include "Folding.h"
 #include "FileSniff.h"
+#include "HtmlPage.h"
 #include "Csv.h"
 #include "JsonOutline.h"
 #include "Notebook.h"
@@ -11336,6 +11337,7 @@ int main() {
     testAgentView();
     testFolding();
     testFileSniff();
+    testHtmlPage();
     testCsv();
     testJsonOutline();
     testNotebook();
