@@ -966,15 +966,16 @@ static void BuildMenu(void) {
     NSMenuItem *fileItem = [[NSMenuItem alloc] init];
     [menubar addItem:fileItem];
     NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
-    // Cmd+N is New File, as in VS Code. It was New Window, which moved to
-    // Option+Cmd+N (VS Code's Shift+Cmd+N is New Folder here).
+    // Cmd+N is New File and Shift+Cmd+N New Window, as in VS Code (New
+    // Window keeps Option+Cmd+N too). In the file tree Shift+Cmd+N is New
+    // Folder, which the key monitor runs before the menu sees the key.
     [fileMenu addItemWithTitle:@"New File…"
                         action:@selector(newFile:)
                  keyEquivalent:@"n"];
     NSMenuItem *newWindow =
         [[NSMenuItem alloc] initWithTitle:@"New Window"
                                    action:@selector(newWindow:) keyEquivalent:@"n"];
-    newWindow.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    newWindow.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [fileMenu addItem:newWindow];
     [fileMenu addItemWithTitle:@"Open Folder…"
                         action:@selector(openFolder:)
@@ -1027,13 +1028,10 @@ static void BuildMenu(void) {
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
     // The file tree's commands, on its clicked or selected row (else the
-    // open folder), as in its right click menu.
-    NSMenuItem *newFolder =
-        [[NSMenuItem alloc] initWithTitle:@"New Folder…"
-                                   action:@selector(newFolder:) keyEquivalent:@"n"];
-    newFolder.keyEquivalentModifierMask =
-        NSEventModifierFlagCommand | NSEventModifierFlagShift;
-    [fileMenu addItem:newFolder];
+    // open folder), as in its right click menu. Their keys (Shift+Cmd+N,
+    // F2, Cmd+Delete) are the tree's alone, so none sits on its item.
+    [fileMenu addItemWithTitle:@"New Folder…"
+                        action:@selector(newFolder:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Rename…"
                         action:@selector(renameSelected:) keyEquivalent:@""];
     // No key equivalent: a menu key works from every pane, and Cmd+Delete

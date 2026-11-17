@@ -79,6 +79,13 @@ static void testCommandKeys() {
     CHECK(appliesIn(npt, When::Editor) && appliesIn(npt, When::Tree) && appliesIn(npt, When::Any));
     CHECK(!appliesIn(npt, When::Terminal) && !appliesIn(npt, When::Page));
     CHECK(appliesIn(When::NotPage, When::Terminal) && !appliesIn(When::Editor, When::Any));
+    // Everywhere but the file tree: New Window's Shift+Cmd+N.
+    const When nt = When::NotTree;
+    CHECK(!overlaps(nt, When::Tree) && !overlaps(When::Tree, nt));
+    CHECK(overlaps(nt, When::Editor) && overlaps(nt, When::Terminal) && overlaps(nt, When::Page));
+    CHECK(overlaps(nt, When::Any) && overlaps(nt, When::NotPage) && overlaps(nt, npt));
+    CHECK(appliesIn(nt, When::Editor) && appliesIn(nt, When::Terminal) && appliesIn(nt, When::Any));
+    CHECK(appliesIn(nt, When::Page) && !appliesIn(nt, When::Tree));
 }
 
 static void testCommandTable() {
@@ -199,6 +206,15 @@ static void testCommandTable() {
           find("minicode.terminal.deleteToLineStart"));
     CHECK(d.commandFor(K("alt+left"), When::Terminal) == find("minicode.terminal.wordLeft"));
     CHECK(d.commandFor(K("space"), When::Tree) == find("minicode.tree.quickLook"));
+    // Shift+Cmd+N is New Folder in the tree, as in Finder, and VS Code's New
+    // Window everywhere else; Option+Cmd+N stays New Window's too.
+    CHECK(d.commandFor(K("shift+cmd+n"), When::Tree) == find("explorer.newFolder"));
+    for (When w : {When::Editor, When::Terminal, When::Page, When::Any})
+        CHECK(d.commandFor(K("shift+cmd+n"), w) == find("workbench.action.newWindow"));
+    CHECK(d.keysOf("workbench.action.newWindow").size() == 2 &&
+          format(d.keysOf("workbench.action.newWindow")[0]) == "shift+cmd+n" &&
+          HasKey(d, "workbench.action.newWindow", "alt+cmd+n"));
+    CHECK(d.keysOf("explorer.newFolder").size() == 1 && find("explorer.newFolder")->when == When::Tree);
     // Cmd+=, Cmd+- and Cmd+0 zoom a web page or a PDF in one, as in Safari;
     // the zoom keys are the terminals' zoom in a terminal and the editor's
     // everywhere else, and Cmd+0 is Focus File Tree outside a page.
