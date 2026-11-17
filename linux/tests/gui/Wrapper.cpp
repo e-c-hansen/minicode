@@ -246,7 +246,9 @@ void clearEnvironment() {
         if (n != "MC_GUI_KEEP" && n != "MC_GUI_VERBOSE" && n != "MC_GUI_SNAPSHOTS" &&
             n != "MC_GUI_TOTAL_SECONDS" && n != "MC_GUI_STEP_SECONDS" && n != "MC_GUI_SUITES" &&
             n != "MC_GUI_SKIP_SUITES" &&
-            n != "MC_GUI_WAIT_SCALE" && n != "MC_GUI_LEAKS")
+            n != "MC_GUI_WAIT_SCALE" && n != "MC_GUI_LEAKS" &&
+            // The session's host through its wire format (SessionLink.h).
+            n != "MINICODE_HOST" && n != "MINICODE_HOST_DELAY_US")
             unsetenv(n.c_str());
     for (const char* n :
          {"WAYLAND_DISPLAY", "WAYLAND_SOCKET", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS",

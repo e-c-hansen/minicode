@@ -8,11 +8,15 @@
 //
 // A document holds:
 //   - its source in a GtkTextBuffer of its own, over the tag table every
-//     document shares, and its undo history (the core's UndoHistory, in
-//     place of GTK's buffer undo, which stays off), so each tab keeps its
-//     history: named steps, typing joined until the caret moves, a
-//     multi-range edit and Reload from Disk each one step, and an undo that
-//     checks its ranges still hold what it put there;
+//     document shares: the mirror of the document the session's host owns
+//     (SessionLink.h, SESSION-DESIGN.md stage 4a). Every edit of the buffer
+//     is reported to the host as it is made, in steps (a user action, or
+//     the edits of one turn of the main loop), and the host keeps the text
+//     and the undo history (the core's UndoHistory, in place of GTK's
+//     buffer undo, which stays off): named steps, typing joined until the
+//     caret moves, a multi-range edit and Reload from Disk each one step,
+//     and an undo that checks its ranges still hold what it put there. An
+//     undo asks the host, which sends the edit back for the buffer;
 //   - the incremental highlighter and its UTF-8 mirror, fed by every edit of
 //     the buffer whether it is on show or not;
 //   - whether it differs from the disk: the text as last read or saved is
@@ -48,6 +52,7 @@
 #include "ComparePanes.h"
 #include "EditorPage.h"
 #include "SyntaxHighlighter.h"
+#include "SessionClient.h"
 #include "UndoHistory.h"
 
 #ifdef MINICODE_ENABLE_PDF
@@ -104,7 +109,7 @@ public:
     virtual uint64_t documentLastUsed(const Document*) const { return 0; }
 };
 
-class Document {
+class Document : public Shared::Client::Listener {
 public:
     enum class Kind {
         Text,      // a file's text, editable
@@ -121,7 +126,7 @@ public:
     // its backup: a document goes when its tab closes (asked about first) or
     // its window does. The editor takes its LaTeX preview's widget off the
     // screen first.
-    ~Document();
+    ~Document() override;
     Document(const Document&) = delete;
     Document& operator=(const Document&) = delete;
 
@@ -233,14 +238,16 @@ public:
     // The document whose source `buffer` is, or null.
     static Document* of(GtkTextBuffer* buffer);
 
-    // ---- Undo (UndoHistory.h, SESSION-DESIGN.md stage 2)
-    // Every edit of the source is recorded: a user action
-    // (gtk_text_buffer_begin_user_action) is one step, and edits made
-    // outside one are one step per turn of the main loop. A user action no
-    // one names is typing, which joins the step before while the caret
-    // stays where that step left it; anything else names its step first
-    // (nameStep, MultiEdit::apply), never joins, and is never joined.
-    // GTK's own undo stays off: gtk_text_buffer_undo does nothing here.
+    // ---- Undo (UndoHistory.h, SESSION-DESIGN.md stages 2 and 4a)
+    // Every edit of the source goes to the session's host, which records
+    // it: a user action (gtk_text_buffer_begin_user_action) is one step,
+    // and edits made outside one are one step per turn of the main loop. A
+    // user action no one names is typing, which joins the step before
+    // while the caret stays where that step left it; anything else names
+    // its step first (nameStep, MultiEdit::apply), never joins, and is
+    // never joined. GTK's own undo stays off: gtk_text_buffer_undo does
+    // nothing here. These ask the host and wait for its answer: in one
+    // process a round trip through its queue.
     enum class UndoResult { Done, Nothing, Refused };
     bool canUndo();
     bool canRedo();
@@ -261,7 +268,7 @@ public:
     void nameStep(const char* name, bool coalesce = false);
     static void nameStep(GtkTextBuffer* buffer, const char* name, bool coalesce = false);
     // The next edit starts a step of its own (the Mac's breakUndoCoalescing).
-    void breakUndoCoalescing() { history_.breakCoalescing(); }
+    void breakUndoCoalescing();
     // The rendered Markdown page, made on first use; never undone into.
     GtkTextBuffer* page();
     Markdown::Page& pageInfo() { return page_; }
@@ -416,6 +423,11 @@ public:
     GtkTextBuffer* loadingBuffer() const;
     void whenLoaded(std::function<void()> f);
 
+    // The host's edit to the buffer: an undo or redo it asked for, or
+    // (stage 6) another screen's typing. Applied as one user action that
+    // is not reported back.
+    void hostEdited(Shared::DocId doc, const Ot::Ops& ops, int flag, const Shared::Selection* select) override;
+
 private:
     struct Load;
     void noteLargeFile(const std::string& content);   // decided as it is read
@@ -470,8 +482,8 @@ private:
     static void onEndUserAction(GtkTextBuffer* buf, gpointer self);
     static void onMarkSet(GtkTextBuffer* buf, GtkTextIter* at, GtkTextMark* mark, gpointer self);
 
-    // Undo (see undo()): the history, in characters as GtkTextIter counts.
-    Model::UndoHistory history_{Model::Unit::CodePoint};
+    // Undo (see undo()): the host's, told of every edit in characters as
+    // GtkTextIter counts.
     bool   stepOpen_ = false;      // a user action's step is being recorded
     bool   stepNamed_ = false;     // and was given a name
     bool   outsideOpen_ = false;   // edits outside a user action, this turn
@@ -481,10 +493,11 @@ private:
     gint64 pendingAt_ = 0;                       // when it was given (0: none)
     bool recording() const;
     Model::UndoHistory::Selection selection() const;
-    std::u16string slice(std::size_t from, std::size_t length) const;
-    void recordEdit(std::size_t at, std::u16string removed, std::u16string inserted);
+    void recordEdit(std::size_t at, std::size_t removed, std::u16string inserted);
     void closeOutside();
-    void resetHistory();
+    // The text was set whole: the host's copy starts again from `text`
+    // (opened there when it was not), or closes when it is not text.
+    void resetHistory(const std::string& text);
     UndoResult takeStep(bool undoing);
     static void onChanged(GtkTextBuffer* buf, gpointer self);
     static gboolean onIdleRetag(gpointer self);

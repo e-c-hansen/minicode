@@ -9,6 +9,7 @@
 #include "AutoCloseInput.h"
 #include "BracketColors.h"
 #include "SemanticColors.h"
+#include "SessionLink.h"
 #include "BracketView.h"
 #include "Carets.h"
 #include "SnippetSession.h"
@@ -386,6 +387,7 @@ Editor::~Editor() {
     delete compare_;
     g_object_unref(welcome_);
     g_object_unref(tags_.table);
+    SessionLink::windowClosed(winId_);
     session().removeWindow(winId_);
     win_ = nullptr;
 }

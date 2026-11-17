@@ -1,13 +1,15 @@
 // LspSessionSync.cpp — LspSession's documents (the Mac's Lsp+Sync.mm): the
 // file on show, attached to its server or not, and every tab's file kept
-// open on its language's running server (PARITY.md item 2.0), with its own
-// buffer's text. Each buffer's edits are followed as they are made
-// (Lsp::ChangeTracker, in UTF-16 units) and sent a moment after typing
-// pauses, as ranges where the server takes them (in characters, which the
-// client turns into UTF-16 units through its copy of the text); a file whose tab closes is
-// closed on its server; a save sends didSave for the file written, on show
-// or not.
+// open on its language's running server (PARITY.md item 2.0). The text a
+// server gets is the session's host's (SessionLink.h, SESSION-DESIGN.md
+// stage 4a), read from the client's copy of it: the host's edits are
+// followed as it applies them (Lsp::ChangeTracker, in UTF-16 units) and
+// sent a moment after typing pauses, as ranges where the server takes them,
+// the copy settled first so it has every edit made so far; a file whose tab
+// closes is closed on its server; a save sends didSave for the file
+// written, on show or not.
 #include "LspSessionPrivate.h"
+#include "SessionLink.h"
 
 #include <algorithm>
 #include <set>
@@ -191,41 +193,42 @@ void LspSession::syncOpenDocuments() {
     }
     for (auto& [key, w] : wanted) {
         if (entries.count(key)) continue;
+        // The host's text, followed from here on: what the server gets
+        // now, and every edit after it.
+        if (!sync_->watched.count(key.first)) {
+            if (!SessionLink::client().watch(key.first, this, [this](Shared::DocId d, const Ot::Ops& ops) {
+                    for (const Ot::Op& o : ops) noteEdit(d, o.pos, o.del, o.ins.size());
+                }))
+                continue;
+            sync_->watched.insert(key.first);
+        }
+        const Model::Text* text = SessionLink::client().hostCopy(key.first);
+        if (!text) continue;
         SyncState::Entry e;
         e.docId = key.first;
         e.path = w.doc->path();
         e.uri = w.uri;
         e.server = w.server;
-        e.buffer = w.doc->buffer();
-        w.server->client().didOpen(w.uri, w.languageId, w.doc->text());
+        w.server->client().didOpen(w.uri, w.languageId, text->utf8());
         sync_->opened++;
         entries.emplace(key, std::move(e));
     }
-    watchBuffers();
+    watchDocuments();
     sync_->syncing = false;
 }
 
-// Each buffer a server has watched once, whichever servers have it, and
-// let go when none has.
-void LspSession::watchBuffers() {
-    std::set<GtkTextBuffer*> buffers;
-    for (auto& [key, e] : sync_->entries) buffers.insert(e.buffer);
+// The documents a server has, followed once each whichever servers have
+// them, and let go when none has.
+void LspSession::watchDocuments() {
+    std::set<uint64_t> docs;
+    for (auto& [key, e] : sync_->entries) docs.insert(e.docId);
     for (auto it = sync_->watched.begin(); it != sync_->watched.end();) {
-        if (buffers.count(it->first)) {
+        if (docs.count(*it)) {
             ++it;
             continue;
         }
-        g_signal_handlers_disconnect_by_data(it->first, it->second.get());
-        g_object_unref(it->first);
+        SessionLink::client().unwatch(*it, this);
         it = sync_->watched.erase(it);
-    }
-    for (auto& [key, e] : sync_->entries) {
-        if (sync_->watched.count(e.buffer)) continue;
-        auto watch = std::make_unique<SyncState::Watch>(SyncState::Watch{this, e.docId});
-        g_object_ref(e.buffer);
-        g_signal_connect(e.buffer, "insert-text", G_CALLBACK(onSyncInsert), watch.get());
-        g_signal_connect(e.buffer, "delete-range", G_CALLBACK(onSyncDelete), watch.get());
-        sync_->watched.emplace(e.buffer, std::move(watch));
     }
 }
 
@@ -239,7 +242,7 @@ void LspSession::forgetServerDocuments(Server* s) {
         else it = entries.erase(it);
     }
     forgetServerDiagnostics(s->key());
-    watchBuffers();
+    watchDocuments();
 }
 
 uint64_t LspSession::documentEdits(uint64_t docId) const {
@@ -268,68 +271,41 @@ std::size_t LspSession::wholeChangesSent() const {
 
 // ---- edits
 
-// Before the buffer changes (both signals are RUN_LAST, and these run
-// first), while the iterators still name the text as it was.
-void LspSession::onSyncInsert(GtkTextBuffer*, GtkTextIter* at, char* text, int len,
-                              gpointer watchp) {
-    auto* w = static_cast<SyncState::Watch*>(watchp);
-    w->self->noteEdit(w->docId, (size_t)gtk_text_iter_get_offset(at), 0, text, len);
-}
-
-void LspSession::onSyncDelete(GtkTextBuffer*, GtkTextIter* a, GtkTextIter* z, gpointer watchp) {
-    auto* w = static_cast<SyncState::Watch*>(watchp);
-    int from = gtk_text_iter_get_offset(a), to = gtk_text_iter_get_offset(z);
-    if (to < from) std::swap(from, to);
-    if (to > from) w->self->noteEdit(w->docId, (size_t)from, (size_t)(to - from), nullptr, 0);
-}
-
-// In characters, as the buffer counts them; the client turns them into
-// the server's UTF-16 units (Client::didChange with Model::Unit::CodePoint).
-void LspSession::noteEdit(uint64_t docId, size_t start, size_t removed, const char* inserted,
-                          int len) {
+// In UTF-16 units of the host's text, as it applied each edit.
+void LspSession::noteEdit(uint64_t docId, size_t start, size_t removed, size_t inserted) {
     sync_->edits[docId]++;
-    const size_t chars = inserted && len > 0 ? (size_t)g_utf8_strlen(inserted, len) : 0;
     bool any = false;
     for (auto& [key, e] : sync_->entries) {
         if (e.docId != docId) continue;
         any = true;
         e.pending = true;
-        e.changes.edit(start, removed, chars);
+        e.changes.edit(start, removed, inserted);
     }
     if (any) scheduleChange();
 }
 
 // didChange, a moment after typing pauses, for every file edited since: the
 // edits as ranges for a server that takes them (and when they come to less
-// than the text), else the whole text. Only the changed pieces are read
-// (Client::didChange's TextReader), in characters. Anything that asks a server about the
-// text flushes first, so with no edits this costs nothing.
+// than the text), else the whole text. The host's copy is settled first, so
+// it holds every edit made so far, and only the changed pieces are read
+// from it (Client::didChange's TextReader). Anything that asks a server
+// about the text flushes first, so with no edits this costs a round trip
+// through the host's queue.
 void LspSession::flushChanges() {
+    // The host's last edits reach the copy (and mark the entries) first.
+    if (!sync_->watched.empty()) SessionLink::client().settle();
     if (sync_->changeTimer) g_source_remove(sync_->changeTimer);
     sync_->changeTimer = 0;
     for (auto& [key, e] : sync_->entries) {
         if (!e.pending) continue;
         e.pending = false;
-        if (!e.server->running() || e.server->stopping()) {
+        const Model::Text* text = SessionLink::client().hostCopy(e.docId);
+        if (!text || !e.server->running() || e.server->stopping()) {
             e.changes.reset();
             continue;
         }
-        GtkTextBuffer* b = e.buffer;
-        const size_t length = (size_t)gtk_text_buffer_get_char_count(b);
-        e.server->client().didChange(
-            e.uri, length, e.changes,
-            [b, length](size_t start, size_t n) {
-                start = std::min(start, length);
-                n = std::min(n, length - start);
-                GtkTextIter x, y;
-                gtk_text_buffer_get_iter_at_offset(b, &x, (int)start);
-                gtk_text_buffer_get_iter_at_offset(b, &y, (int)(start + n));
-                char* s = gtk_text_buffer_get_slice(b, &x, &y, TRUE);
-                std::u16string out = utf16::fromUtf8(s ? s : "");
-                g_free(s);
-                return out;
-            },
-            Model::Unit::CodePoint);
+        e.server->client().didChange(e.uri, text->size(), e.changes,
+                                     [text](size_t start, size_t n) { return text->slice(start, n); });
         e.changes.reset();
     }
 }
