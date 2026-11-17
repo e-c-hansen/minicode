@@ -5207,3 +5207,7 @@ moves onto next. What a user meets: the Mac's undo rules.
 - **Not done**: the workspace edit applier and the inline agent's Keep are
   named "Edit"; drag and drop of text is typing; carets beyond the first
   are not restored by an undo.
+
+### 73. File tree icons by kind (done, November 2026)
+
+A file row's icon follows `FileIcon::kindOf` (what a click on the file opens), as the Mac's does: `fileIconName` in `linux/src/FileTree.cpp` maps each kind to a symbolic name that Adwaita has (checked against `/usr/share/icons/Adwaita/symbolic`, since GTK draws the missing-icon picture for a name the theme lacks): image, video and audio `*-x-generic`, `x-office-document` for a PDF, `x-office-spreadsheet` for a table, `accessories-dictionary` for a notebook, `drive-harddisk` for a database, `package-x-generic` for an archive, `web-browser` for a web page, `user-bookmarks` for a bookmark, `utilities-terminal` for source code (Adwaita has no script icon), `text-x-generic` for the rest. Folders keep `folder-symbolic`. The `tree_icons` suite writes one file of each kind and reads the names off the rows. Other themes may draw these names differently; the look needs the owner's eyes.
