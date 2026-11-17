@@ -1335,7 +1335,12 @@ void TerminalScreen::osc(const std::string& raw) {
         commandsEnded_++;
         addMark('D', body.size() > 6 && body[5] == ';' ? std::atoi(body.c_str() + 6) : 0);
     } else if (body.rfind("133;A", 0) == 0) {
-        promptSp_ = true;
+        // zsh's PROMPT_SP wraps only after output that did not end its line:
+        // after a newline its filler ends in a carriage return before any
+        // wrap. So a mark at a line's start never arms it; a long bash prompt
+        // and the command typed at it wrapped, and the mark went down a line
+        // (the terminal_marks suite with CI's 93-column prompt).
+        promptSp_ = x_ > 0 || wrapPending_;
         promptActive_ = true;
         addMark('A', 0);
     } else if (body.rfind("133;C", 0) == 0) {

@@ -79,10 +79,27 @@ bool atEnd() {
                       gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj);
 }
 
-// The prompt line of the command whose prompt row shows `text`, -1 for none.
+// The rows a command was typed on: from its prompt's row up to the row its
+// output starts on (a long prompt and command wrap over several). Reading a
+// fixed number of rows from the prompt took in the next command's prompt
+// when the output was short, so `seq 1 80` was found at the first command.
+std::string commandText(const Shared::TermMark& m) {
+    VteTerminal* vte = VTE_TERMINAL(term()->vteWidget());
+    const long first = term()->rowOfLine(m.prompt);
+    const long last = std::max(first, term()->rowOfLine(m.output) - 1);
+    gsize n = 0;
+    char* t = vte_terminal_get_text_range_format(vte, VTE_FORMAT_TEXT, first, 0, last,
+                                                 vte_terminal_get_column_count(vte), &n);
+    std::string s = t ? std::string(t, n) : std::string();
+    g_free(t);
+    s.erase(std::remove(s.begin(), s.end(), '\n'), s.end());
+    return s;
+}
+
+// The prompt line of the command typed as `text`, -1 for none.
 long long promptOf(const std::string& text) {
     for (const Shared::TermMark& m : term()->commandMarks())
-        if (m.output >= 0 && rowText(term()->rowOfLine(m.prompt)).find(text) != std::string::npos) return m.prompt;
+        if (m.output >= 0 && commandText(m).find(text) != std::string::npos) return m.prompt;
     return -1;
 }
 
