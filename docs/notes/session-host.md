@@ -290,3 +290,98 @@ the command line's parsing. Real sockets and shells, under TSan in CI.
   design's tmux `window-size latest`); today any `TermResize` wins.
 - Saving, dirty, backups and the disk are still the app's (stage 7): a
   headless host's unsaved document is only as safe as the host process.
+
+## The browser's view (stage 6b)
+
+`minicode host --folder DIR --web PORT`, or `minicode attach --folder DIR
+--web PORT` for a host already running, serves a read-only view of the
+session to a browser: `src/SessionWeb.{h,cpp}` (the server, the request
+rules, the views as data) and `src/SessionWebPage.cpp` (the one page, its
+CSS and script, no third-party code). The user's side is REFERENCE.md's
+"Remote sessions (early)".
+
+- **Access.** A socket on 127.0.0.1 (never `INADDR_ANY`), and a token of 48
+  hex digits from /dev/urandom made at start, printed once in the address
+  (`http://127.0.0.1:PORT/?t=TOKEN`). `Web::answer` refuses, in this order:
+  anything but GET (405), a Host that is not 127.0.0.1, localhost or [::1]
+  with any port (403; two Host or two Origin headers make the request bad),
+  an Origin that is not http:// on one of those (403), no token or a wrong
+  one (403, compared with `IdeLink::sameSecret`), then serves `/` (the page)
+  or `/ws` (the WebSocket upgrade, IdeLink's accept key and frames), else
+  404. The token is in the query of both because a browser's WebSocket
+  cannot send headers; the page has `Referrer-Policy: no-referrer` and
+  fetches nothing else. The page's Content-Security-Policy allows one
+  script by a nonce made per response (`{{NONCE}}` in the page), inline
+  styles, data: pictures, and WebSockets to 127.0.0.1 and localhost.
+- **A renderer that only reads.** The server attaches to the host's Unix
+  socket as a `Client` with `setReadOnly(true)` (Hello flag 1) while at
+  least one browser is connected, and detaches when the last goes, so a
+  host nobody looks at still ends when its lifetime says. The host refuses
+  every message from such a renderer that would change the session
+  (`Host::refusedFromViewer`: edits, resets, undo, saves, tabs, every
+  terminal message but attach and ack), answering an Error; the edit with
+  no operations that reports how far it has read is let through. Its
+  `DocOpen` (`Client::view`) is a view seat: never a new document (a
+  missing one answers `DocGone`), never keeping one open (a view closing
+  leaves the document, even one a detached renderer left; the last
+  renderer that edits closing it ends it, and the views hear `DocGone`).
+- **Views as data.** `Web::DocView` keeps the host's text from its edits
+  with an `IncrementalHighlighter<char16_t>`; each operation becomes a
+  splice of the line list (the lines the highlighter re-lexed, and how many
+  old lines they replace), each line `[text, [[start, length, style]...]]`
+  in UTF-16 units, which is what JavaScript strings count. A Markdown file
+  (md, markdown, mdown, mkd, mkdn) is `MarkdownHtml::page`, sent whole at
+  most four times a second, and drawn in a sandboxed frame with no scripts;
+  a file over 8 M units or 200,000 lines is only named. `Web::TermView`
+  feeds a `TerminalScreen` of its own from the host's replay and output
+  (acknowledged at once, so the view never holds a shell back) and sends
+  its rows as styled runs: the whole terminal (`term`), then `termd` with
+  the lines that went into the scrollback and the rows `takeDirty` marked
+  (all rows once anything scrolled), at most every 30 ms. A replay starts
+  the screen over; a size change seen in the host's state (looked at every
+  `pollMs`, 500) attaches again for a fresh replay at the new size. The
+  palette is the host machine's theme (its settings file, else Dark
+  Modern).
+- **The page** says only `show {doc, term}`, when what it looks at
+  changes; anything else is dropped. It follows the session's tab on show
+  until a tab is clicked, keeps 5,000 scrollback lines, sticks to the
+  bottom unless scrolled up, and reconnects every 2 s after a drop.
+- **Threads.** One thread of the server's: poll(2) over the listening
+  socket, the browsers and a pipe the client's `setWake` writes; the
+  client's messages are dispatched there, so the views are touched by
+  that thread alone. `host --web` runs it beside `HostServer::run` and
+  stops it when the host ends; `attach --web` ends when the host's socket
+  goes (looked at every second with no browser) or its link closes.
+
+### Checks
+
+`make test`'s `sessionweb:*` groups (`tests/session_web_tests.inc`):
+`request` and `refusals` (the rules above as pure functions, the CSP and
+nonce, the accept key); `viewer-reads-only` (a `Host` refusing a viewer's
+every changing message, view seats, `DocGone`); `doc-lines` (random edits
+spliced as the page splices them equal a fresh highlight, line for line,
+spans included; Markdown sanitized; large files named); `term-rows` (rows,
+scrollback and a clear against the screen); `server` (a host and the view
+in the test process, a scripted WebSocket client: refusals over the wire,
+hello and state, the document and terminal whole and then live against the
+host's text and screen, a second browser, Markdown, a closed and a missing
+document, and the view detaching when the browsers go). `make guitest
+SUITES=session_web` loads the page in a WKWebView that is in no window
+against a host in the guitest process: lines and colored spans, typing and
+terminal output followed, a wrong token refused.
+
+### For editing (8b)
+
+- The page needs input paths: a renderer that edits (not read-only), its
+  own caret and selection, typing sent as operations (UTF-16, which the
+  page already counts in) with the client's one-edit-in-flight rule and
+  `Ot::transform` done in JavaScript, or the host's edits applied to a
+  text model the page keeps instead of DOM lines; terminal keys encoded
+  the way `TerminalScreen::encodeKey` does; buttons for save, undo and
+  closing tabs once the host decides tabs (stage 6's note).
+- Saving is still the apps' until stage 7: a browser that edits a headless
+  host's document has nowhere to save it.
+- Lines are re-sent whole per edit; a long line typed into from a browser
+  wants character splices.
+- No snapshot or patch messages exist yet: the view polls the host's state
+  every half second for tabs, documents and terminal sizes.

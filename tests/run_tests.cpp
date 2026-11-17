@@ -11215,6 +11215,7 @@ static void testMultiCaretOccurrences() {
 #include "session_host_tests.inc"
 #include "session_terminal_tests.inc"
 #include "session_server_tests.inc"
+#include "session_web_tests.inc"
 #include "lsp_trust_tests.inc"
 #include "lsp_clangd_tests.inc"
 #include "multiedit_tests.inc"
@@ -11410,6 +11411,7 @@ int main() {
     testSessionHost();
     testSessionTerminals();
     testSessionServer();
+    testSessionWeb();
     testLspProjectCode();
     testLspClangdFlags();
     testMultiEdit();

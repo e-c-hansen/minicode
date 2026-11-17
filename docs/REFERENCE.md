@@ -346,6 +346,33 @@ On the Mac, minicode can also answer Claude Code's /ide, the link VS Code and Je
 
 The repository has a skill for Claude Code in skills/minicode that teaches it all of this: when reporting work, open the changed lines with a note, show the diff and run the tests in a terminal; when asked "where is X", open it rather than quote a path; read `state` and `selection` when you say "this". The app carries it too: `minicode install-skill` copies it to ~/.claude/skills/minicode (run it again after an upgrade), and `make install` does the same from a checkout.
 
+## Remote sessions (early)
+
+A session that `minicode host` keeps can be looked at from a browser on any machine, for now only to read: the open files, the session's tabs, and its terminals, following edits and output as they happen. The browser draws what the host describes, laid out for its own window or phone screen; nothing is a picture of a screen. Files are colored by minicode's own highlighter, in the host's theme, Markdown files show as the page Export as HTML makes, and each terminal's screen keeps its colors, its cursor, and its scrollback (scroll up in it to read back). The page has no way to type, run, or change anything, and the host refuses anything the view's connection sends that would change the session.
+
+Start the host with a port for the browser, or give one to a host already running:
+
+```sh
+minicode host --folder ~/project --web 8123
+minicode attach --folder ~/project --web 8123    # a host that is running already
+```
+
+Either prints an address such as `http://127.0.0.1:8123/?t=3f0c…` once. Open it as printed: the part after `t=` is a secret of 48 hex digits made fresh each time, and without it, or with a wrong one, the page answers only with a refusal. The view listens on 127.0.0.1 alone, never on another interface, and answers only requests whose Host is 127.0.0.1, localhost, or [::1], so other machines on the network, and pages elsewhere that rename themselves to 127.0.0.1, get nothing.
+
+To look from another machine, carry the port over SSH. On the ThinkPad (or whichever machine holds the folder):
+
+```sh
+minicode host --folder ~/project --web 8123
+```
+
+Then on the Mac:
+
+```sh
+ssh -L 8123:127.0.0.1:8123 thinkpad
+```
+
+and open the printed address in Safari or Chrome on the Mac, with the same port. The page reconnects by itself when the tunnel drops and comes back, and it says so when the host ends. It works at phone width too, through any SSH client that forwards ports. Editing from the browser, its buttons, and typing into its terminals are planned.
+
 ## Seeing what agents did
 
 When Claude Code works in a folder, much of what it does never shows in the folder itself: subagents work in worktrees under .claude/worktrees, notes and reports go to scratchpads in /tmp, and the paths it mentions may be in any of them. On the Mac, minicode reads Claude Code's transcripts in ~/.claude/projects to show where that work is. It only reads them; nothing of Claude Code's is ever written, moved, or deleted, and nothing leaves your Mac.

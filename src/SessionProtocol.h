@@ -59,8 +59,12 @@ using Selection = Model::UndoHistory::Selection;
 
 enum class Kind {
     // renderer → host
-    Hello,       // name (the renderer), unit
-    DocOpen,     // doc, name (its path), text8 (UTF-8): the host's copy starts as it, saved
+    Hello,       // name (the renderer), unit; flag 1: it only reads (a browser's view):
+                 // the host refuses anything from it that would change the session
+    DocOpen,     // doc, name (its path), text8 (UTF-8): the host's copy starts as it, saved.
+                 // From a renderer that only reads, a view of the document as it is: it
+                 // never makes one, and keeps none open (DocGone when there is none, or
+                 // when the last renderer that edits it closes it)
     DocReset,    // doc, text8: the text set whole anew (a file read again), history gone
     DocClose,    // doc
     DocEdit,     // doc, base, seq, ops, step; flag 1: outside the undo history (no step:
@@ -96,6 +100,7 @@ enum class Kind {
     TermMarks,   // term, json: {"commands": [[prompt, output, end, status], ...]}
     TermExited,  // term, flag: the shell's wait status (-1 unknown), name: why it never started
     TermReplay,  // term, bytes, v: as TermOutput
+    DocGone,     // doc: to a renderer that only reads: the document is closed, or never was
 };
 
 const char* kindName(Kind k);

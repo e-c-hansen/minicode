@@ -23,6 +23,7 @@
 #include "ControlProtocol.h"
 #include "ClaudeHooks.h"
 #include "SessionServer.h"
+#include "SessionWeb.h"
 #ifdef __APPLE__
 #include "ProcessTable.h"
 #endif
@@ -361,12 +362,55 @@ int openInDefaultBrowser(const std::string &url) {
     return kExitFailed;
 }
 
-// `minicode host --folder DIR`: the session's host for one folder, with no
-// window (SessionServer.h), in the foreground until its lifetime ends or a
-// signal stops it.
-std::mutex gHostMu;
+// SIGINT, SIGTERM and SIGHUP end `host` and `attach --web` as the host's
+// lifetime would: taken by a thread of their own, so they are blocked
+// before any other starts (shells get a clean mask: HostPty.cpp).
+std::mutex gStopMu;
 Shared::HostServer *gHost = nullptr;
+Shared::Web::Server *gWeb = nullptr;
 
+void takeStopSignals() {
+    signal(SIGPIPE, SIG_IGN);
+    sigset_t stops;
+    sigemptyset(&stops);
+    sigaddset(&stops, SIGINT);
+    sigaddset(&stops, SIGTERM);
+    sigaddset(&stops, SIGHUP);
+    pthread_sigmask(SIG_BLOCK, &stops, nullptr);
+    std::thread([stops] {
+        int sig = 0;
+        sigwait(&stops, &sig);
+        std::lock_guard<std::mutex> lk(gStopMu);
+        if (gHost) gHost->stop();
+        if (gWeb) gWeb->stop();
+    }).detach();
+}
+
+// The browser's view (SessionWeb.h) of the host at `socket`: started, its
+// address printed once with its token. False, with the reason printed, when
+// the port cannot be had.
+bool startWeb(Shared::Web::Server &web, const std::string &socket, const std::string &folder,
+              int port) {
+    Shared::Web::Options w;
+    w.hostSocket = socket;
+    w.folder = folder;
+    w.port = port;
+    std::string error;
+    if (!web.start(w, &error)) {
+        std::fprintf(stderr, "minicode: the browser's view could not listen: %s\n", error.c_str());
+        return false;
+    }
+    std::fprintf(stderr, "minicode: a read-only view of %s for a browser on this machine:\n",
+                 folder.c_str());
+    std::printf("%s\n", web.url().c_str());
+    std::fflush(stdout);
+    return true;
+}
+
+// `minicode host --folder DIR [--web PORT]`: the session's host for one
+// folder, with no window (SessionServer.h), in the foreground until its
+// lifetime ends or a signal stops it; with --web, also its view for a
+// browser, a renderer of it attached while a browser looks.
 int runHost(const Json &args) {
     const std::string asked = args["folder"].asString();
     const std::string folder = Shared::resolveFolder(asked);
@@ -378,53 +422,51 @@ int runHost(const Json &args) {
     o.folder = folder;
     o.socketDir = socketDirs()[0];
     if (args.has("idle_minutes")) o.idleMs = (long long)(args["idle_minutes"].asNumber() * 60000.0);
-    // SIGINT, SIGTERM and SIGHUP end the host as its lifetime would: taken by
-    // a thread of their own, so they are blocked before any other starts
-    // (shells get a clean mask: HostPty.cpp).
-    signal(SIGPIPE, SIG_IGN);
-    sigset_t stops;
-    sigemptyset(&stops);
-    sigaddset(&stops, SIGINT);
-    sigaddset(&stops, SIGTERM);
-    sigaddset(&stops, SIGHUP);
-    pthread_sigmask(SIG_BLOCK, &stops, nullptr);
-    std::thread([stops] {
-        int sig = 0;
-        sigwait(&stops, &sig);
-        std::lock_guard<std::mutex> lk(gHostMu);
-        if (gHost) gHost->stop();
-    }).detach();
-    int code = kExitOK;
+    takeStopSignals();
+    Shared::HostServer server;
+    std::string error;
+    switch (server.start(o, &error)) {
+    case Shared::HostServer::Start::Running:
+        std::fprintf(stderr, "minicode: a host for %s is running already (%s)\n", folder.c_str(),
+                     error.c_str());
+        if (args.has("web"))
+            std::fprintf(stderr, "minicode: for a browser's view of it, run `minicode attach "
+                                 "--folder %s --web %d`\n",
+                         shellQuote(folder).c_str(), (int)args["web"].asInt());
+        return kExitOK;
+    case Shared::HostServer::Start::Failed:
+        std::fprintf(stderr, "minicode: %s\n", error.c_str());
+        return kExitFailed;
+    case Shared::HostServer::Start::Ok: break;
+    }
+    std::fprintf(stderr, "minicode: hosting %s at %s\n", folder.c_str(), server.socketPath().c_str());
+    Shared::Web::Server web;
+    std::thread webThread;
+    if (args.has("web")) {
+        if (!startWeb(web, server.socketPath(), folder, (int)args["web"].asInt())) return kExitFailed;
+        webThread = std::thread([&web] { web.run(); });
+    }
     {
-        Shared::HostServer server;
-        std::string error;
-        switch (server.start(o, &error)) {
-        case Shared::HostServer::Start::Running:
-            std::fprintf(stderr, "minicode: a host for %s is running already (%s)\n", folder.c_str(),
-                         error.c_str());
-            return kExitOK;
-        case Shared::HostServer::Start::Failed:
-            std::fprintf(stderr, "minicode: %s\n", error.c_str());
-            return kExitFailed;
-        case Shared::HostServer::Start::Ok: break;
-        }
-        {
-            std::lock_guard<std::mutex> lk(gHostMu);
-            gHost = &server;
-        }
-        std::fprintf(stderr, "minicode: hosting %s at %s\n", folder.c_str(),
-                     server.socketPath().c_str());
-        if (server.run())
-            std::fprintf(stderr, "minicode: the host for %s had no renderer and nothing unsaved or "
-                                 "running, so it stopped\n", folder.c_str());
-        std::lock_guard<std::mutex> lk(gHostMu);
+        std::lock_guard<std::mutex> lk(gStopMu);
+        gHost = &server;
+    }
+    if (server.run())
+        std::fprintf(stderr, "minicode: the host for %s had no renderer and nothing unsaved or "
+                             "running, so it stopped\n", folder.c_str());
+    {
+        std::lock_guard<std::mutex> lk(gStopMu);
         gHost = nullptr;
     }
-    return code;
+    if (webThread.joinable()) {
+        web.stop();
+        webThread.join();
+    }
+    return kExitOK;
 }
 
 // `minicode attach --folder DIR --dump`: the folder's session as text, then
-// detach (SessionServer.h's dumpSession).
+// detach (SessionServer.h's dumpSession). `--web PORT`: a browser's view of
+// it until the host ends.
 int runAttach(const Json &args) {
     const std::string asked = args["folder"].asString();
     const std::string folder = Shared::resolveFolder(asked);
@@ -445,6 +487,23 @@ int runAttach(const Json &args) {
         else
             std::fprintf(stderr, "minicode: %s\n", error.c_str());
         return kExitNoApp;
+    }
+    if (args.has("web")) {
+        // The view attaches itself while a browser looks; this link only
+        // showed that a host answers.
+        link->close();
+        link.reset();
+        takeStopSignals();
+        Shared::Web::Server web;
+        if (!startWeb(web, path, folder, (int)args["web"].asInt())) return kExitFailed;
+        {
+            std::lock_guard<std::mutex> lk(gStopMu);
+            gWeb = &web;
+        }
+        if (web.run()) std::fprintf(stderr, "minicode: the host for %s stopped\n", folder.c_str());
+        std::lock_guard<std::mutex> lk(gStopMu);
+        gWeb = nullptr;
+        return kExitOK;
     }
     Shared::Client client(Model::Unit::Utf16, "minicode attach");
     link->connect(client);

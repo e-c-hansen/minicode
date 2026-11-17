@@ -32,6 +32,7 @@ const KindName kKinds[] = {
     {Kind::TermOpened, "term.opened"},  {Kind::TermOutput, "term.output"},
     {Kind::TermShell, "term.shell"},    {Kind::TermMarks, "term.marks"},
     {Kind::TermExited, "term.exited"},  {Kind::TermReplay, "term.replay"},
+    {Kind::DocGone, "doc.gone"},
 };
 
 // Terminal bytes are any bytes, which a JSON string cannot carry: base64.

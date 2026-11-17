@@ -141,6 +141,7 @@ private:
         Model::Unit unit = Model::Unit::Utf16;
         std::string name;
         bool hello = false;
+        bool readOnly = false;   // Hello's flag 1: a view, which changes nothing
     };
     // One applied edit, as every renderer may need it again: by whom, in
     // both units.
@@ -161,6 +162,7 @@ private:
         struct Seat {
             std::uint64_t base = 0;
             bool watch = false;
+            bool viewer = false;   // a renderer that only reads: keeps nothing open
             UndoInfo heard;
         };
         std::map<ClientId, Seat> seats;
@@ -238,6 +240,8 @@ private:
     void tellUndoState(DocId id, Doc& d);
 
     void onHello(ClientId c, Message& m);
+    // Whether `m` from `c` would change the session while `c` only reads.
+    bool refusedFromViewer(ClientId c, const Message& m) const;
     void onOpen(ClientId c, Message& m);
     void onReset(ClientId c, Message& m);
     void onClose(ClientId c, Message& m);

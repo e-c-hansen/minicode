@@ -43,7 +43,33 @@ Model::Unit Host::unitOf(ClientId c) const {
     return it == renderers_.end() ? Model::Unit::Utf16 : it->second.unit;
 }
 
+bool Host::refusedFromViewer(ClientId c, const Message& m) const {
+    auto it = renderers_.find(c);
+    if (it == renderers_.end() || !it->second.readOnly) return false;
+    switch (m.kind) {
+    case Kind::Hello:
+    case Kind::DocOpen:      // a view seat (onOpen)
+    case Kind::DocClose:     // its own seat
+    case Kind::DocWatch:
+    case Kind::DocQuery:
+    case Kind::StateQuery:
+    case Kind::Ping:
+    case Kind::TermAttach:
+    case Kind::TermAck:
+        return false;
+    case Kind::DocEdit:
+        // Only the report of how far it has read (SessionClient's).
+        return !m.ops.empty() || m.step.id || m.flag;
+    default: return true;
+    }
+}
+
 void Host::handle(ClientId from, Message&& m) {
+    if (refusedFromViewer(from, m)) {
+        error(from, m.doc, std::string("a renderer that only reads cannot send ") +
+                               kindName(m.kind));
+        return;
+    }
     switch (m.kind) {
     case Kind::Hello: onHello(from, m); break;
     case Kind::DocOpen: onOpen(from, m); break;
@@ -108,6 +134,7 @@ void Host::onHello(ClientId c, Message& m) {
     r.unit = m.unit;
     r.name = m.name;
     r.hello = true;
+    r.readOnly = (m.flag & 1) != 0;
     Message w;
     w.kind = Kind::Welcome;
     w.client = c;
@@ -120,6 +147,25 @@ void Host::onOpen(ClientId c, Message& m) {
     Message r;
     r.kind = Kind::DocOpened;
     r.doc = m.doc;
+    auto who = renderers_.find(c);
+    if (who != renderers_.end() && who->second.readOnly) {
+        // A view: of the document as it is, never a new one.
+        if (it == docs_.end()) {
+            Message g;
+            g.kind = Kind::DocGone;
+            g.doc = m.doc;
+            send(c, std::move(g));
+            return;
+        }
+        Doc& d = it->second;
+        Doc::Seat& seat = d.seats[c];
+        seat.base = d.v;
+        seat.viewer = true;
+        r.v = d.v;
+        r.text16 = d.doc.text().str();
+        send(c, std::move(r));
+        return;
+    }
     if (it == docs_.end()) {
         Doc& d = docs_[m.doc];
         d.path = m.name;
@@ -175,9 +221,29 @@ void Host::onClose(ClientId c, Message& m) {
     if (it == docs_.end()) return;
     Doc& d = it->second;
     if (d.stepOpen && d.stepBy == c) closeStep(d);
-    d.seats.erase(c);
-    if (d.seats.empty()) docs_.erase(it);
-    else trimLog(d);
+    auto seat = d.seats.find(c);
+    const bool viewer = seat != d.seats.end() && seat->second.viewer;
+    if (seat != d.seats.end()) d.seats.erase(seat);
+    if (viewer) {
+        // A view going changes nothing, even when nobody else has it open
+        // (a renderer that detached leaves its documents for the next).
+        trimLog(d);
+        return;
+    }
+    bool onlyViews = true;
+    for (const auto& [id, s] : d.seats) onlyViews = onlyViews && s.viewer;
+    if (!onlyViews) {
+        trimLog(d);
+        return;
+    }
+    // The last renderer that edits it closed it: the views hear it went.
+    for (const auto& [id, s] : d.seats) {
+        Message g;
+        g.kind = Kind::DocGone;
+        g.doc = m.doc;
+        send(id, std::move(g));
+    }
+    docs_.erase(it);
 }
 
 bool Host::concurrent(const Doc& d, std::uint64_t base, Model::Unit u, Ot::Ops* out) const {
