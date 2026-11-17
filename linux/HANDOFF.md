@@ -5519,7 +5519,7 @@ buttons' titles). `git_review` (after `git_verbs` in suites.txt) presses
 the panel's button, a block's Stage, Discard with Cancel and with the answer,
 Undo Discard, Stage File, and a change made with the panel hidden.
 
-### 85. An .html file opens as its page (done, November 2026)
+### 86. An .html file opens as its page (done, November 2026)
 
 The Mac's HTML page (mac/src/HtmlPage.mm, 1.5.27 and the fixes after it) on
 GTK: an .html, .htm or .xhtml file (FileSniff::Kind::Html, `Document::isHtml`,
