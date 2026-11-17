@@ -85,6 +85,10 @@ MC_GUI_SUITE(spell_check) {
                                           encoding:NSUTF8StringEncoding
                                              error:nil] ?: @"";
         GCHECK([c showFile:md]);
+        // A Markdown file opens on its rendered page; the source is checked.
+        if ([[c valueForKey:@"previewMode"] boolValue])
+            [c performSelector:@selector(togglePreview:) withObject:nil];
+        GCHECK(Text(c).editable);
         [Text(c) scrollRangeToVisible:NSMakeRange(0, 0)];
     });
     MCGuiWait(@"the Markdown file's prose is checked", 20, ^BOOL {
@@ -111,6 +115,7 @@ MC_GUI_SUITE(spell_check) {
     MCGuiStep(@"a Python file, with the default prose-only", ^{
         checks = Checks(c);
         GCHECK([c showFile:py]);
+        GCHECK(Text(c).editable);
         [Text(c) scrollRangeToVisible:NSMakeRange(0, 0)];
     });
     // A negative check: nothing is checked in code with prose-only, so
