@@ -29,6 +29,7 @@
     self.window.delegate = self;
     self.window.minSize = NSMakeSize(640, 400);
     [self.window center];
+    [self placeRestoredWindow];   // a window brought back: where it was
 
     // --- split view: sidebar | editor
     NSSplitView *split = [[NSSplitView alloc] initWithFrame:frame];
@@ -272,8 +273,11 @@
     [self ensureGitPanel];             // autofetch, before the panel is shown
     [self ensureTestGutter];           // the ▶ beside each test
     [self ensureLineHistory];          // who last changed each line
+    [self restoreWindowLayout];        // a window brought back: its panels and sizes first,
+                                       // so its text is laid out at its width
     [self restoreSession];             // the files open here last time
     [self restoreBrowserFromSession];  // and the browser, where it was
+    [self finishRestoringWindow];      // a window brought back: its tree and keyboard
     [[NSNotificationCenter defaultCenter] addObserver:self
         selector:@selector(backupsAppWillTerminate:)
             name:NSApplicationWillTerminateNotification object:nil];
@@ -855,6 +859,24 @@ static const CGFloat kDividerGrabSlop = 5;
         [self.splitView setPosition:width ofDividerAtIndex:0];
     }
     if (self.hintsVisible) [self updateHints];
+}
+
+- (CGFloat)sidebarWidthToShow {
+    NSView *sidebar = self.splitView.subviews.firstObject;
+    const BOOL shown = !self.sidebarCollapsed && sidebar.frame.size.width >= 1;
+    return shown ? sidebar.frame.size.width : _sidebarShownWidth;
+}
+
+- (void)setSidebarWidth:(CGFloat)width hidden:(BOOL)hidden {
+    const CGFloat W = self.splitView.bounds.size.width;
+    if (width >= 160) {
+        width = MIN(width, MAX(160, W - kMinRightAreaWidth));
+        if (self.sidebarCollapsed) _sidebarShownWidth = width;
+        else [self.splitView setPosition:width ofDividerAtIndex:0];
+    }
+    NSView *sidebar = self.splitView.subviews.firstObject;
+    const BOOL shown = !self.sidebarCollapsed && sidebar.frame.size.width >= 1;
+    if (hidden == shown) [self toggleSidebarVisibility:nil];
 }
 
 // Shift+Cmd+G or Ctrl+Shift+G: the Source Control panel takes the file tree's place in the

@@ -162,6 +162,11 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 @property(nonatomic, assign) NSRange selection;
 @property(nonatomic, assign) NSUInteger topCharacter; // first character in view
 @property(nonatomic, assign) CGFloat topOffset;       // its distance below the pane's top
+// Brought back with its window (EditorController+Persistence.mm) and not
+// shown since: the place above is the last run's, put back when the file is
+// first read, with its page (YES) or its source on show.
+@property(nonatomic, assign) BOOL placeFromSession;
+@property(nonatomic, assign) BOOL pageFromSession;
 @property(nonatomic, assign) NSPoint diffScroll;
 @property(nonatomic, assign) NSUInteger pdfPage;
 @property(nonatomic, assign) NSPoint pdfPoint;

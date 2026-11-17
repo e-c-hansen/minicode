@@ -626,7 +626,8 @@ void MCGuiRunProcess(NSArray<NSString *> *argv, NSDictionary<NSString *, NSStrin
 
 void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, NSString *out)) {
     NSString *defaults = [Env(@"MINICODE_DEFAULTS_SUITE") stringByAppendingString:@".child"];
-    MCGuiRunProcess(@[[MCGuiBuildDir() stringByAppendingPathComponent:@"guitest"], folder],
+    NSString *program = [MCGuiBuildDir() stringByAppendingPathComponent:@"guitest"];
+    MCGuiRunProcess(folder.length ? @[program, folder] : @[program],
                     @{@"MC_GUI_CHILD": @"1", @"MC_GUI_SUITES": suite, @"MC_GUI_KEEP": @"1",
                       @"MINICODE_DEFAULTS_SUITE": defaults},
                     ^(int status, NSString *out, NSString *err) {
