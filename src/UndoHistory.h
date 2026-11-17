@@ -2,7 +2,7 @@
 // steps of edits with the selection before and after each, a name
 // ("Typing", "Format Document", "Reload from Disk"), and typing joined into
 // one step until something breaks it. It is the Mac's NSUndoManager rules
-// (CLAUDE.md, "Programmatic edits" and "Tabs, sessions and the disk") as a
+// (docs/notes/editor.md, "Programmatic edits", and docs/notes/sessions.md) as a
 // core object any port drives from its edit path:
 //
 //   - A step is what was opened and closed around edits (a GTK user action,
