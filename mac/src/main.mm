@@ -739,6 +739,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)nextWaitingTerminal:(id)sender { MCJumpToNextWaitingTerminal(); }
 - (void)runCurrentFile:(id)sender  { [[self current] runCurrentFile:sender]; }
 - (void)runTestAtCursor:(id)sender { [[self current] runTestAtCursor:sender]; }
+- (void)toggleLineHistory:(id)sender { [[self current] toggleLineHistory:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)openBrowserTab:(id)sender  { [[self current] openBrowserTab:sender]; }
 - (void)toggleSidebarVisibility:(id)sender   { [[self current] toggleSidebarVisibility:sender]; }
@@ -1428,6 +1429,11 @@ static void BuildMenu(void) {
     // The language server's inlay hints on or off (editor.inlay-hints;
     // LspInlayHints.h). No key, as in VS Code.
     [viewMenu addItem:MCInlayHintsMenuItem()];
+    // Who last changed each line, beside every line (EditorLineHistory.h);
+    // resting on a line number shows it for that line either way. No key:
+    // VS Code's git blame toggle has none.
+    [viewMenu addItemWithTitle:@"Show Line History" action:@selector(toggleLineHistory:)
+                 keyEquivalent:@""];
 
     // Folding (FoldView.h). VS Code's Option+Cmd+[ and ] are minicode's
     // previous and next terminal, and its other folding keys are Cmd+K

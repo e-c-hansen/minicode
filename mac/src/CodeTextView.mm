@@ -215,6 +215,7 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
         [_folds drawPlaceholdersInRect:dirty color:_bracketMatchColor ?: [NSColor grayColor]];
     [_inlays drawInRect:dirty];
     [_multi drawInRect:dirty];
+    if (_drawOverText) _drawOverText(dirty);
     if (_diagnostics.count == 0) return;
     NSRange visible = [self visibleCharacterRange];
     // Errors last, so they draw over a warning on the same text.
@@ -311,13 +312,15 @@ NSColor *MCDiagnosticColor(NSInteger severity) { return SeverityColor(severity);
 
 - (void)mouseMoved:(NSEvent *)event {
     [super mouseMoved:event];
-    if (!self.onMouseHover) return;
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    if (self.onPointerMoved) self.onPointerMoved(p, YES);
+    if (!self.onMouseHover) return;
     self.onMouseHover([self characterIndexUnderPoint:p]);
 }
 
 - (void)mouseExited:(NSEvent *)event {
     [super mouseExited:event];
+    if (self.onPointerMoved) self.onPointerMoved(NSZeroPoint, NO);
     if (self.onMouseHover) self.onMouseHover(NSNotFound);
 }
 
@@ -850,6 +853,7 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
 }
 
 - (void)mouseDown:(NSEvent *)event {
+    if (self.onMouseDownFirst && self.onMouseDownFirst(event)) return;   // Line History's words
     if (self.editable && [_conflicts mouseDown:event]) return;   // Keep Current, ...
     if (self.editable && [_folds mouseDown:event]) return;   // a fold's placeholder
     if ([_multi mouseDown:event]) return;

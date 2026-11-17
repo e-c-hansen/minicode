@@ -11137,6 +11137,7 @@ static void testMultiCaretOccurrences() {
 #include "agent_index_tests.inc"
 #include "agent_evidence_tests.inc"
 #include "agent_edits_tests.inc"
+#include "line_history_tests.inc"
 #include "agent_view_tests.inc"
 #include "fold_tests.inc"
 #include "previews_tests.inc"
@@ -11317,6 +11318,7 @@ int main() {
     testAgentIndex();
     testAgentEvidence();
     testAgentEdits();
+    testLineHistory();
     testAgentView();
     testFolding();
     testFileSniff();

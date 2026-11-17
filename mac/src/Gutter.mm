@@ -32,6 +32,7 @@ static const NSUInteger kMinDigits = 3;
     BOOL _observing;
     BOOL _thicknessQueued;
     BOOL _hovering;                 // the pointer is over the gutter
+    NSUInteger _hoverLine;          // the line onHoverLine was last told, or NSNotFound
     NSTrackingArea *_tracking;
     std::vector<QuickDiff::Bar> _bars;   // sorted by line
     NSColor *_barColors[3];              // added, modified, deleted
@@ -43,6 +44,7 @@ static const NSUInteger kMinDigits = 3;
     if ((self = [super initWithScrollView:scroll orientation:NSVerticalRuler])) {
         _tv = tv;
         _mode = MCLineNumbersOn;
+        _hoverLine = NSNotFound;
         _digits = kMinDigits;
         self.font = MCEditorFont();
         self.clientView = tv;
@@ -589,10 +591,39 @@ static const NSUInteger kMinDigits = 3;
     if (_tracking) [self removeTrackingArea:_tracking];
     _tracking = [[NSTrackingArea alloc]
         initWithRect:NSZeroRect
-             options:NSTrackingMouseEnteredAndExited | NSTrackingActiveInKeyWindow |
-                     NSTrackingInVisibleRect
+             options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved |
+                     NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
                owner:self userInfo:nil];
     [self addTrackingArea:_tracking];
+}
+
+// Show Line History's hover: the line under the pointer, outside the test
+// and fold lanes (which have their own clicks and tips).
+- (void)tellHoverLine:(NSUInteger)line {
+    if (line == _hoverLine) return;
+    _hoverLine = line;
+    if (self.onHoverLine) self.onHoverLine(line);
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    [super mouseMoved:event];
+    if (!self.onHoverLine) return;
+    const NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    const BOOL inLanes = p.x < self.testWidth || p.x >= NSWidth(self.bounds) - kFoldLane;
+    NSUInteger line = NSNotFound;
+    if (!inLanes && _tv) {
+        line = [self lineAtEvent:event];
+        // Below the last line the nearest line is not under the pointer.
+        const NSRect row = [self rowRectOfLine:line];
+        if (NSIsEmptyRect(row) || p.y < NSMinY(row) || p.y >= NSMaxY(row)) line = NSNotFound;
+    }
+    [self tellHoverLine:line];
+}
+
+- (NSRect)rowRectOfLine:(NSUInteger)line {
+    NSRect r = [self rectOfLines:line count:1];
+    if (NSIsEmptyRect(r)) return NSZeroRect;
+    return NSMakeRect(0, NSMinY(r), NSWidth(self.bounds), NSHeight(r));
 }
 
 - (void)setHovering:(BOOL)hovering {
@@ -602,7 +633,11 @@ static const NSUInteger kMinDigits = 3;
 }
 
 - (void)mouseEntered:(NSEvent *)event { (void)event; [self setHovering:YES]; }
-- (void)mouseExited:(NSEvent *)event { (void)event; [self setHovering:NO]; }
+- (void)mouseExited:(NSEvent *)event {
+    (void)event;
+    [self setHovering:NO];
+    [self tellHoverLine:NSNotFound];
+}
 
 // ---- selecting lines
 - (NSUInteger)lineAtEvent:(NSEvent *)event {

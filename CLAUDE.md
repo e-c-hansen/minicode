@@ -245,7 +245,9 @@ goes here first, with tests; the GUI only displays it.
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
   line's parsing), `SideBySide` (diff rows), `PageCheck` (agents checking
   pages: addresses, the origin limit, the console record).
-- Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`;
+- Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`,
+  `LineHistory` (blame porcelain, the lines a session's edits wrote, each
+  line's answer);
   `ProcessTable` (processes and ports per folder: tracking, groups, Stop's plan).
 - Files: `FileSniff` (how a file is shown), `Csv`, `JsonOutline`, `Notebook`,
   `WebBookmark` (web bookmarks as .url and .webloc files: reading, writing,
@@ -294,7 +296,7 @@ goes here first, with tests; the GUI only displays it.
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
   `ClaudeHooksOffer` (the waiting dots' hooks, offered in the app),
-  `AgentNotes`, `AgentModel`,
+  `AgentNotes`, `AgentModel`, `EditorLineHistory` (Show Line History),
   `AgentsPanel`, `AgentPages`, `AgentWindow`, `ProcessMonitor` (libproc,
   `minicode procs`), `ProcessesPanel`.
 - `Demo` (`make demos`, inert unless `MINICODE_DEMO`), `Bench`
@@ -319,7 +321,8 @@ LanguageServers, Agents (inline agent, Request a
 Change, control channel, agent work), Processes (the Processes panel's
 hooks, its state in associated objects), LargeFile (large-file mode, its
 status bar note, the 1 GB question), Tests (the ▶ beside each test, Run
-Test at Cursor), Markdown and MarkdownRender. Rules, so it
+Test at Cursor), LineHistory (Show Line History's host), Markdown and
+MarkdownRender. Rules, so it
 stays warning-free:
 
 - `EditorController+Private.h` holds the class extension (ivars in its ivar
@@ -3228,6 +3231,44 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   dirty tab refuses), and with none left (`canMarkResolved`) the header's
   Mark Resolved runs the panel's stage arguments without the conflict
   question. A binary, missing or too-large conflict keeps the old note.
+- **Line history** (Mac, 2026-11-16, A7, `EditorLineHistory.{h,mm}`,
+  `EditorController+LineHistory.mm`, core `LineHistory.{h,cpp}`,
+  `linehistory:*`, `make guitest SUITES=line_history`): blame that knows
+  Claude Code's sessions. Each line is a commit (`git blame --porcelain
+  --contents - -- <name>` with the buffer on stdin, through
+  `MCGitRunSyncWithInput` and its 30 s limit, so lines are the buffer's),
+  a session's uncommitted edit, or "Not committed"; a file git does not
+  track (or no repository) is all uncommitted, a git that timed out or
+  failed otherwise is Unknown (no words) with the reason in the box.
+  `LineHistory::linesWritten` walks one session's `AgentEdits::collect`
+  changes last first: each new text must be found exactly once in the
+  text as it was just after the change (the file now with later changes
+  undone), the region widened to whole lines (and past a put-back text
+  that would join the next line), and only lines a `LineDiff` of the
+  region before and after says changed are credited, so an Edit's quoted
+  context is not; a created Write takes every line still mapped to now; a
+  rewrite of an existing file, a removal, a notebook cell or a text not
+  found once ends the walk, which restarts once from the file now for the
+  earlier changes. Only uncommitted lines can be a session's; of several
+  sessions the latest change wins (`combine`). `AgentEdits::Change` now
+  carries `prompt` (the last prompt before the call), and the box shows
+  its first line (`promptLine`). The Mac: the gutter's `onHoverLine` (line
+  numbers, dots and change bars, not the test or fold lanes) shows a
+  child panel after 0.5 s, following the pointer down the gutter, a click
+  opening `showCommitReview:title:` or `MCAgentWindow
+  showChangesToFile:`; View > Show Line History
+  (`git.blame.toggleEditorDecoration`, no key; `MCLineHistoryInline` in
+  the app defaults, every window) draws the words after each line's last
+  fragment through CodeTextView's `drawOverText`, clickable through
+  `onMouseDownFirst`, the box on rest through `onPointerMoved`. Looks run
+  on a serial queue only while wanted (the words on, or a box asked for),
+  0.6 s after typing stops; an edit hides lines from its offset on
+  (`_validBefore`) until the next look; each path's last answer is kept
+  with its text (8 files) and reused on a tab switch while the git panel
+  and the Agents model have not published since. Not done: GTK, "committed
+  from session X" (left out until it can be exact), and a gap between
+  git's and LineDiff's alignment of blank lines around an insertion (one
+  may read "Not committed" or the commit where the other reads the session).
 - **Tool guard trap**: in a worktree-isolated agent session, git commands in
   compound or unusual forms are refused (even a filename containing "git"); use
   plain `cd x && git ...` lines or a script file.
@@ -4027,7 +4068,7 @@ session has a display. Check first.
   terminal_pty, terminal_reflow, terminal_splits, terminal_vt,
   terminal_exec, terminal_keys, terminal_zoom, run_file, test_gutter;
   git: git_panel, git_actions, git_hunks, git_verbs, git_review, worktree_review, git_conflicts, git_sync,
-  git_gutter;
+  git_gutter, line_history;
   agents and control: agents, agent_panel, agent_places, agentcommands,
   agent_autosave, attention, control, browserpages, browser_tabs, browser_find, bookmarks,
   idelink, processes;
