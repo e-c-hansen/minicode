@@ -1015,6 +1015,7 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
             CompareSpec spec;
         };
         Job* job = new Job{host, respond, windowId, "", CompareSpec()};
+        job->spec.preview = !a["keep"].asBool();   // the agents' diff tab, unless --keep
         std::thread([job, path, other, ref, shortA, shortB] {
             CompareSpec& spec = job->spec;
             std::string right, err;

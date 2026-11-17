@@ -213,14 +213,78 @@ static void testSessionModel() {
         w.activate(10);
         CHECK(w.add(20, "/p/n1", Preview::Agent) == 0);
         CHECK(w.tabs() == ids({1, 10, 20}) && w.active() == 10);   // added beside, not shown
+        w.activate(1);
+        // the next takes the old one's place, not a place beside the tab on show
         CHECK(w.add(21, "/p/n2", Preview::Agent) == 20 && w.isOpen(10));
+        CHECK(w.tabs() == ids({1, 10, 21}));
         CHECK(w.previewTab(Preview::User) == 10 && w.previewTab(Preview::Agent) == 21);
         CHECK(w.add(11, "/p/b", Preview::User) == 10 && w.isOpen(21));
-        // never the tab the user is typing in (the port's keepOld says)
+        // never the tab the user is typing in (the port's passOver says): it
+        // stays a preview, and the next of its kind is the one replaced
         w.activate(21);
-        CHECK(w.add(22, "/p/n3", Preview::Agent,
+        CHECK(w.add(22, "/p/n3", Preview::Agent, nullptr,
                     [&w](DocId id) { return id == w.active(); }) == 0);
-        CHECK(w.isOpen(21) && w.preview(21) == Preview::None);
+        CHECK(w.isOpen(21) && w.preview(21) == Preview::Agent && w.preview(22) == Preview::Agent);
+        CHECK(w.add(23, "/p/n4", Preview::Agent, nullptr,
+                    [&w](DocId id) { return id == w.active(); }) == 22);
+        CHECK(w.isOpen(21) && w.preview(23) == Preview::Agent);
+        CHECK(windowHolds(w));
+    }
+    {   // a note's preview tab and a diff's are apart: a diff after a note
+        // leaves the note's tab where it was
+        Model::Window w = windowWith(1);
+        CHECK(w.add(20, "/p/n1", Preview::Agent) == 0);
+        CHECK(w.add(30, "", Preview::AgentDiff) == 0);
+        CHECK(w.isOpen(20) && w.isOpen(30));
+        CHECK(w.add(31, "", Preview::AgentDiff) == 30 && w.isOpen(20));
+        CHECK(w.previewTab(Preview::Agent) == 20 && w.previewTab(Preview::AgentDiff) == 31);
+        CHECK(Model::isAgentPreview(w.preview(31)) && !Model::isAgentPreview(Preview::User));
+        // a kept open of an agents' preview tab's file keeps it, as the user's
+        Model::Window::Open o = w.prepareOpen("/p/n1", OpenFrom::TreeClick, on);
+        CHECK(o.existing == 20 && w.preview(20) == Preview::Agent);
+        o = w.prepareOpen("/p/n1", OpenFrom::Other, on);
+        CHECK(o.existing == 20 && w.preview(20) == Preview::None);
+        CHECK(windowHolds(w));
+    }
+    {   // each group has its own preview tab: one in the other group is not
+        // replaced by a tree click here
+        Model::Window w = windowWith(2);
+        w.add(10, "/p/a", Preview::User);
+        w.activate(10);
+        CHECK(w.splitEditor() && w.focused() == 1);   // 10 in both groups
+        w.focus(0);
+        w.activate(1);
+        w.focus(1);
+        CHECK(w.previewTab(Preview::User) == 10);     // the right group has 10 too
+        w.close(10, 0, nullptr);                      // the left group's 10 goes
+        w.focus(0);
+        CHECK(w.previewTab(Preview::User) == 0 && w.isOpen(10));
+        CHECK(w.add(11, "/p/b", Preview::User) == 0);
+        CHECK(w.isOpen(10) && w.preview(10) == Preview::User && w.preview(11) == Preview::User);
+        CHECK(windowHolds(w));
+    }
+    {   // a replaced preview tab the other group also shows stays there, a
+        // preview still; only the focused group's tab of it goes
+        Model::Window w = windowWith(2);
+        w.add(10, "/p/a", Preview::User);
+        w.activate(10);
+        CHECK(w.splitEditor() && w.focused() == 1 && w.inBothGroups(10));
+        w.focus(0);
+        CHECK(w.add(11, "/p/b", Preview::User) == 10);
+        CHECK(w.active() == 11 && !w.inGroup(10, 0) && w.inGroup(10, 1));
+        CHECK(w.preview(10) == Preview::User && w.active(1) == 10);
+        CHECK(!w.canReopen());
+        CHECK(windowHolds(w));
+    }
+    {   // the agents' replaced preview tab leaves both groups, and a group it
+        // was the last of closes
+        Model::Window w = windowWith(1);
+        w.add(20, "/p/n1", Preview::Agent);
+        w.activate(20);
+        CHECK(w.moveActive(1) && w.split() && w.tabs(1) == ids({20}) && w.focused() == 1);
+        w.focus(0);
+        CHECK(w.add(21, "/p/n2", Preview::Agent) == 20);
+        CHECK(!w.isOpen(20) && !w.split() && w.tabs() == ids({1, 21}));
         CHECK(windowHolds(w));
     }
 
@@ -368,8 +432,11 @@ static void testSessionModel() {
         w.activate(10);
         w.splitEditor();
         CHECK(w.preview(10) == Preview::User);
-        CHECK(w.add(11, "/p/b", Preview::User) == 10);   // out of both groups
-        CHECK(!w.isOpen(10) && w.tabs(0) == ids({1}) && w.tabs(1) == ids({11}) && windowHolds(w));
+        // out of the focused group only: the left group's tab of it stays,
+        // still a preview
+        CHECK(w.add(11, "/p/b", Preview::User) == 10);
+        CHECK(w.tabs(0) == ids({1, 10}) && w.tabs(1) == ids({11}) && windowHolds(w));
+        CHECK(w.preview(10) == Preview::User && w.active(0) == 10);
     }
 
     GROUP("session:windows");
@@ -406,9 +473,11 @@ static void testSessionModel() {
                 const DocId some = all.empty() ? 0 : all[rng() % all.size()];
                 switch (rng() % 12) {
                 case 0: case 1: {
-                    const Preview p = (Preview)(rng() % 3);
+                    const Preview p = (Preview)(rng() % 4);
+                    const bool pass = rng() % 4 == 0;
                     w.add(next, "/p/" + std::to_string(next % 17), p,
-                          [&](DocId id) { return id % 3 == 0; });
+                          [&](DocId id) { return id % 3 == 0; },
+                          [&](DocId id) { return pass && id == w.active(); });
                     if (rng() % 2) w.activate(next);
                     next++;
                     break;
@@ -435,14 +504,9 @@ static void testSessionModel() {
                     break;
                 }
                 }
+                // (a group may hold two preview tabs of a kind: one the
+                // other group's that came over, one passed over)
                 ok = windowHolds(w) && w.previewTab(Preview::None) == 0;
-                // at most one preview tab of each kind
-                int users = 0, agents = 0;
-                for (DocId id : w.documents()) {
-                    users += w.preview(id) == Preview::User;
-                    agents += w.preview(id) == Preview::Agent;
-                }
-                ok = ok && users <= 1 && agents <= 1;
             }
             CHECK(ok);
         }

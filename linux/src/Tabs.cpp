@@ -284,22 +284,23 @@ void Editor::letGo(Document* d) {
 
 Document* Editor::openForAgent(const std::string& path, bool preview, bool quiet) {
     if (Document* have = documentFor(path)) {
-        if (!quiet) openFile(path, EditorTabs::OpenFrom::Other);   // shown, as it is
+        if (!quiet) activate(have);   // shown where it is, a preview still if it was one
         return have;
     }
     if (!quiet && !large_->mayOpen(path, EditorTabs::OpenFrom::Other)) return nullptr;
     Document* d = newDocument();
     if (quiet) d->setUnread(path);
     else loadInto(d, path);   // a message says why; a note waits for text
-    // In the agents' preview tab, replacing the last one, but never one with
-    // unsaved changes, nor the tab the user is typing in; replaced, it is
-    // not asked about and not remembered.
+    // In the agents' preview tab, in the last one's place, but never one
+    // with unsaved changes (kept), nor the tab the user is typing in (left
+    // alone); replaced, it is not asked about and not remembered.
     const Model::DocId old =
         win_->add(d->id(), fileOf(d), preview ? Model::Preview::Agent : Model::Preview::None,
-                  [this, quiet](Model::DocId id) {
+                  [this](Model::DocId id) {
                       Document* o = documentById(id);
-                      return o && (o->dirty() || (quiet && o == active_));
-                  });
+                      return o && o->dirty();
+                  },
+                  [this, quiet](Model::DocId id) { return quiet && documentById(id) == active_; });
     if (quiet) refreshStrip();
     else activate(d);
     if (Document* o = documentById(old)) letGo(o);
@@ -347,14 +348,25 @@ void Editor::showComparison(const CompareSpec& spec, std::function<void(Document
                 if (!*j->alive) return G_SOURCE_REMOVE;
                 Editor* e = j->editor;
                 Document* d = e->newDocument();
-                e->win_->add(d->id(), "");
-                d->setCompare(j->data->spec.title, j->data);
                 const CompareSpec& sp = j->data->spec;
+                // In the agents' preview tab for comparisons when asked, in
+                // the last one's place; never the tab the user is typing in.
+                const Model::DocId old = e->win_->add(
+                    d->id(), "", sp.preview ? Model::Preview::AgentDiff : Model::Preview::None,
+                    [e](Model::DocId id) {
+                        Document* o = e->documentById(id);
+                        return o && o->dirty();
+                    },
+                    [e, quiet = sp.quiet](Model::DocId id) {
+                        return quiet && e->documentById(id) == e->active_;
+                    });
+                d->setCompare(sp.title, j->data);
                 if (!sp.decisionPrompt.empty())
                     d->setDecision(std::make_shared<CompareDecision>(
                         j->data, sp.decisionPrompt, sp.onDecision, sp.lastChoiceGrace));
                 if (sp.quiet) e->refreshStrip();
                 else e->activate(d);
+                if (Document* o = e->documentById(old)) e->letGo(o);
                 if (j->done) j->done(d);
                 return G_SOURCE_REMOVE;
             },
