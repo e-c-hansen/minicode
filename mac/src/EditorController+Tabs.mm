@@ -328,26 +328,24 @@
 // ------------------------------------------------------ the preview tab
 // VS Code's preview editor (workbench.editor.enablePreview): a file opened
 // by a single click in the tree, a single click on a search result, or a
-// code navigation goes in the window's one preview tab, its title in
-// italics, which the next such open replaces; anything else opens in a
-// kept tab. The rules are EditorTabs' (opensInPreview, staysPreview,
-// placePreview). The agents' preview tabs (agentPreview) are kept apart:
-// an agent's note waits in its own tab however the user browses, and the
-// user's file is never taken away by an agent's open.
+// code navigation goes in its group's preview tab, its title in italics,
+// which the next such open replaces; anything else opens in a kept tab.
+// The rules are the window's (Model::Window::prepareOpen and add,
+// EditorTabs.h), the GTK port's too. The agents' preview tabs
+// (agentPreview) are kept apart: an agent's note waits in its own tab
+// however the user browses, and the user's file is never taken away by an
+// agent's open.
 
-- (BOOL)opensInPreview:(EditorTabs::OpenFrom)from {
+- (EditorTabs::PreviewSettings)previewSettings {
     const Settings &cfg = [AppSettings shared].settings;
     EditorTabs::PreviewSettings s;
     s.enabled = cfg.enablePreview();
     s.fromQuickOpen = cfg.enablePreviewFromQuickOpen();
-    return EditorTabs::opensInPreview(from, s);
+    return s;
 }
 
-// The user's preview tab, if there is one.
-- (MCTab *)previewTab {
-    for (MCTab *t in [self groupTabs])
-        if (t.preview) return t;
-    return nil;
+- (BOOL)opensInPreview:(EditorTabs::OpenFrom)from {
+    return EditorTabs::opensInPreview(from, [self previewSettings]);
 }
 
 - (void)keepPreviewTab:(MCTab *)t {
@@ -369,23 +367,31 @@
 }
 
 // Show a file in its tab, else in a new one: the preview tab when `from`
-// opens in preview (replacing the old preview tab, which has no unsaved
-// changes since an edit keeps it), else a kept tab just right of the one on
-// show. The file in the tab that was on show stays as it was, unsaved
-// changes and all.
+// opens in preview (replacing the group's old preview tab, unless that has
+// unsaved changes), else a kept tab just right of the one on show. The file
+// in the tab that was on show stays as it was, unsaved changes and all.
 - (void)openFileAtPath:(NSString *)path from:(EditorTabs::OpenFrom)from {
     // A web bookmark loads in the browser instead (+Bookmarks); an open that
     // keeps a tab gives the page the keyboard.
     if (path && [self openBookmarkAtPath:path focusPage:![self opensInPreview:from]]) return;
     [self revealEditor];
     if (!path) return;
-    const BOOL inPreview = [self opensInPreview:from];
     MCTab *tab = [self tabForPath:path];
+    // The window's rules first: in preview or not; a code navigation keeps
+    // the preview tab it starts from (VS Code's
+    // enablePreviewFromCodeNavigation, off); a kept open of a preview tab's
+    // file keeps it, and an open in preview never makes a kept tab a
+    // preview. The file's tab is asked for by its own spelling.
+    MCTab *shown = _activeTab;
+    const BOOL shownWasPreview = shown.preview;
+    const BOOL tabWasPreview = tab.preview || tab.agentPreview;
+    const Model::Window::Open open =
+        _win->prepareOpen(Utf8String(tab.currentPath ?: path), from, [self previewSettings]);
+    if ((shownWasPreview && !shown.preview) || (tabWasPreview && !(tab.preview || tab.agentPreview))) {
+        [self reloadTabStrip];
+        [self saveSession];
+    }
     if (tab) {
-        // A kept open of the preview tab's file keeps it; an open in preview
-        // never makes a kept tab a preview.
-        const BOOL wasPreview = tab.preview || tab.agentPreview;
-        if (wasPreview && !EditorTabs::staysPreview(true, inPreview)) [self keepPreviewTab:tab];
         if (tab != _activeTab) [self activateTab:tab];   // the one on show: nothing to render
         else [self reselectCurrentFileInTree];          // a Cmd+click may have deselected it
         return;
@@ -393,58 +399,17 @@
     if (![self confirmOpeningLargeFile:path]) return;   // over 1 GB: asked first
     tab = [MCTab new];
     tab.currentPath = path;
-    MCTab *old = inPreview ? [self previewTab] : nil;
-    // An old preview with unsaved changes (from a backup) is never dropped.
-    if (old.dirty) {
-        [self keepPreviewTab:old];
-        old = nil;
-    }
-    if (!inPreview) {
-        [self insertTab:tab];
-        [self activateTab:tab];
-        return;
-    }
-    NSArray<MCTab *> *group = [self groupTabs];
-    const NSInteger active = _activeTab ? (NSInteger)[group indexOfObject:_activeTab] : -1;
-    const NSInteger oldAt = old ? (NSInteger)[group indexOfObject:old] : -1;
-    const EditorTabs::PreviewPlace place =
-        EditorTabs::placePreview((int)active, (int)oldAt, (int)group.count);
-    // `index` counts without the old tab, which is still in the list.
-    NSUInteger at = (NSUInteger)place.index;
-    if (place.replace >= 0 && place.index >= place.replace) at++;
-    [self groupInsertTab:tab atIndex:at preview:Model::Preview::User];
+    MCTab *old = [self groupAddTab:tab
+                           preview:open.inPreview ? Model::Preview::User : Model::Preview::None
+                          passOver:nil];
     [self activateTab:tab];
-    // Leaving it can have saved it (a Cmd+S waiting for its formatter),
-    // which keeps it.
-    if (old.preview && !old.dirty) [self dropPreviewTab:old];
-}
-
-// The preview tab a newer one replaced: no question (it has no unsaved
-// changes) and no place in Reopen Closed Tab, as VS Code leaves a replaced
-// preview editor out of its recently closed list.
-- (void)dropPreviewTab:(MCTab *)t {
-    if (t == _activeTab || ![[self groupTabs] containsObject:t]) return;
-    if (![self otherGroupHoldsTab:t]) {   // else the document stays, there
-        [self discardBackupOf:t];
-        [t.latex removeFromSuperview];
-        [self closePageOf:t];
-    }
-    [self groupRemoveTab:t];
-    [self.lsp tabsChanged];
-    [self reloadTabStrip];
-    [self saveSession];
+    [self letGoOfReplacedTab:old];
 }
 
 // A file a language server's answer names (a workspace edit's, or a code
 // navigation's target): selected in the tree when it is in the folder, and
 // opened. YES when it is now on show.
 - (BOOL)openFileForLanguageServer:(NSString *)p from:(EditorTabs::OpenFrom)from {
-    // VS Code's workbench.editor.enablePreviewFromCodeNavigation, off by
-    // default: a preview tab a navigation starts from is kept, so the
-    // target does not replace the file it was reached from.
-    if (from == EditorTabs::OpenFrom::CodeNavigation && _activeTab.preview &&
-        [self opensInPreview:from] && [self tabForPath:p] != _activeTab)
-        [self keepPreviewTab:_activeTab];
     if ([p hasPrefix:[self.rootPath stringByAppendingString:@"/"]])
         [self revealPath:p open:YES from:from];
     else
