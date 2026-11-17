@@ -1,5 +1,6 @@
 // AppSettings.mm — see AppSettings.h.
 #import "AppSettings.h"
+#import "Environment.h"
 #include "FolderSearch.h"
 #include <fcntl.h>
 #include <unistd.h>
@@ -48,7 +49,7 @@ BOOL MCWriteConfigFile(NSString *path, NSString *text, BOOL checkTabs, NSString 
 
 - (instancetype)init {
     if ((self = [super init])) {
-        NSString *env = NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"];
+        NSString *env = MCEnvironment()[@"MINICODE_SETTINGS"];
         _path = env.length ? env.stringByExpandingTildeInPath
                            : [NSHomeDirectory() stringByAppendingPathComponent:
                                  @".config/minicode/settings.conf"];

@@ -19,6 +19,7 @@
 // Adding a scene: write a function that calls the builder methods on MCDemo
 // (see the scenes at the bottom) and add it to kScenes.
 #import "Demo.h"
+#import "Environment.h"
 #import "AgentWindow.h"
 #import "AgentsPanel.h"
 #import "ChangeReviewPage.h"
@@ -35,7 +36,7 @@
 #include <sys/wait.h>
 #include <mach/mach_time.h>
 
-extern char **environ;
+#include "ProcessEnv.h"
 
 // ------------------------------------------------------------- the overlay
 
@@ -145,7 +146,8 @@ static pid_t SpawnScreencapture(int windowNumber, NSString *path) {
     const char *argv[] = {"/usr/sbin/screencapture", "-x", "-o", flag,
                           path.fileSystemRepresentation, NULL};
     pid_t pid;
-    if (posix_spawn(&pid, argv[0], NULL, NULL, (char *const *)argv, environ) != 0)
+    ProcessEnv::Block env(*ProcessEnv::current());   // never environ (src/ProcessEnv.h)
+    if (posix_spawn(&pid, argv[0], NULL, NULL, (char *const *)argv, env.envp()) != 0)
         return 0;
     return pid;
 }
@@ -847,7 +849,7 @@ static BOOL KeyFor(unichar c, unsigned short *code, BOOL *shift) {
 - (void)setUpWindow {
     NSWindow *w = self.window;
     NSSize size = NSMakeSize(960, 600);
-    NSString *env = NSProcessInfo.processInfo.environment[@"MINICODE_DEMO_SIZE"];
+    NSString *env = MCEnvironment()[@"MINICODE_DEMO_SIZE"];
     NSArray *wh = [env componentsSeparatedByString:@"x"];
     if (wh.count == 2 && [wh[0] doubleValue] > 0 && [wh[1] doubleValue] > 0)
         size = NSMakeSize([wh[0] doubleValue], [wh[1] doubleValue]);

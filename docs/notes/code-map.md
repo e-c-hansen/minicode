@@ -130,6 +130,9 @@ goes here first, with tests; the GUI only displays it.
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
   line's parsing), `SideBySide` (diff rows), `PageCheck` (agents checking
   pages: addresses, the origin limit, the console record).
+- `ProcessEnv` (the environment as an immutable snapshot and a child's
+  explicit envp, so threads that start programs never read `environ`;
+  docs/notes/build.md).
 - Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`,
   `LineHistory` (blame porcelain, the lines a session's edits wrote, each
   line's answer);
@@ -164,6 +167,8 @@ goes here first, with tests; the GUI only displays it.
   sheet), `LspPicker` (references and fixes list, rename box), `LspWatcher`
   (files changed on disk, for the servers), `LspInlayHints` (drawing inlay
   hints in the storage's gaps), `ProblemsPanel`, `InstallPanel`.
+- `Environment` (`MCEnvironment`, `MCEnv`, `MCSetEnv` over the core's
+  `ProcessEnv`: every child's environment, on any thread).
 - `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),

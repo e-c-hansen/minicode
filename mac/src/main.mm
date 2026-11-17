@@ -23,6 +23,7 @@
 #import "TerminalAttention.h"
 #import "ClaudeHooksOffer.h"
 #import "RecentFolders.h"
+#include "ProcessEnv.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting, MCControlAppHost>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -2077,6 +2078,9 @@ static void BuildMenu(void) {
 
 int main(int argc, const char *argv[]) {
     (void)argc; (void)argv;   // args are read via NSProcessInfo
+    // The environment's one read of environ before threads start programs
+    // (src/ProcessEnv.h): every later reader takes this snapshot.
+    ProcessEnv::refresh();
     @autoreleasepool {
         if (MCDemoListScenes()) return 0;   // MINICODE_DEMO=list
         // A path on the command line (the minicode launcher, make run) is read

@@ -83,6 +83,41 @@ found through that list.
   past the other. The GTK job runs no plain `make test` (the sanitizers
   job's g++ build runs the same groups).
 
+## The environment and starting programs (Mac, 2026-11-17)
+
+Threads that start programs never read `environ`. libc's setenv grows the
+array with realloc and rewrites values in place, and no lock covers a
+reader walking it: on Linux a git worker copying it for a child while a
+GUI suite's main thread set a variable corrupted the heap
+(`realloc <- g_environ_setenv <- g_subprocess_launcher_setenv <-
+runGitWithin`). The Mac had the same shape: `MCGitRun` on the panel's
+queue, the formatter, language server, inline agent and tectonic tasks,
+and mmdc's drawing queue copied `NSProcessInfo.environment` or walked
+`environ`, while 59 `setenv`/`unsetenv` calls in the GUI suites ran on
+the main thread. The app itself sets nothing after startup.
+
+- The core's `ProcessEnv` (src/ProcessEnv.h) holds an immutable snapshot
+  of the environment. `main()` takes it before any thread starts a
+  program (`ProcessEnv::refresh()`); `ProcessEnv::set` changes a variable
+  and takes a new one under the same lock, on the main thread only.
+- On the Mac, `MCEnvironment()` (mac/src/Environment.h) is the snapshot
+  as a dictionary (one object per snapshot), `MCEnv(name)` one value,
+  `MCSetEnv(name, value or nil)` the only way to change one. A child's
+  environment is the snapshot with changes: a dictionary copy for
+  NSTask (every NSTask sets `environment`, or NSTask copies environ on
+  the thread that launches it), a `ProcessEnv::Block` (an explicit envp)
+  for posix_spawn and execve.
+- The GUI checks change variables only through `MCSetEnv`.
+- `make test` checks it: `env:snapshot`, `env:spawn-stress` (four
+  threads spawn `/bin/sh` from the snapshot while the main thread sets
+  and unsets 120 variables six times; a torn value or a child missing its
+  variable fails, and a worker walking environ there is ASan's use after
+  free), and `env:raw-access` (no `setenv`, `unsetenv`, `putenv`,
+  `environ` or `NSProcessInfo.environment` in mac/src, and no raw
+  setenv in mac/tests/gui; comments are not scanned).
+- getenv on the main thread stays (ControlServer, the IDE link's folder,
+  the session host's switches): only the main thread writes.
+
 ## Traps
 
 None recorded under a "Trap" label; read the sections above.

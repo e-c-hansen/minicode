@@ -843,7 +843,7 @@ MC_GUI_SUITE(markdown_preview) {
 
     if (NSString *tectonic = NSProcessInfo.processInfo.environment[@"MC_GUI_REAL_TECTONIC"]) {
         MCGuiStep(@"with a real tectonic, a formula is typeset", ^{
-            setenv("MINICODE_TECTONIC", tectonic.fileSystemRepresentation, 1);
+            MCSetEnv("MINICODE_TECTONIC", tectonic.fileSystemRepresentation);
             NSString *path = Fixture(@"math.md");
             MCGuiWriteFile(path, @"Inline $x^2 + y^2$ here.\n");
             GCHECK([MCGuiController() showFile:path]);

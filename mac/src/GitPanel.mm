@@ -1,5 +1,6 @@
 // GitPanel.mm — Objective-C++. See GitPanel.h.
 #import "GitPanel.h"
+#import "Environment.h"
 #import "EditorFont.h"
 #import "AppSettings.h"
 #import "Appearance.h"
@@ -113,7 +114,7 @@ static MCGitResult *MCGitRun(NSString *dir, NSArray<NSString *> *args, NSTimeInt
                        "(xcode-select --install) or git from Homebrew.";
         return r;
     }
-    NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
+    NSMutableDictionary *env = [MCEnvironment() mutableCopy];
     env[@"PATH"] = [MCSearchDirs() componentsJoinedByString:@":"];
     env[@"GIT_TERMINAL_PROMPT"] = @"0";   // never wait for a password
     env[@"GIT_EDITOR"] = @"true";         // never wait for an editor
