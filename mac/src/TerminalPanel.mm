@@ -975,4 +975,69 @@ NSAlert *MCClosingRunningAlert(NSArray<NSString *> *commands, NSString *question
     [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
 }
 
+
+// ------------------------------------------------------- between runs
+
+- (std::vector<TabSessions::TerminalTab>)sessionTabs {
+    std::vector<TabSessions::TerminalTab> out;
+    for (MCTerminalTab *tab in _tabs) {
+        TabSessions::TerminalTab t;
+        for (NSArray<TerminalView *> *column in tab.columns) {
+            std::vector<TabSessions::TerminalPane> panes;
+            for (TerminalView *v in column) {
+                TabSessions::TerminalPane p;
+                NSString *dir = v.directory.length ? v.directory : _dir;
+                p.cwd = dir.UTF8String ?: "";
+                p.title = v.userTitle.UTF8String ?: "";
+                panes.push_back(p);
+            }
+            t.columns.push_back(panes);
+        }
+        t.layout = tab->layout;
+        NSUInteger c = 0, r = 0;
+        if ([tab find:tab.active column:&c row:&r]) {
+            t.activeColumn = (int)c;
+            t.activeRow = (int)r;
+        }
+        out.push_back(t);
+    }
+    return out;
+}
+
+- (void)restoreSessionTabs:(const std::vector<TabSessions::TerminalTab> &)tabs
+                  selected:(NSInteger)selected {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    auto folder = [fm](const std::string &cwd) -> NSString * {
+        NSString *d = [NSString stringWithUTF8String:cwd.c_str()];
+        BOOL dir = NO;
+        return d.length && [fm fileExistsAtPath:d isDirectory:&dir] && dir ? d : nil;
+    };
+    for (size_t i = 0; i < tabs.size(); i++) {
+        const TabSessions::TerminalTab t = TabSessions::sanitize(tabs[i]);
+        MCTerminalTab *tab = nil;
+        // The panel's own first terminal is the first tab's first pane.
+        if (i == 0 && _tabs.count == 1 && [_tabs[0] all].count == 1) {
+            tab = _tabs[0];
+        } else {
+            TerminalView *first = [self makeTerminalIn:folder(t.columns[0][0].cwd)];
+            tab = [[MCTerminalTab alloc] initWith:first];
+            [_tabs addObject:tab];
+        }
+        for (size_t c = 0; c < t.columns.size(); c++) {
+            if (c > 0) [tab.columns addObject:[NSMutableArray array]];
+            for (size_t r = (c == 0 ? 1 : 0); r < t.columns[c].size(); r++)
+                [tab.columns[c] addObject:[self makeTerminalIn:folder(t.columns[c][r].cwd)]];
+            for (size_t r = 0; r < t.columns[c].size(); r++)
+                if (!t.columns[c][r].title.empty())
+                    tab.columns[c][r].userTitle = @(t.columns[c][r].title.c_str());
+        }
+        tab->layout = t.layout;
+        tab.active = tab.columns[(NSUInteger)t.activeColumn][(NSUInteger)t.activeRow];
+    }
+    if (_tabs.count == 0) return;
+    [self selectTab:(NSUInteger)MAX(0, MIN(selected, (NSInteger)_tabs.count - 1))];
+    [self reloadStrip];
+}
+
 @end
+

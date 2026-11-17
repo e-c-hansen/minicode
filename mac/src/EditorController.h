@@ -2,6 +2,7 @@
 #import <Cocoa/Cocoa.h>
 #import "GitGutter.h"   // MCGitGutterHost, which the Git category adopts
 #import "TestGutter.h"  // MCTestGutterHost, which the Tests category adopts
+#import "EditorLineHistory.h"   // MCLineHistoryHost, which the LineHistory category adopts
 
 @class BrowserView, MCAgentNotes, MCComparison, MCPaletteContext, TerminalView;
 
@@ -38,6 +39,14 @@
 - (void)runTestAtCursor:(id)sender;   // Terminal > Run Test at Cursor
 @end
 
+// EditorController+LineHistory.mm: Show Line History (EditorLineHistory.h),
+// whose host it is: who last changed each line, a commit or a Claude Code
+// session, from the gutter's hover or beside every line.
+@interface EditorController (LineHistory) <MCLineHistoryHost>
+- (MCLineHistory *)ensureLineHistory;   // made with the window
+- (void)toggleLineHistory:(id)sender;   // View > Show Line History
+@end
+
 // EditorController+Git.mm: pushing and pulling, staging everything,
 // discarding and the branch picker, on the Source Control panel's object
 // whether it shows or not (MCGitPanel); the last commit and the stash; and
@@ -57,6 +66,9 @@
 - (void)revertChange:(id)sender;     // the change bar on the caret's line
 - (void)stageChange:(id)sender;
 - (void)gitReviewChanges:(id)sender;   // every uncommitted change in one tab
+// A commit on the commit page (the review page in commit mode), one tab
+// per window that each commit shown replaces.
+- (void)showCommitReview:(NSString *)hash title:(NSString *)title;
 - (void)gitFetch:(id)sender;
 - (void)gitPull:(id)sender;
 - (void)gitPush:(id)sender;
@@ -212,6 +224,21 @@
 - (BOOL)keepUnsavedTabsForRestart;
 // Writes this window's session (tabs, browser) now; quitting calls it.
 - (void)saveSession;
+// Every window as it is, for the next launch that is asked to open nothing
+// (VS Code's window.restoreWindows "all"): frames, folders, tabs with their
+// carets and scroll, both editor groups, the panels and their sizes, the
+// terminals' folders and splits, the tree's open folders and selected row
+// (TabSessions::Window). Written as minicode quits, as a window closes (the
+// last one is kept, since closing it quits), and a moment after a tab
+// switch, so a crash loses little.
++ (void)saveOpenWindows;
+// The windows to bring back, front first: @{@"root": folder, @"record":
+// what restoreWindowRecord: takes}, for folders still there. None for the
+// demos and the benchmark, which start the same way every time.
++ (NSArray<NSDictionary *> *)windowsToRestore;
+// Before showWindow: the window comes back as `record` says, its tabs from
+// it rather than from the folder's session.
+- (void)restoreWindowRecord:(NSString *)record;
 @end
 
 // EditorController+Rendering.mm

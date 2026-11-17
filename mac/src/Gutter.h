@@ -94,4 +94,13 @@ typedef NS_ENUM(NSInteger, MCLineNumbers) {
 // NSZeroRect when its line is not laid out. The tip at a point in the lane.
 - (NSRect)rectOfTest:(NSInteger)index;
 - (NSString *)testTipAtPoint:(NSPoint)point;
+
+// Show Line History (LineHistory.h): the pointer over a line's number, its
+// dot or its change bar (not the test lane or the fold lane) calls this
+// with the line as it moves from line to line, and with NSNotFound when it
+// leaves them.
+@property(nonatomic, copy) void (^onHoverLine)(NSUInteger line);
+// A line's row across the gutter (its first fragment to its last), in the
+// gutter's coordinates; NSZeroRect when its line is not laid out.
+- (NSRect)rowRectOfLine:(NSUInteger)line;
 @end

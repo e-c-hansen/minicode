@@ -1,6 +1,7 @@
 // EditorController+Persistence.mm — EditorController: the tabs between runs, backups and hot exit, auto-save, files changed, moved or deleted outside.
 #import "EditorController+Private.h"
 #import "EditorController+PersistenceIvars.h"
+#include "TabSessions.h"
 
 @implementation EditorController (Persistence)
 
@@ -14,17 +15,21 @@ static const NSUInteger kMaxTabSessions = 50;
 // The largest file shown at launch, the GTK port's limit for opening one.
 static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
 
-- (NSUserDefaults *)sessionDefaults {
+static NSUserDefaults *MCSessionDefaults(void) {
     // Tests point this at a scratch suite, away from the user's own.
     NSString *suite = NSProcessInfo.processInfo.environment[@"MINICODE_DEFAULTS_SUITE"];
     return suite.length ? [[NSUserDefaults alloc] initWithSuiteName:suite]
                         : [NSUserDefaults standardUserDefaults];
 }
 
-- (BOOL)sessionsEnabled {
+static BOOL MCSessionsEnabled(void) {
     NSDictionary *env = NSProcessInfo.processInfo.environment;
     return !env[@"MINICODE_DEMO"] && !env[@"MINICODE_BENCH"];
 }
+
+- (NSUserDefaults *)sessionDefaults { return MCSessionDefaults(); }
+
+- (BOOL)sessionsEnabled { return MCSessionsEnabled(); }
 
 - (NSString *)sessionKey { return _root.path.stringByResolvingSymlinksInPath; }
 
@@ -108,6 +113,12 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         }
     }
     [d setObject:all forKey:kTabSessionsKey];
+    // And every window, a moment later (one write for a burst of switches),
+    // so a crash or a force quit loses little of them.
+    [NSObject cancelPreviousPerformRequestsWithTarget:EditorController.class
+                                             selector:@selector(saveOpenWindows) object:nil];
+    [EditorController.class performSelector:@selector(saveOpenWindows) withObject:nil
+                                 afterDelay:3.0];
 }
 
 // The browser panel's part of the session: its page (BrowserView
@@ -142,6 +153,8 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
     [self relayoutRightArea];
 }
 
+static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g);
+
 // Open the tabs this folder had last time; only the one on show is read
 // now, the others when they are first shown.
 - (void)restoreSession {
@@ -149,7 +162,22 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
     NSDictionary *s = [[self sessionDefaults] dictionaryForKey:kTabSessionsKey][[self sessionKey]];
     EditorTabs::Session saved;
     NSSet *besides = nil;   // the files whose page was beside their source
-    if ([s isKindOfClass:NSDictionary.class]) {
+    NSDictionary *groups = nil;
+    std::map<std::string, TabSessions::Tab> places;   // where each was, for a window brought back
+    TabSessions::Window record;
+    if ([self restoringWindow:&record]) {
+        // A window brought back has its own tabs, not the folder's: two
+        // windows on one folder each get theirs.
+        const TabSessions::Session &ws = record.tabs;
+        saved = TabSessions::files(ws);
+        NSMutableSet *side = [NSMutableSet set];
+        for (const TabSessions::Tab &t : ws.tabs) {
+            places[t.path] = t;
+            if (t.side) [side addObject:@(t.path.c_str())];
+        }
+        besides = side;
+        if (ws.split) groups = MCGroupsState(ws.groups);
+    } else if ([s isKindOfClass:NSDictionary.class]) {
         for (id f in s[@"files"])
             if ([f isKindOfClass:NSString.class]) saved.files.push_back(Utf8String(f));
         saved.active = [s[@"active"] intValue];
@@ -158,6 +186,7 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         if ([s[@"preview"] isKindOfClass:NSString.class])
             for (size_t i = 0; i < saved.files.size(); i++)
                 if (saved.files[i] == Utf8String(s[@"preview"])) saved.preview = (int)i;
+        groups = s[@"groups"];
     }
     // Unsaved buffers kept from a crash, a force quit or a restart: a file of
     // the session with a backup comes back even if it is gone from disk, and
@@ -194,6 +223,20 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         // The preview tab comes back as one, unless unsaved changes came
         // back into it from a backup (an edit keeps a tab).
         t.preview = !previewFile.empty() && f == previewFile && !t.dirty;
+        // Its page or source, selection and scroll, put back when it is
+        // first read (applySessionPlaceOf:).
+        auto p = places.find(f);
+        if (p != places.end() && p->second.haveView) {
+            const TabSessions::Tab &at = p->second;
+            t.placeFromSession = YES;
+            t.pageFromSession = at.page;
+            t.haveView = YES;
+            const NSUInteger a = (NSUInteger)MIN(at.selStart, at.selEnd);
+            const NSUInteger b = (NSUInteger)MAX(at.selStart, at.selEnd);
+            t.selection = NSMakeRange(a, b - a);
+            t.topCharacter = (NSUInteger)at.top;
+            t.topOffset = (CGFloat)at.into;
+        }
         [_tabs addObject:t];
     }
     if (_tabs.count == 0) return;
@@ -217,7 +260,297 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
         return;
     }
     [self activateTab:_tabs[(NSUInteger)active]];
-    if ([s isKindOfClass:NSDictionary.class]) [self restoreEditorGroups:s[@"groups"]];
+    if (groups) [self restoreEditorGroups:groups];
+}
+
+// The split editor's groups in the form restoreEditorGroups: and
+// editorGroupsSessionState use.
+static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g) {
+    NSMutableArray *lists = [NSMutableArray array];
+    for (int k = 0; k < 2; k++) {
+        NSMutableArray *files = [NSMutableArray array];
+        for (const std::string &f : g.groups[k]) [files addObject:@(f.c_str())];
+        [lists addObject:files];
+    }
+    return @{@"groups": lists,
+             @"active": @[@(g.active[0].c_str()), @(g.active[1].c_str())],
+             @"focused": @(g.focused), @"fraction": @(g.fraction)};
+}
+
+// ------------------------------------------------- every window, next launch
+// VS Code's window.restoreWindows "all": the windows open when minicode
+// quit (or the last one closed, which quits it) come back on the next
+// launch that is asked to open nothing, from the Dock, Finder, a restart
+// or a `brew upgrade`'s reopening, each as it was. The record is the core's
+// (TabSessions::Window), kept in the user defaults until the session moves
+// into the core (SESSION-DESIGN.md, stage 3); the folders' own sessions
+// above stay for opening a folder.
+static NSString *const kOpenWindowsKey = @"MCOpenWindows";
+
+- (void)restoreWindowRecord:(NSString *)record {
+    _windowRecord = [record copy];
+}
+
+// The window being brought back, while showWindow puts it back.
+- (BOOL)restoringWindow:(TabSessions::Window *)w {
+    if (!_windowRecord) return NO;
+    std::vector<TabSessions::Window> list = TabSessions::decodeWindows(Utf8String(_windowRecord));
+    if (list.empty()) return NO;
+    *w = list[0];
+    return YES;
+}
+
++ (NSArray<NSDictionary *> *)windowsToRestore {
+    if (!MCSessionsEnabled()) return @[];
+    NSString *text = [MCSessionDefaults() stringForKey:kOpenWindowsKey];
+    if (!text.length) return @[];
+    NSMutableArray *out = [NSMutableArray array];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (const TabSessions::Window &w : TabSessions::decodeWindows(Utf8String(text))) {
+        NSString *root = @(w.root.c_str());
+        BOOL dir = NO;
+        if (!root.length || ![fm fileExistsAtPath:root isDirectory:&dir] || !dir) continue;
+        [out addObject:@{@"root": root, @"record": @(TabSessions::encodeWindows({w}).c_str())}];
+    }
+    return out;
+}
+
+// The app's open windows, the one in front first, then as they are stacked
+// (the order they come back in).
++ (NSArray<EditorController *> *)openWindowsFrontFirst {
+    id app = NSApp.delegate;
+    NSArray *all = [app respondsToSelector:@selector(controllers)] ? [app valueForKey:@"controllers"]
+                                                                  : nil;
+    NSMutableArray<EditorController *> *open = [NSMutableArray array];
+    for (EditorController *c in all.reverseObjectEnumerator)
+        if ([c isKindOfClass:EditorController.class] && !c->_closing && c.window && c.rootPath)
+            [open addObject:c];
+    NSArray<NSWindow *> *stack = NSApp.orderedWindows;
+    NSWindow *key = NSApp.keyWindow ?: NSApp.mainWindow;
+    [open sortWithOptions:NSSortStable usingComparator:^NSComparisonResult(EditorController *a,
+                                                                           EditorController *b) {
+        auto rank = [&](EditorController *c) -> NSUInteger {
+            if (c.window == key) return 0;
+            const NSUInteger i = [stack indexOfObject:c.window];
+            return i == NSNotFound ? NSUIntegerMax : i + 1;
+        };
+        const NSUInteger ra = rank(a), rb = rank(b);
+        return ra < rb ? NSOrderedAscending : ra > rb ? NSOrderedDescending : NSOrderedSame;
+    }];
+    return open;
+}
+
+static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
+    if (list.empty()) return;   // the last window's record stays
+    NSUserDefaults *d = MCSessionDefaults();
+    [d setObject:@(TabSessions::encodeWindows(list).c_str()) forKey:kOpenWindowsKey];
+}
+
++ (void)saveOpenWindows {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(saveOpenWindows)
+                                               object:nil];
+    if (!MCSessionsEnabled()) return;
+    std::vector<TabSessions::Window> list;
+    for (EditorController *c in [self openWindowsFrontFirst]) list.push_back([c windowRecordNow]);
+    MCWriteOpenWindows(list);
+}
+
+- (void)noteWindowClosing {
+    if (!MCSessionsEnabled() || _closing) return;
+    [NSObject cancelPreviousPerformRequestsWithTarget:EditorController.class
+                                             selector:@selector(saveOpenWindows) object:nil];
+    NSMutableArray<EditorController *> *open = [[EditorController openWindowsFrontFirst] mutableCopy];
+    if (![open containsObject:self]) [open insertObject:self atIndex:0];
+    std::vector<TabSessions::Window> list;
+    size_t mine = 0;
+    for (NSUInteger i = 0; i < open.count; i++) {
+        if (open[i] == self) mine = i;
+        list.push_back([open[i] windowRecordNow]);
+    }
+    MCWriteOpenWindows(TabSessions::afterClosing(list, mine));
+}
+
+// This window as the next launch should bring it back.
+- (TabSessions::Window)windowRecordNow {
+    TabSessions::Window w;
+    w.root = Utf8String(_root.path);
+    NSWindow *win = self.window;
+    w.fullScreen = (win.styleMask & NSWindowStyleMaskFullScreen) != 0;
+    const NSRect f = w.fullScreen ? _frameBeforeFullScreen : win.frame;
+    if (f.size.width > 0 && f.size.height > 0) {
+        w.haveFrame = true;
+        w.frame = TabSessions::Frame{f.origin.x, f.origin.y, f.size.width, f.size.height};
+    }
+    // Its tabs, as saveSession lists them, each with where it was.
+    TabSessions::Session &s = w.tabs;
+    MCTab *shown = _activeTab.currentPath && !_activeTab.agentPreview ? _activeTab : nil;
+    for (MCTab *t in _tabs) {
+        if (!t.currentPath || t.agentPreview) continue;
+        if (!shown) shown = t;
+        else if (shown != _activeTab && t.lastActive > shown.lastActive) shown = t;
+    }
+    for (MCTab *t in _tabs) {
+        if (!t.currentPath || t.agentPreview) continue;
+        TabSessions::Tab tab;
+        tab.path = Utf8String(t.currentPath);
+        tab.side = t.sidePreview;
+        if (t == shown) s.active = (int)s.tabs.size();
+        if (t.preview) s.preview = (int)s.tabs.size();
+        NSRange sel = t.selection;
+        NSUInteger top = t.topCharacter;
+        CGFloat offset = t.topOffset;
+        bool place = false;
+        if (t == _activeTab && t.loaded) {
+            // On show: where its view is now, when it shows its text or page.
+            place = [self tabTakesBackup:t] && [self liveTextPlace:&sel top:&top offset:&offset];
+            tab.page = t.previewMode;
+        } else if (t.loaded) {
+            place = t.haveView && [self tabTakesBackup:t];
+            tab.page = t.previewMode;
+        } else if (t.placeFromSession) {
+            place = true;   // not shown since the last run: that run's place
+            tab.page = t.pageFromSession;
+        }
+        if (place) {
+            tab.haveView = true;
+            tab.selStart = (long)sel.location;
+            tab.selEnd = (long)NSMaxRange(sel);
+            tab.top = (long)top;
+            tab.into = lround(offset);
+        }
+        s.tabs.push_back(tab);
+    }
+    NSDictionary *groups = [self editorGroupsSessionState];
+    NSArray *lists = groups[@"groups"], *active = groups[@"active"];
+    if ([lists isKindOfClass:NSArray.class] && lists.count == 2 && active.count == 2) {
+        for (int k = 0; k < 2; k++) {
+            for (NSString *f in lists[k]) s.groups.groups[k].push_back(Utf8String(f));
+            s.groups.active[k] = Utf8String(active[k]);
+        }
+        s.groups.focused = [groups[@"focused"] intValue] == 1 ? 1 : 0;
+        s.groups.fraction = [groups[@"fraction"] doubleValue];
+        s.split = !s.groups.groups[0].empty() && !s.groups.groups[1].empty();
+    }
+    // The sidebar, the editor, Problems and the terminal dock.
+    w.sidebar = self.processesVisible ? "processes" : self.agentsVisible ? "agents"
+              : self.gitPanelVisible ? "git" : "tree";
+    w.sidebarWidth = [self sidebarWidthToShow];
+    w.sidebarHidden = self.sidebarCollapsed;
+    w.editorHidden = self.editorHidden;
+    w.problems = self.problemsVisible && self.problemsPanel;
+    if (MCTerminalPanel *panel = self.terminalPanel) {
+        w.terminals = [panel sessionTabs];
+        w.terminalTab = (int)panel.selectedTab;
+        w.terminal = self.terminalVisible && !w.terminals.empty();
+        w.terminalHeight = self.terminalHeight;
+    }
+    // The tree: its open folders, the selected row, the scroll.
+    NSOutlineView *o = self.outline;
+    for (NSInteger r = 0; r < o.numberOfRows; r++) {
+        FileItem *it = [o itemAtRow:r];
+        if ([o isItemExpanded:it] && it.path) w.expanded.push_back(Utf8String(it.path));
+    }
+    if (o.selectedRow >= 0) w.selected = Utf8String([(FileItem *)[o itemAtRow:o.selectedRow] path]);
+    w.treeScroll = self.sidebarScroll.contentView.bounds.origin.y;
+    return w;
+}
+
+- (void)placeRestoredWindow {
+    TabSessions::Window w;
+    if (![self restoringWindow:&w] || !w.haveFrame) return;
+    // On the screens there are now: one unplugged since gives its windows
+    // to the main screen.
+    std::vector<TabSessions::Frame> screens;
+    for (NSScreen *screen in NSScreen.screens) {
+        const NSRect v = screen.visibleFrame;
+        screens.push_back(TabSessions::Frame{v.origin.x, v.origin.y, v.size.width, v.size.height});
+    }
+    const NSSize min = self.window.minSize;
+    const TabSessions::Frame f = TabSessions::fitFrame(w.frame, screens, min.width, min.height);
+    [self.window setFrame:NSMakeRect(f.x, f.y, f.w, f.h) display:NO];
+}
+
+- (void)restoreWindowLayout {
+    TabSessions::Window w;
+    if (![self restoringWindow:&w]) return;
+    if (w.sidebar == "git" && !self.gitPanelVisible) [self toggleSourceControl:nil];
+    else if (w.sidebar == "agents" && !self.agentsVisible) [self toggleAgents:nil];
+    else if (w.sidebar == "processes" && !self.processesVisible) [self toggleProcesses:nil];
+    [self setSidebarWidth:w.sidebarWidth hidden:w.sidebarHidden];
+    // Fresh shells in the folders the terminals were in, split as they were.
+    if (!w.terminals.empty() && !self.terminalPanel) {
+        const TabSessions::TerminalTab first = TabSessions::sanitize(w.terminals[0]);
+        NSString *dir = @(first.columns[0][0].cwd.c_str());
+        BOOL isDir = NO;
+        if (![[NSFileManager defaultManager] fileExistsAtPath:dir isDirectory:&isDir] || !isDir)
+            dir = nil;
+        [self makeTerminalPanelFirstIn:dir];
+        [self.terminalPanel restoreSessionTabs:w.terminals selected:w.terminalTab];
+        if (w.terminalHeight >= 80) self.terminalHeight = w.terminalHeight;
+        if (w.terminal) {
+            self.terminalVisible = YES;
+            [self showRightArea];
+        }
+    }
+    if (w.problems && !self.problemsVisible) [self toggleProblems:nil];
+    [self relayoutRightArea];
+}
+
+- (void)finishRestoringWindow {
+    TabSessions::Window w;
+    if (![self restoringWindow:&w]) return;
+    _windowRecord = nil;
+    // The tree's open folders and selected row, over the one showing the
+    // file on show, and its scroll.
+    NSMutableSet<NSString *> *expanded = [NSMutableSet set];
+    for (const std::string &e : w.expanded) [expanded addObject:@(e.c_str())];
+    [self reExpand:_root usingSet:expanded];
+    if (_worktreesItem && [expanded containsObject:_worktreesItem.path]) {
+        [self.outline expandItem:_worktreesItem];
+        [self reExpand:_worktreesItem usingSet:expanded];
+    }
+    NSString *selected = @(w.selected.c_str());
+    for (NSInteger r = 0; selected.length && r < self.outline.numberOfRows; r++) {
+        if (![[(FileItem *)[self.outline itemAtRow:r] path] isEqualToString:selected]) continue;
+        [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)r]
+                  byExtendingSelection:NO];
+        break;
+    }
+    NSClipView *clip = self.sidebarScroll.contentView;
+    if (clip && w.treeScroll > 0) {
+        NSRect want = clip.bounds;
+        want.origin.y = w.treeScroll;
+        [clip scrollToPoint:[clip constrainBoundsRect:want].origin];
+        [self.sidebarScroll reflectScrolledClipView:clip];
+    }
+    // The keyboard in the file on show, as VS Code brings a window back.
+    if (w.editorHidden && !self.editorHidden) [self toggleEditor:nil];
+    else if (_activeTab) [self focusActiveDocument];
+    if (w.fullScreen && !(self.window.styleMask & NSWindowStyleMaskFullScreen)) {
+        _frameBeforeFullScreen = self.window.frame;
+        [self.window toggleFullScreen:nil];
+    }
+}
+
+- (void)windowWillEnterFullScreen:(NSNotification *)note {
+    (void)note;
+    _frameBeforeFullScreen = self.window.frame;
+}
+
+// A tab brought back with its window, now read: the page or the source it
+// showed, then its selection and scroll (as Reopen Closed Tab does).
+- (void)applySessionPlaceOf:(MCTab *)t {
+    if (!t.placeFromSession || t != _activeTab) return;
+    t.placeFromSession = NO;
+    const BOOL page = t.pageFromSession;
+    if (self.canTogglePreview && self.previewMode != page) {
+        if (self.textView.editable) self.sourceText = self.textView.string;
+        self.previewMode = page;
+        [self refreshDisplay];
+        [self.lsp documentOpened:page ? nil : [self languageServerPath:t.currentPath]];
+        [self updateTitle];
+    }
+    if (t.haveView) [self restoreTextPlaceOf:t];
 }
 
 // ------------------------------------------------- backups and hot exit

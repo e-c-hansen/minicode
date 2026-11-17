@@ -4,10 +4,13 @@
 // drags (EditorTabs::leftGroupWidth), and one document per file however
 // many groups show it.
 //
-// The view and everything on it (the gutter, carets, folds, the find bar,
-// the viewers) is always in the focused group: tabs_ and active_ are that
-// group's, so the strip, the tab keys and closing act on it unchanged. The
-// other group's tabs are other_ and otherActive_; it shows its tab on show
+// Which tabs each group has, which is focused and each one's tab on show
+// are the core's Model::Window (EditorTabs.h): Window::splitEditor's,
+// putInOther's, focus's and close's rules are these. The view and
+// everything on it (the gutter, carets, folds, the find bar, the viewers)
+// is always in the focused group, whose tab on show is active_, so the
+// strip, the tab keys and closing act on it unchanged. The other group's
+// tab on show is otherActive_; it shows it
 // in a plain read-only GtkTextView on the same GtkTextBuffer (D2 makes that
 // a second view, where the Mac needed MCEditorMirror's copy of the layout),
 // so what is typed in one group shows in the other as it is typed, with one
@@ -98,24 +101,33 @@ void Editor::buildGroups() {
     mirrorEmpty_ = gtk_text_buffer_new(nullptr);
 
     otherStrip_ = new TabStrip();
-    otherStrip_->onSelect = [this](int i) {
-        if (!split_ || i < 0 || i >= (int)other_.size()) return;
-        Document* d = other_[(size_t)i];
+    // The other group's tab `i`, null for none.
+    auto otherTab = [this](int i) -> Document* {
+        const std::vector<Model::DocId>& t = win_->tabs(win_->other());
+        return i >= 0 && i < (int)t.size() ? documentById(t[(size_t)i]) : nullptr;
+    };
+    otherStrip_->onSelect = [this, otherTab](int i) {
+        Document* d = otherTab(i);
+        if (!d) return;
         if (d != otherActive_) {
+            win_->putInOther(d->id());   // its tab on show there
             otherActive_ = d;
             showInMirror(d);
         }
-        focusGroup(1 - focused_);
+        focusGroup(win_->other());
     };
-    otherStrip_->onClose = [this](int i) {
-        if (!split_ || i < 0 || i >= (int)other_.size()) return;
-        Document* d = other_[(size_t)i];
+    otherStrip_->onClose = [this, otherTab](int i) {
+        Document* d = otherTab(i);
+        if (!d) return;
         // Still open in the focused group: nothing is lost, nothing asked.
         if (inBothGroups(d) || !onCloseRequest) dropOther(d, true);
         else onCloseRequest(d);
     };
-    otherStrip_->onDoubleClick = [this](int i) {
-        if (i >= 0 && i < (int)other_.size()) keepPreviewTab(other_[(size_t)i]);
+    otherStrip_->onDoubleClick = [this, otherTab](int i) {
+        if (Document* d = otherTab(i)) keepPreviewTab(d);
+    };
+    otherStrip_->onMove = [this](int from, int to) {
+        if (win_->split() && win_->move(from, to, win_->other())) refreshStrip();
     };
 
     mirrorView_ = gtk_text_view_new_with_buffer(mirrorEmpty_);
@@ -151,7 +163,7 @@ void Editor::buildGroups() {
                                                        gpointer p) {
         Editor* self = static_cast<Editor*>(p);
         gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
-        if (!self->split_) return;
+        if (!self->win_->split()) return;
         int at = -1;
         GtkTextView* v = GTK_TEXT_VIEW(self->mirrorView_);
         graphene_point_t in = GRAPHENE_POINT_INIT((float)x, (float)y), out;
@@ -175,8 +187,8 @@ void Editor::buildGroups() {
             Job* j = static_cast<Job*>(q);
             if (j->alive.expired()) return G_SOURCE_REMOVE;
             Editor* e = j->editor;
-            if (!e->split_ || e->otherActive_ != j->doc) return G_SOURCE_REMOVE;
-            e->focusGroup(1 - e->focused_);
+            if (!e->win_->split() || e->otherActive_ != j->doc) return G_SOURCE_REMOVE;
+            e->focusGroup(e->win_->other());
             if (j->at >= 0 && e->isSource()) {
                 GtkTextIter it;
                 gtk_text_buffer_get_iter_at_offset(e->buffer_, &it, j->at);
@@ -204,8 +216,8 @@ void Editor::buildGroups() {
     g_signal_connect(drag, "drag-begin", G_CALLBACK(+[](GtkGestureDrag* g, double x, double, gpointer p) {
         Editor* self = static_cast<Editor*>(p);
         const double total = gtk_widget_get_width(self->groups_) - kBar;
-        const double left = EditorTabs::leftGroupWidth(total, self->groupFraction_, kMinGroupWidth);
-        if (!self->split_ || x < left - kGrab || x >= left + kBar + kGrab) {
+        const double left = EditorTabs::leftGroupWidth(total, self->win_->fraction(), kMinGroupWidth);
+        if (!self->win_->split() || x < left - kGrab || x >= left + kBar + kGrab) {
             gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_DENIED);
             self->dragLeft_ = -1;
             return;
@@ -255,7 +267,7 @@ void Editor::groupsMeasure(GtkWidget* w, GtkOrientation o, int, int* min, int* n
     *minBase = *natBase = -1;
     Editor* self = static_cast<Editor*>(g_object_get_data(G_OBJECT(w), kEditorKey));
     if (!self) return;
-    const bool beside = self->split_ && o == GTK_ORIENTATION_HORIZONTAL;
+    const bool beside = self->win_->split() && o == GTK_ORIENTATION_HORIZONTAL;
     for (GtkWidget* c : {self->box_, self->otherBox_}) {
         if (!gtk_widget_get_visible(c)) continue;
         int m = 0, n = 0;
@@ -272,26 +284,26 @@ void Editor::groupsMeasure(GtkWidget* w, GtkOrientation o, int, int* min, int* n
 void Editor::groupsAllocate(GtkWidget* w, int width, int height, int) {
     Editor* self = static_cast<Editor*>(g_object_get_data(G_OBJECT(w), kEditorKey));
     if (!self) return;
-    if (!self->split_) {
+    if (!self->win_->split()) {
         place(self->box_, 0, width, height);
         return;
     }
     const int left = (int)std::lround(
-        EditorTabs::leftGroupWidth(width - kBar, self->groupFraction_, kMinGroupWidth));
-    GtkWidget* l = self->focused_ == 0 ? self->box_ : self->otherBox_;
-    GtkWidget* r = self->focused_ == 0 ? self->otherBox_ : self->box_;
+        EditorTabs::leftGroupWidth(width - kBar, self->win_->fraction(), kMinGroupWidth));
+    GtkWidget* l = self->win_->focused() == 0 ? self->box_ : self->otherBox_;
+    GtkWidget* r = self->win_->focused() == 0 ? self->otherBox_ : self->box_;
     place(l, 0, left, height);
     place(r, left + kBar, width - left - kBar, height);
     place(self->groupBar_, left - kGrab, kBar + 2 * kGrab, height);
 }
 
 GtkWidget* Editor::groupWidget(int group) const {
-    if (!split_) return group == 0 ? box_ : nullptr;
-    return group == focused_ ? box_ : otherBox_;
+    if (!win_->split()) return group == 0 ? box_ : nullptr;
+    return group == win_->focused() ? box_ : otherBox_;
 }
 
 void Editor::setGroupFraction(double f) {
-    groupFraction_ = std::clamp(f, 0.0, 1.0);
+    win_->setFraction(f);
     gtk_widget_queue_allocate(groups_);
 }
 
@@ -299,29 +311,28 @@ void Editor::setGroupFraction(double f) {
 // either group (refreshStrip calls it).
 void Editor::refreshMirror() {
     if (!groups_) return;   // still being built
-    gtk_widget_set_visible(otherBox_, split_);
-    gtk_widget_set_visible(groupBar_, split_);
+    const bool split = win_->split();
+    gtk_widget_set_visible(otherBox_, split);
+    gtk_widget_set_visible(groupBar_, split);
     gtk_widget_queue_allocate(groups_);
-    Document* d = split_ ? otherActive_ : nullptr;
+    Document* d = split ? otherActive_ : nullptr;
     if (!d) {
         CodeView::setViewBuffer(GTK_TEXT_VIEW(mirrorView_), mirrorEmpty_);
         otherStrip_->setItems({}, -1);
         return;
     }
-    std::vector<std::string> paths;
-    for (Document* t : other_)
-        paths.push_back(t->kind() == Document::Kind::Diff ? std::string() : t->path());
-    const std::vector<std::string> names = EditorTabs::labels(paths);
+    const std::vector<Document*> other = documentsOf(win_->tabs(win_->other()));
+    const std::vector<std::string> names = win_->labels(win_->other());
     std::vector<TabStrip::Item> items;
     int on = -1;
-    for (size_t i = 0; i < other_.size(); i++) {
-        const Document* t = other_[i];
+    for (size_t i = 0; i < other.size() && i < names.size(); i++) {
+        const Document* t = other[i];
         TabStrip::Item it;
         it.title = t->kind() == Document::Kind::Diff ? t->diffTitle() : names[i];
         if (it.title.empty()) it.title = baseName(t->path());
         it.tooltip = t->path().empty() ? it.title : t->path();
         it.dirty = t->dirty();
-        it.preview = t->isPreviewTab() || t->isAgentPreview();
+        it.preview = win_->isPreview(t->id());
         items.push_back(it);
         if (t == d) on = (int)i;
     }
@@ -363,30 +374,38 @@ void Editor::refreshMirror() {
 
 // ---------------------------------------------------------------- the groups' tabs
 
-std::vector<Document*> Editor::documents() const {
-    std::vector<Document*> out = tabs_;
-    for (Document* d : other_)
-        if (std::find(tabs_.begin(), tabs_.end(), d) == tabs_.end()) out.push_back(d);
-    return out;
-}
+std::vector<Document*> Editor::documents() const { return documentsOf(win_->documents()); }
 
 std::vector<Document*> Editor::groupDocuments(int group) const {
-    if (!split_) return group == 0 ? tabs_ : std::vector<Document*>();
-    return group == focused_ ? tabs_ : other_;
+    return documentsOf(win_->tabs(group));
 }
 
 Document* Editor::groupActive(int group) const {
-    if (!split_) return group == 0 ? active_ : nullptr;
-    return group == focused_ ? active_ : otherActive_;
+    if (!win_->split()) return group == 0 ? active_ : nullptr;
+    return group == win_->focused() ? active_ : otherActive_;
 }
 
 bool Editor::inOther(const Document* d) const {
-    return d && std::find(other_.begin(), other_.end(), d) != other_.end();
+    return d && win_->split() && win_->inGroup(d->id(), win_->other());
 }
 
-bool Editor::isOpen(const Document* d) const { return indexOf(d) >= 0 || inOther(d); }
+bool Editor::isOpen(const Document* d) const { return d && win_->isOpen(d->id()); }
 
-bool Editor::inBothGroups(const Document* d) const { return indexOf(d) >= 0 && inOther(d); }
+bool Editor::inBothGroups(const Document* d) const { return d && win_->inBothGroups(d->id()); }
+
+// The other group's tab on show, as the window has it now, into its view
+// (or none, the view letting go, when there is no other group).
+void Editor::syncMirror() {
+    Document* want = win_->split() ? documentById(win_->active(win_->other())) : nullptr;
+    if (want == otherActive_) return;
+    otherActive_ = want;
+    if (want) {
+        showInMirror(want);
+    } else {
+        CodeView::setViewBuffer(GTK_TEXT_VIEW(mirrorView_), mirrorEmpty_);
+        dropMirrorMarks();
+    }
+}
 
 // ---------------------------------------------------------------- places
 
@@ -511,14 +530,10 @@ void Editor::swapGroups() {
     GtkTextBuffer* before = buffer_;
     { if (notes_) notes_->activeWillChange(); if (onActiveWillChange) onActiveWillChange(); }
     stash();
-    std::swap(tabs_, other_);
+    win_->focus(win_->other());   // its tab on show stamped as used
     active_ = b;
     otherActive_ = a;
-    focused_ = 1 - focused_;
-    if (b) {
-        givePlace(b, ms, me, mt);
-        b->lastUsed = ++stamp_;
-    }
+    if (b) givePlace(b, ms, me, mt);
     setMirrorPlace(a, as, ae, at);
     showActive();   // refreshStrip, refreshMirror
     // The same file in both groups: the view kept its buffer, so showSource
@@ -529,13 +544,13 @@ void Editor::swapGroups() {
 }
 
 void Editor::focusGroup(int group) {
-    if (!split_) {
+    if (!win_->split()) {
         if (group == 0) focusActiveDocument();
         else if (active_) splitEditor();   // VS Code's: the second group made
         else gtk_widget_error_bell(view_);
         return;
     }
-    if (group != focused_) swapGroups();
+    if (group != win_->focused()) swapGroups();
     focusActiveDocument();
 }
 
@@ -547,16 +562,9 @@ void Editor::splitEditor() {
     }
     int s, e, t;
     viewPlace(a, &s, &e, &t);
-    if (!split_) {
-        split_ = true;
-        focused_ = 0;
-        other_ = {a};
-    } else if (!inOther(a)) {
-        // Two groups at most: the tab goes to the other one.
-        const auto on = std::find(other_.begin(), other_.end(), otherActive_);
-        other_.insert(other_.begin() + EditorTabs::insertionIndex((int)(on - other_.begin()),
-                                                                  (int)other_.size()), a);
-    }
+    // A group on the right when not split; two groups at most, so else the
+    // tab goes to the other one (Model::Window::putInOther).
+    win_->putInOther(a->id());
     otherActive_ = a;
     setMirrorPlace(a, s, e, t);
     swapGroups();   // the keyboard goes to the new group, at the same place
@@ -565,25 +573,15 @@ void Editor::splitEditor() {
 
 void Editor::moveToGroup(int direction) {
     Document* a = active_;
-    const int target = EditorTabs::moveTarget(focusedGroup(), split_, direction);
-    // Alone in the only group, it would leave an empty group behind.
-    if (!a || target < 0 || target == focusedGroup() || (!split_ && tabs_.size() < 2)) {
+    // No group that way (EditorTabs::moveTarget), or alone in the only
+    // group, which it would leave empty.
+    if (!a || !win_->canMove(direction)) {
         gtk_widget_error_bell(view_);
         return;
     }
     int s, e, t;
     viewPlace(a, &s, &e, &t);
-    if (!split_) {
-        split_ = true;
-        focused_ = 0;
-        other_.clear();
-        otherActive_ = nullptr;
-    }
-    if (!inOther(a)) {
-        const auto on = std::find(other_.begin(), other_.end(), otherActive_);
-        const int at = otherActive_ ? (int)(on - other_.begin()) : -1;
-        other_.insert(other_.begin() + EditorTabs::insertionIndex(at, (int)other_.size()), a);
-    }
+    win_->putInOther(a->id());
     otherActive_ = a;
     setMirrorPlace(a, s, e, t);
     swapGroups();         // the keyboard goes with the tab
@@ -594,28 +592,15 @@ void Editor::moveToGroup(int direction) {
 // Out of the other group (its close button, a move, the Trash): the group's
 // most recently used tab comes on show, and with none left the group goes.
 void Editor::dropOther(Document* d, bool remember) {
-    const auto it = std::find(other_.begin(), other_.end(), d);
-    if (it == other_.end()) return;
-    const int index = (int)(it - other_.begin());
-    if (remember && d->kind() != Document::Kind::Diff && !d->path().empty() && indexOf(d) < 0) {
-        EditorTabs::ClosedTab c = closedTabOf(d);
-        c.index = index;
-        closed_.remember(c);
-    }
-    std::vector<uint64_t> stamps;
-    for (Document* t : other_) stamps.push_back(t->lastUsed);
-    const auto on = std::find(other_.begin(), other_.end(), otherActive_);
-    const int next = EditorTabs::activeAfterClose(stamps, (int)(on - other_.begin()), index);
-    other_.erase(other_.begin() + index);
-    if (other_.empty()) {
-        split_ = false;
-        focused_ = 0;
-        otherActive_ = nullptr;
-        dropMirrorMarks();
-    } else if (d == otherActive_) {
-        otherActive_ = other_[(size_t)std::clamp(next, 0, (int)other_.size() - 1)];
-        showInMirror(otherActive_);
-    }
+    if (!inOther(d)) return;
+    // The window remembers a file's tab the focused group does not still
+    // have, and puts the group's tab used most recently on show; the group
+    // goes with its last tab.
+    EditorTabs::ClosedTab place;
+    const bool keepPlace = remember && !fileOf(d).empty();
+    if (keepPlace) place = closedTabOf(d);
+    win_->close(d->id(), win_->other(), keepPlace ? &place : nullptr);
+    syncMirror();
     if (d == diffDoc_ && !isOpen(d)) diffDoc_ = nullptr;
     if (!isOpen(d)) {
         CodeView::setViewBuffer(GTK_TEXT_VIEW(mirrorView_), mirrorEmpty_);   // lets go of it
@@ -627,21 +612,16 @@ void Editor::dropOther(Document* d, bool remember) {
 // The focused group's last tab went (dropTab): the other group is the only
 // one, its tab on show in the view at the place it had.
 void Editor::closeFocusedGroup() {
-    Document* b = otherActive_;
-    int s, e, t;
-    mirrorPlace(&s, &e, &t);
+    // The window has closed it already (Model::Window::close): the other
+    // group is the only one, its tab on show the window's.
+    Document* b = documentById(win_->active());
+    int s = -1, e = -1, t = -1;
+    if (b == otherActive_) mirrorPlace(&s, &e, &t);
     GtkTextBuffer* before = buffer_;   // the closed group's tab's (stash kept it on show)
-    tabs_ = other_;
-    other_.clear();
     otherActive_ = nullptr;
-    split_ = false;
-    focused_ = 0;
     dropMirrorMarks();
     active_ = b;
-    if (b) {
-        givePlace(b, s, e, t);
-        b->lastUsed = ++stamp_;
-    }
+    if (b) givePlace(b, s, e, t);
     showActive();
     if (buffer_ == before && isSource()) restorePlace(active_);
     if (active_) active_->checkExternalChange();
@@ -651,48 +631,18 @@ void Editor::closeFocusedGroup() {
 // ---------------------------------------------------------------- the session
 
 EditorTabs::GroupsSession Editor::groupsSession() const {
-    EditorTabs::GroupsSession s;
-    auto isFile = [](const Document* d) {
-        return d && d->kind() != Document::Kind::Diff && !d->path().empty();
-    };
-    for (int g = 0; g < 2; g++) {
-        for (Document* d : groupDocuments(g))
-            if (isFile(d)) s.groups[g].push_back(d->path());
-        if (isFile(groupActive(g))) s.active[g] = groupActive(g)->path();
-    }
-    s.focused = focusedGroup();
-    s.fraction = groupFraction_;
-    return s;
+    syncPaths();
+    return win_->groupsSession();
 }
 
 void Editor::restoreGroups(const EditorTabs::GroupLayout& layout) {
-    if (!layout.split || split_) return;
-    const std::vector<Document*> all = documents();   // what the layout counts in
-    std::vector<Document*> g[2];
-    for (int k = 0; k < 2; k++)
-        for (int i : layout.groups[k])
-            if (i >= 0 && i < (int)all.size()) g[k].push_back(all[(size_t)i]);
-    if (g[0].empty() || g[1].empty()) return;
-    const int f = layout.focused == 1 ? 1 : 0;
-    // Nothing is left out of both (EditorTabs::restoreGroups puts any it was
-    // not told of in the focused group).
-    for (Document* d : all)
-        if (std::find(g[0].begin(), g[0].end(), d) == g[0].end() &&
-            std::find(g[1].begin(), g[1].end(), d) == g[1].end())
-            g[f].push_back(d);
+    // The layout's indices count in documents(), the tabs as they are now;
+    // nothing is left out of both groups (Model::Window::restoreGroups).
+    if (!win_->restoreGroups(layout)) return;
     { if (notes_) notes_->activeWillChange(); if (onActiveWillChange) onActiveWillChange(); }
     stash();
-    split_ = true;
-    focused_ = f;
-    groupFraction_ = layout.fraction;
-    tabs_ = g[f];
-    other_ = g[1 - f];
-    auto pick = [](const std::vector<Document*>& v, int i) {
-        return i >= 0 && i < (int)v.size() ? v[(size_t)i] : v.front();
-    };
-    active_ = pick(tabs_, layout.active[f]);
-    otherActive_ = pick(other_, layout.active[1 - f]);
-    active_->lastUsed = ++stamp_;
+    active_ = documentById(win_->active());
+    otherActive_ = documentById(win_->active(win_->other()));
     showInMirror(otherActive_);
     showActive();
     if (active_) active_->checkExternalChange();

@@ -127,6 +127,14 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
         if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
         return;
     }
+    // Launched with nothing to open (the Dock, Finder, `open -a`, the
+    // reopening after a `brew upgrade`): every window open when minicode
+    // last quit, as it was (VS Code's window.restoreWindows "all"). A first
+    // launch, or one after the record was lost, opens the cwd as before.
+    if (args.count < 2 && [self restoreOpenWindows]) {
+        if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
+        return;
+    }
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *root = fm.currentDirectoryPath;
     NSString *file = nil;
@@ -155,6 +163,18 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
     MCDemoStart(c);   // no-op unless MINICODE_DEMO is set (make demos)
     MCBenchStart(c);  // no-op unless MINICODE_BENCH is set (make membench-mac)
+}
+
+// The windows open when minicode last quit (EditorController's
+// saveOpenWindows), each as it was, the front one in front; nil when there
+// were none to bring back.
+- (EditorController *)restoreOpenWindows {
+    EditorController *front = nil;
+    // Opened back to front, so the first ends up in front.
+    for (NSDictionary *w in [EditorController windowsToRestore].reverseObjectEnumerator)
+        front = [self openWindowAtPath:w[@"root"] restoring:w[@"record"]];
+    [front.window makeKeyAndOrderFront:nil];
+    return front;
 }
 
 // A window for every folder with backups that no window holds (a crash in a
@@ -220,6 +240,8 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     // Every window's session as it is now: the browser's page moves without
     // anything else saving it.
     for (EditorController *c in self.controllers) [c saveSession];
+    // And every window as it is, for the next launch to bring back.
+    [EditorController saveOpenWindows];
     MCControlServerStop();
     MCLspTerminateAllServers();
     if (self.restartApp) {
@@ -262,6 +284,20 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     NSString *command = [record[@"command"] isKindOfClass:NSString.class] ? record[@"command"] : nil;
     EditorController *front = nil, *resume = nil;
     NSArray *windows = [record[@"windows"] isKindOfClass:NSArray.class] ? record[@"windows"] : @[];
+    // Every window as it was, which quitting wrote down just before (frames,
+    // tabs with their places, panels, terminals, the tree), then the
+    // conversation with Claude in the window that asked for the restart.
+    if ((front = [self restoreOpenWindows])) {
+        NSString *resumeRoot = nil;
+        for (NSDictionary *w in windows)
+            if ([w isKindOfClass:NSDictionary.class] && [w[@"resume"] boolValue] &&
+                [w[@"root"] isKindOfClass:NSString.class])
+                resumeRoot = w[@"root"];
+        for (EditorController *c in self.controllers)
+            if (resumeRoot && [c.rootPath isEqualToString:resumeRoot] && !resume) resume = c;
+        if (resume && source.length) [resume resumeChangeWithSource:source command:command];
+        return YES;
+    }
     // Opened back to front, so the first ends up in front.
     for (NSDictionary *w in windows.reverseObjectEnumerator) {
         if (![w isKindOfClass:NSDictionary.class]) continue;
@@ -489,8 +525,15 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 
 // ------------------------------------------------------- window management
 - (EditorController *)openWindowAtPath:(NSString *)path {
+    return [self openWindowAtPath:path restoring:nil];
+}
+
+// The same, brought back as the last run left it (`record`, from
+// EditorController's windowsToRestore), or new when nil.
+- (EditorController *)openWindowAtPath:(NSString *)path restoring:(NSString *)record {
     EditorController *c = [[EditorController alloc] initWithRootPath:path];
     [self.controllers addObject:c];
+    if (record) [c restoreWindowRecord:record];
     [c showWindow];
     return c;
 }
@@ -758,6 +801,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)nextWaitingTerminal:(id)sender { MCJumpToNextWaitingTerminal(); }
 - (void)runCurrentFile:(id)sender  { [[self current] runCurrentFile:sender]; }
 - (void)runTestAtCursor:(id)sender { [[self current] runTestAtCursor:sender]; }
+- (void)toggleLineHistory:(id)sender { [[self current] toggleLineHistory:sender]; }
 - (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
 - (void)openBrowserTab:(id)sender  { [[self current] openBrowserTab:sender]; }
 - (void)toggleSidebarVisibility:(id)sender   { [[self current] toggleSidebarVisibility:sender]; }
@@ -1445,6 +1489,11 @@ static void BuildMenu(void) {
     // The language server's inlay hints on or off (editor.inlay-hints;
     // LspInlayHints.h). No key, as in VS Code.
     [viewMenu addItem:MCInlayHintsMenuItem()];
+    // Who last changed each line, beside every line (EditorLineHistory.h);
+    // resting on a line number shows it for that line either way. No key:
+    // VS Code's git blame toggle has none.
+    [viewMenu addItemWithTitle:@"Show Line History" action:@selector(toggleLineHistory:)
+                 keyEquivalent:@""];
 
     // Folding (FoldView.h). VS Code's Option+Cmd+[ and ] are minicode's
     // previous and next terminal, and its other folding keys are Cmd+K
