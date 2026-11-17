@@ -82,6 +82,22 @@ std::string plural(std::size_t n, const char* one, const char* many) {
     return std::to_string(n) + " " + (n == 1 ? one : many);
 }
 
+// A count with thousands separators, as the Mac's MCGrouped.
+std::string grouped(std::size_t n) {
+    std::string d = std::to_string(n), out;
+    for (std::size_t i = 0; i < d.size(); i++) {
+        if (i && (d.size() - i) % 3 == 0) out += ',';
+        out += d[i];
+    }
+    return out;
+}
+
+// Replace in Folder leaves a file over FolderSearch's whole-read size
+// alone (the search still finds its matches): "1 MB".
+std::string replaceSizeLimit() {
+    return std::to_string(FolderSearchOptions().maxFileSize / (1024 * 1024)) + " MB";
+}
+
 GtkWidget* optionToggle(const char* label, const std::string& tip) {
     GtkWidget* b = gtk_toggle_button_new_with_label(label);
     gtk_widget_set_focus_on_click(b, FALSE);
@@ -738,7 +754,9 @@ void SearchPanel::replaceAll() {
 void SearchPanel::planned(PlanJob* job) {
     // Files whose tabs hold changes the disk lacks are left out of the
     // count, and named.
-    std::vector<std::string> todo, held, away;
+    std::vector<std::string> todo, held, away, large = job->plan.tooLarge;
+    if (job->plan.tooLargeCount > large.size())
+        large.push_back("and " + grouped(job->plan.tooLargeCount - large.size()) + " more");
     std::size_t matches = 0;
     for (const FolderReplaceFile& f : job->plan.files) {
         if (holdOf(f.path, nullptr) == Hold::Conflict) {
@@ -754,6 +772,9 @@ void SearchPanel::planned(PlanJob* job) {
         setStatus(!job->plan.error.empty() ? job->plan.error
                   : !held.empty() ? "Nothing replaced: the matches are in tabs with unsaved "
                                     "changes (" + joined(held) + ")"
+                  : !large.empty() ? "Nothing replaced: the matches are in files larger than " +
+                                         replaceSizeLimit() + ", which Replace in Folder leaves "
+                                         "alone (" + joined(large) + ")"
                                   : "Nothing to replace");
         return;
     }
@@ -768,6 +789,9 @@ void SearchPanel::planned(PlanJob* job) {
                   "changed too: " + joined(away) + ".";
     if (!held.empty())
         detail += " Left alone, since their tabs have unsaved changes: " + joined(held) + ".";
+    if (!large.empty())
+        detail += " Left alone, since they are larger than " + replaceSizeLimit() + ": " +
+                  joined(large) + ".";
     GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", question.c_str());
     gtk_alert_dialog_set_detail(dlg, detail.c_str());
     const char* buttons[] = {"Replace", "Cancel", nullptr};
@@ -886,7 +910,12 @@ void SearchPanel::replaceInPaths(const std::vector<std::string>& paths,
             FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
             if (!FolderSearch::readTextFile(p, FolderSearchOptions().maxFileSize, &content,
                                             &encoding)) {
-                j->failed.push_back(baseName(p) + " could not be read as text");
+                const FolderSearch::FileStamp st = FolderSearch::stampOf(p);
+                if (st.exists && st.size > FolderSearchOptions().maxFileSize)
+                    j->failed.push_back(baseName(p) + " is larger than " + replaceSizeLimit() +
+                                        ", which Replace in Folder leaves alone");
+                else
+                    j->failed.push_back(baseName(p) + " could not be read as text");
                 continue;
             }
             std::size_t n = 0;

@@ -31,6 +31,7 @@ std::string two() { return dir() + "/two.txt"; }
 std::string three() { return dir() + "/three.txt"; }
 std::string four() { return dir() + "/sub/four.txt"; }
 std::string dir2() { return MCGuiProjectFile("rif2"); }
+std::string dir3() { return MCGuiProjectFile("rif3"); }
 
 bool idle() { return panel() && !panel()->searching() && !panel()->replacing(); }
 
@@ -222,6 +223,56 @@ MC_GUI_SUITE(replace_in_folder) {
         struct stat st;
         GCHECK(lstat((dir2() + "/alias.txt").c_str(), &st) == 0 && S_ISLNK(st.st_mode));
         GCHECK(panel()->statusText().rfind("Replaced 1 match in 1 file", 0) == 0);
+    });
+
+    // ---- a file over 1 MB: found, never rewritten, named as too large
+    MCGuiStep("big.txt just over 1 MB with a match at its end; \"cat\" searched", [] {
+        std::string big(1024 * 1024 + 100, 'x');
+        big += "\ncat\n";
+        MCGuiWriteFile(dir3() + "/big.txt", big);
+        panel()->setScope(dir3());
+        MCGuiSetKeyWindow(panelWindow());
+        typeInto(panel()->queryEntry(), "cat");
+    });
+    MCGuiWait("Find in Folder lists its match", 10, [] {
+        return idle() && panel()->matches().size() == 1 && panel()->matches()[0].path == dir3() + "/big.txt";
+    });
+    MCGuiStep("\"dog\"; Replace All", [] {
+        typeInto(panel()->replaceEntry(), "dog");
+        MCGuiKey("enter");
+    });
+    MCGuiWait("nothing to replace, and it says why", 10, [] {
+        return idle() && panel()->statusText().rfind("Nothing replaced: the matches are in files", 0) == 0;
+    });
+    MCGuiStep("worded as the Mac's, and the file untouched", [] {
+        GCHECK_EQ_STR(panel()->statusText(),
+                      "Nothing replaced: the matches are in files larger than 1 MB, which Replace "
+                      "in Folder leaves alone (big.txt)");
+        GCHECK(MCGuiReadFile(dir3() + "/big.txt").size() == 1024 * 1024 + 100 + 5);
+        GCHECK(MCGuiReadFile(dir3() + "/big.txt").find("dog") == std::string::npos);
+        MCGuiWriteFile(dir3() + "/small.txt", "cat\n");
+        panel()->runSearch();
+    });
+    MCGuiWait("both found", 10, [] { return idle() && panel()->matches().size() == 2; });
+    MCGuiStep("Replace All again", [] {
+        MCGuiClick(panel()->replaceEntry());
+        MCGuiKey("enter");
+    });
+    MCGuiWait("it asks about the small file", 10, [] { return alertAsks("Replace 1 match in 1 file?"); });
+    MCGuiStep("the large file is named in the question; Replace", [] {
+        GCHECK(MCGuiFindLabel(GTK_WIDGET(alert()),
+                              "Each becomes “dog”. Files open in a tab are changed there, unsaved, "
+                              "and can be undone there; the others are written to disk. Left "
+                              "alone, since they are larger than 1 MB: big.txt.") != nullptr);
+        MCGuiSetKeyWindow(alert());
+        MCGuiClick(MCGuiFindButton(GTK_WIDGET(alert()), "Replace"));
+    });
+    MCGuiWait("small.txt replaced", 10, [] { return idle() && MCGuiReadFile(dir3() + "/small.txt") == "dog\n"; });
+    MCGuiStep("big.txt not modified", [] {
+        MCGuiSetKeyWindow(panelWindow());
+        GCHECK(MCGuiReadFile(dir3() + "/big.txt").find("dog") == std::string::npos);
+        GCHECK(MCGuiReadFile(dir3() + "/big.txt").size() == 1024 * 1024 + 100 + 5);
+        panel()->setScope(dir());
     });
 
     // ---- files to include and exclude, and Alt+C in the window
