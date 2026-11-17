@@ -46,14 +46,20 @@ BOOL MCTextViewUndoing(NSTextView *tv);
 
 @interface CodeTextView : NSTextView
 // The session's host (SessionLink.h): the document whose source the view
-// shows, editable, when the host owns its text, else nil. Every edit is
-// then recorded on it, and replaceRanges:withStrings:actionName: names its
-// step.
+// shows, editable, when the host owns its text and undo, else nil. Then
+// Undo and Redo ask the host (undo:, redo:, and the tab's undo manager),
+// every edit is recorded on it, and replaceRanges:withStrings:actionName:
+// names its step.
 @property(nonatomic, copy) MCSessionDoc * (^sessionDocProvider)(void);
 @property(nonatomic, readonly) MCSessionDoc *sessionDoc;
 // Typing is going on (insertText:, Backspace and the like): an edit then
 // opens a "Typing" step, which joins the one before it.
 @property(nonatomic, readonly) NSInteger sessionTyping;
+// A change of the text view's is going on (from a shouldChangeText... that
+// allowed it to its didChangeText): a storage edit then is in the undo
+// history. One made outside it (the storage edited directly) is the
+// host's edit outside the history, in no step.
+@property(nonatomic, readonly) BOOL sessionChanging;
 // The host's undo or redo is going into the text (as NSUndoManager's
 // isUndoing): what ends on an undo (a snippet's stops) ends.
 @property(nonatomic, assign) BOOL sessionUndoing;

@@ -45,6 +45,7 @@ void Host::handle(ClientId from, Message&& m) {
     case Kind::DocEdit: onEdit(from, m); break;
     case Kind::DocUndo: onUndo(from, m); break;
     case Kind::DocSaved: onSaved(from, m); break;
+    case Kind::DocForget: onForget(from, m); break;
     case Kind::DocWatch: onWatch(from, m); break;
     case Kind::DocQuery: onQuery(from, m); break;
     case Kind::WindowTabs: windows_[m.window] = {from, std::move(m.json)}; break;
@@ -188,7 +189,7 @@ Selection Host::mapSelection(const Selection& s, const Ot::Ops& ops, Model::Unit
     return out;
 }
 
-Host::Entry Host::applyOps(Doc& d, const Ot::Ops& ops, Model::Unit u, bool record) {
+Host::Entry Host::applyOps(Doc& d, const Ot::Ops& ops, Model::Unit u, bool record, bool outside) {
     Entry e;
     e.ops16.reserve(ops.size());
     e.opsCp.reserve(ops.size());
@@ -198,9 +199,10 @@ Host::Entry Host::applyOps(Doc& d, const Ot::Ops& ops, Model::Unit u, bool recor
         const std::size_t aCp = u == Model::Unit::CodePoint ? op.pos : t.codePointOf(a16);
         const std::size_t bCp = u == Model::Unit::CodePoint ? op.pos + op.del : t.codePointOf(b16);
         std::u16string removed;
-        if (record && b16 > a16) removed = t.slice(a16, b16 - a16);
+        if ((record || outside) && b16 > a16) removed = t.slice(a16, b16 - a16);
         d.doc.replace(a16, b16, op.ins);
         if (record) d.history.record({a16, std::move(removed), op.ins});
+        else if (outside) d.history.foreign({{a16, std::move(removed), op.ins}});
         e.ops16.push_back(Ot::Op{a16, b16 - a16, op.ins});
         e.opsCp.push_back(Ot::Op{aCp, bCp - aCp, op.ins});
         const std::size_t caret = a16 + op.ins.size();
@@ -270,6 +272,22 @@ void Host::onEdit(ClientId c, Message& m) {
             ack.seq = m.seq;
             send(c, std::move(ack));
         }
+        return;
+    }
+    if (m.flag == 1) {
+        // Outside the history: in no step, and every step moved past it
+        // (a step open when it came is closed first: its edits were made
+        // before it).
+        closeStep(d);
+        if (!mine.empty()) {
+            e = applyOps(d, mine, u, false, true);
+            e.by = c;
+            d.v++;
+            d.log.push_back(e);
+        }
+        if (m.seq || !mine.empty()) broadcast(m.doc, d, e, c, m.seq, 0, 0, nullptr);
+        trimLog(d);
+        tellUndoState(m.doc, d);
         return;
     }
     const bool sameStep = d.stepOpen && d.stepBy == c && d.stepId == m.step.id;
@@ -346,6 +364,15 @@ void Host::onUndo(ClientId c, Message& m) {
 void Host::onSaved(ClientId, Message& m) {
     auto it = docs_.find(m.doc);
     if (it != docs_.end()) it->second.doc.markSaved(FolderSearch::FileStamp());
+}
+
+void Host::onForget(ClientId, Message& m) {
+    auto it = docs_.find(m.doc);
+    if (it == docs_.end()) return;
+    Doc& d = it->second;
+    closeStep(d);
+    d.history.clear();
+    tellUndoState(m.doc, d);
 }
 
 void Host::onWatch(ClientId c, Message& m) {

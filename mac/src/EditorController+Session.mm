@@ -1,9 +1,9 @@
 // EditorController+Session.mm — EditorController: the session's host
 // (SessionLink.h, editor.session-host). The window's hooks only: the
 // editor's storage reports each edit of the tab on show to the tab's
-// document on the host, the text view asks which document it shows, and
-// the host's edits to a tab not in the storage reach its title and
-// backups. The rest is MCSessionDoc's.
+// document on the host, the text view asks which document it shows (for
+// Undo and Redo), and the host's edits to a tab not in the storage reach
+// its title and backups. The rest is MCSessionDoc's.
 #import "EditorController+Private.h"
 #import "SessionLink.h"
 #import "SourceStorage.h"

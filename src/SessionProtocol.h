@@ -46,9 +46,11 @@ enum class Kind {
     DocOpen,     // doc, name (its path), text8 (UTF-8): the host's copy starts as it, saved
     DocReset,    // doc, text8: the text set whole anew (a file read again), history gone
     DocClose,    // doc
-    DocEdit,     // doc, base, seq, ops, step
+    DocEdit,     // doc, base, seq, ops, step; flag 1: outside the undo history (no step:
+                 // the history moves past it, as a change made with recording off)
     DocUndo,     // doc, req, redo
     DocSaved,    // doc: the text as the renderer has it now was written
+    DocForget,   // doc: the undo history forgotten, the text kept
     DocWatch,    // doc, req, flag (on or off): ops16 with every DocEdited, the text now in DocText
     DocQuery,    // doc, req: answered by DocText (the host's text and state, for checks)
     WindowTabs,  // window, json: a window's tabs as its renderer holds them
