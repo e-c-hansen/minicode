@@ -59,9 +59,14 @@ process released is not given to the other before the range wraps. Launch
 Services is never asked anything (openURL: is swizzled), and the recent
 folders the app notes go to a system list no check reads.
 
-A check that fails only when the halves run together is a sharing bug:
-fix the sharing, or move the suite so it never overlaps the suite it
-collides with, and say so here. Never retry it.
+A check that fails only when the halves run together is a sharing bug,
+or a check that reads a place before it has settled (on a loaded runner it
+settles later): fix the sharing or the wait, or, only when the product's
+own timing is the cause, move the suite so it runs alone, and say so here.
+Never retry it. Found so far: markdown_side_sync read the source's top line
+as soon as the page's text arrived after typing, and on the PR's third run
+saw line 9,356 rather than about 10,000; it now waits for the source's and
+the page's places to hold for half a second (MCGuiWaitQuiet).
 
 ## Before pushing
 

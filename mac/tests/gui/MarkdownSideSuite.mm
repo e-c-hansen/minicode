@@ -874,6 +874,22 @@ MC_GUI_SUITE(markdown_side_sync) {
     MCGuiWait(@"the long page to follow the typing", 10, ^BOOL {
         return [Page(c) containsString:@"Typed Paragraph 1001"];
     });
+    // The page's text arriving is not the end of it: the render keeps the
+    // page's place and then follows the source, and the source's place can
+    // still move while its layout settles after the edit. On a loaded runner
+    // (CI's GUI checks in two halves at once) the check below once read the
+    // source at line 9,356 mid-way, so it waits for both places to hold for
+    // half a second, saying each place it sees.
+    __block NSInteger seen = -1;
+    MCGuiWaitQuiet(@"the source and the page to stop moving", 0.5, 10, ^NSInteger {
+        const NSInteger now = (NSInteger)SourceTop(c) * 100000 + PageTop(c) +
+                              (Side(c).pageLeads ? 10000000000 : 0);
+        if (now != seen && seen >= 0)
+            MCGuiNote(@"moved: source %lu, page %ld%@", (unsigned long)SourceTop(c), (long)PageTop(c),
+                      Side(c).pageLeads ? @", the page leading" : @"");
+        seen = now;
+        return now;
+    });
     MCGuiStep(@"the pause cost under 30 ms of the main thread, and the page is right", ^{
         CHECK_RENDER_COST(c, 30, 205, @"a pause's render at 20,000 lines");
         // The page at the source's line (the source's view, its own height
