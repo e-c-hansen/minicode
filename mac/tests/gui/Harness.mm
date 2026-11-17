@@ -382,6 +382,7 @@ struct World {
     double editorZoom = 0, terminalZoom = 0;
     BOOL showHidden = NO;
     NSInteger treeColumns = 0;
+    NSString *browser;   // each window's browser pane, and its agent page
 };
 World gWorldAtStart;
 }  // namespace
@@ -390,8 +391,21 @@ static World LookAtWorld(void) {
     World w;
     NSArray<EditorController *> *cs = MCGuiControllers();
     w.windows = (NSInteger)cs.count;
+    NSMutableArray<NSString *> *browsers = [NSMutableArray array];
     for (EditorController *c in cs) {
         if (c.window.attachedSheet) w.sheets++;
+        @try {
+            const BOOL shown = [[c valueForKey:@"browserVisible"] boolValue];
+            id b = [c valueForKey:@"browser"];
+            const BOOL agent = b && [[b valueForKey:@"hasAgentPage"] boolValue];
+            const BOOL agentShown = agent && [[b valueForKey:@"agentPageShown"] boolValue];
+            if (shown || agent)
+                [browsers addObject:[NSString stringWithFormat:@"%@: browser %@%@",
+                                     c.rootPath.lastPathComponent ?: @"?", shown ? @"shown" : @"hidden",
+                                     agentShown ? @", the agent page on show"
+                                     : agent ? @", an agent page behind" : @""]];
+        } @catch (NSException *) {
+        }
         @try {
             id panel = [c valueForKey:@"terminalPanel"];
             NSArray *list = [panel valueForKey:@"terminals"];
@@ -399,6 +413,7 @@ static World LookAtWorld(void) {
         } @catch (NSException *) {
         }
     }
+    w.browser = browsers.count ? [browsers componentsJoinedByString:@"; "] : @"none shown";
     w.settings = FileText(Env(@"MINICODE_SETTINGS"));
     w.keys = FileText(KeysPath());
     NSUserDefaults *d = MCAppDefaults();
@@ -476,6 +491,13 @@ static void CheckWhatSuiteLeft(NSString *suite) {
                                                was.editorZoom, was.terminalZoom]);
     if (now.showHidden != was.showHidden)
         Leak(suite, [NSString stringWithFormat:@"left Show Hidden Files %@", now.showHidden ? @"on" : @"off"]);
+    // A browser pane left showing narrows the editor of the window the next
+    // suite works in (2026-11-17: control's agent page wrapped
+    // markdown_side_sync's lines). A warning for now: how many suites leave
+    // one was not known when it was added, and none is put back.
+    if (![now.browser isEqualToString:was.browser])
+        Leak(suite, [NSString stringWithFormat:@"left the browser pane changed: %@ (was %@)", now.browser,
+                                               was.browser], NO);
     if (now.treeColumns != was.treeColumns)
         Leak(suite, [NSString stringWithFormat:@"left the tree's columns changed (%ld, was %ld)",
                                                (long)now.treeColumns, (long)was.treeColumns]);

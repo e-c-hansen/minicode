@@ -4164,7 +4164,10 @@ session has a display. Check first.
   back what it can (the pin, the answers). The two files are the
   harness's to put back between suites and an extra terminal is only
   noted: `LEFT [suite]`, a warning, so a suite needs no step to undo its
-  settings. `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
+  settings. A browser pane or agent page shown or hidden in any window is
+  a LEFT line too (2026-11-17, after control's agent page narrowed
+  markdown_side_sync's editor), until the suites that leave one close
+  it; then it can be a LEAK. `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
   are skipped. A failed check with `MC_GUI_SNAPSHOTS` set leaves a
   picture of the test window (the first ten); CI keeps them as an
   artifact, a folder per half.

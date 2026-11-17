@@ -63,10 +63,13 @@ A check that fails only when the halves run together is a sharing bug,
 or a check that reads a place before it has settled (on a loaded runner it
 settles later): fix the sharing or the wait, or, only when the product's
 own timing is the cause, move the suite so it runs alone, and say so here.
-Never retry it. Found so far: markdown_side_sync read the source's top line
-as soon as the page's text arrived after typing, and on the PR's third run
-saw line 9,356 rather than about 10,000; it now waits for the source's and
-the page's places to hold for half a second (MCGuiWaitQuiet).
+Never retry it. Found so far: markdown_side_sync failed on two of the
+PR's four runs with the source steady at line 9,356 rather than about
+10,000. The control suite had left the project's window with the browser
+pane and its agent page showing (`browse`), which narrowed the source until
+its lines wrapped. Control now closes what it opened, markdown_side_sync
+works in a window of its own, and the harness says when a suite leaves a
+browser pane changed (a `LEFT` line for now, see CLAUDE.md).
 
 ## Before pushing
 

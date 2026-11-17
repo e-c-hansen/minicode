@@ -608,7 +608,13 @@ NSRange Changed(NSString *a, NSString *b, NSString **with) {
 
 MC_GUI_SUITE(markdown_side_sync) {
     __block EditorController *c = nil;
-    NSString *md = MCGuiProjectFile(@"sync.md");
+    // A window of its own on a folder of its own, so the panes are as a new
+    // window has them whatever earlier suites left in theirs: with CI's GUI
+    // checks in two halves, a browser pane an earlier suite left showing in
+    // the project's window narrowed the source until its lines wrapped, and
+    // the source settled 644 lines from where the checks expected it.
+    NSString *folder = MCGuiProjectFile(@"side-sync");
+    NSString *md = [folder stringByAppendingPathComponent:@"sync.md"];
     // Ten lines a section: heading (10k), blank, a paragraph of two lines
     // (10k+2, 10k+3), blank, a fence, two code lines (10k+6, 10k+7), the
     // closing fence, blank.
@@ -617,9 +623,18 @@ MC_GUI_SUITE(markdown_side_sync) {
         [text appendFormat:@"## Section %d\n\nParagraph %d line one\ncontinues on line two of %d.\n\n"
                            @"```\ncode %d a\ncode %d b\n```\n\n", k, k, k, k, k];
 
+    MCGuiStep(@"a window of its own", ^{
+        [[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:YES
+                                                   attributes:nil error:nil];
+        id app = NSApp.delegate;
+        c = [app performSelector:@selector(openWindowAtPath:) withObject:folder.stringByStandardizingPath];
+        MCGuiSetKeyWindow(nil);
+        GCHECK(c != nil && MCGuiController() == c);
+        GCHECK(![[c valueForKey:@"browserVisible"] boolValue]);
+    });
+
     MCGuiStep(@"a long file with the page beside it", ^{
         MCGuiWriteFile(md, text);
-        c = MCGuiController();
         GCHECK([c showFile:md]);
         if (c.previewMode) [c togglePreview:nil];
         [c focusEditor:nil];
@@ -846,7 +861,7 @@ MC_GUI_SUITE(markdown_side_sync) {
 
     // 20,000 lines: a pause in typing still costs only its own piece, and
     // the page is laid out only as far as it is followed.
-    NSString *big = MCGuiProjectFile(@"big.md");
+    NSString *big = [folder stringByAppendingPathComponent:@"big.md"];
     MCGuiStep(@"20,000 lines with the page beside them", ^{
         NSMutableString *t = [NSMutableString string];
         for (int k = 0; k < 2000; k++)
@@ -874,22 +889,6 @@ MC_GUI_SUITE(markdown_side_sync) {
     MCGuiWait(@"the long page to follow the typing", 10, ^BOOL {
         return [Page(c) containsString:@"Typed Paragraph 1001"];
     });
-    // The page's text arriving is not the end of it: the render keeps the
-    // page's place and then follows the source, and the source's place can
-    // still move while its layout settles after the edit. On a loaded runner
-    // (CI's GUI checks in two halves at once) the check below once read the
-    // source at line 9,356 mid-way, so it waits for both places to hold for
-    // half a second, saying each place it sees.
-    __block NSInteger seen = -1;
-    MCGuiWaitQuiet(@"the source and the page to stop moving", 0.5, 10, ^NSInteger {
-        const NSInteger now = (NSInteger)SourceTop(c) * 100000 + PageTop(c) +
-                              (Side(c).pageLeads ? 10000000000 : 0);
-        if (now != seen && seen >= 0)
-            MCGuiNote(@"moved: source %lu, page %ld%@", (unsigned long)SourceTop(c), (long)PageTop(c),
-                      Side(c).pageLeads ? @", the page leading" : @"");
-        seen = now;
-        return now;
-    });
     MCGuiStep(@"the pause cost under 30 ms of the main thread, and the page is right", ^{
         CHECK_RENDER_COST(c, 30, 205, @"a pause's render at 20,000 lines");
         // The page at the source's line (the source's view, its own height
@@ -916,7 +915,7 @@ MC_GUI_SUITE(markdown_side_sync) {
             if ([t.currentPath isEqualToString:big]) [c closeTab:t prompt:NO];
     });
 
-    NSString *folded = MCGuiProjectFile(@"details.md");
+    NSString *folded = [folder stringByAppendingPathComponent:@"details.md"];
     MCGuiStep(@"a closed <details> block: its body is not on the page, lines below still sync", ^{
         NSMutableString *t = [NSMutableString string];
         for (int k = 0; k < 20; k++) [t appendFormat:@"Above %d.\n\n", k];    // lines 0 to 39
@@ -959,9 +958,20 @@ MC_GUI_SUITE(markdown_side_sync) {
             if ([tab.currentPath isEqualToString:folded]) [c closeTab:tab prompt:NO];
     });
 
+    // The window goes with the suite (close, not performClose:, so no
+    // question about anything the steps left unsaved).
+    __block EditorController *closing = nil;
     MCGuiStep(@"done", ^{
         [Source(c).undoManager removeAllActions];
         for (MCTab *t in [(NSArray *)[c valueForKey:@"tabs"] copy])
             if ([t.currentPath isEqualToString:md]) [c closeTab:t prompt:NO];
+        closing = c;
+        c = nil;
+        [closing.window close];
+    });
+    MCGuiWait(@"its window is gone", 10, ^BOOL {
+        if ([MCGuiControllers() containsObject:closing]) return NO;
+        closing = nil;
+        return YES;
     });
 }
