@@ -17,6 +17,7 @@ void Client::connect(Send send) {
     h.unit = unit_;
     h.name = name_;
     if (readOnly_) h.flag = 1;
+    else if (guest_) h.flag = 2;
     send_(std::move(h));
 }
 

@@ -390,18 +390,19 @@ void takeStopSignals() {
 // address printed once with its token. False, with the reason printed, when
 // the port cannot be had.
 bool startWeb(Shared::Web::Server &web, const std::string &socket, const std::string &folder,
-              int port) {
+              int port, bool edit) {
     Shared::Web::Options w;
     w.hostSocket = socket;
     w.folder = folder;
     w.port = port;
+    w.editable = edit;
     std::string error;
     if (!web.start(w, &error)) {
         std::fprintf(stderr, "minicode: the browser's view could not listen: %s\n", error.c_str());
         return false;
     }
-    std::fprintf(stderr, "minicode: a read-only view of %s for a browser on this machine:\n",
-                 folder.c_str());
+    std::fprintf(stderr, "minicode: %s of %s for a browser on this machine:\n",
+                 edit ? "a view that can edit" : "a read-only view", folder.c_str());
     std::printf("%s\n", web.url().c_str());
     std::fflush(stdout);
     return true;
@@ -443,7 +444,9 @@ int runHost(const Json &args) {
     Shared::Web::Server web;
     std::thread webThread;
     if (args.has("web")) {
-        if (!startWeb(web, server.socketPath(), folder, (int)args["web"].asInt())) return kExitFailed;
+        if (!startWeb(web, server.socketPath(), folder, (int)args["web"].asInt(),
+                      args["edit"].asBool()))
+            return kExitFailed;
         webThread = std::thread([&web] { web.run(); });
     }
     {
@@ -495,7 +498,8 @@ int runAttach(const Json &args) {
         link.reset();
         takeStopSignals();
         Shared::Web::Server web;
-        if (!startWeb(web, path, folder, (int)args["web"].asInt())) return kExitFailed;
+        if (!startWeb(web, path, folder, (int)args["web"].asInt(), args["edit"].asBool()))
+            return kExitFailed;
         {
             std::lock_guard<std::mutex> lk(gStopMu);
             gWeb = &web;

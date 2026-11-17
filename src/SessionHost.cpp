@@ -45,7 +45,8 @@ Model::Unit Host::unitOf(ClientId c) const {
 
 bool Host::refusedFromViewer(ClientId c, const Message& m) const {
     auto it = renderers_.find(c);
-    if (it == renderers_.end() || !it->second.readOnly) return false;
+    if (it == renderers_.end() || (!it->second.readOnly && !it->second.guest)) return false;
+    const bool guest = it->second.guest;
     switch (m.kind) {
     case Kind::Hello:
     case Kind::DocOpen:      // a view seat (onOpen)
@@ -58,8 +59,13 @@ bool Host::refusedFromViewer(ClientId c, const Message& m) const {
     case Kind::TermAck:
         return false;
     case Kind::DocEdit:
-        // Only the report of how far it has read (SessionClient's).
+        // A guest's edits, in the undo history; from a reader, only the
+        // report of how far it has read (SessionClient's).
+        if (guest) return m.flag != 0;
         return !m.ops.empty() || m.step.id || m.flag;
+    case Kind::DocUndo:
+    case Kind::TermInput:
+        return !guest;
     default: return true;
     }
 }
@@ -135,6 +141,7 @@ void Host::onHello(ClientId c, Message& m) {
     r.name = m.name;
     r.hello = true;
     r.readOnly = (m.flag & 1) != 0;
+    r.guest = !r.readOnly && (m.flag & 2) != 0;
     Message w;
     w.kind = Kind::Welcome;
     w.client = c;
@@ -148,7 +155,7 @@ void Host::onOpen(ClientId c, Message& m) {
     r.kind = Kind::DocOpened;
     r.doc = m.doc;
     auto who = renderers_.find(c);
-    if (who != renderers_.end() && who->second.readOnly) {
+    if (who != renderers_.end() && (who->second.readOnly || who->second.guest)) {
         // A view: of the document as it is, never a new one.
         if (it == docs_.end()) {
             Message g;

@@ -8,9 +8,15 @@
 // scripted browser on a thread of its own, over a plain socket, gets the
 // page with the token and is refused without it, with a wrong one and with
 // another Host; its WebSocket gets the window's document, only that
-// window's, and an edit typed in the window reaches it. Closing the window
-// stops the server. No browser window opens.
+// window's, and an edit typed in the window reaches it. Then the page itself,
+// in a WKWebView that is in no window, as Safari loads it: key events
+// dispatched into it type into the window's file (Return taking the core's
+// indentation), typing in the window reaches the page, Cmd+Z in the page is
+// the host's undo, Cmd+S in it saves the file through the window, and the
+// page's tab shows the file's dirty dot until then; page and window end on
+// one text. Closing the window stops the server. No browser window opens.
 #import "Harness.h"
+#import <WebKit/WebKit.h>
 #import "EditorController.h"
 #import "EditorController+Private.h"
 #import "EditorTab.h"
@@ -126,6 +132,10 @@ struct Browser {
             lines.clear();
             for (const Json &l : m["lines"].elements()) lines.push_back(l[0].asString());
         } else if (t == "lines" && m["id"].asInt() == docId) {
+            if (m.has("all")) {
+                lines.clear();
+                for (const Json &l : m["all"].elements()) lines.push_back(l[0].asString());
+            }
             for (const Json &e : m["edits"].elements()) {
                 const std::size_t at = (std::size_t)e[0].asInt(), del = (std::size_t)e[1].asInt();
                 if (at > lines.size()) return;
@@ -198,6 +208,53 @@ NSString *gFile = nil;
 // What the plain requests got (written on their thread before `done`).
 std::string page, noToken, wrongToken, otherHost, wsWrong;
 
+WKWebView *gPage = nil;
+NSDictionary *gSeen = nil;   // the page as last read
+
+// What the page shows, read in its own world (window.mcSessionView).
+NSString *const kRead =
+    @"JSON.stringify({status: document.getElementById('status').textContent,"
+    @" text: window.mcSessionView ? window.mcSessionView.text() : null,"
+    @" synced: window.mcSessionView ? window.mcSessionView.synced() : false,"
+    @" lines: [...document.querySelectorAll('#code .l')].map(l => l.textContent).join('\\n'),"
+    @" dirty: !!document.querySelector('#tabs button.shown.dirty'),"
+    @" shown: !!document.querySelector('#tabs button.shown')})";
+
+void Read() {
+    [gPage evaluateJavaScript:kRead inFrame:nil inContentWorld:WKContentWorld.pageWorld
+            completionHandler:^(id value, NSError *error) {
+                if (![value isKindOfClass:NSString.class]) return;
+                NSData *d = [(NSString *)value dataUsingEncoding:NSUTF8StringEncoding];
+                id j = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
+                if ([j isKindOfClass:NSDictionary.class]) gSeen = j;
+                (void)error;
+            }];
+}
+
+// Keys for the page's editor: keydown events dispatched at its field, as a
+// browser sends them (`keys` a JavaScript array of [key, options]).
+void Keys(NSString *keys) {
+    NSString *js = [NSString stringWithFormat:
+        @"(() => { const f = document.getElementById('input');"
+        @" for (const [k, o] of %@) f.dispatchEvent(new KeyboardEvent('keydown',"
+        @" Object.assign({key: k, bubbles: true, cancelable: true}, o || {}))); return 1; })()", keys];
+    [gPage evaluateJavaScript:js inFrame:nil inContentWorld:WKContentWorld.pageWorld
+            completionHandler:^(id, NSError *error) {
+                if (error) MCGuiNote(@"keys: %@", error.localizedDescription);
+            }];
+}
+
+// A string's characters as [key] entries.
+NSString *Typed(NSString *s) {
+    NSMutableArray *parts = [NSMutableArray array];
+    [s enumerateSubstringsInRange:NSMakeRange(0, s.length) options:NSStringEnumerationByComposedCharacterSequences
+                       usingBlock:^(NSString *c, NSRange, NSRange, BOOL *) {
+                           NSData *d = [NSJSONSerialization dataWithJSONObject:@[ c ] options:0 error:nil];
+                           [parts addObject:[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding]];
+                       }];
+    return [parts componentsJoinedByString:@","];
+}
+
 NSTextView *TV(EditorController *c) { return [c valueForKey:@"textView"]; }
 MCTab *Active(EditorController *c) { return [c valueForKey:@"activeTab"]; }
 std::string Text(EditorController *c) { return std::string(TV(c).string.UTF8String ?: ""); }
@@ -234,8 +291,13 @@ MC_GUI_SUITE(session_browser) {
         GCHECK(!MCSessionHostEnabled());
     });
     MCGuiStep(@"Turn On writes the setting, and the page's address goes to the browser", ^{
-        if (!MCSessionHostEnabled()) MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);   // Turn On
+        // Turn On (when asked), then Editable, the first choice until one is made.
+        if (!MCSessionHostEnabled())
+            MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn), @(NSAlertFirstButtonReturn)]);
+        else MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
         [gC showSessionInBrowser:nil];
+        GCHECK_EQ_STR(MCGuiAlertsShown().lastObject, @"Show this window's session in the browser");
+        GCHECK(gC.sessionBrowser.editable);
         GCHECK(MCSessionHostEnabled());
         GCHECK(gC.sessionBrowser != nil);
         gUrl = gC.sessionBrowser.url;
@@ -317,12 +379,93 @@ MC_GUI_SUITE(session_browser) {
         GCHECK([tv.string hasPrefix:@"# typed in minicode\n"]);
     });
     MCGuiWait(@"reaches the browser", 20, ^BOOL { return gBrowser->text() == Text(gC); });
-    MCGuiStep(@"the browser leaves; the window closes, and the server with it", ^{
+    MCGuiStep(@"the scripted browser leaves, and the page loads in WebKit", ^{
         GCHECK(gBrowser->text().find("# typed in minicode") == 0);
         gBrowser->finish();
         delete gBrowser;
         gBrowser = nullptr;
-        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Don't Save, if asked
+        WKWebViewConfiguration *config = [WKWebViewConfiguration new];
+        config.websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
+        gPage = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 900, 700) configuration:config];
+        [gPage loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:gUrl]]];
+    });
+    MCGuiWait(@"the page shows the window's file, editable", 30, ^BOOL {
+        Read();
+        return [gSeen[@"status"] isEqualToString:@"live, editing"] &&
+               [gSeen[@"text"] isEqualToString:TV(gC).string];
+    });
+    MCGuiStep(@"keys typed into the page", ^{
+        GCHECK_EQ_STR(gSeen[@"lines"], TV(gC).string);
+        GCHECK(!MCSessionHostEnabled() || [gSeen[@"shown"] boolValue]);
+        // Command Down to the end, a line, Return.
+        Keys([NSString stringWithFormat:@"[[\"ArrowDown\", {metaKey: true}], %@, [\"Enter\"]]",
+                                        Typed(@"# from the browser")]);
+    });
+    MCGuiWait(@"reach the window's file", 20, ^BOOL {
+        return [TV(gC).string hasSuffix:@"# from the browser\n"];
+    });
+    MCGuiWait(@"and the page and the window agree, the host with them", 20, ^BOOL {
+        Read();
+        return [gSeen[@"synced"] boolValue] && [gSeen[@"text"] isEqualToString:TV(gC).string];
+    });
+    MCGuiStep(@"what the host has; then typing in the window", ^{
+        NSString *diff = MCSessionCheckTabs(@[ Active(gC) ]);
+        if (diff.length) MCGuiNote(@"host: %@", diff);
+        GCHECK(diff.length == 0);
+        GCHECK(Active(gC).dirty);
+        NSTextView *tv = TV(gC);
+        MCGuiUndoGroup(tv.undoManager, ^{
+            [tv insertText:@"# from minicode\n" replacementRange:NSMakeRange(0, 0)];
+        });
+    });
+    MCGuiWait(@"reaches the page, which shows the file's dirty dot", 20, ^BOOL {
+        Read();
+        return [gSeen[@"text"] isEqualToString:TV(gC).string] && [gSeen[@"dirty"] boolValue];
+    });
+    MCGuiStep(@"Return in the page takes the core's indentation", ^{
+        GCHECK([gSeen[@"lines"] hasPrefix:@"# from minicode\n"]);
+        Keys([NSString stringWithFormat:@"[[\"ArrowDown\", {metaKey: true}], %@, [\"Enter\"], %@]",
+                                        Typed(@"def g():"), Typed(@"pass")]);
+    });
+    MCGuiWait(@"in the window's file", 20, ^BOOL {
+        return [TV(gC).string hasSuffix:@"def g():\n    pass"];
+    });
+    MCGuiWait(@"and the page", 20, ^BOOL {
+        Read();
+        return [gSeen[@"synced"] boolValue] && [gSeen[@"text"] isEqualToString:TV(gC).string];
+    });
+    MCGuiStep(@"Command Z in the page: the host's undo", ^{
+        GCHECK(MCSessionCheckTabs(@[ Active(gC) ]).length == 0);
+        Keys(@"[[\"z\", {metaKey: true}]]");
+    });
+    MCGuiWait(@"takes the last typing back in the window", 20, ^BOOL {
+        return ![TV(gC).string containsString:@"pass"];
+    });
+    MCGuiWait(@"and the page", 20, ^BOOL {
+        Read();
+        return [gSeen[@"synced"] boolValue] && [gSeen[@"text"] isEqualToString:TV(gC).string];
+    });
+    MCGuiStep(@"Command S in the page", ^{
+        GCHECK([TV(gC).string containsString:@"# from the browser\n"]);
+        Keys(@"[[\"s\", {metaKey: true}]]");
+    });
+    MCGuiWait(@"saves the file through the window", 20, ^BOOL {
+        NSString *disk = [NSString stringWithContentsOfFile:gFile encoding:NSUTF8StringEncoding error:nil];
+        return [disk isEqualToString:TV(gC).string] && !Active(gC).dirty;
+    });
+    MCGuiWait(@"and the page's dot goes", 20, ^BOOL {
+        Read();
+        return gSeen[@"dirty"] && ![gSeen[@"dirty"] boolValue];
+    });
+    MCGuiStep(@"page, window, host and disk on one text; the window closes, and the server with it", ^{
+        NSString *disk = [NSString stringWithContentsOfFile:gFile encoding:NSUTF8StringEncoding error:nil];
+        GCHECK_EQ_STR(gSeen[@"text"], TV(gC).string);
+        GCHECK_EQ_STR(disk, TV(gC).string);
+        GCHECK(MCSessionCheckTabs(@[ Active(gC) ]).length == 0);
+        [gPage stopLoading];
+        gPage = nil;
+        gSeen = nil;
+        GCHECK(!Active(gC).dirty);   // saved from the page: nothing to ask on closing
         [gC.window performClose:nil];
     });
     MCGuiWait(@"gone", 10, ^BOOL { return ![MCGuiControllers() containsObject:gC]; });

@@ -1,14 +1,25 @@
 // EditorController+SessionBrowser.mm — EditorController: View > Show
 // Session in Browser… and Copy Session Browser Link (SessionBrowser.h). The
 // window's server is kept as an associated object, so the class gains no
-// ivars, and it stops itself when the window closes.
+// ivars, and it stops itself when the window closes. Show asks whether the
+// page may edit, the last answer first (editable until one is given), and
+// remembers it; Copy uses the remembered one. A page's save is the tab's
+// own Cmd+S, its questions about the disk included.
 #import "EditorController+Private.h"
 #import "AppSettings.h"
 #import "SessionBrowser.h"
 #import "SessionLink.h"
+#import "TreeDetails.h"
 #include <objc/runtime.h>
 
 static char kSessionBrowserKey;
+static NSString *const kSessionBrowserEditableKey = @"MCSessionBrowserEditable";
+
+// Editable until the owner says otherwise.
+static BOOL MCSessionBrowserEditableChoice(void) {
+    id v = [MCAppDefaults() objectForKey:kSessionBrowserEditableKey];
+    return v ? [v boolValue] : YES;
+}
 
 @implementation EditorController (SessionBrowser)
 
@@ -35,9 +46,42 @@ static char kSessionBrowserKey;
     return MCSessionHostEnabled();
 }
 
-// The window's server, started now if it is not yet; nil, said in the
-// status bar, when it cannot be.
-- (MCSessionBrowser *)startedSessionBrowser {
+// Whether the page may edit, asked with the last answer first; NO on
+// Cancel.
+- (BOOL)askSessionBrowserEditable:(BOOL *)editable {
+    const BOOL last = MCSessionBrowserEditableChoice();
+    NSAlert *a = [NSAlert new];
+    a.messageText = @"Show this window's session in the browser";
+    a.informativeText = @"Editable lets the page type into this window's files, undo, and save "
+                        @"them, as you can here. Anyone on this Mac with the link can do the "
+                        @"same until the window closes. Read-only shows the files and follows "
+                        @"your typing.";
+    [a addButtonWithTitle:last ? @"Editable" : @"Read-Only"];
+    [a addButtonWithTitle:last ? @"Read-Only" : @"Editable"];
+    [a addButtonWithTitle:@"Cancel"];
+    const NSModalResponse r = [a runModal];
+    if (r != NSAlertFirstButtonReturn && r != NSAlertSecondButtonReturn) return NO;
+    const BOOL chose = r == NSAlertFirstButtonReturn ? last : !last;
+    [MCAppDefaults() setBool:chose forKey:kSessionBrowserEditableKey];
+    *editable = chose;
+    return YES;
+}
+
+// A page's save: every edit it made is in the tab first, then the tab's
+// own save, as Cmd+S on it (or on the tab on show) would.
+- (void)saveSessionDocument:(uint64_t)docId {
+    MCSessionClient().dispatch();
+    for (MCTab *t in [self tabs]) {
+        if (!t.session || t.session.docId != docId) continue;
+        if (t == _activeTab) [self saveCurrentFile:self];
+        else [self saveTab:t];
+        return;
+    }
+}
+
+// The window's server, started now (editable or not) if it is not yet; nil,
+// said in the status bar, when it cannot be.
+- (MCSessionBrowser *)startedSessionBrowser:(BOOL)editable {
     MCSessionBrowser *b = self.sessionBrowser;
     if (!b) {
         __weak EditorController *weakSelf = self;
@@ -57,8 +101,10 @@ static char kSessionBrowserKey;
                 if ([s parkedTabs].count) [on addObject:[s parkedActive] ?: (id)NSNull.null];
                 return on;
             }];
+        b.save = ^(uint64_t docId) { [weakSelf saveSessionDocument:docId]; };
         objc_setAssociatedObject(self, &kSessionBrowserKey, b, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
+    b.editable = editable;
     NSString *error = nil;
     if (![b start:&error]) {
         [self flashStatus:[NSString stringWithFormat:@"The session's page could not start: %@", error]];
@@ -69,17 +115,22 @@ static char kSessionBrowserKey;
 
 - (void)showSessionInBrowser:(id)sender {
     if (![self sessionHostReadyAsking]) return;
-    MCSessionBrowser *b = [self startedSessionBrowser];
+    BOOL editable = YES;
+    if (![self askSessionBrowserEditable:&editable]) return;
+    MCSessionBrowser *b = [self startedSessionBrowser:editable];
     if (!b) return;
     NSURL *url = [NSURL URLWithString:b.url];
     if (MCSessionBrowserOpener) MCSessionBrowserOpener(url);
     else [NSWorkspace.sharedWorkspace openURL:url];
-    [self flashStatus:@"The session's page opened in the browser; it is read-only and only on this Mac."];
+    [self flashStatus:editable
+                          ? @"The session's page opened in the browser; it can edit this window's files, "
+                            @"and opens only on this Mac."
+                          : @"The session's page opened in the browser; it is read-only and only on this Mac."];
 }
 
 - (void)copySessionBrowserLink:(id)sender {
     if (![self sessionHostReadyAsking]) return;
-    MCSessionBrowser *b = [self startedSessionBrowser];
+    MCSessionBrowser *b = [self startedSessionBrowser:MCSessionBrowserEditableChoice()];
     if (!b) return;
     NSPasteboard *pb = NSPasteboard.generalPasteboard;
     [pb clearContents];

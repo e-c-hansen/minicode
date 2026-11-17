@@ -142,6 +142,7 @@ private:
         std::string name;
         bool hello = false;
         bool readOnly = false;   // Hello's flag 1: a view, which changes nothing
+        bool guest = false;      // flag 2: a view that may edit, undo and type
     };
     // One applied edit, as every renderer may need it again: by whom, in
     // both units.
@@ -240,7 +241,8 @@ private:
     void tellUndoState(DocId id, Doc& d);
 
     void onHello(ClientId c, Message& m);
-    // Whether `m` from `c` would change the session while `c` only reads.
+    // Whether `m` from `c` would change the session while `c` only reads,
+    // or go past what a guest may change.
     bool refusedFromViewer(ClientId c, const Message& m) const;
     void onOpen(ClientId c, Message& m);
     void onReset(ClientId c, Message& m);

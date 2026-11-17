@@ -1,14 +1,17 @@
 // SessionBrowser.h — Objective-C++. View > Show Session in Browser… (and
-// Copy Session Browser Link): the browser's read-only view of a session
-// (SessionWeb.h, stage 6b) served for one window's tabs from the app's own
-// host (SessionLink.h, editor.session-host), so the page can be seen
-// working on this Mac without `minicode host`.
+// Copy Session Browser Link): the browser's view of a session (SessionWeb.h,
+// stages 6b and 8b) served for one window's tabs from the app's own host
+// (SessionLink.h, editor.session-host), so the page works on this Mac
+// without `minicode host`. Editable (the choice Show asks for), the page
+// types into the window's documents through the host, undoes through its
+// history, and saves through the window's own Cmd+S; read-only, it only
+// looks.
 //
 // One server per window, made the first time it is asked for and kept while
 // the window lives: 127.0.0.1 on a free port, a fresh 48-hex token, the
 // Host and Origin checks of Web::answer. Its view connects to the process's
-// host as a renderer that only reads (MCSessionConnectViewer) while a
-// browser is connected. The window's tabs that have a document on the host
+// host as a renderer that only reads, or as a guest that may edit
+// (MCSessionConnectViewer), while a browser is connected. The window's tabs that have a document on the host
 // are reported to it (Client::windowTabs) every half second while the server
 // runs, and the page shows only those. Terminals do not run through the
 // Mac's host yet; the page says so in one muted line. The server stops, and
@@ -25,6 +28,12 @@
                         folder:(NSString *)folder
                           tabs:(NSArray<NSArray<MCTab *> *> * (^)(void))tabs
                         active:(NSArray<MCTab *> * (^)(void))active;
+// Whether the page may edit. Changing it stops a server that runs; the next
+// start serves anew, at a new address.
+@property(nonatomic) BOOL editable;
+// Saves the window's document with this id on the host as Cmd+S does; run
+// on the main thread for a page's save.
+@property(nonatomic, copy) void (^save)(uint64_t docId);
 // Starts serving if it is not yet: NO, with why, when it cannot.
 - (BOOL)start:(NSString **)error;
 // http://127.0.0.1:PORT/?t=TOKEN, nil until started.

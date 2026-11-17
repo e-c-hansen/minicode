@@ -78,7 +78,7 @@ SESSION_HOST_SRC := src/SessionServer.cpp src/SessionHost.cpp src/SessionClient.
             src/EditSpans.cpp src/FolderSearch.cpp src/EditorTabs.cpp src/TextFind.cpp \
             src/Regex.cpp src/MarkdownTasks.cpp src/MarkdownParser.cpp \
             src/SessionWeb.cpp src/SessionWebPage.cpp src/IdeLink.cpp src/MarkdownHtml.cpp \
-            src/SyntaxHighlighter.cpp src/Settings.cpp
+            src/SyntaxHighlighter.cpp src/Settings.cpp src/AutoIndent.cpp src/LineComments.cpp
 OBJ      := $(patsubst mac/src/%,$(OBJDIR)/%.o,$(patsubst src/%,$(OBJDIR)/%.o,$(SRC)))
 
 # A release build (`make dist-zip RELEASE=1`, as scripts/release.sh runs it)
