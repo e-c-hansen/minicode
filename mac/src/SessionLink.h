@@ -18,8 +18,9 @@
 //   - undo and redo ask the host (the tab's undo manager, MCTabUndoManager
 //     in EditorTab.mm, and CodeTextView undo:, redo:), whose answer comes
 //     back as an edit put into the storage through
-//     replaceRanges:withStrings:actionName:, recording nothing; NSTextView
-//     registers nothing (allowsUndo off while it shows such a tab);
+//     replaceRanges:withStrings:actionName:, recording nothing (and with
+//     the tab's undo registration off); what NSTextView and the editor
+//     register still goes on NSUndoManager's stacks, never undone then;
 //   - an edit the host sends while the storage is in the middle of an edit
 //     of its own (inside processEditing, a storage notification, a wait
 //     that dispatched it there) waits for the next run-loop turn, and an

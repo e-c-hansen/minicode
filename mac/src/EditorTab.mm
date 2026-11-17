@@ -64,18 +64,23 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 }
 
 // A tab's undo manager. While the session's host owns the tab's history
-// (MCTab session, editor.session-host) it is the host's front: undo, redo
-// and what they would do are the host's, a name given to a step (Toggle
-// Comment, Change Color, ...) names the host's step, and registrations go
-// nowhere, since every change of the text is a step on the host already
-// (the storage's edits, a text set whole). Everything that asks the tab's
-// undo manager (the menu, a viewer's table, the GUI checks) then undoes on
-// the host. Without a session it is NSUndoManager, untouched.
+// (MCTab session, editor.session-host) it is the host's front: undo, redo,
+// undoNestedGroup and what they would do are the host's, and a name given
+// to a step (Toggle Comment, Change Color, ...) names the host's step too.
+// Everything that undoes through the tab's manager (the menu, a viewer's
+// table, the workspace edit applier's put-back, the GUI checks) then undoes
+// on the host. What NSTextView and the editor register still goes on
+// NSUndoManager's own stacks, which are never undone then: NSTextView keeps
+// deciding by the manager it gets (an undoManager answered while allowsUndo
+// was off made it register twice), so it is left exactly as it was. Without
+// a session it is NSUndoManager, untouched.
 @interface MCTabUndoManager : NSUndoManager
 @property(nonatomic, weak) MCTab *tab;
 @end
 
-@implementation MCTabUndoManager
+@implementation MCTabUndoManager {
+    NSInteger _ownGroups;   // depth of groups begun outside event grouping
+}
 - (MCSessionDoc *)host { return self.tab.session; }
 
 - (void)setActionName:(NSString *)name {
@@ -83,21 +88,13 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
     [self.host nameStep:name];
 }
 
-- (void)registerUndoWithTarget:(id)target selector:(SEL)selector object:(id)object {
-    if (!self.host) [super registerUndoWithTarget:target selector:selector object:object];
-}
-
-- (void)registerUndoWithTarget:(id)target handler:(void (^)(id))handler {
-    if (!self.host) [super registerUndoWithTarget:target handler:handler];
-}
-
-// A top-level group is a step of its own on the host, as it is an undo
-// action of its own here: the turn's step closes as it opens and again as
-// it ends, and its typing joins nothing before it (the workspace edit
-// applier's group per file, the GUI checks' group per simulated key).
+// A group begun with event grouping off (the GUI checks' group around one
+// simulated key press) is an undo action of its own: a step of its own on
+// the host, its typing joining nothing before it. Groups NSTextView and
+// NSUndoManager open by event are left alone.
 - (void)beginUndoGrouping {
     MCSessionDoc *h = self.host;
-    if (h && self.groupingLevel == 0) {
+    if (h && (_ownGroups > 0 || !self.groupsByEvent) && _ownGroups++ == 0) {
         [h closeStep];
         [h breakCoalescing];
     }
@@ -107,7 +104,7 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 - (void)endUndoGrouping {
     [super endUndoGrouping];
     MCSessionDoc *h = self.host;
-    if (h && self.groupingLevel == 0) [h closeStep];
+    if (h && _ownGroups > 0 && --_ownGroups == 0) [h closeStep];
 }
 
 - (BOOL)canUndo {

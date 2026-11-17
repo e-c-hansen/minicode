@@ -406,6 +406,11 @@ static BOOL StorageBusy(CodeTextView *view) {
     MCTab *tab = _tab;
     if (!tab) return;
     _applying = YES;
+    // The host's edit is a step of the host's already: nothing of it goes
+    // on NSUndoManager's stacks (NSTextView's or replaceRanges:'s).
+    NSUndoManager *um = tab.undoManager;
+    const BOOL registering = um.isUndoRegistrationEnabled;
+    if (registering) [um disableUndoRegistration];
     if (view) {
         const BOOL editable = view.editable;
         view.editable = YES;   // the mirror follows the host even while read-only
@@ -458,6 +463,7 @@ static BOOL StorageBusy(CodeTextView *view) {
         id owner = tab.owner;
         if ([owner respondsToSelector:@selector(tabTextChangedByHost:)]) [owner tabTextChangedByHost:tab];
     }
+    if (registering) [um enableUndoRegistration];
     _applying = NO;
 }
 

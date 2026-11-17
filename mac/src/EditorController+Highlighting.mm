@@ -192,7 +192,6 @@ struct MCOverlay {
     if (_bracketsOn || _semanticCurrent) [self observeEditorScrolling];
     _pending.clear();   // all of it is fresh now
     _liveHighlight = YES;
-    [self sessionStorageShowsActiveTab];   // its undo: the host's or NSTextView's
     // New colors (a theme, the zoom) over the same text: the server's
     // tokens still hold, painted again where they show.
     if (_semanticCurrent) _semanticPainted = [NSMutableIndexSet indexSet];

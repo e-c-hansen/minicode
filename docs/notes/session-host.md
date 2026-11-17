@@ -61,20 +61,24 @@ before the setting changed keeps the way it was opened until it closes.
   host's front while the tab has a document: `undo`, `redo`,
   `undoNestedGroup`, `canUndo`, `canRedo`, the action names and menu
   titles ask the host, `isUndoing`/`isRedoing` say when its answer is going
-  in, `setActionName:` names the host's step, and registrations go nowhere
-  (every change of the text is already a step on the host). So everything
-  that undoes through the tab's manager (the menu, the CSV table, the
-  workspace edit applier's put-back, the GUI checks) undoes on the host.
-- NSTextView's own undo is off while the storage shows such a tab
-  (`sessionStorageShowsActiveTab`, from `applyHighlighting`: `allowsUndo`
-  NO), so it registers nothing; `CodeTextView undoManager` still answers
-  the tab's manager, and `undo:`/`redo:` (answered only while the view
-  shows a document on the host: `respondsToSelector:`) go to the host
-  directly, with the menu item titled by the host's step.
-- `replaceRanges:withStrings:actionName:` registers nothing then (it
-  checks `allowsUndo`), nor does completion's `MCAcceptUndo`; their edits
-  are host steps named by the action name ("Completion" for an accepted
-  item).
+  in, and `setActionName:` names the host's step. So everything that
+  undoes through the tab's manager (the menu, the CSV table, the workspace
+  edit applier's put-back, the GUI checks) undoes on the host. A group
+  begun with event grouping off (the GUI checks' group around a simulated
+  key) is a host step of its own, as it is an undo action of its own.
+- NSTextView, `replaceRanges:` and completion's `MCAcceptUndo` still
+  register on the tab's NSUndoManager stacks, which are never undone while
+  the host owns the history (memory only, as before). **Trap (CI,
+  2026-11-17):** turning NSTextView's `allowsUndo` off and answering its
+  `undoManager` anyway made it register twice in every `replaceRanges:`
+  (which turns `allowsUndo` off around `shouldChangeTextInRanges:`): it
+  decides by the manager `undoManager` returns, not by the flag. Leave
+  both alone. The host's own edit goes in with the tab's undo registration
+  off.
+- `undo:`/`redo:` on `CodeTextView` (answered only while the view shows a
+  document on the host: `respondsToSelector:`) go to the host directly,
+  with the menu item titled by the host's step. Edits are host steps named
+  by `replaceRanges:`'s action name ("Completion" for an accepted item).
 - An undo closes the turn's step first, then the host takes its last step
   back and the edit comes back before `undo:inView:` returns (in one
   process a round trip through the host's queue), with the selection the

@@ -120,17 +120,6 @@ struct Counting {
     return can;
 }
 
-// The tab's undo manager, the host's front (MCTabUndoManager), even while
-// NSTextView's own undo is off for such a tab (allowsUndo NO, so it
-// registers nothing): what asks the view's undo manager undoes on the host.
-- (NSUndoManager *)undoManager {
-    NSUndoManager *um = [super undoManager];
-    if (um || self.allowsUndo) return um;
-    id<NSTextViewDelegate> d = self.delegate;
-    if ([d respondsToSelector:@selector(undoManagerForTextView:)]) return [d undoManagerForTextView:self];
-    return um;
-}
-
 - (void)breakUndoCoalescing {
     [super breakUndoCoalescing];
     [self.sessionDoc breakCoalescing];
