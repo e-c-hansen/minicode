@@ -676,7 +676,7 @@ std::vector<std::u16string> PalettePanel::recentFileKeys() const {
     if (ctx_.root.empty()) return out;
     std::vector<Document*> tabs = editor_->documents();
     std::stable_sort(tabs.begin(), tabs.end(),
-                     [](const Document* a, const Document* b) { return a->lastUsed > b->lastUsed; });
+                     [](const Document* a, const Document* b) { return a->lastUsed() > b->lastUsed(); });
     std::vector<std::string> abs;
     for (const Document* d : tabs)
         if (d->kind() != Document::Kind::Diff && !d->path().empty()) abs.push_back(d->path());

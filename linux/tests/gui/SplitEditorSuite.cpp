@@ -9,7 +9,8 @@
 // on show to the next group; the tab keys act on the focused group;
 // closing a group's last tab closes the group; the bar between the groups
 // drags, within each side's minimum; and a new window on the folder comes
-// back split.
+// back split. Throughout, what the editor shows is the core's
+// Model::Window: each group's tabs, its tab on show and the focus.
 #include "WindowLayout.h"
 #include "Harness.h"
 
@@ -43,6 +44,21 @@ std::string Group(int g) {
 std::string Groups() {
     return ed()->isSplit() ? Group(0) + " | " + Group(1) + (ed()->focusedGroup() ? " (right)" : " (left)")
                            : Group(0);
+}
+
+// The editor's groups are its window's (EditorTabs.h), tab for tab.
+bool WindowAgrees() {
+    const Model::Window& w = ed()->window();
+    if (w.split() != ed()->isSplit() || w.focused() != ed()->focusedGroup()) return false;
+    for (int g = 0; g < w.groupCount(); g++) {
+        const std::vector<Document*> docs = ed()->groupDocuments(g);
+        if (docs.size() != w.tabs(g).size()) return false;
+        for (size_t i = 0; i < docs.size(); i++)
+            if (docs[i]->id() != w.tabs(g)[i]) return false;
+        Document* on = ed()->groupActive(g);
+        if (!on || on->id() != w.active(g)) return false;
+    }
+    return w.documents().size() == ed()->documents().size();
 }
 
 GtkTextBuffer* Buf() { return gtk_text_view_get_buffer(GTK_TEXT_VIEW(ed()->textView())); }
@@ -227,6 +243,26 @@ MC_GUI_SUITE(split_editor) {
     MCGuiWait("s-b.txt on the left again", 5, [] {
         return Groups() == "s-a.txt s-c.txt >s-b.txt | >s-a.txt (left)" && Keyboard();
     });
+    MCGuiStep("the groups are the window's", [] { GCHECK(WindowAgrees()); });
+    MCGuiStep("s-c.txt dragged to the front of the left group's row", [] {
+        TabStrip* st = ed()->strip();
+        GtkWidget* from = st->tabWidget(1);
+        GtkWidget* first = st->tabWidget(0);
+        graphene_point_t in = GRAPHENE_POINT_INIT(0, 0), out;
+        if (!gtk_widget_compute_point(first, from, &in, &out)) out = in;
+        const double h = gtk_widget_get_height(from) / 2.0;
+        MCGuiDrag(from, 15, h, out.x + 4, h);
+    });
+    MCGuiWait("it leads the row, on show (the press chose it), the right group untouched", 5, [] {
+        return Groups() == ">s-c.txt s-a.txt s-b.txt | >s-a.txt (left)";
+    });
+    MCGuiStep("and in the window's order too; then s-b.txt's tab", [] {
+        GCHECK(WindowAgrees());
+        MCGuiClick(ed()->strip()->titleWidget(2));
+    });
+    MCGuiWait("s-b.txt on show again", 5, [] {
+        return Groups() == "s-c.txt s-a.txt >s-b.txt | >s-a.txt (left)";
+    });
 
     // ---- the bar between the groups
     MCGuiStep("the bar drags 100 px right", [] {
@@ -255,7 +291,9 @@ MC_GUI_SUITE(split_editor) {
     // ---- the session: a new window on the folder comes back split
     MCGuiWait("the split is the folder's session", 10, [] {
         const TabSessions::Session s = SavedFor(MCGuiProject());
-        return s.split && s.groups.focused == 0 && s.groups.groups[1].size() == 1;
+        return s.split && s.groups.focused == 0 && s.groups.groups[1].size() == 1 &&
+               !s.groups.groups[0].empty() &&
+               s.groups.groups[0].front().rfind("/s-c.txt") + 8 == s.groups.groups[0].front().size();
     });
     MCGuiStep("a new window on the folder", [] {
         gWindows = MCGuiAppWindows().size();
@@ -265,7 +303,8 @@ MC_GUI_SUITE(split_editor) {
         return MCGuiAppWindows().size() == gWindows + 1 && ed()->isSplit();
     });
     MCGuiStep("its groups as they were", [] {
-        GCHECK_EQ_STR(Groups(), "s-a.txt s-c.txt >s-b.txt | >s-a.txt (left)");
+        GCHECK_EQ_STR(Groups(), "s-c.txt s-a.txt >s-b.txt | >s-a.txt (left)");
+        GCHECK(WindowAgrees());
         GCHECK(ed()->groupActive(1) && !ed()->groupActive(1)->unread());
         MCGuiKey("ctrl+shift+w");
     });
@@ -279,8 +318,9 @@ MC_GUI_SUITE(split_editor) {
     MCGuiWait("the right group focused", 5, [] { return ed()->focusedGroup() == 1 && Keyboard(); });
     MCGuiStep("Ctrl+W", [] { MCGuiKey("ctrl+w"); });
     MCGuiWait("one group, with the left group's tabs", 5, [] {
-        return !ed()->isSplit() && Groups() == "s-a.txt s-c.txt >s-b.txt";
+        return !ed()->isSplit() && Groups() == "s-c.txt s-a.txt >s-b.txt";
     });
+    MCGuiStep("the window has one group too", [] { GCHECK(WindowAgrees()); });
     MCGuiStep("the other group's widgets are gone from the screen, the document kept", [] {
         GCHECK(!gtk_widget_get_visible(ed()->groupBar()));
         GCHECK(!MCGuiOnScreen(ed()->mirrorView()));

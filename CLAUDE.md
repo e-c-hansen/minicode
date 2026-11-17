@@ -190,7 +190,9 @@ goes here first, with tests; the GUI only displays it.
   IDE link: WebSocket, MCP, lock file).
 - `Settings` (the settings file, themes, every resolved color), `Commands` (the
   command registry and keys.conf; the GTK port's keys are a table of their
-  own in `CommandsLinux.cpp`, the Mac's rows untouched), `EditorTabs` (tab rules), `Backups` (backups
+  own in `CommandsLinux.cpp`, the Mac's rows untouched), `EditorTabs` (tab rules, and
+  `Model::Window` and `Model::Session`, which hold the tabs by them: see
+  "Tabs, sessions and the disk"), `Backups` (backups
   of unsaved tabs, with a POSIX `Fs`), `FileDetails` (tree sorts, ages, folder
   totals), `RunFile` (Run File's quoting), `Runnables` (the tests in a
   file, found through the highlighter's tokens, and the command for one
@@ -646,6 +648,21 @@ container (PanelHost, laid out by hand in layoutContainer)
 
 ## Tabs, sessions and the disk (Mac)
 
+- **The tabs as data** (2026-11-16, SESSION-DESIGN.md stage 3a,
+  `EditorTabs.h`, `session:*`): `Model::Window` holds a window's tabs by
+  the rules below: one or two groups (positional, 0 the left; the right
+  one only while split), each group's tabs in order and its tab on show,
+  the focused group, the share, each document's file, preview state
+  (`Preview::User`, `Agent`) and last use, once however many groups show
+  it, and the closed tabs. Documents are the port's ids (`DocId`); the
+  window reads nothing and shows nothing: a port changes it
+  (`prepareOpen`, `add`, `activate`, `close`, `putInOther`, `focus`,
+  `move`, ...) and shows what it says. `Model::Session` is the app's
+  windows. The GTK editor keeps its tabs in one (linux/HANDOFF.md item
+  73); the Mac still keeps its own in EditorController by the same rules,
+  until stage 3c moves it over, and sessions.json and the backup planner
+  join the core in 3b. A rule changed here is changed in the window, with
+  its `session:*` check.
 - **One text view, many documents.** `MCTab` holds a document's path, text,
   `savedText`, mode flags, `dirty`, its own `NSUndoManager` (from
   `undoManagerForTextView:`), its own `LatexView`, folds, viewer kind,
@@ -771,7 +788,8 @@ container (PanelHost, laid out by hand in layoutContainer)
   Left out: squiggles, inlay labels, folds and carets in the mirror; a find
   bar per group; dragging tabs between strips; a third group or a split
   down. Cmd+2 was Focus Terminal (a Command-only key, so it yields).
-- GTK and Android have no tabs.
+- GTK's tabs are a `Model::Window` (above), with the same rules and the
+  split editor; Android has no tabs.
 
 ## Backups, hot exit and auto-save (Mac)
 
