@@ -66,9 +66,13 @@ NSString* const kRead =
     @" screen: [...document.querySelectorAll('#screen .r')].map(r => r.textContent).join('\\n'),"
     @" body: document.body ? document.body.innerText.slice(0, 300) : ''})";
 
+// The refusal page has none of the view's elements: only its text.
+NSString* const kReadBody =
+    @"JSON.stringify({body: document.body ? document.body.innerText.slice(0, 300) : ''})";
+
 // Starts reading the page; the answer lands in gSeen.
-void Read(WKWebView* w) {
-    [w evaluateJavaScript:kRead inFrame:nil inContentWorld:WKContentWorld.defaultClientWorld
+void Read(WKWebView* w, NSString* script = kRead) {
+    [w evaluateJavaScript:script inFrame:nil inContentWorld:WKContentWorld.defaultClientWorld
         completionHandler:^(id value, NSError* error) {
             if (![value isKindOfClass:NSString.class]) return;
             NSData* d = [(NSString*)value dataUsingEncoding:NSUTF8StringEncoding];
@@ -179,7 +183,7 @@ MC_GUI_SUITE(session_web) {
         [gPage loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:bad]]];
     });
     MCGuiWait(@"a wrong token shows the refusal and nothing else", 20, ^BOOL {
-        Read(gPage);
+        Read(gPage, kReadBody);
         return [gSeen[@"body"] containsString:@"wrong token"];
     });
     MCGuiWait(@"and the view lets the host go once no browser looks", 20, ^BOOL {
