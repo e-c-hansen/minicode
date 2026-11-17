@@ -248,6 +248,32 @@ goes here first, with tests; the GUI only displays it.
   port's `Document` records every buffer edit into one and GTK's undo is
   off (`linux/HANDOFF.md` item 72); the Mac's editor moves onto it next,
   its NSUndoManager rules being the ones above.
+- The session's host (SESSION-DESIGN.md's stage 4, 2026-11-17; namespace
+  `Shared`, since `Session` names classes already): `Ot` (edits that
+  crossed in flight made to agree: lists of operations applied in order,
+  split into deletions and insertions; the host's insertion goes first at
+  one place, an insertion inside a deleted range survives at its start;
+  `ot:*`, a fuzz holding both orders to one text in both units),
+  `SessionProtocol` (the messages, and `encode`/`decode` as one JSON line
+  each for loopback; a text with a lone surrogate goes as an array of
+  units), `SessionHost` (`Host`, the logic with no thread, and
+  `SessionHost`, a Host on a thread of its own: every open document's
+  `Model::Document`, version and `UndoHistory`, one per document whoever
+  edits it, a log of applied edits in both units back to the oldest base
+  a renderer may still send, and the windows' tabs as reported) and
+  `SessionClient` (a renderer's side: an outbox with one edit in flight
+  at a time, as ot.js's client, so the host moves an edit past nothing of
+  the sender's own; edits from elsewhere moved past the unconfirmed ones
+  and handed to the document's `Listener`; steps and coalescing decided
+  by the renderer, which knows the keys; waits that are a round trip
+  through the host's queue: `settle`, `undo`, the undo state; and on
+  request a copy of the host's text kept from its own edits). The wire
+  unit is the renderer's (Hello says which); the host converts at the
+  edge. A UTF-16 renderer must never split a surrogate pair (a renderer
+  counting code points could not follow). `host:*`: the edit loop, undo
+  across renderers, a fuzz with renderers in both units typing, undoing
+  and resetting while messages wait and go in random order (each link in
+  its own order), and the threaded host (TSan in CI).
 - Editing: `LineDiff` (Myers, split at lines unique on both sides past
   1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,
   `mapOffset`), `LineComments`,
@@ -3380,7 +3406,11 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   `writeFileAtomically`, so a clean tab follows the disk ("Reload from
   Disk"); a dirty tab's file is refused. Every action, and every panel
   refresh (`MCGitPanelDidRefreshNotification`), reads again and keeps the
-  place by `ChangeReview::anchorAt`/`rowFor`. Rows are one height
+  place by `ChangeReview::anchorAt`/`rowFor`. An action's note stays
+  while the reads show what the first read after it showed
+  (`noteRead:serial:`), and goes at that first read when HEAD moved
+  since the page's last read before it: a commit landing between the
+  action and its read (2026-11-17, a flake on main). Rows are one height
   (`ReviewRowHeight`), so places are arithmetic and layout is
   non-contiguous; tints, numbers and the buttons are drawn, the buttons
   pinned to the visible right edge (a sideways scroll redraws). New,

@@ -92,6 +92,7 @@ struct ReviewData {
     std::vector<Extra> extras;
     Page page;
     size_t fingerprint = 0;           // ChangeReview::fingerprint of the diffs
+    std::string head;                 // HEAD's commit as status read it (uncommitted changes only)
 };
 
 std::string ExtOf(const std::string &path) {
@@ -145,6 +146,7 @@ std::shared_ptr<ReviewData> ReadReview(NSString *root, const ChangeReview::Opene
     GitUi::Snapshot snap;
     GitUi::applyStatus(snap, Git::parseStatus(Bytes(st.output)));
     data->initial = snap.initial;
+    data->head = snap.headOid;
     std::vector<GitUi::Row> rows;
     std::vector<std::string> paths;
     for (const GitUi::Row &row : snap.rows) {
@@ -1009,6 +1011,8 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     NSUInteger _messageAfter; // the note is about reads started after this many
     BOOL _messageSettled;     // ...one of which is on show
     size_t _messagePrint;     // what that read showed
+    std::string _messageHead; // HEAD as the page last read it before the note
+    BOOL _messageHeadKnown;
     size_t _lastConflicts;
     NSString *_commitTitle;   // "a1b2c3d Subject", the tab's title
     NSTextField *_bodyLabel;  // the rest of a commit's message
@@ -1591,6 +1595,8 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     _message = [text copy];
     _messageAfter = _reads;
     _messageSettled = NO;
+    _messageHeadKnown = _data && _data->error.empty();
+    _messageHead = _messageHeadKnown ? _data->head : std::string();
     _messageLabel.stringValue = text ?: @"";
     _messageLabel.toolTip = text;
     AppSettings *cfg = [AppSettings shared];
@@ -1611,9 +1617,15 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         if (serial <= _messageAfter) return;
         _messageSettled = YES;
         _messagePrint = d->fingerprint;
+        // A commit landed between the action and this read (the panel's
+        // Commit pressed at once, a terminal): what the note spoke of is
+        // committed, and this read is already the state after it, so the
+        // fingerprint alone would keep the note for good (CI, 6ea9d0f).
+        // No action of the page's moves HEAD.
+        if (!_messageHeadKnown || !d->error.empty() || d->head == _messageHead) return;
+    } else if (d->fingerprint == _messagePrint) {
         return;
     }
-    if (d->fingerprint == _messagePrint) return;
     _message = nil;
     _messageLabel.stringValue = @"";
     _messageLabel.toolTip = nil;

@@ -294,6 +294,20 @@ void MCGuiClick(GtkWidget* widget, double x, double y, int b) {
     button(b, false);
 }
 
+void MCGuiClickWhenReady(const std::string& what, std::function<GtkWidget*()> find,
+                         double timeout) {
+    MCGuiWait(what + " on screen", timeout, [find] { return MCGuiOnScreen(find()); });
+    MCGuiStep("click " + what, [what, find] {
+        GtkWidget* w = find();
+        if (!MCGuiOnScreen(w)) {
+            MCGuiCheck(false, what + " on screen to click (" + whyNotOnScreen(w) + ")", __FILE__,
+                       __LINE__);
+            return;
+        }
+        MCGuiClick(w);
+    });
+}
+
 void MCGuiPress(GtkWidget* widget, double x, double y, int b) {
     MCGuiMoveTo(widget, x, y);
     button(b, true);

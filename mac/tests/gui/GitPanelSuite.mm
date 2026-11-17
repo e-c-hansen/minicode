@@ -1241,6 +1241,48 @@ MC_GUI_SUITE(git_review) {
         GCHECK(p.message.length == 0);
         GCHECK_EQ_STR([[p valueForKey:@"messageLabel"] stringValue], @"");
     });
+    // The other order: the commit lands after the action wrote and before
+    // the page's first read after it, so that read already shows the
+    // change committed and the note had nothing to compare it with (CI on
+    // main, 6ea9d0f: "Staged g.py." stayed). The page's queue is held
+    // between the action and its read, so the order is certain here.
+    __block dispatch_semaphore_t hold = nil;
+    GitShell(@"g.py changed again", [NSString stringWithFormat:@"cd '%@' && printf 'def f():\\n    return 3\\n' > g.py", repo]);
+    MCGuiStep(@"read again for it", ^{
+        loads = Review(c).loads;
+        [Review(c) reload];
+    });
+    MCGuiWait(@"g.py among the changes", 15, ^BOOL {
+        return Review(c).loads > loads && [Review(c) rowOfFile:@"g.py" staged:NO] >= 0;
+    });
+    MCGuiStep(@"Stage File on g.py, the page's next read held back", ^{
+        MCChangeReviewPage *p = Review(c);
+        actions = 0;
+        GCHECK(PressButton(p, @"Stage File", [p rowOfFile:@"g.py" staged:NO]));
+        dispatch_semaphore_t s = dispatch_semaphore_create(0);
+        hold = s;
+        // Behind the action's write, so ahead of the read its end starts.
+        dispatch_async((dispatch_queue_t)[p valueForKey:@"_queue"], ^{
+            dispatch_semaphore_wait(s, dispatch_time(DISPATCH_TIME_NOW, 30 * (int64_t)NSEC_PER_SEC));
+        });
+    });
+    MCGuiWait(@"staged and said", 15, ^BOOL { return actions == 1; });
+    MCGuiStep(@"a commit before the page reads; then the read", ^{
+        GCHECK_EQ_STR(Review(c).message, @"Staged g.py.");
+        GCHECK(MCGitRunSync(repo, @[@"commit", @"-qm", @"meanwhile"]).ok);
+        loads = Review(c).loads;
+        dispatch_semaphore_signal(hold);
+    });
+    MCGuiWait(@"read with g.py committed", 15, ^BOOL {
+        return Review(c).loads > loads && [Review(c) rowOfFile:@"g.py" staged:YES] < 0 &&
+               [Review(c) rowOfFile:@"g.py" staged:NO] < 0;
+    });
+    MCGuiStep(@"the note went with the change it spoke of", ^{
+        MCChangeReviewPage *p = Review(c);
+        MCGuiNote(@"committed before the first read: \"%@\"", p.message);
+        GCHECK(p.message.length == 0);
+        GCHECK_EQ_STR([[p valueForKey:@"messageLabel"] stringValue], @"");
+    });
     GitShell(@"50,000 lines, every one changed", [NSString
         stringWithFormat:@"set -e; cd '%@'; seq 1 50000 | sed 's/^/line /' > big.txt; %@ add big.txt; "
                           "%@ commit -qm big; seq 1 50000 | sed 's/^/LINE /' > big.txt",
