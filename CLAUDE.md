@@ -363,7 +363,7 @@ session has a display. Check first.
   previews, compare, html_page;
   terminal: terminal_draw, terminal_links, terminal_marks, terminal_paste,
   terminal_pty, terminal_reflow, terminal_splits, terminal_vt,
-  terminal_exec, terminal_keys, terminal_zoom, run_file, test_gutter;
+  terminal_exec, terminal_keys, terminal_zoom, terminal_host, run_file, test_gutter;
   git: git_panel, git_actions, git_hunks, git_verbs, git_review, worktree_review, git_conflicts, git_sync,
   git_gutter, line_history;
   agents and control: agents, agent_panel, agent_places, agentcommands,

@@ -621,3 +621,26 @@ NSString *MCSessionCheckTabs(NSArray<MCTab *> *tabs) {
     for (const std::string &e : c.takeErrors()) [out appendFormat:@"the host said: %s; ", e.c_str()];
     return out;
 }
+
+MCSessionTerminalState MCSessionInspectTerminal(unsigned long long term) {
+    MCSessionTerminalState out;
+    if (!gHost) return out;
+    gHost->inspect([&](const Shared::Host &h) {
+        out.fd = h.ptyFd(term);
+        out.pid = h.shellPid(term);
+        std::vector<Shared::Host::PollFd> fds;
+        h.pollSet(&fds);
+        for (const auto &p : fds)
+            if (p.term == term) {
+                out.writeWaiting = p.write;
+                out.reading = p.read;
+            }
+        out.dying = h.dyingCount();
+        if (const TerminalScreen *s = h.screen(term)) {
+            int last = s->rows() - 1;
+            while (last >= 0 && s->lineText(last).empty()) last--;
+            for (int r = -s->historySize(); r <= last; r++) out.screen += s->lineText(r) + "\n";
+        }
+    });
+    return out;
+}

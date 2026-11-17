@@ -77,6 +77,9 @@ public:
     // ICANON on), or the line editor is not in canonical mode (raw).
     bool echoOff() const;
     bool raw() const;
+    // Signals off (ISIG): a raw program (cfmakeraw, fzf), not zsh's line
+    // editor, which keeps ISIG (TerminalScreen::setRawTty's rule).
+    bool signalsOff() const;
 
     // Whether the shell has exited, without hanging up (something it
     // started may still hold the pty): reaped then, with its status.

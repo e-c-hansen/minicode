@@ -348,7 +348,7 @@ bool TermShell::operator==(const TermShell& o) const {
     return known == o.known && busy == o.busy && atPrompt == o.atPrompt && inputReady == o.inputReady &&
            prompts == o.prompts && started == o.started && done == o.done && status == o.status &&
            command == o.command && cwd == o.cwd && title == o.title && foreground == o.foreground &&
-           raw == o.raw && echoOff == o.echoOff;
+           raw == o.raw && echoOff == o.echoOff && signalsOff == o.signalsOff;
 }
 
 Json termShellJson(const TermShell& s) {
@@ -367,6 +367,7 @@ Json termShellJson(const TermShell& s) {
     j.set("foreground", Json(s.foreground));
     j.set("raw", Json(s.raw));
     j.set("echoOff", Json(s.echoOff));
+    j.set("signalsOff", Json(s.signalsOff));
     return j;
 }
 
@@ -386,6 +387,7 @@ TermShell termShellFrom(const Json& j) {
     s.foreground = (int)j["foreground"].asInt();
     s.raw = j["raw"].asBool();
     s.echoOff = j["echoOff"].asBool();
+    s.signalsOff = j["signalsOff"].asBool();
     return s;
 }
 

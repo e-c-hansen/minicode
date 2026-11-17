@@ -146,14 +146,15 @@ jobs:
 
       # The editing suites again with the session's host owning every tab's
       # text and undo (editor.session-host, docs/notes/session-host.md;
-      # SESSION-DESIGN.md stage 4b), every message through the protocol's
+      # SESSION-DESIGN.md stage 4b), and the terminal suites with it owning
+      # every grid terminal's pty (stage 5), every message through the protocol's
       # encoding and back and 200 us late on the host's thread, as the GTK
       # job's loopback step runs its own. A step of its own after the
       # halves, so their timing is undisturbed. Each suite ends with the
       # harness's check that every tab's text is the host's.
       - name: GUI checks with the session's host
         id: session
-        timeout-minutes: 12
+        timeout-minutes: 16
         env:
           MINICODE_SESSION_HOST: 'on'
           MINICODE_HOST: loopback
@@ -163,7 +164,9 @@ jobs:
           PICTURES: ${{ runner.temp }}/gui-pictures
           GUI_SESSION_HOST: >-
             keystroke multiedit editor_keys auto_close save backups lsp_sync
-            snippets format git_conflicts test_gutter
+            snippets format git_conflicts test_gutter terminal_pty
+            terminal_marks terminal_paste terminal_exec terminal_keys run_file
+            attention terminal_host
         run: |
           scripts/ci-together.sh "$RUNNER_TEMP/ci-logs" \
             gui-session-host 'MC_GUI_SNAPSHOTS="$PICTURES/session-host" ./build/guitest $GUI_SESSION_HOST'

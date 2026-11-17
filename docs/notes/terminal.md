@@ -446,8 +446,10 @@ for full-screen programs. Both can be open at once.
 
 SESSION-DESIGN.md's stage 5, core half (2026-11-17; `HostPty.{h,cpp}`,
 `SessionHost`, `SessionProtocol`, `SessionClient`, `TerminalScreen::replay`,
-`tests/session_terminal_tests.inc`). The Mac's terminal still owns its
-MCPty; the GTK port runs on it (linux/HANDOFF.md item 90).
+`tests/session_terminal_tests.inc`). The GTK port runs on it
+(linux/HANDOFF.md item 90); the Mac's grid terminals do with
+`editor.session-host` on (below, and docs/notes/session-host.md,
+"Terminals on the host").
 
 - **The pty** (`Shared::Pty`): `posix_openpt`, the slave opened and its
   modes (the kernel's plus IUTF8) and size set in the parent, then
@@ -525,6 +527,18 @@ MCPty; the GTK port runs on it (linux/HANDOFF.md item 90).
   from the first. The waiting dot goes when a key's commit reaches the
   shell (a key counts for 200 ms, an input method's commit coming late),
   so Ctrl+Shift+C and Ctrl+Up leave it.
+- **The Mac on it** (2026-11-17, with `editor.session-host` on, grid mode
+  only): `TerminalView` keeps everything above (its own `TerminalStream`
+  and `TerminalScreen` parse the same bytes, so the integration, nonce,
+  marks, typing queue, titles and links are unchanged) and changes only
+  where the bytes come from and go: `startShell` sends the same argv and
+  environment as a `TermSpec`, and waits (`settle`) for the shell's pid;
+  `MCHostTermListener` hands output to the backlog, acknowledged as each
+  slice is parsed; `sendBytes` (keys, pastes, typed commands, the screen's
+  replies) is `terminalInput`; `updateWindowSize` is `resizeTerminal`.
+  What read the master (`tcgetpgrp`, `tcgetattr` for ICANON, ECHO and
+  ISIG) reads the host's `TermShell` through `ptyForeground`, `ptyRaw`,
+  `ptyHidesInput` and `ptySignalsOff`. Line mode keeps MCPty.
 
 ## Traps
 

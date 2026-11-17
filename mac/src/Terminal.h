@@ -117,6 +117,13 @@ extern NSNotificationName const MCTerminalClaudeDidStartNotification;
 // The shell's process id, 0 while there is none (the Processes panel
 // tracks what descends from it).
 @property(nonatomic, readonly) pid_t shellPid;
+// The session's host owns this terminal's pty (editor.session-host, grid
+// mode): its output, keys and tty state go through the host, where other
+// screens can see and type into it. Decided when the terminal opens.
+@property(nonatomic, readonly) BOOL onSessionHost;
+// The shell's terminal id on the host, 0 when none (off the host, or no
+// shell).
+@property(nonatomic, readonly) unsigned long long sessionTerminal;
 // The first of them, or nil.
 @property(nonatomic, readonly, copy) NSString *runningCommand;
 // The process group holding the terminal's foreground when it is not the

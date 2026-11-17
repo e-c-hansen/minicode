@@ -166,6 +166,7 @@ struct TermShell {
     int foreground = 0;       // the pty's foreground process group, 0 unknown
     bool raw = false;         // the pty is out of canonical mode
     bool echoOff = false;     // echo off in canonical mode: a password
+    bool signalsOff = false;  // ISIG off: a raw program, not zsh's line editor
     bool operator==(const TermShell& o) const;
     bool operator!=(const TermShell& o) const { return !(*this == o); }
 };
