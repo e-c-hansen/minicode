@@ -11172,6 +11172,7 @@ static void testMultiCaretOccurrences() {
 #include "lsp_sync_tests.inc"
 #include "text_model_tests.inc"
 #include "undo_history_tests.inc"
+#include "session_model_tests.inc"
 #include "lsp_trust_tests.inc"
 #include "lsp_clangd_tests.inc"
 #include "multiedit_tests.inc"
@@ -11274,6 +11275,7 @@ int main() {
     testRunnables();
     testSnippetCompletionItems();
     testEditorTabs();
+    testSessionModel();
     testFormatter();
     testFormatConsent();
     testFormatCoverage();

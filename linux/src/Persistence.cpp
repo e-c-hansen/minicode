@@ -75,7 +75,9 @@ void writeSessions(const TabSessions::Sessions& all) {
 }  // namespace
 
 Persistence::Persistence(Editor* editor, const std::string& root, Host host)
-    : editor_(editor), key_(keyFor(root)), host_(std::move(host)) {}
+    : editor_(editor), key_(keyFor(root)), host_(std::move(host)) {
+    editor_->window().setRoot(key_);
+}
 
 Persistence::~Persistence() {
     closing_ = true;
@@ -120,7 +122,10 @@ void Persistence::putSession(const std::string& key, const TabSessions::Session&
     if (lock >= 0) close(lock);   // which lets go of the lock
 }
 
-void Persistence::setRoot(const std::string& root) { key_ = keyFor(root); }
+void Persistence::setRoot(const std::string& root) {
+    key_ = keyFor(root);
+    editor_->window().setRoot(key_);   // the window's folder, as the session keys it
+}
 
 // ---------------------------------------------------------------- hooks
 
@@ -180,7 +185,7 @@ TabSessions::Session Persistence::session() {
     Document* shown = editor_->active() && isFile(editor_->active()) ? editor_->active() : nullptr;
     if (!shown)
         for (Document* d : editor_->documents())
-            if (isFile(d) && (!shown || d->lastUsed > shown->lastUsed)) shown = d;
+            if (isFile(d) && (!shown || d->lastUsed() > shown->lastUsed())) shown = d;
     for (Document* d : editor_->documents()) {
         if (!isFile(d)) continue;
         if (d == shown) s.active = (int)s.tabs.size();
@@ -273,7 +278,8 @@ void Persistence::restoreSession() {
         if (t != tabFor.end()) editor_->placeTab(d, TabSessions::place(*t->second));
         // The preview tab comes back as one, unless unsaved changes came back
         // into it (an edit keeps a tab).
-        d->setPreviewTab(!previewFile.empty() && f == previewFile && !d->dirty());
+        if (!previewFile.empty() && f == previewFile && !d->dirty())
+            editor_->setPreview(d, Model::Preview::User);
         made[i] = d;
     }
     // The tab on show is read now, while the window opens. One holding a
