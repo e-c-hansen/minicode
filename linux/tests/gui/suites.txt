@@ -106,3 +106,4 @@ UndoHistorySuite.cpp
 TreeIconsSuite.cpp
 LatexInputsSuite.cpp
 FormatOfferSuite.cpp
+HtmlPageSuite.cpp

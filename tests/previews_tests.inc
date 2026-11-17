@@ -2,6 +2,79 @@
 // of run_tests.cpp (FileSniff.h, Csv.h, JsonOutline.h): how a file is
 // shown, and the cores of the table and outline views. Included there.
 
+static void testHtmlPage() {
+    using HS = Settings::HtmlScripts;
+    GROUP("htmlpage:scripts");
+    {
+        // on and off apply unasked, whatever the page holds.
+        CHECK(HtmlPage::scripts(HS::On, true, 0).run && !HtmlPage::scripts(HS::On, true, 0).ask);
+        CHECK(!HtmlPage::scripts(HS::Off, true, 0).run && !HtmlPage::scripts(HS::Off, true, 0).ask);
+        // ask: nothing to run is never asked about; a script is, until answered.
+        CHECK(!HtmlPage::scripts(HS::Ask, false, 0).run && !HtmlPage::scripts(HS::Ask, false, 0).ask);
+        CHECK(HtmlPage::scripts(HS::Ask, true, 0).ask && !HtmlPage::scripts(HS::Ask, true, 0).run);
+        CHECK(HtmlPage::scripts(HS::Ask, true, 1).run && !HtmlPage::scripts(HS::Ask, true, 1).ask);
+        CHECK(!HtmlPage::scripts(HS::Ask, true, 2).run && !HtmlPage::scripts(HS::Ask, true, 2).ask);
+        CHECK(std::string(HtmlPage::rememberedValue(true)) == "on");
+        CHECK(std::string(HtmlPage::rememberedValue(false)) == "off");
+        // The remembered value is what the settings file reads back.
+        const std::string written = Settings::withValue(Settings::defaultFileText(), "html.scripts",
+                                                         HtmlPage::rememberedValue(true));
+        CHECK(written.find("\nhtml.scripts = on\n") != std::string::npos);
+        CHECK(HtmlPage::answeredLine(true, true) == "This page's scripts run, until minicode quits.");
+        CHECK(HtmlPage::answeredLine(false, true) ==
+              "This page's scripts stay off, until minicode quits.");
+        CHECK(HtmlPage::answeredLine(true, false) == "This page's scripts run.");
+        CHECK(HtmlPage::answeredLine(false, false) == "This page's scripts stay off.");
+    }
+    GROUP("htmlpage:folders");
+    {
+        CHECK(HtmlPage::readAccessFolder("/w/site/a.html", "/w") == "/w");
+        CHECK(HtmlPage::readAccessFolder("/w/site/a.html", "/w/") == "/w");
+        CHECK(HtmlPage::readAccessFolder("/w/site/a.html", "/") == "/");
+        CHECK(HtmlPage::readAccessFolder("/other/a.html", "/w") == "/other");
+        CHECK(HtmlPage::readAccessFolder("/wx/a.html", "/w") == "/wx");   // not a prefix of a name
+        CHECK(HtmlPage::readAccessFolder("/a.html", "") == "/");
+        CHECK(HtmlPage::withoutFragment("file:///w/a.html#end") == "file:///w/a.html");
+        CHECK(HtmlPage::withoutFragment("file:///w/a.html") == "file:///w/a.html");
+    }
+    GROUP("htmlpage:navigation");
+    {
+        using N = HtmlPage::Navigation;
+        using V = HtmlPage::Verdict;
+        const std::string own = "/w/a.html";
+        std::set<std::string> asked = {"/w/a.html", "/w/b.html"};
+        auto nav = [](const char *scheme, const std::string &path, N::Kind kind, bool main = true,
+                      bool query = false) {
+            N n;
+            n.scheme = scheme;
+            n.path = path;
+            n.kind = kind;
+            n.mainFrame = main;
+            n.hasQuery = query;
+            return n;
+        };
+        CHECK(HtmlPage::decide(nav("file", own, N::Kind::Other), own, asked) == V::Allow);
+        CHECK(HtmlPage::decide(nav("file", own, N::Kind::Reload), own, asked) == V::Allow);   // own file
+        CHECK(HtmlPage::decide(nav("about", "", N::Kind::Other), own, asked) == V::Allow);
+        // A frame inside the page loads whatever it names.
+        CHECK(HtmlPage::decide(nav("https", "", N::Kind::Other, false), own, asked) == V::Allow);
+        // A link leaves the page: a file or a web address, to the handler.
+        CHECK(HtmlPage::decide(nav("file", "/w/c.html", N::Kind::Link), own, asked) == V::Open);
+        CHECK(HtmlPage::decide(nav("https", "", N::Kind::Link), own, asked) == V::Open);
+        CHECK(HtmlPage::decide(nav("mailto", "", N::Kind::Link), own, asked) == V::Open);
+        // The own file with a query is another address.
+        CHECK(HtmlPage::decide(nav("file", own, N::Kind::Link, true, true), own, asked) == V::Open);
+        // A load asked for before, a reload, back and forward: stale once the tab moved on.
+        CHECK(HtmlPage::decide(nav("file", "/w/b.html", N::Kind::Other), own, asked) == V::Drop);
+        CHECK(HtmlPage::decide(nav("file", "/w/c.html", N::Kind::Reload), own, asked) == V::Drop);
+        CHECK(HtmlPage::decide(nav("file", "/w/c.html", N::Kind::BackForward), own, asked) == V::Drop);
+        // Not asked for, by script: a link.
+        CHECK(HtmlPage::decide(nav("file", "/w/c.html", N::Kind::Other), own, asked) == V::Open);
+        // Nothing on show: nothing is the own page.
+        CHECK(HtmlPage::decide(nav("file", "/w/a.html", N::Kind::Link), "", {}) == V::Open);
+    }
+}
+
 static void testFileSniff() {
     using namespace FileSniff;
     GROUP("sniff:binary");

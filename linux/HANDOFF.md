@@ -5421,3 +5421,44 @@ closed. `processes` closes the busy terminal, presses the button and checks
 the panel, the selected row (`selectedPid`) and that the terminal is still
 there. The question's wording is Linux's own ("Close this terminal?"); the Mac
 names the command, which the GTK terminal does not know.
+
+### 83. An .html file opens as its page (done, November 2026)
+
+The Mac's HTML page (mac/src/HtmlPage.mm, 1.5.27 and the fixes after it) on
+GTK: an .html, .htm or .xhtml file (FileSniff::Kind::Html, `Document::isHtml`,
+browser builds only) opens as its page in the editor's slot, a viewer over
+the tab's text like the CSV table (`Editor::showHtml`, beside `showTable`),
+and Ctrl+Shift+V flips to the source and back, giving the keyboard to the
+page when it is asked for (`togglePreview`). An empty file opens in its
+source. The rules are the core's (`src/HtmlPage.{h,cpp}`, `htmlpage:*`):
+what `html.scripts` and the file's answer make of a page (`scripts`), the
+bar's and the answered line's wording, the folder a page may read, which
+navigations load and which go to the link handler or are dropped as stale
+(`decide`: a reload, a back or forward, or a load this page asked for
+earlier arrives after the tab moved on and is never taken for a link). The
+Mac keeps its own copy of those rules in the .mm; it was not changed here.
+The view is `HtmlView.{h,cpp}`: a box with the bar (the consent bar's look,
+`minicode-consent-bar`) over a WebKitWebView on an ephemeral network
+session, JavaScript off in its settings until allowed (`html.scripts` on, or
+Run Scripts, or an answer held for the file until quit; the setting is the
+page's and takes effect on the load that follows, so an answer loads the page
+again). The bar says "This page has scripts. Run them?" with Run Scripts,
+Don't Run and "Remember for every HTML file", which writes `html.scripts =
+on` or `off` through `Editor::htmlRemember` (main.cpp's `writeValue`); an
+answer leaves a line in the bar's place ("This page's scripts run, until
+minicode quits.") with an ×, so the page does not move. A save, or a write
+from outside, loads the page again (its own `GFileMonitor`, 200 ms after the
+last event, and a stamp of mtime, size and inode), reading the scroll first
+and putting it back every 100 ms until it holds (the Mac's), with a
+generation count so an older answer is dropped. A link or `window.open`
+leaving the page goes to `Editor::openMarkdownLink` (a local file in a tab, a
+web address in the browser pane). The web view is not focusable until a click
+or the toggle key, so an autofocus field cannot take the keyboard.
+Differences: WebKitGTK has no read-access folder for a file page (the Mac's
+`loadFileURL:allowingReadAccessToURL:`), so subresources load from wherever
+the page names them (scripts still cannot read other files, as file access
+from file URLs is off); and a frame inside the page is told from the main
+frame by its name only. `html_page` checks the page's text and style, the
+script not running and then running after Run Scripts, the keyboard, the
+toggle, a write from outside keeping the scroll, a link to another file, the
+remembered answer's setting and `off`.

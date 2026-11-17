@@ -27,7 +27,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
         ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp ../src/Text.cpp ../src/Document.cpp ../src/UndoHistory.cpp \
         ../src/LatexDoc.cpp ../src/LatexLog.cpp ../src/LatexScratch.cpp ../src/SyncTex.cpp \
-        ../src/Csv.cpp ../src/JsonOutline.cpp ../src/Notebook.cpp ../src/FileSniff.cpp ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp ../src/ControlProtocol.cpp ../src/IdeLink.cpp ../src/PageCheck.cpp ../src/ClaudeHooks.cpp ../src/AttentionBoard.cpp ../src/AgentIndex.cpp ../src/AgentTranscript.cpp ../src/ProcessTable.cpp ../src/RunFile.cpp ../src/Runnables.cpp ../src/ProcFs.cpp ../src/AgentEvidence.cpp ../src/AgentView.cpp ../src/InlineAgent.cpp \
+        ../src/Csv.cpp ../src/JsonOutline.cpp ../src/Notebook.cpp ../src/FileSniff.cpp ../src/HtmlPage.cpp ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp ../src/ControlProtocol.cpp ../src/IdeLink.cpp ../src/PageCheck.cpp ../src/ClaudeHooks.cpp ../src/AttentionBoard.cpp ../src/AgentIndex.cpp ../src/AgentTranscript.cpp ../src/ProcessTable.cpp ../src/RunFile.cpp ../src/Runnables.cpp ../src/ProcFs.cpp ../src/AgentEvidence.cpp ../src/AgentView.cpp ../src/InlineAgent.cpp \
         ../src/LspProtocol.cpp ../src/LspText.cpp ../src/LspServers.cpp \
         ../src/LspDiagnostics.cpp ../src/LspCompletion.cpp ../src/LspSync.cpp \
         ../src/LspFeatures.cpp ../src/LspEdits.cpp \
@@ -49,7 +49,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
 # their feature macro is defined.
 GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/Document.cpp src/Tabs.cpp src/Groups.cpp \
-       src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp src/CsvTable.cpp src/SqliteView.cpp src/JsonOutlineView.cpp src/MarkdownSide.cpp \
+       src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp src/CsvTable.cpp src/HtmlView.cpp src/SqliteView.cpp src/JsonOutlineView.cpp src/MarkdownSide.cpp \
        src/BracketView.cpp src/BracketColors.cpp src/AutoCloseInput.cpp src/BufferText.cpp \
        src/Carets.cpp src/CaretEdits.cpp src/SnippetSession.cpp src/Folds.cpp \
        src/Terminal.cpp src/TerminalDock.cpp src/TerminalGroup.cpp src/Browser.cpp src/Bookmarks.cpp src/BrowserPages.cpp src/AppSettings.cpp src/Appearance.cpp src/MenuBarFocus.cpp \
