@@ -596,7 +596,7 @@ void Document::finishLoading() {
     largeOff_ = job->large && job->optimizations;
     utf16Length_ = job->utf16;
     ++edits_;
-    resetHistory();   // the pieces put in are the file, nothing to undo
+    resetHistory(saved_);   // the pieces put in are the file, nothing to undo
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(buffer_, &start);
     gtk_text_buffer_place_cursor(buffer_, &start);

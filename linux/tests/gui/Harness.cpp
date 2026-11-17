@@ -2,7 +2,9 @@
 // real input is Input.cpp, and the app's parts come from AppSeam.inc.
 #include "Harness.h"
 
+#include "DocumentView.h"
 #include "Editor.h"
+#include "SessionLink.h"
 #include "TerminalDock.h"
 
 #include <execinfo.h>
@@ -604,9 +606,37 @@ void leak(const std::string& what, bool fails = true) {
     }
 }
 
+// The session's host (SessionLink.h, SESSION-DESIGN.md stage 4a) owns the
+// documents' text, and each buffer is its mirror: once everything sent has
+// been answered, the host's text of every document a window has read is
+// what the buffer holds, its tabs are the window's, and it reported nothing
+// wrong. Checked as every suite ends, so a suite that left them apart
+// fails by name (under MINICODE_HOST=loopback too, every message through
+// the protocol's encoding).
+void checkSessionMirrors() {
+    for (const MCGuiAppWindow& a : MCGuiAppWindows()) {
+        if (!a.editor) continue;
+        std::vector<std::pair<uint64_t, std::string>> docs;
+        for (Document* d : a.editor->documents()) {
+            if (d->kind() != Document::Kind::Text || d->loading() || d->unread()) continue;
+            GtkTextIter s, e;
+            gtk_text_buffer_get_bounds(d->buffer(), &s, &e);
+            char* t = gtk_text_buffer_get_text(d->buffer(), &s, &e, TRUE);
+            docs.emplace_back(d->id(), t ? t : "");
+            g_free(t);
+        }
+        const std::string why =
+            SessionLink::check(a.editor->sessionWindowId(), a.editor->window(), docs);
+        if (!why.empty())
+            MCGuiCheck(false, ("the session's host and the window it renders differ: " + why).c_str(),
+                       __FILE__, __LINE__);
+    }
+}
+
 void checkWhatSuiteLeft() {
     // A "_" suite runs alone in a process of its own, which it may end.
     if (gSuite.empty() || gSuite[0] == '_') return;
+    checkSessionMirrors();
     const bool putBack = leaksFail();
     if (MCGuiPinnedKeyWindow() && MCGuiPinnedKeyWindow() != MCGuiApp().window) {
         leak("left the key window pinned to a window still open (MCGuiSetKeyWindow(nullptr) at its end)");

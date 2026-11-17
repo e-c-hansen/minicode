@@ -171,6 +171,9 @@ gui_sources = [
   'src/OpacityPicker.cpp',
   'src/DocumentView.cpp',
   'src/Tabs.cpp',
+  # The session's host and the editor's client of it (SESSION-DESIGN.md
+  # stage 4a): the documents' text and undo live there.
+  'src/SessionLink.cpp',
   'src/Groups.cpp',
   'src/TabStrip.cpp',
   # The view itself (CodeView.cpp: its drawing passes and the ruler), its
@@ -360,7 +363,8 @@ gui_sources = [
 
 inc = include_directories('src', '../src')
 
-deps = [gtk_dep, dependency('sqlite3')]
+# The session's host runs on a thread of its own (SessionLink.cpp).
+deps = [gtk_dep, dependency('sqlite3'), dependency('threads')]
 cpp_args = []
 
 # --- optional: terminal panel via VTE (vte-2.91-gtk4) ----------------------

@@ -134,6 +134,9 @@ public:
     // (session()); the editor shows what it says, and keeps the documents
     // it names by Document::id().
     Model::Window& window() const { return *win_; }
+    // Its window in the session (Model::Session's id, which the session's
+    // host knows its tabs by: SessionLink.h).
+    std::uint64_t sessionWindowId() const { return winId_; }
     static Model::Session& session();
     // A tab's preview state (a session coming back), and the window's
     // answers for Document::isPreviewTab and lastUsed.

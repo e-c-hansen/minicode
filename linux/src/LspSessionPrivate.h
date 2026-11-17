@@ -21,6 +21,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -105,24 +106,16 @@ struct LspSession::SyncState {
         uint64_t docId = 0;
         std::string path, uri;
         std::shared_ptr<lspgtk::Server> server;
-        GtkTextBuffer* buffer = nullptr;   // the document's own, held
-        // Its edits since the text was last sent, in characters (code
-        // points), as the buffer counts them; the client turns them into
-        // the server's UTF-16 through its copy of the text (Model::Text),
-        // so a character outside the Basic Multilingual Plane no longer
-        // makes the next send the whole text.
+        // Its edits since the text was last sent, in UTF-16 units, as the
+        // session's host applied them (SessionLink.h): the text sent is the
+        // host's, read from the client's copy of it.
         Lsp::ChangeTracker changes;
         bool pending = false;              // edited since the last flush
     };
     std::map<std::pair<uint64_t, std::string>, Entry> entries;
-    // Each buffer a server has is watched once (insert-text and delete-range,
-    // before the buffer changes), and held while it is: a tab's document may
-    // go before the sync that closes it.
-    struct Watch {
-        LspSession* self;
-        uint64_t docId;
-    };
-    std::map<GtkTextBuffer*, std::unique_ptr<Watch>> watched;
+    // The documents whose host text is followed (Client::watch), once each
+    // whichever servers have them.
+    std::set<uint64_t> watched;
     // Each document's edits counted, so what was placed in its text (the
     // Problems list's rows) knows when the text moved on.
     std::map<uint64_t, uint64_t> edits;
