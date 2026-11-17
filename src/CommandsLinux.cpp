@@ -399,6 +399,14 @@ const std::vector<LinuxRow>& linuxRows() {
         {"cursorTopSelect", "ctrl+shift+home", 0, nullptr, nullptr},
         {"cursorBottom", "ctrl+end", 0, nullptr, nullptr},
         {"cursorBottomSelect", "ctrl+shift+end", 0, nullptr, nullptr},
+        // Between the commands the shell integration marked (the host reads
+        // the marks from the pty, SESSION-DESIGN.md stage 5): VS Code's
+        // Linux keys, the terminal's own (Terminal.cpp), so the editor keeps
+        // Ctrl+Up and Ctrl+Down for scrolling a line. Its Select to the
+        // Previous and Next Command are left out: VTE takes no selection
+        // from the app.
+        {"workbench.action.terminal.scrollToPreviousCommand", "ctrl+up", 0, nullptr, nullptr},
+        {"workbench.action.terminal.scrollToNextCommand", "ctrl+down", 0, nullptr, nullptr},
     };
     return rows;
 }

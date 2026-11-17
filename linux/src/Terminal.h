@@ -1,7 +1,11 @@
-// Terminal.h — a collapsible bottom panel embedding a real VTE terminal that
-// spawns the user's $SHELL. Unlike the macOS build (a command runner with a
-// sentinel protocol over a pipe), VTE is a genuine terminal emulator, so this
-// is much simpler.
+// Terminal.h — a collapsible bottom panel embedding a real VTE terminal for
+// the user's $SHELL. The shell's pty belongs to the session's host
+// (SESSION-DESIGN.md stage 5, SessionLink.h): the host starts the shell,
+// reads what it writes into a headless screen of its own (the shell
+// integration's marks, the commands' places), and forwards the bytes, which
+// VTE is fed (vte_terminal_feed); what VTE would send the program (keys,
+// pastes, its answers to queries) comes back through its "commit" signal and
+// goes to the host. VTE draws, selects, finds and scrolls as before.
 //
 // The whole feature is compiled only when MINICODE_ENABLE_TERMINAL is defined
 // (i.e. when libvte-2.91-gtk4 was found at configure time). Callers must guard
@@ -17,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "SessionClient.h"
 #include "Settings.h"
 #include "ShellIntegration.h"
 
@@ -34,8 +39,8 @@ public:
     // when first needed (PARITY.md R3).
     explicit Terminal(const std::string& cwd);
     // Called while the window's widgets still exist (main.cpp tears a window
-    // down from GtkApplication's window-removed). VTE hangs the shell up when
-    // its widget goes; this only makes sure it is not restarted.
+    // down from GtkApplication's window-removed). The session's host hangs
+    // the shell up and reaps it; nothing restarts it.
     ~Terminal();
     GtkWidget* widget() const { return root_; }
     // Whether the terminal and its shell were made yet (for the checks).
@@ -141,7 +146,7 @@ public:
     void setUserTitle(const std::string& t);
     // The title changed (a program set one, or the user did).
     std::function<void()> onTitleChanged;
-    // The shell's pid (the VTE child), 0 while there is none (PARITY.md 3.8).
+    // The shell's pid (the host's child), 0 while there is none (PARITY.md 3.8).
     int shellPid() const { return shellPid_ > 0 ? (int)shellPid_ : 0; }
 
     // Waiting for you (PARITY.md 3.6). The terminal's id is the control
@@ -171,13 +176,14 @@ public:
     // started (CLAUDE_CODE_SSE_PORT while the IDE link is on).
     std::function<std::vector<std::string>()> extraEnvironment;
 
-    // The shell integration (PARITY.md 3.1, D10). A bash or zsh shell is
-    // started with minicode's script (bash --rcfile, zsh through ZDOTDIR's
-    // .zshenv, both copied once a process into a folder of its own in the
-    // user's runtime folder) and a nonce of 128 random bits in
-    // MINICODE_NONCE; its hooks set the termprop vte.ext.minicode.mark,
-    // and only a value carrying that nonce is believed. What the newest
-    // one said: `known` stays false for another shell (fish, sh), one whose
+    // The shell integration (PARITY.md 3.1, D10; SESSION-DESIGN.md stage 5).
+    // A bash or zsh shell is started with minicode's script (bash --rcfile,
+    // zsh through ZDOTDIR's .zshenv, both copied once a process into a
+    // folder of its own in the user's runtime folder) and a nonce of 128
+    // random bits in MINICODE_NONCE; its hooks print the Mac's marks (OSC
+    // 133, 633;E and 7), which the session's host reads from the pty's bytes,
+    // believing only those carrying the nonce. What the host knows:
+    // `known` stays false for another shell (fish, sh), one whose
     // integration did not load, or before the first prompt; unknown is
     // never idle. Every restart of the shell starts unknown with a new
     // nonce.
@@ -193,6 +199,27 @@ public:
     // could not be made), for the checks.
     static const std::string& integrationFolder();
 
+    // Command marks (the Mac's Cmd+Up and Cmd+Down; Ctrl+Up and Ctrl+Down
+    // here, VS Code's Linux keys): the previous or next command that ran,
+    // its prompt scrolled to the top and the command outlined, as far as
+    // the marks the host's screen keeps go; past the newest, back to the
+    // end. False (the key is the program's) while a program has the
+    // alternate screen; with no command above, a bell. Typing forgets the
+    // outline.
+    bool moveToCommand(int direction);
+    // For the checks: the commands the host marked (lines counted from the
+    // first that went into its scrollback), how many of them ran, the VTE
+    // row a host line is on now (the numbering of VTE's text ranges), and
+    // the outlined command's prompt line (-1: none).
+    const std::vector<Shared::TermMark>& commandMarks() const { return marks_; }
+    int commandsRun() const;
+    long rowOfLine(long long hostLine) const;
+    long long outlinedCommand() const { return navLine_; }
+    bool onAlternateScreen() const { return altScreen_; }
+    // The host's terminal now (0 between shells), and what it last said.
+    Shared::TermId hostTerminal() const { return hostTerm_; }
+    const Shared::TermShell& hostShell() const { return host_; }
+
 private:
     // One row's share of the hovered link: cells [col0, col1) of `row`, a
     // row of the whole buffer (scrollback included), not of the screen.
@@ -204,9 +231,6 @@ private:
     static void drawHover(GtkDrawingArea* area, cairo_t* cr, int w, int h, gpointer self);
 
     void makeTerminal();   // the terminal and its shell, once
-    // The termprop the hooks set, installed once, before the first VteTerminal.
-    static void installTermprops();
-    static void onTermpropChanged(VteTerminal* term, const char* name, gpointer self);
     ShellIntegration::ShellState shell_;
     std::string nonce_;   // this shell's, "" when it runs without the integration
     void spawnShell();
@@ -217,8 +241,38 @@ private:
     // The shell is restarted in place when it exits, so Ctrl+D does not leave a
     // dead panel behind. lastSpawn_/rapidExits_ break the loop a shell that
     // cannot start would otherwise spin in.
-    static void onChildExited(VteTerminal* term, gint status, gpointer self);
-    static void onSpawned(VteTerminal* term, GPid pid, GError* error, gpointer self);
+    void shellExited(const std::string& error);
+
+    // The host's side: what it sends about this terminal's shell.
+    struct HostListener : Shared::Client::TermListener {
+        Terminal* t = nullptr;
+        void termOpened(Shared::TermId id, int pid) override;
+        void termOutput(Shared::TermId id, const std::string& bytes, long long cursorLine, bool alt,
+                        bool replay) override;
+        void termShell(Shared::TermId id, const Shared::TermShell& s) override;
+        void termMarks(Shared::TermId id, const std::vector<Shared::TermMark>& m) override;
+        void termExited(Shared::TermId id, int status, const std::string& error) override;
+    };
+    HostListener listener_;
+    Shared::TermId hostTerm_ = 0;
+    Shared::TermShell host_;
+    std::vector<Shared::TermMark> marks_;
+    long long hostCursor_ = -1;    // the host screen's cursor line after the last bytes fed
+    bool altScreen_ = false;
+    std::size_t unacked_ = 0;      // fed to VTE, not yet acknowledged
+    guint ackIdle_ = 0;
+    int sentCols_ = 0, sentRows_ = 0;
+    guint sizeTick_ = 0;
+    int sizeTicks_ = 0;
+    void sendSize();               // VTE's columns and rows to the host, when they changed
+    void watchSize();              // sendSize now and over the next frames
+    // A key the user pressed is being handled (or was, a fifth of a second
+    // ago): what VTE commits now is the user's own typing (the waiting dot
+    // goes), not the app's or VTE's answer to a query.
+    bool userInput_ = false;
+    guint userInputIdle_ = 0;
+    void userTyped();
+    long long navLine_ = -1;       // the outlined command's prompt line (host's)
 
     int         controlId_ = 0;
     std::string userTitle_;
@@ -262,7 +316,6 @@ private:
     void applyFont();
     double fontBase_ = 0, fontScale_ = 1;
     bool   fontSet_ = false;
-    GCancellable* spawnCancel_ = g_cancellable_new();
     // Run in Terminal's text, waiting for the shell's first output; and
     // the look for a command's end after Return (typeText, onCommandFinished).
     std::string pendingType_;

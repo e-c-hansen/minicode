@@ -11231,7 +11231,7 @@ static void testMultiCaretOccurrences() {
 #include "preview_scroll_tests.inc"
 #include "quick_diff_tests.inc"
 #include "zsh_integration_tests.inc"
-#include "shell_vte_tests.inc"
+#include "shell_bash_tests.inc"
 #include "ppa_wait_tests.inc"
 #include "lexer_styles_tests.inc"
 #include "markup_syntax_tests.inc"
@@ -11277,7 +11277,7 @@ int main() {
     testTerminalHyperlinks();
     testTerminalPaste();
     testZshIntegration();
-    testShellVte();
+    testShellBash();
     testPpaWait();
     testCiTimeouts();
     testTerminalMarks();
