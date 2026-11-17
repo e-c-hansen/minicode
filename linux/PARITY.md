@@ -540,6 +540,10 @@ feature, so item 2.7 leaves inlay hints out until GTK or Pango can leave
 room on one side.
 
 **D10. The terminal stays VTE**, and `TerminalScreen` stays out of the build.
+*Superseded in part, 2026-11-17 (SESSION-DESIGN.md stage 5, HANDOFF item
+90):* VTE stays the emulator, but the session's host owns the pty and a
+headless `TerminalScreen`, and reads OSC 133 itself; the termprop route
+below is gone, and command marks are in.
 What the Mac learns from its own parser comes from VTE's termprops
 (`VTE_TERMPROP_SHELL_PRECMD`, `_PREEXEC`, `_POSTEXEC`, and `CURRENT_DIRECTORY_URI`
 are in the installed headers). Try first: whether the zsh integration can set
@@ -1494,7 +1498,7 @@ These may run in parallel.
   HANDOFF.md item 61, `split_editor`; its commands are in View > Editor
   Layout on Linux.
 - [x] **4.7 Terminal tabs and splits**, their own zoom, find, command marks
-  (D10: left out, the owner's call), and Run File. `TerminalLayout`, `RunFile`.
+  (since stage 5, HANDOFF item 90), and Run File. `TerminalLayout`, `RunFile`.
   *Tabs done:* `TerminalDock` over a `TabStrip` and a +: New, Next,
   Previous and Close Terminal, Rename, Move Left and Right, a drag, a close
   question for a busy terminal, the last tab hiding the dock, Run File into a
@@ -1509,7 +1513,8 @@ These may run in parallel.
   own, made with it (`MINICODE_TERMINAL_ID`), found through `Terminal::byId`;
   `state`, `notify`, `term-output`, `open-url`, the board's marks, the tab
   strip's mark and the process monitor all use it (HANDOFF item 63,
-  `terminal_ids`). Left out by the owner's decision: command marks (D10).
+  `terminal_ids`). Command marks came with stage 5 (HANDOFF item 90, `terminal_marks`):
+  Ctrl+Up and Ctrl+Down between commands; Shift's selection is left out.
   Left: the window close question counting busy terminals.
 - [x] **4.8 Web bookmarks and the browser window.** `WebBookmark` (core,
   `bookmarks:*`; not yet in `meson.build` or the Makefile). Added to the

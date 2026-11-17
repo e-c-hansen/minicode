@@ -447,7 +447,7 @@ for full-screen programs. Both can be open at once.
 SESSION-DESIGN.md's stage 5, core half (2026-11-17; `HostPty.{h,cpp}`,
 `SessionHost`, `SessionProtocol`, `SessionClient`, `TerminalScreen::replay`,
 `tests/session_terminal_tests.inc`). The Mac's terminal still owns its
-MCPty; the GTK port moves onto this next.
+MCPty; the GTK port runs on it (linux/HANDOFF.md item 90).
 
 - **The pty** (`Shared::Pty`): `posix_openpt`, the slave opened and its
   modes (the kernel's plus IUTF8) and size set in the parent, then
@@ -510,6 +510,21 @@ MCPty; the GTK port moves onto this next.
   and the wrap of a bottom row that a wrap continued onto (and of any
   wrapped bottom row on a screen of two rows), which only a scroll could
   make.
+
+- **The GTK port on it** (linux/src/Terminal.cpp, item 90): VTE has no
+  pty. `spawnShell` opens a `TermSpec` through `SessionLink::client()`;
+  `termOutput` is fed to VTE (`vte_terminal_feed`) and acknowledged at low
+  priority once the main loop is idle; VTE's "commit" signal, which it
+  emits with no pty too (VTE issue 222), carries keys, pastes,
+  `feed_child`, `paste_text` and VTE's answers to queries to the host's
+  pty. The shell integration (bash's script and the zsh script without its
+  old VTE branch) prints OSC 133, 633;E and 7 with the nonce, as on the
+  Mac; D10's termprop is gone. Ctrl+Up and Ctrl+Down move between
+  commands: a command's VTE row is its host line plus VTE's cursor row
+  minus the host's cursor line (`rowOfLine`), both counting every line
+  from the first. The waiting dot goes when a key's commit reaches the
+  shell (a key counts for 200 ms, an input method's commit coming late),
+  so Ctrl+Shift+C and Ctrl+Up leave it.
 
 ## Traps
 

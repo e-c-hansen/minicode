@@ -336,6 +336,8 @@ jobs:
       # and the edit loop's waits exercised before any network carries them.
       # A named set of suites that edit, undo, save and switch tabs; each
       # ends with the harness's check that every buffer is the host's text.
+      # terminal_marks puts a terminal's bytes, input and marks through it
+      # too (stage 5).
       - name: GUI checks over the session host's wire format
         id: loopback
         working-directory: linux
@@ -350,7 +352,7 @@ jobs:
           GUI_LOOPBACK: >-
             undo_history save tabs preview_tabs split_editor sessions backups
             auto_close snippets line_commands multicaret completion_edits
-            lsp_tabs lsp_actions markdown_side_edit csv_table
+            lsp_tabs lsp_actions markdown_side_edit csv_table terminal_marks
         run: |
           MC_GUI_SUITES="$GUI_LOOPBACK" MC_GUI_SNAPSHOTS="$PICTURES/loopback" \
             meson test -C build --suite gui --no-rebuild --logbase gui-loopback -v --print-errorlogs \

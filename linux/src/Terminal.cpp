@@ -11,6 +11,7 @@
 #include "BackupStore.h"
 #include "ClaudeHooks.h"
 #include "Palette.h"
+#include "SessionLink.h"
 #include "StartupLog.h"
 #include "TerminalAttention.h"
 #include "TermLinkPath.h"
@@ -157,13 +158,6 @@ void Terminal::setAttention(const std::string& markName, const std::string& tool
 
 // ------------------------------------------------------ shell integration
 
-void Terminal::installTermprops() {
-    static bool installed = false;
-    if (installed) return;
-    installed = true;
-    vte_install_termprop(ShellIntegration::kVteMarkTermprop, VTE_PROPERTY_STRING, VTE_PROPERTY_FLAG_NONE);
-}
-
 namespace {
 
 // A file the app ships: beside the binary (a build folder), else in the
@@ -233,7 +227,7 @@ const std::string& Terminal::integrationFolder() {
         if (g_file_set_contents((dir + "/" + name).c_str(), text, (gssize)len, nullptr)) any = true;
         g_free(text);
     }
-    const std::string stub = ShellIntegration::zshenvStub(true, true);
+    const std::string stub = ShellIntegration::zshenvStub(true);
     g_file_set_contents((dir + "/.zshenv").c_str(), stub.c_str(), (gssize)stub.size(), nullptr);
     if (!any) {
         removeIntegrationFolder(dir);
@@ -242,28 +236,6 @@ const std::string& Terminal::integrationFolder() {
     gIntegrationFolder = dir;
     atexit([] { removeIntegrationFolder(gIntegrationFolder); });
     return gIntegrationFolder;
-}
-
-// The hooks' mark: believed only with this shell's nonce, read from the
-// newest value alone (VTE keeps only the last of a read; ShellIntegration.h).
-void Terminal::onTermpropChanged(VteTerminal* term, const char* name, gpointer selfp) {
-    Terminal* self = static_cast<Terminal*>(selfp);
-    if (!name || strcmp(name, ShellIntegration::kVteMarkTermprop) != 0 || self->nonce_.empty()) return;
-    size_t len = 0;
-    const char* value = vte_terminal_get_termprop_string(term, ShellIntegration::kVteMarkTermprop, &len);
-    if (!value) return;   // unset: a value VTE refused
-    ShellIntegration::VteMark m;
-    if (!ShellIntegration::parseVteMark(std::string(value, len), self->nonce_, &m)) return;
-    // Counters, not the busy flag: a short command's start and finish can
-    // arrive in one read, of which VTE keeps only the last value.
-    const bool ended = self->shell_.known && m.done > self->shell_.done;
-    const bool began = m.started > m.done && (!self->shell_.known || m.started > self->shell_.started);
-    self->shell_.apply(m);
-    if (began && self->onClaudeStarted) self->lookForClaude();
-    if (self->onShellStateChanged) self->onShellStateChanged();
-    // The finishing mark ends the command: no polling for an integrated shell.
-    self->giveLineBack();
-    if (ended && !self->shell_.busy && self->onCommandFinished) self->onCommandFinished();
 }
 
 // Claude Code starting here: the typed command names it, or a second later,
@@ -281,7 +253,7 @@ void Terminal::lookForClaude() {
         if (!self->onClaudeStarted || !self->shell_.busy || self->shell_.started != self->claudeLookFor_ ||
             !self->busy())
             return G_SOURCE_REMOVE;
-        const int fg = (int)tcgetpgrp(vte_pty_get_fd(vte_terminal_get_pty(VTE_TERMINAL(self->vte_))));
+        const int fg = self->host_.foreground;
         if (fg <= 0) return G_SOURCE_REMOVE;
         char* exe = g_file_read_link(("/proc/" + std::to_string(fg) + "/exe").c_str(), nullptr);
         const bool is = exe && ClaudeHooks::isClaudeProgramPath(exe);
@@ -294,7 +266,7 @@ void Terminal::lookForClaude() {
 void Terminal::makeTerminal() {
     if (vte_) return;
     StartupLog::mark("terminal: made, on first show");
-    installTermprops();   // before the first VteTerminal exists
+    listener_.t = this;
     GtkWidget* scroller = gtk_scrolled_window_new();
     gtk_widget_add_css_class(scroller, "minicode-terminal");
     gtk_widget_add_css_class(scroller, "minicode-scroller");
@@ -305,6 +277,9 @@ void Terminal::makeTerminal() {
     underline_ = gtk_drawing_area_new();
     gtk_widget_set_can_target(underline_, FALSE);   // clicks go through to VTE
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(underline_), drawHover, this, nullptr);
+    g_signal_connect(underline_, "resize", G_CALLBACK(+[](GtkDrawingArea*, int, int, gpointer p) {
+        static_cast<Terminal*>(p)->watchSize();
+    }), this);
 
     applyTheme();
     if (settings_) applyColors(*settings_);   // the app's, told before the terminal existed
@@ -321,35 +296,48 @@ void Terminal::makeTerminal() {
     vte_terminal_set_allow_hyperlink(term, TRUE);
     vte_terminal_set_cursor_blink_mode(term, VTE_CURSOR_BLINK_OFF);
 
-    g_signal_connect(vte_, "child-exited", G_CALLBACK(onChildExited), this);
     g_signal_connect(vte_, "window-title-changed", G_CALLBACK(+[](VteTerminal*, gpointer p) {
         Terminal* t = static_cast<Terminal*>(p);
         if (t->onTitleChanged) t->onTitleChanged();
     }), this);
-    {
-        const std::string detailed = std::string("termprop-changed::") + ShellIntegration::kVteMarkTermprop;
-        g_signal_connect(vte_, detailed.c_str(), G_CALLBACK(onTermpropChanged), this);
-    }
+    // Its size is the shell's: VTE takes the rows and columns that fit as it
+    // is laid out (and when its font changes), and the host gives them to
+    // the pty. The underline's drawing area covers the terminal, so its
+    // resize says when.
+    g_signal_connect(vte_, "char-size-changed", G_CALLBACK(+[](VteTerminal*, guint, guint, gpointer p) {
+        static_cast<Terminal*>(p)->watchSize();
+    }), this);
     // Run in Terminal waits for the shell's prompt, and a Return typed here
     // starts the look for the command's end (typeText, onCommandFinished).
     g_signal_connect(vte_, "contents-changed", G_CALLBACK(onContentsChanged), this);
     g_signal_connect(vte_, "commit", G_CALLBACK(onCommit), this);
-    // A key typed in the terminal ends its mark (a modifier alone is no
-    // typing). The controller only watches: the key goes on to the shell.
+    // A key pressed in the terminal: what VTE commits while it is handled
+    // is the user's typing, which ends the terminal's mark (onCommit; a
+    // key that sends the program nothing, such as Ctrl+Shift+C, does not).
+    // Ctrl+Up and Ctrl+Down move between the commands the marks place
+    // (VS Code's Linux keys), unless a program has the alternate screen.
+    // The controller only watches otherwise: the key goes on to VTE.
     {
         GtkEventController* typed = gtk_event_controller_key_new();
         gtk_event_controller_set_propagation_phase(typed, GTK_PHASE_CAPTURE);
         g_signal_connect(typed, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey*, guint keyval,
-                                                              guint, GdkModifierType, gpointer p) -> gboolean {
-            switch (keyval) {
-            case GDK_KEY_Shift_L: case GDK_KEY_Shift_R: case GDK_KEY_Control_L:
-            case GDK_KEY_Control_R: case GDK_KEY_Alt_L: case GDK_KEY_Alt_R:
-            case GDK_KEY_Meta_L: case GDK_KEY_Meta_R: case GDK_KEY_Super_L:
-            case GDK_KEY_Super_R: case GDK_KEY_ISO_Level3_Shift: case GDK_KEY_Caps_Lock:
-                return FALSE;
-            }
+                                                              guint, GdkModifierType mods, gpointer p) -> gboolean {
             Terminal* t = static_cast<Terminal*>(p);
-            if (t->controlId_ > 0) TerminalAttention::typed(t->controlId_);
+            const GdkModifierType held = (GdkModifierType)(mods & (GDK_CONTROL_MASK | GDK_SHIFT_MASK |
+                                                                   GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK));
+            if (held == GDK_CONTROL_MASK && (keyval == GDK_KEY_Up || keyval == GDK_KEY_Down ||
+                                             keyval == GDK_KEY_KP_Up || keyval == GDK_KEY_KP_Down))
+                return t->moveToCommand(keyval == GDK_KEY_Up || keyval == GDK_KEY_KP_Up ? -1 : 1) ? TRUE : FALSE;
+            // What the key commits may come through an input method a
+            // moment later, so the key counts for a fifth of a second.
+            t->userInput_ = true;
+            if (t->userInputIdle_) g_source_remove(t->userInputIdle_);
+            t->userInputIdle_ = g_timeout_add(200, [](gpointer q) -> gboolean {
+                Terminal* self = static_cast<Terminal*>(q);
+                self->userInput_ = false;
+                self->userInputIdle_ = 0;
+                return G_SOURCE_REMOVE;
+            }, t);
             return FALSE;
         }), this);
         gtk_widget_add_controller(vte_, typed);
@@ -371,10 +359,13 @@ void Terminal::makeTerminal() {
     gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(keys),
         gtk_shortcut_new(gtk_keyval_trigger_new(GDK_KEY_V, (GdkModifierType)(
                              GDK_CONTROL_MASK | GDK_SHIFT_MASK)),
-                         gtk_callback_action_new([](GtkWidget* w, GVariant*, gpointer) -> gboolean {
+                         gtk_callback_action_new([](GtkWidget* w, GVariant*, gpointer p) -> gboolean {
+                             // The clipboard comes later, outside the key's
+                             // handling: the paste is the user's now.
+                             static_cast<Terminal*>(p)->userTyped();
                              vte_terminal_paste_clipboard(VTE_TERMINAL(w));
                              return TRUE;
-                         }, nullptr, nullptr)));
+                         }, this, nullptr)));
     gtk_widget_add_controller(vte_, keys);
 
     // Ctrl+click on a link. Capture phase, so it is seen before VTE starts a
@@ -425,6 +416,7 @@ void Terminal::makeTerminal() {
     auto recheck = +[](gpointer, gpointer p) {
         Terminal* self = static_cast<Terminal*>(p);
         if (self->ctrlDown_ || !self->hover_.empty()) self->setHover(self->ctrlDown_);
+        if (self->navLine_ >= 0) gtk_widget_queue_draw(self->underline_);   // the outline scrolls
     };
     g_signal_connect(vte_, "contents-changed", G_CALLBACK(+[](VteTerminal*, gpointer p) {
         Terminal* self = static_cast<Terminal*>(p);
@@ -494,8 +486,11 @@ void Terminal::setUserTitle(const std::string& t) {
 Terminal::~Terminal() {
     terminalRegistry().erase(controlId_);
     TerminalAttention::forget(controlId_);   // the mark goes with it
-    g_cancellable_cancel(spawnCancel_);
-    g_object_unref(spawnCancel_);
+    // The host hangs the shell up and reaps it.
+    if (hostTerm_) SessionLink::client().closeTerminal(hostTerm_);
+    if (ackIdle_) g_source_remove(ackIdle_);
+    if (sizeTick_ && vte_) gtk_widget_remove_tick_callback(vte_, sizeTick_);
+    if (userInputIdle_) g_source_remove(userInputIdle_);
     g_signal_handlers_disconnect_by_data(root_, this);
     if (focusCtl_) g_signal_handlers_disconnect_by_data(focusCtl_, this);
     if (vte_) g_signal_handlers_disconnect_by_data(vte_, this);
@@ -595,6 +590,9 @@ double Terminal::topRow() {
 // that hook still has a working directory the kernel knows; failing both,
 // the folder the shell started in.
 std::string Terminal::shellDirectory() const {
+    // The integration's OSC 7, which the host believed (it carries the
+    // nonce, so VTE takes the nonce for part of the address).
+    if (!host_.cwd.empty()) return host_.cwd;
 #if VTE_CHECK_VERSION(0, 78, 0)
     if (GUri* uri = vte_terminal_ref_termprop_uri(VTE_TERMINAL(vte_),
                                                   VTE_TERMPROP_CURRENT_DIRECTORY_URI)) {
@@ -766,12 +764,35 @@ void Terminal::setHover(bool ctrl) {
 
 void Terminal::drawHover(GtkDrawingArea*, cairo_t* cr, int, int, gpointer p) {
     Terminal* self = static_cast<Terminal*>(p);
-    if (self->hover_.empty()) return;
+    if (self->hover_.empty() && self->navLine_ < 0) return;
     VteTerminal* t = VTE_TERMINAL(self->vte_);
     const long cw = vte_terminal_get_char_width(t), ch = vte_terminal_get_char_height(t);
     const double top = self->topRow();
     const GtkBorder pad = cellInset(self->vte_);
     const int height = gtk_widget_get_height(self->vte_);
+    // The command moved to (moveToCommand): its prompt to the line before
+    // the next prompt, or to the cursor's line, outlined.
+    if (self->navLine_ >= 0 && !self->altScreen_) {
+        long long last = self->hostCursor_;
+        for (const Shared::TermMark& m : self->marks_)
+            if (m.prompt > self->navLine_) {
+                last = m.prompt - 1;
+                break;
+            }
+        const double y0 = pad.top + ((double)self->rowOfLine(self->navLine_) - top) * ch;
+        const double y1 = pad.top + ((double)self->rowOfLine(std::max(last, self->navLine_)) + 1 - top) * ch;
+        graphene_point_t a = GRAPHENE_POINT_INIT((float)pad.left, (float)y0), at;
+        if (gtk_widget_compute_point(self->vte_, self->underline_, &a, &at)) {
+            GdkRGBA c = self->linkColor_;
+            c.alpha = 0.55f;
+            gdk_cairo_set_source_rgba(cr, &c);
+            cairo_set_line_width(cr, 1);
+            cairo_rectangle(cr, std::floor(at.x) + 0.5, std::floor(at.y) + 0.5,
+                            (double)vte_terminal_get_column_count(t) * cw - 1, std::max(1.0, y1 - y0 - 1));
+            cairo_stroke(cr);
+        }
+    }
+    if (self->hover_.empty()) return;
     gdk_cairo_set_source_rgba(cr, &self->linkColor_);
     for (const Span& s : self->hover_) {
         // In the terminal's coordinates, then the overlay's; one pixel, just
@@ -918,7 +939,7 @@ std::string Terminal::findStatus() const {
 }
 
 // Ctrl+L, which bash's and zsh's line editors take as clear-screen, whenever
-// no program holds the terminal's foreground (busy(), from tcgetpgrp). Not
+// no program holds the terminal's foreground (busy(), the host's tcgetpgrp). Not
 // the integration's marks: a mark that comes in one read with output is lost
 // (HANDOFF 48), and on CI that left Clear refusing at an idle prompt; and a
 // shell without the integration has a prompt to clear too.
@@ -1011,41 +1032,194 @@ void Terminal::feedNotice(const std::string& text) {
 
 // The shell exiting used to leave a dead rectangle until the app was
 // restarted: Ctrl+D and the panel was finished. The macOS build restarts it
-// (Terminal.mm -startShell), so this does too.
-void Terminal::onChildExited(VteTerminal*, gint /*status*/, gpointer selfp) {
-    Terminal* self = static_cast<Terminal*>(selfp);
-    self->shellPid_ = -1;
+// (Terminal.mm -startShell), so this does too. `error`: it never started.
+void Terminal::shellExited(const std::string& error) {
+    shellPid_ = -1;
+    hostTerm_ = 0;
+    navLine_ = -1;
+    if (!error.empty()) {
+        // Without this the panel just sits there blank and there is nothing
+        // to tell you why.
+        feedNotice("[could not start the shell: " + error + "]");
+        return;
+    }
 
     // A shell that dies the instant it starts — $SHELL uninstalled, a profile
     // that exits, a bad interpreter — would otherwise respawn in a tight loop
     // and peg a core. Three fast deaths in a row is taken as "not coming back".
     const gint64 now = g_get_monotonic_time();
-    if (now - self->lastSpawn_ < 1000000) {   // under a second counts as fast
-        if (++self->rapidExits_ >= 3) {
-            self->feedNotice("[shell keeps exiting immediately — not restarting]");
+    if (now - lastSpawn_ < 1000000) {   // under a second counts as fast
+        if (++rapidExits_ >= 3) {
+            feedNotice("[shell keeps exiting immediately — not restarting]");
             return;
         }
     } else {
-        self->rapidExits_ = 0;
+        rapidExits_ = 0;
     }
 
-    self->feedNotice("[shell exited — restarting]");
-    self->spawnShell();
+    feedNotice("[shell exited — restarting]");
+    spawnShell();
 }
 
-// Reports a spawn that never got off the ground. Without this the panel just
-// sits there blank and there is nothing to tell you why.
-void Terminal::onSpawned(VteTerminal*, GPid pid, GError* error, gpointer selfp) {
-    if (pid != -1 && !error) {
-        static_cast<Terminal*>(selfp)->shellPid_ = pid;   // for its directory
-        StartupLog::once("shell", "terminal: shell started (pid %d)", (int)pid);
-        return;
+// ---- the host's side of the terminal (SessionLink's client, on the main loop)
+
+void Terminal::HostListener::termOpened(Shared::TermId id, int pid) {
+    if (id != t->hostTerm_) return;
+    t->shellPid_ = pid;   // for its directory, the processes, busy()
+    StartupLog::once("shell", "terminal: shell started (pid %d)", pid);
+}
+
+// The shell's bytes, for VTE to draw; acknowledged once the main loop is
+// idle (VTE parses what it is fed in its own time), so a program printing
+// without pause is held back by the host rather than queued here.
+void Terminal::HostListener::termOutput(Shared::TermId id, const std::string& bytes, long long cursorLine,
+                                        bool alt, bool) {
+    if (id != t->hostTerm_ || !t->vte_) return;
+    vte_terminal_feed(VTE_TERMINAL(t->vte_), bytes.data(), (gssize)bytes.size());
+    t->hostCursor_ = cursorLine;
+    t->altScreen_ = alt;
+    t->shellSpoke_ = true;
+    t->unacked_ += bytes.size();
+    if (!t->ackIdle_)
+        t->ackIdle_ = g_idle_add_full(G_PRIORITY_LOW, [](gpointer q) -> gboolean {
+            Terminal* self = static_cast<Terminal*>(q);
+            self->ackIdle_ = 0;
+            if (self->hostTerm_ && self->unacked_) SessionLink::client().ackTerminal(self->hostTerm_, self->unacked_);
+            self->unacked_ = 0;
+            return G_SOURCE_REMOVE;
+        }, t, nullptr);
+    if (t->navLine_ >= 0) gtk_widget_queue_draw(t->underline_);
+}
+
+// What the host read of the shell from its marks (and the pty's foreground
+// group, which busy() reads). The counters, not the busy flag, say a
+// command ended: a short one's start and end come in one message.
+void Terminal::HostListener::termShell(Shared::TermId id, const Shared::TermShell& s) {
+    if (id != t->hostTerm_) return;
+    t->host_ = s;
+    if (t->nonce_.empty() || !s.known) return;
+    ShellIntegration::ShellState& sh = t->shell_;
+    const bool changed = !sh.known || sh.prompts != s.prompts || sh.started != s.started || sh.done != s.done ||
+                         sh.busy != s.busy || sh.status != s.status || sh.command != s.command;
+    if (!changed) return;   // the foreground group or the tty's modes only
+    const bool ended = sh.known && s.done > sh.done;
+    const bool began = s.started > s.done && (!sh.known || s.started > sh.started);
+    sh.known = true;
+    sh.prompts = s.prompts;
+    sh.started = s.started;
+    sh.done = s.done;
+    sh.busy = s.busy;
+    sh.atPrompt = s.atPrompt;
+    sh.command = s.busy ? s.command : std::string();
+    sh.status = s.status;
+    if (began && t->onClaudeStarted) t->lookForClaude();
+    if (t->onShellStateChanged) t->onShellStateChanged();
+    // The finishing mark ends the command: no polling for an integrated shell.
+    t->giveLineBack();
+    if (ended && !sh.busy && t->onCommandFinished) t->onCommandFinished();
+}
+
+void Terminal::HostListener::termMarks(Shared::TermId id, const std::vector<Shared::TermMark>& m) {
+    if (id != t->hostTerm_) return;
+    t->marks_ = m;
+    if (t->navLine_ >= 0) {
+        bool still = false;
+        for (const Shared::TermMark& k : m) still = still || k.prompt == t->navLine_;
+        if (!still) t->navLine_ = -1;   // its lines left the scrollback, or were cleared
+        gtk_widget_queue_draw(t->underline_);
     }
-    // The window closed while the shell was starting: this object is gone.
-    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) return;
-    Terminal* self = static_cast<Terminal*>(selfp);
-    self->feedNotice(std::string("[could not start the shell: ") +
-                     (error && error->message ? error->message : "unknown error") + "]");
+}
+
+void Terminal::HostListener::termExited(Shared::TermId id, int, const std::string& error) {
+    if (id != t->hostTerm_) return;
+    t->shellExited(error);
+}
+
+void Terminal::sendSize() {
+    if (!vte_ || !hostTerm_) return;
+    VteTerminal* t = VTE_TERMINAL(vte_);
+    const int cols = (int)vte_terminal_get_column_count(t), rows = (int)vte_terminal_get_row_count(t);
+    if (cols < 2 || rows < 1 || (cols == sentCols_ && rows == sentRows_)) return;
+    sentCols_ = cols;
+    sentRows_ = rows;
+    SessionLink::client().resizeTerminal(hostTerm_, cols, rows);
+    if (navLine_ >= 0) gtk_widget_queue_draw(underline_);
+}
+
+// VTE takes its new rows and columns when it is next laid out (after its
+// widget or its font changed): looked at in each of the next ten frames.
+void Terminal::watchSize() {
+    sendSize();
+    sizeTicks_ = 10;
+    if (sizeTick_ || !vte_) return;
+    sizeTick_ = gtk_widget_add_tick_callback(vte_, [](GtkWidget*, GdkFrameClock*, gpointer p) -> gboolean {
+        Terminal* t = static_cast<Terminal*>(p);
+        t->sendSize();
+        if (--t->sizeTicks_ > 0) return G_SOURCE_CONTINUE;
+        t->sizeTick_ = 0;
+        return G_SOURCE_REMOVE;
+    }, this, nullptr);
+}
+
+// The user typed or pasted into the terminal: its mark goes, and so does
+// the outline of a command moved to.
+void Terminal::userTyped() {
+    if (controlId_ > 0) TerminalAttention::typed(controlId_);
+    if (navLine_ >= 0) {
+        navLine_ = -1;
+        gtk_widget_queue_draw(underline_);
+    }
+}
+
+// ---- command marks
+
+int Terminal::commandsRun() const {
+    int n = 0;
+    for (const Shared::TermMark& m : marks_) n += m.output >= 0;
+    return n;
+}
+
+// The host's lines and VTE's rows both count every line from the first, so
+// one is the other plus what the cursor's line says between them.
+long Terminal::rowOfLine(long long hostLine) const {
+    if (!vte_ || hostCursor_ < 0) return (long)hostLine;
+    long col = 0, row = 0;
+    vte_terminal_get_cursor_position(VTE_TERMINAL(vte_), &col, &row);
+    return (long)(hostLine - hostCursor_) + row;
+}
+
+bool Terminal::moveToCommand(int direction) {
+    if (!vte_ || altScreen_) return false;
+    const long long from = navLine_ >= 0 ? navLine_ : LLONG_MAX;
+    long long target = -1;
+    for (const Shared::TermMark& m : marks_) {
+        if (m.output < 0) continue;   // a prompt still waiting: no command
+        if (direction < 0 && m.prompt < from) target = std::max(target, m.prompt);
+        if (direction > 0 && from != LLONG_MAX && m.prompt > from && (target < 0 || m.prompt < target))
+            target = m.prompt;
+    }
+    if (target < 0 && direction < 0) {
+        gtk_widget_error_bell(vte_);   // none above
+        return true;
+    }
+    if (target < 0) {   // past the newest: the end, as before
+        navLine_ = -1;
+        scrollToEnd();
+        gtk_widget_queue_draw(underline_);
+        return true;
+    }
+    navLine_ = target;
+    // Its prompt at the top, as far as there is room.
+    GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(vte_));
+    if (adj) {
+        topRow();   // the adjustment's offset from VTE's rows (topDelta_)
+        double value = (double)rowOfLine(target) - (double)topDelta_;
+        value = std::max(gtk_adjustment_get_lower(adj),
+                         std::min(value, gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj)));
+        gtk_adjustment_set_value(adj, value);
+    }
+    gtk_widget_queue_draw(underline_);
+    return true;
 }
 
 void Terminal::spawnShell() {
@@ -1103,6 +1277,10 @@ void Terminal::spawnShell() {
     // /etc/bash.bashrc. zsh: ZDOTDIR at the folder, whose .zshenv hands the
     // user's ZDOTDIR back (MINICODE_USER_ZDOTDIR when they had one).
     shell_ = ShellIntegration::ShellState();
+    host_ = Shared::TermShell();
+    marks_.clear();
+    navLine_ = -1;
+    hostCursor_ = -1;
     nonce_.clear();
     bashShell_ = false;
     popOwed_ = 0;
@@ -1133,24 +1311,40 @@ void Terminal::spawnShell() {
             }
         }
     }
-    std::vector<char*> argv;
-    for (std::string& a : args) argv.push_back(&a[0]);
-    argv.push_back(nullptr);
+    // What VTE's own spawn added: the terminal it is, and its version for
+    // the distributions' vte.sh.
+    envv = g_environ_setenv(envv, "TERM", "xterm-256color", TRUE);
+    envv = g_environ_setenv(envv, "COLORTERM", "truecolor", TRUE);
+    envv = g_environ_setenv(envv, "VTE_VERSION",
+                            std::to_string(vte_get_major_version() * 10000 + vte_get_minor_version() * 100 +
+                                           vte_get_micro_version()).c_str(),
+                            TRUE);
 
-    // vte_terminal_spawn_async is the current API (the sync variant is
-    // deprecated in recent VTE).
-    vte_terminal_spawn_async(
-        VTE_TERMINAL(vte_),
-        VTE_PTY_DEFAULT,
-        cwd_.empty() ? nullptr : cwd_.c_str(),  // working directory
-        argv.data(),
-        envv,                                    // the inherited, with the ids and the window's
-        G_SPAWN_DEFAULT,
-        nullptr, nullptr, nullptr,               // child setup
-        -1,                                      // timeout
-        spawnCancel_,                            // cancelled if the window closes first
-        onSpawned, this);                        // callback / user data
-    g_strfreev(envv);   // spawn_async has copied the environment
+    // The host starts it, on a pty of its own, the size VTE has now (it
+    // says when that changes, sendSize).
+    Shared::TermSpec spec;
+    spec.program = shell;
+    spec.argv = args;
+    for (gchar** e = envv; e && *e; e++) spec.env.push_back(*e);
+    g_strfreev(envv);
+    if (!cwd_.empty()) {
+        spec.cwd = cwd_;
+    } else {
+        gchar* here = g_get_current_dir();
+        spec.cwd = here;
+        g_free(here);
+    }
+    VteTerminal* t = VTE_TERMINAL(vte_);
+    spec.cols = std::max(2, (int)vte_terminal_get_column_count(t));
+    spec.rows = std::max(1, (int)vte_terminal_get_row_count(t));
+    spec.scrollback = (int)vte_terminal_get_scrollback_lines(t);
+    spec.nonce = nonce_;
+    static Shared::TermId nextTerm = 0;
+    hostTerm_ = ++nextTerm;
+    sentCols_ = spec.cols;
+    sentRows_ = spec.rows;
+    shellPid_ = -1;
+    SessionLink::client().openTerminal(hostTerm_, spec, &listener_);
 }
 
 void Terminal::focus() {
@@ -1160,19 +1354,16 @@ void Terminal::focus() {
 
 // ---------------------------------------------------- typing for the user
 
+// The shell leads its own session and process group (the host starts it
+// so); a command it runs gets the foreground group of its own. The host
+// reads the pty's foreground group after each output and every 200 ms.
 bool Terminal::busy() const {
     if (!vte_ || shellPid_ <= 0) return false;
-    VtePty* pty = vte_terminal_get_pty(VTE_TERMINAL(vte_));
-    if (!pty) return false;
-    // The shell leads its own session and process group (VTE spawns it so);
-    // a command it runs gets the foreground group of its own.
-    const pid_t group = tcgetpgrp(vte_pty_get_fd(pty));
-    return group > 0 && group != shellPid_;
+    return host_.foreground > 0 && host_.foreground != shellPid_;
 }
 
 int Terminal::foregroundJob() const {
-    if (!busy()) return 0;
-    return (int)tcgetpgrp(vte_pty_get_fd(vte_terminal_get_pty(VTE_TERMINAL(vte_))));
+    return busy() ? host_.foreground : 0;
 }
 
 bool Terminal::typeText(const std::string& text) {
@@ -1340,11 +1531,17 @@ void Terminal::onContentsChanged(VteTerminal*, gpointer selfp) {
     static_cast<Terminal*>(selfp)->shellSpoke_ = true;
 }
 
+// Everything VTE would write to a pty of its own: the user's keys and
+// pastes, the app's typing (feed_child, paste_text), and VTE's answers to a
+// program's queries. All of it goes to the host's pty, in order.
 void Terminal::onCommit(VteTerminal*, char* text, guint size, gpointer selfp) {
     Terminal* self = static_cast<Terminal*>(selfp);
-    if (!text || (!memchr(text, '\r', size) && !memchr(text, '\n', size))) return;
+    if (!text || !size) return;
+    if (self->hostTerm_) SessionLink::client().terminalInput(self->hostTerm_, std::string(text, size));
+    if (self->userInput_) self->userTyped();
+    if (!memchr(text, '\r', size) && !memchr(text, '\n', size)) return;
     if (self->finishTimer_) return;   // already looking
-    if (!self->nonce_.empty()) return;   // the integration's marks tell (onTermpropChanged)
+    if (!self->nonce_.empty()) return;   // the integration's marks tell (termShell)
     self->finishTimer_ = g_timeout_add(250, [](gpointer p) -> gboolean {
         Terminal* t = static_cast<Terminal*>(p);
         if (t->busy()) return G_SOURCE_CONTINUE;

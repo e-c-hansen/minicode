@@ -8,7 +8,8 @@
 //     gives status 1; the user's PROMPT_COMMAND still sees each status and
 //     their alias works;
 //   - a mark without the nonce, or with another, changes nothing, printed
-//     by a command or fed to the terminal directly;
+//     by a command (the session's host reads the marks from the pty's
+//     bytes, SESSION-DESIGN.md stage 5: VTE draws them and nothing else);
 //   - three commands on one line, and three lines in one write, leave the
 //     counters consistent;
 //   - zsh's half, where zsh is installed (a note otherwise).
@@ -222,10 +223,6 @@ bool endsWith(const std::string& s, const std::string& t) {
     return s.size() >= t.size() && s.compare(s.size() - t.size(), t.size(), t) == 0;
 }
 
-std::string forged(const std::string& nonce) {
-    return "\x1b]666;vte.ext.minicode.mark=p=99\\sx=99\\sd=0\\ss=77\\sc=forged\\smc=" + nonce + "\x1b\\";
-}
-
 }  // namespace
 
 MC_GUI_SUITE(shell_integration) {
@@ -295,36 +292,31 @@ MC_GUI_SUITE(shell_integration) {
         GCHECK(log.find("0\n0\n1\n0\n") != std::string::npos);
     });
 
-    MCGuiStep("marks fed to the terminal without the nonce, or with another", [] {
+    MCGuiStep("marks printed without the nonce, or with another", [] {
+        gBefore = sh();
+        typeLine("printf '\\e]133;A\\a\\e]133;C;mc=0123456789abcdef0123456789abcdef\\a\\e]133;D;7;mc=bad\\a'");
+    });
+    MCGuiWait("the printf ran", 10, [] { return sh().atPrompt && sh().prompts > gBefore.prompts; });
+    MCGuiStep("only its own two marks counted", [] {
+        GCHECK(sh().prompts == gBefore.prompts + 1 && sh().started == gBefore.started + 1);
+        GCHECK(sh().status == 0 && sh().done == sh().started);
         gBefore = sh();
         gAccepted = 0;
-        VteTerminal* vte = findVte(term()->widget());
-        for (const std::string& f : {forged(""), forged("0123456789abcdef0123456789abcdef"),
-                                     std::string("\x1b]666;vte.ext.minicode.mark=p=99\x1b\\")}) {
-            vte_terminal_feed(vte, f.c_str(), (gssize)f.size());
-        }
-    });
-    MCGuiPause(0.5);   // negative check: nothing may arrive
-    MCGuiStep("change nothing", [] {
-        GCHECK(sameState(sh(), gBefore));
-        GCHECK(gAccepted == 0);
         // Printed by a command (a file shown with cat would be the same),
-        // half a second in: output in the same read as the start's mark
-        // would leave VTE only the later value (D10), hiding the start.
-        typeLine("sleep 0.5; printf '\\e]666;vte.ext.minicode.mark=p=99\\\\sx=99\\\\sd=0\\\\ss=77\\\\sc=forged\\\\smc=bad\\e\\\\'; sleep 2");
+        // half a second in, while the command runs.
+        typeLine("sleep 0.5; printf '\\e]133;D;77;mc=bad\\a\\e]133;A;mc=bad\\a'; sleep 2");
     });
     MCGuiWait("the printing command runs", 10, [] { return sh().busy; });
     MCGuiPause(1.2);   // while it sleeps, after its forged mark
     MCGuiStep("still its own text, not the forged one", [] {
-        VteTerminal* vte = findVte(term()->widget());
-        const char* now = vte_terminal_get_termprop_string(vte, ShellIntegration::kVteMarkTermprop, nullptr);
-        GCHECK(now && std::string(now).find("c=forged;mc=bad") != std::string::npos);   // VTE has it
         GCHECK(sh().busy && sh().command.find("sleep 0.5; printf") == 0);
         GCHECK(sh().prompts == gBefore.prompts && sh().started == gBefore.started + 1);
     });
     MCGuiWait("it finishes", 10, [] { return sh().atPrompt; });
-    MCGuiStep("only the shell's two marks were believed", [] {
-        GCHECK(gAccepted == 2);
+    MCGuiStep("only the shell's marks were believed", [] {
+        // Its start, and its end with the next prompt (one message or two,
+        // as the host read them).
+        GCHECK(gAccepted >= 2 && gAccepted <= 3);
         GCHECK(sh().status == 0 && sh().prompts == gBefore.prompts + 1);
         gBefore = sh();
         typeLine("true; true; true");
