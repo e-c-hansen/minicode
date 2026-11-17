@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <string>
 
 namespace {
@@ -298,11 +299,20 @@ MC_GUI_SUITE(split_editor) {
     MCGuiStep("back to halves", [] { ed()->setGroupFraction(0.5); });
 
     // ---- the session: a new window on the folder comes back split
-    MCGuiWait("the split is the folder's session", 10, [] {
+    // The session is saved a second after the first change since the last
+    // save, so the file can still hold the moment s-c.txt was dragged to the
+    // front and on show, from before the click on s-b.txt; a new window
+    // opened then came back with s-c.txt on show (CI, 1ed703d). Wait for the
+    // left group's tab on show too.
+    MCGuiWait("the split is the folder's session, s-b.txt on show on the left", 10, [] {
         const TabSessions::Session s = SavedFor(MCGuiProject());
+        auto endsWith = [](const std::string& path, const char* tail) {
+            const std::size_t n = std::strlen(tail);
+            return path.size() >= n && path.compare(path.size() - n, n, tail) == 0;
+        };
         return s.split && s.groups.focused == 0 && s.groups.groups[1].size() == 1 &&
-               !s.groups.groups[0].empty() &&
-               s.groups.groups[0].front().rfind("/s-c.txt") + 8 == s.groups.groups[0].front().size();
+               !s.groups.groups[0].empty() && endsWith(s.groups.groups[0].front(), "/s-c.txt") &&
+               endsWith(s.groups.active[0], "/s-b.txt");
     });
     MCGuiStep("a new window on the folder", [] {
         gWindows = MCGuiAppWindows().size();
