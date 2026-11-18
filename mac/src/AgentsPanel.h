@@ -9,6 +9,12 @@
 // the folder, in its worktree, outside the folder); a file no longer on
 // disk is struck through. The model is MCAgentModel; this file only draws.
 //
+// Above the sessions, a row for each task New Agent Task started whose
+// session has not shown up yet (AgentTaskBar.h): its name, its branch and
+// how long ago; a click shows its terminal. A session (or task) that works
+// in a worktree offers Compare with Main… in its menu, the review with
+// Apply to Main.
+//
 // Keys, as in the git panel: Up and Down move, Return shows a session's
 // Evidence or what it changed in a file, Space or Right expands (Left
 // collapses), Tab goes to the editor. A click on a session shows its
@@ -27,6 +33,8 @@
 @property(nonatomic, copy) void (^onShowFileChanges)(NSString *path, NSString *transcript,
                                                      NSString *sessionName);
 @property(nonatomic, copy) void (^onOpenFolderInNewWindow)(NSString *path);
+// Compare with Main on a worktree (MCAgentWindow compareWorktreeAt:).
+@property(nonatomic, copy) void (^onCompareWorktree)(NSString *path);
 @property(nonatomic, copy) void (^onTab)(void);
 - (void)applySettings;
 - (void)focusList;
@@ -42,7 +50,8 @@
 @property(nonatomic, readonly) NSOutlineView *outline;
 @property(nonatomic, readonly, copy) NSString *noticeText;    // the empty state, "" with rows
 @property(nonatomic, readonly, copy) NSString *summaryText;   // "1 running · 2 sessions"
-// One line per row on show: "S <depth> <state> <name> | <detail>",
+// One line per row on show: "T <name> | <detail>" for a task,
+// "S <depth> <state> <name> | <detail>",
 // "G <title>", "F <path>" (with " (missing)" when it is gone).
 - (NSArray<NSString *> *)rowDescriptions;
 - (void)activateRow:(NSInteger)row;   // Return

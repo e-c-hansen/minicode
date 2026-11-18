@@ -401,6 +401,9 @@
 - (NSString *)changeSourceToResume;
 // Shift+Cmd+K: Request a Change to minicode (see ChangePanel.h).
 - (void)requestChange:(id)sender;
+// Edit > New Agent Task… (Option+Shift+Cmd+A): Claude Code on a fresh
+// worktree, from a prompt (AgentTaskBar.h).
+- (void)newAgentTask:(id)sender;
 // After a restart: the conversation in `source` continued in a terminal here.
 - (void)resumeChangeWithSource:(NSString *)source command:(NSString *)command;
 - (void)inlineAgent:(id)sender;        // Cmd+I the agent, for whatever has the keyboard

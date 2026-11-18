@@ -35,6 +35,7 @@ static NSString *Resolved(NSString *path) {
     NSArray<MCTermLinkMatch *> *_pickerMatches;
     MCTermLink *_pickerLink;
     void (^_pickerOpen)(MCTermLink *);
+    MCAgentTaskSession *_tasks;
 }
 @synthesize model = _model, panel = _panel;
 
@@ -51,6 +52,12 @@ static NSString *Resolved(NSString *path) {
 }
 
 - (BOOL)started { return _model != nil; }
+
+- (MCAgentTaskSession *)tasks {
+    if (!_tasks) _tasks = [[MCAgentTaskSession alloc] initWithHost:_host model:self.model];
+    return _tasks;
+}
+- (MCAgentTaskSession *)tasksIfMade { return _tasks; }
 
 - (MCAgentModel *)model {
     if (!_model) {
@@ -84,6 +91,7 @@ static NSString *Resolved(NSString *path) {
             [weakSelf showChangesToFile:path transcript:transcript name:name];
         };
         _panel.onOpenFolderInNewWindow = ^(NSString *path) { [weakSelf openFolderInNewWindow:path]; };
+        _panel.onCompareWorktree = ^(NSString *path) { [weakSelf compareWorktreeAt:path]; };
         _panel.onTab = ^{
             MCAgentWindow *s = weakSelf;
             [s->_host focusEditor:nil];
@@ -112,6 +120,7 @@ static NSString *Resolved(NSString *path) {
 }
 
 - (void)stop {
+    [_tasks close];
     [_model stop];
     if (_worktreeObserver) [NSNotificationCenter.defaultCenter removeObserver:_worktreeObserver];
     _worktreeObserver = nil;

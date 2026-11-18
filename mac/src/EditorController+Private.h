@@ -964,6 +964,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (MCChangeSession *)changeSession;
 - (NSRect)layoutChangeBarIn:(NSRect)area;
 - (void)applyChangeBarColors;
+- (NSRect)layoutAgentTaskBarIn:(NSRect)area;
+- (void)applyAgentTaskBarColors;
+- (void)agentTaskBarDidChange;
 - (TerminalView *)changeTerminalRunning:(NSString *)command focus:(BOOL)focus;
 - (void)runCommand:(NSString *)command inTerminal:(TerminalView *)terminal focus:(BOOL)focus;
 - (BOOL)terminalIsOpen:(TerminalView *)terminal;

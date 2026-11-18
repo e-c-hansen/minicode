@@ -85,6 +85,63 @@ found through that list.
   build; launching a build registers it with Launch Services, so Finder may
   offer two minicodes (`lsregister -u` it).
 
+## New Agent Task (Mac, A8, 2026-11-18)
+
+- Edit > New Agent Task… (`minicode.agent.newTask`, Option+Shift+Cmd+A,
+  beside Shift+Cmd+A's panel; Mac only, no Linux row yet). Core
+  `AgentTask.{h,cpp}` (`agenttask:*`): `nameFromPrompt` (first four words
+  that say something, ASCII, 32 bytes), `sanitizeName` (a branch and a
+  folder: `[A-Za-z0-9._-]`, no `..`, no `.lock`, 60 bytes), `uniqueName`
+  (-2, -3), `worktreePath` (`<folder>/.claude/worktrees/<name>`, where
+  Claude Code's own go and where `MCAgentModel`, the tree's Worktrees node,
+  Compare with Main and Apply to Main look, so nothing of the review is
+  new), `insideClaudeHome` (a window on ~ would write ~/.claude: refused),
+  `worktreeAddArgs` (`worktree add -b <name> <path> HEAD`), and
+  `startCommand`: `cd <wt> && <agent.command> '<prompt>'` when the prompt
+  is one line of at most 160 bytes, else `"$(cat <file>)"` from
+  `$TMPDIR/MiniCode-task/task-<pid>-<n>.txt` (Request a Change's lesson:
+  a long line floods the terminal, its title and history). The
+  `agenttask:shell` group runs the line through /bin/sh with printf for
+  claude: quotes, `$( )`, backticks and `!` arrive as one argument and
+  nothing in them runs.
+- Mac `AgentTaskBar.{h,mm}`: `MCAgentTaskBar` (a bar across the top of
+  the right pane under Request a Change's, blue where that one is amber:
+  the prompt box, wrapping and growing to 8 lines, the name field, which
+  follows the prompt until typed in, `nameEdited`, and the branch and
+  folder it gives) and `MCAgentTaskSession`, owned by `MCAgentWindow`
+  (`tasks`, made on first use; EditorController has `newAgentTask:`,
+  `agentTaskBarDidChange`, `layoutAgentTaskBarIn:` in
+  `relayoutRightArea`, and the colors in `applySettings`). `begin` looks
+  at the repository on its own queue (toplevel, HEAD, branch, `status
+  --porcelain` count) for the line beside the heading
+  (`AgentTask::startsFromText`: uncommitted changes stay behind) or the
+  refusal; `start` looks again (so it never trusts a stale look), picks a
+  free name against `for-each-ref refs/heads` and the folders, runs `git
+  worktree add` (300 s limit), adds `/<rel>.claude/worktrees/` to the
+  common dir's `info/exclude` when `check-ignore` says the folder is not
+  ignored (never .gitignore), then types the line into a terminal tab
+  (`changeTerminalRunning:focus:`, Request a Change's, which makes room
+  for Claude's screen) and `[MCAgentModel addTask:]`. The agent command is
+  looked for as the language servers' are (`MCResolveCommand`), plus
+  Claude Code's old `~/.claude/local/claude` (read only, a shell alias
+  names it); not found, the bar says the inline agent's sentence
+  (claude.com/claude-code, agent.command).
+- The panel: `MCAgentModel tasks` (in memory, newest first, forgotten
+  with the folder) and `pendingTasks`, those no indexed session works in
+  (its worktreePath, or a cwd in the task's folder, by realpath). Their
+  rows (`T <name> | starting · <name> · <age>`) sit above the sessions
+  with a blue ring; a click shows the terminal (else Compare with Main);
+  the menu has Show Terminal, Compare with Main…, Open Worktree in New
+  Window and Copy Worktree Path. Once Claude Code writes its transcript
+  the session row stands for the task. Session rows with a worktree gained
+  Compare with Main… (`onCompareWorktree`, MCAgentWindow's
+  `compareWorktreeAt:`).
+- Checked by `make guitest SUITES=agent_task` (a stand-in claude script;
+  the transcript it writes for a SESSION prompt goes to the suite's
+  scratch MINICODE_CLAUDE_PROJECTS). Not run against a real Claude Code
+  session: its folder-trust question for the new worktree is answered in
+  the terminal.
+
 ## The Claude Code IDE link (Mac, agent.ide-link)
 
 Claude Code's `/ide` answered per window, as VS Code's extension does. Off by

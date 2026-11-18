@@ -22,7 +22,7 @@
 // (the GUI checks point both at scratch copies of tests/fixtures/claude).
 #import <Cocoa/Cocoa.h>
 
-@class MCComparison;
+@class MCComparison, TerminalView;
 
 // A file a session wrote or edited.
 @interface MCAgentFile : NSObject
@@ -83,6 +83,17 @@
 @property(nonatomic, readonly, copy) NSString *path, *from;   // relative to the worktree
 @end
 
+// A task New Agent Task started (AgentTaskBar.h): Claude Code in a terminal
+// on a worktree of its own. Listed in the panel until a session indexed
+// from the transcripts works in that worktree, which then stands for it.
+@interface MCAgentTask : NSObject
+@property(nonatomic, copy) NSString *name;      // the branch and the folder's name
+@property(nonatomic, copy) NSString *path;      // <folder>/.claude/worktrees/<name>
+@property(nonatomic, copy) NSString *prompt;
+@property(nonatomic) NSTimeInterval started;    // Unix seconds
+@property(nonatomic, weak) TerminalView *terminal;
+@end
+
 extern NSNotificationName const MCAgentModelDidChangeNotification;            // sessions
 extern NSNotificationName const MCAgentModelWorktreesDidChangeNotification;   // worktrees
 
@@ -102,6 +113,14 @@ extern NSNotificationName const MCAgentModelWorktreesDidChangeNotification;   //
 @property(nonatomic, readonly) BOOL worktreesLoaded;          // git has answered once
 @property(nonatomic, readonly) NSUInteger generation;         // grows with every publish
 - (MCAgentWork *)sessionForTranscript:(NSString *)transcript;
+// The tasks started in this window (New Agent Task), newest first; a new
+// folder forgets them. addTask: posts MCAgentModelDidChangeNotification
+// and asks git about the worktrees again.
+@property(nonatomic, readonly, copy) NSArray<MCAgentTask *> *tasks;
+- (void)addTask:(MCAgentTask *)task;
+// The tasks no indexed session works in yet (its worktree, or its folder
+// inside the task's), newest first: the panel's task rows.
+- (NSArray<MCAgentTask *> *)pendingTasks;
 - (MCAgentWorktree *)worktreeAtPath:(NSString *)path;   // any spelling of its folder
 // Where a relative path in terminal output is looked for after the shell's
 // folder and the window's (R2.10): the worktrees under the folder, then the
