@@ -222,6 +222,14 @@ std::string stylesheet(const Settings& s) {
            "; background: none; box-shadow: none; border: none; min-height: 0; min-width: 0;"
            " padding: 0 7px; margin: 0; }";
     css += "button.minicode-tree-focus-close:hover { color: " + fg(Surface::Sidebar) + "; }";
+    // Several focused folders (Add to Focus): the label row's labels, each
+    // on a faint ground of the sidebar's text color with its own ×, and the
+    // folders' root rows in the tree a little heavier, as the Mac draws them.
+    css += ".minicode-tree-focus-chip { background-color: " + tinted(0.1) +
+           "; border-radius: 4px; padding-left: 6px; margin: 3px 0; }";
+    css += ".minicode-tree-focus-chip label { color: " + fg(Surface::Sidebar) + "; font-size: 0.9em; }";
+    css += ".minicode-tree-focus-chip button.minicode-tree-focus-close { padding: 0 5px; }";
+    css += ".minicode-tree-label.minicode-tree-root { font-weight: 500; }";
     // The Source Control panel, in the tree's place: the sidebar's colors,
     // painted once by the panel. Its accents are the Mac's inline hex.
     css += ".minicode-git { background-color: " + bg(Surface::Sidebar) + "; color: " +

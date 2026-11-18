@@ -60,6 +60,7 @@
 #include "Editor.h"
 #include "FileTree.h"
 #include "FileDetails.h"   // TreeFocus (Focus on Folder)
+#include "FolderPicker.h"  // inScope (Add Folder to Focus…)
 #include "Folds.h"
 #include "ThemeCss.h"
 #include "Palette.h"
@@ -951,9 +952,11 @@ std::function<void(GtkWindow*, const std::string&, std::function<void(const std:
 
 // The system's folder chooser, shared by File > Open Folder and `mutible
 // --open-folder` (the dock icon's Open Folder…). `done` gets the folder's
-// path, or "" when it was cancelled or failed. `parent` may be null.
+// path, or "" when it was cancelled or failed. `parent` may be null. Add
+// Folder to Focus… asks with a title of its own.
 static void chooseFolder(GtkWindow* parent, const std::string& start,
-                         std::function<void(const std::string&)> done) {
+                         std::function<void(const std::string&)> done,
+                         const char* title = "Open Folder") {
 #ifdef MUTIBLE_GUITEST
     if (gFolderChooserHook) {
         gFolderChooserHook(parent, start, std::move(done));
@@ -961,7 +964,7 @@ static void chooseFolder(GtkWindow* parent, const std::string& start,
     }
 #endif
     GtkFileDialog* dlg = gtk_file_dialog_new();
-    gtk_file_dialog_set_title(dlg, "Open Folder");
+    gtk_file_dialog_set_title(dlg, title);
     if (!start.empty()) {
         GFile* f = g_file_new_for_path(start.c_str());
         gtk_file_dialog_set_initial_folder(dlg, f);
@@ -2544,8 +2547,9 @@ static void act_copy_path(GSimpleAction*, GVariant*, gpointer userp) {
 
 // ------------------------------------------------------ Focus on Folder
 //
-// The tree rooted at one folder (FileTree.h, the Mac's
-// EditorController+TreeFocus.mm). The window's folder never changes.
+// The tree rooted at one folder, or at several each a root row of its own
+// (FileTree.h, the Mac's EditorController+TreeFocus.mm). The window's
+// folder never changes.
 
 // The folder Focus on Folder roots the tree at, as a path from the window's
 // folder: the selected folder, a selected file's folder, else the open
@@ -2568,9 +2572,59 @@ static bool folderToFocus(App* app, std::string* rel) {
     return true;
 }
 
-// The two that depend on the tree: Focus on Folder on a folder's row in its
-// right click menu (a file's has none), Show Whole Folder in Tree while the
-// tree is focused (the menu bar's too). Hidden in the menu while disabled.
+// Whether Add to Focus would show something new by `rel`: a folder not
+// shown yet, and not the window's own ("" would show the whole folder,
+// which is Show Whole Folder in Tree's), as the Mac's addableFocus.
+static bool addableFocus(App* app, const std::string& rel) {
+    return !rel.empty() && TreeFocus::rootOf(app->tree->focusFolders(), rel) < 0;
+}
+
+// The selected row's folder (a file's folder) when Add to Focus would add
+// it; a right click selects its row, so this is the clicked row's there.
+static bool rowFolderToAdd(App* app, std::string* rel) {
+    const std::string sel = app->tree->selectedPath();
+    if (sel.empty() || app->tree->isWorktreeRow(sel)) return false;
+    std::string folder = app->tree->selectedDir();
+    if (folder.empty()) {
+        char* dir = g_path_get_dirname(sel.c_str());
+        folder = dir;
+        g_free(dir);
+    }
+    std::string r;
+    if (!app->tree->relative(folder, &r) || !addableFocus(app, r)) return false;
+    *rel = r;
+    return true;
+}
+
+// What Add to Focus adds from the menu bar or the palette: the selected
+// row's folder, else the open file's (the Mac's folderToAddToFocus).
+static bool folderToAddToFocus(App* app, std::string* rel) {
+    if (rowFolderToAdd(app, rel)) return true;
+    std::string fromRoot;
+    if (!app->tree->relative(app->editor->currentPath(), &fromRoot)) return false;
+    const std::string folder = TreeFocus::parent(fromRoot);
+    if (!addableFocus(app, folder)) return false;
+    *rel = folder;
+    return true;
+}
+
+// The root row selected, while several folders are focused: what Remove
+// from Focus takes out.
+static bool focusedRootToRemove(App* app, std::string* rel) {
+    const std::vector<std::string>& set = app->tree->focusFolders();
+    std::string r;
+    if (set.size() < 2 || !app->tree->relative(app->tree->selectedPath(), &r) ||
+        std::find(set.begin(), set.end(), r) == set.end())
+        return false;
+    *rel = r;
+    return true;
+}
+
+// Those that depend on the tree: Focus on Folder on a folder's row in its
+// right click menu (a file's has none), Add to Focus on a row whose folder
+// is not shown already as a focused folder or inside one, Remove from
+// Focus on a root row of several, Show Whole Folder in Tree while the tree
+// is focused (the menu bar's too). Hidden in the menu while disabled.
 static void updateTreeFocusActions(App* app) {
     if (app->dead || !app->tree) return;
     auto enable = [app](const char* name, bool on) {
@@ -2578,10 +2632,81 @@ static void updateTreeFocusActions(App* app) {
             g_simple_action_set_enabled(G_SIMPLE_ACTION(a), on);
     };
     const std::string dir = app->tree->selectedDir();
-    std::string rel;
+    std::string rel, add, remove;
     enable("focusfolderrow", !dir.empty() && !app->tree->isWorktreeRow(dir) &&
                                  app->tree->relative(dir, &rel) && app->tree->inTree(rel));
-    enable("showwholefolder", !app->tree->focusPath().empty());
+    enable("addtofocusrow", rowFolderToAdd(app, &add) && app->tree->inTree(add));
+    enable("removefromfocusrow", focusedRootToRemove(app, &remove));
+    enable("showwholefolder", !app->tree->focusFolders().empty());
+}
+
+// Add to Focus, by the core's merging (FileTree::addFocus); true when the
+// tree took the folder.
+static bool addToFocusOrSay(App* app, const std::string& rel) {
+    if (app->tree->addFocus(rel)) return true;
+    gtk_widget_error_bell(app->window);
+    flashStatus(app, "That folder is not in the tree");
+    return false;
+}
+
+// Add Folder to Focus…: the folder chooser, starting in the window's
+// folder and held to it (FolderPicker::inScope: only folders strictly
+// inside it, as the Mac's scoped picker offers), the folder chosen added
+// as Add to Focus adds one (nested folders merged by the core). The tree
+// has the keyboard after.
+static void act_add_folder_to_focus(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->rootDir.empty() || !app->tree) {
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    chooseFolder(GTK_WINDOW(app->window), app->rootDir, [app](const std::string& dir) {
+        if (dir.empty() || app->dead || !app->tree) return;   // cancelled, or the window went
+        std::string rel;
+        if (!FolderPicker::inScope(dir, app->rootDir) || !app->tree->relative(dir, &rel) ||
+            rel.empty()) {
+            gtk_widget_error_bell(app->window);
+            flashStatus(app, "Only folders inside " +
+                                 FolderPicker::abbreviate(app->rootDir, g_get_home_dir()));
+            return;
+        }
+        if (addToFocusOrSay(app, rel)) app->tree->focus();
+    }, "Add Folder to Focus");
+}
+
+// Add to Focus from the menu bar or the palette: with nothing new to add
+// by the selection or the open file (with the tree focused, every row is
+// inside it), the chooser instead, as on the Mac.
+static void act_add_to_focus(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    std::string rel;
+    if (!folderToAddToFocus(app, &rel)) {
+        act_add_folder_to_focus(nullptr, nullptr, app);
+        return;
+    }
+    addToFocusOrSay(app, rel);
+}
+
+// Add to Focus on a folder's right click: its row alone.
+static void act_add_to_focus_row(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    std::string rel;
+    if (!rowFolderToAdd(app, &rel)) {
+        gtk_widget_error_bell(app->window);
+        flashStatus(app, "The tree shows that folder already");
+        return;
+    }
+    addToFocusOrSay(app, rel);
+}
+
+static void act_remove_from_focus_row(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    std::string rel;
+    if (!focusedRootToRemove(app, &rel)) {
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    app->tree->removeFocus(rel);
 }
 
 static void act_focus_folder(GSimpleAction*, GVariant*, gpointer userp) {
@@ -2599,7 +2724,7 @@ static void act_focus_folder(GSimpleAction*, GVariant*, gpointer userp) {
 
 static void act_show_whole_folder(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    if (app->tree->focusPath().empty()) {
+    if (app->tree->focusFolders().empty()) {
         gtk_widget_error_bell(app->window);
         return;
     }
@@ -4010,10 +4135,11 @@ static void initShared() {
     // with Adjust Settings… for the tree's keys.
     g.treeMenu = Keys::menuOf({"explorer.newFile", "explorer.newFolder", "", "renameFile",
                                "moveFileToTrash", "", "revealFileInOS", "copyFilePath"});
-    {   // Focus on Folder on a folder's row, Show Whole Folder in Tree while
-        // the tree is focused, each hidden otherwise (updateTreeFocusActions),
-        // as the Mac's menu hides them; the breadcrumb's own menu has the
-        // second.
+    {   // Focus on Folder on a folder's row, Add to Focus on one not shown
+        // already as a focused folder or inside one, Remove from Focus on a
+        // root row of several, Show Whole Folder in Tree while the tree is
+        // focused, each hidden otherwise (updateTreeFocusActions), as the
+        // Mac's menu hides them; the bar's own menu has the last.
         auto title = [](const char* id) {
             const Commands::Command* c = Commands::find(id);
             return c ? Commands::titleOf(*c, Commands::Platform::Linux) : id;
@@ -4026,6 +4152,8 @@ static void initShared() {
         };
         GMenu* focus = g_menu_new();
         item(focus, title("mutible.tree.focusFolder"), "win.focusfolderrow");
+        item(focus, title("mutible.tree.addToFocus"), "win.addtofocusrow");
+        item(focus, "Remove from Focus", "win.removefromfocusrow");
         item(focus, title("mutible.tree.showWholeFolder"), "win.showwholefolder");
         g_menu_append_section(G_MENU(g.treeMenu), nullptr, G_MENU_MODEL(focus));
         g_object_unref(focus);
@@ -4360,10 +4488,10 @@ static App* newWindow(const std::string& root, const std::string& file,
             }
         },
         [] { saveOpenWindows(); },
-        // The tree's focused folder (Focus on Folder). Asked as the window
-        // closes too, while the tree still exists.
-        [app] { return app->tree ? app->tree->focusPath() : std::string(); },
-        [app](const std::string& saved) {
+        // The tree's focused folders (Focus on Folder, Add to Focus). Asked
+        // as the window closes too, while the tree still exists.
+        [app] { return app->tree ? app->tree->focusFolders() : std::vector<std::string>(); },
+        [app](const std::vector<std::string>& saved) {
             if (app->dead || !app->tree) return;
             app->tree->restoreFocus(saved);
             updateTreeFocusActions(app);
@@ -4663,6 +4791,17 @@ static App* newWindow(const std::string& root, const std::string& file,
     addAction(app, "focusfolder",    G_CALLBACK(act_focus_folder));
     addAction(app, "focusfolderrow", G_CALLBACK(act_focus_folder));
     addAction(app, "showwholefolder", G_CALLBACK(act_show_whole_folder));
+    // Add to Focus: several folders, each a root of the tree (the menu
+    // bar's and the palette's, which pick a folder when there is nothing new
+    // to add; the folder row's; a root row's Remove from Focus), and Add
+    // Folder to Focus… (also the bar's +).
+    addAction(app, "addtofocus",      G_CALLBACK(act_add_to_focus));
+    addAction(app, "addtofocusrow",   G_CALLBACK(act_add_to_focus_row));
+    addAction(app, "removefromfocusrow", G_CALLBACK(act_remove_from_focus_row));
+    addAction(app, "addfoldertofocus", G_CALLBACK(act_add_folder_to_focus));
+    app->tree->onAddFolder = [app] {
+        if (!app->dead) act_add_folder_to_focus(nullptr, nullptr, app);
+    };
     app->tree->onContextMenu = [app] {
         updateBookmarkActions(app);
         updateTreeFocusActions(app);

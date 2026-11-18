@@ -43,6 +43,8 @@ const std::vector<Action>& actions() {
         {"copyFilePath", "win.copypath", false},
         {"mutible.tree.focusFolder", "win.focusfolder", true},
         {"mutible.tree.showWholeFolder", "win.showwholefolder", false},
+        {"mutible.tree.addToFocus", "win.addtofocus", false},
+        {"mutible.tree.addFolderToFocus", "win.addfoldertofocus", false},
         {"workbench.action.files.copyPathOfActiveFile", "win.copyactivepath", true},
         {"workbench.action.files.revealActiveFileInWindows", "win.revealactive", false},
         {"workbench.files.action.showActiveFileInExplorer", "win.revealactiveintree", false},

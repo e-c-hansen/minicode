@@ -6153,3 +6153,82 @@ Needs a person at the ThinkPad: `apt upgrade` from an installed minicode
 mutible comes in, `/usr/bin/minicode` stays), the first launch's copy of
 real settings and sessions, and pinning mutible to the dock in place of
 the old icon.
+
+### 98. Add to Focus: several folders, each a root of the tree (done, November 2026)
+
+The Mac's feature of 2026-11-18 (`../docs/notes/tree.md`, "Add to Focus,
+several folders"; PRs 157 and 169; `mac/src/EditorController+TreeFocus.mm`
+and `TreeFocusBar.mm`), over the same core: `FileDetails.h`'s
+`TreeFocus` set rules (`added`, `removed`, `merged`, `rootOf`,
+`revealed`, `restoredSet`, `shortLabels`, `shared`) and the list form of
+`TabSessions::Session.treeFocus`. Item 94's single focus is the set of
+one, breadcrumb and widening unchanged. PARITY.md 4.11.
+
+- **The set.** `FileTree::foci_` is the focused folders in the order
+  added; `setFocusFolders` takes a list through `TreeFocus::merged` and
+  refuses one that is not `inTree`; `setFocus` (one folder or none),
+  `addFocus` and `removeFocus` go through it. `focusPath()` joins the set
+  with ", " (the Mac's `treeFocus`), `top()` is the first folder (New
+  File, Copy Path, Open Containing Folder with nothing selected).
+- **Roots.** With several, `makeTreeModel` puts a plain `GListStore` of
+  one `GFileInfo` per folder (type directory, its `standard::file`, a
+  `minicode-root-label` with its path) at the top (`makeRootsModel`); each
+  row's children are the usual watched folder model, so listings, the
+  dotfile filter, git colors and drops into a root need nothing new.
+  `onBind` shows the label and the `minicode-tree-root` class (a little
+  heavier). A drop below the roots is refused (`dropDirAt` gives "").
+  `applyFocus(set, lost)` keeps the Mac's rules for what is open: memory
+  outside the old tops kept, rows open now added, widening opens the old
+  root and the folders down to it (and selects it when one folder was
+  focused), and a root new to several, or the folder that was the single
+  focus, opens. `showsPath` asks `rootOf` with several and reveals
+  through `TreeFocus::revealed`, so a reveal outside every root adds its
+  folder. `watchFocusPath` watches the folders from the window's down to
+  every root's parent; `dropLostFocus` keeps the roots still `inTree` and
+  says one of the Mac's three notes ("A focused folder is gone: the tree
+  shows the others", or the whole folder's two).
+- **The label row** reuses the breadcrumb's bar and `GtkCustomLayout`:
+  one chip per folder (`minicode-tree-focus-chip`: a label, a flat ×),
+  laid out with the full paths when their widths (measured with Pango for
+  either text, whatever the label shows) fit, else `shortLabels`, each
+  capped by `shared`. The texts change from an idle (`setBarShort`),
+  never inside the allocate function. A press on a label selects its root
+  row (`selectRoot`); a chip's × removes its folder from an idle, since
+  the bar is made again without that button. A + (`onAddFolder`) sits
+  before the last × on the breadcrumb and the label row alike.
+- **The window** (`main.cpp`, "Focus on Folder"): `win.addtofocus` (the
+  File menu and the palette, `mutible.tree.addToFocus`: the selected
+  row's folder, else the open file's, when not shown already; else the
+  chooser, as the Mac opens its picker), `win.addtofocusrow` and
+  `win.removefromfocusrow` in the tree's right click (hidden while they
+  cannot act, `updateTreeFocusActions`), and `win.addfoldertofocus`
+  (`mutible.tree.addFolderToFocus`, Add Folder to Focus…, the bar's +).
+  That one is the system's folder chooser (`chooseFolder`, titled "Add
+  Folder to Focus"), started in the window's folder: the GTK port has no
+  palette folder picker like the Mac's `MCFolderPick`, so the open tabs'
+  folders are not offered first and nothing completes a typed path. The
+  answer is held to the window's folder by the core's
+  `FolderPicker::inScope` (strictly inside: the folder itself is refused
+  too), with the Mac's "Only folders inside …" (`FolderPicker::
+  abbreviate`); `FolderPicker.cpp` joins the Linux build lists for it.
+  Persistence's `treeFocus` and `restoreTreeFocus` hooks carry the list.
+
+Checked: the `tree_focus` suite's second half (`./build/mutible-guitest
+tree_focus`), run three times: Add to Focus in a folder's right click
+(not Remove from Focus) and from the menu bar, the + asking the chooser
+(answered through `MCGuiAnswerFolderChooser`, started in the window's
+folder) and giving two roots in the order added, both open, labelled with
+their paths, the label row and the session saying both; a file made in a
+root; a folder already shown adding nothing; a reveal adding its folder
+as a third root; the labels fitting the bar (short ones at the sidebar's
+width); Remove from Focus on a root row's right click; a label's click
+selecting its root row and its × taking it out, back to the breadcrumb;
+the chooser's answer outside the window's folder and the folder itself
+refused with the note; Add to Focus with nothing new asking the chooser;
+the last ×; a window's record with a folder gone since between two;
+the folder's session bringing both back; one of two deleted on disk
+dropping out alone. Pictures of the label row with two and three
+folders were looked at (`MC_GUI_SNAPSHOTS`). Needs a person at the
+ThinkPad: the label row's look under GNOME, real clicks on the chips'
+× at the sidebar's narrowest, and the portal's folder chooser opening in
+the window's folder.

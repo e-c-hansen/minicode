@@ -71,6 +71,10 @@ const std::vector<LinuxRow>& linuxRows() {
         // Focus on Folder and back (FileTree.h): no key, as on the Mac.
         {"mutible.tree.focusFolder", "", 0, nullptr, nullptr},
         {"mutible.tree.showWholeFolder", "", 0, nullptr, nullptr},
+        // Add to Focus and Add Folder to Focus…: several folders, each a
+        // root of the tree. No key, as on the Mac.
+        {"mutible.tree.addToFocus", "", 0, nullptr, nullptr},
+        {"mutible.tree.addFolderToFocus", "", 0, nullptr, nullptr},
         // The tab on show (PARITY.md 1.1): VS Code's Linux keys where it has
         // them, the rest from the menu and the tab's right click menu, as on
         // the Mac. Ctrl+W and Ctrl+F4 are plain Ctrl keys, so the shell keeps

@@ -13,6 +13,20 @@
 // folder gone since comes back as the whole folder, and the focused folder
 // deleted on disk gives the whole folder back with a note.
 //
+// Several folders (Add to Focus, HANDOFF.md item 98): Add to Focus in a
+// folder's right click and from the menu bar takes the selected folder;
+// the bar's + asks the folder chooser (answered by the check), starting
+// in the window's folder, and adds what it chose, so the tree shows each
+// folder as a root row labelled with its path, opened, under a row of
+// their labels. A file made in a root shows; a folder inside a focused
+// one adds nothing; a reveal outside every root adds its folder; Remove
+// from Focus on a root row's right click and a label's × take one out (one
+// left gives the breadcrumb back), a click on a label selects its root
+// row; the chooser refuses a folder outside the window's; Add to Focus
+// with nothing new to add asks the chooser. Both folders come back with
+// the window's record (a folder gone since dropped) and with the folder's
+// session, and a focused folder deleted on disk drops out alone.
+//
 // The clicks on the breadcrumb, the × and the rows' right clicks are real
 // (XTest); the command is the window's action, as the menu bar and the
 // palette run it. The GTK port keeps no open folders in a window's record
@@ -23,7 +37,9 @@
 #include "FileTree.h"
 #include "Persistence.h"
 #include "TabSessions.h"
+#include "FileDetails.h"   // TreeFocus::shortLabels
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -169,8 +185,39 @@ std::string StoredFocus() {
         TabSessions::decode(MCGuiReadFile(MCGuiScratch() + "/state/mutible/sessions.json"));
     const auto it = all.find(Persistence::keyFor(gRepo));
     if (it == all.end()) return "(no session)";
-    // A list since the Mac's Add to Focus; the GTK tree keeps one folder.
-    return it->second.treeFocus.empty() ? std::string() : it->second.treeFocus.front();
+    // A list since Add to Focus, joined by ", " as FileTree::focusPath.
+    std::string out;
+    for (const std::string& f : it->second.treeFocus) out += (out.empty() ? "" : ", ") + f;
+    return out;
+}
+
+// The rows at the top of the tree, as paths from the folder.
+std::string TopPaths(FileTree* t) {
+    std::string out;
+    GListModel* m = Rows(t);
+    if (!m) return out;
+    for (guint i = 0; i < g_list_model_get_n_items(m); i++) {
+        auto* r = GTK_TREE_LIST_ROW(g_list_model_get_item(m, i));
+        if (gtk_tree_list_row_get_depth(r) == 0) {
+            const std::string p = PathOf(r);
+            out += (out.empty() ? "" : " ") + p.substr(std::min(p.size(), gRepo.size() + 1));
+        }
+        g_object_unref(r);
+    }
+    return out;
+}
+
+// The folder chooser's answers (Add Folder to Focus…): what it is asked
+// to start in, how often, and the folder it gives.
+std::string gChooserStart, gChooserAnswer;
+int gChooserAsked = 0;
+void AnswerChooser(const std::string& folder) {
+    gChooserAnswer = folder;
+    MCGuiAnswerFolderChooser([](const std::string& start) {
+        gChooserStart = start;
+        gChooserAsked++;
+        return gChooserAnswer;
+    });
 }
 
 std::string StatusText() {
@@ -489,6 +536,214 @@ MC_GUI_SUITE(tree_focus) {
     MCGuiWait("on the whole folder", 10, [] {
         return Tree()->focusPath().empty() && TopRows(Tree()) == "mac src README.md" &&
                !BarShown(Tree());
+    });
+    CloseRepoWindows("the window closes");
+
+    // ---- several folders (Add to Focus)
+    OpenRepoWindow("the folder opened again, for several folders");
+    MCGuiWait("on the whole folder", 10, [] {
+        return Tree()->focusPath().empty() && TopRows(Tree()) == "mac src README.md";
+    });
+    MCGuiStep("both commands in the File menu; src selected", [] {
+        GMenuModel* bar = gtk_application_get_menubar(MCGuiApplication());
+        GCHECK(MenuBarHas(bar, "win.addtofocus"));
+        GCHECK(MenuBarHas(bar, "win.addfoldertofocus"));
+        Tree()->revealPath(F("src"));
+    });
+    MCGuiWait("selected", 10, [] { return Tree()->selectedPath() == F("src"); });
+    MCGuiWait("its row on screen", 10, [] { return RowLabel(Tree(), F("src")) != nullptr; });
+    MCGuiStep("a right click on src's row", [] { MCGuiClick(RowLabel(Tree(), F("src")), -1, -1, 3); });
+    MCGuiWait("its menu", 10, [] { return OpenMenu(Tree()) != nullptr; });
+    MCGuiStep("a folder's right click offers Add to Focus, not Remove from Focus", [] {
+        const std::vector<std::string> items = MenuLabels(OpenMenu(Tree()));
+        GCHECK(Has(items, "Focus on Folder"));
+        GCHECK(Has(items, "Add to Focus"));
+        GCHECK(!Has(items, "Remove from Focus"));
+        MCGuiKey("escape");
+    });
+    MCGuiWait("closed", 10, [] { return OpenMenu(Tree()) == nullptr; });
+    MCGuiStep("Add to Focus from the menu bar takes the selected folder", [] { Run("addtofocus"); });
+    MCGuiWait("one folder: src, with its breadcrumb", 10, [] {
+        return Tree()->focusPath() == "src" && TopRows(Tree()) == "core.cpp";
+    });
+    MCGuiStep("the breadcrumb and its +; the chooser answers mac/src", [] {
+        GCHECK(BarShown(Tree()));
+        GCHECK(!Tree()->focusBarShowsFolders());
+        GCHECK_EQ_STR(Labels(Tree()), "focusrepo › src");
+        GCHECK(gtk_widget_get_visible(Tree()->focusBarAdd()));
+        AnswerChooser(F("mac/src"));
+        gChooserAsked = 0;
+    });
+    MCGuiClickWhenReady("the bar's +", [] { return Tree()->focusBarAdd(); });
+    MCGuiWait("two roots in the order added, each open", 10, [] {
+        return TopPaths(Tree()) == "src mac/src" && Expanded(Tree(), F("src")) &&
+               Expanded(Tree(), F("mac/src")) && HasRow(Tree(), F("src/core.cpp")) &&
+               HasRow(Tree(), F("mac/src/a.mm"));
+    });
+    MCGuiWait("the label row drawn", 10, [] {
+        return MCGuiOnScreen(Tree()->focusBarPart(0)) && MCGuiOnScreen(Tree()->focusBarPart(1)) &&
+               MCGuiOnScreen(Tree()->focusBarRemove(1)) && RowLabel(Tree(), F("mac/src")) != nullptr;
+    });
+    MCGuiStep("the chooser started in the window's folder; labels, rows and session say both", [] {
+        MCGuiNote("asked %d, from %s; labels %s; session %s", gChooserAsked, gChooserStart.c_str(),
+                  Labels(Tree()).c_str(), StoredFocus().c_str());
+        GCHECK(gChooserAsked == 1);
+        GCHECK_EQ_STR(gChooserStart, gRepo);
+        GCHECK_EQ_STR(Tree()->focusPath(), "src, mac/src");
+        GCHECK_EQ_STR(Tree()->root(), gRepo);
+        GCHECK(Tree()->focusBarShowsFolders());
+        GCHECK_EQ_STR(Labels(Tree()), "src › mac/src");
+        GCHECK(gtk_widget_get_visible(Tree()->focusBarAdd()));
+        // A root row says its path from the window's folder.
+        GCHECK_EQ_STR(gtk_label_get_text(GTK_LABEL(RowLabel(Tree(), F("mac/src")))), "mac/src");
+        GCHECK_EQ_STR(StoredFocus(), "src, mac/src");
+        // New File's folder, Copy Path's: the first root.
+        GCHECK_EQ_STR(Tree()->top(), F("src"));
+        GCHECK(Enabled("showwholefolder"));
+        MCGuiSnapshot(Tree()->container(), "tree_focus-roots");
+        MCGuiWriteFile(F("mac/src/b.txt"), "b\n");
+    });
+    MCGuiWait("a file made in a root shows", 10, [] { return HasRow(Tree(), F("mac/src/b.txt")); });
+    MCGuiStep("a folder already shown adds nothing; a reveal outside every root adds its folder", [] {
+        GCHECK(Tree()->addFocus("mac/src"));
+        GCHECK(Tree()->addFocus("src"));
+        GCHECK_EQ_STR(Tree()->focusPath(), "src, mac/src");
+        Tree()->revealPath(F("mac/checks/t.mm"), true);
+        GCHECK_EQ_STR(Tree()->focusPath(), "src, mac/src, mac/checks");
+    });
+    MCGuiWait("t.mm selected under its new root", 10, [] {
+        return TopPaths(Tree()) == "src mac/src mac/checks" &&
+               Tree()->selectedPath() == F("mac/checks/t.mm");
+    });
+    MCGuiWait("three labels drawn", 10, [] {
+        return MCGuiOnScreen(Tree()->focusBarPart(2)) && MCGuiOnScreen(Tree()->focusBarRemove(2));
+    });
+    MCGuiStep("the full paths, or the core's short labels where they do not fit, inside the bar", [] {
+        MCGuiSnapshot(Tree()->container(), "tree_focus-three");
+        const std::string labels = Labels(Tree());
+        MCGuiNote("labels %s", labels.c_str());
+        std::string brief;
+        for (const std::string& l : TreeFocus::shortLabels({"src", "mac/src", "mac/checks"}))
+            brief += (brief.empty() ? "" : " › ") + l;
+        GCHECK(labels == "src › mac/src › mac/checks" || labels == brief);
+        graphene_rect_t bar, last;
+        GCHECK(gtk_widget_compute_bounds(Tree()->focusBar(), Tree()->container(), &bar));
+        GCHECK(gtk_widget_compute_bounds(Tree()->focusBarRemove(2), Tree()->container(), &last));
+        GCHECK(last.origin.x + last.size.width <= bar.origin.x + bar.size.width + 0.5);
+    });
+    MCGuiWait("mac/checks's row on screen", 10, [] {
+        return RowLabel(Tree(), F("mac/checks")) != nullptr;
+    });
+    MCGuiStep("a right click on the mac/checks root row", [] {
+        MCGuiClick(RowLabel(Tree(), F("mac/checks")), -1, -1, 3);
+    });
+    MCGuiWait("its menu", 10, [] { return OpenMenu(Tree()) != nullptr; });
+    MCGuiStep("a root row offers Remove from Focus, not Add to Focus", [] {
+        const std::vector<std::string> items = MenuLabels(OpenMenu(Tree()));
+        GCHECK(Has(items, "Remove from Focus"));
+        GCHECK(!Has(items, "Add to Focus"));
+        GCHECK(Has(items, "Show Whole Folder in Tree"));
+    });
+    MCGuiClickWhenReady("its Remove from Focus", [] {
+        return MenuButton(OpenMenu(Tree()), "Remove from Focus");
+    });
+    MCGuiWait("mac/checks taken out", 10, [] {
+        return Tree()->focusPath() == "src, mac/src" && TopPaths(Tree()) == "src mac/src";
+    });
+    MCGuiWait("the labels drawn", 10, [] {
+        return MCGuiOnScreen(Tree()->focusBarPart(1)) && Tree()->focusBarLabels().size() == 2;
+    });
+    MCGuiClickWhenReady("mac/src's label", [] { return Tree()->focusBarPart(1); });
+    MCGuiWait("its root row selected", 10, [] { return Tree()->selectedPath() == F("mac/src"); });
+    MCGuiClickWhenReady("src's ×", [] { return Tree()->focusBarRemove(0); });
+    MCGuiWait("one folder left: mac/src, with its breadcrumb", 10, [] {
+        return Tree()->focusPath() == "mac/src" && !Tree()->focusBarShowsFolders() &&
+               TopRows(Tree()) == "a.mm b.txt new.txt";
+    });
+    MCGuiStep("the breadcrumb again; the chooser answers a folder outside the window's", [] {
+        GCHECK_EQ_STR(Labels(Tree()), "focusrepo › mac › src");
+        GCHECK_EQ_STR(StoredFocus(), "mac/src");
+        AnswerChooser(MCGuiScratch());
+        Run("addfoldertofocus");
+    });
+    MCGuiWait("refused, with a note", 10, [] {
+        return StatusText().find("Only folders inside") != std::string::npos;
+    });
+    MCGuiStep("the chooser answers the window's folder itself", [] {
+        MCGuiNote("status: %s", StatusText().c_str());
+        GCHECK_EQ_STR(Tree()->focusPath(), "mac/src");
+        AnswerChooser(gRepo);
+        gChooserAsked = 0;
+        Run("addfoldertofocus");
+        GCHECK(gChooserAsked == 1);
+    });
+    // The answer comes from an idle, run before the next step.
+    MCGuiStep("refused too: nothing changed", [] {
+        GCHECK_EQ_STR(Tree()->focusPath(), "mac/src");
+        GCHECK(StatusText().find("Only folders inside") != std::string::npos);
+    });
+    MCGuiStep("a.mm opened and selected: nothing new to add", [] {
+        MCGuiOpenFileKept(F("mac/src/a.mm"));
+        Tree()->revealPath(F("mac/src/a.mm"));
+    });
+    MCGuiWait("selected", 10, [] {
+        return Win().editor->currentPath() == F("mac/src/a.mm") &&
+               Tree()->selectedPath() == F("mac/src/a.mm");
+    });
+    MCGuiStep("Add to Focus asks the chooser instead, which gives src", [] {
+        AnswerChooser(F("src"));
+        gChooserAsked = 0;
+        Run("addtofocus");
+        GCHECK(gChooserAsked == 1);
+    });
+    MCGuiWait("mac/src and src", 10, [] {
+        return Tree()->focusPath() == "mac/src, src" && TopPaths(Tree()) == "mac/src src";
+    });
+    MCGuiClickWhenReady("the last ×", [] { return Tree()->focusBarClose(); });
+    MCGuiWait("the whole folder", 10, [] {
+        return Tree()->focusPath().empty() && TopRows(Tree()) == "mac src README.md" &&
+               !BarShown(Tree());
+    });
+
+    // ---- several brought back
+    MCGuiStep("mac/src and src again: the window's record keeps both", [] {
+        GCHECK(Tree()->setFocusFolders({"mac/src", "src"}));
+        gRecord = MCGuiWindowRecord(Win().window);
+        std::vector<TabSessions::Window> w = TabSessions::decodeWindows(gRecord);
+        GCHECK(w.size() == 1 && w[0].tabs.treeFocus == (std::vector<std::string>{"mac/src", "src"}));
+        if (w.empty()) return;
+        // One gone since, between them.
+        w[0].tabs.treeFocus = {"mac/src", "mac/gone", "src"};
+        MCGuiOpenWindowRestoring(gRepo, TabSessions::encodeWindows(w));
+        MCGuiSetKeyWindow(nullptr);
+    });
+    MCGuiWait("a window brought back with the two still there", 10, [] {
+        FileTree* back = MCGuiApp().tree;
+        return MCGuiAppWindows().size() == gWindowsBefore + 2 && back->focusPath() == "mac/src, src" &&
+               TopPaths(back) == "mac/src src" && back->focusBarShowsFolders() && BarShown(back);
+    });
+    MCGuiStep("that window closes", [] { gtk_window_close(MCGuiApp().window); });
+    MCGuiWait("closed", 10, [] { return MCGuiAppWindows().size() == gWindowsBefore + 1; });
+    CloseRepoWindows("the window closes");
+    MCGuiStep("the folder's session keeps both", [] { GCHECK_EQ_STR(StoredFocus(), "mac/src, src"); });
+    OpenRepoWindow("the folder opened again");
+    MCGuiWait("both roots, as they were", 10, [] {
+        return Tree()->focusPath() == "mac/src, src" && TopPaths(Tree()) == "mac/src src" &&
+               Tree()->focusBarShowsFolders() && BarShown(Tree());
+    });
+
+    // ---- one of several gone from the disk
+    MCGuiStep("src deleted on disk", [] { std::filesystem::remove_all(F("src")); });
+    MCGuiWait("it drops out alone", 10, [] {
+        return Tree()->focusPath() == "mac/src" && TopRows(Tree()) == "a.mm b.txt new.txt";
+    });
+    MCGuiStep("the breadcrumb again, the status bar says why, the session keeps mac/src", [] {
+        GCHECK(BarShown(Tree()));
+        GCHECK_EQ_STR(Labels(Tree()), "focusrepo › mac › src");
+        MCGuiNote("status: %s", StatusText().c_str());
+        GCHECK(StatusText().find("A focused folder is gone") != std::string::npos);
+        GCHECK_EQ_STR(StoredFocus(), "mac/src");
+        MCGuiAnswerFolderChooser(nullptr);
     });
     CloseRepoWindows("the window closes");
 }

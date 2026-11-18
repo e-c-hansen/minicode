@@ -206,9 +206,29 @@ found through that list.
   before reads as a list of one), restored through `TreeFocus::
   restoredSet`. `treeFocusRememberedExpanded` lists only folders outside
   the roots, so a root closed since it was added comes back closed. **The
-  GTK port follows**: it keeps one folder, the list's first
-  (`linux/src/Persistence.cpp` writes a list of one and restores the
-  first), until the Linux session ports several.
+  GTK port has it too** (2026-11-18, `linux/HANDOFF.md` item 98, the
+  `tree_focus` suite's second half): `FileTree` keeps the set (`foci_`,
+  `setFocusFolders`, `addFocus`, `removeFocus`, each through the core's
+  `merged`, `added`, `removed`), and with several its model's top is a
+  store of one `GFileInfo` per folder (`makeRootsModel`), labelled with
+  its path in `onBind` (`minicode-tree-root`); `applyFocus` keeps the
+  Mac's rules for what stays open (a root new to several opens, widening
+  opens the old root), `showsPath` reveals through `TreeFocus::revealed`,
+  `restoreFocus` takes the list through `restoredSet`, and `dropLostFocus`
+  drops each gone folder with the Mac's three notes. The watches from the
+  window's folder down cover every root's parents. The bar's label row is
+  chips (a label and its ×) laid out in the breadcrumb's `GtkCustomLayout`:
+  full paths when they fit, else `shortLabels` (switched from an idle,
+  never during the layout), widths by `shared`; the + (`onAddFolder`) sits
+  before the last ×. The window (`main.cpp`) has the menu bar's and
+  palette's Add to Focus (`win.addtofocus`, the chooser when nothing new is
+  left to add), the row's Add to Focus and Remove from Focus (hidden while
+  they cannot act), and Add Folder to Focus… (`win.addfoldertofocus`),
+  which is the system's folder chooser started in the window's folder (the
+  GTK port has no palette folder picker), its answer held to that folder
+  by `FolderPicker::inScope` (FolderPicker.cpp is in the Linux build for
+  it). Persistence keeps the whole list. A drop below several roots is
+  refused, as on the Mac. It keeps no open folders in a window's record.
 
 ## Traps
 

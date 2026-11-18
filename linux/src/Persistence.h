@@ -71,12 +71,13 @@ public:
         std::function<void(TabSessions::Window*)> windowState;
         // The tabs were saved: the windows' records are written again.
         std::function<void()> windowsChanged;
-        // The tree's focused folder (Focus on Folder, FileTree.h), kept in
-        // the session as a path from the folder; and a saved one put back,
-        // first thing when a session is restored (the tree checks it still
-        // names a folder).
-        std::function<std::string()> treeFocus;
-        std::function<void(const std::string&)> restoreTreeFocus;
+        // The tree's focused folders (Focus on Folder and Add to Focus,
+        // FileTree.h), kept in the session as paths from the folder in the
+        // order added; and a saved list put back, first thing when a
+        // session is restored (the tree keeps those that still name a
+        // folder).
+        std::function<std::vector<std::string>()> treeFocus;
+        std::function<void(const std::vector<std::string>&)> restoreTreeFocus;
     };
 
     Persistence(Editor* editor, const std::string& root, Host host);

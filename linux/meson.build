@@ -105,6 +105,9 @@ core_sources = [
   core_dir / 'GitModel.cpp',
   # The tree's listings: the splices a fresh listing makes, and their pace.
   core_dir / 'FileDetails.cpp',
+  # Add Folder to Focus…: the folder chosen held to the window's folder
+  # (FolderPicker::inScope).
+  core_dir / 'FolderPicker.cpp',
   # The command registry and its Linux keys (Keys.cpp drives the menus and
   # the accelerators from them).
   core_dir / 'Commands.cpp',
