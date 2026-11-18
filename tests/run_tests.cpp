@@ -57,6 +57,7 @@
 #include "AgentIndex.h"
 #include "AgentEvidence.h"
 #include "AgentView.h"
+#include "AgentTask.h"
 #include "Folding.h"
 #include "FileSniff.h"
 #include "HtmlPage.h"
@@ -11179,6 +11180,7 @@ static void testMultiCaretOccurrences() {
 #include "agent_edits_tests.inc"
 #include "line_history_tests.inc"
 #include "agent_view_tests.inc"
+#include "agent_task_tests.inc"
 #include "fold_tests.inc"
 #include "previews_tests.inc"
 #include "folder_picker_tests.inc"
@@ -11379,6 +11381,7 @@ int main() {
     testAgentEdits();
     testLineHistory();
     testAgentView();
+    testAgentTask();
     testFolding();
     testFileSniff();
     testHtmlPage();

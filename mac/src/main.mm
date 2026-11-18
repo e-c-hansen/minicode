@@ -937,6 +937,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)showHoverInfo:(id)sender   { [[self current] showHoverInfo:sender]; }
 - (void)goToBracket:(id)sender     { [[self current] goToBracket:sender]; }
 - (void)inlineAgent:(id)sender     { [[self current] inlineAgent:sender]; }
+- (void)newAgentTask:(id)sender    { [[self current] newAgentTask:sender]; }
 // Restart minicode, as after a rebuild from Request a Change but on demand:
 // the same questions, then the same bundle opened again with every window's
 // folder, its tabs, unsaved changes and browser page. A conversation with
@@ -1244,6 +1245,14 @@ static void BuildMenu(void) {
     // what has the keyboard decides what the agent does (AgentPanel.h).
     [editMenu addItemWithTitle:@"Inline Agent…"
                         action:@selector(inlineAgent:) keyEquivalent:@"i"];
+    // Claude Code on a fresh worktree from a prompt (AgentTaskBar.h).
+    // Option+Shift+Cmd+A, beside the Agents panel's Shift+Cmd+A.
+    NSMenuItem *agentTask = [[NSMenuItem alloc] initWithTitle:@"New Agent Task…"
+                                                       action:@selector(newAgentTask:)
+                                                keyEquivalent:@"a"];
+    agentTask.keyEquivalentModifierMask =
+        NSEventModifierFlagCommand | NSEventModifierFlagShift | NSEventModifierFlagOption;
+    [editMenu addItem:agentTask];
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Toggle Comment"
                         action:@selector(toggleComment:) keyEquivalent:@"/"];
