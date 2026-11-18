@@ -5944,11 +5944,12 @@ rows without one).
   (on every right click, change of focus and restore), so the File menu's
   Show Whole Folder in Tree is greyed while the whole folder shows.
 
-Checked by the new `tree_focus` suite (63 checks; real right clicks on a
+Checked by the new `tree_focus` suite (64 checks; real right clicks on a
 folder's and a file's row, the menus read; the action; the root and the
 breadcrumb, the bar above the rows; a file made inside; real clicks on
-the breadcrumb's parts and the × widening with the folders kept open;
-Show Whole Folder; a focus too long for the bar, its first part, ellipsis
+the breadcrumb's parts, the × and the bar's own menu, widening with the
+folders kept open; Show Whole Folder; a focus too long for the bar, its
+first part, ellipsis
 and last part; an open outside the focus leaving it, reveals widening,
 Reveal Active File in File Tree; a window brought back from its record,
 also focused on a folder gone since; the folder's session after closing

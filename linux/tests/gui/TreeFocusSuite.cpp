@@ -137,6 +137,19 @@ std::vector<std::string> MenuLabels(GtkWidget* menu) {
     }
     return out;
 }
+// The breadcrumb's right click menu while it is up, and the item showing
+// `label` in a menu (the button a click goes to).
+GtkWidget* BarMenu(FileTree* t) {
+    for (GtkWidget* c = gtk_widget_get_first_child(t->focusBar()); c; c = gtk_widget_get_next_sibling(c))
+        if (GTK_IS_POPOVER_MENU(c) && gtk_widget_get_mapped(c)) return c;
+    return nullptr;
+}
+GtkWidget* MenuButton(GtkWidget* menu, const std::string& label) {
+    GtkWidget* l = menu ? MCGuiFindLabel(menu, label) : nullptr;
+    for (GtkWidget* w = l; w && w != menu; w = gtk_widget_get_parent(w))
+        if (std::string(G_OBJECT_TYPE_NAME(w)) == "GtkModelButton") return w;
+    return l;
+}
 bool Has(const std::vector<std::string>& v, const std::string& s) {
     for (const std::string& x : v)
         if (x == s) return true;
@@ -325,6 +338,16 @@ MC_GUI_SUITE(tree_focus) {
     });
     MCGuiWait("focused again", 10, [] { return TopRows(Tree()) == "deep a.mm new.txt"; });
     MCGuiClickWhenReady("the ×", [] { return Tree()->focusBarClose(); });
+    MCGuiWait("the whole folder", 10, [] {
+        return Tree()->focusPath().empty() && TopRows(Tree()) == "mac src README.md";
+    });
+    MCGuiStep("focused again", [] { GCHECK(Tree()->setFocus("mac/src")); });
+    MCGuiWait("the bar on screen", 10, [] { return MCGuiOnScreen(Tree()->focusBarPart(2)); });
+    MCGuiStep("a right click on the bar", [] { MCGuiClick(Tree()->focusBarPart(2), -1, -1, 3); });
+    MCGuiWait("its menu", 10, [] { return BarMenu(Tree()) != nullptr; });
+    MCGuiClickWhenReady("its Show Whole Folder in Tree", [] {
+        return MenuButton(BarMenu(Tree()), "Show Whole Folder in Tree");
+    });
     MCGuiWait("the whole folder", 10, [] {
         return Tree()->focusPath().empty() && TopRows(Tree()) == "mac src README.md";
     });
