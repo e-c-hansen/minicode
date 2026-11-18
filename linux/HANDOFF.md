@@ -1324,6 +1324,19 @@ What later items build on:
   (`gtk_text_view_get_line_yrange`, which lays nothing out). The
   `gutter_switch` suite crashes in its first round without the first, under
   `MALLOC_PERTURB_`; plain runs may pass without it.
+- **Trap (the nightly soak, 2026-11-18): the scroll offset outlives a
+  buffer too.** `gtk_text_view_set_buffer` keeps the view's offset and the
+  adjustments' values. Far down one file, GTK set the adjustment to 0 for
+  the next before laying it out, took the unlaid buffer's last line (lines
+  have no height until laid out) for the view's first, and once laid out
+  moved the offset after it, which the adjustment clamped back to the 0 it
+  had, so no value-changed put the two back in step: a short file showed
+  its empty last line or nothing, the gutter numbering that line. GTK keeps
+  the view's offset at value minus the top margin; a visible rect that
+  disagrees is this. `CodeView::setBuffer` now puts both adjustments at 0
+  while the old text is still laid out, then changes the buffer; tab places
+  come back after it as before. `gutter_switch` checks it (all four rounds
+  failed without it).
 
 ### 17. Sessions, backups and auto-save (done, November 2026; `PARITY.md` items 1.2 and 1.3)
 
