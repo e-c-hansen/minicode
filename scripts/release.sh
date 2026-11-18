@@ -10,13 +10,14 @@
 #      stamped or committed, so a failed APK build leaves nothing behind,
 #   3. builds the zip and checks the built app reports that same version and
 #      runs on the macOS Info.plist promises (scripts/check-minos.sh),
-#   4. stamps the version and checksum into Info.plist and packaging/minicode.rb,
+#   4. stamps the version and checksum into Info.plist and packaging/mutible.rb,
 #      commits that, and pushes main,
 #   5. publishes a GitHub Release here, tagged vVERSION, with the zip and the
 #      APK attached (Obtainium and people installing by hand take it from there),
 #      its notes from MINICODE_RELEASE_NOTES (a Markdown file) or else the
 #      commit subjects since the last tag,
-#   6. copies packaging/minicode.rb into the tap as the live cask,
+#   6. copies packaging/mutible.rb into the tap as the live cask, and the old,
+#      deprecated cask into the old tap when it changed (OLD_CASK below),
 #   7. uploads the Ubuntu source package to the Launchpad PPA through
 #      scripts/ppa.sh, when a signing key is configured (packaging/PPA.md),
 #      and says it skipped that step when none is; ppa.sh then waits for
@@ -25,7 +26,7 @@
 #      MINICODE_PPA_NO_WAIT=1 uploads without waiting.
 #
 # The zip ships from this repo's own Releases, next to the tag it was built
-# from; the tap holds nothing but the cask. packaging/minicode.rb is the one
+# from; the tap holds nothing but the cask. packaging/mutible.rb is the one
 # copy of the cask that is edited: the tap's copy is written from it, so the two
 # cannot drift.
 # Requires the gh CLI, authenticated with push access to both repos, and for
@@ -51,12 +52,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# rename-mutible: keep-begin
+# MINICODE_* variables, the names from before 1.6.0, still count
+# (src/Rename.h). The PPA's and the Android key's keep their old names.
+for old in $(compgen -e | grep '^MINICODE_' || true); do
+    new="MUTIBLE_${old#MINICODE_}"
+    [ -n "${!new+x}" ] || export "$new=${!old}"
+done
+# rename-mutible: keep-end
+
 LINUX_ONLY=""
 if [ "${1:-}" = "--linux" ]; then LINUX_ONLY=1; shift; fi
 VERSION="${1:?usage: scripts/release.sh [--linux] <version>   e.g. 1.2.0}"
-TAP_REPO="e-c-hansen/homebrew-tap"
-APP_REPO="e-c-hansen/minicode"
-CASK="packaging/minicode.rb"
+TAP_REPO="ible-ai/homebrew-tap"
+APP_REPO="ible-ai/mutible"
+CASK="packaging/mutible.rb"
+# The cask from before the rename, deprecated, in the old tap.
+OLD_TAP_REPO="e-c-hansen/homebrew-tap"   # rename-mutible: keep
+OLD_CASK="packaging/minicode.rb"          # rename-mutible: keep
 PLIST="Info.plist"
 BUDDY=/usr/libexec/PlistBuddy
 
@@ -255,13 +268,32 @@ $CHANGES"
 echo "==> Writing the cask to $TAP_REPO"
 TMP="$(mktemp -d)"
 gh repo clone "$TAP_REPO" "$TMP" -- -q
-cp "$CASK" "$TMP/Casks/minicode.rb"
+cp "$CASK" "$TMP/Casks/mutible.rb"
 git -C "$TMP" add -A
 if ! git -C "$TMP" diff --cached --quiet; then
     git -C "$TMP" commit -q -m "MiniCode $VERSION"
     git -C "$TMP" push -q
 fi
 rm -rf "$TMP"
+# rename-mutible: keep-begin
+# The old tap keeps the cask from before the rename, deprecated and pointing
+# to the new one; written when it differs, so after the first release this
+# does nothing.
+echo "==> Checking the deprecated cask in $OLD_TAP_REPO"
+TMP="$(mktemp -d)"
+if gh repo clone "$OLD_TAP_REPO" "$TMP" -- -q; then
+    mkdir -p "$TMP/Casks"
+    cp "$OLD_CASK" "$TMP/Casks/minicode.rb"
+    git -C "$TMP" add -A
+    if ! git -C "$TMP" diff --cached --quiet; then
+        git -C "$TMP" commit -q -m "minicode is now mutible: brew install --cask ible-ai/tap/mutible"
+        git -C "$TMP" push -q
+    fi
+else
+    echo "warning: could not clone $OLD_TAP_REPO, so its deprecated cask was not written" >&2
+fi
+rm -rf "$TMP"
+# rename-mutible: keep-end
 [ -n "$APK" ] && rm -f "$APK"
 
 PPA_FAILED=""

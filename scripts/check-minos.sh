@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 
 APP="${1:-MiniCode.app}"
 BUDDY=/usr/libexec/PlistBuddy
-CASK=packaging/minicode.rb
+CASK=packaging/mutible.rb
 
 # 11.0 and 11 are the same version.
 norm() { echo "$1" | sed -E 's/(\.0)+$//'; }

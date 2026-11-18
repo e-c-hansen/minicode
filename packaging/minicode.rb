@@ -1,10 +1,12 @@
-# Homebrew Cask for MiniCode — install with:
+# The Homebrew Cask from before the rename: minicode is called mutible since
+# 1.6.0, and its cask is packaging/mutible.rb, in the ible-ai tap:
 #
-#   brew install --cask e-c-hansen/tap/minicode
+#   brew install --cask ible-ai/tap/mutible
 #
-# This file is the cask. scripts/release.sh stamps the version and checksum into
-# it and copies it into the homebrew-tap repo, which holds nothing else, so edit
-# it here and never there. To cut a new version: scripts/release.sh 1.2.1
+# This one stays in the old tap (e-c-hansen/homebrew-tap), deprecated and
+# pointing to the new one, for people who have minicode installed:
+# scripts/release.sh writes it there when it differs, and never stamps it
+# again, so it stays on the last minicode release.
 cask "minicode" do
   version "1.5.38"
   sha256 "5cdbb02a44247414afa5875406ed484232280128046b8a7563f4d4561106429a"
@@ -32,6 +34,15 @@ cask "minicode" do
   postflight_steps do
     run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/MiniCode.app"]
   end
+
+  deprecate! date: "2026-11-18", because: "is now called mutible", replacement_cask: "ible-ai/tap/mutible"
+
+  caveats <<~EOS
+    minicode is now called mutible, and its cask is ible-ai/tap/mutible:
+      brew uninstall --cask minicode
+      brew install --cask ible-ai/tap/mutible
+    mutible copies your settings, sessions, and backups on its first launch.
+  EOS
 
   zap trash: "~/Library/Preferences/com.minicode.editor.plist"
 end
