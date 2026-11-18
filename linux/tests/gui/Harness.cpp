@@ -473,22 +473,40 @@ void MCGuiHideBrowserPane() {
     });
 }
 
+#ifdef MINICODE_ENABLE_TERMINAL
+namespace {
+// Ctrl+U to a terminal's shell, as a key typed there.
+void sendCtrlU(Terminal* t) {
+    std::vector<GtkWidget*> todo;
+    if (t) todo.push_back(t->widget());
+    while (!todo.empty()) {
+        GtkWidget* w = todo.back();
+        todo.pop_back();
+        if (VTE_IS_TERMINAL(w)) {
+            vte_terminal_feed_child(VTE_TERMINAL(w), "\x15", 1);
+            return;
+        }
+        for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+            todo.push_back(c);
+    }
+}
+
+// Every terminal of every app window.
+std::vector<Terminal*> allTerminals() {
+    std::vector<Terminal*> out;
+    for (const MCGuiAppWindow& a : MCGuiAppWindows())
+        for (int i = 0; a.termDock && i < a.termDock->count(); i++)
+            if (TerminalGroup* g = a.termDock->group(i))
+                for (Terminal* t : g->panes()) out.push_back(t);
+    return out;
+}
+}  // namespace
+#endif
+
 void MCGuiClearTerminalLine(const std::string& typed) {
 #ifdef MINICODE_ENABLE_TERMINAL
     MCGuiStep("the line typed at the shell's prompt taken back (Ctrl+U)", [] {
-        Terminal* t = MCGuiApp().terminal;
-        std::vector<GtkWidget*> todo;
-        if (t) todo.push_back(t->widget());
-        while (!todo.empty()) {
-            GtkWidget* w = todo.back();
-            todo.pop_back();
-            if (VTE_IS_TERMINAL(w)) {
-                vte_terminal_feed_child(VTE_TERMINAL(w), "\x15", 1);
-                return;
-            }
-            for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
-                todo.push_back(c);
-        }
+        sendCtrlU(MCGuiApp().terminal);
     });
     if (typed.empty()) return;
     MCGuiWait("\"" + typed + "\" gone from the shell's prompt", 10, [typed] {
@@ -666,7 +684,9 @@ struct World {
     int terminals = 0;
     bool closeAsks = true;   // every window asks before closing a busy terminal
     bool otherOnTop = false;
+    bool active = true;   // the app's window has the X focus
     int waiting = 0;   // terminals marked waiting for the user (TerminalAttention)
+    int busy = 0;      // terminals where a program other than the shell has the foreground
     std::string settings, keys;
 };
 World gWorldAtStart;
@@ -683,7 +703,12 @@ World lookAtWorld() {
         }
 #endif
     w.otherOnTop = MCGuiTopWindow() != MCGuiApp().window;
+    w.active = MCGuiApp().window && gtk_window_is_active(MCGuiApp().window);
     w.waiting = TerminalAttention::waitingCount();
+#ifdef MINICODE_ENABLE_TERMINAL
+    for (Terminal* t : allTerminals())
+        if (t->busy()) w.busy++;
+#endif
     w.settings = MCGuiReadFile(envOr("MINICODE_SETTINGS"));
     w.keys = MCGuiReadFile(envOr("MINICODE_KEYS"));
     return w;
@@ -763,20 +788,42 @@ void checkWhatSuiteLeft() {
     // processes, after it in the soak's shuffled order.
     if (was.closeAsks && !now.closeAsks)
         leak("left a window's question before closing a busy terminal off (TerminalDock::confirmClose)");
+    // With no window manager the X focus stays on a window that closed (a
+    // question, a second window) and no app window is active, so a click
+    // gives the keyboard nothing: tabs' first click in the text, after such
+    // a suite in a shuffled order. A desktop gives the focus to the window
+    // left, and the harness does too; said, not failed.
+    if (!now.active && !now.otherOnTop) {
+        if (was.active)
+            leak("left the app's window inactive (the X focus on a window it closed), given back",
+                 false);
+        if (putBack) MCGuiFocusKeyWindow();
+    }
     // A terminal marked waiting puts "(1 waiting)" before every window's
     // title: agents marked one and never cleared it, and tabs, after it in
     // the soak's shuffled order, read the title.
+#ifdef MINICODE_ENABLE_TERMINAL
+    // A program left running in a terminal takes what later suites type
+    // there, and Run in Terminal waits for it (agents' Open in Terminal).
+    if (now.busy > was.busy)
+        leak("left a program running in " + std::to_string(now.busy - was.busy) +
+             " terminal(s) (stop it before the suite ends)");
+    // A line typed at a shell's prompt and left there joins the next suite's
+    // typing: find_bar's and folding's "stty raw ..." after install_hints'
+    // "uv tool install ...", never run. Nothing tells a typed line from the
+    // prompt, so every idle shell gets Ctrl+U, which an empty prompt ignores.
+    if (putBack)
+        for (Terminal* t : allTerminals())
+            if (t->runBlocker(nullptr).empty()) sendCtrlU(t);
+#endif
     if (now.waiting > was.waiting) {
         leak("left " + std::to_string(now.waiting) + " terminal(s) marked waiting where it found " +
              std::to_string(was.waiting) + " (a notify's mark; TerminalAttention::typed clears it)");
 #ifdef MINICODE_ENABLE_TERMINAL
         if (putBack)
-            for (const MCGuiAppWindow& a : MCGuiAppWindows())
-                for (int i = 0; a.termDock && i < a.termDock->count(); i++)
-                    if (TerminalGroup* g = a.termDock->group(i))
-                        for (Terminal* t : g->panes())
-                            if (TerminalAttention::markName(t->controlId()) == std::string("waiting"))
-                                TerminalAttention::typed(t->controlId());
+            for (Terminal* t : allTerminals())
+                if (TerminalAttention::markName(t->controlId()) == std::string("waiting"))
+                    TerminalAttention::typed(t->controlId());
 #endif
     }
     if (now.terminals > was.terminals)
