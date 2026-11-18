@@ -22,7 +22,11 @@
 // page's tree lists the window's folder through the host (FsRead, confined
 // to the folder the window reports), and a click on a file in it opens the
 // file in the window, as a click in the window's tree does, read-only pages
-// included: opening a tab changes no text.
+// included: opening a tab changes no text. The window's browser pane's tabs
+// (address, title, the one on show) go with its tabs (`browserTabs`), so the
+// page lists them and frames the one picked; an editable page may ask the
+// pane to open an http or https address (`browse`, held by the core's
+// Web::webAddress).
 #pragma once
 #import <Cocoa/Cocoa.h>
 
@@ -49,6 +53,13 @@
 // The window's terminals on the host (TerminalView sessionTerminal, 0s
 // left out), reported with the tabs; unset, the page shows none.
 @property(nonatomic, copy) NSArray<NSNumber *> * (^terminals)(void);
+// The window's browser pane, nil while it has none: @{@"tabs": @[@{@"url",
+// @"title"}], @"active": @(index on show, -1 for none)}. Read with the tabs.
+@property(nonatomic, copy) NSDictionary * (^browserTabs)(void);
+// Opens an http or https address in the window's browser pane (a tab
+// already at it shown again, else a new one); run on the main thread for an
+// editable page's address field. The core refuses every other scheme first.
+@property(nonatomic, copy) void (^browse)(NSString *url);
 // Starts serving if it is not yet: NO, with why, when it cannot.
 - (BOOL)start:(NSString **)error;
 // http://127.0.0.1:PORT/?t=TOKEN, nil until started.

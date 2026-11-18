@@ -1669,4 +1669,243 @@ static void testSessionWeb() {
         CHECK(page.find("id=\"tree\"") != std::string::npos && page.find("id=\"sidebtn\"") != std::string::npos);
         CHECK(Web::paletteJson().has("treeIgnored"));
     }
+
+    // The window's browser pane (R4): its tabs as the window reports them,
+    // checked again for the page, only that window's; an editable page may
+    // ask the pane to open an http or https address and nothing else, a
+    // read-only one not at all.
+    GROUP("sessionweb:browser");
+    {
+        // Only http and https, with a host, nothing hidden in the address.
+        for (const char* ok : {"http://example.com", "https://example.com/a?b=c#d", "HTTPS://Example.com:8443/",
+                               "http://127.0.0.1:3000/", "http://[::1]:8080/x", "http://localhost"}) {
+            std::string why;
+            CHECK(Web::webAddress(ok, &why));
+            if (!why.empty()) std::printf("  sessionweb:browser: %s: %s\n", ok, why.c_str());
+        }
+        for (const char* bad : {"javascript:alert(1)", "JavaScript:alert(1)", " javascript:alert(1)",
+                                "javascript://example.com/%0aalert(1)", "file:///etc/passwd", "data:text/html,<p>",
+                                "about:blank", "ftp://example.com/", "blob:http://example.com/x", "vbscript:x",
+                                "view-source:http://example.com", "http:/example.com", "http://", "https:///x",
+                                "http://user:pw@example.com/", "http://example.com@evil.example/",
+                                "http://exa mple.com", "http://example.com/\n", "http://example.com/\t",
+                                "example.com", "", "//example.com", "http://[::1/"}) {
+            std::string why;
+            CHECK(!Web::webAddress(bad, &why) && !why.empty());
+        }
+        CHECK(!Web::webAddress("https://example.com/" + std::string(Web::kMaxAddress, 'a')));
+        CHECK(Web::loopbackAddress("http://localhost:3000/") && Web::loopbackAddress("http://127.0.0.1/"));
+        CHECK(Web::loopbackAddress("http://127.1.2.3:80") && Web::loopbackAddress("https://[::1]/"));
+        CHECK(Web::loopbackAddress("http://app.localhost/") && Web::loopbackAddress("http://0.0.0.0:8000"));
+        CHECK(Web::loopbackAddress("HTTP://LOCALHOST"));
+        CHECK(!Web::loopbackAddress("http://example.com/") && !Web::loopbackAddress("http://127.0.0.1.evil.example/"));
+        CHECK(!Web::loopbackAddress("http://localhost.evil.example/") && !Web::loopbackAddress("file://localhost/x"));
+        CHECK(!Web::loopbackAddress("http://128.0.0.1/") && !Web::loopbackAddress("http://127.0.0/"));
+
+        // The report: empty and overlong addresses left out (the tab on show
+        // counted among the rest), titles cut at a character, a cap.
+        std::vector<Web::BrowserTab> tabs = {{"", "new tab"},
+                                             {"https://example.com/", "Example"},
+                                             {"https://" + std::string(Web::kMaxAddress, 'a'), "long"},
+                                             {"http://localhost:3000/", std::string(299, 'x') + "\xc3\xa9"}};
+        Json report = Web::browserReportJson(tabs, 3);
+        CHECK(report["tabs"].size() == 2 && report["active"].asInt() == 1);
+        CHECK(report["tabs"][0]["url"].asString() == "https://example.com/" &&
+              report["tabs"][0]["title"].asString() == "Example");
+        CHECK(report["tabs"][1]["title"].asString() == std::string(299, 'x'));
+        CHECK(Web::browserReportJson(tabs, 0)["active"].asInt() == -1);
+        CHECK(Web::browserReportJson({}, 0)["tabs"].size() == 0);
+        std::vector<Web::BrowserTab> many(Web::kMaxBrowserTabs + 20, Web::BrowserTab{"https://example.com/", "e"});
+        CHECK(Web::browserReportJson(many, 0)["tabs"].size() == Web::kMaxBrowserTabs);
+        // Through the protocol and back unchanged.
+        Message wt;
+        wt.kind = Shared::Kind::WindowTabs;
+        wt.window = 9;
+        wt.json = Json::object();
+        wt.json.set("browser", report);
+        CHECK(Shared::roundTrip(wt).json["browser"] == report);
+
+        // What the page gets: marked, and checked again (a renderer's report).
+        Json view = Web::browserViewJson(report);
+        CHECK(view["tabs"].size() == 2 && view["active"].asInt() == 1);
+        CHECK(view["tabs"][0]["web"].asBool() && !view["tabs"][0]["loopback"].asBool());
+        CHECK(view["tabs"][1]["web"].asBool() && view["tabs"][1]["loopback"].asBool());
+        Json odd;
+        CHECK(Json::parse("{\"tabs\":[{\"url\":\"javascript:alert(1)\",\"title\":\"x\"},7,{\"title\":\"no url\"},"
+                          "{\"url\":\"file:///etc/hosts\"}],\"active\":3}",
+                          odd));
+        view = Web::browserViewJson(odd);
+        CHECK(view["tabs"].size() == 2 && view["active"].asInt() == 1);
+        CHECK(!view["tabs"][0]["web"].asBool() && !view["tabs"][1]["web"].asBool());
+        CHECK(Web::browserViewJson(Json()).isNull() && Web::browserViewJson(Json("x")).isNull());
+
+        // Over the wire, in a host in this process with two windows.
+        std::mutex routesMu;
+        std::map<Shared::ClientId, Shared::Client*> routes;
+        Shared::SessionHost host([&](Shared::ClientId to, Message&& m) {
+            std::lock_guard<std::mutex> lk(routesMu);
+            auto it = routes.find(to);
+            if (it != routes.end()) it->second->deliver(std::move(m));
+        });
+        Shared::Client editor(Model::Unit::Utf16, "editor");
+        const Shared::ClientId editorId = host.connect();
+        {
+            std::lock_guard<std::mutex> lk(routesMu);
+            routes[editorId] = &editor;
+        }
+        editor.connect([&](Message&& m) { host.post(editorId, std::move(m)); });
+        auto windowWith = [](const std::string& url, const std::string& title) {
+            Json w = Json::object();
+            w.set("root", Json("/w"));
+            w.set("focused", Json(0));
+            w.set("groups", Json::array());
+            w.set("browser", Web::browserReportJson({{url, title}}, 0));
+            return w;
+        };
+        editor.windowTabs(5, windowWith("http://localhost:5173/", "Dev server"));
+        editor.windowTabs(6, windowWith("https://other.example/", "Another window's page"));
+        CHECK(editor.settle());
+        auto connectTo = [&](Shared::Client& c) -> std::function<void()> {
+            const Shared::ClientId id = host.connect();
+            {
+                std::lock_guard<std::mutex> lk(routesMu);
+                routes[id] = &c;
+            }
+            c.connect([&host, id](Message&& m) { host.post(id, std::move(m)); });
+            return [&, id] {
+                {
+                    std::lock_guard<std::mutex> lk(routesMu);
+                    routes.erase(id);
+                }
+                host.disconnect(id);
+            };
+        };
+        std::mutex browsedMu;
+        std::vector<std::string> browsed;
+        auto serve = [&](Web::Server& web, bool editable, bool withPane) {
+            Web::Options o;
+            o.folder = "/w";
+            o.window = 5;
+            o.pollMs = 100;
+            o.editable = editable;
+            o.connect = connectTo;
+            if (withPane)
+                o.browse = [&](const std::string& url) {
+                    std::lock_guard<std::mutex> lk(browsedMu);
+                    browsed.push_back(url);
+                    return true;
+                };
+            std::string error;
+            CHECK(web.start(o, &error));
+        };
+        Web::Server editing, reading, paneless;
+        serve(editing, true, true);
+        serve(reading, false, true);
+        serve(paneless, true, false);
+        std::thread t1([&] { editing.run(); }), t2([&] { reading.run(); }), t3([&] { paneless.run(); });
+        {
+            PageClient p;
+            CHECK(p.upgrade(editing.port(), "/ws?t=" + editing.token()));
+            Json hello, state;
+            std::vector<Json> answers, notes;
+            auto take = [&](const Json& m) {
+                const std::string t = m["t"].asString();
+                if (t == "hello") hello = m;
+                else if (t == "state") state = m;
+                else if (t == "browsing") answers.push_back(m);
+                else if (t == "note") notes.push_back(m);
+            };
+            CHECK(p.pump(take, [&] { return state.isObject(); }));
+            CHECK(hello["canBrowse"].asBool());
+            // Only window 5's browser tab, marked for the page.
+            CHECK(state["windows"].size() == 1);
+            const Json& b = state["windows"][0]["browser"];
+            CHECK(b["tabs"].size() == 1 && b["active"].asInt() == 0);
+            CHECK(b["tabs"][0]["url"].asString() == "http://localhost:5173/" &&
+                  b["tabs"][0]["title"].asString() == "Dev server");
+            CHECK(b["tabs"][0]["web"].asBool() && b["tabs"][0]["loopback"].asBool());
+            CHECK(state.dump().find("other.example") == std::string::npos);
+            // A change to the window's pane reaches the page.
+            editor.windowTabs(5, windowWith("https://docs.example/guide", "Guide"));
+            CHECK(editor.settle());
+            CHECK(p.pump(take, [&] {
+                return state["windows"][0]["browser"]["tabs"][0]["url"].asString() == "https://docs.example/guide";
+            }));
+            // Opening addresses: http and https reach the window; the rest
+            // are refused before it.
+            p.sendText("{\"t\":\"browse\",\"url\":\"https://example.com/docs\"}");
+            p.sendText("{\"t\":\"browse\",\"url\":\"javascript:alert(document.cookie)\"}");
+            p.sendText("{\"t\":\"browse\",\"url\":\"file:///etc/passwd\"}");
+            p.sendText("{\"t\":\"browse\",\"url\":\"data:text/html,<script>alert(1)</script>\"}");
+            p.sendText("{\"t\":\"browse\",\"url\":7}");
+            p.sendText("{\"t\":\"browse\",\"url\":\"http://localhost:3000/\"}");
+            CHECK(p.pump(take, [&] { return answers.size() == 6; }));
+            if (answers.size() == 6) {
+                CHECK(answers[0]["ok"].asBool() && answers[0]["url"].asString() == "https://example.com/docs");
+                for (int i = 1; i < 5; i++)
+                    CHECK(!answers[i]["ok"].asBool() && answers[i]["why"].asString().find("Not opened") == 0);
+                CHECK(answers[5]["ok"].asBool());
+            }
+            {
+                std::lock_guard<std::mutex> lk(browsedMu);
+                CHECK(browsed.size() == 2);
+                if (browsed.size() == 2)
+                    CHECK(browsed[0] == "https://example.com/docs" && browsed[1] == "http://localhost:3000/");
+            }
+            p.close();
+
+            // A read-only page lists the tabs but cannot open an address.
+            PageClient r;
+            CHECK(r.upgrade(reading.port(), "/ws?t=" + reading.token()));
+            hello = Json();
+            state = Json();
+            notes.clear();
+            answers.clear();
+            CHECK(r.pump(take, [&] { return state.isObject(); }));
+            CHECK(!hello["canBrowse"].asBool());
+            CHECK(state["windows"][0]["browser"]["tabs"].size() == 1);
+            r.sendText("{\"t\":\"browse\",\"url\":\"https://example.com/\"}");
+            CHECK(r.pump(take, [&] { return notes.size() == 1; }));
+            CHECK(answers.empty() && notes[0]["text"].asString().find("only reads") != std::string::npos);
+            r.close();
+
+            // Without a browser pane to open in (unset browse), it says so.
+            PageClient q;
+            CHECK(q.upgrade(paneless.port(), "/ws?t=" + paneless.token()));
+            hello = Json();
+            state = Json();
+            answers.clear();
+            CHECK(q.pump(take, [&] { return state.isObject(); }));
+            CHECK(!hello["canBrowse"].asBool());
+            q.sendText("{\"t\":\"browse\",\"url\":\"https://example.com/\"}");
+            CHECK(q.pump(take, [&] { return answers.size() == 1; }));
+            CHECK(answers.size() == 1 && !answers[0]["ok"].asBool() &&
+                  answers[0]["why"].asString().find("no browser pane") != std::string::npos);
+            q.close();
+            {
+                std::lock_guard<std::mutex> lk(browsedMu);
+                CHECK(browsed.size() == 2);
+            }
+            CHECK(waitUntil([&] { return editing.browsers() == 0 && reading.browsers() == 0 && paneless.browsers() == 0; }));
+        }
+        editing.stop();
+        reading.stop();
+        paneless.stop();
+        t1.join();
+        t2.join();
+        t3.join();
+        {
+            std::lock_guard<std::mutex> lk(routesMu);
+            routes.clear();
+        }
+        // A window that reports no pane (a headless host has none) gives the
+        // page no browser group; the page's frame is limited by its policy.
+        const std::string token = "0123456789abcdef0123456789abcdef0123456789abcdef";
+        const Web::Answer a = Web::answer(request(getWith("/?t=" + token)), token, "<p></p>");
+        CHECK(a.response.find("frame-src 'self' http: https:;") != std::string::npos);
+        CHECK(a.response.find("connect-src 'self' ws://127.0.0.1:* ws://localhost:*;") != std::string::npos);
+        CHECK(a.response.find("default-src 'none'") != std::string::npos);
+        CHECK(Web::pageHtml().find("id=\"web\"") != std::string::npos &&
+              Web::pageHtml().find("Open in a new tab") != std::string::npos);
+    }
 }

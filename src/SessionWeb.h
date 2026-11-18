@@ -13,7 +13,10 @@
 // folders, and asks the window to open a file of the folder (a tab opened
 // changes no text). Editable
 // (Options::editable), it also types into the document on show and its
-// terminal, undoes through the host's history, and asks for a save.
+// terminal, undoes through the host's history, asks for a save, and asks
+// the window's browser pane to open an http or https address. Either way
+// the page lists the window's browser tabs and shows the one picked in a
+// frame.
 //
 // Access: a random token of 48 hex digits, made at start and printed once
 // with the address to open (http://127.0.0.1:PORT/?t=TOKEN), must come in
@@ -47,12 +50,14 @@
 // nobody still ends when its lifetime says.
 //
 // What goes to the browser, one JSON object per text frame ("t" names it):
-//   hello   {machine, folder, palette, termNote, editable, canSave}: once,
-//           first
+//   hello   {machine, folder, palette, termNote, editable, canSave,
+//           canBrowse}: once, first
 //   palette {palette}: the host's settings file changed (paletteJson)
 //   state   {windows, docs, terms}: whenever the session's state changes
 //           (looked at every half second, or at once on lookNow()); with
-//           Options::window, that window's tabs, documents and terminals
+//           Options::window, that window's tabs, documents and terminals;
+//           a window with a browser pane
+//           has `browser` {tabs: [{url, title, web, loopback}], active}
 //   doc     {id, path, kind, version, editable, indent, lines, html | note}:
 //           the document the browser shows, whole: kind "code" (lines, each
 //           [text, spans] or [text, spans, break], spans [[start, length,
@@ -83,6 +88,8 @@
 //           (SessionFiles.h's "list" answer), for a `list`
 //   opening {path, abs, ok, why}: a file a page clicked is opening in the
 //           window (`abs` its path as the tabs spell it), or why it is not
+//   browsing {url, ok, why}: an address a page asked the window's browser
+//           pane to open (`browse`), opening or refused
 // and from the browser:
 //   show    {doc, term}: what it is looking at (0 for nothing)
 //   list    {path}: one folder of the tree ("" the session's folder), read
@@ -98,6 +105,15 @@
 //   tkey    {term, key, mods}, ttext {term, text, mods}, tpaste {term, text}:
 //           keys for the terminal on show, encoded as its screen's modes ask
 //           (TerminalScreen::encodeKey, encodeChar, encodePaste)
+//   browse  {url}: open an http or https address in the window's browser
+//           pane (Options::browse; webAddress refuses every other scheme)
+//
+// The window's browser pane: a window that has one adds its tabs to the
+// tabs it reports (Client::windowTabs) as "browser" (browserReportJson),
+// and each window in `state` carries them as browserViewJson gives them,
+// so the page lists them beside the editor's tabs and frames the one a
+// person picks. A headless host has no browser pane: no window says
+// "browser", and the page shows no such group.
 //
 // Pure C++17 and POSIX: the server's own thread polls the listening socket,
 // the browsers' connections and a pipe the host's messages wake it through.
@@ -162,6 +178,34 @@ struct Answer {
 // `page` is the HTML to serve; "{{NONCE}}" in it becomes the response's
 // script nonce.
 Answer answer(const Request& r, const std::string& token, const std::string& page);
+
+// ---- the window's browser pane
+// One of its tabs, as the window reports it.
+struct BrowserTab {
+    std::string url, title;
+};
+constexpr std::size_t kMaxBrowserTabs = 100;
+constexpr std::size_t kMaxAddress = 8192;    // bytes; a longer address is left out
+constexpr std::size_t kMaxPageTitle = 300;   // bytes, cut at a character
+// What a window adds to its tabs as "browser": {tabs: [{url, title}],
+// active}, `active` the index of the tab on show (-1 for none) among the
+// tabs kept. Tabs with no address or one over kMaxAddress are left out,
+// titles cut to kMaxPageTitle, at most kMaxBrowserTabs.
+Json browserReportJson(const std::vector<BrowserTab>& tabs, int active);
+// What the page gets for a window from that report: {tabs: [{url, title,
+// web, loopback}], active}, each tab checked again (the report comes from a
+// renderer), `web` when webAddress takes it (only those are framed),
+// `loopback` when it names this machine. Null when there is no report.
+Json browserViewJson(const Json& report);
+// An address a page may frame, or ask the window to open: http or https
+// (any case), a host, no user name or password before it, no space or
+// control character anywhere, at most kMaxAddress bytes. javascript:,
+// file:, data: and every other scheme are refused; `why` says why.
+bool webAddress(const std::string& url, std::string* why = nullptr);
+// An http or https address on this machine: localhost (or a name under
+// .localhost), 127.0.0.0/8, [::1], 0.0.0.0 or [::]. A page reached
+// through a tunnel from elsewhere cannot reach it.
+bool loopbackAddress(const std::string& url);
 
 // The page itself (SessionWebPage.cpp): one HTML file with its CSS and
 // script, no third-party code.
@@ -320,6 +364,12 @@ struct Options {
     // or shown changes no text. Unset (a headless host, which decides no
     // tabs): a page's click on a file says so.
     std::function<bool(const std::string& path, bool keep)> open;
+    // Opens an http or https address (webAddress has held it) in the
+    // window's browser pane, a tab already at it shown again, else a new
+    // tab. Called on the server's thread, only for a page that may edit;
+    // false when it cannot. Unset (a headless host, which has no browser
+    // pane): a page's `browse` says so, and the hello's canBrowse is false.
+    std::function<bool(const std::string& url)> browse;
     // Dotfiles in the tree (the window's Show Hidden Files).
     bool showHidden = false;
     int port = 0;             // 0: any free port (checks)
@@ -391,6 +441,7 @@ private:
     void onTermInput(Conn& c, const std::string& type, const Json& j);
     void onList(Conn& c, const Json& j);
     void onOpen(Conn& c, const Json& j);
+    void onBrowse(Conn& c, const Json& j);
     void takeReads();
     void note(Conn& c, const std::string& text);
     void refuseEdit(Conn& c, DocId doc, std::uint64_t seq, const std::string& why, bool resync);

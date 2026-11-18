@@ -267,6 +267,9 @@ setprop log.tag.MiniCodeGit DEBUG` on Android.
   dirty tab refuses), and with none left (`canMarkResolved`) the header's
   Mark Resolved runs the panel's stage arguments without the conflict
   question. A binary, missing or too-large conflict keeps the old note.
+  The GTK port has the same (`linux/HANDOFF.md` item 95,
+  `linux/src/EditorConflicts.{h,cpp}`, `git_conflicts`), the review page's
+  right click aside.
 - **Line history** (Mac, 2026-11-16, A7, `EditorLineHistory.{h,mm}`,
   `EditorController+LineHistory.mm`, core `LineHistory.{h,cpp}`,
   `linehistory:*`, `make guitest SUITES=line_history`): blame that knows

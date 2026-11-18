@@ -110,6 +110,15 @@ std::atomic<uint64_t> gNextWindow{1000};   // clear of GTK's and the checks' sma
             return true;
         };
     }
+    if (_editable && _browse) {
+        void (^browse)(NSString *) = _browse;
+        o.browse = [browse](const std::string &url) {
+            NSString *u = [NSString stringWithUTF8String:url.c_str()];
+            if (!u) return false;
+            dispatch_async(dispatch_get_main_queue(), ^{ browse(u); });
+            return true;
+        };
+    }
     o.showHidden = gShowHidden;
     o.folder = _folder.fileSystemRepresentation ?: "";
     o.window = _windowId;
@@ -165,6 +174,17 @@ std::atomic<uint64_t> gNextWindow{1000};   // clear of GTK's and the checks' sma
     for (NSNumber *t in _terminals ? _terminals() : @[])
         if (t.unsignedLongLongValue) terms.push(Json((int64_t)t.unsignedLongLongValue));
     w.set("terms", std::move(terms));
+    // The browser pane's tabs, when the window has the pane.
+    if (NSDictionary *pane = _browserTabs ? _browserTabs() : nil) {
+        std::vector<Shared::Web::BrowserTab> tabs;
+        for (NSDictionary *t in pane[@"tabs"]) {
+            if (![t isKindOfClass:NSDictionary.class]) continue;
+            NSString *url = [t[@"url"] isKindOfClass:NSString.class] ? t[@"url"] : @"";
+            NSString *title = [t[@"title"] isKindOfClass:NSString.class] ? t[@"title"] : @"";
+            tabs.push_back({url.UTF8String ?: "", title.UTF8String ?: ""});
+        }
+        w.set("browser", Shared::Web::browserReportJson(tabs, [pane[@"active"] intValue]));
+    }
     std::string dump = w.dump();
     if (dump == _sentTabs) return;
     _sentTabs = std::move(dump);
