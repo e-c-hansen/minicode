@@ -291,7 +291,14 @@ void testThemeCss() {
     CHECK(has(d, ".minicode-browser-bar { background-color: rgba(31,31,31,1.000)"));
     CHECK(!has(d, "background-color: transparent; }window"));   // sanity
     CHECK(!has(d, "window.minicode-window.background"));        // opaque window
-    CHECK(!has(d, "menubar"));                                  // theme's title bar
+    // The title bar, menu bar and menus are the theme's whatever the desktop
+    // theme (the owner's Yaru-dark kept them dark under a light theme).
+    CHECK(has(d, "window.minicode-window windowhandle, window.minicode-window menubar {"
+                 " background-color: rgba(24,24,24,1.000); background-image: none;"));
+    CHECK(has(d, "window.minicode-window menubar > item { padding: 4px 8px; min-width: 0; }"));
+    CHECK(has(d, "popover.menu > contents, popover.menu > arrow { background-color: rgba(24,24,24,1.000);"
+                 " background-image: none; color: rgba(204,204,204,1.000); }"));
+    CHECK(has(d, "button.minicode-tabs-plus { background-color: rgba(24,24,24,1.000);"));
     CHECK(!has(d, ".minicode-browser-bar entry"));
     // A translucent color must be painted exactly once per panel.
     CHECK(has(d, ".minicode-editor { background-color: transparent; color: rgba(204,204,204,1.000); }"));
@@ -317,9 +324,13 @@ void testThemeCss() {
     const std::string tb = theme::stylesheet(Settings::parse(
         "titlebar.opacity = 0.2\ntitlebar.text = #FF0000\n"));
     CHECK(has(tb, "background-color: rgba(24,24,24,0.200); background-image: none;"
-                  " box-shadow: none; color: rgba(255,0,0,1.000); }"));
+                  " box-shadow: none; border-color: rgba(255,0,0,0.120); color: rgba(255,0,0,1.000); }"));
     CHECK(has(tb, "window.minicode-window menubar > item, window.minicode-window"
-                  " headerbar label { color: rgba(255,0,0,1.000); }"));
+                  " headerbar label, window.minicode-window headerbar button,"
+                  " window.minicode-window headerbar windowcontrols image { color: rgba(255,0,0,1.000); }"));
+    // A menu stays opaque whatever the bar's opacity, in its text color.
+    CHECK(has(tb, "popover.menu > contents, popover.menu > arrow { background-color: rgba(24,24,24,1.000);"
+                  " background-image: none; color: rgba(255,0,0,1.000); }"));
     CHECK(has(tb, "window.minicode-window.background { background-color: transparent; }"));
 
     GROUP("theme:light");
