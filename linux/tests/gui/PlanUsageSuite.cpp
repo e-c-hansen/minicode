@@ -235,6 +235,10 @@ MC_GUI_SUITE(plan_usage) {
                     "\"command\": \"~/bin/status.sh --short\", \"padding\": 1}\n}\n";
         MCGuiWriteFile(gSettings, gOriginal);
         GCHECK(!StatusLineOffer::installed());
+        // What goes in names a program the core takes for the wrapper: the
+        // built mutible beside mutible-guitest, which the steps below run.
+        printf("    command: %s\n", StatusLineOffer::command().c_str());
+        GCHECK(ClaudeStatusLine::isWrapper(StatusLineOffer::command()));
         // $1 every 6 minutes for 3 hours (250,000 input tokens of Opus 5.5),
         // in a folder no window shows.
         std::string lines;

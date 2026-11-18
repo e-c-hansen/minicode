@@ -6389,7 +6389,9 @@ already in the Linux build; this adds the panel's side.
   it, then a notice says where (and where the backup is). Undo asks (Put
   It Back, Cancel) and says whether the file is exactly as before. The
   command is `mutible statusline` when `mutible` is on the PATH, else
-  this program by its full path (`/proc/self/exe`), as the hooks' is.
+  this program by its full path (`/proc/self/exe`), as the hooks' is;
+  but the core knows the wrapper by its program's name, so a copy named
+  otherwise (`mutible-guitest`) names the `mutible` beside it.
 - **Checks**: the `plan_usage` suite (a scratch CLAUDE_CONFIG_DIR,
   transcripts folder and usage folder of its own, checked to be under the
   harness's scratch root before anything is written): "no reading yet",

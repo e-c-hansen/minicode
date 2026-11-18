@@ -80,7 +80,20 @@ std::string command() {
     const ssize_t n = readlink("/proc/self/exe", path, sizeof path - 1);
     if (n <= 0) return ClaudeStatusLine::kCommand;
     path[n] = 0;
-    return ClaudeStatusLine::commandFor(path);
+    // The wrapper is known by its program's name, mutible
+    // (ClaudeStatusLine::isWrapper): a copy of another name (the GUI checks'
+    // mutible-guitest) names the mutible beside it, or none.
+    std::string exe = path;
+    gchar* base = g_path_get_basename(path);
+    const bool named = std::string(base) == "mutible";
+    g_free(base);
+    if (!named) {
+        gchar* dir = g_path_get_dirname(path);
+        exe = std::string(dir) + "/mutible";
+        g_free(dir);
+        if (!g_file_test(exe.c_str(), G_FILE_TEST_IS_EXECUTABLE)) return ClaudeStatusLine::kCommand;
+    }
+    return ClaudeStatusLine::commandFor(exe);
 }
 
 bool installed() {

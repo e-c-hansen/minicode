@@ -23,7 +23,10 @@ namespace StatusLineOffer {
 // ~/.claude.
 std::string usageDir();
 // The command installed: `mutible statusline` when `mutible` is on the
-// PATH, else this program by its full path, then ` statusline`.
+// PATH, else this program by its full path, then ` statusline`. The
+// wrapper is known by its program's name (ClaudeStatusLine::isWrapper), so
+// a copy of another name (the GUI checks' mutible-guitest) names the
+// mutible beside it.
 std::string command();
 // Is the wrapper Claude Code's status line now?
 bool installed();
