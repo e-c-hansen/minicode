@@ -1,0 +1,79 @@
+name: Pages
+
+# Publishes the homepage, https://mut.ible.ai: the README, rendered by
+# GitHub's own Markdown API so it reads as the repository's front page does,
+# in site/template.html with site/site.css (site/build.py puts them
+# together). The site is built here, not by Jekyll over the repository: that
+# would publish every Markdown file in it, and some hold Liquid-like `{{`.
+#
+# A pull request that touches the page builds it, to catch a broken build,
+# but only main deploys (the github-pages environment takes main alone).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - docs/demos/**
+      - docs/brand/**
+      - site/**
+      - .github/workflows/pages.yml
+  pull_request:
+    paths:
+      - README.md
+      - docs/demos/**
+      - docs/brand/**
+      - site/**
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, and a newer one never cancels one under way.
+concurrency:
+  group: pages-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the homepage
+    runs-on: ubuntu-26.04
+    # The build takes well under a minute; this only stops a hang.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Render the README with GitHub's Markdown API
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api markdown -f mode=gfm -f context=${{ github.repository }} \
+            -F text=@README.md > "$RUNNER_TEMP/readme.html"
+          test -s "$RUNNER_TEMP/readme.html"
+
+      - name: Put the page together
+        run: python3 site/build.py "$RUNNER_TEMP/readme.html" _site
+
+      - uses: actions/configure-pages@v6
+        if: github.event_name != 'pull_request'
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
