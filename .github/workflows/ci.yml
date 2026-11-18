@@ -566,8 +566,15 @@ jobs:
         if: always()
         run: scripts/ci-summary.sh "Core tests under ThreadSanitizer" "$RUNNER_TEMP/ci-logs"
 
+  # Android is frozen (owner, 2026-11-17: the least important port, and its
+  # jobs failed on downloads, the NDK's and Maven Central's 429s, more than
+  # on code). Both Android jobs run only when the workflow is started by
+  # hand (Actions > CI > Run workflow), and CI passed does not wait for
+  # them. Unfreezing: drop the two `if:` lines and put the jobs back in
+  # ci-passed's needs.
   android:
     name: Android debug APK and Kotlin checks
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
@@ -603,6 +610,7 @@ jobs:
   # update must carry its signature, so it stays on the release Mac.
   android-release:
     name: Android release APK
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
@@ -645,7 +653,7 @@ jobs:
   ci-passed:
     name: CI passed
     if: always()
-    needs: [macos, linux, sanitizers, tsan, android, android-release]
+    needs: [macos, linux, sanitizers, tsan]
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:

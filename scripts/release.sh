@@ -155,6 +155,9 @@ if [ -n "$LINUX_ONLY" ]; then
     exit 0
 fi
 
+# Android is frozen (owner, 2026-11-17; docs/ci.md): no APK unless
+# MINICODE_NO_APK is set to the empty string (MINICODE_NO_APK= scripts/release.sh ...).
+: "${MINICODE_NO_APK=1}"
 APK=""
 if [ -z "${MINICODE_NO_APK:-}" ]; then
     KEYSTORE="$HOME/.config/minicode/release.keystore"
@@ -244,9 +247,9 @@ gh release create "v$VERSION" MiniCode.zip ${APK:+"$APK"} \
     --target "$(git rev-parse HEAD)" \
     --title "MiniCode $VERSION" \
     --notes "**macOS:** \`brew install --cask e-c-hansen/tap/minicode\`, or download MiniCode.zip below.
-
-**Android:** download ${APK:-the APK} on your phone and open it; Android asks once whether your browser may install apps. Termux setup and updates through Obtainium: [android/README.md](https://github.com/$APP_REPO/blob/main/android/README.md#install).
-
+${APK:+
+**Android:** download $APK on your phone and open it; Android asks once whether your browser may install apps. Termux setup and updates through Obtainium: [android/README.md](https://github.com/$APP_REPO/blob/main/android/README.md#install).
+}
 $CHANGES"
 
 echo "==> Writing the cask to $TAP_REPO"
