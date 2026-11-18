@@ -868,8 +868,11 @@ struct Server::Conn {
 struct Server::Session : Client::Listener, Client::TermListener {
     std::unique_ptr<HostLink> link;
     std::function<void()> letGo;    // an in-process host's (Options::connect)
-    // With Options::window: the documents that window's tabs hold.
+    // With Options::window: the documents that window's tabs hold, and
+    // the terminals it reports ("terms" beside its groups). A page sees,
+    // attaches to and types into no other.
     std::set<DocId> allowed;
+    std::set<TermId> allowedTerms;
     std::unique_ptr<Client> client;
     std::map<DocId, std::unique_ptr<DocView>> docs;
     std::map<TermId, std::unique_ptr<TermView>> terms;
@@ -1030,6 +1033,11 @@ std::string Server::helloText() const {
 
 void Server::reloadSettings() {
     reload_ = true;
+    wake();
+}
+
+void Server::lookNow() {
+    look_ = true;
     wake();
 }
 
@@ -1383,6 +1391,8 @@ void Server::onTermInput(Conn& c, const std::string& type, const Json& j) {
     const TermId t = (TermId)std::max<int64_t>(0, j["term"].asInt());
     if (!opt_.editable) return note(c, "This page only reads: it cannot type into terminals.");
     if (!session_ || !t || t != c.term) return;
+    // Another window's terminal is not this view's to type into.
+    if (opt_.window && !session_->allowedTerms.count(t)) return;
     auto it = session_->terms.find(t);
     if (it == session_->terms.end()) return;
     const TerminalScreen& sc = it->second->screen();
@@ -1555,6 +1565,7 @@ void Server::lookAtState() {
     out.set("t", Json("state"));
     Json windows = Json::array();
     s.allowed.clear();
+    s.allowedTerms.clear();
     for (const Json& w : st["windows"].elements()) {
         if (opt_.window && (std::uint64_t)w["window"].asInt() != opt_.window) continue;
         Json tabs = w["tabs"];
@@ -1564,6 +1575,7 @@ void Server::lookAtState() {
         windows.push(std::move(tabs));
         for (const Json& g : w["tabs"]["groups"].elements())
             for (const Json& t : g["tabs"].elements()) s.allowed.insert((DocId)t["doc"].asInt());
+        for (const Json& t : w["tabs"]["terms"].elements()) s.allowedTerms.insert((TermId)t.asInt());
     }
     out.set("windows", std::move(windows));
     Json docs = Json::array();
@@ -1579,6 +1591,9 @@ void Server::lookAtState() {
     Json terms = Json::array();
     for (const Json& t : st["terminals"].elements()) {
         const TermId id = (TermId)t["term"].asInt();
+        // One window's view: only the terminals that window reports. A
+        // headless host has no windows, and its view sees every terminal.
+        if (opt_.window && !s.allowedTerms.count(id)) continue;
         const TermShell sh = termShellFrom(t["shell"]);
         const int cols = (int)t["cols"].asInt(80), rows = (int)t["rows"].asInt(24);
         Json o = Json::object();
@@ -1599,6 +1614,16 @@ void Server::lookAtState() {
         }
     }
     out.set("terms", std::move(terms));
+    if (opt_.window) {
+        // A terminal the window no longer reports: nobody here shows it, and
+        // the view keeps no copy of its screen.
+        for (auto& c : conns_)
+            if (c->term && !s.allowedTerms.count(c->term)) c->term = 0;
+        for (auto it = s.terms.begin(); it != s.terms.end();) {
+            if (s.allowedTerms.count(it->first)) ++it;
+            else it = s.terms.erase(it);
+        }
+    }
     std::string text = out.dump();
     if (text == s.sentState) return;
     s.sentState = std::move(text);
@@ -1731,6 +1756,8 @@ void Server::showTo(Conn& c) {
             sendJson(c, snap);
         }
     }
+    // Nor is another window's terminal: never attached to, never shown.
+    if (c.term && opt_.window && !s.allowedTerms.count(c.term)) c.term = 0;
     if (c.term) {
         auto it = s.terms.find(c.term);
         if (it == s.terms.end()) {
@@ -1828,7 +1855,7 @@ bool Server::run() {
                 detach();
                 return true;
             }
-            if (msSince(session_->lastLook) >= opt_.pollMs) lookAtState();
+            if (look_.exchange(false) || msSince(session_->lastLook) >= opt_.pollMs) lookAtState();
             if (session_->pending && msSince(session_->lastTermFlush) >= 30) flush();
         } else if (!opt_.connect && msSince(lastSocketLook) >= 1000) {
             // Nobody looking: the host's socket going means it ended.
