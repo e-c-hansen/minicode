@@ -76,9 +76,9 @@
 //
 // Between suites the runner compares the world with what the suite found
 // (app windows, another window such as a question left on top, terminal
-// tabs, settings.conf, keys.conf, a key window left pinned): a difference is
-// a "LEAK [suite]" line and a failed check of the suite that left it, and
-// the pin is put back, so one suite's leftovers never fail the suites after
+// tabs, terminals marked waiting, settings.conf, keys.conf, a key window
+// left pinned): a difference is a "LEAK [suite]" line and a failed check of
+// the suite that left it, and the pin and the marks are put back, so one suite's leftovers never fail the suites after
 // it. The two files are the harness's to put back between suites, and a
 // terminal tab left open is only noted: "LEFT [suite]" lines, which warn.
 // MC_GUI_LEAKS=note prints the lines and neither fails nor puts anything
