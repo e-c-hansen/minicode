@@ -37,17 +37,45 @@ std::string stylesheet(const Settings& s) {
         css += "window.minicode-window, window.minicode-window.background "
                "{ background-color: transparent; }";
 
-    // Title bar and menu bar. Left to the desktop theme unless asked for, the
-    // same rule as the macOS build's customTitlebar.
-    if (s.customTitlebar()) {
+    // Title bar and menu bar: always painted, in the theme's titlebar colors
+    // and opaque unless the file made them see-through (titlebar.opacity), so
+    // nothing behind the window shows through the strip above the menus
+    // (the desktop's own CSS drew it translucent under some themes). The
+    // Mac's customTitlebar still decides whether its title bar is replaced.
+    {
+        const std::string tb = bg(Surface::Titlebar), tf = fg(Surface::Titlebar);
+        Rgba edge = s.text(Surface::Titlebar);
+        auto tintOf = [&](double a) { edge.a = a; return cssColor(edge); };
         css += "window.minicode-window .titlebar, window.minicode-window headerbar,"
-               " window.minicode-window menubar {"
-               " background-color: " + bg(Surface::Titlebar) + ";"
-               " background-image: none; box-shadow: none; color: " +
-               fg(Surface::Titlebar) + "; }";
+               " window.minicode-window windowhandle, window.minicode-window menubar {"
+               " background-color: " + tb + "; background-image: none; box-shadow: none;"
+               " border-color: " + tintOf(0.12) + "; color: " + tf + "; }";
         css += "window.minicode-window menubar > item,"
-               " window.minicode-window headerbar label { color: " +
-               fg(Surface::Titlebar) + "; }";
+               " window.minicode-window headerbar label,"
+               " window.minicode-window headerbar button,"
+               " window.minicode-window headerbar windowcontrols image { color: " + tf + "; }";
+        // Adwaita's spacing: the items of the bar were run together.
+        css += "window.minicode-window menubar > item { padding: 4px 8px; min-width: 0; }";
+        css += "window.minicode-window menubar > item:hover,"
+               " window.minicode-window menubar > item:checked { background-color: " +
+               tintOf(0.12) + "; }";
+        // Dropdown menus (the bar's and the context menus') take the same
+        // colors, opaque, since a popover inherits its text color from the
+        // widget it belongs to and the desktop theme draws its background.
+        Rgba solid = s.background(Surface::Titlebar);
+        solid.a = 1.0;
+        const std::string pb = cssColor(solid);
+        css += "popover.menu > contents, popover.menu > arrow {"
+               " background-color: " + pb + "; background-image: none; color: " + tf + "; }";
+        css += "popover.menu modelbutton, popover.menu modelbutton label,"
+               " popover.menu modelbutton accelerator, popover.menu label { color: " + tf + "; }";
+        css += "popover.menu modelbutton:hover, popover.menu modelbutton:focus {"
+               " background-color: " + tintOf(0.14) + "; }";
+        css += "popover.menu modelbutton:disabled, popover.menu modelbutton:disabled label,"
+               " popover.menu modelbutton:disabled accelerator { color: " + tintOf(0.45) + "; }";
+        css += "popover.menu modelbutton accelerator { color: " + tintOf(0.6) + "; }";
+        css += "popover.menu separator { background-color: " + tintOf(0.18) + "; }";
+        css += "popover.menu check, popover.menu radio { color: " + tf + "; }";
     }
 
     // Editor. The text node paints the background; the view and its scroller
@@ -78,6 +106,15 @@ std::string stylesheet(const Settings& s) {
     dim.a *= 0.7;
     css += ".minicode-tabs { background-color: " + bg(Surface::Sidebar) +
            "; border-bottom: 1px solid #333333; }";
+    // The + beside the terminal's and the browser's strips: the strip's
+    // color, not the desktop theme's button (Yaru-dark drew a dark block
+    // there under a light theme).
+    css += "button.minicode-tabs-plus { background-color: " + bg(Surface::Sidebar) +
+           "; background-image: none; box-shadow: none; border: none;"
+           " border-bottom: 1px solid #333333; border-radius: 0; color: " + fg(Surface::Sidebar) + "; }";
+    // Lit under the pointer by a tint over that color, never instead of it.
+    css += "button.minicode-tabs-plus:hover { box-shadow: inset 0 0 0 100px " +
+           std::string(dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)") + "; }";
     // The title's size is tabs.font-size when the file sets it, else the
     // desktop's interface font (no size here, so GTK's own applies).
     css += ".minicode-tab { padding: 5px 6px 5px 12px; border-right: 1px solid #333333;";

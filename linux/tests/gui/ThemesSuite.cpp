@@ -33,6 +33,7 @@
 
 #ifdef MINICODE_ENABLE_TERMINAL
 #include "Terminal.h"
+#include "TerminalDock.h"
 #include <vte/vte.h>
 #endif
 
@@ -344,7 +345,12 @@ bool inTheme(const std::string& id) {
     }
     bool known = false;
     const bool dark = menuBarDark(&known);
-    if (!known || dark != s.isDark()) {
+    // The bar is painted in the theme's titlebar color, so it is as dark as
+    // that, which is the theme's own darkness even when a color of the file's
+    // makes the rest of the window dark as drawn.
+    const Rgba tb = s.background(Surface::Titlebar);
+    const bool barDark = (0.299 * tb.r + 0.587 * tb.g + 0.114 * tb.b) / 255 < 0.5;
+    if (!known || dark != barDark) {
         gWhy = std::string("the menu bar is ") + (dark ? "dark" : "light");
         return false;
     }
@@ -390,6 +396,124 @@ void undoUntilClean() {
 }
 
 const char* kBase = "lsp.enabled = false\n";
+
+}  // namespace
+
+namespace {
+
+// ---- the window's top strip and the menus (the owner's look report,
+// 2026-11-17: under Ubuntu's Yaru-dark the menus were white on white, the
+// bar's items ran together, and the window behind showed through the strip
+// above the editor): the menu bar painted in the theme's titlebar color
+// whatever the desktop theme, its items spaced, and an opened menu readable.
+GtkWidget* firstLabel(GtkWidget* w) {
+    if (GTK_IS_LABEL(w)) return w;
+    for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* hit = firstLabel(c)) return hit;
+    return nullptr;
+}
+double luminance(double r, double g, double b) {
+    auto lin = [](double c) { return c <= 0.03928 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); };
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+double contrast(double a, double b) {
+    if (a < b) std::swap(a, b);
+    return (a + 0.05) / (b + 0.05);
+}
+
+void lookChecks(const char* name) {
+    MCGuiStep(std::string("the menu bar in the titlebar color, its items spaced: ") + name, [] {
+        const Settings s = fileSettings();
+        GtkWidget* bar = menuBar();
+        GCHECK(bar != nullptr);
+        if (!bar) return;
+        GtkWidget* window = GTK_WIDGET(MCGuiApp().window);
+        graphene_rect_t r;
+        GCHECK(gtk_widget_compute_bounds(bar, window, &r));
+        const Picture p = picture(window);
+        int red = 0, green = 0, blue = 0;
+        const Rgba want = s.background(Surface::Titlebar);
+        GCHECK(p.at(r.origin.x + r.size.width - 4, r.origin.y + r.size.height / 2, &red, &green, &blue));
+        if (std::abs(red - want.r) > 6 || std::abs(green - want.g) > 6 || std::abs(blue - want.b) > 6)
+            MCGuiNote("the menu bar is %s, not the titlebar color %s", hex(red, green, blue).c_str(),
+                      hex(want.r, want.g, want.b).c_str());
+        GCHECK(std::abs(red - want.r) <= 6 && std::abs(green - want.g) <= 6 &&
+               std::abs(blue - want.b) <= 6);
+        // Each item's text starts well after the one before ends.
+        GtkWidget* prevLabel = nullptr;
+        int items = 0;
+        for (GtkWidget* c = gtk_widget_get_first_child(bar); c; c = gtk_widget_get_next_sibling(c)) {
+            GtkWidget* l = firstLabel(c);
+            if (!l) continue;
+            items++;
+            if (prevLabel) {
+                graphene_rect_t a, b;
+                GCHECK(gtk_widget_compute_bounds(prevLabel, window, &a));
+                GCHECK(gtk_widget_compute_bounds(l, window, &b));
+                const double gap = b.origin.x - (a.origin.x + a.size.width);
+                if (gap < 14) MCGuiNote("%s and %s are %.1f px apart", gtk_label_get_text(GTK_LABEL(prevLabel)),
+                                        gtk_label_get_text(GTK_LABEL(l)), gap);
+                GCHECK(gap >= 14);
+            }
+            prevLabel = l;
+        }
+        GCHECK(items >= 5);
+#ifdef MINICODE_ENABLE_TERMINAL
+        // The terminal's + beside its strip: the strip's color.
+        if (MCGuiApp().termDock && gtk_widget_get_mapped(MCGuiApp().termDock->newTabButton())) {
+            GtkWidget* plus = MCGuiApp().termDock->newTabButton();
+            graphene_rect_t b;
+            GCHECK(gtk_widget_compute_bounds(plus, window, &b));
+            const Rgba strip = s.background(Surface::Sidebar);
+            GCHECK(p.at(b.origin.x + 3, b.origin.y + 3, &red, &green, &blue));
+            if (std::abs(red - strip.r) > 6 || std::abs(green - strip.g) > 6 || std::abs(blue - strip.b) > 6)
+                MCGuiNote("the terminal's + is %s, not the strip's %s", hex(red, green, blue).c_str(),
+                          hex(strip.r, strip.g, strip.b).c_str());
+            GCHECK(std::abs(red - strip.r) <= 6 && std::abs(green - strip.g) <= 6 &&
+                   std::abs(blue - strip.b) <= 6);
+        }
+#endif
+    });
+    MCGuiStep("File opened", [] { MCGuiClick(MCGuiFindLabel(menuBar(), "File")); });
+    MCGuiWait("its menu", 10, [] { return popoverWith("Save") != nullptr; });
+    MCGuiStep(std::string("the menu readable: ") + name, [name] {
+        const Settings s = fileSettings();
+        GtkWidget* pop = popoverWith("Save");
+        GCHECK(pop != nullptr);
+        if (!pop) return;
+        GtkWidget* label = MCGuiFindLabel(pop, "Save");
+        GCHECK(label != nullptr);
+        const Picture p = picture(pop);
+        GCHECK(p.width > 0);
+        int red = 0, green = 0, blue = 0;
+        graphene_rect_t row;
+        GtkWidget* rw = rowOf(label);
+        GCHECK(rw && gtk_widget_compute_bounds(rw, pop, &row));
+        GCHECK(p.at(row.origin.x + row.size.width - 3, row.origin.y + row.size.height / 2, &red, &green, &blue));
+        GdkRGBA fg;
+        gtk_widget_get_color(label, &fg);
+        const double ratio = contrast(luminance(red / 255.0, green / 255.0, blue / 255.0),
+                                      luminance(fg.red, fg.green, fg.blue));
+        MCGuiNote("menu %s on %s, contrast %.1f", hex((int)std::lround(fg.red * 255),
+                  (int)std::lround(fg.green * 255), (int)std::lround(fg.blue * 255)).c_str(),
+                  hex(red, green, blue).c_str(), ratio);
+        GCHECK(ratio >= 4.5);
+        // And the theme's own: the titlebar's color, text and all.
+        const Rgba bgw = s.background(Surface::Titlebar), tx = s.text(Surface::Titlebar);
+        GCHECK(std::abs(red - bgw.r) <= 6 && std::abs(green - bgw.g) <= 6 && std::abs(blue - bgw.b) <= 6);
+        GCHECK(std::abs((int)std::lround(fg.red * 255) - tx.r) <= 6 &&
+               std::abs((int)std::lround(fg.green * 255) - tx.g) <= 6 &&
+               std::abs((int)std::lround(fg.blue * 255) - tx.b) <= 6);
+        MCGuiSnapshot(pop, std::string("look-menu-") + name);
+        MCGuiSnapshot(GTK_WIDGET(MCGuiApp().window), std::string("look-window-") + name);
+        MCGuiKey("escape");
+    });
+    MCGuiWait("closed", 10, [] { return !anyMenuOpen(); });
+}
+
+// The owner's desktop theme, where it is installed (not on CI's runner).
+const char* kYaru = "/usr/share/themes/Yaru-dark/gtk-4.0/gtk.css";
+gchar* gOldGtkTheme = nullptr;
 
 }  // namespace
 
@@ -454,6 +578,28 @@ MC_GUI_SUITE(themes) {
     });
     MCGuiWait("back to the desktop's size", 10,
               [] { return std::abs(tabTitlePoints() - desktopPoints()) < 0.6; });
+
+    // ---- the top strip and the menus, in the default settings
+    lookChecks("dark-modern");
+    MCGuiStep("Light Modern by the file", [] { MCGuiSetSettings("theme = light-modern\n" + std::string(kBase)); });
+    waitInTheme("light-modern");
+    lookChecks("light-modern");
+    MCGuiStep("Light Modern on the owner's desktop theme, Yaru-dark", [] {
+        if (!g_file_test(kYaru, G_FILE_TEST_EXISTS)) {
+            MCGuiNote("no Yaru-dark here: the checks below run on the default desktop theme");
+            return;
+        }
+        g_object_get(gtk_settings_get_default(), "gtk-theme-name", &gOldGtkTheme, nullptr);
+        g_object_set(gtk_settings_get_default(), "gtk-theme-name", "Yaru-dark", nullptr);
+    });
+    lookChecks("light-modern-on-yaru-dark");
+    MCGuiStep("the desktop theme as it was", [] {
+        if (!gOldGtkTheme) return;
+        g_object_set(gtk_settings_get_default(), "gtk-theme-name", gOldGtkTheme, nullptr);
+        g_clear_pointer(&gOldGtkTheme, g_free);
+    });
+    MCGuiStep("the plain settings again", [] { MCGuiSetSettings(kBase); });
+    waitInTheme("dark-modern");
 
     // ---- a light theme and a dark one, from the menu bar
     chooseTheme("Solarized Light");

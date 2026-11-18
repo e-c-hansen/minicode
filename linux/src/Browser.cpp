@@ -79,6 +79,7 @@ Browser::Browser(const std::string& homeUrl) : home_(homeUrl) {
     plus_ = gtk_button_new_with_label("+");
     gtk_widget_set_tooltip_text(plus_, "New Browser Tab");
     gtk_widget_add_css_class(plus_, "flat");
+    gtk_widget_add_css_class(plus_, "minicode-tabs-plus");   // painted as the strip (ThemeCss.cpp)
     gtk_widget_set_focus_on_click(plus_, FALSE);
     gtk_box_append(GTK_BOX(tabsRow), strip_->widget());
     gtk_box_append(GTK_BOX(tabsRow), plus_);
