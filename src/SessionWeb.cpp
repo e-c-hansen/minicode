@@ -4,6 +4,7 @@
 #include "AutoIndent.h"
 #include "IdeLink.h"
 #include "MarkdownHtml.h"
+#include "SessionFiles.h"
 #include "SessionServer.h"
 #include "Settings.h"
 #include "Text.h"
@@ -431,6 +432,8 @@ Json paletteJson(const Settings& s) {
     p.set("lineNumberActive", Json(hexColor(s.lineNumberActiveColor())));
     p.set("bracketMatch", Json(hexColor(s.bracketMatchColor())));
     p.set("ruler", Json(hexColor(s.rulerColor())));
+    // The tree's rows the ignore files ignore, as the apps' trees color them.
+    p.set("treeIgnored", Json(hexColor(s.treeGitColor(TreeGitColor::Ignored))));
     Json rulers = Json::array();
     for (int c : s.rulers()) rulers.push(Json(c));
     p.set("rulers", std::move(rulers));
@@ -760,6 +763,8 @@ struct Server::Session : Client::Listener, Client::TermListener {
     // document the page that asked last (its selection comes back).
     std::map<std::uint64_t, int> undoAsks;
     std::map<DocId, int> undoFor;
+    // The tree's reads asked of the host: the request's page.
+    std::map<std::uint64_t, int> reads;
 
     void hostEdited(DocId d, const Ot::Ops& ops, int flag, const Selection* select) override {
         auto it = docs.find(d);
@@ -1018,6 +1023,10 @@ void Server::handleMessage(Conn& c, const std::string& text) {
         showTo(c);
         return;
     }
+    // The tree: reading the folder and opening a tab change no text, so a
+    // page that only reads may.
+    if (t == "list") return onList(c, j);
+    if (t == "open") return onOpen(c, j);
     // The rest changes the session: only from a page that may.
     if (t == "edit") onEdit(c, j);
     else if (t == "undo") onUndo(c, j);
@@ -1272,6 +1281,70 @@ void Server::onTermInput(Conn& c, const std::string& type, const Json& j) {
         bytes = TerminalScreen::encodePaste(j["text"].asString(), sc.bracketedPaste());
     }
     session_->client->terminalInput(t, std::move(bytes));
+}
+
+void Server::onList(Conn& c, const Json& j) {
+    if (!session_ || !j["path"].isString()) return;
+    Session& s = *session_;
+    // A page asks for one folder at a time, as it opens them; one that
+    // floods is not answered past this.
+    if (s.reads.size() >= 256) return;
+    Json req = Json::object();
+    req.set("op", Json("list"));
+    req.set("path", j["path"]);
+    req.set("hidden", Json(opt_.showHidden));
+    s.reads[s.client->requestRead(opt_.window, std::move(req))] = c.id;
+}
+
+void Server::takeReads() {
+    if (!session_) return;
+    Session& s = *session_;
+    for (auto it = s.reads.begin(); it != s.reads.end();) {
+        Json a;
+        if (!s.client->readAnswer(it->first, &a)) {
+            ++it;
+            continue;
+        }
+        Json m = Json::object();
+        m.set("t", Json("tree"));
+        m.set("path", a["path"]);
+        if (a.has("error")) {
+            m.set("error", a["error"]);
+        } else {
+            m.set("root", a["root"]);
+            m.set("entries", a["entries"]);
+            if (a.has("more")) m.set("more", a["more"]);
+        }
+        for (auto& c : conns_)
+            if (c->id == it->second && c->welcomed) sendJson(*c, m);
+        it = s.reads.erase(it);
+    }
+}
+
+void Server::onOpen(Conn& c, const Json& j) {
+    if (!session_ || !j["path"].isString()) return;
+    const std::string rel = j["path"].asString();
+    Json m = Json::object();
+    m.set("t", Json("opening"));
+    m.set("path", Json(rel));
+    std::string abs, why;
+    struct stat st;
+    if (!confinedPath(opt_.folder, rel, &abs, &why)) {
+        why = "That file is not one of this session's folder's: " + why + ".";
+    } else if (::stat(abs.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+        why = "That is not a file.";
+    } else if (!opt_.open) {
+        why = "This page cannot open files from a headless host yet.";
+    } else if (!opt_.open(abs, j["keep"].asBool())) {
+        why = "The minicode window could not open that file.";
+    } else {
+        m.set("abs", Json(abs));
+        m.set("ok", Json(true));
+        return sendJson(c, m);
+    }
+    m.set("ok", Json(false));
+    m.set("why", Json(why));
+    sendJson(c, m);
 }
 
 bool Server::attach() {
@@ -1590,6 +1663,7 @@ bool Server::run() {
         if (session_) {
             session_->client->dispatch();
             takeOutcomes();
+            takeReads();
             if (session_->closed) {
                 Json e = Json::object();
                 e.set("t", Json("ended"));

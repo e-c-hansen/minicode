@@ -312,6 +312,7 @@ void Client::process(Message&& m) {
         break;
     case Kind::DocText:
     case Kind::State:
+    case Kind::FsData:
     case Kind::Pong: {
         const std::uint64_t req = m.req;
         if (!abandoned_.erase(req)) replies_[req] = std::move(m);
@@ -672,6 +673,38 @@ Client::HostDoc Client::hostDocument(DocId id) {
 std::vector<std::string> Client::takeErrors() {
     std::vector<std::string> out;
     out.swap(errors_);
+    return out;
+}
+
+// ---------------------------------------------------------------- the workspace
+
+std::uint64_t Client::requestRead(std::uint64_t window, Json request) {
+    Message m;
+    m.kind = Kind::FsRead;
+    m.window = window;
+    m.json = std::move(request);
+    m.req = ++nextReq_;
+    const std::uint64_t req = m.req;
+    sendNow(std::move(m));
+    return req;
+}
+
+bool Client::readAnswer(std::uint64_t req, Json* out) {
+    auto it = replies_.find(req);
+    if (it == replies_.end() || it->second.kind != Kind::FsData) return false;
+    if (out) *out = std::move(it->second.json);
+    replies_.erase(it);
+    return true;
+}
+
+Json Client::read(std::uint64_t window, Json request, int timeoutMs) {
+    const std::uint64_t req = requestRead(window, std::move(request));
+    Json out;
+    if (!waitFor([&] { return replies_.count(req) > 0; }, timeoutMs)) {
+        abandoned_.insert(req);
+        return Json();
+    }
+    readAnswer(req, &out);
     return out;
 }
 
