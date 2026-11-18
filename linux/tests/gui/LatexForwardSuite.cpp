@@ -50,6 +50,10 @@ void say(const char* what) {
 }  // namespace
 
 MC_GUI_SUITE(latex_forward) {
+    // With the browser beside it the preview's pages are narrow enough that
+    // the whole of page 2 fits below page 1's end, and the view cannot put
+    // page 2 at its top (browser_find left the pane shown in the soak).
+    MCGuiHideBrowserPane();
     MCGuiStep("a stand-in tectonic that copies the committed typeset of main.tex", [] {
         ed()->closeAllTabs();
         for (const char* n : {"main.tex", "chapter.tex", "appendix.tex"})

@@ -2391,10 +2391,13 @@ static BOOL IsWordCell(const TermCell &cell) {
                     then:(void (^)(NSModalResponse))then {
     NSAlert *alert = [[NSAlert alloc] init];
     alert.alertStyle = NSAlertStyleWarning;
-    const BOOL oneLine = check.lines < 2;
+    // One line with a final break still sends Return, so it asks as lines
+    // do ("Paste 1 line"), with Paste as One Line to leave the break out.
+    const BOOL oneLine = !check.breaks;
     alert.messageText = oneLine
         ? @"Paste text that contains control characters into the terminal?"
-        : [NSString stringWithFormat:@"Paste %d lines into the terminal?", check.lines];
+        : [NSString stringWithFormat:@"Paste %d line%@ into the terminal?", check.lines,
+                                     check.lines == 1 ? @"" : @"s"];
     NSString *preview = [[NSString alloc] initWithBytes:check.preview.data()
                                                  length:check.preview.size()
                                                encoding:NSUTF8StringEncoding] ?: @"";

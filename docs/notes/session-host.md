@@ -372,13 +372,40 @@ the lifetime with a 150 ms timer (no renderer, an unsaved document kept and
 then saved, a running command by the marks, a foreground `sleep` in `sh -i`);
 the command line's parsing. Real sockets and shells, under TSan in CI.
 
+### Ids (done, 2026-11-18)
+
+Each connection's Welcome carries an id base in `v`, a multiple of
+`kIdRange` (2^32, SessionProtocol.h), and the renderer takes the ids of
+everything it opens on the host from it: `Client::newId()` gives base + 1,
+base + 2, ..., one counter for documents, terminals and windows. Bases are
+slots 1 to 2^21 - 1, so every id is under 2^53 and the browser page's JSON
+numbers (and Json's doubles) carry it exactly; Json writes every integer
+under 2^53 as its digits. The host gives each slot once, passing over any
+in whose range it holds an id all the same, then (after two million
+connections) the first slot no live renderer has and in whose range no
+document, terminal (dying ones included) or window is held
+(`Host::chooseIdBase`). Ids below 2^32 are in no base's range.
+
+- **What the host holds keeps its id.** A renderer attaching opens a held
+  document or terminal under the id `StateQuery` names; only new things
+  take new ids. A renderer that connects again gets a new base.
+- **Settle after `connect()`**: the base comes in the answer to its Hello.
+  Both apps do (`SessionLink` on GTK and the Mac); `newId()` before the
+  Welcome was taken settles first, and gives 0, never an id, when no host
+  answered (or none had a slot left, or 2^32 ids were used).
+- GTK's documents (`Document`), terminals and windows take `newId()`; the
+  window's host id is mapped from its `Model::Session` id in
+  `SessionLink.cpp`. The Mac's `MCSessionDoc`, host terminals and the
+  session browser's window do too.
+- Nothing persisted holds a host id: sessions keep tabs by path, backups
+  have their own UUIDs, and the save planner's ids last one run.
+- Checks: `host:id-bases` (three renderers through the encoding, slots
+  coming round, the largest base), `host:new-id-before-welcome`,
+  `hostserver:id-bases` (documents and shells of two renderers over the
+  socket) and `sessionweb:big-ids` (the page's JSON).
+
 ### For the GTK and Mac attach steps
 
-- A renderer needs ids that do not clash with the host's: today each app
-  numbers its documents, windows and terminals from 1, which is fine for
-  one renderer in process but not for two on one host. Either the host
-  hands out ids (`doc.open` without one), or each renderer takes a range
-  from its Welcome.
 - Tabs are still reported, not decided (4a's note): a second renderer reads
   `windows` from the state but cannot change them through the host until
   `Model::Window`'s callbacks are data.
@@ -516,7 +543,8 @@ Cancel.
   host, each group's tab on show) every half second when it changed, and
   `windowClosed` when it stops. `Web::Options::window` keeps the state the
   browsers get to that window and its documents, and a `show` of any other
-  document answers `gone`. Window ids start at 1000.
+  document answers `gone`. The window's id is the client's (`newId()`,
+  below).
 - **One window's terminals** (R5, 2026-11-18). Terminals opened while
   the setting is on are the host's (above, "Terminals on the host"), and
   the host does not know which window holds one. The window says, as it

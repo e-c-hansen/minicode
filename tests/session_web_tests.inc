@@ -840,6 +840,30 @@ static void testSessionWeb() {
         CHECK(big.snapshot()["kind"].asString() == "large" && !big.snapshot().has("lines"));
     }
 
+    GROUP("sessionweb:big-ids");
+    {
+        // A renderer's ids reach 2^53 - 1 (SessionProtocol.h, kIdRange):
+        // what the page is sent writes them as exact decimal integers, which
+        // JSON.parse gives back as the same number.
+        const Shared::DocId far = Shared::kMaxId, even = 2000000000000000;
+        Web::DocView v(far, "/p/a.txt");
+        v.apply(Ot::Ops{Ot::Op{0, 0, u"hello\n"}});
+        CHECK(v.snapshot().dump().find("\"id\":9007199254740991,") != std::string::npos);
+        v.takeEdits();
+        v.apply(Ot::Ops{Ot::Op{0, 0, u"x"}});
+        const Json e = v.takeEdits();
+        CHECK(!e.isNull() && e.dump().find("\"id\":9007199254740991,") != std::string::npos);
+        Web::DocView r(even, "/p/b.txt");
+        CHECK(r.snapshot().dump().find("\"id\":2000000000000000,") != std::string::npos);
+        Web::TermView t(far, 20, 4);
+        t.feed("hi");
+        CHECK(t.snapshot().dump().find("\"id\":9007199254740991") != std::string::npos);
+        // And what the page sends back reads as the same id.
+        Json back;
+        CHECK(Json::parse("{\"doc\":9007199254740991}", back));
+        CHECK((Shared::DocId)back["doc"].asInt() == far);
+    }
+
     GROUP("sessionweb:palette");
     {
         // The page's colors are the editor's, resolved: the theme, then the

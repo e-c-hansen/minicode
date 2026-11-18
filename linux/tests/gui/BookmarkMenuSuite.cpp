@@ -263,6 +263,12 @@ MC_GUI_SUITE(bookmark_menu) {
         GCHECK(indexOf(l, "Alpha.url") < 0);
         GCHECK(gtk_widget_get_mapped(browser()->bookButton()));
     });
+    // The popover lays its buttons out a frame or so after it opens: a
+    // click before that went to a 0x0 button (#96, #97).
+    MCGuiWait("Beta_x on screen", 10, [] {
+        GtkWidget* b = modelButton(bookPopover(), "Beta_x");
+        return b && MCGuiOnScreen(b);
+    });
     MCGuiStep("a click on Beta_x", [] {
         GtkWidget* b = modelButton(bookPopover(), "Beta_x");
         GCHECK(b != nullptr);
@@ -276,7 +282,10 @@ MC_GUI_SUITE(bookmark_menu) {
         GCHECK(!bookOpen());
         MCGuiClick(browser()->bookButton());
     });
-    MCGuiWait("open", 10, bookOpen);
+    MCGuiWait("open, Zed on screen", 10, [] {
+        GtkWidget* b = bookOpen() ? modelButton(bookPopover(), "Zed") : nullptr;
+        return b && MCGuiOnScreen(b);
+    });
     MCGuiStep("a Ctrl+click on Zed", [] {
         GtkWidget* b = modelButton(bookPopover(), "Zed");
         GCHECK(b != nullptr);

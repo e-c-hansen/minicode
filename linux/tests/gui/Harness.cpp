@@ -4,8 +4,10 @@
 
 #include "DocumentView.h"
 #include "Editor.h"
+#include "FileTree.h"
 #include "SessionLink.h"
 #include "TerminalDock.h"
+#include "WindowLayout.h"
 #include "../../../tests/GuiRetry.h"
 
 #include <execinfo.h>
@@ -409,6 +411,67 @@ GtkWidget* MCGuiFindButton(GtkWidget* root, const std::string& text) {
     return nullptr;
 }
 
+namespace {
+GtkWidget* treeLabelOf(GtkWidget* root, const std::string& path) {
+    if (!root || !gtk_widget_get_mapped(root)) return nullptr;
+    if (GTK_IS_LABEL(root)) {
+        const char* p = static_cast<const char*>(g_object_get_data(G_OBJECT(root), "minicode-path"));
+        return p && path == p && MCGuiOnScreen(root) ? root : nullptr;
+    }
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* hit = treeLabelOf(c, path)) return hit;
+    return nullptr;
+}
+}  // namespace
+
+GtkWidget* MCGuiTreeRow(const std::string& path) {
+    FileTree* tree = MCGuiApp().tree;
+    return tree ? treeLabelOf(tree->widget(), path) : nullptr;
+}
+
+void MCGuiBringTreeRow(const std::string& path, double timeout) {
+    const std::string name = path.substr(path.find_last_of('/') + 1);
+    MCGuiStep(name + "'s row brought into view in the tree", [path] {
+        MCGuiApp().tree->revealPath(path);
+    });
+    // When it was last asked again, where the row was, and since when.
+    auto asked = std::make_shared<double>(MCGuiNowMs());
+    auto lastY = std::make_shared<double>(-1);
+    auto since = std::make_shared<double>(0);
+    MCGuiWait(name + "'s row on screen, standing still", timeout, [path, asked, lastY, since] {
+        GtkWidget* row = MCGuiTreeRow(path);
+        graphene_point_t in = GRAPHENE_POINT_INIT(0, 0), at;
+        if (!row || !gtk_widget_compute_point(row, MCGuiApp().tree->widget(), &in, &at)) {
+            // revealPath gives up after a couple of seconds; a file written
+            // in the step before may still be on its way from the monitor.
+            if (MCGuiNowMs() - *asked > 1000) {
+                *asked = MCGuiNowMs();
+                MCGuiApp().tree->revealPath(path);
+            }
+            *since = 0;
+            return false;
+        }
+        if (*since == 0 || at.y != *lastY) {
+            *lastY = at.y;
+            *since = MCGuiNowMs();
+            return false;
+        }
+        return MCGuiNowMs() - *since >= 300;
+    });
+}
+
+void MCGuiHideBrowserPane() {
+    MCGuiStep("the browser pane hidden, if an earlier suite left it shown", [] {
+        // The window action, as View > Toggle Browser: a key could go to the
+        // page or the terminal, wherever the keyboard was left.
+        if (MCGuiApp().layout && MCGuiApp().layout->browserShown())
+            g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "togglebrowser", nullptr);
+    });
+    MCGuiWait("the browser pane hidden", 10, [] {
+        return !MCGuiApp().layout || !MCGuiApp().layout->browserShown();
+    });
+}
+
 bool MCGuiTextLaidOut(GtkWidget* textView) {
     if (!textView || !GTK_IS_TEXT_VIEW(textView)) return false;
     GtkTextIter end;
@@ -573,6 +636,7 @@ void noteState() {
 struct World {
     size_t windows = 0;
     int terminals = 0;
+    bool closeAsks = true;   // every window asks before closing a busy terminal
     bool otherOnTop = false;
     std::string settings, keys;
 };
@@ -584,7 +648,10 @@ World lookAtWorld() {
     w.windows = all.size();
 #ifdef MINICODE_ENABLE_TERMINAL
     for (const MCGuiAppWindow& a : all)
-        if (a.termDock) w.terminals += a.termDock->count();
+        if (a.termDock) {
+            w.terminals += a.termDock->count();
+            if (!a.termDock->confirmClose) w.closeAsks = false;
+        }
 #endif
     w.otherOnTop = MCGuiTopWindow() != MCGuiApp().window;
     w.settings = MCGuiReadFile(envOr("MINICODE_SETTINGS"));
@@ -661,6 +728,11 @@ void checkWhatSuiteLeft() {
         const char* title = gtk_window_get_title(MCGuiTopWindow());
         leak(std::string("left another window on top of the app's: \"") + (title ? title : "") + "\"");
     }
+    // A suite may turn the question off while it closes terminals, but must
+    // put it back: terminal_ids did not, and a busy terminal closed unasked in
+    // processes, after it in the soak's shuffled order.
+    if (was.closeAsks && !now.closeAsks)
+        leak("left a window's question before closing a busy terminal off (TerminalDock::confirmClose)");
     if (now.terminals > was.terminals)
         leak("left " + std::to_string(now.terminals) + " terminal tab(s) where it found " +
                  std::to_string(was.terminals),
@@ -789,6 +861,19 @@ void selectSuites() {
         if (wanted.empty() ? s.name[0] == '_' : !wanted.count(s.name)) continue;
         if (skipped.count(s.name)) continue;
         chosen.push_back(&s);
+    }
+    // MC_GUI_IN_ORDER=1: the suites in the order MC_GUI_SUITES names them,
+    // to replay part of a shuffled run (a soak round's log names its order)
+    // up to the suite that failed.
+    if (!envOr("MC_GUI_IN_ORDER").empty() && !wanted.empty()) {
+        std::vector<std::string> named;
+        std::istringstream in(envOr("MC_GUI_SUITES"));
+        for (std::string w; in >> w;) named.push_back(w);
+        auto place = [&named](const Suite* s) {
+            return std::find(named.begin(), named.end(), s->name) - named.begin();
+        };
+        std::stable_sort(chosen.begin(), chosen.end(),
+                         [&place](const Suite* a, const Suite* b) { return place(a) < place(b); });
     }
     // MC_GUI_SHUFFLE=<seed>: the chosen suites in the order the seed gives
     // (tests/GuiRetry.h), the same on every machine, so the soak

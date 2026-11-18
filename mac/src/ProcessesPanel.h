@@ -42,7 +42,8 @@
 @property(nonatomic, readonly, copy) NSString *summaryText;   // "1.8 GB in 14 processes"
 @property(nonatomic, readonly, copy) NSString *helpText;
 // One line per row on show: "G <kind> <title> | <memory>" for a group,
-// "P <depth> <pid> <name> | <memory> <cpu> :<ports> [exited]" for a process.
+// "P <depth> <pid> <name> | <memory> <cpu> :<ports> [exited]" for a process,
+// "X <depth> <n> exited" for the row the exited helpers fold into.
 - (NSArray<NSString *> *)rowDescriptions;
 - (NSInteger)rowForPid:(int)pid;      // -1 when not on show
 - (void)expandAll;

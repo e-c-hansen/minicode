@@ -1,9 +1,9 @@
 // BufferLines.h — what the gutter (Gutter.h) knows of one GtkTextBuffer,
 // linux/PARITY.md item 1.4: where each of its lines starts, kept edit by
 // edit in the core's LineIndex, and the per-file state of the gutter's
-// other lanes: the change bars (QuickDiff.h), which move with the lines as
-// the buffer is edited, the fold lane's source, and the carets besides the
-// insert mark. One is attached to each document's source buffer when the
+// other lanes: the change bars (QuickDiff.h) and the test marks
+// (TestGutter.h), which move with the lines as the buffer is edited, the
+// fold lane's source, and the carets besides the insert mark. One is attached to each document's source buffer when the
 // buffer is made (Document.cpp) and lives as long as the buffer, as its
 // object data, so a tab keeps its lines while another tab is on show and
 // whatever shows the buffer finds them with BufferLines::of. The Mac keeps
@@ -27,6 +27,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <string>
 #include <vector>
 
 #include "LineIndex.h"
@@ -47,6 +48,18 @@ public:
     // one's), or `line` when none starts there: the gutter's walk down the
     // lines on screen jumps over what a fold hides (Folds.h, D8).
     virtual size_t lastHiddenLine(size_t line) const { return line; }
+};
+
+// A test's mark in the gutter's test lane (TestGutter.h): a ▶ to run it, a
+// ring while it runs, a green check or a red cross after.
+enum class TestState { Idle, Running, Passed, Failed };
+struct GutterTest {
+    size_t line = 0;   // 0-based
+    TestState state = TestState::Idle;
+    std::string tip;   // the tooltip: "Run test_parse"
+    bool operator==(const GutterTest& o) const {
+        return line == o.line && state == o.state && tip == o.tip;
+    }
 };
 
 class BufferLines {
@@ -78,6 +91,14 @@ public:
     void setChangeBars(std::vector<QuickDiff::Bar> bars);
     const std::vector<QuickDiff::Bar>& changeBars() const { return bars_; }
 
+    // ---- the test lane (TestGutter.h): whether the gutter shows it for
+    // this buffer (a test file), and a mark beside each test, sorted by
+    // line. The marks move with each edit until the next set (one on lines
+    // an edit took stays on its first line); a whole new text clears them.
+    void setTests(bool lane, std::vector<GutterTest> tests);
+    bool testLane() const { return testLane_; }
+    const std::vector<GutterTest>& tests() const { return tests_; }
+
     // ---- the fold lane (item 1.10): not owned; null for none
     void setFolds(GutterFolds* folds);
     GutterFolds* folds() const { return folds_; }
@@ -101,9 +122,16 @@ private:
     // The change bars after an insertion of newLen characters at pos, on
     // what was line linesBefore.
     void shiftBars(size_t pos, size_t newLen, size_t linesBefore);
+    // The test marks after an edit at `pos` on line `first` that took
+    // `removed` line breaks and added `added`, as the Mac's gutter moves
+    // them: those below move with their lines, the edit's own first line
+    // too when it began at that line's start.
+    void shiftTests(size_t first, bool atLineStart, size_t removed, size_t added);
 
     LineIndex index_;
     std::vector<QuickDiff::Bar> bars_;
+    bool testLane_ = false;
+    std::vector<GutterTest> tests_;
     GutterFolds* folds_ = nullptr;
     std::vector<std::pair<int, std::function<void()>>> listeners_;
     int nextListener_ = 0;

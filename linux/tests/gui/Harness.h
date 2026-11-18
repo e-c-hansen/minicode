@@ -51,7 +51,9 @@
 // its half, the other skipping it), and a name in either list that no suite
 // has fails the run; MC_GUI_SHUFFLE=<seed> plays the chosen suites in an
 // order drawn from the seed, the same on every machine and the Mac's
-// harness (the soak workflow's rounds; tests/GuiRetry.h);
+// harness (the soak workflow's rounds; tests/GuiRetry.h); MC_GUI_IN_ORDER=1
+// plays the named suites in the order named instead, to replay a soak
+// round's order (its log names it) up to the suite that failed;
 // MC_GUI_RETRIES=<n> (CI sets 3) has the wrapper, once the run is over,
 // run each failed suite once more, alone, as a fresh run of this program
 // (its own world and display; MC_GUI_RETRY_OF names it there), its output
@@ -193,6 +195,24 @@ GtkWidget* MCGuiFindLabel(GtkWidget* root, const std::string& text);
 GtkWidget* MCGuiFindButton(GtkWidget* root, const std::string& text);
 // The newest mapped toplevel of this process, the app's or an alert's.
 GtkWindow* MCGuiTopWindow();
+// The newest window's tree row for `path`, its name's label, on screen, or
+// null. The row is known by its path (FileTree keeps it on the label), so a
+// file of the same name in a folder an earlier suite opened (watch/notes.txt
+// beside notes.txt) is never taken for it.
+GtkWidget* MCGuiTreeRow(const std::string& path);
+// Queues what a click on a tree row needs after other suites: a full run
+// leaves the project folder with a hundred entries and folders open, more
+// than the tree shows at once, and its list view makes rows only for what is
+// on screen. The row is revealed (FileTree::revealPath: its folders opened,
+// scrolled to, selected), again while it is not there yet (a file just
+// written arrives from the folder's monitor), and waited for until it stands
+// still (a double-click whose second press lands on the next row is two
+// single clicks).
+void MCGuiBringTreeRow(const std::string& path, double timeout = 10);
+// Queues hiding the newest window's browser pane, when an earlier suite left
+// it shown (the pane takes the editor's width: a PDF's pages narrower, the
+// keyboard maybe in the page), and a wait until it is hidden.
+void MCGuiHideBrowserPane();
 // Whether a GtkTextView has laid out every line of the buffer it shows.
 // After a buffer comes on show GTK lays it out in idle slices, from the
 // top, for seconds when it is big (longer on a loaded machine), and until

@@ -293,7 +293,12 @@ for full-screen programs. Both can be open at once.
   unasked), with Paste and Cancel only; the preview shows controls as
   U+2400 symbols, and when the first is past the first three lines' 30
   characters a line saying where it is, with the 30 characters around it
-  (round 6's defect 4: the question showed none). The question is a
+  (round 6's defect 4: the question showed none). A final line break
+  ends the last line and does not start another (2026-11-18, T2: three
+  copied lines asked "Paste 4 lines" with a false "…"): `lines` and the
+  preview leave that empty line out, "…" only for lines left out, and
+  `breaks` says whether the text sends Return, so one line and its break
+  (asked under "always") is "Paste 1 line" with Paste as One Line. The question is a
   sheet on the grid's window (2026-11-16; a free dialog sat mid-screen
   where the window had been), the paste sent from its handler;
   `askingPaste` while it is up, when another paste beeps. Secure keyboard entry: TerminalView polls termios
@@ -399,7 +404,10 @@ for full-screen programs. Both can be open at once.
   (`MCTerminalExitStatusKey`, `MCTerminalCommandKey`, read before the prompt
   mark clears it): 0 is a check, anything else a cross. Results are kept
   per file and test until an edit that is not a whole new text (a tab
-  switch). GTK and Android have none yet.
+  switch). The GTK port has it too (2026-11-18, `linux/HANDOFF.md`
+  item 96: `linux/src/TestGutter.{h,cpp}`, the marks in each buffer's
+  `BufferLines`, a run matched to its terminal, shell and the
+  integration's count of commands started); Android has none yet.
 - **Links** (Cmd+click; `TermLinks`): resolved against the shell's cwd (OSC 7),
   the window folder, its worktrees and the sessions' scratchpads
   (`AgentIndex::resolveTarget`): one match opens, several get a picker, none

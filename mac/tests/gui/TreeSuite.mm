@@ -9,7 +9,8 @@
 // copies a file from Finder in; Sort By size and date order the rows; the
 // size column shows each file's size; hidden files come and go; a file's
 // icon says what a click opens (a picture, a film, a table, a database,
-// code, text), a folder's stays a folder.
+// code, text), a folder's stays a folder; the names use the sidebar's width
+// after a new file's refresh, with the name column left out of step first.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -77,6 +78,19 @@ NSArray<NSString *> *ListedSince(NSUInteger from, NSString *repo) {
         if ([all[i] isEqualToString:repo] || [all[i] hasPrefix:[repo stringByAppendingString:@"/"]])
             [mine addObject:all[i]];
     return mine;
+}
+
+// How far right the name of the row for `path` reaches, in the sidebar's
+// visible width: the cell the outline gives it and the name field inside.
+// NO when the row is not there.
+BOOL NameReach(EditorController *c, NSString *path, CGFloat *cellRight, CGFloat *nameRight) {
+    const NSInteger row = RowOf(c, path);
+    if (row < 0) return NO;
+    [c.outline layoutSubtreeIfNeeded];
+    *cellRight = NSMaxX([c.outline frameOfCellAtColumn:0 row:row]);
+    MCTreeCell *cell = CellAt(c, path);
+    *nameRight = cell ? NSMaxX([c.outline convertRect:cell.textField.frame fromView:cell]) : 0;
+    return YES;
 }
 
 void Touch(NSString *path, time_t when) {
@@ -445,6 +459,52 @@ MC_GUI_SUITE(tree) {
         MCGuiNote(@"burst listings: %@", [listed componentsJoinedByString:@", "]);
         GCHECK([[NSSet setWithArray:listed] isSubsetOfSet:[NSSet setWithObject:src]]);
         GCHECK(listed.count <= 6);
+    });
+
+    // --- names use the sidebar's width after a refresh (C3, 2026-11-16: a
+    // file added to the folder cut every name off at about 90 points in a
+    // 250-point sidebar). The name column had lost its width (to its
+    // 80-point minimum) while the outline kept the sidebar's, and only
+    // followed changes in that; the reload the new file caused gave every
+    // row a cell of the column's width.
+    __block CGFloat visible = 0;
+    MCGuiStep(@"the name column fills the sidebar; then it is left at its minimum", ^{
+        visible = NSWidth(c.sidebarScroll.contentView.bounds);
+        CGFloat cellRight = 0, nameRight = 0;
+        GCHECK(NameReach(c, file(@"small.txt"), &cellRight, &nameRight));
+        MCGuiNote(@"sidebar %.0f, column %.0f, cell to %.0f, name to %.0f", visible,
+                  c.outline.outlineTableColumn.width, cellRight, nameRight);
+        GCHECK(visible > 150);
+        GCHECK(cellRight >= visible - 40);
+        GCHECK(nameRight >= visible - 45);
+        c.outline.outlineTableColumn.width = c.outline.outlineTableColumn.minWidth;
+    });
+    MCGuiStep(@"a new file at the top", ^{
+        MCGuiWriteFile(file(@"old-latin1.log"), @"x\n");
+    });
+    MCGuiWait(@"old-latin1.log shows", 10, ^BOOL { return RowOf(c, file(@"old-latin1.log")) >= 0; });
+    MCGuiStep(@"every top row's name reaches the sidebar's right edge again", ^{
+        GCHECK(fabs(NSWidth(c.sidebarScroll.contentView.bounds) - visible) < 1);
+        MCGuiNote(@"column %.0f", c.outline.outlineTableColumn.width);
+        for (NSString *name in @[@"small.txt", @"medium.txt", @"old-latin1.log"]) {
+            CGFloat cellRight = 0, nameRight = 0;
+            GCHECK(NameReach(c, file(name), &cellRight, &nameRight));
+            if (cellRight < visible - 40 || nameRight < visible - 45)
+                MCGuiNote(@"%@: cell to %.0f, name to %.0f of %.0f", name, cellRight, nameRight, visible);
+            GCHECK(cellRight >= visible - 40);
+            GCHECK(nameRight >= visible - 45);
+        }
+    });
+    MCGuiStep(@"a narrower sidebar: the column follows it", ^{
+        CGFloat side = NSWidth(c.splitView.subviews.firstObject.frame);
+        [c.splitView setPosition:side - 60 ofDividerAtIndex:0];
+        [c.splitView layoutSubtreeIfNeeded];
+        const CGFloat now = NSWidth(c.sidebarScroll.contentView.bounds);
+        CGFloat cellRight = 0, nameRight = 0;
+        GCHECK(NameReach(c, file(@"small.txt"), &cellRight, &nameRight));
+        MCGuiNote(@"sidebar %.0f, cell to %.0f", now, cellRight);
+        GCHECK(cellRight <= now + 1 && cellRight >= now - 40);
+        [c.splitView setPosition:side ofDividerAtIndex:0];
     });
 
     MCGuiStep(@"close the window", ^{

@@ -190,10 +190,19 @@ std::map<std::string, int> gBefore;
 MC_GUI_SUITE(keys) {
     // An earlier suite may leave an edit unsaved (harness does), and every
     // open below would then ask about it.
-    MCGuiStep("an editor with nothing unsaved", [] {
+    // The accelerators depend on where the keyboard is (a page's and the
+    // terminal's keys only there), and an earlier suite may leave it in the
+    // browser (bookmark_menu, in the soak's shuffled order): the editor
+    // takes it first.
+    MCGuiStep("an editor with nothing unsaved, with the keyboard", [] {
+        MCGuiSetKeyWindow(nullptr);
+        MCGuiFocusKeyWindow();
+        gtk_widget_grab_focus(MCGuiApp().editor->textView());
         if (MCGuiApp().editor->dirty()) MCGuiKey("ctrl+s");
     });
-    MCGuiWait("saved", 10, [] { return !MCGuiApp().editor->dirty(); });
+    MCGuiWait("saved, and the editor has the keyboard", 10, [] {
+        return !MCGuiApp().editor->dirty() && editorHasKeyboard();
+    });
 
     // ---- the tables and what they build
     MCGuiStep("CommandsLinux.cpp's rows and the port's actions agree", [] {

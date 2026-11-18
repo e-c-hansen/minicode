@@ -84,6 +84,9 @@ static NSString *RealPath(NSString *p) {
 @implementation MCWorktreeChange
 @end
 
+@implementation MCAgentTask
+@end
+
 // What git said about one worktree.
 struct WorktreeState {
     int ahead = -1;
@@ -99,6 +102,7 @@ struct WorktreeState {
 @property(nonatomic, readwrite, copy) NSArray<MCAgentWorktree *> *worktrees;
 @property(nonatomic, readwrite, copy) NSString *mainBranch;
 @property(nonatomic, readwrite, copy) NSString *projectsDir, *tmpRoot;
+@property(nonatomic, readwrite, copy) NSArray<MCAgentTask *> *tasks;
 - (void)eventsArrived;
 @end
 
@@ -151,6 +155,7 @@ static void MCAgentFSCallback(ConstFSEventStreamRef stream, void *info, size_t n
         _sessions = @[];
         _scratchpads = @[];
         _worktrees = @[];
+        _tasks = @[];
         AgentIndex::Options opt;
         opt.projectsDir = U8(_projectsDir);
         opt.tmpRoot = U8(_tmpRoot);
@@ -180,6 +185,7 @@ static void MCAgentFSCallback(ConstFSEventStreamRef stream, void *info, size_t n
     _worktrees = @[];
     _scratchpads = @[];
     _mainBranch = nil;
+    _tasks = @[];
     std::string real = U8(_realFolder);
     NSString *folderCopy = [_folder copy], *realCopy = [_realFolder copy];
     // Not / or the home folder: every session on the Mac is inside those.
@@ -512,6 +518,34 @@ static void MCAgentFSCallback(ConstFSEventStreamRef stream, void *info, size_t n
 // ------------------------------------------------------------- lookups
 - (MCAgentWork *)sessionForTranscript:(NSString *)transcript {
     return transcript ? _byTranscript[transcript] : nil;
+}
+
+- (void)addTask:(MCAgentTask *)task {
+    if (!task.path.length) return;
+    self.tasks = [@[task] arrayByAddingObjectsFromArray:self.tasks ?: @[]];
+    self.generation++;
+    [NSNotificationCenter.defaultCenter postNotificationName:MCAgentModelDidChangeNotification
+                                                      object:self];
+    [self refreshWorktrees];
+}
+
+- (NSArray<MCAgentTask *> *)pendingTasks {
+    NSMutableArray<MCAgentTask *> *out = [NSMutableArray array];
+    for (MCAgentTask *t in self.tasks) {
+        NSString *real = RealPath(t.path);
+        NSString *inside = [real stringByAppendingString:@"/"];
+        BOOL found = NO;
+        for (MCAgentWork *s in self.sessions) {
+            NSString *wt = s.worktreePath.length ? RealPath(s.worktreePath) : nil;
+            NSString *cwd = s.cwd.length ? RealPath(s.cwd) : nil;
+            if ([wt isEqualToString:real] || [cwd isEqualToString:real] || [cwd hasPrefix:inside]) {
+                found = YES;
+                break;
+            }
+        }
+        if (!found) [out addObject:t];
+    }
+    return out;
 }
 
 - (MCAgentWorktree *)worktreeAtPath:(NSString *)path {
