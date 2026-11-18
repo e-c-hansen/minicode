@@ -134,10 +134,10 @@ found through that list.
   never started; never start Docker unattended.
 - **GTK on the ThinkPad** (Ubuntu 26.04, GNOME on Wayland; check
   `$WAYLAND_DISPLAY`): `meson test -C build`; `setsid gtk-launch
-  org.minicode.Editor &` then `pgrep -a mutible` (a real window: say so, leave
+  ai.ible.Mutible &` then `pgrep -a mutible` (a real window: say so, leave
   none behind); `systemctl --user list-units --type=scope | grep mutible`
-  (`app-gnome-org.minicode.Editor-*.scope` proves the dock association,
-  `app-mutible-org.minicode.Editor-*.scope` a start from a terminal, a
+  (`app-gnome-ai.ible.Mutible-*.scope` proves the dock association,
+  `app-mutible-ai.ible.Mutible-*.scope` a start from a terminal, a
   nested `vte-spawn-*.scope` the terminal); `journalctl --user --since "-15
   min"`. Real input: a private rootful Xwayland driven by XTest
   (`linux/HANDOFF.md`, "How to work on it"); prefer it to hooks, which passed

@@ -9,7 +9,7 @@
 //   favicon/favicon.ico (16, 32, 48), favicon/favicon.svg, favicon/apple-touch-icon.png
 //   readme/mutible-header-light@2x.png, readme/mutible-header-dark@2x.png, readme/mutible-header.svg
 //   social/mutible-social-1280x640.png
-//   linux/icons/<n>x<n>/org.minicode.Editor.png for 32, 64, 128, 256 and 512
+//   linux/icons/<n>x<n>/ai.ible.Mutible.png for 32, 64, 128, 256 and 512
 //   icon.svg (the 1024 master as SVG) and sheet.png (every size, for review)
 #define MAKEICON_NO_MAIN
 #include "makeicon.m"
@@ -629,7 +629,7 @@ int main(int argc, const char *argv[]) {
         for (int i = 0; i < 5; i++) {
             NSString *d = [out stringByAppendingFormat:@"/linux/icons/%dx%d", lin[i], lin[i]];
             mkdirs(d);
-            writeIcon(lin[i], [d stringByAppendingPathComponent:@"org.minicode.Editor.png"]);
+            writeIcon(lin[i], [d stringByAppendingPathComponent:@"ai.ible.Mutible.png"]);
         }
         writeString([NSString stringWithFormat:@"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1024 1024\" width=\"1024\" height=\"1024\">\n<title>mutible</title>\n%@</svg>\n",
             svgIcon(CGRectMake(100, 100, 824, 824), 1024, YES, YES, @"a")], [out stringByAppendingPathComponent:@"icon.svg"]);

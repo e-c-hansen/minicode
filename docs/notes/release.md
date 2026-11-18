@@ -14,10 +14,13 @@ found through that list.
   or cask, so Homebrew and Obtainium stay on the last full release. Ubuntu
   users get Linux changes only through a release of one kind or the other.
 - `scripts/ppa.sh VERSION [N]` builds the Ubuntu source package (`debian/`,
-  versions like `1.4.12-1~ppa1~resolute1`) in an ubuntu:26.04 container, signs
-  it on the Mac with the gpg key named in `~/.config/minicode/ppa-key-id`, and
+  versions like `1.6.0-1~ppa1~resolute1`) in an ubuntu:26.04 container, signs
+  it on the Mac with the gpg key named in `~/.config/mutible/ppa-key-id` (the
+  old `~/.config/minicode/ppa-key-id` is read while that is missing), and
   uploads it to `ppa:echansen/minicode` (`--dry-run` and `--simulate` send
-  nothing). Setup is in `packaging/PPA.md`. Account `echansen`, key
+  nothing). From 1.6.0 the source package is `mutible`, building `mutible`
+  and `minicode`, a transitional package that moves PPA users over (the PPA
+  keeps its name; `packaging/PPA.md`, "What the packages hold"). Setup is in `packaging/PPA.md`. Account `echansen`, key
   340F7652...1F40 in the Mac's gpg with its passphrase in the Keychain;
   Launchpad builds amd64 about 35 minutes after an upload, and ppa.sh (so
   release.sh too) waits for it (`scripts/ppa-wait.sh VERSION [N]`, the PPA's

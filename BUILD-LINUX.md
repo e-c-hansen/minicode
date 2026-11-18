@@ -1,6 +1,6 @@
-# Building MiniCode on Linux (GTK4)
+# Building mutible on Linux (GTK4)
 
-MiniCode began as a native macOS editor. This is a port of the same editor to
+mutible began as a native macOS editor. This is a port of the same editor to
 Ubuntu Linux using GTK4. It reuses the exact same portable C++ core (the syntax
 highlighter, the Markdown parser, the settings file parser, the comment
 toggle, the folder search and the language server client) that the macOS
@@ -20,14 +20,40 @@ On Ubuntu 26.04 there is no need to build it: a Launchpad PPA has it, and
 apt keeps it up to date.
 
     sudo add-apt-repository ppa:echansen/minicode
-    sudo apt install minicode
+    sudo apt install mutible
 
 The package is built from `debian/` at the top of the repository with every
 panel on, and installs the same launcher and icons as `meson install` below,
 under `/usr`. If you installed a build of your own into `~/.local` before,
 remove that first, or it shadows the package. `packaging/PPA.md` has the
 commands for that, and how the package is made and uploaded. The rest of
-this file is for building MiniCode yourself.
+this file is for building mutible yourself.
+
+## Renamed from minicode in 1.6.0
+
+mutible was called minicode until 1.6.0 (`src/Rename.h` keeps every old
+name it still answers to).
+
+- The command is `mutible`, also installed as `mbl`. `minicode` is still
+  there, as a link to it that says it is now mutible.
+- On its first launch mutible copies `~/.config/minicode`,
+  `~/.local/state/minicode` and `~/.local/share/minicode` (where
+  `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME` and `$XDG_DATA_HOME` put them) to
+  the same folders named `mutible`, when those do not exist yet: settings
+  and keys, sessions and recent folders, backups and the downloaded
+  tectonic. The old folders are left as they were, and a marker,
+  `~/.local/share/mutible/.migrated-from-minicode`, keeps it from running
+  twice.
+- `MINICODE_*` environment variables are still read where the `MUTIBLE_*`
+  name is not set.
+- The app id is `ai.ible.Mutible`, where it was `org.minicode.Editor`, so
+  the launcher and icons have new names and a dock pin of the old one shows
+  nothing: unpin it, start mutible, and pin it again.
+- From the PPA, the `minicode` package is now a transitional one that
+  brings in `mutible` (`sudo apt upgrade`), and can then be removed with
+  `sudo apt remove minicode`. A copy of your own in `~/.local` is not
+  replaced: remove its old files (the list is in `packaging/PPA.md`) and
+  install again as below.
 
 ## What is verified, and what is not
 
@@ -54,7 +80,7 @@ person", after this section, is that list.
 Verified by running it:
 
 - The control channel, part one (item 3.1): the `control` GUI suite runs the
-  real `build/minicode open|window|state|selection` against the app. The
+  real `build/mutible open|window|state|selection` against the app. The
   socket is `<pid>.sock` (0600) in a 0700 folder; `open a.txt:3:6` shows the
   file with the caret there and `--to` selects a range; `state` and
   `selection` answer what is on show; with the keyboard in the editor an
@@ -62,7 +88,7 @@ Verified by running it:
   command, a misspelled field, a wrong type and a line that is not JSON are
   error answers over the raw socket, a cut-short request leaves the app
   answering, `--note`, a missing file and `term` exit 1 with the reason,
-  `state` with no minicode exits 3, and stale sockets (a dead pid, a live
+  `state` with no mutible exits 3, and stale sockets (a dead pid, a live
   pid with no listener) are removed while one with a listener is kept. The
   check fails with the server taken out. Not tested: another user's peer
   refused (one `SO_PEERCRED` comparison; it needs a second user).
@@ -78,7 +104,7 @@ Verified by running it:
   back, watches the 3 s grace (shortened in the check) end and send, and
   checks Send Now, the bar's Accept and Reject and closing the tab, in the
   grace and before it, and the accepted text. The `control` suite runs
-  `minicode diff` as a real client (two files, a file against HEAD in a real
+  `mutible diff` as a real client (two files, a file against HEAD in a real
   repository, the beside-the-user note, a bad `--base`, a missing file, a
   folder); both fail with the feature taken out. Not tested: a 16 MB file
   (the limit is a `stat` comparison), a window closed during the read.
@@ -88,11 +114,11 @@ Verified by running it:
   folder shaped like `/proc` to `ProcFs::Source`, and read the real `/proc`
   where there is one, so every CI job runs them. The `processes` GUI suite
   types `python3 -m http.server 0` into the app's terminal and has
-  `build/minicode procs --json --folder` report it under the terminal with
+  `build/mutible procs --json --folder` report it under the terminal with
   its port, cwd, command line and Pss; a sleep whose parent is gone and whose
   cwd is in the folder is "not started here"; Stop ends one by SIGTERM, the
   shell's child too, and a sleep ignoring SIGTERM by the SIGKILL 3 s later,
-  and refuses minicode; a look's CPU time is bounded on the sampling thread's
+  and refuses mutible; a look's CPU time is bounded on the sampling thread's
   clock; a folder no window shows is answered for. It failed with the client's
   "procs is not on Linux yet" and passes. Part two, the panel: the same suite
   toggles View > Toggle Processes (the `toggleprocesses` window action, no
@@ -107,7 +133,7 @@ Verified by running it:
   other users' processes.
 - Waiting for you (item 3.6): the `attention` GUI suite runs the real client
   with canned hook JSON against the app's terminal (the shell's
-  `MINICODE_TERMINAL_ID` and `MINICODE_PID`, the dot and title count, a real
+  `MUTIBLE_TERMINAL_ID` and `MUTIBLE_PID`, the dot and title count, a real
   key clearing the mark, Ctrl+Alt+W, `hooks --install` twice and onto a
   symlink in the scratch HOME). Not seen on a real desktop.
 - The shell integration (item 3.1, part one of the terminal's half; D10):
@@ -124,7 +150,7 @@ Verified by running it:
   runs the script in a bash reading a pipe, and `zsh:vte` the zsh half
   where /bin/zsh exists. zsh's half has not run here (no zsh on this
   machine or the ThinkPad); the suite runs it where zsh is installed.
-  Part two (same suite, `linux-31-term`): `minicode term --run 'echo hi'`
+  Part two (same suite, `linux-31-term`): `mutible term --run 'echo hi'`
   at the prompt types and enters it visibly and `term-output` shows `hi`
   after `echo hi`; with `sleep 3` running it is refused with "busy running:
   sleep 3" and nothing is typed; Run File while busy says "Not run:" with
@@ -138,10 +164,10 @@ Verified by running it:
 - Reveal and install-skill (items 3.1, 3.5, 3.8; November 2026): the `processes`
   suite checks the row menu's Open localhost:port (the URL handed to the
   browser hook) and Reveal Origin (the terminal asked for, the two notes);
-  `agents` runs Reveal Scratchpad with `$MINICODE_FILE_MANAGER` pointing at a
+  `agents` runs Reveal Scratchpad with `$MUTIBLE_FILE_MANAGER` pointing at a
   recording script and Open Worktree in New Window against a recording hook;
-  `control` runs `minicode install-skill --dir <scratch>` and compares the
-  file with `skills/minicode/SKILL.md` (never the real `~/.claude`). Not
+  `control` runs `mutible install-skill --dir <scratch>` and compares the
+  file with `skills/mutible/SKILL.md` (never the real `~/.claude`). Not
   checked: the real file manager (`GtkFileLauncher` through the portal).
 - The Agents panel and Evidence (item 3.5; the same suite also checks part
   two: a click on a session opens its Evidence page with the final message,
@@ -152,7 +178,7 @@ Verified by running it:
   and Apply to Main brings them into main's checkout; the fixtures are
   listed before and after). Part one: the `agents` GUI suite copies
   `tests/fixtures/claude` into a scratch transcripts folder
-  (`MINICODE_CLAUDE_PROJECTS`, `MINICODE_CLAUDE_TMP`), presses Ctrl+Shift+A for
+  (`MUTIBLE_CLAUDE_PROJECTS`, `MUTIBLE_CLAUDE_TMP`), presses Ctrl+Shift+A for
   real, and checks the sessions newest first with the running one marked,
   the subagent nested, the file groups, a click opening a file in the editor,
   a transcript appended to while shown adding a file, a file deleted
@@ -182,7 +208,7 @@ Verified by running it:
   bring it back; the next note replaces the preview tab and an edited one is
   kept; a note sent while the keyboard is in the editor waits with its tab
   (their caret unmoved, the client says so) and is placed when the tab is
-  shown; `minicode tour` steps with Alt+] and Alt+[ to "2 of 3" and "3 of 3",
+  shown; `mutible tour` steps with Alt+] and Alt+[ to "2 of 3" and "3 of 3",
   stops at the ends, goes back, and the keys do nothing before a tour and
   after its note is closed; `state` names the note. 30 of its checks fail
   with placing switched off. Not tested: the box's look beyond one
@@ -209,7 +235,7 @@ Verified by running it:
   WebSocket client built on the core's frame code and a scratch
   `CLAUDE_CONFIG_DIR` (never `~/.claude`; the wrapper sets it). The lock
   file is mode 0600 with the token, the folder and our pid, a stale one of
-  minicode's own (a dead pid) is removed at start and another IDE's stays; a
+  mutible's own (a dead pid) is removed at start and another IDE's stays; a
   wrong token, no token and a Host off the loopback are refused with
   nothing said first; initialize, ide_connected and tools/list (no
   saveDocument or executeCode); selection_changed on a real selection
@@ -226,7 +252,7 @@ Verified by running it:
   Fails (checked once) with the link never started. Not tested: a real
   Claude Code, the per-hunk clicks of a diff (item 3.2's suite has them),
   the lock file removed at exit.
-- Install hints (item 2.8): the `install_hints` GUI suite, with `MINICODE_INSTALL_HAVE=uv`,
+- Install hints (item 2.8): the `install_hints` GUI suite, with `MUTIBLE_INSTALL_HAVE=uv`,
   shows the bar for a missing Python server with `uv tool install basedpyright`,
   Copy, Run in Terminal typing it without Return, the bar going when the
   server appears, x and Don't Show Again; and Format Document's note for a
@@ -277,7 +303,7 @@ Verified by running it:
   with a compositor, driven with real key presses and mouse drags from
   `xdotool` and checked from screenshots. `linux/dev/` has that setup
   (`linux/dev/gtk-dev.sh`, see its README):
-  - Ctrl+, creates `~/.config/minicode/settings.conf` with every setting
+  - Ctrl+, creates `~/.config/mutible/settings.conf` with every setting
     commented out and opens it, with each color shown as a swatch. Clicking a
     swatch opened the GTK color dialog then, and the choice was written into
     the line, uncommented, and saved. Since item 8 of `linux/HANDOFF.md` it
@@ -310,7 +336,7 @@ Verified by running it:
   build: a keystroke at line 25,000 takes 0.2 ms; typing `/*` takes 6 ms, the
   lines on screen recolor at once and the rest in the background, with no
   main loop turn longer than 11 ms. A real clipboard copy and paste passed in
-  three runs and delivered nothing in two, while other MiniCode windows were
+  three runs and delivered nothing in two, while other mutible windows were
   running and writing the clipboard; Wayland only gives the clipboard to the
   focused window, so treat that one as unconfirmed.
 - The shell restarts in place when it exits. Confirmed by sending `exit` to the
@@ -340,7 +366,7 @@ Verified by running it:
   removed, opened files through the same path a click in the tree takes and
   made 27 checks, all passing:
   - png, jpg, bmp, ico, tiff and webp show in the editor's slot with the
-    pixel size in the title (`MiniCode — icon.png  256 × 256`), and an
+    pixel size in the title (`mutible — icon.png  256 × 256`), and an
     animated GIF advances frames. A small image is drawn at its own size,
     not enlarged, which a snapshot of the widget confirmed.
   - A PDF shows in the slot with the page count in the title (`1 page`,
@@ -385,8 +411,8 @@ Verified by running it:
     AAC), h264.mov, mjpeg.avi, theora.ogv, vp8.webm, vp9.mkv, and aac,
     flac, m4a, mp3, ogg, opus and wav. A video opens paused on its first
     frame with GtkVideo's play button over it, and the title reads
-    `MiniCode — vp8.webm  640 × 360, 0:06`; audio shows its name over
-    always-visible controls, titled `MiniCode — tone.mp3  0:05`. Ctrl Shift
+    `mutible — vp8.webm  640 × 360, 0:06`; audio shows its name over
+    always-visible controls, titled `mutible — tone.mp3  0:05`. Ctrl Shift
     Space from the tree played each one: about 71% of the video's pixels
     changed between captures 0.7 s apart, and the audio page's time and
     scale moved. With no sound device, GStreamer played silently rather
@@ -395,7 +421,7 @@ Verified by running it:
     removed), everything played except h264.mp4, h264.mov, tone.m4a and
     tone.aac, which show "Cannot play", the two packages to install, and
     GStreamer's own "Your GStreamer installation is missing a plug-in."
-    Installing libav while MiniCode ran did not help until it was
+    Installing libav while mutible ran did not help until it was
     restarted, which the message says. A file of random bytes named .mp4
     says "Could not determine type of stream." With `GTK_MEDIA=none` (GTK
     with no media backend) a video shows the message about GTK's GStreamer
@@ -429,7 +455,7 @@ Verified by running it:
     was not checked in a container.
 
 - Zoom for PDFs and the LaTeX preview (September 2026, on the ThinkPad under
-  GNOME Wayland, display at 125%). A temporary `MINICODE_ZOOMTEST` hook,
+  GNOME Wayland, display at 125%). A temporary `MUTIBLE_ZOOMTEST` hook,
   since removed, ran under its own application id (`org.minicode.ZoomTest`)
   with a scratch home, config and tectonic cache, and made 62 checks, all
   passing. It generated a 100-page PDF with a landscape page 50 and a red
@@ -470,7 +496,7 @@ Verified by running it:
 
 - Data safety and the file tree actions (September 2026, on the ThinkPad).
   These were driven from inside the running app by a temporary
-  `MINICODE_FILETEST` hook, since removed, which ran 50 checks against a
+  `MUTIBLE_FILETEST` hook, since removed, which ran 50 checks against a
   scratch project, all passing. It activated the window actions, pressed the
   alert buttons by emitting their `clicked` signal, typed names into the name
   popover's entry, and fired the tree's right-click gesture at a row's
@@ -525,7 +551,7 @@ Verified by running it:
   in separate runs:
   - With no tectonic anywhere, opening `notes.tex` shows the message and a
     Download… button. Pressing it (its real "clicked" signal) downloaded the
-    pinned release into `~/.local/share/minicode/bin` (that copy is now
+    pinned release into `~/.local/share/mutible/bin` (that copy is now
     installed on the ThinkPad), byte for byte the published build, left no
     archive behind, and typeset the document. With a stand-in `curl` that
     writes junk, the download is refused for its checksum, nothing is
@@ -573,10 +599,10 @@ Verified by running it:
       `.notes.tex.2…`, `.notes.ltx.2…`), and none was left afterwards. Both
       previews showed their own title page.
     - Renaming the document's folder while tectonic ran (a document made
-      slow on purpose): the build before the fix left `.notes.minicode.tex`
+      slow on purpose): the build before the fix left `.notes.mutible.tex`
       in the renamed folder, the fixed one left nothing.
-    - With `/tmp/minicode-latex-root` made first by another user and open to
-      all, the output went to a fresh 0700 `/tmp/minicode-latex-XXXXXX`
+    - With `/tmp/mutible-latex-root` made first by another user and open to
+      all, the output went to a fresh 0700 `/tmp/mutible-latex-XXXXXX`
       instead.
     - A double-click on "review" still opened "Editing list item" with
       `Ask for a review`, so SyncTeX finds the renamed sibling.
@@ -609,7 +635,7 @@ Verified by running it:
   - A Python file said "No Python language server found" (none is
     installed); a PNG got no server and an empty status.
   - Closing the window sent shutdown and exit (both in the
-    `MINICODE_LSP_LOG` traffic), the app exited on its own, the whole run
+    `MUTIBLE_LSP_LOG` traffic), the app exited on its own, the whole run
     took under 5 s, and afterwards `pgrep -a clangd` found nothing and the
     server's pid was gone. Every run of the hook ended the same way.
   - The first run found a real bug: the completion and hover popovers,
@@ -624,14 +650,14 @@ Verified by running it:
     scrolling to the caret when its slot was switched.
 - The smaller gaps, item 8 of `linux/HANDOFF.md` (September 2026, on the
   ThinkPad under GNOME Wayland, GTK 4.22.4, VTE 0.84, clangd 21, tectonic
-  0.17). A temporary `MINICODE_ITEM8TEST` hook, since removed, ran inside the
+  0.17). A temporary `MUTIBLE_ITEM8TEST` hook, since removed, ran inside the
   real app under its own application id, with scratch `HOME`, config, cache
   and settings, `GSETTINGS_BACKEND=memory` (the color chooser writes its
   custom colors to GSettings), and a scratch copy of the tectonic cache. It
   activated the window and application actions, set the find bar's text,
   emitted the swatch's click gesture, pressed alert buttons, and wrote files
   from outside. 81 checks, all passing, with no GTK criticals or warnings
-  from MiniCode in the log and no clangd, tectonic or MiniCode left after.
+  from mutible in the log and no clangd, tectonic or mutible left after.
   The one warning in the log is WebKit's web process failing to release
   its bus name as the app exits.
   - Previous File: with no history it opens nothing; main.cpp then vec.h,
@@ -657,8 +683,8 @@ Verified by running it:
     running) went with it: no tectonic afterwards and no hidden sibling.
     The terminal, browser and Find in Folder panel it had open were torn
     down without a warning.
-  - A second `minicode sub` run from outside opened a new window on `sub`,
-    and `minicode sub/plain.txt` opened the file in that window rather than
+  - A second `mutible sub` run from outside opened a new window on `sub`,
+    and `mutible sub/plain.txt` opened the file in that window rather than
     a third. Ctrl+Q at the end closed every window and the process exited.
   - The terminal's keys: with the terminal focused, the plain Ctrl
     accelerators and F12 are all unbound (14 checked: Ctrl+B, F, H, I, O,
@@ -669,7 +695,7 @@ Verified by running it:
   - Reload on external change: a 300-line file changed on disk in its first
     and 290th lines reloaded by itself, stayed clean, and kept the caret
     (line 151, column 4) and the scroll position (1,500 pixels) exactly; so
-    did a whole-file rewrite through an atomic rename. MiniCode's own save
+    did a whole-file rewrite through an atomic rename. mutible's own save
     changed nothing. With unsaved edits, a change on disk asked Keep Mine or
     Reload and replaced nothing before the answer; Reload took the disk's
     text and left the buffer clean, Keep Mine kept the edits, the same
@@ -725,7 +751,7 @@ Verified by running it:
   headers installed, and none are needed). Those are real X events, so
   GTK's gestures, their claiming, double-click counting and the accelerator
   matching all ran as they do for a mouse and keyboard. A temporary
-  `MINICODE_TREETEST` hook, under the application id
+  `MUTIBLE_TREETEST` hook, under the application id
   `org.minicode.TreeTest` and since removed, answered over a FIFO with the
   state (caret, selection, the lines in the visible rect, the tree's rows
   and selection, the focus) and each widget's position, and rendered the
@@ -812,7 +838,7 @@ Verified by running it:
   against scratch repositories in the container's `/tmp`, identity given
   through `GIT_AUTHOR_*` and `GIT_COMMITTER_*` with `GIT_CONFIG_GLOBAL` set to
   `/dev/null`. The panel logs what it shows with
-  `G_MESSAGES_DEBUG=minicode-git`, which is how the rows and graph were
+  `G_MESSAGES_DEBUG=mutible-git`, which is how the rows and graph were
   read back.
   - The clone was 2 ahead and 1 behind its upstream, with a merged feature
     branch, an annotated tag, a remote-only branch and a local branch. The
@@ -943,7 +969,7 @@ Verified by running it:
   clicks. Ctrl Shift P and F1 list the commands with their keys, only those
   whose action is enabled; a fuzzy query ranks Toggle Terminal and Show
   Hidden Files first and Enter runs them, and the command run last comes
-  first next time, read from `$XDG_STATE_HOME/minicode/palette.json`.
+  first next time, read from `$XDG_STATE_HOME/mutible/palette.json`.
   Escape, a click outside, or running a row gives the keyboard back, to the
   editor or to the find bar with its selection. Ctrl P lists the folder's
   files off the main thread, dotfiles in and node_modules out, and opens
@@ -1005,7 +1031,7 @@ Verified by running it:
   `linux/PARITY.md` item 1.11), by the `zoom`, `word_wrap`, `go_back`, and
   `maximize` GUI suites. Ctrl equals, Ctrl minus, and Ctrl with keypad 0
   zoom the editor and its Markdown page a point at a time, kept across
-  launches in `$XDG_STATE_HOME/minicode/zoom.json`; the same keys zoom a
+  launches in `$XDG_STATE_HOME/mutible/zoom.json`; the same keys zoom a
   PDF while one shows, the browser's page while it has the keyboard, and
   only the terminals while a terminal has it (`tput cols` read fewer
   columns). Source wraps by default and Alt Z turns that over for the
@@ -1039,21 +1065,21 @@ Verified by running it:
   to 60 ms of CPU at most, against 18.2 s before, and a listing that lands
   while the button is down no longer opens the wrong file. The owner's
   freeze itself was not reproduced: none of their folders is that large.
-- `minicode` from a terminal (November 2026, `linux/PARITY.md` R2), by the
-  `detach` GUI suite, which runs the real `build/minicode` on
+- `mutible` from a terminal (November 2026, `linux/PARITY.md` R2), by the
+  `detach` GUI suite, which runs the real `build/mutible` on
   pseudo-terminals with `/bin/sh` as the shell, on the checks' Xvfb and a
-  session bus of its own. `minicode <folder>` returned 0 in under half a
+  session bus of its own. `mutible <folder>` returned 0 in under half a
   second while its window stayed up, in a session of its own with no
   controlling terminal and `/dev/null` on its standard streams; it asked
-  systemd (answered by the check) for `app-minicode-org.minicode.Editor-<pid>.scope`
+  systemd (answered by the check) for `app-mutible-ai.ible.Mutible-<pid>.scope`
   and carried on when refused; closing the terminal's master and sending
-  SIGHUP to its session left it running. A second `minicode notes.txt`
+  SIGHUP to its session left it running. A second `mutible notes.txt`
   returned 0 and the running window showed the file. Started with no
   terminal, as the desktop entry starts it, it did not fork.
-  `minicode --foreground` held the terminal in its session until the
+  `mutible --foreground` held the terminal in its session until the
   hang-up closed it, and `--version` and `-h` printed and returned.
 - The time to a window (November 2026, `linux/PARITY.md` item R3), by the
-  `startup` GUI suite on a private Xvfb and by `MINICODE_STARTUP_LOG=1`
+  `startup` GUI suite on a private Xvfb and by `MUTIBLE_STARTUP_LOG=1`
   runs on `~/minicode`: a window opening with the terminal and the browser
   hidden starts no shell and no WebKit process, the language server for a
   session's tab starts after the first frame, and both panes work once
@@ -1288,7 +1314,7 @@ re-investigates them.
    editor (`linux/HANDOFF.md`, item 18).
 
 4. **GtkTextTag setup and CSS.** The tag properties and the
-   `.minicode-editor text { ... }` node selector are all correct; the editor and
+   `.mutible-editor text { ... }` node selector are all correct; the editor and
    Markdown preview render with the intended VS Code dark palette.
 
 ## What needs a person
@@ -1301,21 +1327,21 @@ about an hour; what the work before November left unchecked is under "Not
 verified" above. Write down anything that does not hold, with what you
 saw.
 
-First quit every minicode, the packaged one too (a second `minicode` hands
+First quit every mutible, the packaged one too (a second `mutible` hands
 its folder to the one already running), build main (`meson compile -C
 build` in `linux/`, set up as in "Build with Meson" below), and keep
 scratch files in a folder of their own, such as `~/mc-check`.
 
 ### Starting it (R2, R3)
 
-- [ ] In GNOME Terminal, from `linux/`, run `./build/minicode ~/minicode`.
+- [ ] In GNOME Terminal, from `linux/`, run `./build/mutible ~/minicode`.
   The prompt comes back at once, and the window is up in well under a
   second.
-- [ ] While it runs, `systemctl --user list-units 'app-minicode-*'` lists
-  one `app-minicode-org.minicode.Editor-<pid>.scope`, loaded and active.
+- [ ] While it runs, `systemctl --user list-units 'app-mutible-*'` lists
+  one `app-mutible-ai.ible.Mutible-<pid>.scope`, loaded and active.
 - [ ] Close that GNOME Terminal window: it asks nothing about a running
-  process, and minicode stays open.
-- [ ] Quit minicode, run `dev/startup-times.sh build/minicode ~/minicode`
+  process, and mutible stays open.
+- [ ] Quit mutible, run `dev/startup-times.sh build/mutible ~/minicode`
   from `linux/` (it opens and closes the window three times for each of
   GTK's four renderers), and keep what it prints: what the GPU adds to the
   first frame (`linux/HANDOFF.md`, item 24).
@@ -1389,7 +1415,7 @@ Displays.
   part of a long line.
 - [ ] Focus on Folder (`linux/HANDOFF.md` item 94): right click a folder
   two levels down in the tree and choose Focus on Folder. The row above
-  the tree reads like "minicode › linux › src", the last part bold, a ×
+  the tree reads like "mutible › linux › src", the last part bold, a ×
   at its right, a thin line under it; the folders above dim, underlined
   with a pointing hand under the pointer. Narrow the sidebar until the
   middle parts give way to "…". Click a part, then the ×, and see the
@@ -1446,7 +1472,7 @@ Displays.
   knows the packages installed there; Edit > Ask Again About This Folder's
   Tools brings the question back.
 - [ ] How the bar under the tabs, the question, and a formatter's note by
-  the caret look, and that Ctrl Shift I reaches minicode with IBus running.
+  the caret look, and that Ctrl Shift I reaches mutible with IBus running.
 
 ### Completion and snippets (item 2.5)
 
@@ -1467,19 +1493,19 @@ Displays.
   theirs, and scrolling a long file painting lines as they come in.
 ### The control channel (item 3.1, part one)
 
-- [ ] From a real terminal under GNOME: `minicode open file:12:3` while the
+- [ ] From a real terminal under GNOME: `mutible open file:12:3` while the
   app runs raises nothing it should not and puts the caret there; typing in
-  the editor meanwhile keeps the keyboard. `minicode state --pretty` and
-  `minicode selection` with a real selection. `minicode open file` with no
-  minicode running starts the app, waits for its socket and opens the file.
-  The socket is under `/run/user/<uid>/minicode`.
+  the editor meanwhile keeps the keyboard. `mutible state --pretty` and
+  `mutible selection` with a real selection. `mutible open file` with no
+  mutible running starts the app, waits for its socket and opens the file.
+  The socket is under `/run/user/<uid>/mutible`.
 
 ### The shell integration (item 3.1; D10)
 
 - [ ] The owner's own shell setup: their `~/.bashrc` (prompt, PROMPT_COMMAND
   from tools such as direnv, starship or atuin, history settings) and, if
   they use zsh, their `.zshrc` and plugins, in the app's terminal: the
-  prompt, history and keys as in GNOME Terminal, and `minicode state`
+  prompt, history and keys as in GNOME Terminal, and `mutible state`
   saying `busy` while a command runs and `false` at the prompt.
 
 ### Symbols and folding ranges from the servers (items 2.12 and 2.13)
@@ -1559,29 +1585,29 @@ that are files, databases made with the C API) on Xvfb. The details are in
   terminal focused; the bar finds in the scrollback, steps with Enter, and
   Escape returns the keyboard. Clear Terminal (palette, no key) clears the
   screen and keeps the scrollback. Up and Down in a lone pane resize the dock.
-- [ ] Waiting dots per terminal (item 63): run `minicode hooks --install`
+- [ ] Waiting dots per terminal (item 63): run `mutible hooks --install`
   yourself, start Claude Code in two terminal tabs and a split, and see the
   dot (" ●") and the done mark (" ✓") on the right tab, Next Waiting Terminal
-  landing on it, and `minicode state` listing each terminal with its own id.
+  landing on it, and `mutible state` listing each terminal with its own id.
 
 ### Sessions and losing work
 
 - [ ] The Claude Code IDE link (item 3.9): turn on View > Claude Code IDE
   Link, start the real Claude Code in the window's folder, run /ide and
-  pick minicode; select some lines and see them in Claude's footer; ask it
+  pick mutible; select some lines and see them in Claude's footer; ask it
   to open a file and to change one (with Diff tool set to auto in /config)
   and accept and reject a diff in the tab. Needs the owner's Claude Code
   login; no agent runs it.
 - [ ] Logout: with tabs open on a folder, one with unsaved typing, log out
-  of GNOME and back in, and start minicode on that folder. The tabs come
+  of GNOME and back in, and start mutible on that folder. The tabs come
   back at their places, and the unsaved text comes back unsaved, with the
-  file on disk as it was. Note whether the logout waited on minicode or
+  file on disk as it was. Note whether the logout waited on mutible or
   asked anything.
 - [ ] A crash: type in a tab without saving, wait two seconds, find
-  minicode's pid with `pgrep -a minicode`, and `kill -SEGV` it. Start
-  minicode again: a window on that folder opens with the text back unsaved.
+  mutible's pid with `pgrep -a mutible`, and `kill -SEGV` it. Start
+  mutible again: a window on that folder opens with the text back unsaved.
 - [ ] Last, a power loss: the same, but hold the power button until the
-  machine is off instead of killing minicode, then boot and start it.
+  machine is off instead of killing mutible, then boot and start it.
 
 ## Install the dependencies
 
@@ -1612,11 +1638,11 @@ Notes on package names, which drift between Ubuntu versions:
   `poppler-glib`). Without it a PDF shows the "Cannot display" message, and
   a `.tex` file opens as highlighted source, with no LaTeX preview.
 - The LaTeX preview typesets with [tectonic](https://tectonic-typesetting.github.io/),
-  a separate program, not a build dependency. MiniCode uses `MINICODE_TECTONIC`,
-  then `~/.local/share/minicode/bin/tectonic`, then one on your PATH, and if
+  a separate program, not a build dependency. mutible uses `MUTIBLE_TECTONIC`,
+  then `~/.local/share/mutible/bin/tectonic`, then one on your PATH, and if
   there is none the preview offers to download the official 0.17.0 build
   (about 10 MB, checked against its published checksum) into
-  `~/.local/share/minicode/bin`. It needs `curl` or `wget` and `tar` for that.
+  `~/.local/share/mutible/bin`. It needs `curl` or `wget` and `tar` for that.
 
 - Video and audio play through GTK's own media support, which is GStreamer,
   so they add no build dependency. On Ubuntu 26.04 GTK's GStreamer backend
@@ -1631,8 +1657,8 @@ Notes on package names, which drift between Ubuntu versions:
       sudo apt install gstreamer1.0-libav
 
   A file GStreamer has no decoder for shows a message naming these packages
-  in place of the player. GStreamer reads its plugin list when MiniCode
-  starts, so restart MiniCode after installing one.
+  in place of the player. GStreamer reads its plugin list when mutible
+  starts, so restart mutible after installing one.
 
 If you only install `libgtk-4-dev`, the core viewer still builds, images
 included. The terminal, the browser and the PDF viewer are compiled out
@@ -1644,7 +1670,7 @@ automatically when their libraries are absent.
     meson setup build
     meson compile -C build
     meson test -C build
-    ./build/minicode ~/some/project
+    ./build/mutible ~/some/project
 
 The GUI checks are a suite of their own, which plain `meson test` leaves out:
 `meson test -C build --suite gui` runs the whole app on a private Xvfb with
@@ -1681,7 +1707,7 @@ get the core viewer up quickly.
 
 ## Install it as a real desktop app
 
-Building leaves the binary in `linux/build`. To get `minicode` on your PATH and
+Building leaves the binary in `linux/build`. To get `mutible` on your PATH and
 a launcher in the app grid (so it can be pinned to the dock), install into your
 home prefix:
 
@@ -1694,13 +1720,16 @@ home prefix:
 debugger, which would make the installed binary 17 MB instead of about 1 MB.
 Keep them (drop `--strip`) only if you want readable crash traces.
 
-That installs three things:
+That installs:
 
-- `~/.local/bin/minicode` — the binary. Ubuntu already puts `~/.local/bin` on
-  the PATH for login shells.
-- `~/.local/share/applications/org.minicode.Editor.desktop` — the launcher.
-- `~/.local/share/icons/hicolor/*/apps/org.minicode.Editor.png` — the icon, at
+- `~/.local/bin/mutible` — the binary, with `mbl` and `minicode` beside it
+  as links to it. Ubuntu already puts `~/.local/bin` on the PATH for login
+  shells.
+- `~/.local/share/applications/ai.ible.Mutible.desktop` — the launcher.
+- `~/.local/share/icons/hicolor/*/apps/ai.ible.Mutible.png` — the icon, at
   five sizes, extracted from the macOS `resources/AppIcon.icns`.
+- `~/.local/share/mutible/` — the terminal's browser script, the bash and
+  zsh integrations, and the Claude Code skill.
 
 Then refresh the caches, or log out and back in:
 
@@ -1708,13 +1737,13 @@ Then refresh the caches, or log out and back in:
     gtk4-update-icon-cache -f -t ~/.local/share/icons/hicolor
 
 The launcher, the icons, and the GTK application id are all named
-`org.minicode.Editor` on purpose. A Wayland compositor matches a window back to
+`ai.ible.Mutible` on purpose. A Wayland compositor matches a window back to
 its launcher by application id, so if those names drift apart the dock shows a
 second, generic icon for the running window instead of lighting up the pinned
 one.
 
 The `Exec=` line uses the absolute path to the binary rather than bare
-`minicode`. GNOME starts desktop entries from the systemd user session, whose
+`mutible`. GNOME starts desktop entries from the systemd user session, whose
 PATH does not reliably include `~/.local/bin`.
 
 To pin it: launch it once, then right-click its dock icon and choose "Pin to
@@ -1722,14 +1751,14 @@ Dash". The equivalent from a shell is
 
     gsettings set org.gnome.shell favorite-apps \
         "$(gsettings get org.gnome.shell favorite-apps \
-           | sed "s/]$/, 'org.minicode.Editor.desktop']/")"
+           | sed "s/]$/, 'ai.ible.Mutible.desktop']/")"
 
 Installing to `/usr/local` with `sudo meson install --strip` works the same way and puts
 the app in every user's menu.
 
 ### Sudden second copy of the app?
 
-`minicode` is a single-instance GApplication, so launching it again while it is
+`mutible` is a single-instance GApplication, so launching it again while it is
 running does not start a second process. It does still do what you asked:
 the argument is forwarded to the running instance, which opens a new window on
 that folder, or raises the window that already has it open and shows the file
@@ -1740,11 +1769,11 @@ closes.
 
 ## Running
 
-    ./build/minicode [path]
+    ./build/mutible [path]
 
 The path can be a directory or a single file. A directory becomes the root of
 the sidebar. A file is opened in the editor, with the sidebar rooted at the
-directory containing it, so `minicode notes/todo.md` shows the file and its
+directory containing it, so `mutible notes/todo.md` shows the file and its
 neighbours without you having to name the folder separately. Markdown opens
 rendered, the same as clicking it in the sidebar. With no argument at all it
 opens the current working directory.
@@ -1755,10 +1784,10 @@ an instance is already running. A path that does not exist reports
 sidebar opens on the parent directory so a mistyped filename still lands in the
 right place.
 
-Typed in a terminal, `minicode` gives the terminal back once its window is
+Typed in a terminal, `mutible` gives the terminal back once its window is
 up, in a session of its own, so closing the terminal leaves it open, as on
 the Mac and as VS Code's `code` does. Its output then goes nowhere, unless
-you sent it to a file. `minicode --foreground` keeps it in the terminal,
+you sent it to a file. `mutible --foreground` keeps it in the terminal,
 with its output there, until it quits; `-h` lists the options and `-v`
 prints the version. The Mac's `-n` and `-r` are refused, since the port has
 neither. Started from the desktop's launcher, it does not fork at all.
@@ -1768,13 +1797,13 @@ tabs above it, with a status bar along the bottom. When shown, the browser
 sits right of the editor and the terminal below both, across the whole
 width, as on the Mac.
 
-To see where the time to a window goes, run it with `MINICODE_STARTUP_LOG=1`
+To see where the time to a window goes, run it with `MUTIBLE_STARTUP_LOG=1`
 (such a run stays in the terminal):
 each phase of the start is printed to the terminal with the time since the
 program began and the CPU time it took, from GTK's own start to the first
 frame drawn. `linux/dev/startup-times.sh BINARY [FOLDER]` does this three
 times for each of GTK's renderers and prints the phases (quit every other
-minicode first; `linux/HANDOFF.md`, item 24).
+mutible first; `linux/HANDOFF.md`, item 24).
 
 ## Keyboard shortcuts
 
@@ -1783,10 +1812,10 @@ The keys are the Linux column of the table in `docs/REFERENCE.md`
 beside the Mac's in `src/Commands.cpp`, which builds the menu bar, the accelerators, the
 file tree's keys and the shortcut hints, and a core test holds the reference's
 column to it. They follow the Mac's set by `linux/PARITY.md`'s rule D1: VS
-Code's Linux key for a feature VS Code has, minicode's own Shift Command keys
+Code's Linux key for a feature VS Code has, mutible's own Shift Command keys
 as Ctrl Shift with the same letter, and its Command keys as Ctrl unless VS
-Code's Linux keys use them for something else. `~/.config/minicode/keys.conf`
-(or `$MINICODE_KEYS`) changes them as on the Mac, in the same notation but
+Code's Linux keys use them for something else. `~/.config/mutible/keys.conf`
+(or `$MUTIBLE_KEYS`) changes them as on the Mac, in the same notation but
 with ctrl, alt, and shift only; Edit > Keyboard Shortcuts… writes it the
 first time with every command the port has, commented out, and the menus,
 the hints and the status bar follow it as it is saved.
@@ -1804,7 +1833,7 @@ Path.
 
 ## The settings file
 
-The settings file (Ctrl+,) is the same `~/.config/minicode/settings.conf` the
+The settings file (Ctrl+,) is the same `~/.config/mutible/settings.conf` the
 macOS build reads (it follows `$XDG_CONFIG_HOME`). Every panel's background,
 opacity and text color work the same way, with two differences: on Linux the
 title bar settings also color the menu bar, and `window.blur` is ignored.
