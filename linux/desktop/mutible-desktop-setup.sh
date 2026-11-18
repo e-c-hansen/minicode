@@ -27,6 +27,8 @@
 #      getty and starts the session again whenever it ends, 2 s later (a
 #      session that ends within 30 s of starting three times running, a
 #      crash loop, leaves a text shell on tty1 instead);
+#      It also adds brightnessctl's udev rule (the video group may set the
+#      backlight) and puts NAME in the video group;
 #   4. disables getty@tty1.service (noting that it was enabled) and enables
 #      mutible-desktop.service. Nothing starts until the next boot, or now
 #      with --start (refused from tty1 itself, whose login it would end).
@@ -46,6 +48,7 @@ PAM=/etc/pam.d/mutible-desktop
 DEFAULTS=/etc/default/mutible-desktop
 UNIT=/etc/systemd/system/mutible-desktop.service
 UNIT_NAME=mutible-desktop.service
+BACKLIGHT_RULE=/etc/udev/rules.d/90-mutible-desktop-backlight.rules
 PPA_FILE=/etc/apt/sources.list.d/mutible-desktop-ppa.sources
 PPA_URL=https://ppa.launchpadcontent.net/echansen/minicode/ubuntu
 PPA_FINGERPRINT=4EC31F514321C71F5B47A5218919EF5B37EEFF40
@@ -176,7 +179,7 @@ if [ "$UNDO" = 1 ]; then
         note "not installed: $UNIT"
     fi
     say "step 2: the session's files"
-    for f in "$UNIT" "$PAM" "$SESSION"; do
+    for f in "$UNIT" "$PAM" "$SESSION" "$BACKLIGHT_RULE"; do
         if [ -e "$f" ]; then run rm -f "$f"; else note "already gone: $f"; fi
     done
     [ -d "$LIB" ] && run rmdir --ignore-fail-on-non-empty "$LIB"
@@ -188,6 +191,10 @@ if [ "$UNDO" = 1 ]; then
         fi
     fi
     run systemctl daemon-reload
+    who=$(state_get user)
+    if [ "$(state_get video-group-added)" = yes ] && [ -n "$who" ] && id -nG "$who" 2>/dev/null | grep -qw video; then
+        run gpasswd -d "$who" video
+    fi
     say "step 3: tty1's text login"
     if [ "$(state_get getty-tty1)" = enabled ] || [ ! -r "$STATE" ]; then
         run systemctl enable getty@tty1.service
@@ -232,6 +239,10 @@ if [ "$UNDO" = 1 ]; then
         fi
     else
         note "not running"
+        if systemctl is-enabled --quiet getty@tty1.service 2>/dev/null &&
+           ! systemctl is-active --quiet getty@tty1.service 2>/dev/null; then
+            run systemctl start getty@tty1.service
+        fi
     fi
     say "done: the machine is as it was, but for the packages listed above"
     exit 0
@@ -317,10 +328,15 @@ before=$(dpkg-query -W -f='${db:Status-Status} ${Package}\n' 2>/dev/null | awk '
 want=()
 for p in "${PACKAGES[@]}"; do installed "$p" || want+=("$p"); done
 want_mutible=0
+reinstall=()
 if [ -n "$DEB" ]; then
-    # The same version from the same .deb again is nothing to do.
-    [ "$(dpkg-query -W -f='${Version}' mutible 2>/dev/null || true)" = "$(dpkg-deb -f "$DEB" Version)" ] &&
-        installed mutible || want_mutible=1
+    want_mutible=1
+    # The .deb given is what runs: the same version installed already is
+    # installed again from it (a rebuild keeps its version).
+    if installed mutible &&
+       [ "$(dpkg-query -W -f='${Version}' mutible)" = "$(dpkg-deb -f "$DEB" Version)" ]; then
+        reinstall=(--reinstall)
+    fi
 elif ! installed mutible; then
     want_mutible=1
 fi
@@ -334,9 +350,11 @@ else
         run apt-get install -y --no-install-recommends "${want[@]}"
     fi
     if [ -n "$DEB" ]; then
-        run apt-get install -y --no-install-recommends "$DEB"
+        run apt-get install -y --no-install-recommends "${reinstall[@]}" "$DEB"
     elif [ "$want_mutible" = 1 ]; then
-        if [ "$DRY" = 0 ] && ! apt-cache policy mutible | grep -q 'Candidate: [0-9]'; then
+        # (read whole first: grep -q stopping early fails the pipe under pipefail)
+        policy=$(apt-cache policy mutible 2>/dev/null || true)
+        if [ "$DRY" = 0 ] && ! printf '%s\n' "$policy" | grep -q 'Candidate: [0-9]'; then
             die "the PPA has no mutible for ${VERSION_CODENAME:-this release} yet; try --deb FILE"
         fi
         run apt-get install -y --no-install-recommends mutible
@@ -472,6 +490,25 @@ RuntimeDirectoryPreserve=restart
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# The backlight: Ubuntu's brightnessctl asks neither logind nor udev, so
+# only root could change the brightness. brightnessctl's own udev rule lets
+# the video group write it, and the desktop's user joins that group.
+put "$BACKLIGHT_RULE" 0644 <<'EOF'
+# The mutible desktop (mutible-desktop-setup.sh): the video group may set the
+# screen's and the keyboard's backlight, so brightnessctl works without sudo
+# (brightnessctl's own rule, which Ubuntu's package leaves out).
+ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness"
+ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chmod g+w /sys/class/backlight/%k/brightness"
+ACTION=="add", SUBSYSTEM=="leds", RUN+="/bin/chgrp input /sys/class/leds/%k/brightness"
+ACTION=="add", SUBSYSTEM=="leds", RUN+="/bin/chmod g+w /sys/class/leds/%k/brightness"
+EOF
+if id -nG "$USER_NAME" | grep -qw video; then
+    note "$USER_NAME is in the video group already"
+else
+    run usermod -aG video "$USER_NAME"
+    [ "$DRY" = 1 ] || state_set video-group-added yes
+fi
 
 say "step 4: tty1"
 run systemctl daemon-reload

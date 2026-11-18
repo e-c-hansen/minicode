@@ -6232,3 +6232,55 @@ folders were looked at (`MC_GUI_SNAPSHOTS`). Needs a person at the
 ThinkPad: the label row's look under GNOME, real clicks on the chips'
 × at the sidebar's narrowest, and the portal's folder chooser opening in
 the window's folder.
+
+### 99. The mutible desktop: mutible as the whole desktop under cage (done, November 2026)
+
+`desktop/README.md` is the guide; `desktop/mutible-desktop-setup.sh` turns
+a minimal Ubuntu 26.04 into it and undoes it; `src/DesktopMode.{h,cpp}` is
+the app's side (`MUTIBLE_DESKTOP=1`), with hooks in `main.cpp`'s
+initShared, newWindow, onCloseRequest, onWindowRemoved and the shutdown
+handler; the `desktop_mode` GUI suite checks it with logind replaced.
+
+How it runs: a system service, not getty autologin plus `~/.profile`.
+`mutible-desktop.service` has `User=`, `PAMName=mutible-desktop` and
+`TTYPath=/dev/tty1`, which make pam_systemd register a logind session on
+seat0, vt 1, type wayland: the same active local session a console login
+makes, so devices come through logind (cage uses libseat's logind backend)
+and polkit's allow_active applies. It conflicts with getty@tty1, which the
+setup disables. Checked in a VM (QEMU with KVM, std VGA, `-display none`,
+screendumps over QMP): the window full screen with no title bar; Ctrl+Alt+F2
+to a login prompt and Ctrl+Alt+F1 back (cage's `-s`); GTK's own file chooser
+(no portal installed; `GDK_DEBUG=no-portals` keeps it so); Suspend, Restart,
+Power Off and Log Out from the menu (the actions activated over D-Bus with
+`busctl --user call ai.ible.Mutible ... org.gtk.Actions Activate`, the
+questions answered with QMP sendkey), `systemctl suspend` typed in
+mutible's terminal with no sudo (polkit allowed it with the same user also
+logged in over SSH), PipeWire listing the emulated sound card, and `--undo`
+leaving tty1's login after a reboot.
+
+Traps:
+- `OnFailure=getty@tty1.service` fired on every exit of a restarting unit
+  (systemd 259), and the getty it started, which conflicts with the unit,
+  reset the start limit: seven kills in 30 s and it kept restarting. The
+  session script counts exits within 30 s of starting itself (in
+  `$RUNTIME_DIRECTORY`, kept over restarts) and after three gives tty1 a
+  text shell; the start limit is only a backstop, with no OnFailure.
+- `mutible` must run with `--foreground` under cage: the service gives it
+  tty1 as its controlling terminal, so it would detach (Detach.h), its
+  first process would exit, and cage would end the session.
+- `apt-cache policy mutible | grep -q` under `set -o pipefail` failed when
+  grep stopped reading early: read the output whole first.
+- Ubuntu's brightnessctl has neither logind support nor a udev rule; the
+  setup adds brightnessctl's upstream rule and the video group.
+- QEMU's `-vga virtio` with `-display none` gave screendumps of the boot
+  console while GNOME was up; `-vga std` showed the screen.
+
+Measured in VMs (the table in the guide): about 500 MB used against 1,010
+with GNOME, and mutible's first frame 9 s after power on against 19.
+
+Left: volume, brightness and media keys (cage binds none), a battery,
+Wi-Fi and clock line in the status bar, screen locking and blanking, a way
+to switch between several windows (cage shows the newest), and everything
+on real hardware: Wi-Fi with nmtui, the lid, the power key, the backlight
+rule, suspend and resume with a real GPU, and how long a cheap laptop takes.
+
