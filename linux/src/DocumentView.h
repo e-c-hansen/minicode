@@ -53,6 +53,7 @@
 #include "EditorPage.h"
 #include "SyntaxHighlighter.h"
 #include "SessionClient.h"
+#include "SessionLink.h"
 #include "UndoHistory.h"
 
 #ifdef MUTIBLE_ENABLE_PDF
@@ -121,7 +122,9 @@ public:
     // Reading a file as text (readText).
     enum class Read { Ok, Missing, NotRegular, TooLarge, NotText, Failed };
 
-    Document(DocumentHost* host, DocumentTags* tags);
+    // `link`: the session's host its text and history belong to (its
+    // window's folder's, SessionLink.h), kept for its life.
+    Document(DocumentHost* host, DocumentTags* tags, std::shared_ptr<SessionLink::Link> link);
     // Takes every handler off its buffers and its file's watch, and removes
     // its backup: a document goes when its tab closes (asked about first) or
     // its window does. The editor takes its LaTeX preview's widget off the
@@ -396,8 +399,12 @@ public:
     // A stamp of when it was last on show (EditorTabs::activeAfterClose),
     // larger for later, kept by the window's tabs.
     uint64_t lastUsed() const { return host_->documentLastUsed(this); }
-    // Its id, for the tab's right click menu (unique in the process).
+    // Its id, for the tab's right click menu: its link's (Client::newId),
+    // unique among that host's documents and so among its window's.
     uint64_t id() const { return id_; }
+    // The link to the session's host it was opened on.
+    SessionLink::Link* sessionLink() const { return link_.get(); }
+    const std::shared_ptr<SessionLink::Link>& sessionLinkShared() const { return link_; }
 
     // ---- Big files (LargeFileView.cpp, PARITY.md item 1.12)
     // Over ../src/LargeFile.h's thresholds (20 MB or 300,000 lines) when it was
@@ -513,6 +520,8 @@ private:
 
     DocumentHost* host_;
     DocumentTags* tags_;
+    std::shared_ptr<SessionLink::Link> link_;
+    Shared::Client& client() const { return link_->client(); }
     uint64_t      id_;
     Kind          kind_ = Kind::Text;
     std::string   path_, ext_;

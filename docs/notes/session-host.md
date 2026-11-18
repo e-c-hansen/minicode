@@ -295,8 +295,9 @@ window, and `mutible attach --folder DIR --dump` is the first renderer that
 reaches it over a socket. Both are in `mutible-cli` (the Mac's
 `Contents/MacOS/mutible-cli`, and the GTK binary, which hands the control
 channel's subcommands to the same `mutibleCliMain`), built from the core
-alone: `src/SessionServer.{h,cpp}` over `SessionHost`. Neither app attaches
-yet; GTK is next, after the Linux session's GTK terminals (#128).
+alone: `src/SessionServer.{h,cpp}` over `SessionHost`. GTK attaches with
+`editor.session-host = headless` (below, "GTK attaches"); the Mac does not
+yet.
 
 - **The socket.** `host-<FNV-1a of the resolved folder, 16 hex>.sock` in the
   first of `ControlChannel::socketFolders()` (ControlPaths.h, now shared by
@@ -447,6 +448,97 @@ document, terminal (dying ones included) or window is held
   `TermShell`'s size rather than polling the state.
 - Saving, dirty, backups and the disk are still the app's (stage 7): a
   headless host's unsaved document is only as safe as the host process.
+
+### GTK attaches (stage 6, step 1)
+
+The GTK app reaches its hosts through `linux/src/SessionLink.{h,cpp}`
+(linux/HANDOFF.md item 99): one `SessionLink::Link` per folder its windows
+show (resolved; `forFolder`), shared by every window on the folder, each
+with its own `Client` in code points and its own ids (`newId` from that
+client's base, so ids of two hosts never meet in one client).
+
+- **Who holds a link.** The window (`App::link`, made in `newWindow`
+  before the editor, and anew in `openFolder` after the old tabs closed:
+  `Editor::setSessionLink` tells the old link the window closed and the new
+  one its tabs). The editor opens each new `Document` on its link, and the
+  document keeps it for its life (`Document::sessionLink`); each
+  `Terminal` gets its window's link when made and keeps it, so a terminal
+  started before Open Folder stays on the old folder's host. The language
+  server sync follows a document's host text through that document's link
+  (`watched` maps each id to its link). The harness's mirror check groups
+  documents by link (`checkDocuments`) and checks the window's tabs on the
+  window's (`checkWindow`). A link goes when the last holder lets it go:
+  an in-process host's thread ends, a headless one is detached from.
+- **Where the host is**, read when a link is made, so a GUI suite switches
+  between windows with `EnvLock::envSet`. `MUTIBLE_HOST` wins: `socket`,
+  `inprocess`, `loopback`. Unset, `editor.session-host = headless`
+  (`Settings::sessionHostMode`, a third value; `sessionHost()` stays true
+  for it, so the Mac takes it as `on`) means socket; `off` and `on` both
+  mean in-process on Linux. **The default stays in-process until step 2**
+  (reattaching, and closing a window detaching), or every folder a user
+  opened would leave a host with nothing to reattach to it; the default
+  flips on both apps together later.
+- **Socket.** `findHostSocket(resolveFolder(root), socketFolders())` and
+  `HostLink::open`; a socket nothing listens on, or none, gets a host
+  started as this program (`/proc/self/exe host --folder DIR`, with
+  `--idle-minutes` from `MUTIBLE_HOST_IDLE_MINUTES`): forked twice with
+  `setsid` between, so init (or the nearest subreaper) is its parent and
+  reaps it; stdin `/dev/null`, stdout and stderr
+  `$XDG_STATE_HOME/mutible/host-<hash>.log`, nothing else of the app's
+  open files (`close_range`), signals at their defaults, the environment
+  copied under `EnvLock::EnvRead` before the fork. The window waits up to
+  5 s for the socket (the main thread, 20 ms polls; a host starts in a few
+  milliseconds), connects, settles and checks `idBase()`. A host that
+  answers and refuses (another user's), a host that does not come, or no
+  Welcome: the in-process host for that folder, and one stderr line saying
+  why. The GUI harness's binary takes the subcommands too (Harness.cpp's
+  `main`, before anything of the checks), since the host it starts is
+  `mutible-guitest host`.
+- **Delivery** is as before: the link's reader thread (or the in-process
+  host's) calls `Client::deliver`, whose wake queues one main-loop dispatch
+  of the link; the idle source holds the link weakly (`Link::Wake`), so no
+  other thread ever holds the link itself.
+- **The host going** (killed, its socket closed): `HostLink`'s `closed`
+  calls `Client::hostLost` (new in the core, additive; `HostLink::connect`
+  does it too), after which the client sends nothing, every wait (settle,
+  undo, `undoInfo`, the queries, a first `newId`) returns at once, and
+  `undoInfo` says nothing can be undone (`hostserver:host-gone`). The link
+  says so once on stderr and to its listeners: the window's status bar
+  (`flashStatus`) and each terminal on it, which writes a line, drops its
+  shell (it ended with the host's pty) and starts none again. Documents
+  stay open and editable and save as before (saving is the app's); undo
+  and redo do nothing in them. Nothing reconnects.
+- **Quitting** calls `SessionLink::detachAll` (the shutdown handler):
+  every headless host is detached from and runs on until its lifetime
+  ends. Closing a window behaves as today: its documents close on the host
+  and its terminals ask, then end; then the window's link goes (detached).
+- **Checks.** The harness sets `MUTIBLE_HOST=inprocess` for every suite
+  (Wrapper.cpp, kept when a run asks for loopback), and its socket folder
+  is the scratch world's (`XDG_RUNTIME_DIR` under `/tmp/mcgui-*`). The
+  `host_link` suite: a window on a scratch folder under
+  `MUTIBLE_HOST=socket` starts a host (its socket in the scratch folder,
+  not the app's child), typing reaches it (`mutible attach --dump`, the
+  real binary, prints the text unsaved), undo is the host's, a terminal's
+  shell is the host's child and its output is in the dump, a second window
+  shares the link, closing both leaves the host running and a new window
+  finds it, the host killed by its pid is reported in the status bar and
+  the terminal with nothing waiting; then `editor.session-host = headless`
+  with `MUTIBLE_HOST` unset starts one, and `on` keeps it in the app. Each
+  host it starts it ends by its pid (SIGKILL, or SIGTERM to see it stop);
+  the wrapper's subreaper reaps them and would end any left.
+
+**Step 2 (TODO).** Closing a window detaches instead of closing its
+documents and terminals; a window opened on the folder (or the app
+started again) reattaches to what the host holds: the documents by path
+(the GTK document opens on the host with an empty path today, so the host
+has to be told each document's path first) and the terminals by id (a VTE
+fed the host's `replay()`, `TermAttach` instead of `TermOpen`), with the
+window's tabs rebuilt from `StateQuery`'s `windows`. A host that goes
+should be found or started again and reattached to, the documents
+reopened with their buffers' text (`Client::open` anew under new ids, or
+reset), rather than left without undo. The terminals' size and answers
+need the "For the GTK and Mac attach steps" work above before a second
+renderer shares them. Then the default can flip, on both apps together.
 
 ## The browser's view (stage 6b)
 

@@ -402,7 +402,7 @@ void HostLink::start(std::function<void(Message&&)> deliver, std::function<void(
 }
 
 void HostLink::connect(Client& client) {
-    start([&client](Message&& m) { client.deliver(std::move(m)); });
+    start([&client](Message&& m) { client.deliver(std::move(m)); }, [&client] { client.hostLost(); });
     client.connect([this](Message&& m) { send(m); });
 }
 

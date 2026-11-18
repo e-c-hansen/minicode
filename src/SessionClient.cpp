@@ -22,7 +22,7 @@ void Client::connect(Send send) {
 }
 
 std::uint64_t Client::newId(int timeoutMs) {
-    if (!idBase_ && send_) settle(timeoutMs);
+    if (!idBase_ && send_ && !lost_) settle(timeoutMs);
     if (!idBase_ || idsUsed_ + 1 >= kIdRange) return 0;
     return idBase_ + ++idsUsed_;
 }
@@ -45,6 +45,11 @@ void Client::queue(Message&& m) { outbox_.push_back(std::move(m)); }
 // in flight, so the host moves it past nothing of its own.
 void Client::pump() {
     if (!send_) return;
+    if (lost_) {   // nothing more reaches the host, and nothing waits for it
+        outbox_.clear();
+        inFlight_ = false;
+        return;
+    }
     while (!inFlight_ && !outbox_.empty()) {
         Message m = std::move(outbox_.front());
         outbox_.pop_front();
@@ -352,7 +357,7 @@ void Client::process(Message&& m) {
 // ---------------------------------------------------------------- terminals
 
 void Client::sendNow(Message&& m) {
-    if (send_) send_(std::move(m));
+    if (send_ && !lost_) send_(std::move(m));
 }
 
 void Client::openTerminal(TermId t, const TermSpec& spec, TermListener* l) {
@@ -523,8 +528,20 @@ bool Client::waitFor(const std::function<bool()>& done, int timeoutMs) {
         }
         if (done()) return true;
         std::unique_lock<std::mutex> lk(mu_);
-        if (!cv_.wait_until(lk, deadline, [this] { return !inbox_.empty(); })) return false;
+        if (!cv_.wait_until(lk, deadline, [this] { return !inbox_.empty() || lost_; })) return false;
+        if (inbox_.empty()) return false;   // the host is gone: nothing more is coming
     }
+}
+
+void Client::hostLost() {
+    std::function<void()> wake;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (lost_.exchange(true)) return;
+        wake = wake_;
+    }
+    cv_.notify_all();
+    if (wake) wake();
 }
 
 bool Client::ask(Message&& m, Message* reply, int timeoutMs) {
@@ -549,6 +566,7 @@ bool Client::settle(int timeoutMs) {
 // ---------------------------------------------------------------- undo
 
 UndoInfo Client::undoInfo(DocId id) {
+    if (lost_) return UndoInfo();   // nothing can be undone with the host gone
     settle();
     Doc* d = doc(id);
     return d ? d->undo : UndoInfo();
