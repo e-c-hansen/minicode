@@ -574,16 +574,22 @@ static void testSessionTerminals() {
     {
         // Output nobody takes stops the host reading the pty (the program
         // blocks) at kTermCredit; taking it lets it go on.
+        // A megabyte through TSan's host and mirror took 2 s on an M3 and
+        // 9 s under `taskpolicy -b`: the wait polls, so its room only
+        // delays a failure. Each look is after a round trip (settle()):
+        // dispatch() takes only what was queued when it was called, and a
+        // message the host sent during it is not output read after.
         TermRig r;
         r.ack = false;
         r.open(8, r.spec("yes", {"yes", "credit"}));
-        CHECK(r.wait([&] { return r.received >= Shared::kTermCredit; }));
+        CHECK(r.wait([&] { return r.received >= Shared::kTermCredit; }, 30000));
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        r.client->dispatch();
+        CHECK(r.client->settle(5000));
         const long long held = r.received;
         CHECK(held <= Shared::kTermCredit + 65536);
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        r.client->dispatch();
+        CHECK(r.client->settle(5000));
+        if (r.received != held) std::printf("  credit: %lld bytes held, then %lld\n", held, r.received);
         CHECK(r.received == held);
         r.ack = true;
         r.client->ackTerminal(8, (size_t)held);
