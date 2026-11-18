@@ -243,7 +243,20 @@ the editor or its keyboard that time out), and `processes`, `mermaid`,
 `latex_forward`, `agent_panel`, `attention`, `palette`, `harness` and
 `tree_stall` in one; on the Mac `control` in both (`controlTerminals`
 not empty where it expects none). Each is a suite that depends on what
-an earlier one did or left, to be made to stand alone.
+an earlier one did or left, to be made to stand alone. The GTK ones were
+(2026-11-18): rows off screen in a tree a full run leaves with a hundred
+entries, and a watch/notes.txt taken for save's notes.txt
+(`MCGuiBringTreeRow` and `MCGuiTreeRow` reveal a row and know it by
+path; tree_stall scrolls to the top); the browser pane left shown
+(`MCGuiHideBrowserPane`: the harness suite, and latex_forward, whose
+page 2 could not reach the top of a narrower preview); keys reading
+accelerators with the keyboard left in a page; palette's "big" matching
+find_bar's find/big.py first; terminal_ids leaving the close question
+off, so processes closed its busy terminal unasked (now a LEAK); and
+browser_find's about:blank, which the GTK address bar took for a web
+search (the app fixed). `MC_GUI_IN_ORDER=1` replays a round's order,
+from its log, up to the suite that failed. agent_panel's and
+attention's shell waits did not fail again in that round's replay.
 
 - GTK `agents`, "the same key closes the panel": in one local full run
   on the ThinkPad (2026-11-17, main at b0ce717 plus a test-only change),
