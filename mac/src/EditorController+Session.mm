@@ -16,8 +16,12 @@
 #import "SessionWindow.h"
 #import "SourceStorage.h"
 #include <objc/runtime.h>
+#include <sys/stat.h>
 
 #include <set>
+#include <string>
+
+#include "Backups.h"
 
 static char kSessionWindowKey;
 
@@ -54,6 +58,10 @@ static char kSessionWindowKey;
 // A tab's text read afresh: the host's history goes too.
 - (void)sessionForgetHistoryOf:(MCTab *)t {
     [t.session forgetHistoryWithText:t.currentText];
+}
+
+- (void)sessionRestoredBackupOf:(MCTab *)t saved:(NSString *)saved {
+    [t.session hostSaved:saved];
 }
 
 // ---- what MCSessionDoc asks (MCTabOwner's optional methods)
@@ -143,30 +151,64 @@ static char kSessionWindowKey;
 // restores the rest, which passes over a path open already): the latest
 // record a closed window left, each of its documents as a tab with the
 // host's text, unsaved where it differs from the file; its terminals wait
-// for the panel (finishSessionAttach).
+// for the panel (finishSessionAttach). What is taken is the core's choice
+// (Shared::reattachFrom): never two documents of one path, and an untitled
+// buffer (another renderer's, with no path) as the tab of a file not on
+// disk yet, named as a backup of it is (Backups::untitledPath).
 - (void)attachSessionHeld {
     MCSessionWindow *w = [self sessionWindow];
     if (!w || w.link.link->lost()) return;
     const MCSession::Held h = [w takeHeld];
     for (const MCSession::HeldDoc &d : h.docs) {
-        NSString *path = [NSString stringWithUTF8String:d.path.c_str()];
+        NSString *path = d.path.empty() ? [self untitledPathBeside:h] : @(d.path.c_str());
         if (!path.length || [self tabForPath:path]) continue;
         MCTab *t = [MCTab new];
+        t.untitled = d.path.empty();   // before the document: the host keeps it without a path
         t.currentPath = path;
         if (![t attachHeld:d.id link:w.link]) continue;
-        MCDiskText *disk = MCReadDiskText(path, ULLONG_MAX);
-        t.dirty = !disk.text || ![disk.text isEqualToString:t.sourceText ?: @""];
-        t.gone = !disk.stamp;
-        // Saved on the host and changed on disk since: the file wins, as a
-        // clean tab follows its file (read afresh when first shown).
-        if (!d.dirty && disk.text && t.dirty) {
-            t.dirty = NO;
-            t.heldFromHost = NO;
+        if (t.untitled) {
+            t.dirty = YES;   // nothing of it is on disk
+            [self recordStamp:nil ofTab:t];
+        } else {
+            MCDiskText *disk = MCReadDiskText(path, ULLONG_MAX);
+            t.dirty = !disk.text || ![disk.text isEqualToString:t.sourceText ?: @""];
+            t.gone = !disk.stamp;
+            // Saved on the host and changed on disk since: the file wins, as
+            // a clean tab follows its file (read afresh when first shown).
+            if (!d.dirty && disk.text && t.dirty) {
+                t.dirty = NO;
+                t.heldFromHost = NO;
+            }
+            // Saved on the host and gone from disk since: all of it is
+            // unsaved, on the host too, so a headless host keeps it (and
+            // backs it up) if this window leaves it again.
+            if (!d.dirty && !disk.stamp) [t.session hostSaved:@""];
+            [self recordStamp:disk.stamp ofTab:t];
         }
-        [self recordStamp:disk.stamp ofTab:t];
         [self groupAppendTab:t preview:Model::Preview::None];
         w.heldDocsAttached++;
     }
+}
+
+// The name an untitled buffer the host held takes: Untitled-1, -2, ... in
+// the window's folder, the first that no file, no tab and no other held
+// document has. The folder as the host names it (resolved: /private/tmp,
+// where the window's root says /tmp), so the tab is the file the host's
+// backup of it names.
+- (NSString *)untitledPathBeside:(const MCSession::Held &)h {
+    MCSessionWindow *w = [self existingSessionWindow];
+    const std::string hostFolder = w ? w.link.link->folder() : std::string();
+    NSString *folder = hostFolder.empty() ? _root.path : @(hostFolder.c_str());
+    if (!folder.length) return nil;
+    const std::string p = Backups::untitledPath(folder.fileSystemRepresentation, [&](const std::string &x) {
+        NSString *path = @(x.c_str());
+        struct stat st;
+        if (lstat(x.c_str(), &st) == 0 || [self tabForPath:path]) return true;
+        for (const MCSession::HeldDoc &o : h.docs)
+            if (o.path == x) return true;
+        return false;
+    });
+    return p.empty() ? nil : @(p.c_str());
 }
 
 // After the session restored the rest: the record's tab on show, and the
@@ -183,6 +225,9 @@ static char kSessionWindowKey;
             }
     }
     if (!_activeTab && w.heldDocsAttached && [self tabs].count) [self activateTab:[self tabs].firstObject];
+    // The held documents are this window's now: their backups written at
+    // once, since a headless host lets go of its own as an app opens them.
+    if (w.heldDocsAttached) [self writeBackups];
     w.heldDocsAttached = 0;
     if (w.heldTermsLeft) {
         const BOOL fresh = self.terminalPanel == nil;
@@ -323,6 +368,17 @@ static char kSessionWindowKey;
     }
 }
 
+// The file's text as last read or saved, for the host to count the tab's
+// unsaved changes against: "" for a file not on disk (an untitled buffer, a
+// file gone), so all of it is unsaved; nil when it does not read as text.
+- (NSString *)hostSavedTextOf:(MCTab *)t {
+    if (t.untitled || t.gone) return @"";
+    if (t.loaded) return t.savedText ?: @"";
+    MCDiskText *disk = MCReadDiskText(t.currentPath, ULLONG_MAX);
+    if (disk.text) return disk.text;
+    return [NSFileManager.defaultManager fileExistsAtPath:t.currentPath] ? nil : @"";
+}
+
 - (void)moveToSessionLink:(MCSessionLinkRef *)link folder:(const std::string &)folder {
     MCSessionWindow *w = [self existingSessionWindow];
     if (!w || _closing || w.link.link == link.link) return;
@@ -332,8 +388,7 @@ static char kSessionWindowKey;
     for (MCTab *t in [self tabs]) {
         MCSessionDoc *d = t.session;
         if (!d || !d.link.link->lost() || d.link.link->folder() != folder) continue;
-        NSString *saved = t.loaded ? t.savedText : MCReadDiskText(t.currentPath, ULLONG_MAX).text;
-        [d rehostOn:link saved:saved];
+        [d rehostOn:link saved:[self hostSavedTextOf:t]];
     }
     for (TerminalView *t in self.terminalPanel.terminals)
         if (t.sessionLink && t.sessionLink.link->lost() && t.sessionLink.link->folder() == folder) [t rehostOn:link];

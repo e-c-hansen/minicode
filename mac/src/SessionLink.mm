@@ -2,6 +2,7 @@
 #import "SessionLink.h"
 
 #import "AppSettings.h"
+#import "BackupStore.h"
 #import "EditorTab.h"
 #import "Environment.h"
 #import "Lsp.h"
@@ -67,6 +68,10 @@ void Start() {
     const char *delay = std::getenv("MUTIBLE_HOST_DELAY_US");
     const unsigned delayUs = delay ? (unsigned)std::strtoul(delay, nullptr, 10) : 0;
     gClient = new Shared::Client(Model::Unit::Utf16, "mac");
+    // The windows back up their unsaved files themselves (BackupStore), so a
+    // host keeps no backup of a document while one has it open (Hello flag
+    // 4). A browser's view (MCSessionConnectViewer) says nothing of the kind.
+    gClient->setKeepsBackups(true);
     // The host's messages arrive on its thread; the main queue dispatches
     // them, once per batch, at the top of a run-loop turn (never inside a
     // text system callback; a wait that dispatches there defers the edits,
@@ -133,6 +138,19 @@ NSString *HostLogPath(const std::string &folder) {
     return [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%s.log", name.c_str()]];
 }
 
+}  // namespace
+
+NSDictionary<NSString *, NSString *> *MCSessionHostEnvironment(void) {
+    NSMutableDictionary<NSString *, NSString *> *e = [MCEnvironment() mutableCopy];
+    // The host's backups go in this app's store: the CLI finds the store by
+    // $HOME, which is not where NSHomeDirectory (CFFIXED_USER_HOME, a
+    // sandbox) may put the app's.
+    if (NSString *dir = [MCBackupStore shared].directory) e[@"MUTIBLE_BACKUP_DIR"] = dir;
+    return e;
+}
+
+namespace {
+
 // `mutible-cli host --folder <folder>`, in a session of its own, stdin from
 // /dev/null, stdout and stderr to its log, nothing else of this process's
 // open files, signals at their defaults. It is this process's child until
@@ -154,7 +172,7 @@ pid_t StartHostProcess(const std::string &folder, std::string *why) {
     for (std::string &a : args) argv.push_back(a.data());
     argv.push_back(nullptr);
     std::vector<std::string> env;
-    NSDictionary<NSString *, NSString *> *e = MCEnvironment();
+    NSDictionary<NSString *, NSString *> *e = MCSessionHostEnvironment();
     for (NSString *k in e) env.push_back(std::string(k.UTF8String ?: "") + "=" + (e[k].UTF8String ?: ""));
     std::vector<char *> envp;
     for (std::string &x : env) envp.push_back(x.data());
@@ -320,95 +338,75 @@ void Link::windowClosed(std::uint64_t window) {
     if (sent_.erase(window) && !lost()) client_->windowClosed(window);
 }
 
+// What a window takes is the core's (Shared::reattachFrom, both apps): the
+// latest free record with what it names, then what no record names; never
+// two documents of one path; an untitled buffer too. The process's host
+// serves every folder, so before the core chooses, a record of another
+// folder counts as an open window's (left alone, and what it names with
+// it), and of what no record names only documents under the folder are
+// kept, and no terminals, which say no folder of their own.
 Held Link::free(bool all, const std::string &root) {
     Held out;
     if (client_->lost()) return out;
-    const Json st = client_->sessionState();
+    Json st = client_->sessionState();
     if (!st.isObject()) return out;
-    const Shared::ClientId me = client_->clientId();
-    const bool shared = kind_ == Kind::InProcess;   // one host for every folder
-    const std::string folder = FolderKey(root);
-    std::map<std::uint64_t, HeldDoc> docs;
-    for (const Json &d : st["documents"].elements()) {
-        HeldDoc h;
-        h.id = (std::uint64_t)d["doc"].asInt();
-        h.path = d["path"].asString();
-        h.dirty = d["dirty"].asBool();
-        if (h.id && !client_->isOpen(h.id)) docs[h.id] = h;
+    std::set<std::uint64_t> live = live_;
+    if (kind_ == Kind::InProcess && !all) {
+        const std::string folder = FolderKey(root);
+        std::set<std::uint64_t> named, namedTerms;
+        for (const Json &win : st["windows"].elements()) {
+            std::vector<std::uint64_t> d, t;
+            NamedIn(win["tabs"], &d, &t);
+            named.insert(d.begin(), d.end());
+            namedTerms.insert(t.begin(), t.end());
+            if (FolderKey(win["tabs"]["root"].asString()) != folder) live.insert((std::uint64_t)win["window"].asInt());
+        }
+        Json docs = Json::array(), terms = Json::array();
+        for (const Json &d : st["documents"].elements()) {
+            const std::string &path = d["path"].asString();
+            if (named.count((std::uint64_t)d["doc"].asInt()) || (!path.empty() && Under(path, folder))) docs.push(d);
+        }
+        for (const Json &t : st["terminals"].elements())
+            if (namedTerms.count((std::uint64_t)t["term"].asInt())) terms.push(t);
+        st.set("documents", std::move(docs));
+        st.set("terminals", std::move(terms));
     }
-    std::map<std::uint64_t, HeldTerm> terms;
-    for (const Json &t : st["terminals"].elements()) {
+    Shared::Client &c = *client_;
+    const Shared::Reattach r = Shared::reattachFrom(
+        st, c.clientId(), live, [&c](Shared::DocId d) { return c.isOpen(d); },
+        [&c](Shared::TermId t) { return c.showsTerminal(t); }, all);
+    // The terminals' sizes, which the core's choice does not carry.
+    std::map<std::uint64_t, std::pair<int, int>> sizes;
+    for (const Json &t : st["terminals"].elements())
+        sizes[(std::uint64_t)t["term"].asInt()] = {(int)t["cols"].asInt(80), (int)t["rows"].asInt(24)};
+    out.window = r.window;
+    out.tabs = r.tabs;
+    out.records = r.records;
+    for (const Shared::Reattach::Doc &d : r.docs) out.docs.push_back({d.id, d.path, d.dirty});
+    for (const Shared::Reattach::Term &t : r.terms) {
         HeldTerm h;
-        h.id = (std::uint64_t)t["term"].asInt();
-        h.pid = (int)t["pid"].asInt();
-        h.cols = (int)t["cols"].asInt(80);
-        h.rows = (int)t["rows"].asInt(24);
-        h.shell = Shared::termShellFrom(t["shell"]);
-        if (h.id && h.pid > 0 && !client_->showsTerminal(h.id)) terms[h.id] = h;
+        h.id = t.id;
+        h.pid = t.pid;
+        h.shell = t.shell;
+        auto sz = sizes.find(t.id);
+        h.cols = sz == sizes.end() ? 80 : sz->second.first;
+        h.rows = sz == sizes.end() ? 24 : sz->second.second;
+        out.terms.push_back(h);
     }
-    std::set<std::uint64_t> named, namedTerms;
-    const Json *best = nullptr;
-    std::vector<const Json *> freeRecords;
-    for (const Json &win : st["windows"].elements()) {
-        const std::uint64_t id = (std::uint64_t)win["window"].asInt();
-        const bool connected = win["connected"].isBool() ? win["connected"].asBool() : true;
-        const bool mine = (Shared::ClientId)win["renderer"].asInt() == me;
-        bool isFree = !live_.count(id) && (!connected || mine);
-        std::vector<std::uint64_t> d, t;
-        NamedIn(win["tabs"], &d, &t);
-        named.insert(d.begin(), d.end());
-        namedTerms.insert(t.begin(), t.end());
-        if (!isFree) {
-            for (std::uint64_t x : d) docs.erase(x);
-            for (std::uint64_t x : t) terms.erase(x);
-            continue;
-        }
-        // The process's host serves every folder: a record is this folder's
-        // when it says so.
-        if (shared && !all && FolderKey(win["tabs"]["root"].asString()) != folder) continue;
-        freeRecords.push_back(&win);
-        if (!best || win["seen"].asInt() > (*best)["seen"].asInt()) best = &win;
-    }
-    auto take = [&](const Json &win) {
-        std::vector<std::uint64_t> d, t;
-        NamedIn(win["tabs"], &d, &t);
-        for (std::uint64_t x : d) {
-            auto it = docs.find(x);
-            if (it == docs.end() || it->second.path.empty()) continue;
-            out.docs.push_back(it->second);
-            docs.erase(it);
-        }
-        for (std::uint64_t x : t) {
-            auto it = terms.find(x);
-            if (it == terms.end()) continue;
-            out.terms.push_back(it->second);
-            terms.erase(it);
-        }
-    };
-    if (all) {
-        for (const Json *w : freeRecords) take(*w);
-    } else if (best) {
-        out.window = (std::uint64_t)(*best)["window"].asInt();
-        out.tabs = (*best)["tabs"];
-        take(*best);
-    }
-    // What no record names (a record lost, or opened by a renderer that
-    // kept none): on the process's host only what is under the folder, and
-    // no terminals, which say no folder of their own.
-    for (const auto &[id, d] : docs)
-        if (!named.count(id) && !d.path.empty() && (all || !shared || Under(d.path, folder)))
-            out.docs.push_back(d);
-    for (const auto &[id, t] : terms)
-        if (!namedTerms.count(id) && (all || !shared)) out.terms.push_back(t);
-    if (all)
-        for (const Json *w : freeRecords) out.records.push_back((std::uint64_t)(*w)["window"].asInt());
     return out;
 }
 
 Held Link::takeForWindow(std::uint64_t *window, const std::string &root) {
     Held h = free(false, root);
     if (h.window && window) {
-        if (*window) windowClosed(*window);   // the id it had, never reported or let go
+        // What the window reported before it took the record (its tabs as
+        // it was made) goes, or a later window could take that record for
+        // the latest one.
+        if (*window && *window != h.window) {
+            live_.erase(*window);
+            sent_.erase(*window);
+            if (!lost()) client_->windowClosed(*window);
+        }
         *window = h.window;
         live_.insert(h.window);
         sent_.erase(h.window);
@@ -466,6 +464,7 @@ bool Link::startSocket(std::string *why) {
     }
     kind_ = Kind::Socket;
     owned_ = std::make_unique<Shared::Client>(Model::Unit::Utf16, "mac");
+    owned_->setKeepsBackups(true);   // as the process's client: the windows keep their own
     client_ = owned_.get();
     // The host's messages arrive on the link's reader thread; the main queue
     // dispatches them, once per batch. The block holds the link weakly, so
@@ -687,6 +686,10 @@ struct DocListener : Shared::Client::Listener {
     __weak CodeTextView *_view;   // the view the step's edits were made in
 }
 
+// The path the host has the tab's document by: none for an untitled buffer
+// the host held (MCTab untitled) until it is saved to its file.
+static std::string HostPathOf(MCTab *tab) { return tab.untitled ? std::string() : Utf8(tab.currentPath); }
+
 // The tab's window's link (EditorController+Session.mm), else the one
 // holding its path.
 static MCSessionLinkRef *LinkForTab(MCTab *tab) {
@@ -709,7 +712,7 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
         // UTF-8 cannot carry a lone surrogate (no text read from a file has
         // one: such a file goes to Quick Look); one typed in becomes U+FFFD
         // in the host's copy, which the GUI checks would catch.
-        _hostPath = Utf8(tab.currentPath);
+        _hostPath = HostPathOf(tab);
         [self client].open(_docId, _hostPath, Utf8(text), _listener.get());
         _open = YES;
     }
@@ -724,7 +727,7 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
         _docId = docId;
         _listener = std::make_unique<DocListener>();
         _listener->doc = self;
-        _hostPath = Utf8(tab.currentPath);
+        _hostPath = HostPathOf(tab);
         // The host's text comes back as one insertion (Client::open with an
         // empty text), taken here rather than put in a mirror.
         _capturing = YES;
@@ -761,7 +764,7 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
 }
 
 - (void)pathChanged {
-    const std::string now = Utf8(_tab.currentPath);
+    const std::string now = HostPathOf(_tab);
     if (!_open || now == _hostPath || _link->lost()) return;
     _hostPath = now;
     [self client].setPath(_docId, now);
@@ -779,14 +782,20 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
     _link = link.link;
     _docId = [self client].newId();
     NSString *now = _tab.currentText ?: @"";
-    _hostPath = Utf8(_tab.currentPath);
+    _hostPath = HostPathOf(_tab);
     [self client].open(_docId, _hostPath, Utf8(now), _listener.get());
     _open = YES;
+    [self hostSaved:saved];
+}
+
+- (void)hostSaved:(NSString *)saved {
+    if (!saved || !self.open) return;
+    NSString *now = _tab.currentText ?: @"";
+    if ([saved isEqualToString:now]) return;
     // The file's text as the host's saved text, and the buffer's difference
     // from it an edit outside the history: the host counts it unsaved, and
     // its lifetime keeps an unsaved file.
-    if (!saved || [saved isEqualToString:now]) return;
-    [self client].reset(_docId, Utf8(saved));
+    [self resetTo:saved];
     const std::u16string x = U16(saved), y = U16(now);
     const size_t a = x.size(), b = y.size();
     const size_t pre = (size_t)(std::mismatch(x.begin(), x.begin() + (long)std::min(a, b), y.begin()).first -

@@ -1148,6 +1148,12 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
     t.savedText = text;
     t.gone = NO;
     t.dirty = NO;
+    // An untitled buffer the session's host held has its file now: the host
+    // is told its path, which it kept none of until then.
+    if (t.untitled) {
+        t.untitled = NO;
+        [t.session pathChanged];
+    }
     if (t.session && [text isEqualToString:t.currentText ?: @""]) [t.session saved];   // the host's too
     if (t.preview) [self keepPreviewTab:t];   // saved: kept, as in VS Code
     // So our own save never looks like a change made outside.

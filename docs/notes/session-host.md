@@ -693,14 +693,15 @@ The host-side items left before the default can flip (2026-11-18).
   A document needs one when it is unsaved (dirty, or with no path and
   some text) and no app's window has it open: an app is a renderer whose
   Hello says it keeps backups (flag 4, `Client::setKeepsBackups`; GTK
-  sets it on every link; a browser's view, a guest or `mutible attach`
-  does not). Written at once when the last app seat goes (DocDetach, a
+  sets it on every link, the Mac on the process's client and every folder
+  link's; a browser's view, a guest or `mutible attach` does not). Written at once when the last app seat goes (DocDetach, a
   connection lost), then after edits from other renderers as the apps
   time theirs (`SavePlan::Planner` on the host's thread, its due time
   folded into `tick()`'s wait: a second after typing stops, at most five
   after the first change not yet written); removed when the document is
   saved, closed, or opened again by an app (whose own backup takes over:
-  GTK writes its own at once after reattaching, `backUpHeldDocuments`).
+  GTK writes its own at once after reattaching, `backUpHeldDocuments`,
+  the Mac in `finishSessionAttach`).
   What a stop by signal leaves unwritten is written as the host's thread
   ends (`writeBackupsNow`). The entry's base is the file as the host finds
   it when writing: its stamp when it reads as the host's saved text, a
@@ -725,8 +726,8 @@ The host-side items left before the default can flip (2026-11-18).
   buffer whose file is not on disk as all unsaved (saved text ""), so a
   restored backup of such a file keeps the host alive and backed up.
 - **What a window takes** moved to the core (`Shared::reattachFrom`,
-  SessionClient.h; GTK's `Link::free` calls it, and the Mac's reattach
-  should): the latest free record and what it names, then what no record
+  SessionClient.h; GTK's `Link::free` and the Mac's `MCSession::Link::free`
+  call it): the latest free record and what it names, then what no record
   names, oldest id first. **Never two documents of one path** in one
   window: the record's own first, then those no record names; the others
   stay on the host for the folder's next window, so two windows on one
@@ -872,10 +873,8 @@ it for both apps; GTK does both, **the Mac's session should** (below).
   detached, its pane left out; the record rewritten without the layout,
   a tab each).
 
-**Left before the default flips:** the Mac's half of step 3 (its step 2,
-below, is done: reattaching through `reattachFrom`, `setKeepsBackups`,
-untitled buffers, its own backups written at once after reattaching);
-the browser's view lists a closed window's record among the windows;
+**Left before the default flips:** the browser's view lists a closed
+window's record among the windows;
 the Mac's half of the terminal splits in the record (above).
 
 ### The Mac reattaches (stage 6, step 2)
@@ -972,9 +971,71 @@ place on its link, and `EditorController+Session.mm` the window's hooks.
   shell; Don't Save. The harness ends what closed windows left between
   suites (`MCSession::endDetached`).
 - **Not yet:** quitting asks Keep Unsaved on a headless host but Restart
-  keeps its backups as before; a held document with no path and two
-  held documents on one path are the Linux session's (core); no backup
-  is kept of a held unsaved file (likewise).
+  keeps its backups as before.
+
+### The Mac's half of step 3
+
+GTK's step 3 ("The host's own backups, untitled buffers, one path twice,
+panning", above), on the Mac. All of it applies with
+`editor.session-host` on or headless; the default (off) is unchanged.
+
+- **Hello flag 4.** The process's client (`Start`) and each folder link's
+  (`startSocket`) call `setKeepsBackups(true)`; `MCSessionConnectViewer`'s
+  clients (the browser's view) do not.
+- **The backup folder.** A host the Mac starts gets `MUTIBLE_BACKUP_DIR`
+  set to `[MCBackupStore shared].directory` (`MCSessionHostEnvironment`):
+  the CLI finds the store by `$HOME`, and the app's is by
+  `NSHomeDirectory` (`CFFIXED_USER_HOME` in the checks), or
+  `$MUTIBLE_BACKUP_DIR` already. Under `MUTIBLE_DEMO` and `MUTIBLE_BENCH`
+  (no store) the environment is passed as it is.
+- **What a window takes** is `Shared::reattachFrom`'s (`Link::free`). The
+  process's link serves every folder, so before the core chooses, a record
+  whose `root` is another folder is added to the open windows' ids (left
+  alone, with what it names), and of the documents only those a record
+  names or under the folder stay, and of the terminals only those a record
+  names. `takeForWindow` closes the window's own id on the host when it
+  takes a record (WindowClose, whether or not it was ever reported).
+- **An untitled buffer** (a held document with no path) becomes the tab of
+  `Backups::untitledPath` in the folder as the host names it (the link's,
+  resolved: `/private/tmp` where the window's root says `/tmp`, so the tab
+  is the file the host's backup names; no file, no tab and no other held
+  document of that name), marked `MCTab untitled`: unsaved, not
+  "(deleted)", no disk stamp, never auto-saved. The Mac has no untitled
+  tabs of its own (New File asks for a name and makes the file), so it is
+  a file's tab whose file is not on disk yet. Its `MCSessionDoc` has the
+  host's path "" (`HostPathOf`), so a rename tells the host nothing; Cmd+S
+  writes the file, clears `untitled` and sends `DocPath` before
+  `DocSaved` (`saveTab:` in EditorController+Tabs.mm).
+- **Its own backups at once** (`finishSessionAttach`, after the session
+  restored the rest): `writeBackups` when any held document became a tab,
+  since the host let go of its own as the tab opened it.
+- **A file not on disk is wholly unsaved** (`MCSessionDoc hostSaved:`,
+  GTK's `hostSavedFromDisk`: the host's copy reset to the saved text, the
+  difference an edit outside the history). `rehostOn:saved:` takes ""
+  for an untitled tab, a gone one, or a file that is not there
+  (`hostSavedTextOf:`); a backup restored when its tab is first shown
+  (`loadActiveTab`, `sessionRestoredBackupOf:saved:`) counts against the
+  file's text, "" when gone, where it had been the host's saved text; a
+  held document the host has saved whose file is gone from disk is reset
+  that way as it attaches (its undo history goes), so a headless host
+  keeps it, and backs it up, if this window leaves it again.
+- **Checks:** `host_reattach`'s step 3 part (HostReattachSuite.mm's
+  header): the host started with `MUTIBLE_BACKUP_DIR` out of the app's
+  environment backs up into the app's store under its pid at Keep
+  Unsaved, the window's backup gone; a saved file deleted on disk, an
+  untitled buffer and a second document of the unsaved file (a script
+  over the socket) left on the host; the next window has one tab of the
+  file (the record's document, the other still held), the deleted file
+  unsaved and gone (and unsaved in `attach --dump`), Untitled-1 unsaved
+  and not on disk with the host keeping no path, its own backups written
+  as it opened and the host's gone; Cmd+S writes Untitled-1 and the dump
+  then shows its path, saved.
+- **Trap:** `stringByResolvingSymlinksInPath` drops `/private` from
+  `/private/tmp/...`, so the Mac's backup root (`sessionKey`) for a folder
+  under /tmp is not the host's (`resolveFolder`, realpath): a host's
+  backup of a folder under /tmp is not found by the window's restore.
+  Real folders under the home are the same either way; the checks use a
+  realpath'd folder.
 
 ## The browser's view (stage 6b)
 
