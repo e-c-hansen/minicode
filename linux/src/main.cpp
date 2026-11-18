@@ -58,6 +58,7 @@
 #include "Detach.h"
 #include "DocumentView.h"
 #include "Editor.h"
+#include "SessionLink.h"
 #include "FileTree.h"
 #include "FileDetails.h"   // TreeFocus (Focus on Folder)
 #include "FolderPicker.h"  // inScope (Add Folder to Focus…)
@@ -196,6 +197,11 @@ struct App {
     GtkWidget* hintsHint  = nullptr;
 
     std::string rootDir;
+    // The session's host for the folder (SessionLink.h): its tabs are
+    // reported there and its new documents and terminals opened there; the
+    // listener puts the host's going in the status bar.
+    std::shared_ptr<SessionLink::Link> link;
+    int linkLostListener = 0;
 
     bool prompting = false;   // a "Save changes?" alert is up
     bool closing = false;     // the user answered it for a window close
@@ -440,6 +446,19 @@ static void flashStatus(App* app, const std::string& message) {
         delete f;
         return G_SOURCE_REMOVE;
     }, f);
+}
+
+// The window's folder's session host (SessionLink.h), found or made as
+// editor.session-host and MUTIBLE_HOST say, with its going in the status bar.
+static void useSessionLink(App* app, const std::string& folder) {
+    std::shared_ptr<SessionLink::Link> link =
+        SessionLink::forFolder(folder, g.settings && g.settings->settings().sessionHostHeadless());
+    if (link == app->link) return;
+    if (app->link) app->link->removeLostListener(app->linkLostListener);
+    app->link = std::move(link);
+    app->linkLostListener = app->link->addLostListener([app](const std::string& message) {
+        if (!app->dead) flashStatus(app, message);
+    });
 }
 
 // The question about unsaved changes, the Mac's: `answer` gets 0 for Save
@@ -909,6 +928,10 @@ static void openFolder(App* app, const std::string& dir) {
     if (app->treeColors) app->treeColors->setRoot(dir);
     if (app->git) app->git->setRoot(dir);   // the panel follows the folder
     app->editor->closeAllTabs();
+    // The new folder's host, for the tabs that open next; the terminals
+    // stay on the one their shells run on.
+    useSessionLink(app, dir);
+    app->editor->setSessionLink(app->link);
     app->nav->clear();   // Go Back's places were the old folder's
     // After the tabs close, so no old file is reopened under the new root.
     if (app->lsp) app->lsp->setRoot(dir);   // servers belong to a folder
@@ -1181,7 +1204,7 @@ static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer
 // the shell starts), links, the IDE link's variables, and the settings and
 // zoom as they are now.
 static Terminal* makeTerminal(App* app) {
-    Terminal* t = new Terminal(app->rootDir);
+    Terminal* t = new Terminal(app->rootDir, app->link);
     t->setProjectRoot(app->rootDir);
     t->onCommandFinished = [app, t] {
         if (app->dead) return;
@@ -4302,6 +4325,10 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->findBar = nullptr;
     delete app->editor;   // its tabs' backups go with them (Document::~Document)
     app->editor = nullptr;
+    // The folder's host is let go of once nothing of any window holds it
+    // (in-process: its thread ends; headless: detached, it keeps running).
+    if (app->link) app->link->removeLostListener(app->linkLostListener);
+    app->link.reset();
     BackupStore::shared().flush();   // gone from disk before anything can end the process
     // The App itself is kept (see App::dead).
     updateKeyPlace();
@@ -4385,7 +4412,9 @@ static App* newWindow(const std::string& root, const std::string& file,
     };
     app->treeColors->setRoot(app->rootDir);
     setupWorktrees(app);
-    app->editor = new Editor();
+    useSessionLink(app, app->rootDir);
+    StartupLog::mark("window: the session's host");
+    app->editor = new Editor(app->link);
     StartupLog::mark("window: editor");
     app->editor->setTitleCallback(updateTitle, app);
     app->editor->setLinkHandler([app](const Editor::Link& link) {
@@ -5453,6 +5482,8 @@ int main(int argc, char** argv) {
     // stopped by now, so this waits on the processes directly.
     g_signal_connect(gapp, "shutdown", G_CALLBACK(+[](GApplication*, gpointer) {
         LspTerminateAllServers();
+        // Headless session hosts keep running, detached (SessionLink.h).
+        SessionLink::detachAll();
         BackupStore::shared().flush();   // what the last windows let go is gone from disk
         if (gControl) gControl->stop();   // the socket goes with the app
     }), nullptr);

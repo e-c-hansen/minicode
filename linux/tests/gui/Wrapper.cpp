@@ -280,6 +280,10 @@ void setWorld(const std::string& root, const std::string& shortRoot) {
     // Not written until a suite writes it: the defaults until then.
     setenv("MUTIBLE_KEYS", at("keys.conf").c_str(), 1);
     setenv("MUTIBLE_BACKUP_DIR", at("backups").c_str(), 1);
+    // The session's host in the app's own process for every suite, as
+    // before stage 6, fast; host_link sets it to the headless host's
+    // socket for itself. A run asked for loopback (CI's) keeps it.
+    setenv("MUTIBLE_HOST", "inprocess", 0);
     // The scratch folder is under build/, inside mutible's own checkout:
     // git looks no higher than it, so the project and the suites' folders
     // are in no repository unless a suite makes one (the change bars and

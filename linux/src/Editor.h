@@ -82,7 +82,9 @@ public:
 
 class Editor : public DocumentHost {
 public:
-    Editor();
+    // `link`: the window's folder's session host (SessionLink.h), which its
+    // new documents are opened on.
+    explicit Editor(std::shared_ptr<SessionLink::Link> link);
     // Runs while the window's widgets still exist (main.cpp deletes the
     // editor from GtkApplication's window-removed).
     ~Editor() override;
@@ -141,6 +143,11 @@ public:
     // Its window in the session (Model::Session's id, which the session's
     // host knows its tabs by: SessionLink.h).
     std::uint64_t sessionWindowId() const { return winId_; }
+    // The window's folder's link: the window's tabs are reported to it and
+    // new documents opened on it. Set anew when the window opens another
+    // folder, after its tabs closed: the old link hears the window close.
+    SessionLink::Link* sessionLink() const { return link_.get(); }
+    void setSessionLink(std::shared_ptr<SessionLink::Link> link);
     static Model::Session& session();
     // A tab's preview state (a session coming back), and the window's
     // answers for Document::isPreviewTab and lastUsed.
@@ -749,6 +756,7 @@ private:
     DocumentTags           tags_;
     Model::Session::WindowId winId_ = 0;
     Model::Window*         win_ = nullptr;
+    std::shared_ptr<SessionLink::Link> link_;
     std::map<uint64_t, Document*> docs_;
     Document*              active_ = nullptr;
     Document*              diffDoc_ = nullptr;   // the tab diffs and commits share

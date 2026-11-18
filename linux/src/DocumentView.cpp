@@ -135,10 +135,11 @@ std::string Document::extensionOf(const std::string& path) {
 
 // ---------------------------------------------------------------- life
 
-Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(tags) {
+Document::Document(DocumentHost* host, DocumentTags* tags, std::shared_ptr<SessionLink::Link> link)
+    : host_(host), tags_(tags), link_(std::move(link)) {
     // Its id on the session's host, from the client's range (a second
     // renderer on the host never makes the same one).
-    id_ = SessionLink::client().newId();
+    id_ = client().newId();
     buffer_ = gtk_text_buffer_new(tags_->table);
     // GTK's undo stays off: every edit goes to the session's host (undo()).
     gtk_text_buffer_set_enable_undo(buffer_, FALSE);
@@ -168,14 +169,14 @@ Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(
     semantic_ = std::make_unique<SemanticColors>(buffer_);
     // An empty text until it holds something: the session's host has it
     // from the start, so typing into a new file is followed too.
-    SessionLink::client().open(id_, "", "", this);
+    client().open(id_, "", "", this);
 }
 
 Document::~Document() {
     // Saved, or let go when asked: its unsaved text is not kept any more. A
     // crash or a SIGKILL never gets here, and leaves the backup.
     if (backup_.written) BackupStore::shared().remove(backup_.id);
-    if (SessionLink::client().isOpen(id_)) SessionLink::client().close(id_);
+    if (client().isOpen(id_)) client().close(id_);
     folds_.reset();
     cancelLoading();
     stopWatching();
@@ -513,7 +514,7 @@ Model::UndoHistory::Selection Document::selection() const {
 // test's set_text) are one step a turn of the main loop, as the Mac's
 // NSUndoManager groups by event.
 void Document::recordEdit(std::size_t at, std::size_t removed, std::u16string inserted) {
-    Shared::Client& c = SessionLink::client();
+    Shared::Client& c = client();
     if (!stepOpen_ && !outsideOpen_) {
         Model::UndoHistory::StepInfo info{"Edit", false};
         if (pendingAt_ && g_get_monotonic_time() - pendingAt_ < kPendingNameUs) info = pendingStep_;
@@ -535,7 +536,7 @@ void Document::closeOutside() {
     outsideOpen_ = false;
     if (outsideIdle_) g_source_remove(outsideIdle_);
     outsideIdle_ = 0;
-    SessionLink::client().closeStep(id_, selection());
+    client().closeStep(id_, selection());
 }
 
 // The text was set whole (a file read, a message): nothing to undo, and the
@@ -546,7 +547,7 @@ void Document::resetHistory(const std::string& text) {
     outsideIdle_ = 0;
     outsideOpen_ = false;
     pendingAt_ = 0;
-    Shared::Client& c = SessionLink::client();
+    Shared::Client& c = client();
     if (kind_ != Kind::Text) {
         if (c.isOpen(id_)) c.close(id_);
         return;
@@ -559,12 +560,12 @@ void Document::resetHistory(const std::string& text) {
     }
 }
 
-void Document::breakUndoCoalescing() { SessionLink::client().breakCoalescing(id_); }
+void Document::breakUndoCoalescing() { client().breakCoalescing(id_); }
 
 void Document::nameStep(const char* name, bool coalesce) {
     if (replaying_ || !name) return;
     if (stepOpen_) {
-        if (!stepNamed_) SessionLink::client().renameStep(id_, {name, coalesce});
+        if (!stepNamed_) client().renameStep(id_, {name, coalesce});
         stepNamed_ = true;
         return;
     }
@@ -579,22 +580,22 @@ void Document::nameStep(GtkTextBuffer* buffer, const char* name, bool coalesce) 
 
 bool Document::canUndo() {
     closeOutside();
-    Shared::Client& c = SessionLink::client();
+    Shared::Client& c = client();
     return kind_ == Kind::Text && c.isOpen(id_) && c.undoInfo(id_).canUndo;
 }
 
 bool Document::canRedo() {
     closeOutside();
-    Shared::Client& c = SessionLink::client();
+    Shared::Client& c = client();
     return kind_ == Kind::Text && c.isOpen(id_) && c.undoInfo(id_).canRedo;
 }
 
 std::string Document::undoName() {
-    return canUndo() ? SessionLink::client().undoInfo(id_).undoName : std::string();
+    return canUndo() ? client().undoInfo(id_).undoName : std::string();
 }
 
 std::string Document::redoName() {
-    return canRedo() ? SessionLink::client().undoInfo(id_).redoName : std::string();
+    return canRedo() ? client().undoInfo(id_).redoName : std::string();
 }
 
 Document::UndoResult Document::undo() { return takeStep(true); }
@@ -605,7 +606,7 @@ Document::UndoResult Document::redo() { return takeStep(false); }
 Document::UndoResult Document::takeStep(bool undoing) {
     if (kind_ != Kind::Text || loading() || stepOpen_) return UndoResult::Nothing;
     closeOutside();
-    Shared::Client& c = SessionLink::client();
+    Shared::Client& c = client();
     if (!c.isOpen(id_)) return UndoResult::Nothing;
     const Shared::Outcome o = c.undo(id_, !undoing);
     if (o == Shared::Outcome::Nothing) return UndoResult::Nothing;
@@ -667,7 +668,7 @@ void Document::onMarkSet(GtkTextBuffer* buf, GtkTextIter*, GtkTextMark* mark, gp
     if (mark != gtk_text_buffer_get_insert(buf) && mark != gtk_text_buffer_get_selection_bound(buf))
         return;
     if (self->stepOpen_ || !self->recording()) return;
-    SessionLink::client().noteSelection(self->id_, self->selection());
+    self->client().noteSelection(self->id_, self->selection());
 }
 
 // ---------------------------------------------------------------- saving
@@ -731,7 +732,7 @@ bool Document::save(std::string* error) {
     }
     rememberDisk(body);   // so this save is not taken for someone else's
     markDirty(false);
-    SessionLink::client().saved(id_);
+    client().saved(id_);
     return true;
 }
 
@@ -1615,7 +1616,7 @@ void Document::onBeginUserAction(GtkTextBuffer*, gpointer selfp) {
         self->stepNamed_ = self->pendingAt_ && g_get_monotonic_time() - self->pendingAt_ < kPendingNameUs;
         if (self->stepNamed_) info = self->pendingStep_;
         self->pendingAt_ = 0;
-        SessionLink::client().openStep(self->id_, info, self->selection());
+        self->client().openStep(self->id_, info, self->selection());
         self->stepOpen_ = true;
     }
     self->inAction_ = true;
@@ -1627,7 +1628,7 @@ void Document::onEndUserAction(GtkTextBuffer*, gpointer selfp) {
     Document* self = static_cast<Document*>(selfp);
     if (self->stepOpen_) {
         self->stepOpen_ = false;
-        SessionLink::client().closeStep(self->id_, self->selection());
+        self->client().closeStep(self->id_, self->selection());
     }
     self->inAction_ = false;
     if (self->batching_) self->finishBatch();

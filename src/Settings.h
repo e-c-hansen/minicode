@@ -317,8 +317,16 @@ public:
     // editor.session-host: each document's text, version and undo history
     // belong to the in-process session host (SESSION-DESIGN.md stage 4b;
     // SessionLink.h on the Mac), the editor's storage its mirror. Off, the
-    // default for now, the Mac's editor owns them as before.
-    bool sessionHost() const { return sessionHost_; }
+    // default for now, the Mac's editor owns them as before. True for
+    // `headless` too, which the Mac takes as `on` for now.
+    bool sessionHost() const { return sessionHostMode_ != SessionHostMode::Off; }
+    // Its three values. `headless` (stage 6): the host is a `mutible host`
+    // process of the folder's own, found or started and attached to over
+    // its socket (the GTK port's SessionLink.h); off and on both mean the
+    // in-process host on Linux, whose editor always uses one.
+    enum class SessionHostMode { Off, On, Headless };
+    SessionHostMode sessionHostMode() const { return sessionHostMode_; }
+    bool sessionHostHeadless() const { return sessionHostMode_ == SessionHostMode::Headless; }
     // editor.large-file-optimizations: a file over LargeFile's thresholds
     // (VS Code's: 20 MB or 300,000 lines) opens without highlighting,
     // folding, bracket matching or a language server (on, the default, as
@@ -580,7 +588,7 @@ private:
     LineNumbers lineNumbers_ = LineNumbers::On;
     bool wordWrap_ = true;
     bool autoClose_ = true;
-    bool sessionHost_ = false;
+    SessionHostMode sessionHostMode_ = SessionHostMode::Off;
     InlayHints inlayHints_ = InlayHints::On;
     bool inlayHintParameterNames_ = false;
     std::optional<Rgba> inlayHintColor_, inlayHintBackground_;
