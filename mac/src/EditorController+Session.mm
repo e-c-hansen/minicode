@@ -192,9 +192,13 @@ static char kSessionWindowKey;
 
 // The name an untitled buffer the host held takes: Untitled-1, -2, ... in
 // the window's folder, the first that no file, no tab and no other held
-// document has.
+// document has. The folder as the host names it (resolved: /private/tmp,
+// where the window's root says /tmp), so the tab is the file the host's
+// backup of it names.
 - (NSString *)untitledPathBeside:(const MCSession::Held &)h {
-    NSString *folder = _root.path;
+    MCSessionWindow *w = [self existingSessionWindow];
+    const std::string hostFolder = w ? w.link.link->folder() : std::string();
+    NSString *folder = hostFolder.empty() ? _root.path : @(hostFolder.c_str());
     if (!folder.length) return nil;
     const std::string p = Backups::untitledPath(folder.fileSystemRepresentation, [&](const std::string &x) {
         NSString *path = @(x.c_str());

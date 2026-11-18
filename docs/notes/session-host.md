@@ -859,8 +859,10 @@ panning", above), on the Mac. All of it applies with
   names. `takeForWindow` closes the window's own id on the host when it
   takes a record (WindowClose, whether or not it was ever reported).
 - **An untitled buffer** (a held document with no path) becomes the tab of
-  `Backups::untitledPath` in the window's folder (no file, no tab and no
-  other held document of that name), marked `MCTab untitled`: unsaved, not
+  `Backups::untitledPath` in the folder as the host names it (the link's,
+  resolved: `/private/tmp` where the window's root says `/tmp`, so the tab
+  is the file the host's backup names; no file, no tab and no other held
+  document of that name), marked `MCTab untitled`: unsaved, not
   "(deleted)", no disk stamp, never auto-saved. The Mac has no untitled
   tabs of its own (New File asks for a name and makes the file), so it is
   a file's tab whose file is not on disk yet. Its `MCSessionDoc` has the

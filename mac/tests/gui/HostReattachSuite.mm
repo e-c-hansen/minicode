@@ -457,6 +457,7 @@ MC_GUI_SUITE(host_reattach) {
         std::shared_ptr<MCSession::Link> l = LinkOf(gC);
         GCHECK(l && l->kind() == MCSession::Link::Kind::Socket && !l->lost() && l->socketPath() == gSocketC);
         NSArray<MCTab *> *tabs = [gC valueForKey:@"tabs"];
+        for (MCTab *t in tabs) MCGuiNote(@"tab %@ (document %llu)", t.currentPath, t.session.docId);
         NSUInteger ofC = 0;
         for (MCTab *t in tabs)
             if ([t.currentPath.stringByResolvingSymlinksInPath isEqualToString:gFileC.stringByResolvingSymlinksInPath])
@@ -474,9 +475,9 @@ MC_GUI_SUITE(host_reattach) {
         GCHECK(![NSFileManager.defaultManager fileExistsAtPath:gUntitled]);
         // The other document of c.txt stays on the host for the next window.
         bool held = false;
-        if (l)
-            for (const Json &doc : l->client().sessionState()["documents"].elements())
-                held = held || (uint64_t)doc["doc"].asInt() == gOtherId;
+        const Json st = l ? l->client().sessionState() : Json();
+        for (const Json &doc : st["documents"].elements())
+            held = held || (uint64_t)doc["doc"].asInt() == gOtherId;
         GCHECK(held && l && !l->client().isOpen(gOtherId));
         // The window's own backups, written as it opened.
         [[MCBackupStore shared] flush];
@@ -499,6 +500,8 @@ MC_GUI_SUITE(host_reattach) {
          });
     MCGuiStep(@"Cmd+S writes the untitled buffer to Untitled-1", ^{
         MCTab *u = TabFor(gC, gUntitled);
+        GCHECK(u != nil);
+        if (!u) return;   // nothing else to save
         [gC activateTab:u];
         [gC saveCurrentFile:nil];
         GCHECK_EQ_STR([NSString stringWithContentsOfFile:gUntitled encoding:NSUTF8StringEncoding error:nil],
