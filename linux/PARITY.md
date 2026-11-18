@@ -1587,14 +1587,21 @@ These may run in parallel.
   Cursor (`testing.runAtCursor`, no key on either system); test.<language>
   in the settings. *Done* (`HANDOFF.md` item 96), checked by the
   `test_gutter` suite.
-- [ ] **4.11 Add to Focus, several folders.** Added to the Mac on
+- [x] **4.11 Add to Focus, several folders.** Added to the Mac on
   2026-11-18: "Add to Focus, several folders" in `../docs/notes/tree.md`.
   The core's set rules (`TreeFocus::added`, `removed`, `merged`, `rootOf`,
   `revealed`, `restoredSet`, `shortLabels`, `shared`; `tree:focus-set`)
-  and the list form of `TabSessions::Session.treeFocus` are in; the port
-  keeps one folder (`Persistence.cpp` writes a list of one and restores
-  the first) until it shows each focused folder as a root row with the
-  label row above.
+  and the list form of `TabSessions::Session.treeFocus` are in.
+  *Done 2026-11-18 (HANDOFF.md item 98):* the tree shows each focused
+  folder as a root row labelled with its path, under a label row (each
+  label with its ×, then the + and the last ×); Add to Focus on a folder's
+  right click, in the File menu and the palette; Add Folder to Focus…,
+  the system's folder chooser started in the window's folder and held to
+  it (`FolderPicker::inScope`); Remove from Focus on a root row; reveals
+  through `TreeFocus::revealed`; a gone folder drops out alone; the
+  session and the window's record keep the list. The `tree_focus` suite
+  checks it. Differs from the Mac: the picker is the system's chooser,
+  not a palette listing the open tabs' folders first.
 
 ## Reported by the owner
 

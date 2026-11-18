@@ -60,21 +60,35 @@ public:
     void setRoot(const std::string& rootDir);
     const std::string& root() const { return root_; }
 
-    // Focus on Folder (FileDetails.h's TreeFocus, the Mac's
-    // EditorController+TreeFocus.mm): the tree shows one folder inside the
-    // window's as its root, with a breadcrumb row back up. A focus is that
-    // folder's path from root(), "mac/src", and "" for the whole folder.
-    // Only the tree's view narrows: root() and everything that covers it
+    // Focus on Folder and Add to Focus (FileDetails.h's TreeFocus, the
+    // Mac's EditorController+TreeFocus.mm). With one folder focused the
+    // tree shows that folder inside the window's as its root, with a
+    // breadcrumb row back up; with several, each is a root row of its own,
+    // labelled with its path from root(), in the order added, under a row
+    // of their labels, each with a × that takes it out. A focus is a
+    // folder's path from root(), "mac/src"; none is the whole folder. Only
+    // the tree's view narrows: root() and everything that covers it
     // (search, Quick Open, terminals, git) stay as they were.
     //
-    // setFocus roots the tree at `focus`, keeping the folders open in it and
-    // the selected row where it still shows, and remembering the folders
-    // open outside it, which open again when the tree widens; widening
-    // opens the old root and selects its row. False, nothing changed, when
-    // `focus` names no folder the tree lists (inTree).
+    // setFocusFolders shows `folders` (merged by the core's rule:
+    // TreeFocus::merged), keeping the folders open in it and the selected
+    // row where it still shows, and remembering the folders open outside
+    // it, which open again when the tree widens; widening opens the old
+    // root and selects its row, and a folder new among several roots shows
+    // open. False, nothing changed, when a folder is not one the tree lists
+    // (inTree). setFocus replaces the set with one folder ("" for none);
+    // addFocus and removeFocus are TreeFocus::added and removed.
+    bool setFocusFolders(const std::vector<std::string>& folders);
     bool setFocus(const std::string& focus);
-    const std::string& focusPath() const { return focus_; }
-    // The folder the tree starts at: root(), or the focused folder.
+    bool addFocus(const std::string& folder);
+    bool removeFocus(const std::string& folder);
+    const std::vector<std::string>& focusFolders() const { return foci_; }
+    // The focused folders joined by ", " ("" for the whole folder), as the
+    // Mac's treeFocus says them.
+    std::string focusPath() const;
+    // The folder the tree starts at: root(), the focused folder, or with
+    // several the first (New File, Copy Path and drops go there by default,
+    // the Mac's treeDefaultFolder).
     std::string top() const;
     // Whether `rel`, a path from root(), is a folder the tree lists: a
     // folder on disk, no dotfolder on the way while hidden files are off,
@@ -82,23 +96,34 @@ public:
     bool inTree(const std::string& rel) const;
     // `path` from root() ("" for the root), false outside it.
     bool relative(const std::string& path, std::string* rel) const;
-    // A saved focus back (TreeFocus::restored): itself while it is still in
-    // the tree, else the whole folder. Calls no onFocusChanged.
-    void restoreFocus(const std::string& saved);
+    // A saved set back (TreeFocus::restoredSet): those still in the tree,
+    // else the whole folder. Calls no onFocusChanged.
+    void restoreFocus(const std::vector<std::string>& saved);
     // Whether `path` shows as a row under the focus. With `widen`, a path
-    // outside it widens the focus to the nearest folder above both
-    // (TreeFocus::widened) first: reveals widen, opens do not.
+    // outside it widens one focused folder to the nearest folder above both,
+    // or adds its folder to several (TreeFocus::revealed) first: reveals
+    // widen, opens do not.
     bool showsPath(const std::string& path, bool widen);
+    // The root row of the focused folder `rel` selected and scrolled to
+    // (a label of the label row clicked).
+    void selectRoot(const std::string& rel);
     // After every change of the focus but restoreFocus's (the window saves
-    // its session), and a note for the status bar when the focused folder
-    // went from the disk and the tree shows the whole folder again.
+    // its session), and a note for the status bar when a focused folder
+    // went from the disk.
     std::function<void()> onFocusChanged;
     std::function<void(const std::string& note)> onNote;
-    // For the checks: the breadcrumb row, its parts' labels as shown (the
-    // ellipsis left out), a part's label (null when left out) and the ×.
+    // The bar's + (Add Folder to Focus…, the window's picker); without it
+    // the + is not shown.
+    std::function<void()> onAddFolder;
+    // For the checks: the bar, its parts' labels as shown (the breadcrumb's
+    // parts, the ellipsis left out, or the label row's labels), a part's
+    // label (null when left out), a label's ×, the + and the last ×.
     GtkWidget* focusBar() const { return bar_; }
+    bool focusBarShowsFolders() const { return foci_.size() > 1; }
     std::vector<std::string> focusBarLabels() const;
     GtkWidget* focusBarPart(size_t index) const;
+    GtkWidget* focusBarRemove(size_t index) const;
+    GtkWidget* focusBarAdd() const { return barAdd_; }
     GtkWidget* focusBarClose() const { return barClose_; }
     // The breadcrumb's right click menu (Show Whole Folder in Tree), its
     // items naming window actions as the tree's own menu does.
@@ -179,16 +204,23 @@ private:
     void replaceModel();
     // The paths of the folders open now.
     std::unordered_set<std::string> expandedNow() const;
-    // The focus set to `rel` (normalized, in the tree, or "" for the whole
+    // Several focused folders: a row each, in the set's order (onBind
+    // labels them with their paths).
+    GListModel* makeRootsModel();
+    // The focus set to `set` (merged, each in the tree; empty for the whole
     // folder): the model replaced, the folders open again, the bar redrawn.
-    // `lost`: the focused folder went, so nothing widens or is selected.
-    void applyFocus(const std::string& rel, bool lost);
-    // The focused folder gone from the disk, renamed, or hidden now: the
-    // whole folder again, with a note.
+    // `lost`: focused folders went, so nothing widens or is selected.
+    void applyFocus(const std::vector<std::string>& set, bool lost);
+    // Focused folders gone from the disk, renamed, or hidden now: each
+    // drops out, the others stay; none left is the whole folder, with a
+    // note.
     void dropLostFocus();
-    // The breadcrumb row: made once, its parts made again on every focus.
+    // The bar: made once, its parts made again on every focus.
     void buildFocusBar();
     void updateFocusBar();
+    // The label row's labels: full paths, or the core's shortLabels when
+    // those do not fit (barShort_), switched from an idle after a layout.
+    void setBarShort(bool shortLabels);
     static void measureParts(GtkWidget* w, GtkOrientation o, int forSize, int* min, int* nat,
                              int* minBase, int* natBase);
     static void allocateParts(GtkWidget* w, int width, int height, int baseline);
@@ -320,8 +352,8 @@ private:
     GtkWidget*  worktreeMenu_ = nullptr;
     gint64      expandDeadline_ = 0;
 
-    // Focus on Folder.
-    std::string focus_;                    // "" for the whole folder
+    // Focus on Folder and Add to Focus.
+    std::vector<std::string> foci_;        // none for the whole folder
     // The folders open outside the focused folder, for when it widens.
     std::unordered_set<std::string> focusExpanded_;
     GtkWidget*  bar_ = nullptr;            // the breadcrumb row
@@ -333,6 +365,17 @@ private:
     std::vector<GtkWidget*> barLabels_;    // by part
     std::vector<GtkWidget*> barSeps_;      // one more than enough
     std::vector<std::string> barFoci_;     // the focus each part gives
+    GtkWidget*  barAdd_ = nullptr;         // the + (onAddFolder)
+    // The label row (several folders): one chip a folder, each its label
+    // and ×; the full and short labels by folder.
+    std::vector<GtkWidget*> barChips_;
+    std::vector<GtkWidget*> barChipLabels_;
+    std::vector<GtkWidget*> barChipRemoves_;
+    std::vector<std::string> barFull_, barShortText_;
+    bool        barShort_ = false;
+    guint       barShortIdle_ = 0;
+    guint       barRemoveIdle_ = 0;        // a label's × acts from an idle
+    std::string barRemove_;
     std::vector<GFileMonitor*> focusWatch_;
     guint       focusCheck_ = 0;           // the check after an event, coalesced
 };
