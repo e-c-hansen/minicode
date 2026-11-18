@@ -88,17 +88,6 @@ void CodeView::setBuffer(GtkTextBuffer* buffer) { setViewBuffer(textView(), buff
 void CodeView::setViewBuffer(GtkTextView* view, GtkTextBuffer* buffer) {
     GtkTextBuffer* old = gtk_text_view_get_buffer(view);
     if (old == buffer) return;
-    if (old) {
-        static const char kFlush[] = "minicode-layout-flush";
-        GtkTextTagTable* table = gtk_text_buffer_get_tag_table(old);
-        GtkTextTag* tag = gtk_text_tag_table_lookup(table, kFlush);
-        if (!tag) {
-            tag = gtk_text_tag_new(kFlush);   // never applied to any text
-            gtk_text_tag_table_add(table, tag);
-            g_object_unref(tag);
-        }
-        gtk_text_tag_changed(tag, FALSE);
-    }
     // The view goes to its top before it takes the new buffer, which it
     // then shows from its start. GtkTextView's scroll offset is the view's,
     // not the buffer's: set_buffer puts the view's first line at the new
@@ -115,11 +104,27 @@ void CodeView::setViewBuffer(GtkTextView* view, GtkTextBuffer* buffer) {
     // it). At 0 first, while the old text is laid out, there is nothing for
     // GTK to move. A tab's own place is put back after this
     // (Editor::restorePlace), which is captured before (Editor::stash).
+    // Before the flush below, never after it: scrolling the old buffer lays
+    // its lines out again into the layout's line cache, and lines of a buffer
+    // the view no longer shows crashed the next draw
+    // ("gtk_text_btree_line_number couldn't find line", semantic_tokens
+    // closing its tab, main's GTK job after #165).
     GtkAdjustment* adjs[] = {gtk_scrollable_get_hadjustment(GTK_SCROLLABLE(view)),
                              gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(view))};
     if (old)
         for (GtkAdjustment* a : adjs)
             if (a) gtk_adjustment_set_value(a, 0);
+    if (old) {
+        static const char kFlush[] = "minicode-layout-flush";
+        GtkTextTagTable* table = gtk_text_buffer_get_tag_table(old);
+        GtkTextTag* tag = gtk_text_tag_table_lookup(table, kFlush);
+        if (!tag) {
+            tag = gtk_text_tag_new(kFlush);   // never applied to any text
+            gtk_text_tag_table_add(table, tag);
+            g_object_unref(tag);
+        }
+        gtk_text_tag_changed(tag, FALSE);
+    }
     gtk_text_view_set_buffer(view, buffer);
 }
 
