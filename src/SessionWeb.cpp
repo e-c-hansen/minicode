@@ -1,6 +1,7 @@
 // SessionWeb.cpp — see SessionWeb.h.
 #include "SessionWeb.h"
 
+#include "AutoIndent.h"
 #include "IdeLink.h"
 #include "MarkdownHtml.h"
 #include "SessionServer.h"
@@ -284,6 +285,16 @@ bool loopbackOrigin(const std::string& origin) {
     return o.compare(0, 7, "http://") == 0 && loopbackHost(o.substr(7));
 }
 
+bool sameOrigin(const std::string& origin, const std::string& host) {
+    auto bare = [](std::string h) {
+        h = lower(h);
+        if (h.size() > 3 && h.compare(h.size() - 3, 3, ":80") == 0) h.resize(h.size() - 3);
+        return h;
+    };
+    const std::string o = lower(origin);
+    return loopbackOrigin(o) && loopbackHost(host) && bare(o.substr(7)) == bare(host);
+}
+
 Answer answer(const Request& r, const std::string& token, const std::string& page) {
     if (r.state != Request::Complete) return refuse(400, "Bad Request", "the request was not HTTP");
     if (r.method != "GET") return refuse(405, "Method Not Allowed", "only GET is served");
@@ -294,9 +305,13 @@ Answer answer(const Request& r, const std::string& token, const std::string& pag
     const std::string* host = header("host");
     if (!host || !loopbackHost(*host))
         return refuse(403, "Forbidden", "the Host must be 127.0.0.1, localhost or [::1]");
-    if (const std::string* origin = header("origin"))
-        if (!loopbackOrigin(*origin))
-            return refuse(403, "Forbidden", "pages from " + *origin + " are not served");
+    // Only the page's own origin: a page elsewhere, even one renamed to
+    // 127.0.0.1, has another, and could otherwise drive the session.
+    const std::string* origin = header("origin");
+    if (origin && !sameOrigin(*origin, *host))
+        return refuse(403, "Forbidden", "pages from " + *origin + " are not served");
+    if (!origin && r.path == "/ws")
+        return refuse(403, "Forbidden", "the socket opens only from minicode's own page");
     auto t = r.query.find("t");
     if (t == r.query.end() || t->second.empty())
         return refuse(403, "Forbidden", "no token: open the address minicode printed");
@@ -445,11 +460,10 @@ DocView::DocView(DocId id, std::string path) : id_(id), path_(std::move(path)) {
     ext_ = extensionOfPath(path_);
     for (const char* e : kMarkdownExtensions)
         if (ext_ == e) markdown_ = true;
-    if (!markdown_) {
-        hl_ = std::make_unique<IncrementalHighlighter<char16_t>>(ext_);
-        StringSource<char16_t> src(text_);
-        hl_->reset(src, nullptr);
-    }
+    // Markdown too: its source is what a page edits.
+    hl_ = std::make_unique<IncrementalHighlighter<char16_t>>(ext_);
+    StringSource<char16_t> src(text_);
+    hl_->reset(src, nullptr);
 }
 
 bool DocView::large() const {
@@ -489,6 +503,16 @@ Json DocView::lineJson(std::size_t line) const {
     }
     j.push(Json(Model::utf8FromUtf16(text_.substr(start, len))));
     j.push(std::move(spans));
+    // The line's break, when it is not "\n": none on the last line.
+    if (line + 1 == hl_->lineCount()) {
+        j.push(Json(0));
+    } else {
+        const std::size_t b = end - start - len;
+        const char16_t c = b ? text_[end - 1] : u'\n';
+        if (b == 2) j.push(Json(2));
+        else if (c == u'\r') j.push(Json(3));
+        else if (c == 0x2029) j.push(Json(4));
+    }
     return j;
 }
 
@@ -499,7 +523,7 @@ void DocView::apply(const Ot::Ops& ops) {
         const bool wasLarge = large();
         const std::size_t oldLines = lineCount();
         text_.replace(pos, del, op.ins);
-        changed_ = changed_ || markdown_;
+        if (markdown_) htmlStale_ = true;
         if (!hl_) continue;
         StringSource<char16_t> src(text_);
         std::vector<Token> scratch;
@@ -542,6 +566,52 @@ Json DocView::takeEdits() {
     return j;
 }
 
+DocView::Change& DocView::commit(const Ot::Ops& ops, int by, std::uint64_t seq) {
+    apply(ops);
+    version_++;
+    log_.emplace_back(by, ops);
+    while (log_.size() > kMaxLog) {
+        log_.pop_front();
+        logStart_++;
+    }
+    Change ch;
+    ch.version = version_;
+    ch.by = by;
+    ch.seq = seq;
+    ch.ops = ops;
+    if (changed_ || large()) {
+        ch.whole = true;
+        if (!large()) ch.lines = allLines();
+        changed_ = false;
+        edits_ = Json::array();
+    } else {
+        ch.lines = std::move(edits_);
+        edits_ = Json::array();
+    }
+    queue_.push_back(std::move(ch));
+    return queue_.back();
+}
+
+bool DocView::since(std::uint64_t base, Ot::Ops* out) const {
+    out->clear();
+    if (base > version_ || base < logStart_) return false;
+    for (std::uint64_t v = base + 1; v <= version_; v++) {
+        const Ot::Ops& ops = log_[(std::size_t)(v - logStart_ - 1)].second;
+        out->insert(out->end(), ops.begin(), ops.end());
+    }
+    return true;
+}
+
+Json DocView::allLines() const {
+    Json lines = Json::array();
+    for (std::size_t l = 0; l < lineCount(); l++) lines.push(lineJson(l));
+    return lines;
+}
+
+std::string DocView::html() const {
+    return MarkdownHtml::page(Model::utf8FromUtf16(text_), baseName(path_));
+}
+
 Json DocView::snapshot() const {
     Json j = Json::object();
     j.set("t", Json("doc"));
@@ -553,12 +623,14 @@ Json DocView::snapshot() const {
     if (k == "large") {
         j.set("note", Json(baseName(path_) + " is too large to show here yet (" +
                            std::to_string(text_.size()) + " characters)."));
-    } else if (k == "markdown") {
-        j.set("html", Json(MarkdownHtml::page(Model::utf8FromUtf16(text_), baseName(path_))));
     } else {
-        Json lines = Json::array();
-        for (std::size_t l = 0; l < lineCount(); l++) lines.push(lineJson(l));
-        j.set("lines", std::move(lines));
+        if (k == "markdown") j.set("html", Json(html()));
+        j.set("lines", allLines());
+        const AutoIndent::Unit u = AutoIndent::detect(text_, path_);
+        Json indent = Json::object();
+        indent.set("tabs", Json(u.tabs));
+        indent.set("width", Json(u.width));
+        j.set("indent", std::move(indent));
     }
     return j;
 }
@@ -657,6 +729,7 @@ Json TermView::takeUpdate() {
 // ---------------------------------------------------------------- the server
 
 struct Server::Conn {
+    int id = 0;                   // the page's number in its edits' log entries
     int fd = -1;
     bool socket = false;          // upgraded to a WebSocket
     bool closeAfterWrite = false;
@@ -683,11 +756,23 @@ struct Server::Session : Client::Listener, Client::TermListener {
     std::atomic<bool> closed{false};
     bool pending = false;           // something came that is not sent yet
     Clock::time_point lastLook, lastTermFlush, lastMarkdown;
+    // Undo and redo asked for by pages: the request's page, and per
+    // document the page that asked last (its selection comes back).
+    std::map<std::uint64_t, int> undoAsks;
+    std::map<DocId, int> undoFor;
 
-    void hostEdited(DocId d, const Ot::Ops& ops, int, const Selection*) override {
+    void hostEdited(DocId d, const Ot::Ops& ops, int flag, const Selection* select) override {
         auto it = docs.find(d);
-        if (it == docs.end()) return;
-        it->second->apply(ops);
+        if (it == docs.end() || ops.empty()) return;
+        DocView::Change& ch = it->second->commit(ops, 0);
+        auto who = undoFor.find(d);
+        if (flag && select && !select->empty() && who != undoFor.end()) {
+            Json sel = Json::array();
+            sel.push(Json((int64_t)(*select)[0].anchor));
+            sel.push(Json((int64_t)(*select)[0].caret));
+            ch.sel = std::move(sel);
+            ch.selFor = who->second;
+        }
         pending = true;
     }
     void hostGone(DocId d) override {
@@ -811,6 +896,8 @@ std::string Server::helloText() const {
     hello.set("folder", Json(opt_.folder));
     hello.set("palette", palette_);
     hello.set("termNote", Json(opt_.termNote));
+    hello.set("editable", Json(opt_.editable));
+    hello.set("canSave", Json(opt_.editable && (bool)opt_.save));
     return hello.dump();
 }
 
@@ -843,6 +930,7 @@ void Server::acceptAll() {
         setNonBlocking(fd);
         auto c = std::make_unique<Conn>();
         c->fd = fd;
+        c->id = ++nextConn_;
         conns_.push_back(std::move(c));
     }
 }
@@ -923,17 +1011,276 @@ void Server::handleHttp(Conn& c) {
 void Server::handleMessage(Conn& c, const std::string& text) {
     Json j;
     if (!Json::parse(text, j) || !j.isObject()) return;
-    // The only thing a browser says: what it looks at.
-    if (j["t"].asString() != "show") return;
-    c.doc = (DocId)std::max<int64_t>(0, j["doc"].asInt());
-    c.term = (TermId)std::max<int64_t>(0, j["term"].asInt());
-    showTo(c);
+    const std::string t = j["t"].asString();
+    if (t == "show") {
+        c.doc = (DocId)std::max<int64_t>(0, j["doc"].asInt());
+        c.term = (TermId)std::max<int64_t>(0, j["term"].asInt());
+        showTo(c);
+        return;
+    }
+    // The rest changes the session: only from a page that may.
+    if (t == "edit") onEdit(c, j);
+    else if (t == "undo") onUndo(c, j);
+    else if (t == "save") onSave(c, j);
+    else if (t == "tkey" || t == "ttext" || t == "tpaste") onTermInput(c, t, j);
+}
+
+void Server::note(Conn& c, const std::string& text) {
+    Json n = Json::object();
+    n.set("t", Json("note"));
+    n.set("text", Json(text));
+    sendJson(c, n);
+}
+
+void Server::refuseEdit(Conn& c, DocId doc, std::uint64_t seq, const std::string& why, bool resync) {
+    Json r = Json::object();
+    r.set("t", Json("refused"));
+    r.set("id", Json((int64_t)doc));
+    r.set("seq", Json((int64_t)seq));
+    r.set("why", Json(why));
+    sendJson(c, r);
+    // Out of step: the document again, whole, from now.
+    if (resync && session_ && c.doc == doc) {
+        auto it = session_->docs.find(doc);
+        if (it != session_->docs.end()) {
+            flush();
+            Json snap = it->second->snapshot();
+            snap.set("editable", Json(opt_.editable && it->second->kind() != "large"));
+            sendJson(c, snap);
+        }
+    }
+}
+
+namespace {
+
+// [[pos, del, insert], ...] from a page, or false.
+bool opsFrom(const Json& j, Ot::Ops* out) {
+    if (!j.isArray()) return false;
+    for (const Json& o : j.elements()) {
+        if (!o.isArray() || o.size() != 3 || !o[0].isNumber() || !o[1].isNumber() || !o[2].isString() ||
+            o[0].asInt() < 0 || o[1].asInt() < 0)
+            return false;
+        out->push_back(Ot::Op{(std::size_t)o[0].asInt(), (std::size_t)o[1].asInt(),
+                              Model::utf16FromUtf8(o[2].asString())});
+    }
+    return true;
+}
+
+Json opsJson(const Ot::Ops& ops) {
+    Json a = Json::array();
+    for (const Ot::Op& o : ops) {
+        Json e = Json::array();
+        e.push(Json((int64_t)o.pos));
+        e.push(Json((int64_t)o.del));
+        e.push(Json(Model::utf8FromUtf16(o.ins)));
+        a.push(std::move(e));
+    }
+    return a;
+}
+
+// [anchor, caret] from a page, moved through `ops`.
+Selection selectionFrom(const Json& j, const Ot::Ops& ops, bool afterInsert, std::size_t length) {
+    Selection s;
+    if (!j.isArray() || j.size() != 2) return s;
+    auto at = [&](const Json& v) {
+        const std::size_t p = (std::size_t)std::max<int64_t>(0, v.asInt());
+        return std::min(Ot::mapOffset(p, ops, Model::Unit::Utf16, afterInsert), length);
+    };
+    s.push_back({at(j[0]), at(j[1])});
+    return s;
+}
+
+// What turns the text `predicted` made of `t` into the one `made` made:
+// one replacement, as small as the two allow (never splitting a surrogate
+// pair), as primitives.
+Ot::Ops fixBetween(const std::u16string& t, const Ot::Ops& predicted, const Ot::Ops& made) {
+    std::u16string p = t, a = t;
+    Ot::apply(p, predicted, Model::Unit::Utf16);
+    Ot::apply(a, made, Model::Unit::Utf16);
+    if (p == a) return {};
+    const std::size_t m = std::min(p.size(), a.size());
+    std::size_t pre = 0;
+    while (pre < m && p[pre] == a[pre]) pre++;
+    std::size_t suf = 0;
+    while (suf < m - pre && p[p.size() - 1 - suf] == a[a.size() - 1 - suf]) suf++;
+    if (pre > 0 && pre < p.size() && (p[pre] & 0xFC00) == 0xDC00) pre--;
+    if (suf > 0 && (p[p.size() - suf] & 0xFC00) == 0xDC00 && suf <= p.size() - pre) suf--;
+    return Ot::primitives(
+        {Ot::Op{pre, p.size() - pre - suf, a.substr(pre, a.size() - pre - suf)}});
+}
+
+bool keyNamed(const std::string& name, TermKey* out) {
+    static const std::pair<const char*, TermKey> kKeys[] = {
+        {"ArrowUp", TermKey::Up},       {"ArrowDown", TermKey::Down},
+        {"ArrowRight", TermKey::Right}, {"ArrowLeft", TermKey::Left},
+        {"Home", TermKey::Home},        {"End", TermKey::End},
+        {"PageUp", TermKey::PageUp},    {"PageDown", TermKey::PageDown},
+        {"Insert", TermKey::Insert},    {"Delete", TermKey::Delete},
+        {"F1", TermKey::F1},   {"F2", TermKey::F2},   {"F3", TermKey::F3},   {"F4", TermKey::F4},
+        {"F5", TermKey::F5},   {"F6", TermKey::F6},   {"F7", TermKey::F7},   {"F8", TermKey::F8},
+        {"F9", TermKey::F9},   {"F10", TermKey::F10}, {"F11", TermKey::F11}, {"F12", TermKey::F12},
+        {"Enter", TermKey::Enter},      {"Backspace", TermKey::Backspace},
+        {"Tab", TermKey::Tab},          {"Escape", TermKey::Escape},
+    };
+    for (const auto& k : kKeys)
+        if (name == k.first) {
+            *out = k.second;
+            return true;
+        }
+    return false;
+}
+
+}  // namespace
+
+void Server::onEdit(Conn& c, const Json& j) {
+    const DocId id = (DocId)std::max<int64_t>(0, j["doc"].asInt());
+    const std::uint64_t seq = (std::uint64_t)std::max<int64_t>(0, j["seq"].asInt());
+    if (!opt_.editable) return refuseEdit(c, id, seq, "This page only reads: it cannot edit.", false);
+    if (!session_ || !id || id != c.doc) return refuseEdit(c, id, seq, "That document is not on show.", false);
+    auto it = session_->docs.find(id);
+    if (it == session_->docs.end()) return refuseEdit(c, id, seq, "That document is not open.", false);
+    DocView& v = *it->second;
+    if (v.kind() == "large") return refuseEdit(c, id, seq, "That document is too large to edit here.", true);
+    Ot::Ops ops;
+    if (!opsFrom(j["ops"], &ops)) return refuseEdit(c, id, seq, "The edit was not understood.", true);
+    // Moved past what the page had not seen: everything since its base (it
+    // has one edit in flight, so none of that is its own).
+    Ot::Ops crossed, mine, crossedPastMine;
+    if (!v.since((std::uint64_t)std::max<int64_t>(0, j["base"].asInt()), &crossed))
+        return refuseEdit(c, id, seq, "The page fell out of step; it has the text again.", true);
+    if (crossed.empty()) mine = Ot::primitives(ops);
+    else Ot::transform(ops, crossed, Model::Unit::Utf16, &mine, &crossedPastMine);
+    if (!Ot::valid(mine, v.text().size(), Model::Unit::Utf16))
+        return refuseEdit(c, id, seq, "The edit did not fit the text; the page has it again.", true);
+    // Return, Tab, Shift+Tab and Backspace: the core's indentation rules,
+    // on the text as it is here, rather than the page's guess.
+    Ot::Ops made = mine, fix;
+    Json sel;
+    const std::string cmd = j["cmd"].asString();
+    if (!cmd.empty() && j["at"].isArray() && j["at"].size() == 2) {
+        const std::size_t n = v.text().size();
+        std::size_t a = std::min(Ot::mapOffset((std::size_t)std::max<int64_t>(0, j["at"][0].asInt()),
+                                               crossed, Model::Unit::Utf16),
+                                 n);
+        std::size_t b = std::min(Ot::mapOffset((std::size_t)std::max<int64_t>(0, j["at"][1].asInt()),
+                                               crossed, Model::Unit::Utf16),
+                                 n);
+        if (a > b) std::swap(a, b);
+        AutoIndent::Edit e;
+        if (cmd == "newline") e = AutoIndent::newline(v.text(), a, b, v.path());
+        else if (cmd == "tab") e = AutoIndent::tab(v.text(), a, b, v.path());
+        else if (cmd == "backtab") e = AutoIndent::backtab(v.text(), a, b, v.path());
+        else if (cmd == "backspace") e = AutoIndent::backspace(v.text(), a, b, v.path());
+        if (e.changed && e.replaceStart <= n && e.replaceLength <= n - e.replaceStart) {
+            made = Ot::primitives({Ot::Op{e.replaceStart, e.replaceLength, e.replacement}});
+            fix = fixBetween(v.text(), mine, made);
+            sel = Json::array();
+            sel.push(Json((int64_t)e.selStart));
+            sel.push(Json((int64_t)e.selEnd));
+        }
+    }
+    // One undo step on the host, as the page grouped it.
+    Client& cl = *session_->client;
+    const std::size_t before = v.text().size();
+    std::size_t after = before;
+    Ot::valid(made, before, Model::Unit::Utf16, &after);
+    const Json& step = j["step"];
+    Model::UndoHistory::StepInfo info;
+    info.name = step["name"].isString() ? step["name"].asString() : "Typing";
+    if (info.name.empty() || info.name.size() > 40) info.name = "Edit";
+    info.coalesce = step["coalesce"].asBool();
+    if (step["fresh"].asBool()) cl.breakCoalescing(id);
+    cl.openStep(id, info, selectionFrom(j["before"], crossed, false, before));
+    for (const Ot::Op& o : made) cl.record(id, o);
+    Ot::Ops through = crossedPastMine;
+    through.insert(through.end(), fix.begin(), fix.end());
+    Selection last = selectionFrom(j["after"], through, true, after);
+    if (sel.isArray()) last = {{(std::size_t)sel[0].asInt(), (std::size_t)sel[1].asInt()}};
+    cl.closeStep(id, last);
+    DocView::Change& ch = v.commit(made, c.id, seq);
+    ch.fix = std::move(fix);
+    if (sel.isArray()) {
+        ch.sel = std::move(sel);
+        ch.selFor = c.id;
+    }
+    flush();
+}
+
+void Server::onUndo(Conn& c, const Json& j) {
+    const DocId id = (DocId)std::max<int64_t>(0, j["doc"].asInt());
+    if (!opt_.editable) return note(c, "This page only reads: it cannot undo.");
+    if (!session_ || !id || id != c.doc || !session_->docs.count(id)) return;
+    const bool redo = j["redo"].asBool();
+    const std::uint64_t req = session_->client->requestUndo(id, redo);
+    if (!req) return;
+    session_->undoAsks[req] = c.id;
+    session_->undoFor[id] = c.id;
+}
+
+void Server::takeOutcomes() {
+    if (!session_) return;
+    Session& s = *session_;
+    for (auto it = s.undoAsks.begin(); it != s.undoAsks.end();) {
+        Outcome o;
+        if (!s.client->outcome(it->first, &o)) {
+            ++it;
+            continue;
+        }
+        if (o != Outcome::Done)
+            for (auto& c : conns_)
+                if (c->id == it->second && c->welcomed)
+                    note(*c, o == Outcome::Nothing ? "Nothing to undo or redo."
+                                                   : "The undo was refused: the text changed under it.");
+        it = s.undoAsks.erase(it);
+    }
+}
+
+void Server::onSave(Conn& c, const Json& j) {
+    const DocId id = (DocId)std::max<int64_t>(0, j["doc"].asInt());
+    if (!opt_.editable) return note(c, "This page only reads: it cannot save.");
+    if (!session_ || !id || !session_->docs.count(id)) return;
+    if (!opt_.save)
+        return note(c, "Nothing here saves to disk yet: save from the minicode window that has this "
+                       "file open.");
+    // The host has every edit first, and has passed it on.
+    session_->client->settle();
+    if (!opt_.save(id)) note(c, "That document could not be saved from here.");
+}
+
+void Server::onTermInput(Conn& c, const std::string& type, const Json& j) {
+    const TermId t = (TermId)std::max<int64_t>(0, j["term"].asInt());
+    if (!opt_.editable) return note(c, "This page only reads: it cannot type into terminals.");
+    if (!session_ || !t || t != c.term) return;
+    auto it = session_->terms.find(t);
+    if (it == session_->terms.end()) return;
+    const TerminalScreen& sc = it->second->screen();
+    const int mods = (int)(j["mods"].asInt() & (TermModShift | TermModAlt | TermModCtrl));
+    std::string bytes;
+    if (type == "tkey") {
+        TermKey k;
+        if (!keyNamed(j["key"].asString(), &k)) return;
+        bytes = TerminalScreen::encodeKey(k, mods, sc.appCursorKeys(), sc.appKeypad(), sc.keyboardFlags());
+    } else if (type == "ttext") {
+        const std::u16string s = Model::utf16FromUtf8(j["text"].asString());
+        for (std::size_t i = 0; i < s.size(); i++) {
+            uint32_t cp = s[i];
+            if ((cp & 0xFC00) == 0xD800 && i + 1 < s.size() && (s[i + 1] & 0xFC00) == 0xDC00)
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (s[++i] - 0xDC00);
+            bytes += TerminalScreen::encodeChar(cp, mods, sc.keyboardFlags());
+        }
+    } else {
+        bytes = TerminalScreen::encodePaste(j["text"].asString(), sc.bracketedPaste());
+    }
+    session_->client->terminalInput(t, std::move(bytes));
 }
 
 bool Server::attach() {
     auto s = std::make_unique<Session>();
     s->client = std::make_unique<Client>(Model::Unit::Utf16, "browser");
-    s->client->setReadOnly(true);
+    // A page that may edit is a guest: it edits, undoes and types, and its
+    // views still keep no document open.
+    if (opt_.editable) s->client->setGuest(true);
+    else s->client->setReadOnly(true);
     s->client->setWake([this] { wake(); });
     Client* client = s->client.get();
     if (opt_.connect) {
@@ -1047,33 +1394,61 @@ void Server::flush() {
     }
     s.gone.clear();
     const bool markdownDue = msSince(s.lastMarkdown) >= 250;
+    bool sentMarkdown = false;
     for (auto& [id, v] : s.docs) {
-        v->setVersion(s.client->version(id));
-        bool anyone = false;
-        for (auto& c : conns_) anyone = anyone || (c->welcomed && c->doc == id);
-        if (v->changed()) {
-            if (!anyone) {
-                v->clearChanged();
+        std::vector<Conn*> showing;
+        for (auto& c : conns_)
+            if (c->welcomed && c->doc == id) showing.push_back(c.get());
+        std::deque<DocView::Change>& q = v->queued();
+        if (showing.empty()) {
+            q.clear();
+            v->clearHtml();
+            continue;
+        }
+        // Every version in order: each page applies them to its lines and
+        // moves its own unconfirmed edits past the others'.
+        for (DocView::Change& ch : q) {
+            if (ch.whole && v->kind() == "large") {
+                Json snap = v->snapshot();
+                snap.set("editable", Json(false));
+                const std::string text = snap.dump();
+                for (Conn* c : showing) sendText(*c, text);
                 continue;
             }
-            if (v->kind() == "markdown" && !markdownDue) {
+            Json base = Json::object();
+            base.set("t", Json("lines"));
+            base.set("id", Json((int64_t)id));
+            base.set("version", Json((int64_t)ch.version));
+            base.set(ch.whole ? "all" : "edits", ch.lines);
+            for (Conn* c : showing) {
+                Json m = base;
+                if (c->id == ch.by) {
+                    m.set("seq", Json((int64_t)ch.seq));
+                    if (!ch.fix.empty()) m.set("fix", opsJson(ch.fix));
+                } else {
+                    m.set("ops", opsJson(ch.ops));
+                }
+                if (ch.selFor && c->id == ch.selFor) m.set("sel", ch.sel);
+                sendJson(*c, m);
+            }
+        }
+        q.clear();
+        if (v->kind() == "markdown" && v->htmlStale()) {
+            if (!markdownDue) {
                 s.pending = true;   // a page at most four times a second
                 continue;
             }
-            if (v->kind() == "markdown") s.lastMarkdown = Clock::now();
-            const std::string text = v->snapshot().dump();
-            v->clearChanged();
-            v->takeEdits();
-            for (auto& c : conns_)
-                if (c->welcomed && c->doc == id) sendText(*c, text);
-            continue;
+            sentMarkdown = true;
+            v->clearHtml();
+            Json m = Json::object();
+            m.set("t", Json("md"));
+            m.set("id", Json((int64_t)id));
+            m.set("html", Json(v->html()));
+            const std::string text = m.dump();
+            for (Conn* c : showing) sendText(*c, text);
         }
-        const Json e = v->takeEdits();
-        if (e.isNull() || !anyone) continue;
-        const std::string text = e.dump();
-        for (auto& c : conns_)
-            if (c->welcomed && c->doc == id) sendText(*c, text);
     }
+    if (sentMarkdown) s.lastMarkdown = Clock::now();
     s.lastTermFlush = Clock::now();
     for (auto& [id, v] : s.terms) {
         const Json u = v->takeUpdate();
@@ -1112,8 +1487,11 @@ void Server::showTo(Conn& c) {
             if (it == s.docs.end()) {
                 s.gone.erase(c.doc);   // DocGone: said below, to this browser
             } else {
+                // Nobody had any of it: the snapshot below is the start.
+                it->second->dropQueued();
                 it->second->clearChanged();
                 it->second->takeEdits();
+                it->second->clearHtml();
             }
         }
         if (it == s.docs.end()) {
@@ -1123,8 +1501,9 @@ void Server::showTo(Conn& c) {
             sendJson(c, g);
             c.doc = 0;
         } else {
-            it->second->setVersion(s.client->version(c.doc));
-            sendJson(c, it->second->snapshot());
+            Json snap = it->second->snapshot();
+            snap.set("editable", Json(opt_.editable && it->second->kind() != "large"));
+            sendJson(c, snap);
         }
     }
     if (c.term) {
@@ -1210,6 +1589,7 @@ bool Server::run() {
         }
         if (session_) {
             session_->client->dispatch();
+            takeOutcomes();
             if (session_->closed) {
                 Json e = Json::object();
                 e.set("t", Json("ended"));

@@ -1,43 +1,71 @@
-// SessionWeb.h — a browser's read-only view of a session's host
-// (SESSION-DESIGN.md, "Browser screen", stage 6b). `minicode host --folder
+// SessionWeb.h — a browser's view of a session's host (SESSION-DESIGN.md,
+// "Browser screen": stage 6b, which reads, and 8b, which edits). `minicode host --folder
 // DIR --web PORT`, or `minicode attach --folder DIR --web PORT` for a host
 // already running, serves one page on 127.0.0.1:PORT, never another
 // interface. The page's script opens a WebSocket back to the same address
 // and draws what the host describes: the session's tabs, the document on
 // show as lines with the core highlighter's spans, a Markdown document as
 // MarkdownHtml's page, and each terminal's screen and scrollback as rows of
-// styled runs from a headless TerminalScreen. Nothing is drawn from pixels,
-// and the browser can change nothing: its only message says which document
-// and terminal it is looking at.
+// styled runs from a headless TerminalScreen. Nothing is drawn from pixels.
+// Read-only (the default), the browser can change nothing: its only message
+// says which document and terminal it is looking at. Editable
+// (Options::editable), it also types into the document on show and its
+// terminal, undoes through the host's history, and asks for a save.
 //
 // Access: a random token of 48 hex digits, made at start and printed once
 // with the address to open (http://127.0.0.1:PORT/?t=TOKEN), must come in
 // the query of the page's address and of the socket's. The Host header must
 // name the loopback (127.0.0.1, localhost or [::1], any port, so `ssh -L`
 // to another local port still works), and an Origin header, when there is
-// one, the same: a page elsewhere that rebinds a name to 127.0.0.1 is turned
-// away. Anything else gets a refusal and nothing more. The page carries a
-// Content-Security-Policy with a per-response nonce for its one script.
+// one, the page's own origin (http:// and that Host): a page elsewhere,
+// even one that rebinds a name to 127.0.0.1, is turned away, and the socket
+// opens only with an Origin, which every browser sends. Anything else gets
+// a refusal and nothing more. The page carries a Content-Security-Policy
+// with a per-response nonce for its one script.
 //
 // The server is a renderer of the host (SessionClient.h) that says it only
-// reads (Client::setReadOnly): the host refuses anything from it that would
-// change the session, and its views of documents keep none open
-// (Client::view). It attaches over the host's Unix socket while at least one
+// reads (Client::setReadOnly), or, editable, that it is a guest
+// (Client::setGuest): the host refuses anything from it that would change
+// the session beyond a guest's edits, undo and terminal input, and its views
+// of documents keep none open (Client::view).
+//
+// Editing: the server is the pages' sequencer, as the host is its own
+// renderers'. Each document's view counts a version for every change of its
+// text, whoever made it, and keeps a log of them. A page edits its own lines
+// at once and sends its edit with the version it had seen (`base`); the
+// server moves it past what came since (Ot::transform, its own changes
+// winning ties), applies it, records it with the host as one undo step, and
+// tells every page: the sender by `seq`, the others with the operations. A
+// page keeps one edit in flight and moves its waiting ones past what others
+// did, as SessionClient does. Return, Tab, Shift+Tab and Backspace carry a
+// command: the server makes what AutoIndent says instead of what the page
+// guessed and gives the page `fix`, the change from its guess to that. It attaches over the host's Unix socket while at least one
 // browser is connected, and detaches when the last goes, so a host serving
 // nobody still ends when its lifetime says.
 //
 // What goes to the browser, one JSON object per text frame ("t" names it):
-//   hello   {machine, folder, palette, termNote}: once, first
+//   hello   {machine, folder, palette, termNote, editable, canSave}: once,
+//           first
 //   palette {palette}: the host's settings file changed (paletteJson)
 //   state   {windows, docs, terms}: whenever the session's state changes
 //           (looked at every half second)
-//   doc     {id, path, kind, version, lines | html | note}: the document the
-//           browser shows, whole: kind "code" (lines, each [text, spans],
-//           spans [[start, length, style], ...] in UTF-16 units, styles by
-//           TokenStyle), "markdown" (html, MarkdownHtml's page) or "large"
-//           (note: too large to show here yet)
-//   lines   {id, version, edits: [[at, del, lines], ...]}: the document's
-//           lines changed, each edit a splice of the line list
+//   doc     {id, path, kind, version, editable, indent, lines, html | note}:
+//           the document the browser shows, whole: kind "code" (lines, each
+//           [text, spans] or [text, spans, break], spans [[start, length,
+//           style], ...] in UTF-16 units, styles by TokenStyle, break 0 for
+//           none (the last line), 2 "\r\n", 3 "\r", 4 U+2029, left out for
+//           "\n"), "markdown" (lines, and html, MarkdownHtml's page) or
+//           "large" (note: too large to show here yet); indent {tabs, width}
+//   lines   {id, version, edits: [[at, del, lines], ...] | all: lines, ops,
+//           seq, fix, sel}: one version of the document: the line list's
+//           splices (or every line), and the change itself, `ops` [[pos,
+//           del, insert], ...] in UTF-16, to every page but the one that made
+//           it, which gets its `seq` and `fix` instead; `sel` [anchor, caret]
+//           to the page an undo or a command's selection is for
+//   md      {id, html}: a Markdown document's page again (at most 4 a second)
+//   refused {id, seq, why}: an edit not made (the page drops what it has
+//           not had confirmed; a `doc` follows when it fell out of step)
+//   note    {text}: something to say (nothing to undo, a save not possible)
 //   gone    {id}: the document closed
 //   term    {id, cols, rows, base, hist, screen, cursor, alt, title}: a
 //           terminal whole: `hist` the newest scrollback lines (oldest
@@ -47,8 +75,17 @@
 //   termd   {id, hist, rows: [[row, line], ...], cursor, alt, title}: lines
 //           that went into the scrollback since, and rows that changed
 //   ended   {why}: the host went
-// and from the browser, only:
+// and from the browser:
 //   show    {doc, term}: what it is looking at (0 for nothing)
+// and, only when editable:
+//   edit    {doc, base, seq, ops, step {name, coalesce, fresh}, before, after,
+//           cmd, at}: an edit of the document on show; cmd "newline", "tab",
+//           "backtab" or "backspace" with `at` the selection it acted on
+//   undo    {doc, redo}
+//   save    {doc}: Options::save (the app that owns the disk), else a note
+//   tkey    {term, key, mods}, ttext {term, text, mods}, tpaste {term, text}:
+//           keys for the terminal on show, encoded as its screen's modes ask
+//           (TerminalScreen::encodeKey, encodeChar, encodePaste)
 //
 // Pure C++17 and POSIX: the server's own thread polls the listening socket,
 // the browsers' connections and a pipe the host's messages wake it through.
@@ -62,6 +99,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#include <deque>
 
 #include "Json.h"
 #include "SessionClient.h"
@@ -95,6 +134,9 @@ Request readRequest(const std::string& buffer);
 bool loopbackHost(const std::string& host);
 // An Origin of http:// and a loopback host.
 bool loopbackOrigin(const std::string& origin);
+// The page's own origin: http:// and the Host it was asked under (any
+// case, ":80" or not), on the loopback.
+bool sameOrigin(const std::string& origin, const std::string& host);
 
 // What to do with a request: serve the page, take the socket (then
 // `response` is the 101 answer), or refuse (then `response` is the refusal,
@@ -143,20 +185,46 @@ public:
     const std::string& path() const { return path_; }
     // "code", "markdown" or "large".
     std::string kind() const;
-    // The host's edit (its UTF-16 operations, in order). For a code
-    // document the lines it changed are kept as edits for takeEdits().
+    // An edit (UTF-16 operations, in order). The lines it changed are kept
+    // as edits for takeEdits().
     void apply(const Ot::Ops& ops);
+    // ---- versions (editing): one for every change of the text
+    struct Change {
+        std::uint64_t version = 0;
+        int by = 0;              // the page that made it (0: the host's)
+        std::uint64_t seq = 0;   // that page's number for it
+        Ot::Ops ops;             // in the text before it
+        Ot::Ops fix;             // for that page: from what it guessed to what was made
+        Json lines;              // the splices, or every line when `whole`
+        bool whole = false;
+        Json sel;                // [anchor, caret] for page `selFor`, else null
+        int selFor = 0;
+    };
+    // The log reaches back this many versions at most.
+    static constexpr std::size_t kMaxLog = 20000;
+    // `ops` applied as the next version, made by page `by` (0: the host),
+    // and queued for the pages.
+    Change& commit(const Ot::Ops& ops, int by, std::uint64_t seq = 0);
+    // What was applied after version `base`, as one list; false when the
+    // log no longer reaches back so far (or `base` is ahead).
+    bool since(std::uint64_t base, Ot::Ops* out) const;
+    std::deque<Change>& queued() { return queue_; }
+    void dropQueued() { queue_.clear(); }
     std::uint64_t version() const { return version_; }
-    void setVersion(std::uint64_t v) { version_ = v; }
+    // A Markdown document's page is out of date.
+    bool htmlStale() const { return htmlStale_; }
+    void clearHtml() { htmlStale_ = false; }
+    std::string html() const;
     const std::u16string& text() const { return text_; }
     // The whole document for the browser ("doc").
     Json snapshot() const;
     // Line edits since the last call ("lines"), null when none, or when the
-    // document is not code (then snapshot() again: `changed()` says so).
+    // lines are better sent whole (then snapshot() again: `changed()` says
+    // so).
     Json takeEdits();
     bool changed() const { return changed_; }
     void clearChanged() { changed_ = false; }
-    // A line as the browser gets it: [text, spans].
+    // A line as the browser gets it: [text, spans] or [text, spans, break].
     Json lineJson(std::size_t line) const;
     std::size_t lineCount() const;
 
@@ -168,8 +236,12 @@ private:
     std::unique_ptr<IncrementalHighlighter<char16_t>> hl_;
     std::uint64_t version_ = 0;
     Json edits_ = Json::array();
-    bool changed_ = false;
+    bool changed_ = false, htmlStale_ = false;
+    std::deque<std::pair<int, Ot::Ops>> log_;   // versions logStart_ + 1 ... version_
+    std::uint64_t logStart_ = 0;
+    std::deque<Change> queue_;
     bool large() const;
+    Json allLines() const;
 };
 
 // A terminal as the browser sees it: a screen fed what the host forwards.
@@ -218,6 +290,14 @@ struct Options {
     // none).
     std::string termNote;
     std::string machine;      // the header's name ("" for this machine's)
+    // Whether pages may edit, undo, save and type into terminals; false:
+    // they only look, and the host is told this renderer only reads.
+    bool editable = false;
+    // Saves a document the way the app that owns the disk does (the Mac's
+    // Cmd+S, its questions included), called on the server's thread once
+    // the host has every edit the pages made; false when it cannot. Unset:
+    // a page's save is answered with a note.
+    std::function<bool(DocId)> save;
     int port = 0;             // 0: any free port (checks)
     std::string token;        // "" for a fresh one
     int pollMs = 500;         // how often the session's state is looked at
@@ -277,6 +357,14 @@ private:
     void writeTo(Conn& c);
     void handleHttp(Conn& c);
     void handleMessage(Conn& c, const std::string& text);
+    void onEdit(Conn& c, const Json& j);
+    void onUndo(Conn& c, const Json& j);
+    void onSave(Conn& c, const Json& j);
+    void onTermInput(Conn& c, const std::string& type, const Json& j);
+    void note(Conn& c, const std::string& text);
+    void refuseEdit(Conn& c, DocId doc, std::uint64_t seq, const std::string& why, bool resync);
+    void takeOutcomes();
+    int nextConn_ = 0;
     void sendJson(Conn& c, const Json& j);
     void sendText(Conn& c, const std::string& text);
     bool attach();

@@ -80,6 +80,11 @@ public:
     // its Hello, so the host refuses anything from it that would change the
     // session. Before connect().
     void setReadOnly(bool on) { readOnly_ = on; }
+    // A guest (a browser's view that may edit, SessionWeb.h): its documents
+    // are views (view()), as a reader's, but it may edit and undo them and
+    // type into the terminals it attached to. Said in its Hello. Before
+    // connect().
+    void setGuest(bool on) { guest_ = on; }
     Model::Unit unit() const { return unit_; }
 
     // ---- the host's messages
@@ -227,7 +232,7 @@ private:
 
     Model::Unit unit_;
     std::string name_;
-    bool readOnly_ = false;
+    bool readOnly_ = false, guest_ = false;
     Send send_;
     ClientId id_ = 0;
     std::map<DocId, Doc> docs_;

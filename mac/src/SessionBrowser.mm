@@ -71,6 +71,12 @@ std::atomic<uint64_t> gNextWindow{1000};   // clear of GTK's and the checks' sma
 }
 
 - (uint64_t)windowId { return _windowId; }
+
+- (void)setEditable:(BOOL)editable {
+    if (editable == _editable) return;
+    [self stop];   // a server serves one way: the next start serves the other
+    _editable = editable;
+}
 - (int)port { return _server ? _server->port() : 0; }
 - (int)browsers { return _server ? _server->browsers() : 0; }
 
@@ -86,6 +92,14 @@ std::atomic<uint64_t> gNextWindow{1000};   // clear of GTK's and the checks' sma
     auto server = std::make_unique<Shared::Web::Server>();
     Shared::Web::Options o;
     o.connect = [](Shared::Client &c) { return MCSessionConnectViewer(c); };
+    o.editable = _editable;
+    if (_editable && _save) {
+        void (^save)(uint64_t) = _save;
+        o.save = [save](Shared::DocId d) {
+            dispatch_async(dispatch_get_main_queue(), ^{ save(d); });
+            return true;
+        };
+    }
     o.folder = _folder.fileSystemRepresentation ?: "";
     o.window = _windowId;
     o.termNote = MCSessionBrowserTermNote.UTF8String;

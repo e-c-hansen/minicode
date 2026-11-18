@@ -33,6 +33,7 @@ struct PageDoc {
             html = m["html"].asString();
             lines = m["lines"].elements();
         } else if (t == "lines" && (Shared::DocId)m["id"].asInt() == id) {
+            if (m.has("all")) lines = m["all"].elements();
             for (const Json& e : m["edits"].elements()) {
                 const std::size_t at = (std::size_t)e[0].asInt(), del = (std::size_t)e[1].asInt();
                 if (at > lines.size()) {
@@ -161,14 +162,18 @@ struct PageClient {
         return r;
     }
     // The upgrade: true with the 101 read, its answer in `head` either way.
-    bool upgrade(int port, const std::string& target, std::string* head = nullptr) {
+    // `origin`: "" for the page's own, "-" for none.
+    bool upgrade(int port, const std::string& target, std::string* head = nullptr,
+                 const std::string& origin = "") {
         if (!connectTo(port)) return false;
+        const std::string own = "http://127.0.0.1:" + std::to_string(port);
+        const std::string o = origin.empty() ? own : origin;
         const std::string req = "GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1:" +
                                 std::to_string(port) +
                                 "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                                 "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-                                "Sec-WebSocket-Version: 13\r\nOrigin: http://127.0.0.1:" +
-                                std::to_string(port) + "\r\n\r\n";
+                                "Sec-WebSocket-Version: 13\r\n" +
+                                (o == "-" ? std::string() : "Origin: " + o + "\r\n") + "\r\n";
         if (!write(req)) return false;
         const double end = nowMs() + 5000;
         std::size_t e;
@@ -225,6 +230,164 @@ struct PageClient {
     }
 };
 
+// A page that edits, as the page's script does (SessionWebPage.cpp): the
+// server's lines at its version, one edit in flight and the rest waiting,
+// each moved past what others did (Ot::transform, the server's winning
+// ties), and a command's `fix` taken as a change after its own.
+struct PageEditor {
+    PageClient* p = nullptr;
+    Shared::DocId id = 0;
+    std::uint64_t version = 0;
+    std::vector<Json> lines;
+    struct Edit {
+        std::uint64_t seq = 0;
+        Ot::Ops ops;
+        std::string cmd, name = "Typing";
+        bool coalesce = true;
+        std::size_t at0 = 0, at1 = 0, after = 0;
+    };
+    bool flying = false;
+    Edit flight;
+    std::deque<Edit> queue;
+    std::uint64_t seq = 0;
+    int refusals = 0, docs = 0;
+    std::vector<std::string> notes;
+    Json lastSel;
+    bool editable = false;
+
+    std::u16string shadow() const {
+        static const char16_t* const breaks[] = {u"", u"\n", u"\r\n", u"\r", u"\u2029"};
+        std::u16string t;
+        for (const Json& l : lines) {
+            t += Model::utf16FromUtf8(l[0].asString());
+            t += l.size() > 2 ? breaks[(int)l[2].asInt()] : u"\n";
+        }
+        return t;
+    }
+    std::u16string text() const {
+        std::u16string t = shadow();
+        if (flying) Ot::apply(t, flight.ops, Model::Unit::Utf16);
+        for (const Edit& e : queue) Ot::apply(t, e.ops, Model::Unit::Utf16);
+        return t;
+    }
+    bool synced() const { return !flying && queue.empty(); }
+    void move(Ot::Ops f) {
+        if (flying) {
+            Ot::Ops a, b;
+            Ot::transform(flight.ops, f, Model::Unit::Utf16, &a, &b);
+            flight.ops = a;
+            f = b;
+        }
+        for (Edit& e : queue) {
+            e.at0 = Ot::mapOffset(e.at0, f, Model::Unit::Utf16);
+            e.at1 = Ot::mapOffset(e.at1, f, Model::Unit::Utf16);
+            Ot::Ops a, b;
+            Ot::transform(e.ops, f, Model::Unit::Utf16, &a, &b);
+            e.ops = a;
+            f = b;
+            e.after = Ot::mapOffset(e.after, f, Model::Unit::Utf16);
+        }
+    }
+    static Ot::Ops opsOf(const Json& j) {
+        Ot::Ops out;
+        for (const Json& o : j.elements())
+            out.push_back(Ot::Op{(std::size_t)o[0].asInt(), (std::size_t)o[1].asInt(),
+                                 Model::utf16FromUtf8(o[2].asString())});
+        return out;
+    }
+    void take(const Json& m) {
+        const std::string t = m["t"].asString();
+        if (t == "hello") editable = m["editable"].asBool();
+        if (t == "note") notes.push_back(m["text"].asString());
+        if ((Shared::DocId)m["id"].asInt() != id) return;
+        if (t == "doc") {
+            lines = m["lines"].elements();
+            version = (std::uint64_t)m["version"].asInt();
+            flying = false;
+            queue.clear();
+            docs++;
+        } else if (t == "lines") {
+            if (m.has("all")) lines = m["all"].elements();
+            for (const Json& e : m["edits"].elements()) {
+                const std::size_t at = (std::size_t)e[0].asInt(), del = (std::size_t)e[1].asInt();
+                if (at > lines.size()) return;
+                lines.erase(lines.begin() + (long)at, lines.begin() + (long)std::min(lines.size(), at + del));
+                lines.insert(lines.begin() + (long)at, e[2].elements().begin(), e[2].elements().end());
+            }
+            version = (std::uint64_t)m["version"].asInt();
+            if (m.has("sel")) lastSel = m["sel"];
+            if (m.has("seq")) {
+                if (flying && flight.seq == (std::uint64_t)m["seq"].asInt()) flying = false;
+                if (m.has("fix")) move(opsOf(m["fix"]));
+            } else {
+                move(opsOf(m["ops"]));
+            }
+            sendNext();
+        } else if (t == "refused") {
+            flying = false;
+            queue.clear();
+            refusals++;
+        }
+    }
+    void sendNext() {
+        if (flying || queue.empty()) return;
+        flight = queue.front();
+        queue.pop_front();
+        flight.seq = ++seq;
+        flying = true;
+        Json m = Json::object();
+        m.set("t", Json("edit"));
+        m.set("doc", Json((int64_t)id));
+        m.set("base", Json((int64_t)version));
+        m.set("seq", Json((int64_t)flight.seq));
+        Json ops = Json::array();
+        for (const Ot::Op& o : flight.ops) {
+            Json e = Json::array();
+            e.push(Json((int64_t)o.pos));
+            e.push(Json((int64_t)o.del));
+            e.push(Json(Model::utf8FromUtf16(o.ins)));
+            ops.push(std::move(e));
+        }
+        m.set("ops", std::move(ops));
+        Json step = Json::object();
+        step.set("name", Json(flight.name));
+        step.set("coalesce", Json(flight.coalesce));
+        m.set("step", std::move(step));
+        Json before = Json::array(), after = Json::array();
+        before.push(Json((int64_t)flight.at0));
+        before.push(Json((int64_t)flight.at1));
+        after.push(Json((int64_t)flight.after));
+        after.push(Json((int64_t)flight.after));
+        m.set("before", before);
+        m.set("after", after);
+        if (!flight.cmd.empty()) {
+            m.set("cmd", Json(flight.cmd));
+            m.set("at", before);
+        }
+        p->sendText(m.dump());
+    }
+    // An edit on the text on show, made at once; the selection before it
+    // is what one operation replaced (or `at` for a command), the caret
+    // after it the end of what it put in.
+    void edit(Ot::Ops ops, const std::string& cmd = "", std::size_t at0 = 0, std::size_t at1 = 0,
+              const std::string& name = "Typing", bool coalesce = true) {
+        Edit e;
+        if (cmd.empty() && ops.size() == 1) {
+            at0 = ops[0].pos;
+            at1 = ops[0].pos + ops[0].del;
+        }
+        e.after = ops.size() == 1 ? ops[0].pos + ops[0].ins.size() : at0;
+        e.ops = std::move(ops);
+        e.cmd = cmd;
+        e.at0 = at0;
+        e.at1 = at1;
+        e.name = name;
+        e.coalesce = coalesce;
+        queue.push_back(std::move(e));
+        sendNext();
+    }
+};
+
 Web::Request request(const std::string& text) { return Web::readRequest(text); }
 
 void writeText(const std::string& path, const std::string& text) {
@@ -277,6 +440,13 @@ static void testSessionWeb() {
         for (const char* bad : {"0", "65536", "80x", "", "-1"})
             CHECK(parseCommandLine({"host", "--folder", "p", "--web", bad}, "/w", "/h", exists).error ==
                   "--web needs a port number (1 to 65535)");
+        c = parseCommandLine({"host", "--folder", "p", "--web", "8123", "--edit"}, "/w", "/h", exists);
+        CHECK(c.error.empty() && c.args["edit"].asBool());
+        c = parseCommandLine({"attach", "--folder", "p", "--web", "8123", "--edit"}, "/w", "/h", exists);
+        CHECK(c.error.empty() && c.args["edit"].asBool());
+        CHECK(parseCommandLine({"host", "--folder", "p", "--edit"}, "/w", "/h", exists).error ==
+              "--edit goes with --web PORT");
+        CHECK(usageText("host").find("--edit") != std::string::npos);
         CHECK(usageText("host").find("--web PORT") != std::string::npos);
         CHECK(usageText("attach").find("--web PORT") != std::string::npos);
     }
@@ -292,6 +462,14 @@ static void testSessionWeb() {
         CHECK(!Web::loopbackHost("127.0.0.1:") && !Web::loopbackHost("127.0.0.1:80x"));
         CHECK(!Web::loopbackHost("[::1]x") && !Web::loopbackHost("[::2]"));
         CHECK(Web::loopbackOrigin("http://127.0.0.1:8123") && Web::loopbackOrigin("http://localhost"));
+        // Only the page's own origin: the Host it was asked under.
+        CHECK(Web::sameOrigin("http://127.0.0.1:8123", "127.0.0.1:8123"));
+        CHECK(Web::sameOrigin("http://LOCALHOST:9000", "localhost:9000"));
+        CHECK(Web::sameOrigin("http://127.0.0.1", "127.0.0.1:80") && Web::sameOrigin("http://[::1]:5", "[::1]:5"));
+        CHECK(!Web::sameOrigin("http://localhost:8123", "127.0.0.1:8123"));
+        CHECK(!Web::sameOrigin("http://127.0.0.1:8124", "127.0.0.1:8123"));
+        CHECK(!Web::sameOrigin("http://evil.com:8123", "evil.com:8123"));
+        CHECK(!Web::sameOrigin("https://127.0.0.1:8123", "127.0.0.1:8123") && !Web::sameOrigin("null", "127.0.0.1"));
         CHECK(!Web::loopbackOrigin("https://evil.com") && !Web::loopbackOrigin("null"));
         CHECK(!Web::loopbackOrigin("http://evil.com") && !Web::loopbackOrigin("127.0.0.1"));
 
@@ -318,9 +496,12 @@ static void testSessionWeb() {
         CHECK(refused(Web::answer(request("GET /?t=" + token + " HTTP/1.1\r\nHost: 10.0.0.2:8123\r\n\r\n"),
                                   token, page),
                       403));
-        // A page from elsewhere is turned away even with the token.
+        // A page from elsewhere is turned away even with the token, and so
+        // is another loopback page: only the page's own origin.
         CHECK(refused(ask(getWith("/?t=" + token, "Origin: http://evil.com\r\n")), 403));
         CHECK(refused(ask(getWith("/ws?t=" + token, "Origin: https://127.0.0.1.evil.com\r\n")), 403));
+        CHECK(refused(ask(getWith("/?t=" + token, "Origin: http://localhost:8123\r\n")), 403));
+        CHECK(refused(ask(getWith("/ws?t=" + token, "Origin: http://127.0.0.1:9999\r\n")), 403));
         // Only GET; an unknown path only once the token is right.
         CHECK(refused(ask("POST /?t=" + token + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"), 405));
         CHECK(refused(ask(getWith("/x?t=" + token)), 404));
@@ -331,7 +512,7 @@ static void testSessionWeb() {
         CHECK(refused(Web::answer(request("junk"), token, page), 400));
 
         // The page, with a fresh nonce in it and in its policy.
-        a = ask(getWith("/?t=" + token, "Origin: http://localhost:8123\r\n"));
+        a = ask(getWith("/?t=" + token, "Origin: http://127.0.0.1:8123\r\n"));
         CHECK(a.kind == Web::Answer::Page && a.status == 200);
         const std::size_t csp = a.response.find("script-src 'nonce-");
         CHECK(csp != std::string::npos);
@@ -344,13 +525,19 @@ static void testSessionWeb() {
         CHECK(a.response.find("frame-ancestors 'none'") != std::string::npos);
         // The socket: the upgrade's headers, and the RFC's accept key.
         const std::string up = "Upgrade: websocket\r\nConnection: keep-alive, Upgrade\r\n"
-                               "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
+                               "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                               "Origin: http://127.0.0.1:8123\r\n";
         a = ask(getWith("/ws?t=" + token, up));
         CHECK(a.kind == Web::Answer::Socket && a.status == 101);
         CHECK(a.response.find("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n") != std::string::npos);
-        CHECK(refused(ask(getWith("/ws?t=" + token)), 400));
+        // The socket opens only with an Origin, which every browser sends.
+        const std::string upNoOrigin = up.substr(0, up.find("Origin:"));
+        a = ask(getWith("/ws?t=" + token, upNoOrigin));
+        CHECK(refused(a, 403) && a.why.find("own page") != std::string::npos);
+        CHECK(refused(ask(getWith("/ws?t=" + token, "Origin: http://127.0.0.1:8123\r\n")), 400));
         CHECK(refused(ask(getWith("/ws?t=" + token, "Upgrade: websocket\r\nConnection: Upgrade\r\n"
-                                                      "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: c2hvcnQ=\r\n")),
+                                                      "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: c2hvcnQ=\r\n"
+                                                      "Origin: http://127.0.0.1:8123\r\n")),
                       400));
         CHECK(refused(ask(getWith("/ws", up)), 403));
         CHECK(refused(ask(getWith("/ws?t=nope", up)), 403));
@@ -479,6 +666,88 @@ static void testSessionWeb() {
         CHECK(Shared::roundTrip(g).kind == Shared::Kind::DocGone && Shared::roundTrip(g).doc == 5);
     }
 
+    GROUP("sessionweb:guest");
+    {
+        // A browser's view that may edit: its seats are views, as a
+        // reader's, and it may edit, undo and type, nothing more.
+        std::map<Shared::ClientId, std::vector<Message>> got;
+        Shared::Host host([&](Shared::ClientId to, Message&& m) { got[to].push_back(std::move(m)); });
+        auto say = [&](Shared::ClientId c, Message m) { host.handle(c, std::move(m)); };
+        auto kinds = [&](Shared::ClientId c, Shared::Kind k) {
+            int n = 0;
+            for (const Message& m : got[c]) n += m.kind == k;
+            return n;
+        };
+        const Shared::ClientId a = host.connect(), g = host.connect();
+        Message m;
+        m.kind = Shared::Kind::Hello;
+        say(a, m);
+        m.flag = 2;   // a guest
+        say(g, m);
+        CHECK(Shared::roundTrip(m).flag == 2);
+        m = Message();
+        m.kind = Shared::Kind::DocOpen;
+        m.doc = 1;
+        m.name = "/p/a.txt";
+        m.text8 = "abc";
+        say(a, m);
+        m.text8 = "ignored";
+        say(g, m);
+        CHECK(got[g].back().kind == Shared::Kind::DocOpened && got[g].back().text16 == u"abc");
+        m.doc = 9;
+        say(g, m);
+        CHECK(!host.hasDocument(9) && kinds(g, Shared::Kind::DocGone) == 1);
+        // Its edit goes into the history and reaches the editor.
+        Message e;
+        e.kind = Shared::Kind::DocEdit;
+        e.doc = 1;
+        e.seq = 1;
+        e.base = 0;
+        e.step.id = 1;
+        e.step.open = e.step.close = true;
+        e.step.name = "Typing";
+        e.ops = {Ot::Op{3, 0, u"d"}};
+        say(g, e);
+        CHECK(host.text(1) == u"abcd" && host.undoInfo(1).canUndo);
+        CHECK(kinds(a, Shared::Kind::DocEdited) == 1 && kinds(g, Shared::Kind::Error) == 0);
+        Message u;
+        u.kind = Shared::Kind::DocUndo;
+        u.doc = 1;
+        u.req = 5;
+        say(g, u);
+        CHECK(host.text(1) == u"abc");
+        // Nothing else that changes the session.
+        const int errors = kinds(g, Shared::Kind::Error);
+        for (Shared::Kind k : {Shared::Kind::DocReset, Shared::Kind::DocSaved, Shared::Kind::DocForget,
+                               Shared::Kind::WindowTabs, Shared::Kind::WindowClose,
+                               Shared::Kind::TermOpen, Shared::Kind::TermResize, Shared::Kind::TermClose}) {
+            Message x;
+            x.kind = k;
+            x.doc = 1;
+            x.term = 1;
+            x.window = 1;
+            x.text8 = "zzz";
+            x.cols = 10;
+            x.rows = 10;
+            x.json = Json::object();
+            say(g, x);
+        }
+        Message outside;
+        outside.kind = Shared::Kind::DocEdit;
+        outside.doc = 1;
+        outside.flag = 1;
+        outside.ops = {Ot::Op{0, 0, u"Y"}};
+        say(g, outside);
+        CHECK(kinds(g, Shared::Kind::Error) == errors + 9);
+        CHECK(host.text(1) == u"abc" && host.state()["windows"].size() == 0 && host.terminalCount() == 0);
+        // Its seat going keeps the document.
+        Message c;
+        c.kind = Shared::Kind::DocClose;
+        c.doc = 1;
+        say(g, c);
+        CHECK(host.hasDocument(1));
+    }
+
     GROUP("sessionweb:doc-lines");
     {
         // Random edits; the page's lines, spliced, stay the text, and each
@@ -543,12 +812,28 @@ static void testSessionWeb() {
         // Markdown is MarkdownHtml's page, with what it sanitizes gone.
         Web::DocView md(2, "/p/README.md");
         md.apply(Ot::Ops{Ot::Op{0, 0, u"# Title\n\n<script>alert(1)</script> [x](javascript:alert(2))\n"}});
-        CHECK(md.changed());
+        CHECK(md.htmlStale());
         const Json page = md.snapshot();
         CHECK(page["kind"].asString() == "markdown");
         CHECK(page["html"].asString().find("<h1") != std::string::npos);
         CHECK(page["html"].asString().find("<script") == std::string::npos);
         CHECK(page["html"].asString().find("javascript:") == std::string::npos);
+        CHECK(page["lines"].size() == 4);   // its source too, which a page edits
+        // Each line's break: none on the last, "\r\n" and U+2029 said.
+        Web::DocView br(4, "/p/b.txt");
+        br.apply(Ot::Ops{Ot::Op{0, 0, u"a\r\nb\nc\u2029d\re"}});
+        const Json bl = br.snapshot()["lines"];
+        CHECK(bl.size() == 5 && bl[0].size() == 3 && bl[0][2].asInt() == 2 && bl[1].size() == 2 &&
+              bl[2][2].asInt() == 4 && bl[3][2].asInt() == 3 && bl[4][2].asInt() == 0);
+        // Versions: each commit is the next, and the log gives what came
+        // after any it still holds.
+        Web::DocView vv(5, "/p/v.txt");
+        vv.commit(Ot::Ops{Ot::Op{0, 0, u"abc"}}, 0);
+        vv.commit(Ot::Ops{Ot::Op{3, 0, u"d"}}, 2, 7);
+        CHECK(vv.version() == 2 && vv.queued().size() == 2 && vv.queued().back().seq == 7);
+        Ot::Ops since;
+        CHECK(vv.since(1, &since) && since.size() == 1 && since[0].ins == u"d");
+        CHECK(vv.since(2, &since) && since.empty() && !vv.since(3, &since));
         // Too large for the page yet: said, not sent.
         Web::DocView big(3, "/p/big.txt");
         big.apply(Ot::Ops{Ot::Op{0, 0, std::u16string(Web::DocView::kMaxUnits + 1, u'a')}});
@@ -911,5 +1196,182 @@ static void testSessionWeb() {
             CHECK(routes.size() == 1);
             routes.clear();
         }
+    }
+
+    // A page that edits (stage 8b): its edits reach the host and the
+    // window's renderer, crossing the renderer's own in flight and ending
+    // on one text; Return takes the core's indentation; undo is the host's;
+    // a save goes to the app; keys reach the host's terminal. A read-only
+    // view refuses all of it, and the socket opens only from the page's own
+    // origin.
+    GROUP("sessionweb:edit");
+    {
+        ServerRig rig;
+        CHECK(rig.start(60000) == Shared::HostServer::Start::Ok);
+        SocketRenderer a;
+        CHECK(a.attach(rig.path(), "editor"));
+        const std::string home = scratchFolder();
+        std::atomic<int> saves{0};
+        std::atomic<std::uint64_t> savedDoc{0};
+        Web::Server web;
+        Web::Options o;
+        o.hostSocket = rig.path();
+        o.folder = rig.proj;
+        o.pollMs = 100;
+        o.editable = true;
+        o.save = [&](Shared::DocId d) {
+            savedDoc = d;
+            saves++;
+            return true;
+        };
+        std::string error;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        Web::Server ro;   // the same host, read-only
+        Web::Options ro_o = o;
+        ro_o.editable = false;
+        ro_o.save = nullptr;
+        CHECK(ro.start(ro_o, &error));
+        std::thread roThread([&] { ro.run(); });
+        const int port = web.port();
+        if (a.client && port > 0) {
+            const std::u16string text = u"def f(x):\n    return x\n";
+            a.mirror.doc = 1;
+            a.mirror.text = text;
+            a.client->open(1, rig.proj + "/f.py", Model::utf8FromUtf16(text), &a.mirror);
+            a.client->openTerminal(7, shellSpec(home, {"sh"}), &a);
+            CHECK(a.wait([&] { return a.pid > 0 && a.out.find("$ ") != std::string::npos; }));
+
+            // Only the page's own origin opens the socket.
+            PageClient bad;
+            std::string head;
+            CHECK(!bad.upgrade(port, "/ws?t=" + web.token(), &head, "http://evil.example") &&
+                  head.compare(0, 12, "HTTP/1.1 403") == 0);
+            CHECK(!bad.upgrade(port, "/ws?t=" + web.token(), &head, "-") &&
+                  head.compare(0, 12, "HTTP/1.1 403") == 0);
+            CHECK(!bad.upgrade(port, "/ws?t=" + web.token(), &head,
+                               "http://localhost:" + std::to_string(port)) &&
+                  head.compare(0, 12, "HTTP/1.1 403") == 0);
+            bad.close();
+
+            PageClient p;
+            CHECK(p.upgrade(port, "/ws?t=" + web.token()));
+            PageEditor page;
+            page.p = &p;
+            page.id = 1;
+            Json hello, state;
+            PageTerm term;
+            auto take = [&](const Json& m) {
+                const std::string t = m["t"].asString();
+                if (t == "hello") hello = m;
+                else if (t == "state") state = m;
+                page.take(m);
+                term.take(m);
+            };
+            auto hostText = [&] { return a.client->hostDocument(1).text; };
+            CHECK(p.pump(take, [&] { return state.isObject(); }));
+            CHECK(hello["editable"].asBool() && hello["canSave"].asBool());
+            p.sendText("{\"t\":\"show\",\"doc\":1,\"term\":7}");
+            CHECK(p.pump(take, [&] { return page.docs == 1 && term.snapshots == 1; }));
+            CHECK(page.text() == text);
+
+            // Typed in the page: the host and the window's renderer have it.
+            page.edit(Ot::Ops{Ot::Op{0, 0, u"# top\n"}});
+            CHECK(p.pump(take, [&] { return page.synced(); }));
+            CHECK(a.wait([&] { return a.mirror.text == page.text(); }));
+            CHECK(hostText() == u"# top\ndef f(x):\n    return x\n");
+
+            // Both type at once, many times, neither waiting for the other.
+            std::mt19937 rng(88);
+            for (int round = 0; round < 120; round++) {
+                const std::u16string mine = page.text();
+                Ot::Ops ops = randomOps(rng, mine, Model::Unit::Utf16, 2);
+                page.edit(ops);
+                if (round % 3 == 0) {
+                    a.mirror.moveCaret(rng);
+                    a.mirror.edit(rng, round % 2 ? "Typing" : "Edit");
+                }
+                if (round % 5 == 0) a.client->dispatch();
+                p.pump(take, [] { return false; }, round % 7 ? 0 : 15);
+            }
+            CHECK(p.pump(take, [&] { return page.synced(); }, 15000));
+            CHECK(a.client->settle());
+            CHECK(p.pump(take, [&] { return page.synced() && page.text() == hostText(); }, 8000));
+            CHECK(a.wait([&] { return a.mirror.text == hostText(); }));
+            CHECK(page.text() == hostText() && a.mirror.text == hostText());
+            CHECK(page.refusals == 0 && page.docs == 1);
+
+            // Return after a line ending in ':': the page guessed no
+            // indentation, the core gave four spaces, and the page's next
+            // typing lands after them.
+            page.edit(Ot::Ops{Ot::Op{0, page.text().size(), u"x = 1\n"}}, "", 0, 0, "Paste", false);
+            CHECK(p.pump(take, [&] { return page.synced(); }));
+            const std::size_t end = page.text().size();
+            page.edit(Ot::Ops{Ot::Op{end, 0, u"def g():"}});
+            const std::size_t at = end + 8;
+            page.edit(Ot::Ops{Ot::Op{at, 0, u"\n"}}, "newline", at, at);
+            page.edit(Ot::Ops{Ot::Op{at + 1, 0, u"pass"}});
+            CHECK(p.pump(take, [&] { return page.synced(); }));
+            CHECK(p.pump(take, [&] { return page.text() == hostText(); }));
+            const std::u16string tail = hostText().substr(end);
+            CHECK(tail == u"def g():\n    pass");
+            CHECK(page.text() == hostText());
+
+            // Undo is the host's: the last step goes, in the page and the
+            // window alike.
+            p.sendText("{\"t\":\"undo\",\"doc\":1,\"redo\":false}");
+            CHECK(p.pump(take, [&] { return hostText().substr(end) != u"def g():\n    pass"; }));
+            CHECK(p.pump(take, [&] { return page.text() == hostText(); }));
+            CHECK(a.wait([&] { return a.mirror.text == hostText(); }));
+            CHECK(hostText().size() < end + 17);
+            p.sendText("{\"t\":\"undo\",\"doc\":1,\"redo\":true}");
+            CHECK(p.pump(take, [&] { return hostText().substr(end) == u"def g():\n    pass"; }));
+            CHECK(p.pump(take, [&] { return page.text() == hostText(); }));
+
+            // A save goes to the app that owns the disk.
+            p.sendText("{\"t\":\"save\",\"doc\":1}");
+            CHECK(waitUntil([&] { return saves == 1; }) && savedDoc == 1);
+
+            // Keys for the host's terminal, encoded on the server.
+            p.sendText("{\"t\":\"ttext\",\"term\":7,\"text\":\"echo key-$((6*7))\",\"mods\":0}");
+            p.sendText("{\"t\":\"tkey\",\"term\":7,\"key\":\"Enter\",\"mods\":0}");
+            CHECK(a.wait([&] { return a.out.find("key-42\r\n") != std::string::npos; }));
+            p.sendText("{\"t\":\"ttext\",\"term\":7,\"text\":\"c\",\"mods\":4}");   // Control C
+            CHECK(p.pump(take, [&] { return term.all().find("key-42") != std::string::npos; }));
+
+            // A read-only view of the same host refuses all of it.
+            PageClient q;
+            CHECK(q.upgrade(ro.port(), "/ws?t=" + ro.token()));
+            PageEditor rpage;
+            rpage.p = &q;
+            rpage.id = 1;
+            Json rstate;
+            auto rtake = [&](const Json& m) {
+                if (m["t"].asString() == "state") rstate = m;
+                rpage.take(m);
+            };
+            CHECK(q.pump(rtake, [&] { return rstate.isObject(); }));
+            CHECK(!rpage.editable);
+            q.sendText("{\"t\":\"show\",\"doc\":1,\"term\":7}");
+            CHECK(q.pump(rtake, [&] { return rpage.docs == 1; }));
+            const std::u16string before = hostText();
+            rpage.edit(Ot::Ops{Ot::Op{0, 0, u"NO"}});
+            CHECK(q.pump(rtake, [&] { return rpage.refusals == 1; }));
+            q.sendText("{\"t\":\"undo\",\"doc\":1,\"redo\":false}");
+            q.sendText("{\"t\":\"save\",\"doc\":1}");
+            q.sendText("{\"t\":\"ttext\",\"term\":7,\"text\":\"echo pwned\\n\",\"mods\":0}");
+            CHECK(q.pump(rtake, [&] { return rpage.notes.size() >= 3; }));
+            a.client->settle();
+            CHECK(hostText() == before && saves == 1);
+            CHECK(a.out.find("pwned") == std::string::npos);
+            q.close();
+            p.close();
+            CHECK(waitUntil([&] { return web.browsers() == 0 && ro.browsers() == 0; }));
+            a.client->closeTerminal(7);
+        }
+        web.stop();
+        webThread.join();
+        ro.stop();
+        roThread.join();
     }
 }

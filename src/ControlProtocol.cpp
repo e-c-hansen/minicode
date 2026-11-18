@@ -497,21 +497,24 @@ const Help kHelp[] = {
      "    terminal has. With no minicode, or outside one, it does nothing and\n"
      "    exits 0, so a hook never fails because of it.\n"},
     {"host",
-     "minicode host --folder DIR [--idle-minutes N] [--web PORT]\n"
+     "minicode host --folder DIR [--idle-minutes N] [--web PORT [--edit]]\n"
      "    Runs the session's host for a folder with no window, until it has had\n"
      "    no renderer for N minutes (10 by default) and nothing in it is\n"
      "    unsaved or running. Renderers attach and detach over its socket;\n"
      "    documents and terminals stay with the host between them. A second\n"
      "    host for the same folder finds the first and exits. With --web, it\n"
      "    also serves a read-only view of the session to a browser on\n"
-     "    127.0.0.1:PORT, and prints the address to open, with its token.\n"},
+     "    127.0.0.1:PORT, and prints the address to open, with its token;\n"
+     "    with --edit as well, the page may type into the documents and\n"
+     "    terminals and undo, which is control of this machine.\n"},
     {"attach",
      "minicode attach --folder DIR --dump\n"
-     "minicode attach --folder DIR --web PORT\n"
+     "minicode attach --folder DIR --web PORT [--edit]\n"
      "    Prints the session a folder's host holds (its documents and\n"
      "    terminals' screens) and detaches, leaving everything running; or\n"
      "    serves a read-only view of it to a browser on 127.0.0.1:PORT until\n"
-     "    the host ends, printing the address to open, with its token.\n"
+     "    the host ends, printing the address to open, with its token (with\n"
+     "    --edit, a view that may edit, as for host).\n"
      "    Exits 3 when no host serves the folder.\n"},
     {"hooks",
      "minicode hooks --print\n"
@@ -644,6 +647,8 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
                 c.args.set("idle_minutes", m);
             } else if (sub == "attach" && w == "--dump") {
                 c.args.set("dump", true);
+            } else if (w == "--edit") {
+                c.args.set("edit", true);
             } else if (takeValue(a, i, "web", v, c.error)) {
                 char* end = nullptr;
                 const long port = v.empty() ? -1 : std::strtol(v.c_str(), &end, 10);
@@ -658,6 +663,8 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
         if (c.error.empty() && !c.args.has("folder")) c.error = sub + " needs --folder";
         if (c.error.empty() && sub == "attach" && c.args.has("dump") == c.args.has("web"))
             c.error = "attach needs --dump or --web PORT (one of them)";
+        if (c.error.empty() && c.args.has("edit") && !c.args.has("web"))
+            c.error = "--edit goes with --web PORT";
         return c;
     }
     const CommandSpec* spec = findCommand(sub);

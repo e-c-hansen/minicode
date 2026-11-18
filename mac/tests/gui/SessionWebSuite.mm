@@ -6,8 +6,10 @@
 // window loads the address with its token: the page draws the tabs, the
 // file's lines with the highlighter's colors and the terminal's rows, and
 // follows typing and output live, in the settings file's colors and font
-// size, and recolors when the file changes. The same address with a wrong
-// token shows only the refusal. Nothing here reaches the screen.
+// size, and recolors when the file changes. The view may edit: key events
+// dispatched into the page type into the host's shell and the file. The
+// same address with a wrong token shows only the refusal. Nothing here
+// reaches the screen.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
 
@@ -133,6 +135,7 @@ MC_GUI_SUITE(session_web) {
         w.folder = o.folder;
         w.machine = "guitest-host";
         w.pollMs = 150;
+        w.editable = true;
         gSettings = [dir stringByAppendingPathComponent:@"settings.conf"];
         MCGuiWriteFile(gSettings, @"theme = dark-modern\neditor.background = #102030\n");
         w.settingsPath = gSettings.fileSystemRepresentation;
@@ -192,9 +195,36 @@ MC_GUI_SUITE(session_web) {
         Read(gPage);
         return [gSeen[@"screen"] containsString:@"browser-42"];
     });
+    MCGuiStep(@"keys typed into the page's terminal and its file", ^{
+        NSString* js =
+            @"(() => { const key = (el, k) => el.dispatchEvent(new KeyboardEvent('keydown',"
+            @" {key: k, bubbles: true, cancelable: true}));"
+            @" const t = document.getElementById('term');"
+            @" for (const c of 'echo page-$((7*6))') key(t, c); key(t, 'Enter');"
+            @" const f = document.getElementById('input');"
+            @" for (const c of '# page') key(f, c); key(f, 'Enter'); return 1; })()";
+        [gPage evaluateJavaScript:js inFrame:nil inContentWorld:WKContentWorld.pageWorld
+                completionHandler:^(id, NSError* error) {
+                    if (error) MCGuiNote(@"keys: %@", error.localizedDescription);
+                }];
+    });
+    MCGuiWait(@"the shell ran what the page typed", 20, ^BOOL {
+        gRig->client->dispatch();
+        Read(gPage);
+        return [gSeen[@"screen"] containsString:@"page-42\n"] || [gSeen[@"screen"] hasSuffix:@"page-42"];
+    });
+    MCGuiWait(@"and the file has the page's line, in the page and on the host", 20, ^BOOL {
+        gRig->client->dispatch();
+        Read(gPage);
+        return [HostText() hasPrefix:@"# page\n"] && [Joined(gSeen[@"lines"]) isEqualToString:HostText()];
+    });
     MCGuiStep(@"the page drew what the host has", ^{
         GCHECK_EQ_STR(Joined(gSeen[@"lines"]), HostText());
         GCHECK([gSeen[@"screen"] containsString:@"$ echo browser-$((6*7))\nbrowser-42"]);
+        GCHECK([gSeen[@"screen"] containsString:@"$ echo page-$((7*6))\npage-42"]);
+        // The editor's renderer has the page's line too.
+        GCHECK([[NSString stringWithUTF8String:Model::utf8FromUtf16(gRig->editor.text).c_str()]
+            isEqualToString:HostText()]);
         MCGuiNote(@"browsers attached: %d", gRig->web.browsers());
         GCHECK(gRig->web.browsers() == 1);
         // A wrong token: only the refusal.

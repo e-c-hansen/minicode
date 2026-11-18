@@ -381,7 +381,10 @@ CSS and script, no third-party code). The user's side is REFERENCE.md's
   (`http://127.0.0.1:PORT/?t=TOKEN`). `Web::answer` refuses, in this order:
   anything but GET (405), a Host that is not 127.0.0.1, localhost or [::1]
   with any port (403; two Host or two Origin headers make the request bad),
-  an Origin that is not http:// on one of those (403), no token or a wrong
+  an Origin that is not the page's own (`sameOrigin`: http:// and the
+  Host the request came under, so a page on another port or under the
+  other loopback name is refused too) and a socket upgrade with no Origin
+  at all (403; since 8b, when pages can edit), no token or a wrong
   one (403, compared with `IdeLink::sameSecret`), then serves `/` (the page)
   or `/ws` (the WebSocket upgrade, IdeLink's accept key and frames), else
   404. The token is in the query of both because a browser's WebSocket
@@ -475,9 +478,14 @@ Cancel.
   object on the controller, made at the first choice and reused; it stops
   on the window's `NSWindowWillCloseNotification` (and in dealloc), so
   EditorController gained no hook.
+- **Read-only or editable.** Show asks first (Editable, Read-Only,
+  Cancel, the last answer first; `MCSessionBrowserEditable` in the app's
+  defaults, editable until one is given); Copy uses the remembered
+  answer. `MCSessionBrowser editable` set otherwise than the running
+  server stops it, and the next start serves anew at a new address.
 - **The in-process host.** `Web::Options::connect` replaces the Unix
   socket: `MCSessionConnectViewer` (SessionLink.mm) connects the view's
-  read-only client as another renderer of `gHost`, and the host's Sink
+  client (a reader's or a guest's) as another renderer of `gHost`, and the host's Sink
   routes by `ClientId` (`gViewers`, under a lock, so the function it
   returns stops deliveries before the client goes). The state's folder is
   not checked then (one host serves every window), and `run()` does not
@@ -504,18 +512,126 @@ caught rather than opened, Copy, plain requests with and without the
 token and with another Host, a WebSocket that gets the window's document
 and an edit typed in the window, the port closed once the window is).
 
-### For editing (8b)
+### Editing in the browser (stage 8b)
 
-- The page needs input paths: a renderer that edits (not read-only), its
-  own caret and selection, typing sent as operations (UTF-16, which the
-  page already counts in) with the client's one-edit-in-flight rule and
-  `Ot::transform` done in JavaScript, or the host's edits applied to a
-  text model the page keeps instead of DOM lines; terminal keys encoded
-  the way `TerminalScreen::encodeKey` does; buttons for save, undo and
-  closing tabs once the host decides tabs (stage 6's note).
-- Saving is still the apps' until stage 7: a browser that edits a headless
-  host's document has nowhere to save it.
+`Web::Options::editable` (the Mac's choice at Show; `minicode host --web
+PORT --edit` or `attach ... --edit`): the page edits the document on show,
+undoes through the host's history, asks for a save, and types into the
+terminal on show. Read-only stays the default for the command line.
+
+- **A guest, not an editor.** The server's client says Hello flag 2
+  (`Client::setGuest`): its document seats are views, as a reader's
+  (never a new document, never keeping one open, `DocGone` when the last
+  editor closes it), and `Host::refusedFromViewer` lets it send only
+  `DocEdit` in the history (no flag 1), `DocUndo` and `TermInput` beyond
+  what a reader may (`sessionweb:guest`). A read-only view is still Hello
+  flag 1 and its server refuses every page message but `show`
+  (`refused` or `note`), before the host would.
+- **The server sequences its pages**, as the host sequences renderers.
+  `DocView` counts its own versions, one per change of its text whoever
+  made it (`commit`), keeps a log of 20,000 (`since`), and queues each
+  version as a `Change` that `flush` sends in order: the splices (or `all`
+  lines when a splice will not do), `ops` to every page but the maker, and
+  to the maker its `seq`, its `fix` and a `sel`. A page's `edit {base,
+  seq, ops}` is moved past `since(base)` (`Ot::transform`, the server's
+  winning ties: everything since is someone else's, as the page has one
+  edit in flight), applied to the view, recorded on the server's client
+  as one step (`openStep` with the page's name and coalescing,
+  `breakCoalescing` when the page says `fresh`, selections mapped through
+  what crossed), and committed. The client then does what any renderer's
+  does: one edit in flight to the host, the host's edits moved past its
+  own, handed back through `hostEdited`, which commits them as version
+  `by` 0. A base older than the log, or ops that do not fit, are
+  `refused` and the page gets the document again.
+- **Commands.** Return, Tab (a caret, or a selection in one line),
+  Shift+Tab, a selection over several lines, and Backspace carry `cmd` and
+  `at` (the selection they acted on). The server maps `at` through what
+  crossed and makes what `AutoIndent::newline`, `tab`, `backtab` or
+  `backspace` say on its own text instead of the page's guess (Return:
+  the line's indentation; Shift+Tab and block Tab: nothing), and sends the
+  maker `fix`, the smallest replacement from its guess to that
+  (`fixBetween`), plus AutoIndent's selection. The page takes `fix` as a
+  change made just after its own edit: what is waiting moves past it with
+  the caret after inserted text (`afterInsert`), so typing that followed
+  Return lands after the indentation.
+- **Undo** (`undo {redo}`) goes once the page has nothing unconfirmed;
+  the server calls `requestUndo`, and the host's edit comes back as any
+  other, with the step's selection for the page that asked
+  (`Session::undoFor`). An outcome other than done is a `note`.
+- **Save** (`save`) goes once the page is in step; the server settles its
+  client (the host has every edit, and has passed it on) and calls
+  `Options::save` on its own thread. The Mac's dispatches to the main
+  queue, dispatches the app's client (so the tab has every edit), and
+  saves the tab as `saveCurrentFile:` with a sender does for the tab on
+  show (format and organize on save, the disk questions) or `saveTab:`
+  for one behind. A headless host has no `save`: the page says to save
+  from a window. The tabs' dirty dots are the host's dirty flags in the
+  state, polled every half second.
+- **Terminal keys** (`tkey {key, mods}`, `ttext {text, mods}`, `tpaste
+  {text}`) are encoded on the server by the view's own screen, which saw
+  the same modes as the host's (`TerminalScreen::encodeKey` with
+  `appCursorKeys`, `appKeypad` and `keyboardFlags`; `encodeChar`;
+  `encodePaste` with `bracketedPaste`), and go to the host as
+  `TermInput`. Mods are xterm's (Shift 1, Alt 2, Control 4); on a Mac the
+  page leaves Option out, as it composes characters there. Resizing is
+  left to the app that opened the terminal.
+- **The page's editor** (SessionWebPage.cpp, no third-party code): each
+  line `{t, s, b}` (text, spans, its break: the server sends break 0 for
+  the last line, 2 for "\r\n", 3 "\r", 4 U+2029, nothing for "\n").
+  `shadow` is the server's lines at `version`, `flight` the edit sent,
+  `queue` those waiting (typing that waited is joined into one while it is
+  one step), and the lines on show are the shadow with them made
+  (`applyOp`, which keeps the objects, so the elements, of lines it did
+  not change, and the colors outside a change until the server's come).
+  `render` keeps the elements whose line object is the same at both ends.
+  Its transform is src/Ot.cpp line for line in UTF-16, the halving
+  recursion included. The caret and selection are drawn over the lines
+  from Range rectangles (only lines in view); a hidden textarea at the
+  caret takes keys, input methods (only `compositionend`'s text is
+  typed), and the clipboard (it holds the selected text, so Copy is
+  enabled in every browser); a click is `caretRangeFromPoint` (or
+  `caretPositionFromPoint`). Keys: the arrows (Option on a Mac, Control
+  elsewhere, by words; Command on a Mac to the line's or file's ends),
+  Home (to the first non-blank, then column 0) and End, Page Up and Down
+  by the scroller's height, Backspace and Delete (a surrogate pair or a
+  line break whole), Return, Tab, Shift+Tab, Escape, Command or Control
+  A, Z, Shift Z (Control Y), S; Copy, Cut and Paste are the browser's
+  events. A Markdown document shows its page, with Edit Source to edit it
+  (an editable page opens on the source). A document with typing not yet
+  confirmed is kept on show until it is.
+
+#### Checks
+
+`sessionweb:guest` (the host's rules for a guest); `sessionweb:edit` (a
+scripted page that keeps lines and pending edits as the script does,
+against a host over its socket with the editor's renderer typing at the
+same time: 120 rounds of both, ending on one text in the page, the host
+and the renderer; Return after `def g():` making four spaces with the
+next typing after them; undo and redo; a save reaching `Options::save`;
+keys and Control C reaching the shell; a read-only view of the same host
+refusing an edit, undo, save and keys; the socket refused for another
+origin, a localhost page under a 127.0.0.1 Host, and no Origin);
+`sessionweb:refusals` (`sameOrigin`); `sessionweb:doc-lines` (breaks and
+versions). GUI: `session_web` types into the headless host's shell and
+file through key events dispatched in the page; `session_browser` loads
+the Mac's page in a windowless WKWebView, types into the window's file
+with key events (Command Down, a line, Return), types in the window and
+sees the page follow and its dirty dot, checks Return's indentation,
+Command Z and Command S, and ends with page, window, host and disk on one
+text. The page's line splitting and transform were also fuzzed under node
+by hand against plain string edits and TP1 (not committed: CI has no
+JavaScript runner).
+
+### Still to do
+
 - Lines are re-sent whole per edit; a long line typed into from a browser
   wants character splices.
 - No snapshot or patch messages exist yet: the view polls the host's state
   every half second for tabs, documents and terminal sizes.
+- Several carets, folding, find, completion and the rest of the editor
+  are the Mac's and GTK's, not the page's; so are closing and reordering
+  tabs, which wait for the host to decide tabs (stage 6's note).
+- Saving from a headless host waits for stage 7; Mac terminals are the
+  app's own until they move into the host.
+- Typing the session had not confirmed when the connection drops is lost
+  (the page says so); it is not resent on reconnecting.
