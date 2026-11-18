@@ -223,6 +223,7 @@ gui_sources = [
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.
   'src/Terminal.cpp',
+  'src/TerminalFrame.cpp',
   'src/TerminalDock.cpp',
   'src/TerminalGroup.cpp',
   'src/Bookmarks.cpp',

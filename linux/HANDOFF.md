@@ -6469,3 +6469,44 @@ untitled buffers, one path twice, panning (stage 6, step 3)").
   The top-level Makefile's CLI links Backups.cpp and SavePlan.cpp.
 - **Checks**: `host_backups`, `host_pan`, and the `hostbackup:*` and
   `reattach:*` groups of `make test`.
+
+### 105. VTE in a frame of its own: no warnings while it pans, and a smaller pty's wrap (stage 6, step 3; November 2026)
+
+Two of item 104's leftovers (`../docs/notes/session-host.md`, "VTE as a
+renderer among several" and "VTE pans").
+
+- **What a user meets.** A terminal another renderer (the browser's
+  view, a guest) made smaller shows the program's screen at the pty's
+  own width and height, at the top left of the panel, the rest of the
+  panel the terminal's background: a long line with no cursor
+  positioning wraps where it wraps for the renderer that typed, not at
+  the panel's width. Typing in the panel takes the pty back to the
+  panel's size, as before. A larger one pans as in item 104, and GTK no
+  longer prints a warning on every pan.
+- **Code.** `src/TerminalFrame.{h,cpp}` (new): a GtkWidget implementing
+  GtkScrollable, the scrolled window's child in VTE's place, passing the
+  adjustments and scroll policies through to VTE (the scroll bar, the
+  wheel and the scrollback stay VTE's); it lays VTE out at its own size,
+  or at the size and offset it is held at, clips it, paints the
+  terminal's background where VTE does not reach, and gives VTE the
+  keyboard on a press there. `Terminal`: `followPtySize` holds VTE at
+  any size of another renderer's (larger or smaller), `measureCells`
+  (only while mapped), `viewCells` from the frame, `placeGrid` (was
+  `applyPan` and its negative margins), `releasePtySize`; `sendSize`
+  sends the frame's cells whenever VTE's cell is known (VTE's grid is
+  still the held one for a layout after a release, and sent then it took
+  the pty back to the other renderer's size); `char-size-changed` keeps
+  the cell and lays a held grid out in the new cells; a resize of
+  the view pans again; `sentSizes_` keeps the sizes still on their way
+  (up to 32, those before the latest dropped once it comes back);
+  `clipped()` is `atPtySize()`. The harness: `MCGuiLogWatchStart` and
+  `MCGuiLogWatchStop`, GLib's one log writer, keeping every warning and
+  critical while on.
+- **Checks**: `host_pan` (VTE laid out up in its frame by the rows
+  panned, no margins, the scroll bar VTE's adjustment, no Gtk-WARNING or
+  Gtk-CRITICAL from the other renderer's attach to the pty coming back)
+  and `host_wrap` (new; its header says what it checks).
+- **Left for a real screen**: the empty part's look beside a translucent
+  terminal color, trackpad scrolling over it, and a hidden terminal
+  shown while another renderer's size is in force (it follows at the
+  host's next TermShell, as before).

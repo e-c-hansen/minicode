@@ -146,6 +146,14 @@ bool MCGuiCheckEqual(const std::string& got, const std::string& want, const char
                      const char* file, int line);
 #define GCHECK_EQ_STR(a, b) MCGuiCheckEqual((a), (b), #a, #b, __FILE__, __LINE__)
 void MCGuiNote(const char* format, ...) G_GNUC_PRINTF(1, 2);
+// GLib's log watched: from MCGuiLogWatchStart on, every warning and
+// critical any library logs (GTK's "Gtk-WARNING" lines among them) is kept
+// as well as printed, as "<domain>-WARNING: <message>" or "-CRITICAL",
+// until MCGuiLogWatchStop returns them. The harness is the program, so it
+// sets GLib's one log writer (g_log_set_writer_func), at the first start;
+// it hands every message on to GLib's default writer.
+void MCGuiLogWatchStart();
+std::vector<std::string> MCGuiLogWatchStop();
 
 // ---- timing bounds that hold on a loaded machine
 // Bound the CPU time of the thread doing the work (MCGuiThreadCpuMs), not
