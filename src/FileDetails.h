@@ -16,7 +16,9 @@
 //     row's icon (a picture, a film, a table, ...).
 //   - TreeFocus: Focus on Folder, the tree rooted at one folder inside the
 //     window's: the breadcrumb's parts, a saved focus checked, a focus
-//     widened to show a path, and which parts fit the bar.
+//     widened to show a path, and which parts fit the bar; and Add to
+//     Focus, several folders as roots: the set's rules (nested folders
+//     merged), reveals, a saved set checked, and the label row's labels.
 //
 // The Mac's EditorController and TreeDetails.mm use it, and the GTK port's
 // FileTree.cpp its TreeRefresh; nothing here touches a GUI. measure() reads
@@ -377,5 +379,52 @@ std::string restored(const std::string &saved,
 // three parts or more) and the last, which the bar cuts short.
 std::vector<int> fit(const std::vector<double> &widths, double separator, double ellipsis,
                      double available);
+
+// Several folders (Add to Focus, 2026-11-18): the tree shows each folder of
+// a set as a root row of its own, labelled with its path from the window's
+// folder, in the order the folders were added. A set holds no "" (the
+// whole folder is the empty set), no folder twice, and no folder inside
+// another of its folders, so the tree never shows a file twice. One folder
+// is Focus on Folder as above, with its breadcrumb.
+using Set = std::vector<std::string>;
+
+// `set` with `folder` (normalized) added: unchanged when the folder is one
+// of them or inside one (the outer one wins); a folder that holds some of
+// them takes the place of the first of those, and the others go; else it
+// comes last. "" (the whole folder) gives the empty set.
+Set added(const Set &set, const std::string &folder);
+
+// `set` without `folder` (normalized); unchanged when it is not one of them.
+Set removed(const Set &set, const std::string &folder);
+
+// A list as a set: each normalized and added in turn, so a list with a
+// folder inside another keeps the outer one.
+Set merged(const Set &list);
+
+// The index of the folder of `set` that is `rel` or holds it; -1 for none.
+int rootOf(const Set &set, const std::string &rel);
+
+// What revealing `rel` (a path from the window's folder) makes of `set`:
+// with no folder, nothing; with one, widened() as above (the whole folder
+// when that gives ""); with several, the set itself when one of them holds
+// `rel`, else the set with `rel`'s folder added, so the tree takes it in
+// without widening (a file at the top of the window's folder adds "" and
+// so shows the whole folder).
+Set revealed(const Set &set, const std::string &rel);
+
+// What a saved set comes back as: merged, keeping only the folders that
+// still are folders (`isFolder`, asked with each); empty when none is.
+Set restoredSet(const Set &saved, const std::function<bool(const std::string &)> &isFolder);
+
+// The shortest labels that still tell the folders apart: each folder's
+// last names, as few as make it differ from every other folder's
+// ("mac/src", "linux/src" stay; "mac/src/deep" and "linux/tests" give
+// "deep" and "tests"). For a label row too narrow for the full paths.
+std::vector<std::string> shortLabels(const Set &set);
+
+// Widths that fit `available` in all: `widths` as they are when they fit,
+// else each cut to one cap, the largest that fits (the narrow ones keep
+// their width, the wide ones share what is left).
+std::vector<double> shared(const std::vector<double> &widths, double available);
 
 }  // namespace TreeFocus

@@ -1,31 +1,102 @@
-// EditorController+TreeFocus.mm — EditorController: Focus on Folder. The
-// tree shows one folder inside the window's as its root, with a breadcrumb
-// row across its top (TreeFocusBar.h) back up to the whole folder. The
-// focused folder is a node of the whole tree (_root's), reached by listing
-// the folders down to it, so the tree's own listings (FSEvents, Refresh,
-// the hidden-files switch) keep it, its rows, their git colors and sizes up
-// to date as before; the tree only starts lower. The window's folder never
-// changes: search, Quick Open, terminals, git, agents and the session cover
-// all of it. The rules (the breadcrumb's parts, a saved focus checked, a
-// focus widened to show a path) are the core's, FileDetails.h's TreeFocus.
+// EditorController+TreeFocus.mm — EditorController: Focus on Folder and
+// Add to Focus. With one folder focused, the tree shows that folder inside
+// the window's as its root, with a breadcrumb row across its top
+// (TreeFocusBar.h) back up to the whole folder; with several, each folder
+// is a root row of its own, labelled with its path from the window's
+// folder, under a row of their labels, each with a × that takes it out.
+// The focused folders are nodes of the whole tree (_root's), reached by
+// listing the folders down to them, so the tree's own listings (FSEvents,
+// Refresh, the hidden-files switch) keep them, their rows, git colors and
+// sizes up to date as before; the tree only starts lower. The window's
+// folder never changes: search, Quick Open, terminals, git, agents and the
+// session cover all of it. The rules (the breadcrumb's parts, the set's
+// merging of nested folders, a saved focus checked, a reveal widening or
+// adding a folder, the labels) are the core's, FileDetails.h's TreeFocus.
 #import "EditorController+Private.h"
 #import "EditorController+TreeFocusIvars.h"
 
 #include "FileDetails.h"
 
+namespace {
+
+TreeFocus::Set MCFocusSet(NSArray<NSString *> *folders) {
+    TreeFocus::Set set;
+    for (NSString *f in folders) set.push_back(Utf8String(f));
+    return set;
+}
+
+NSArray<NSString *> *MCFocusArray(const TreeFocus::Set &set) {
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    for (const std::string &f : set) [out addObject:@(f.c_str()) ?: @""];
+    return out;
+}
+
+BOOL MCPathAtOrBelow(NSString *path, FileItem *folder) {
+    return [path isEqualToString:folder.path] ||
+           [path hasPrefix:[folder.path stringByAppendingString:@"/"]];
+}
+
+}  // namespace
+
 @implementation EditorController (TreeFocus)
 
-- (FileItem *)treeTop { return _treeFocusItem ?: _root; }
+- (FileItem *)treeTop {
+    if (!_treeFocusItems.count) return _root;
+    return _treeFocusItems.count == 1 ? _treeFocusItems[0] : nil;
+}
 
-- (NSString *)treeFocus { return _treeFocusItem ? (_treeFocusPath ?: @"") : @""; }
+- (NSArray<FileItem *> *)treeTopRows {
+    if (_treeFocusItems.count > 1) return _treeFocusItems;
+    return [self childrenOf:[self treeTop]];
+}
+
+- (FileItem *)treeDefaultFolder { return [self treeTop] ?: _treeFocusItems.firstObject; }
+
+- (NSString *)treeFocus { return [_treeFocusPaths componentsJoinedByString:@", "] ?: @""; }
+
+- (NSArray<NSString *> *)treeFocusFolders { return _treeFocusPaths ?: @[]; }
 
 - (MCTreeFocusBar *)treeFocusBar { return _treeFocusBar; }
 
+- (FileItem *)treeRootFor:(NSString *)path {
+    if (_treeFocusItems.count < 2 || !path) return nil;
+    for (FileItem *r in _treeFocusItems)
+        if (MCPathAtOrBelow(path, r)) return r;
+    return nil;
+}
+
+- (NSString *)treeRootLabelFor:(FileItem *)item {
+    if (_treeFocusItems.count < 2 || !item) return nil;
+    const NSUInteger i = [_treeFocusItems indexOfObjectIdenticalTo:item];
+    return i == NSNotFound ? nil : _treeFocusPaths[i];
+}
+
 - (BOOL)treeShowsFolder:(FileItem *)folder {
-    FileItem *top = [self treeTop];
     if (!folder) return NO;
-    if (folder == top || top == _root) return YES;
-    return [folder.path hasPrefix:[top.path stringByAppendingString:@"/"]];
+    if (!_treeFocusItems.count) return YES;
+    for (FileItem *top in _treeFocusItems)
+        if (folder == top || [folder.path hasPrefix:[top.path stringByAppendingString:@"/"]]) return YES;
+    return NO;
+}
+
+- (void)reExpandTreeTop:(NSSet<NSString *> *)expanded {
+    if (_treeFocusItems.count > 1) {
+        for (FileItem *r in _treeFocusItems) {
+            if ([expanded containsObject:r.path]) {
+                [self.outline expandItem:r];
+                [self reExpand:r usingSet:expanded];
+            } else {
+                [self.outline collapseItem:r];
+            }
+        }
+        return;
+    }
+    FileItem *top = [self treeTop];
+    [self reExpand:top usingSet:expanded];
+    if (top == _root && _worktreesItem && [expanded containsObject:_worktreesItem.path]) {
+        [self.outline expandItem:_worktreesItem];
+        [self reExpand:_worktreesItem usingSet:expanded];
+    }
 }
 
 // `path` (the tree's spelling) from the window's folder; nil outside it.
@@ -67,50 +138,82 @@
     return [self focusTreeOn:focus save:YES];
 }
 
-// Roots the tree at `focus` ("" for the whole folder), keeping the folders
-// open in it and the selected row, and remembering the folders open
-// outside it for when it widens again.
 - (BOOL)focusTreeOn:(NSString *)focus save:(BOOL)save {
-    NSString *rel = @(TreeFocus::normalize(Utf8String(focus ?: @"")).c_str()) ?: @"";
-    FileItem *target = rel.length ? [self treeItemForFocus:rel] : nil;
-    if (rel.length && !target) return NO;
-    if (target == _treeFocusItem) return YES;
-    FileItem *oldTop = [self treeTop];
+    return [self setTreeFocusFolders:focus.length ? @[focus] : @[] save:save];
+}
+
+- (BOOL)setTreeFocusFolders:(NSArray<NSString *> *)folders {
+    return [self setTreeFocusFolders:folders save:YES];
+}
+
+- (BOOL)addTreeFocus:(NSString *)folder {
+    return [self setTreeFocusFolders:MCFocusArray(TreeFocus::added(MCFocusSet(self.treeFocusFolders),
+                                                                   Utf8String(folder ?: @"")))
+                                save:YES];
+}
+
+- (BOOL)removeTreeFocus:(NSString *)folder {
+    return [self setTreeFocusFolders:MCFocusArray(TreeFocus::removed(MCFocusSet(self.treeFocusFolders),
+                                                                     Utf8String(folder ?: @"")))
+                                save:YES];
+}
+
+// Shows `folders` (merged by the core's rule; none for the whole folder),
+// keeping the folders open in the tree and the selected row, and
+// remembering the folders open outside it for when it widens again. A
+// folder new among several roots shows open.
+- (BOOL)setTreeFocusFolders:(NSArray<NSString *> *)folders save:(BOOL)save {
+    const TreeFocus::Set set = TreeFocus::merged(MCFocusSet(folders));
+    NSMutableArray<FileItem *> *items = [NSMutableArray array];
+    for (const std::string &f : set) {
+        FileItem *it = [self treeItemForFocus:@(f.c_str())];
+        if (!it) return NO;
+        [items addObject:it];
+    }
+    NSArray<FileItem *> *old = _treeFocusItems ?: @[];
+    if ([items isEqualToArray:old]) return YES;
     NSString *selPath = self.outline.selectedRow >= 0
         ? [(FileItem *)[self.outline itemAtRow:self.outline.selectedRow] path] : nil;
     // What was remembered from before, but where the tree showed it, what
     // it shows now: those rows are the truth.
     NSMutableSet<NSString *> *memory = _treeFocusExpanded ?: [NSMutableSet set];
-    NSString *oldPrefix = [oldTop.path stringByAppendingString:@"/"];
-    for (NSString *p in [memory allObjects])
-        if (oldTop == _root || [p isEqualToString:oldTop.path] || [p hasPrefix:oldPrefix])
-            [memory removeObject:p];
+    for (NSString *p in [memory allObjects]) {
+        BOOL shown = old.count == 0;
+        for (FileItem *t in old) shown = shown || MCPathAtOrBelow(p, t);
+        if (shown) [memory removeObject:p];
+    }
     [memory unionSet:[self treeExpandedNow]];
-    // Widening: the folder that was the root shows open, with every folder
-    // on the way down to it, so its rows stay in view.
-    NSString *newTopPath = target ? target.path : _root.path;
-    const BOOL widening = oldTop != _root &&
-        (target == nil || [oldTop.path hasPrefix:[newTopPath stringByAppendingString:@"/"]]);
-    if (widening)
-        for (FileItem *f = oldTop; f && f != _root && f != target; f = f.parent)
-            [memory addObject:f.path];
-    _treeFocusItem = target;
-    _treeFocusPath = target ? rel : nil;
+    // Widening (or a root taken into a new folder that holds it): the old
+    // root shows open, with every folder on the way down to it, so its
+    // rows stay in view.
+    NSArray<FileItem *> *newTops = items.count ? items : @[_root];
+    FileItem *widenedFrom = nil;
+    for (FileItem *t in old) {
+        for (FileItem *n in newTops) {
+            if (n == t) break;
+            if (n != _root && ![t.path hasPrefix:[n.path stringByAppendingString:@"/"]]) continue;
+            for (FileItem *f = t; f && f != _root && f != n; f = f.parent) [memory addObject:f.path];
+            if (old.count == 1) widenedFrom = t;
+            break;
+        }
+    }
+    // Among several roots, one that was not a root of several before
+    // (added, or the one folder focused till now) shows open.
+    if (items.count > 1)
+        for (FileItem *n in items)
+            if (old.count < 2 || [old indexOfObjectIdenticalTo:n] == NSNotFound) [memory addObject:n.path];
+    _treeFocusItems = items.count ? [items copy] : nil;
+    _treeFocusPaths = items.count ? MCFocusArray(set) : nil;
     _treeFocusExpanded = memory;
 
     [self.outline reloadData];
-    FileItem *top = [self treeTop];
-    [self reExpand:top usingSet:memory];
+    [self reExpandTreeTop:memory];
     [self fitTreeColumn];
-    if (top == _root && _worktreesItem && [memory containsObject:_worktreesItem.path]) {
-        [self.outline expandItem:_worktreesItem];
-        [self reExpand:_worktreesItem usingSet:memory];
-    }
     // The selection where it still shows; widening, else the old root's row.
     NSInteger row = -1;
     for (NSInteger r = 0; selPath && r < self.outline.numberOfRows; r++)
         if ([[(FileItem *)[self.outline itemAtRow:r] path] isEqualToString:selPath]) { row = r; break; }
-    if (row < 0 && widening) row = [self.outline rowForItem:oldTop];
+    if (row < 0 && widenedFrom) row = [self.outline rowForItem:widenedFrom];
     if (row >= 0) {
         [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
                   byExtendingSelection:NO];
@@ -125,7 +228,7 @@
 }
 
 - (void)updateTreeFocusBar {
-    if (!_treeFocusItem) {
+    if (!_treeFocusItems.count) {
         if (_treeFocusBar && !_treeFocusBar.hidden) {
             _treeFocusBar.hidden = YES;
             [self.sidebarScroll tile];
@@ -141,13 +244,37 @@
             [s focusTreeOn:focus];
             [s.window makeFirstResponder:s.outline];
         };
+        _treeFocusBar.onRemove = ^(NSString *folder) {
+            EditorController *s = weakSelf;
+            [s removeTreeFocus:folder];
+            [s.window makeFirstResponder:s.outline];
+        };
+        _treeFocusBar.onShowFolder = ^(NSString *folder) {
+            EditorController *s = weakSelf;
+            [s selectTreeRoot:folder];
+            [s.window makeFirstResponder:s.outline];
+        };
         self.sidebarScroll.topBar = _treeFocusBar;
     }
     _treeFocusBar.textColor = [[AppSettings shared] text:Surface::Sidebar];
-    NSString *name = _root.path.lastPathComponent.length ? _root.path.lastPathComponent : _root.path;
-    [_treeFocusBar setRootName:name focus:_treeFocusPath ?: @""];
+    if (_treeFocusItems.count == 1) {
+        NSString *name = _root.path.lastPathComponent.length ? _root.path.lastPathComponent : _root.path;
+        [_treeFocusBar setRootName:name focus:_treeFocusPaths.firstObject ?: @""];
+    } else {
+        [_treeFocusBar setFolders:_treeFocusPaths];
+    }
     _treeFocusBar.hidden = NO;
     [self.sidebarScroll tile];
+}
+
+// A label of the label row clicked: its root row selected and scrolled to.
+- (void)selectTreeRoot:(NSString *)folder {
+    const NSUInteger i = [_treeFocusPaths indexOfObject:folder ?: @""];
+    if (i == NSNotFound || i >= _treeFocusItems.count) return;
+    const NSInteger row = [self.outline rowForItem:_treeFocusItems[i]];
+    if (row < 0) return;
+    [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row] byExtendingSelection:NO];
+    [self.outline scrollRowToVisible:row];
 }
 
 // The folder Focus on Folder roots the tree at: the clicked or selected
@@ -156,9 +283,37 @@
     FileItem *node = [self clickedOrSelectedItem];
     if (node && [self isWorktreeRowOrNode:node]) return nil;
     if (node) return [self treeRelative:node.isDir ? node.path : node.path.stringByDeletingLastPathComponent];
+    return [self activeFileFolder];
+}
+
+// The active file's folder from the window's ("" at its top); nil for none
+// or outside it.
+- (NSString *)activeFileFolder {
     NSString *fromRoot = self.currentPath ? [self pathFromRoot:self.currentPath] : nil;
     if (!fromRoot) return nil;
     return [fromRoot isEqualToString:@"."] ? @"" : @(TreeFocus::parent(Utf8String(fromRoot)).c_str());
+}
+
+// `rel` when Add to Focus would show something new by it: a folder not
+// shown yet, and not the window's own ("" would show the whole folder,
+// which is Show Whole Folder in Tree's).
+- (NSString *)addableFocus:(NSString *)rel {
+    return rel.length && TreeFocus::rootOf(MCFocusSet(self.treeFocusFolders), Utf8String(rel)) < 0 ? rel : nil;
+}
+
+- (NSString *)folderToAddToFocusFrom:(FileItem *)node {
+    if (!node || [self isWorktreeRowOrNode:node]) return nil;
+    return [self addableFocus:[self treeRelative:node.isDir ? node.path
+                                                            : node.path.stringByDeletingLastPathComponent]];
+}
+
+- (NSString *)folderToAddToFocus {
+    // A right click goes by its row alone.
+    if (self.outline.clickedRow >= 0)
+        return [self folderToAddToFocusFrom:[self.outline itemAtRow:self.outline.clickedRow]];
+    FileItem *selected = self.outline.selectedRow >= 0 ? [self.outline itemAtRow:self.outline.selectedRow] : nil;
+    if (NSString *rel = [self folderToAddToFocusFrom:selected]) return rel;
+    return [self addableFocus:[self activeFileFolder]];
 }
 
 - (void)focusOnFolder:(id)sender {
@@ -174,34 +329,69 @@
     }
 }
 
+- (void)addFolderToFocus:(id)sender {
+    (void)sender;
+    NSString *rel = [self folderToAddToFocus];
+    if (!rel) {
+        NSBeep();
+        [self showStatusNote:@"The tree shows that folder already"];
+        return;
+    }
+    if (![self addTreeFocus:rel]) {
+        NSBeep();
+        [self showStatusNote:@"That folder is not in the tree"];
+    }
+}
+
+// The root row clicked or selected, while several folders are focused.
+- (NSString *)focusedRootToRemove {
+    return [self treeRootLabelFor:[self clickedOrSelectedItem]];
+}
+
+- (void)removeFolderFromFocus:(id)sender {
+    (void)sender;
+    NSString *rel = [self focusedRootToRemove];
+    if (!rel) {
+        NSBeep();
+        return;
+    }
+    [self removeTreeFocus:rel];
+}
+
 - (void)showWholeFolderInTree:(id)sender {
     (void)sender;
-    if (!_treeFocusItem) return;
-    [self focusTreeOn:@""];
+    if (!_treeFocusItems.count) return;
+    [self setTreeFocusFolders:@[] save:YES];
 }
 
 - (BOOL)validateTreeFocusItem:(NSMenuItem *)item enabled:(BOOL *)enabled {
-    if (item.action == @selector(showWholeFolderInTree:)) *enabled = _treeFocusItem != nil;
+    if (item.action == @selector(showWholeFolderInTree:)) *enabled = _treeFocusItems.count > 0;
     else if (item.action == @selector(focusOnFolder:)) *enabled = [self folderToFocus] != nil;
+    else if (item.action == @selector(addFolderToFocus:)) *enabled = [self folderToAddToFocus] != nil;
+    else if (item.action == @selector(removeFolderFromFocus:)) *enabled = [self focusedRootToRemove] != nil;
     else return NO;
     return YES;
 }
 
 - (BOOL)treeFocusShowsPath:(NSString *)path widen:(BOOL)widen {
-    if (!_treeFocusItem) return YES;
+    if (!_treeFocusItems.count) return YES;
     NSString *rel = [self treeRelative:path];
     if (!rel) return YES;   // outside the window's folder: as before, nothing to show
-    const std::string focus = Utf8String(_treeFocusPath), r = Utf8String(rel);
-    if (r != focus && TreeFocus::contains(focus, r)) return YES;
+    const TreeFocus::Set set = MCFocusSet(_treeFocusPaths);
+    const std::string r = Utf8String(rel);
+    // One folder is the tree's root, no row of its own; several are rows.
+    if (set.size() == 1 ? r != set[0] && TreeFocus::contains(set[0], r) : TreeFocus::rootOf(set, r) >= 0)
+        return YES;
     if (!widen) return NO;
-    // A reveal: the nearest folder that shows it as a row.
-    return [self focusTreeOn:@(TreeFocus::widened(focus, r).c_str())];
+    // A reveal: one folder widens to the nearest folder that shows it as a
+    // row; several take in the path's folder.
+    return [self setTreeFocusFolders:MCFocusArray(TreeFocus::revealed(set, r)) save:YES];
 }
 
-// Whether the focused folder is still where the tree listed it: each
-// folder on the way down still holds the next.
-- (BOOL)treeFocusStillListed {
-    for (FileItem *f = _treeFocusItem; f && f != _root; f = f.parent) {
+// Whether a focused folder is still where the tree listed it: each folder
+// on the way down still holds the next.
+- (BOOL)treeFocusStillListed:(FileItem *)item {
+    for (FileItem *f = item; f && f != _root; f = f.parent) {
         FileItem *up = f.parent;
         if (!up || !up.loaded || [up.children indexOfObjectIdenticalTo:f] == NSNotFound) return NO;
     }
@@ -209,33 +399,53 @@
 }
 
 - (NSSet<NSString *> *)dropLostTreeFocus {
-    if (!_treeFocusItem || [self treeFocusStillListed]) return nil;
+    if (!_treeFocusItems.count) return nil;
+    NSMutableArray<FileItem *> *items = [NSMutableArray array];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSUInteger i = 0; i < _treeFocusItems.count; i++) {
+        if (![self treeFocusStillListed:_treeFocusItems[i]]) continue;
+        [items addObject:_treeFocusItems[i]];
+        [paths addObject:_treeFocusPaths[i]];
+    }
+    if (items.count == _treeFocusItems.count) return nil;
     NSSet<NSString *> *open = [_treeFocusExpanded copy] ?: [NSSet set];
-    _treeFocusItem = nil;
-    _treeFocusPath = nil;
-    _treeFocusExpanded = nil;
+    const BOOL several = _treeFocusItems.count > 1;
+    _treeFocusItems = items.count ? items : nil;
+    _treeFocusPaths = items.count ? paths : nil;
+    if (!items.count) _treeFocusExpanded = nil;
     [self updateTreeFocusBar];
-    [self showStatusNote:@"The focused folder is gone: the tree shows the whole folder"];
+    [self showStatusNote:items.count ? @"A focused folder is gone: the tree shows the others"
+                         : several   ? @"The focused folders are gone: the tree shows the whole folder"
+                                     : @"The focused folder is gone: the tree shows the whole folder"];
     [self saveSession];
     return open;
 }
 
 - (void)forgetTreeFocus {
-    _treeFocusItem = nil;
-    _treeFocusPath = nil;
+    _treeFocusItems = nil;
+    _treeFocusPaths = nil;
     _treeFocusExpanded = nil;
     [self updateTreeFocusBar];
 }
 
-- (void)restoreTreeFocus:(NSString *)saved {
-    const std::string focus = TreeFocus::restored(
-        Utf8String(saved ?: @""),
+- (void)restoreTreeFocus:(NSArray<NSString *> *)saved {
+    const TreeFocus::Set set = TreeFocus::restoredSet(
+        MCFocusSet(saved ?: @[]),
         [self](const std::string &f) { return [self treeItemForFocus:@(f.c_str())] != nil; });
-    [self focusTreeOn:@(focus.c_str()) save:NO];
+    [self setTreeFocusFolders:MCFocusArray(set) save:NO];
 }
 
+// Only those outside what the tree shows: the rows say what is open there
+// (a root closed since it was added stays closed).
 - (NSSet<NSString *> *)treeFocusRememberedExpanded {
-    return _treeFocusItem ? [_treeFocusExpanded copy] ?: [NSSet set] : [NSSet set];
+    NSMutableSet<NSString *> *out = [NSMutableSet set];
+    if (!_treeFocusItems.count) return out;
+    for (NSString *p in _treeFocusExpanded) {
+        BOOL shown = NO;
+        for (FileItem *t in _treeFocusItems) shown = shown || MCPathAtOrBelow(p, t);
+        if (!shown) [out addObject:p];
+    }
+    return out;
 }
 
 - (void)rememberTreeExpanded:(NSSet<NSString *> *)paths {

@@ -181,6 +181,11 @@ static const NSInteger kBookmarkFileMenuTag = 7703;
 // Show Whole Folder in Tree, shown while the tree is focused.
 static const NSInteger kFocusFolderMenuTag = 7704;
 static const NSInteger kTreeFocusedMenuTag = 7705;
+// Add to Focus, shown on a folder's row the tree does not show already as
+// a focused folder or inside one, and Remove from Focus, on a root row
+// while several folders are focused.
+static const NSInteger kAddFocusMenuTag = 7706;
+static const NSInteger kRemoveFocusMenuTag = 7707;
 
 // ---------------------------------------------------------------------------
 // The instance variables more than one category uses. A variable only one
@@ -543,35 +548,60 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)reloadTreeKeepingState:(BOOL)rescan alsoExpanding:(NSSet<NSString *> *)more;
 @end
 
-// EditorController+TreeFocus.mm: Focus on Folder (EditorController.h).
-// Its state is in EditorController+TreeFocusIvars.h; the other categories
-// ask these.
+// EditorController+TreeFocus.mm: Focus on Folder and Add to Focus
+// (EditorController.h). Its state is in EditorController+TreeFocusIvars.h;
+// the other categories ask these.
 @class MCTreeFocusBar;
 @interface EditorController (TreeFocus)
-// The node the tree shows as its root: the focused folder, else _root.
+// The node the tree shows as its root: the focused folder, else _root;
+// nil while several folders are focused, each a root row of its own.
 - (FileItem *)treeTop;
-// Whether a folder's rows are on show in the tree: the top or below it.
+// The rows at the top of the tree: the top's children, or the focused
+// folders themselves while there are several.
+- (NSArray<FileItem *> *)treeTopRows;
+// The folder a command with no row to go by works in (New File with
+// nothing selected, Copy Path): the top, else the first focused folder.
+- (FileItem *)treeDefaultFolder;
+// The focused folder (one of several) that is `path` or holds it; nil
+// with fewer than two, or outside them all.
+- (FileItem *)treeRootFor:(NSString *)path;
+// A root row's label while several folders are focused (its path from the
+// window's folder, "mac/src"); nil for any other row.
+- (NSString *)treeRootLabelFor:(FileItem *)item;
+// Whether a folder's rows are on show in the tree: a top or below one.
 - (BOOL)treeShowsFolder:(FileItem *)folder;
+// Opens the folders of `expanded` from the top down (the Worktrees node
+// too on the whole folder); with several roots, each root open exactly
+// when `expanded` holds it.
+- (void)reExpandTreeTop:(NSSet<NSString *> *)expanded;
 // Whether `path` (the tree's spelling) can show in the tree now, widening
-// the focus to take it in when `widen` is set.
+// the focus to take it in when `widen` is set (one folder: to the nearest
+// folder above both; several: the path's folder added).
 - (BOOL)treeFocusShowsPath:(NSString *)path widen:(BOOL)widen;
-// After the tree read the disk again: the focused folder gone from it
-// falls back to the whole folder (with a note), and the folders it had
-// open outside the focus are returned to open again; nil when the focus
-// stands.
+// After the tree read the disk again: a focused folder gone from it is
+// dropped (with a note), the whole folder shown when none is left, and the
+// folders open outside the focus are returned to open again; nil when the
+// focus stands.
 - (NSSet<NSString *> *)dropLostTreeFocus;
 // A new folder in the window: no focus, and nothing remembered.
 - (void)forgetTreeFocus;
-// A focus kept by a session or a window record: set again when it still
-// names a folder in the tree, else the whole folder. Saves nothing.
-- (void)restoreTreeFocus:(NSString *)saved;
+// The folders kept by a session or a window record: set again while they
+// still name folders in the tree (those gone are dropped; with none left,
+// the whole folder). Saves nothing.
+- (void)restoreTreeFocus:(NSArray<NSString *> *)saved;
 // Folders open outside the focus, kept so widening opens them again, and
 // added to (a window brought back).
 - (NSSet<NSString *> *)treeFocusRememberedExpanded;
 - (void)rememberTreeExpanded:(NSSet<NSString *> *)paths;
-// The breadcrumb row shown, hidden and colored as things stand.
+// The breadcrumb or label row shown, hidden and colored as things stand.
 - (void)updateTreeFocusBar;
 - (BOOL)validateTreeFocusItem:(NSMenuItem *)item enabled:(BOOL *)enabled;
+// What Add to Focus would add (the clicked folder; else the selected row's
+// folder, else the open file's, the first not shown yet); nil for none.
+- (NSString *)folderToAddToFocus;
+// The same for one row (a folder, or a file's folder) alone, as its right
+// click offers it.
+- (NSString *)folderToAddToFocusFrom:(FileItem *)node;
 // The bar, for the checks (nil until the tree is first focused).
 - (MCTreeFocusBar *)treeFocusBar;
 @end

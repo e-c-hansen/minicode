@@ -1579,6 +1579,14 @@ These may run in parallel.
   Cursor (`testing.runAtCursor`, no key on either system); test.<language>
   in the settings. *Done* (`HANDOFF.md` item 96), checked by the
   `test_gutter` suite.
+- [ ] **4.11 Add to Focus, several folders.** Added to the Mac on
+  2026-11-18: "Add to Focus, several folders" in `../docs/notes/tree.md`.
+  The core's set rules (`TreeFocus::added`, `removed`, `merged`, `rootOf`,
+  `revealed`, `restoredSet`, `shortLabels`, `shared`; `tree:focus-set`)
+  and the list form of `TabSessions::Session.treeFocus` are in; the port
+  keeps one folder (`Persistence.cpp` writes a list of one and restores
+  the first) until it shows each focused folder as a root row with the
+  label row above.
 
 ## Reported by the owner
 

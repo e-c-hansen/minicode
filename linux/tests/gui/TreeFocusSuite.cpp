@@ -168,7 +168,9 @@ std::string StoredFocus() {
     const TabSessions::Sessions all =
         TabSessions::decode(MCGuiReadFile(MCGuiScratch() + "/state/minicode/sessions.json"));
     const auto it = all.find(Persistence::keyFor(gRepo));
-    return it == all.end() ? "(no session)" : it->second.treeFocus;
+    if (it == all.end()) return "(no session)";
+    // A list since the Mac's Add to Focus; the GTK tree keeps one folder.
+    return it->second.treeFocus.empty() ? std::string() : it->second.treeFocus.front();
 }
 
 std::string StatusText() {
@@ -416,7 +418,7 @@ MC_GUI_SUITE(tree_focus) {
         GCHECK(Tree()->setFocus("mac/src"));
         gRecord = MCGuiWindowRecord(Win().window);
         const std::vector<TabSessions::Window> w = TabSessions::decodeWindows(gRecord);
-        GCHECK(w.size() == 1 && w[0].tabs.treeFocus == "mac/src");
+        GCHECK(w.size() == 1 && w[0].tabs.treeFocus == std::vector<std::string>{"mac/src"});
         MCGuiOpenWindowRestoring(gRepo, gRecord);
         MCGuiSetKeyWindow(nullptr);
     });
@@ -437,7 +439,7 @@ MC_GUI_SUITE(tree_focus) {
         std::vector<TabSessions::Window> w = TabSessions::decodeWindows(gRecord);
         GCHECK(!w.empty());
         if (w.empty()) return;
-        w[0].tabs.treeFocus = "mac/gone";
+        w[0].tabs.treeFocus = {"mac/gone"};
         MCGuiOpenWindowRestoring(gRepo, TabSessions::encodeWindows(w));
         MCGuiSetKeyWindow(nullptr);
     });

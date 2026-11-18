@@ -652,4 +652,110 @@ std::vector<int> fit(const std::vector<double> &widths, double separator, double
     return out;
 }
 
+Set added(const Set &set, const std::string &folder) {
+    const std::string f = normalize(folder);
+    if (f.empty()) return {};
+    for (const std::string &s : set)
+        if (contains(s, f)) return set;   // already shown (outer wins)
+    Set out;
+    bool placed = false;
+    for (const std::string &s : set) {
+        if (contains(f, s)) {   // inside the new folder: it takes the first's place
+            if (!placed) out.push_back(f);
+            placed = true;
+            continue;
+        }
+        out.push_back(s);
+    }
+    if (!placed) out.push_back(f);
+    return out;
+}
+
+Set removed(const Set &set, const std::string &folder) {
+    const std::string f = normalize(folder);
+    Set out;
+    for (const std::string &s : set)
+        if (s != f) out.push_back(s);
+    return out;
+}
+
+Set merged(const Set &list) {
+    Set out;
+    for (const std::string &f : list) {
+        if (normalize(f).empty()) continue;   // "" or one leaving the folder: no folder
+        out = added(out, f);
+    }
+    return out;
+}
+
+int rootOf(const Set &set, const std::string &rel) {
+    for (size_t i = 0; i < set.size(); i++)
+        if (!set[i].empty() && contains(set[i], rel)) return (int)i;
+    return -1;
+}
+
+Set revealed(const Set &set, const std::string &rel) {
+    if (set.empty()) return set;
+    if (set.size() == 1) {
+        const std::string w = widened(set[0], rel);
+        return w.empty() ? Set{} : Set{w};
+    }
+    if (rootOf(set, rel) >= 0) return set;
+    return added(set, parent(rel));
+}
+
+Set restoredSet(const Set &saved, const std::function<bool(const std::string &)> &isFolder) {
+    Set out;
+    if (!isFolder) return out;
+    for (const std::string &f : merged(saved))
+        if (isFolder(f)) out.push_back(f);
+    return out;
+}
+
+std::vector<std::string> shortLabels(const Set &set) {
+    std::vector<std::vector<std::string>> parts;
+    for (const std::string &s : set) parts.push_back(names(s));
+    auto suffix = [&](size_t i, size_t k) {
+        const std::vector<std::string> &p = parts[i];
+        const size_t from = p.size() > k ? p.size() - k : 0;
+        std::vector<std::string> tail(p.begin() + (long)from, p.end());
+        return joined(tail, tail.size());
+    };
+    std::vector<std::string> out;
+    for (size_t i = 0; i < set.size(); i++) {
+        size_t k = 1;
+        for (; k < parts[i].size(); k++) {
+            bool unique = true;
+            for (size_t j = 0; j < set.size() && unique; j++)
+                if (j != i && suffix(j, k) == suffix(i, k)) unique = false;
+            if (unique) break;
+        }
+        out.push_back(suffix(i, k));
+    }
+    return out;
+}
+
+std::vector<double> shared(const std::vector<double> &widths, double available) {
+    double all = 0;
+    for (double w : widths) all += w;
+    if (all <= available || widths.empty()) return widths;
+    if (available <= 0) return std::vector<double>(widths.size(), 0);
+    // The cap: the narrow ones whole, what is left shared by the rest.
+    std::vector<double> sorted = widths;
+    std::sort(sorted.begin(), sorted.end());
+    double left = available, cap = 0;
+    for (size_t i = 0; i < sorted.size(); i++) {
+        const double share = left / (double)(sorted.size() - i);
+        if (sorted[i] > share) {
+            cap = share;
+            break;
+        }
+        left -= sorted[i];
+        cap = sorted[i];
+    }
+    std::vector<double> out;
+    for (double w : widths) out.push_back(std::min(w, cap));
+    return out;
+}
+
 }  // namespace TreeFocus

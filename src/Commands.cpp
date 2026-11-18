@@ -352,6 +352,10 @@ const std::vector<Command>& all() {
          nullptr},
         {"minicode.tree.showWholeFolder", "Show Whole Folder in Tree", "File", "", A,
          "showWholeFolderInTree:", 0, 0, nullptr},
+        // Add to Focus: several folders, each a root of the tree (the
+        // clicked or selected folder, else the open file's). No key.
+        {"minicode.tree.addToFocus", "Add to Focus", "File", "", A, "addFolderToFocus:", 0, 0,
+         nullptr},
         {"workbench.action.files.copyPathOfActiveFile", "Copy Path of Active File", "File", "", A,
          "copyActiveFilePath:", 0, 0, nullptr},
         {"workbench.action.files.copyRelativePathOfActiveFile",

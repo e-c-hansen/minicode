@@ -105,7 +105,11 @@ Json encodeSession(const Session &s) {
         g.set("fraction", s.groups.fraction);
         e.set("groups", g);
     }
-    if (!s.treeFocus.empty()) e.set("treeFocus", s.treeFocus);
+    if (!s.treeFocus.empty()) {
+        Json focus = Json::array();
+        for (const std::string &f : s.treeFocus) focus.push(Json(f));
+        e.set("treeFocus", focus);
+    }
     return e;
 }
 
@@ -152,7 +156,12 @@ bool decodeSession(const Json &e, Session *out) {
     s.active = active >= 0 ? keptAt[(size_t)active] : -1;
     s.preview = preview >= 0 ? keptAt[(size_t)preview] : -1;
     s.used = e["used"].asNumber(0);
-    if (e["treeFocus"].isString()) s.treeFocus = e["treeFocus"].asString();
+    // A list of folders; before 2026-11-18, one folder's path.
+    const Json &focus = e["treeFocus"];
+    if (focus.isString() && !focus.asString().empty()) s.treeFocus.push_back(focus.asString());
+    if (focus.isArray())
+        for (const Json &f : focus.elements())
+            if (f.isString() && !f.asString().empty()) s.treeFocus.push_back(f.asString());
     const Json &g = e["groups"];
     if (g.isObject() && g["left"].isArray() && g["right"].isArray()) {
         for (int k = 0; k < 2; k++)
