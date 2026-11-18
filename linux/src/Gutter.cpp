@@ -103,6 +103,18 @@ Gutter::Gutter(GtkTextView* view) : view_(view) {
         if (self->lines() && self->lines()->folds()) self->queueDraw();
     }), this);
     gtk_widget_add_controller(widget_, motion);
+    // The test lane's tooltips: looked up by the line under the pointer, so
+    // nothing needs redoing as the text scrolls.
+    gtk_widget_set_has_tooltip(widget_, TRUE);
+    g_signal_connect(widget_, "query-tooltip", G_CALLBACK(+[](GtkWidget*, int x, int y, gboolean keyboard,
+                                                               GtkTooltip* tip, gpointer p) -> gboolean {
+        Gutter* self = static_cast<Gutter*>(p);
+        if (keyboard) return FALSE;
+        const std::string text = self->testTipAt(x, y);
+        if (text.empty()) return FALSE;
+        gtk_tooltip_set_text(tip, text.c_str());
+        return TRUE;
+    }), this);
 
     gtk_text_view_set_gutter(view_, GTK_TEXT_WINDOW_LEFT, widget_);
 
@@ -176,9 +188,13 @@ void Gutter::attachBuffer(GtkTextBuffer* b) {
         g_signal_connect_after(buffer_, "apply-tag", G_CALLBACK(onTag), this);
         g_signal_connect_after(buffer_, "remove-tag", G_CALLBACK(onTag), this);
         if ((listening_ = lines()))
-            listenId_ = listening_->listen([this] { queueDraw(); });
+            listenId_ = listening_->listen([this] {
+                updateTestLane();
+                queueDraw();
+            });
     }
     caretLine_ = caretLine();
+    updateTestLane();
     updateVisibility();
     updateWidth();
     queueDraw();
@@ -293,7 +309,17 @@ double Gutter::digitWidth() const {
 }
 
 double Gutter::laneWidth() const {
-    return kDotLane + (changeLane_ ? kChangeLane : 0) + kFoldLane;
+    return testWidth() + kDotLane + (changeLane_ ? kChangeLane : 0) + kFoldLane;
+}
+
+// The lane comes and goes with the buffer's (a test file's tab, another's):
+// the view lays its text out again beside the new width.
+void Gutter::updateTestLane() {
+    BufferLines* l = lines();
+    const bool want = l && l->testLane();
+    if (want == testLane_) return;
+    testLane_ = want;
+    gtk_widget_queue_resize(widget_);
 }
 
 double Gutter::numbersRight() const { return gtk_widget_get_width(widget_) - kFoldLane; }
@@ -486,6 +512,15 @@ void Gutter::snapshot(GtkSnapshot* s, int width, int height) {
 
     PangoLayout* layout = numberLayout(nullptr);
     char label[32];
+    // The test marks' size, from the numbers' line height (the Mac's from
+    // the font's size).
+    double testRadius = 3;
+    if (testLane_) {
+        pango_layout_set_text(layout, "8", -1);
+        int lw = 0, lh = 0;
+        pango_layout_get_pixel_size(layout, &lw, &lh);
+        testRadius = std::max(3.0, std::round(lh * 0.25 * 2) / 2);
+    }
 
     auto drawRow = [&](const GtkTextIter& at, const GdkRectangle& r) {
         const size_t line = l->lineOf(offsetOf(&at));
@@ -516,7 +551,7 @@ void Gutter::snapshot(GtkSnapshot* s, int width, int height) {
         gtk_text_buffer_get_iter_at_offset(buffer_, &b, (int)l->lineEnd(line));
         if ((row.dot = dotOn(a, b))) {
             const double d = 6;
-            graphene_rect_t box = GRAPHENE_RECT_INIT((float)((kDotLane - d) / 2 + 1),
+            graphene_rect_t box = GRAPHENE_RECT_INIT((float)(testWidth() + (kDotLane - d) / 2 + 1),
                                                      (float)(mid - d / 2), (float)d, (float)d);
             GskRoundedRect round;
             gsk_rounded_rect_init_from_rect(&round, &box, (float)(d / 2));
@@ -524,6 +559,14 @@ void Gutter::snapshot(GtkSnapshot* s, int width, int height) {
             gtk_snapshot_push_rounded_clip(s, &round);
             gtk_snapshot_append_color(s, &c, &box);
             gtk_snapshot_pop(s);
+        }
+        if (testLane_ && !l->tests().empty()) {
+            const int t = testOnLine(line);
+            if (t >= 0) {
+                row.test = (int)l->tests()[(size_t)t].state;
+                // By the line's first display line (a wrapped line's start).
+                drawTest(s, row.test, y + r.height / 2.0, testRadius);
+            }
         }
         if (chevrons) {
             const bool closed = folds->startsClosedFold(line);
@@ -626,12 +669,98 @@ graphene_rect_t Gutter::rectOfChangeBar(int index) const {
     double y = 0, h = 0;
     if (b.kind != QuickDiff::Kind::Deleted) {
         if (!linesYRange(b.line, b.line + std::max<size_t>(b.lines, 1) - 1, &y, &h)) return none;
-        return GRAPHENE_RECT_INIT((float)kDotLane, (float)y, (float)kChangeBarWidth, (float)h);
+        return GRAPHENE_RECT_INIT((float)(testWidth() + kDotLane), (float)y, (float)kChangeBarWidth,
+                                  (float)h);
     }
     // A deletion: the boundary below the line above it (or above line 0).
     if (!linesYRange(QuickDiff::anchorLine(b), QuickDiff::anchorLine(b), &y, &h)) return none;
     const double at = b.line == 0 ? y : y + h;
-    return GRAPHENE_RECT_INIT((float)kDotLane, (float)(at - 4), 6, 8);
+    return GRAPHENE_RECT_INIT((float)(testWidth() + kDotLane), (float)(at - 4), 6, 8);
+}
+
+// ---------------------------------------------------------------- tests
+
+int Gutter::testOnLine(size_t line) const {
+    BufferLines* l = lines();
+    if (!l) return -1;
+    const std::vector<GutterTest>& tests = l->tests();
+    auto it = std::lower_bound(tests.begin(), tests.end(), line,
+                               [](const GutterTest& t, size_t n) { return t.line < n; });
+    return it != tests.end() && it->line == line ? (int)(it - tests.begin()) : -1;
+}
+
+graphene_rect_t Gutter::rectOfTest(int index) const {
+    graphene_rect_t none = GRAPHENE_RECT_INIT(0, 0, 0, 0);
+    BufferLines* l = lines();
+    if (!testLane_ || !l || index < 0 || (size_t)index >= l->tests().size()) return none;
+    const size_t line = l->tests()[(size_t)index].line;
+    if (line >= l->lineCount()) return none;
+    // The line's first display line: a wrapped line's mark sits by its start.
+    // Only a line GTK has laid out (one with a height) is asked about its
+    // display lines, as the snapshot asks.
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &it, (int)l->lineStart(line));
+    int ly = 0, lh = 0;
+    gtk_text_view_get_line_yrange(view_, &it, &ly, &lh);
+    if (lh <= 0) return none;
+    GdkRectangle r;
+    gtk_text_view_get_iter_location(view_, &it, &r);
+    return GRAPHENE_RECT_INIT(0, (float)toGutterY(r.y), (float)kTestLane, (float)std::max(r.height, 1));
+}
+
+std::string Gutter::testTipAt(double x, double y) const {
+    BufferLines* l = lines();
+    if (!testLane_ || !l || x < 0 || x >= kTestLane) return std::string();
+    const int t = testOnLine(lineAtY(y));
+    if (t < 0) return std::string();
+    const graphene_rect_t r = rectOfTest(t);
+    if (y < r.origin.y || y >= r.origin.y + r.size.height) return std::string();
+    return l->tests()[(size_t)t].tip;
+}
+
+// The mark itself, the Mac's (Gutter.mm drawTest:): a ▶ in the numbers'
+// color, a ring in the active color while it runs, VS Code's
+// testing.iconPassed check and testing.iconFailed cross.
+void Gutter::drawTest(GtkSnapshot* s, int state, double mid, double r) {
+    const double cx = kTestLane / 2 + 1;
+    GskPathBuilder* b = gsk_path_builder_new();
+    const auto st = (TestState)state;
+    if (st == TestState::Idle) {
+        gsk_path_builder_move_to(b, (float)(cx - r * 0.7), (float)(mid - r));
+        gsk_path_builder_line_to(b, (float)(cx + r), (float)mid);
+        gsk_path_builder_line_to(b, (float)(cx - r * 0.7), (float)(mid + r));
+        gsk_path_builder_close(b);
+        GskPath* path = gsk_path_builder_free_to_path(b);
+        gtk_snapshot_append_fill(s, path, GSK_FILL_RULE_WINDING, &number_);
+        gsk_path_unref(path);
+        return;
+    }
+    GdkRGBA color = active_;
+    double width = 1.5;
+    if (st == TestState::Running) {
+        const graphene_point_t center = GRAPHENE_POINT_INIT((float)cx, (float)mid);
+        gsk_path_builder_add_circle(b, &center, (float)(r * 0.8));
+    } else if (st == TestState::Passed) {
+        gsk_path_builder_move_to(b, (float)(cx - r), (float)mid);
+        gsk_path_builder_line_to(b, (float)(cx - r * 0.25), (float)(mid + r * 0.75));
+        gsk_path_builder_line_to(b, (float)(cx + r), (float)(mid - r * 0.8));
+        color = hexColor(0x73C991);
+        width = 1.75;
+    } else {
+        gsk_path_builder_move_to(b, (float)(cx - r * 0.75), (float)(mid - r * 0.75));
+        gsk_path_builder_line_to(b, (float)(cx + r * 0.75), (float)(mid + r * 0.75));
+        gsk_path_builder_move_to(b, (float)(cx - r * 0.75), (float)(mid + r * 0.75));
+        gsk_path_builder_line_to(b, (float)(cx + r * 0.75), (float)(mid - r * 0.75));
+        color = hexColor(0xF14C4C);
+        width = 1.75;
+    }
+    GskPath* path = gsk_path_builder_free_to_path(b);
+    GskStroke* stroke = gsk_stroke_new((float)width);
+    gsk_stroke_set_line_cap(stroke, GSK_LINE_CAP_ROUND);
+    gsk_stroke_set_line_join(stroke, GSK_LINE_JOIN_ROUND);
+    gtk_snapshot_append_stroke(s, path, stroke, &color);
+    gsk_stroke_free(stroke);
+    gsk_path_unref(path);
 }
 
 // Only the bars whose lines are among [firstLine, lastLine] are drawn.
@@ -690,9 +819,18 @@ void Gutter::onDragBegin(GtkGestureDrag* g, double x, double y, gpointer p) {
     self->dragX_ = x;
     self->dragY_ = y;
     const size_t line = self->lineAtY(y);
+    // The test lane: a click on a mark runs its test.
+    if (self->testLane_ && x < kTestLane && self->onTest) {
+        const int t = self->testOnLine(line);
+        if (t >= 0) {
+            self->onTest(t);
+            return;
+        }
+    }
     // The change lane: a click on a bar shows its change.
+    const double barX = self->testWidth() + kDotLane;
     if (self->changeLane_ && self->onChangeBar && !l->changeBars().empty() &&
-        x >= kDotLane - 1 && x < kDotLane + kChangeLane + 1) {
+        x >= barX - 1 && x < barX + kChangeLane + 1) {
         const int at = QuickDiff::barAt(l->changeBars(), line);
         if (at >= 0) {
             self->pendingBar_ = at;

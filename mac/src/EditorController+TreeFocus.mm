@@ -101,6 +101,7 @@
     [self.outline reloadData];
     FileItem *top = [self treeTop];
     [self reExpand:top usingSet:memory];
+    [self fitTreeColumn];
     if (top == _root && _worktreesItem && [memory containsObject:_worktreesItem.path]) {
         [self.outline expandItem:_worktreesItem];
         [self reExpand:_worktreesItem usingSet:memory];

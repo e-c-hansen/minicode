@@ -173,11 +173,14 @@ struct Net {
             }
     }
 
-    Link& add(Unit u, const std::string& name) {
+    // `hello`: 1 a renderer that only reads, 2 a guest (Client::setGuest).
+    Link& add(Unit u, const std::string& name, int hello = 0) {
         links.push_back(std::make_unique<Link>());
         Link* l = links.back().get();
         l->id = host.connect();
         l->client = std::make_unique<Shared::Client>(u, name);
+        if (hello == 1) l->client->setReadOnly(true);
+        if (hello == 2) l->client->setGuest(true);
         l->client->connect([this, l](Message&& m) {
             if (immediate) host.handle(l->id, wire(std::move(m)));
             else l->up.push_back(wire(std::move(m)));
@@ -648,6 +651,139 @@ static void testSessionHost() {
         CHECK(tabs["groups"][0]["tabs"][1]["preview"].asInt() == (int)Model::Preview::User);
         a.client->windowClosed(5);
         CHECK(a.client->sessionState()["windows"].size() == 0);
+    }
+
+    GROUP("host:id-bases");
+    {
+        // Each renderer takes the ids of what it opens from the base its
+        // Welcome gave (Client::newId), through the encoding both ways: two
+        // renderers on one host never make the same id, and what the host
+        // holds keeps its id when another renderer attaches.
+        Net net(true, true);
+        Net::Link& a = net.add(Unit::CodePoint, "gtk");
+        Net::Link& b = net.add(Unit::Utf16, "mac");
+        Net::Link& web = net.add(Unit::Utf16, "browser", 2);
+        // newId() before the Welcome was taken settles first.
+        const std::uint64_t a1 = a.client->newId();
+        CHECK(a.client->idBase() != 0 && a1 == a.client->idBase() + 1);
+        CHECK(b.client->settle() && web.client->settle());
+        const std::uint64_t ba = a.client->idBase(), bb = b.client->idBase(), bw = web.client->idBase();
+        CHECK(ba % Shared::kIdRange == 0 && bb % Shared::kIdRange == 0 && bw % Shared::kIdRange == 0);
+        CHECK(ba >= Shared::kIdRange && bb >= Shared::kIdRange && bw >= Shared::kIdRange);
+        CHECK(ba != bb && bb != bw && ba != bw);
+        std::set<std::uint64_t> ids{a1};
+        for (int i = 0; i < 50; i++)
+            for (Net::Link* l : {&a, &b, &web}) ids.insert(l->client->newId());
+        CHECK(ids.size() == 151 && !ids.count(0));
+        // Documents and windows of each: the host keeps them apart.
+        const Shared::DocId da = a.client->newId(), db = b.client->newId();
+        TestMirror& ma = net.open(a, da, u"one\n");
+        net.open(b, db, u"two\n");
+        Model::Window w;
+        w.setRoot("/proj");
+        w.append(da, "/tmp/doc");
+        const std::uint64_t wa = a.client->newId(), wb = b.client->newId();
+        a.client->windowTabs(wa, Shared::windowJson(w));
+        b.client->windowTabs(wb, Shared::windowJson(w));
+        Json s = b.client->sessionState();
+        CHECK(s["documents"].size() == 2 && s["windows"].size() == 2);
+        CHECK(net.host.text(da) == u"one\n" && net.host.text(db) == u"two\n");
+        std::set<std::uint64_t> held;
+        for (const Json& d : s["documents"].elements()) held.insert((std::uint64_t)d["doc"].asInt());
+        for (const Json& win : s["windows"].elements()) held.insert((std::uint64_t)win["window"].asInt());
+        CHECK(held == (std::set<std::uint64_t>{da, db, wa, wb}));
+        // The second renderer opens the first's document under its id
+        // (from the state) and edits it: the id stays, both mirrors follow.
+        TestMirror& mb = net.open(b, da, u"");
+        CHECK(b.client->settle());
+        CHECK(mb.text == u"one\n");
+        mb.caret = 0;
+        mb.type(u"B");
+        CHECK(b.client->settle() && a.client->settle());
+        CHECK(net.host.text(da) == u"Bone\n" && ma.text == u"Bone\n");
+        CHECK(b.client->sessionState()["documents"].size() == 2 && net.host.hasDocument(da));
+
+        // A renderer that goes and comes back gets a new base; its old
+        // document stays, under its id.
+        net.host.disconnect(b.id);
+        Net::Link& b2 = net.add(Unit::Utf16, "mac again");
+        CHECK(b2.client->settle());
+        const std::uint64_t bb2 = b2.client->idBase();
+        CHECK(bb2 != ba && bb2 != bb && bb2 != bw && net.host.hasDocument(db));
+        // Two million connections later the bases come round again: the
+        // first slot no renderer has and in whose range the host holds
+        // nothing. b's slot holds its document and windows, so it is
+        // passed over; the browser's, which held nothing, is taken.
+        net.host.disconnect(web.id);
+        net.host.setLastIdSlot(Shared::kIdSlots - 1);
+        Net::Link& c = net.add(Unit::Utf16, "c");
+        CHECK(c.client->settle());
+        CHECK(bb < bw && c.client->idBase() == bw);
+        // A renderer that chose an id of its own in a slot (none should):
+        // the host never gives that slot.
+        Net::Link& d = net.add(Unit::Utf16, "d");
+        CHECK(d.client->settle());
+        const std::uint64_t own = d.client->idBase() + Shared::kIdRange + 7;
+        d.client->open(own, "/tmp/own", "x", nullptr);
+        CHECK(d.client->settle());
+        net.host.disconnect(d.id);
+        net.host.setLastIdSlot(own / Shared::kIdRange - 1);
+        Net::Link& e = net.add(Unit::Utf16, "e");
+        CHECK(e.client->settle());
+        CHECK(e.client->idBase() == (own / Shared::kIdRange + 1) * Shared::kIdRange);
+
+        // The largest base, and its last id: under 2^53, which a JSON number
+        // (the browser page's) carries exactly.
+        net.host.setLastIdSlot(Shared::kIdSlots - 2);
+        Net::Link& f = net.add(Unit::Utf16, "f");
+        CHECK(f.client->settle());
+        const std::uint64_t top = (Shared::kIdSlots - 1) * Shared::kIdRange;
+        CHECK(f.client->idBase() == top);
+        CHECK(top + Shared::kIdRange - 1 == Shared::kMaxId);
+        CHECK(Shared::kMaxId < (std::uint64_t(1) << 53));
+        CHECK((std::uint64_t)(double)Shared::kMaxId == Shared::kMaxId);
+        const Shared::DocId far = f.client->newId();
+        net.open(f, far, u"far\n");
+        CHECK(net.host.hasDocument(far) && net.host.text(far) == u"far\n");
+        // The Welcome's base survives encode() and decode().
+        Message wel;
+        wel.kind = Shared::Kind::Welcome;
+        wel.client = 9;
+        wel.v = top;
+        wel.name = "/proj";
+        Message back;
+        CHECK(Shared::decode(Shared::encode(wel), &back));
+        CHECK(back.kind == Shared::Kind::Welcome && back.v == top && back.client == 9 && back.name == "/proj");
+        CHECK(Shared::encode(wel).find("\"v\":" + std::to_string(top)) != std::string::npos);
+        // Json writes every integer under 2^53 as its digits.
+        CHECK(Json((int64_t)Shared::kMaxId).dump() == "9007199254740991");
+        CHECK(Json((int64_t)2000000000000000).dump() == "2000000000000000");
+        CHECK(Json(0.1).dump() == "0.1" && Json(1.5e300).dump() == "1.5e+300");
+        Json parsed;
+        CHECK(Json::parse("9007199254740991", parsed) && (std::uint64_t)parsed.asInt() == Shared::kMaxId);
+    }
+
+    GROUP("host:new-id-before-welcome");
+    {
+        // An id is never handed out before the base is known: with no
+        // connection there is none, and with no host answering newId()
+        // waits its time and gives 0, which is never an id.
+        Shared::Client lone(Unit::Utf16, "lone");
+        CHECK(lone.newId() == 0 && lone.idBase() == 0);
+        Shared::Client deaf(Unit::Utf16, "deaf");
+        deaf.connect([](Message&&) {});
+        CHECK(deaf.newId(50) == 0 && deaf.idBase() == 0);
+        // A host on its own thread, as the apps have it: newId() straight
+        // after connect() settles and takes the Welcome first. The client
+        // outlives the host's thread, which may still be in deliver() when
+        // the client has what it waited for (TSan saw it destroyed there).
+        Shared::Client app(Unit::Utf16, "app");
+        Shared::SessionHost host([&](Shared::ClientId, Message&& m) { app.deliver(std::move(m)); });
+        const Shared::ClientId id = host.connect();
+        app.connect([&](Message&& m) { host.post(id, Shared::roundTrip(m)); });
+        const std::uint64_t first = app.newId();
+        CHECK(app.idBase() >= Shared::kIdRange && first == app.idBase() + 1);
+        CHECK(app.newId() == first + 1);
     }
 
     GROUP("host:waits");

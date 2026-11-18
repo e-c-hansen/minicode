@@ -370,6 +370,84 @@ static void testProcs() {
               !v.groups[0].roots[0].proc.alive);
     }
 
+    GROUP("procs:running-first");
+    {
+        // A4, as the owner met it: in terminal 2, a server that was stopped,
+        // two short helpers a command line ran, and the server running now.
+        // The running server leads; the stopped one and the helpers sink
+        // below it, each in start order.
+        FakeProcs f;
+        world(f);
+        f.add(310, 300, 60, "python3", folder).cmd = "python3 -m http.server 8000";
+        f.find(310)->d.ports = {{"*", 8000}};
+        f.add(311, 300, 61, "sleep", folder).cmd = "sleep 1";
+        f.add(312, 300, 62, "sleep", folder).cmd = "sleep 1";
+        f.add(313, 300, 63, "python3", folder).cmd = "python3 -m http.server 8001";
+        f.find(313)->d.ports = {{"*", 8001}};
+        Tracker t;
+        t.sample(f, 1000, terms, {folder}, self, 501);
+        View v = buildView(t.snapshot(), terms, 7, folder);
+        CHECK(v.groups.size() >= 2 && v.groups[1].terminal == 2);
+        auto pids = [](const std::vector<Node>& ns) {
+            std::vector<int> out;
+            for (const Node& n : ns) out.push_back(n.proc.key.pid);
+            return out;
+        };
+        // All running: by start.
+        CHECK(pids(v.groups[1].roots) == (std::vector<int>{310, 311, 312, 313}));
+        f.remove(310);
+        f.remove(311);
+        f.remove(312);
+        t.sample(f, 1002, terms, {folder}, self, 501);
+        v = buildView(t.snapshot(), terms, 7, folder);
+        const Group& g = v.groups[1];
+        CHECK(pids(g.roots) == (std::vector<int>{313, 310, 311, 312}));
+        if (pids(g.roots) != (std::vector<int>{313, 310, 311, 312}))
+            for (int p : pids(g.roots)) std::printf("    row: %d\n", p);
+        CHECK(g.roots[0].proc.alive && !g.roots[1].proc.alive);
+        CHECK(g.count == 1 && g.exited.empty());   // buildView folds nothing
+        // The server that stopped is remembered as one that listened.
+        CHECK(g.roots[1].proc.listened && g.roots[1].proc.ports.empty() &&
+              !g.roots[2].proc.listened);
+
+        // The panel's fold: the helpers become one "2 exited" row; the
+        // stopped server, which listened, keeps its row below the running one.
+        View folded = v;
+        foldExited(folded);
+        const Group& fg = folded.groups[1];
+        CHECK(pids(fg.roots) == (std::vector<int>{313, 310}));
+        CHECK(pids(fg.exited) == (std::vector<int>{311, 312}) && countProcs(fg.exited) == 2);
+        CHECK(fg.count == 1);
+        // Terminal 1's npm and node, both running, are untouched.
+        CHECK(folded.groups[0].exited.empty() && rowsOf(folded.groups[0]) == rowsOf(v.groups[0]));
+
+        // An exited parent whose children all exited folds with them, its
+        // tree kept under it; one with a child still running counts as
+        // running, so it comes first and stays a row.
+        FakeProcs h;
+        world(h);
+        h.add(320, 300, 70, "sh", folder).cmd = "sh -c make";
+        h.add(321, 320, 71, "make", folder);
+        h.add(322, 321, 72, "cc", folder);
+        h.add(330, 300, 80, "sh", folder).cmd = "sh -c watch";
+        h.add(331, 330, 81, "fswatch", folder);
+        Tracker t2;
+        t2.sample(h, 1000, terms, {folder}, self, 501);
+        h.remove(320);
+        h.remove(321);
+        h.remove(322);
+        h.remove(330);   // its child lives on (as the table still shows it)
+        t2.sample(h, 1002, terms, {folder}, self, 501);
+        View w = buildView(t2.snapshot(), terms, 7, folder);
+        CHECK(pids(w.groups[1].roots) == (std::vector<int>{330, 320}));
+        foldExited(w);
+        const Group& wg = w.groups[1];
+        CHECK(pids(wg.roots) == (std::vector<int>{330}));
+        CHECK(wg.roots[0].children.size() == 1 && wg.roots[0].children[0].proc.key.pid == 331);
+        CHECK(pids(wg.exited) == (std::vector<int>{320}) && countProcs(wg.exited) == 3);
+        CHECK(wg.exited[0].children.size() == 1 && wg.exited[0].children[0].children.size() == 1);
+    }
+
     GROUP("procs:json");
     {
         FakeProcs f;

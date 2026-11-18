@@ -59,6 +59,7 @@ static NSString *gStep;
 static NSMutableArray<NSNumber *> *gAnswers;
 static NSMutableArray<NSString *> *gAlerts;
 static NSMutableArray<NSString *> *gSheets;
+static NSString *gLastInformative;
 static __weak NSWindow *gLastSheetWindow;
 static __weak NSWindow *gKeyWindow;
 // What failed, by suite, for the first stage's retry (tests/GuiRetry.h);
@@ -285,6 +286,7 @@ void MCGuiAnswerAlerts(NSArray<NSNumber *> *answers) {
 }
 NSArray<NSString *> *MCGuiAlertsShown(void) { return [gAlerts copy] ?: @[]; }
 NSArray<NSString *> *MCGuiSheetsShown(void) { return [gSheets copy] ?: @[]; }
+NSString *MCGuiLastAlertInformative(void) { return gLastInformative ?: @""; }
 NSWindow *MCGuiLastSheetWindow(void) { return gLastSheetWindow; }
 
 void MCGuiWriteFile(NSString *path, NSString *text) {
@@ -983,6 +985,7 @@ static void InstallSwizzles(void) {
     Replace(NSAlert.class, @selector(runModal), ^NSModalResponse(NSAlert *a) {
         if (!gAlerts) gAlerts = [NSMutableArray array];
         [gAlerts addObject:a.messageText ?: @""];
+        gLastInformative = [a.informativeText copy];
         if (gAnswers.count) {
             NSModalResponse r = gAnswers.firstObject.integerValue;
             [gAnswers removeObjectAtIndex:0];

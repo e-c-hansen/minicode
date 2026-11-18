@@ -81,8 +81,8 @@ void testTerminalPaste() {
         // auto: asks for several lines into a program that did not turn
         // bracketed paste on, and not into one that did.
         PC c = TerminalScreen::checkPaste("ls\nrm x\n", false, "auto");
-        CHECK(c.ask && c.lines == 3);
-        CHECK(c.preview == "ls\nrm x\n");
+        CHECK(c.ask && c.lines == 2 && c.breaks);
+        CHECK(c.preview == "ls\nrm x");
         PC b = TerminalScreen::checkPaste("ls\nrm x\n", true, "auto");
         CHECK(!b.ask && b.text == "ls\nrm x\n");
         // An unknown mode is auto, as in VS Code.
@@ -128,6 +128,30 @@ void testTerminalPaste() {
         if (c.preview != want) std::printf("    preview: %s\n", c.preview.c_str());
     }
     {
+        // A final line break ends the last line, it does not start another:
+        // three copied lines ending in a break are 3, not 4, and the preview
+        // shows those three with no "…", which is only for lines left out.
+        PC three = TerminalScreen::checkPaste("one\ntwo\nthree\n", false, "auto");
+        CHECK(three.ask && three.lines == 3 && three.breaks);
+        CHECK(three.preview == "one\ntwo\nthree");
+        if (three.preview != "one\ntwo\nthree") std::printf("    preview: %s\n", three.preview.c_str());
+        CHECK(three.text == "one\ntwo\nthree\n");   // still sent with its break
+        PC crlf = TerminalScreen::checkPaste("one\r\ntwo\r\nthree\r\n", false, "auto");
+        CHECK(crlf.lines == 3 && crlf.preview == "one\ntwo\nthree");
+        PC unended = TerminalScreen::checkPaste("one\ntwo\nthree", false, "auto");
+        CHECK(unended.lines == 3 && unended.preview == "one\ntwo\nthree");
+        // Four lines with a break: three shown, then "…" for the fourth.
+        PC four = TerminalScreen::checkPaste("1\n2\n3\n4\n", false, "auto");
+        CHECK(four.lines == 4 && four.preview == "1\n2\n3\n\xE2\x80\xA6");
+        // A blank line before the final break is a line of its own.
+        PC blank = TerminalScreen::checkPaste("a\nb\n\n", false, "auto");
+        CHECK(blank.lines == 3 && blank.preview == "a\nb\n");
+        // always: one line and its break asks as one line that has a break.
+        PC one = TerminalScreen::checkPaste("make\n", false, "always");
+        CHECK(one.ask && one.lines == 1 && one.breaks && one.preview == "make");
+        CHECK(!TerminalScreen::checkPaste("make", false, "always").breaks);
+    }
+    {
         // Paste as One Line takes every break out, as VS Code does.
         CHECK(TerminalScreen::pasteAsOneLine("a\nb\r\nc\rd\n") == "abcd");
         CHECK(TerminalScreen::pasteAsOneLine("plain") == "plain");
@@ -164,7 +188,7 @@ void testTerminalPaste() {
         // A command with its line break and a control character: the break
         // is not taken out quietly, the question comes.
         PC both = TerminalScreen::checkPaste("ls\x0f\n", false, "auto");
-        CHECK(both.ask && both.controls && both.lines == 2);
+        CHECK(both.ask && both.controls && both.lines == 1 && both.breaks);
         // Several lines with one: the line count still leads the question.
         PC lines = TerminalScreen::checkPaste("a\nb\x1b", false, "auto");
         CHECK(lines.ask && lines.controls && lines.lines == 2 &&

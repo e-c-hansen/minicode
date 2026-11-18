@@ -169,6 +169,24 @@ static NSString *MCGroupedCount(long long n) {
     }];
 }
 
+// The name column as wide as the sidebar shows: after every reload, and
+// whenever the sidebar's frame changes. The column only follows the
+// outline's frame by the change in it (NSTableViewLastColumnOnlyAutoresizingStyle),
+// so a width it lost once (to its 80-point minimum, or to the default 100
+// of a window laid out before it was shown) stayed lost, and the next
+// reload cut every name off at about 90 points in a 250-point sidebar
+// (C3, 2026-11-16: a file added to the folder). A collapsed sidebar is left
+// alone.
+- (void)fitTreeColumn {
+    NSClipView *clip = self.sidebarScroll.contentView;
+    if (!self.outline.outlineTableColumn || NSWidth(clip.bounds) < 1) return;
+    [self.outline sizeLastColumnToFit];
+}
+- (void)sidebarFrameChanged:(NSNotification *)note {
+    (void)note;
+    [self fitTreeColumn];
+}
+
 // Folder totals arrived. Sorted by size, the rows move if their order
 // changed (the selection, expansion and scroll position stay); otherwise
 // the rows on screen just show the new sizes.

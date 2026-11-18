@@ -374,7 +374,7 @@ session has a display. Check first.
   terminal_exec, terminal_keys, terminal_zoom, terminal_host, run_file, test_gutter;
   git: git_panel, git_actions, git_hunks, git_verbs, git_review, worktree_review, git_conflicts, git_sync,
   git_gutter, line_history;
-  agents and control: agents, agent_panel, agent_places, agentcommands,
+  agents and control: agents, agent_panel, agent_places, agent_task, agentcommands,
   agent_autosave, attention, control, browserpages, browser_tabs, browser_find, bookmarks,
   idelink, processes, session_web, session_browser;
   run only when named: _backups_writer, _backups_restore, _restore_writer,

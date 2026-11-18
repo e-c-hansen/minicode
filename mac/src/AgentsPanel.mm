@@ -5,6 +5,7 @@
 #import "Appearance.h"
 #import "TreeDetails.h"
 #import "TerminalAttention.h"
+#import "Terminal.h"
 #import "ClaudeHooksOffer.h"
 
 #include "AgentView.h"
@@ -23,6 +24,7 @@ static NSString *ANS(const std::string &s) {
 static std::string AU8(NSString *s) { return s.UTF8String ? std::string(s.UTF8String) : ""; }
 
 static NSString *KeyOf(id item) {
+    if ([item isKindOfClass:MCAgentTask.class]) return [@"task:" stringByAppendingString:((MCAgentTask *)item).path];
     if ([item isKindOfClass:MCAgentWork.class]) return ((MCAgentWork *)item).transcript;
     if ([item isKindOfClass:MCAgentFileGroup.class]) {
         MCAgentFileGroup *g = item;
@@ -41,6 +43,13 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     NSString *age = t > 0 ? MCCompactAge([NSDate dateWithTimeIntervalSince1970:t], now) : @"";
     return ANS(AgentView::detailLine([s runningAt:now], AU8(age), AU8(s.whereText),
                                      (int)s.filesTouched, (int)s.bashCommands));
+}
+
+// A task's second line: its branch and how long ago it started.
+static NSString *TaskDetailOf(MCAgentTask *t, NSDate *now) {
+    NSString *age = MCCompactAge([NSDate dateWithTimeIntervalSince1970:t.started], now);
+    return [NSString stringWithFormat:@"starting · %@%@", t.name,
+            age.length ? [@" · " stringByAppendingString:age] : @""];
 }
 
 // ---------------------------------------------------------------- one row
@@ -62,6 +71,30 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     ps.lineBreakMode = NSLineBreakByTruncatingTail;
     const NSStringDrawingOptions opts =
         NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine;
+    if ([self.item isKindOfClass:MCAgentTask.class]) {
+        MCAgentTask *t = self.item;
+        // A ring, not a dot: started, its session not seen yet.
+        NSBezierPath *ring = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(2.5, 8.5, 6, 6)];
+        ring.lineWidth = 1.2;
+        [AHex(0x4EA1F7) setStroke];
+        [ring stroke];
+        NSString *title = [t.prompt componentsSeparatedByCharactersInSet:
+                               NSCharacterSet.newlineCharacterSet].firstObject;
+        if (!title.length) title = t.name ?: @"";
+        [title drawWithRect:NSMakeRect(14, 2, MAX(0, b.size.width - 16), 17)
+                    options:opts
+                 attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5
+                                                                    weight:NSFontWeightMedium],
+                              NSForegroundColorAttributeName: text,
+                              NSParagraphStyleAttributeName: ps}];
+        [TaskDetailOf(t, self.now ?: [NSDate date])
+            drawWithRect:NSMakeRect(14, 19, MAX(0, b.size.width - 16), 15)
+                 options:opts
+              attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:10.5],
+                           NSForegroundColorAttributeName: muted,
+                           NSParagraphStyleAttributeName: ps}];
+        return;
+    }
     if ([self.item isKindOfClass:MCAgentWork.class]) {
         MCAgentWork *s = self.item;
         const BOOL running = [s runningAt:self.now ?: [NSDate date]];
@@ -173,6 +206,7 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     NSScrollView *_scroll;
     MCAgentsOutline *_outline;
     NSArray<MCAgentWork *> *_sessions;
+    NSArray<MCAgentTask *> *_tasks;   // started here, no session yet
     NSMutableSet<NSString *> *_expanded;
     NSColor *_text;
     NSDate *_now;
@@ -184,6 +218,7 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     if ((self = [super initWithFrame:NSMakeRect(0, 0, 260, 400)])) {
         _model = model;
         _sessions = @[];
+        _tasks = @[];
         _expanded = [NSMutableSet set];
         _now = [NSDate date];
         self.wantsLayer = YES;
@@ -376,6 +411,7 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     _now = [NSDate date];
     NSString *selected = _outline.selectedRow >= 0 ? KeyOf([_outline itemAtRow:_outline.selectedRow]) : nil;
     _sessions = self.model.sessions ?: @[];
+    _tasks = [self.model pendingTasks] ?: @[];
     [_outline reloadData];
     [self restoreExpansion];
     if (selected) {
@@ -395,15 +431,17 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
         if ([s runningAt:_now]) running++;
         [all addObjectsFromArray:s.subagents];
     }
-    _summary.stringValue = total == 0 ? @""
-        : [NSString stringWithFormat:@"%@%lu %@", running ? [NSString stringWithFormat:@"%lu running · ",
+    NSString *starting = _tasks.count
+        ? [NSString stringWithFormat:@"%lu starting · ", (unsigned long)_tasks.count] : @"";
+    _summary.stringValue = total == 0 ? (_tasks.count ? [starting substringToIndex:starting.length - 3] : @"")
+        : [starting stringByAppendingString:[NSString stringWithFormat:@"%@%lu %@", running ? [NSString stringWithFormat:@"%lu running · ",
                                                             (unsigned long)running] : @"",
-           (unsigned long)total, total == 1 ? @"session" : @"sessions"];
+           (unsigned long)total, total == 1 ? @"session" : @"sessions"]];
     _notice.stringValue = ANS(AgentView::emptyText(self.model.projectsMissing, self.model.loaded,
                                                    AU8([self.model.projectsDir
                                                        stringByAbbreviatingWithTildeInPath])));
-    _notice.hidden = _sessions.count > 0;
-    _scroll.hidden = _sessions.count == 0;
+    _notice.hidden = _sessions.count + _tasks.count > 0;
+    _scroll.hidden = _sessions.count + _tasks.count == 0;
     [self updateHooksLine];
 }
 
@@ -417,7 +455,7 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
 }
 
 - (NSArray *)childrenOf:(id)item {
-    if (!item) return _sessions;
+    if (!item) return [(NSArray *)_tasks arrayByAddingObjectsFromArray:_sessions];
     if ([item isKindOfClass:MCAgentWork.class]) {
         MCAgentWork *s = item;
         return [(NSArray *)s.groups arrayByAddingObjectsFromArray:(NSArray *)s.subagents];
@@ -440,7 +478,7 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
 }
 - (CGFloat)outlineView:(NSOutlineView *)ov heightOfRowByItem:(id)item {
     (void)ov;
-    return [item isKindOfClass:MCAgentWork.class] ? 38 : 21;
+    return [item isKindOfClass:MCAgentWork.class] || [item isKindOfClass:MCAgentTask.class] ? 38 : 21;
 }
 - (NSView *)outlineView:(NSOutlineView *)ov viewForTableColumn:(NSTableColumn *)col item:(id)item {
     (void)col;
@@ -459,6 +497,11 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
                      f.edits == 1 ? @"edit" : @"edits",
                      f.failed ? [NSString stringWithFormat:@", %ld refused", (long)f.failed] : @"",
                      f.exists ? @"" : @"\nNo longer on disk"];
+    } else if ([item isKindOfClass:MCAgentTask.class]) {
+        MCAgentTask *t = item;
+        v.toolTip = [NSString stringWithFormat:@"%@\nWorktree: %@ (branch %@)\nClaude Code's session shows "
+                                               @"here once it starts\nClick: its terminal",
+                     t.prompt ?: @"", [t.path stringByAbbreviatingWithTildeInPath], t.name];
     } else if ([item isKindOfClass:MCAgentWork.class]) {
         MCAgentWork *s = item;
         NSMutableArray *tip = [NSMutableArray arrayWithObject:s.name ?: @""];
@@ -490,7 +533,12 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
 - (void)activateRow:(NSInteger)row {
     if (row < 0) return;
     id item = [_outline itemAtRow:row];
-    if ([item isKindOfClass:MCAgentWork.class]) {
+    if ([item isKindOfClass:MCAgentTask.class]) {
+        MCAgentTask *t = item;
+        TerminalView *term = t.terminal;
+        if (term && term.window) MCRevealTerminal(term);
+        else if (self.onCompareWorktree) self.onCompareWorktree(t.path);
+    } else if ([item isKindOfClass:MCAgentWork.class]) {
         MCAgentWork *s = item;
         if (self.onShowEvidence) self.onShowEvidence(s.transcript, s.name);
     } else if ([item isKindOfClass:MCAgentFile.class]) {
@@ -529,7 +577,10 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     NSMutableArray *out = [NSMutableArray array];
     for (NSInteger r = 0; r < _outline.numberOfRows; r++) {
         id item = [_outline itemAtRow:r];
-        if ([item isKindOfClass:MCAgentWork.class]) {
+        if ([item isKindOfClass:MCAgentTask.class]) {
+            MCAgentTask *t = item;
+            [out addObject:[NSString stringWithFormat:@"T %@ | %@", t.name, TaskDetailOf(t, _now)]];
+        } else if ([item isKindOfClass:MCAgentWork.class]) {
             MCAgentWork *s = item;
             [out addObject:[NSString stringWithFormat:@"S %ld %@ %@ | %@", (long)s.depth,
                             [s runningAt:_now] ? @"running" : @"finished", s.name,
@@ -561,7 +612,25 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
     m.autoenablesItems = NO;
     id item = row >= 0 && row < _outline.numberOfRows ? [_outline itemAtRow:row] : nil;
     __weak MCAgentsPanel *weakSelf = self;
-    if ([item isKindOfClass:MCAgentWork.class]) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    if ([item isKindOfClass:MCAgentTask.class]) {
+        MCAgentTask *t = item;
+        __weak TerminalView *weakTerm = t.terminal;
+        if (t.terminal.window) [self item:@"Show Terminal" in:m run:^{ MCRevealTerminal(weakTerm); }];
+        const BOOL there = [fm fileExistsAtPath:t.path];
+        [self item:@"Compare with Main…" in:m run:^{
+            MCAgentsPanel *p = weakSelf;
+            if (p.onCompareWorktree) p.onCompareWorktree(t.path);
+        }].enabled = there;
+        [self item:@"Open Worktree in New Window" in:m run:^{
+            MCAgentsPanel *p = weakSelf;
+            if (p.onOpenFolderInNewWindow) p.onOpenFolderInNewWindow(t.path);
+        }].enabled = there;
+        [self item:@"Copy Worktree Path" in:m run:^{
+            [NSPasteboard.generalPasteboard clearContents];
+            [NSPasteboard.generalPasteboard setString:t.path forType:NSPasteboardTypeString];
+        }];
+    } else if ([item isKindOfClass:MCAgentWork.class]) {
         MCAgentWork *s = item;
         [self item:@"Show Evidence" in:m run:^{ [weakSelf activateRow:row]; }];
         // The terminal its session runs in, as its hooks told us (R7.4).
@@ -570,7 +639,12 @@ static NSString *DetailOf(MCAgentWork *s, NSDate *now) {
         __weak TerminalView *weakTerm = term;
         if (term)
             [self item:@"Show Terminal" in:m run:^{ MCRevealTerminal(weakTerm); }];
-        if (s.worktreePath.length && [NSFileManager.defaultManager fileExistsAtPath:s.worktreePath])
+        if (s.worktreePath.length && [fm fileExistsAtPath:s.worktreePath])
+            [self item:@"Compare with Main…" in:m run:^{
+                MCAgentsPanel *p = weakSelf;
+                if (p.onCompareWorktree) p.onCompareWorktree(s.worktreePath);
+            }];
+        if (s.worktreePath.length && [fm fileExistsAtPath:s.worktreePath])
             [self item:@"Open Worktree in New Window" in:m run:^{
                 MCAgentsPanel *p = weakSelf;
                 if (p.onOpenFolderInNewWindow) p.onOpenFolderInNewWindow(s.worktreePath);

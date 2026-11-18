@@ -13,6 +13,10 @@
 // to whole lines.
 //
 // Lanes, left to right:
+//   - tests, while the buffer's BufferLines says the file is a test file
+//     (TestGutter.h): a ▶ beside each test, a ring while it runs, a green
+//     check or a red cross after; a click on one calls onTest instead of
+//     selecting, and the pointer resting on one shows its tooltip;
 //   - dots: a dot in the error or warning color by each line a diagnostic
 //     starts on, from the buffer's tags (the language server session's
 //     squiggles, lsp-error and lsp-warning, unless setDiagnosticTags says);
@@ -70,6 +74,7 @@ public:
     bool shown() const { return gtk_widget_get_visible(widget_); }
 
     // ---- lanes
+    static constexpr double kTestLane = 14;
     static constexpr double kDotLane = 12;
     static constexpr double kChangeLane = 5;
     static constexpr double kChangeBarWidth = 3;
@@ -89,6 +94,16 @@ public:
     // marks), in the gutter's coordinates; empty when its lines are not laid
     // out.
     graphene_rect_t rectOfChangeBar(int index) const;
+    // The test lane: shown while the buffer's BufferLines::testLane() is
+    // (TestGutter.h sets it, with the marks). A click on test `index` (of
+    // the buffer's tests()) calls onTest.
+    bool testLane() const { return testLane_; }
+    std::function<void(int index)> onTest;
+    // The rect test `index`'s mark is drawn in, in the gutter's
+    // coordinates; empty when its line is not laid out. The tip at a point
+    // of the lane, "" for none.
+    graphene_rect_t rectOfTest(int index) const;
+    std::string testTipAt(double x, double y) const;
     // The tags whose starts get a dot, with their severities (1 error, 2
     // warning: the worst wins), colored by the tag's underline color.
     void setDiagnosticTags(std::vector<std::pair<std::string, int>> tags);
@@ -114,6 +129,7 @@ public:
         bool active = false;      // in the active color (a caret's line)
         int dot = 0;              // 1 error, 2 warning, 0 none
         int chevron = 0;          // 1 open region, 2 closed fold, 0 none
+        int test = -1;            // the test mark's TestState, -1 none
     };
     const std::vector<Row>& drawnRows() const { return rows_; }
     unsigned drawCount() const { return draws_; }
@@ -146,6 +162,10 @@ private:
     bool linesYRange(size_t first, size_t last, double* y, double* height) const;
     void drawChangeBars(GtkSnapshot* s, size_t firstLine, size_t lastLine);
     void drawChevron(GtkSnapshot* s, double width, double midY, bool closed);
+    void drawTest(GtkSnapshot* s, int state, double midY, double radius);
+    double testWidth() const { return testLane_ ? kTestLane : 0; }
+    void updateTestLane();
+    int testOnLine(size_t line) const;
     void selectLines(size_t anchor, size_t line);
 
     static void onDragBegin(GtkGestureDrag* g, double x, double y, gpointer self);
@@ -162,6 +182,7 @@ private:
     GdkRGBA        number_{0.522f, 0.522f, 0.522f, 1};
     GdkRGBA        active_{0.776f, 0.776f, 0.776f, 1};
     bool           changeLane_ = false;
+    bool           testLane_ = false;
     GdkRGBA        changeColors_[3] = {{0.282f, 0.494f, 0.008f, 1},    // #487E02
                                        {0.106f, 0.506f, 0.659f, 1},    // #1B81A8
                                        {0.945f, 0.298f, 0.298f, 1}};   // #F14C4C

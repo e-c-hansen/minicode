@@ -281,6 +281,50 @@ bool eachLine(std::string_view content, const Needle* nd, Halt halt, F f, int fi
     return true;
 }
 
+// The line before the one starting at `start` in s: [*from, *to), its
+// break left off. False at s's start (start 0), where there is none.
+bool lineBefore(std::string_view s, std::size_t start, std::size_t* from, std::size_t* to) {
+    if (start == 0 || start > s.size()) return false;
+    auto isPs = [&](std::size_t e) {   // U+2029 ends at e
+        return e >= 3 && s[e - 1] == '\xA9' && s[e - 2] == '\x80' && s[e - 3] == '\xE2';
+    };
+    std::size_t e = start;
+    if (s[e - 1] == '\n') {
+        --e;
+        if (e > 0 && s[e - 1] == '\r') --e;
+    } else if (s[e - 1] == '\r') {
+        --e;
+    } else if (isPs(e)) {
+        e -= 3;
+    }
+    std::size_t b = e;
+    while (b > 0 && s[b - 1] != '\n' && s[b - 1] != '\r' && !isPs(b)) --b;
+    *from = b;
+    *to = e;
+    return true;
+}
+
+// Up to `k` lines just before the line at `start` (display text, in file
+// order) and up to `k` just after the line ending at `next`, within s.
+// *afterShort says the lines after ran into s's end (a piece of a large
+// file: the rest come from the next piece).
+void contextOf(std::string_view s, std::size_t start, std::size_t next, std::size_t k,
+               std::size_t maxChars, std::vector<std::string>* before,
+               std::vector<std::string>* after) {
+    std::size_t at = start, from, to;
+    while (before->size() < k && lineBefore(s, at, &from, &to)) {
+        before->insert(before->begin(), displayText(std::string(s.substr(from, to - from)), maxChars));
+        at = from;
+    }
+    at = next;
+    while (after->size() < k && at < s.size()) {
+        std::size_t end, nx;
+        lineEndAt(s.data(), s.size(), at, &end, &nx);
+        after->push_back(displayText(std::string(s.substr(at, end - at)), maxChars));
+        at = nx;
+    }
+}
+
 // The line breaks in s[0, n), counted as lineEndAt splits lines (\r\n is
 // one break).
 std::size_t countBreaks(const char* s, std::size_t n) {
@@ -346,9 +390,29 @@ std::size_t decodeUtf16Piece(const char* p, std::size_t n, bool le, bool last, s
     return i;
 }
 
+// Windows-1252 bytes to UTF-8, appended to *utf8: every byte a character.
+void appendWindows1252(std::string_view bytes, std::string* utf8) {
+    // 0x80..0x9F as the WHATWG encoding standard's windows-1252 index has
+    // them; the five it leaves out are their C1 controls.
+    static const char16_t k80[32] = {
+        0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+        0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+        0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+        0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+    };
+    utf8->reserve(utf8->size() + bytes.size() + bytes.size() / 8);
+    for (const char ch : bytes) {
+        const unsigned char b = static_cast<unsigned char>(ch);
+        if (b < 0x80) *utf8 += ch;
+        else appendUtf8(*utf8, b < 0xA0 ? k80[b - 0x80] : b);
+    }
+}
+
 // ------------------------------------------------------------- one file
 // Streamed: over maxFileSize and not binary, left open to be read in pieces.
-enum class FileKind { Silent, Searched, TooLarge, NotUtf8, Streamed };
+// Legacy: not UTF-8 and no NUL anywhere, read as Windows-1252 (searched;
+// Replace in Folder names it when it holds a match, and leaves it alone).
+enum class FileKind { Silent, Searched, TooLarge, NotUtf8, Streamed, Legacy };
 
 struct Job {
     std::string path, rel;
@@ -358,6 +422,9 @@ struct Job {
 struct Outcome {
     FileKind kind = FileKind::Silent;
     std::vector<FolderSearchMatch> rows;
+    // Rows (indexes) whose lines after ran into the end of a piece of a
+    // large file: the next piece's first lines finish them.
+    std::vector<std::size_t> needAfter;
     std::size_t planCount = 0;   // Replace in Folder's count
     bool outside = false;        // reached through a symlink to outside the root
     std::uint64_t dev = 0, ino = 0;
@@ -378,8 +445,10 @@ bool hasUtf16Bom(const std::string& s) {
 // without blocking so a pipe swapped in cannot hold the search. UTF-16
 // with its byte order mark comes back decoded to UTF-8; `strict` (Replace
 // in Folder's count) only when the decoding is exact, since that text is
-// what gets written back. A file over maxSize that is not binary is
-// Streamed: `out` its first bytes, *streamFd open for the rest.
+// what gets written back. Text that is not UTF-8 (nor binary: no NUL
+// anywhere) comes back decoded from Windows-1252, as Legacy. A file over
+// maxSize that is not binary is Streamed: `out` its first bytes, *streamFd
+// open for the rest.
 FileKind readForSearch(const std::string& path, std::uintmax_t maxSize, std::string* out,
                        std::uint64_t* dev, std::uint64_t* ino, bool strict, int* streamFd) {
     const int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
@@ -420,8 +489,13 @@ FileKind readForSearch(const std::string& path, std::uintmax_t maxSize, std::str
         *out = std::move(text);
         return FileKind::Searched;
     }
-    if (!isValidUtf8(*out))
-        return looksBinary(out->data(), out->size()) ? FileKind::Silent : FileKind::NotUtf8;
+    if (!isValidUtf8(*out)) {
+        // Not UTF-8: a single-byte encoding (Latin-1, Windows-1252), read
+        // as Windows-1252, unless a NUL anywhere says it is binary.
+        if (std::memchr(out->data(), 0, out->size())) return FileKind::Silent;
+        *out = decodeWindows1252(*out);
+        return FileKind::Legacy;
+    }
     return FileKind::Searched;
 }
 
@@ -467,6 +541,10 @@ struct Matcher {
             return;
         }
         if (opt.onFileRead) opt.onFileRead();
+        // A file read from Windows-1252 is searched; Replace in Folder,
+        // which writes UTF-8 or UTF-16 only, counts its matches to name it.
+        const bool legacy = o.kind == FileKind::Legacy;
+        if (legacy) o.kind = FileKind::Searched;
         if (o.kind != FileKind::Searched) return;
         if (useNeedle && needle.never) return;   // no line can match
         const Needle* nd = useNeedle ? &needle : nullptr;
@@ -476,13 +554,18 @@ struct Matcher {
         };
         if (plan) countAll(content, nd, halted, o);
         else rows(content, nd, halted, o);
+        if (plan && legacy) {
+            o.kind = o.planCount ? FileKind::Legacy : FileKind::Silent;
+            o.planCount = 0;
+        }
     }
 
     // A file over maxFileSize: read a piece at a time and each piece matched up to its last line break, the
     // rest carried into the next, so its lines, their numbers and matches
     // are what reading it whole gives. `head` is what was read already.
-    // A piece that is not UTF-8 makes it NotUtf8, rows dropped, as a small
-    // file's would be; a line past maxStreamedLine makes it TooLarge.
+    // From the first piece that is not UTF-8 on, the rest is read as
+    // Windows-1252 (a NUL in it then makes it binary, rows dropped, as a
+    // small file's would be); a line past maxStreamedLine makes it TooLarge.
     // It stops at `limit` rows.
     void stream(int fd, std::string head, Outcome& o, std::size_t limit) const {
         const bool utf16 = hasUtf16Bom(head);
@@ -499,6 +582,10 @@ struct Matcher {
         };
         int line = 1;
         bool eof = false, told = false;
+        bool legacy = false;   // reading Windows-1252 from here on
+        const std::size_t k = todos ? 0 : opt.contextLines;
+        std::vector<std::string> tail;   // the last k lines read, for lines before
+        bool full = false;               // at the limit: only finishing lines after
         for (;;) {
             if (halted()) return;
             const std::size_t have = raw.size();
@@ -522,6 +609,14 @@ struct Matcher {
                 rawAt += decodeUtf16Piece(raw.data() + rawAt, raw.size() - rawAt, le, eof, &text);
                 raw.erase(0, rawAt);
                 rawAt = 0;
+            } else if (legacy) {
+                if (std::memchr(raw.data(), 0, raw.size())) {
+                    o.kind = FileKind::Silent;
+                    o.rows.clear();
+                    return;
+                }
+                appendWindows1252(raw, &text);
+                raw.clear();
             } else if (text.empty()) {
                 text.swap(raw);
             } else {
@@ -538,14 +633,26 @@ struct Matcher {
                 scanFrom = text.size() >= 2 ? text.size() - 2 : 0;
                 continue;
             }
-            const std::string_view view(text.data(), cut);
-            if (!utf16 && !isValidUtf8(view)) {
-                o.kind = FileKind::NotUtf8;
-                o.rows.clear();
-                return;
+            if (!utf16 && !legacy && !isValidUtf8(std::string_view(text.data(), cut))) {
+                // Not UTF-8 after all: this piece and the rest as
+                // Windows-1252 (the pieces before were ASCII or UTF-8).
+                if (std::memchr(text.data(), 0, text.size())) {
+                    o.kind = FileKind::Silent;
+                    o.rows.clear();
+                    return;
+                }
+                legacy = true;
+                text = decodeWindows1252(text);
+                scanFrom = 0;
+                continue;
             }
-            if (!(useNeedle && needle.never)) rows(view, nd, halted, o, line, limit);
-            if (eof || o.rows.size() >= limit) return;
+            const std::string_view view(text.data(), cut);
+            if (k) finishAfter(view, o, k);
+            if (!full && !(useNeedle && needle.never))
+                rows(view, nd, halted, o, line, limit, !eof, &tail);
+            full = o.rows.size() >= limit;
+            if (eof || (full && o.needAfter.empty())) return;
+            if (k) keepTail(view, k, &tail);
             line += static_cast<int>(countBreaks(view.data(), view.size()));
             text.erase(0, cut);
             scanFrom = 0;
@@ -590,10 +697,50 @@ struct Matcher {
     // A row per matching line (a TODO's line, for the TODO list).
     // Lines are numbered from firstLine: a piece of a large file (whose
     // Markdown tasks are read a piece at a time). At most `limit` rows.
+    // The rows still wanting lines after: from the first lines of `view`,
+    // the next piece.
+    void finishAfter(std::string_view view, Outcome& o, std::size_t k) const {
+        std::vector<std::size_t> still;
+        for (const std::size_t i : o.needAfter) {
+            FolderSearchMatch& r = o.rows[i];
+            std::size_t at = 0;
+            while (r.after.size() < k && at < view.size()) {
+                std::size_t end, next;
+                lineEndAt(view.data(), view.size(), at, &end, &next);
+                r.after.push_back(displayText(std::string(view.substr(at, end - at)), opt.maxLineChars));
+                at = next;
+            }
+            if (r.after.size() < k) still.push_back(i);
+        }
+        o.needAfter.swap(still);
+    }
+
+    // The last k lines of what has been read, for the next piece's first
+    // rows' lines before: `view` (whole lines) after what was kept before.
+    void keepTail(std::string_view view, std::size_t k, std::vector<std::string>* tail) const {
+        std::vector<std::string> last;
+        std::size_t at = view.size(), from, to;
+        while (last.size() < k && lineBefore(view, at, &from, &to)) {
+            last.insert(last.begin(), displayText(std::string(view.substr(from, to - from)),
+                                                  opt.maxLineChars));
+            at = from;
+        }
+        if (last.size() < k) {   // a short piece: the older lines stay in front
+            const std::size_t keep = std::min(tail->size(), k - last.size());
+            last.insert(last.begin(), tail->end() - static_cast<std::ptrdiff_t>(keep), tail->end());
+        }
+        tail->swap(last);
+    }
+
+    // `more`: content goes on past its end (a piece of a large file), so a
+    // row's lines after may be in the next piece; `tail` the lines before
+    // the piece, for its first rows' lines before.
     template <class Halt>
     void rows(std::string_view content, const Needle* nd, Halt halted, Outcome& o,
-              int firstLine = 1, std::size_t limit = SIZE_MAX) const {
+              int firstLine = 1, std::size_t limit = SIZE_MAX, bool more = false,
+              const std::vector<std::string>* tail = nullptr) const {
         limit = std::min(limit, opt.maxMatches);
+        const std::size_t k = todos ? 0 : opt.contextLines;
         // For the TODO list, a Markdown file's open tasks, by line.
         const bool markdown = todos && isMarkdownPath(o.path);
         std::vector<MarkdownTasks::OpenTask> tasks;
@@ -641,6 +788,18 @@ struct Matcher {
             r.column = static_cast<int>(countChars(line.substr(0, col))) + 1;
             r.text = displayText(line, opt.maxLineChars);
             r.count = count;
+            if (k) {
+                std::size_t end2, next;
+                lineEndAt(content.data(), content.size(), start, &end2, &next);
+                contextOf(content, start, next, k, opt.maxLineChars, &r.before, &r.after);
+                // Lines before from the piece before, back to the file's top.
+                if (tail && r.before.size() < k) {
+                    const std::size_t want = std::min(k - r.before.size(), tail->size());
+                    r.before.insert(r.before.begin(),
+                                    tail->end() - static_cast<std::ptrdiff_t>(want), tail->end());
+                }
+                if (more && r.after.size() < k) o.needAfter.push_back(o.rows.size());
+            }
             o.rows.push_back(std::move(r));
             // No file gives more rows than the whole search may hold.
             return o.rows.size() < limit;
@@ -875,6 +1034,14 @@ struct Walker {
             if (plan && large && files.insert({o.dev, o.ino}).second) {   // named once
                 ++plan->tooLargeCount;
                 if (plan->tooLarge.size() < kMaxSkipsListed) plan->tooLarge.push_back(o.rel);
+            }
+            return true;
+        }
+        if (o.kind == FileKind::Legacy) {   // Replace in Folder's count: named
+            if (plan && files.insert({o.dev, o.ino}).second) {
+                ++plan->otherEncodingCount;
+                if (plan->otherEncoding.size() < kMaxSkipsListed)
+                    plan->otherEncoding.push_back(o.rel);
             }
             return true;
         }
@@ -1460,7 +1627,24 @@ FolderSearchResult search(const std::string& root, const std::string& query,
     }
     Walker w(options, cancel, out, m);
     w.start(root);
+    if (options.contextLines) dropRepeatedContext(out.matches);
     return out;
+}
+
+void dropRepeatedContext(std::vector<FolderSearchMatch>& rows) {
+    for (std::size_t i = 1; i < rows.size(); ++i) {
+        FolderSearchMatch& a = rows[i - 1];
+        FolderSearchMatch& b = rows[i];
+        if (a.path != b.path || b.line <= a.line) continue;
+        // a's lines after stop short of b's line; b's lines before start
+        // after the last line a shows.
+        const std::size_t gap = static_cast<std::size_t>(b.line - a.line - 1);
+        if (a.after.size() > gap) a.after.resize(gap);
+        const std::size_t room = gap - a.after.size();
+        if (b.before.size() > room)
+            b.before.erase(b.before.begin(),
+                           b.before.begin() + static_cast<std::ptrdiff_t>(b.before.size() - room));
+    }
 }
 
 TextFind::Query makeQuery(const std::string& query, const FolderSearchOptions& options) {
@@ -1553,6 +1737,12 @@ bool replaceMatchInText(const std::string& content, const std::string& query,
     }
     return TextFind::replaceOneInText(content, makeQuery(query, options), replacement, line,
                                       byteColumn, out);
+}
+
+std::string decodeWindows1252(std::string_view bytes) {
+    std::string out;
+    appendWindows1252(bytes, &out);
+    return out;
 }
 
 bool decodeUtf16(const std::string& bytes, std::string* utf8, TextEncoding* encoding,
