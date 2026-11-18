@@ -293,7 +293,12 @@ for full-screen programs. Both can be open at once.
   unasked), with Paste and Cancel only; the preview shows controls as
   U+2400 symbols, and when the first is past the first three lines' 30
   characters a line saying where it is, with the 30 characters around it
-  (round 6's defect 4: the question showed none). The question is a
+  (round 6's defect 4: the question showed none). A final line break
+  ends the last line and does not start another (2026-11-18, T2: three
+  copied lines asked "Paste 4 lines" with a false "…"): `lines` and the
+  preview leave that empty line out, "…" only for lines left out, and
+  `breaks` says whether the text sends Return, so one line and its break
+  (asked under "always") is "Paste 1 line" with Paste as One Line. The question is a
   sheet on the grid's window (2026-11-16; a free dialog sat mid-screen
   where the window had been), the paste sent from its handler;
   `askingPaste` while it is up, when another paste beeps. Secure keyboard entry: TerminalView polls termios
