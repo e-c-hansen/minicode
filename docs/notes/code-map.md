@@ -141,6 +141,11 @@ goes here first, with tests; the GUI only displays it.
 - `ProcessEnv` (the environment as an immutable snapshot and a child's
   explicit envp, so threads that start programs never read `environ`;
   docs/notes/build.md).
+- `Rename.h` (header only): every name from before the rename to mutible
+  (1.6.0) that is still read (MINICODE_* variables, `minicode.*` command <!-- rename-mutible: keep -->
+  ids, an old copy's socket folder, the old hook command and ideName), and
+  the first launch's migration paths and rules; `scripts/rename-mutible.sh`
+  skips it, so the old names stay.
 - Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`,
   `AgentTask` (New Agent Task's names, worktree place and command line),
   `LineHistory` (blame porcelain, the lines a session's edits wrote, each
@@ -178,6 +183,9 @@ goes here first, with tests; the GUI only displays it.
   hints in the storage's gaps), `ProblemsPanel`, `InstallPanel`.
 - `Environment` (`MCEnvironment`, `MCEnv`, `MCSetEnv` over the core's
   `ProcessEnv`: every child's environment, on any thread).
+- `Migration` (the first launch since the rename: copies Application
+  Support, ~/.config, WebKit's data and the defaults domain from
+  minicode's names, once, by `Rename.h`'s rules). <!-- rename-mutible: keep -->
 - `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),

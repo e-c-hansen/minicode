@@ -320,6 +320,11 @@ from a commit whose CI already passed. A pull request with no run (one the
 Demos workflow opened before `scripts/demos-propose.sh` started CI itself)
 gets one by hand: `gh workflow run CI --ref <branch>`.
 
+Since the rename (1.6.0) the repo is `ible-ai/mutible`; GitHub redirects
+the old `e-c-hansen/minicode` URLs. Branch protection moves with the repo, <!-- rename-mutible: keep -->
+but check it is still on after the move (`gh api
+repos/ible-ai/mutible/branches/main/protection`).
+
 A run took about 21 minutes until 2026-11-17 (see "What makes a run
 quick" for now), and a merge waits that long after the last push to its
 branch.

@@ -1,14 +1,18 @@
 # mutible
 
-mutible is a file browser that opens everything in place, in one window you drive from the keyboard. Each file opens where you are: code in an editor with language servers behind it, Markdown and LaTeX as pages you can edit, and PDFs, pictures, video, spreadsheets, and databases in viewers of their own. A terminal, a browser, a git panel, and a dashboard of what your Claude Code sessions did are a keystroke away. It runs on macOS and Linux.
+Take back your space. Quickly explore your files, open and render just about anything, edit it in realtime, or watch your agents work through it all.
 
-Web pages, PDFs, video, and documents such as Word and Keynote files are shown by the operating system's own components: WebKit, PDFKit, AVKit, and Quick Look on the Mac, and WebKitGTK, poppler, and GStreamer on Linux. The rest is written from scratch, with no third-party libraries: the editor, a syntax highlighter for over 200 languages, the language server client, the Markdown renderer, the git panel, and on the Mac the terminal emulator (Linux uses VTE). On the Mac it is a download of under 4 MB, and on the same work it used 320 MB of memory where VS Code, Chrome, and Preview together used 1,283 MB, about a quarter as much. On Linux it used less than half of what VS Code, Chrome, and Papers did.
+mutible is a small native app for macOS and Linux, with no Electron and no third-party libraries. Code opens in an editor with language servers behind it, Markdown and LaTeX as pages you can edit, and PDFs, pictures, video, spreadsheets, and databases in viewers of their own. A terminal, a browser, a git panel, and a dashboard of what your Claude Code sessions did are a keystroke away.
+
+The operating system's own components show web pages, PDFs, video, and documents such as Word and Keynote files; the rest, from the editor to the Markdown renderer, is written from scratch. On the Mac it is a download of under 4 MB, and on the same work it used about a quarter of the memory of VS Code, Chrome, and Preview together.
 
 ![Clicking through the demo folder in mutible](docs/demos/tour.gif)
 
 ```
 brew install --cask ible-ai/tap/mutible
 ```
+
+mutible was called minicode until 1.6.0. The `minicode` command still works for now, and on the Mac the first launch brings over minicode's settings, sessions, and backups. <!-- rename-mutible: keep -->
 
 Ubuntu, Android, and building from source are under [Get started](#get-started). Most of what follows works on both macOS and Linux; the [reference](docs/REFERENCE.md) says where the Mac is ahead.
 

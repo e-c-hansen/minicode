@@ -41,6 +41,18 @@ found through that list.
   updater, so the cask must not declare `auto_updates` (a plain `brew upgrade`
   would skip it). Homebrew runs `lsregister` only when it reopens apps it quit;
   macOS registers a new bundle in /Applications itself.
+- The rename (1.6.0): the app was minicode, in `e-c-hansen/minicode` with <!-- rename-mutible: keep -->
+  the cask `e-c-hansen/tap/minicode`. That cask stays in the old tap as <!-- rename-mutible: keep -->
+  `packaging/minicode.rb`, deprecated (`deprecate!` with <!-- rename-mutible: keep -->
+  `replacement_cask: "ible-ai/tap/mutible"`, and caveats saying how to
+  move), never stamped again; `release.sh` writes it into the old tap when
+  it differs. The new cask links `mutible`, `mbl` and `minicode`, so it <!-- rename-mutible: keep -->
+  `conflicts_with` the old one, which links `minicode` too. The cask's <!-- rename-mutible: keep -->
+  `desc` is "Take back your space" (brew style refuses a full stop).
+  The Android APK keeps its name and key, and the PPA its name, through
+  the rename. Both casks load with
+  `brew ruby -e 'Cask::CaskLoader::FromPathLoader.new(Pathname(ARGV[0])).load(config: nil)' <file>`
+  (`brew info` refuses a path).
 - Not notarized (that needs the paid Apple Developer Program);
   `scripts/sign-and-notarize.sh` is ready.
 - The APK is signed with `~/.config/minicode/release.keystore` (password in the

@@ -4,6 +4,20 @@ Area notes moved out of `CLAUDE.md` (see its "Area notes" list). The text
 below is as it stood there; section names quoted in it ("see ...") are
 found through that list.
 
+## The rename (2026-11-18)
+
+minicode becomes mutible in 1.6.0 (CLAUDE.md, "The name"). The Mac side, <!-- rename-mutible: keep -->
+the core and the docs moved on the `rename-mutible` branch; the Linux
+session renames `linux/` and `debian/` (app id `ai.ible.Mutible`, the PPA's
+new `mutible` source with a transitional `minicode` package) in its own <!-- rename-mutible: keep -->
+pull request on top of it, with `Rename::linuxItems` ready for its XDG
+migration. Android is frozen under its old name. What needs the user's
+eyes after 1.6.0: the first launch's migration on their own Mac (the
+tabs, backups, settings, and browser sign-ins come back), macOS asking
+again for folder and microphone access (it keeps those by bundle id),
+and `brew uninstall --cask minicode && brew install --cask <!-- rename-mutible: keep -->
+ible-ai/tap/mutible`.
+
 ## Current state (2026-11-15)
 
 - **Released: 1.5.26** (2026-11-14), and the user's Homebrew copy is on it.

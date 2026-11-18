@@ -70,7 +70,9 @@ found through that list.
   monitor runs it before any view, the grid included; `Fixed`: a view's own
   keys, listed and protected but not changeable yet). `resolve()` applies
   `keys.conf` (`~/.config/mutible/keys.conf` or `$MUTIBLE_KEYS`): `key = id`
-  adds, `key = -` takes the key from every command, `key = -id` from one; a key
+  adds, `key = -` takes the key from every command, `key = -id` from one
+  (an id from before the rename, `minicode.x`, names `mutible.x`: <!-- rename-mutible: keep -->
+  `Commands::find` and `keysOf` take either, by `Rename::otherCommandId`); a key
   given to a command leaves any that had it where both apply; two lines giving
   one key to two commands in one place are a conflict and the later is refused
   with its line number. A command may also have a language (`language`,

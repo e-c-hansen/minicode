@@ -34,7 +34,9 @@ found through that list.
   shell's `$TMPDIR/Mutible` and the user's own temporary folder's (a nix
   shell's TMPDIR differs from the app's), only in folders that are the
   user's, real and 0700, moving on to the next when one refuses the
-  connection; starting mutible and waiting 10 s when none runs, except for
+  connection, and last in the folders a copy from before the rename uses
+  (`$TMPDIR/MiniCode`; `Rename::oldSocketFolder`, so `mutible` reaches a <!-- rename-mutible: keep -->
+  running minicode); starting mutible and waiting 10 s when none runs, except for <!-- rename-mutible: keep -->
   reads (`state`, `selection`, `term-output`, `procs`, `page`), which exit 3
   at once, and `notify` and `open-url` (`ControlProtocol::launchesApp`); a
   running mutible with no socket (older than the channel) gets "quit and

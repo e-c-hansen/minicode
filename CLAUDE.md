@@ -22,6 +22,21 @@ tool) carries `-mac` in its name. Until 2026-11-14 the Mac's files were in
 otherwise. Almost everything added since 1.5.0 is Mac-only, with its logic in
 the core so the ports can follow (`ROADMAP.md`).
 
+**The name** (2026-11-18): mutible was called minicode until 1.6.0 <!-- rename-mutible: keep -->
+(bundle id `ai.ible.mutible`, was `com.minicode.editor`; repo <!-- rename-mutible: keep -->
+`ible-ai/mutible`; cask `ible-ai/tap/mutible`; command `mutible`, alias
+`mbl`). Every old name the app still reads is in `src/Rename.h` and
+nowhere else: MINICODE_* variables (adopted at startup), `minicode.*` <!-- rename-mutible: keep -->
+command ids in keys.conf, an old copy's socket folder, `minicode notify <!-- rename-mutible: keep -->
+--from-hook` in Claude Code's hooks, the IDE link's old ideName, and the
+Mac's first-launch migration (`mac/src/Migration.mm`). `minicode` still <!-- rename-mutible: keep -->
+runs and says, on a terminal, that it is now mutible. Write new code with
+the new names only. The rename itself was made by
+`scripts/rename-mutible.sh` (its header says what it leaves alone: the
+"MiniCode Local Signing" certificate, the Android key and APK, the PPA,
+and the Linux and Android ports' own names, which those ports change).
+Lines marked `rename-mutible: keep` hold an old name on purpose.
+
 This file is architecture and the traps already paid for. What a commit
 checked, and its timings, is in its message (`git log`); each source file's
 opening comment says what it does in more detail than the lines below.
@@ -243,7 +258,7 @@ adding a file or looking for where something lives.
 - README and user-facing prose: plain sentences, Oxford commas, no emoji, no
   LLM-ish phrasing; the name is "mutible", lowercase, in prose and in every
   port's window title (2026-11-14; the bundle, the menu bar's app name, the
-  launcher's label and folder names stay Mutible). No labels the user did
+  launcher's label and folder names are Mutible). No labels the user did
   not choose.
 - Commits in the repo's style (the area, then why and what was checked), ending
   with the Co-Authored-By trailer.
