@@ -267,16 +267,16 @@ the shell's prompt without Return and leaving it there, so find_bar's
 Ctrl+U as a suite ends, and a program left running in a terminal is a
 LEAK); the X focus left on a window a git suite closed, so tabs' click
 reached an inactive window (the git suites give it back, and so does the
-harness, with a LEFT line); zoom's and browser_find's browser pane as an
-earlier suite left it (shown, or with tabs before theirs); layout's and
-palette's tree rows off screen; and, in the app, the Evidence page's
-folder line, which did not shorten:
-with a long project folder it made every page in the editor's slot
-wider than the window, so Compare with Main's Apply to Main… and the
-format offer's × were out of reach (agents failed even alone in a
-checkout under `.claude/worktrees`, whose path also gave a session in
-the project's own worktree the outer one: AgentIndex now takes the
-innermost).
+harness, with a LEFT line); control expecting the keyboard out of the
+editor, where an open lands in the background; zoom's and browser_find's
+browser pane as an earlier suite left it (shown, or with tabs before
+theirs); layout's and palette's tree rows off screen; and, in the app,
+the Evidence page's folder line, which did not shorten: with a long
+project folder it made every page in the editor's slot wider than the
+window, so Compare with Main's Apply to Main… and the format offer's ×
+were out of reach (agents failed even alone in a checkout under
+`.claude/worktrees`, whose path also gave a session in the project's
+own worktree the outer one: AgentIndex now takes the innermost).
 
 - GTK `agents`, "the same key closes the panel": in one local full run
   on the ThinkPad (2026-11-17, main at b0ce717 plus a test-only change),
