@@ -134,6 +134,18 @@ NSString *CellText(EditorController *c, NSString *path) {
     return cell.textField.stringValue ?: @"(no text)";
 }
 
+// Closes a window, and checks it went (a window left would be a later
+// check's, and the suite's leak).
+void CloseChecked(EditorController *w) {
+    const NSUInteger before = MCGuiControllers().count;
+    [w.window performClose:nil];
+    const NSUInteger after = MCGuiControllers().count;
+    if (after != before - 1 || [MCGuiControllers() containsObject:w])
+        MCGuiNote(@"closing %@ (focus \"%@\"): %lu windows, then %lu", w.rootPath.lastPathComponent,
+                  w.treeFocus, (unsigned long)before, (unsigned long)after);
+    GCHECK(![MCGuiControllers() containsObject:w]);
+}
+
 NSInteger RowsOf(EditorController *c, NSString *path) {
     NSInteger n = 0;
     for (NSInteger r = 0; r < c.outline.numberOfRows; r++)
@@ -398,8 +410,8 @@ MC_GUI_SUITE(tree_focus) {
     MCGuiStep(@"New File's folder and Copy Path go by the row, else the first root", ^{
         [c.outline deselectAll:nil];
         GCHECK_EQ_STR([c targetDirectory], file(@"mac/src"));
-        Select(c, file(@"linux/src/sub/s.c"));
-        GCHECK_EQ_STR([c targetDirectory], file(@"linux/src/sub"));
+        Select(c, file(@"linux/src/l.c"));
+        GCHECK_EQ_STR([c targetDirectory], file(@"linux/src"));
     });
     MCGuiStep(@"a folder inside a root changes nothing; one holding a root takes its place", ^{
         GCHECK([c addTreeFocus:@"linux/src/sub"]);
@@ -477,7 +489,7 @@ MC_GUI_SUITE(tree_focus) {
         GCHECK_EQ_STR(TopLabels(back), @"mac/src linux/src");
         GCHECK(Expanded(back, file(@"mac/src")) && !Expanded(back, file(@"linux/src")));
         GCHECK([back treeFocusBar].showsFolders);
-        [back.window performClose:nil];
+        CloseChecked(back);
         MCGuiSetKeyWindow(c.window);
     });
     MCGuiStep(@"a record with folders gone since keeps the others", ^{
@@ -486,14 +498,14 @@ MC_GUI_SUITE(tree_focus) {
         EditorController *back = [(NSObject *)NSApp.delegate
             openWindowAtPath:repo restoring:@(TabSessions::encodeWindows({w}).c_str())];
         GCHECK_EQ_STR(back.treeFocus, @"mac/src, linux/src");
-        [back.window performClose:nil];
+        CloseChecked(back);
         w.tabs.treeFocus = {"gone", "linux/src"};
         back = [(NSObject *)NSApp.delegate
             openWindowAtPath:repo restoring:@(TabSessions::encodeWindows({w}).c_str())];
         GCHECK_EQ_STR(back.treeFocus, @"linux/src");
         GCHECK(![back treeFocusBar].showsFolders);
         GCHECK_EQ_STR(Labels(back), @"focusrepo › linux › src");
-        [back.window performClose:nil];
+        CloseChecked(back);
         MCGuiSetKeyWindow(c.window);
     });
     MCGuiStep(@"a record in the old single-path form still restores", ^{
@@ -507,12 +519,12 @@ MC_GUI_SUITE(tree_focus) {
         EditorController *back = [(NSObject *)NSApp.delegate openWindowAtPath:repo restoring:@(text.c_str())];
         GCHECK_EQ_STR(back.treeFocus, @"mac/src");
         GCHECK_EQ_STR(Labels(back), @"focusrepo › mac › src");
-        [back.window performClose:nil];
+        CloseChecked(back);
         MCGuiSetKeyWindow(c.window);
     });
     MCGuiStep(@"the folder's own session brings the set back", ^{
         GCHECK_EQ_STR(c.treeFocus, @"mac/src, linux/src");
-        [c.window performClose:nil];
+        CloseChecked(c);
         MCGuiSetKeyWindow(nil);
         GCHECK_EQ_STR(StoredFocus(repo), @"mac/src, linux/src");
         [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
