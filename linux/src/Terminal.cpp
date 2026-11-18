@@ -678,7 +678,17 @@ void Terminal::setPan(int row, int col) {
 
 void Terminal::applyPan() {
     if (!vte_) return;
-    if (!ptyCols_ && !ptyRows_) extraCols_ = extraRows_ = panRow_ = panCol_ = 0;
+    if (!ptyCols_ && !ptyRows_) {
+        // Nothing clipped: no margins, and VTE not measured (a VTE not on
+        // screen measured from a TermShell showed nothing typed: the trap
+        // followPtySize's note names).
+        extraCols_ = extraRows_ = panRow_ = panCol_ = 0;
+        gtk_widget_set_margin_top(vte_, 0);
+        gtk_widget_set_margin_bottom(vte_, 0);
+        gtk_widget_set_margin_start(vte_, 0);
+        gtk_widget_set_margin_end(vte_, 0);
+        return;
+    }
     VteTerminal* t = VTE_TERMINAL(vte_);
     const int cw = (int)vte_terminal_get_char_width(t), ch = (int)vte_terminal_get_char_height(t);
     gtk_widget_set_margin_top(vte_, -panRow_ * ch);
