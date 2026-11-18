@@ -119,3 +119,18 @@ std::function<void()> MCSessionConnectViewer(Shared::Client &client);
 // document on the host is the tab's text, and the host reported nothing
 // wrong. Empty when so, else what differs.
 NSString *MCSessionCheckTabs(NSArray<MCTab *> *tabs);
+
+// For the GUI checks: what the host has of terminal `term` now (on its
+// thread, after everything posted before): its pty master (-1 once hung
+// up or gone), shell, whether bytes wait to be written to it and whether
+// it is read, how many hung-up shells wait to be reaped, and its screen's
+// scrollback and rows down to the last with text.
+struct MCSessionTerminalState {
+    int fd = -1;
+    int pid = 0;
+    bool writeWaiting = false, reading = false;
+    size_t dying = 0;
+    std::string screen;
+};
+MCSessionTerminalState MCSessionInspectTerminal(unsigned long long term);
+

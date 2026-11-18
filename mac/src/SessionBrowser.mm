@@ -13,7 +13,7 @@
 #include "Json.h"
 #include "SessionWeb.h"
 
-NSString *const MCSessionBrowserTermNote = @"Terminals appear here once they run through the session host";
+NSString *const MCSessionBrowserTermNote = @"Terminals opened while the session host is on appear here";
 void (^MCSessionBrowserOpener)(NSURL *url) = nil;
 
 namespace {

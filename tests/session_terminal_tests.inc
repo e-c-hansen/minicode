@@ -416,6 +416,28 @@ static void testSessionTerminals() {
         r2.open(2, s);
         CHECK(r2.wait([&] { return r2.exited; }));
         CHECK(r2.out.find("/\r\n") != std::string::npos);
+
+        // The tty's modes, as the Mac's checks read them (TerminalView): a
+        // password read (echo off, canonical), a line editor's raw mode that
+        // keeps signals (ZLE: zsh's widths), and a raw program's with
+        // signals off (fzf: clusters). A script that waits on `read` between
+        // them, so each holds until the check has seen it (an interactive
+        // shell's own line editor sets modes of its own at its prompt).
+        TermRig r3;
+        r3.open(4, r3.spec("/bin/sh", {"sh", "-c",
+            "stty -echo; echo modes-1; read x; stty echo -icanon; echo modes-2; read x;"
+            " stty -isig; echo modes-3; read x; stty sane; echo modes-4; read x"}));
+        CHECK(r3.wait([&] { return r3.has("modes-1") && r3.shell.echoOff; }));
+        CHECK(!r3.shell.raw && !r3.shell.signalsOff);
+        r3.type(4, "\n");
+        CHECK(r3.wait([&] { return r3.has("modes-2") && r3.shell.raw; }));
+        CHECK(!r3.shell.echoOff && !r3.shell.signalsOff);
+        r3.type(4, "\n");
+        CHECK(r3.wait([&] { return r3.has("modes-3") && r3.shell.signalsOff; }));
+        r3.type(4, "\n");
+        CHECK(r3.wait([&] { return r3.has("modes-4") && !r3.shell.raw && !r3.shell.signalsOff; }));
+        r3.type(4, "\n");
+        CHECK(r3.wait([&] { return r3.exited; }));
     }
 
     GROUP("term:marks");
@@ -588,6 +610,7 @@ static void testSessionTerminals() {
         s.command = "make -j8";
         s.cwd = "/tmp/a b";
         s.foreground = 4321;
+        s.signalsOff = true;
         CHECK(Shared::termShellFrom(Shared::termShellJson(s)) == s);
         CHECK(Shared::termShellFrom(Json()).status == -1);
         std::vector<Shared::TermMark> marks(2);

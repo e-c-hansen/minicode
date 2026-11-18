@@ -763,12 +763,15 @@ void Host::look(Term& t) {
     t.shell.foreground = t.pty->foreground();
     t.shell.raw = t.pty->raw();
     t.shell.echoOff = t.pty->echoOff();
+    t.shell.signalsOff = t.pty->signalsOff();
     t.nextLook = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
 }
 
 void Host::output(TermId id, Term& t, std::string&& bytes) {
     if (bytes.empty()) return;
-    t.screen.setRawTty(t.shell.raw);
+    // Raw with signals off is a program a widget runs (fzf), counting
+    // clusters; zsh's line editor keeps ISIG (the Mac's rule, Terminal.mm).
+    t.screen.setRawTty(t.shell.signalsOff);
     t.screen.feed(bytes);
     t.screen.takeReplies();   // the renderer's emulator answers
     for (const TermEvent& e : t.stream.feed(bytes)) applyTermEvent(t.shell, e);
