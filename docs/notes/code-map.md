@@ -217,7 +217,7 @@ goes here first, with tests; the GUI only displays it.
   `tools/makegif.m`, `tools/procmem-mac.c`, `tools/procmem-linux.c`,
   `scripts/membench-mac.sh`, `scripts/membench-linux.sh`, `skills/mutible/SKILL.md`,
   `tests/fixtures/claude`, `mac/tests/gui`, `tests/latex`, `tests/markdown`,
-  `tests/keepsorted`.
+  `tests/keepsorted`, `site/` (the homepage, `docs/notes/release.md`).
 
 ### EditorController and its categories
 

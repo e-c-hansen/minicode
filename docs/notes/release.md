@@ -56,6 +56,25 @@ found through that list.
   the rename. Both casks load with
   `brew ruby -e 'Cask::CaskLoader::FromPathLoader.new(Pathname(ARGV[0])).load(config: nil)' <file>`
   (`brew info` refuses a path).
+- The homepage, https://mut.ible.ai (2026-11-18), is the README:
+  `.github/workflows/pages.yml` renders it with GitHub's Markdown API
+  (`gh api markdown -F text=@README.md`, which keeps the page as
+  github.com shows it) and `site/build.py` puts it in `site/template.html`
+  with `site/site.css`, copies `docs/demos` and `docs/brand` beside it (so
+  the README's relative pictures work as they are), sends every other
+  relative link to its page on github.com, gives the headings GitHub's ids
+  (the API's output has none, so `#get-started` would go nowhere), and
+  writes `CNAME`. It deploys on a push to main that touches the README,
+  the demos, the brand, `site/` or the workflow; a pull request touching
+  them only builds. Not Jekyll over the repository: that would publish
+  every Markdown file, and some hold Liquid-like `{{`. To see a change
+  without a push, run the workflow's two commands into a scratch folder.
+  The domain and HTTPS are set in the repository's Pages settings, not
+  here; the DNS is ible.ai's. Until the domain is set the site is at
+  https://ible.ai/mutible/ (the org's own site holds ible.ai, so
+  ible-ai.github.io/mutible/ redirects there); every path in the template
+  is relative so both work. A later page (the browser version's landing
+  page) is a template of its own beside this one.
 - Not notarized (that needs the paid Apple Developer Program);
   `scripts/sign-and-notarize.sh` is ready.
 - The APK is signed with `~/.config/minicode/release.keystore` (password in the
