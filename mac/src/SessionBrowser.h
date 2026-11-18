@@ -33,15 +33,12 @@
 #pragma once
 #import <Cocoa/Cocoa.h>
 
-@class MCTab;
+@class MCTab, MCSessionWindow;
 
 @interface MCSessionBrowser : NSObject
-// `tabs` gives the window's groups: an array of arrays of MCTab (the
-// focused group first), and `active` each group's tab on show.
-- (instancetype)initWithWindow:(NSWindow *)window
-                        folder:(NSString *)folder
-                          tabs:(NSArray<NSArray<MCTab *> *> * (^)(void))tabs
-                        active:(NSArray<MCTab *> * (^)(void))active;
+// `session` is the window's on the session's host (SessionWindow.h): its
+// link, its id there and its record, which the page shows.
+- (instancetype)initWithWindow:(NSWindow *)window session:(MCSessionWindow *)session;
 // Whether the page may edit. Changing it stops a server that runs; the next
 // start serves anew, at a new address.
 @property(nonatomic) BOOL editable;
@@ -57,16 +54,6 @@
 // close does; run on the main thread for an editable page's close button.
 // The core has refused a tab with unsaved changes; the window checks again.
 @property(nonatomic, copy) void (^close)(uint64_t docId);
-// Which panes the window shows: @{@"browser": @(open), @"terminal":
-// @(open), @"browserShare": @(its share of the width beside the editor)}.
-// Read with the tabs; unset, the page decides from what it has.
-@property(nonatomic, copy) NSDictionary * (^panes)(void);
-// The window's terminals on the host (TerminalView sessionTerminal, 0s
-// left out), reported with the tabs; unset, the page shows none.
-@property(nonatomic, copy) NSArray<NSNumber *> * (^terminals)(void);
-// The window's browser pane, nil while it has none: @{@"tabs": @[@{@"url",
-// @"title"}], @"active": @(index on show, -1 for none)}. Read with the tabs.
-@property(nonatomic, copy) NSDictionary * (^browserTabs)(void);
 // Opens an http or https address in the window's browser pane (a tab
 // already at it shown again, else a new one); run on the main thread for an
 // editable page's address field. The core refuses every other scheme first.
@@ -79,9 +66,11 @@
 @property(nonatomic, readonly) int browsers;   // connected now
 // The window's id on the host (Client::windowTabs).
 @property(nonatomic, readonly) uint64_t windowId;
-// Sends the window's tabs and terminals to the host now, when they
+// Sends the window's record (MCSessionWindow report) now, when it
 // changed, and has the page's view look at once.
 - (void)reportTabs;
+// The page's view looks at the host's state now (a record was sent).
+- (void)lookNow;
 - (void)stop;
 @end
 

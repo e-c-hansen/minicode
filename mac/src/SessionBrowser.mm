@@ -5,6 +5,7 @@
 #import "EditorTab.h"
 #import "FileTree.h"   // gShowHidden
 #import "SessionLink.h"
+#import "SessionWindow.h"
 
 #include <memory>
 #include <string>
@@ -18,28 +19,18 @@ void (^MCSessionBrowserOpener)(NSURL *url) = nil;
 
 @implementation MCSessionBrowser {
     __weak NSWindow *_window;
-    NSString *_folder;
-    NSArray<NSArray<MCTab *> *> * (^_tabs)(void);
-    NSArray<MCTab *> * (^_active)(void);
+    MCSessionWindow *_session;
     std::unique_ptr<Shared::Web::Server> _server;
     std::thread _thread;
     NSTimer *_timer;
-    std::string _sentTabs;
-    uint64_t _windowId;
     id _closeObserver;
     id _settingsObserver;
 }
 
-- (instancetype)initWithWindow:(NSWindow *)window
-                        folder:(NSString *)folder
-                          tabs:(NSArray<NSArray<MCTab *> *> * (^)(void))tabs
-                        active:(NSArray<MCTab *> * (^)(void))active {
+- (instancetype)initWithWindow:(NSWindow *)window session:(MCSessionWindow *)session {
     if ((self = [super init])) {
         _window = window;
-        _folder = [folder copy] ?: @"";
-        _tabs = [tabs copy];
-        _active = [active copy];
-        _windowId = MCSessionClient().newId();   // from the client's range on the host
+        _session = session;
         __weak MCSessionBrowser *weakSelf = self;
         _closeObserver = [NSNotificationCenter.defaultCenter
             addObserverForName:NSWindowWillCloseNotification
@@ -66,7 +57,7 @@ void (^MCSessionBrowserOpener)(NSURL *url) = nil;
     if (_settingsObserver) [NSNotificationCenter.defaultCenter removeObserver:_settingsObserver];
 }
 
-- (uint64_t)windowId { return _windowId; }
+- (uint64_t)windowId { return _session.windowId; }
 
 - (void)setEditable:(BOOL)editable {
     if (editable == _editable) return;
@@ -87,7 +78,11 @@ void (^MCSessionBrowserOpener)(NSURL *url) = nil;
     [self reportTabs];
     auto server = std::make_unique<Shared::Web::Server>();
     Shared::Web::Options o;
-    o.connect = [](Shared::Client &c) { return MCSessionConnectViewer(c); };
+    // The window's host: the process's, or its folder's headless one over
+    // its socket.
+    std::shared_ptr<MCSession::Link> link = _session.link.link;
+    if (link->kind() == MCSession::Link::Kind::Socket) o.hostSocket = link->socketPath();
+    else o.connect = [](Shared::Client &c) { return MCSessionConnectViewer(c); };
     o.editable = _editable;
     if (_editable && _save) {
         void (^save)(uint64_t) = _save;
@@ -122,8 +117,9 @@ void (^MCSessionBrowserOpener)(NSURL *url) = nil;
         };
     }
     o.showHidden = gShowHidden;
-    o.folder = _folder.fileSystemRepresentation ?: "";
-    o.window = _windowId;
+    o.folder = link->kind() == MCSession::Link::Kind::Socket ? link->folder()
+                                                             : std::string(_session.folder.fileSystemRepresentation ?: "");
+    o.window = _session.windowId;
     o.termNote = MCSessionBrowserTermNote.UTF8String;
     o.port = 0;   // any free port
     o.settingsPath = [AppSettings shared].path.fileSystemRepresentation ?: "";
@@ -143,60 +139,14 @@ void (^MCSessionBrowserOpener)(NSURL *url) = nil;
     return YES;
 }
 
-// The window's tabs as the host keeps a window's (Shared::windowJson's
-// shape): the tabs that have a document on the host, by group.
+// The window's record, sent when it changed; the view follows now, not at
+// its next half-second look.
 - (void)reportTabs {
-    NSArray<NSArray<MCTab *> *> *groups = _tabs ? _tabs() : @[];
-    NSArray<MCTab *> *active = _active ? _active() : @[];
-    Json jgroups = Json::array();
-    for (NSUInteger g = 0; g < groups.count; g++) {
-        Json tabs = Json::array();
-        for (MCTab *t in groups[g]) {
-            if (!t.session) continue;
-            Json tab = Json::object();
-            tab.set("doc", Json((int64_t)t.session.docId));
-            tab.set("path", Json(std::string(t.currentPath.fileSystemRepresentation ?: "")));
-            tab.set("preview", Json((int)(t.preview ? 1 : 0)));
-            tabs.push(std::move(tab));
-        }
-        id a = g < active.count ? active[g] : nil;
-        MCTab *on = [a isKindOfClass:MCTab.class] ? a : nil;   // NSNull: none on show
-        Json group = Json::object();
-        group.set("tabs", std::move(tabs));
-        group.set("active", Json((int64_t)(on.session ? on.session.docId : 0)));
-        jgroups.push(std::move(group));
-    }
-    Json w = Json::object();
-    w.set("root", Json(std::string(_folder.fileSystemRepresentation ?: "")));
-    w.set("focused", Json(0));
-    w.set("groups", std::move(jgroups));
-    w.set("closed", Json(0));
-    // The window's own terminals: the page's view shows no others.
-    Json terms = Json::array();
-    for (NSNumber *t in _terminals ? _terminals() : @[])
-        if (t.unsignedLongLongValue) terms.push(Json((int64_t)t.unsignedLongLongValue));
-    w.set("terms", std::move(terms));
-    // The browser pane's tabs, when the window has the pane.
-    if (NSDictionary *pane = _browserTabs ? _browserTabs() : nil) {
-        std::vector<Shared::Web::BrowserTab> tabs;
-        for (NSDictionary *t in pane[@"tabs"]) {
-            if (![t isKindOfClass:NSDictionary.class]) continue;
-            NSString *url = [t[@"url"] isKindOfClass:NSString.class] ? t[@"url"] : @"";
-            NSString *title = [t[@"title"] isKindOfClass:NSString.class] ? t[@"title"] : @"";
-            tabs.push_back({url.UTF8String ?: "", title.UTF8String ?: ""});
-        }
-        w.set("browser", Shared::Web::browserReportJson(tabs, [pane[@"active"] intValue]));
-    }
-    // Which panes it shows, so the page lays itself out alike.
-    if (NSDictionary *panes = _panes ? _panes() : nil)
-        w.set("panes", Shared::Web::panesReportJson([panes[@"browser"] boolValue],
-                                                    [panes[@"terminal"] boolValue],
-                                                    [panes[@"browserShare"] doubleValue]));
-    std::string dump = w.dump();
-    if (dump == _sentTabs) return;
-    _sentTabs = std::move(dump);
-    MCSessionClient().windowTabs(_windowId, std::move(w));
-    // The view follows now, not at its next half-second look.
+    [_session report];
+    [self lookNow];
+}
+
+- (void)lookNow {
     if (_server) _server->lookNow();
 }
 
@@ -207,10 +157,6 @@ void (^MCSessionBrowserOpener)(NSURL *url) = nil;
         _server->stop();
         if (_thread.joinable()) _thread.join();
         _server.reset();   // detaches the view from the host
-    }
-    if (!_sentTabs.empty()) {
-        _sentTabs.clear();
-        MCSessionClient().windowClosed(_windowId);
     }
 }
 

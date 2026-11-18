@@ -34,6 +34,7 @@
 #import "EditorFont.h"
 #import <Carbon/Carbon.h>   // kVK_* key codes, EnableSecureEventInput
 #import <CoreText/CoreText.h>
+#include <sys/stat.h>
 #include <algorithm>
 #include <climits>
 #include <unordered_map>
@@ -41,6 +42,7 @@
 #include <vector>
 #include "TerminalStream.h"   // termCharWidth
 #include "TermLinks.h"
+#include "TermDrop.h"
 #include <unistd.h>          // gethostname
 
 static const long long kNoLine = LLONG_MIN;
@@ -210,6 +212,7 @@ static bool MCSameCells(const std::vector<TermCell> &a, const std::vector<TermCe
         _reportButton = -1;
         _optionAsMeta = YES;
         _foundIndex = -1;
+        [self registerForDraggedTypes:[TerminalGridView droppedTypes]];
     }
     return self;
 }
@@ -2351,8 +2354,10 @@ static BOOL IsWordCell(const TermCell &cell) {
 
 - (void)paste:(id)sender {
     (void)sender;
-    NSString *str = [[NSPasteboard generalPasteboard]
-                     stringForType:NSPasteboardTypeString];
+    [self pasteString:[[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString]];
+}
+
+- (void)pasteString:(NSString *)str {
     const char *utf8 = str.UTF8String;
     if (!utf8 || !self.screen) return;
     if (_askingPaste) { NSBeep(); return; }   // its question is still up
@@ -2377,6 +2382,203 @@ static BOOL IsWordCell(const TermCell &cell) {
 }
 
 - (BOOL)askingPaste { return _askingPaste; }
+
+// ---------------------------------------------------------------- drops
+// See the header. Files come first (Finder and the tree put file URLs on
+// the pasteboard), then a picture's data (a browser's image, a screenshot
+// thumbnail's), then files promised (Photos, Mail, a browser's image with no
+// data), then text or a web address.
++ (NSArray<NSPasteboardType> *)droppedTypes {
+    NSMutableArray<NSPasteboardType> *types = [NSMutableArray arrayWithArray:@[
+        NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeTIFF,
+        NSPasteboardTypeString, NSPasteboardTypeURL]];
+    [types addObjectsFromArray:NSFilePromiseReceiver.readableDraggedTypes];
+    return types;
+}
+
++ (NSString *)dropFolder {
+    // $TMPDIR, as the command line reads it (NSTemporaryDirectory() does not
+    // read TMPDIR, which the GUI checks set to their scratch folder).
+    const char *t = getenv("TMPDIR");
+    NSString *tmp = t && *t ? [NSString stringWithUTF8String:t] : nil;
+    if (!tmp) {
+        char buf[PATH_MAX];
+        size_t n = confstr(_CS_DARWIN_USER_TEMP_DIR, buf, sizeof buf);
+        tmp = n > 0 && n <= sizeof buf ? [NSString stringWithUTF8String:buf] : NSTemporaryDirectory();
+    }
+    return [tmp stringByAppendingPathComponent:@"Mutible-drop"];
+}
+
+// The folder, made private, with what is a day old taken out (a picture is
+// read when it is dropped; a day leaves time to use it again).
+static NSString *MCPrepareDropFolder(void) {
+    NSString *dir = [TerminalGridView dropFolder];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES
+                   attributes:@{NSFilePosixPermissions: @0700} error:nil];
+    const NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+    for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+        NSString *path = [dir stringByAppendingPathComponent:name];
+        NSDate *written = [fm attributesOfItemAtPath:path error:nil].fileModificationDate;
+        if (written && now - written.timeIntervalSince1970 > 24 * 3600)
+            [fm removeItemAtPath:path error:nil];
+    }
+    return dir;
+}
+
+// A new name in the drop folder: drop-<date>-<n>.<ext>, or a folder of that
+// name for files that keep their own names.
+static NSString *MCNewDropPath(NSString *ext) {
+    NSString *dir = MCPrepareDropFolder();
+    NSDateFormatter *f = [[NSDateFormatter alloc] init];
+    f.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    f.dateFormat = @"yyyyMMdd-HHmmss";
+    NSString *stamp = [f stringFromDate:[NSDate date]];
+    static NSUInteger serial;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (;;) {
+        NSString *name = [NSString stringWithFormat:@"drop-%@-%lu", stamp, (unsigned long)++serial];
+        if (ext.length) name = [name stringByAppendingPathExtension:ext];
+        NSString *path = [dir stringByAppendingPathComponent:name];
+        if (![fm fileExistsAtPath:path]) return path;
+    }
+}
+
+// A picture's data as a PNG file in the drop folder; nil when it is none.
+static NSString *MCWriteDroppedImage(NSPasteboard *pb) {
+    NSData *png = [pb dataForType:NSPasteboardTypePNG];
+    if (!png) {
+        NSData *tiff = [pb dataForType:NSPasteboardTypeTIFF];
+        NSBitmapImageRep *rep = tiff ? [NSBitmapImageRep imageRepWithData:tiff] : nil;
+        png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    }
+    if (!png.length) return nil;
+    NSString *path = MCNewDropPath(@"png");
+    if (![png writeToFile:path options:NSDataWritingWithoutOverwriting error:nil]) return nil;
+    chmod(path.fileSystemRepresentation, 0600);
+    return path;
+}
+
+// A screenshot's floating thumbnail drops a file screencaptureui deletes
+// once the drag is over, before a program may have read it: such a file is
+// copied to the drop folder first. Every other file is dropped where it is.
+static NSString *MCKeptDropPath(NSString *path) {
+    if (![path containsString:@"/TemporaryItems/"] ||
+        [path rangeOfString:@"screencaptureui" options:NSCaseInsensitiveSearch].location == NSNotFound)
+        return path;
+    NSString *dir = MCNewDropPath(nil);
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *copy = [dir stringByAppendingPathComponent:path.lastPathComponent];
+    if ([fm createDirectoryAtPath:dir withIntermediateDirectories:YES
+                       attributes:@{NSFilePosixPermissions: @0700} error:nil] &&
+        [fm copyItemAtPath:path toPath:copy error:nil])
+        return copy;
+    return path;
+}
+
+static std::string MCDropPathsText(NSArray<NSString *> *paths) {
+    std::vector<std::string> list;
+    for (NSString *p in paths)
+        if (p.fileSystemRepresentation) list.emplace_back(p.fileSystemRepresentation);
+    return TermDrop::paths(list);
+}
+
+// The drop can go in: a screen and a pty, and no paste question up.
+- (BOOL)takesDrops {
+    return self.screen && self.onInput && !_askingPaste && !self.hidden;
+}
+
+- (NSDragOperation)dropOperation:(id<NSDraggingInfo>)info {
+    if (![self takesDrops]) return NSDragOperationNone;
+    if (![info.draggingPasteboard availableTypeFromArray:[TerminalGridView droppedTypes]])
+        return NSDragOperationNone;
+    // Copy shows the usual "+" cursor; a source that does not offer it
+    // (none known) gets whichever it allows.
+    const NSDragOperation mask = info.draggingSourceOperationMask;
+    for (NSDragOperation op : {NSDragOperationCopy, NSDragOperationGeneric, NSDragOperationLink})
+        if (mask & op) return op;
+    return NSDragOperationNone;
+}
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)info { return [self dropOperation:info]; }
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)info { return [self dropOperation:info]; }
+- (BOOL)prepareForDragOperation:(id<NSDraggingInfo>)info {
+    return [self dropOperation:info] != NSDragOperationNone;
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)info {
+    if (![self takesDrops]) return NO;
+    NSPasteboard *pb = info.draggingPasteboard;
+    [self.window makeFirstResponder:self];   // the terminal under the pointer
+    NSArray<NSURL *> *urls = [pb readObjectsForClasses:@[NSURL.class]
+                                               options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSURL *u in urls) {
+        NSString *p = u.filePathURL.path ?: u.path;
+        if (p.length) [paths addObject:MCKeptDropPath(p)];
+    }
+    if (!paths.count) {
+        NSString *image = MCWriteDroppedImage(pb);
+        if (image) [paths addObject:image];
+    }
+    if (paths.count) {
+        [self pasteDropText:MCDropPathsText(paths)];
+        return YES;
+    }
+    NSArray<NSFilePromiseReceiver *> *promises =
+        [pb readObjectsForClasses:@[NSFilePromiseReceiver.class] options:nil];
+    if (promises.count) {
+        [self receivePromisedFiles:promises];
+        return YES;
+    }
+    NSString *text = [pb stringForType:NSPasteboardTypeString];
+    if (!text) text = [NSURL URLFromPasteboard:pb].absoluteString;
+    if (!text.length) return NO;
+    [self pasteString:text];
+    return YES;
+}
+
+- (void)pasteDropText:(const std::string &)text {
+    [self pasteString:[NSString stringWithUTF8String:text.c_str()]];
+}
+
+// Files promised (Photos, Mail, a browser's image): written by their source
+// into a new folder in the drop folder, then their paths dropped together,
+// sorted by name, once every one has arrived or failed.
+- (void)receivePromisedFiles:(NSArray<NSFilePromiseReceiver *> *)promises {
+    NSString *dir = MCNewDropPath(nil);
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES
+                                                    attributes:@{NSFilePosixPermissions: @0700}
+                                                         error:nil])
+        return;
+    NSURL *dest = [NSURL fileURLWithPath:dir isDirectory:YES];
+    static NSOperationQueue *queue;
+    if (!queue) {
+        queue = [[NSOperationQueue alloc] init];
+        queue.qualityOfService = NSQualityOfServiceUserInitiated;
+    }
+    // Each receiver may promise several files; the reader runs once per file.
+    NSUInteger expected = 0;
+    for (NSFilePromiseReceiver *r in promises) expected += MAX((NSUInteger)1, r.fileNames.count);
+    NSMutableArray *arrived = [NSMutableArray array];   // NSString or NSNull, in arrival order
+    __block NSUInteger left = expected;
+    __weak TerminalGridView *weakSelf = self;
+    void (^one)(NSURL *, NSError *) = ^(NSURL *file, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [arrived addObject:!error && file.path ? file.path : (id)[NSNull null]];
+            if (--left) return;
+            NSMutableArray<NSString *> *got = [NSMutableArray array];
+            for (id p in arrived)
+                if ([p isKindOfClass:NSString.class]) [got addObject:p];
+            [got sortUsingSelector:@selector(compare:)];
+            TerminalGridView *s = weakSelf;
+            if (s && got.count && [s takesDrops]) [s pasteDropText:MCDropPathsText(got)];
+        });
+    };
+    for (NSFilePromiseReceiver *r in promises)
+        [r receivePromisedFilesAtDestination:dest options:@{} operationQueue:queue
+                                      reader:^(NSURL *file, NSError *error) { one(file, error); }];
+}
 
 // VS Code's question (terminal.integrated.enableMultiLinePasteWarning):
 // Paste, Paste as One Line, or Cancel, with a preview of the first lines.

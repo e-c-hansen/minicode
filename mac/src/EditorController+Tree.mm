@@ -1096,7 +1096,9 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     [_agents setRoot:dir];              // and so do the agents
     [self startWatching:dir];           // watch the new folder
     [self updateTitle];
+    [self sessionFolderChanged];        // the new folder's host, and what it kept
     [self restoreSession];              // the new folder's tabs from last time
+    [self finishSessionAttach];
 }
 
 // ----------------------------------------------------- the control channel

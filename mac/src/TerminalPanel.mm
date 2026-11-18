@@ -161,8 +161,15 @@ static const int kResizeCells = 4;
 
 - (instancetype)initWithDirectory:(NSString *)dir firstIn:(NSString *)first
                       environment:(NSDictionary<NSString *, NSString *> *(^)(NSString *))environment {
+    return [self initWithDirectory:dir firstIn:first environment:environment sessionPlace:nil];
+}
+
+- (instancetype)initWithDirectory:(NSString *)dir firstIn:(NSString *)first
+                      environment:(NSDictionary<NSString *, NSString *> *(^)(NSString *))environment
+                     sessionPlace:(MCSessionTermPlace *(^)(void))place {
     if ((self = [super initWithFrame:NSMakeRect(0, 0, 400, 220)])) {
         _environment = [environment copy];
+        _sessionPlace = [place copy];
         _dir = dir.length ? dir : NSHomeDirectory();
         _tabs = [NSMutableArray array];
         _bars = [NSMutableArray array];
@@ -244,7 +251,8 @@ static const int kResizeCells = 4;
 - (TerminalView *)makeTerminalIn:(NSString *)dir {
     NSString *start = dir.length ? dir : _dir;
     TerminalView *t = [[TerminalView alloc] initWithDirectory:start
-                                                  environment:_environment ? _environment(start) : nil];
+                                                  environment:_environment ? _environment(start) : nil
+                                                        place:_sessionPlace ? _sessionPlace() : nil];
     t.projectRoot = self.projectRoot;
     t.extraLinkRoots = self.extraLinkRoots;
     t.sessionLinkRoots = self.sessionLinkRoots;

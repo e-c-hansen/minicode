@@ -322,8 +322,8 @@ reaches it over a socket. Both are in `mutible-cli` (the Mac's
 `Contents/MacOS/mutible-cli`, and the GTK binary, which hands the control
 channel's subcommands to the same `mutibleCliMain`), built from the core
 alone: `src/SessionServer.{h,cpp}` over `SessionHost`. GTK attaches with
-`editor.session-host = headless` (below, "GTK attaches"); the Mac does not
-yet.
+`editor.session-host = headless` (below, "GTK attaches"), and the Mac too
+(below, "The Mac reattaches").
 
 - **The socket.** `host-<FNV-1a of the resolved folder, 16 hex>.sock` in the
   first of `ControlChannel::socketFolders()` (ControlPaths.h, now shared by
@@ -734,11 +734,110 @@ The host-side items left before the default can flip (2026-11-18).
   lives, an untitled buffer a client left, the host SIGKILLed and a new
   window restoring both, two windows on one file) and `host_pan`.
 
-**Left before the default flips:** the Mac's half (closing detaching,
-reattaching through `reattachFrom`, `setKeepsBackups`, untitled buffers);
+**Left before the default flips:** the Mac's half of step 3 (its step 2,
+below, is done: reattaching through `reattachFrom`, `setKeepsBackups`,
+untitled buffers, its own backups written at once after reattaching);
 the browser's view lists a closed window's record among the windows;
 VTE's own wrap of plain output at a smaller pty's width; terminal splits
 come back as tabs.
+
+### The Mac reattaches (stage 6, step 2)
+
+The Mac's half of the above, with GTK's behavior and words (Keep Unsaved,
+Reconnect, the status bar's sentences). `mac/src/SessionLink.{h,mm}` now
+has links (`MCSession::Link`), `mac/src/SessionWindow.{h,mm}` a window's
+place on its link, and `EditorController+Session.mm` the window's hooks.
+
+- **Links.** The process's link (`processLink()`) wraps the one in-process
+  host and client there always were: `editor.session-host = on`, and the
+  fallback. With `headless` (or `MUTIBLE_HOST=socket`; any other
+  `MUTIBLE_HOST` keeps the process's), `forFolder` gives one link per
+  resolved folder: the folder's `mutible host`, found by its socket or
+  started as `mutible-cli host --folder DIR` from beside the executable
+  (the bundle's Contents/MacOS, build/ for the checks) with `posix_spawn`
+  (`POSIX_SPAWN_SETSID`, `CLOEXEC_DEFAULT`, signals at their defaults,
+  stdout and stderr to `~/Library/Logs/Mutible/host-<hash>.log`,
+  `--idle-minutes` from `MUTIBLE_HOST_IDLE_MINUTES`), reaped by a thread
+  of its own when it ends while the app runs. The window waits up to 5 s
+  for its socket, connects (`HostLink::connect`), settles and checks
+  `idBase()`; anything failing logs why (os_log, category session) and
+  the window takes the process's link. A link's wake dispatches on the
+  main queue through a weak pointer. Each `MCSessionDoc` and host
+  `TerminalView` keeps the link it was opened on (`MCSessionLinkRef`):
+  a tab's is its window's (`MCTabOwner sessionLinkForTab:`), else the
+  live folder link holding its path (`linkForPath`), else the process's;
+  a terminal's comes from its panel (`MCTerminalPanel sessionPlace`).
+  `MCSessionCheckTabs` checks each tab against its own link's host.
+- **The record.** `MCSessionWindow` (an associated object of the
+  controller, so no new ivars) holds the window's link, its id there
+  (`Link::newWindow`) and its record, the shape `MCSessionBrowser` used
+  to report, now sent every half second while the setting is on
+  (`Link::windowTabs` sends only a change), whether or not a page
+  serves it. The page's server takes the window's id and link from it
+  (a folder link's page attaches over the host's socket, `hostSocket`)
+  and no longer closes the record when it stops.
+- **Opening** (`attachSessionHeld`, before `restoreWindowLayout`, and
+  `finishSessionAttach` after `finishRestoringWindow`; Open Folder calls
+  `sessionFolderChanged` and the same two around its `restoreSession`).
+  `Link::takeForWindow` is GTK's `free()`, plus one rule for the
+  process's link, which serves every folder: only records whose `root` is
+  the window's folder, and only unnamed held documents under it (unnamed
+  terminals only on a folder's host). Each held document becomes a tab
+  (`MCTab attachHeld:link:`: `DocOpen` with an empty text, the host's text
+  taken as one insertion while `initWithTab:held:link:` settles, set as
+  the tab's text without telling the host); unsaved when the file on disk
+  differs. The tab keeps `heldFromHost` until first shown:
+  `loadActiveTab` then reads the file as the saved text without
+  forgetting the history or resetting the host. `restoreSession` passes
+  over a path open already and removes that path's backup. Held
+  terminals wait in the window (`nextTermPlace`): a window brought back
+  with terminal tabs gives them to those, and the rest open as tabs in
+  the dock, which is shown. A `TerminalView` given a held terminal
+  (`attachHeldShell`) makes a fresh screen at the host's size, attaches
+  (the replay, then output; replay bytes are never acknowledged), and
+  says its own size. Its marks count only with the nonce this process gave
+  the shell (`HostNonces`); its prompt state starts from the host's
+  `TermShell`. A shell from before a relaunch has no nonce here and runs
+  without the integration's marks (the foreground decides, as after
+  `exec bash`).
+- **Closing** (`detachFromSessionHost`, first in `windowWillClose:`, and
+  for every window in `applicationWillTerminate:`): the record goes once
+  more, marked `"detached": true` (`Link::windowDetached`; `WindowClose`
+  instead when it names nothing), each terminal `detachFromSessionHost`s
+  (`TermDetach`; its pid forgotten, so closing the view hangs nothing up),
+  each document `detach`es (`DocDetach`) but those the question's Don't
+  Save named, which close; then every link involved settles.
+- **The question** (`confirmCloseAllTabsClosing:`, from
+  `windowShouldClose:` and quitting): on a headless host that is there it
+  is Save (Save All), Keep Unsaved, Don't Save, Cancel (1000 to 1003),
+  with GTK's detail line. Otherwise the three answers as before; either
+  way the tabs still unsaved after a Don't Save close on the host.
+- **Paths.** `MCTab setCurrentPath:` tells its document (`pathChanged`:
+  `DocPath` when it differs from what the host has).
+- **The host gone.** The window's lost listener flashes GTK's sentence
+  and adds a Reconnect button to the status bar (left of ↻); each host
+  terminal on the link writes a line and starts no shell. Reconnect
+  (`reconnectSessionHost:`), or a new window on the folder, makes a new
+  link, and every window still on the lost one moves (`moveToSessionLink:`):
+  its record anew, each document `rehostOn:saved:` (a new id, the buffer's
+  text, the file's text as the host's saved text and the difference an
+  edit outside the history, so the host counts it unsaved), each terminal
+  `rehostOn:` (a new shell). A host that cannot be had again: the
+  process's link takes them, so nothing typed is lost either way.
+- **Checks.** `make guitest SUITES=host_reattach` (HostReattachSuite.mm;
+  its header says what it checks): with `on`, a closed window's saved
+  file and running shell back in the folder's next window under the same
+  ids, the replay, another command; with `headless`, a host the window
+  started, Keep Unsaved, `attach --dump` showing the file unsaved and the
+  shell, the next window's tab back with the typed text and unsaved, the
+  same shell; the host killed, Reconnect shown, typing on, Reconnect
+  starting a new host with everything typed unsaved there and a new
+  shell; Don't Save. The harness ends what closed windows left between
+  suites (`MCSession::endDetached`).
+- **Not yet:** quitting asks Keep Unsaved on a headless host but Restart
+  keeps its backups as before; a held document with no path and two
+  held documents on one path are the Linux session's (core); no backup
+  is kept of a held unsaved file (likewise).
 
 ## The browser's view (stage 6b)
 
@@ -868,11 +967,12 @@ Cancel.
   returns stops deliveries before the client goes). The state's folder is
   not checked then (one host serves every window), and `run()` does not
   look for a socket file.
-- **One window's tabs.** The Mac reports nothing to the host about windows
-  otherwise, so while a server runs the window sends `Client::windowTabs`
+- **One window's tabs.** The window's record (`MCSessionWindow`, since
+  stage 6 sent while the setting is on, a server running or not; "The Mac
+  reattaches") is what the page shows: the window sends `Client::windowTabs`
   (`windowJson`'s shape, by hand: groups of tabs with a document on the
   host, each group's tab on show) every half second when it changed, and
-  `windowClosed` when it stops. `Web::Options::window` keeps the state the
+  closing, leaves it marked detached. `Web::Options::window` keeps the state the
   browsers get to that window and its documents, and a `show` of any other
   document answers `gone`. The window's id is the client's (`newId()`,
   below).
