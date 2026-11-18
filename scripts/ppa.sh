@@ -181,7 +181,9 @@ fi
 # upload itself is left to say so.
 if [ -z "$DRY" ]; then
     API="https://api.launchpad.net/1.0/~$PPA_OWNER/+archive/ubuntu/$PPA_NAME"
-    if curl -fsS "$API?ws.op=getPublishedSources&source_name=mutible&exact_match=true&version=$PKGVER" 2>/dev/null |
+    # no-cache: Launchpad's squid cache can keep one URL's answer for hours
+    # (scripts/ppa-wait.sh).
+    if curl -fsS -H "Cache-Control: no-cache" "$API?ws.op=getPublishedSources&source_name=mutible&exact_match=true&version=$PKGVER" 2>/dev/null |
            grep -qE "\"source_package_version\": *\"$PKGVER\""; then
         echo "error: $PKGVER is already in $PPA; give a higher PPA revision:" >&2
         echo "       scripts/ppa.sh $VERSION $((REV + 1))" >&2
