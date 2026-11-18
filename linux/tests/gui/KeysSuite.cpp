@@ -475,7 +475,12 @@ MC_GUI_SUITE(keys) {
         MCGuiKey("escape");
     });
     MCGuiWait("it goes", 10, [] { return !MCGuiApp().palette->isOpen() && editorHasKeyboard(); });
-    MCGuiStep("F3, with nothing to find, opens the find bar", [] { MCGuiKey("f3"); });
+    MCGuiStep("F3, with nothing to find, opens the find bar", [] {
+        // A query find_bar left would be found again instead, the keyboard
+        // left in the text (the soak's shuffled order).
+        gtk_editable_set_text(GTK_EDITABLE(MCGuiApp().findBar->findField()), "");
+        MCGuiKey("f3");
+    });
     MCGuiWait("it is open", 10, searchBarOpen);
     MCGuiStep("Escape, in its field, shuts it", [] {
         GCHECK(gRuns["win.findnext"] == 1);
