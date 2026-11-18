@@ -172,6 +172,11 @@ public:
     // each Return typed into the terminal starts a look, four times a
     // second, until the shell is in the foreground.
     std::function<void()> onCommandFinished;
+    // In onCommandFinished, with the integration: the finished command's
+    // line as its 633;E mark gave it, read before the prompt after it
+    // clears it; "" when its start and end came in one report (a short
+    // command) or the shell sent no line. Its status is shellState().status.
+    const std::string& finishedCommand() const { return finished_; }
     // "NAME=value" lines added to the shell's environment each time it is
     // started (CLAUDE_CODE_SSE_PORT while the IDE link is on).
     std::function<std::vector<std::string>()> extraEnvironment;
@@ -232,6 +237,7 @@ private:
 
     void makeTerminal();   // the terminal and its shell, once
     ShellIntegration::ShellState shell_;
+    std::string finished_;   // finishedCommand()
     std::string nonce_;   // this shell's, "" when it runs without the integration
     void spawnShell();
     void applyTheme();

@@ -102,7 +102,8 @@ enum class Kind {
     TermClose,   // term
     TermAttach,  // term: answered by TermReplay, TermShell and TermMarks
     // host → renderer
-    Welcome,     // client: the renderer's id
+    Welcome,     // client: the renderer's id; v: the base of the ids it makes (kIdRange);
+                 // name: the folder
     DocOpened,   // doc, v (and text16 when it was open already: another renderer's)
     DocEdited,   // doc, v, by, seq, ops, ops16, flag (1 undo, 2 redo), select
     DocUndone,   // doc, req, outcome
@@ -155,6 +156,19 @@ struct UndoInfo {
 enum class Outcome { Done = 0, Nothing = 1, Refused = 2 };
 
 using TermId = std::uint64_t;
+
+// The ids a renderer makes for what it opens on the host (documents,
+// terminals, windows): its Welcome's `v` is a base, a multiple of
+// kIdRange, and it takes base + 1, base + 2, ... (Client::newId), so two
+// renderers on one host never make the same id. The host gives each
+// connection a base no live renderer has and in whose range it holds no
+// id (SessionHost.cpp, chooseIdBase); ids below kIdRange are never in a
+// base's range (a renderer from before bases, or a check, may use them).
+// Every id stays under 2^53, which a JSON number carries exactly (the
+// browser page's, SessionWebPage.cpp; Json keeps numbers as doubles).
+constexpr std::uint64_t kIdRange = std::uint64_t(1) << 32;
+constexpr std::uint64_t kIdSlots = std::uint64_t(1) << 21;   // bases 1 ... kIdSlots - 1 times kIdRange
+constexpr std::uint64_t kMaxId = kIdSlots * kIdRange - 1;    // 2^53 - 1
 // Unacknowledged output at which the host stops reading a pty, and below
 // which it reads again.
 constexpr long long kTermCredit = 1 << 20;

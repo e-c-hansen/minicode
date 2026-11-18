@@ -103,6 +103,9 @@ public:
     bool dirty(DocId d) const;
     UndoInfo undoInfo(DocId d) const;
     std::size_t logSize(DocId d) const;
+    // As if id bases up to `slot` had been given (SessionProtocol.h,
+    // kIdSlots): checks of what follows two million connections.
+    void setLastIdSlot(std::uint64_t slot) { lastSlot_ = slot; }
     // The session as StateQuery answers it: the folder, windows, documents
     // (id, path, version, length, dirty) and terminals (id, size, pid, the
     // shell's state, how many renderers show it).
@@ -151,6 +154,7 @@ private:
         bool hello = false;
         bool readOnly = false;   // Hello's flag 1: a view, which changes nothing
         bool guest = false;      // flag 2: a view that may edit, undo and type
+        std::uint64_t idBase = 0;   // its Welcome's: the ids it makes are above it
     };
     // One applied edit, as every renderer may need it again: by whom, in
     // both units.
@@ -238,6 +242,13 @@ private:
     std::string folder_;
     std::map<ClientId, Renderer> renderers_;
     ClientId nextClient_ = 0;
+    // Id bases (SessionProtocol.h, kIdRange): the last slot given, and the
+    // base for a renderer saying Hello: the next slot never given, then,
+    // once all have been, the first that no renderer has and in whose range
+    // the host holds no id; 0 when none is left.
+    std::uint64_t lastSlot_ = 0;
+    std::uint64_t chooseIdBase();
+    bool slotFree(std::uint64_t slot) const;
     std::map<DocId, Doc> docs_;
     std::map<std::uint64_t, std::pair<ClientId, Json>> windows_;
     std::uint64_t order_ = 0;   // counts terminals' typing and joining (Term::Viewer)

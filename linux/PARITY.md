@@ -1257,8 +1257,10 @@ its server comes first here (2.0).
   (a button beside the branch, View > Source Control, the palette) opens one
   tab of every uncommitted change, each block with Stage and Discard
   (Unstage), whole files with Stage File, Unstage File, Discard File, Side by
-  Side and Open, Undo Discard at its top; `git_review` presses them. Left to
-  do: F7, the right click on selected lines, conflicts' Keep buttons, the
+  Side and Open, Undo Discard at its top; `git_review` presses them. A
+  conflict's Keep Current, Keep Incoming and Keep Both, in the editor and
+  on the review page, with Mark Resolved, are done (`HANDOFF.md` item 95,
+  `git_conflicts`). Left to do: F7, the right click on selected lines, the
   commit page. A worktree's page with Apply to Main is done (`HANDOFF.md`
   item 85): the tree's Compare with Main opens the review page in its
   worktree mode.
@@ -1567,6 +1569,16 @@ These may run in parallel.
   folder's session, a focused folder gone falling back to the whole one.
   No keys on either system. *Done* (`HANDOFF.md` item 94), checked by the
   `tree_focus` suite.
+- [x] **4.10 Run one test.** `Runnables` (core, `runnables:*`), added to
+  the Mac on 2026-11-16 (C5): "Running one test" in
+  `../docs/notes/terminal.md`, `mac/src/TestGutter.mm`, the `test_gutter`
+  GUI suite. A ▶ in a test lane, leftmost in the gutter, beside each
+  pytest, go test, cargo test, Jest and Vitest test; a click saves the
+  file and runs that test as Run File does; the 133;D exit status makes
+  the mark a check or a cross until the file is edited; Run Test at
+  Cursor (`testing.runAtCursor`, no key on either system); test.<language>
+  in the settings. *Done* (`HANDOFF.md` item 96), checked by the
+  `test_gutter` suite.
 
 ## Reported by the owner
 

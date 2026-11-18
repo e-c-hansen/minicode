@@ -1139,6 +1139,7 @@ void Terminal::applyShell(const Shared::TermShell& s) {
     sh.done = s.done;
     sh.busy = s.busy;
     sh.atPrompt = s.atPrompt;
+    if (ended) finished_ = sh.command;   // the line seen with its start, if it was
     sh.command = s.busy ? s.command : std::string();
     sh.status = s.status;
     if (began && t->onClaudeStarted) t->lookForClaude();
@@ -1424,8 +1425,7 @@ void Terminal::spawnShell() {
     spec.rows = std::max(1, (int)vte_terminal_get_row_count(t));
     spec.scrollback = (int)vte_terminal_get_scrollback_lines(t);
     spec.nonce = nonce_;
-    static Shared::TermId nextTerm = 0;
-    hostTerm_ = ++nextTerm;
+    hostTerm_ = SessionLink::client().newId();   // from the client's range on the host
     sentCols_ = spec.cols;
     sentRows_ = spec.rows;
     shellPid_ = -1;

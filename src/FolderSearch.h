@@ -27,18 +27,23 @@
 //   is searched as a small file is: the same lines, line numbers and
 //   matches, in memory of a piece or so (until 2026-11-16 every file over
 //   1 MB was skipped). Only a line longer than maxStreamedLine (64 MB)
-//   leaves such a file out. A byte that is not UTF-8 late in one still
-//   leaves it out, unless the search's limit was reached before it. Replace in Folder's count (planReplace) still
+//   leaves such a file out. Replace in Folder's count (planReplace) still
 //   leaves files over 1 MB out, and names those holding a match
 //   (FolderReplacePlan::tooLarge), since a replacement rewrites the file
 //   whole in memory.
-// - A file that is not valid UTF-8 is skipped, which is how binaries fall
-//   out (the Mac drops them the same way, when NSString refuses to decode
-//   them). The result names the ones a reader would have expected
-//   searched: those too large (above) and those not UTF-8, unless a NUL
-//   byte in their first 8 KB marks them binary (FileSniff's rule), since
-//   every picture and object file would be named. A large file is read
-//   for its first 8 KB first, so a large binary costs no more than that.
+// - A file with a NUL byte in its first 8 KB is binary (FileSniff's rule)
+//   and left out without a word, since every picture and object file would
+//   be named; so is one that is not UTF-8 with a NUL anywhere. A large file
+//   is read for its first 8 KB first, so a large binary costs no more than
+//   that. Text that is not valid UTF-8 is read as Windows-1252
+//   (decodeWindows1252: Latin-1 and its Windows superset, the single-byte
+//   encodings old files use), as VS Code and Zed find "café" in a Latin-1
+//   file (until 2026-11-18 it was left out and named, C3); a large file
+//   switches at the first piece that is not UTF-8. Replace in Folder,
+//   which writes UTF-8 or UTF-16 only, leaves such a file alone and names
+//   it when it holds a match (FolderReplacePlan::otherEncoding). The
+//   result names the files a reader would have expected searched: those
+//   too large (above), and UTF-16 Replace in Folder could not take back.
 //   UTF-16 with a byte order mark is decoded and searched as ripgrep does
 //   (decodeUtf16; every such file has NULs, so until 2026-11-08 it fell
 //   out without a word): its matches' lines, columns and bytes are of the
@@ -92,6 +97,13 @@ struct FolderSearchMatch {
                                  // line; GtkTextBuffer's "line index"
     std::size_t byteLength = 0;  // bytes the match covers in the raw line
     std::string text;          // the line for display: cleaned, trimmed, capped
+    // With FolderSearchOptions::contextLines, the lines just above and
+    // below, for display as `text` is (in file order: before.back() is
+    // line - 1, after.front() line + 1). Fewer at the file's start or end,
+    // and none that a neighbouring row of the same file shows already:
+    // its own line, or a line of its context (search() leaves them out,
+    // so consecutive hits read as one excerpt, as Zed and VS Code show).
+    std::vector<std::string> before, after;
     // Matches on the line, counted as Replace in Folder counts them (a row
     // is a line, so "a = a" is one row and two matches). 1 for a TODO.
     std::size_t count = 1;
@@ -107,6 +119,10 @@ struct FolderSearchOptions {
     std::size_t   streamPiece = 4 * 1024 * 1024;
     std::size_t   maxStreamedLine = 64 * 1024 * 1024;
     std::size_t   maxLineChars = 200;           // display text cap, in characters
+    // Lines of context kept above and below each row (FolderSearchMatch::
+    // before and after): 0 for none (the GTK port and Android), 1 on the
+    // Mac. Only the rows found pay for them.
+    std::size_t   contextLines = 0;
     bool          caseSensitive = false;        // the Mac panel is insensitive
     // VS Code's other two options (TextFind.h has the rules). With either
     // set the line is matched by TextFind; a regex is not trimmed and needs
@@ -137,7 +153,8 @@ struct FolderSearchOptions {
 struct FolderSearchSkip {
     std::string relativePath;
     // A line over maxStreamedLine (or, for Replace in Folder, over
-    // maxFileSize); else text that is not UTF-8.
+    // maxFileSize); else UTF-16 that Replace in Folder's count could not
+    // take back exactly (a search reads any text: see decodeWindows1252).
     bool tooLarge = false;
 };
 
@@ -181,6 +198,11 @@ struct FolderReplacePlan {
     // is made in memory, the file whole.
     std::vector<std::string> tooLarge;
     std::size_t tooLargeCount = 0;
+    // Text files read as Windows-1252 (not UTF-8) holding a match, left
+    // alone the same way and named (the first kMaxSkipsListed; all
+    // counted): a replacement is written as UTF-8 or UTF-16 only.
+    std::vector<std::string> otherEncoding;
+    std::size_t otherEncodingCount = 0;
     bool cancelled = false;
     std::string error;                      // the regex did not compile: why
 };
@@ -335,6 +357,13 @@ bool replaceMatchInText(const std::string& content, const std::string& query,
                         int line, std::size_t byteColumn, std::string* out,
                         const std::string* expectedText = nullptr);
 
+// Context shown once: for each two rows of one file one after the other,
+// the first's lines after are cut where the second's line or its lines
+// before begin, and the second's lines before where the first's line or
+// lines after end. search() does it to its result; for a front end that
+// joins results itself.
+void dropRepeatedContext(std::vector<FolderSearchMatch>& rows);
+
 // Line `line` (1-based) of `content`, its line break left off, with lines
 // ending as search() ends them. False past the last line.
 bool lineAt(const std::string& content, int line, std::string* out);
@@ -351,6 +380,15 @@ enum class TextEncoding { Utf8, Utf16LE, Utf16BE };
 // not start with a UTF-16 byte order mark.
 bool decodeUtf16(const std::string& bytes, std::string* utf8, TextEncoding* encoding,
                  bool strict);
+
+// Text in a single-byte encoding, as the search reads a file that is not
+// UTF-8 (and holds no NUL, which marks it binary): Windows-1252, which is
+// Latin-1 (ISO 8859-1) but for 0x80..0x9F, where it has the euro sign,
+// curly quotes, dashes and a few letters (the five bytes it leaves
+// undefined become their C1 controls, as browsers read them). Every byte
+// is a character, so this never fails; matches' lines, columns and bytes
+// are of the text decoded to UTF-8, as for UTF-16.
+std::string decodeWindows1252(std::string_view bytes);
 
 // UTF-8 text written in `encoding`: as it is for Utf8, else as UTF-16 with
 // its byte order mark first (an invalid byte becomes U+FFFD).

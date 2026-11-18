@@ -40,7 +40,9 @@ static NSString *MCGrouped(unsigned long n) {
 
 // The line under the results naming the files a search left out, the
 // files themselves in its tooltip; nil when none were. One file is named
-// in the line itself ("app.log was not searched: it is not UTF-8"), more
+// in the line itself ("app.log was not searched: it is not UTF-8"; since
+// 2026-11-18 text that is not UTF-8 is read as Windows-1252, so only
+// UTF-16 Replace in Folder could not take back says so), more
 // are counted ("12 files not searched: 3 with a line over 64 MB, 9 not
 // UTF-8"). A large text file is searched (FolderSearch reads it in
 // pieces), so only a line past the limit leaves one out for its size.
@@ -71,6 +73,18 @@ static NSString *MCSkippedNote(const FolderSearchResult &r, NSString **tooltip) 
                                       [parts componentsJoinedByString:@", "]];
 }
 
+// Text that is not UTF-8 and holds no NUL: what the search reads as
+// Windows-1252 (FolderSearch::decodeWindows1252) and Replace in Folder,
+// which writes UTF-8 or UTF-16 only, leaves alone.
+static BOOL MCReadsAsWindows1252(const std::string &path) {
+    std::string bytes;
+    FolderSearch::FileStamp st;
+    if (FolderSearch::readFileStable(path, FolderSearchOptions().maxFileSize, &bytes, &st) !=
+        FolderSearch::ReadStatus::Ok)
+        return NO;
+    return !memchr(bytes.data(), 0, bytes.size()) && !FolderSearch::isValidUtf8(bytes);
+}
+
 // Replace in Folder rewrites a file whole in memory, so it leaves a file
 // over FolderSearch's whole-read size alone (the search still finds its
 // matches): "1 MB".
@@ -87,9 +101,27 @@ static NSString *MCReplaceSizeLimit(void) {
 @property(nonatomic, copy) NSString *text;
 @property(nonatomic, assign) NSUInteger byteColumn;
 @property(nonatomic, assign) NSUInteger count;   // matches on the line
+// The lines just above and below (FolderSearchMatch::before and after),
+// drawn muted around it with their numbers, as Zed and VS Code show a hit
+// in its excerpt (C3, 2026-11-18: each hit was a bare line).
+@property(nonatomic, copy) NSArray<NSString *> *before, *after;
+// Digits in the largest line number its file's rows show, so the numbers
+// line up down the file.
+@property(nonatomic, assign) NSUInteger digits;
 @end
 @implementation SearchHit
 @end
+
+// Lines of context above and below each hit (FolderSearchOptions::
+// contextLines), and the height a line of a hit's row takes.
+static const std::size_t kContextLines = 1;
+static const CGFloat kExcerptLine = 18;
+
+static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
+    NSMutableArray<NSString *> *a = [NSMutableArray arrayWithCapacity:lines.size()];
+    for (const std::string &l : lines) [a addObject:SNS(l)];
+    return a;
+}
 
 // A file in the results tree: its lines, and how many matches they hold.
 @interface SearchFile : NSObject
@@ -170,6 +202,13 @@ static NSString *MCReplaceSizeLimit(void) {
 
 @interface MCSearchCell : NSTableCellView
 @property(nonatomic, strong) NSTextField *name, *detail;
+// A line's row: its number, left of the text, and the lines around it,
+// each with its number (kContextLines above, then as many below; those
+// not used hidden).
+@property(nonatomic, strong) NSTextField *number;
+@property(nonatomic, strong) NSArray<NSTextField *> *contextNumbers, *contextTexts;
+@property(nonatomic) NSUInteger beforeCount, afterCount;
+@property(nonatomic) CGFloat gutter;   // the numbers' width
 @property(nonatomic, strong) MCSearchBadge *badge;
 @property(nonatomic, strong) NSArray<MCFindButton *> *actions;
 @property(nonatomic) BOOL showActions;
@@ -219,6 +258,8 @@ static NSString *MCReplaceSizeLimit(void) {
 @end
 
 @implementation MCSearchCell
+// Top down, for a line's row of several lines.
+- (BOOL)isFlipped { return YES; }
 // VS Code hides the count while a row shows its actions.
 - (void)setShowActions:(BOOL)show {
     _showActions = show;
@@ -230,10 +271,15 @@ static NSString *MCReplaceSizeLimit(void) {
     [super layout];
     const NSRect b = self.bounds;
     CGFloat right = NSMaxX(b) - 4;
+    // A line's row: the line itself kExcerptLine high after its lines
+    // above, the actions beside it.
+    const CGFloat hitY = self.number ? 2 + self.beforeCount * kExcerptLine
+                                     : round((b.size.height - kExcerptLine) / 2);
     if (self.showActions) {
         for (MCFindButton *a in self.actions.reverseObjectEnumerator) {
             right -= 20;
-            a.frame = NSMakeRect(right, round((b.size.height - 20) / 2), 20, 20);
+            a.frame = NSMakeRect(right, self.number ? hitY - 1 : round((b.size.height - 20) / 2),
+                                 20, 20);
             right -= 2;
         }
     } else if (!self.badge.hidden) {
@@ -246,6 +292,24 @@ static NSString *MCReplaceSizeLimit(void) {
     if (self.imageView) {
         self.imageView.frame = NSMakeRect(0, round((b.size.height - 16) / 2), 16, 16);
         x = 22;
+    }
+    if (self.number) {
+        // The numbers right-aligned in their gutter; the lines around in
+        // the full width (the actions sit beside the line itself).
+        const CGFloat tx = self.gutter + 8, full = NSMaxX(b) - 4;
+        self.number.frame = NSMakeRect(0, hitY + 1, self.gutter, kExcerptLine - 1);
+        for (NSUInteger i = 0; i < self.contextTexts.count; i++) {
+            const BOOL above = i < kContextLines;
+            const NSUInteger k = above ? i : i - kContextLines;
+            const BOOL used = above ? k < self.beforeCount : k < self.afterCount;
+            self.contextNumbers[i].hidden = self.contextTexts[i].hidden = !used;
+            if (!used) continue;
+            const CGFloat y = above ? 2 + k * kExcerptLine : hitY + (k + 1) * kExcerptLine;
+            self.contextNumbers[i].frame = NSMakeRect(0, y + 1, self.gutter, kExcerptLine - 1);
+            self.contextTexts[i].frame = NSMakeRect(tx, y, MAX(0, full - tx), kExcerptLine - 1);
+        }
+        self.name.frame = NSMakeRect(tx, hitY, MAX(0, right - tx), kExcerptLine - 1);
+        return;
     }
     const CGFloat h = 17;
     const CGFloat y = round((b.size.height - h) / 2);
@@ -668,6 +732,7 @@ static NSString *MCReplaceSizeLimit(void) {
     o.useIgnoreFiles = [AppSettings shared].settings.searchUseIgnoreFiles();
     if (_root.length) o.ignoreTop = _root.fileSystemRepresentation;
     o.maxMatches = kMaxResults;
+    if (!_todos) o.contextLines = kContextLines;
     return o;
 }
 
@@ -780,6 +845,12 @@ static NSString *MCReplaceSizeLimit(void) {
         [f.hits addObject:h];
         f.count += MAX((NSUInteger)1, h.count);
     }
+    for (SearchFile *f in _files) {
+        NSInteger last = 0;
+        for (SearchHit *h in f.hits) last = MAX(last, h.line + (NSInteger)h.after.count);
+        const NSUInteger digits = [NSString stringWithFormat:@"%ld", (long)last].length;
+        for (SearchHit *h in f.hits) h.digits = digits;
+    }
     [self.outline reloadData];
     [self.outline expandItem:nil expandChildren:YES];
     _replaceAll.enabled = _hits.count > 0 && !_todos;
@@ -798,6 +869,14 @@ static NSString *MCReplaceSizeLimit(void) {
 - (BOOL)outlineView:(NSOutlineView *)ov isItemExpandable:(id)item {
     (void)ov;
     return [item isKindOfClass:[SearchFile class]];
+}
+
+// A line's row is as tall as its lines: the line and those around it.
+- (CGFloat)outlineView:(NSOutlineView *)ov heightOfRowByItem:(id)item {
+    (void)ov;
+    if (![item isKindOfClass:[SearchHit class]]) return 22;
+    SearchHit *h = item;
+    return 4 + kExcerptLine * (CGFloat)(1 + h.before.count + h.after.count);
 }
 
 - (NSTableRowView *)outlineView:(NSOutlineView *)ov rowViewForItem:(id)item {
@@ -833,6 +912,24 @@ static NSString *MCReplaceSizeLimit(void) {
         cell.detail.lineBreakMode = NSLineBreakByTruncatingHead;
         cell.detail.font = [NSFont systemFontOfSize:12];
         [cell addSubview:cell.detail];
+    } else {
+        auto label = ^NSTextField *(BOOL number) {
+            NSTextField *t = [NSTextField labelWithString:@""];
+            t.font = number ? [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular]
+                            : [NSFont systemFontOfSize:12];
+            t.alignment = number ? NSTextAlignmentRight : NSTextAlignmentLeft;
+            t.lineBreakMode = number ? NSLineBreakByClipping : NSLineBreakByTruncatingTail;
+            [cell addSubview:t];
+            return t;
+        };
+        cell.number = label(YES);
+        NSMutableArray<NSTextField *> *numbers = [NSMutableArray array], *texts = [NSMutableArray array];
+        for (std::size_t i = 0; i < 2 * kContextLines; i++) {
+            [numbers addObject:label(YES)];
+            [texts addObject:label(NO)];
+        }
+        cell.contextNumbers = numbers;
+        cell.contextTexts = texts;
     }
     NSMutableArray *actions = [NSMutableArray array];
     if (!_todos) {
@@ -875,6 +972,28 @@ static NSString *MCReplaceSizeLimit(void) {
     SearchHit *h = item;
     MCSearchCell *cell = [self cellFor:ov kind:@"line"];
     cell.name.attributedStringValue = [self previewFor:h];
+    // Its number, and the lines around it, muted, with theirs.
+    static CGFloat digitWidth = 0;
+    if (!digitWidth)
+        digitWidth = [@"0" sizeWithAttributes:@{NSFontAttributeName: cell.number.font}].width;
+    cell.gutter = ceil(digitWidth * MAX((NSUInteger)2, h.digits)) + 2;
+    cell.number.stringValue = [NSString stringWithFormat:@"%ld", (long)h.line];
+    cell.number.textColor = _style.muted;
+    cell.beforeCount = MIN(h.before.count, kContextLines);
+    cell.afterCount = MIN(h.after.count, kContextLines);
+    for (NSUInteger i = 0; i < cell.contextTexts.count; i++) {
+        const BOOL above = i < kContextLines;
+        const NSUInteger k = above ? i : i - kContextLines;
+        NSArray<NSString *> *lines = above ? h.before : h.after;
+        if (k >= lines.count) continue;
+        const NSInteger n = above ? h.line - (NSInteger)h.before.count + (NSInteger)k
+                                  : h.line + 1 + (NSInteger)k;
+        cell.contextNumbers[i].stringValue = [NSString stringWithFormat:@"%ld", (long)n];
+        cell.contextNumbers[i].textColor = _style.muted;
+        cell.contextTexts[i].stringValue = lines[k];
+        cell.contextTexts[i].textColor = _style.muted;
+    }
+    cell.needsLayout = YES;
     cell.badge.text = @"";
     cell.badge.hidden = YES;
     cell.toolTip = [NSString stringWithFormat:@"%@:%ld", [self relativePath:h.path], (long)h.line];
@@ -981,6 +1100,8 @@ static NSString *MCReplaceSizeLimit(void) {
             h.text = SNS(m.text);
             h.byteColumn = m.byteColumn;
             h.count = m.count;
+            h.before = MCLines(m.before);
+            h.after = MCLines(m.after);
             [found addObject:h];
             [files addObject:h.path];
         }
@@ -1278,6 +1399,13 @@ static NSString *MCReplaceSizeLimit(void) {
         if (plan.tooLargeCount > plan.tooLarge.size())
             [large addObject:[NSString stringWithFormat:@"and %@ more",
                                        MCGrouped(plan.tooLargeCount - plan.tooLarge.size())]];
+        // Files read as Windows-1252: searched, but written as UTF-8 or
+        // UTF-16 only, so left alone and named.
+        NSMutableArray<NSString *> *legacy = [NSMutableArray array];
+        for (const std::string &rel : plan.otherEncoding) [legacy addObject:SNS(rel)];
+        if (plan.otherEncodingCount > plan.otherEncoding.size())
+            [legacy addObject:[NSString stringWithFormat:@"and %@ more",
+                                        MCGrouped(plan.otherEncodingCount - plan.otherEncoding.size())]];
         for (const FolderReplaceFile &f : plan.files) {
             [paths addObject:SNS(f.path)];
             [counts addObject:@(f.matches)];
@@ -1315,6 +1443,11 @@ static NSString *MCReplaceSizeLimit(void) {
                                                   "leaves alone (%@)",
                                                  MCReplaceSizeLimit(),
                                                  [large componentsJoinedByString:@", "]]
+                    : legacy.count
+                    ? [NSString stringWithFormat:@"Nothing replaced: the matches are in files "
+                                                  "that are not UTF-8 (read as Windows-1252), "
+                                                  "which Replace in Folder leaves alone (%@)",
+                                                 [legacy componentsJoinedByString:@", "]]
                     : @"Nothing to replace";
                 [s setStatus:why error:error != nil];
                 return;
@@ -1337,6 +1470,10 @@ static NSString *MCReplaceSizeLimit(void) {
             if (large.count)
                 [info appendFormat:@" Left alone, since they are larger than %@: %@.",
                                    MCReplaceSizeLimit(), [large componentsJoinedByString:@", "]];
+            if (legacy.count)
+                [info appendFormat:@" Left alone, since they are not UTF-8 (read as "
+                                    "Windows-1252): %@.",
+                                   [legacy componentsJoinedByString:@", "]];
             alert.informativeText = info;
             [alert addButtonWithTitle:@"Replace"];
             [alert addButtonWithTitle:@"Cancel"];
@@ -1453,6 +1590,10 @@ static NSString *MCReplaceSizeLimit(void) {
                     [failed addObject:[NSString stringWithFormat:
                                 @"%@ is larger than %@, which Replace in Folder leaves alone",
                                 path.lastPathComponent, MCReplaceSizeLimit()]];
+                else if (MCReadsAsWindows1252(p))
+                    [failed addObject:[NSString stringWithFormat:
+                                @"%@ is not UTF-8 (read as Windows-1252), which Replace in "
+                                 "Folder leaves alone", path.lastPathComponent]];
                 else
                     [failed addObject:[NSString stringWithFormat:@"%@ could not be read as text",
                                                                  path.lastPathComponent]];

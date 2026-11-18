@@ -406,6 +406,10 @@ const std::vector<Command>& all() {
         {"editor.action.insertLineBefore", "Insert Line Above", "Edit", "", E, "insertLineAbove:",
          0, 0, nullptr},
         {"inlineChat.start", "Inline Agent…", "Edit", "cmd+i", A, "inlineAgent:", 0, 0, nullptr},
+        // minicode's own: Claude Code on a fresh worktree (AgentTaskBar.h),
+        // beside Shift+Cmd+A's Agents panel, where the task is listed.
+        {"minicode.agent.newTask", "New Agent Task…", "Edit", "alt+shift+cmd+a", A,
+         "newAgentTask:", 0, 0, nullptr},
         {"editor.action.commentLine", "Toggle Comment", "Edit", "cmd+/", E, "toggleComment:", 0,
          0, nullptr},
         // Option+C is markdown-all-in-one's key (in Markdown only, so it

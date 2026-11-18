@@ -31,7 +31,9 @@ std::string describe(const FolderReplacePlan& p) {
     std::string s;
     for (const FolderReplaceFile& f : p.files)
         s += f.relativePath + " " + std::to_string(f.matches) + (f.outside ? " outside" : "") + "\n";
-    return s + "total " + std::to_string(p.matches) + (p.cancelled ? " cancelled" : "") + p.error;
+    for (const std::string& rel : p.otherEncoding) s += rel + " other encoding\n";
+    return s + "total " + std::to_string(p.matches) + (p.cancelled ? " cancelled" : "") + p.error +
+           " other " + std::to_string(p.otherEncodingCount);
 }
 
 // The process's CPU time (every thread), in seconds.
@@ -79,7 +81,7 @@ static void testFolderSearchParallel() {
 
     // A tree as varied as the walk's rules: nested folders, files in and
     // out of .gitignore, skipped folders, a symlinked folder and a loop,
-    // a file too large, one not UTF-8, binaries, and a pipe.
+    // a file too large, one in Latin-1, binaries, and a pipe.
     std::mt19937 rng(20261107);
     for (int d = 0; d < 12; ++d) {
         const fsys::path dir = root / ("d" + std::to_string(d)) / (d % 3 ? "sub" : "") ;
@@ -256,46 +258,251 @@ static void testFolderSearchParallel() {
 
     GROUP("search:skipped");
     {
-        // Text not in UTF-8 is named; a binary (a NUL byte early on) is
-        // left out without a word, large or not. A text file over 1 MB is
-        // searched (until 2026-11-16 it was skipped and named), unless a
-        // line of it is longer than maxStreamedLine.
+        // A binary (a NUL byte early on) is left out without a word, large
+        // or not. Text not in UTF-8 is searched, read as Windows-1252
+        // (until 2026-11-18 it was named and left out). A text file over
+        // 1 MB is searched (until 2026-11-16 it was skipped and named),
+        // unless a line of it is longer than maxStreamedLine: then it is
+        // named.
         FolderSearchOptions o;
         o.threads = 4;
         const FolderSearchResult r = search(root.string(), "return", nullptr, o);
-        CHECK(r.skippedTooLarge == 0 && r.skippedNotUtf8 == 1);
-        CHECK(r.skipped.size() == 1);
-        if (r.skipped.size() == 1)
-            CHECK(r.skipped[0].relativePath == "latin1.txt" && !r.skipped[0].tooLarge);
-        bool bigLine2 = false;
-        for (const FolderSearchMatch& m : r.matches)
+        CHECK(r.skippedTooLarge == 0 && r.skippedNotUtf8 == 0 && r.skipped.empty());
+        bool bigLine2 = false, latin1 = false;
+        for (const FolderSearchMatch& m : r.matches) {
             if (m.relativePath == "big.txt") bigLine2 = m.line == 2 && m.text == "return";
+            if (m.relativePath == "latin1.txt")
+                latin1 = m.line == 1 && m.column == 6 && m.text == "caf\xC3\xA9 return";
+            CHECK(m.relativePath != "small.bin" && m.relativePath != "big.bin");
+        }
         CHECK(bigLine2);
+        CHECK(latin1);
         o.maxStreamedLine = 512 * 1024;    // big.txt's first line is longer
         o.streamPiece = 64 * 1024;         // and read in pieces shorter than it
         const FolderSearchResult longLine = search(root.string(), "return", nullptr, o);
-        CHECK(longLine.skippedTooLarge == 1 && longLine.skipped.size() == 2 &&
+        CHECK(longLine.skippedTooLarge == 1 && longLine.skipped.size() == 1 &&
               longLine.skipped[0].relativePath == "big.txt" && longLine.skipped[0].tooLarge);
-        o.maxStreamedLine = FolderSearchOptions().maxStreamedLine;
-        o.streamPiece = FolderSearchOptions().streamPiece;
         // Only what the search reached: a limit of one stops before them.
         const fsys::path two = root / "two";
         writeFile(two / "a.txt", "return\n");
-        writeFile(two / "b.txt", "caf\xE9\n");
+        writeFile(two / "b.txt", std::string(600 * 1024, 'b') + "\n");
+        o.maxFileSize = 0;   // read in pieces, so its 600 KB line is over the limit
         o.maxMatches = 1;
         const FolderSearchResult stopped = search(two.string(), "return", nullptr, o);
-        CHECK(stopped.truncated && stopped.skipped.empty() && stopped.skippedNotUtf8 == 0);
+        CHECK(stopped.truncated && stopped.skipped.empty() && stopped.skippedTooLarge == 0);
         o.maxMatches = 2;
-        CHECK(search(two.string(), "return", nullptr, o).skippedNotUtf8 == 1);
+        CHECK(search(two.string(), "return", nullptr, o).skippedTooLarge == 1);
         fsys::remove_all(two, ec);
         // The list stops at kMaxSkipsListed; the count does not.
         const fsys::path many = root / "many";
         for (std::size_t i = 0; i < kMaxSkipsListed + 5; ++i)
-            writeFile(many / ("l" + std::to_string(i) + ".txt"), "caf\xE9\n");
+            writeFile(many / ("l" + std::to_string(i) + ".txt"), std::string(10000, 'l') + "\n");
         o.maxMatches = 2000;
+        o.maxFileSize = 0;          // every file read in pieces (the first 8 KB, then
+        o.streamPiece = 1024;       // pieces shorter than its line),
+        o.maxStreamedLine = 9000;   // which is over the limit
         const FolderSearchResult m = search(many.string(), "return", nullptr, o);
-        CHECK(m.skippedNotUtf8 == kMaxSkipsListed + 5 && m.skipped.size() == kMaxSkipsListed);
+        CHECK(m.skippedTooLarge == kMaxSkipsListed + 5 && m.skipped.size() == kMaxSkipsListed);
         fsys::remove_all(many, ec);
+    }
+
+    GROUP("search:latin1");
+    {
+        // Text that is not UTF-8 is read as Windows-1252 (Latin-1 but for
+        // 0x80..0x9F), as VS Code and Zed find "café" in a Latin-1 file;
+        // a NUL anywhere in it still means binary, left out unnamed.
+        CHECK(decodeWindows1252("caf\xE9") == "caf\xC3\xA9");
+        CHECK(decodeWindows1252("plain ASCII\r\n") == "plain ASCII\r\n");
+        CHECK(decodeWindows1252("\x80 \x93q\x94 \x96 \x9F") ==
+              "\xE2\x82\xAC \xE2\x80\x9Cq\xE2\x80\x9D \xE2\x80\x93 \xC5\xB8");
+        CHECK(decodeWindows1252("\x81\x8D\x8F\x90\x9D") == "\xC2\x81\xC2\x8D\xC2\x8F\xC2\x90\xC2\x9D");
+        CHECK(decodeWindows1252("\xA0\xFF") == "\xC2\xA0\xC3\xBF");
+        std::string all;
+        for (int b = 0; b < 256; ++b) all += static_cast<char>(b);
+        const std::string decoded = decodeWindows1252(all);
+        std::size_t chars = 0;
+        for (const char c : decoded) chars += (static_cast<unsigned char>(c) & 0xC0) != 0x80;
+        CHECK(isValidUtf8(decoded) && chars == 256);
+
+        const fsys::path dir = root / "latin";
+        writeFile(dir / "old-latin1.log", "first line\nna\xEFve caf\xE9 au lait\n\x93quoted\x94\n");
+        writeFile(dir / "notes.txt", "a caf\xC3\xA9 in UTF-8\n");
+        // Not UTF-8, its NUL past the first 8 KB: binary all the same.
+        writeFile(dir / "late-nul.dat",
+                  std::string(9000, 'a') + std::string("\xE9 caf\xE9\0 x\n", 11));
+        FolderSearchOptions o;
+        FolderSearchResult r = search(dir.string(), "CAF\xC3\x89 au", nullptr, o);
+        CHECK(r.matches.size() == 1 && r.skipped.empty() && r.skippedNotUtf8 == 0);
+        if (r.matches.size() == 1) {
+            const FolderSearchMatch& m = r.matches[0];
+            CHECK(m.relativePath == "old-latin1.log" && m.line == 2 && m.column == 7);
+            CHECK(m.byteColumn == 7 && m.byteLength == 8);   // in the text decoded to UTF-8
+            CHECK(m.text == "na\xC3\xAFve caf\xC3\xA9 au lait");
+        }
+        r = search(dir.string(), "caf\xC3\xA9", nullptr, o);
+        CHECK(r.matches.size() == 2 && r.filesMatched == 2);   // not late-nul.dat
+        r = search(dir.string(), "\xE2\x80\x9Cquoted\xE2\x80\x9D", nullptr, o);
+        CHECK(r.matches.size() == 1 && r.matches[0].line == 3);
+        // A regex and whole word run on the decoded text too.
+        o.regex = true;
+        CHECK(search(dir.string(), "na.ve", nullptr, o).matches.size() == 1);
+        o.regex = false;
+        o.wholeWord = true;
+        CHECK(search(dir.string(), "caf\xC3\xA9", nullptr, o).matches.size() == 2);
+        o.wholeWord = false;
+        // Read in pieces (a large file), the same rows, and a file that
+        // turns out not to be UTF-8 late switches there: its earlier
+        // matches are kept.
+        std::string late;
+        for (int i = 0; i < 40; ++i) late += "return " + std::to_string(i) + "\n";
+        late += "\xE9t\xE9 return\n";
+        writeFile(dir / "late.txt", late);
+        const std::string whole = describe(search(dir.string(), "return", nullptr, o));
+        FolderSearchOptions pieces;
+        pieces.maxFileSize = 0;
+        for (std::size_t piece : {std::size_t(16), std::size_t(64), std::size_t(1000)}) {
+            pieces.streamPiece = piece;
+            const std::string got = describe(search(dir.string(), "return", nullptr, pieces));
+            if (got != whole) std::printf("  latin1 pieces of %zu:\n%s\n--\n%s\n", piece,
+                                          got.c_str(), whole.c_str());
+            CHECK(got == whole);
+            const FolderSearchResult e = search(dir.string(), "\xC3\xA9t\xC3\xA9", nullptr, pieces);
+            CHECK(e.matches.size() == 1 && e.matches[0].line == 41);
+            CHECK(search(dir.string(), "caf\xC3\xA9", nullptr, pieces).matches.size() == 2);
+        }
+        CHECK(search(dir.string(), "return", nullptr, o).matches.size() == 41);
+        // Replace in Folder writes UTF-8 or UTF-16 only: a Latin-1 file
+        // holding a match is left alone and named, one without is not.
+        FolderReplacePlan plan = planReplace(dir.string(), "caf\xC3\xA9", nullptr, o);
+        CHECK(plan.files.size() == 1 && plan.files[0].relativePath == "notes.txt");
+        CHECK(plan.otherEncodingCount == 1 && plan.otherEncoding.size() == 1 &&
+              plan.otherEncoding[0] == "old-latin1.log");
+        plan = planReplace(dir.string(), "first", nullptr, o);
+        CHECK(plan.files.empty() && plan.otherEncoding.size() == 1);
+        plan = planReplace(dir.string(), "in UTF", nullptr, o);
+        CHECK(plan.files.size() == 1 && plan.otherEncoding.empty() && plan.otherEncodingCount == 0);
+        // The TODO list reads it too.
+        writeFile(dir / "todo.txt", "// TODO: caf\xE9\n");
+        const FolderSearchResult todos = findTodos(dir.string(), nullptr, o);
+        bool todo = false;
+        for (const FolderSearchMatch& m : todos.matches)
+            if (m.relativePath == "todo.txt") todo = m.text == "// TODO: caf\xC3\xA9";
+        CHECK(todo);
+        fsys::remove_all(dir, ec);
+    }
+
+    GROUP("search:context");
+    {
+        // With contextLines, each row carries the lines just above and
+        // below (display text, as its own), as Zed and VS Code show a hit
+        // in its excerpt; a line a neighbouring row shows already is left
+        // out, so consecutive hits read as one excerpt.
+        const fsys::path dir = root / "context";
+        auto ctx = [](const FolderSearchResult& r) {
+            std::string s;
+            for (const FolderSearchMatch& m : r.matches) {
+                s += m.relativePath + ":" + std::to_string(m.line) + " [";
+                for (const std::string& b : m.before) s += b + "|";
+                s += "] " + m.text + " [";
+                for (const std::string& a : m.after) s += a + "|";
+                s += "]\n";
+            }
+            return s;
+        };
+        writeFile(dir / "a.txt", "one\ntwo\nthree needle\nfour\nfive\n");
+        FolderSearchOptions o;
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) == "a.txt:3 [] three needle []\n");
+        o.contextLines = 1;
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) == "a.txt:3 [two|] three needle [four|]\n");
+        o.contextLines = 2;
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) ==
+              "a.txt:3 [one|two|] three needle [four|five|]\n");
+        o.contextLines = 3;   // no phantom line after the last line break
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) ==
+              "a.txt:3 [one|two|] three needle [four|five|]\n");
+        o.contextLines = 1;
+        // The first and last lines; every kind of line break; display text
+        // (trimmed, escapes and controls gone).
+        fsys::remove_all(dir, ec);
+        writeFile(dir / "b.txt", "needle first\nsecond\nlast needle");
+        writeFile(dir / "c.txt", "a\r\nb needle\rc\xE2\x80\xA9" "d needle\n");
+        writeFile(dir / "d.txt", "   indented \x1b[31mred\x1b[0m  \n\tneedle\n\n");
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) ==
+              "b.txt:1 [] needle first [second|]\n"
+              "b.txt:3 [] last needle []\n"
+              "c.txt:2 [a|] b needle [c|]\n"
+              "c.txt:4 [] d needle []\n"
+              "d.txt:2 [indented red|] needle [|]\n");
+        // Neighbours: next to each other, one line apart, two apart.
+        fsys::remove_all(dir, ec);
+        writeFile(dir / "e.txt", "x\nneedle a\nneedle b\ny\nneedle c\nz\nw\nneedle d\nv\n");
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) ==
+              "e.txt:2 [x|] needle a []\n"
+              "e.txt:3 [] needle b [y|]\n"
+              "e.txt:5 [] needle c [z|]\n"
+              "e.txt:8 [w|] needle d [v|]\n");
+        // A Latin-1 file's lines around are decoded too; the TODO list has
+        // none.
+        writeFile(dir / "f.txt", "caf\xE9\nneedle\nna\xEFve\n");
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)).find(
+                  "f.txt:2 [caf\xC3\xA9|] needle [na\xC3\xAFve|]") != std::string::npos);
+        writeFile(dir / "g.txt", "above\n// TODO: x\nbelow\n");
+        const FolderSearchResult todos = findTodos(dir.string(), nullptr, o);
+        CHECK(!todos.matches.empty());
+        for (const FolderSearchMatch& m : todos.matches) CHECK(m.before.empty() && m.after.empty());
+        fsys::remove_all(dir, ec);
+
+        // dropRepeatedContext on rows as a front end might join them.
+        std::vector<FolderSearchMatch> rows(4);
+        rows[0].path = rows[1].path = rows[2].path = "p";
+        rows[3].path = "q";
+        rows[0].line = 10; rows[0].before = {"8", "9"}; rows[0].after = {"11", "12"};
+        rows[1].line = 12; rows[1].before = {"10", "11"}; rows[1].after = {"13", "14"};
+        rows[2].line = 17; rows[2].before = {"15", "16"}; rows[2].after = {"18"};
+        rows[3].line = 18; rows[3].before = {"16", "17"};
+        dropRepeatedContext(rows);
+        CHECK(rows[0].before.size() == 2 && rows[0].after == std::vector<std::string>{"11"});
+        CHECK(rows[1].before.empty() && rows[1].after.size() == 2);
+        const std::vector<std::string> fifteen = {"15", "16"};
+        CHECK(rows[2].before == fifteen && rows[2].after.size() == 1);
+        CHECK(rows[3].before.size() == 2);   // another file
+
+        // Read in pieces (a large file), the same context as read whole,
+        // for every piece size, limit and number of lines: across a
+        // piece's end both ways, and finishing a row's lines after when
+        // the limit came in its piece.
+        std::mt19937 crng(20261118);
+        std::string big;
+        for (int i = 0; i < 400; ++i) {
+            const int kind = static_cast<int>(crng() % 9);
+            big += kind == 0 ? "needle " + std::to_string(i) : kind == 1 ? "" :
+                   std::string(1 + crng() % 40, static_cast<char>('a' + crng() % 26));
+            big += (crng() % 7 == 0) ? "\r\n" : "\n";
+        }
+        writeFile(dir / "big.txt", big);
+        writeFile(dir / "big2.txt", big + "tail needle");   // no last line break
+        int compared = 0, differ = 0;
+        for (std::size_t lines : {std::size_t(1), std::size_t(2), std::size_t(3)})
+            for (std::size_t limit : {std::size_t(1), std::size_t(7), std::size_t(2000)}) {
+                FolderSearchOptions whole;
+                whole.contextLines = lines;
+                whole.maxMatches = limit;
+                const std::string want = ctx(search(dir.string(), "needle", nullptr, whole));
+                for (std::size_t piece : {std::size_t(16), std::size_t(64), std::size_t(1000)}) {
+                    FolderSearchOptions pieces = whole;
+                    pieces.maxFileSize = 0;
+                    pieces.streamPiece = piece;
+                    const std::string got = ctx(search(dir.string(), "needle", nullptr, pieces));
+                    ++compared;
+                    if (got != want && ++differ < 3)
+                        std::printf("  context in pieces of %zu, %zu lines, limit %zu:\n%s\n--\n%s\n",
+                                    piece, lines, limit, got.c_str(), want.c_str());
+                }
+            }
+        CHECK(differ == 0);
+        std::printf("  search: %d streamed searches gave the lines around as whole-file ones\n",
+                    compared);
+        fsys::remove_all(dir, ec);
     }
 
     GROUP("search:utf16");
@@ -349,7 +556,7 @@ static void testFolderSearchParallel() {
         // not the lone surrogate's, not the odd byte's.
         // Nor big.txt, over 1 MB, which it names instead.
         const FolderReplacePlan plan = planReplace(dir.string(), "return", nullptr, o);
-        CHECK(describe(plan) == "be.log 2\nle.ps1 2\ntotal 4");
+        CHECK(describe(plan) == "be.log 2\nle.ps1 2\ntotal 4 other 0");
         CHECK(plan.tooLargeCount == 1 && plan.tooLarge.size() == 1 &&
               plan.tooLarge[0] == "big.txt");
         // A large file without a match is not named.
@@ -572,16 +779,16 @@ static void testFolderSearchParallel() {
         }
         CHECK(differ == 0);
         std::printf("  search: %d streamed searches matched whole-file ones\n", compared);
-        // A late byte that is not UTF-8 names the file, its earlier matches
-        // dropped, as a small file's are. (Unless the search's limit came
-        // first: a file read in pieces is not read past it.)
+        // A late byte that is not UTF-8 switches the rest of the file to
+        // Windows-1252, its earlier matches kept (search:latin1 has more).
         writeFile(dir / "bad" / "bad.txt", randomText(srng, 300) + "\n\xE9 late\n");
         FolderSearchOptions o;
         o.maxFileSize = 0;
         o.streamPiece = 64;
         const FolderSearchResult r = search((dir / "bad").string(), "re", nullptr, o);
-        CHECK(r.skippedNotUtf8 == 1 && r.skipped.size() == 1 &&
-              r.skipped[0].relativePath == "bad.txt" && r.matches.empty());
+        CHECK(r.skippedNotUtf8 == 0 && r.skipped.empty() && !r.matches.empty());
+        const FolderSearchResult l = search((dir / "bad").string(), "\xC3\xA9 late", nullptr, o);
+        CHECK(l.matches.size() == 1);
         // The cancel flag, raised as a file is read, stops it mid-file.
         std::atomic<bool> stop(false);
         o.threads = 1;

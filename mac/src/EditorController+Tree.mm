@@ -527,6 +527,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                 [self reExpand:_worktreesItem usingSet:expanded];
             }
         }
+        [self fitTreeColumn];
         const NSInteger row = selected ? [self.outline rowForItem:selected] : -1;
         if (row >= 0 && row != self.outline.selectedRow)
             [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
@@ -604,6 +605,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     [self.outline reloadData];
     FileItem *top = [self treeTop];
     [self reExpand:top usingSet:expanded];
+    [self fitTreeColumn];
     if (top == _root && _worktreesItem && [expanded containsObject:_worktreesItem.path]) {
         [self.outline expandItem:_worktreesItem];
         [self reExpand:_worktreesItem usingSet:expanded];

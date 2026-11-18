@@ -426,8 +426,12 @@ public:
         bool ask = false;        // show the question before sending anything
         bool controls = false;   // unbracketed, with control characters (above)
         std::string text;        // what to paste when not asking
-        int lines = 1;           // the lines the text holds
-        // Its first three lines, each cut at 30 characters, control
+        // The lines the text holds; a final line break ends the last line,
+        // it does not start another ("a\nb\nc\n" is 3).
+        int lines = 1;
+        bool breaks = false;     // it holds a line break (Return), at its end too
+        // Its first three lines, each cut at 30 characters, then a line of
+        // "…" only when more lines follow; control
         // characters shown as their symbols (U+2400 + c, U+2421 for DEL),
         // Tab as a space; then, when the first control character is not in
         // them, "Line L, column C: " and the 30 characters around it.

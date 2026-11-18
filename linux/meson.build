@@ -208,6 +208,7 @@ gui_sources = [
   # Folding: each document's regions, folds and their invisible tag, and the
   # editor's placeholders, keys and commands (PARITY.md 1.10).
   'src/Folds.cpp',
+  'src/EditorConflicts.cpp',
   'src/Markdown.cpp',
   'src/CsvTable.cpp',
   'src/HtmlView.cpp',
@@ -312,6 +313,8 @@ gui_sources = [
   # (TreeGitColors.cpp), both watching the repository's folder
   # (GitDirWatch.cpp).
   'src/GitGutter.cpp',
+  # The ▶ beside each test (TestGutter.cpp, over the core's Runnables).
+  'src/TestGutter.cpp',
   'src/AgentNotes.cpp',
   'src/InlineAgentBar.cpp',
   'src/TerminalAttention.cpp',

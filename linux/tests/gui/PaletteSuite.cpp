@@ -404,7 +404,9 @@ MC_GUI_SUITE(palette) {
     MCGuiStep("the earlier pick first, as recently opened", [] {
         GCHECK_EQ_STR(pal()->labels()[0], "pal/deeper/quick-open-target.md");
         GCHECK_EQ_STR(keysOf("pal/deeper/quick-open-target.md"), "recently opened");
-        MCGuiType("big");
+        // The whole name: other suites' files match "big" as well, and
+        // find_bar's find/big.py came first (the soak's shuffled order).
+        MCGuiType("big.txt");
     });
     // The list rebinds its rows at once but lays them out on the next frame:
     // clicked before that (10,000 files of tree_stall's match "big" too),

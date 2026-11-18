@@ -706,6 +706,8 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
                     key2:nil label2:nil state:openOr(self.gitPanelVisible)];
     [self appendHintsRow:s key:[self hk:@"minicode.toggleAgents"] label:@"Agents"
                     key2:nil label2:nil state:openOr(self.agentsVisible)];
+    [self appendHintsRow:s key:[self hk:@"minicode.agent.newTask"] label:@"New agent task"
+                    key2:nil label2:nil state:nil];
     [self appendHintsRow:s key:[self hk:@"minicode.toggleProcesses"] label:@"Processes"
                     key2:nil label2:nil state:openOr(self.processesVisible)];
     [self appendHintsRow:s key:[self hk:@"workbench.actions.view.problems"] label:@"Problems"

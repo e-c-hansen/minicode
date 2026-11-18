@@ -584,6 +584,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSArray<FileItem *> *)orderOf:(NSArray<FileItem *> *)items;
 - (void)configureTreeCell:(MCTreeCell *)cell item:(FileItem *)node;
 - (void)refreshTreeCells;
+- (void)fitTreeColumn;
+- (void)sidebarFrameChanged:(NSNotification *)note;
 - (void)folderTotalsArrived:(NSSet<NSString *> *)paths;
 - (void)reorderNode:(FileItem *)node changed:(BOOL *)changed;
 - (void)folderChangedOnDisk:(NSString *)path subtree:(BOOL)subtree;
@@ -964,6 +966,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (MCChangeSession *)changeSession;
 - (NSRect)layoutChangeBarIn:(NSRect)area;
 - (void)applyChangeBarColors;
+- (NSRect)layoutAgentTaskBarIn:(NSRect)area;
+- (void)applyAgentTaskBarColors;
+- (void)agentTaskBarDidChange;
 - (TerminalView *)changeTerminalRunning:(NSString *)command focus:(BOOL)focus;
 - (void)runCommand:(NSString *)command inTerminal:(TerminalView *)terminal focus:(BOOL)focus;
 - (BOOL)terminalIsOpen:(TerminalView *)terminal;

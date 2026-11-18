@@ -2247,7 +2247,12 @@ TerminalScreen::PasteCheck TerminalScreen::checkPaste(const std::string& text, b
     PasteCheck out;
     out.text = text;
     const std::vector<std::string> lines = pasteLines(text);
-    out.lines = (int)lines.size();
+    // A final line break ends the last line; it does not start another, so
+    // "a\nb\nc\n" is three lines and its preview shows those three.
+    std::vector<std::string> shownLines = lines;
+    if (shownLines.size() > 1 && shownLines.back().empty()) shownLines.pop_back();
+    out.lines = (int)shownLines.size();
+    out.breaks = lines.size() > 1;
     if (!bracketed)
         for (char c : text)
             if (((unsigned char)c < 0x20 && c != '\t' && c != '\r' && c != '\n') || c == 0x7F) {
@@ -2262,6 +2267,7 @@ TerminalScreen::PasteCheck TerminalScreen::checkPaste(const std::string& text, b
         if (lines.size() == 2 && blankText(lines[1]) && !out.controls) {
             out.text = lines[0];
             out.lines = 1;
+            out.breaks = false;
             return out;
         }
     }
@@ -2280,13 +2286,14 @@ TerminalScreen::PasteCheck TerminalScreen::checkPaste(const std::string& text, b
         return line;
     };
     const std::string ellipsis = "\xE2\x80\xA6";   // …
-    for (size_t i = 0; i < lines.size() && i < 3; i++) {
+    for (size_t i = 0; i < shownLines.size() && i < 3; i++) {
         bool cut = false;
         if (i) out.preview += '\n';
-        out.preview += shown(firstChars(lines[i], 30, cut));
+        out.preview += shown(firstChars(shownLines[i], 30, cut));
         if (cut) out.preview += ellipsis;
     }
-    if (lines.size() > 3) out.preview += "\n" + ellipsis;
+    // "…" only when lines are left out.
+    if (shownLines.size() > 3) out.preview += "\n" + ellipsis;
     // A control character the lines above leave out (past a line's 30th
     // character, or below its third line) gets a line of its own: where it
     // is, and the 30 characters around it, so the question never says
