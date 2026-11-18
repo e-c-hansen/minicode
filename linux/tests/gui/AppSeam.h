@@ -30,6 +30,7 @@ class ConsentBar;
 class Formatting;
 class FormatOffer;
 class GitGutter;
+class TestGutter;
 class TreeGitColors;
 class ProblemsPanel;
 class ProcessesPanel;
@@ -70,6 +71,7 @@ struct MCGuiAppWindow {
     FormatOffer* formatOffer = nullptr;    // the bar offering format on save
     ProblemsPanel* problems = nullptr;     // the Problems list and its counts (2.2)
     GitGutter*  changeBars = nullptr;      // the editor's change bars (2.10)
+    TestGutter* tests = nullptr;           // the ▶ beside each test (TestGutter.h)
     TreeGitColors* treeColors = nullptr;   // the tree's colors (2.10)
     std::string rootDir;
 };

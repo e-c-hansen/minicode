@@ -312,6 +312,8 @@ gui_sources = [
   # (TreeGitColors.cpp), both watching the repository's folder
   # (GitDirWatch.cpp).
   'src/GitGutter.cpp',
+  # The ▶ beside each test (TestGutter.cpp, over the core's Runnables).
+  'src/TestGutter.cpp',
   'src/AgentNotes.cpp',
   'src/InlineAgentBar.cpp',
   'src/TerminalAttention.cpp',

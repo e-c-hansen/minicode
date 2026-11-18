@@ -5958,3 +5958,76 @@ folder deleted on disk, with the status note). The bar's pictures were
 looked at (`MC_GUI_SNAPSHOTS`). Needs a person at the ThinkPad: the bar's
 look under GNOME, hover and the pointer (`BUILD-LINUX.md`, "How it
 looks").
+
+### 95. Run one test: the ▶ beside each test (done, November 2026)
+
+The Mac's feature of 2026-11-16 (C5; `../docs/notes/terminal.md`, "Running
+one test"; `mac/src/TestGutter.mm`), over the same core, `Runnables.h`,
+which finds pytest, go test, cargo test, Jest and Vitest tests without a
+server and builds the command for one test or the whole file from
+test.<language> or its built-in template. Nothing of its rules is in the
+port.
+
+- **The marks live with the buffer.** `BufferLines` keeps them beside the
+  change bars (`setTests(lane, marks)`, `GutterTest`, `TestState`): whether
+  the buffer is a test file (the lane) and a mark a test, moved by each
+  insert and delete as the Mac's gutter moves them (`shiftTests`: a mark
+  below the edit moves with its line, its own line too when the edit began
+  at that line's start; one in lines the edit took stays on its first
+  line), cleared by a whole new text. So a tab shown again has its lane and
+  marks at once, and the gutter never shows one file's marks beside
+  another's text.
+- **The lane** (`Gutter`, `kTestLane` 14 px, leftmost): drawn while the
+  shown buffer's `testLane()`, the dots and the change bars (their rects
+  and the click's range) moved right by it, the width measured again when
+  it comes or goes (`updateTestLane`). A ▶ in the numbers' color, a ring in
+  the active color while running, VS Code's check (#73C991) and cross
+  (#F14C4C), as the Mac draws them; `drawnRows()`'s `test` says which. A
+  press on a mark calls `onTest` instead of selecting lines, after giving
+  the view the keyboard; the tooltip comes from `query-tooltip`, looked up
+  by the line under the pointer (`testTipAt`).
+- **`TestGutter`** (one per window, made beside `GitGutter`) follows the
+  view's buffer and its edits as GitGutter does: a look 50 ms after a tab
+  switch or a settings change, 0.3 s after typing pauses, `Runnables::find`
+  on a one-thread pool, the answer dropped when anything happened
+  meanwhile. Results are kept by file and test label until the file on
+  show is edited. Run Test at Cursor is `win.runtestatcursor`, enabled
+  only while the file on show is a test file with tests, so the palette
+  and the Terminal menu offer it only there.
+- **Running** goes through `runFileCommand` in main.cpp, now Run File's
+  too (the Mac's `runFileCommand:inDirectory:busyNote:`): save first (a
+  failed save runs nothing), a new tab when the terminal on show is busy
+  (the test's note in the status bar), the keyboard left where it was, and
+  `cd <project> && ` first unless the shell's OSC 7 folder is already the
+  project's. `TestGutter` knows nothing of `Terminal` (a build may have
+  none): the window hands back where the line went (`Typed`: the
+  terminal's control id, its shell's host terminal id, and the
+  integration's count of commands started when it was typed) and, from
+  each terminal's `onCommandFinished`, what finished (`Finished`: the
+  same ids, the count of commands done, 133;D's status, and the line).
+- **Matching a finished command to its run.** The host clears a command's
+  line when it ends, and a short command's start and end reach the window
+  in one report, so the line is seldom known by then: a run is the
+  command its shell started next after it was typed, `started + 1`, in
+  that terminal and that shell (a restarted shell is another host
+  terminal: the run is forgotten). When the shell's done count reaches it
+  and it was the last to end, its status decides; when the window also
+  saw its line (`Terminal::finishedCommand`, new) that line must hold the
+  run's. Anything less certain (several ended in one report, another
+  line) puts the marks back to ▶, never a wrong check or cross. A
+  terminal closed with a run in it does the same (the dock's `onChanged`,
+  now set, calls `terminalsChanged`).
+
+Checked by the new `test_gutter` suite, a bash terminal of its own with a
+stand-in `pytest` first on its PATH (`EnvLock::envSet`, put back after)
+and `test.python = pytest {tests}`: the lane and a mark on each test's
+line, tooltips, real clicks on the marks, the command typed and run (read
+from what the stand-in wrote down and from the marks' counts, never off
+the screen), the check and the cross by exit status, the keyboard left in
+the editor, Run Test at Cursor in a test's body and above the first test
+(the whole file, saved first), an edit moving the marks and clearing the
+results, a busy terminal never typed into (a new tab took the run, with
+the note), a file that is no test file without a lane, and the results
+kept across a tab switch. Pictures of the lane were looked at
+(`MC_GUI_SNAPSHOTS`). Needs a person at the ThinkPad: the marks' look and
+the tooltip under GNOME, and real pytest, go, cargo and vitest projects.

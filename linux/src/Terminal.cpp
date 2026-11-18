@@ -1139,6 +1139,7 @@ void Terminal::applyShell(const Shared::TermShell& s) {
     sh.done = s.done;
     sh.busy = s.busy;
     sh.atPrompt = s.atPrompt;
+    if (ended) finished_ = sh.command;   // the line seen with its start, if it was
     sh.command = s.busy ? s.command : std::string();
     sh.status = s.status;
     if (began && t->onClaudeStarted) t->lookForClaude();

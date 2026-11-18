@@ -84,6 +84,7 @@
 #include "Lsp.h"
 #include "AgentNotes.h"
 #include "GitGutter.h"
+#include "TestGutter.h"
 #include "GitPanel.h"
 #include "InlineAgentBar.h"
 #include "Keys.h"
@@ -148,6 +149,8 @@ struct App {
     // The editor's change bars and the tree's git colors (PARITY.md 2.10).
     GitGutter*     gitGutter = nullptr;
     TreeGitColors* treeColors = nullptr;
+    // The ▶ beside each test in a test file (TestGutter.h).
+    TestGutter*    testGutter = nullptr;
     SearchPanel* search = nullptr;   // Find in Folder, created on first use
     SearchPanel* todos = nullptr;    // the TODOs window, the same
     LspSession*  lsp = nullptr;      // language servers for this window
@@ -1172,8 +1175,19 @@ static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer
 static Terminal* makeTerminal(App* app) {
     Terminal* t = new Terminal(app->rootDir);
     t->setProjectRoot(app->rootDir);
-    t->onCommandFinished = [app] {
-        if (!app->dead && app->lsp) app->lsp->lookAgainForMissingServer();
+    t->onCommandFinished = [app, t] {
+        if (app->dead) return;
+        if (app->lsp) app->lsp->lookAgainForMissingServer();
+        // A test run's command, perhaps (TestGutter.h): its status.
+        if (app->testGutter) {
+            TestGutter::Finished f;
+            f.terminal = t->controlId();
+            f.shell = (unsigned long long)t->hostTerminal();
+            f.done = t->shellState().done;
+            f.status = t->shellState().status;
+            f.line = t->finishedCommand();
+            app->testGutter->commandFinished(f);
+        }
     };
     t->setSessionRoots([app, t] { return sessionRootsOf(app, t->controlId()); });
     // Claude Code started here: the bar offering its hooks over the terminals
@@ -1276,16 +1290,11 @@ static void showTerminalQuietly(App* app) {
 #endif
 }
 
-static void runInTerminal(App* app, const std::string& line, std::function<void(const std::string&)> done,
-                          bool newTabIfBusy = false) {
+static void runInTerminal(App* app, const std::string& line, std::function<void(const std::string&)> done) {
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->dead || !app->terminal) {
         done("this window has no terminal");
         return;
-    }
-    if (newTabIfBusy) {   // Run File never types into a busy terminal: a new tab, as the Mac's
-        bool wait = false;
-        if (!app->terminal->runBlocker(&wait).empty() && !wait) newTerminalTab(app, "", false);
     }
     showTerminalQuietly(app);
     app->terminal->runLine(line, std::move(done));
@@ -1293,6 +1302,57 @@ static void runInTerminal(App* app, const std::string& line, std::function<void(
     (void)app; (void)line;
     done("this build has no terminal");
 #endif
+}
+
+// Run File's way of running a command for the file on show (the ▶ beside a
+// test too, TestGutter.h), the Mac's runFileCommand:inDirectory:busyNote:
+// the file saved first, the command typed into the terminal on show, or a
+// new tab when that one is busy (with `busyNote` in the status bar, when
+// given), the keyboard left where it was. With `dir`, the command runs
+// there: a `cd` goes first unless the shell is in it already. False when
+// the save failed (it said why) and nothing is typed; else `done` gets
+// where the line went and "" once typed, or why it was not.
+static bool runFileCommand(App* app, std::string line, const std::string& dir, const std::string& busyNote,
+                           std::function<void(const TestGutter::Typed&, const std::string&)> done) {
+    if (app->editor->dirty()) {
+        saveCurrent(app);
+        if (app->editor->dirty()) return false;   // the save failed and said why
+    }
+#ifdef MINICODE_ENABLE_TERMINAL
+    if (app->dead || !app->terminal) {
+        done(TestGutter::Typed(), "this window has no terminal");
+        return true;
+    }
+    bool wait = false;
+    if (!app->terminal->runBlocker(&wait).empty() && !wait) {
+        newTerminalTab(app, "", false);
+        if (!busyNote.empty()) flashStatus(app, busyNote);
+    }
+    showTerminalQuietly(app);
+    Terminal* t = app->terminal;
+    if (!dir.empty()) {
+        char a[PATH_MAX], b[PATH_MAX];
+        const std::string here = t->hostShell().cwd;
+        const bool there = !here.empty() && realpath(here.c_str(), a) && realpath(dir.c_str(), b) &&
+                           strcmp(a, b) == 0;
+        if (!there) line = "cd " + RunFile::shellQuote(dir) + " && " + line;
+    }
+    const int id = t->controlId();
+    t->runLine(line, [id, done = std::move(done)](const std::string& why) {
+        TestGutter::Typed where;
+        where.terminal = id;
+        // Typed now, at the prompt: the command is the shell's next.
+        if (Terminal* u = Terminal::byId(id)) {
+            where.shell = (unsigned long long)u->hostTerminal();
+            where.started = u->shellState().started;
+        }
+        done(where, why);
+    });
+#else
+    (void)line; (void)dir; (void)busyNote;
+    done(TestGutter::Typed(), "this build has no terminal");
+#endif
+    return true;
 }
 
 // Run File (Shift+Cmd+Return on the Mac, Ctrl+Shift+Return here): the open
@@ -1326,15 +1386,12 @@ static void act_run_file(GSimpleAction*, GVariant*, gpointer userp) {
         vars["python"] = python.empty() ? "python3" : python;
     }
     const std::string line = RunFile::expand(tmpl, vars);
-    if (app->editor->dirty()) {
-        saveCurrent(app);
-        if (app->editor->dirty()) return;   // the save failed and said why
-    }
     App* a = app;
-    runInTerminal(app, line, [a, name = baseName(path)](const std::string& why) {
+    runFileCommand(app, line, std::string(), std::string(),
+                   [a, name = baseName(path)](const TestGutter::Typed&, const std::string& why) {
         if (why.empty() || a->dead) return;
         flashStatus(a, "Not run: " + why + " (" + name + ")");
-    }, true);
+    });
 }
 
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -2613,6 +2670,41 @@ static void showChangeReview(App* app) {
     app->editor->showPage(page);
 }
 
+// The ▶ beside each test (TestGutter.h), made with the window as the Mac's
+// is: its runs go the way Run File's do (runFileCommand), with Run File's
+// Python, and the window's terminals tell it of finished commands
+// (makeTerminal) and closed terminals (the dock's onChanged).
+static void makeTestGutter(App* app) {
+    app->testGutter = new TestGutter(app->editor);
+    app->testGutter->installActions(G_ACTION_MAP(app->window));
+    app->testGutter->root = [app] { return app->rootDir; };
+    app->testGutter->python = [app](const std::string& path) {
+        std::string python = app->lsp ? app->lsp->serverPythonInterpreter() : std::string();
+        if (python.empty()) python = RunFile::findVirtualenvPython(path, app->rootDir);
+        return python.empty() ? std::string("python3") : python;
+    };
+    app->testGutter->templateFor = [](const std::string& language) {
+        return g.settings->settings().testTemplate(language);
+    };
+    app->testGutter->run = [app](const std::string& line, const std::string& dir,
+                                 std::function<void(const TestGutter::Typed&, const std::string&)> typed) {
+        if (app->dead) return false;
+        return runFileCommand(app, line, dir, "The terminal was busy, so the test runs in a new one",
+                              std::move(typed));
+    };
+    app->testGutter->terminalOpen = [](int id) {
+#ifdef MINICODE_ENABLE_TERMINAL
+        return Terminal::byId(id) != nullptr;
+#else
+        (void)id;
+        return false;
+#endif
+    };
+    app->testGutter->onNote = [app](const std::string& text) {
+        if (!app->dead) flashStatus(app, text);
+    };
+}
+
 // The Source Control panel's object, made with the window as the Mac's is
 // (EditorController+Git.mm's ensureGitPanel), so autofetch and View > Source
 // Control's commands (GitPanel.h) work before it is first shown; its widget
@@ -2662,6 +2754,7 @@ static void makeGitPanel(App* app) {
         if (!app->dead && app->git) app->git->refresh();
     };
     app->gitGutter->installActions(G_ACTION_MAP(app->window));
+    makeTestGutter(app);
     app->editor->notes()->installActions(G_ACTION_MAP(app->window));   // the tour's keys
     // The inline agent's bar (PARITY.md 3.3).
     app->editor->inlineAgent()->command = [] { return g.settings->settings().agentCommand(); };
@@ -3514,6 +3607,7 @@ static void applyWindowSettings(App* app) {
         if (d->editorPage())
             if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get())) r->applySettings();
     if (app->gitGutter) app->gitGutter->applySettings(st);
+    if (app->testGutter) app->testGutter->refreshSoon();   // test.<language> may have changed
 #ifdef MINICODE_ENABLE_TERMINAL
     if (app->termDock)
         for (Terminal* t : app->termDock->all()) t->applySettings(st);
@@ -4012,6 +4106,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     if (app->git) app->git->onRefreshed = nullptr;
     delete app->gitGutter;   // before the editor whose view and buffers it watches
     app->gitGutter = nullptr;
+    delete app->testGutter;  // the same
+    app->testGutter = nullptr;
     delete app->treeColors;  // before the tree it colors
     app->treeColors = nullptr;
     if (app->tree) app->tree->setDecorator(nullptr);
@@ -4306,6 +4402,10 @@ static App* newWindow(const std::string& root, const std::string& file,
     };
     app->termDock->onEmpty = [app] {
         if (!app->dead && app->layout) app->layout->hideTerminal();
+    };
+    // A terminal closed with a test run in it: nothing more will be said.
+    app->termDock->onChanged = [app] {
+        if (!app->dead && app->testGutter) app->testGutter->terminalsChanged();
     };
     app->termDock->confirmClose = [app](Terminal* t, std::function<void()> proceed) {
         askCloseBusyTerminal(app, t, std::move(proceed));
