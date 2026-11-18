@@ -6380,3 +6380,61 @@ The Mac's #176 on GTK; `../docs/notes/sessions.md` has the rules.
 - **Left**: the GTK port has no Save As or encoding picker (neither has
   the Mac); a file changed on disk to the same text in another encoding
   is followed only while its buffer is clean.
+
+### 103. The plan usage forecast in the Agents panel (done, November 2026)
+
+The Mac's A13 of 2026-11-18 (PR 178; `../docs/notes/agents.md`, "The plan
+usage forecast"; `mac/src/UsageView.mm` and `StatusLineOffer.mm`), over
+the same core: `ClaudeUsage` (the transcripts' tokens, prices, blocks,
+burn rate, the status line's samples, the fit, `describe`'s lines) and
+`ClaudeStatusLine` (`planInstall`, `install`, `planUninstall`,
+`uninstall`, the record, the log). The CLI's `mutible statusline` was
+already in the Linux build; this adds the panel's side.
+
+- **What a user meets.** Under the Agents panel's heading, PLAN USAGE:
+  the 5-hour window, the week, the burn rate, any unseen usage (the fit's
+  line is the text's tooltip), and "Log plan usage from Claude Code's
+  status line…", which becomes "Stop logging plan usage…" once it is in.
+  Before the transcripts are read it says "Reading Claude Code's
+  transcripts…"; without readings each window says "no reading yet".
+- **The model** (`UsageView.{h,cpp}`, `UsageModel`): one per app, never
+  freed. A `GThreadPool` of one thread keeps the `Scanner` and `Tally`
+  and reads the transcripts incrementally (`AgentModel::
+  defaultProjectsDir`, 8 days back) and the log (`StatusLineOffer::
+  usageDir`: `$MUTIBLE_USAGE_DIR`, else `$XDG_STATE_HOME/mutible/usage`);
+  the lines come back with `g_idle_add`. Where to look is read on the
+  main loop. `refresh` skips a look within 5 s of the last;
+  `refreshThen` forces one (the checks, and after an install or undo).
+  The panel's `rebuild` refreshes it while the panel shows (its model's
+  changes and the 30 s timer), as the Mac's `reload` does.
+- **The view** (`UsageView`): a box in `AgentsPanel` between the heading
+  and the notice or sessions; the text a wrapping, selectable label (not
+  a Tab stop) in the sidebar's text at 0.8 (`minicode-usage-text`), the
+  action a flat button whose label is the accent, ellipsized
+  (`minicode-usage-action`, ThemeCss.cpp). Its click goes through a
+  shared handle the view clears when it goes, so a question still up
+  when a window closes answers into nothing.
+- **Install and undo** (`StatusLineOffer.{h,cpp}`): the Mac's wording and
+  steps through `Question`, as the hooks offer (item 83) asks: the
+  question names the settings file, the command and the usage folder,
+  with the `statusLine` JSON in the preview box; Log Plan Usage or
+  Cancel; the core reads and plans again, backs the file up and writes
+  it, then a notice says where (and where the backup is). Undo asks (Put
+  It Back, Cancel) and says whether the file is exactly as before. The
+  command is `mutible statusline` when `mutible` is on the PATH, else
+  this program by its full path (`/proc/self/exe`), as the hooks' is;
+  but the core knows the wrapper by its program's name, so a copy named
+  otherwise (`mutible-guitest`) names the `mutible` beside it.
+- **Checks**: the `plan_usage` suite (a scratch CLAUDE_CONFIG_DIR,
+  transcripts folder and usage folder of its own, checked to be under the
+  harness's scratch root before anything is written): "no reading yet",
+  then the fitted forecast's lines and the fit's tooltip, the section
+  above what follows it, Cancel writing nothing, Log Plan Usage over an
+  existing `statusLine` (the rest kept, one backup, the record in the
+  usage folder), the built `mutible statusline` logging a reading and
+  running the old command with the same stdin, Put It Back restoring the
+  file byte for byte, and a settings file that is a symbolic link staying
+  one through install and undo, its target written and restored.
+- **Left**: the look of the section in a narrow sidebar on a real screen,
+  and a real Claude Code session with the wrapper installed (the readings
+  arrive after a reply), as on the Mac.
