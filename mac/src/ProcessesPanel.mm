@@ -51,6 +51,21 @@ static NSString *PNS(const std::string &s) {
 - (NSString *)key { return [NSString stringWithFormat:@"g:%d:%ld", (int)self.kind, (long)self.terminal]; }
 @end
 
+// One dim "N exited" row: the exited helpers of a level (Procs::foldExited),
+// opened to list them.
+@interface MCProcFoldItem : NSObject
+@property(nonatomic) int count;
+@property(nonatomic, copy) NSString *parentKey;
+@property(nonatomic, copy) NSArray<MCProcItem *> *children;
+@property(nonatomic, readonly) NSString *key;
+@property(nonatomic, readonly) NSString *title;   // "3 exited"
+@end
+
+@implementation MCProcFoldItem
+- (NSString *)key { return [@"x:" stringByAppendingString:self.parentKey ?: @""]; }
+- (NSString *)title { return [NSString stringWithFormat:@"%d exited", self.count]; }
+@end
+
 static NSString *KindName(Procs::GroupKind k) {
     switch (k) {
     case Procs::GroupKind::Terminal: return @"terminal";
@@ -64,6 +79,25 @@ static NSString *PortsText(NSArray<NSNumber *> *ports) {
     NSMutableArray *words = [NSMutableArray array];
     for (NSNumber *p in ports) [words addObject:[NSString stringWithFormat:@":%@", p]];
     return [words componentsJoinedByString:@" "];
+}
+
+static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteger depth);
+
+// A level's rows: its nodes, then its folded exited ones as one row.
+static NSArray *MakeItems(const std::vector<Procs::Node> &nodes, const std::vector<Procs::Node> &exited,
+                          Procs::GroupKind kind, NSInteger depth, NSString *parentKey) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (const Procs::Node &c : nodes) [out addObject:MakeItem(c, kind, depth)];
+    if (!exited.empty()) {
+        MCProcFoldItem *f = [MCProcFoldItem new];
+        f.count = Procs::countProcs(exited);
+        f.parentKey = parentKey;
+        NSMutableArray *kids = [NSMutableArray array];
+        for (const Procs::Node &c : exited) [kids addObject:MakeItem(c, kind, depth + 1)];
+        f.children = kids;
+        [out addObject:f];
+    }
+    return out;
 }
 
 static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteger depth) {
@@ -89,9 +123,7 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
     it.orphan = kind == Procs::GroupKind::Orphans;
     it.terminal = p.terminal;
     it.depth = depth;
-    NSMutableArray *kids = [NSMutableArray array];
-    for (const Procs::Node &c : n.children) [kids addObject:MakeItem(c, kind, depth + 1)];
-    it.children = kids;
+    it.children = MakeItems(n.children, n.exited, kind, depth + 1, it.key);
     return it;
 }
 
@@ -218,6 +250,15 @@ static const CGFloat kStopWidth = 40;
                                  NSForegroundColorAttributeName: muted,
                                  NSParagraphStyleAttributeName: ps}]];
         [t drawWithRect:NSMakeRect(2, 4, MAX(0, b.size.width - memW - 14), 16) options:opts];
+        return;
+    }
+    if ([self.item isKindOfClass:MCProcFoldItem.class]) {
+        [((MCProcFoldItem *)self.item).title
+            drawWithRect:NSMakeRect(14, 4, MAX(0, b.size.width - 20), 16)
+                 options:opts
+              attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
+                           NSForegroundColorAttributeName: muted,
+                           NSParagraphStyleAttributeName: ps}];
         return;
     }
     MCProcItem *p = self.item;
@@ -522,6 +563,7 @@ static const CGFloat kStopWidth = 40;
     const NSInteger window = self.windowID ? self.windowID() : 0;
     NSString *folder = MCProcessRealPath(self.folder ? self.folder() : @"");
     Procs::View v = [[MCProcessMonitor shared] viewForWindow:window folder:folder];
+    Procs::foldExited(v);   // short helpers that exited: one "N exited" row
     NSMutableArray *groups = [NSMutableArray array];
     for (const Procs::Group &g : v.groups) {
         MCProcGroupItem *gi = [MCProcGroupItem new];
@@ -530,9 +572,7 @@ static const CGFloat kStopWidth = 40;
         gi.title = PNS(g.title);
         gi.memory = g.memory;
         gi.count = g.count;
-        NSMutableArray *kids = [NSMutableArray array];
-        for (const Procs::Node &n : g.roots) [kids addObject:MakeItem(n, g.kind, 0)];
-        gi.children = kids;
+        gi.children = MakeItems(g.roots, g.exited, g.kind, 0, gi.key);
         [groups addObject:gi];
     }
     _groups = groups;
@@ -573,14 +613,10 @@ static const CGFloat kStopWidth = 40;
             if (!g.children.count) break;
             if (![_outline isItemExpanded:g]) [_outline expandItem:g];
             // A job the question named but not yet seen: wait for a look
-            // that has it, then fall back to the group's first process
-            // still running (an earlier server that exited sits above the
-            // one running, by start), else its first.
+            // that has it, then fall back to the group's first row (running
+            // ones come first).
             if (_revealJob > 0 && _revealUntil.timeIntervalSinceNow > 12) return;
-            MCProcItem *first = g.children.firstObject;
-            for (MCProcItem *p in g.children)
-                if (p.alive) { first = p; break; }
-            row = [_outline rowForItem:first];
+            row = [_outline rowForItem:g.children.firstObject];
         }
     }
     if (row < 0) return;
@@ -637,6 +673,7 @@ static const CGFloat kStopWidth = 40;
     if (!item) return _groups;
     if ([item isKindOfClass:MCProcGroupItem.class]) return ((MCProcGroupItem *)item).children;
     if ([item isKindOfClass:MCProcItem.class]) return ((MCProcItem *)item).children;
+    if ([item isKindOfClass:MCProcFoldItem.class]) return ((MCProcFoldItem *)item).children;
     return @[];
 }
 
@@ -684,6 +721,8 @@ static const CGFloat kStopWidth = 40;
             [tip addObject:[NSString stringWithFormat:@"Started by Claude Code session %@", p.session]];
         if (!p.alive) [tip addObject:@"Exited"];
         v.toolTip = [tip componentsJoinedByString:@"\n"];
+    } else if ([item isKindOfClass:MCProcFoldItem.class]) {
+        v.toolTip = @"Processes that exited and never listened on a port; open the row to list them";
     } else {
         MCProcGroupItem *g = item;
         v.toolTip = [NSString stringWithFormat:@"%@ in %d %@", PNS(Procs::formatBytes(g.memory)),
@@ -711,6 +750,9 @@ static const CGFloat kStopWidth = 40;
             MCProcGroupItem *g = item;
             [out addObject:[NSString stringWithFormat:@"G %@ %@ | %@", KindName(g.kind), g.title,
                             PNS(Procs::formatBytes(g.memory))]];
+        } else if ([item isKindOfClass:MCProcFoldItem.class]) {
+            [out addObject:[NSString stringWithFormat:@"X %ld %@", (long)[_outline levelForRow:r] - 1,
+                            ((MCProcFoldItem *)item).title]];
         } else {
             MCProcItem *p = item;
             [out addObject:[NSString stringWithFormat:@"P %ld %d %@ | %@ %@ %@%@", (long)p.depth, p.pid,

@@ -32,6 +32,13 @@
 // Output past kTermCredit bytes not yet acknowledged stops the host reading
 // the pty until the renderer catches up (the program blocks), as the Mac's
 // reader stops past 1 MB.
+// Size (tmux's window-size latest): a renderer's TermResize is its view's
+// size, kept as that renderer's; the pty takes the size of the renderer that
+// last typed into it (TermInput; flag 1 marks an emulator's answer to a
+// query, which is not typing), else the opener's, else the first attached
+// renderer's that sent one. TermShell's cols and rows are the pty's size:
+// a renderer's emulator takes them where that TermShell comes in the
+// stream, whatever its view's size.
 //
 // Offsets are in the receiving renderer's unit, named in its Hello (code
 // points for GTK, UTF-16 for the Mac); `ops16` is the same edit in UTF-16
@@ -87,8 +94,10 @@ enum class Kind {
     StateQuery,  // req: the whole session, answered by State
     Ping,        // req: answered by Pong once everything sent before it is done
     TermOpen,    // term, json (TermSpec's fields)
-    TermInput,   // term, bytes
-    TermResize,  // term, cols, rows
+    TermInput,   // term, bytes; flag 1: an answer to the program (an emulator's reply
+                 // to a query), not typing: it does not give the sender the pty's size
+    TermResize,  // term, cols, rows: the renderer's view; the pty's size only while it
+                 // is the one that last typed (or, before anyone has, the opener)
     TermAck,     // term, v: bytes of output taken
     TermClose,   // term
     TermAttach,  // term: answered by TermReplay, TermShell and TermMarks
@@ -194,6 +203,7 @@ struct TermShell {
     bool raw = false;         // the pty is out of canonical mode
     bool echoOff = false;     // echo off in canonical mode: a password
     bool signalsOff = false;  // ISIG off: a raw program, not zsh's line editor
+    int cols = 0, rows = 0;   // the pty's size (the host's screen's), 0 unknown
     bool operator==(const TermShell& o) const;
     bool operator!=(const TermShell& o) const { return !(*this == o); }
 };

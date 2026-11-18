@@ -120,8 +120,8 @@ Three more kinds of line warn before anything fails:
 - `LEAK [suite]` (a failure) and `LEFT [suite]` (a warning): state a GUI
   suite left for the next. LEAK is what a later suite would trip over (a
   window, a sheet or question, a zoom, a key window pinned, alert answers
-  unused); LEFT is a settings or keys file, which the harness puts back
-  between suites anyway, or a terminal left open. Either names the suite
+  unused); LEFT is a settings or keys file, or a terminal left open,
+  which the harness puts back (closes) between suites anyway. Either names the suite
   that left it, not the one that would fail because of it.
 
 ## Why a check passes here and fails on CI

@@ -20,7 +20,15 @@
 #import "ControlServer.h"
 #import "TreeDetails.h"   // MCAppDefaults
 #import "SessionLink.h"
+#import "Terminal.h"
+#import "TerminalPanel.h"
 #include "../../../tests/GuiRetry.h"
+
+// The panel's close without the question (TerminalPanel.mm), for the
+// terminals a suite left open: they go between suites, unasked.
+@interface MCTerminalPanel (HarnessPutBack)
+- (BOOL)removeTerminal:(TerminalView *)terminal;
+@end
 
 int minicode_main(int argc, const char *argv[]);   // mac/src/main.mm, renamed
 
@@ -398,6 +406,7 @@ struct World {
     BOOL showHidden = NO;
     NSInteger treeColumns = 0;
     NSString *browser;   // each window's browser pane, and its agent page
+    NSHashTable *terminalViews;   // the terminals themselves, held weakly
 };
 World gWorldAtStart;
 }  // namespace
@@ -407,6 +416,7 @@ static World LookAtWorld(void) {
     NSArray<EditorController *> *cs = MCGuiControllers();
     w.windows = (NSInteger)cs.count;
     NSMutableArray<NSString *> *browsers = [NSMutableArray array];
+    w.terminalViews = [NSHashTable weakObjectsHashTable];
     for (EditorController *c in cs) {
         if (c.window.attachedSheet) w.sheets++;
         @try {
@@ -424,7 +434,10 @@ static World LookAtWorld(void) {
         @try {
             id panel = [c valueForKey:@"terminalPanel"];
             NSArray *list = [panel valueForKey:@"terminals"];
-            if ([list isKindOfClass:NSArray.class]) w.terminals += (NSInteger)list.count;
+            if ([list isKindOfClass:NSArray.class]) {
+                w.terminals += (NSInteger)list.count;
+                for (id t in list) [w.terminalViews addObject:t];
+            }
         } @catch (NSException *) {
         }
     }
@@ -484,6 +497,21 @@ static void CheckSessionMirrors(NSString *suite) {
     }
 }
 
+// Every terminal not open when the suite started, closed unasked (a shell
+// still running a command is hung up, as a window's close does).
+static void CloseTerminalsLeft(const World &was) {
+    for (EditorController *c in MCGuiControllers()) {
+        MCTerminalPanel *panel = nil;
+        @try {
+            panel = [c valueForKey:@"terminalPanel"];
+        } @catch (NSException *) {
+        }
+        if (![panel isKindOfClass:MCTerminalPanel.class]) continue;
+        for (TerminalView *t in [panel.terminals copy])
+            if (![was.terminalViews containsObject:t]) [panel removeTerminal:t];
+    }
+}
+
 static void CheckWhatSuiteLeft(NSString *suite) {
     // A "_" suite runs alone in a process of its own, which it may end.
     if (!suite || [suite hasPrefix:@"_"]) return;
@@ -509,9 +537,15 @@ static void CheckWhatSuiteLeft(NSString *suite) {
                                                (long)now.windows, (long)was.windows]);
     if (now.sheets > was.sheets)
         Leak(suite, [NSString stringWithFormat:@"left %ld sheet(s) open on its windows", (long)now.sheets]);
-    if (now.terminals > was.terminals)
-        Leak(suite, [NSString stringWithFormat:@"left %ld terminal(s) open where it found %ld",
+    if (now.terminals > was.terminals) {
+        Leak(suite, [NSString stringWithFormat:@"left %ld terminal(s) open where it found %ld, closed",
                                                (long)now.terminals, (long)was.terminals], NO);
+        // Closed, as the two files are put back: the next suite finds the
+        // terminals this one found (2026-11-18: run_file, terminal_vt,
+        // daily_work, palette and keymap each left some, and control,
+        // counting its own from none, failed in every soak round).
+        if (putBack) CloseTerminalsLeft(was);
+    }
     // The two files are the harness's to put back between suites, so a suite
     // that changes them needs no step of its own to undo it; said, not failed.
     if (!(now.settings == was.settings || [now.settings isEqualToString:was.settings])) {
