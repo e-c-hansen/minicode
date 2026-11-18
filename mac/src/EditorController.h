@@ -87,6 +87,14 @@
 - (void)toggleProcesses:(id)sender;
 @end
 
+// EditorController+Session.mm (SessionLink.h, SessionWindow.h)
+@interface EditorController (Session)
+// The window is closing, or the app quitting: its documents and terminals
+// stay on the session's host for the folder's next window, but those the
+// close question's Don't Save dropped (stage 6).
+- (void)detachFromSessionHost;
+@end
+
 // EditorController+SessionBrowser.mm (SessionBrowser.h)
 @class MCSessionBrowser;
 @interface EditorController (SessionBrowser)
@@ -243,6 +251,12 @@
 // Asks about every tab with unsaved changes (window close, quit). NO when
 // the user cancelled or a save failed.
 - (BOOL)confirmCloseAllTabs;
+// `closing`: the window is about to close (or the app to quit) and detach
+// from the session's host. Don't Save then names the tabs to close there
+// (the rest stay on the host), and a headless host adds a fourth answer,
+// Keep Unsaved, which leaves the changes unsaved there for the folder's
+// next window (stage 6).
+- (BOOL)confirmCloseAllTabsClosing:(BOOL)closing;
 @property(nonatomic, readonly) BOOL hasUnsavedChanges;
 - (NSArray<NSString *> *)recentTabPaths;
 // Quick Open's file: in a kept tab, or in the preview tab with

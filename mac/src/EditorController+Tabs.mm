@@ -5,6 +5,11 @@
 #import "EditorController+TabsIvars.h"
 #import "TextKit2.h"
 
+// The close question's fourth answer on a headless session host (GTK's
+// words, stage 6).
+static NSString *const kKeepUnsavedDetail = @"Keep Unsaved leaves your changes unsaved with the folder's session "
+                                            @"for its next window. Don't Save discards them.";
+
 @implementation EditorController (Tabs)
 
 - (NSArray<NSString *> *)recentTabPaths {
@@ -830,33 +835,84 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
 
 // Before the window closes, the app quits or another folder takes over:
 // one question for every tab with unsaved changes.
-- (BOOL)confirmCloseAllTabs {
+- (BOOL)confirmCloseAllTabs { return [self confirmCloseAllTabsClosing:NO]; }
+
+- (BOOL)confirmCloseAllTabsClosing:(BOOL)closing {
     [self saveBeforeLeavingFormatSave];   // a Cmd+S still waiting for its formatter
     [self autoSaveNow];   // auto-save's writes first, so only what it skips is asked about
+    if (closing) [self sessionDropOnClose:nil];
     NSMutableArray<MCTab *> *dirty = [NSMutableArray array];
     for (MCTab *t in [self tabs]) if (t.dirty) [dirty addObject:t];
     if (dirty.count == 0) return YES;
+    if (closing && [self sessionKeepsUnsaved]) return [self confirmKeepingUnsaved:dirty];
+    BOOL ok;
     if (dirty.count == 1) {
         [self activateTab:dirty[0]];   // so the file asked about is the one on show
-        return [self confirmCloseTab:dirty[0]];
+        ok = [self confirmCloseTab:dirty[0]];
+    } else {
+        NSMutableArray<NSString *> *names = [NSMutableArray array];
+        for (MCTab *t in dirty) [names addObject:t.currentPath.lastPathComponent ?: @"?"];
+        NSAlert *a = [[NSAlert alloc] init];
+        a.messageText = [NSString stringWithFormat:@"Save changes to %lu files?",
+                         (unsigned long)dirty.count];
+        a.informativeText = [NSString stringWithFormat:
+            @"%@\n\nYour changes will be lost if you don't save them.",
+            [names componentsJoinedByString:@"\n"]];
+        [a addButtonWithTitle:@"Save All"];     // 1000
+        [a addButtonWithTitle:@"Don't Save"];   // 1001
+        [a addButtonWithTitle:@"Cancel"];       // 1002
+        NSModalResponse r = [a runModal];
+        if (r == NSAlertSecondButtonReturn) ok = YES;
+        else if (r != NSAlertFirstButtonReturn) return NO;
+        else ok = [self saveAllOf:dirty];
     }
-    NSMutableArray<NSString *> *names = [NSMutableArray array];
-    for (MCTab *t in dirty) [names addObject:t.currentPath.lastPathComponent ?: @"?"];
+    // What is still unsaved was let go (Don't Save): closed on the session's
+    // host with the window, not left there.
+    if (ok && closing) {
+        NSMutableArray<MCTab *> *drop = [NSMutableArray array];
+        for (MCTab *t in dirty) if (t.dirty) [drop addObject:t];
+        [self sessionDropOnClose:drop];
+    }
+    return ok;
+}
+
+// The window closes on a headless session host, which keeps what it holds
+// after the window and the app are gone: Save (All), Keep Unsaved (the
+// changes stay unsaved on the host for the folder's next window), Don't
+// Save (they are dropped there too) or Cancel.
+- (BOOL)confirmKeepingUnsaved:(NSArray<MCTab *> *)dirty {
     NSAlert *a = [[NSAlert alloc] init];
-    a.messageText = [NSString stringWithFormat:@"Save changes to %lu files?",
-                     (unsigned long)dirty.count];
-    a.informativeText = [NSString stringWithFormat:
-        @"%@\n\nYour changes will be lost if you don't save them.",
-        [names componentsJoinedByString:@"\n"]];
-    [a addButtonWithTitle:@"Save All"];     // 1000
-    [a addButtonWithTitle:@"Don't Save"];   // 1001
-    [a addButtonWithTitle:@"Cancel"];       // 1002
-    NSModalResponse r = [a runModal];
+    if (dirty.count == 1) {
+        [self activateTab:dirty[0]];   // so the file asked about is the one on show
+        a.messageText = [NSString stringWithFormat:@"Save changes to “%@”?",
+                         dirty[0].currentPath.lastPathComponent ?: @"this file"];
+        a.informativeText = kKeepUnsavedDetail;
+    } else {
+        NSMutableArray<NSString *> *names = [NSMutableArray array];
+        for (MCTab *t in dirty) [names addObject:t.currentPath.lastPathComponent ?: @"?"];
+        a.messageText = [NSString stringWithFormat:@"Save changes to %lu files?", (unsigned long)dirty.count];
+        a.informativeText = [NSString stringWithFormat:@"%@\n\n%@", [names componentsJoinedByString:@"\n"],
+                                                       kKeepUnsavedDetail];
+    }
+    [a addButtonWithTitle:dirty.count == 1 ? @"Save" : @"Save All"];   // 1000
+    [a addButtonWithTitle:@"Keep Unsaved"];                            // 1001
+    [a addButtonWithTitle:@"Don't Save"];                              // 1002
+    [a addButtonWithTitle:@"Cancel"];                                  // 1003
+    const NSModalResponse r = [a runModal];
     if (r == NSAlertSecondButtonReturn) return YES;
+    if (r == NSAlertThirdButtonReturn) {
+        [self sessionDropOnClose:dirty];
+        return YES;
+    }
     if (r != NSAlertFirstButtonReturn) return NO;
-    // Every question about the disk first (Keep Mine, Reload, Cancel), and
-    // only then any writing, so Cancel at any of them leaves every file and
-    // every tab as it was.
+    if (dirty.count == 1) return [self saveTab:dirty[0]];
+    return [self saveAllOf:dirty];
+}
+
+// Save All for the close question: every question about the disk first
+// (Keep Mine, Reload, Cancel), and only then any writing, so Cancel at any
+// of them leaves every file and every tab as it was.
+- (BOOL)saveAllOf:(NSArray<MCTab *> *)dirty {
     NSMutableArray<MCTab *> *write = [NSMutableArray array], *reload = [NSMutableArray array];
     for (MCTab *t in dirty) {
         switch ([self diskDecisionForTab:t]) {

@@ -321,8 +321,11 @@ void Link::windowDetached(std::uint64_t window, const Model::Window& w) {
     const bool kept = w.count() > 0 || (windowTerms_.count(window) && !windowTerms_[window].empty());
     if (it != hostWindow_.end() && kept) {
         // Sent again even when unchanged: its "seen" makes it the latest
-        // record a closing window left.
-        client_->windowTabs(it->second, tabsJson(window, w));
+        // record a closing window left, and "detached" tells a page it is
+        // closed (the Mac marks its own the same way).
+        Json tabs = tabsJson(window, w);
+        tabs.set("detached", Json(true));
+        client_->windowTabs(it->second, std::move(tabs));
         hostWindow_.erase(it);
         sentTabs_.erase(window);
         windowTerms_.erase(window);

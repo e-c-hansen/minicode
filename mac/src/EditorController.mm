@@ -100,10 +100,13 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if (!MCConfirmClosingRunning([self runningTerminalCommands], @"Close the window?",
                                  @"Close"))
         return NO;
-    return [self confirmCloseAllTabs];
+    return [self confirmCloseAllTabsClosing:YES];
 }
 - (void)windowWillClose:(NSNotification *)note {
     [self noteWindowClosing];   // before the terminals go: the windows to bring back
+    // The session's host keeps the window's documents and terminals for the
+    // folder's next window (EditorController+Session.mm).
+    [self detachFromSessionHost];
     [_agent close];
     // Asked already (windowShouldClose:): what is still unsaved was let go.
     for (MCTab *t in [self tabs]) [self discardBackupOf:t];

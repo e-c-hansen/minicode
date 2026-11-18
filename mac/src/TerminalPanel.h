@@ -26,6 +26,7 @@ typedef NS_ENUM(NSInteger, MCPaneDirection) {
     MCPaneDown = 4,
 };
 
+@class MCSessionTermPlace;
 @interface MCTerminalPanel : NSView
 - (instancetype)initWithDirectory:(NSString *)dir;   // with one terminal
 
@@ -61,7 +62,14 @@ typedef NS_ENUM(NSInteger, MCPaneDirection) {
 // the terminal starts in.
 - (instancetype)initWithDirectory:(NSString *)dir firstIn:(NSString *)first
                       environment:(NSDictionary<NSString *, NSString *> *(^)(NSString *dir))environment;
+- (instancetype)initWithDirectory:(NSString *)dir firstIn:(NSString *)first
+                      environment:(NSDictionary<NSString *, NSString *> *(^)(NSString *dir))environment
+                     sessionPlace:(MCSessionTermPlace *(^)(void))place;
 @property(nonatomic, copy) NSDictionary<NSString *, NSString *> *(^environment)(NSString *dir);
+// Where each terminal it makes goes on the session's host (the window's
+// link, and a held terminal to take over while the window has one); nil, or
+// a nil answer: the link for its folder, and a new shell.
+@property(nonatomic, copy) MCSessionTermPlace *(^sessionPlace)(void);
 // A new terminal beside the active one (a new column to its right), taking
 // half its width, or an equal share of the tab when half would be narrower
 // than 20 columns; nil (a beep and a status note) when even that would.

@@ -229,10 +229,17 @@ static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
     if (r.files.empty()) return;
     if (r.active < 0) r.active = 0;
     for (const std::string &f : r.files) {
+        auto b = backupFor.find(f);
+        if (MCTab *open = [self tabForPath:[NSString stringWithUTF8String:f.c_str()]]) {
+            // Open here already: from the session's host when the window
+            // took what it held (stage 6), whose live text wins over a
+            // backup a process that went left of it.
+            if (b != backupFor.end() && open.session) [[MCBackupStore shared] removeID:@(b->second.c_str())];
+            continue;
+        }
         MCTab *t = [MCTab new];
         t.currentPath = [NSString stringWithUTF8String:f.c_str()];
         t.sidePreview = [besides containsObject:t.currentPath];
-        auto b = backupFor.find(f);
         if (b != backupFor.end() && ![self takeBackup:@(b->second.c_str()) intoTab:t] &&
             ![fm fileExistsAtPath:t.currentPath])
             continue;   // nothing to show: the backup does not read and the file is gone

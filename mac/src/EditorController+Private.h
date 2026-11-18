@@ -700,11 +700,32 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // EditorController+Session.mm: the session's host (SessionLink.h,
 // editor.session-host): the storage's edits of the tab on show go to its
 // document there, and the text view asks which document it shows.
+@class MCSessionWindow, MCSessionLinkRef, MCSessionTermPlace;
 @interface EditorController (Session)
 - (void)installSessionHooks;
 - (void)sessionForgetHistoryOf:(MCTab *)t;
 - (CodeTextView *)textViewShowingSourceOf:(MCTab *)t;
 - (void)tabTextChangedByHost:(MCTab *)t;
+// Stage 6: the window on its host (SessionWindow.h), nil with the setting
+// off; what a window opening takes (before the session restores the rest,
+// then after it); Open Folder moving it; a window closing detaching; the
+// close question's Keep Unsaved and Don't Save; Reconnect.
+- (MCSessionWindow *)sessionWindow;
+- (MCSessionLinkRef *)sessionLinkForTab:(MCTab *)t;
+- (MCSessionTermPlace *)sessionTerminalPlace;
+- (void)attachSessionHeld;
+- (void)finishSessionAttach;
+- (void)sessionFolderChanged;
+- (BOOL)sessionKeepsUnsaved;
+- (void)sessionDropOnClose:(NSArray<MCTab *> *)tabs;
+- (void)reconnectSessionHost:(id)sender;
+@end
+
+// EditorController+SessionBrowser.mm: what the window's record carries
+// besides its tabs (SessionWindow.h).
+@interface EditorController (SessionBrowserRecord)
+- (NSDictionary *)sessionBrowserPanes;
+- (NSDictionary *)sessionBrowserTabs;
 @end
 
 // EditorController+Groups.mm: two editor groups side by side (Split Editor),
