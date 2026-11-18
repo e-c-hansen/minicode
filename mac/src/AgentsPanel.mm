@@ -7,6 +7,7 @@
 #import "TerminalAttention.h"
 #import "Terminal.h"
 #import "ClaudeHooksOffer.h"
+#import "UsageView.h"
 
 #include "AgentView.h"
 #include "Settings.h"
@@ -203,6 +204,7 @@ static NSString *TaskDetailOf(MCAgentTask *t, NSDate *now) {
 @implementation MCAgentsPanel {
     NSTextField *_heading, *_summary, *_notice;
     NSButton *_hooks;
+    MCUsageView *_usage;
     NSScrollView *_scroll;
     MCAgentsOutline *_outline;
     NSArray<MCAgentWork *> *_sessions;
@@ -263,6 +265,9 @@ static NSString *TaskDetailOf(MCAgentTask *t, NSDate *now) {
                       "a terminal's tab gets an orange dot while its session waits for you.";
     [self setHooksTitle];
     [self addSubview:_hooks];
+    _usage = [[MCUsageView alloc] initWithFrame:NSMakeRect(0, 0, 240, 80)];
+    _usage.onHeightChange = ^{ [weakSelf layoutPanel]; };
+    [self addSubview:_usage];
         _notice = [NSTextField wrappingLabelWithString:@""];
     _notice.font = [NSFont systemFontOfSize:12];
     _notice.textColor = AHex(0x9D9D9D);
@@ -323,6 +328,7 @@ static NSString *TaskDetailOf(MCAgentTask *t, NSDate *now) {
     AppSettings *cfg = [AppSettings shared];
     self.layer.backgroundColor = [cfg background:Surface::Sidebar].CGColor;
     _text = [cfg text:Surface::Sidebar];
+    [_usage applyTextColor:_text];
     [_outline reloadData];
     [self restoreExpansion];
 }
@@ -336,8 +342,12 @@ static NSString *TaskDetailOf(MCAgentTask *t, NSDate *now) {
     const CGFloat W = self.bounds.size.width, H = self.bounds.size.height, pad = 10;
     _heading.frame = NSMakeRect(pad, 10, 80, 16);
     _summary.frame = NSMakeRect(pad + 60, 10, MAX(0, W - 2 * pad - 60), 16);
-    const CGFloat top = _hooks.hidden ? 32 : 52;
+    const CGFloat usageTop = _hooks.hidden ? 32 : 52;
     _hooks.frame = NSMakeRect(pad - 2, 30, MAX(0, W - 2 * pad + 2), 18);
+    const CGFloat usageW = MAX(40, W - 2 * pad);
+    const CGFloat usageH = [_usage heightForWidth:usageW];
+    _usage.frame = NSMakeRect(pad, usageTop + 4, usageW, usageH);
+    const CGFloat top = usageTop + 4 + usageH + 6;
     _notice.preferredMaxLayoutWidth = MAX(40, W - 2 * pad);
     _notice.frame = NSMakeRect(pad, top + 2, MAX(40, W - 2 * pad), 80);
     _scroll.frame = NSMakeRect(0, top, W, MAX(0, H - top));
@@ -363,6 +373,7 @@ static NSString *TaskDetailOf(MCAgentTask *t, NSDate *now) {
 }
 
 - (NSButton *)hooksButton { return _hooks; }
+- (MCUsageView *)usageView { return _usage; }
 
 // The line shows only while the hooks are missing; the file is small and
 // read on each reload (the model's changes and the 30 s timer).
@@ -443,6 +454,7 @@ static NSString *TaskDetailOf(MCAgentTask *t, NSDate *now) {
     _notice.hidden = _sessions.count + _tasks.count > 0;
     _scroll.hidden = _sessions.count + _tasks.count == 0;
     [self updateHooksLine];
+    [_usage refresh];
 }
 
 - (void)restoreExpansion {

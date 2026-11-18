@@ -122,10 +122,17 @@ install_skill() {
 # (control:launcher-words) check the two lists agree.
 case "$1" in
   install-skill) shift; install_skill "$@"; exit $? ;;
-  open|window|browse|term|diff|split|state|selection|term-output|tour|procs|notify|hooks|page|open-url|host|attach|help)
+  open|window|browse|term|diff|split|state|selection|term-output|tour|procs|notify|hooks|page|open-url|host|attach|statusline|help)
     if [ ! -x "$cli" ]; then
       # A hook runs `mutible notify`; it must never fail because of us.
       if [ "$1" = notify ]; then [ -t 0 ] || cat >/dev/null 2>&1; exit 0; fi
+      # Nor may the status line: what it would chain to still runs.
+      if [ "$1" = statusline ]; then
+        input="$(cat)"
+        if [ "$2" = --then ] && [ -n "$3" ]; then printf '%s' "$input" | /bin/sh -c "$3"
+        else echo "Claude Code"; fi
+        exit 0
+      fi
       echo "mutible: this copy has no control channel ($cli is missing)" >&2
       exit 3
     fi

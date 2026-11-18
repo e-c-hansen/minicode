@@ -370,7 +370,7 @@ const std::vector<std::string>& subcommands() {
                                                    "diff", "split", "state", "selection",
                                                    "term-output", "tour", "procs", "notify",
                                                    "hooks", "page", "open-url", "host",
-                                                   "attach", "help"};
+                                                   "attach", "statusline", "help"};
     return words;
 }
 
@@ -524,6 +524,14 @@ const Help kHelp[] = {
      "    set): the file is backed up first, nothing in it is removed or\n"
      "    moved, and running it again changes nothing. Only this command\n"
      "    writes there; mutible never installs hooks by itself.\n"},
+    {"statusline",
+     "mutible statusline [--then COMMAND]\n"
+     "    Claude Code's status line, as the Agents panel's Log Plan Usage\n"
+     "    installs it: notes the 5-hour and weekly plan usage Claude Code\n"
+     "    passes on stdin in mutible's own folder (never ~/.claude), for the\n"
+     "    usage forecast, then runs COMMAND, the status line you had, with\n"
+     "    the same stdin, and shows what it prints; without one it prints the\n"
+     "    model and both windows. Always exits 0.\n"},
 };
 
 const char* kCommon =

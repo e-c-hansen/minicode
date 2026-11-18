@@ -149,7 +149,10 @@ goes here first, with tests; the GUI only displays it.
 - Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`,
   `AgentTask` (New Agent Task's names, worktree place and command line),
   `LineHistory` (blame porcelain, the lines a session's edits wrote, each
-  line's answer);
+  line's answer), `ClaudeUsage` (the plan usage forecast: transcript
+  tokens, prices, blocks, burn rate, status line samples, the fit) and
+  `ClaudeStatusLine` (`mutible statusline`: installing it over the user's
+  status line, undo, the log);
   `ProcessTable` (processes and ports per folder: tracking, groups, Stop's plan).
 - Files: `FileSniff` (how a file is shown), `Csv`, `JsonOutline`, `Notebook`,
   `WebBookmark` (web bookmarks as .url and .webloc files: reading, writing,
@@ -207,6 +210,8 @@ goes here first, with tests; the GUI only displays it.
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
   `ClaudeHooksOffer` (the waiting dots' hooks, offered in the app),
+  `StatusLineOffer` and `UsageView` (the plan usage forecast in the
+  Agents panel, and its status line log's install and undo),
   `AgentNotes`, `AgentModel`, `EditorLineHistory` (Show Line History),
   `AgentsPanel`, `AgentPages`, `AgentWindow`, `AgentTaskBar` (New Agent
   Task), `ProcessMonitor` (libproc,
