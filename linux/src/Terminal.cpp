@@ -331,6 +331,13 @@ void Terminal::makeTerminal() {
         auto caughtUp = +[](VteTerminal*, gpointer p) { static_cast<Terminal*>(p)->vteCaughtUp(); };
         g_signal_connect(vte_, "contents-changed", G_CALLBACK(caughtUp), this);
         g_signal_connect(vte_, "cursor-moved", G_CALLBACK(caughtUp), this);
+        // A grid larger than the view (another renderer's size) follows the
+        // cursor; nothing is done while it fits.
+        auto moved = +[](VteTerminal*, gpointer p) {
+            Terminal* self = static_cast<Terminal*>(p);
+            if (self->ptyCols_ || self->ptyRows_) self->panToCursor();
+        };
+        g_signal_connect(vte_, "cursor-moved", G_CALLBACK(moved), this);
     }
     // A key pressed in the terminal: what VTE commits while it is handled
     // is the user's typing, which ends the terminal's mark (onCommit; a
@@ -592,6 +599,7 @@ void Terminal::followPtySize(int cols, int rows) {
     if (own) {
         if (ptyCols_ || ptyRows_) gtk_widget_set_size_request(vte_, -1, -1);
         ptyCols_ = ptyRows_ = 0;
+        applyPan();
         return;
     }
     int vc = 0, vr = 0;
@@ -600,6 +608,7 @@ void Terminal::followPtySize(int cols, int rows) {
     if (own || (!wider && !taller)) {
         if (ptyCols_ || ptyRows_) gtk_widget_set_size_request(vte_, -1, -1);
         ptyCols_ = ptyRows_ = 0;
+        applyPan();
         return;
     }
     if (cols == ptyCols_ && rows == ptyRows_) return;
@@ -611,6 +620,81 @@ void Terminal::followPtySize(int cols, int rows) {
     const int padH = std::max(0, gtk_widget_get_height(vte_) - (int)(vte_terminal_get_row_count(t) * ch));
     gtk_widget_set_size_request(vte_, wider ? (int)(cols * cw) + padW + 1 : -1,
                                 taller ? (int)(rows * ch) + padH + 1 : -1);
+    // The scroller gives a scrollable child its own size whatever it asks
+    // for, so the grid's extra rows and columns are negative margins on the
+    // far sides (GTK adds a margin to the allocation's size), and the part
+    // on show is chosen by moving the near sides (panToCursor).
+    // Counted from VTE's own grid less what it was grown by (the scroller's
+    // size in cells leaves out a scroll bar that takes room).
+    const int ownCols = (int)vte_terminal_get_column_count(t) - extraCols_;
+    const int ownRows = (int)vte_terminal_get_row_count(t) - extraRows_;
+    extraCols_ = wider ? std::max(0, cols - ownCols) : 0;
+    extraRows_ = taller ? std::max(0, rows - ownRows) : 0;
+    applyPan();
+    panToCursor();
+}
+
+// tmux's pan: the cursor's cell kept in the part of the grid on show, the
+// part moved only as far as it takes. The cursor's row is counted from the
+// top of the program's screen (VTE's last rows), whatever is scrolled back.
+void Terminal::panToCursor() {
+    if (!vte_ || (!ptyCols_ && !ptyRows_)) return;
+    int vc = 0, vr = 0;
+    if (!viewCells(&vc, &vr)) return;
+    VteTerminal* t = VTE_TERMINAL(vte_);
+    long col = 0, row = 0;
+    vte_terminal_get_cursor_position(t, &col, &row);
+    const long rowsNow = vte_terminal_get_row_count(t), colsNow = vte_terminal_get_column_count(t);
+    long screenTop = 0;
+    if (GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(vte_)))
+        screenTop = (long)gtk_adjustment_get_upper(adj) - rowsNow;
+    const long r = std::max(0L, row - std::max(0L, screenTop)), c = std::max(0L, col);
+    int top = panRow_, left = panCol_;
+    if (ptyRows_ && ptyRows_ > vr) {
+        if (r < top) top = (int)r;
+        else if (r >= top + vr) top = (int)(r - vr + 1);
+        top = std::max(0, std::min(top, (int)std::max(0L, std::min<long>(ptyRows_, rowsNow) - vr)));
+    } else {
+        top = 0;
+    }
+    if (ptyCols_ && ptyCols_ > vc) {
+        if (c < left) left = (int)c;
+        else if (c >= left + vc) left = (int)(c - vc + 1);
+        left = std::max(0, std::min(left, (int)std::max(0L, std::min<long>(ptyCols_, colsNow) - vc)));
+    } else {
+        left = 0;
+    }
+    setPan(top, left);
+}
+
+// The grid moved up and left under the scroller, which clips it: negative
+// margins, which GTK adds to the allocation's origin and size alike.
+void Terminal::setPan(int row, int col) {
+    if (row == panRow_ && col == panCol_) return;
+    panRow_ = row;
+    panCol_ = col;
+    applyPan();
+}
+
+void Terminal::applyPan() {
+    if (!vte_) return;
+    if (!ptyCols_ && !ptyRows_) {
+        // Nothing clipped: no margins, and VTE not measured (a VTE not on
+        // screen measured from a TermShell showed nothing typed: the trap
+        // followPtySize's note names).
+        extraCols_ = extraRows_ = panRow_ = panCol_ = 0;
+        gtk_widget_set_margin_top(vte_, 0);
+        gtk_widget_set_margin_bottom(vte_, 0);
+        gtk_widget_set_margin_start(vte_, 0);
+        gtk_widget_set_margin_end(vte_, 0);
+        return;
+    }
+    VteTerminal* t = VTE_TERMINAL(vte_);
+    const int cw = (int)vte_terminal_get_char_width(t), ch = (int)vte_terminal_get_char_height(t);
+    gtk_widget_set_margin_top(vte_, -panRow_ * ch);
+    gtk_widget_set_margin_bottom(vte_, -std::max(0, extraRows_ - panRow_) * ch);
+    gtk_widget_set_margin_start(vte_, -panCol_ * cw);
+    gtk_widget_set_margin_end(vte_, -std::max(0, extraCols_ - panCol_) * cw);
 }
 
 std::string Terminal::title() const {

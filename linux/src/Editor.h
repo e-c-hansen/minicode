@@ -201,8 +201,10 @@ public:
     // A tab at the end of the row viewing a document the host holds (a
     // window opening takes what a closed one left; SessionLink's
     // takeForWindow), its text the host's: unsaved when it differs from
-    // the file. Not put on show.
-    Document* attachTab(uint64_t heldId, const std::string& path);
+    // the file. Not put on show. `hostNamed` false: an untitled buffer the
+    // host holds with no path, shown under `path`, a name for a file not on
+    // disk yet (Document::attachHeld).
+    Document* attachTab(uint64_t heldId, const std::string& path, bool hostNamed = true);
     // The window closes and detaches (stage 6, step 2): every document stays
     // on the host but those in `drop` (the question's Don't Save), which
     // close there with their tabs; the window's record stays for the

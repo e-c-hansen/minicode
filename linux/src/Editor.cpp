@@ -1136,6 +1136,7 @@ bool Editor::save(std::string* error) { return saveDocument(active_, error); }
 bool Editor::saveDocument(Document* d, std::string* error) {
     if (!d || !d->canSave()) return true;
     if (!d->save(error)) return false;
+    d->tellHostPath();   // an untitled buffer the host held now has a file
     if (d->isPreviewTab() || d->isAgentPreview()) keepPreviewTab(d);   // saved: kept, as in VS Code
     latexFileSaved(d);
     if (observer_) observer_->documentSaved(d);

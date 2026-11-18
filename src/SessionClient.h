@@ -87,6 +87,13 @@ public:
     // them (resizeTerminal: the pty takes it only while the guest is the
     // one that typed last). Said in its Hello. Before connect().
     void setGuest(bool on) { guest_ = on; }
+    // An app whose windows keep backups of their unsaved files (Backups.h:
+    // GTK's Persistence, the Mac's EditorController+Persistence): said in
+    // its Hello (flag 4), so a headless host that keeps backups of what no
+    // window shows (Host::keepBackups) lets go of a document's backup while
+    // this renderer has it open, and takes it up again once it detaches.
+    // Not for a renderer that only reads, nor a guest. Before connect().
+    void setKeepsBackups(bool on) { keepsBackups_ = on; }
     Model::Unit unit() const { return unit_; }
 
     // ---- ids: what this renderer opens on the host (documents, terminals,
@@ -293,7 +300,7 @@ private:
 
     Model::Unit unit_;
     std::string name_;
-    bool readOnly_ = false, guest_ = false;
+    bool readOnly_ = false, guest_ = false, keepsBackups_ = false;
     Send send_;
     ClientId id_ = 0;
     std::uint64_t idBase_ = 0, idsUsed_ = 0;
@@ -328,5 +335,46 @@ private:
     bool ask(Message&& m, Message* reply, int timeoutMs = 10000);
     Selection mapSelection(const Selection& s, const Ot::Ops& ops) const;
 };
+
+// What a window opening on a host's folder takes of what the host holds
+// (stage 6, step 2; both apps): the latest record a closed window left (its
+// tabs, windowJson's shape) with the documents and terminals it names, then
+// those held documents and terminals no record names. A record is free
+// when no window of this renderer reports under it (`live`) and its
+// renderer is gone or is this one; what a record of a window still open
+// names is that window's, and left alone; one that names nothing is
+// never the one taken.
+//   - A document is taken when it has a path, or has none and holds text or
+//     unsaved changes (an untitled buffer: the window shows it under a name
+//     of its own, Backups::untitledPath); one with neither (a renderer's
+//     document before it had a file) never is.
+//   - Never two documents of one path (two windows on one file, both
+//     closed): the record's own first, then those no record names, oldest
+//     id first; the others stay on the host for the folder's next window.
+//   - `all` (a check's cleanup): every free record and what each names,
+//     and every document no record names, seconds of a path too.
+struct Reattach {
+    struct Doc {
+        DocId id = 0;
+        std::string path;   // "" for an untitled buffer
+        bool dirty = false;
+    };
+    struct Term {
+        TermId id = 0;
+        int pid = 0;
+        TermShell shell;
+    };
+    std::uint64_t window = 0;   // the record taken, 0 for none
+    Json tabs;                  // its tabs, null for none
+    std::vector<Doc> docs;
+    std::vector<Term> terms;
+    std::vector<std::uint64_t> records;   // `all`: every free record
+    bool empty() const { return !window && docs.empty() && terms.empty(); }
+};
+// `state` is the host's StateQuery answer; `me` this renderer's id;
+// `openHere` and `showsHere` what this renderer has open already.
+Reattach reattachFrom(const Json& state, ClientId me, const std::set<std::uint64_t>& live,
+                      const std::function<bool(DocId)>& openHere,
+                      const std::function<bool(TermId)>& showsHere, bool all);
 
 }  // namespace Shared

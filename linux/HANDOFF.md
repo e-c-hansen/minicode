@@ -6438,3 +6438,34 @@ already in the Linux build; this adds the panel's side.
 - **Left**: the look of the section in a narrow sidebar on a real screen,
   and a real Claude Code session with the wrapper installed (the readings
   arrive after a reply), as on the Mac.
+
+### 104. The headless host keeps backups, untitled buffers come back, one path twice, VTE pans (stage 6, step 3; November 2026)
+
+The host-side items left before `editor.session-host = headless` can be
+the default (`../docs/notes/session-host.md`, "The host's own backups,
+untitled buffers, one path twice, panning (stage 6, step 3)").
+
+- **What a user meets.** A file left unsaved on the folder's headless
+  host (Keep Unsaved) is in the backups folder at once, held by the
+  host's process; a crash, `kill -9` or a reboot of the host loses
+  nothing: the folder's next window restores it as an unsaved tab. While
+  the host lives, the next window gets the host's document as before and
+  nothing is restored twice. A buffer with no file that another renderer
+  left on the host comes back as the tab of `Untitled-1` (not on disk
+  until saved). Two windows on one file, both closed unsaved: the next
+  window shows the last one's text, the window after it the other's. A
+  terminal another renderer made larger follows the cursor.
+- **Code.** Core: `Host::keepBackups`, `writeBackupsNow`, `backupId`,
+  `backupPath`, `SessionHost::keepBackups`, `HostOptions::backupDir`
+  (`mutible host` sets it from `Backups::defaultDir`), the Hello's flag 4
+  (`Client::setKeepsBackups`), `busyReason` counting an untitled buffer
+  with text, `Backups::defaultDir`, `processStart`, `newId`,
+  `untitledPath`, `Shared::reattachFrom`. GTK: `SessionLink` (the flag,
+  `free` over `reattachFrom`, its Held types now the core's), main.cpp
+  (`attachHeldDocuments` naming untitled buffers, `backUpHeldDocuments`),
+  `Editor::attachTab(..., hostNamed)`, `Editor::saveDocument` telling the
+  host a new path, `Document::attachHeld(..., hostNamed)`,
+  `hostSavedFromDisk` for a file not on disk, `Terminal::panToCursor`.
+  The top-level Makefile's CLI links Backups.cpp and SavePlan.cpp.
+- **Checks**: `host_backups`, `host_pan`, and the `hostbackup:*` and
+  `reattach:*` groups of `make test`.

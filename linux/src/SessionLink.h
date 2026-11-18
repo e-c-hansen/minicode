@@ -107,30 +107,13 @@ public:
     void windowDetached(std::uint64_t window, const Model::Window& w);
 
     // What the host holds that a window opening on the folder takes
-    // (takeForWindow): the latest record a closed window left (its tabs, as
-    // windowJson has them) with its documents and terminals, then those
-    // held documents and terminals no record names. A record is free when no
-    // window of this app has it and its renderer is gone or is this app's;
-    // what a record of a window still open names is that window's, and
-    // left alone.
-    struct HeldDoc {
-        std::uint64_t id = 0;
-        std::string path;
-        bool dirty = false;
-    };
-    struct HeldTerm {
-        std::uint64_t id = 0;
-        int pid = 0;
-        Shared::TermShell shell;
-    };
-    struct Held {
-        std::uint64_t window = 0;   // the record taken, 0 for none
-        Json tabs;                  // its tabs (windowJson), null for none
-        std::vector<HeldDoc> docs;
-        std::vector<HeldTerm> terms;
-        std::vector<std::uint64_t> records;   // allFree: every free record
-        bool empty() const { return !window && docs.empty() && terms.empty(); }
-    };
+    // (takeForWindow): the core's rules (Shared::reattachFrom, SessionClient.h:
+    // the latest record a closed window left with what it names, then what
+    // no record names; never two documents of one path; an untitled buffer
+    // too, which the window names, Backups::untitledPath).
+    using HeldDoc = Shared::Reattach::Doc;
+    using HeldTerm = Shared::Reattach::Term;
+    using Held = Shared::Reattach;
     // `window` takes the record over: its tabs are reported under the
     // record's id from now on.
     Held takeForWindow(std::uint64_t window);

@@ -43,6 +43,7 @@
 #include <gtk/gtk.h>
 
 #include "EnvLock.h"
+#include "Backups.h"
 #include "AppSettings.h"
 #include "Appearance.h"
 #include "Bookmarks.h"
@@ -476,6 +477,7 @@ static void flashStatus(App* app, const std::string& message) {
 // editor.session-host and MUTIBLE_HOST say, with its going in the status bar.
 static void rehostWindows(const std::shared_ptr<SessionLink::Link>& link);
 static void attachHeldDocuments(App* app);
+static void backUpHeldDocuments(App* app);
 static void showHeldActive(App* app);
 
 static void listenForLoss(App* app) {
@@ -1028,6 +1030,7 @@ static void openFolder(App* app, const std::string& dir) {
 #endif
     app->persist->setRoot(dir);
     app->persist->restoreSession();   // the new folder's tabs from last time
+    backUpHeldDocuments(app);
     showHeldActive(app);
     updateTitle(app);
     refreshHints(app);
@@ -4403,9 +4406,32 @@ static void reconnectHost(App* app) {
 // made, App::held): each document as a tab with the host's text, before the
 // session restores the rest from sessions.json and backups (Persistence),
 // which passes over a path open already.
+// An untitled buffer the host holds (no file: another renderer's) comes back
+// as the tab of a file not on disk yet, named as a backup of it would be
+// (Backups::untitledPath: Untitled-1, ...), unsaved; Ctrl+S writes it there.
+// The host keeps it without a path until then.
 static void attachHeldDocuments(App* app) {
-    for (const SessionLink::Link::HeldDoc& d : app->held.docs)
-        if (!app->editor->documentFor(d.path)) app->editor->attachTab(d.id, d.path);
+    for (const SessionLink::Link::HeldDoc& d : app->held.docs) {
+        if (!d.path.empty()) {
+            if (!app->editor->documentFor(d.path)) app->editor->attachTab(d.id, d.path);
+            continue;
+        }
+        const std::string folder = app->link ? app->link->folder() : app->rootDir;
+        const std::string name = Backups::untitledPath(folder, [app](const std::string& p) {
+            struct stat st;
+            if (lstat(p.c_str(), &st) == 0 || app->editor->documentFor(p)) return true;
+            for (const SessionLink::Link::HeldDoc& o : app->held.docs)
+                if (o.path == p) return true;
+            return false;
+        });
+        app->editor->attachTab(d.id, name, false);
+    }
+}
+
+// The held documents now this window's: their backups written at once, as
+// the host lets go of its own as they attach (Host::keepBackups).
+static void backUpHeldDocuments(App* app) {
+    if (!app->held.docs.empty() && app->persist) app->persist->writeBackups();
 }
 
 // After the session: the record's tab on show, if it is back.
@@ -5261,6 +5287,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     // back, else the folder's.
     attachHeldDocuments(app);
     app->persist->restoreSession(record ? &record->tabs : nullptr);
+    backUpHeldDocuments(app);
     showHeldActive(app);
 #ifdef MUTIBLE_ENABLE_BROWSER
     if (app->browser) {   // the browser's tabs, suspended; the one on show loads when the pane is

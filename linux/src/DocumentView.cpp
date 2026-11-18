@@ -187,11 +187,13 @@ Document::Document(DocumentHost* host, DocumentTags* tags, std::shared_ptr<Sessi
     client().open(id_, "", "", this);
 }
 
-void Document::attachHeld(const std::string& path) {
+void Document::attachHeld(const std::string& path, bool hostNamed) {
     clearSource();
     kind_ = Kind::Text;
     path_ = path;
-    hostPath_ = path;   // the host has it by this path already
+    // The host has it by this path already, or (an untitled buffer) by none
+    // until it is saved here.
+    hostPath_ = hostNamed ? path : std::string();
     ext_ = extensionOf(path);
     markdown_ = ext_ == "md" || ext_ == "markdown";
 #ifdef MUTIBLE_ENABLE_PDF
@@ -251,12 +253,17 @@ void Document::rehost(std::shared_ptr<SessionLink::Link> link) {
 // unsaved, and its lifetime keeps an unsaved file (a headless host after
 // the app quits). The mirror already holds `now`.
 void Document::hostSavedFromDisk(const std::string& now) {
-    if (kind_ != Kind::Text || !diskKnown_ || saved_ == now || !client().isOpen(id_)) return;
-    client().reset(id_, saved_);
+    if (kind_ != Kind::Text || !client().isOpen(id_)) return;
+    // A file not on disk (never saved, or gone) has nothing saved: all of the
+    // buffer is unsaved, so the host keeps it (and backs it up once no
+    // window has it) rather than taking it for saved.
+    const std::string saved = diskKnown_ ? saved_ : std::string();
+    if (saved == now) return;
+    client().reset(id_, saved);
     std::size_t p = 0, q = 0;
-    commonEnds(saved_, now, p, q);
-    const std::size_t from = g_utf8_strlen(saved_.data(), (gssize)p);
-    const std::size_t del = g_utf8_strlen(saved_.data() + p, (gssize)(saved_.size() - p - q));
+    commonEnds(saved, now, p, q);
+    const std::size_t from = g_utf8_strlen(saved.data(), (gssize)p);
+    const std::size_t del = g_utf8_strlen(saved.data() + p, (gssize)(saved.size() - p - q));
     client().recordOutside(id_, Ot::Op{from, del, Model::utf16FromUtf8(now.substr(p, now.size() - p - q))});
 }
 

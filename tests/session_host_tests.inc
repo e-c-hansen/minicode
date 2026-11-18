@@ -173,7 +173,8 @@ struct Net {
             }
     }
 
-    // `hello`: 1 a renderer that only reads, 2 a guest (Client::setGuest).
+    // `hello`: 1 a renderer that only reads, 2 a guest (Client::setGuest), 4
+    // an app that keeps backups (Client::setKeepsBackups).
     Link& add(Unit u, const std::string& name, int hello = 0) {
         links.push_back(std::make_unique<Link>());
         Link* l = links.back().get();
@@ -181,6 +182,7 @@ struct Net {
         l->client = std::make_unique<Shared::Client>(u, name);
         if (hello == 1) l->client->setReadOnly(true);
         if (hello == 2) l->client->setGuest(true);
+        if (hello == 4) l->client->setKeepsBackups(true);
         l->client->connect([this, l](Message&& m) {
             if (immediate) host.handle(l->id, wire(std::move(m)));
             else l->up.push_back(wire(std::move(m)));
