@@ -77,7 +77,7 @@ static void testFolderPicker() {
     CHECK(complete("~", "/Users/me/Code", home) == "~/Code/");
     CHECK(complete("/Users/me/Co", "/Users/me/Code", home) == "/Users/me/Code/");
     CHECK(complete("../a", "/Users/me/Code/apps", home) == "../apps/");
-    CHECK(complete("mini", "/Users/me/Code/minicode", home) == "~/Code/minicode/");
+    CHECK(complete("mini", "/Users/me/Code/minicode", home) == "~/Code/minicode/");  // rename-mutible: keep (a folder of that name)
     CHECK(complete("", "/opt/x", home) == "/opt/x/");
     CHECK(complete("ro", "/", home) == "/");
     CHECK(slashCompletes("~/Co"));
@@ -91,20 +91,20 @@ static void testFolderPicker() {
 
     GROUP("folderpick:rows-name");
     {
-        const std::vector<std::string> recent = {"/Users/me/Code/minicode", "/Users/me/Code/app/lib"};
+        const std::vector<std::string> recent = {"/Users/me/Code/minicode", "/Users/me/Code/app/lib"};  // rename-mutible: keep (a folder of that name)
         const Listing l = fpListing({".git", "docs", "lib", "src"});
         // Empty: the recent folders, then the base's subfolders (each once,
         // hidden ones left out), then Choose in Finder.
         auto rs = rows(parse("", home, base), recent, l, home);
         CHECK(fpLabels(rs) == (std::vector<std::string>{
-                                 "~/Code/minicode", "~/Code/app/lib", "~/Code/app/docs",
+                                 "~/Code/minicode", "~/Code/app/lib", "~/Code/app/docs",  // rename-mutible: keep (a folder of that name)
                                  "~/Code/app/src", "Choose in Finder…"}));
         CHECK(rs[0].recent && !rs[2].recent);
-        CHECK(rs[0].nameAt == 7);   // "~/Code/" before "minicode"
+        CHECK(rs[0].nameAt == 7);   // "~/Code/" before "minicode" (rename-mutible: keep)
         CHECK(rs.back().kind == RowKind::ChooseInFinder);
         // A name matches names first.
         auto m = rows(parse("mini", home, base), recent, l, home);
-        CHECK(m.size() == 2 && toU8(m[0].label, nullptr) == "~/Code/minicode");
+        CHECK(m.size() == 2 && toU8(m[0].label, nullptr) == "~/Code/minicode");  // rename-mutible: keep (a folder of that name)
         CHECK(m[0].positions == (std::vector<size_t>{7, 8, 9, 10}));
         // A subfolder of the base named exactly is offered to open as typed.
         auto s = rows(parse("src", home, base), recent, l, home);

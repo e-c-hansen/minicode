@@ -75,11 +75,11 @@ void testShellBash() {
         writeFile(root / "home" / ".bashrc",
                   "exec 2>&1\nPROMPT_COMMAND='echo \"user-pc:$?\"'\nalias hi='echo hi-alias'\n");
         const std::vector<std::string> env = {"HOME=" + (root / "home").string(), "PATH=/usr/bin:/bin",
-                                              "TERM=dumb", "MINICODE_NONCE=n0nce"};
+                                              "TERM=dumb", "MINICODE_NONCE=n0nce"};  // rename-mutible: keep (the Linux bash script's name)
         ZshRun r = runZsh(root, {"--rcfile", (root / "script.bash").string(), "-i"}, env,
                           "hi\nfalse\ntrue; true; true\n"
                           "printf '\\e]133;A;mc=bad\\a\\e]133;D;9\\a'\n"
-                          "echo \"nonce:${MINICODE_NONCE-unset}\"\n"
+                          "echo \"nonce:${MINICODE_NONCE-unset}\"\n"  // rename-mutible: keep (the Linux bash script's name)
                           "echo 'a;b\\c'\n",
                           "/bin/bash");
         CHECK(printed(r.out, "user-pc") == "0");
@@ -89,7 +89,7 @@ void testShellBash() {
         const std::string want =
             "1 0 0 - | 1 1 0 - hi | 2 1 1 0 | 2 2 1 0 false | 3 2 2 1 | 3 3 2 1 true; true; true | "
             "4 3 3 0 | 4 4 3 0 printf '\\e]133;A;mc=bad\\a\\e]133;D;9\\a' | "
-            "5 4 4 0 | 5 5 4 0 echo \"nonce:${MINICODE_NONCE-unset}\" | 6 5 5 0 | "
+            "5 4 4 0 | 5 5 4 0 echo \"nonce:${MINICODE_NONCE-unset}\" | 6 5 5 0 | "  // rename-mutible: keep (the Linux bash script's name)
             "6 6 5 0 echo 'a;b\\c' | 7 6 6 0";
         const std::string got = hostStates(r.out, "n0nce");
         CHECK(got == want);
