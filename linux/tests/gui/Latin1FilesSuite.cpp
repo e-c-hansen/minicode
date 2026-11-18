@@ -16,7 +16,9 @@
 #include "Backups.h"
 #include "DocumentView.h"
 #include "Editor.h"
+#include "FileTree.h"
 #include "Persistence.h"
+#include "Search.h"
 
 #include <glib/gstdio.h>
 #include <sys/stat.h>
@@ -31,6 +33,7 @@ std::string dir() { return MCGuiProjectFile("latin1"); }
 std::string cp1252() { return dir() + "/cp1252.txt"; }
 std::string latin1() { return dir() + "/latin1.txt"; }
 std::string utf16() { return dir() + "/utf16.txt"; }
+std::string hit() { return dir() + "/hit.txt"; }
 
 // "café costs 5 €" and a second line, in Windows-1252.
 const std::string kCp1252 = "caf\xE9 costs 5 \x80\nline two\n";
@@ -82,7 +85,26 @@ std::string backupOf(const std::string& path) {
     return found;
 }
 
+int caretLine() {
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_mark(ed()->buffer(), &it, gtk_text_buffer_get_insert(ed()->buffer()));
+    return gtk_text_iter_get_line(&it);
+}
+
+GtkWidget* labelHolding(GtkWidget* root, const std::string& part) {
+    if (!root || !gtk_widget_get_mapped(root)) return nullptr;
+    if (GTK_IS_LABEL(root)) {
+        const char* text = gtk_label_get_text(GTK_LABEL(root));
+        if (text && std::string(text).find(part) != std::string::npos)
+            return MCGuiOnScreen(root) ? root : nullptr;
+    }
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* found = labelHolding(c, part)) return found;
+    return nullptr;
+}
+
 uint64_t gInode = 0;
+GtkWindow* gSearch = nullptr;
 
 }  // namespace
 
@@ -97,8 +119,8 @@ MC_GUI_SUITE(latin1_files) {
     MCGuiWait("the Windows-1252 file opens as text, é and € as they are", 10, [] {
         return showing(cp1252(), "café costs 5 €\nline two\n");
     });
-    MCGuiStep("the status bar names its encoding; it is not unsaved", [] {
-        GCHECK(encodingShown("Windows-1252"));
+    MCGuiWait("the status bar names its encoding", 5, [] { return encodingShown("Windows-1252"); });
+    MCGuiStep("it is not unsaved; Ctrl+S", [] {
         GCHECK(!ed()->dirty());
         gInode = inodeOf(cp1252());
         MCGuiClick(ed()->textView());
@@ -116,8 +138,8 @@ MC_GUI_SUITE(latin1_files) {
     MCGuiWait("opens as text, its undefined byte as U+0081", 10, [] {
         return showing(latin1(), "Grüße aus Köln ©\nx\xC2\x81y\n");
     });
-    MCGuiStep("named Windows-1252 too, and saved unchanged", [] {
-        GCHECK(encodingShown("Windows-1252"));
+    MCGuiWait("named Windows-1252 too", 5, [] { return encodingShown("Windows-1252"); });
+    MCGuiStep("saved unchanged", [] {
         gInode = inodeOf(latin1());
         MCGuiClick(ed()->textView());
         MCGuiKey("ctrl+s");
@@ -127,8 +149,8 @@ MC_GUI_SUITE(latin1_files) {
 
     MCGuiStep("the UTF-16 file", [] { open(utf16()); });
     MCGuiWait("opens as text without its mark", 10, [] { return showing(utf16(), "naïve\n"); });
-    MCGuiStep("named UTF-16 LE, and saved unchanged", [] {
-        GCHECK(encodingShown("UTF-16 LE"));
+    MCGuiWait("named UTF-16 LE", 5, [] { return encodingShown("UTF-16 LE"); });
+    MCGuiStep("saved unchanged", [] {
         GCHECK(!encodingShown("Windows-1252"));
         gInode = inodeOf(utf16());
         MCGuiClick(ed()->textView());
@@ -136,6 +158,45 @@ MC_GUI_SUITE(latin1_files) {
     });
     MCGuiWait("written again", 10, [] { return inodeOf(utf16()) != gInode; });
     MCGuiStep("byte for byte, its mark first", [] { GCHECK(MCGuiReadFile(utf16()) == kUtf16); });
+
+    // ---- a Find in Folder hit in such a file opens it as text at its line
+    MCGuiStep("a Windows-1252 file with a hit on line 3; its folder selected", [] {
+        MCGuiWriteFile(hit(), "one\ntwo\nthe caf\xE9 l1needle\n");
+        MCGuiApp().tree->revealPath(dir());
+    });
+    MCGuiWait("selected", 10, [] { return MCGuiApp().tree->selectedDir() == dir(); });
+    MCGuiStep("Find in Folder", [] { MCGuiKey("ctrl+shift+f"); });
+    MCGuiWait("its window", 10, [] { return MCGuiTopWindow() != MCGuiApp().window; });
+    MCGuiStep("the word typed over whatever was there", [] {
+        gSearch = MCGuiTopWindow();
+        MCGuiSetKeyWindow(gSearch);
+        if (SearchPanel* s = MCGuiApp().search) {
+            gtk_editable_set_text(GTK_EDITABLE(s->includeEntry()), "");
+            gtk_editable_set_text(GTK_EDITABLE(s->excludeEntry()), "");
+        }
+        MCGuiKey("ctrl+a");
+        MCGuiType("l1needle");
+    });
+    MCGuiWait("the hit, read as Windows-1252", 10, [] {
+        return labelHolding(GTK_WIDGET(gSearch), "the café l1needle") != nullptr;
+    });
+    MCGuiStep("a click on it", [] {
+        MCGuiClick(labelHolding(GTK_WIDGET(gSearch), "the café l1needle"));
+    });
+    MCGuiWait("the file open as text at line 3", 10, [] {
+        return showing(hit(), "one\ntwo\nthe café l1needle\n") && caretLine() == 2;
+    });
+    MCGuiWait("named Windows-1252", 5, [] { return encodingShown("Windows-1252"); });
+    MCGuiStep("the search window closed", [] {
+        GCHECK(!ed()->dirty());
+        MCGuiSetKeyWindow(gSearch);
+        MCGuiKey("escape");
+    });
+    MCGuiWait("gone", 10, [] { return MCGuiTopWindow() == MCGuiApp().window; });
+    MCGuiStep("the editor's window", [] {
+        MCGuiSetKeyWindow(nullptr);
+        MCGuiFocusKeyWindow();
+    });
 
     // ---- an edit, in the encoding; then a character it cannot store
     MCGuiStep("back to the Windows-1252 file, ü typed at its end", [] { open(cp1252()); });
@@ -218,7 +279,7 @@ MC_GUI_SUITE(latin1_files) {
     });
 
     MCGuiStep("the tabs closed", [] {
-        for (const std::string& p : {cp1252(), latin1(), utf16()}) {
+        for (const std::string& p : {cp1252(), latin1(), utf16(), hit()}) {
             if (Document* d = ed()->documentFor(p)) {
                 GCHECK(!d->dirty());
                 ed()->closeTab(d);
@@ -239,8 +300,10 @@ MC_GUI_SUITE(_latin1_restore) {
     MCGuiWait("on show, unsaved", 10, [] {
         return showing(gone(), "naïve café\n") && ed()->dirty();
     });
-    MCGuiStep("the backup's encoding, in the status bar; Ctrl+S", [] {
-        GCHECK(encodingShown("Windows-1252"));
+    MCGuiWait("the backup's encoding, in the status bar", 5, [] {
+        return encodingShown("Windows-1252");
+    });
+    MCGuiStep("Ctrl+S", [] {
         MCGuiClick(ed()->textView());
         MCGuiKey("ctrl+s");
     });
