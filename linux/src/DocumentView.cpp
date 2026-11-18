@@ -97,7 +97,8 @@ void commonEnds(const std::string& a, const std::string& b, std::size_t& p, std:
 
 // ---------------------------------------------------------------- reading
 
-Document::Read Document::readText(const std::string& path, std::string& out) {
+Document::Read Document::readText(const std::string& path, std::string& out,
+                                  FileEncoding* encoding) {
     struct stat st;
     if (stat(path.c_str(), &st) != 0) return Read::Missing;
     if (!S_ISREG(st.st_mode)) return Read::NotRegular;
@@ -116,9 +117,18 @@ Document::Read Document::readText(const std::string& path, std::string& out) {
         if ((off_t)out.size() > kMaxTextBytes) { close(fd); return Read::TooLarge; }
     }
     close(fd);
+    // The core's rules, the Mac's (MCReadDiskText): UTF-16 with its byte
+    // order mark decoded exactly, bytes that are not UTF-8 and hold no NUL
+    // read as Windows-1252, a UTF-8 mark kept apart. UTF-16 that does not
+    // decode (a lone surrogate, an odd byte) is not text.
+    FileEncoding found;
+    if (!FolderSearch::decodeFileText(&out, &found.encoding, &found.bom)) return Read::NotText;
     // gtk_text_buffer_set_text requires valid UTF-8; handing it a binary file
     // spews GTK criticals and leaves the buffer cut at the first bad byte.
+    // decodeFileText leaves a file that is neither (a NUL in bytes that are
+    // not UTF-8) as it is, and a NUL is refused here too.
     if (!g_utf8_validate(out.data(), (gssize)out.size(), nullptr)) return Read::NotText;
+    if (encoding) *encoding = found;
     return Read::Ok;
 }
 
@@ -194,7 +204,7 @@ void Document::attachHeld(const std::string& path) {
     const std::string text = this->text();
     sniffCsv(text);
     std::string disk;
-    if (readText(path, disk) == Read::Ok) rememberDisk(disk);
+    if (readText(path, disk, &encoding_) == Read::Ok) rememberDisk(disk);
     noteLargeFile(text);
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(buffer_, &start);
@@ -303,6 +313,7 @@ void Document::clearSource() {
     taskTimer_ = 0;
     tasksDone_ = tasksTotal_ = 0;
     diskKnown_ = false;
+    encoding_ = FileEncoding();
     std::string().swap(saved_);
     savedChars_ = 0;
     dirty_ = false;
@@ -325,10 +336,12 @@ void Document::fill(const std::string& text) {
     resetHistory(text);
 }
 
-void Document::loadText(const std::string& path, const std::string& content) {
+void Document::loadText(const std::string& path, const std::string& content,
+                        const FileEncoding& encoding) {
     clearSource();
     kind_ = Kind::Text;
     path_ = path;
+    encoding_ = encoding;
     ext_ = extensionOf(path);
     markdown_ = ext_ == "md" || ext_ == "markdown";
 #ifdef MUTIBLE_ENABLE_PDF
@@ -766,7 +779,15 @@ bool Document::save(std::string* error) {
     // display". Saving a message used to write it over the file, which for
     // a binary file destroyed it.
     if (!canSave()) return true;
+    saveNote_.clear();
     const std::string body = text();
+    // In the file's encoding, as read. A character Windows-1252 cannot store
+    // (an arrow, an emoji) has the file written as UTF-8, and said so: never
+    // a '?' in its place, never a question on every save (the Mac's C3b).
+    FileEncoding encoding = encoding_;
+    std::string unheld;
+    if (!FolderSearch::canEncode(body, encoding.encoding, &unheld)) encoding = FileEncoding();
+    const std::string bytes = FolderSearch::encodeFileText(body, encoding.encoding, encoding.bom);
 
     // Write through a symlink to the file it names (a dotfile repo links its
     // files into place), and keep the file's permissions. The write itself is
@@ -805,23 +826,43 @@ bool Document::save(std::string* error) {
     }
     if (inPlace) {
         std::string why;
-        if (!writeInPlace(target, body, (off_t)st.st_size, why)) {
+        if (!writeInPlace(target, bytes, (off_t)st.st_size, why)) {
             if (error) *error = why;
             return false;
         }
     } else {
         GError* err = nullptr;
-        if (!g_file_set_contents_full(target.c_str(), body.data(), (gssize)body.size(),
+        if (!g_file_set_contents_full(target.c_str(), bytes.data(), (gssize)bytes.size(),
                                       G_FILE_SET_CONTENTS_CONSISTENT, mode, &err)) {
             if (error) *error = err ? err->message : "Unknown error";
             g_clear_error(&err);
             return false;
         }
     }
+    if (encoding.encoding != encoding_.encoding) {
+        const std::size_t slash = path_.find_last_of('/');
+        saveNote_ = "Saved " + (slash == std::string::npos ? path_ : path_.substr(slash + 1)) +
+                    " as UTF-8: " +
+                    FolderSearch::encodingLabel(encoding_.encoding, encoding_.bom) +
+                    " cannot store \u201C" + unheld + "\u201D";
+    }
+    encoding_ = encoding;
     rememberDisk(body);   // so this save is not taken for someone else's
     markDirty(false);
     client().saved(id_);
     return true;
+}
+
+std::string Document::takeSaveNote() {
+    std::string n;
+    n.swap(saveNote_);
+    return n;
+}
+
+std::string Document::encodingLabel() const {
+    if (kind_ != Kind::Text || path_.empty() || loading()) return "";
+    if (encoding_.encoding == FolderSearch::TextEncoding::Utf8 && !encoding_.bom) return "";
+    return FolderSearch::encodingLabel(encoding_.encoding, encoding_.bom);
 }
 
 // ---------------------------------------------------------------- rename
@@ -922,13 +963,22 @@ void Document::checkExternalChange() {
     // Gone, unreadable, replaced by a pipe, grown past what the editor opens
     // or no longer text: what is in the editor stays, as on the Mac.
     std::string content;
-    if (readText(path_, content) != Read::Ok) return;
+    FileEncoding encoding;
+    if (readText(path_, content, &encoding) != Read::Ok) return;
     // Back from a backup made from an older version of the file: asked about
     // once, as a change seen now would be (askAboutDiskChange).
     if (diskQuestion_ && !dirty()) diskQuestion_ = false;
-    if (content == saved_ && !diskQuestion_) return;
+    if (content == saved_ && !diskQuestion_) {
+        // The same text written another way (a tool saved it as UTF-8):
+        // a clean buffer is written as the file is now.
+        if (!dirty() && (encoding.encoding != encoding_.encoding || encoding.bom != encoding_.bom)) {
+            encoding_ = encoding;
+            host_->documentStateChanged(this);   // the status bar's label
+        }
+        return;
+    }
     if (!dirty()) {
-        applyDiskText(content);
+        applyDiskText(content, encoding);
         return;
     }
     // Edits here and a change there: the user decides. Once asked, this
@@ -942,8 +992,9 @@ void Document::checkExternalChange() {
 bool Document::reloadFromDisk() {
     if (kind_ != Kind::Text || path_.empty()) return false;
     std::string content;
-    if (readText(path_, content) != Read::Ok) return false;
-    applyDiskText(content);
+    FileEncoding encoding;
+    if (readText(path_, content, &encoding) != Read::Ok) return false;
+    applyDiskText(content, encoding);
     return true;
 }
 
@@ -953,9 +1004,10 @@ bool Document::reloadFromDisk() {
 // from Disk") takes it back and keeps the steps before it,
 // and the caret stays where it was (a caret inside the replaced part keeps
 // its line and column). The editor keeps the scroll position of one on show.
-void Document::applyDiskText(const std::string& content) {
+void Document::applyDiskText(const std::string& content, const FileEncoding& encoding) {
     host_->documentWillReload(this);
     folds_->forget();   // as on the Mac, a reload forgets the folds
+    encoding_ = encoding;   // the file as it is now is what a save writes
     rememberDisk(content);
     const std::string old = text();
     std::size_t p = 0, q = 0;
