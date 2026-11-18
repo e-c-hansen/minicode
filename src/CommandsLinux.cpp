@@ -19,6 +19,7 @@
 // has the same commands, but those the registry marks Fixed, which are a
 // view's own keys.
 #include "Commands.h"
+#include "Rename.h"
 
 
 namespace Commands {
@@ -418,8 +419,9 @@ const std::vector<LinuxRow>& linuxRows() {
 }
 
 const LinuxRow* linuxRow(const std::string& id) {
+    const std::string other = Rename::otherCommandId(id);   // src/Rename.h
     for (const LinuxRow& r : linuxRows())
-        if (id == r.id) return &r;
+        if (id == r.id || (!other.empty() && other == r.id)) return &r;
     return nullptr;
 }
 

@@ -28,6 +28,20 @@
 #
 # make test checks this file (tests/zsh_integration_tests.inc).
 
+# rename-mutible: keep-begin
+# A shell started with the names from before 1.6.0 (src/Rename.h: the
+# Linux app until it moves, an older copy) is read the same.
+() {
+  local v old new
+  for v in USER_ZDOTDIR EXEC NONCE VENV VENV_PROMPT; do
+    old=MINICODE_$v new=MUTIBLE_$v
+    if (( ${(P)+old} )); then
+      (( ${(P)+new} )) || typeset -gx $new="${(P)old}"
+      unset $old
+    fi
+  done
+}
+# rename-mutible: keep-end
 typeset -g __minicode_zdotdir=$ZDOTDIR __minicode_exec_in=${MINICODE_EXEC-}
 typeset -g __minicode_nonce=${MINICODE_NONCE-}
 typeset -g __minicode_venv=${MINICODE_VENV-} __minicode_venv_prompt=${MINICODE_VENV_PROMPT-}

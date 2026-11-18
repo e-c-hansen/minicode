@@ -382,8 +382,9 @@ jobs:
         working-directory: linux
         timeout-minutes: 12
         env:
-          MINICODE_HOST: loopback
-          MINICODE_HOST_DELAY_US: '200'
+          # The Linux app's names, until it moves to mutible's.
+          MINICODE_HOST: loopback # rename-mutible: keep
+          MINICODE_HOST_DELAY_US: '200' # rename-mutible: keep
           MC_GUI_RETRIES: '3'
           MC_GUI_TOTAL_SECONDS: '600'
           MC_GUI_WAIT_SCALE: '1.5'

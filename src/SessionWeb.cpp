@@ -1,5 +1,6 @@
 // SessionWeb.cpp — see SessionWeb.h.
 #include "SessionWeb.h"
+#include "Rename.h"
 
 #include "AutoIndent.h"
 #include "IdeLink.h"
@@ -979,7 +980,7 @@ bool Server::start(const Options& o, std::string* error) {
     // The host machine's theme when its settings file says one.
     settingsPath_ = o.settingsPath;
     if (settingsPath_.empty()) {
-        if (const char* s = std::getenv("MINICODE_SETTINGS")) settingsPath_ = s;
+        if (const char* s = Rename::getenvOrOld("MINICODE_SETTINGS")) settingsPath_ = s;
         else if (const char* home = std::getenv("HOME"))
             settingsPath_ = std::string(home) + "/.config/minicode/settings.conf";
     }

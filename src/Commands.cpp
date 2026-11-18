@@ -1,5 +1,6 @@
 // Commands.cpp — see Commands.h.
 #include "Commands.h"
+#include "Rename.h"
 
 #include <algorithm>
 #include <cctype>
@@ -857,6 +858,12 @@ const std::vector<Command>& all() {
 const Command* find(const std::string& id) {
     for (const Command& c : all())
         if (id == c.id) return &c;
+    // An id of the app's own in its spelling before the rename (keys.conf
+    // files written then, the Linux port's tables): src/Rename.h.
+    const std::string other = Rename::otherCommandId(id);
+    if (!other.empty())
+        for (const Command& c : all())
+            if (other == c.id) return &c;
     return nullptr;
 }
 
@@ -919,6 +926,7 @@ unsigned flagsOf(const Command& c, Platform p) {
 const std::vector<Key>& Keymap::keysOf(const std::string& id) const {
     static const std::vector<Key> none;
     auto it = keys.find(id);
+    if (it == keys.end()) it = keys.find(Rename::otherCommandId(id));
     return it == keys.end() ? none : it->second;
 }
 

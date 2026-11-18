@@ -1,5 +1,6 @@
 // ClaudeHooks.cpp — see ClaudeHooks.h.
 #include "ClaudeHooks.h"
+#include "Rename.h"
 #include "ControlProtocol.h"
 #include <cerrno>
 #include <climits>
@@ -104,9 +105,13 @@ Json entry(const std::string &command) {
 bool isOurCommand(const std::string &c) {
     // Any spelling that runs `minicode notify --from-hook` (a full path to
     // the launcher, extra flags after it) counts as installed.
-    return c.find("minicode notify --from-hook") != std::string::npos ||
-           (c.find("minicode") != std::string::npos &&
-            c.find(" notify --from-hook") != std::string::npos);
+    // The command before the rename (src/Rename.h) counts too: Claude
+    // Code's settings files keep it, and it still runs.
+    for (const char *name : {"minicode", Rename::kOldName})
+        if (c.find(std::string(name) + " notify --from-hook") != std::string::npos ||
+            (c.find(name) != std::string::npos && c.find(" notify --from-hook") != std::string::npos))
+            return true;
+    return false;
 }
 
 }  // namespace
