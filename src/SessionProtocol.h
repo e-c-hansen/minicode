@@ -125,6 +125,16 @@ enum class Kind {
                  // folder first), json: the request ({"op": "list", "path", "hidden"});
                  // changes nothing, so a renderer that only reads may send it
     FsData,      // host → renderer: req, json: the answer (or {"error"})
+    // A window that closes detaches, and one that opens reattaches (stage 6,
+    // step 2; renderer → host). New kinds rather than flags on DocClose and
+    // TermClose, so that a host from before them refuses them ("the host
+    // takes no ...") instead of closing what the renderer meant to keep.
+    DocPath,     // doc, name: the document's file is now this path (Save As, a rename)
+    DocDetach,   // doc: the renderer lets go of its seat and the host keeps the document,
+                 // its text and history, even with no renderer left on it (as when a
+                 // renderer's connection goes); a renderer reattaches with DocOpen
+    TermDetach,  // term: the renderer no longer shows the terminal (it stops being one
+                 // of its viewers, so its credit holds nothing back); the shell runs on
 };
 
 const char* kindName(Kind k);
@@ -263,5 +273,12 @@ Message roundTrip(const Message& m);
 // panel: a browser's view of one window (SessionWeb.h, Options::window)
 // shows and types into those and no others.
 Json windowJson(const Model::Window& w);
-
+// Whether `bytes` read as an emulator's answers to a program's queries and
+// nothing else (TermInput's flag 1): one or more of a CSI ending in c, n,
+// R, t, x or y (DA, DSR, CPR, window reports, DECRQM), an OSC (colors) or
+// a DCS (XTVERSION, DECRQSS), each whole. A key's sequence (arrows, F keys,
+// a mouse report, a bracketed paste) never reads as one, though a renderer
+// should still count bytes sent while a key is pressed as typing (Shift+F3
+// is CSI 1;2R, as a cursor report is).
+bool termLooksLikeAnswer(const std::string& bytes);
 }  // namespace Shared

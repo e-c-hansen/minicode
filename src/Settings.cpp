@@ -1738,9 +1738,13 @@ const char* Settings::defaultFileText() {
 # are). Off, the editor and the terminals keep them themselves, as before.
 # Files and terminals opened after a change follow it.
 # Headless (Linux): the host is a separate `mutible host` process for each
-# folder, which the app finds, or starts, and attaches to. It ends by itself
-# once no window has used it for 10 minutes and nothing in it is unsaved or
-# running. On Linux, off and on both keep the host inside the app; macOS
+# folder, which the app finds, or starts, and attaches to. A window closed,
+# or the app quit, leaves the folder's files and terminals with it: a file
+# kept unsaved (the close question's Keep Unsaved) and every terminal,
+# running, come back in the folder's next window. It ends by itself once no
+# window has used it for 10 minutes and nothing in it is unsaved or running.
+# On Linux, off and on both keep the host inside the app, where a closed
+# window's terminals and saved files come back while the app runs; macOS
 # takes headless as on for now. Windows opened after a change follow it.
 # editor.session-host = off
 # A file over 20 MB or 300,000 lines opens in large-file mode, as in VS Code:

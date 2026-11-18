@@ -136,10 +136,14 @@ std::string Document::extensionOf(const std::string& path) {
 // ---------------------------------------------------------------- life
 
 Document::Document(DocumentHost* host, DocumentTags* tags, std::shared_ptr<SessionLink::Link> link)
+    : Document(host, tags, std::move(link), 0) {}
+
+Document::Document(DocumentHost* host, DocumentTags* tags, std::shared_ptr<SessionLink::Link> link,
+                   uint64_t heldId)
     : host_(host), tags_(tags), link_(std::move(link)) {
     // Its id on the session's host, from the client's range (a second
-    // renderer on the host never makes the same one).
-    id_ = client().newId();
+    // renderer on the host never makes the same one), or the held one's.
+    id_ = heldId ? heldId : client().newId();
     buffer_ = gtk_text_buffer_new(tags_->table);
     // GTK's undo stays off: every edit goes to the session's host (undo()).
     gtk_text_buffer_set_enable_undo(buffer_, FALSE);
@@ -168,15 +172,95 @@ Document::Document(DocumentHost* host, DocumentTags* tags, std::shared_ptr<Sessi
     brackets_ = std::make_unique<BracketColors>(buffer_);
     semantic_ = std::make_unique<SemanticColors>(buffer_);
     // An empty text until it holds something: the session's host has it
-    // from the start, so typing into a new file is followed too.
+    // from the start, so typing into a new file is followed too. A held
+    // one's text comes back as one insertion (attachHeld waits for it).
     client().open(id_, "", "", this);
+}
+
+void Document::attachHeld(const std::string& path) {
+    clearSource();
+    kind_ = Kind::Text;
+    path_ = path;
+    hostPath_ = path;   // the host has it by this path already
+    ext_ = extensionOf(path);
+    markdown_ = ext_ == "md" || ext_ == "markdown";
+#ifdef MUTIBLE_ENABLE_PDF
+    latex_ = ext_ == "tex" || ext_ == "ltx" || ext_ == "latex";
+#endif
+    // The host's text, as one insertion from the host (Client::open's
+    // answer), which records nothing.
+    ++edits_;
+    client().settle();
+    const std::string text = this->text();
+    sniffCsv(text);
+    std::string disk;
+    if (readText(path, disk) == Read::Ok) rememberDisk(disk);
+    noteLargeFile(text);
+    GtkTextIter start;
+    gtk_text_buffer_get_start_iter(buffer_, &start);
+    gtk_text_buffer_place_cursor(buffer_, &start);
+    startHighlighting();
+    watch();
+    refreshTaskCount();
+    checkDirty();
+}
+
+void Document::detachFromHost() {
+    Shared::Client& c = client();
+    if (!c.isOpen(id_) || link_->lost()) return;
+    closeOutside();   // the step this turn opened goes first
+    c.detach(id_);
+    detached_ = true;
+}
+
+void Document::rehost(std::shared_ptr<SessionLink::Link> link) {
+    if (!link || link == link_) return;
+    const bool wasOpen = client().isOpen(id_);
+    if (wasOpen) client().close(id_);   // nothing reaches a lost host; the entry goes
+    if (outsideIdle_) g_source_remove(outsideIdle_);
+    outsideIdle_ = 0;
+    outsideOpen_ = false;
+    link_ = std::move(link);
+    id_ = client().newId();
+    hostPath_.clear();
+    if (kind_ != Kind::Text) return;
+    // The file's text as last read or saved is the host's saved text, and
+    // the buffer's difference from it an edit outside the history, so the
+    // host counts it unsaved (its lifetime keeps an unsaved file).
+    const std::string now = text();
+    client().open(id_, path_, now, this);
+    hostPath_ = path_;
+    hostSavedFromDisk(now);
+    if (stepOpen_) client().openStep(id_, {"Typing", false}, selection());
+}
+
+// The host's saved text made the file's (as last read or saved) when the
+// buffer holds `now`, which differs from it (a buffer opened anew on a host,
+// or a backup restored): the host's copy is set to the file's text and the
+// difference goes as an edit outside the history, so the host counts it
+// unsaved, and its lifetime keeps an unsaved file (a headless host after
+// the app quits). The mirror already holds `now`.
+void Document::hostSavedFromDisk(const std::string& now) {
+    if (kind_ != Kind::Text || !diskKnown_ || saved_ == now || !client().isOpen(id_)) return;
+    client().reset(id_, saved_);
+    std::size_t p = 0, q = 0;
+    commonEnds(saved_, now, p, q);
+    const std::size_t from = g_utf8_strlen(saved_.data(), (gssize)p);
+    const std::size_t del = g_utf8_strlen(saved_.data() + p, (gssize)(saved_.size() - p - q));
+    client().recordOutside(id_, Ot::Op{from, del, Model::utf16FromUtf8(now.substr(p, now.size() - p - q))});
+}
+
+void Document::tellHostPath() {
+    if (kind_ != Kind::Text || path_ == hostPath_ || !client().isOpen(id_)) return;
+    hostPath_ = path_;
+    client().setPath(id_, path_);
 }
 
 Document::~Document() {
     // Saved, or let go when asked: its unsaved text is not kept any more. A
     // crash or a SIGKILL never gets here, and leaves the backup.
     if (backup_.written) BackupStore::shared().remove(backup_.id);
-    if (client().isOpen(id_)) client().close(id_);
+    if (!detached_ && client().isOpen(id_)) client().close(id_);
     folds_.reset();
     cancelLoading();
     stopWatching();
@@ -374,6 +458,7 @@ void Document::restoreText(const std::string& path, const std::string& text,
     watch();
     refreshTaskCount();
     checkDirty();
+    hostSavedFromDisk(text);   // the host counts the backup's text unsaved too
 }
 
 void Document::askAboutDiskChange() {
@@ -550,14 +635,17 @@ void Document::resetHistory(const std::string& text) {
     Shared::Client& c = client();
     if (kind_ != Kind::Text) {
         if (c.isOpen(id_)) c.close(id_);
+        hostPath_.clear();
         return;
     }
     if (c.isOpen(id_)) {
         c.reset(id_, text);
     } else {
         c.open(id_, path_, text, this);
+        hostPath_ = path_;
         if (stepOpen_) c.openStep(id_, {"Typing", false}, selection());
     }
+    tellHostPath();   // a reattaching window finds it by its path
 }
 
 void Document::breakUndoCoalescing() { client().breakCoalescing(id_); }
@@ -765,6 +853,7 @@ void Document::setPath(const std::string& path) {
     stopWatching();
     path_ = path;
     if (watched) watch();
+    tellHostPath();   // Save As, a rename
     const bool regrammar = ext != ext_ || wasSettings != isSettingsFile();
     ext_ = ext;
     if (regrammar && kind_ == Kind::Text) startHighlighting();

@@ -22,8 +22,9 @@
 // Where the host is, read when a link is made (MUTIBLE_HOST wins over the
 // setting, for the checks and for forcing one):
 //   - MUTIBLE_HOST=inprocess, or unset with editor.session-host off or on:
-//     a SessionHost on a thread of this process, one per folder. The
-//     default until closing a window detaches (stage 6, step 2).
+//     a SessionHost on a thread of this process, one per folder; kept
+//     while it holds what windows that closed left (keepWhileHolding). The
+//     default until the default flips on both apps together.
 //   - MUTIBLE_HOST=loopback: the same, every message through the
 //     protocol's encoding and back, both ways (MUTIBLE_HOST_DELAY_US delays
 //     each on the host's thread, as a slow link would).
@@ -37,8 +38,16 @@
 // A headless host that goes (killed, or its socket closed) is reported once
 // on stderr and to the link's lost listeners (the windows' status bars, the
 // terminals); its client then sends nothing and waits for nothing
-// (Client::hostLost). Nothing reconnects yet. Quitting detaches from every
-// headless host (detachAll), which keeps running until its lifetime ends.
+// (Client::hostLost). The next window on the folder, or Reconnect in the
+// status bar, finds or starts the host again (forFolder passes a lost link
+// over) and moves the windows to it, their buffers opened on it anew.
+// Quitting detaches from every headless host (detachAll), which keeps
+// running until its lifetime ends.
+//
+// Windows detach and reattach (stage 6, step 2): a window closing leaves its
+// documents and terminals on the host and its record (windowDetached); a
+// window opening takes the latest record a closed window left, with what it
+// names, and what no record names (takeForWindow).
 #pragma once
 
 #include <sys/types.h>
@@ -86,9 +95,48 @@ public:
     int addLostListener(std::function<void(const std::string& message)> f);
     void removeLostListener(int token);
 
-    // A window's tabs, sent when they differ from what was sent last.
+    // A window's tabs, sent when they differ from what was sent last, with
+    // the host terminals its dock shows ("terms", as the Mac's window has).
     void windowTabs(std::uint64_t window, const Model::Window& w);
+    void windowTerminals(std::uint64_t window, const Model::Window& w, std::vector<std::uint64_t> terms);
     void windowClosed(std::uint64_t window);
+    // The window closes and detaches (stage 6, step 2): its record stays on
+    // the host, sent once more so it is the latest a closing window left,
+    // for the folder's next window to take; none is kept for a window with
+    // no tabs and no terminals.
+    void windowDetached(std::uint64_t window, const Model::Window& w);
+
+    // What the host holds that a window opening on the folder takes
+    // (takeForWindow): the latest record a closed window left (its tabs, as
+    // windowJson has them) with its documents and terminals, then those
+    // held documents and terminals no record names. A record is free when no
+    // window of this app has it and its renderer is gone or is this app's;
+    // what a record of a window still open names is that window's, and
+    // left alone.
+    struct HeldDoc {
+        std::uint64_t id = 0;
+        std::string path;
+        bool dirty = false;
+    };
+    struct HeldTerm {
+        std::uint64_t id = 0;
+        int pid = 0;
+        Shared::TermShell shell;
+    };
+    struct Held {
+        std::uint64_t window = 0;   // the record taken, 0 for none
+        Json tabs;                  // its tabs (windowJson), null for none
+        std::vector<HeldDoc> docs;
+        std::vector<HeldTerm> terms;
+        std::vector<std::uint64_t> records;   // allFree: every free record
+        bool empty() const { return !window && docs.empty() && terms.empty(); }
+    };
+    // `window` takes the record over: its tabs are reported under the
+    // record's id from now on.
+    Held takeForWindow(std::uint64_t window);
+    // Everything free (every free record, and what no window's record
+    // names), for endDetached.
+    Held allFree();
 
     // For the GUI checks: whether the host's text of each of `docs` (a
     // document's id and its buffer's text) is the buffer's, and the host
@@ -103,6 +151,8 @@ public:
 
 private:
     friend std::shared_ptr<Link> forFolder(const std::string& root, bool headless);
+    Held free(bool all);
+    Json tabsJson(std::uint64_t window, const Model::Window& w) const;
     Link() = default;
     struct Wake;
     void startInProcess(bool loopback, unsigned delayUs);
@@ -131,18 +181,36 @@ private:
     // windows never take it.
     std::map<std::uint64_t, std::string> sentTabs_;
     std::map<std::uint64_t, std::uint64_t> hostWindow_;
+    std::map<std::uint64_t, std::vector<std::uint64_t>> windowTerms_;
 };
 
 // The link to the host of `root`'s folder: the one already made for it,
 // else a new one, its host found or started as the environment and
-// `headless` (editor.session-host = headless) say.
+// `headless` (editor.session-host = headless) say. A link whose host went
+// is passed over: the folder gets a new one (stage 6, step 2: the windows
+// on the old one move to it, Editor::rehost), found or started again.
 std::shared_ptr<Link> forFolder(const std::string& root, bool headless);
+// Whether the folder's link now has lost its host (a new window, or
+// Reconnect, finds or starts it again).
+bool folderLost(const std::string& root);
+
+// A window let its link go, detached: an in-process host holding anything
+// (documents, terminals, a window's record) is kept, with its thread, while
+// the app runs, for the folder's next window; one holding nothing goes. A
+// headless host needs nothing kept (it runs on by itself).
+void keepWhileHolding(const std::shared_ptr<Link>& link);
+// For the GUI checks between suites: everything the links hold that no
+// open window shows (free records, their documents and terminals) is
+// closed on its host, and kept links holding nothing go, so one suite's
+// detached terminals never come back in the next suite's window.
+void endDetached();
 
 // Every link there is now (checks).
 std::vector<std::shared_ptr<Link>> all();
 
 // Quitting: every headless host let go of; each keeps running until its
-// own lifetime ends.
+// own lifetime ends. In-process hosts kept for the next window go (their
+// shells hung up).
 void detachAll();
 
 }  // namespace SessionLink

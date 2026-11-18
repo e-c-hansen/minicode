@@ -34,6 +34,8 @@ const KindName kKinds[] = {
     {Kind::TermExited, "term.exited"},  {Kind::TermReplay, "term.replay"},
     {Kind::DocGone, "doc.gone"},
     {Kind::FsRead, "fs.read"},          {Kind::FsData, "fs.data"},
+    {Kind::DocPath, "doc.path"},        {Kind::DocDetach, "doc.detach"},
+    {Kind::TermDetach, "term.detach"},
 };
 
 // Terminal bytes are any bytes, which a JSON string cannot carry: base64.
@@ -169,6 +171,44 @@ std::uint64_t num(const Json& j, const char* key) {
 }
 
 }  // namespace
+
+bool termLooksLikeAnswer(const std::string& b) {
+    std::size_t i = 0;
+    const std::size_t n = b.size();
+    if (n == 0) return false;
+    while (i < n) {
+        if (b[i] != '\x1b' || i + 1 >= n) return false;
+        const char kind = b[i + 1];
+        i += 2;
+        if (kind == '[') {
+            // Parameters, intermediates, then the final byte.
+            while (i < n && (unsigned char)b[i] >= 0x30 && (unsigned char)b[i] <= 0x3f) i++;
+            while (i < n && (unsigned char)b[i] >= 0x20 && (unsigned char)b[i] <= 0x2f) i++;
+            if (i >= n) return false;
+            const char f = b[i++];
+            if (f != 'c' && f != 'n' && f != 'R' && f != 't' && f != 'x' && f != 'y') return false;
+        } else if (kind == ']' || kind == 'P') {
+            // To BEL (an OSC only) or ST (ESC \\).
+            bool ended = false;
+            while (i < n && !ended) {
+                if (kind == ']' && b[i] == '\x07') {
+                    i++;
+                    ended = true;
+                } else if (b[i] == '\x1b') {
+                    if (i + 1 >= n || b[i + 1] != '\\') return false;
+                    i += 2;
+                    ended = true;
+                } else {
+                    i++;
+                }
+            }
+            if (!ended) return false;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
 
 const char* kindName(Kind k) {
     for (const KindName& n : kKinds)

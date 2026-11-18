@@ -482,7 +482,135 @@ void Terminal::makeTerminal() {
     // realized as it goes in, and the handler above must be there for it.
     gtk_overlay_set_child(GTK_OVERLAY(root_), scroller);
     gtk_overlay_add_overlay(GTK_OVERLAY(root_), underline_);
+    // A pty larger than the view (another renderer typed last) is drawn
+    // larger and clipped here, with no scroll bar of its own
+    // (followPtySize).
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller), GTK_POLICY_EXTERNAL, GTK_POLICY_AUTOMATIC);
+    if (heldTerm_) attachShell();
+    else spawnShell();
+}
+
+void Terminal::attachHeld(Shared::TermId id, int pid, const Shared::TermShell& shell) {
+    heldTerm_ = id;
+    heldPid_ = pid;
+    shellPid_ = pid;   // for busy(), the processes and the close question meanwhile
+    host_ = shell;
+}
+
+// The held shell's integration is the host's to read (its marks carry a
+// nonce this renderer never saw): its word on the shell is taken as it is,
+// and the shell is zsh or bash by its name.
+void Terminal::attachShell() {
+    const Shared::TermId id = heldTerm_;
+    heldTerm_ = 0;
+    if (hostGone_ || link_->lost()) {
+        hostGone_ = true;
+        feedNotice("[the session's host went away: no shell can start here]");
+        return;
+    }
+    std::string comm;
+    {
+        gchar* raw = nullptr;
+        const std::string file = "/proc/" + std::to_string(heldPid_) + "/comm";
+        if (g_file_get_contents(file.c_str(), &raw, nullptr, nullptr)) comm = raw;
+        g_free(raw);
+        while (!comm.empty() && (comm.back() == '\n' || comm.back() == ' ')) comm.pop_back();
+    }
+    shell_ = ShellIntegration::ShellState();
+    const Shared::TermShell held = host_;
+    host_ = Shared::TermShell();
+    marks_.clear();
+    navLine_ = -1;
+    hostCursor_ = -1;
+    forgetHeld();
+    bashShell_ = comm == "bash";
+    nonce_ = comm == "zsh" || bashShell_ ? std::string("held") : std::string();
+    popOwed_ = 0;
+    shellSpoke_ = true;   // at its prompt or running: nothing to wait for
+    lastSpawn_ = g_get_monotonic_time();
+    hostTerm_ = id;
+    shellPid_ = heldPid_;
+    sentCols_ = sentRows_ = 0;   // this view's size, sent once attached
+    link_->client().attachTerminal(hostTerm_, &listener_);
+    applyShell(held);
+    watchSize();
+}
+
+void Terminal::detachFromHost() {
+    if (link_->lost()) return;
+    if (hostTerm_) link_->client().detachTerminal(hostTerm_);
+    hostTerm_ = 0;
+    heldTerm_ = 0;   // never attached here: nothing to let go of
+}
+
+void Terminal::rehost(std::shared_ptr<SessionLink::Link> link) {
+    if (!link || link == link_) return;
+    link_->removeLostListener(lostListener_);
+    if (hostTerm_ && !link_->lost()) link_->client().closeTerminal(hostTerm_);
+    hostTerm_ = heldTerm_ = 0;
+    link_ = std::move(link);
+    lostListener_ = link_->addLostListener([this](const std::string&) {
+        hostGone_ = true;
+        const bool had = hostTerm_ != 0;
+        hostTerm_ = 0;
+        shellPid_ = -1;
+        navLine_ = -1;
+        if (vte_ && had) feedNotice("[the session's host went away, and this terminal's shell with it]");
+    });
+    hostGone_ = false;
+    rapidExits_ = 0;
+    if (!vte_) return;   // its shell starts when it is first shown
+    feedNotice("[the session's host is back: a new shell]");
     spawnShell();
+}
+
+bool Terminal::viewCells(int* cols, int* rows) const {
+    if (!vte_) return false;
+    GtkWidget* scroller = gtk_widget_get_parent(vte_);
+    VteTerminal* t = VTE_TERMINAL(vte_);
+    const double cw = (double)vte_terminal_get_char_width(t), ch = (double)vte_terminal_get_char_height(t);
+    if (!scroller || cw <= 0 || ch <= 0) return false;
+    // VTE's padding: what its allocation holds beyond its cells.
+    const int padW = std::max(0, gtk_widget_get_width(vte_) - (int)(vte_terminal_get_column_count(t) * cw));
+    const int padH = std::max(0, gtk_widget_get_height(vte_) - (int)(vte_terminal_get_row_count(t) * ch));
+    *cols = (int)((gtk_widget_get_width(scroller) - padW) / cw);
+    *rows = (int)((gtk_widget_get_height(scroller) - padH) / ch);
+    return *cols >= 2 && *rows >= 1;
+}
+
+// The pty's size as the host says it (TermShell's cols and rows), the Mac's
+// rule (docs/notes/session-host.md, "Size"): never reflowing a program's
+// screen to this view. Larger than the view: VTE takes the pty's size and
+// the scroller clips it (no panning to the cursor yet). Smaller: VTE keeps
+// the view's grid, and the program draws in its top left.
+void Terminal::followPtySize(int cols, int rows) {
+    if (!vte_ || cols < 2 || rows < 1) return;
+    // This view's own size on its way (a size it sent), or a terminal not on
+    // screen (nothing to draw, and its cells not measured yet): no clipping.
+    bool own = !gtk_widget_get_mapped(vte_);
+    for (const auto& [c, r] : sentSizes_) own = own || (c == cols && r == rows);
+    if (own) {
+        if (ptyCols_ || ptyRows_) gtk_widget_set_size_request(vte_, -1, -1);
+        ptyCols_ = ptyRows_ = 0;
+        return;
+    }
+    int vc = 0, vr = 0;
+    if (!viewCells(&vc, &vr)) return;
+    const bool wider = cols > vc, taller = rows > vr;
+    if (own || (!wider && !taller)) {
+        if (ptyCols_ || ptyRows_) gtk_widget_set_size_request(vte_, -1, -1);
+        ptyCols_ = ptyRows_ = 0;
+        return;
+    }
+    if (cols == ptyCols_ && rows == ptyRows_) return;
+    ptyCols_ = cols;
+    ptyRows_ = rows;
+    VteTerminal* t = VTE_TERMINAL(vte_);
+    const double cw = (double)vte_terminal_get_char_width(t), ch = (double)vte_terminal_get_char_height(t);
+    const int padW = std::max(0, gtk_widget_get_width(vte_) - (int)(vte_terminal_get_column_count(t) * cw));
+    const int padH = std::max(0, gtk_widget_get_height(vte_) - (int)(vte_terminal_get_row_count(t) * ch));
+    gtk_widget_set_size_request(vte_, wider ? (int)(cols * cw) + padW + 1 : -1,
+                                taller ? (int)(rows * ch) + padH + 1 : -1);
 }
 
 std::string Terminal::title() const {
@@ -491,6 +619,7 @@ std::string Terminal::title() const {
         const char* t = vte_terminal_get_window_title(VTE_TERMINAL(vte_));
         if (t && *t) return t;
     }
+    if (!host_.title.empty()) return host_.title;   // a held shell's, before VTE heard one
     const char* shell = g_getenv("SHELL");
     if (shell && *shell) {
         const char* slash = strrchr(shell, '/');
@@ -507,7 +636,12 @@ void Terminal::setUserTitle(const std::string& t) {
 Terminal::~Terminal() {
     terminalRegistry().erase(controlId_);
     TerminalAttention::forget(controlId_);   // the mark goes with it
-    // The host hangs the shell up and reaps it.
+    // The host hangs the shell up and reaps it (a held one never shown is
+    // attached first, so the host takes the close from this renderer).
+    if (heldTerm_ && !link_->lost()) {
+        link_->client().attachTerminal(heldTerm_, nullptr);
+        link_->client().closeTerminal(heldTerm_);
+    }
     if (hostTerm_) link_->client().closeTerminal(hostTerm_);
     link_->removeLostListener(lostListener_);
     if (ackIdle_) g_source_remove(ackIdle_);
@@ -1140,6 +1274,7 @@ void Terminal::HostListener::termShell(Shared::TermId id, const Shared::TermShel
 void Terminal::applyShell(const Shared::TermShell& s) {
     Terminal* t = this;
     t->host_ = s;
+    followPtySize(s.cols, s.rows);
     if (t->nonce_.empty() || !s.known) return;
     ShellIntegration::ShellState& sh = t->shell_;
     const bool changed = !sh.known || sh.prompts != s.prompts || sh.started != s.started || sh.done != s.done ||
@@ -1229,10 +1364,14 @@ void Terminal::HostListener::termExited(Shared::TermId id, int, const std::strin
 void Terminal::sendSize() {
     if (!vte_ || !hostTerm_) return;
     VteTerminal* t = VTE_TERMINAL(vte_);
-    const int cols = (int)vte_terminal_get_column_count(t), rows = (int)vte_terminal_get_row_count(t);
+    int cols = (int)vte_terminal_get_column_count(t), rows = (int)vte_terminal_get_row_count(t);
+    // VTE held at a larger pty's size: the view's own size is the scroller's.
+    if ((ptyCols_ || ptyRows_) && !viewCells(&cols, &rows)) return;
     if (cols < 2 || rows < 1 || (cols == sentCols_ && rows == sentRows_)) return;
     sentCols_ = cols;
     sentRows_ = rows;
+    sentSizes_.push_back({cols, rows});
+    if (sentSizes_.size() > 4) sentSizes_.erase(sentSizes_.begin());
     link_->client().resizeTerminal(hostTerm_, cols, rows);
     if (navLine_ >= 0) gtk_widget_queue_draw(underline_);
 }
@@ -1450,6 +1589,7 @@ void Terminal::spawnShell() {
     hostTerm_ = link_->client().newId();   // from the client's range on the host
     sentCols_ = spec.cols;
     sentRows_ = spec.rows;
+    sentSizes_ = {{spec.cols, spec.rows}};
     shellPid_ = -1;
     link_->client().openTerminal(hostTerm_, spec, &listener_);
 }
@@ -1651,7 +1791,13 @@ void Terminal::onCommit(VteTerminal*, char* text, guint size, gpointer selfp) {
     // VTE's size first: a key typed right after a resize (a zoom) is read by
     // a program that asks for the width at once.
     self->sendSize();
-    if (self->hostTerm_) self->link_->client().terminalInput(self->hostTerm_, std::string(text, size));
+    // VTE's answers to a program's queries (DA, DSR, OSC colors) are not
+    // typing, so they leave the pty's size where it is (Client::
+    // terminalInput's `answer`): what comes with no key pressed and reads
+    // as one.
+    std::string bytes(text, size);
+    const bool answer = !self->userInput_ && Shared::termLooksLikeAnswer(bytes);
+    if (self->hostTerm_) self->link_->client().terminalInput(self->hostTerm_, std::move(bytes), answer);
     if (self->userInput_) self->userTyped();
     if (!memchr(text, '\r', size) && !memchr(text, '\n', size)) return;
     if (self->finishTimer_) return;   // already looking

@@ -115,3 +115,4 @@ TreeFocusSuite.cpp
 TestGutterSuite.cpp
 DesktopModeSuite.cpp
 HostLinkSuite.cpp
+HostReattachSuite.cpp

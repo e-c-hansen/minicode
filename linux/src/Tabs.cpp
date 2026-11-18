@@ -55,8 +55,8 @@ Model::Session& Editor::session() {
     return s;
 }
 
-Document* Editor::newDocument() {
-    Document* d = new Document(this, &tags_, link_);
+Document* Editor::newDocument(uint64_t heldId) {
+    Document* d = heldId ? new Document(this, &tags_, link_, heldId) : new Document(this, &tags_, link_);
     docs_[d->id()] = d;
     return d;
 }
@@ -321,6 +321,33 @@ Document* Editor::addTab(const std::string& path) {
     win_->append(d->id(), path);
     refreshStrip();
     return d;
+}
+
+Document* Editor::attachTab(uint64_t heldId, const std::string& path) {
+    if (!heldId || documentById(heldId)) return nullptr;
+    Document* d = newDocument(heldId);
+    d->attachHeld(path);
+    win_->append(d->id(), path);
+    refreshStrip();
+    return d;
+}
+
+void Editor::detachFromHost(const std::set<uint64_t>& drop) {
+    if (!link_ || link_->lost()) return;
+    // The record first, while the window still lists its tabs.
+    link_->windowDetached(winId_, *win_);
+    windowDetached_ = true;
+    for (Document* d : documents())
+        if (!drop.count(d->id()) && d->sessionLink() == link_.get()) d->detachFromHost();
+}
+
+void Editor::rehost(std::shared_ptr<SessionLink::Link> link) {
+    if (!link) return;
+    SessionLink::Link* old = link_.get();
+    for (Document* d : documents())
+        if (d->sessionLink() == old || (d->sessionLink() && d->sessionLink()->lost())) d->rehost(link);
+    setSessionLink(std::move(link));
+    notifyDocument();   // a new id: a new document to a language server
 }
 
 void Editor::showDiff(const std::string& title, const std::string& bytes, bool commit) {
