@@ -110,3 +110,4 @@ LatexInputsSuite.cpp
 FormatOfferSuite.cpp
 HtmlPageSuite.cpp
 TerminalMarksSuite.cpp
+TreeFocusSuite.cpp

@@ -50,14 +50,37 @@ static bool infoIsDir(GFileInfo* info) {
 
 FileTree::FileTree(const std::string& rootDir, bool showHidden)
     : root_(rootDir), showHidden_(showHidden) {
+    box_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     scroller_ = gtk_scrolled_window_new();
     gtk_widget_set_size_request(scroller_, 220, -1);
+    gtk_widget_set_vexpand(scroller_, TRUE);
     gtk_widget_add_css_class(scroller_, "minicode-sidebar");
+    buildFocusBar();
+    gtk_box_append(GTK_BOX(box_), bar_);
+    gtk_box_append(GTK_BOX(box_), scroller_);
     build();
 }
 
 FileTree::~FileTree() {
     *activity_ = nullptr;   // folder watches still running call nothing now
+    unwatchFocusPath();
+    if (barMenu_) gtk_widget_unparent(barMenu_);
+    barMenu_ = nullptr;
+    if (barMenuModel_) g_object_unref(barMenuModel_);
+    if (bar_) {
+        for (GtkWidget* w : {bar_, barParts_}) {
+            GListModel* ctrls = gtk_widget_observe_controllers(w);
+            for (guint i = 0; i < g_list_model_get_n_items(ctrls); ++i) {
+                GObject* c = static_cast<GObject*>(g_list_model_get_item(ctrls, i));
+                g_signal_handlers_disconnect_by_data(c, this);
+                g_object_unref(c);
+            }
+            g_object_unref(ctrls);
+        }
+        g_signal_handlers_disconnect_by_data(barClose_, this);
+        g_signal_handlers_disconnect_by_data(bar_, this);
+        g_object_set_data(G_OBJECT(barParts_), "minicode-tree", nullptr);
+    }
     holdRow(&pressRow_, nullptr);
     holdRow(&lastReleaseRow_, nullptr);
     if (revealIdle_) g_source_remove(revealIdle_);
@@ -475,6 +498,45 @@ GListModel* FileTree::makeDirModel(GFile* dir, bool root) {
     return G_LIST_MODEL(gtk_filter_list_model_new(G_LIST_MODEL(store), filter_));
 }
 
+// The rows from top(): the window's folder, or the focused folder. Only the
+// window's folder lists the Worktrees node.
+GtkTreeListModel* FileTree::makeTreeModel() {
+    // Each folder's store is kept in the tree's order itself ("one folder").
+    GFile* topFile = g_file_new_for_path(top().c_str());
+    GListModel* rootModel = makeDirModel(topFile, focus_.empty());
+    g_object_unref(topFile);
+
+    GtkTreeListModel* model = gtk_tree_list_model_new(
+        rootModel,          // takes ownership
+        FALSE,              // passthrough
+        FALSE,              // autoexpand
+        [](gpointer item, gpointer self) -> GListModel* {
+            return static_cast<FileTree*>(self)->createChild(item, self);
+        }, this, nullptr);
+    g_signal_connect(model, "items-changed", G_CALLBACK(onItemsChanged), this);
+    return model;
+}
+
+// The list view on a fresh model from top(). The selection model is kept
+// (it owns the tree model, so the old one goes with its folders' watches),
+// and so are the list view and its handlers.
+void FileTree::replaceModel() {
+    holdRow(&pressRow_, nullptr);
+    holdRow(&lastReleaseRow_, nullptr);
+    pendingReveal_.clear();
+    pendingExpand_.clear();
+    endDrop();
+    if (namePopover_) gtk_popover_popdown(GTK_POPOVER(namePopover_));
+    if (treeModel_) g_signal_handlers_disconnect_by_data(treeModel_, this);
+    GtkTreeListModel* fresh = makeTreeModel();
+    GtkSelectionModel* sel = gtk_list_view_get_model(GTK_LIST_VIEW(listView_));
+    gtk_single_selection_set_model(GTK_SINGLE_SELECTION(sel), G_LIST_MODEL(fresh));
+    g_object_unref(fresh);   // the selection's now
+    treeModel_ = fresh;
+    gtk_adjustment_set_value(
+        gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_)), 0);
+}
+
 void FileTree::build() {
     // Shared dotfile filter.
     filter_ = GTK_FILTER(gtk_custom_filter_new(
@@ -482,20 +544,7 @@ void FileTree::build() {
             return static_cast<FileTree*>(self)->filterVisible(item, self);
         }, this, nullptr));
 
-    // Each folder's store is kept in the tree's order itself ("one folder").
-    GFile* rootFile = g_file_new_for_path(root_.c_str());
-    GListModel* rootModel = makeDirModel(rootFile, true);
-    g_object_unref(rootFile);
-
-    treeModel_ = gtk_tree_list_model_new(
-        rootModel,          // takes ownership
-        FALSE,              // passthrough
-        FALSE,              // autoexpand
-        [](gpointer item, gpointer self) -> GListModel* {
-            return static_cast<FileTree*>(self)->createChild(item, self);
-        }, this, nullptr);
-
-    g_signal_connect(treeModel_, "items-changed", G_CALLBACK(onItemsChanged), this);
+    treeModel_ = makeTreeModel();
 
     GtkSingleSelection* sel =
         gtk_single_selection_new(G_LIST_MODEL(treeModel_));
@@ -951,6 +1000,12 @@ static std::string pathOfRow(GtkTreeListRow* row);
 
 void FileTree::setRoot(const std::string& rootDir) {
     root_ = rootDir;
+    // A focus belongs to its folder (the new folder's session may bring its
+    // own back).
+    focus_.clear();
+    focusExpanded_.clear();
+    unwatchFocusPath();
+    updateFocusBar();
     holdRow(&pressRow_, nullptr);
     holdRow(&lastReleaseRow_, nullptr);
     pendingReveal_.clear();
@@ -966,6 +1021,13 @@ void FileTree::setRoot(const std::string& rootDir) {
 void FileTree::setShowHidden(bool show) {
     if (show == showHidden_) return;
     showHidden_ = show;
+    // Focused on a dotfolder, or inside one, with hidden files off now: the
+    // whole folder again, its folders open as they were (the models made
+    // for it filter by the new setting).
+    if (!focus_.empty() && !inTree(focus_)) {
+        dropLostFocus();
+        return;
+    }
     // The open folders and the selection, to put back afterwards: refiltering
     // makes the sorted lists report every entry as removed and added again,
     // and the tree model forgets what was expanded under a removed row. Found
@@ -1062,7 +1124,8 @@ void FileTree::clearSelection() {
     gtk_selection_model_unselect_all(gtk_list_view_get_model(GTK_LIST_VIEW(listView_)));
 }
 
-void FileTree::revealPath(const std::string& path) {
+void FileTree::revealPath(const std::string& path, bool widen) {
+    if (!showsPath(path, widen)) return;   // outside the focus, left as it is
     pendingReveal_ = path;
     revealDeadline_ = g_get_monotonic_time() + 3 * G_USEC_PER_SEC;
     tryReveal();
@@ -1348,10 +1411,12 @@ void FileTree::onDragEnd(GtkDragSource*, GdkDrag*, gboolean, gpointer) {
 std::string FileTree::dropDirAt(double x, double y, guint* rowOut) const {
     *rowOut = GTK_INVALID_LIST_POSITION;
     // Spelled as GIO spells the rows' paths, so the checks compare like with
-    // like (no trailing slash, no "..").
-    GFile* rootFile = g_file_new_for_path(root_.c_str());
+    // like (no trailing slash, no ".."). The empty space and a top-level
+    // file's row mean the tree's top: the focused folder, if any.
+    const std::string topDir = top();
+    GFile* rootFile = g_file_new_for_path(topDir.c_str());
     char* rp = g_file_get_path(rootFile);
-    std::string dir = rp ? rp : root_;
+    std::string dir = rp ? rp : topDir;
     g_free(rp);
     g_object_unref(rootFile);
 
@@ -1513,4 +1578,408 @@ void FileTree::endDrop() {
     if (scrollTimer_) g_source_remove(scrollTimer_);
     scrollTimer_ = 0;
     dropPaths_.clear();
+}
+
+// ---------------------------------------------------------------- Focus on Folder
+//
+// The tree rooted at one folder inside the window's (the Mac's
+// EditorController+TreeFocus.mm, the rules the core's TreeFocus). The model
+// is made again from the focused folder, so its folders' watches, the
+// dotfile filter, the git colors and drag and drop work as they do from the
+// window's folder; root_ never changes. The folders open stay open across a
+// change: those on show are read before the model goes, those outside the
+// new top are remembered (focusExpanded_) for when it widens again. A row
+// of folder names across the top (the breadcrumb) leads back up.
+
+namespace {
+
+// Either side of a "›" in the breadcrumb, as on the Mac.
+constexpr int kSepPad = 4;
+
+std::string joinPath(const std::string& root, const std::string& rel) {
+    if (rel.empty()) return root;
+    return root == "/" ? "/" + rel : root + "/" + rel;
+}
+
+// Whether `path` is inside `dir` (not `dir` itself).
+bool inside(const std::string& path, const std::string& dir) {
+    const std::string prefix = dir == "/" ? dir : dir + "/";
+    return path.size() > prefix.size() && path.compare(0, prefix.size(), prefix) == 0;
+}
+
+std::string dirOf(const std::string& path) {
+    const std::size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos) return "";
+    return slash == 0 ? "/" : path.substr(0, slash);
+}
+
+int naturalWidth(GtkWidget* w, int* min = nullptr) {
+    int lo = 0, nat = 0;
+    gtk_widget_measure(w, GTK_ORIENTATION_HORIZONTAL, -1, &lo, &nat, nullptr, nullptr);
+    if (min) *min = lo;
+    return nat;
+}
+
+}  // namespace
+
+std::string FileTree::top() const { return joinPath(root_, focus_); }
+
+bool FileTree::relative(const std::string& path, std::string* rel) const {
+    return TreeFocus::relative(root_, path, rel);
+}
+
+bool FileTree::inTree(const std::string& relIn) const {
+    const std::string rel = TreeFocus::normalize(relIn);
+    if (rel.empty()) return false;
+    // The Worktrees node shows .claude/worktrees, which .claude does not list.
+    if (rel == ".claude/worktrees" || rel.compare(0, 18, ".claude/worktrees/") == 0) return false;
+    if (!showHidden_)
+        for (std::size_t at = 0; at < rel.size();) {
+            if (rel[at] == '.') return false;   // a dotfolder on the way
+            const std::size_t slash = rel.find('/', at);
+            if (slash == std::string::npos) break;
+            at = slash + 1;
+        }
+    return g_file_test(joinPath(root_, rel).c_str(), G_FILE_TEST_IS_DIR);
+}
+
+std::unordered_set<std::string> FileTree::expandedNow() const {
+    std::unordered_set<std::string> open;
+    GListModel* rows = G_LIST_MODEL(treeModel_);
+    for (guint i = 0; i < g_list_model_get_n_items(rows); ++i) {
+        GtkTreeListRow* row = gtk_tree_list_model_get_row(treeModel_, i);
+        if (!row) continue;
+        if (gtk_tree_list_row_get_expanded(row)) open.insert(pathOfRow(row));
+        g_object_unref(row);
+    }
+    return open;
+}
+
+bool FileTree::setFocus(const std::string& focusIn) {
+    const std::string rel = TreeFocus::normalize(focusIn);
+    if (!rel.empty() && !inTree(rel)) return false;
+    if (rel == focus_) return true;
+    applyFocus(rel, false);
+    if (onFocusChanged) onFocusChanged();
+    return true;
+}
+
+void FileTree::applyFocus(const std::string& rel, bool lost) {
+    const std::string oldTop = top();
+    const bool wasWhole = focus_.empty();
+    const std::string selected = lost ? std::string() : selectedPath();
+    // What was remembered from before, but where the tree showed it, what
+    // it shows now: those rows are the truth.
+    std::unordered_set<std::string> memory = focusExpanded_;
+    for (auto it = memory.begin(); it != memory.end();) {
+        if (wasWhole || *it == oldTop || inside(*it, oldTop)) it = memory.erase(it);
+        else ++it;
+    }
+    if (!lost)
+        for (const std::string& p : expandedNow()) memory.insert(p);
+    // Widening: the folder that was the root shows open, with every folder
+    // on the way down to it, and its row selected.
+    const std::string newTop = joinPath(root_, rel);
+    const bool widening = !lost && !wasWhole && (rel.empty() || inside(oldTop, newTop));
+    if (widening)
+        for (std::string f = oldTop; inside(f, newTop); f = dirOf(f)) memory.insert(f);
+    focus_ = rel;
+    focusExpanded_ = memory;
+
+    replaceModel();
+    for (const std::string& p : memory)
+        if (inside(p, newTop)) pendingExpand_.insert(p);
+    expandDeadline_ = g_get_monotonic_time() + 3 * G_USEC_PER_SEC;
+    tryExpand();   // the rows come as the listings do (onItemsChanged)
+    // The selection where it still shows: inside the new top, every folder
+    // on the way open. Else, widening, the old root's row.
+    auto shows = [&](const std::string& p) {
+        if (!inside(p, newTop)) return false;
+        for (std::string d = dirOf(p); d != newTop; d = dirOf(d))
+            if (!memory.count(d)) return false;
+        return true;
+    };
+    std::string select;
+    if (!selected.empty() && shows(selected)) select = selected;
+    else if (widening) select = oldTop;
+    if (!select.empty()) revealPath(select);
+    updateFocusBar();
+    watchFocusPath();
+}
+
+void FileTree::dropLostFocus() {
+    if (focus_.empty() || inTree(focus_)) return;
+    applyFocus("", true);
+    if (onNote) onNote("The focused folder is gone: the tree shows the whole folder");
+    if (onFocusChanged) onFocusChanged();
+}
+
+void FileTree::restoreFocus(const std::string& saved) {
+    const std::string focus =
+        TreeFocus::restored(saved, [this](const std::string& rel) { return inTree(rel); });
+    if (focus != focus_) applyFocus(focus, false);
+}
+
+bool FileTree::showsPath(const std::string& path, bool widen) {
+    if (focus_.empty()) return true;
+    std::string rel;
+    if (!relative(path, &rel)) return true;   // outside the window's folder: as before
+    if (rel != focus_ && TreeFocus::contains(focus_, rel)) return true;
+    if (!widen) return false;
+    // A reveal: the nearest folder that shows it as a row.
+    return setFocus(TreeFocus::widened(focus_, rel));
+}
+
+// ---- the breadcrumb row
+
+void FileTree::buildFocusBar() {
+    bar_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(bar_, "minicode-tree-focus-bar");
+    gtk_widget_set_visible(bar_, FALSE);
+    // The parts, as many as fit (TreeFocus::fit), laid out by hand.
+    barParts_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(barParts_, TRUE);
+    gtk_widget_set_layout_manager(barParts_,
+                                  gtk_custom_layout_new(nullptr, measureParts, allocateParts));
+    g_object_set_data(G_OBJECT(barParts_), "minicode-tree", this);
+    barEllipsis_ = gtk_label_new("…");
+    gtk_widget_add_css_class(barEllipsis_, "minicode-tree-focus-sep");
+    gtk_box_append(GTK_BOX(barParts_), barEllipsis_);
+    GtkGesture* press = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(press), GDK_BUTTON_PRIMARY);
+    g_signal_connect(press, "pressed", G_CALLBACK(onBarPressed), this);
+    gtk_widget_add_controller(barParts_, GTK_EVENT_CONTROLLER(press));
+    gtk_box_append(GTK_BOX(bar_), barParts_);
+    // The ×: the whole folder again.
+    barClose_ = gtk_button_new_with_label("×");
+    gtk_widget_add_css_class(barClose_, "flat");
+    gtk_widget_add_css_class(barClose_, "minicode-tree-focus-close");
+    gtk_widget_set_focus_on_click(barClose_, FALSE);
+    gtk_widget_set_valign(barClose_, GTK_ALIGN_CENTER);
+    gtk_widget_set_tooltip_text(barClose_, "Show Whole Folder in Tree");
+    g_signal_connect(barClose_, "clicked", G_CALLBACK(+[](GtkButton*, gpointer selfp) {
+        FileTree* self = static_cast<FileTree*>(selfp);
+        self->setFocus("");
+        self->focus();
+    }), this);
+    gtk_box_append(GTK_BOX(bar_), barClose_);
+    // Its right click: Show Whole Folder in Tree (setFocusBarMenu).
+    GtkGesture* rclick = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rclick), GDK_BUTTON_SECONDARY);
+    g_signal_connect(rclick, "pressed", G_CALLBACK(onBarRightClick), this);
+    gtk_widget_add_controller(bar_, GTK_EVENT_CONTROLLER(rclick));
+    // The menu is the bar's child, and comes off before the bar goes.
+    g_signal_connect(bar_, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer selfp) {
+        FileTree* self = static_cast<FileTree*>(selfp);
+        if (self->barMenu_) gtk_widget_unparent(self->barMenu_);
+        self->barMenu_ = nullptr;
+    }), this);
+}
+
+void FileTree::updateFocusBar() {
+    if (!bar_) return;
+    for (GtkWidget* w : barLabels_) gtk_box_remove(GTK_BOX(barParts_), w);
+    for (GtkWidget* w : barSeps_) gtk_box_remove(GTK_BOX(barParts_), w);
+    barLabels_.clear();
+    barSeps_.clear();
+    barFoci_.clear();
+    if (focus_.empty()) {
+        gtk_widget_set_visible(bar_, FALSE);
+        return;
+    }
+    std::string name = root_;
+    const std::size_t slash = root_.find_last_of('/');
+    if (slash != std::string::npos && slash + 1 < root_.size()) name = root_.substr(slash + 1);
+    const std::vector<TreeFocus::Part> parts = TreeFocus::breadcrumb(name, focus_);
+    std::string shown;
+    for (std::size_t i = 0; i < parts.size(); i++) {
+        char* valid = g_utf8_make_valid(parts[i].label.c_str(), -1);
+        GtkWidget* label = gtk_label_new(valid);
+        shown += (i ? "/" : "") + std::string(valid);
+        g_free(valid);
+        gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+        gtk_label_set_single_line_mode(GTK_LABEL(label), TRUE);
+        gtk_widget_add_css_class(label, "minicode-tree-focus-part");
+        if (i + 1 == parts.size()) {
+            gtk_widget_add_css_class(label, "minicode-tree-focus-current");   // the tree's root now
+        } else {
+            gtk_widget_set_cursor_from_name(label, "pointer");
+            g_object_set_data(G_OBJECT(label), "minicode-focus-part", GINT_TO_POINTER((int)i + 1));
+        }
+        gtk_box_append(GTK_BOX(barParts_), label);
+        barLabels_.push_back(label);
+        barFoci_.push_back(parts[i].focus);
+        // A "›" for every part, enough for any choice fit makes.
+        GtkWidget* sep = gtk_label_new("›");
+        gtk_widget_add_css_class(sep, "minicode-tree-focus-sep");
+        gtk_box_append(GTK_BOX(barParts_), sep);
+        barSeps_.push_back(sep);
+    }
+    const std::string tip = "The tree shows " + shown +
+                            " only\nClick a folder above to show it instead; × shows the whole folder";
+    gtk_widget_set_tooltip_text(barParts_, tip.c_str());
+    gtk_widget_set_visible(bar_, TRUE);
+    gtk_widget_queue_allocate(barParts_);
+}
+
+std::vector<std::string> FileTree::focusBarLabels() const {
+    std::vector<std::string> out;
+    for (GtkWidget* l : barLabels_) out.push_back(gtk_label_get_text(GTK_LABEL(l)));
+    return out;
+}
+
+GtkWidget* FileTree::focusBarPart(std::size_t index) const {
+    return index < barLabels_.size() ? barLabels_[index] : nullptr;
+}
+
+void FileTree::setFocusBarMenu(GMenuModel* model) {
+    if (barMenu_) gtk_widget_unparent(barMenu_);
+    barMenu_ = nullptr;
+    if (barMenuModel_) g_object_unref(barMenuModel_);
+    barMenuModel_ = model ? G_MENU_MODEL(g_object_ref(model)) : nullptr;
+}
+
+// The row asks for no width of its own (the sidebar decides), and the
+// height of its tallest part.
+void FileTree::measureParts(GtkWidget* w, GtkOrientation o, int, int* min, int* nat,
+                            int* minBase, int* natBase) {
+    *min = *nat = 0;
+    *minBase = *natBase = -1;
+    if (o == GTK_ORIENTATION_HORIZONTAL) return;
+    for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c)) {
+        int lo = 0, hi = 0;
+        gtk_widget_measure(c, o, -1, &lo, &hi, nullptr, nullptr);
+        *min = std::max(*min, lo);
+        *nat = std::max(*nat, hi);
+    }
+}
+
+// The parts that fit (TreeFocus::fit: all, else the first, an ellipsis and
+// as many of the last as fit), a "›" between each two; the last one shown
+// is cut short when even it does not fit. The rest are not shown.
+void FileTree::allocateParts(GtkWidget* w, int width, int height, int) {
+    for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+        gtk_widget_set_child_visible(c, FALSE);
+    auto* self = static_cast<FileTree*>(g_object_get_data(G_OBJECT(w), "minicode-tree"));
+    if (!self || self->barLabels_.empty()) return;
+    std::vector<double> widths;
+    for (GtkWidget* l : self->barLabels_) widths.push_back(naturalWidth(l));
+    int sepMin = 0;
+    const int sepWidth = naturalWidth(self->barSeps_[0], &sepMin);
+    const double sep = sepWidth + 2 * kSepPad;
+    int ellMin = 0;
+    const double ell = naturalWidth(self->barEllipsis_, &ellMin);
+    const std::vector<int> shown = TreeFocus::fit(widths, sep, ell, std::max(0, width));
+    int x = 0;
+    std::size_t nextSep = 0;
+    auto place = [&](GtkWidget* c, int at, int want, int least) {
+        const int room = width - at;
+        if (room < least) return;
+        GtkAllocation a = {at, 0, std::max(least, std::min(want, room)), height};
+        gtk_widget_set_child_visible(c, TRUE);
+        gtk_widget_size_allocate(c, &a, -1);
+    };
+    for (std::size_t k = 0; k < shown.size() && x < width; k++) {
+        if (k > 0) {
+            place(self->barSeps_[nextSep++], x + kSepPad, sepWidth, sepMin);
+            x += (int)sep;
+        }
+        const int i = shown[k];
+        GtkWidget* c = i < 0 ? self->barEllipsis_ : self->barLabels_[(std::size_t)i];
+        int least = ellMin;
+        if (i >= 0) naturalWidth(c, &least);
+        const int want = i < 0 ? (int)ell : (int)widths[(std::size_t)i];
+        place(c, x, want, least);
+        x += want;
+    }
+}
+
+// A press on a part roots the tree there (the first part is the whole
+// folder); the last part, the tree's root already, does nothing.
+void FileTree::onBarPressed(GtkGestureClick* g, int, double x, double y, gpointer selfp) {
+    FileTree* self = static_cast<FileTree*>(selfp);
+    for (GtkWidget* w = gtk_widget_pick(self->barParts_, x, y, GTK_PICK_DEFAULT);
+         w && w != self->barParts_; w = gtk_widget_get_parent(w)) {
+        const int part = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(w), "minicode-focus-part"));
+        if (part <= 0 || (std::size_t)part > self->barFoci_.size()) continue;
+        gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+        const std::string focus = self->barFoci_[(std::size_t)part - 1];
+        self->setFocus(focus);
+        self->focus();
+        return;
+    }
+}
+
+void FileTree::onBarRightClick(GtkGestureClick* g, int, double x, double y, gpointer selfp) {
+    FileTree* self = static_cast<FileTree*>(selfp);
+    if (!self->barMenuModel_) return;
+    gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+    if (!self->barMenu_) {
+        self->barMenu_ = gtk_popover_menu_new_from_model(self->barMenuModel_);
+        gtk_popover_set_has_arrow(GTK_POPOVER(self->barMenu_), FALSE);
+        gtk_widget_set_halign(self->barMenu_, GTK_ALIGN_START);
+        gtk_widget_set_parent(self->barMenu_, self->bar_);
+    }
+    GdkRectangle at = {(int)x, (int)y, 1, 1};
+    gtk_popover_set_pointing_to(GTK_POPOVER(self->barMenu_), &at);
+    gtk_popover_popup(GTK_POPOVER(self->barMenu_));
+}
+
+// ---- the focused folder gone
+
+void FileTree::watchFocusPath() {
+    unwatchFocusPath();
+    if (focus_.empty()) return;
+    std::vector<std::string> dirs = {root_};
+    for (std::string d = dirOf(top()); inside(d, root_); d = dirOf(d)) dirs.push_back(d);
+    for (const std::string& d : dirs) {
+        GFile* f = g_file_new_for_path(d.c_str());
+        GFileMonitor* m = g_file_monitor_directory(f, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
+        g_object_unref(f);
+        if (!m) continue;
+        g_signal_connect(m, "changed", G_CALLBACK(onFocusPathChanged), this);
+        focusWatch_.push_back(m);
+    }
+}
+
+void FileTree::unwatchFocusPath() {
+    for (GFileMonitor* m : focusWatch_) {
+        g_signal_handlers_disconnect_by_data(m, this);
+        g_file_monitor_cancel(m);
+        g_object_unref(m);
+    }
+    focusWatch_.clear();
+    if (focusCheck_) g_source_remove(focusCheck_);
+    focusCheck_ = 0;
+}
+
+void FileTree::onFocusPathChanged(GFileMonitor*, GFile* file, GFile*, GFileMonitorEvent ev,
+                                  gpointer selfp) {
+    FileTree* self = static_cast<FileTree*>(selfp);
+    // What the tree's own watch of the window's folder would report, had
+    // it one now (the Source Control panel and the git colors look again).
+    if (*self->activity_) {
+        char* path = file ? g_file_get_path(file) : nullptr;
+        (*self->activity_)(path ? path : "");
+        g_free(path);
+    }
+    switch (ev) {
+    case G_FILE_MONITOR_EVENT_DELETED:
+    case G_FILE_MONITOR_EVENT_MOVED_OUT:
+    case G_FILE_MONITOR_EVENT_RENAMED:
+    case G_FILE_MONITOR_EVENT_MOVED:
+    case G_FILE_MONITOR_EVENT_UNMOUNTED:
+        break;
+    default:
+        return;
+    }
+    // Looked at once things settle: a folder deleted with what is in it
+    // reports each entry first.
+    if (self->focusCheck_) return;
+    self->focusCheck_ = g_timeout_add(100, [](gpointer p) -> gboolean {
+        FileTree* t = static_cast<FileTree*>(p);
+        t->focusCheck_ = 0;
+        t->dropLostFocus();
+        return G_SOURCE_REMOVE;
+    }, self);
 }

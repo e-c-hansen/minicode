@@ -41,6 +41,8 @@ const std::vector<Action>& actions() {
         {"moveFileToTrash", "win.trash", false},
         {"revealFileInOS", "win.reveal", true},
         {"copyFilePath", "win.copypath", false},
+        {"minicode.tree.focusFolder", "win.focusfolder", true},
+        {"minicode.tree.showWholeFolder", "win.showwholefolder", false},
         {"workbench.action.files.copyPathOfActiveFile", "win.copyactivepath", true},
         {"workbench.action.files.revealActiveFileInWindows", "win.revealactive", false},
         {"workbench.files.action.showActiveFileInExplorer", "win.revealactiveintree", false},

@@ -94,6 +94,18 @@ void MCGuiCommandLine(const std::vector<std::string>& args, const std::string& c
 
 GMenu* MCGuiRecentMenu() { return g.recentMenu; }
 
+std::string MCGuiWindowRecord(GtkWindow* window) {
+    for (App* a : g.windows)
+        if (!a->dead && GTK_WINDOW(a->window) == window && a->persist)
+            return TabSessions::encodeWindows({a->persist->windowRecord()});
+    return "";
+}
+
+void MCGuiOpenWindowRestoring(const std::string& folder, const std::string& record) {
+    const std::vector<TabSessions::Window> windows = TabSessions::decodeWindows(record);
+    if (!windows.empty()) newWindow(folder, "", &windows[0]);
+}
+
 void MCGuiAnswerFolderChooser(std::function<std::string(const std::string& start)> answer) {
     if (!answer) {
         gFolderChooserHook = nullptr;

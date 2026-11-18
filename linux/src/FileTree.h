@@ -41,7 +41,11 @@ public:
     // names this object off the models and the list view.
     ~FileTree();
 
+    // The scrolled list of rows. container() is what the window shows: the
+    // Focus on Folder breadcrumb row (hidden while the whole folder shows)
+    // over widget().
     GtkWidget* widget() const { return scroller_; }
+    GtkWidget* container() const { return box_; }
 
     void setOpenCallback(OpenCb cb, void* user) { openCb_ = cb; openUser_ = user; }
 
@@ -51,9 +55,54 @@ public:
     // nothing is accepted.
     void setDropCallback(DropCb cb) { dropCb_ = std::move(cb); }
 
-    // Re-root at a new directory (Open Folder).
+    // Re-root at a new directory (Open Folder). A focus belongs to its
+    // folder, so the tree shows the whole of the new one.
     void setRoot(const std::string& rootDir);
     const std::string& root() const { return root_; }
+
+    // Focus on Folder (FileDetails.h's TreeFocus, the Mac's
+    // EditorController+TreeFocus.mm): the tree shows one folder inside the
+    // window's as its root, with a breadcrumb row back up. A focus is that
+    // folder's path from root(), "mac/src", and "" for the whole folder.
+    // Only the tree's view narrows: root() and everything that covers it
+    // (search, Quick Open, terminals, git) stay as they were.
+    //
+    // setFocus roots the tree at `focus`, keeping the folders open in it and
+    // the selected row where it still shows, and remembering the folders
+    // open outside it, which open again when the tree widens; widening
+    // opens the old root and selects its row. False, nothing changed, when
+    // `focus` names no folder the tree lists (inTree).
+    bool setFocus(const std::string& focus);
+    const std::string& focusPath() const { return focus_; }
+    // The folder the tree starts at: root(), or the focused folder.
+    std::string top() const;
+    // Whether `rel`, a path from root(), is a folder the tree lists: a
+    // folder on disk, no dotfolder on the way while hidden files are off,
+    // and not the Worktrees node's (.claude lists no "worktrees").
+    bool inTree(const std::string& rel) const;
+    // `path` from root() ("" for the root), false outside it.
+    bool relative(const std::string& path, std::string* rel) const;
+    // A saved focus back (TreeFocus::restored): itself while it is still in
+    // the tree, else the whole folder. Calls no onFocusChanged.
+    void restoreFocus(const std::string& saved);
+    // Whether `path` shows as a row under the focus. With `widen`, a path
+    // outside it widens the focus to the nearest folder above both
+    // (TreeFocus::widened) first: reveals widen, opens do not.
+    bool showsPath(const std::string& path, bool widen);
+    // After every change of the focus but restoreFocus's (the window saves
+    // its session), and a note for the status bar when the focused folder
+    // went from the disk and the tree shows the whole folder again.
+    std::function<void()> onFocusChanged;
+    std::function<void(const std::string& note)> onNote;
+    // For the checks: the breadcrumb row, its parts' labels as shown (the
+    // ellipsis left out), a part's label (null when left out) and the ×.
+    GtkWidget* focusBar() const { return bar_; }
+    std::vector<std::string> focusBarLabels() const;
+    GtkWidget* focusBarPart(size_t index) const;
+    GtkWidget* focusBarClose() const { return barClose_; }
+    // The breadcrumb's right click menu (Show Whole Folder in Tree), its
+    // items naming window actions as the tree's own menu does.
+    void setFocusBarMenu(GMenuModel* model);
 
     // Show or hide entries whose names start with a dot, the Mac's rule
     // (Shift+Cmd+. there, Ctrl+H or Ctrl+Shift+. here). The setting is the
@@ -78,8 +127,11 @@ public:
     // Select the row for `path`, expanding the folders above it. Folders load
     // asynchronously and a file just created appears only once the directory
     // monitor reports it, so this keeps retrying as rows arrive, for a couple
-    // of seconds, rather than failing on the first pass.
-    void revealPath(const std::string& path);
+    // of seconds, rather than failing on the first pass. Outside a focused
+    // folder, `widen` widens the focus first (showsPath); without it the
+    // tree is left as it is (the tree following the tab on show, a file
+    // opened from Quick Open or a link).
+    void revealPath(const std::string& path, bool widen = false);
 
     // Called on every change any of the tree's folder monitors reports, a
     // file's contents included, with the path that changed. The Source
@@ -121,6 +173,34 @@ public:
 private:
     GListModel* makeDirModel(GFile* dir, bool root = false);   // one folder, sorted, then filtered
     void build();
+    // The tree's model from top(), and the list view put on a fresh one
+    // (Focus on Folder): the rows and their folders' watches start over.
+    GtkTreeListModel* makeTreeModel();
+    void replaceModel();
+    // The paths of the folders open now.
+    std::unordered_set<std::string> expandedNow() const;
+    // The focus set to `rel` (normalized, in the tree, or "" for the whole
+    // folder): the model replaced, the folders open again, the bar redrawn.
+    // `lost`: the focused folder went, so nothing widens or is selected.
+    void applyFocus(const std::string& rel, bool lost);
+    // The focused folder gone from the disk, renamed, or hidden now: the
+    // whole folder again, with a note.
+    void dropLostFocus();
+    // The breadcrumb row: made once, its parts made again on every focus.
+    void buildFocusBar();
+    void updateFocusBar();
+    static void measureParts(GtkWidget* w, GtkOrientation o, int forSize, int* min, int* nat,
+                             int* minBase, int* natBase);
+    static void allocateParts(GtkWidget* w, int width, int height, int baseline);
+    static void onBarPressed(GtkGestureClick* g, int n, double x, double y, gpointer self);
+    static void onBarRightClick(GtkGestureClick* g, int n, double x, double y, gpointer self);
+    // Watches each folder from root() down to the focused folder's parent,
+    // so the focused folder deleted or renamed, or one above it, is seen
+    // (the tree's own watches start at the focused folder).
+    void watchFocusPath();
+    void unwatchFocusPath();
+    static void onFocusPathChanged(GFileMonitor* m, GFile* file, GFile* other,
+                                   GFileMonitorEvent ev, gpointer self);
     void dropPopovers();                    // before the list view is replaced
     bool tryReveal();
     void tryExpand();
@@ -186,6 +266,7 @@ private:
     static void        onBind(GtkSignalListItemFactory* f, GObject* obj, gpointer self);
 
     std::string  root_;
+    GtkWidget*   box_      = nullptr;     // the bar over the scroller
     GtkWidget*   scroller_ = nullptr;
     GtkWidget*   listView_ = nullptr;
     GtkFilter*   filter_   = nullptr;     // shared dotfile filter
@@ -238,4 +319,20 @@ private:
     GMenuModel* worktreeModel_ = nullptr;
     GtkWidget*  worktreeMenu_ = nullptr;
     gint64      expandDeadline_ = 0;
+
+    // Focus on Folder.
+    std::string focus_;                    // "" for the whole folder
+    // The folders open outside the focused folder, for when it widens.
+    std::unordered_set<std::string> focusExpanded_;
+    GtkWidget*  bar_ = nullptr;            // the breadcrumb row
+    GtkWidget*  barParts_ = nullptr;       // its parts, laid out by allocateParts
+    GtkWidget*  barClose_ = nullptr;       // the ×
+    GtkWidget*  barEllipsis_ = nullptr;
+    GtkWidget*  barMenu_ = nullptr;        // its right click menu
+    GMenuModel* barMenuModel_ = nullptr;
+    std::vector<GtkWidget*> barLabels_;    // by part
+    std::vector<GtkWidget*> barSeps_;      // one more than enough
+    std::vector<std::string> barFoci_;     // the focus each part gives
+    std::vector<GFileMonitor*> focusWatch_;
+    guint       focusCheck_ = 0;           // the check after an event, coalesced
 };

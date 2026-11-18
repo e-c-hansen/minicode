@@ -67,6 +67,9 @@ const std::vector<LinuxRow>& linuxRows() {
         {"moveFileToTrash", "delete", 0, nullptr, nullptr},
         {"revealFileInOS", "", 0, "Open Containing Folder", nullptr},
         {"copyFilePath", "", 0, nullptr, nullptr},
+        // Focus on Folder and back (FileTree.h): no key, as on the Mac.
+        {"minicode.tree.focusFolder", "", 0, nullptr, nullptr},
+        {"minicode.tree.showWholeFolder", "", 0, nullptr, nullptr},
         // The tab on show (PARITY.md 1.1): VS Code's Linux keys where it has
         // them, the rest from the menu and the tab's right click menu, as on
         // the Mac. Ctrl+W and Ctrl+F4 are plain Ctrl keys, so the shell keeps
